@@ -1,0 +1,543 @@
+﻿import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../core/theme/tokens.dart';
+import '../../../settings/app_settings.dart';
+
+/// 消息输入组件
+class Composer extends ConsumerStatefulWidget {
+  final bool disabled;
+  final ValueChanged<String> onSend;
+  const Composer({super.key, required this.onSend, this.disabled = false});
+
+  @override
+  ConsumerState<Composer> createState() => _ComposerState();
+}
+
+class _ComposerState extends ConsumerState<Composer> with SingleTickerProviderStateMixin {
+  final _ctrl = TextEditingController();
+  bool _isMenuExpanded = false;
+  late AnimationController _animController;
+  late Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+    _animController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 250),
+    );
+    _animation = CurvedAnimation(
+      parent: _animController,
+      curve: Curves.easeInOut,
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _animController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final t = _ctrl.text.trim();
+    if (t.isEmpty || widget.disabled) return;
+    widget.onSend(t);
+    _ctrl.clear();
+  }
+
+  void _toggleActionsMenu() {
+    setState(() {
+      _isMenuExpanded = !_isMenuExpanded;
+      if (_isMenuExpanded) {
+        _animController.forward();
+      } else {
+        _animController.reverse();
+      }
+    });
+  }
+
+  void _closeActionsMenu() {
+    if (_isMenuExpanded) {
+      setState(() {
+        _isMenuExpanded = false;
+        _animController.reverse();
+      });
+    }
+  }
+
+  void _showModelSelector() {
+    final settingsAsync = ref.read(appSettingsProvider);
+    final settings = settingsAsync.maybeWhen(
+      data: (s) => s,
+      orElse: () => null,
+    );
+    if (settings == null) return;
+
+    final visibleModels = List<String>.from(settings.modelList);
+    visibleModels.sort((a, b) {
+      final la = settings.getModelDisplayName(a).toLowerCase();
+      final lb = settings.getModelDisplayName(b).toLowerCase();
+      return la.compareTo(lb);
+    });
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _ModelSelectorSheet(
+        models: visibleModels,
+        currentModel: settings.defaultModelName,
+        onSelectModel: (m) {
+          ref.read(appSettingsProvider.notifier).setDefaultModelName(m);
+          Navigator.pop(context);
+        },
+        getDisplayName: settings.getModelDisplayName,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 功能菜单区域（可展开）
+        SizeTransition(
+          sizeFactor: _animation,
+          axisAlignment: -1.0,
+          child: Container(
+            decoration: const BoxDecoration(
+              color: moeSurface,
+              border: Border(
+                top: BorderSide(color: moeBorder, width: 1),
+              ),
+            ),
+            child: _ActionsMenuContent(
+              onSelectModel: () {
+                _closeActionsMenu();
+                _showModelSelector();
+              },
+              onActionTap: (String action) {
+                _closeActionsMenu();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('$action功能开发中'), duration: const Duration(seconds: 1)),
+                );
+              },
+            ),
+          ),
+        ),
+        // 输入栏区域（固定）
+        Container(
+          decoration: const BoxDecoration(
+            color: moeSurface,
+            border: Border(
+              top: BorderSide(color: moeBorder, width: 1),
+            ),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              // 加号按钮
+              _buildPlusButton(),
+              const SizedBox(width: 8),
+              // 输入框
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    border: Border.all(color: moeBorder, width: 1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: TextField(
+                    controller: _ctrl,
+                    minLines: 1,
+                    maxLines: 4,
+                    style: const TextStyle(fontSize: 16, height: 1.5),
+                    decoration: const InputDecoration.collapsed(
+                      hintText: '说点什么...',
+                      hintStyle: TextStyle(color: moeMuted),
+                    ),
+                    onSubmitted: (_) => _submit(),
+                    enabled: !widget.disabled,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // 发送按钮
+              _buildSendButton(),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPlusButton() {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: widget.disabled ? null : _toggleActionsMenu,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          width: 42,
+          height: 42,
+          decoration: BoxDecoration(
+            border: Border.all(color: moeBorder),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: AnimatedRotation(
+            turns: _isMenuExpanded ? 0.125 : 0, // 45度旋转
+            duration: const Duration(milliseconds: 250),
+            child: const Icon(Icons.add, size: 24, color: moeMuted),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSendButton() {
+    return Material(
+      color: moePrimary,
+      shape: const CircleBorder(),
+      elevation: 2,
+      child: InkWell(
+        onTap: widget.disabled ? null : _submit,
+        customBorder: const CircleBorder(),
+        child: Container(
+          width: 42,
+          height: 42,
+          decoration: const BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: LinearGradient(
+              colors: [moeHeaderGradientStart, moeHeaderGradientEnd],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+          child: const Icon(Icons.send_rounded, color: Colors.white, size: 20),
+        ),
+      ),
+    );
+  }
+}
+
+// 附加功能菜单
+class _ActionsMenu extends ConsumerWidget {
+  const _ActionsMenu();
+
+  void _showModelSelector(BuildContext context, WidgetRef ref) {
+    final settingsAsync = ref.read(appSettingsProvider);
+    final settings = settingsAsync.maybeWhen(
+      data: (s) => s,
+      orElse: () => null,
+    );
+
+    if (settings == null) return;
+
+    final visibleModels = List<String>.from(settings.modelList);
+    visibleModels.sort((a, b) {
+      final labelA = settings.getModelDisplayName(a).toLowerCase();
+      final labelB = settings.getModelDisplayName(b).toLowerCase();
+      return labelA.compareTo(labelB);
+    });
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _ModelSelectorSheet(
+        models: visibleModels,
+        currentModel: settings.defaultModelName,
+        onSelectModel: (model) {
+          ref.read(appSettingsProvider.notifier).setDefaultModelName(model);
+          Navigator.pop(context);
+        },
+        getDisplayName: settings.getModelDisplayName,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      child: SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 顶部拖动指示器
+            Container(
+              margin: const EdgeInsets.only(top: 8, bottom: 16),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: moeMuted.withOpacity(0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            // 功能按钮网格
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: GridView.count(
+                shrinkWrap: true,
+                crossAxisCount: 4,
+                mainAxisSpacing: 16,
+                crossAxisSpacing: 16,
+                physics: const NeverScrollableScrollPhysics(),
+                children: [
+                  _ActionButton(
+                    icon: Icons.smart_toy_outlined,
+                    label: '选择模型',
+                    onTap: () {
+                      Navigator.pop(context);
+                      _showModelSelector(context, ref);
+                    },
+                  ),
+                  _ActionButton(
+                    icon: Icons.image_outlined,
+                    label: '照片',
+                    onTap: () {
+                      Navigator.pop(context);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('照片功能开发中'), duration: Duration(seconds: 1)),
+                      );
+                    },
+                  ),
+                  _ActionButton(
+                    icon: Icons.camera_alt_outlined,
+                    label: '拍照',
+                    onTap: () {
+                      Navigator.pop(context);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('拍照功能开发中'), duration: Duration(seconds: 1)),
+                      );
+                    },
+                  ),
+                  _ActionButton(
+                    icon: Icons.phone_outlined,
+                    label: '语音通话',
+                    onTap: () {
+                      Navigator.pop(context);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('语音通话功能开发中'), duration: Duration(seconds: 1)),
+                      );
+                    },
+                  ),
+                  _ActionButton(
+                    icon: Icons.videocam_outlined,
+                    label: '视频通话',
+                    onTap: () {
+                      Navigator.pop(context);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('视频通话功能开发中'), duration: Duration(seconds: 1)),
+                      );
+                    },
+                  ),
+                  _ActionButton(
+                    icon: Icons.shuffle_outlined,
+                    label: '戳一戳',
+                    onTap: () {
+                      Navigator.pop(context);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('戳一戳功能开发中'), duration: Duration(seconds: 1)),
+                      );
+                    },
+                  ),
+                  _ActionButton(
+                    icon: Icons.card_giftcard_outlined,
+                    label: '红包',
+                    onTap: () {
+                      Navigator.pop(context);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('红包功能开发中'), duration: Duration(seconds: 1)),
+                      );
+                    },
+                  ),
+                  _ActionButton(
+                    icon: Icons.location_on_outlined,
+                    label: '位置',
+                    onTap: () {
+                      Navigator.pop(context);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('位置功能开发中'), duration: Duration(seconds: 1)),
+                      );
+                    },
+                  ),
+                  _ActionButton(
+                    icon: Icons.folder_outlined,
+                    label: '文件',
+                    onTap: () {
+                      Navigator.pop(context);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('文件功能开发中'), duration: Duration(seconds: 1)),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// 功能按钮组件
+class _ActionButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  const _ActionButton({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              color: moeSurface,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: moeBorder),
+            ),
+            child: Icon(icon, size: 28, color: moeMuted),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 12,
+              color: moeText,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
+// 模型选择器弹窗
+class _ModelSelectorSheet extends StatelessWidget {
+  final List<String> models;
+  final String currentModel;
+  final ValueChanged<String> onSelectModel;
+  final String Function(String) getDisplayName;
+
+  const _ModelSelectorSheet({
+    required this.models,
+    required this.currentModel,
+    required this.onSelectModel,
+    required this.getDisplayName,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      child: SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 顶部拖动指示器
+            Container(
+              margin: const EdgeInsets.only(top: 8, bottom: 8),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: moeMuted.withOpacity(0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            // 标题
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                '选择AI模型',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: moeText,
+                ),
+              ),
+            ),
+            const Divider(height: 1, color: moeBorder),
+            // 模型列表
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: models.length,
+                itemBuilder: (context, index) {
+                  final model = models[index];
+                  final displayName = getDisplayName(model);
+                  final isSelected = model == currentModel;
+
+                  return Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: () => onSelectModel(model),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                        decoration: BoxDecoration(
+                          color: isSelected ? moeSurface : Colors.transparent,
+                          border: Border(
+                            bottom: BorderSide(
+                              color: moeBorderLight,
+                              width: index < models.length - 1 ? 1 : 0,
+                            ),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                displayName,
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: moeText,
+                                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                                ),
+                              ),
+                            ),
+                            if (isSelected)
+                              const Icon(
+                                Icons.check_circle,
+                                color: moePrimary,
+                                size: 20,
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+}

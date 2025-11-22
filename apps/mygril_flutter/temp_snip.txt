@@ -1,0 +1,40 @@
+      ttsEvents,
+      placeholderId: placeholder.id,
+    ));
+    await _ttsManager.addEvents(ttsEvents);
+
+    // 立即返回：不追加文本消息，占位语音条已经插入
+
+    return _AssistantDeliveryResult(
+      messages: resultMessages,
+      lastMessagePreview: resultPreview,
+      placeholderId: placeholder.id,
+    );
+  }
+
+  Future<void> _removePlaceholderMessage(String convId, String placeholderId) async {
+    await _ref.read(conversationsProvider.notifier).updateOne(
+          convId,
+          (c) => c.copyWith(
+            messages: [
+              for (final m in c.messages)
+                if (m.id != placeholderId) m,
+            ],
+          ),
+        );
+  }
+
+  _AssistantMessageBuildResult _buildAssistantMessages({
+    required String replyText,
+    required String processedText,
+    required List<PluginEvent> pluginEvents,
+    required MessageFormatConfig messageConfig,
+  }) {
+    final sourceText = _selectAssistantText(processedText, pluginEvents, replyText);
+    if (sourceText.isEmpty) {
+      return const _AssistantMessageBuildResult(messages: [], lastMessageText: '');
+    }
+
+    final chunks = MessageFormatter.formatAndChunkText(sourceText, messageConfig);
+    final texts = chunks.isEmpty ? [sourceText] : chunks;
+    final aiMessages = texts

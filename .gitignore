@@ -1,0 +1,10 @@
+backend/
+cloud_backend/
+参考素材/
+.venv/
+.serena/
+.trae/
+.playwright-mcp/
+.claude/
+*.log
+.DS_Store
