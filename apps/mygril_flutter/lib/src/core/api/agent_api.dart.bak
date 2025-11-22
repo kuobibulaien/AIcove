@@ -1,0 +1,125 @@
+﻿  Future<SendMessageRichResult> sendMessageRich({
+    required String agentId,
+    required String sessionId,
+    required String modelFullId, // e.g. openai:gpt-4o-mini
+    required List<Map<String, dynamic>> messages,
+    required String userText,
+    double? temperature,
+    String? token,
+    Map<String, dynamic>? toolPrefs,
+    String? providerApiBase,
+    String? providerApiKey,
+  }) async {
+    final hdrs = token != null && token.trim().isNotEmpty
+        ? {'Authorization': 'Bearer ${token.trim()}'}
+        : null;
+
+    // Helper: call /v1/messages (no tool results)
+    Future<SendMessageRichResult> callV1() async {
+      final data = await _postJson('/v1/messages', {
+        'model': modelFullId,
+        'messages': messages,
+        if (temperature != null) 'temperature': temperature,
+        'stream': false,
+        if (providerApiBase != null && providerApiBase.trim().isNotEmpty)
+          'api_base': providerApiBase.trim(),
+        if (providerApiKey != null && providerApiKey.trim().isNotEmpty)
+          'api_key': providerApiKey.trim(),
+      }, headers: hdrs);
+      String text = '';
+      final content = (data['content'] as List?) ?? const [];
+      if (content.isNotEmpty) {
+        final first = content.first as Map<String, dynamic>;
+        text = (first['text'] as String?) ?? '';
+      }
+      if (text.isEmpty) {
+        text = (data['text'] as String?) ?? data.toString();
+      }
+      return SendMessageRichResult(text: text, toolResults: const <Map<String, dynamic>>[]);
+    }
+
+    // Helper: call /api/chat (may include tool_results)
+    Future<SendMessageRichResult> callChat() async {
+      String provider = 'openai';
+      String model = modelFullId;
+      final idx = modelFullId.indexOf(':');
+      if (idx > 0) {
+        provider = modelFullId.substring(0, idx);
+        model = modelFullId.substring(idx + 1);
+      }
+      String _coerceContent(dynamic content) {
+        if (content is String) return content;
+        if (content is List) {
+          final buf = StringBuffer();
+          for (final part in content) {
+            if (part is Map<String, dynamic>) {
+              final t = (part['text'] ?? part['input_text']) as String?;
+              if (t != null) buf.write(t);
+            }
+          }
+          return buf.toString();
+        }
+        return content?.toString() ?? '';
+      }
+      final history = <Map<String, String>>[
+        for (final m in messages)
+          {
+            'role': (m['role'] as String? ?? 'user'),
+            'content': _coerceContent(m['content']),
+          }
+      ];
+      final payload = <String, dynamic>{
+        'user_id': agentId,
+        'session_id': sessionId,
+        'message': userText,
+        'history': history,
+        'provider': provider,
+        'model': model,
+        if (toolPrefs != null && toolPrefs.isNotEmpty) 'tool_prefs': toolPrefs,
+      };
+      final trimmedBase = providerApiBase?.trim();
+      if (trimmedBase != null && trimmedBase.isNotEmpty) {
+        payload['api_base'] = trimmedBase;
+      }
+      final trimmedKey = providerApiKey?.trim();
+      if (trimmedKey != null && trimmedKey.isNotEmpty) {
+        payload['api_key'] = trimmedKey;
+      }
+      final data = await _postJson('/api/chat', payload, headers: hdrs);
+      final text = (data['text'] as String?) ?? data.toString();
+      final trs = <Map<String, dynamic>>[];
+      final rawTr = data['tool_results'];
+      if (rawTr is List) {
+        for (final item in rawTr) {
+          if (item is Map<String, dynamic>) {
+            final name = (item['name'] ?? '').toString();
+            final payload = (item['payload'] as Map<String, dynamic>?) ?? const <String, dynamic>{};
+            trs.add({'name': name, 'payload': payload});
+          }
+        }
+      }
+      return SendMessageRichResult(text: text, toolResults: trs);
+    }
+
+    // Decide path: if tool prefs indicate MCP tools are desired, prefer /api/chat first
+    bool preferChat = false;
+    final tp = toolPrefs ?? const <String, dynamic>{};
+    if (tp['auto_tools_enabled'] == true) preferChat = true;
+    final ets = tp['mcp_enabled_tools'];
+    if (ets is List && ets.isNotEmpty) preferChat = true;
+
+    if (preferChat) {
+      try {
+        return await callChat();
+      } catch (_) {
+        // fallback
+      }
+    }
+
+    try {
+      return await callV1();
+    } catch (_) {
+      // fallback to chat if v1 fails
+    }
+    return await callChat();
+  }
