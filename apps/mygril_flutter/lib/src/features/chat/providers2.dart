@@ -304,6 +304,12 @@ class ChatActions {
   
   // 触发器分析延迟定时器（5分钟无消息后触发）
   Timer? _analyzerDelayTimer;
+  
+  // 后台切换防抖相关
+  Timer? _bgAnalyzerTimer;
+  int _bgSwitchCount = 0;
+  DateTime? _bgSwitchWindowStart;
+  DateTime? _bgProcessingPausedUntil;
 
   // 统一的事件日志，使用 AppLogger
   void _evt(String name, Map<String, Object?> data, {String level = 'INFO'}) {
@@ -353,6 +359,7 @@ class ChatActions {
   void _scheduleAnalyzer() {
     // 取消之前的定时器
     _analyzerDelayTimer?.cancel();
+    _bgAnalyzerTimer?.cancel(); // 用户活跃时取消后台快速触发
     
     // 创建新的5分钟延迟定时器
     _analyzerDelayTimer = Timer(const Duration(minutes: 5), () {
@@ -375,7 +382,78 @@ class ChatActions {
 
   /// 应用切后台时调用，确保分析器定时器正在运行
   void onAppBackground() {
-    _scheduleAnalyzer();
+    final now = DateTime.now();
+
+    // 1. 检查是否处于冷却期
+    if (_bgProcessingPausedUntil != null) {
+      if (now.isBefore(_bgProcessingPausedUntil!)) {
+        _evt('analyzer:background_skipped', {
+          'reason': 'cooldown_active', 
+          'until': _bgProcessingPausedUntil.toString()
+        }, level: 'WARN');
+        return;
+      } else {
+        _bgProcessingPausedUntil = null;
+        _bgSwitchCount = 0;
+        _bgSwitchWindowStart = null;
+      }
+    }
+
+    // 2. 更新计数窗口 (5分钟窗口)
+    if (_bgSwitchWindowStart == null || now.difference(_bgSwitchWindowStart!).inMinutes >= 5) {
+      _bgSwitchWindowStart = now;
+      _bgSwitchCount = 1;
+    } else {
+      _bgSwitchCount++;
+    }
+
+    // 3. 检查是否触发冷却 (5分钟内超过3次)
+    if (_bgSwitchCount > 3) {
+      _bgProcessingPausedUntil = now.add(const Duration(minutes: 10));
+      _evt('analyzer:background_cooldown', {
+        'reason': 'too_frequent', 
+        'count': _bgSwitchCount, 
+        'pauseMinutes': 10
+      }, level: 'WARN');
+      return;
+    }
+
+    // 4. 调度快速分析 (10秒后，给用户一点撤回机会)
+    // 取消常规的5分钟定时器，改用快速定时器
+    _analyzerDelayTimer?.cancel();
+    _bgAnalyzerTimer?.cancel();
+
+    _bgAnalyzerTimer = Timer(const Duration(seconds: 10), () {
+      try {
+        final conv = _ref.read(activeConversationProvider);
+        if (conv != null && conv.messages.isNotEmpty) {
+           _evt('analyzer:triggered', {
+            'reason': 'app_background',
+            'messagesCount': conv.messages.length,
+          }, level: 'INFO');
+          _ref.read(contextAnalyzerProvider).analyzeAndSchedule(conv);
+        }
+      } catch (e) {
+        _evt('analyzer:error', {'error': e.toString()}, level: 'ERRO');
+      }
+    });
+    
+    _evt('analyzer:scheduled_fast', {'delaySeconds': 10}, level: 'DBUG');
+
+    // 5. 同步云端心跳 (Fire and forget)
+    // 即使分析失败，也应该告诉云端我们下线了
+    Future(() async {
+      try {
+        final settings = await _ref.read(appSettingsProvider.future);
+        if (settings.backendApiKey.isNotEmpty) {
+           final agent = AgentApiClient(); // 使用默认 client
+           await agent.syncTriggerHeartbeat(now, token: settings.backendApiKey);
+           _evt('cloud:heartbeat_sent', {'timestamp': now.toIso8601String()}, level: 'DBUG');
+        }
+      } catch (e) {
+         _evt('cloud:heartbeat_failed', {'error': e.toString()}, level: 'WARN');
+      }
+    });
   }
 
   Future<McpConfigDto?> _getMcpConfig() async {

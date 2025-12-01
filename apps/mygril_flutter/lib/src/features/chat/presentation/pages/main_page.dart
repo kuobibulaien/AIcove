@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'contacts_page.dart';
-import 'settings_page.dart';
+import 'role_card_page.dart';
 import 'profile_page.dart';
 import '../widgets/custom_bottom_nav.dart';
 
@@ -20,7 +20,7 @@ class _MainPageState extends ConsumerState<MainPage> {
   // 三个标签页
   final List<Widget> _pages = const [
     ContactsPage(), // 消息（角色列表）
-    SettingsPage(), // 设置
+    RoleCardPage(), // 角色卡
     ProfilePage(),  // 我的
   ];
 
@@ -65,9 +65,9 @@ class _MainPageState extends ConsumerState<MainPage> {
             label: '消息',
           ),
           BottomNavItem(
-            icon: Icons.settings_outlined,
-            activeIcon: Icons.settings,
-            label: '设置',
+            icon: Icons.style_outlined,
+            activeIcon: Icons.style,
+            label: '角色卡',
           ),
           BottomNavItem(
             icon: Icons.person_outline,

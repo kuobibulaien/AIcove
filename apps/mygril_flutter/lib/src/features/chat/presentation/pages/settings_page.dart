@@ -5,7 +5,7 @@ import '../../../settings/app_settings.dart';
 import '../../../settings/direct_mode.dart' as direct;
 // import '../../../settings/provider_state.dart';
 import 'package:mygril_flutter/src/features/chat/presentation/pages/model_list_page.dart';
-import 'package:mygril_flutter/src/features/settings/preset_management_page.dart';
+
 import 'plugin_settings_page.dart';
 import 'auto_reply_settings_page.dart';
 import 'message_format_settings_page.dart';
@@ -104,30 +104,7 @@ class _SettingsContentState extends ConsumerState<SettingsContent> {
               },
             ),
             Divider(height: 0, thickness: borderWidth, color: colors.divider),
-            ListTile(
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-              minLeadingWidth: 48,
-              leading: Icon(Icons.person_add_alt_1, color: colors.text, size: 24),
-              title: Text('角色预设管理', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: colors.text)),
-              trailing: Icon(Icons.chevron_right, color: colors.muted),
-              onTap: () {
-                Navigator.of(context).push(
-                  PageRouteBuilder(
-                    pageBuilder: (context, animation, secondaryAnimation) => const PresetManagementPage(),
-                    transitionsBuilder: (context, animation, secondaryAnimation, child) {
-                      const begin = Offset(1.0, 0.0);
-                      const end = Offset.zero;
-                      const curve = Curves.easeOut;
-                      final tween = Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
-                      final offsetAnimation = animation.drive(tween);
-                      return SlideTransition(position: offsetAnimation, child: child);
-                    },
-                    transitionDuration: const Duration(milliseconds: 250),
-                  ),
-                );
-              },
-            ),
-            Divider(height: 0, thickness: borderWidth, color: colors.divider),
+
             ListTile(
               contentPadding: const EdgeInsets.symmetric(horizontal: 16),
               minLeadingWidth: 48,

@@ -468,4 +468,23 @@ class AgentApiClient {
       }
     }
   }
+
+  /// 同步触发器心跳（用于云端接管判定）
+  Future<void> syncTriggerHeartbeat(DateTime timestamp, {String? token}) async {
+    try {
+      final uri = _uri('/api/v1/sync/trigger_heartbeat');
+      final headers = <String, String>{
+        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+      };
+      
+      await _client.post(
+        uri,
+        headers: headers,
+        body: jsonEncode({'timestamp': timestamp.toIso8601String()}),
+      ).timeout(const Duration(seconds: 5));
+    } catch (e) {
+      // 心跳失败不应阻断流程，仅记录日志
+      _evt('syncTriggerHeartbeat', {'error': e.toString()}, level: 'WARN');
+    }
+  }
 }
