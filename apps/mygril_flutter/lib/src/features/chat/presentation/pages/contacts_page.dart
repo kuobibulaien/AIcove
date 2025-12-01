@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../providers2.dart';
+import 'settings_page.dart';
 import 'package:mygril_flutter/src/features/chat/presentation/widgets/contacts_list_content.dart';
 import 'package:mygril_flutter/src/features/chat/presentation/widgets/momotalk_sort_dialog.dart';
 import '../../../../core/theme/tokens.dart';
@@ -68,6 +69,40 @@ class _ContactsPageState extends ConsumerState<ContactsPage> {
     );
 
     return Scaffold(
+      drawer: Drawer(
+        backgroundColor: colors.surface,
+        child: Column(
+          children: [
+            // Drawer Header - 模仿 Telegram 风格
+            UserAccountsDrawerHeader(
+              decoration: BoxDecoration(
+                color: colors.headerColor,
+              ),
+              accountName: Text(
+                '我的账号',
+                style: TextStyle(
+                  color: colors.headerContentColor,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              accountEmail: Text(
+                '点击查看个人信息',
+                style: TextStyle(
+                  color: colors.headerContentColor.withOpacity(0.8),
+                ),
+              ),
+              currentAccountPicture: CircleAvatar(
+                backgroundColor: colors.surface,
+                child: Icon(Icons.person, size: 40, color: colors.primary),
+              ),
+            ),
+            // Settings Content
+            Expanded(
+              child: const SettingsContent(),
+            ),
+          ],
+        ),
+      ),
       appBar: AppBar(
         backgroundColor: colors.headerColor,
         foregroundColor: colors.headerContentColor,

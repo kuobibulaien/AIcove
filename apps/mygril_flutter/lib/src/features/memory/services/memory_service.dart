@@ -57,21 +57,27 @@ class MemoryService {
       // 4. Get Embeddings
       final embeddings = await _embeddingService.getEmbeddings(facts);
 
-      // 5. Store in DB
+      // 5. Store in DB with timestamp prefix
+      final now = DateTime.now();
+      final dateStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      
       for (int i = 0; i < facts.length; i++) {
         final fact = facts[i];
         final embedding = embeddings[i];
         
+        // 给记忆内容添加时间前缀
+        final contentWithTime = '[$dateStr] $fact';
+        
         final memory = MemoryEntity(
           id: const Uuid().v4(),
-          content: fact,
+          content: contentWithTime,  // 存储时就包含时间前缀
           embedding: embedding,
-          createdAt: DateTime.now(),
+          createdAt: now,
           importance: 1, // Default importance
         );
 
         await _repository.addMemory(memory);
-        AppLogger.debug('MemoryService', 'Stored memory', metadata: {'content': fact});
+        AppLogger.debug('MemoryService', 'Stored memory', metadata: {'content': contentWithTime});
       }
       
       AppLogger.info('MemoryService', 'Successfully stored ${facts.length} memories.');

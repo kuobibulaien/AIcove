@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../providers2.dart';
 import 'chat_page.dart';
 import 'package:mygril_flutter/src/features/chat/presentation/widgets/contacts_list_content.dart';
+import 'role_card_page.dart';
 import 'settings_page.dart';
 import '../widgets/profile_content.dart';
 import '../widgets/custom_bottom_nav.dart';
@@ -75,7 +76,7 @@ class _SplitChatPageState extends ConsumerState<SplitChatPage> {
           ref.read(activeConversationIdProvider.notifier).state = conversationId;
         },
       ),
-      const SettingsContent(), // 设置 - 复用组件
+      const RoleCardContent(), // 角色卡 - 复用组件
       const ProfileContent(), // 我的 - 复用组件
     ];
   }
@@ -289,9 +290,9 @@ class _SplitChatPageState extends ConsumerState<SplitChatPage> {
                                 label: '消息',
                               ),
                               BottomNavItem(
-                                icon: Icons.settings_outlined,
-                                activeIcon: Icons.settings,
-                                label: '设置',
+                                icon: Icons.style_outlined,
+                                activeIcon: Icons.style,
+                                label: '角色卡',
                               ),
                               BottomNavItem(
                                 icon: Icons.person_outline,

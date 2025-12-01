@@ -53,6 +53,9 @@ class MemoryPlugin implements Plugin {
       final buffer = StringBuffer();
       buffer.writeln('## Relevant Memories');
       buffer.writeln('Here are some facts you remember about the user that might be relevant:');
+      buffer.writeln('(Note: Each memory has a timestamp prefix [YYYY-MM-DD]. Pay attention to when events occurred.)');
+      
+      // 直接输出记忆内容，已包含时间前缀 [YYYY-MM-DD]
       for (final mem in memories) {
         buffer.writeln('- ${mem.content}');
       }
