@@ -29,6 +29,17 @@
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
+  <!-- 预加载中文字体（解决 Web 平台汉字显示为方框的问题） -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* 确保 Flutter 加载前页面也使用中文字体 */
+    body {
+      font-family: 'Noto Sans SC', sans-serif;
+    }
+  </style>
+
   <title>mygril_flutter</title>
   <link rel="manifest" href="manifest.json">
 </head>

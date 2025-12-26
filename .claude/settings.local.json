@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl:*)",
+      "Read(//tmp/**)",
+      "Bash(npm run dev:*)",
+      "Bash(npm run build:*)",
+      "Search(*)",
+      "Fetch(*)",
+      "Read(**)",
+      "Bash(git:*)",
+      "Bash(flutter run:*)",
+      "Bash(bash:*)",
+      "Bash(flutter build:*)",
+      "Read(//home/koubi/**)",
+      "Bash(xargs find:*)",
+      "Bash(tree:*)",
+      "Bash(cat:*)",
+      "Bash(rm:*)",
+      "Bash(timeout:*)",
+      "mcp__context7__resolve-library-id",
+      "mcp__duckduckgo-mcp-server__search",
+      "mcp__ace__codebase-retrieval"
+    ],
+    "deny": [],
+    "ask": []
+  },
+  "dangerously-skip-permissions": true
+}

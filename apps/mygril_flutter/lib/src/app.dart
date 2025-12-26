@@ -19,6 +19,9 @@ class MyApp extends ConsumerStatefulWidget {
 }
 
 class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
+  // GoRouter 只创建一次，避免设置变更时路由重置
+  late final GoRouter _router = _createRouter();
+
   @override
   void initState() {
     super.initState();
@@ -38,24 +41,43 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final settingsAsync = ref.watch(appSettingsProvider);
-    // Initialize AutoReplyService to listen for triggers
-    ref.watch(autoReplyServiceProvider);
-
-    final router = GoRouter(
+  /// 创建路由配置（只调用一次）
+  GoRouter _createRouter() {
+    return GoRouter(
       routes: [
         GoRoute(
           path: '/',
-          builder: (context, state) {
+          pageBuilder: (context, state) {
             // 自适应：小屏显示主页（带底部导航），大屏双栏
             final width = MediaQuery.of(context).size.width;
-            if (width < layoutBreakpoint) {
-              return const MainPage();
-            } else {
-              return const SplitChatPage();
-            }
+            final child = width < layoutBreakpoint
+                ? const MainPage()
+                : const SplitChatPage();
+            
+            return CustomTransitionPage(
+              key: state.pageKey,
+              child: child,
+              // 主页面被覆盖时的视差动画（参考鸿蒙NEXT风格）
+              // 优化：使用专用 Transition widget，减少每帧对象创建
+              transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                const curve = Curves.fastOutSlowIn;
+                final curvedSecondary = CurvedAnimation(
+                  parent: secondaryAnimation,
+                  curve: curve,
+                );
+                
+                final slideTween = Tween(
+                  begin: Offset.zero,
+                  end: const Offset(-0.08, 0.0),
+                );
+                
+                // 底层页面 - 仅微幅左移，无遮罩
+                return SlideTransition(
+                  position: curvedSecondary.drive(slideTween),
+                  child: child,
+                );
+              },
+            );
           },
           routes: [
             GoRoute(
@@ -65,19 +87,32 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
                 return CustomTransitionPage(
                   key: state.pageKey,
                   child: ChatPage(conversationId: id),
+                  transitionDuration: const Duration(milliseconds: 400),
+                  reverseTransitionDuration: const Duration(milliseconds: 350),
+                  // 视差滑动动画：新页面从右边滑入覆盖，左侧带阴影
                   transitionsBuilder: (context, animation, secondaryAnimation, child) {
-                    // 从右向左滑入动画
-                    const begin = Offset(1.0, 0.0); // 从右侧开始
-                    const end = Offset.zero; // 到达中心位置
-                    const curve = Curves.easeInOut;
-
-                    var tween = Tween(begin: begin, end: end).chain(
-                      CurveTween(curve: curve),
-                    );
+                    const curve = Curves.fastOutSlowIn;
+                    
+                    final slideIn = Tween(
+                      begin: const Offset(1.0, 0.0),
+                      end: Offset.zero,
+                    ).chain(CurveTween(curve: curve));
 
                     return SlideTransition(
-                      position: animation.drive(tween),
-                      child: child,
+                      position: animation.drive(slideIn),
+                      // 左侧阴影 - 增强层次感
+                      child: DecoratedBox(
+                        decoration: const BoxDecoration(
+                          boxShadow: [
+                            BoxShadow(
+                              color: Color(0x33000000), // 20% 黑色
+                              blurRadius: 16,
+                              offset: Offset(-4, 0), // 向左偏移
+                            ),
+                          ],
+                        ),
+                        child: child,
+                      ),
                     );
                   },
                 );
@@ -119,6 +154,13 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         ),
       ],
     );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final settingsAsync = ref.watch(appSettingsProvider);
+    // Initialize AutoReplyService to listen for triggers
+    ref.watch(autoReplyServiceProvider);
 
     // 创建浅色主题
     final lightTheme = _buildTheme(isDark: false);
@@ -153,7 +195,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
           theme: lightTheme,
           darkTheme: darkTheme,
           themeMode: themeMode,
-          routerConfig: router,
+          routerConfig: _router,
         );
       },
     );
@@ -187,14 +229,16 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       colorScheme: isDark ? moeTalkColorSchemeDark : moeTalkColorScheme,
       useMaterial3: true,
       scaffoldBackgroundColor: isDark ? moeSurfaceDark : moeSurface,
-      // 系统字体+跨平台回退栈（不引入外部字体，最大化兼容性）
+      // 跨平台字体回退栈（Web 优先使用 Noto Sans SC，已在 index.html 预加载）
       fontFamilyFallback: const [
+        // 首选：Google Fonts 中文字体（Web 平台必需）
+        'Noto Sans SC',
         // Apple 平台
         'SF Pro Rounded', 'SF Pro Text', 'SF Pro Display', 'PingFang SC', 'Hiragino Sans GB',
         // Windows
         'Segoe UI', 'Microsoft YaHei',
         // Android/Linux
-        'Noto Sans SC', 'Roboto',
+        'Roboto',
       ],
       textTheme: boldText,
       // 全局分割线样式：1px 细线、无额外上下留白（颜色更柔和）

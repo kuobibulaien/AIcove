@@ -13,7 +13,11 @@ class UiSettingsPage extends ConsumerWidget {
     final colors = context.moeColors;
 
     return Scaffold(
+      backgroundColor: colors.surface,
       appBar: AppBar(
+        // 暗色适配：顶部栏使用主题色，避免白底刺眼
+        backgroundColor: colors.headerColor,
+        foregroundColor: colors.headerContentColor,
         elevation: 0,
         // 添加底部分割线
         bottom: PreferredSize(

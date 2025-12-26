@@ -1,6 +1,7 @@
 ﻿import 'package:flutter/material.dart';
 import '../../../../core/theme/tokens.dart';
 import '../../../../core/utils/data_image.dart';
+import '../../../../core/widgets/parallax_slide_page_route.dart';
 import '../../domain/conversation.dart';
 
 class ChatSettingsPage extends StatelessWidget {
@@ -27,21 +28,23 @@ class ChatSettingsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.moeColors;
+    
     return Scaffold(
-      backgroundColor: moeSurface,
+      backgroundColor: colors.surface,
       appBar: AppBar(
-        backgroundColor: moeSurface,
-        foregroundColor: moeText,
+        backgroundColor: colors.headerColor,
+        foregroundColor: colors.headerContentColor,
         elevation: 0,
         title: const Text('聊天设置'),
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: moeText),
+          icon: Icon(Icons.arrow_back, color: colors.headerContentColor),
           tooltip: '返回',
           onPressed: () => Navigator.pop(context),
         ),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(borderWidth),
-          child: Container(height: borderWidth, color: moeDividerColor),
+          child: Container(height: borderWidth, color: colors.divider),
         ),
       ),
       body: ListView(
@@ -57,10 +60,10 @@ class ChatSettingsPage extends StatelessWidget {
                   height: 56,
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.all(radiusBubble),
-                    color: Colors.white,
+                    color: colors.surfaceAlt,
                   ),
                   clipBehavior: Clip.antiAlias,
-                  child: _buildAvatar(conversation),
+                  child: _buildAvatar(context, conversation),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -69,15 +72,8 @@ class ChatSettingsPage extends StatelessWidget {
                     children: [
                       Text(
                         conversation.displayName,
-                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: moeText),
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: colors.text),
                       ),
-                      if (conversation.organization != null && conversation.organization!.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          conversation.organization!,
-                          style: const TextStyle(fontSize: 13, color: moeTextSecondary),
-                        ),
-                      ],
                     ],
                   ),
                 ),
@@ -85,9 +81,10 @@ class ChatSettingsPage extends StatelessWidget {
             ),
           ),
 
-          const Divider(height: 0, thickness: borderWidth, color: moeDividerColor),
+          Divider(height: 0, thickness: borderWidth, color: colors.divider),
 
           _buildListItem(
+            context,
             icon: Icons.search,
             title: '查找聊天记录',
             onTap: () {
@@ -96,44 +93,49 @@ class ChatSettingsPage extends StatelessWidget {
             },
           ),
 
-          const Divider(height: 0, thickness: borderWidth, color: moeDividerColor),
+          Divider(height: 0, thickness: borderWidth, color: colors.divider),
 
           _buildListItem(
+            context,
             icon: Icons.edit_outlined,
             title: '编辑角色信息',
             onTap: () => onEditContact?.call(),
           ),
 
-          const Divider(height: 0, thickness: borderWidth, color: moeDividerColor),
+          Divider(height: 0, thickness: borderWidth, color: colors.divider),
 
           _buildSwitchItem(
+            context,
             icon: Icons.push_pin_outlined,
             title: '置顶',
             value: conversation.isPinned,
             onChanged: onPinnedChanged,
           ),
 
-          const Divider(height: 0, thickness: borderWidth, color: moeDividerColor),
+          Divider(height: 0, thickness: borderWidth, color: colors.divider),
 
           _buildSwitchItem(
+            context,
             icon: Icons.notifications_off_outlined,
             title: '消息免打扰',
             value: conversation.isMuted,
             onChanged: onMutedChanged,
           ),
 
-          const Divider(height: 0, thickness: borderWidth, color: moeDividerColor),
+          Divider(height: 0, thickness: borderWidth, color: colors.divider),
 
           _buildSwitchItem(
+            context,
             icon: Icons.volume_up_outlined,
             title: '消息提示音',
             value: conversation.notificationSound,
             onChanged: onNotificationSoundChanged,
           ),
 
-          const Divider(height: 0, thickness: borderWidth, color: moeDividerColor),
+          Divider(height: 0, thickness: borderWidth, color: colors.divider),
 
           _buildListItem(
+            context,
             icon: Icons.delete_sweep_outlined,
             title: '清空聊天记录',
             subtitle: '删除此角色的全部聊天记录',
@@ -160,9 +162,10 @@ class ChatSettingsPage extends StatelessWidget {
             },
           ),
 
-          const Divider(height: 0, thickness: borderWidth, color: moeBorderLight),
+          Divider(height: 0, thickness: borderWidth, color: colors.divider),
 
           _buildListItem(
+            context,
             icon: Icons.delete_outline,
             title: '删除角色',
             subtitle: '删除该角色及其所有聊天记录',
@@ -193,7 +196,7 @@ class ChatSettingsPage extends StatelessWidget {
     );
   }
 
-  Widget _buildAvatar(Conversation conversation) {
+  Widget _buildAvatar(BuildContext context, Conversation conversation) {
     // 1. 尝试解码 avatarUrl 作为 data URL
     final avatarBytes = decodeDataImage(conversation.avatarUrl);
     if (avatarBytes != null) {
@@ -211,7 +214,7 @@ class ChatSettingsPage extends StatelessWidget {
       return Image.asset(
         avatar,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => _buildFallbackLetter(conversation),
+        errorBuilder: (_, __, ___) => _buildFallbackLetter(context, conversation),
       );
     }
 
@@ -225,54 +228,57 @@ class ChatSettingsPage extends StatelessWidget {
       return Image.asset(
         char,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => _buildFallbackLetter(conversation),
+        errorBuilder: (_, __, ___) => _buildFallbackLetter(context, conversation),
       );
     }
 
     // 5. 最后使用字母占位符
-    return _buildFallbackLetter(conversation);
+    return _buildFallbackLetter(context, conversation);
   }
 
-  Widget _buildFallbackLetter(Conversation conversation) {
+  Widget _buildFallbackLetter(BuildContext context, Conversation conversation) {
+    final colors = context.moeColors;
     final letter = conversation.displayName.isNotEmpty ? conversation.displayName[0] : '新';
     return Center(
       child: Text(
         letter,
-        style: const TextStyle(fontSize: 24, color: moeTextSecondary, fontWeight: FontWeight.w500),
+        style: TextStyle(fontSize: 24, color: colors.textSecondary, fontWeight: FontWeight.w500),
       ),
     );
   }
 
-  Widget _buildListItem({
+  Widget _buildListItem(
+    BuildContext context, {
     required IconData icon,
     required String title,
     String? subtitle,
-    Color iconColor = moeText,
-    Color textColor = moeText,
     VoidCallback? onTap,
   }) {
+    final colors = context.moeColors;
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 16),
       minLeadingWidth: 48,
-      leading: Icon(icon, color: iconColor, size: 24),
-      title: Text(title, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: textColor)),
-      subtitle: subtitle != null ? Text(subtitle, style: const TextStyle(fontSize: 12, color: moeTextSecondary)) : null,
-      trailing: const Icon(Icons.chevron_right, color: moeMuted),
+      leading: Icon(icon, color: colors.text, size: 24),
+      title: Text(title, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: colors.text)),
+      subtitle: subtitle != null ? Text(subtitle, style: TextStyle(fontSize: 12, color: colors.textSecondary)) : null,
+      trailing: Icon(Icons.chevron_right, color: colors.muted),
       onTap: onTap,
     );
   }
 
-  Widget _buildSwitchItem({
+  Widget _buildSwitchItem(
+    BuildContext context, {
     required IconData icon,
     required String title,
     required bool value,
     ValueChanged<bool>? onChanged,
   }) {
+    final colors = context.moeColors;
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 16),
       minLeadingWidth: 48,
-      leading: Icon(icon, color: moeText, size: 24),
-      title: Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: moeText)),
+      leading: Icon(icon, color: colors.text, size: 24),
+      title: Text(title, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: colors.text)),
       trailing: Switch(value: value, onChanged: onChanged),
     );
   }
@@ -290,8 +296,8 @@ Future<void> showChatSettingsDialog({
   VoidCallback? onDeleteConversation,
 }) {
   return Navigator.of(context).push(
-    PageRouteBuilder(
-      pageBuilder: (context, animation, secondaryAnimation) => ChatSettingsPage(
+    ParallaxSlidePageRoute(
+      page: ChatSettingsPage(
         conversation: conversation,
         onSearchMessages: onSearchMessages,
         onEditContact: onEditContact,
@@ -301,15 +307,6 @@ Future<void> showChatSettingsDialog({
         onClearMessages: onClearMessages,
         onDeleteConversation: onDeleteConversation,
       ),
-      transitionsBuilder: (context, animation, secondaryAnimation, child) {
-        const begin = Offset(1.0, 0.0);
-        const end = Offset.zero;
-        const curve = Curves.easeOut;
-        final tween = Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
-        final offsetAnimation = animation.drive(tween);
-        return SlideTransition(position: offsetAnimation, child: child);
-      },
-      transitionDuration: const Duration(milliseconds: 250),
     ),
   );
 }

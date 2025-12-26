@@ -63,7 +63,6 @@ class PresetStore {
     required String displayName,
     String? avatarUrl,
     String? characterImage,
-    String? organization,
     String personaPrompt = '',
   }) async {
     final presets = await loadPresets();
@@ -74,7 +73,6 @@ class PresetStore {
       displayName: displayName,
       avatarUrl: avatarUrl,
       characterImage: characterImage,
-      organization: organization,
       personaPrompt: personaPrompt,
       createdAt: now,
     );
@@ -90,7 +88,6 @@ class PresetStore {
     String? displayName,
     String? avatarUrl,
     String? characterImage,
-    String? organization,
     String? personaPrompt,
   }) async {
     final presets = await loadPresets();
@@ -105,7 +102,6 @@ class PresetStore {
       displayName: displayName ?? target.displayName,
       avatarUrl: avatarUrl ?? target.avatarUrl,
       characterImage: characterImage ?? target.characterImage,
-      organization: organization ?? target.organization,
       personaPrompt: personaPrompt ?? target.personaPrompt,
     );
 
@@ -144,7 +140,6 @@ class PresetStore {
         displayName: 'Arona',
         avatarUrl: null,
         characterImage: 'assets/characters/Arona.webp',
-        organization: '联邦学生会',
         personaPrompt: '你是联邦学生会的成员Arona，充满活力和好奇心。',
         createdAt: now,
       ),
@@ -154,7 +149,6 @@ class PresetStore {
         displayName: 'Aru',
         avatarUrl: null,
         characterImage: 'assets/characters/Aru.webp',
-        organization: '便利屋68',
         personaPrompt: '你是便利屋68的成员Aru，性格开朗，乐于助人。',
         createdAt: now,
       ),
@@ -164,7 +158,6 @@ class PresetStore {
         displayName: 'Hoshino',
         avatarUrl: null,
         characterImage: 'assets/characters/Hoshino.webp',
-        organization: '对策委员会',
         personaPrompt: '你是对策委员会的成员Hoshino，冷静理智，擅长分析。',
         createdAt: now,
       ),
@@ -174,7 +167,6 @@ class PresetStore {
         displayName: 'Shiroko',
         avatarUrl: null,
         characterImage: 'assets/characters/Shiroko.webp',
-        organization: '对策委员会',
         personaPrompt: '你是对策委员会的成员Shiroko，温柔体贴，善解人意。',
         createdAt: now,
       ),
@@ -184,7 +176,6 @@ class PresetStore {
         displayName: 'Hina',
         avatarUrl: null,
         characterImage: 'assets/characters/Hina.webp',
-        organization: '风纪委员会',
         personaPrompt: '你是风纪委员会的成员Hina，严格认真，注重规则。',
         createdAt: now,
       ),

@@ -1,3 +1,7 @@
+/// 消息输入组件
+/// 
+/// 更新记录：
+/// - 2025-12-06: 接入皮肤系统
 import 'dart:async';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
@@ -5,7 +9,9 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
+import '../../../../core/theme/skin_provider.dart';
 import '../../../../core/theme/tokens.dart';
+import '../../../../core/widgets/moe_toast.dart';
 import '../../../settings/app_settings.dart';
 
 /// 消息输入组件
@@ -121,15 +127,11 @@ class _ComposerState extends ConsumerState<Composer> with SingleTickerProviderSt
       
       // 如果既没有路径也没有字节，显示提示
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('未能获取图片数据'), duration: Duration(seconds: 1)),
-        );
+        MoeToast.brief(context, '未能获取图片数据');
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('选择图片失败: $e'), duration: const Duration(seconds: 1)),
-        );
+        MoeToast.error(context, '选择图片失败: $e');
       }
     }
   }
@@ -162,9 +164,7 @@ class _ComposerState extends ConsumerState<Composer> with SingleTickerProviderSt
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('拍照失败: $e'), duration: const Duration(seconds: 1)),
-        );
+        MoeToast.error(context, '拍照失败: $e');
       }
     }
   }
@@ -262,6 +262,7 @@ class _ComposerState extends ConsumerState<Composer> with SingleTickerProviderSt
 
   @override
   Widget build(BuildContext context) {
+    final skin = context.skin;
     final colors = context.moeColors;
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -288,7 +289,7 @@ class _ComposerState extends ConsumerState<Composer> with SingleTickerProviderSt
               top: BorderSide(color: colors.border, width: 1),
             ),
           ),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11), // 11*2+42=64，与底栏高度一致
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
@@ -300,10 +301,8 @@ class _ComposerState extends ConsumerState<Composer> with SingleTickerProviderSt
                 child: Container(
                   constraints: const BoxConstraints(minHeight: 42), // 确保最小高度与按钮一致
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), // 减少垂直padding使总高度为42px
-                  decoration: BoxDecoration(
+                  decoration: skin.inputDecoration(colors).copyWith(
                     color: inputBgColor,
-                    border: Border.all(color: colors.border, width: 1),
-                    borderRadius: BorderRadius.circular(8),
                   ),
                   child: TextField(
                     controller: _ctrl,
@@ -352,9 +351,7 @@ class _ComposerState extends ConsumerState<Composer> with SingleTickerProviderSt
                 },
                 onActionTap: (String action) {
                   _closeActionsMenu();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('$action功能开发中'), duration: const Duration(seconds: 1)),
-                  );
+                  MoeToast.brief(context, '$action功能开发中');
                 },
               ),
             ),

@@ -14,11 +14,15 @@ class MessageFormatConfig {
   /// 过滤标点列表
   final List<String> filterPunctuations;
 
+  /// 表情包发送概率 (0.0 - 1.0，0表示关闭)
+  final double stickerProbability;
+
   const MessageFormatConfig({
     this.enableChunking = false,
     this.filterPunctuation = false,
     this.chunkPunctuations = const ['。', '！', '？', '，', '、', '；', '…'],
     this.filterPunctuations = const ['。', '，', '、', '；', '…', ',', ';'],
+    this.stickerProbability = 0.3,
   });
 
   MessageFormatConfig copyWith({
@@ -26,12 +30,14 @@ class MessageFormatConfig {
     bool? filterPunctuation,
     List<String>? chunkPunctuations,
     List<String>? filterPunctuations,
+    double? stickerProbability,
   }) {
     return MessageFormatConfig(
       enableChunking: enableChunking ?? this.enableChunking,
       filterPunctuation: filterPunctuation ?? this.filterPunctuation,
       chunkPunctuations: chunkPunctuations ?? this.chunkPunctuations,
       filterPunctuations: filterPunctuations ?? this.filterPunctuations,
+      stickerProbability: stickerProbability ?? this.stickerProbability,
     );
   }
 
@@ -41,6 +47,7 @@ class MessageFormatConfig {
       'filterPunctuation': filterPunctuation,
       'chunkPunctuations': chunkPunctuations,
       'filterPunctuations': filterPunctuations,
+      'stickerProbability': stickerProbability,
     };
   }
 
@@ -52,6 +59,7 @@ class MessageFormatConfig {
           const ['。', '！', '？', '，', '、', '；', '…'],
       filterPunctuations: (json['filterPunctuations'] as List<dynamic>?)?.cast<String>() ??
           const ['。', '，', '、', '；', '…', ',', ';'],
+      stickerProbability: (json['stickerProbability'] as num?)?.toDouble() ?? 0.3,
     );
   }
 }

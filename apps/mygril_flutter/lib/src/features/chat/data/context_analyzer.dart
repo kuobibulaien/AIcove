@@ -73,17 +73,46 @@ Do not output markdown. Just JSON.
     });
 
     try {
-      final model = settings.defaultModelName;
-      final provider = settings.modelProviderMap[model] ?? 'openai';
+      // 优先使用配置的独立 AI 管家模型，否则使用默认对话模型
+      // 无论哪种情况，都使用新的 sessionId 隔离上下文，防止污染
+      final autoReplySettings = settings.autoReplySettings;
+      final String model;
+      final String provider;
+      
+      if (autoReplySettings.analyzerModel?.isNotEmpty == true) {
+        // 使用用户指定的独立模型
+        model = autoReplySettings.analyzerModel!;
+        provider = autoReplySettings.analyzerProvider?.isNotEmpty == true
+            ? autoReplySettings.analyzerProvider!
+            : (settings.modelProviderMap[model] ?? 'openai');
+        AppLogger.info('ContextAnalyzer', '使用独立 AI 管家模型', metadata: {
+          'model': model,
+          'provider': provider,
+        });
+      } else {
+        // 使用默认对话模型（但仍隔离 session）
+        model = settings.defaultModelName;
+        provider = settings.modelProviderMap[model] ?? 'openai';
+        AppLogger.info('ContextAnalyzer', '使用默认模型（隔离 session）', metadata: {
+          'model': model,
+          'provider': provider,
+        });
+      }
+      
       final modelFull = '$provider:$model';
-
-      final providerAuth = settings.providers.firstWhere((p) => p.id == provider, orElse: () => ProviderAuth(id: provider, apiKeys: [], apiBaseUrl: settings.apiBaseUrl));
+      final providerAuth = settings.providers.firstWhere(
+        (p) => p.id == provider, 
+        orElse: () => ProviderAuth(id: provider, apiKeys: [], apiBaseUrl: settings.apiBaseUrl),
+      );
       final apiKey = providerAuth.apiKeys.isNotEmpty ? providerAuth.apiKeys.first : null;
       final apiBase = providerAuth.apiBaseUrl.isNotEmpty ? providerAuth.apiBaseUrl : settings.apiBaseUrl;
 
+      // 关键：使用独立的 sessionId，完全隔离触发器分析与聊天上下文
+      final isolatedSessionId = 'scheduler_${DateTime.now().millisecondsSinceEpoch}';
+      
       final response = await _agent.sendMessage(
         agentId: 'scheduler',
-        sessionId: 'scheduler_${DateTime.now().millisecondsSinceEpoch}',
+        sessionId: isolatedSessionId,
         modelFullId: modelFull,
         messages: messagesJson,
         userText: '',

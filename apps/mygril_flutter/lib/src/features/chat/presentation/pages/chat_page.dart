@@ -9,6 +9,8 @@ import 'package:mygril_flutter/src/features/chat/presentation/widgets/contact_ed
 import 'contact_edit_page.dart';
 import 'package:mygril_flutter/src/features/chat/presentation/widgets/chat_settings_dialog.dart';
 import '../../../../core/theme/tokens.dart';
+import '../../../../core/widgets/parallax_slide_page_route.dart';
+import '../../../../core/widgets/moe_toast.dart';
 import '../../../settings/app_settings.dart';
 
 class ChatPage extends ConsumerWidget {
@@ -95,30 +97,12 @@ class ChatPage extends ConsumerWidget {
                   conversation: conv,
                   onSearchMessages: () {
                     // TODO: 实现查找聊天记录功能
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('查找功能开发中'), duration: Duration(seconds: 1)),
-                    );
+                    MoeToast.brief(context, '查找功能开发中');
                   },
                   onEditContact: () async {
-                    // 改为新页面编辑，使用从右向左的滑动动�?
+                    // 编辑角色页面（视差滑动动画）
                     final result = await Navigator.of(context).push<ContactEditResult>(
-                      PageRouteBuilder(
-                        pageBuilder: (context, animation, secondaryAnimation) => 
-                          ContactEditPage(conversation: conv),
-                        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-                          const begin = Offset(1.0, 0.0);  // 从右侧开�?
-                          const end = Offset.zero;         // 滑动到当前位�?
-                          const curve = Curves.easeOut;
-                          final tween = Tween(begin: begin, end: end)
-                            .chain(CurveTween(curve: curve));
-                          final offsetAnimation = animation.drive(tween);
-                          return SlideTransition(
-                            position: offsetAnimation,
-                            child: child,
-                          );
-                        },
-                        transitionDuration: const Duration(milliseconds: 250),
-                      ),
+                      ParallaxSlidePageRoute(page: ContactEditPage(conversation: conv)),
                     );
                     if (result != null) {
                       await ref.read(conversationsProvider.notifier).applyContactEdit(
@@ -126,14 +110,11 @@ class ChatPage extends ConsumerWidget {
                             displayName: result.displayName,
                             avatarUrl: result.avatarUrl,
                             characterImage: result.characterImage,
-                            organization: result.organization,
                             addressUser: result.addressUser,
                             personaPrompt: result.personaPrompt,
                           );
                       if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('已保存角色信息'), duration: Duration(seconds: 1)),
-                      );
+                      MoeToast.brief(context, '已保存角色信息');
                     }
                   },
                   onPinnedChanged: (value) async {
@@ -142,9 +123,7 @@ class ChatPage extends ConsumerWidget {
                       isPinned: value,
                     );
                     if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(value ? '已置顶' : '已取消置顶'), duration: const Duration(seconds: 1)),
-                    );
+                    MoeToast.brief(context, value ? '已置顶' : '已取消置顶');
                   },
                   onMutedChanged: (value) async {
                     await ref.read(conversationsProvider.notifier).updateConversationSettings(
@@ -152,9 +131,7 @@ class ChatPage extends ConsumerWidget {
                       isMuted: value,
                     );
                     if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(value ? '已开启免打扰' : '已关闭免打扰'), duration: const Duration(seconds: 1)),
-                    );
+                    MoeToast.brief(context, value ? '已开启免打扰' : '已关闭免打扰');
                   },
                   onNotificationSoundChanged: (value) async {
                     await ref.read(conversationsProvider.notifier).updateConversationSettings(
@@ -162,16 +139,12 @@ class ChatPage extends ConsumerWidget {
                       notificationSound: value,
                     );
                     if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(value ? '已开启提示音' : '已关闭提示音'), duration: const Duration(seconds: 1)),
-                    );
+                    MoeToast.brief(context, value ? '已开启提示音' : '已关闭提示音');
                   },
                   onClearMessages: () async {
                     await ref.read(conversationsProvider.notifier).clearMessages(conv.id);
                     if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('已清空聊天记录'), duration: Duration(seconds: 1)),
-                    );
+                    MoeToast.brief(context, '已清空聊天记录');
                   },
                   onDeleteConversation: () async {
                     await ref.read(conversationsProvider.notifier).deleteConversation(conv.id);
@@ -210,12 +183,7 @@ class ChatPage extends ConsumerWidget {
               onSend: (text) {
                 // 如果正在发送，不处理新消息
                 if (sending) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('请等待当前消息发送完成'),
-                      duration: Duration(seconds: 1),
-                    ),
-                  );
+                  MoeToast.brief(context, '请等待当前消息发送完成');
                   return;
                 }
                 actions.send(text);
@@ -223,12 +191,7 @@ class ChatPage extends ConsumerWidget {
               onImageSelected: (imagePath) {
                 // 如果正在发送，不处理新图片
                 if (sending) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('请等待当前消息发送完成'),
-                      duration: Duration(seconds: 1),
-                    ),
-                  );
+                  MoeToast.brief(context, '请等待当前消息发送完成');
                   return;
                 }
                 actions.sendWithImage(imagePath);

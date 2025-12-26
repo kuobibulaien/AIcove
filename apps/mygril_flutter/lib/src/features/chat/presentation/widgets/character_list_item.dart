@@ -1,5 +1,10 @@
+/// 消息列表卡片组件 - MoeTalk 风格
+/// 
+/// 更新记录：
+/// - 2025-12-06: 接入皮肤系统（背景色、描边）
 import 'package:flutter/material.dart';
 import 'package:mygril_flutter/src/core/utils/data_image.dart';
+import '../../../../core/theme/skin_provider.dart';
 import '../../../../core/theme/tokens.dart';
 
 import '../../domain/conversation.dart';
@@ -44,7 +49,9 @@ class CharacterListItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final skin = context.skin;
     final colors = context.moeColors;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     final bgColor = isActive ? colors.surfaceAlt : colors.surface;
     final borderColor = colors.borderLight;
@@ -62,7 +69,7 @@ class CharacterListItem extends StatelessWidget {
           decoration: BoxDecoration(
             color: bgColor,
             border: Border(
-              bottom: BorderSide(color: borderColor, width: 0.5),
+              bottom: BorderSide(color: borderColor, width: skin.borderWidth),
             ),
           ),
           child: Row(
@@ -74,7 +81,11 @@ class CharacterListItem extends StatelessWidget {
                 height: 56,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.all(radiusBubble),
-                  color: colors.surfaceAlt,
+                  color: colors.surface, // 使用主题背景色，自动适配深浅模式
+                  border: Border.all(
+                    color: colors.borderLight, // 添加细微描边，增强边界感
+                    width: 0.5,
+                  ),
                 ),
                 clipBehavior: Clip.antiAlias,
                 child: _buildAvatarContent(conversation),

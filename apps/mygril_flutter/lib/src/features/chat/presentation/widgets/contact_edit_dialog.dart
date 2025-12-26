@@ -13,14 +13,12 @@ class ContactEditResult {
   final String displayName;
   final String? avatarUrl;
   final String? characterImage;
-  final String? organization;
   final String? addressUser; // 角色对"我"的称呼
   final String personaPrompt;
   const ContactEditResult({
     required this.displayName,
     this.avatarUrl,
     this.characterImage,
-    this.organization,
     this.addressUser,
     required this.personaPrompt,
   });
@@ -31,7 +29,6 @@ Future<ContactEditResult?> showContactEditDialog({
   required Conversation conversation,
 }) {
   final nameCtrl = TextEditingController(text: conversation.displayName);
-  final orgCtrl = TextEditingController(text: conversation.organization ?? '');
   final addressCtrl = TextEditingController(text: conversation.addressUser ?? '');
   final personaCtrl = TextEditingController(text: conversation.personaPrompt);
 
@@ -185,14 +182,6 @@ Future<ContactEditResult?> showContactEditDialog({
                   ),
                   const SizedBox(height: 16),
                   TextField(
-                    controller: orgCtrl,
-                    decoration: const InputDecoration(
-                      labelText: '所属组织（可选）',
-                      hintText: '例如：联邦学生会、便利屋68',
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
                     controller: addressCtrl,
                     decoration: const InputDecoration(
                       labelText: '对我的称呼（可选）',
@@ -213,14 +202,12 @@ Future<ContactEditResult?> showContactEditDialog({
             onCancel: () => Navigator.of(context).pop(),
             onConfirm: () {
               final name = nameCtrl.text.trim().isEmpty ? conversation.displayName : nameCtrl.text.trim();
-              final org = orgCtrl.text.trim().isEmpty ? null : orgCtrl.text.trim();
               final address = addressCtrl.text.trim().isEmpty ? null : addressCtrl.text.trim();
               final persona = personaCtrl.text.trim();
               Navigator.of(context).pop(ContactEditResult(
                 displayName: name,
                 avatarUrl: avatarData,
                 characterImage: characterData,
-                organization: org,
                 addressUser: address,
                 personaPrompt: persona,
               ));

@@ -39,31 +39,16 @@ class TriggerPlugin implements Plugin {
 
   @override
   Future<String?> getSystemPrompt({String? userMessage}) async {
-    if (!enabled) return null;
-    
-    final triggers = _ref.read(autoReplyTriggersProvider).valueOrNull ?? [];
-    final buffer = StringBuffer();
-    buffer.writeln('## Trigger Capability (Active Reply)');
-    buffer.writeln('You can manage proactive triggers (active replies) for the user.');
-    buffer.writeln('Current Time: ${DateTime.now().toIso8601String()}');
-    buffer.writeln('Current Triggers:');
-    if (triggers.isEmpty) {
-      buffer.writeln('- (None)');
-    } else {
-      for (final t in triggers) {
-        buffer.writeln('- ID: ${t.id}, Title: "${t.title}", Time: ${t.nextFireAt}, Contact: ${t.contactId ?? "Current"}, Prompt: "${t.prompt ?? ''}"');
-      }
-    }
-    buffer.writeln('');
-    buffer.writeln('To CREATE a trigger, output: <create_trigger time="YYYY-MM-DD HH:mm:ss" title="..." prompt="..." contact_id="..." />');
-    buffer.writeln('  - `time`: Required. ISO 8601 format preferred (e.g., 2023-12-31 23:59:00).');
-    buffer.writeln('  - `title`: Required. A short description.');
-    buffer.writeln('  - `prompt`: Optional. The system instruction for the AI when the trigger fires (e.g., "Remind user to sleep").');
-    buffer.writeln('  - `contact_id`: Optional. The ID of the contact to send the message to.');
-    buffer.writeln('To DELETE a trigger, output: <delete_trigger id="..." />');
-    buffer.writeln('The tags will be hidden from the user.');
-    
-    return buffer.toString();
+    // 原设计：触发器的创建由独立的 AI 管家（ContextAnalyzer）在对话结束后处理
+    // 不在聊天 AI 的提示词中注入触发器创建能力，避免：
+    // 1. 污染聊天上下文（角色扮演被触发器指令干扰）
+    // 2. 在对话进行中就创建触发器（违背"对话结束后"原则）
+    // 
+    // 触发器创建流程：
+    // - 用户切后台 / 5分钟无消息 → ContextAnalyzer → 独立调用 AI 管家 → 创建触发器
+    // 
+    // 此插件的 processResponse 仅作为兜底，处理意外出现的标签
+    return null;
   }
 
   @override

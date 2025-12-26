@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/tokens.dart';
+import '../../../../core/widgets/parallax_slide_page_route.dart';
 import '../../../settings/app_settings.dart';
 import '../../../plugins/plugin_providers.dart';
 import '../../data/auto_reply_trigger.dart';
@@ -107,10 +108,7 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage> {
                         OutlinedButton.icon(
                           onPressed: () {
                             Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => const AutoReplyTriggerListPage(),
-                                fullscreenDialog: true,
-                              ),
+                              ParallaxSlidePageRoute(page: const AutoReplyTriggerListPage()),
                             );
                           },
                           icon: const Icon(Icons.list_alt_outlined),
@@ -141,6 +139,8 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage> {
                       _buildQuietHoursCard(context, draft),
                       const SizedBox(height: 16),
                       _buildExactAlarmSwitch(context, draft),
+                      const SizedBox(height: 16),
+                      _buildAnalyzerModelCard(context, draft, settings),
                       const SizedBox(height: 16),
                       _buildAnalyzerPromptCard(context, draft),
                     ],
@@ -210,6 +210,8 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage> {
   Widget _buildDailyLimitCard(BuildContext context, AutoReplySettings draft) {
     final colors = context.moeColors;
     return Card(
+      // 暗色适配：卡片使用主题面板色
+      color: colors.panel,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -252,6 +254,8 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage> {
     final colors = context.moeColors;
     final hours = (draft.minIntervalMinutes / 60).toStringAsFixed(1);
     return Card(
+      // 暗色适配：卡片使用主题面板色
+      color: colors.panel,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -293,6 +297,8 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage> {
   Widget _buildQuietHoursCard(BuildContext context, AutoReplySettings draft) {
     final colors = context.moeColors;
     return Card(
+      // 暗色适配：卡片使用主题面板色
+      color: colors.panel,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -398,7 +404,183 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage> {
         config.enabled ? 'AI 可通过对话（如"叫我起床"）自动设置系统闹钟' : 'AI 无法操作你的系统通知',
         style: const TextStyle(fontSize: 13),
       ),
-      secondary: Icon(Icons.alarm_add, color: config.enabled ? colors.primary : Colors.grey),
+      secondary: Icon(Icons.alarm_add, color: config.enabled ? colors.primary : colors.muted),
+    );
+  }
+
+  /// 构建 AI 管家模型选择卡片
+  /// 用户可以指定一个独立的模型来管理触发器，防止污染聊天上下文
+  Widget _buildAnalyzerModelCard(BuildContext context, AutoReplySettings draft, AppSettings settings) {
+    final colors = context.moeColors;
+    final hasCustomModel = draft.analyzerModel?.isNotEmpty == true;
+    
+    // 构建可用模型列表（从设置中获取）
+    final availableModels = <_ModelOption>[];
+    
+    // 添加 "使用默认模型" 选项
+    availableModels.add(_ModelOption(
+      model: null,
+      provider: null,
+      displayName: '使用默认对话模型',
+      subtitle: settings.defaultModelName,
+    ));
+    
+    // 从 providers 中提取所有可用模型
+    for (final provider in settings.providers) {
+      for (final model in provider.models) {
+        availableModels.add(_ModelOption(
+          model: model,
+          provider: provider.id,
+          displayName: model,
+          subtitle: provider.id,
+        ));
+      }
+    }
+    
+    // 当前选中的显示文本
+    final currentDisplay = hasCustomModel
+        ? '${draft.analyzerModel} (${draft.analyzerProvider ?? "auto"})'
+        : '使用默认对话模型';
+    
+    return Card(
+      color: colors.panel,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.smart_toy_outlined, color: colors.primary),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'AI 管家模型',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+                if (hasCustomModel)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: colors.primary.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      '独立',
+                      style: TextStyle(fontSize: 11, color: colors.primary),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              '触发器由独立的 AI 管家管理，不会污染聊天上下文。可以指定一个便宜的小模型来降低成本。',
+              style: TextStyle(fontSize: 13, height: 1.4),
+            ),
+            const SizedBox(height: 12),
+            InkWell(
+              onTap: () => _showModelPicker(context, draft, availableModels),
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  border: Border.all(color: colors.borderLight),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      hasCustomModel ? Icons.check_circle : Icons.radio_button_unchecked,
+                      size: 20,
+                      color: hasCustomModel ? colors.primary : colors.muted,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        currentDisplay,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: colors.text,
+                        ),
+                      ),
+                    ),
+                    Icon(Icons.chevron_right, color: colors.muted),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 显示模型选择对话框
+  Future<void> _showModelPicker(
+    BuildContext context, 
+    AutoReplySettings draft,
+    List<_ModelOption> options,
+  ) async {
+    final colors = context.moeColors;
+    
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: colors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  const Text(
+                    '选择 AI 管家模型',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: options.length,
+                itemBuilder: (context, index) {
+                  final option = options[index];
+                  final isSelected = option.model == draft.analyzerModel;
+                  
+                  return ListTile(
+                    leading: Icon(
+                      isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
+                      color: isSelected ? colors.primary : colors.muted,
+                    ),
+                    title: Text(option.displayName),
+                    subtitle: Text(option.subtitle, style: TextStyle(color: colors.muted)),
+                    onTap: () {
+                      Navigator.pop(context);
+                      final next = option.model == null
+                          ? draft.copyWith(clearAnalyzerModel: true, clearAnalyzerProvider: true)
+                          : draft.copyWith(analyzerModel: option.model, analyzerProvider: option.provider);
+                      _updateDraft(next, showToast: true);
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -407,6 +589,8 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage> {
     final isDefault = draft.analyzerPrompt == AutoReplySettings.defaultAnalyzerPrompt;
     
     return Card(
+      // 暗色适配：卡片使用主题面板色
+      color: colors.panel,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -521,4 +705,19 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage> {
       _updateDraft(next, showToast: true);
     }
   }
+}
+
+/// 模型选择选项
+class _ModelOption {
+  final String? model;
+  final String? provider;
+  final String displayName;
+  final String subtitle;
+
+  const _ModelOption({
+    required this.model,
+    required this.provider,
+    required this.displayName,
+    required this.subtitle,
+  });
 }
