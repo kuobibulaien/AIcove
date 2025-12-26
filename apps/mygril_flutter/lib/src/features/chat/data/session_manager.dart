@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/app_logger.dart';
 import '../../plugins/plugin_providers.dart';
 import '../../plugins/trigger/trigger_plugin.dart';
+import '../../plugins/memory/memory_plugin.dart';
 import '../providers2.dart';
 
 /// 会话管理器
@@ -86,29 +87,37 @@ class SessionManager {
   }
 
   /// 处理会话结束逻辑 (核心)
+  /// 
+  /// 会话结束时执行：
+  /// 1. MemoryPlugin: 记忆摘要（提取对话中的关键事实）
+  /// 2. TriggerPlugin: 分析是否需要创建定时提醒
+  /// 3. 前台挂机时: 触发主动消息
   Future<void> _handleSessionEnd({required bool isForegroundTimeout}) async {
     final pluginManager = _ref.read(pluginManagerProvider);
-    // 找到 TriggerPlugin
-    // 注意：这里假设 TriggerPlugin 已经注册且是 TriggerPlugin 类型
-    // 实际项目中可能需要更安全的查找方式
-    final triggerPlugin = pluginManager.plugins.firstWhere(
-      (p) => p is TriggerPlugin, 
-      orElse: () => null as dynamic // 临时处理，后续 TriggerPlugin 重构后会更安全
-    ) as TriggerPlugin?;
+    
+    // === 1. 记忆摘要 (Memory Track) ===
+    final memoryPlugin = pluginManager.getPlugin('memory') as MemoryPlugin?;
 
-    if (triggerPlugin == null || !triggerPlugin.enabled) {
-      AppLogger.warning('SessionManager', 'TriggerPlugin not found or disabled.');
-      return;
+    if (memoryPlugin != null && memoryPlugin.enabled) {
+      AppLogger.info('SessionManager', 'Starting Memory Track summarization...');
+      // 异步执行，不阻塞其他流程
+      unawaited(memoryPlugin.onSessionEnd());
+    } else {
+      AppLogger.debug('SessionManager', 'MemoryPlugin not found or disabled.');
     }
 
-    // 1. 调用管家 AI 进行整理 (Logic Track)
-    // 无论前台后台，都要整理
-    AppLogger.info('SessionManager', 'Starting Logic Track analysis...');
-    // TODO: 这里调用 TriggerPlugin 的新方法 analyzeSession
-    // 由于 TriggerPlugin 还没重构，这里先注释，等下一步实现
-    // await triggerPlugin.analyzeSession(); 
+    // === 2. 触发器分析 (Logic Track) ===
+    final triggerPlugin = pluginManager.getPlugin('trigger') as TriggerPlugin?;
 
-    // 2. 如果是前台挂机，触发“女友 AI”的主动骚扰 (Chat Track)
+    if (triggerPlugin != null && triggerPlugin.enabled) {
+      AppLogger.info('SessionManager', 'Starting Logic Track analysis...');
+      // TODO: 调用 TriggerPlugin 的 analyzeSession 方法
+      // await triggerPlugin.analyzeSession(); 
+    } else {
+      AppLogger.debug('SessionManager', 'TriggerPlugin not found or disabled.');
+    }
+
+    // === 3. 主动消息 (Chat Track) ===
     if (isForegroundTimeout) {
       AppLogger.info('SessionManager', 'Starting Chat Track proactive poke...');
       // TODO: 调用 ChatActions 发送主动消息

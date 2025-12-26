@@ -190,6 +190,9 @@ class _PresetCard extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Card(
+      // 暗色适配：卡片随主题配色
+      color: colors.panel,
+      surfaceTintColor: colors.panel,
       margin: const EdgeInsets.only(bottom: 12),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -201,7 +204,7 @@ class _PresetCard extends StatelessWidget {
               height: 56,
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.all(radiusBubble),
-                color: isDark ? colors.panel : Colors.grey[200],
+                color: isDark ? colors.panel : colors.surfaceAlt,
               ),
               clipBehavior: Clip.antiAlias,
               child: _buildAvatar(context),
@@ -227,16 +230,7 @@ class _PresetCard extends StatelessWidget {
                       color: colors.textSecondary,
                     ),
                   ),
-                  if (preset.organization != null) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      '组织：${preset.organization}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: colors.textSecondary,
-                      ),
-                    ),
-                  ],
+
                 ],
               ),
             ),
@@ -323,7 +317,6 @@ class _PresetEditDialog extends StatefulWidget {
 class _PresetEditDialogState extends State<_PresetEditDialog> {
   late final TextEditingController _nameCtrl;
   late final TextEditingController _displayNameCtrl;
-  late final TextEditingController _orgCtrl;
   late final TextEditingController _promptCtrl;
 
   String? _selectedBuiltInAvatar;
@@ -337,7 +330,6 @@ class _PresetEditDialogState extends State<_PresetEditDialog> {
     super.initState();
     _nameCtrl = TextEditingController(text: widget.preset?.name ?? '');
     _displayNameCtrl = TextEditingController(text: widget.preset?.displayName ?? '');
-    _orgCtrl = TextEditingController(text: widget.preset?.organization ?? '');
     _promptCtrl = TextEditingController(text: widget.preset?.personaPrompt ?? '');
 
     // 初始化头像选择
@@ -355,7 +347,6 @@ class _PresetEditDialogState extends State<_PresetEditDialog> {
   void dispose() {
     _nameCtrl.dispose();
     _displayNameCtrl.dispose();
-    _orgCtrl.dispose();
     _promptCtrl.dispose();
     super.dispose();
   }
@@ -398,7 +389,6 @@ class _PresetEditDialogState extends State<_PresetEditDialog> {
           displayName: _displayNameCtrl.text.trim(),
           avatarUrl: avatarUrl,
           characterImage: characterImage,
-          organization: _orgCtrl.text.trim().isEmpty ? null : _orgCtrl.text.trim(),
           personaPrompt: _promptCtrl.text.trim(),
         );
       } else {
@@ -409,7 +399,6 @@ class _PresetEditDialogState extends State<_PresetEditDialog> {
           displayName: _displayNameCtrl.text.trim(),
           avatarUrl: avatarUrl,
           characterImage: characterImage,
-          organization: _orgCtrl.text.trim().isEmpty ? null : _orgCtrl.text.trim(),
           personaPrompt: _promptCtrl.text.trim(),
         );
       }
@@ -433,6 +422,9 @@ class _PresetEditDialogState extends State<_PresetEditDialog> {
     final colors = context.moeColors;
 
     return AlertDialog(
+      // 暗色适配：对话框使用主题面板色，避免白底
+      backgroundColor: colors.surface,
+      surfaceTintColor: colors.surface,
       title: Text(widget.preset == null ? '新建预设' : '编辑预设'),
       content: SingleChildScrollView(
         child: SizedBox(
@@ -502,11 +494,6 @@ class _PresetEditDialogState extends State<_PresetEditDialog> {
                     ),
                   ],
                 ],
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _orgCtrl,
-                decoration: const InputDecoration(labelText: '所属组织（可选）'),
               ),
               const SizedBox(height: 16),
               TextField(

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/tokens.dart';
+import '../../../../core/widgets/parallax_slide_page_route.dart';
 import '../../../plugins/plugin_providers.dart';
+import 'memory_plugin_detail_page.dart';
 import 'tts_plugin_detail_page.dart';
 
 /// 插件设置页面
@@ -126,9 +128,12 @@ class PluginSettingsPage extends ConsumerWidget {
     switch (plugin.id) {
       case 'tts':
         Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (context) => const TtsPluginDetailPage(),
-          ),
+          ParallaxSlidePageRoute(page: const TtsPluginDetailPage()),
+        );
+        break;
+      case 'memory':
+        Navigator.of(context).push(
+          ParallaxSlidePageRoute(page: const MemoryPluginDetailPage()),
         );
         break;
       // 未来可以添加更多插件的详细页面

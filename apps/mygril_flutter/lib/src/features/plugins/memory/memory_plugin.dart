@@ -1,18 +1,73 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/app_logger.dart';
+import '../../../core/database/database_provider.dart';
 import '../../chat/providers2.dart';
 import '../../memory/services/memory_service.dart';
+import '../../settings/app_settings.dart';
 import '../domain/plugin.dart';
 import 'memory_config.dart';
 
+/// 长期记忆插件
+///
+/// 功能：
+/// - 在对话结束时提取关键事实并存储为向量记忆
+/// - 在用户发消息时检索相关记忆注入到 System Prompt
+/// - 输出格式：n天前的对话摘要"..."
 class MemoryPlugin implements Plugin {
   MemoryConfig _config;
-  late final MemoryService _service;
+  MemoryService? _service;
   final Ref _ref;
 
   MemoryPlugin(this._config, this._ref) {
-    _service = MemoryService(_config);
+    _initService();
+  }
+
+  void _initService() {
+    final appSettings = _ref.read(appSettingsProvider).valueOrNull;
+    if (appSettings == null) {
+      AppLogger.warning('MemoryPlugin', 'AppSettings not available. Service init delayed.');
+      return;
+    }
+
+    final repository = _ref.read(memoryRepositoryProvider);
+    final serviceConfig = _resolveConfig(appSettings);
+    _service = MemoryService(serviceConfig, repository);
+
+    AppLogger.info('MemoryPlugin', 'Service initialized', metadata: {
+      'embeddingAvailable': _service?.isEmbeddingAvailable ?? false,
+    });
+  }
+
+  MemoryServiceConfig _resolveConfig(AppSettings settings) {
+    return MemoryServiceConfig(
+      enabled: _config.enabled,
+      summarizePrompt: _config.summarizePrompt,
+      summarizeModel: _resolveModel(settings, _config.summarizeProviderId, _config.summarizeModelName),
+      embeddingModel: _resolveModel(settings, _config.embeddingProviderId, _config.embeddingModelName),
+      fallbackEmbeddingModel: _resolveModel(settings, _config.fallbackEmbeddingProviderId, _config.fallbackEmbeddingModelName),
+      fallbackEnabled: _config.fallbackEmbeddingEnabled,
+    );
+  }
+
+  ResolvedModelConfig? _resolveModel(AppSettings settings, String? providerId, String? modelName) {
+    if (providerId == null || providerId.isEmpty) return null;
+    if (modelName == null || modelName.isEmpty) return null;
+
+    final provider = settings.providers.firstWhere(
+      (p) => p.id == providerId && p.enabled,
+      orElse: () => const ProviderAuth(id: '', apiKeys: [], apiBaseUrl: ''),
+    );
+
+    if (provider.id.isEmpty || provider.apiKeys.isEmpty) {
+      return null;
+    }
+
+    return ResolvedModelConfig(
+      apiKey: provider.apiKeys.first,
+      baseUrl: provider.apiBaseUrl,
+      model: modelName,
+    );
   }
 
   @override
@@ -36,28 +91,26 @@ class MemoryPlugin implements Plugin {
   @override
   void updateConfig(Map<String, dynamic> config) {
     _config = MemoryConfig.fromJson(config);
-    // Re-init service with new config if needed, but for now simple replacement
-    // In a real app we might need to recreate the service or update its config
+    _initService();
   }
 
   @override
   Future<String?> getSystemPrompt({String? userMessage}) async {
-    if (!enabled || userMessage == null || userMessage.trim().isEmpty) {
+    if (!enabled || _service == null || userMessage == null || userMessage.trim().isEmpty) {
       return null;
     }
 
     try {
-      final memories = await _service.search(userMessage);
-      if (memories.isEmpty) return null;
+      // 使用新的格式化搜索方法
+      final formattedMemories = await _service!.searchFormatted(userMessage);
+      if (formattedMemories.isEmpty) return null;
 
       final buffer = StringBuffer();
-      buffer.writeln('## Relevant Memories');
-      buffer.writeln('Here are some facts you remember about the user that might be relevant:');
-      buffer.writeln('(Note: Each memory has a timestamp prefix [YYYY-MM-DD]. Pay attention to when events occurred.)');
-      
-      // 直接输出记忆内容，已包含时间前缀 [YYYY-MM-DD]
-      for (final mem in memories) {
-        buffer.writeln('- ${mem.content}');
+      buffer.writeln('## 相关记忆');
+      buffer.writeln('以下是你记住的关于用户的一些事实，可能与当前对话相关：');
+
+      for (final mem in formattedMemories) {
+        buffer.writeln('- $mem');
       }
       return buffer.toString();
     } catch (e) {
@@ -72,31 +125,53 @@ class MemoryPlugin implements Plugin {
       return PluginProcessResult(processedText: text, events: []);
     }
 
-    // Trigger summarization in background if needed
-    // We don't await this to avoid blocking the UI
     _checkAndTriggerSummarization();
-
     return PluginProcessResult(processedText: text, events: []);
   }
 
   void _checkAndTriggerSummarization() {
+    if (_service == null) return;
+
     final conv = _ref.read(activeConversationProvider);
     if (conv == null) return;
 
     final msgCount = conv.messages.length;
-    // Simple trigger: Every N messages
     if (msgCount > 0 && msgCount % _config.triggerInterval == 0) {
       AppLogger.info('MemoryPlugin', 'Triggering memory summarization', metadata: {'msgCount': msgCount});
-      
-      // Run in background
+
       Future(() async {
-        // Take last N messages + some context
-        final messagesToAnalyze = conv.messages.length > 20 
-            ? conv.messages.sublist(conv.messages.length - 20) 
-            : conv.messages;
-            
-        await _service.summarizeAndStore(messagesToAnalyze);
+        final messagesToAnalyze = conv.messages.length > 20 ? conv.messages.sublist(conv.messages.length - 20) : conv.messages;
+        await _service!.summarizeAndStore(messagesToAnalyze);
       });
     }
   }
+
+  /// 会话结束时触发的记忆整理
+  Future<void> onSessionEnd() async {
+    if (!enabled || _service == null) return;
+
+    final conv = _ref.read(activeConversationProvider);
+    if (conv == null || conv.messages.isEmpty) {
+      return;
+    }
+
+    AppLogger.info('MemoryPlugin', 'Session ended, summarizing conversation...', metadata: {
+      'messageCount': conv.messages.length,
+    });
+
+    try {
+      final messagesToAnalyze = conv.messages.length > 30 ? conv.messages.sublist(conv.messages.length - 30) : conv.messages;
+      await _service!.summarizeAndStore(messagesToAnalyze);
+
+      // 清理过期的回收站记忆
+      final purged = await _service!.purgeExpiredTrash();
+      if (purged > 0) {
+        AppLogger.info('MemoryPlugin', 'Purged $purged expired memories from trash.');
+      }
+    } catch (e) {
+      AppLogger.error('MemoryPlugin', 'Failed to summarize on session end', metadata: {'error': e.toString()});
+    }
+  }
+
+  MemoryService? get service => _service;
 }

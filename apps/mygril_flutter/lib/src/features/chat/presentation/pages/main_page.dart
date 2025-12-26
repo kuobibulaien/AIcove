@@ -4,6 +4,9 @@ import 'contacts_page.dart';
 import 'role_card_page.dart';
 import 'profile_page.dart';
 import '../widgets/custom_bottom_nav.dart';
+import '../../../../core/widgets/settings_drawer_wrapper.dart';
+import '../../../../core/widgets/settings_drawer_panel.dart';
+import '../../../../core/theme/tokens.dart';
 
 /// 主页面 - 包含底部导航栏（仅小屏模式使用）
 class MainPage extends ConsumerStatefulWidget {
@@ -13,9 +16,13 @@ class MainPage extends ConsumerStatefulWidget {
   ConsumerState<MainPage> createState() => _MainPageState();
 }
 
-class _MainPageState extends ConsumerState<MainPage> {
+class _MainPageState extends ConsumerState<MainPage>
+    with SingleTickerProviderStateMixin {
   int _currentIndex = 0;
-  late PageController _pageController;
+  
+  // 淡入淡出动画控制器
+  late AnimationController _fadeController;
+  late Animation<double> _fadeAnimation;
 
   // 三个标签页
   final List<Widget> _pages = const [
@@ -27,54 +34,71 @@ class _MainPageState extends ConsumerState<MainPage> {
   @override
   void initState() {
     super.initState();
-    _pageController = PageController(initialPage: _currentIndex);
+    _fadeController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+    );
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _fadeController, curve: Curves.easeOut),
+    );
+    _fadeController.value = 1.0; // 初始状态为完全显示
   }
 
   @override
   void dispose() {
-    _pageController.dispose();
+    _fadeController.dispose();
     super.dispose();
+  }
+  
+  /// 切换标签页 - 先淡出再切换再淡入
+  void _switchTab(int index) {
+    if (index == _currentIndex) return;
+    
+    // 先淡出
+    _fadeController.reverse().then((_) {
+      // 切换页面
+      setState(() {
+        _currentIndex = index;
+      });
+      // 再淡入
+      _fadeController.forward();
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: PageView(
-        controller: _pageController,
-        physics: const NeverScrollableScrollPhysics(), // 禁用手势滑动，只允许通过底部导航切换
-        children: _pages,
-        onPageChanged: (index) {
-          setState(() {
-            _currentIndex = index;
-          });
-        },
-      ),
-      bottomNavigationBar: CustomBottomNav(
-        currentIndex: _currentIndex,
-        onTap: (index) {
-          _pageController.animateToPage(
-            index,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeInOut,
-          );
-        },
-        items: const [
-          BottomNavItem(
-            icon: Icons.chat_bubble_outline,
-            activeIcon: Icons.chat_bubble,
-            label: '消息',
+    return SettingsDrawerWrapper(
+      settingsBuilder: (close) => SettingsDrawerPanel(onClose: close),
+      child: Scaffold(
+        // 使用 FadeTransition + IndexedStack 实现无闪烁切换
+        body: FadeTransition(
+          opacity: _fadeAnimation,
+          child: IndexedStack(
+            index: _currentIndex,
+            children: _pages,
           ),
-          BottomNavItem(
-            icon: Icons.style_outlined,
-            activeIcon: Icons.style,
-            label: '角色卡',
-          ),
-          BottomNavItem(
-            icon: Icons.person_outline,
-            activeIcon: Icons.person,
-            label: '我的',
-          ),
-        ],
+        ),
+        bottomNavigationBar: CustomBottomNav(
+          currentIndex: _currentIndex,
+          onTap: _switchTab,
+          items: const [
+            BottomNavItem(
+              icon: Icons.chat_bubble_outline,
+              activeIcon: Icons.chat_bubble,
+              label: '消息',
+            ),
+            BottomNavItem(
+              icon: Icons.style_outlined,
+              activeIcon: Icons.style,
+              label: '角色卡',
+            ),
+            BottomNavItem(
+              icon: Icons.person_outline,
+              activeIcon: Icons.person,
+              label: '我的',
+            ),
+          ],
+        ),
       ),
     );
   }

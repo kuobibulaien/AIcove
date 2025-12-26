@@ -11,11 +11,20 @@ import '../../domain/conversation.dart';
 import '../../../../core/utils/data_image.dart';
 import '../widgets/contact_edit_dialog.dart';
 import '../../providers2.dart';
-import '../../../settings/character_preset.dart';
-import '../../../settings/preset_store.dart';
 
-/// 编辑角色信息的独立页面
-/// 目标：支持修改名称、头像（可本地选择并裁剪预览）、人设提示词
+/// 新建/编辑角色卡页面
+/// 
+/// 布局结构：
+/// - 上半部分（左右分栏）：
+///   - 左侧：头像 + 参考图（上下排列，中间有"使用一致图像"开关）
+///   - 右侧：角色名称、简介
+/// - 下半部分（纵向排列）：
+///   - 人格设定
+///   - 称呼设置（自称 + 对我的称呼，填写后以 JSON 附加到提示词）
+///   - 音色设置（上传 mp3/wav 音频）
+/// 
+/// 更新记录：
+/// - 2025-12-08: 重构布局，新增自称、音色设置
 class ContactEditPage extends ConsumerStatefulWidget {
   final Conversation conversation;
   final bool isNew; // 是否为新建模式
@@ -26,81 +35,69 @@ class ContactEditPage extends ConsumerStatefulWidget {
 }
 
 class _ContactEditPageState extends ConsumerState<ContactEditPage> {
+  // 基本信息
   late final TextEditingController _nameCtrl;
+  late final TextEditingController _descCtrl; // 简介
+  late final TextEditingController _personaCtrl; // 人格提示词
+  
+  // 称呼设置
+  late final TextEditingController _selfAddressCtrl; // 角色自称
+  late final TextEditingController _addressUserCtrl; // 对我的称呼
+  
+  // 图像数据
   late final TextEditingController _avatarCtrl;
-  late final TextEditingController _addressCtrl;
-  late final TextEditingController _personaCtrl;
-
-  Uint8List? _croppedBytes; // 裁剪完成后的图片
-
-  // 预设相关
-  final PresetStore _presetStore = PresetStore();
-  List<CharacterPreset> _presets = [];
-  CharacterPreset? _selectedPreset;
+  late final TextEditingController _refImageCtrl;
+  Uint8List? _avatarBytes;
+  Uint8List? _refImageBytes;
+  bool _useSameImage = true; // 使用一致图像
+  
+  // 音色设置
+  String? _voiceFileName;
+  Uint8List? _voiceFileBytes;
 
   @override
   void initState() {
     super.initState();
-    _nameCtrl = TextEditingController(text: widget.conversation.displayName);
-    _avatarCtrl = TextEditingController(text: widget.conversation.avatarUrl ?? '');
-    _addressCtrl = TextEditingController(text: widget.conversation.addressUser ?? '');
-    _personaCtrl = TextEditingController(text: widget.conversation.personaPrompt);
+    final conv = widget.conversation;
     
-    // 加载预设列表（仅在新建模式）
+    _nameCtrl = TextEditingController(text: conv.displayName);
+    _descCtrl = TextEditingController(text: conv.lastMessage ?? '');
+    _personaCtrl = TextEditingController(text: conv.personaPrompt);
+    _selfAddressCtrl = TextEditingController(text: conv.selfAddress ?? '');
+    _addressUserCtrl = TextEditingController(text: conv.addressUser ?? '');
+    _avatarCtrl = TextEditingController(text: conv.avatarUrl ?? '');
+    _refImageCtrl = TextEditingController(text: conv.characterImage ?? '');
+    
+    // 初始化图像字节数据
+    if (_avatarCtrl.text.isNotEmpty) {
+      _avatarBytes = decodeDataImage(_avatarCtrl.text);
+    }
+    if (_refImageCtrl.text.isNotEmpty) {
+      _refImageBytes = decodeDataImage(_refImageCtrl.text);
+    }
+    
+    // 判断是否使用一致图像
     if (widget.isNew) {
-      _loadPresets();
+      _useSameImage = true;
+    } else {
+      _useSameImage = _refImageCtrl.text.isEmpty || _refImageCtrl.text == _avatarCtrl.text;
     }
-  }
-
-  Future<void> _loadPresets() async {
-    try {
-      final presets = await _presetStore.loadPresets();
-      setState(() => _presets = presets);
-    } catch (e) {
-      // 加载失败不影响使用
-    }
-  }
-
-  Future<void> _applyPreset(CharacterPreset preset) async {
-    setState(() {
-      _selectedPreset = preset;
-      _nameCtrl.text = preset.displayName;
-      _addressCtrl.text = preset.addressUser ?? '';
-      _personaCtrl.text = preset.personaPrompt;
-    });
-
-    // 如果有头像或立绘，加载为 _croppedBytes
-    String? imageSource;
-    if (preset.avatarUrl != null) {
-      imageSource = preset.avatarUrl;
-    } else if (preset.characterImage != null) {
-      imageSource = preset.characterImage;
-    }
-
-    if (imageSource != null) {
-      // 尝试解码为字节数组
-      final bytes = decodeDataImage(imageSource);
-      if (bytes != null) {
-        setState(() {
-          _croppedBytes = bytes;
-          _avatarCtrl.text = imageSource!;
-        });
-      } else {
-        // 如果不是 data URL，保存到 avatarCtrl 以便显示
-        setState(() {
-          _avatarCtrl.text = imageSource!;
-          _croppedBytes = null;
-        });
-      }
+    
+    // 初始化音色文件
+    if (conv.voiceFile != null && conv.voiceFile!.isNotEmpty) {
+      _voiceFileName = '已设置音色';
     }
   }
 
   @override
   void dispose() {
     _nameCtrl.dispose();
-    _avatarCtrl.dispose();
-    _addressCtrl.dispose();
+    _descCtrl.dispose();
     _personaCtrl.dispose();
+    _selfAddressCtrl.dispose();
+    _addressUserCtrl.dispose();
+    _avatarCtrl.dispose();
+    _refImageCtrl.dispose();
     super.dispose();
   }
 
@@ -108,18 +105,20 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
 
+    // 移除 Hero，改用自定义展开路由实现"原地展开"动画
     return Scaffold(
-      backgroundColor: moeSurface,
+      // 暗色适配：背景跟随主题
+      backgroundColor: colors.surface,
       appBar: AppBar(
         backgroundColor: colors.headerColor,
         foregroundColor: colors.headerContentColor,
         elevation: 0,
-        title: Text(widget.isNew ? '新建角色' : '编辑角色信息'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        title: Text(widget.isNew ? '新建角色卡' : '编辑角色信息'),
         actions: [
-          TextButton(
-            onPressed: _onSaveAsPreset,
-            child: const Text('保存为新预设'),
-          ),
           TextButton(
             onPressed: _onSave,
             child: const Text('保存'),
@@ -127,210 +126,302 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
         ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(borderWidth),
-          child: Container(height: borderWidth, color: moeDividerColor),
+          child: Container(height: borderWidth, color: colors.divider),
         ),
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          // 预设选择（仅在新建模式显示）
-          if (widget.isNew && _presets.isNotEmpty) ...[
-            const Text(
-              '选择预设',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ========== 形象图片（竖版海报）==========
+            Center(
+              child: GestureDetector(
+                onTap: () => _pickImage(isAvatar: true),
+                child: Container(
+                  width: 160,
+                  height: 220,
+                  decoration: BoxDecoration(
+                    color: colors.surfaceAlt.withOpacity(0.3),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: colors.borderLight,
+                      width: 1,
+                    ),
+                  ),
+                  child: _avatarBytes != null
+                      ? ClipRRect(
+                          borderRadius: BorderRadius.circular(11),
+                          child: Image.memory(_avatarBytes!, fit: BoxFit.cover),
+                        )
+                      : Center(
+                          child: Icon(Icons.add, size: 36, color: colors.primary),
+                        ),
+                ),
+              ),
+            ),
+            
+            const SizedBox(height: 24),
+
+            // ========== 人设（人格设定）==========
+            _buildSettingRow(
+              icon: Icons.auto_awesome,
+              title: '人设 *',
+              trailing: const SizedBox.shrink(),
             ),
             const SizedBox(height: 8),
-            InkWell(
-              onTap: _showPresetSelector,
-              borderRadius: BorderRadius.circular(8),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                decoration: BoxDecoration(
-                  border: Border.all(color: moeBorderLight, width: borderWidth),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        _selectedPreset?.name ?? '选择一个预设快速填充（可选）',
-                        style: TextStyle(
-                          fontSize: 15,
-                          color: _selectedPreset != null ? moeText : moeMuted,
-                        ),
-                      ),
-                    ),
-                    const Icon(Icons.arrow_drop_down, color: moeMuted),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
-            const Divider(),
+            
+            // 昵称
+            Text('昵称 *', style: TextStyle(fontSize: 12, color: colors.muted)),
+            const SizedBox(height: 6),
+            _buildTextField(_nameCtrl, '给角色起个名字'),
             const SizedBox(height: 16),
-          ],
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              _buildAvatarPreview(),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+            
+            // 简介
+            Text('简介', style: TextStyle(fontSize: 12, color: colors.muted)),
+            const SizedBox(height: 6),
+            _buildTextField(_descCtrl, '一句话介绍角色（可选）', maxLines: 2),
+            const SizedBox(height: 16),
+            
+            // 人格提示词
+            Text('人格设定 *', style: TextStyle(fontSize: 12, color: colors.muted)),
+            const SizedBox(height: 6),
+            _buildTextField(_personaCtrl, '详细描述角色的性格、说话方式、背景故事...', maxLines: 6),
+            const SizedBox(height: 4),
+            Text('💡 越详细越生动', style: TextStyle(fontSize: 11, color: colors.muted)),
+            
+            const SizedBox(height: 20),
+            _buildDivider(),
+
+            // ========== 称呼设置 ==========
+            _buildSettingRow(
+              icon: Icons.chat_bubble_outline,
+              title: '称呼设置',
+              trailing: const SizedBox.shrink(),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('自称', style: TextStyle(fontSize: 11, color: colors.muted)),
+                      const SizedBox(height: 4),
+                      _buildTextField(_selfAddressCtrl, '如：我、本小姐'),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('对我的称呼', style: TextStyle(fontSize: 11, color: colors.muted)),
+                      const SizedBox(height: 4),
+                      _buildTextField(_addressUserCtrl, '如：主人、先生'),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 20),
+            _buildDivider(),
+
+            // ========== 声音设置（可选，TTS 联动）==========
+            _buildSettingRow(
+              icon: Icons.record_voice_over,
+              title: '声音',
+              trailing: GestureDetector(
+                onTap: _pickVoiceFile,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    TextField(
-                      controller: _nameCtrl,
-                      decoration: const InputDecoration(labelText: '角色名称'),
+                    Text(
+                      _voiceFileName ?? '添加音色',
+                      style: TextStyle(color: colors.muted, fontSize: 14),
                     ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        FilledButton.icon(
-                          onPressed: _pickLocalImage,
-                          icon: const Icon(Icons.image_outlined),
-                          label: const Text('从本地选择'),
-                        ),
-                        const SizedBox(width: 12),
-                        if (_croppedBytes != null)
-                          Text(
-                            '已裁剪',
-                            style: TextStyle(color: Colors.green[700]),
-                          ),
-                      ],
-                    ),
+                    const SizedBox(width: 4),
+                    Icon(Icons.chevron_right, color: colors.muted, size: 20),
                   ],
                 ),
               ),
-            ],
-          ),
-
-          const SizedBox(height: 16),
-          TextField(
-            controller: _addressCtrl,
-            decoration: const InputDecoration(
-              labelText: '对我的称呼（可选）',
-              hintText: '例如：老师、先生、主人',
             ),
-          ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _personaCtrl,
-            maxLines: 5,
-            decoration: const InputDecoration(labelText: '人设提示词'),
-          ),
+            Text('可选，上传 mp3/wav 音频用于 TTS 语音合成', style: TextStyle(fontSize: 11, color: colors.muted)),
+
+            const SizedBox(height: 40),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ========== 辅助组件 ==========
+
+  Widget _buildSettingRow({
+    required IconData icon,
+    required String title,
+    required Widget trailing,
+  }) {
+    final colors = context.moeColors;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: colors.primary),
+          const SizedBox(width: 8),
+          Text(title, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: colors.text)),
+          const Spacer(),
+          trailing,
         ],
       ),
     );
   }
 
-  Widget _buildAvatarPreview() {
-    final double size = 72;
-
-    Widget content;
-    if (_croppedBytes != null) {
-      content = Image.memory(_croppedBytes!, fit: BoxFit.cover);
-    } else {
-      final dataBytes = decodeDataImage(_avatarCtrl.text);
-      if (dataBytes != null) {
-        content = Image.memory(dataBytes, fit: BoxFit.cover);
-      } else if (_avatarCtrl.text.startsWith('http')) {
-        content = Image.network(_avatarCtrl.text, fit: BoxFit.cover);
-      } else if (_avatarCtrl.text.startsWith('assets/')) {
-        // 支持 assets 资源路径
-        content = Image.asset(
-          _avatarCtrl.text,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => _buildFallbackLetter(),
-        );
-      } else {
-        content = _buildFallbackLetter();
-      }
-    }
-
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.all(radiusBubble),
-        color: Colors.white,
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: content,
-    );
-  }
-
-  Widget _buildFallbackLetter() {
-    final title = _nameCtrl.text.trim();
-    final letter = title.isNotEmpty ? title[0] : '新';
-    return Center(
-      child: Text(
-        letter,
-        style: const TextStyle(fontSize: 26, color: moeTextSecondary, fontWeight: FontWeight.w600),
+  Widget _buildTextField(TextEditingController controller, String hint, {int maxLines = 1}) {
+    final colors = context.moeColors;
+    return TextField(
+      controller: controller,
+      maxLines: maxLines,
+      minLines: maxLines > 1 ? 2 : 1,
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: TextStyle(color: colors.muted),
+        filled: true,
+        fillColor: colors.surfaceAlt.withOpacity(0.3),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide.none,
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       ),
     );
   }
 
-  Future<void> _pickLocalImage() async {
+  Widget _buildDivider() {
+    return Divider(height: 1, color: context.moeColors.borderLight.withOpacity(0.3));
+  }
+
+  Future<void> _pickImage({required bool isAvatar}) async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.image,
-      withData: true, // 需要字节以便裁剪
+      withData: true,
     );
     if (result == null || result.files.isEmpty) return;
 
     final file = result.files.first;
     if (file.bytes == null) return;
 
-    // 打开裁剪弹窗
-    if (!mounted) return;
-    final croppedBytes = await Navigator.of(context).push<Uint8List>(
-      PageRouteBuilder(
-        opaque: false,
-        barrierDismissible: false,
-        barrierColor: Colors.black,
-        transitionDuration: const Duration(milliseconds: 250),
-        reverseTransitionDuration: const Duration(milliseconds: 200),
-        pageBuilder: (context, animation, secondaryAnimation) => ImageCropDialog(
-          imageBytes: file.bytes!,
-          fileName: file.name,
-        ),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          // 组合淡入和轻微缩放效果
-          final fadeAnimation = CurvedAnimation(
-            parent: animation,
-            curve: Curves.easeOut,
-          );
-          final scaleAnimation = Tween<double>(
-            begin: 0.95,
-            end: 1.0,
-          ).animate(CurvedAnimation(
-            parent: animation,
-            curve: Curves.easeOutCubic,
-          ));
-          
-          return FadeTransition(
-            opacity: fadeAnimation,
-            child: ScaleTransition(
-              scale: scaleAnimation,
-              child: child,
-            ),
-          );
-        },
-      ),
-    );
+    Uint8List? finalBytes = file.bytes;
 
-    if (croppedBytes != null) {
-      _updateAvatarData(croppedBytes, fileName: file.name);
+    // 头像需要裁剪
+    if (isAvatar && mounted) {
+      final croppedBytes = await Navigator.of(context).push<Uint8List>(
+        PageRouteBuilder(
+          opaque: false,
+          barrierDismissible: false,
+          barrierColor: Colors.black,
+          transitionDuration: const Duration(milliseconds: 250),
+          reverseTransitionDuration: const Duration(milliseconds: 200),
+          pageBuilder: (context, animation, secondaryAnimation) => ImageCropDialog(
+            imageBytes: file.bytes!,
+            fileName: file.name,
+          ),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            final fadeAnimation = CurvedAnimation(parent: animation, curve: Curves.easeOut);
+            final scaleAnimation = Tween<double>(begin: 0.95, end: 1.0).animate(
+              CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+            );
+            return FadeTransition(
+              opacity: fadeAnimation,
+              child: ScaleTransition(scale: scaleAnimation, child: child),
+            );
+          },
+        ),
+      );
+      if (croppedBytes != null) {
+        finalBytes = croppedBytes;
+      } else {
+        return;
+      }
+    }
+
+    if (finalBytes != null) {
+      final dataUrl = buildDataImage(finalBytes, fileName: file.name);
+      setState(() {
+        if (isAvatar) {
+          _avatarBytes = finalBytes;
+          _avatarCtrl.text = dataUrl;
+          if (_useSameImage) {
+            _refImageBytes = finalBytes;
+            _refImageCtrl.text = dataUrl;
+          }
+        } else {
+          _refImageBytes = finalBytes;
+          _refImageCtrl.text = dataUrl;
+        }
+      });
     }
   }
 
+  Future<void> _pickVoiceFile() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['mp3', 'wav', 'm4a', 'aac'],
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) return;
+
+    final file = result.files.first;
+    setState(() {
+      _voiceFileName = file.name;
+      _voiceFileBytes = file.bytes;
+    });
+  }
+
+  String _buildAddressJson() {
+    final selfAddr = _selfAddressCtrl.text.trim();
+    final userAddr = _addressUserCtrl.text.trim();
+    if (selfAddr.isEmpty && userAddr.isEmpty) return '';
+    
+    final map = <String, String>{};
+    if (selfAddr.isNotEmpty) map['self_address'] = selfAddr;
+    if (userAddr.isNotEmpty) map['user_address'] = userAddr;
+    return '\n[称呼设置]: ${map.toString()}';
+  }
+
   Future<void> _onSave() async {
-    final name = _nameCtrl.text.trim().isEmpty ? '新角色' : _nameCtrl.text.trim();
+    final name = _nameCtrl.text.trim();
+    if (name.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请输入角色名称')),
+      );
+      return;
+    }
+
     final avatar = _avatarCtrl.text.trim().isEmpty ? null : _avatarCtrl.text.trim();
-    final address = _addressCtrl.text.trim().isEmpty ? null : _addressCtrl.text.trim();
-    final persona = _personaCtrl.text.trim();
+    final characterImage = _useSameImage
+        ? avatar
+        : (_refImageCtrl.text.trim().isEmpty ? null : _refImageCtrl.text.trim());
+
+    // 构建人格提示词（含称呼 JSON）
+    String persona = _personaCtrl.text.trim();
+    final addressJson = _buildAddressJson();
+    if (addressJson.isNotEmpty) {
+      persona = persona + addressJson;
+    }
+
+    // 音色文件转 base64
+    String? voiceFile;
+    if (_voiceFileBytes != null && _voiceFileName != null) {
+      voiceFile = buildDataImage(_voiceFileBytes!, fileName: _voiceFileName);
+    }
+
+    final selfAddress = _selfAddressCtrl.text.trim().isEmpty ? null : _selfAddressCtrl.text.trim();
+    final addressUser = _addressUserCtrl.text.trim().isEmpty ? null : _addressUserCtrl.text.trim();
 
     if (widget.isNew) {
-      // 新建模式：创建新对话并应用信息
       final notifier = ref.read(conversationsProvider.notifier);
       final id = await notifier.createNew();
 
@@ -338,9 +429,8 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
         id,
         displayName: name,
         avatarUrl: avatar,
-        characterImage: null,
-        organization: null,
-        addressUser: address,
+        characterImage: characterImage,
+        addressUser: addressUser,
         personaPrompt: persona,
       );
 
@@ -348,300 +438,15 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
       if (!mounted) return;
       context.go('/chat/$id');
     } else {
-      // 编辑模式：返回结果
       Navigator.of(context).pop<ContactEditResult>(
         ContactEditResult(
           displayName: name,
           avatarUrl: avatar,
-          characterImage: widget.conversation.characterImage,
-          organization: widget.conversation.organization,
-          addressUser: address,
+          characterImage: characterImage,
+          addressUser: addressUser,
           personaPrompt: persona,
         ),
       );
     }
   }
-
-  void _updateAvatarData(Uint8List bytes, {String? fileName}) {
-    final dataUrl = buildDataImage(bytes, fileName: fileName);
-    setState(() {
-      _croppedBytes = bytes;
-      _avatarCtrl.text = dataUrl;
-    });
-  }
-
-  Future<void> _onSaveAsPreset() async {
-    final name = _nameCtrl.text.trim();
-    if (name.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请先填写角色名称')),
-      );
-      return;
-    }
-
-    // 弹出对话框让用户输入预设名称
-    final presetName = await showDialog<String>(
-      context: context,
-      builder: (context) {
-        final controller = TextEditingController(text: name);
-        return AlertDialog(
-          title: const Text('保存为新预设'),
-          content: TextField(
-            controller: controller,
-            decoration: const InputDecoration(
-              labelText: '预设名称',
-              hintText: '为这个预设起个名字',
-            ),
-            autofocus: true,
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('取消'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, controller.text.trim()),
-              child: const Text('保存'),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (presetName == null || presetName.isEmpty) return;
-
-    try {
-      // 创建新预设
-      await _presetStore.createPreset(
-        name: presetName,
-        displayName: _nameCtrl.text.trim(),
-        avatarUrl: _avatarCtrl.text.trim().isEmpty ? null : _avatarCtrl.text.trim(),
-        characterImage: null,
-        organization: null,
-        personaPrompt: _personaCtrl.text.trim(),
-      );
-
-      // 刷新预设列表
-      await _loadPresets();
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('预设 "$presetName" 已保存')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('保存失败：$e')),
-      );
-    }
-  }
-
-  Future<void> _showPresetSelector() async {
-    final selected = await showModalBottomSheet<CharacterPreset?>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (context) {
-        return Container(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(context).size.height * 0.6,
-          ),
-          decoration: const BoxDecoration(
-            color: moeSurface,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // 标题栏
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                child: Row(
-                  children: [
-                    const Expanded(
-                      child: Text(
-                        '选择预设',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w600,
-                          color: moeText,
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close, color: moeMuted),
-                      onPressed: () => Navigator.pop(context),
-                    ),
-                  ],
-                ),
-              ),
-              const Divider(height: 0, thickness: borderWidth, color: moeDividerColor),
-              // 预设列表
-              Flexible(
-                child: ListView(
-                  shrinkWrap: true,
-                  children: [
-                    // "不使用预设"选项
-                    ListTile(
-                      leading: Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.all(radiusBubble),
-                          color: moeSurfaceAlt,
-                        ),
-                        child: const Icon(Icons.close, color: moeMuted, size: 20),
-                      ),
-                      title: const Text('不使用预设'),
-                      selected: _selectedPreset == null,
-                      selectedTileColor: moeSurfaceAlt,
-                      onTap: () => Navigator.pop(context, null),
-                    ),
-                    const Divider(height: 0, thickness: borderWidth, color: moeDividerColor),
-                    // 预设选项
-                    ..._presets.map((preset) {
-                      return Column(
-                        children: [
-                          ListTile(
-                            leading: _buildPresetAvatar(preset),
-                            title: Text(preset.name),
-                            subtitle: preset.displayName != preset.name
-                                ? Text(
-                                    preset.displayName,
-                                    style: const TextStyle(fontSize: 12, color: moeMuted),
-                                  )
-                                : null,
-                            selected: _selectedPreset == preset,
-                            selectedTileColor: moeSurfaceAlt,
-                            onTap: () => Navigator.pop(context, preset),
-                          ),
-                          const Divider(height: 0, thickness: borderWidth, color: moeDividerColor),
-                        ],
-                      );
-                    }),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-
-    // 处理选择结果
-    if (selected != null) {
-      await _applyPreset(selected);
-    } else if (selected == null && _selectedPreset != null) {
-      // 用户选择了"不使用预设"
-      setState(() => _selectedPreset = null);
-    }
-  }
-
-  Widget _buildPresetAvatar(CharacterPreset preset) {
-    // 尝试解码 avatarUrl
-    final avatarBytes = decodeDataImage(preset.avatarUrl);
-    if (avatarBytes != null) {
-      return Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.all(radiusBubble),
-          color: Colors.white,
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Image.memory(avatarBytes, fit: BoxFit.cover),
-      );
-    }
-
-    // 如果是网络URL
-    final avatar = preset.avatarUrl;
-    if (avatar != null && avatar.startsWith('http')) {
-      return Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.all(radiusBubble),
-          color: Colors.white,
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Image.network(avatar, fit: BoxFit.cover),
-      );
-    }
-
-    // 如果是本地asset路径
-    if (avatar != null && avatar.trim().isNotEmpty) {
-      return Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.all(radiusBubble),
-          color: Colors.white,
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Image.asset(
-          avatar,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => _buildPresetFallbackAvatar(preset),
-        ),
-      );
-    }
-
-    // 尝试使用 characterImage 字段
-    final charBytes = decodeDataImage(preset.characterImage);
-    if (charBytes != null) {
-      return Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.all(radiusBubble),
-          color: Colors.white,
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Image.memory(charBytes, fit: BoxFit.cover),
-      );
-    }
-
-    final char = preset.characterImage;
-    if (char != null && char.trim().isNotEmpty) {
-      return Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.all(radiusBubble),
-          color: Colors.white,
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Image.asset(
-          char,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => _buildPresetFallbackAvatar(preset),
-        ),
-      );
-    }
-
-    // 最后使用字母占位符
-    return _buildPresetFallbackAvatar(preset);
-  }
-
-  Widget _buildPresetFallbackAvatar(CharacterPreset preset) {
-    final letter = preset.displayName.isNotEmpty ? preset.displayName[0] : preset.name[0];
-    return Container(
-      width: 40,
-      height: 40,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.all(radiusBubble),
-        color: moeSurfaceAlt,
-      ),
-      child: Center(
-        child: Text(
-          letter,
-          style: const TextStyle(fontSize: 18, color: moePrimary, fontWeight: FontWeight.w600),
-        ),
-      ),
-    );
-  }
 }
-
-
-

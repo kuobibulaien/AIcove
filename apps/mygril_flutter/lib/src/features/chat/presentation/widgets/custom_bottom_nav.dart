@@ -1,4 +1,9 @@
+/// 自定义底部导航栏
+/// 
+/// 更新记录：
+/// - 2025-12-06: 接入皮肤系统
 import 'package:flutter/material.dart';
+import '../../../../core/theme/skin_provider.dart';
 import '../../../../core/theme/tokens.dart';
 
 /// 自定义底部导航栏
@@ -17,16 +22,12 @@ class CustomBottomNav extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final itemCount = items.length;
+    final skin = context.skin;
     final colors = context.moeColors;
 
     return Container(
       height: 64,
-      decoration: BoxDecoration(
-        color: colors.surface,
-        border: Border(
-          top: BorderSide(color: colors.borderLight, width: 1),
-        ),
-      ),
+      decoration: skin.bottomNavDecoration(colors),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: List.generate(itemCount, (index) {

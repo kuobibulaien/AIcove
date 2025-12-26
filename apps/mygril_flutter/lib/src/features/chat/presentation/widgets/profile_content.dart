@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/tokens.dart';
 import '../../../../core/utils/data_image.dart';
 import '../../../../core/widgets/image_crop_dialog.dart';
+import '../../../../core/widgets/parallax_slide_page_route.dart';
 import '../../../settings/app_settings.dart';
 import '../pages/log_viewer_page.dart';
 
@@ -326,9 +327,7 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
               trailing: const Icon(Icons.chevron_right),
               onTap: () {
                 Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (context) => const LogViewerPage(),
-                  ),
+                  ParallaxSlidePageRoute(page: const LogViewerPage()),
                 );
               },
             ),

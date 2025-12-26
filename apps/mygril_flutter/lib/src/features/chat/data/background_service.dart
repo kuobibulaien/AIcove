@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'package:drift/drift.dart';
 import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:workmanager/workmanager.dart';
-import 'package:uuid/uuid.dart';
+
+import '../../../core/database/database.dart';
+import '../../../core/database/repositories/repositories.dart';
 
 // 任务名称常量
 const String taskNameActiveReply = 'com.mygril.active_reply';
@@ -119,50 +121,47 @@ Future<void> _showNotification(String title, String body) async {
   );
 }
 
+/// 后台任务：将消息写入 SQLite 数据库
+/// 注意：后台 isolate 中无法使用 Riverpod，需要创建独立的数据库实例
 Future<void> _saveMessageToStorage(String convId, String text) async {
-  final prefs = await SharedPreferences.getInstance();
-  // 必须重新加载以获取最新数据
-  await prefs.reload(); 
-  
-  final key = 'mygril.conversations';
-  final raw = prefs.getString(key);
-  if (raw == null) return;
-
+  final db = AppDatabase();
   try {
-    final List<dynamic> list = jsonDecode(raw);
-    bool changed = false;
-    
-    final updatedList = list.map((item) {
-      if (item['id'] == convId) {
-        changed = true;
-        final msgs = (item['messages'] as List).cast<Map<String, dynamic>>();
-        
-        // 构建新消息
-        final newMsg = {
-          'id': 'bg_${DateTime.now().millisecondsSinceEpoch}',
-          'role': 'assistant',
-          'content': text,
-          'createdAt': DateTime.now().toIso8601String(),
-          'status': 'sent',
-        };
-        
-        return {
-          ...item,
-          'messages': [...msgs, newMsg],
-          'lastMessage': text,
-          'lastMessageTime': DateTime.now().toIso8601String(),
-          'unreadCount': (item['unreadCount'] ?? 0) + 1, // 增加未读数
-        };
-      }
-      return item;
-    }).toList();
+    final convRepo = ConversationRepository(db);
+    final msgRepo = MessageRepository(db);
 
-    if (changed) {
-      await prefs.setString(key, jsonEncode(updatedList));
-      print('[Background] Message saved to storage.');
+    // 检查会话是否存在
+    final conv = await convRepo.getById(convId);
+    if (conv == null) {
+      print('[Background] Conversation not found: $convId');
+      return;
     }
+
+    // 插入消息
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final msgId = 'bg_$now';
+    await msgRepo.insert(MessagesCompanion(
+      id: Value(msgId),
+      conversationId: Value(convId),
+      role: const Value('assistant'),
+      content: Value(text),
+      status: const Value('sent'),
+      createdAt: Value(now),
+    ));
+
+    // 更新会话摘要（lastMessage, lastMessageTime, updatedAt）
+    await convRepo.updateSummary(convId, text, now);
+
+    // 增加未读数（需要单独更新）
+    await (db.update(db.conversations)..where((t) => t.id.equals(convId)))
+        .write(ConversationsCompanion(
+      unreadCount: Value(conv.unreadCount + 1),
+    ));
+
+    print('[Background] Message saved to SQLite.');
   } catch (e) {
-    print('[Background] Storage Error: $e');
+    print('[Background] SQLite Error: $e');
+  } finally {
+    await db.close();
   }
 }
 

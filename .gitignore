@@ -1,10 +1,4 @@
-backend/
-cloud_backend/
+.ace-tool/
+
+# 忽略参考素材（不需要被ACE索引）
 参考素材/
-.venv/
-.serena/
-.trae/
-.playwright-mcp/
-.claude/
-*.log
-.DS_Store

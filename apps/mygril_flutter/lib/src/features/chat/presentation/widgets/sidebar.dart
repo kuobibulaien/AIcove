@@ -17,7 +17,8 @@ class Sidebar extends ConsumerWidget {
       color: moeSurface,
       child: Column(
         children: [
-          // MoeTalk 顶部导航栏样�?          Container(
+          // MoeTalk 顶部导航栏样式
+          Container(
             height: 64,
             padding: const EdgeInsets.symmetric(horizontal: 16),
             decoration: const BoxDecoration(
@@ -39,7 +40,8 @@ class Sidebar extends ConsumerWidget {
                   ),
                 ),
                 const Spacer(),
-                // 加号按钮 - 添加新角�?                Material(
+                // 加号按钮 - 添加新角色
+                Material(
                   color: Colors.transparent,
                   child: InkWell(
                     onTap: () async {
@@ -75,7 +77,8 @@ class Sidebar extends ConsumerWidget {
                     scrollbars: false,
                   ),
                   child: ListView.builder(
-                    padding: EdgeInsets.zero, // 去除默认内边距，贴靠分割�?                    itemCount: list.length,
+                    padding: EdgeInsets.zero, // 去除默认内边距，贴靠分割线
+                    itemCount: list.length,
                     itemBuilder: (context, index) {
                       final c = list[index];
                       final activeId = ref.watch(activeConversationIdProvider);

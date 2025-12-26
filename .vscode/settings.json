@@ -1,0 +1,18 @@
+{
+    "search.exclude": {
+        "*.freezed.dart": true,
+        "*.g.dart": true,
+        "**/build/**": true
+    },
+    "files.exclude": {
+        "*.freezed.dart": true,
+        "*.g.dart": true,
+        "**/.dart_tool/**": true,
+        "**/build/**": true
+    },
+    "files.watcherExclude": {
+        "*.freezed.dart": true,
+        "*.g.dart": true,
+        "**/build/**": true
+    }
+}

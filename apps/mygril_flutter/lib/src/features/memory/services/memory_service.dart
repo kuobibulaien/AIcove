@@ -1,32 +1,95 @@
 import 'dart:convert';
 import 'package:uuid/uuid.dart';
 import 'package:http/http.dart' as http;
-import '../../../core/api_client.dart';
 import '../../../core/app_logger.dart';
-import '../../../features/chat/domain/message.dart';
-import '../../plugins/memory/memory_config.dart';
+import '../../../core/database/repositories/memory_repository.dart';
+import '../../chat/domain/message.dart';
 import '../models/memory_entity.dart';
-import '../repositories/memory_repository.dart';
+import '../utils/memory_time_formatter.dart';
 import 'embedding_service.dart';
-import 'openai_embedding_service.dart';
+import 'hybrid_embedding_service.dart';
 
+/// 解析后的模型配置
+class ResolvedModelConfig {
+  final String apiKey;
+  final String baseUrl;
+  final String model;
+
+  const ResolvedModelConfig({
+    required this.apiKey,
+    required this.baseUrl,
+    required this.model,
+  });
+
+  bool get isValid => apiKey.isNotEmpty && baseUrl.isNotEmpty && model.isNotEmpty;
+}
+
+/// 记忆服务配置
+class MemoryServiceConfig {
+  final bool enabled;
+  final String summarizePrompt;
+  final ResolvedModelConfig? summarizeModel;
+  final ResolvedModelConfig? embeddingModel;
+  final ResolvedModelConfig? fallbackEmbeddingModel;
+  final bool fallbackEnabled;
+
+  const MemoryServiceConfig({
+    this.enabled = true,
+    this.summarizePrompt = '',
+    this.summarizeModel,
+    this.embeddingModel,
+    this.fallbackEmbeddingModel,
+    this.fallbackEnabled = false,
+  });
+}
+
+/// 记忆服务
+///
+/// 负责对话摘要提取和记忆存储/检索
+/// 使用 Drift MemoryRepository 进行数据持久化
 class MemoryService {
-  final MemoryConfig config;
+  final MemoryServiceConfig config;
   final MemoryRepository _repository;
-  late final EmbeddingService _embeddingService;
-  final ApiClient _apiClient;
+  EmbeddingService? _embeddingService;
 
-  MemoryService(this.config)
-      : _repository = MemoryRepository.instance,
-        _apiClient = ApiClient() {
-    _embeddingService = OpenAIEmbeddingService(
-      apiKey: config.embeddingApiKey,
-      baseUrl: config.embeddingBaseUrl,
-      model: config.embeddingModel,
-    );
+  bool get isInFallbackMode {
+    final service = _embeddingService;
+    return service is HybridEmbeddingService && service.isInFallbackMode;
   }
 
-  /// Summarize recent conversation and store as memory
+  bool get isEmbeddingAvailable => _embeddingService != null;
+
+  MemoryService(this.config, this._repository) {
+    _initEmbeddingService();
+  }
+
+  void _initEmbeddingService() {
+    final primary = config.embeddingModel;
+    final fallback = config.fallbackEmbeddingModel;
+
+    if (primary == null || !primary.isValid) {
+      AppLogger.warning('MemoryService', 'No valid embedding model configured.');
+      _embeddingService = null;
+      return;
+    }
+
+    _embeddingService = HybridEmbeddingService(
+      primaryApiKey: primary.apiKey,
+      primaryBaseUrl: primary.baseUrl,
+      primaryModel: primary.model,
+      fallbackEnabled: config.fallbackEnabled && fallback != null && fallback.isValid,
+      fallbackBaseUrl: fallback?.baseUrl ?? '',
+      fallbackModel: fallback?.model ?? '',
+      fallbackApiKey: fallback?.apiKey ?? '',
+    );
+
+    AppLogger.info('MemoryService', 'Initialized with hybrid embedding', metadata: {
+      'primaryModel': primary.model,
+      'fallbackEnabled': config.fallbackEnabled,
+    });
+  }
+
+  /// 摘要并存储记忆
   Future<void> summarizeAndStore(List<Message> messages) async {
     if (!config.enabled || messages.isEmpty) return;
 
@@ -35,71 +98,71 @@ class MemoryService {
     });
 
     try {
-      // 1. Prepare Prompt
       final conversationText = messages.map((m) => '${m.role}: ${m.content}').join('\n');
       final prompt = '${config.summarizePrompt}\n\nConversation:\n$conversationText';
 
-      // 2. Call Summarization LLM
       final summary = await _callSummarizeLLM(prompt);
       if (summary == null || summary.trim().isEmpty || summary.toLowerCase().contains('no key facts')) {
-         AppLogger.info('MemoryService', 'No relevant memories found to summarize.');
-         return;
+        AppLogger.info('MemoryService', 'No relevant memories found to summarize.');
+        return;
       }
 
-      // 3. Split into individual facts (assuming LLM returns one fact per line)
       final facts = LineSplitter.split(summary)
           .map((s) => s.trim())
-          .where((s) => s.isNotEmpty && !s.startsWith('- ')) // Remove bullet points if any
+          .where((s) => s.isNotEmpty && !s.startsWith('- '))
           .toList();
 
       if (facts.isEmpty) return;
 
-      // 4. Get Embeddings
-      final embeddings = await _embeddingService.getEmbeddings(facts);
+      if (_embeddingService == null) {
+        AppLogger.warning('MemoryService', 'Embedding service not available.');
+        return;
+      }
 
-      // 5. Store in DB with timestamp prefix
+      final embeddings = await _embeddingService!.getEmbeddings(facts);
       final now = DateTime.now();
-      final dateStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-      
+
       for (int i = 0; i < facts.length; i++) {
-        final fact = facts[i];
-        final embedding = embeddings[i];
-        
-        // 给记忆内容添加时间前缀
-        final contentWithTime = '[$dateStr] $fact';
-        
         final memory = MemoryEntity(
           id: const Uuid().v4(),
-          content: contentWithTime,  // 存储时就包含时间前缀
-          embedding: embedding,
+          content: facts[i],
+          embedding: embeddings[i],
+          persistenceP: 0.5, // 默认值，后续可由 AI 打分
+          emotionE: 0.0,
+          infoI: 0.5,
+          judgeJ: 0.5,
           createdAt: now,
-          importance: 1, // Default importance
         );
 
         await _repository.addMemory(memory);
-        AppLogger.debug('MemoryService', 'Stored memory', metadata: {'content': contentWithTime});
+        AppLogger.debug('MemoryService', 'Stored memory', metadata: {'content': facts[i]});
       }
-      
-      AppLogger.info('MemoryService', 'Successfully stored ${facts.length} memories.');
 
+      AppLogger.info('MemoryService', 'Successfully stored ${facts.length} memories.');
     } catch (e) {
       AppLogger.error('MemoryService', 'Failed to summarize memories', metadata: {'error': e.toString()});
     }
   }
 
   Future<String?> _callSummarizeLLM(String prompt) async {
-    final url = Uri.parse('${config.summarizeBaseUrl}/chat/completions');
+    final summarizeConfig = config.summarizeModel;
+    if (summarizeConfig == null || !summarizeConfig.isValid) {
+      AppLogger.warning('MemoryService', 'Summarize model not configured.');
+      return null;
+    }
+
+    final url = Uri.parse('${summarizeConfig.baseUrl}/chat/completions');
     final client = http.Client();
-    
+
     try {
       final response = await client.post(
         url,
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': 'Bearer ${config.summarizeApiKey}',
+          'Authorization': 'Bearer ${summarizeConfig.apiKey}',
         },
         body: jsonEncode({
-          'model': config.summarizeModel,
+          'model': summarizeConfig.model,
           'messages': [
             {'role': 'user', 'content': prompt}
           ],
@@ -113,7 +176,7 @@ class MemoryService {
           return data['choices'][0]['message']['content'] as String?;
         }
       } else {
-        AppLogger.error('MemoryService', 'LLM Call Failed: ${response.statusCode} ${response.body}');
+        AppLogger.error('MemoryService', 'LLM Call Failed: ${response.statusCode}');
       }
     } catch (e) {
       AppLogger.error('MemoryService', 'LLM Call Failed', metadata: {'error': e.toString()});
@@ -122,14 +185,42 @@ class MemoryService {
     }
     return null;
   }
-  
-  Future<List<MemoryEntity>> search(String query) async {
+
+  /// 搜索相关记忆（候选300 → 相似度排序 → topK=3）
+  /// 返回格式化后的记忆列表（带时间戳）
+  Future<List<String>> searchFormatted(String query) async {
+    if (_embeddingService == null) {
+      AppLogger.warning('MemoryService', 'Embedding service not available.');
+      return [];
+    }
+
     try {
-      final embedding = await _embeddingService.getEmbedding(query);
-      return await _repository.search(embedding);
+      final embedding = await _embeddingService!.getEmbedding(query);
+      final memories = await _repository.searchTopK(embedding);
+
+      // 格式化输出：n天前的对话摘要"..."
+      return memories.map((m) => MemoryTimeFormatter.format(m.createdAt, m.content)).toList();
     } catch (e) {
       AppLogger.error('MemoryService', 'Search Failed', metadata: {'error': e.toString()});
       return [];
     }
+  }
+
+  /// 搜索原始记忆实体
+  Future<List<MemoryEntity>> search(String query) async {
+    if (_embeddingService == null) return [];
+
+    try {
+      final embedding = await _embeddingService!.getEmbedding(query);
+      return await _repository.searchTopK(embedding);
+    } catch (e) {
+      AppLogger.error('MemoryService', 'Search Failed', metadata: {'error': e.toString()});
+      return [];
+    }
+  }
+
+  /// 清理过期的回收站记忆
+  Future<int> purgeExpiredTrash() async {
+    return await _repository.purgeExpired();
   }
 }

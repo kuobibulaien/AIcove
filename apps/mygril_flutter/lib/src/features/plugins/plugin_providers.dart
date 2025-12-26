@@ -11,6 +11,8 @@ import 'trigger/trigger_plugin.dart';
 import 'trigger/trigger_config.dart';
 import 'memory/memory_plugin.dart';
 import 'memory/memory_config.dart';
+import 'sticker/sticker_plugin.dart';
+import 'sticker/sticker_config.dart';
 
 /// 插件管理器 Provider
 final pluginManagerProvider = Provider<PluginManager>((ref) {
@@ -18,12 +20,14 @@ final pluginManagerProvider = Provider<PluginManager>((ref) {
   final ttsConfig = ref.watch(ttsPluginConfigProvider);
   final triggerConfig = ref.watch(triggerPluginConfigProvider);
   final memoryConfig = ref.watch(memoryPluginConfigProvider);
+  final stickerConfig = ref.watch(stickerPluginConfigProvider);
 
   // 使用单例确保 PluginManager 不会重建，导致下游 Provider 拿不到更新
   _pluginManagerSingleton ??= PluginManager();
   _pluginManagerSingleton!.updatePlugin(TtsPlugin(ttsConfig));
   _pluginManagerSingleton!.updatePlugin(TriggerPlugin(triggerConfig, ref));
   _pluginManagerSingleton!.updatePlugin(MemoryPlugin(memoryConfig, ref));
+  _pluginManagerSingleton!.updatePlugin(StickerPlugin(stickerConfig));
 
   return _pluginManagerSingleton!;
 });
@@ -69,6 +73,74 @@ class MemoryPluginConfigNotifier extends StateNotifier<MemoryConfig> {
     } catch (e) {
       print('[MemoryPluginConfigNotifier] Failed to save config: $e');
     }
+  }
+
+  /// 设置启用状态
+  Future<void> setEnabled(bool enabled) async {
+    state = MemoryConfig(
+      enabled: enabled,
+      summarizeProviderId: state.summarizeProviderId,
+      summarizeModelName: state.summarizeModelName,
+      summarizePrompt: state.summarizePrompt,
+      embeddingProviderId: state.embeddingProviderId,
+      embeddingModelName: state.embeddingModelName,
+      fallbackEmbeddingEnabled: state.fallbackEmbeddingEnabled,
+      fallbackEmbeddingProviderId: state.fallbackEmbeddingProviderId,
+      fallbackEmbeddingModelName: state.fallbackEmbeddingModelName,
+      triggerInterval: state.triggerInterval,
+    );
+    await _saveConfig();
+  }
+
+  /// 设置摘要模型
+  Future<void> setSummarizeModel(String? providerId, String? modelName) async {
+    state = MemoryConfig(
+      enabled: state.enabled,
+      summarizeProviderId: providerId,
+      summarizeModelName: modelName,
+      summarizePrompt: state.summarizePrompt,
+      embeddingProviderId: state.embeddingProviderId,
+      embeddingModelName: state.embeddingModelName,
+      fallbackEmbeddingEnabled: state.fallbackEmbeddingEnabled,
+      fallbackEmbeddingProviderId: state.fallbackEmbeddingProviderId,
+      fallbackEmbeddingModelName: state.fallbackEmbeddingModelName,
+      triggerInterval: state.triggerInterval,
+    );
+    await _saveConfig();
+  }
+
+  /// 设置主嵌入模型
+  Future<void> setEmbeddingModel(String? providerId, String? modelName) async {
+    state = MemoryConfig(
+      enabled: state.enabled,
+      summarizeProviderId: state.summarizeProviderId,
+      summarizeModelName: state.summarizeModelName,
+      summarizePrompt: state.summarizePrompt,
+      embeddingProviderId: providerId,
+      embeddingModelName: modelName,
+      fallbackEmbeddingEnabled: state.fallbackEmbeddingEnabled,
+      fallbackEmbeddingProviderId: state.fallbackEmbeddingProviderId,
+      fallbackEmbeddingModelName: state.fallbackEmbeddingModelName,
+      triggerInterval: state.triggerInterval,
+    );
+    await _saveConfig();
+  }
+
+  /// 设置备用嵌入模型
+  Future<void> setFallbackEmbeddingModel(bool enabled, String? providerId, String? modelName) async {
+    state = MemoryConfig(
+      enabled: state.enabled,
+      summarizeProviderId: state.summarizeProviderId,
+      summarizeModelName: state.summarizeModelName,
+      summarizePrompt: state.summarizePrompt,
+      embeddingProviderId: state.embeddingProviderId,
+      embeddingModelName: state.embeddingModelName,
+      fallbackEmbeddingEnabled: enabled,
+      fallbackEmbeddingProviderId: providerId,
+      fallbackEmbeddingModelName: modelName,
+      triggerInterval: state.triggerInterval,
+    );
+    await _saveConfig();
   }
 }
 
@@ -222,6 +294,48 @@ class TriggerPluginConfigNotifier extends StateNotifier<TriggerConfig> {
       await prefs.setString(_storageKey, jsonEncode(state.toJson()));
     } catch (e) {
       print('[TriggerPluginConfigNotifier] Failed to save config: $e');
+    }
+  }
+}
+
+/// Sticker 插件配置 Provider
+final stickerPluginConfigProvider = StateNotifierProvider<StickerPluginConfigNotifier, StickerConfig>(
+  (ref) => StickerPluginConfigNotifier(),
+);
+
+/// Sticker 插件配置 Notifier
+class StickerPluginConfigNotifier extends StateNotifier<StickerConfig> {
+  static const _storageKey = 'mygril.plugins.sticker.config';
+
+  StickerPluginConfigNotifier() : super(const StickerConfig()) {
+    _loadConfig();
+  }
+
+  Future<void> _loadConfig() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final json = prefs.getString(_storageKey);
+
+      if (json != null && json.isNotEmpty) {
+        final data = jsonDecode(json) as Map<String, dynamic>;
+        state = StickerConfig.fromJson(data);
+      }
+    } catch (e) {
+      print('[StickerPluginConfigNotifier] Failed to load config: $e');
+    }
+  }
+
+  Future<void> setEnabled(bool enabled) async {
+    state = state.copyWith(enabled: enabled);
+    await _saveConfig();
+  }
+
+  Future<void> _saveConfig() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_storageKey, jsonEncode(state.toJson()));
+    } catch (e) {
+      print('[StickerPluginConfigNotifier] Failed to save config: $e');
     }
   }
 }

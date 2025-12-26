@@ -5,7 +5,6 @@ class CharacterPreset {
   final String displayName; // 角色名称
   final String? avatarUrl;
   final String? characterImage;
-  final String? organization;
   final String? addressUser; // 角色对"我"的称呼
   final String personaPrompt;
   final DateTime createdAt;
@@ -16,7 +15,6 @@ class CharacterPreset {
     required this.displayName,
     this.avatarUrl,
     this.characterImage,
-    this.organization,
     this.addressUser,
     required this.personaPrompt,
     required this.createdAt,
@@ -29,7 +27,6 @@ class CharacterPreset {
       displayName: json['displayName'] as String,
       avatarUrl: json['avatarUrl'] as String?,
       characterImage: json['characterImage'] as String?,
-      organization: json['organization'] as String?,
       addressUser: json['addressUser'] as String?,
       personaPrompt: (json['personaPrompt'] as String?) ?? '',
       createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ?? DateTime.now(),
@@ -43,7 +40,6 @@ class CharacterPreset {
       'displayName': displayName,
       'avatarUrl': avatarUrl,
       'characterImage': characterImage,
-      'organization': organization,
       'addressUser': addressUser,
       'personaPrompt': personaPrompt,
       'createdAt': createdAt.toIso8601String(),
@@ -56,7 +52,6 @@ class CharacterPreset {
     String? displayName,
     String? avatarUrl,
     String? characterImage,
-    String? organization,
     String? addressUser,
     String? personaPrompt,
     DateTime? createdAt,
@@ -67,7 +62,6 @@ class CharacterPreset {
       displayName: displayName ?? this.displayName,
       avatarUrl: avatarUrl ?? this.avatarUrl,
       characterImage: characterImage ?? this.characterImage,
-      organization: organization ?? this.organization,
       addressUser: addressUser ?? this.addressUser,
       personaPrompt: personaPrompt ?? this.personaPrompt,
       createdAt: createdAt ?? this.createdAt,

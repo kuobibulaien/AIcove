@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: mygril-sync
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - SECRET_KEY=${SECRET_KEY:-change-this-secret-key}
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/sync.db}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-10080}
+    volumes:
+      - ./data:/app/data
+    networks:
+      - mygril-network
+
+networks:
+  mygril-network:
+    driver: bridge

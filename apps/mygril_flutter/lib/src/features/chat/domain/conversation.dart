@@ -5,9 +5,10 @@ class Conversation {
   final String title;
   final String displayName;
   final String? avatarUrl;
-  final String? characterImage; // 角色立绘路径
-  final String? organization; // 所属组织
+  final String? characterImage; // 角色立绘/参考图路径
+  final String? selfAddress; // 角色的自称（例如：我、本小姐、奴家等）
   final String? addressUser; // 角色对"我"的称呼（例如：老师、先生、主人等）
+  final String? voiceFile; // 音色文件路径/数据（用于 TTS）
   final String personaPrompt;
   final List<Message> messages;
   final DateTime createdAt;
@@ -16,6 +17,7 @@ class Conversation {
   final String? sessionProvider;
   // 聊天设置（每个角色独立）
   final bool isPinned; // 是否置顶
+  final bool isFavorite; // 是否收藏（我的角色卡）
   final bool isMuted; // 消息免打扰
   final bool notificationSound; // 消息提示音
   // 消息列表相关字段
@@ -29,8 +31,9 @@ class Conversation {
     required this.displayName,
     this.avatarUrl,
     this.characterImage,
-    this.organization,
+    this.selfAddress,
     this.addressUser,
+    this.voiceFile,
     this.personaPrompt = '',
     this.messages = const [],
     required this.createdAt,
@@ -38,6 +41,7 @@ class Conversation {
     this.defaultProvider,
     this.sessionProvider,
     this.isPinned = false,
+    this.isFavorite = false,
     this.isMuted = false,
     this.notificationSound = true,
     this.lastMessage,
@@ -51,8 +55,9 @@ class Conversation {
     String? displayName,
     String? avatarUrl,
     String? characterImage,
-    String? organization,
+    String? selfAddress,
     String? addressUser,
+    String? voiceFile,
     String? personaPrompt,
     List<Message>? messages,
     DateTime? createdAt,
@@ -60,6 +65,7 @@ class Conversation {
     String? defaultProvider,
     String? sessionProvider,
     bool? isPinned,
+    bool? isFavorite,
     bool? isMuted,
     bool? notificationSound,
     String? lastMessage,
@@ -72,8 +78,9 @@ class Conversation {
       displayName: displayName ?? this.displayName,
       avatarUrl: avatarUrl ?? this.avatarUrl,
       characterImage: characterImage ?? this.characterImage,
-      organization: organization ?? this.organization,
+      selfAddress: selfAddress ?? this.selfAddress,
       addressUser: addressUser ?? this.addressUser,
+      voiceFile: voiceFile ?? this.voiceFile,
       personaPrompt: personaPrompt ?? this.personaPrompt,
       messages: messages ?? this.messages,
       createdAt: createdAt ?? this.createdAt,
@@ -81,6 +88,7 @@ class Conversation {
       defaultProvider: defaultProvider ?? this.defaultProvider,
       sessionProvider: sessionProvider ?? this.sessionProvider,
       isPinned: isPinned ?? this.isPinned,
+      isFavorite: isFavorite ?? this.isFavorite,
       isMuted: isMuted ?? this.isMuted,
       notificationSound: notificationSound ?? this.notificationSound,
       lastMessage: lastMessage ?? this.lastMessage,

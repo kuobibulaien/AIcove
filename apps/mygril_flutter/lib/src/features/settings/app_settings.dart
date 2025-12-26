@@ -73,7 +73,12 @@ class AutoReplySettings {
   final String quietHoursStart;
   final String quietHoursEnd;
   final bool allowExactAlarm;
-  final String analyzerPrompt; // 新增：自定义分析提示词
+  final String analyzerPrompt; // 自定义分析提示词
+  
+  // 独立的 AI 管家模型配置（防止污染聊天上下文）
+  // 如果为空，则使用默认对话模型（但仍会新建 session 隔离上下文）
+  final String? analyzerModel;    // 模型名称，如 "gpt-4o-mini"
+  final String? analyzerProvider; // 渠道 ID，如 "openai"
 
   // 默认提示词
   static const String defaultAnalyzerPrompt = '''You are the "Scheduler" for an AI girlfriend. Your job is to analyze the chat history and ORGANIZE the trigger list.
@@ -121,6 +126,8 @@ Do not output markdown. Just JSON.''';
     this.quietHoursEnd = '08:00',
     this.allowExactAlarm = false,
     this.analyzerPrompt = defaultAnalyzerPrompt,
+    this.analyzerModel,
+    this.analyzerProvider,
   });
 
   AutoReplySettings copyWith({
@@ -132,6 +139,10 @@ Do not output markdown. Just JSON.''';
     String? quietHoursEnd,
     bool? allowExactAlarm,
     String? analyzerPrompt,
+    String? analyzerModel,
+    String? analyzerProvider,
+    bool clearAnalyzerModel = false,    // 用于显式清除模型配置
+    bool clearAnalyzerProvider = false,
   }) {
     return AutoReplySettings(
       enabled: enabled ?? this.enabled,
@@ -142,6 +153,8 @@ Do not output markdown. Just JSON.''';
       quietHoursEnd: quietHoursEnd ?? this.quietHoursEnd,
       allowExactAlarm: allowExactAlarm ?? this.allowExactAlarm,
       analyzerPrompt: analyzerPrompt ?? this.analyzerPrompt,
+      analyzerModel: clearAnalyzerModel ? null : (analyzerModel ?? this.analyzerModel),
+      analyzerProvider: clearAnalyzerProvider ? null : (analyzerProvider ?? this.analyzerProvider),
     );
   }
 
@@ -154,6 +167,8 @@ Do not output markdown. Just JSON.''';
         'quiet_hours_end': quietHoursEnd,
         'allow_exact_alarm': allowExactAlarm,
         'analyzer_prompt': analyzerPrompt,
+        'analyzer_model': analyzerModel,
+        'analyzer_provider': analyzerProvider,
       };
 
   factory AutoReplySettings.fromJson(Map<String, dynamic> json) {
@@ -188,6 +203,8 @@ Do not output markdown. Just JSON.''';
       analyzerPrompt: (json['analyzer_prompt'] as String?)?.isEmpty == false
           ? json['analyzer_prompt'] as String
           : defaultAnalyzerPrompt,
+      analyzerModel: json['analyzer_model'] as String?,
+      analyzerProvider: json['analyzer_provider'] as String?,
     );
   }
 }

@@ -24,15 +24,21 @@ dependencies:
   timezone: ^0.9.2 # 时区支持
   # 云同步相关
   dio: ^5.4.0  # HTTP客户端
-  sqflite: ^2.3.0  # 本地数据库
   path_provider: ^2.1.2  # 文件路径
   flutter_secure_storage: ^9.0.0  # 安全存储Token
   workmanager: ^0.6.0-rc.1 # 后台任务管理 (修复Flutter 3.x兼容性)
+  # 本地数据库 (Drift)
+  drift: ^2.18.0
+  sqlite3_flutter_libs: ^0.5.0  # Android/iOS/macOS/Windows SQLite
+  path: ^1.9.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
+  # Drift 代码生成
+  drift_dev: ^2.18.0
+  build_runner: ^2.4.0
 
 flutter:
   uses-material-design: true
@@ -41,3 +47,4 @@ flutter:
     - assets/characters/
     - assets/ui/
     - assets/emoji/
+    - assets/stickers/nahida/

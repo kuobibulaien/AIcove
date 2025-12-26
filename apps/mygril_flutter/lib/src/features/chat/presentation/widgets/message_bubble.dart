@@ -1,7 +1,13 @@
+/// 消息气泡组件（支持多模态）
+/// 遵循单一职责原则(S)：只负责消息的UI渲染
+/// 
+/// 更新记录：
+/// - 2025-12-06: 接入皮肤系统（背景色、描边）
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mygril_flutter/src/core/utils/data_image.dart';
+import '../../../../core/theme/skin_provider.dart';
 import '../../../../core/theme/tokens.dart';
 import '../../../../core/models/message_block.dart';
 import '../../domain/message.dart';
@@ -45,26 +51,25 @@ class MessageBubble extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final skin = context.skin;
+    final colors = context.moeColors;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    final bubbleColor = isMe
-        ? (isDark ? moeBubbleRightBgDark : moeBubbleRightBg)
-        : (isDark ? moeBubbleLeftBgDark : moeBubbleLeftBg);
-
-    final fg = isMe
-        ? Colors.white
-        : (isDark ? moeBubbleLeftFgDark : moeBubbleLeftFg);
+    // 从 MoeColors 读取气泡颜色（已适配深浅模式）
+    final bubbleColor = isMe ? colors.bubbleRightBg : colors.bubbleLeftBg;
+    final fg = isMe ? Colors.white : colors.bubbleLeftFg;
 
     final align = isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start;
     
     // Momotalk 风格圆角：
     // AI (左侧): 左上角直角，其他圆角
     // User (右侧): 右上角直角，其他圆角
+    final r = skin.bubbleRadius;
     final radius = BorderRadius.only(
-      topLeft: isMe ? const Radius.circular(12) : Radius.zero,
-      topRight: isMe ? Radius.zero : const Radius.circular(12),
-      bottomLeft: const Radius.circular(12),
-      bottomRight: const Radius.circular(12),
+      topLeft: isMe ? Radius.circular(r) : Radius.zero,
+      topRight: isMe ? Radius.zero : Radius.circular(r),
+      bottomLeft: Radius.circular(r),
+      bottomRight: Radius.circular(r),
     );
 
     // 获取要渲染的blocks
@@ -126,8 +131,8 @@ class MessageBubble extends ConsumerWidget {
                     ),
                   ),
                 
-                // Render image blocks separately without bubble
-                ..._buildImageBlocksOnly(blocks),
+                // Render image/sticker blocks separately without bubble
+                ..._buildMediaBlocksOnly(blocks),
                 // Render non-image blocks in bubble (text, audio, etc.)
                 if (_shouldShowBubble(blocks))
                   Container(
@@ -174,31 +179,36 @@ class MessageBubble extends ConsumerWidget {
     );
   }
 
-  /// Check if bubble should be shown (for text, audio, etc., but not for images only)
+  /// Check if bubble should be shown (for text, audio, etc., but not for images/stickers only)
   bool _shouldShowBubble(List<MessageBlock> blocks) {
     // If no blocks, show bubble for displayText (even if empty, will show placeholder)
     if (blocks.isEmpty) {
       return true;
     }
-    // If has non-image blocks, show bubble
-    return blocks.any((block) => block is! ImageBlock);
+    // If has non-image/non-emoji blocks, show bubble
+    return blocks.any((block) => block is! ImageBlock && block is! EmojiBlock);
   }
 
-  /// Build only image blocks without bubble wrapper
-  List<Widget> _buildImageBlocksOnly(List<MessageBlock> blocks) {
-    return blocks
-        .whereType<ImageBlock>()
-        .map((block) => _buildImageBlock(block))
-        .toList();
+  /// Build only image and sticker blocks without bubble wrapper
+  List<Widget> _buildMediaBlocksOnly(List<MessageBlock> blocks) {
+    final widgets = <Widget>[];
+    for (final block in blocks) {
+      if (block is ImageBlock) {
+        widgets.add(_buildImageBlock(block));
+      } else if (block is EmojiBlock) {
+        widgets.add(_buildStickerBlock(block));
+      }
+    }
+    return widgets;
   }
 
-  /// Build only non-image blocks content for bubble (text, audio, code, etc.)
+  /// Build only non-image/non-sticker blocks content for bubble (text, audio, code, etc.)
   Widget _buildNonImageBlocksContent(List<MessageBlock> blocks, Color textColor) {
-    // Filter to only non-image blocks
-    final nonImageBlocks = blocks.where((block) => block is! ImageBlock).toList();
+    // Filter to only non-image and non-sticker blocks
+    final nonMediaBlocks = blocks.where((block) => block is! ImageBlock && block is! EmojiBlock).toList();
     
     // Filter out empty text blocks
-    final filteredBlocks = nonImageBlocks.where((block) {
+    final filteredBlocks = nonMediaBlocks.where((block) {
       if (block is TextBlock) {
         return block.content.trim().isNotEmpty;
       }
@@ -306,6 +316,28 @@ class MessageBubble extends ConsumerWidget {
       child: ClipRRect(
         borderRadius: BorderRadius.circular(8),
         child: imageWidget,
+      ),
+    );
+  }
+
+  /// 渲染表情包块（Sticker）
+  Widget _buildStickerBlock(EmojiBlock block) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 4),
+      child: Image.asset(
+        block.path,
+        width: 120,
+        height: 120,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => Container(
+          width: 120,
+          height: 120,
+          decoration: BoxDecoration(
+            color: Colors.grey.shade200,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: const Icon(Icons.emoji_emotions, color: Colors.grey, size: 40),
+        ),
       ),
     );
   }
