@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../ui/theme/tokens.dart';
-import '../../../settings/mcp_api.dart';
-import '../../../tts/tts_player.dart';
+import '../../../../features/settings/mcp_api.dart';
+import '../../../../features/tts/tts_player.dart';
 
 class TtsToolDetailPage extends ConsumerStatefulWidget {
   const TtsToolDetailPage({super.key});

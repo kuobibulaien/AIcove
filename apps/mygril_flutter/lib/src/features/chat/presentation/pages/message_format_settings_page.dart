@@ -6,7 +6,7 @@ import '../../../../core/utils/message_formatter.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../settings/app_settings.dart';
 import 'chunk_settings_page.dart';
-import 'sticker_settings_page.dart';
+import '../../../../ui/features/plugins/pages/sticker_settings_page.dart';
 
 /// 自然回复设置页面
 /// 

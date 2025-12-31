@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../ui/theme/tokens.dart';
-import '../../../plugins/plugin_providers.dart';
-import '../../../plugins/memory/memory_config.dart';
-import '../../../settings/app_settings.dart';
+import '../../../../features/plugins/plugin_providers.dart';
+import '../../../../features/plugins/memory/memory_config.dart';
+import '../../../../features/settings/app_settings.dart';
 
 /// 长期记忆插件详细设置页面
 /// 

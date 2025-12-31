@@ -5,8 +5,8 @@ import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/animations/expanding_page_route.dart';
 import '../../../../ui/shared/widgets/moe_toast.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
-import '../../../plugins/plugin_providers.dart';
-import '../../../stickers/sticker_registry.dart';
+import '../../../../features/plugins/plugin_providers.dart';
+import '../../../../features/stickers/sticker_registry.dart';
 
 /// 分组方式枚举
 enum StickerGroupMode { byTag, byFolder }

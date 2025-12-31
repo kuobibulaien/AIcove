@@ -19,10 +19,10 @@ import '../../../settings/app_settings.dart';
 import 'package:mygril_flutter/src/features/chat/presentation/pages/model_list_page.dart';
 
 import '../../../../ui/features/auto_reply/pages/auto_reply_settings_page.dart';
-import 'memory_plugin_detail_page.dart';
+import '../../../../ui/features/plugins/pages/memory_plugin_detail_page.dart';
 import 'message_format_settings_page.dart';
 import 'ui_settings_page.dart';
-import 'tts_plugin_detail_page.dart';
+import '../../../../ui/features/plugins/pages/tts_plugin_detail_page.dart';
 
 /// 设置页面 - 带AppBar 的完整页面（小屏使用）
 class SettingsPage extends StatelessWidget {

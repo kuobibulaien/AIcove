@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../core/models/message_block.dart';
-import '../../../plugins/plugin_providers.dart';
-import '../../../plugins/tts/tts_config.dart';
-import '../../../plugins/tts/tts_service.dart';
-import '../widgets/audio_player_widget.dart';
+import '../../../../features/plugins/plugin_providers.dart';
+import '../../../../features/plugins/tts/tts_config.dart';
+import '../../../../features/plugins/tts/tts_service.dart';
+import '../../../../features/chat/presentation/widgets/audio_player_widget.dart';
 
 /// TTS 插件详细设置页面
 class TtsPluginDetailPage extends ConsumerStatefulWidget {
