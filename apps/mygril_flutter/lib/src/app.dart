@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'ui/theme/tokens.dart';
-import 'features/chat/presentation/pages/main_page.dart';
+import 'ui/features/home/pages/main_page.dart';
 import 'ui/features/chat/pages/chat_page.dart';
 import 'ui/features/chat/pages/split_chat_page.dart';
 import 'ui/features/character/pages/contact_edit_page.dart';

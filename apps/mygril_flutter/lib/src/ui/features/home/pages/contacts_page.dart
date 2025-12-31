@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import '../../providers2.dart';
-import 'package:mygril_flutter/src/features/chat/presentation/widgets/contacts_list_content.dart';
-import 'package:mygril_flutter/src/features/chat/presentation/widgets/contacts_sub_header.dart';
-import 'package:mygril_flutter/src/features/chat/presentation/widgets/momotalk_sort_dialog.dart';
+import '../../../../features/chat/providers2.dart';
+import '../../../../features/chat/presentation/widgets/contacts_list_content.dart';
+import '../../../../features/chat/presentation/widgets/contacts_sub_header.dart';
+import '../../../../features/chat/presentation/widgets/momotalk_sort_dialog.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/settings_drawer_wrapper.dart';
 
