@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'contacts_page.dart';
 import 'role_card_page.dart';
-import 'profile_page.dart';
+import '../../../../ui/features/settings/pages/profile_page.dart';
 import '../widgets/custom_bottom_nav.dart';
 import '../../../../ui/shared/widgets/settings_drawer_wrapper.dart';
 import '../../../../ui/shared/widgets/settings_drawer_panel.dart';

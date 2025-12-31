@@ -9,7 +9,7 @@
 import 'package:flutter/material.dart';
 import '../../theme/tokens.dart';
 import 'moe_app_bar.dart';
-import '../../../features/chat/presentation/pages/settings_page.dart';
+import '../../../ui/features/settings/pages/settings_page.dart';
 
 /// 设置抽屉面板内容组件
 /// 

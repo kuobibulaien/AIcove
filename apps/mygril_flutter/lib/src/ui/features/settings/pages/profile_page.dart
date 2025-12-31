@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/moe_app_bar.dart';
-import '../widgets/profile_content.dart';
+import '../../../../features/chat/presentation/widgets/profile_content.dart';
 
 /// 我的页面
 /// 

@@ -10,7 +10,7 @@ import '../../../../core/utils/data_image.dart';
 import '../../../../ui/shared/widgets/image_crop_dialog.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../settings/app_settings.dart';
-import '../pages/log_viewer_page.dart';
+import '../../../../ui/features/settings/pages/log_viewer_page.dart';
 
 /// 个人中心内容组件（无 AppBar，可复用）
 class ProfileContent extends ConsumerStatefulWidget {

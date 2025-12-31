@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../ui/theme/tokens.dart';
 import '../../../../core/utils/message_formatter.dart';
-import '../../../settings/app_settings.dart';
+import '../../../../features/settings/app_settings.dart';
 
 /// 分段标点设置页面
 class ChunkSettingsPage extends ConsumerStatefulWidget {

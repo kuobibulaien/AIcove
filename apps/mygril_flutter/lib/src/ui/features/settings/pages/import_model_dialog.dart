@@ -4,7 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../ui/theme/tokens.dart';
-import '../../../settings/app_settings.dart';
+import '../../../../features/settings/app_settings.dart';
 
 class ImportModelDialog extends ConsumerStatefulWidget {
   const ImportModelDialog({super.key});

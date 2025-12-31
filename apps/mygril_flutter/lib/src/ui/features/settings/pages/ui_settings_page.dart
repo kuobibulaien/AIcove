@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../ui/theme/tokens.dart';
-import '../../../settings/app_settings.dart';
+import '../../../../features/settings/app_settings.dart';
 
 /// 界面设置页面
 class UiSettingsPage extends ConsumerWidget {

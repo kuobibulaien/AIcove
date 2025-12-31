@@ -15,14 +15,14 @@ import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/moe_app_bar.dart';
 import '../../../../ui/shared/widgets/moe_toast.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
-import '../../../settings/app_settings.dart';
-import 'package:mygril_flutter/src/features/chat/presentation/pages/model_list_page.dart';
+import '../../../../features/settings/app_settings.dart';
+import 'package:mygril_flutter/src/ui/features/settings/pages/model_list_page.dart';
 
-import '../../../../ui/features/auto_reply/pages/auto_reply_settings_page.dart';
-import '../../../../ui/features/plugins/pages/memory_plugin_detail_page.dart';
+import '../../auto_reply/pages/auto_reply_settings_page.dart';
+import '../../plugins/pages/memory_plugin_detail_page.dart';
 import 'message_format_settings_page.dart';
 import 'ui_settings_page.dart';
-import '../../../../ui/features/plugins/pages/tts_plugin_detail_page.dart';
+import '../../plugins/pages/tts_plugin_detail_page.dart';
 
 /// 设置页面 - 带AppBar 的完整页面（小屏使用）
 class SettingsPage extends StatelessWidget {

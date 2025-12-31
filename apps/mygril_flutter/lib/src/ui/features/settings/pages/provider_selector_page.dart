@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../ui/theme/tokens.dart';
-import '../../../settings/provider_state.dart';
-import '../../../settings/app_settings.dart';
+import '../../../../features/settings/provider_state.dart';
+import '../../../../features/settings/app_settings.dart';
 
 /// 提供商选择页面
 class ProviderSelectorPage extends ConsumerWidget {
