@@ -13,8 +13,8 @@ import '../../../../ui/shared/animations/expanding_page_route.dart';
 import '../../../../ui/shared/effects/frosted_glass_card.dart';
 import '../../../../ui/shared/widgets/moe_app_bar.dart';
 import '../../../../core/utils/data_image.dart';
-import '../../domain/conversation.dart';
-import '../../providers2.dart';
+import '../../../../features/chat/domain/conversation.dart';
+import '../../../../features/chat/providers2.dart';
 import 'character_detail_page.dart';
 
 /// 我的收藏页面

@@ -7,10 +7,10 @@ import 'package:go_router/go_router.dart';
 
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/image_crop_dialog.dart';
-import '../../domain/conversation.dart';
+import '../../../../features/chat/domain/conversation.dart';
 import '../../../../core/utils/data_image.dart';
-import '../widgets/contact_edit_dialog.dart';
-import '../../providers2.dart';
+import '../../../../features/chat/presentation/widgets/contact_edit_dialog.dart';
+import '../../../../features/chat/providers2.dart';
 
 /// 新建/编辑角色卡页面
 /// 

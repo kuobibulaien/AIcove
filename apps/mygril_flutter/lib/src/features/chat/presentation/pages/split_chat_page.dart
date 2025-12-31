@@ -5,7 +5,7 @@ import '../../providers2.dart';
 import 'chat_page.dart';
 import 'package:mygril_flutter/src/features/chat/presentation/widgets/contacts_list_content.dart';
 import 'package:mygril_flutter/src/features/chat/presentation/widgets/contacts_sub_header.dart';
-import 'role_card_page.dart';
+import '../../../../ui/features/character/pages/role_card_page.dart';
 import '../widgets/profile_content.dart';
 import '../widgets/custom_bottom_nav.dart';
 import '../../../../ui/theme/tokens.dart';

@@ -5,7 +5,7 @@ import 'ui/theme/tokens.dart';
 import 'features/chat/presentation/pages/main_page.dart';
 import 'features/chat/presentation/pages/chat_page.dart';
 import 'features/chat/presentation/pages/split_chat_page.dart';
-import 'features/chat/presentation/pages/contact_edit_page.dart';
+import 'ui/features/character/pages/contact_edit_page.dart';
 import 'features/chat/domain/conversation.dart';
 import 'features/chat/data/auto_reply_service.dart';
 import 'features/chat/providers2.dart';

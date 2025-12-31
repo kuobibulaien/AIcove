@@ -6,11 +6,11 @@ import '../../../../core/utils/data_image.dart';
 import '../../../../core/utils/role_transition_tags.dart';
 import '../../../../core/utils/blurred_background_cache.dart';
 import '../../../../ui/shared/effects/frosted_glass_card.dart';
-import '../../domain/conversation.dart';
+import '../../../../features/chat/domain/conversation.dart';
 import 'contact_edit_page.dart';
-import '../../providers2.dart';
+import '../../../../features/chat/providers2.dart';
 import '../../../../ui/shared/widgets/moe_toast.dart';
-import '../widgets/contact_edit_dialog.dart';
+import '../../../../features/chat/presentation/widgets/contact_edit_dialog.dart';
 
 /// 角色详情页面
 /// 
