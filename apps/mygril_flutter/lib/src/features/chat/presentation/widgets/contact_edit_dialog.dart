@@ -3,11 +3,11 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
-import '../../../../core/theme/tokens.dart';
+import '../../../../ui/theme/tokens.dart';
 import 'package:mygril_flutter/src/core/utils/data_image.dart';
 
 import '../../domain/conversation.dart';
-import '../../../../core/widgets/meotalk_dialog.dart';
+import '../../../../ui/shared/widgets/meotalk_dialog.dart';
 
 class ContactEditResult {
   final String displayName;

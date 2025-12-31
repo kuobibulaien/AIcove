@@ -8,10 +8,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../../core/theme/tokens.dart';
-import '../../../../core/widgets/expanding_page_route.dart';
-import '../../../../core/widgets/frosted_glass_card.dart';
-import '../../../../core/widgets/moe_app_bar.dart';
+import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/animations/expanding_page_route.dart';
+import '../../../../ui/shared/effects/frosted_glass_card.dart';
+import '../../../../ui/shared/widgets/moe_app_bar.dart';
 import '../../../../core/utils/data_image.dart';
 import '../../domain/conversation.dart';
 import '../../providers2.dart';

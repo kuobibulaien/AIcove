@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'smooth_clip.dart';
-import '../utils/role_transition_tags.dart';
-import '../utils/blurred_background_cache.dart';
+import '../../../core/utils/role_transition_tags.dart';
+import '../../../core/utils/blurred_background_cache.dart';
 
 /// 角色背景 Hero 组件
 ///

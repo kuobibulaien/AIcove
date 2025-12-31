@@ -3,8 +3,8 @@
 /// 更新记录：
 /// - 2025-12-06: 接入皮肤系统
 import 'package:flutter/material.dart';
-import '../../../../core/theme/skin_provider.dart';
-import '../../../../core/theme/tokens.dart';
+import '../../../../ui/theme/skin_provider.dart';
+import '../../../../ui/theme/tokens.dart';
 
 /// 自定义底部导航栏
 class CustomBottomNav extends StatelessWidget {

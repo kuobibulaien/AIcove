@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers2.dart';
 import '../../domain/conversation.dart';
-import '../../../../core/theme/tokens.dart';
+import '../../../../ui/theme/tokens.dart';
 import 'character_list_item.dart';
 
 class Sidebar extends ConsumerWidget {

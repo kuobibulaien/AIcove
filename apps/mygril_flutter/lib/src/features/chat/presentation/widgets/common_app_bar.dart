@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../../../../core/theme/tokens.dart';
+import '../../../../ui/theme/tokens.dart';
 
 /// 公共AppBar组件 - 统一应用中所有页面的AppBar样式（应用DRY原则）
 class CommonAppBar extends StatelessWidget implements PreferredSizeWidget {

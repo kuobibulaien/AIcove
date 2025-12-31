@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../../core/theme/tokens.dart';
-import '../../../../core/widgets/image_crop_dialog.dart';
+import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/widgets/image_crop_dialog.dart';
 import '../../domain/conversation.dart';
 import '../../../../core/utils/data_image.dart';
 import '../widgets/contact_edit_dialog.dart';

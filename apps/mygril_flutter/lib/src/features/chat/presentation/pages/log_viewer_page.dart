@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../../../../core/api_logger.dart';
 import '../../../../core/app_logger.dart';
-import '../../../../core/theme/tokens.dart';
+import '../../../../ui/theme/tokens.dart';
 
 class LogViewerPage extends StatefulWidget {
   const LogViewerPage({super.key});

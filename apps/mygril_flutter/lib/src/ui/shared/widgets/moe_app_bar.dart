@@ -12,8 +12,8 @@
 /// - 2025-12-06: 接入皮肤系统
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import '../theme/skin_provider.dart';
-import '../theme/tokens.dart';
+import '../../theme/skin_provider.dart';
+import '../../theme/tokens.dart';
 
 /// MoeTalk 风格 AppBar
 /// 

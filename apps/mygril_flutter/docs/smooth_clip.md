@@ -1,16 +1,18 @@
-# iOS 风格平滑圆角组件 (Smooth Clip)
+# Figma 风格平滑圆角组件 (Smooth Clip)
 
 ## 概述
 
-本组件提供 iOS 风格的**平滑圆角**（Squircle / Continuous Corner）效果，区别于 Flutter 默认的标准圆角。
+本组件提供 **Figma/iOS 风格的 G2 曲率连续平滑圆角**（Squircle）效果，区别于 Flutter 默认的标准圆角。
+
+> **2025-12-28 升级说明**：组件已从 `ContinuousRectangleBorder` 升级为 `figma_squircle` 包，实现真正的 G2 曲率连续算法，与 Figma 设计工具完全一致。
 
 ### 视觉差异
 
-| 标准圆角 | 平滑圆角 |
-|---------|---------|
-| `BorderRadius.circular()` | `SmoothClipRRect` |
-| 圆弧与直边交接处有明显拐点 | 圆弧与直边平滑过渡，无拐点 |
-| 适合一般 UI 元素 | 适合 iOS 风格卡片、相册封面 |
+| 类型 | 实现 | 特点 |
+|------|------|------|
+| 标准圆角 | `BorderRadius.circular()` | 圆弧与直边交接处有明显拐点 |
+| ~~ContinuousRectangleBorder~~ | ~~超椭圆曲线~~ | ~~近似平滑，但非 G2 连续~~（已弃用） |
+| **平滑圆角** | `SmoothClipRRect` | **G2 曲率连续**，与 Figma 一致 |
 
 ---
 
@@ -19,6 +21,11 @@
 ### 文件位置
 ```
 lib/src/core/widgets/smooth_clip.dart
+```
+
+### 依赖
+```yaml
+figma_squircle: ^0.6.3
 ```
 
 ### 组件列表
@@ -40,7 +47,8 @@ import '../../../../core/widgets/smooth_clip.dart';
 
 // 包裹任意 Widget，实现平滑圆角裁剪
 SmoothClipRRect(
-  radius: 12.0,  // 圆角半径，与标准 BorderRadius 使用相同的值
+  radius: 12.0,  // 圆角半径
+  // smoothing: 0.6,  // 可选，平滑度 (0.0-1.0)，默认 0.6 = iOS 风格
   child: Container(
     color: Colors.blue,
     child: YourContent(),
@@ -48,7 +56,26 @@ SmoothClipRRect(
 )
 ```
 
-### 2. 与展开动画配合使用
+### 2. 平滑度参数
+
+`smoothing` 参数控制曲线的平滑程度：
+
+| 值 | 效果 | 说明 |
+|----|------|------|
+| 0.0 | 标准圆角 | 与 `BorderRadius.circular` 相同 |
+| **0.6** | **iOS 风格** | **默认值**，与 Figma 60% corner smoothing 相同 |
+| 1.0 | 最大平滑 | 完全的 squircle（似乎过于圆润） |
+
+```dart
+// 完全平滑的 squircle
+SmoothClipRRect(
+  radius: 20.0,
+  smoothing: 1.0,  // 最大平滑
+  child: YourWidget(),
+)
+```
+
+### 3. 与展开动画配合使用
 
 `ExpandingPageRoute` 内部已使用平滑圆角，确保动画过渡时圆角样式一致：
 
@@ -71,14 +98,38 @@ onTap: () {
 }
 ```
 
-### 3. 自定义 ClipPath
+### 4. 自定义 ClipPath
 
 如果需要更细粒度的控制：
 
 ```dart
 ClipPath(
-  clipper: SmoothRectClipper(radius: 16.0),
+  clipper: SmoothRectClipper(
+    radius: 16.0,
+    smoothing: 0.6,  // 可选
+  ),
   child: YourWidget(),
+)
+```
+
+### 5. 装饰用法
+
+```dart
+Container(
+  decoration: SmoothRectDecoration(
+    radius: 16.0,
+    smoothing: 0.6,
+    color: Colors.white,
+    border: Border.all(color: Colors.grey),
+    boxShadow: [
+      BoxShadow(
+        color: Colors.black26,
+        blurRadius: 8,
+        offset: Offset(0, 2),
+      ),
+    ],
+  ),
+  child: YourContent(),
 )
 ```
 
@@ -86,25 +137,22 @@ ClipPath(
 
 ## 技术原理
 
-### ContinuousRectangleBorder
+### G2 曲率连续
 
-Flutter 提供的 `ContinuousRectangleBorder` 使用超椭圆曲线（Superellipse）生成路径，
-与 iOS 的 `UIBezierPath(roundedRect:cornerRadius:)` 视觉效果一致。
+G2 曲率连续意味着：
+- **G0**：曲线位置连续（普通圆角也满足）
+- **G1**：切线方向连续（曲线平滑）
+- **G2**：**曲率也连续**（曲线的弯曲程度平滑过渡）
 
-### 转换系数
+传统圆角在直线和圆弧交接处，曲率从 0 突变到 1/r，视觉上有"拐点感"。
+G2 连续圆角通过贝塞尔曲线使曲率渐变，视觉更加自然柔和。
 
-`ContinuousRectangleBorder` 需要更大的圆角值才能达到与标准圆角相同的视觉效果。
-本组件内部使用 **2.35** 作为转换系数：
+### figma_squircle 实现
 
-```dart
-// 内部实现
-final shape = ContinuousRectangleBorder(
-  borderRadius: BorderRadius.circular(radius * 2.35),
-);
-```
-
-这意味着你传入 `radius: 12.0`，实际生成的路径使用 `12.0 * 2.35 = 28.2` 的圆角值，
-但视觉上与标准 `BorderRadius.circular(12.0)` 大小接近，只是更加平滑。
+`figma_squircle` 包使用与 Figma 相同的算法：
+- 组合两段贝塞尔曲线和一段圆弧
+- `cornerSmoothing` 参数对应 Figma 的 "Corner Smoothing" 滑块
+- 0.6 (60%) 是 iOS 系统 UI 使用的标准值
 
 ---
 
@@ -118,6 +166,8 @@ final shape = ContinuousRectangleBorder(
 | 表情包管理 | 展开动画 | 与卡片圆角一致 |
 | 角色卡 | 海报卡片 | 视觉更精致 |
 | 角色卡 | 展开动画 | 与卡片圆角一致 |
+| 毛玻璃卡片 | FrostedGlassCard | iOS 风格毛玻璃 |
+| 渐变模糊卡片 | GradientBlurCard | 统一圆角风格 |
 
 ---
 
@@ -135,4 +185,6 @@ final shape = ContinuousRectangleBorder(
 
 ## 更新记录
 
+- **2025-12-28**：升级为 `figma_squircle` 包，实现真正的 G2 曲率连续算法
+- **2025-12-25**：修复 `SmoothRectDecoration` 描边问题
 - **2025-12-03**：创建组件，用于表情包管理页面和角色卡页面

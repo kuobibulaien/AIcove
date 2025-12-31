@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../../core/theme/tokens.dart';
+import '../../../../ui/theme/tokens.dart';
 import '../../../../core/models/message_block.dart';
 import '../../../plugins/plugin_providers.dart';
 import '../../../plugins/tts/tts_config.dart';

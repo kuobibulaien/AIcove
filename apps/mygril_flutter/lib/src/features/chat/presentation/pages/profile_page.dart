@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import '../../../../core/theme/tokens.dart';
-import '../../../../core/widgets/moe_app_bar.dart';
+import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/widgets/moe_app_bar.dart';
 import '../widgets/profile_content.dart';
 
 /// 我的页面

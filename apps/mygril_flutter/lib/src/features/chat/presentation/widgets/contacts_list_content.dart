@@ -5,7 +5,7 @@ import 'package:flutter_slidable/flutter_slidable.dart';
 import '../../providers2.dart';
 import 'character_list_item.dart';
 import 'momotalk_sort_dialog.dart';
-import '../../../../core/theme/tokens.dart';
+import '../../../../ui/theme/tokens.dart';
 
 /// 联系人列表内容组件 - 纯内容展示，无AppBar（应用DRY原则）
 /// 可复用于小屏和大屏布局

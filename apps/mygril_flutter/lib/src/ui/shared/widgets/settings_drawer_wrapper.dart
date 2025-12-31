@@ -9,7 +9,8 @@
 // - 2025-12-02: 简化为全屏覆盖效果
 // - 2025-12-08: 添加视差滑动动画和返回手势支持
 import 'package:flutter/material.dart';
-import '../theme/tokens.dart';
+import '../../theme/skin_provider.dart';
+import '../../theme/tokens.dart';
 
 /// 设置覆盖层包装器 - 实现视差滑动效果（从左侧打开）
 class SettingsDrawerWrapper extends StatefulWidget {

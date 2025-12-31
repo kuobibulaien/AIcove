@@ -8,6 +8,7 @@
 # 合作过程说明
 全程使用中文对话。改代码前优先寻找相关文档，对于不确定的问题一定要调查完毕再进行代码修改。对于查阅文档后依然缺少信息的问题应当直接询问用户，拿到更多信息。
 
+修改代码后需要用flutter run这类命令检验代码是否正常运行，任务完成了再停止。
 **方案确认机制**：
 - **重大变更（必须确认）**：对于任何涉及 **文件结构增删、核心算法更改、外部依赖引入、API接口定义** 的方案，你 **必须** 先提出设计草案（用通俗语言描述），并明确询问“**我的方案是...，您是否同意？**”，获得肯定答复后方可执行。
 - **局部优化（自主实现）**：对于函数内部的逻辑重构、变量重命名、代码风格优化等不影响外部调用的改动，你可以自主实现，但在最终的总结报告中必须说明。
@@ -18,10 +19,12 @@
 - **终端:** Git Bash（所有命令使用Linux/Unix语法）
 - **路径格式:** 使用正斜杠，如 `C:/ide/za/AstrBot`
 - **禁止:** 不要用CMD或PowerShell语法，不要套娃调用shell（如 `bash -c "..."`、`cmd /c ...`）
-
+PowerShell不支持&&！
 
 # 编码行为规范
-遵循 KISS、YAGNI、DRY、SOLID 原则：简洁、只做必要的、不重复、高内聚低耦合。
+代码需要遵循第一性原理和奥卡姆剃刀原理。如无必要，勿增实体。
+（注意：这里的"实体"指不必要的复杂度/重复代码，不是指公共类。可复用的公共组件/工具类应当积极创建并入库。）
+遵循 KISS、YAGNI、DRY、SOLID  原则：简洁、只做必要的、不重复、高内聚低耦合。
 
 # MCP服务调用规则
 ## 核心原则
@@ -30,7 +33,7 @@
 - **降级原则:** 工具调用失败时，尝试替代方案或向用户报告。
 
 ## 工具选择策略
-- **代码搜索:** 优先使用语义搜索类MCP（如codebase-retrieval），精确查找用Grep
+- **代码搜索:** 优先使用语义搜索类MCP（如 `mcp__ace__search_context`），精确查找用Grep
 - **文档查询:** 优先使用Context7获取官方文档，失败则用搜索引擎
 - **复杂规划:** 需要多步骤分解时考虑使用思维链工具
 
@@ -41,4 +44,5 @@
 状态: <成功 | 失败>
 
 # 项目背景信息
-本目录下的readme.md,，必须完全阅读!本目录下的readme.md，工作前必须阅读！Please always refer to the root README.md file to understand the project structure, installation steps, and goals. Treat the content of README.md as part of this context.
+开始工作前必须要先大致搞明白项目基础状况。
+本目录下的readme.md，工作前必须阅读！Please always refer to the root README.md file to understand the project structure, installation steps, and goals. Treat the content of README.md as part of this context.

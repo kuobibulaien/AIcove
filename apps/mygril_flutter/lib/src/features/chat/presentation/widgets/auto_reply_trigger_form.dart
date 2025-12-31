@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../../core/theme/tokens.dart';
+import '../../../../ui/theme/tokens.dart';
 import '../../data/auto_reply_trigger.dart';
 import '../../data/auto_reply_trigger_controller.dart';
 import '../../providers2.dart';

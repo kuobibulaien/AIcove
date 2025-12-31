@@ -4,8 +4,8 @@
 /// - 2025-12-06: 接入皮肤系统（背景色、描边）
 import 'package:flutter/material.dart';
 import 'package:mygril_flutter/src/core/utils/data_image.dart';
-import '../../../../core/theme/skin_provider.dart';
-import '../../../../core/theme/tokens.dart';
+import '../../../../ui/theme/skin_provider.dart';
+import '../../../../ui/theme/tokens.dart';
 
 import '../../domain/conversation.dart';
 

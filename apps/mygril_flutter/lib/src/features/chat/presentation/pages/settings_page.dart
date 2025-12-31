@@ -11,10 +11,10 @@
 // - 2025-12-06: 使用 MoeAppBar 替换原有 AppBar 样式
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../../core/theme/tokens.dart';
-import '../../../../core/widgets/moe_app_bar.dart';
-import '../../../../core/widgets/moe_toast.dart';
-import '../../../../core/widgets/parallax_slide_page_route.dart';
+import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/widgets/moe_app_bar.dart';
+import '../../../../ui/shared/widgets/moe_toast.dart';
+import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../settings/app_settings.dart';
 import 'package:mygril_flutter/src/features/chat/presentation/pages/model_list_page.dart';
 

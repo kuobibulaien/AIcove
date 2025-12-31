@@ -9,9 +9,9 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
-import '../../../../core/theme/skin_provider.dart';
-import '../../../../core/theme/tokens.dart';
-import '../../../../core/widgets/moe_toast.dart';
+import '../../../../ui/theme/skin_provider.dart';
+import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/widgets/moe_toast.dart';
 import '../../../settings/app_settings.dart';
 
 /// 消息输入组件

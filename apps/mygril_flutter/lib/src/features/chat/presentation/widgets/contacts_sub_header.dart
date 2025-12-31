@@ -12,8 +12,8 @@
 /// - 2025-12-06: 接入皮肤系统
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../../core/theme/skin_provider.dart';
-import '../../../../core/theme/tokens.dart';
+import '../../../../ui/theme/skin_provider.dart';
+import '../../../../ui/theme/tokens.dart';
 import '../../providers2.dart';
 import 'momotalk_sort_dialog.dart';
 

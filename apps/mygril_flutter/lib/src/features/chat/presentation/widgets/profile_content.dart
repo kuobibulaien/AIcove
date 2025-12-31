@@ -5,10 +5,10 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../../core/theme/tokens.dart';
+import '../../../../ui/theme/tokens.dart';
 import '../../../../core/utils/data_image.dart';
-import '../../../../core/widgets/image_crop_dialog.dart';
-import '../../../../core/widgets/parallax_slide_page_route.dart';
+import '../../../../ui/shared/widgets/image_crop_dialog.dart';
+import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../settings/app_settings.dart';
 import '../pages/log_viewer_page.dart';
 

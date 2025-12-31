@@ -12,7 +12,7 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 
-import '../theme/tokens.dart';
+import '../../theme/tokens.dart';
 import 'smooth_clip.dart';
 
 /// 渐变高斯模糊卡片

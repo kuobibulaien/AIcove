@@ -6,6 +6,7 @@ class Conversation {
   final String displayName;
   final String? avatarUrl;
   final String? characterImage; // 角色立绘/参考图路径
+  final String? blurredBackground; // 模糊背景图（base64）
   final String? selfAddress; // 角色的自称（例如：我、本小姐、奴家等）
   final String? addressUser; // 角色对"我"的称呼（例如：老师、先生、主人等）
   final String? voiceFile; // 音色文件路径/数据（用于 TTS）
@@ -31,6 +32,7 @@ class Conversation {
     required this.displayName,
     this.avatarUrl,
     this.characterImage,
+    this.blurredBackground,
     this.selfAddress,
     this.addressUser,
     this.voiceFile,
@@ -55,6 +57,7 @@ class Conversation {
     String? displayName,
     String? avatarUrl,
     String? characterImage,
+    String? blurredBackground,
     String? selfAddress,
     String? addressUser,
     String? voiceFile,
@@ -78,6 +81,7 @@ class Conversation {
       displayName: displayName ?? this.displayName,
       avatarUrl: avatarUrl ?? this.avatarUrl,
       characterImage: characterImage ?? this.characterImage,
+      blurredBackground: blurredBackground ?? this.blurredBackground,
       selfAddress: selfAddress ?? this.selfAddress,
       addressUser: addressUser ?? this.addressUser,
       voiceFile: voiceFile ?? this.voiceFile,

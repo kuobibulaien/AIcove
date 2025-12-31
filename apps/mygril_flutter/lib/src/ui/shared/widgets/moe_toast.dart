@@ -12,7 +12,7 @@
 /// - 2025-12-06: 接入皮肤系统
 import 'dart:async';
 import 'package:flutter/material.dart';
-import '../theme/skin_provider.dart';
+import '../../theme/skin_provider.dart';
 
 /// Toast 类型枚举
 enum ToastType { info, success, error, warning }

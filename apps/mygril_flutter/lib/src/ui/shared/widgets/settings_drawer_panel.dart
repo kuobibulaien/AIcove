@@ -7,9 +7,9 @@
 /// - 2025-12-06: 接入皮肤系统
 /// - 2025-12-07: 使用 MoeAppBar 替换自定义头部，统一 AppBar 高度
 import 'package:flutter/material.dart';
-import '../theme/tokens.dart';
+import '../../theme/tokens.dart';
 import 'moe_app_bar.dart';
-import '../../features/chat/presentation/pages/settings_page.dart';
+import '../../../features/chat/presentation/pages/settings_page.dart';
 
 /// 设置抽屉面板内容组件
 /// 

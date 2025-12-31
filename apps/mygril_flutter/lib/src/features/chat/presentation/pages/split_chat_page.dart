@@ -8,9 +8,9 @@ import 'package:mygril_flutter/src/features/chat/presentation/widgets/contacts_s
 import 'role_card_page.dart';
 import '../widgets/profile_content.dart';
 import '../widgets/custom_bottom_nav.dart';
-import '../../../../core/theme/tokens.dart';
-import '../../../../core/widgets/settings_drawer_wrapper.dart';
-import '../../../../core/widgets/settings_drawer_panel.dart';
+import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/widgets/settings_drawer_wrapper.dart';
+import '../../../../ui/shared/widgets/settings_drawer_panel.dart';
 import 'package:mygril_flutter/src/features/chat/presentation/widgets/momotalk_sort_dialog.dart';
 
 class SplitChatPage extends ConsumerStatefulWidget {

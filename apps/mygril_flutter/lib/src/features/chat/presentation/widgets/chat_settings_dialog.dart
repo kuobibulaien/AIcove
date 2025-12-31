@@ -1,7 +1,7 @@
-﻿import 'package:flutter/material.dart';
-import '../../../../core/theme/tokens.dart';
+import 'package:flutter/material.dart';
+import '../../../../ui/theme/tokens.dart';
 import '../../../../core/utils/data_image.dart';
-import '../../../../core/widgets/parallax_slide_page_route.dart';
+import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../domain/conversation.dart';
 
 class ChatSettingsPage extends StatelessWidget {

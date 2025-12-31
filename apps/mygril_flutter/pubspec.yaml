@@ -20,6 +20,7 @@ dependencies:
   crop_your_image: ^2.0.0
   uuid: ^4.2.1  # 用于生成Block和Message的唯一ID
   flutter_slidable: ^3.1.0  # 用于联系人卡片的左滑操作
+  figma_squircle: ^0.6.3    # Figma 风格平滑圆角 (G2曲率连续)
   flutter_local_notifications: ^17.0.0 # 本地通知
   timezone: ^0.9.2 # 时区支持
   # 云同步相关

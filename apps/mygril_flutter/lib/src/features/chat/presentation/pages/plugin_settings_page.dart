@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../../core/theme/tokens.dart';
-import '../../../../core/widgets/parallax_slide_page_route.dart';
+import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../plugins/plugin_providers.dart';
 import 'memory_plugin_detail_page.dart';
 import 'tts_plugin_detail_page.dart';

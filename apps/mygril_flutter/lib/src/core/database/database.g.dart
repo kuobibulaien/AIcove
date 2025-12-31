@@ -37,6 +37,12 @@ class $ConversationsTable extends Conversations
   late final GeneratedColumn<String> characterImage = GeneratedColumn<String>(
       'character_image', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _blurredBackgroundMeta =
+      const VerificationMeta('blurredBackground');
+  @override
+  late final GeneratedColumn<String> blurredBackground =
+      GeneratedColumn<String>('blurred_background', aliasedName, true,
+          type: DriftSqlType.string, requiredDuringInsert: false);
   static const VerificationMeta _selfAddressMeta =
       const VerificationMeta('selfAddress');
   @override
@@ -184,6 +190,7 @@ class $ConversationsTable extends Conversations
         displayName,
         avatarUrl,
         characterImage,
+        blurredBackground,
         selfAddress,
         addressUser,
         voiceFile,
@@ -243,6 +250,12 @@ class $ConversationsTable extends Conversations
           _characterImageMeta,
           characterImage.isAcceptableOrUnknown(
               data['character_image']!, _characterImageMeta));
+    }
+    if (data.containsKey('blurred_background')) {
+      context.handle(
+          _blurredBackgroundMeta,
+          blurredBackground.isAcceptableOrUnknown(
+              data['blurred_background']!, _blurredBackgroundMeta));
     }
     if (data.containsKey('self_address')) {
       context.handle(
@@ -373,6 +386,8 @@ class $ConversationsTable extends Conversations
           .read(DriftSqlType.string, data['${effectivePrefix}avatar_url']),
       characterImage: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}character_image']),
+      blurredBackground: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}blurred_background']),
       selfAddress: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}self_address']),
       addressUser: attachedDatabase.typeMapping
@@ -429,6 +444,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
   final String displayName;
   final String? avatarUrl;
   final String? characterImage;
+  final String? blurredBackground;
   final String? selfAddress;
   final String? addressUser;
   final String? voiceFile;
@@ -455,6 +471,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       required this.displayName,
       this.avatarUrl,
       this.characterImage,
+      this.blurredBackground,
       this.selfAddress,
       this.addressUser,
       this.voiceFile,
@@ -486,6 +503,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
     }
     if (!nullToAbsent || characterImage != null) {
       map['character_image'] = Variable<String>(characterImage);
+    }
+    if (!nullToAbsent || blurredBackground != null) {
+      map['blurred_background'] = Variable<String>(blurredBackground);
     }
     if (!nullToAbsent || selfAddress != null) {
       map['self_address'] = Variable<String>(selfAddress);
@@ -545,6 +565,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       characterImage: characterImage == null && nullToAbsent
           ? const Value.absent()
           : Value(characterImage),
+      blurredBackground: blurredBackground == null && nullToAbsent
+          ? const Value.absent()
+          : Value(blurredBackground),
       selfAddress: selfAddress == null && nullToAbsent
           ? const Value.absent()
           : Value(selfAddress),
@@ -601,6 +624,8 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       displayName: serializer.fromJson<String>(json['displayName']),
       avatarUrl: serializer.fromJson<String?>(json['avatarUrl']),
       characterImage: serializer.fromJson<String?>(json['characterImage']),
+      blurredBackground:
+          serializer.fromJson<String?>(json['blurredBackground']),
       selfAddress: serializer.fromJson<String?>(json['selfAddress']),
       addressUser: serializer.fromJson<String?>(json['addressUser']),
       voiceFile: serializer.fromJson<String?>(json['voiceFile']),
@@ -634,6 +659,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       'displayName': serializer.toJson<String>(displayName),
       'avatarUrl': serializer.toJson<String?>(avatarUrl),
       'characterImage': serializer.toJson<String?>(characterImage),
+      'blurredBackground': serializer.toJson<String?>(blurredBackground),
       'selfAddress': serializer.toJson<String?>(selfAddress),
       'addressUser': serializer.toJson<String?>(addressUser),
       'voiceFile': serializer.toJson<String?>(voiceFile),
@@ -663,6 +689,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           String? displayName,
           Value<String?> avatarUrl = const Value.absent(),
           Value<String?> characterImage = const Value.absent(),
+          Value<String?> blurredBackground = const Value.absent(),
           Value<String?> selfAddress = const Value.absent(),
           Value<String?> addressUser = const Value.absent(),
           Value<String?> voiceFile = const Value.absent(),
@@ -690,6 +717,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
         avatarUrl: avatarUrl.present ? avatarUrl.value : this.avatarUrl,
         characterImage:
             characterImage.present ? characterImage.value : this.characterImage,
+        blurredBackground: blurredBackground.present
+            ? blurredBackground.value
+            : this.blurredBackground,
         selfAddress: selfAddress.present ? selfAddress.value : this.selfAddress,
         addressUser: addressUser.present ? addressUser.value : this.addressUser,
         voiceFile: voiceFile.present ? voiceFile.value : this.voiceFile,
@@ -731,6 +761,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       characterImage: data.characterImage.present
           ? data.characterImage.value
           : this.characterImage,
+      blurredBackground: data.blurredBackground.present
+          ? data.blurredBackground.value
+          : this.blurredBackground,
       selfAddress:
           data.selfAddress.present ? data.selfAddress.value : this.selfAddress,
       addressUser:
@@ -782,6 +815,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           ..write('displayName: $displayName, ')
           ..write('avatarUrl: $avatarUrl, ')
           ..write('characterImage: $characterImage, ')
+          ..write('blurredBackground: $blurredBackground, ')
           ..write('selfAddress: $selfAddress, ')
           ..write('addressUser: $addressUser, ')
           ..write('voiceFile: $voiceFile, ')
@@ -813,6 +847,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
         displayName,
         avatarUrl,
         characterImage,
+        blurredBackground,
         selfAddress,
         addressUser,
         voiceFile,
@@ -843,6 +878,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           other.displayName == this.displayName &&
           other.avatarUrl == this.avatarUrl &&
           other.characterImage == this.characterImage &&
+          other.blurredBackground == this.blurredBackground &&
           other.selfAddress == this.selfAddress &&
           other.addressUser == this.addressUser &&
           other.voiceFile == this.voiceFile &&
@@ -871,6 +907,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
   final Value<String> displayName;
   final Value<String?> avatarUrl;
   final Value<String?> characterImage;
+  final Value<String?> blurredBackground;
   final Value<String?> selfAddress;
   final Value<String?> addressUser;
   final Value<String?> voiceFile;
@@ -898,6 +935,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     this.displayName = const Value.absent(),
     this.avatarUrl = const Value.absent(),
     this.characterImage = const Value.absent(),
+    this.blurredBackground = const Value.absent(),
     this.selfAddress = const Value.absent(),
     this.addressUser = const Value.absent(),
     this.voiceFile = const Value.absent(),
@@ -926,6 +964,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     required String displayName,
     this.avatarUrl = const Value.absent(),
     this.characterImage = const Value.absent(),
+    this.blurredBackground = const Value.absent(),
     this.selfAddress = const Value.absent(),
     this.addressUser = const Value.absent(),
     this.voiceFile = const Value.absent(),
@@ -958,6 +997,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     Expression<String>? displayName,
     Expression<String>? avatarUrl,
     Expression<String>? characterImage,
+    Expression<String>? blurredBackground,
     Expression<String>? selfAddress,
     Expression<String>? addressUser,
     Expression<String>? voiceFile,
@@ -986,6 +1026,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       if (displayName != null) 'display_name': displayName,
       if (avatarUrl != null) 'avatar_url': avatarUrl,
       if (characterImage != null) 'character_image': characterImage,
+      if (blurredBackground != null) 'blurred_background': blurredBackground,
       if (selfAddress != null) 'self_address': selfAddress,
       if (addressUser != null) 'address_user': addressUser,
       if (voiceFile != null) 'voice_file': voiceFile,
@@ -1017,6 +1058,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       Value<String>? displayName,
       Value<String?>? avatarUrl,
       Value<String?>? characterImage,
+      Value<String?>? blurredBackground,
       Value<String?>? selfAddress,
       Value<String?>? addressUser,
       Value<String?>? voiceFile,
@@ -1044,6 +1086,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       displayName: displayName ?? this.displayName,
       avatarUrl: avatarUrl ?? this.avatarUrl,
       characterImage: characterImage ?? this.characterImage,
+      blurredBackground: blurredBackground ?? this.blurredBackground,
       selfAddress: selfAddress ?? this.selfAddress,
       addressUser: addressUser ?? this.addressUser,
       voiceFile: voiceFile ?? this.voiceFile,
@@ -1085,6 +1128,9 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     }
     if (characterImage.present) {
       map['character_image'] = Variable<String>(characterImage.value);
+    }
+    if (blurredBackground.present) {
+      map['blurred_background'] = Variable<String>(blurredBackground.value);
     }
     if (selfAddress.present) {
       map['self_address'] = Variable<String>(selfAddress.value);
@@ -1161,6 +1207,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
           ..write('displayName: $displayName, ')
           ..write('avatarUrl: $avatarUrl, ')
           ..write('characterImage: $characterImage, ')
+          ..write('blurredBackground: $blurredBackground, ')
           ..write('selfAddress: $selfAddress, ')
           ..write('addressUser: $addressUser, ')
           ..write('voiceFile: $voiceFile, ')
@@ -4992,6 +5039,7 @@ typedef $$ConversationsTableCreateCompanionBuilder = ConversationsCompanion
   required String displayName,
   Value<String?> avatarUrl,
   Value<String?> characterImage,
+  Value<String?> blurredBackground,
   Value<String?> selfAddress,
   Value<String?> addressUser,
   Value<String?> voiceFile,
@@ -5021,6 +5069,7 @@ typedef $$ConversationsTableUpdateCompanionBuilder = ConversationsCompanion
   Value<String> displayName,
   Value<String?> avatarUrl,
   Value<String?> characterImage,
+  Value<String?> blurredBackground,
   Value<String?> selfAddress,
   Value<String?> addressUser,
   Value<String?> voiceFile,
@@ -5088,6 +5137,10 @@ class $$ConversationsTableFilterComposer
 
   ColumnFilters<String> get characterImage => $composableBuilder(
       column: $table.characterImage,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get blurredBackground => $composableBuilder(
+      column: $table.blurredBackground,
       builder: (column) => ColumnFilters(column));
 
   ColumnFilters<String> get selfAddress => $composableBuilder(
@@ -5203,6 +5256,10 @@ class $$ConversationsTableOrderingComposer
       column: $table.characterImage,
       builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<String> get blurredBackground => $composableBuilder(
+      column: $table.blurredBackground,
+      builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<String> get selfAddress => $composableBuilder(
       column: $table.selfAddress, builder: (column) => ColumnOrderings(column));
 
@@ -5294,6 +5351,9 @@ class $$ConversationsTableAnnotationComposer
 
   GeneratedColumn<String> get characterImage => $composableBuilder(
       column: $table.characterImage, builder: (column) => column);
+
+  GeneratedColumn<String> get blurredBackground => $composableBuilder(
+      column: $table.blurredBackground, builder: (column) => column);
 
   GeneratedColumn<String> get selfAddress => $composableBuilder(
       column: $table.selfAddress, builder: (column) => column);
@@ -5405,6 +5465,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             Value<String> displayName = const Value.absent(),
             Value<String?> avatarUrl = const Value.absent(),
             Value<String?> characterImage = const Value.absent(),
+            Value<String?> blurredBackground = const Value.absent(),
             Value<String?> selfAddress = const Value.absent(),
             Value<String?> addressUser = const Value.absent(),
             Value<String?> voiceFile = const Value.absent(),
@@ -5433,6 +5494,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             displayName: displayName,
             avatarUrl: avatarUrl,
             characterImage: characterImage,
+            blurredBackground: blurredBackground,
             selfAddress: selfAddress,
             addressUser: addressUser,
             voiceFile: voiceFile,
@@ -5461,6 +5523,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             required String displayName,
             Value<String?> avatarUrl = const Value.absent(),
             Value<String?> characterImage = const Value.absent(),
+            Value<String?> blurredBackground = const Value.absent(),
             Value<String?> selfAddress = const Value.absent(),
             Value<String?> addressUser = const Value.absent(),
             Value<String?> voiceFile = const Value.absent(),
@@ -5489,6 +5552,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             displayName: displayName,
             avatarUrl: avatarUrl,
             characterImage: characterImage,
+            blurredBackground: blurredBackground,
             selfAddress: selfAddress,
             addressUser: addressUser,
             voiceFile: voiceFile,

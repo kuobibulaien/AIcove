@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../../core/theme/tokens.dart';
-import '../../../../core/widgets/expanding_page_route.dart';
-import '../../../../core/widgets/moe_toast.dart';
-import '../../../../core/widgets/smooth_clip.dart';
+import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/animations/expanding_page_route.dart';
+import '../../../../ui/shared/widgets/moe_toast.dart';
+import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../plugins/plugin_providers.dart';
 import '../../../stickers/sticker_registry.dart';
 

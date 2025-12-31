@@ -5,8 +5,8 @@ import '../../providers2.dart';
 import 'package:mygril_flutter/src/features/chat/presentation/widgets/contacts_list_content.dart';
 import 'package:mygril_flutter/src/features/chat/presentation/widgets/contacts_sub_header.dart';
 import 'package:mygril_flutter/src/features/chat/presentation/widgets/momotalk_sort_dialog.dart';
-import '../../../../core/theme/tokens.dart';
-import '../../../../core/widgets/settings_drawer_wrapper.dart';
+import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/widgets/settings_drawer_wrapper.dart';
 
 class ContactsPage extends ConsumerStatefulWidget {
   const ContactsPage({super.key});

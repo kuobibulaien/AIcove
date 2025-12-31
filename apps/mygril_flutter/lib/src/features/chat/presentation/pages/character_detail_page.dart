@@ -1,15 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import '../../../../core/theme/tokens.dart';
+import '../../../../ui/theme/tokens.dart';
 import '../../../../core/utils/data_image.dart';
 import '../../../../core/utils/role_transition_tags.dart';
 import '../../../../core/utils/blurred_background_cache.dart';
-import '../../../../core/widgets/frosted_glass_card.dart';
+import '../../../../ui/shared/effects/frosted_glass_card.dart';
 import '../../domain/conversation.dart';
 import 'contact_edit_page.dart';
 import '../../providers2.dart';
-import '../../../../core/widgets/moe_toast.dart';
+import '../../../../ui/shared/widgets/moe_toast.dart';
 import '../widgets/contact_edit_dialog.dart';
 
 /// 角色详情页面
@@ -181,11 +181,14 @@ class CharacterDetailPage extends ConsumerWidget {
           },
         ),
         // 轻微玻璃提亮/压暗（与卡片一致）
-        Container(
-          color: isDark
-              ? Colors.black.withValues(alpha: 0.25)
-              : Colors.white.withValues(alpha: 0.22),
-        ),
+        Builder(builder: (context) {
+          final isDark = Theme.of(context).brightness == Brightness.dark;
+          return Container(
+            color: isDark
+                ? Colors.black.withValues(alpha: 0.25)
+                : Colors.white.withValues(alpha: 0.22),
+          );
+        }),
       ],
     );
   }

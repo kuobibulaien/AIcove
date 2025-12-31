@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../../core/theme/tokens.dart';
+import '../../../../ui/theme/tokens.dart';
 import '../../../../core/utils/message_formatter.dart';
-import '../../../../core/widgets/parallax_slide_page_route.dart';
+import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../settings/app_settings.dart';
 import 'chunk_settings_page.dart';
 import 'sticker_settings_page.dart';

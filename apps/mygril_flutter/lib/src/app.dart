@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'core/theme/tokens.dart';
+import 'ui/theme/tokens.dart';
 import 'features/chat/presentation/pages/main_page.dart';
 import 'features/chat/presentation/pages/chat_page.dart';
 import 'features/chat/presentation/pages/split_chat_page.dart';

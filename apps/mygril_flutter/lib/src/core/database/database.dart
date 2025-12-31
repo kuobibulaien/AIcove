@@ -18,6 +18,7 @@ class Conversations extends Table {
   TextColumn get displayName => text()();
   TextColumn get avatarUrl => text().nullable()();
   TextColumn get characterImage => text().nullable()();
+  TextColumn get blurredBackground => text().nullable()(); // 海报模糊背景图（base64）
   TextColumn get selfAddress => text().nullable()();
   TextColumn get addressUser => text().nullable()();
   TextColumn get voiceFile => text().nullable()();
@@ -230,7 +231,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration {
@@ -243,6 +244,10 @@ class AppDatabase extends _$AppDatabase {
         if (from < 2) {
           await m.createTable(memories);
           await m.createTable(memoryTombstones);
+        }
+        // v2 -> v3: 新增 blurredBackground 列
+        if (from < 3) {
+          await customStatement('ALTER TABLE conversations ADD COLUMN blurred_background TEXT');
         }
       },
     );

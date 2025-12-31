@@ -8,9 +8,9 @@ import 'package:mygril_flutter/src/features/chat/presentation/widgets/composer.d
 import 'package:mygril_flutter/src/features/chat/presentation/widgets/contact_edit_dialog.dart';
 import 'contact_edit_page.dart';
 import 'package:mygril_flutter/src/features/chat/presentation/widgets/chat_settings_dialog.dart';
-import '../../../../core/theme/tokens.dart';
-import '../../../../core/widgets/parallax_slide_page_route.dart';
-import '../../../../core/widgets/moe_toast.dart';
+import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
+import '../../../../ui/shared/widgets/moe_toast.dart';
 import '../../../settings/app_settings.dart';
 
 class ChatPage extends ConsumerWidget {
