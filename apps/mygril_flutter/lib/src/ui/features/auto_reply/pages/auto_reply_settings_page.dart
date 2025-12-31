@@ -4,11 +4,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
-import '../../../settings/app_settings.dart';
-import '../../../plugins/plugin_providers.dart';
-import '../../data/auto_reply_trigger.dart';
-import '../../data/auto_reply_trigger_controller.dart';
-import '../widgets/auto_reply_trigger_form.dart';
+import '../../../../features/settings/app_settings.dart';
+import '../../../../features/plugins/plugin_providers.dart';
+import '../../../../features/chat/data/auto_reply_trigger.dart';
+import '../../../../features/chat/data/auto_reply_trigger_controller.dart';
+import '../../../../features/chat/presentation/widgets/auto_reply_trigger_form.dart';
 import 'auto_reply_trigger_list_page.dart';
 
 class AutoReplySettingsPage extends ConsumerStatefulWidget {

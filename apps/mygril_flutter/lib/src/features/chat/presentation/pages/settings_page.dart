@@ -18,7 +18,7 @@ import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../settings/app_settings.dart';
 import 'package:mygril_flutter/src/features/chat/presentation/pages/model_list_page.dart';
 
-import 'auto_reply_settings_page.dart';
+import '../../../../ui/features/auto_reply/pages/auto_reply_settings_page.dart';
 import 'memory_plugin_detail_page.dart';
 import 'message_format_settings_page.dart';
 import 'ui_settings_page.dart';

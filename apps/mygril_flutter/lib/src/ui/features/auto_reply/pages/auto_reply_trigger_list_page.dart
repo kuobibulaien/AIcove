@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../ui/theme/tokens.dart';
-import '../../data/auto_reply_trigger.dart';
-import '../../data/auto_reply_trigger_controller.dart';
-import '../widgets/auto_reply_trigger_form.dart';
+import '../../../../features/chat/data/auto_reply_trigger.dart';
+import '../../../../features/chat/data/auto_reply_trigger_controller.dart';
+import '../../../../features/chat/presentation/widgets/auto_reply_trigger_form.dart';
 
 class AutoReplyTriggerListPage extends ConsumerWidget {
   const AutoReplyTriggerListPage({super.key});
