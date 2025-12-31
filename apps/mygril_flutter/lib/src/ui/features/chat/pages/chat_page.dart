@@ -1,17 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import '../../providers2.dart';
-import '../../domain/message.dart';
-import 'package:mygril_flutter/src/features/chat/presentation/widgets/message_bubble.dart';
-import 'package:mygril_flutter/src/features/chat/presentation/widgets/composer.dart';
-import 'package:mygril_flutter/src/features/chat/presentation/widgets/contact_edit_dialog.dart';
+import '../../../../features/chat/providers2.dart';
+import '../../../../features/chat/domain/message.dart';
+import '../../../../features/chat/presentation/widgets/message_bubble.dart';
+import '../../../../features/chat/presentation/widgets/composer.dart';
+import '../../../../features/chat/presentation/widgets/contact_edit_dialog.dart';
 import '../../../../ui/features/character/pages/contact_edit_page.dart';
-import 'package:mygril_flutter/src/features/chat/presentation/widgets/chat_settings_dialog.dart';
+import '../../../../features/chat/presentation/widgets/chat_settings_dialog.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../../ui/shared/widgets/moe_toast.dart';
-import '../../../settings/app_settings.dart';
+import '../../../../features/settings/app_settings.dart';
 
 class ChatPage extends ConsumerWidget {
   final String? conversationId;
