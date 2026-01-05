@@ -48,7 +48,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
   late final TextEditingController _avatarCtrl;
   late final TextEditingController _refImageCtrl;
   Uint8List? _avatarBytes;
-  Uint8List? _refImageBytes;
   bool _useSameImage = true; // 使用一致图像
   
   // 音色设置
@@ -72,10 +71,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     if (_avatarCtrl.text.isNotEmpty) {
       _avatarBytes = decodeDataImage(_avatarCtrl.text);
     }
-    if (_refImageCtrl.text.isNotEmpty) {
-      _refImageBytes = decodeDataImage(_refImageCtrl.text);
-    }
-    
     // 判断是否使用一致图像
     if (widget.isNew) {
       _useSameImage = true;
@@ -142,7 +137,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
                   width: 160,
                   height: 220,
                   decoration: BoxDecoration(
-                    color: colors.surfaceAlt.withOpacity(0.3),
+                    color: colors.surfaceAlt.withValues(alpha: 0.3),
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
                       color: colors.borderLight,
@@ -289,7 +284,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
         hintText: hint,
         hintStyle: TextStyle(color: colors.muted),
         filled: true,
-        fillColor: colors.surfaceAlt.withOpacity(0.3),
+        fillColor: colors.surfaceAlt.withValues(alpha: 0.3),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
           borderSide: BorderSide.none,
@@ -300,7 +295,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
   }
 
   Widget _buildDivider() {
-    return Divider(height: 1, color: context.moeColors.borderLight.withOpacity(0.3));
+    return Divider(height: 1, color: context.moeColors.borderLight.withValues(alpha: 0.3));
   }
 
   Future<void> _pickImage({required bool isAvatar}) async {
@@ -354,11 +349,9 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
           _avatarBytes = finalBytes;
           _avatarCtrl.text = dataUrl;
           if (_useSameImage) {
-            _refImageBytes = finalBytes;
             _refImageCtrl.text = dataUrl;
           }
         } else {
-          _refImageBytes = finalBytes;
           _refImageCtrl.text = dataUrl;
         }
       });
@@ -412,13 +405,13 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
       persona = persona + addressJson;
     }
 
-    // 音色文件转 base64
-    String? voiceFile;
-    if (_voiceFileBytes != null && _voiceFileName != null) {
-      voiceFile = buildDataImage(_voiceFileBytes!, fileName: _voiceFileName);
-    }
+    // 音色文件转 base64 (TODO: 后续使用)
+    // String? voiceFile;
+    // if (_voiceFileBytes != null && _voiceFileName != null) {
+    //   voiceFile = buildDataImage(_voiceFileBytes!, fileName: _voiceFileName);
+    // }
 
-    final selfAddress = _selfAddressCtrl.text.trim().isEmpty ? null : _selfAddressCtrl.text.trim();
+    // selfAddress 已通过 _buildAddressJson 处理，不需要单独变量
     final addressUser = _addressUserCtrl.text.trim().isEmpty ? null : _addressUserCtrl.text.trim();
 
     if (widget.isNew) {

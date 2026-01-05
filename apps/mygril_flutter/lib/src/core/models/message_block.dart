@@ -83,14 +83,11 @@ abstract class MessageBlock {
 /// 占位Block（未知类型）
 class PlaceholderBlock extends MessageBlock {
   PlaceholderBlock({
-    String? id,
-    required String messageId,
-    BlockStatus status = BlockStatus.pending,
+    super.id,
+    required super.messageId,
+    super.status = BlockStatus.pending,
   }) : super(
-          id: id,
-          messageId: messageId,
           type: BlockType.unknown,
-          status: status,
         );
 
   factory PlaceholderBlock.fromJson(Map<String, dynamic> json) {
@@ -120,15 +117,12 @@ class TextBlock extends MessageBlock {
   final String content;
 
   TextBlock({
-    String? id,
-    required String messageId,
+    super.id,
+    required super.messageId,
     required this.content,
-    BlockStatus status = BlockStatus.success,
+    super.status,
   }) : super(
-          id: id,
-          messageId: messageId,
           type: BlockType.mainText,
-          status: status,
         );
 
   factory TextBlock.fromJson(Map<String, dynamic> json) {
@@ -172,16 +166,13 @@ class ThinkingBlock extends MessageBlock {
   final int? durationMs;
 
   ThinkingBlock({
-    String? id,
-    required String messageId,
+    super.id,
+    required super.messageId,
     required this.content,
     this.durationMs,
-    BlockStatus status = BlockStatus.success,
+    super.status,
   }) : super(
-          id: id,
-          messageId: messageId,
           type: BlockType.thinking,
-          status: status,
         );
 
   factory ThinkingBlock.fromJson(Map<String, dynamic> json) {
@@ -230,22 +221,19 @@ class ImageBlock extends MessageBlock {
   final String? prompt;
 
   ImageBlock({
-    String? id,
-    required String messageId,
+    super.id,
+    required super.messageId,
     this.url,
     this.localPath,
     this.base64,
     this.width,
     this.height,
     this.prompt,
-    BlockStatus status = BlockStatus.success,
+    super.status,
   })  : assert(url != null || localPath != null || base64 != null,
             'At least one of url, localPath, or base64 must be provided'),
         super(
-          id: id,
-          messageId: messageId,
           type: BlockType.image,
-          status: status,
         );
 
   factory ImageBlock.fromJson(Map<String, dynamic> json) {
@@ -293,17 +281,14 @@ class AudioBlock extends MessageBlock {
   final double? durationSeconds;
 
   AudioBlock({
-    String? id,
-    required String messageId,
+    super.id,
+    required super.messageId,
     required this.url,
     this.text,
     this.durationSeconds,
-    BlockStatus status = BlockStatus.success,
+    super.status,
   }) : super(
-          id: id,
-          messageId: messageId,
           type: BlockType.audio,
-          status: status,
         );
 
   factory AudioBlock.fromJson(Map<String, dynamic> json) {
@@ -345,17 +330,14 @@ class ToolBlock extends MessageBlock {
   final Map<String, dynamic>? result;
 
   ToolBlock({
-    String? id,
-    required String messageId,
+    super.id,
+    required super.messageId,
     required this.toolName,
     this.arguments,
     this.result,
-    BlockStatus status = BlockStatus.success,
+    super.status,
   }) : super(
-          id: id,
-          messageId: messageId,
           type: BlockType.tool,
-          status: status,
         );
 
   factory ToolBlock.fromJson(Map<String, dynamic> json) {
@@ -394,16 +376,13 @@ class CodeBlock extends MessageBlock {
   final String language;
 
   CodeBlock({
-    String? id,
-    required String messageId,
+    super.id,
+    required super.messageId,
     required this.content,
     required this.language,
-    BlockStatus status = BlockStatus.success,
+    super.status,
   }) : super(
-          id: id,
-          messageId: messageId,
           type: BlockType.code,
-          status: status,
         );
 
   factory CodeBlock.fromJson(Map<String, dynamic> json) {
@@ -446,18 +425,15 @@ class FileBlock extends MessageBlock {
   final String filePath;
 
   FileBlock({
-    String? id,
-    required String messageId,
+    super.id,
+    required super.messageId,
     required this.fileName,
     required this.fileSize,
     required this.mimeType,
     required this.filePath,
-    BlockStatus status = BlockStatus.success,
+    super.status,
   }) : super(
-          id: id,
-          messageId: messageId,
           type: BlockType.file,
-          status: status,
         );
 
   factory FileBlock.fromJson(Map<String, dynamic> json) {
@@ -504,18 +480,15 @@ class EmojiBlock extends MessageBlock {
   final String? originalText;
 
   EmojiBlock({
-    String? id,
-    required String messageId,
+    super.id,
+    required super.messageId,
     required this.emojiId,
     required this.path,
     this.matchedTag,
     this.originalText,
-    BlockStatus status = BlockStatus.success,
+    super.status,
   }) : super(
-          id: id,
-          messageId: messageId,
           type: BlockType.emoji,
-          status: status,
         );
 
   factory EmojiBlock.fromJson(Map<String, dynamic> json) {
@@ -556,13 +529,11 @@ class ErrorBlock extends MessageBlock {
   final String? errorCode;
 
   ErrorBlock({
-    String? id,
-    required String messageId,
+    super.id,
+    required super.messageId,
     required this.message,
     this.errorCode,
   }) : super(
-          id: id,
-          messageId: messageId,
           type: BlockType.error,
           status: BlockStatus.error,
           errorMessage: message,

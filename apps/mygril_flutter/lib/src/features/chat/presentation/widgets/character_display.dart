@@ -68,7 +68,7 @@ class CharacterDisplay extends StatelessWidget {
             radius: 1.0,
             colors: [
               Colors.transparent,
-              Colors.black.withOpacity(0.3),
+              Colors.black.withValues(alpha: 0.3),
             ],
             stops: const [0.5, 1.0],
           ),
@@ -106,7 +106,7 @@ class CharacterDisplay extends StatelessWidget {
             end: Alignment.bottomCenter,
             colors: [
               Colors.transparent,
-              Colors.black.withOpacity(0.7),
+              Colors.black.withValues(alpha: 0.7),
             ],
           ),
         ),
@@ -135,7 +135,7 @@ class CharacterDisplay extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 13,
-                  color: Colors.white.withOpacity(0.85),
+                  color: Colors.white.withValues(alpha: 0.85),
                   height: 1.4,
                 ),
               ),
@@ -169,7 +169,7 @@ class CharacterDisplay extends StatelessWidget {
         decoration: BoxDecoration(
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.3),
+              color: Colors.black.withValues(alpha: 0.3),
               blurRadius: 20,
               spreadRadius: 5,
             ),

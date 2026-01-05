@@ -10,6 +10,7 @@
 /// - 2025-12-06: 创建，统一全局提示样式
 /// - 2025-12-06: 重构为 Overlay 实现，增加动画和图标
 /// - 2025-12-06: 接入皮肤系统
+library;
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../theme/skin_provider.dart';
@@ -139,7 +140,6 @@ class _ToastWidgetState extends State<_ToastWidget>
       case ToastType.warning:
         return isDark ? const Color(0xFFE65100) : const Color(0xFFFF9800);
       case ToastType.info:
-      default:
         return isDark ? const Color(0xFF37474F) : const Color(0xFF424242);
     }
   }

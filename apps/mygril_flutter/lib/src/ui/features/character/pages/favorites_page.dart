@@ -5,6 +5,7 @@
 /// 更新记录：
 /// - 2025-12-08: 从 role_card_page.dart 独立为单独文件
 /// - 2025-12-07: 在 role_card_page.dart 中创建，使用展开动画跳转
+library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -146,7 +147,7 @@ class _FavoriteCard extends StatelessWidget {
                   end: Alignment.bottomCenter,
                   colors: [
                     Colors.transparent,
-                    Colors.black.withOpacity(0.7),
+                    Colors.black.withValues(alpha: 0.7),
                   ],
                 ),
               ),
@@ -175,7 +176,7 @@ class _FavoriteCard extends StatelessWidget {
                     conversation.personaPrompt,
                     style: TextStyle(
                       fontSize: 12,
-                      color: Colors.white.withOpacity(0.8),
+                      color: Colors.white.withValues(alpha: 0.8),
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -190,7 +191,7 @@ class _FavoriteCard extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.all(6),
               decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.3),
+                color: Colors.black.withValues(alpha: 0.3),
                 shape: BoxShape.circle,
               ),
               child: const Icon(Icons.favorite, color: Colors.pinkAccent, size: 16),

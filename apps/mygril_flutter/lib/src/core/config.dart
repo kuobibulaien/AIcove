@@ -43,7 +43,7 @@ const String apiBaseUrl = String.fromEnvironment(
 String resolvedApiBase() {
   // Web：优先使用编译期注入的 API_BASE_URL；未注入或无效时回退到当前页面 origin（KISS）
   if (kIsWeb) {
-    final base = apiBaseUrl;
+    const base = apiBaseUrl;
     if (base.startsWith('http://') || base.startsWith('https://')) {
       return base;
     }

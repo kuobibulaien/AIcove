@@ -159,7 +159,7 @@ class AutoReplyTriggerController
     // 记录清理日志
     if (toDelete.isNotEmpty) {
       for (final deleted in toDelete) {
-        print('[AutoReplyTriggerController] Auto-cleaned completed trigger: ${deleted.title} (fired at: ${deleted.lastFiredAt})');
+        AppLogger.debug('AutoReplyTrigger', 'Auto-cleaned completed trigger: ${deleted.title} (fired at: ${deleted.lastFiredAt})');
       }
     }
   }

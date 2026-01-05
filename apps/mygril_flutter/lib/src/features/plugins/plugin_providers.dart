@@ -1,9 +1,9 @@
+// ignore_for_file: avoid_print
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 
 import 'plugin_manager.dart';
-import 'domain/plugin.dart';
 import 'tts/tts_plugin.dart';
 import 'tts/tts_config.dart';
 import 'tts/tts_player_manager.dart';

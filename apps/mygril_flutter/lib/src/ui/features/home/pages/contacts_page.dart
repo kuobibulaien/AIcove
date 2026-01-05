@@ -4,7 +4,6 @@ import 'package:go_router/go_router.dart';
 import '../../../../features/chat/providers2.dart';
 import '../../../../features/chat/presentation/widgets/contacts_list_content.dart';
 import '../../../../features/chat/presentation/widgets/contacts_sub_header.dart';
-import '../../../../features/chat/presentation/widgets/momotalk_sort_dialog.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/settings_drawer_wrapper.dart';
 
@@ -17,7 +16,7 @@ class ContactsPage extends ConsumerStatefulWidget {
 
 class _ContactsPageState extends ConsumerState<ContactsPage> {
   final TextEditingController _controller = TextEditingController();
-  String _query = '';
+  final String _query = '';
 
   @override
   void dispose() {
@@ -55,7 +54,7 @@ class _ContactsPageState extends ConsumerState<ContactsPage> {
                 color: colors.divider,
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.04),
+                    color: Colors.black.withValues(alpha: 0.04),
                     offset: const Offset(0, 1),
                     blurRadius: 0,
                   ),

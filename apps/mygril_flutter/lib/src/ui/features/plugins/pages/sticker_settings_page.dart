@@ -186,7 +186,7 @@ class _StickerSettingsPageState extends ConsumerState<StickerSettingsPage> {
                         end: Alignment.bottomCenter,
                         colors: [
                           Colors.transparent,
-                          Colors.black.withOpacity(0.7),
+                          Colors.black.withValues(alpha: 0.7),
                         ],
                       ),
                     ),
@@ -208,7 +208,7 @@ class _StickerSettingsPageState extends ConsumerState<StickerSettingsPage> {
                         Text(
                           '${stickers.length} 个表情',
                           style: TextStyle(
-                            color: Colors.white.withOpacity(0.8),
+                            color: Colors.white.withValues(alpha: 0.8),
                             fontSize: 11,
                           ),
                           textAlign: TextAlign.center,
@@ -257,7 +257,7 @@ class _StickerSettingsPageState extends ConsumerState<StickerSettingsPage> {
         title: Text('启用表情包', style: TextStyle(color: colors.text, fontSize: 16, fontWeight: FontWeight.w500)),
         subtitle: Text(enabled ? '已启用' : '已禁用', style: TextStyle(color: enabled ? colors.primary : colors.muted, fontSize: 13)),
         value: enabled,
-        activeColor: colors.primary,
+        activeThumbColor: colors.primary,
         onChanged: (value) => ref.read(stickerPluginConfigProvider.notifier).setEnabled(value),
       ),
     );
@@ -310,7 +310,7 @@ class _StickerSettingsPageState extends ConsumerState<StickerSettingsPage> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
-                    color: colors.primary.withOpacity(0.1),
+                    color: colors.primary.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Row(

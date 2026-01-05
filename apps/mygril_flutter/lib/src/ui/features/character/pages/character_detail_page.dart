@@ -167,8 +167,8 @@ class CharacterDetailPage extends ConsumerWidget {
         Container(color: colors.surface),
         ValueListenableBuilder<int>(
           valueListenable: BlurredBackgroundCache.ticker,
-          builder: (context, _, __) {
-            final (bgProvider, __) = BlurredBackgroundCache.getOrFallback(
+          builder: (context, _, unused) {
+            final (bgProvider, _) = BlurredBackgroundCache.getOrFallback(
               conversation.id,
               imageProvider,
             );

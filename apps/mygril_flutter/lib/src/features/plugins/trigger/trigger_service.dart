@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
@@ -15,7 +16,7 @@ class TriggerService {
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
     // Linux/Windows/iOS setup can be added here. 
     // For MVP, we focus on Android as per user request (priority).
-    final initializationSettings = InitializationSettings(
+    const initializationSettings = InitializationSettings(
       android: androidSettings,
     );
 

@@ -79,7 +79,7 @@ class UiSettingsPage extends ConsumerWidget {
                       ),
                       trailing: Switch(
                         value: settings.isDarkMode,
-                        activeColor: colors.primary,
+                        activeThumbColor: colors.primary,
                         onChanged: (value) {
                           // 点击手动开关时，同时设置暗色模式和关闭「跟随系统」
                           ref.read(appSettingsProvider.notifier).setDarkModeAndSystemTheme(
@@ -103,7 +103,7 @@ class UiSettingsPage extends ConsumerWidget {
                       ),
                       trailing: Switch(
                         value: settings.useSystemTheme,
-                        activeColor: colors.primary,
+                        activeThumbColor: colors.primary,
                         onChanged: (value) {
                           ref
                               .read(appSettingsProvider.notifier)

@@ -193,7 +193,7 @@ class AudioPlayerWidget extends ConsumerWidget {
           Text(
             '${durationSec.toInt()}"',
             style: TextStyle(
-              color: textColor.withOpacity(0.9),
+              color: textColor.withValues(alpha: 0.9),
               fontSize: 13,
               fontWeight: FontWeight.w500,
             ),
@@ -342,7 +342,7 @@ class _AnimatedWaveformState extends State<_AnimatedWaveform>
                 width: 3,
                 height: height * heightFactor,
                 decoration: BoxDecoration(
-                  color: widget.color.withOpacity(widget.isPlaying ? 0.9 : 0.6),
+                  color: widget.color.withValues(alpha: widget.isPlaying ? 0.9 : 0.6),
                   borderRadius: BorderRadius.circular(1.5),
                 ),
               );
@@ -384,7 +384,7 @@ class _PendingAudioBubble extends StatelessWidget {
           Text(
             '生成中...',
             style: TextStyle(
-              color: textColor.withOpacity(0.8),
+              color: textColor.withValues(alpha: 0.8),
               fontSize: 12,
             ),
           ),

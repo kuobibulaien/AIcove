@@ -173,7 +173,7 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
                   width: 120,
                   height: 120,
                   decoration: BoxDecoration(
-                    borderRadius: BorderRadius.all(radiusBubble),
+                    borderRadius: const BorderRadius.all(radiusBubble),
                     color: moeSurface,
                     border: Border.all(color: moeBorder, width: 2),
                   ),

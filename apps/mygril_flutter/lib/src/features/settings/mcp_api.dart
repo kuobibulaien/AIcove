@@ -172,7 +172,7 @@ class TtsToolConfigDto {
   });
 
   factory TtsToolConfigDto.fromJson(Map<String, dynamic> json) {
-    double? _parseSpeed(dynamic value) {
+    double? parseSpeed(dynamic value) {
       if (value == null || value == '' ) return null;
       final parsed = double.tryParse(value.toString());
       if (parsed == null || parsed <= 0) return null;
@@ -183,7 +183,7 @@ class TtsToolConfigDto {
       apiKey: _readString(json['api_key']) ?? _readString(json['apiKey']) ?? '',
       promptAudioUrl: _readString(json['prompt_audio_url']) ?? _readString(json['promptAudioUrl']) ?? '',
       promptText: _readString(json['prompt_text']) ?? _readString(json['promptText']) ?? '',
-      speed: _parseSpeed(json['speed']),
+      speed: parseSpeed(json['speed']),
       requestUrl: _readString(json['request_url']) ?? _readString(json['requestUrl']) ?? '',
     );
   }

@@ -1,4 +1,5 @@
 /// 角色预设管理页面
+library;
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -203,7 +204,7 @@ class _PresetCard extends StatelessWidget {
               width: 56,
               height: 56,
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.all(radiusBubble),
+                borderRadius: const BorderRadius.all(radiusBubble),
                 color: isDark ? colors.panel : colors.surfaceAlt,
               ),
               clipBehavior: Clip.antiAlias,
@@ -462,7 +463,7 @@ class _PresetEditDialogState extends State<_PresetEditDialog> {
                       width: 60,
                       height: 60,
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.all(radiusBubble),
+                        borderRadius: const BorderRadius.all(radiusBubble),
                         border: Border.all(
                           color: isSelected ? colors.primary : colors.divider,
                           width: isSelected ? 3 : 1,
@@ -488,7 +489,7 @@ class _PresetEditDialogState extends State<_PresetEditDialog> {
                       width: 40,
                       height: 40,
                       decoration:
-                          BoxDecoration(borderRadius: BorderRadius.all(radiusBubble)),
+                          const BoxDecoration(borderRadius: BorderRadius.all(radiusBubble)),
                       clipBehavior: Clip.antiAlias,
                       child: Image.memory(_customAvatarBytes!, fit: BoxFit.cover),
                     ),

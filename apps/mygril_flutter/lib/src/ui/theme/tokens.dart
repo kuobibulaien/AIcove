@@ -97,7 +97,7 @@ final moeTalkColorSchemeDark = ColorScheme.fromSeed(
 
 // 公共阴影
 final cardShadow = [
-  BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 8, offset: const Offset(0, 2)),
+  BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 8, offset: const Offset(0, 2)),
 ];
 
 // 响应式断点（统一管理窄屏/宽屏切换阈值，KISS/DRY）
@@ -304,4 +304,129 @@ class MoeColors extends ThemeExtension<MoeColors> {
 // 便捷访问方法
 extension MoeColorsExtension on BuildContext {
   MoeColors get moeColors => Theme.of(this).extension<MoeColors>() ?? MoeColors.light;
+}
+
+// ===== Design Tokens =====
+
+// === 动画时长 ===
+/// 快速动画（按压反馈、微交互）
+const Duration kAnimFast = Duration(milliseconds: 150);
+/// 标准动画（过渡、切换）
+const Duration kAnim = Duration(milliseconds: 240);
+/// 慢速动画（复杂过渡、页面切换）
+const Duration kAnimSlow = Duration(milliseconds: 320);
+
+// === 间距系统 ===
+/// 统一间距常量，遵循 4px 基准
+class MoeSpacing {
+  MoeSpacing._();
+  
+  static const double xxs = 4;
+  static const double xs = 8;
+  static const double sm = 12;
+  static const double md = 16;
+  static const double lg = 20;
+  static const double xl = 24;
+  static const double xxl = 32;
+}
+
+// === 圆角变体 ===
+/// 统一圆角常量
+class MoeRadii {
+  MoeRadii._();
+  
+  /// 超小圆角（4px）- 用于小型元素
+  static const double xs = 4;
+  /// 小圆角（8px）- 用于按钮、输入框
+  static const double sm = 8;
+  /// 中等圆角（12px）- 用于卡片、面板
+  static const double md = 12;
+  /// 大圆角（16px）- 用于弹窗、大卡片
+  static const double lg = 16;
+  /// 超大圆角（20px）- 用于特殊效果
+  static const double xl = 20;
+  /// 卡片专用（25px）- 保持与现有 radiusCard 一致
+  static const double card = 25;
+  /// 胶囊形圆角
+  static const double capsule = 9999;
+  
+  // BorderRadius 便捷方法
+  static BorderRadius get borderXs => BorderRadius.circular(xs);
+  static BorderRadius get borderSm => BorderRadius.circular(sm);
+  static BorderRadius get borderMd => BorderRadius.circular(md);
+  static BorderRadius get borderLg => BorderRadius.circular(lg);
+  static BorderRadius get borderXl => BorderRadius.circular(xl);
+  static BorderRadius get borderCard => BorderRadius.circular(card);
+  static BorderRadius get borderCapsule => BorderRadius.circular(capsule);
+}
+
+// === 阴影预设 ===
+/// 统一阴影样式
+class MoeShadows {
+  MoeShadows._();
+  
+  /// 轻微阴影（卡片、按钮）
+  static List<BoxShadow> get soft => [
+    BoxShadow(
+      color: Colors.black.withValues(alpha: 0.04),
+      blurRadius: 4,
+      offset: const Offset(0, 1),
+    ),
+  ];
+  
+  /// 普通阴影（浮动元素）
+  static List<BoxShadow> get card => [
+    BoxShadow(
+      color: Colors.black.withValues(alpha: 0.06),
+      blurRadius: 8,
+      offset: const Offset(0, 2),
+    ),
+  ];
+  
+  /// 强调阴影（弹窗、悬浮按钮）
+  static List<BoxShadow> get elevated => [
+    BoxShadow(
+      color: Colors.black.withValues(alpha: 0.1),
+      blurRadius: 16,
+      offset: const Offset(0, 4),
+    ),
+  ];
+  
+  /// 深度阴影（模态框）
+  static List<BoxShadow> get modal => [
+    BoxShadow(
+      color: Colors.black.withValues(alpha: 0.15),
+      blurRadius: 24,
+      offset: const Offset(0, 8),
+    ),
+  ];
+}
+
+// === 按钮尺寸预设 ===
+/// 按钮高度常量
+class MoeButtonSizes {
+  MoeButtonSizes._();
+  
+  /// 小按钮高度
+  static const double sm = 32;
+  /// 标准按钮高度
+  static const double md = 44;
+  /// 大按钮高度
+  static const double lg = 52;
+  
+  /// 最小触控区域（无障碍标准）
+  static const double minTouchTarget = 44;
+}
+
+// === 输入框尺寸预设 ===
+/// 输入框高度常量
+class MoeInputSizes {
+  MoeInputSizes._();
+  
+  /// 小输入框高度
+  static const double sm = 36;
+  /// 标准输入框高度
+  static const double md = 44;
+  /// 大输入框高度
+  static const double lg = 52;
 }

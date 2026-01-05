@@ -2,6 +2,7 @@
 /// 
 /// 更新记录：
 /// - 2025-12-06: 接入皮肤系统
+library;
 import 'package:flutter/material.dart';
 import '../../../../ui/theme/skin_provider.dart';
 import '../../../../ui/theme/tokens.dart';

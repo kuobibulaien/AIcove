@@ -6,16 +6,16 @@
 - 根目录其他文件夹多为参考资料：默认不改（见 `readme.md`）
 
 ## 1) 目录地图（像“零件箱 vs 房间”）
-- 公共零件箱：`apps/mygril_flutter/lib/src/core/`
-  - 主题/颜色/间距：`lib/src/core/theme/`（优先用 tokens，不要页面里手写颜色）
-  - 公共组件：`lib/src/core/widgets/`（先查 docs/公共组件总览.md 再决定要不要新写）
-  - 通用工具：`lib/src/core/utils/`
-  - 通用模型：`lib/src/core/models/`
-- 功能房间：`apps/mygril_flutter/lib/src/features/<feature>/`
+- 前端 UI 层：`apps/mygril_flutter/lib/src/ui/`
+  - 主题/颜色：`lib/src/ui/theme/`（优先用 tokens，不要页面里手写颜色）
+  - 公共组件：`lib/src/ui/shared/`（含 widgets, effects, animations）
+  - 页面路由：`lib/src/ui/features/<feature>/pages/`
+- 后端业务层：`apps/mygril_flutter/lib/src/features/<feature>/`
   - 业务模型：`domain/`
   - 数据与服务：`data/`
-  - 页面与组件：`presentation/`
-- 备注：如果发现 `lib/core/` 和 `lib/src/core/` 并存，默认以 `lib/src/` 为主，新增代码别往 `lib/core/` 放。
+  - 状态管理：`providers/`
+- 公共核心：`apps/mygril_flutter/lib/src/core/` (utils, logic)
+- 备注：如果发现 `lib/core/` 和 `lib/src/core/` 并存，默认以 `lib/src/` 为主。
 
 ## 2) UI/主题强约束（禁止“单页作品”）
 - 颜色/字体/间距/圆角：只能用现有 Theme/tokens（`lib/src/core/theme/`）

@@ -21,7 +21,7 @@ class KaomojiParser {
     // 常见标点：，。！？、；：""''（）【】
 
     // 查找连续的特殊符号（不包括常见中文标点）
-    final specialCharsPattern = RegExp(r'[^\u4e00-\u9fffa-zA-Z0-9\s，。！？、；：""''（）【】\[\]]{2,}');
+    final specialCharsPattern = RegExp(r'[^\u4e00-\u9fffa-zA-Z0-9\s，。！？、；：""''（）【】[]]{2,}');
     final specialMatches = specialCharsPattern.allMatches(text);
 
     for (final match in specialMatches) {

@@ -3,6 +3,7 @@
 /// 
 /// 更新记录：
 /// - 2025-12-06: 接入皮肤系统（背景色、描边）
+library;
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -153,7 +154,7 @@ class MessageBubble extends ConsumerWidget {
                                 return Text(
                                   '[空消息]',
                                   style: TextStyle(
-                                    color: fg.withOpacity(0.5),
+                                    color: fg.withValues(alpha: 0.5),
                                     height: 1.42,
                                     fontSize: fontSize - 1,
                                     fontStyle: FontStyle.italic,
@@ -356,7 +357,7 @@ class MessageBubble extends ConsumerWidget {
       margin: const EdgeInsets.only(top: 8, bottom: 4),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.8),
+        color: Colors.black.withValues(alpha: 0.8),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Column(
@@ -393,7 +394,7 @@ class MessageBubble extends ConsumerWidget {
         children: [
           Text(
             block.content,
-            style: TextStyle(color: textColor.withOpacity(0.8), fontSize: fontSize),
+            style: TextStyle(color: textColor.withValues(alpha: 0.8), fontSize: fontSize),
           ),
         ],
       ),
@@ -425,46 +426,6 @@ class MessageBubble extends ConsumerWidget {
       ),
     );
   }
-}
-
-// MoeTalk 左侧小三角（.左角::after）- 已废弃，保留类定义以防其他地方引用（虽然现在不应该引用了）
-class _LeftTrianglePainter extends CustomPainter {
-  final Color color;
-  _LeftTrianglePainter(this.color);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = color;
-    final path = Path()
-      ..moveTo(size.width, 0)
-      ..lineTo(size.width, size.height)
-      ..lineTo(0, size.height / 2)
-      ..close();
-    canvas.drawPath(path, paint);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-// MoeTalk 右侧小三角（.右角::after）- 已废弃
-class _RightTrianglePainter extends CustomPainter {
-  final Color color;
-  _RightTrianglePainter(this.color);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = color;
-    final path = Path()
-      ..moveTo(0, 0)
-      ..lineTo(0, size.height)
-      ..lineTo(size.width, size.height / 2)
-      ..close();
-    canvas.drawPath(path, paint);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class _Avatar extends StatelessWidget {
@@ -525,7 +486,7 @@ class _Avatar extends StatelessWidget {
       height: 38,
       margin: const EdgeInsets.only(right: 0, top: 0),
       decoration:
-          BoxDecoration(borderRadius: BorderRadius.all(radiusBubble), color: colors.surfaceAlt),
+          BoxDecoration(borderRadius: const BorderRadius.all(radiusBubble), color: colors.surfaceAlt),
       clipBehavior: Clip.antiAlias,
       child: trimmedUrl != null && trimmedUrl.isNotEmpty ? buildImage(trimmedUrl) : buildFallback(),
     );

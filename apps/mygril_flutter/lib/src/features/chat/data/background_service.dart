@@ -1,3 +1,6 @@
+// ignore_for_file: avoid_print
+// 注意：此文件在后台 isolate 中运行，无法使用 AppLogger（依赖 Flutter framework）。
+// 这里的 print 语句仅用于后台调试，在 release 模式下不会输出。
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';

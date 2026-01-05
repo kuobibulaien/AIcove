@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print
 import 'domain/plugin.dart';
 
 /// 插件管理器
@@ -37,6 +38,8 @@ class PluginManager {
 
   /// 获取所有启用插件的系统提示词
   /// 返回合并后的提示词字符串
+  /// 
+  /// 注意：单个插件失败不会影响其他插件和整体对话流程
   Future<String> getSystemPrompts({String? userMessage}) async {
     final enabledPlugins = getEnabledPlugins();
     if (enabledPlugins.isEmpty) {
@@ -45,9 +48,14 @@ class PluginManager {
 
     final prompts = <String>[];
     for (final plugin in enabledPlugins) {
-      final prompt = await plugin.getSystemPrompt(userMessage: userMessage);
-      if (prompt != null && prompt.isNotEmpty) {
-        prompts.add(prompt);
+      try {
+        final prompt = await plugin.getSystemPrompt(userMessage: userMessage);
+        if (prompt != null && prompt.isNotEmpty) {
+          prompts.add(prompt);
+        }
+      } catch (e) {
+        // 单个插件失败不影响其他插件和整体对话流程
+        print('[PluginManager] Plugin ${plugin.id} getSystemPrompt failed: $e');
       }
     }
 

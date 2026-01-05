@@ -261,7 +261,7 @@ class _ChunkSettingsPageState extends ConsumerState<ChunkSettingsPage> {
                           decoration: BoxDecoration(
                             color: colors.surfaceAlt,
                             borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: colors.primary.withOpacity(0.3)),
+                            border: Border.all(color: colors.primary.withValues(alpha: 0.3)),
                           ),
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,

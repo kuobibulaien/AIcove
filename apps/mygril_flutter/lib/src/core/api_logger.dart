@@ -46,7 +46,7 @@ class ApiLogger {
     out = out.replaceAllMapped(RegExp(r'("api_key"\s*:\s*")([^"\\]{4,})(")', multiLine: true), (m) => '${m.group(1)}***${m.group(3)}');
     out = out.replaceAllMapped(RegExp(r'(sk-)[A-Za-z0-9]{8,}'), (m) => '${m.group(1)}****');
     if (out.length > max) {
-      return out.substring(0, max) + '…';
+      return '${out.substring(0, max)}…';
     }
     return out;
   }

@@ -98,7 +98,7 @@ class _ImageCropDialogState extends State<ImageCropDialog> with SingleTickerProv
                     aspectRatio: 1.0,
                   ),
                   baseColor: Colors.black,
-                  maskColor: Colors.black.withOpacity(0.6),
+                  maskColor: Colors.black.withValues(alpha: 0.6),
                   radius: radiusBubble.x,
                   fixCropRect: true,
                   // 隐藏裁剪框的控制点
@@ -127,7 +127,7 @@ class _ImageCropDialogState extends State<ImageCropDialog> with SingleTickerProv
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                   colors: [
-                    Colors.black.withOpacity(0.7),
+                    Colors.black.withValues(alpha: 0.7),
                     Colors.transparent,
                   ],
                 ),
@@ -179,7 +179,7 @@ class _ImageCropDialogState extends State<ImageCropDialog> with SingleTickerProv
                           vertical: 10,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.6),
+                          color: Colors.black.withValues(alpha: 0.6),
                           borderRadius: BorderRadius.circular(20),
                         ),
                         child: const Text(

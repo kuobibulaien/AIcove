@@ -73,13 +73,13 @@ Future<ContactEditResult?> showContactEditDialog({
           Widget avatarPreview() {
             if (avatarBytes != null) {
               return ClipRRect(
-                borderRadius: BorderRadius.all(radiusBubble),
+                borderRadius: const BorderRadius.all(radiusBubble),
                 child: Image.memory(avatarBytes!, width: 72, height: 72, fit: BoxFit.cover),
               );
             }
             if (avatarData != null && avatarData!.trim().isNotEmpty) {
               return ClipRRect(
-                borderRadius: BorderRadius.all(radiusBubble),
+                borderRadius: const BorderRadius.all(radiusBubble),
                 child: Image.asset(
                   avatarData!,
                   width: 72,
@@ -90,7 +90,7 @@ Future<ContactEditResult?> showContactEditDialog({
               );
             }
             return ClipRRect(
-              borderRadius: BorderRadius.all(radiusBubble),
+              borderRadius: const BorderRadius.all(radiusBubble),
               child: _fallbackLetter(nameCtrl.text),
             );
           }
@@ -224,9 +224,9 @@ Widget _fallbackLetter(String name) {
   return Container(
     width: 72,
     height: 72,
-    decoration: BoxDecoration(
+    decoration: const BoxDecoration(
       borderRadius: BorderRadius.all(radiusBubble),
-      color: const Color(0xFFF0F0F0),
+      color: Color(0xFFF0F0F0),
     ),
     alignment: Alignment.center,
     child: Text(

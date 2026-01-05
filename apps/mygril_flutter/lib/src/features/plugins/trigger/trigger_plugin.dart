@@ -1,18 +1,17 @@
+// ignore_for_file: avoid_print
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/app_logger.dart';
 import '../domain/plugin.dart';
 import 'trigger_config.dart';
-import 'trigger_service.dart';
 import '../../chat/data/auto_reply_trigger.dart';
 import '../../chat/data/auto_reply_trigger_controller.dart';
 
 class TriggerPlugin implements Plugin {
   TriggerConfig _config;
-  final TriggerService _service;
   final Ref _ref;
 
-  TriggerPlugin(this._config, this._ref) : _service = TriggerService();
+  TriggerPlugin(this._config, this._ref);
 
   @override
   String get id => 'trigger';
@@ -113,7 +112,7 @@ class TriggerPlugin implements Plugin {
           );
 
           events.add(PluginEvent(
-            pluginId: this.id,
+            pluginId: id,
             type: 'trigger_created',
             data: {
               'time': scheduledTime.toIso8601String(),

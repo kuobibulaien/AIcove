@@ -95,7 +95,7 @@ class ProviderSelectorPage extends ConsumerWidget {
                   provider: provider,
                   models: models,
                 );
-              }).toList(),
+              }),
               const SizedBox(height: 16),
             ],
           );
@@ -176,7 +176,7 @@ class _ProviderCard extends ConsumerWidget {
                     );
                   },
                 );
-              }).toList(),
+              }),
           ],
         ),
       ),

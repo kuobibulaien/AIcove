@@ -12,6 +12,7 @@
 /// - 2025-12-07: 从 role_card_page.dart 抽取，简化为纯毛玻璃效果
 /// - 2025-12-07: 改用 SmoothClipRRect 实现 iOS 风格平滑圆角
 /// - 2025-12-25: 修复描边不生效与阴影被裁剪问题，增强卡片边角线条可见性
+library;
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'smooth_clip.dart';
@@ -67,12 +68,12 @@ class FrostedGlassCard extends StatelessWidget {
         radius: borderRadius,
         boxShadow: boxShadow ?? [
           BoxShadow(
-            color: Colors.black.withOpacity(0.15),
+            color: Colors.black.withValues(alpha: 0.15),
             blurRadius: 16,
             offset: const Offset(0, 6),
           ),
           BoxShadow(
-            color: Colors.black.withOpacity(0.08),
+            color: Colors.black.withValues(alpha: 0.08),
             blurRadius: 4,
             offset: const Offset(0, 2),
           ),
@@ -85,8 +86,8 @@ class FrostedGlassCard extends StatelessWidget {
             radius: borderRadius,
             border: Border.all(
               color: isDark
-                  ? Colors.white.withOpacity(0.18)
-                  : Colors.grey.shade400.withOpacity(0.35),
+                  ? Colors.white.withValues(alpha: 0.18)
+                  : Colors.grey.shade400.withValues(alpha: 0.35),
               width: 1,
             ),
           ),
@@ -121,8 +122,8 @@ class FrostedGlassCard extends StatelessWidget {
               // 3. 轻微着色层（提升层次感）
               Container(
                 color: isDark
-                    ? Colors.black.withOpacity(0.3)  // 暗色模式：轻微压暗
-                    : Colors.white.withOpacity(0.15), // 亮色模式：轻微提亮
+                    ? Colors.black.withValues(alpha: 0.3)  // 暗色模式：轻微压暗
+                    : Colors.white.withValues(alpha: 0.15), // 亮色模式：轻微提亮
               ),
 
               // 4. 内容层

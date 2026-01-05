@@ -6,6 +6,7 @@
 /// - 2025-12-06: 从 MainPage/SplitChatPage 抽取，消除代码重复
 /// - 2025-12-06: 接入皮肤系统
 /// - 2025-12-07: 使用 MoeAppBar 替换自定义头部，统一 AppBar 高度
+library;
 import 'package:flutter/material.dart';
 import '../../theme/tokens.dart';
 import 'moe_app_bar.dart';

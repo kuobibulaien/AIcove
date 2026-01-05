@@ -8,6 +8,7 @@
 /// 
 /// 更新记录：
 /// - 2025-12-06: 从 tokens.dart 迁移，作为默认皮肤实现
+library;
 import 'package:flutter/material.dart';
 import '../skin_config.dart';
 import '../tokens.dart';
@@ -93,11 +94,11 @@ class MoeTalkSkin extends SkinConfig {
   @override
   BoxDecoration toastDecoration(Color bgColor) {
     return BoxDecoration(
-      color: bgColor.withOpacity(0.95),
+      color: bgColor.withValues(alpha: 0.95),
       borderRadius: BorderRadius.circular(12),
       boxShadow: [
         BoxShadow(
-          color: Colors.black.withOpacity(0.2),
+          color: Colors.black.withValues(alpha: 0.2),
           blurRadius: 12,
           offset: const Offset(0, 4),
         ),

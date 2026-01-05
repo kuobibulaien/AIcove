@@ -169,18 +169,18 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     final darkTheme = _buildTheme(isDark: true);
 
     return settingsAsync.when(
-      loading: () => MaterialApp(
+      loading: () => const MaterialApp(
         debugShowCheckedModeBanner: false,
         home: Scaffold(
           backgroundColor: moeSurface,
-          body: const Center(child: CircularProgressIndicator()),
+          body: Center(child: CircularProgressIndicator()),
         ),
       ),
-      error: (_, __) => MaterialApp(
+      error: (_, __) => const MaterialApp(
         debugShowCheckedModeBanner: false,
         home: Scaffold(
           backgroundColor: moeSurface,
-          body: const Center(child: Text('加载设置失败')),
+          body: Center(child: Text('加载设置失败')),
         ),
       ),
       data: (settings) {

@@ -2,6 +2,7 @@
 /// 
 /// 更新记录：
 /// - 2025-12-06: 接入皮肤系统（背景色、描边）
+library;
 import 'package:flutter/material.dart';
 import 'package:mygril_flutter/src/core/utils/data_image.dart';
 import '../../../../ui/theme/skin_provider.dart';
@@ -51,7 +52,6 @@ class CharacterListItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final skin = context.skin;
     final colors = context.moeColors;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     final bgColor = isActive ? colors.surfaceAlt : colors.surface;
     final borderColor = colors.borderLight;
@@ -80,7 +80,7 @@ class CharacterListItem extends StatelessWidget {
                 width: 56,
                 height: 56,
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.all(radiusBubble),
+                  borderRadius: const BorderRadius.all(radiusBubble),
                   color: colors.surface, // 使用主题背景色，自动适配深浅模式
                   border: Border.all(
                     color: colors.borderLight, // 添加细微描边，增强边界感

@@ -6,7 +6,6 @@ import '../../../../ui/features/settings/pages/profile_page.dart';
 import '../../../../features/chat/presentation/widgets/custom_bottom_nav.dart';
 import '../../../../ui/shared/widgets/settings_drawer_wrapper.dart';
 import '../../../../ui/shared/widgets/settings_drawer_panel.dart';
-import '../../../../ui/theme/tokens.dart';
 
 /// 主页面 - 包含底部导航栏（仅小屏模式使用）
 class MainPage extends ConsumerStatefulWidget {

@@ -9,6 +9,7 @@
 /// 
 /// 更新记录：
 /// - 2025-12-06: 创建皮肤系统抽象接口
+library;
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'tokens.dart';

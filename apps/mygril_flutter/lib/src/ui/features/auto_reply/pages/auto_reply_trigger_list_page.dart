@@ -71,7 +71,7 @@ class AutoReplyTriggerListPage extends ConsumerWidget {
                   border: Border.all(color: moeBorderLight),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.02),
+                      color: Colors.black.withValues(alpha: 0.02),
                       blurRadius: 6,
                       offset: const Offset(0, 2),
                     ),
@@ -86,7 +86,7 @@ class AutoReplyTriggerListPage extends ConsumerWidget {
                           width: 40,
                           height: 40,
                           decoration: BoxDecoration(
-                            color: statusColor.withOpacity(0.12),
+                            color: statusColor.withValues(alpha: 0.12),
                             borderRadius: BorderRadius.circular(20),
                           ),
                           child: Icon(
@@ -115,7 +115,7 @@ class AutoReplyTriggerListPage extends ConsumerWidget {
                                     padding:
                                         const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                     decoration: BoxDecoration(
-                                      color: statusColor.withOpacity(0.12),
+                                      color: statusColor.withValues(alpha: 0.12),
                                       borderRadius: BorderRadius.circular(12),
                                     ),
                                     child: Text(
@@ -232,7 +232,7 @@ class AutoReplyTriggerListPage extends ConsumerWidget {
             width: 72,
             height: 72,
             decoration: BoxDecoration(
-              color: moeBorderLight.withOpacity(0.4),
+              color: moeBorderLight.withValues(alpha: 0.4),
               borderRadius: BorderRadius.circular(36),
             ),
             child: const Icon(Icons.inbox_outlined, size: 32, color: moeMuted),

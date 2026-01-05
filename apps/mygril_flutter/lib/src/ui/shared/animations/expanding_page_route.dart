@@ -24,6 +24,7 @@
 /// - 2025-12-08: 修复返回动画闪烁问题（背景层透明度随 progress 变化）
 /// - 2025-12-08: 禁止底层页面左移动画（覆写 canTransitionFrom）
 /// - 2025-12-08: 添加目标圆角参数，适配现代手机屏幕圆角
+library;
 import 'package:flutter/material.dart';
 
 /// 自定义展开路由 - 实现"无缝展开"动画效果

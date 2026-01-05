@@ -31,11 +31,6 @@ class _MessageFormatSettingsPageState extends ConsumerState<MessageFormatSetting
     }
   }
 
-  Future<void> _updateConfig(MessageFormatConfig newConfig) async {
-    setState(() => _config = newConfig);
-    await ref.read(appSettingsProvider.notifier).updateMessageFormatConfig(newConfig);
-  }
-
   @override
   Widget build(BuildContext context) {
     final settingsAsync = ref.watch(appSettingsProvider);

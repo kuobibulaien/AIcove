@@ -5,7 +5,6 @@ import '../../../../ui/theme/tokens.dart';
 import '../../data/auto_reply_trigger.dart';
 import '../../data/auto_reply_trigger_controller.dart';
 import '../../providers2.dart';
-import '../../domain/conversation.dart';
 
 Future<void> showCreateAutoReplyTriggerSheet(
   BuildContext context,
@@ -91,7 +90,7 @@ class _CreateTriggerSheetState extends ConsumerState<_CreateTriggerSheet> {
           conversationsAsync.when(
             data: (conversations) {
               return DropdownButtonFormField<String>(
-                value: _selectedContactId,
+                initialValue: _selectedContactId,
                 decoration: const InputDecoration(
                   labelText: '指定联系人 (可选)',
                   hintText: '默认使用当前活跃对话',
@@ -157,14 +156,14 @@ class _CreateTriggerSheetState extends ConsumerState<_CreateTriggerSheet> {
             subtitle: const Text('默认夜间会自动顺延，开启后可在夜间提醒'),
             value: _allowNight,
             onChanged: (value) => setState(() => _allowNight = value),
-            activeColor: moePrimary,
+            activeThumbColor: moePrimary,
           ),
           SwitchListTile(
             title: const Text('使用精准模式'),
             subtitle: const Text('适合严格到点的提醒，可能更耗电'),
             value: _requireExact,
             onChanged: (value) => setState(() => _requireExact = value),
-            activeColor: moePrimary,
+            activeThumbColor: moePrimary,
           ),
           if (_error != null)
             Padding(

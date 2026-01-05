@@ -5,6 +5,7 @@
 /// 更新记录：
 /// - 2025-12-06: 创建皮肤状态管理
 /// - 2025-12-06: 添加 SkinScope InheritedWidget
+library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'skin_config.dart';

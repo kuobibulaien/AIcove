@@ -59,7 +59,7 @@ class ChatSettingsPage extends StatelessWidget {
                   width: 56,
                   height: 56,
                   decoration: BoxDecoration(
-                    borderRadius: BorderRadius.all(radiusBubble),
+                    borderRadius: const BorderRadius.all(radiusBubble),
                     color: colors.surfaceAlt,
                   ),
                   clipBehavior: Clip.antiAlias,

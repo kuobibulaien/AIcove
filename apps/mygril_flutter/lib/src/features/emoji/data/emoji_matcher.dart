@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print
 import '../domain/emoji_model.dart';
 import 'emoji_manager.dart';
 

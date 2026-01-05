@@ -32,10 +32,10 @@ class _MemoryPluginDetailPageState extends ConsumerState<MemoryPluginDetailPage>
         backgroundColor: moeSurface,
         elevation: 0,
         leading: IconButton(
-          icon: Icon(Icons.arrow_back, color: moeText),
+          icon: const Icon(Icons.arrow_back, color: moeText),
           onPressed: () => Navigator.of(context).pop(),
         ),
-        title: Text(
+        title: const Text(
           '长期记忆',
           style: TextStyle(
             color: moeText,
@@ -124,9 +124,9 @@ class _MemoryPluginDetailPageState extends ConsumerState<MemoryPluginDetailPage>
       ),
       child: Row(
         children: [
-          Icon(Icons.memory, color: moePrimary, size: 24),
+          const Icon(Icons.memory, color: moePrimary, size: 24),
           const SizedBox(width: 12),
-          Expanded(
+          const Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -138,7 +138,7 @@ class _MemoryPluginDetailPageState extends ConsumerState<MemoryPluginDetailPage>
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                const SizedBox(height: 4),
+                SizedBox(height: 4),
                 Text(
                   '让AI记住你的喜好和重要信息',
                   style: TextStyle(
@@ -152,7 +152,7 @@ class _MemoryPluginDetailPageState extends ConsumerState<MemoryPluginDetailPage>
           Switch(
             value: config.enabled,
             onChanged: (value) => notifier.setEnabled(value),
-            activeColor: moePrimary,
+            activeThumbColor: moePrimary,
           ),
         ],
       ),
@@ -166,7 +166,7 @@ class _MemoryPluginDetailPageState extends ConsumerState<MemoryPluginDetailPage>
         const SizedBox(width: 8),
         Text(
           title,
-          style: TextStyle(
+          style: const TextStyle(
             color: moeText,
             fontSize: 16,
             fontWeight: FontWeight.w600,
@@ -188,18 +188,18 @@ class _MemoryPluginDetailPageState extends ConsumerState<MemoryPluginDetailPage>
       return Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: moePanel.withOpacity(0.5),
+          color: moePanel.withValues(alpha: 0.5),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: moeBorder.withOpacity(0.5)),
+          border: Border.all(color: moeBorder.withValues(alpha: 0.5)),
         ),
         child: Row(
           children: [
-            Icon(Icons.info_outline, color: moeTextSecondary, size: 20),
+            const Icon(Icons.info_outline, color: moeTextSecondary, size: 20),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
                 emptyHint,
-                style: TextStyle(
+                style: const TextStyle(
                   color: moeTextSecondary,
                   fontSize: 14,
                 ),
@@ -212,7 +212,7 @@ class _MemoryPluginDetailPageState extends ConsumerState<MemoryPluginDetailPage>
 
     // 构建下拉选项：渠道 + 模型
     final items = <DropdownMenuItem<String>>[];
-    items.add(DropdownMenuItem<String>(
+    items.add(const DropdownMenuItem<String>(
       value: null,
       child: Text('未选择', style: TextStyle(color: moeMuted, fontSize: 14)),
     ));
@@ -225,7 +225,7 @@ class _MemoryPluginDetailPageState extends ConsumerState<MemoryPluginDetailPage>
           value: value,
           child: Text(
             '$displayName / $model',
-            style: TextStyle(color: moeText, fontSize: 14),
+            style: const TextStyle(color: moeText, fontSize: 14),
             overflow: TextOverflow.ellipsis,
           ),
         ));
@@ -254,29 +254,29 @@ class _MemoryPluginDetailPageState extends ConsumerState<MemoryPluginDetailPage>
         children: [
           Text(
             hint,
-            style: TextStyle(
+            style: const TextStyle(
               color: moeTextSecondary,
               fontSize: 13,
             ),
           ),
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
-            value: currentValue,
+            initialValue: currentValue,
             isExpanded: true,
             decoration: InputDecoration(
               filled: true,
               fillColor: moeSurface,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: moeBorder),
+                borderSide: const BorderSide(color: moeBorder),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: moeBorder),
+                borderSide: const BorderSide(color: moeBorder),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: moePrimary, width: 2),
+                borderSide: const BorderSide(color: moePrimary, width: 2),
               ),
               contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             ),
@@ -305,18 +305,18 @@ class _MemoryPluginDetailPageState extends ConsumerState<MemoryPluginDetailPage>
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: moePanel.withOpacity(0.7),
+        color: moePanel.withValues(alpha: 0.7),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: moeBorder.withOpacity(0.7)),
+        border: Border.all(color: moeBorder.withValues(alpha: 0.7)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(Icons.backup_outlined, color: moePrimary, size: 20),
+              const Icon(Icons.backup_outlined, color: moePrimary, size: 20),
               const SizedBox(width: 8),
-              Text(
+              const Text(
                 '备用嵌入模型（可选）',
                 style: TextStyle(
                   color: moeText,
@@ -334,12 +334,12 @@ class _MemoryPluginDetailPageState extends ConsumerState<MemoryPluginDetailPage>
                     config.fallbackEmbeddingModelName,
                   );
                 },
-                activeColor: moePrimary,
+                activeThumbColor: moePrimary,
               ),
             ],
           ),
           const SizedBox(height: 8),
-          Text(
+          const Text(
             '当主嵌入服务不可用时，自动切换到备用模型',
             style: TextStyle(
               color: moeTextSecondary,
@@ -368,17 +368,17 @@ class _MemoryPluginDetailPageState extends ConsumerState<MemoryPluginDetailPage>
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: moePanel.withOpacity(0.5),
+        color: moePanel.withValues(alpha: 0.5),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: moeBorder.withOpacity(0.5)),
+        border: Border.all(color: moeBorder.withValues(alpha: 0.5)),
       ),
-      child: Column(
+      child: const Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
               Icon(Icons.help_outline, color: moePrimary, size: 20),
-              const SizedBox(width: 8),
+              SizedBox(width: 8),
               Text(
                 '使用说明',
                 style: TextStyle(
@@ -389,7 +389,7 @@ class _MemoryPluginDetailPageState extends ConsumerState<MemoryPluginDetailPage>
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          SizedBox(height: 12),
           Text(
             '长期记忆插件会在对话结束时自动提取关键信息（如你的喜好、重要事件等）并存储。\n\n'
             '工作流程：\n'

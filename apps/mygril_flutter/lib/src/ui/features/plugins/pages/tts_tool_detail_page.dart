@@ -239,7 +239,7 @@ class _TtsToolDetailPageState extends ConsumerState<TtsToolDetailPage> {
         _presetBusy = false;
         _syncResponse(res);
       });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('预设"\${preset.name}"已删除'), duration: const Duration(seconds: 1)));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('预设"\${preset.name}"已删除'), duration: Duration(seconds: 1)));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('删除失败: $e'), duration: const Duration(seconds: 1)));
@@ -332,7 +332,7 @@ class _TtsToolDetailPageState extends ConsumerState<TtsToolDetailPage> {
                 children: [
                   Expanded(
                     child: DropdownButtonFormField<String>(
-                      value: _selectedPresetId,
+                      initialValue: _selectedPresetId,
                       decoration: const InputDecoration(
                         labelText: '选择预设',
                         border: OutlineInputBorder(),

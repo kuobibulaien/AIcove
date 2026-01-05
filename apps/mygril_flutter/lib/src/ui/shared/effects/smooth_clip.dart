@@ -13,6 +13,7 @@
 /// 更新记录：
 /// - 2025-12-03: 创建，用于表情包管理页面的展开动画
 /// - 2025-12-25: 修复 SmoothRectDecoration 未绘制 border 的问题（描边生效）
+library;
 import 'package:flutter/material.dart';
 
 /// 平滑圆角裁剪容器

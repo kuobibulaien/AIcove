@@ -107,19 +107,19 @@ class AutoReplyTrigger {
   }
 
   factory AutoReplyTrigger.fromJson(Map<String, dynamic> json) {
-    DateTime _parse(String value) => DateTime.tryParse(value)?.toLocal() ?? DateTime.now();
+    DateTime parse(String value) => DateTime.tryParse(value)?.toLocal() ?? DateTime.now();
     return AutoReplyTrigger(
       id: (json['id'] as String?) ?? '',
       title: (json['title'] as String?) ?? '自定义触发',
       type: _safeType(json['type'] as String?),
       status: _safeStatus(json['status'] as String?),
-      createdAt: json['created_at'] is String ? _parse(json['created_at'] as String) : DateTime.now(),
-      nextFireAt: json['next_fire_at'] is String ? _parse(json['next_fire_at'] as String) : DateTime.now(),
+      createdAt: json['created_at'] is String ? parse(json['created_at'] as String) : DateTime.now(),
+      nextFireAt: json['next_fire_at'] is String ? parse(json['next_fire_at'] as String) : DateTime.now(),
       allowNight: json['allow_night'] != false,
       requireExact: json['require_exact'] == true,
       delayMinutes: (json['delay_minutes'] as num?)?.toInt() ?? 30,
       manual: json['manual'] != false,
-      lastFiredAt: json['last_fired_at'] is String ? _parse(json['last_fired_at'] as String) : null,
+      lastFiredAt: json['last_fired_at'] is String ? parse(json['last_fired_at'] as String) : null,
       contactId: json['contact_id'] as String?,
       prompt: json['prompt'] as String?,
       priority: _safePriority(json['priority'] as String?),

@@ -55,7 +55,7 @@ Map<String, dynamic> _normalizeAutoReplySettings(dynamic source) {
     return Map<String, dynamic>.from(defaults);
   }
 
-  String _normalizeTime(String? value, String fallback) {
+  String normalizeTime(String? value, String fallback) {
     if (value == null || value.isEmpty) return fallback;
     final parts = value.split(':');
     if (parts.length != 2) return fallback;
@@ -67,7 +67,7 @@ Map<String, dynamic> _normalizeAutoReplySettings(dynamic source) {
     return '$hh:$mm';
   }
 
-  int _clampInt(num? value, int min, int max, int fallback) {
+  int clampInt(num? value, int min, int max, int fallback) {
     if (value == null) return fallback;
     final v = value.toInt();
     if (v < min) return min;
@@ -77,12 +77,12 @@ Map<String, dynamic> _normalizeAutoReplySettings(dynamic source) {
 
   return <String, dynamic>{
     'enabled': source['enabled'] == true,
-    'daily_limit': _clampInt(source['daily_limit'] as num?, 1, 10, defaults['daily_limit'] as int),
+    'daily_limit': clampInt(source['daily_limit'] as num?, 1, 10, defaults['daily_limit'] as int),
     'min_interval_minutes':
-        _clampInt(source['min_interval_minutes'] as num?, 15, 720, defaults['min_interval_minutes'] as int),
+        clampInt(source['min_interval_minutes'] as num?, 15, 720, defaults['min_interval_minutes'] as int),
     'quiet_hours_enabled': source['quiet_hours_enabled'] != false,
-    'quiet_hours_start': _normalizeTime(source['quiet_hours_start'] as String?, defaults['quiet_hours_start'] as String),
-    'quiet_hours_end': _normalizeTime(source['quiet_hours_end'] as String?, defaults['quiet_hours_end'] as String),
+    'quiet_hours_start': normalizeTime(source['quiet_hours_start'] as String?, defaults['quiet_hours_start'] as String),
+    'quiet_hours_end': normalizeTime(source['quiet_hours_end'] as String?, defaults['quiet_hours_end'] as String),
     'allow_exact_alarm': source['allow_exact_alarm'] == true,
   };
 }

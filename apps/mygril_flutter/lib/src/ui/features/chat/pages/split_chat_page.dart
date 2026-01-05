@@ -25,7 +25,7 @@ class _SplitChatPageState extends ConsumerState<SplitChatPage>
   int _currentIndex = 0;
   final GlobalKey<SettingsDrawerWrapperState> _drawerKey = GlobalKey();
   double _sidebarWidth = 320; // 可调节的侧边栏宽度
-  String _searchQuery = '';
+  final String _searchQuery = '';
   
   // 淡入淡出动画控制器
   late AnimationController _fadeController;

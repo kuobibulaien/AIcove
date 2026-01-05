@@ -10,6 +10,7 @@
 /// 更新记录：
 /// - 2025-12-06: 从 ContactsPage/SplitChatPage 抽取，消除代码重复
 /// - 2025-12-06: 接入皮肤系统
+library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../ui/theme/skin_provider.dart';
@@ -76,7 +77,7 @@ class ContactsSubHeader extends ConsumerWidget {
                   borderRadius: BorderRadius.circular(4),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.02),
+                      color: Colors.black.withValues(alpha: 0.02),
                       offset: const Offset(0, 1),
                       blurRadius: 1,
                     ),

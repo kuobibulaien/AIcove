@@ -53,11 +53,8 @@ class ContactsListContent extends ConsumerWidget {
           switch (sortMode) {
             case SortMode.name:
               result = a.displayName.compareTo(b.displayName);
-              break;
             case SortMode.latest:
-            default:
               result = a.updatedAt.compareTo(b.updatedAt);
-              break;
           }
           
           // 如果是最新消息模式，默认是倒序（最新的在上面），所以 isAscending=false 时反转

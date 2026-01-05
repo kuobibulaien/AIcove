@@ -9,6 +9,7 @@
 /// 
 /// 更新记录：
 /// - 2025-12-08: 从 role_card_page.dart 抽取为公共组件
+library;
 import 'dart:ui';
 import 'package:flutter/material.dart';
 
@@ -76,7 +77,7 @@ class GradientBlurCard extends StatelessWidget {
             decoration: SmoothRectDecoration(
               radius: radius,
               border: Border.all(
-                color: colors.borderLight.withOpacity(0.3),
+                color: colors.borderLight.withValues(alpha: 0.3),
                 width: 1,
               ),
             ),
@@ -110,8 +111,8 @@ class GradientBlurCard extends StatelessWidget {
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                       colors: [
-                        Colors.white.withOpacity(0.4),
-                        Colors.white.withOpacity(0.1),
+                        Colors.white.withValues(alpha: 0.4),
+                        Colors.white.withValues(alpha: 0.1),
                       ],
                     ),
                   ),
@@ -126,7 +127,7 @@ class GradientBlurCard extends StatelessWidget {
                         width: 40,
                         height: 40,
                         decoration: BoxDecoration(
-                          color: iconColor.withOpacity(0.15),
+                          color: iconColor.withValues(alpha: 0.15),
                           shape: BoxShape.circle,
                         ),
                         child: Icon(icon, color: iconColor, size: 24),

@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print
 import '../data/api_client.dart';
 import '../data/local_database.dart';
 import '../models/sync_models.dart';
@@ -40,7 +41,7 @@ class SyncRepository {
       final unsyncedContacts = await localDb.getUnsyncedContacts();
       if (unsyncedContacts.isNotEmpty) {
         final uploadData = unsyncedContacts.map((c) => c.toJson()).toList();
-        final uploadResponse = await apiClient.syncContacts(uploadData);
+        await apiClient.syncContacts(uploadData);
 
         // 标记为已同步
         final syncedIds = unsyncedContacts.map((c) => c.contactId).toList();
@@ -88,7 +89,7 @@ class SyncRepository {
         if (unsyncedMessages.isEmpty) break;
 
         final uploadData = unsyncedMessages.map((m) => m.toJson()).toList();
-        final uploadResponse = await apiClient.syncMessages(uploadData);
+        await apiClient.syncMessages(uploadData);
 
         // 标记为已同步
         final syncedIds = unsyncedMessages.map((m) => m.messageId).toList();

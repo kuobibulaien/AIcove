@@ -10,6 +10,7 @@
 /// 更新记录：
 /// - 2025-12-06: 从多个页面抽取公共 AppBar 样式
 /// - 2025-12-06: 接入皮肤系统
+library;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../theme/skin_provider.dart';
@@ -61,7 +62,7 @@ class MoeAppBar extends StatelessWidget implements PreferredSizeWidget {
   });
 
   @override
-  Size get preferredSize => Size.fromHeight(kToolbarHeight + borderWidth);
+  Size get preferredSize => const Size.fromHeight(kToolbarHeight + borderWidth);
 
   @override
   Widget build(BuildContext context) {
@@ -99,7 +100,7 @@ class MoeAppBar extends StatelessWidget implements PreferredSizeWidget {
             color: colors.divider,
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.04),
+                color: Colors.black.withValues(alpha: 0.04),
                 offset: const Offset(0, 1),
                 blurRadius: 0,
               ),
@@ -137,7 +138,7 @@ class MoeDetailAppBar extends StatelessWidget implements PreferredSizeWidget {
   });
 
   @override
-  Size get preferredSize => Size.fromHeight(kToolbarHeight + borderWidth);
+  Size get preferredSize => const Size.fromHeight(kToolbarHeight + borderWidth);
 
   @override
   Widget build(BuildContext context) {
@@ -166,7 +167,7 @@ class MoeDetailAppBar extends StatelessWidget implements PreferredSizeWidget {
             color: colors.divider,
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.04),
+                color: Colors.black.withValues(alpha: 0.04),
                 offset: const Offset(0, 1),
                 blurRadius: 0,
               ),

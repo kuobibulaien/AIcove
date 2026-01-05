@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../config.dart';
 import '../api_logger.dart';
@@ -36,16 +36,16 @@ class AgentApiClient {
     final now = DateTime.now();
     final ts =
         '[${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}]';
-    final source = 'AgentApiClient';
+    const source = 'AgentApiClient';
     final parts = <String>[];
     data.forEach((k, v) {
       if (v == null) return;
-      final val = v is String && v.length > 120 ? v.substring(0, 120) + '…' : v;
+      final val = v is String && v.length > 120 ? '${v.substring(0, 120)}…' : v;
       parts.add('$k=$val');
     });
-    final kv = parts.isEmpty ? '' : ' ' + parts.join(' ');
+    final kv = parts.isEmpty ? '' : ' ${parts.join(' ')}';
     // ignore: avoid_print
-    print('$ts [Core] [$level] [$source:${name}]::$kv');
+    print('$ts [Core] [$level] [$source:$name]::$kv');
   }
 
   Uri _uri(String path) {
@@ -148,7 +148,7 @@ class AgentApiClient {
     }
 
     // 将多模态/对象化的 messages 压平为 {role, content(String)}
-    String _coerceContent(dynamic content) {
+    String coerceContent(dynamic content) {
       if (content is String) return content;
       if (content is List) {
         final buf = StringBuffer();
@@ -167,7 +167,7 @@ class AgentApiClient {
       for (final m in messages)
         {
           'role': (m['role'] as String? ?? 'user'),
-          'content': _coerceContent(m['content']),
+          'content': coerceContent(m['content']),
         }
     ];
 
@@ -381,7 +381,7 @@ class AgentApiClient {
       model = modelFullId.substring(idx + 1);
     }
 
-    String _coerceContent(dynamic content) {
+    String coerceContent(dynamic content) {
       if (content is String) return content;
       if (content is List) {
         final buf = StringBuffer();
@@ -400,7 +400,7 @@ class AgentApiClient {
       for (final m in messages)
         {
           'role': (m['role'] as String? ?? 'user'),
-          'content': _coerceContent(m['content']),
+          'content': coerceContent(m['content']),
         }
     ];
 
