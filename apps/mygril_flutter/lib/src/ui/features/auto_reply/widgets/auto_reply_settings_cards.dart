@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../../features/plugins/plugin_providers.dart';
@@ -21,21 +22,23 @@ class AutoReplyIntroCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
-    return Card(
-      color: colors.surfaceAlt,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: const Padding(
-        padding: EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('说明', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-            SizedBox(height: 8),
-            Text(
-              '开启后，AI 会在聊天结束或特殊时间主动联系你。所有触发器都会遵守你设置的频率、冷却与免打扰策略，并可在下方查看或自定义。',
-              style: TextStyle(fontSize: 13, height: 1.4),
-            ),
-          ],
+    return MoeG2ClipRRect(
+      radius: MoeSmoothRadii.sm,
+      child: Material(
+        color: colors.surfaceAlt,
+        child: const Padding(
+          padding: EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('说明', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+              SizedBox(height: 8),
+              Text(
+                '开启后，AI 会在聊天结束或特殊时间主动联系你。所有触发器都会遵守你设置的频率、冷却与免打扰策略，并可在下方查看或自定义。',
+                style: TextStyle(fontSize: 13, height: 1.4),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -56,12 +59,13 @@ class DailyLimitCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
-    return Card(
-      color: colors.panel,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
+    return MoeG2ClipRRect(
+      radius: MoeSmoothRadii.sm,
+      child: Material(
+        color: colors.panel,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -86,6 +90,7 @@ class DailyLimitCard extends StatelessWidget {
             Text('建议 1~5 次，过多可能显得"黏人"。',
                 style: TextStyle(fontSize: 12, color: colors.muted)),
           ],
+          ),
         ),
       ),
     );
@@ -107,12 +112,13 @@ class IntervalCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
     final hours = (draft.minIntervalMinutes / 60).toStringAsFixed(1);
-    return Card(
-      color: colors.panel,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
+    return MoeG2ClipRRect(
+      radius: MoeSmoothRadii.sm,
+      child: Material(
+        color: colors.panel,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -137,6 +143,7 @@ class IntervalCard extends StatelessWidget {
             Text('限制两次主动消息之间的冷却时间。',
                 style: TextStyle(fontSize: 12, color: colors.muted)),
           ],
+          ),
         ),
       ),
     );
@@ -159,45 +166,46 @@ class QuietHoursCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
-    return Card(
-      color: colors.panel,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
+    return MoeG2ClipRRect(
+      radius: MoeSmoothRadii.sm,
+      child: Material(
+        color: colors.panel,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SwitchListTile(
-              title: const Text('夜间免打扰'),
-              subtitle: Text(
-                draft.quietHoursEnabled
-                    ? '${draft.quietHoursStart} - ${draft.quietHoursEnd}'
-                    : '关闭后夜间也可能收到提醒',
-                style: const TextStyle(fontSize: 12),
-              ),
-              value: draft.quietHoursEnabled,
-              onChanged: onEnabledChanged,
-              activeColor: colors.primary,
+            MoeSettingsRow(
+              icon: Icons.nightlight_round,
+              label: '夜间免打扰',
+              subtitle: draft.quietHoursEnabled
+                  ? '${draft.quietHoursStart} - ${draft.quietHoursEnd}'
+                  : '关闭后夜间也可能收到提醒',
+              trailingType: MoeSettingsRowTrailing.switchControl,
+              switchValue: draft.quietHoursEnabled,
+              onSwitchChanged: onEnabledChanged,
+              showDivider: false,
             ),
             const SizedBox(height: 8),
             Row(
               children: [
                 Expanded(
-                  child: OutlinedButton(
+                  child: MoeSecondaryButton(
+                    label: '开始 ${draft.quietHoursStart}',
                     onPressed: draft.quietHoursEnabled ? () => onPickTime(true) : null,
-                    child: Text('开始 ${draft.quietHoursStart}'),
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: OutlinedButton(
+                  child: MoeSecondaryButton(
+                    label: '结束 ${draft.quietHoursEnd}',
                     onPressed: draft.quietHoursEnabled ? () => onPickTime(false) : null,
-                    child: Text('结束 ${draft.quietHoursEnd}'),
                   ),
                 ),
               ],
             ),
           ],
+          ),
         ),
       ),
     );
@@ -225,12 +233,13 @@ class AnalyzerModelCard extends StatelessWidget {
         ? '${draft.analyzerModel} (${draft.analyzerProvider ?? "auto"})'
         : '使用默认对话模型';
 
-    return Card(
-      color: colors.panel,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
+    return MoeG2ClipRRect(
+      radius: MoeSmoothRadii.sm,
+      child: Material(
+        color: colors.panel,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -243,9 +252,9 @@ class AnalyzerModelCard extends StatelessWidget {
                 if (hasCustomModel)
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(
+                    decoration: MoeG2Decoration(
+                      radius: 4,
                       color: colors.primary.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text('独立', style: TextStyle(fontSize: 11, color: colors.primary)),
                   ),
@@ -257,32 +266,38 @@ class AnalyzerModelCard extends StatelessWidget {
               style: TextStyle(fontSize: 13, height: 1.4, color: colors.textSecondary),
             ),
             const SizedBox(height: 12),
-            InkWell(
-              onTap: onTap,
-              borderRadius: BorderRadius.circular(8),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                decoration: BoxDecoration(
-                  border: Border.all(color: colors.borderLight),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      hasCustomModel ? Icons.check_circle : Icons.radio_button_unchecked,
-                      size: 20,
-                      color: hasCustomModel ? colors.primary : colors.muted,
+            MoeG2ClipRRect(
+              radius: 8,
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: onTap,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    decoration: MoeG2Decoration(
+                      radius: 8,
+                      border: Border.all(color: colors.borderLight),
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(currentDisplay, style: TextStyle(fontSize: 14, color: colors.text)),
+                    child: Row(
+                      children: [
+                        Icon(
+                          hasCustomModel ? Icons.check_circle : Icons.radio_button_unchecked,
+                          size: 20,
+                          color: hasCustomModel ? colors.primary : colors.muted,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(currentDisplay, style: TextStyle(fontSize: 14, color: colors.text)),
+                        ),
+                        Icon(Icons.chevron_right, color: colors.muted),
+                      ],
                     ),
-                    Icon(Icons.chevron_right, color: colors.muted),
-                  ],
+                  ),
                 ),
               ),
             ),
           ],
+          ),
         ),
       ),
     );
@@ -307,12 +322,13 @@ class AnalyzerPromptCard extends StatelessWidget {
     final colors = context.moeColors;
     final isDefault = draft.analyzerPrompt == AutoReplySettings.defaultAnalyzerPrompt;
 
-    return Card(
-      color: colors.panel,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
+    return MoeG2ClipRRect(
+      radius: MoeSmoothRadii.sm,
+      child: Material(
+        color: colors.panel,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -325,9 +341,9 @@ class AnalyzerPromptCard extends StatelessWidget {
                 if (!isDefault)
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(
+                    decoration: MoeG2Decoration(
+                      radius: 4,
                       color: colors.primary.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text('自定义', style: TextStyle(fontSize: 11, color: colors.primary)),
                   ),
@@ -359,6 +375,7 @@ class AnalyzerPromptCard extends StatelessWidget {
               ],
             ),
           ],
+          ),
         ),
       ),
     );
@@ -371,21 +388,18 @@ class IntelligentTriggerSwitch extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final colors = context.moeColors;
     final config = ref.watch(triggerPluginConfigProvider);
-    
-    return SwitchListTile(
-      value: config.enabled,
-      onChanged: (value) {
+
+    return MoeSettingsRow(
+      icon: Icons.alarm_add,
+      label: '允许 AI 设定提醒',
+      subtitle: config.enabled ? 'AI 可通过对话（如"叫我起床"）自动设置系统闹钟' : 'AI 无法操作你的系统通知',
+      trailingType: MoeSettingsRowTrailing.switchControl,
+      switchValue: config.enabled,
+      onSwitchChanged: (value) {
         ref.read(triggerPluginConfigProvider.notifier).setEnabled(value);
       },
-      activeColor: colors.primary,
-      title: const Text('允许 AI 设定提醒'),
-      subtitle: Text(
-        config.enabled ? 'AI 可通过对话（如"叫我起床"）自动设置系统闹钟' : 'AI 无法操作你的系统通知',
-        style: const TextStyle(fontSize: 13),
-      ),
-      secondary: Icon(Icons.alarm_add, color: config.enabled ? colors.primary : colors.muted),
+      showDivider: false,
     );
   }
 }

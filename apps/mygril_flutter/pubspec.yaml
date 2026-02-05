@@ -8,6 +8,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
   cupertino_icons: ^1.0.6
   go_router: ^14.2.0
   flutter_riverpod: ^2.5.1
@@ -28,10 +30,25 @@ dependencies:
   path_provider: ^2.1.2  # 文件路径
   flutter_secure_storage: ^9.0.0  # 安全存储Token
   workmanager: ^0.6.0-rc.1 # 后台任务管理 (修复Flutter 3.x兼容性)
+  # 聊天底部面板（键盘/更多面板平滑切换）
+  chat_bottom_container: ^0.4.0
+  # 图片预览（支持缩放、Hero动画）
+  photo_view: ^0.15.0
+  # 网络图片缓存（性能优化）
+  cached_network_image: ^3.3.1
   # 本地数据库 (Drift)
   drift: ^2.18.0
   sqlite3_flutter_libs: ^0.5.0  # Android/iOS/macOS/Windows SQLite
   path: ^1.9.0
+  # 数据备份导入导出
+  archive: ^3.6.0  # ZIP 压缩解压
+  share_plus: ^9.0.0  # 分享文件
+  package_info_plus: ^8.0.0  # 获取应用版本
+  lucide_icons: ^0.257.0  # 图标库
+  pretty_qr_code: ^3.3.0  # 二维码生成
+  flutter_colorpicker: ^1.1.0  # 颜色选择器
+  flutter_svg: ^2.0.10  # SVG 图标支持
+  window_manager: ^0.4.3  # Windows/macOS/Linux 无边框窗口管理
 
   flutter_web_plugins:
     sdk: flutter
@@ -48,7 +65,11 @@ flutter:
   uses-material-design: true
 
   assets:
+    - assets/
     - assets/characters/
+    - assets/characters/images/
+    - assets/characters/prompts/
     - assets/ui/
     - assets/emoji/
     - assets/stickers/nahida/
+    - assets/icons/providers/

@@ -1,6 +1,6 @@
 # MyGril Cloud Sync 云同步服务
 
-精简的云同步后端，仅负责用户认证和数据同步，所有AI逻辑在Flutter客户端。
+云端后端服务：以「用户认证 + 云端数据相关能力」为主（同步/备份/触发器/记忆/额度等），所有 AI 对话逻辑在 Flutter 客户端完成。
 
 ## 🎯 功能
 
@@ -9,6 +9,12 @@
 - ✅ 聊天消息云同步
 - ✅ 用户设置云同步
 - ✅ 管理后台（用户管理、邀请码）
+- ✅ 同步 API v2（Scope/增量同步/回收站）
+- ✅ 数据备份/恢复
+- ✅ 云触发器（自动化任务）
+- ✅ 云记忆库（长期记忆）
+- ✅ Key 分发与额度管理
+- ✅ （可选）挂载 Flutter Web：`/app`（检测到 `apps/mygril_flutter/build/web` 时自动启用）
 - ✅ RESTful API
 
 ## 📦 技术栈
@@ -74,7 +80,7 @@ docker-compose down
 - `GET /api/v1/auth/me` - 获取当前用户信息
 - `POST /api/v1/auth/bootstrap-admin` - 创建首个管理员
 
-#### 数据同步
+#### 数据同步（旧版）
 - `GET /api/v1/sync/contacts` - 获取联系人
 - `POST /api/v1/sync/contacts` - 批量同步联系人
 - `GET /api/v1/sync/messages` - 获取消息
@@ -82,6 +88,37 @@ docker-compose down
 - `GET /api/v1/sync/settings` - 获取用户设置
 - `PUT /api/v1/sync/settings` - 更新用户设置
 - `GET /api/v1/sync/status` - 获取同步状态
+
+#### 数据同步（v2）
+- `GET /api/v1/sync/v2/scopes` - 获取同步范围（Scope）
+- `PUT /api/v1/sync/v2/scopes` - 更新同步范围（Scope）
+- `GET /api/v1/sync/v2/pull` - 拉取增量
+- `POST /api/v1/sync/v2/push` - 推送增量（幂等 op_id）
+- `GET /api/v1/sync/v2/recycle-bin` - 回收站列表
+- `POST /api/v1/sync/v2/purge-expired` - 清理过期回收站
+
+#### Key 分发与额度
+- `GET /api/v1/keys/providers` - 获取可用 Provider
+- `POST /api/v1/keys/request` - 申请 Key
+- `GET /api/v1/keys/quota` - 查看额度
+- `POST /api/v1/keys/usage/report` - 上报用量
+
+#### 数据备份
+- `POST /api/v1/backup/create` - 创建备份
+- `GET /api/v1/backup/list` - 备份列表
+- `POST /api/v1/backup/{backup_id}/restore` - 恢复备份
+- `GET /api/v1/backup/stats/my` - 备份统计
+
+#### 云触发器
+- `POST /api/v1/triggers/create` - 创建触发器
+- `GET /api/v1/triggers/list` - 触发器列表
+- `GET /api/v1/triggers/{trigger_id}/logs` - 执行日志
+- `GET /api/v1/triggers/stats/my` - 触发器统计
+
+#### 云记忆库
+- `POST /api/v1/memory/create` - 写入记忆
+- `POST /api/v1/memory/search` - 搜索记忆（keyword/semantic）
+- `GET /api/v1/memory/stats/my` - 记忆统计
 
 #### 管理（需管理员权限）
 - `POST /api/v1/admin/invites` - 创建邀请码
@@ -109,6 +146,12 @@ DATABASE_URL=sqlite:///./data/sync.db
 
 # CORS（生产环境改为具体域名）
 ALLOWED_ORIGINS=*
+
+# 加密（生产环境建议配置，避免重启后无法解密历史数据）
+# - 用于 providers.api_keys 信封加密（AES-256-GCM）
+ENCRYPTION_KEK=base64-32-bytes
+# - 用于 Key 分发/额度模块（Fernet）
+ENCRYPTION_KEY=base64-fernet-key
 ```
 
 ## 🗄️ 数据库
@@ -126,13 +169,22 @@ DATABASE_URL=postgresql://user:password@localhost/mygril
 
 ```
 cloud_backend/
-├── main.py              # 主入口
+├── main.py              # 主入口（挂载路由 + /app 静态站点）
 ├── database.py          # 数据库连接
 ├── models.py            # 数据模型
 ├── auth.py              # 认证模块
-├── sync_api.py          # 同步API
-├── admin_api.py         # 管理API
+├── admin_api.py         # 管理API（邀请码/用户/统计）
+├── sync_api.py          # 同步API（旧版）
+├── sync_api_v2.py       # 同步API（v2：scopes/pull/push/回收站）
+├── backup_api.py        # 数据备份/恢复
+├── trigger_api.py       # 云触发器
+├── memory_api.py        # 云记忆库
+├── key_distribution.py  # Key 分发/额度管理
+├── encryption.py        # 加解密（供同步 v2 等使用）
+├── purge_task.py        # 清理任务（回收站/过期数据）
 ├── requirements.txt     # Python依赖
+├── start.ps1            # Windows 启动脚本
+├── start.sh             # Linux/Mac 启动脚本
 ├── .env.example         # 环境变量示例
 ├── Dockerfile           # Docker镜像
 ├── docker-compose.yml   # Docker编排
@@ -206,7 +258,9 @@ curl -X POST http://your-server:8000/api/v1/auth/bootstrap-admin \
 ## 🐛 故障排查
 
 ### 服务无法启动
-- 检查端口是否被占用: `lsof -i :8000`
+- 检查端口是否被占用:
+  - Linux/Mac: `lsof -i :8000`
+  - Windows: `netstat -ano | findstr :8000`
 - 查看日志: `docker-compose logs`
 
 ### 数据库连接错误

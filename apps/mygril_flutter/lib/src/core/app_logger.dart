@@ -1,6 +1,9 @@
-﻿import 'dart:convert';
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
 
 /// 日志级别
 enum LogLevel {
@@ -77,20 +80,157 @@ class LogEntry {
 }
 
 /// 应用日志管理器
+///
+/// 特性：
+/// - 实时写入文件，不丢失日志
+/// - 写入队列保证顺序，避免并发问题
+/// - 初始化前的日志会被缓冲，初始化后批量写入
+/// - 缓存文件路径，避免重复计算
 class AppLogger {
   static final ValueNotifier<List<LogEntry>> entries = ValueNotifier<List<LogEntry>>(<LogEntry>[]);
-  static const int maxEntries = 1000;  // 最多保存 1000 条日志
-  
+  static const int maxEntries = 1000;  // 内存中最多保存 1000 条日志
+  static const String _logDirName = 'logs';
+
+  // 初始化状态
+  static bool _initialized = false;
+  static Completer<void>? _initCompleter;
+
+  // 文件路径缓存
+  static String? _cachedLogDirPath;
+  static String? _cachedTodayFilePath;
+  static int? _cachedFileDay;  // 缓存的日期（用于检测跨天）
+
+  // 写入队列
+  static final List<LogEntry> _writeQueue = [];
+  static bool _isWriting = false;
+
+  // 初始化前的缓冲区
+  static final List<LogEntry> _preInitBuffer = [];
+
+  /// 获取日志存储目录（带缓存）
+  static Future<String> _getLogDirPath() async {
+    if (_cachedLogDirPath != null) return _cachedLogDirPath!;
+
+    final appDir = await getApplicationDocumentsDirectory();
+    final logDir = Directory('${appDir.path}/$_logDirName');
+    if (!await logDir.exists()) {
+      await logDir.create(recursive: true);
+    }
+    _cachedLogDirPath = logDir.path;
+    return _cachedLogDirPath!;
+  }
+
+  /// 获取当天的日志文件路径（带缓存，自动处理跨天）
+  static Future<String> _getTodayLogFilePath() async {
+    final now = DateTime.now();
+    final today = now.day;
+
+    // 如果日期变了，清除缓存
+    if (_cachedFileDay != null && _cachedFileDay != today) {
+      _cachedTodayFilePath = null;
+    }
+
+    if (_cachedTodayFilePath != null) return _cachedTodayFilePath!;
+
+    final logDirPath = await _getLogDirPath();
+    final fileName = 'app_${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}.jsonl';
+    _cachedTodayFilePath = '$logDirPath/$fileName';
+    _cachedFileDay = today;
+    return _cachedTodayFilePath!;
+  }
+
+  /// 初始化日志系统
+  ///
+  /// 只准备好文件路径，不加载历史日志到内存。
+  /// 内存中只保留本次 session 的日志，历史日志通过 LogHistoryService 查看。
+  static Future<void> initialize() async {
+    if (_initialized) return;
+
+    // 防止重复初始化
+    if (_initCompleter != null) {
+      return _initCompleter!.future;
+    }
+    _initCompleter = Completer<void>();
+
+    try {
+      // 预热文件路径缓存，确保目录存在
+      await _getTodayLogFilePath();
+
+      _initialized = true;
+      _initCompleter!.complete();
+
+      // 将初始化前缓冲的日志写入文件
+      if (_preInitBuffer.isNotEmpty) {
+        final buffered = List<LogEntry>.from(_preInitBuffer);
+        _preInitBuffer.clear();
+        for (final entry in buffered) {
+          _enqueueWrite(entry);
+        }
+      }
+    } catch (e) {
+      _initialized = true;  // 即使失败也标记为已初始化，避免死循环
+      _initCompleter!.complete();
+      if (kDebugMode) {
+        debugPrint('AppLogger 初始化失败: $e');
+      }
+    }
+  }
+
+  /// 将日志加入写入队列
+  static void _enqueueWrite(LogEntry entry) {
+    _writeQueue.add(entry);
+    _processWriteQueue();
+  }
+
+  /// 处理写入队列（单一协程顺序写入）
+  static Future<void> _processWriteQueue() async {
+    if (_isWriting || _writeQueue.isEmpty) return;
+
+    _isWriting = true;
+    try {
+      while (_writeQueue.isNotEmpty) {
+        final entry = _writeQueue.removeAt(0);
+        await _writeToFile(entry);
+      }
+    } finally {
+      _isWriting = false;
+    }
+  }
+
+  /// 实际写入文件
+  static Future<void> _writeToFile(LogEntry entry) async {
+    try {
+      final filePath = await _getTodayLogFilePath();
+      final file = File(filePath);
+      final line = '${jsonEncode(entry.toJson())}\n';
+      await file.writeAsString(line, mode: FileMode.append, flush: true);
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('日志写入文件失败: $e');
+      }
+    }
+  }
+
   /// 添加日志
   static void add(LogEntry entry) {
+    // 1. 更新内存中的日志列表
     final list = List<LogEntry>.from(entries.value);
     list.add(entry);
     if (list.length > maxEntries) {
       list.removeRange(0, list.length - maxEntries);
     }
     entries.value = list;
-    
-    // 在开发模式下同时输出到控制台
+
+    // 2. 写入文件
+    if (_initialized) {
+      // 已初始化：直接加入写入队列
+      _enqueueWrite(entry);
+    } else {
+      // 未初始化：先缓冲，等初始化完成后再写入
+      _preInitBuffer.add(entry);
+    }
+
+    // 3. 在开发模式下同时输出到控制台
     if (kDebugMode) {
       _printFormattedLog(entry);
     }
@@ -200,20 +340,20 @@ class AppLogger {
   }
 
   /// 创建一个新的追踪日志器
-  /// 
+  ///
   /// 用于追踪一个完整的事件流，自动记录开始、结束时间和耗时
-  /// 
+  ///
   /// 示例：
   /// ```dart
   /// final trace = AppLogger.startTrace('发送消息', source: 'ChatPage', file: 'chat_page.dart');
   /// trace.info('开始调用API');
-  /// 
+  ///
   /// // 创建子追踪
   /// final apiTrace = trace.startChild('API调用');
   /// apiTrace.info('请求已发送');
   /// // ... 执行操作
   /// apiTrace.end(); // 自动计算耗时并记录
-  /// 
+  ///
   /// trace.end(); // 结束追踪
   /// ```
   static TraceLogger startTrace(String name,
@@ -243,7 +383,7 @@ class _TraceIdGenerator {
 }
 
 /// 追踪日志器
-/// 
+///
 /// 用于追踪一个完整的事件流，支持：
 /// - 自动生成追踪ID
 /// - 层级嵌套（子追踪）
@@ -328,7 +468,7 @@ class TraceLogger {
   }
 
   /// 创建子追踪（用于嵌套的操作）
-  /// 
+  ///
   /// 子追踪会继承父追踪的 traceId，但层级深度会+1
   TraceLogger startChild(String childName, {String? childSource, String? childFile}) {
     return TraceLogger(

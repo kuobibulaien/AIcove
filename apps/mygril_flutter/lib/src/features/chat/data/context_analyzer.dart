@@ -7,6 +7,8 @@ import '../domain/conversation.dart';
 import 'auto_reply_trigger.dart';
 import 'auto_reply_trigger_controller.dart';
 import 'background_service.dart';
+import '../../plugins/plugin_providers.dart';
+import '../../plugins/time_awareness/time_awareness_plugin.dart';
 
 final contextAnalyzerProvider = Provider((ref) => ContextAnalyzer(ref));
 
@@ -23,13 +25,16 @@ class ContextAnalyzer {
     final history = conversation.messages;
     // Only analyze last 10 messages to save tokens
     final recent = history.length > 10 ? history.sublist(history.length - 10) : history;
-    final messagesJson = recent.map((m) => m.toHistoryJson()).toList();
+    
+    // 根据时间增强插件配置决定是否添加时间戳
+    final pluginManager = _ref.read(pluginManagerProvider);
+    final timeAwarenessPlugin = pluginManager.getPlugin('time_awareness') as TimeAwarenessPlugin?;
+    final includeTimestamp = timeAwarenessPlugin?.shouldIncludeTimestamp ?? false;
+    final messagesJson = recent.map((m) => m.toHistoryJson(includeTimestamp: includeTimestamp)).toList();
 
     // 获取当前未完成的触发器列表
     final currentTriggers = _ref.read(autoReplyTriggersProvider).valueOrNull ?? [];
-    final pendingTriggers = currentTriggers
-        .where((t) => t.status != AutoReplyTriggerStatus.completed)
-        .toList();
+    final pendingTriggers = currentTriggers.where((t) => t.isActive).toList();
 
     // 默认提示词
     const defaultPrompt = '''
@@ -155,9 +160,7 @@ Do not output markdown. Just JSON.
       final controller = _ref.read(autoReplyTriggersProvider.notifier);
       
       final currentTriggers = _ref.read(autoReplyTriggersProvider).valueOrNull ?? [];
-      final pendingTriggers = currentTriggers
-          .where((t) => t.status != AutoReplyTriggerStatus.completed)
-          .toList();
+      final pendingTriggers = currentTriggers.where((t) => t.isActive).toList();
 
       final aiTriggerIds = <String>{};
       final triggersToAdd = <Map<String, dynamic>>[];
@@ -183,11 +186,11 @@ Do not output markdown. Just JSON.
       // 添加新的
       for (final item in triggersToAdd) {
         final title = item['title'] as String? ?? 'Auto Trigger';
-        final minutes = item['delay_minutes'] as int? ?? 60;
+        final minutes = (item['delay_minutes'] as num?)?.toInt() ?? 60;
         final allowNight = item['allow_night'] as bool? ?? false;
         final prompt = item['prompt'] as String? ?? 'Initiate conversation based on trigger: $title';
         final priorityStr = item['priority'] as String? ?? 'medium';
-        
+
         AutoReplyTriggerPriority priority;
         switch (priorityStr.toLowerCase()) {
           case 'high': priority = AutoReplyTriggerPriority.high; break;
@@ -195,15 +198,31 @@ Do not output markdown. Just JSON.
           default: priority = AutoReplyTriggerPriority.medium;
         }
 
-        // 1. 创建前台 Timer 触发器
-        controller.createManualTrigger(
+        // 获取会话中最后一条用户消息（用于作废判断）
+        String? lastUserMsgId;
+        DateTime? lastUserMsgAt;
+        for (final m in conversation.messages.reversed) {
+          if (m.role == 'user') {
+            lastUserMsgId = m.id;
+            lastUserMsgAt = m.createdAt;
+            break;
+          }
+        }
+
+        // 1. 使用新的 createTrigger 方法创建触发器
+        controller.createTrigger(
+          title: title,
           type: AutoReplyTriggerType.delay,
           nextFireAt: DateTime.now().add(Duration(minutes: minutes)),
           allowNight: allowNight,
           requireExact: false,
           delayMinutes: minutes,
-          title: title,
+          prompt: prompt,
           priority: priority,
+          source: TriggerSource.aiScheduler, // AI 管家创建
+          conversationId: conversation.id,
+          contextLastUserMessageId: lastUserMsgId,
+          contextLastUserMessageAt: lastUserMsgAt,
         );
 
         // 2. 注册后台 WorkManager 任务 (仅当 API Key 存在时)
@@ -223,9 +242,9 @@ Do not output markdown. Just JSON.
           );
           AppLogger.info('ContextAnalyzer', 'Scheduled background task', metadata: {'delay': minutes});
         }
-        
-        AppLogger.info('ContextAnalyzer', 'Scheduled trigger', 
-            metadata: {'title': title, 'minutes': minutes});
+
+        AppLogger.info('ContextAnalyzer', 'Scheduled trigger',
+            metadata: {'title': title, 'minutes': minutes, 'source': 'aiScheduler'});
       }
     } catch (e) {
       AppLogger.warning('ContextAnalyzer', 'Failed to parse scheduler JSON', 

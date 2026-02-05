@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../ui/theme/tokens.dart';
 import 'contacts_page.dart';
 import '../../../../ui/features/character/pages/role_card_page.dart';
 import '../../../../ui/features/settings/pages/profile_page.dart';
@@ -35,7 +36,7 @@ class _MainPageState extends ConsumerState<MainPage>
     super.initState();
     _fadeController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 200),
+      duration: kAnim,
     );
     _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _fadeController, curve: Curves.easeOut),

@@ -16,9 +16,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../features/settings/app_settings.dart';
-import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/index.dart';
-import 'provider_section_card.dart';
 
 /// 显示模型搜索弹窗
 Future<void> showModelSearchSheet(BuildContext context, WidgetRef ref) async {
@@ -26,7 +24,7 @@ Future<void> showModelSearchSheet(BuildContext context, WidgetRef ref) async {
     context: context,
     title: '搜索模型',
     showCloseButton: true,
-    maxHeight: MediaQuery.of(context).size.height * 0.85,
+    maxHeight: MediaQuery.sizeOf(context).height * 0.85,
     builder: (context) => _ModelSearchContent(ref: ref),
   );
 }
@@ -60,28 +58,23 @@ class _ModelSearchContentState extends State<_ModelSearchContent> {
         // 搜索框
         Padding(
           padding: const EdgeInsets.all(16),
-          child: TextField(
+          child: MoeTextField(
             controller: _searchCtrl,
             autofocus: true,
-            decoration: InputDecoration(
-              hintText: '搜索模型ID或备注...',
-              prefixIcon: const Icon(Icons.search),
-              suffixIcon: _searchCtrl.text.isNotEmpty
-                  ? IconButton(
-                      icon: const Icon(Icons.clear, size: 20),
-                      onPressed: () {
-                        setState(() {
-                          _searchCtrl.clear();
-                          _searchQuery = '';
-                        });
-                      },
-                    )
-                  : null,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            ),
+            hint: '搜索模型ID或备注...',
+            prefixIcon: Icons.search,
+            suffix: _searchCtrl.text.isNotEmpty
+                ? IconButton(
+                    icon: const Icon(Icons.clear, size: 20),
+                    onPressed: () {
+                      setState(() {
+                        _searchCtrl.clear();
+                        _searchQuery = '';
+                      });
+                    },
+                  )
+                : null,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             onChanged: (value) {
               setState(() {
                 _searchQuery = value.toLowerCase().trim();
@@ -153,7 +146,7 @@ class _ModelSearchContentState extends State<_ModelSearchContent> {
             modelId: modelId,
             displayName: displayName,
             providerId: provider.id,
-            providerName: providerTitle(provider),
+            providerName: provider.displayName ?? provider.id,
             isVisible: isVisible,
           ));
         }
@@ -199,82 +192,21 @@ class _SearchResultRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.moeColors;
     final notifier = ref.read(appSettingsProvider.notifier);
 
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: colors.surfaceAlt,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: colors.borderLight, width: borderWidth),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  result.modelId,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                    color: colors.text,
-                  ),
-                ),
-                if (result.displayName != null && result.displayName!.isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    result.displayName!,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: colors.muted,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 4),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: colors.surface,
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: colors.borderLight),
-                  ),
-                  child: Text(
-                    result.providerName,
-                    style: TextStyle(fontSize: 11, color: colors.muted),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                result.isVisible ? '已显示' : '已隐藏',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: result.isVisible ? colors.primary : colors.muted,
-                ),
-              ),
-              Switch(
-                value: result.isVisible,
-                onChanged: (value) {
-                  notifier.setModelVisibility(
-                    providerId: result.providerId,
-                    modelId: result.modelId,
-                    visible: value,
-                  );
-                },
-              ),
-            ],
-          ),
-        ],
-      ),
+    return MoeSettingsRow(
+      icon: Icons.model_training_outlined,
+      label: result.modelId,
+      subtitle: '${result.displayName ?? ""} · ${result.providerName}',
+      trailingType: MoeSettingsRowTrailing.switchControl,
+      switchValue: result.isVisible,
+      onSwitchChanged: (value) {
+        notifier.setModelVisibility(
+          providerId: result.providerId,
+          modelId: result.modelId,
+          visible: value,
+        );
+      },
     );
   }
 }

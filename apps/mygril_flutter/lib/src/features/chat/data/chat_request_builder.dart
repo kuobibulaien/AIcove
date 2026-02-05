@@ -18,7 +18,9 @@ import '../../settings/app_settings.dart';
 import '../../settings/mcp_api.dart';
 import '../../settings/direct_mode.dart' as direct;
 import '../../plugins/plugin_providers.dart';
+import '../../plugins/time_awareness/time_awareness_plugin.dart';
 import '../../../core/app_logger.dart';
+import '../../../core/utils/token_estimator.dart';
 
 /// 请求构建结果 - 包含发送 AI 请求所需的所有参数
 class ChatRequestParams {
@@ -211,7 +213,11 @@ class ChatRequestBuilder {
     String? userMessage,
     String? additionalPrompt,
   }) async {
-    final reqMessages = history.map((m) => m.toHistoryJson()).toList();
+    // 根据时间增强插件配置决定是否添加时间戳
+    final pluginManager = _ref.read(pluginManagerProvider);
+    final timeAwarenessPlugin = pluginManager.getPlugin('time_awareness') as TimeAwarenessPlugin?;
+    final includeTimestamp = timeAwarenessPlugin?.shouldIncludeTimestamp ?? false;
+    final reqMessages = history.map((m) => m.toHistoryJson(includeTimestamp: includeTimestamp)).toList();
 
     final systemPrompt = await buildSystemPrompt(
       conversation: conversation,
@@ -256,12 +262,23 @@ class ChatRequestBuilder {
 
     final providerConfig = await resolveProviderConfig(settings);
 
+    // Token 截断：确保消息总长度不超过模型上下文限制
+    final modelName = providerConfig.modelFullId.contains(':')
+        ? providerConfig.modelFullId.split(':').last
+        : providerConfig.modelFullId;
+    final maxContextTokens = getModelContextLimit(modelName);
+    final truncatedMessages = truncateMessagesToFit(
+      messages: messages,
+      maxContextTokens: maxContextTokens,
+      reserveTokens: 2048,
+    );
+
     return ChatRequestParams(
       modelFullId: providerConfig.modelFullId,
       providerApiBase: providerConfig.providerApiBase,
       providerApiKey: providerConfig.providerApiKey,
       customConfig: providerConfig.customConfig,
-      messages: messages,
+      messages: truncatedMessages,
       toolPrefs: toolPrefs,
       temperature: settings.temperature,
       backendApiKey: settings.backendApiKey,

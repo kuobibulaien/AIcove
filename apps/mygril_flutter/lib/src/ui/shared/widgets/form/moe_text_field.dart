@@ -24,6 +24,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../theme/tokens.dart';
+import '../../effects/smooth_clip.dart';
 
 /// 输入框尺寸枚举
 enum MoeTextFieldSize { sm, md, lg }
@@ -248,6 +249,7 @@ class _MoeTextFieldState extends State<MoeTextField> {
     final labelColor = widget.labelColor ?? colors.textSecondary;
     
     final radius = widget.borderRadius ?? MoeRadii.borderSm;
+    final g2Radius = radius.topLeft.x;
     final borderWidth = widget.borderWidth ?? 1.0;
     final padding = widget.contentPadding ?? _defaultPadding;
 
@@ -286,9 +288,9 @@ class _MoeTextFieldState extends State<MoeTextField> {
         // 输入框
         AnimatedContainer(
           duration: kAnimFast,
-          decoration: BoxDecoration(
+          decoration: MoeG2Decoration(
+            radius: g2Radius,
             color: currentFill,
-            borderRadius: radius,
             border: Border.all(
               color: currentBorder,
               width: _hasFocus ? borderWidth * 1.5 : borderWidth,

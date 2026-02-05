@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/animations/expanding_page_route.dart';
-import '../../../../ui/shared/widgets/moe_toast.dart';
+import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../features/plugins/plugin_providers.dart';
 import '../../../../features/stickers/sticker_registry.dart';
@@ -43,17 +43,8 @@ class _StickerSettingsPageState extends ConsumerState<StickerSettingsPage> {
 
     return Scaffold(
       backgroundColor: colors.surface,
-      appBar: AppBar(
-        backgroundColor: colors.surface,
-        elevation: 0,
-        leading: IconButton(
-          icon: Icon(Icons.arrow_back, color: colors.text),
-          onPressed: () => Navigator.of(context).pop(),
-        ),
-        title: Text(
-          '表情包管理',
-          style: TextStyle(color: colors.text, fontSize: 18, fontWeight: FontWeight.w600),
-        ),
+      appBar: MoeDetailAppBar(
+        title: '表情包管理',
       ),
       body: Column(
         children: [
@@ -158,7 +149,7 @@ class _StickerSettingsPageState extends ConsumerState<StickerSettingsPage> {
               sourceRadius: cardRadius,
             );
           },
-          child: SmoothClipRRect(
+          child: MoeG2ClipRRect(
             radius: cardRadius,
             child: Container(
               color: colors.surfaceAlt,
@@ -236,9 +227,9 @@ class _StickerSettingsPageState extends ConsumerState<StickerSettingsPage> {
   Widget _buildStatChip(String text, MoeColors colors) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
+      decoration: MoeG2Decoration(
+        radius: 12,
         color: colors.surfaceAlt,
-        borderRadius: BorderRadius.circular(12),
       ),
       child: Text(text, style: TextStyle(fontSize: 12, color: colors.muted)),
     );
@@ -246,19 +237,20 @@ class _StickerSettingsPageState extends ConsumerState<StickerSettingsPage> {
 
   /// 构建启用开关
   Widget _buildEnableToggle(bool enabled, MoeColors colors) {
-    return Container(
-      margin: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: colors.panel,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: colors.border),
-      ),
-      child: SwitchListTile(
-        title: Text('启用表情包', style: TextStyle(color: colors.text, fontSize: 16, fontWeight: FontWeight.w500)),
-        subtitle: Text(enabled ? '已启用' : '已禁用', style: TextStyle(color: enabled ? colors.primary : colors.muted, fontSize: 13)),
-        value: enabled,
-        activeThumbColor: colors.primary,
-        onChanged: (value) => ref.read(stickerPluginConfigProvider.notifier).setEnabled(value),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 16, 0, 8),
+      child: MoeSettingsGroup(
+        children: [
+          MoeSettingsRow(
+            icon: Icons.emoji_emotions_outlined,
+            label: '启用表情包',
+            subtitle: enabled ? '已启用' : '已禁用',
+            subtitleColor: enabled ? colors.primary : colors.muted,
+            trailingType: MoeSettingsRowTrailing.switchControl,
+            switchValue: enabled,
+            onSwitchChanged: (value) => ref.read(stickerPluginConfigProvider.notifier).setEnabled(value),
+          ),
+        ],
       ),
     );
   }
@@ -272,17 +264,13 @@ class _StickerSettingsPageState extends ConsumerState<StickerSettingsPage> {
           Text('分组方式：', style: TextStyle(color: colors.text, fontSize: 14)),
           const SizedBox(width: 12),
           Expanded(
-            child: SegmentedButton<StickerGroupMode>(
-              segments: const [
-                ButtonSegment(value: StickerGroupMode.byTag, label: Text('按标签'), icon: Icon(Icons.label_outline, size: 18)),
-                ButtonSegment(value: StickerGroupMode.byFolder, label: Text('按分组'), icon: Icon(Icons.folder_outlined, size: 18)),
+            child: MoeToggleBar<StickerGroupMode>(
+              value: _groupMode,
+              items: const [
+                MoeToggleItem(value: StickerGroupMode.byTag, label: '按标签', icon: Icons.label_outline),
+                MoeToggleItem(value: StickerGroupMode.byFolder, label: '按分组', icon: Icons.folder_outlined),
               ],
-              selected: {_groupMode},
-              onSelectionChanged: (selection) => setState(() => _groupMode = selection.first),
-              style: ButtonStyle(
-                visualDensity: VisualDensity.compact,
-                textStyle: WidgetStateProperty.all(const TextStyle(fontSize: 13)),
-              ),
+              onChanged: (value) => setState(() => _groupMode = value),
             ),
           ),
         ],
@@ -294,9 +282,9 @@ class _StickerSettingsPageState extends ConsumerState<StickerSettingsPage> {
   Widget _buildTagGroup(String tag, List<Sticker> stickers, MoeColors colors) {
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
-      decoration: BoxDecoration(
+      decoration: MoeG2Decoration(
+        radius: 12,
         color: colors.panel,
-        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: colors.border),
       ),
       child: Column(
@@ -309,9 +297,9 @@ class _StickerSettingsPageState extends ConsumerState<StickerSettingsPage> {
               children: [
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
+                  decoration: MoeG2Decoration(
+                    radius: 6,
                     color: colors.primary.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(6),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -351,13 +339,13 @@ class _StickerSettingsPageState extends ConsumerState<StickerSettingsPage> {
       child: Container(
         width: 64,
         height: 64,
-        decoration: BoxDecoration(
+        decoration: MoeG2Decoration(
+          radius: 8,
           color: colors.surfaceAlt,
-          borderRadius: BorderRadius.circular(8),
           border: Border.all(color: colors.border),
         ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(7),
+        child: MoeG2ClipRRect(
+          radius: 7,
           child: Image.asset(
             sticker.assetPath,
             width: 64,
@@ -392,21 +380,12 @@ class _StickerFolderDetailPage extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: colors.surface,
-      appBar: AppBar(
-        backgroundColor: colors.surface,
-        elevation: 0,
-        leading: IconButton(
-          icon: Icon(Icons.arrow_back, color: colors.text),
-          onPressed: () => Navigator.of(context).pop(),
-        ),
-        title: Text(
-          folderName,
-          style: TextStyle(color: colors.text, fontSize: 18, fontWeight: FontWeight.w600),
-        ),
+      appBar: MoeDetailAppBar(
+        title: folderName,
         actions: [
           // 未来可添加编辑按钮
           IconButton(
-            icon: Icon(Icons.edit_outlined, color: colors.muted),
+            icon: Icon(Icons.edit_outlined, color: colors.headerContentColor),
             onPressed: () {
               // TODO: 实现编辑功能
               MoeToast.brief(context, '编辑功能开发中...');

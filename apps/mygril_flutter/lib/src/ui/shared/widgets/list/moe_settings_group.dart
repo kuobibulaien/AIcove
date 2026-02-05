@@ -25,6 +25,7 @@ library;
 
 import 'package:flutter/material.dart';
 import '../../../theme/tokens.dart';
+import '../../effects/smooth_clip.dart';
 import 'moe_settings_row.dart';
 
 /// 设置分组卡片组件
@@ -87,13 +88,11 @@ class MoeSettingsGroup extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    
-    // 解析样式
-    final bgColor = backgroundColor ?? (isDark 
-        ? Colors.white.withValues(alpha: 0.1)
-        : Colors.white.withValues(alpha: 0.96));
+
+    // 解析样式 - 卡片背景使用主题的组件公共背景色
+    final bgColor = backgroundColor ?? colors.componentBackground;
     final radius = borderRadius ?? MoeRadii.borderMd;
+    final g2Radius = radius.topLeft.x;
     final borderSide = border ?? BorderSide(
       color: colors.border.withValues(alpha: 0.06),
       width: 0.6,
@@ -127,14 +126,14 @@ class MoeSettingsGroup extends StatelessWidget {
         // 卡片容器
         Container(
           margin: outerMargin,
-          decoration: BoxDecoration(
+          decoration: MoeG2Decoration(
+            radius: g2Radius,
             color: bgColor,
-            borderRadius: radius,
             border: Border.fromBorderSide(borderSide),
             boxShadow: shadow,
           ),
-          child: ClipRRect(
-            borderRadius: radius,
+          child: MoeG2ClipRRect(
+            radius: g2Radius,
             child: Padding(
               padding: innerPadding,
               child: Column(
@@ -162,7 +161,9 @@ class MoeSettingsGroup extends StatelessWidget {
         return MoeSettingsRow(
           key: child.key,
           icon: child.icon,
+          iconWidget: child.iconWidget,
           label: child.label,
+          labelMaxLines: child.labelMaxLines,
           subtitle: child.subtitle,
           trailingType: child.trailingType,
           trailing: child.trailing,

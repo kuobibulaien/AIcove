@@ -4,13 +4,17 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:mygril_flutter/src/ui/shared/effects/smooth_clip.dart';
 
 import '../../../../ui/theme/tokens.dart';
 import '../../../../core/utils/data_image.dart';
 import '../../../../ui/shared/widgets/image_crop_dialog.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
+import '../../../../ui/shared/widgets/index.dart';
 import '../../../settings/app_settings.dart';
 import '../../../../ui/features/settings/pages/log_viewer_page.dart';
+import '../../../../ui/features/debug/pages/ui_gallery_page.dart';
+
 
 /// 个人中心内容组件（无 AppBar，可复用）
 class ProfileContent extends ConsumerStatefulWidget {
@@ -49,8 +53,8 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
           opaque: false,
           barrierDismissible: false,
           barrierColor: Colors.black,
-          transitionDuration: const Duration(milliseconds: 250),
-          reverseTransitionDuration: const Duration(milliseconds: 200),
+          transitionDuration: kAnim,
+          reverseTransitionDuration: kAnim,
           pageBuilder: (context, animation, secondaryAnimation) => ImageCropDialog(
             imageBytes: file.bytes!,
             fileName: file.name,
@@ -172,13 +176,15 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
                 Container(
                   width: 120,
                   height: 120,
-                  decoration: BoxDecoration(
-                    borderRadius: const BorderRadius.all(radiusBubble),
+                  decoration: MoeG2Decoration(
+                    radius: radiusBubble.x,
                     color: moeSurface,
                     border: Border.all(color: moeBorder, width: 2),
                   ),
-                  clipBehavior: Clip.antiAlias,
-                  child: _buildAvatarImage(userAvatar),
+                  child: MoeG2ClipRRect(
+                    radius: radiusBubble.x,
+                    child: _buildAvatarImage(userAvatar),
+                  ),
                 ),
                 Positioned(
                   right: 0,
@@ -267,70 +273,63 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
 
           const SizedBox(height: 48),
 
-          // 设置列表
-          Card(
-            child: Column(
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.person_outline),
-                  title: const Text('个人信息'),
-                  subtitle: Text(userName),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () {
-                    setState(() {
-                      _isEditingName = true;
-                    });
-                  },
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  leading: const Icon(Icons.photo_library_outlined),
-                  title: const Text('更换头像'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: _pickImage,
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
-          // 关于信息
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.info_outline),
-              title: const Text('关于'),
-              subtitle: const Text('MyGril v1.0.0'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () {
-                showAboutDialog(
-                  context: context,
-                  applicationName: 'MyGril',
-                  applicationVersion: '1.0.0',
-                  applicationIcon: const Icon(Icons.chat_bubble_outline, size: 48),
-                  children: const [
-                    Text('一款简单顺手的聊天应用'),
-                  ],
-                );
-              },
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
-          // 日志查看器
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.description_outlined),
-              title: const Text('查看日志'),
-              subtitle: const Text('查看系统运行日志'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () {
-                Navigator.of(context).push(
-                  ParallaxSlidePageRoute(page: const LogViewerPage()),
-                );
-              },
-            ),
+          // 设置列表 - 使用 MoeSettingsGroup 统一管理
+          MoeSettingsGroup(
+            titleFirst: true,
+            margin: EdgeInsets.zero,
+            children: [
+              MoeSettingsRow(
+                icon: Icons.person_outline,
+                label: '个人信息',
+                subtitle: userName,
+                onTap: () {
+                  setState(() {
+                    _isEditingName = true;
+                  });
+                },
+              ),
+              MoeSettingsRow(
+                icon: Icons.photo_library_outlined,
+                label: '更换头像',
+                onTap: _pickImage,
+              ),
+              MoeSettingsRow(
+                icon: Icons.info_outline,
+                label: '关于',
+                subtitle: 'MyGril v1.0.0',
+                onTap: () {
+                  showAboutDialog(
+                    context: context,
+                    applicationName: 'MyGril',
+                    applicationVersion: '1.0.0',
+                    applicationIcon: const Icon(Icons.chat_bubble_outline, size: 48),
+                    children: const [
+                      Text('一款简单顺手的聊天应用'),
+                    ],
+                  );
+                },
+              ),
+              MoeSettingsRow(
+                icon: Icons.description_outlined,
+                label: '查看日志',
+                subtitle: '查看系统运行日志',
+                onTap: () {
+                  Navigator.of(context).push(
+                    ParallaxSlidePageRoute(page: const LogViewerPage()),
+                  );
+                },
+              ),
+              MoeSettingsRow(
+                icon: Icons.palette_outlined,
+                label: 'UI 组件库',
+                subtitle: '查看所有公共组件样式',
+                onTap: () {
+                  Navigator.of(context).push(
+                    ParallaxSlidePageRoute(page: const UiGalleryPage()),
+                  );
+                },
+              ),
+            ],
           ),
         ],
       ),

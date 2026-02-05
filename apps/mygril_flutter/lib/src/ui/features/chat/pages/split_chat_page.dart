@@ -7,8 +7,9 @@ import '../../../../features/chat/presentation/widgets/contacts_list_content.dar
 import '../../../../features/chat/presentation/widgets/contacts_sub_header.dart';
 import '../../../../ui/features/character/pages/role_card_page.dart';
 import '../../../../features/chat/presentation/widgets/profile_content.dart';
-import '../../../../features/chat/presentation/widgets/custom_bottom_nav.dart';
+import '../../../../ui/shared/widgets/nav/moe_side_nav.dart';
 import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/settings_drawer_wrapper.dart';
 import '../../../../ui/shared/widgets/settings_drawer_panel.dart';
 import '../../../../features/chat/presentation/widgets/momotalk_sort_dialog.dart';
@@ -36,7 +37,7 @@ class _SplitChatPageState extends ConsumerState<SplitChatPage>
     super.initState();
     _fadeController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 200),
+      duration: kAnim,
     );
     _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _fadeController, curve: Curves.easeOut),
@@ -93,46 +94,79 @@ class _SplitChatPageState extends ConsumerState<SplitChatPage>
     final isAscending = ref.watch(sortAscendingProvider);
     final colors = context.moeColors;
 
+    // 侧边导航栏宽度
+    const sideNavWidth = 64.0;
+    // 内容面板实际宽度（包含侧边导航）
+    final contentPanelWidth = sidebarVisible ? _sidebarWidth : 0.0;
+
     return SettingsDrawerWrapper(
       key: _drawerKey,
       settingsBuilder: (close) => SettingsDrawerPanel(onClose: close),
       child: Scaffold(
         body: Stack(
-        children: [
-          // 基础布局：左右并列
-          Row(
-            children: [
-              // 左侧面板 - 带底部导航栏
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 250),
-                curve: Curves.easeInOut,
-                width: sidebarVisible ? _sidebarWidth : 0,
-                child: sidebarVisible
-                    ? Column(
-                        children: [
-                          // 顶部导航栏
-                          Container(
-                            height: 56 + borderWidth, // 56dp内容 + 2dp分割线，与右侧AppBar总高度对齐
-                            padding: const EdgeInsets.only(left: 4, right: 8),
-                            decoration: BoxDecoration(
-                              color: colors.headerColor,
-                              border: Border(
-                                bottom: BorderSide(color: colors.divider, width: borderWidth),
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                // 菜单按钮
-                                IconButton(
-                                  icon: Icon(Icons.menu, color: colors.headerContentColor),
-                                  tooltip: '设置',
-                                  onPressed: _openSettings,
+          children: [
+            // 基础布局：三栏并列（侧边导航 + 内容面板 + 聊天区）
+            Row(
+              children: [
+                // 左侧侧边导航栏（类似QQ）
+                if (sidebarVisible)
+                  MoeSideNav(
+                    currentIndex: _currentIndex,
+                    onTap: _switchTab,
+                    onSettingsTap: _openSettings,
+                    items: const [
+                      SideNavItem(
+                        icon: Icons.chat_bubble_outline,
+                        activeIcon: Icons.chat_bubble,
+                        label: '消息',
+                      ),
+                      SideNavItem(
+                        icon: Icons.style_outlined,
+                        activeIcon: Icons.style,
+                        label: '角色卡',
+                      ),
+                      SideNavItem(
+                        icon: Icons.person_outline,
+                        activeIcon: Icons.person,
+                        label: '我的',
+                      ),
+                    ],
+                  ),
+                // 中间内容面板
+                AnimatedContainer(
+                  duration: kAnim,
+                  curve: Curves.easeInOut,
+                  width: sidebarVisible ? (_sidebarWidth - sideNavWidth) : 0,
+                  child: sidebarVisible
+                      ? Column(
+                          children: [
+                            // 顶部导航栏
+                            Container(
+                              height: 56 + borderWidth,
+                              padding: const EdgeInsets.only(left: 12, right: 8),
+                              decoration: BoxDecoration(
+                                color: colors.headerColor,
+                                border: Border(
+                                  bottom: BorderSide(color: colors.divider, width: borderWidth),
                                 ),
-                                Builder(builder: (context) {
-                                  if (_currentIndex == 0) {
-                                    // 消息页显示 MomoTalk
+                              ),
+                              child: Row(
+                                children: [
+                                  // 标题
+                                  Builder(builder: (context) {
+                                    if (_currentIndex == 0) {
+                                      return Text(
+                                        'MomoTalk',
+                                        style: TextStyle(
+                                          color: colors.headerContentColor,
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 24,
+                                          letterSpacing: 0.8,
+                                        ),
+                                      );
+                                    }
                                     return Text(
-                                      'MomoTalk',
+                                      'MyGril',
                                       style: TextStyle(
                                         color: colors.headerContentColor,
                                         fontWeight: FontWeight.w800,
@@ -140,112 +174,77 @@ class _SplitChatPageState extends ConsumerState<SplitChatPage>
                                         letterSpacing: 0.8,
                                       ),
                                     );
-                                  }
-                                  return Text(
-                                    'MyGril',
-                                    style: TextStyle(
-                                      color: colors.headerContentColor,
-                                      fontWeight: FontWeight.w800,
-                                      fontSize: 24,
-                                      letterSpacing: 0.8,
-                                    ),
-                                  );
-                                }),
-                                const Spacer(),
-                                // 加号按钮 - 仅在消息标签页显示
-                                if (_currentIndex == 0)
-                                  Material(
-                                    color: Colors.transparent,
-                                    child: InkWell(
-                                      onTap: () {
-                                        context.go('/contact/new');
-                                      },
-                                      borderRadius: BorderRadius.circular(8),
-                                      child: Container(
-                                        padding: const EdgeInsets.all(8),
-                                        child: Icon(Icons.add, color: colors.headerContentColor, size: 26),
+                                  }),
+                                  const Spacer(),
+                                  // 加号按钮 - 仅在消息标签页显示
+                                  if (_currentIndex == 0)
+                                    MoeG2ClipRRect(
+                                      radius: 8,
+                                      child: Material(
+                                        color: Colors.transparent,
+                                        child: InkWell(
+                                          onTap: () {
+                                            context.go('/contact/new');
+                                          },
+                                          child: Padding(
+                                            padding: const EdgeInsets.all(8),
+                                            child: Icon(Icons.add, color: colors.headerContentColor, size: 26),
+                                          ),
+                                        ),
                                       ),
                                     ),
-                                  ),
-                              ],
+                                ],
+                              ),
                             ),
-                          ),
-                          // 次级标题栏：未读消息计数 + 排序按钮 (仅在消息页显示)
-                          if (_currentIndex == 0)
-                            ContactsSubHeader(searchQuery: _searchQuery),
-                          // 内容区域 - 使用 FadeTransition + IndexedStack 实现无闪烁切换
-                          Expanded(
-                            child: Container(
-                              color: colors.surface,
-                              child: FadeTransition(
-                                opacity: _fadeAnimation,
-                                child: IndexedStack(
-                                  index: _currentIndex,
-                                  children: _buildPages(sortMode, isAscending),
+                            // 次级标题栏：未读消息计数 + 排序按钮 (仅在消息页显示)
+                            if (_currentIndex == 0)
+                              ContactsSubHeader(searchQuery: _searchQuery),
+                            // 内容区域
+                            Expanded(
+                              child: Container(
+                                color: colors.surface,
+                                child: FadeTransition(
+                                  opacity: _fadeAnimation,
+                                  child: IndexedStack(
+                                    index: _currentIndex,
+                                    children: _buildPages(sortMode, isAscending),
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                          // 底部导航栏
-                          CustomBottomNav(
-                            currentIndex: _currentIndex,
-                            onTap: _switchTab,
-                            items: const [
-                              BottomNavItem(
-                                icon: Icons.chat_bubble_outline,
-                                activeIcon: Icons.chat_bubble,
-                                label: '消息',
-                              ),
-                              BottomNavItem(
-                                icon: Icons.style_outlined,
-                                activeIcon: Icons.style,
-                                label: '角色卡',
-                              ),
-                              BottomNavItem(
-                                icon: Icons.person_outline,
-                                activeIcon: Icons.person,
-                                label: '我的',
-                              ),
-                            ],
-                          ),
-                        ],
-                      )
-                    : const SizedBox.shrink(),
-              ),
-              // 右侧聊天区域
-              const Expanded(
-                child: ChatPage(showToggleButton: true),
-              ),
-            ],
-          ),
-          // 叠加层：1px 可见分割线 + 8px 透明拖动热区
-          if (sidebarVisible)
-            Positioned(
-              left: _sidebarWidth - 4, // 4px热区以线为中心覆盖左右
-              top: 0,
-              bottom: 0,
-              width: 8,
-              child: MouseRegion(
-                cursor: SystemMouseCursors.resizeColumn,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.translucent,
-                  onHorizontalDragUpdate: (details) {
-                    setState(() {
-                      _sidebarWidth += details.delta.dx;
-                      _sidebarWidth = _sidebarWidth.clamp(200.0, 600.0);
-                    });
-                  },
-                  child: Center(
-                    child: Container(
-                      width: borderWidth, // 视觉1px（0.5逻辑像素）
-                      color: colors.divider,
-                    ),
+                          ],
+                        )
+                      : const SizedBox.shrink(),
+                ),
+                // 右侧聊天区域
+                const Expanded(
+                  child: ChatPage(showToggleButton: true),
+                ),
+              ],
+            ),
+            // 叠加层：透明拖动热区
+            if (sidebarVisible)
+              Positioned(
+                left: contentPanelWidth - 4,
+                top: 0,
+                bottom: 0,
+                width: 8,
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.resizeColumn,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onHorizontalDragUpdate: (details) {
+                      setState(() {
+                        _sidebarWidth += details.delta.dx;
+                        _sidebarWidth = _sidebarWidth.clamp(200.0, 600.0);
+                      });
+                    },
+                    child: const SizedBox.expand(),
                   ),
                 ),
               ),
-            ),
-        ],
-      ),
+          ],
+        ),
       ),
     );
   }

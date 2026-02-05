@@ -1,28 +1,25 @@
 // 设置页面 - 重构版
 //
 // 分组结构（无标题，组间用深色分割线）：
-// 1. 模型列表、记忆库
-// 2. 自然回复、主动关怀
-// 3. 语音设置、绘图设置
-// 4. 界面设置
+// 1. 渠道列表
+// 2. 界面设置
+// 3. 聊天插件
 //
 // 更新记录：
 // - 2025-12-02: 重构分组结构，移除插件设置，TTS独立为语音设置
 // - 2025-12-06: 使用 MoeAppBar 替换原有 AppBar 样式
+// - 2026-01-15: 整合聊天相关设置到"聊天插件"页面
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/moe_app_bar.dart';
-import '../../../../ui/shared/widgets/moe_toast.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../../features/settings/app_settings.dart';
 import 'package:mygril_flutter/src/ui/features/settings/pages/model_list_page.dart';
 
-import '../../auto_reply/pages/auto_reply_settings_page.dart';
-import '../../plugins/pages/memory_plugin_detail_page.dart';
-import 'message_format_settings_page.dart';
+import 'chat_plugin_settings_page.dart';
 import 'ui_settings_page.dart';
-import '../../plugins/pages/tts_plugin_detail_page.dart';
+import '../../backup/pages/data_management_page.dart';
 
 /// 设置页面 - 带AppBar 的完整页面（小屏使用）
 class SettingsPage extends StatelessWidget {
@@ -60,72 +57,49 @@ class _SettingsContentState extends ConsumerState<SettingsContent> {
       data: (settings) {
         return ListView(
           children: [
-            // ============ 第一组：模型列表、记忆库 ============
+            // ============ 渠道列表 ============
             _buildSettingItem(
               context,
               icon: Icons.list_alt,
-              title: '模型列表',
+              title: '渠道列表',
+              subtitle: '管理所有类型的渠道商',
               onTap: () => _navigateTo(context, const ModelListPage()),
             ),
-            Divider(height: 0, thickness: borderWidth, color: colors.divider),
-            _buildSettingItem(
-              context,
-              icon: Icons.psychology_outlined,
-              title: '记忆库',
-              subtitle: '长期记忆设置',
-              onTap: () => _navigateTo(context, const MemoryPluginDetailPage()),
-            ),
 
             // ============ 组间分割 ============
             _buildGroupDivider(colors),
 
-            // ============ 第二组：自然回复、主动关怀 ============
-            _buildSettingItem(
-              context,
-              icon: Icons.chat_bubble_outline,
-              title: '自然回复',
-              subtitle: '模拟真人分段、表情包',
-              onTap: () => _navigateTo(context, const MessageFormatSettingsPage()),
-            ),
-            Divider(height: 0, thickness: borderWidth, color: colors.divider),
-            _buildSettingItem(
-              context,
-              icon: Icons.favorite_outline,
-              title: '主动关怀',
-              subtitle: '主动回复触发器',
-              onTap: () => _navigateTo(context, const AutoReplySettingsPage()),
-            ),
-
-            // ============ 组间分割 ============
-            _buildGroupDivider(colors),
-
-            // ============ 第三组：语音设置、绘图设置 ============
-            _buildSettingItem(
-              context,
-              icon: Icons.record_voice_over_outlined,
-              title: '语音设置',
-              subtitle: '音色、朗读',
-              onTap: () => _navigateTo(context, const TtsPluginDetailPage()),
-            ),
-            Divider(height: 0, thickness: borderWidth, color: colors.divider),
-            _buildSettingItem(
-              context,
-              icon: Icons.brush_outlined,
-              title: '绘图设置',
-              subtitle: '生图模型',
-              onTap: () => _showPlaceholder(context, '绘图设置'),
-            ),
-
-            // ============ 组间分割 ============
-            _buildGroupDivider(colors),
-
-            // ============ 第四组：界面设置 ============
+            // ============ 界面设置 ============
             _buildSettingItem(
               context,
               icon: Icons.palette_outlined,
               title: '界面设置',
               subtitle: '字体、暗色模式',
               onTap: () => _navigateTo(context, const UiSettingsPage()),
+            ),
+
+            // ============ 组间分割 ============
+            _buildGroupDivider(colors),
+
+            // ============ 聊天插件 ============
+            _buildSettingItem(
+              context,
+              icon: Icons.extension_outlined,
+              title: '聊天插件',
+              subtitle: '记忆、语音、表情包等',
+              onTap: () => _navigateTo(context, const ChatPluginSettingsPage()),
+            ),
+
+            // ============ 组间分割 ============
+            _buildGroupDivider(colors),
+
+            // ============ 数据管理 ============
+            _buildSettingItem(
+              context,
+              icon: Icons.cloud_sync_outlined,
+              title: '数据管理',
+              subtitle: '备份、导入导出、云同步',
+              onTap: () => _navigateTo(context, const DataManagementPage()),
             ),
 
             const SizedBox(height: 24),
@@ -146,7 +120,8 @@ class _SettingsContentState extends ConsumerState<SettingsContent> {
     final colors = context.moeColors;
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-      minLeadingWidth: 48,
+      minLeadingWidth: 24,
+      horizontalTitleGap: 12,
       leading: Icon(icon, color: colors.text, size: 24),
       title: Text(title, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: colors.text)),
       subtitle: subtitle != null 
@@ -157,11 +132,12 @@ class _SettingsContentState extends ConsumerState<SettingsContent> {
     );
   }
 
-  /// 构建组间分割线（更粗更深）
+  /// 构建分割线（与联系人卡片一致的全宽分割线）
   Widget _buildGroupDivider(MoeColors colors) {
-    return Container(
-      height: 8,
-      color: colors.surfaceAlt,
+    return Divider(
+      height: borderWidth,
+      thickness: borderWidth,
+      color: colors.borderLight,
     );
   }
 
@@ -170,10 +146,5 @@ class _SettingsContentState extends ConsumerState<SettingsContent> {
     Navigator.of(context).push(
       ParallaxSlidePageRoute(page: page),
     );
-  }
-
-  /// 显示占位提示
-  void _showPlaceholder(BuildContext context, String feature) {
-    MoeToast.brief(context, '$feature 功能开发中');
   }
 }

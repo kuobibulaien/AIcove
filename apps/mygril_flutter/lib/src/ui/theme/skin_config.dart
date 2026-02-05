@@ -13,6 +13,7 @@ library;
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'tokens.dart';
+import '../shared/effects/smooth_clip.dart';
 
 /// 皮肤配置抽象类
 abstract class SkinConfig {
@@ -117,16 +118,27 @@ class SkinDecoratedBox extends StatelessWidget {
     final decoration = decorationBuilder(colors);
     
     if (skin.useBlurEffect && skin.backgroundFilter != null) {
-      return ClipRRect(
-        borderRadius: decoration.borderRadius as BorderRadius? ?? BorderRadius.zero,
-        child: BackdropFilter(
-          filter: skin.backgroundFilter!,
-          child: Container(
-            decoration: decoration,
-            child: child,
-          ),
+      final resolved = decoration.borderRadius?.resolve(Directionality.of(context));
+      final radii = <double>[
+        resolved?.topLeft.x ?? 0,
+        resolved?.topRight.x ?? 0,
+        resolved?.bottomLeft.x ?? 0,
+        resolved?.bottomRight.x ?? 0,
+      ];
+      // 若不是完全一致的圆角，则取最小值兜底，避免裁剪越界。
+      final g2Radius = radii.reduce((a, b) => a < b ? a : b);
+
+      final filteredChild = BackdropFilter(
+        filter: skin.backgroundFilter!,
+        child: Container(
+          decoration: decoration,
+          child: child,
         ),
       );
+
+      return g2Radius > 0
+          ? MoeG2ClipRRect(radius: g2Radius, child: filteredChild)
+          : ClipRect(child: filteredChild);
     }
     
     return Container(

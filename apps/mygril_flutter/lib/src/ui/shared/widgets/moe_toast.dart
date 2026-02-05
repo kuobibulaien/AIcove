@@ -13,7 +13,9 @@
 library;
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../../theme/tokens.dart';
 import '../../theme/skin_provider.dart';
+import '../effects/smooth_clip.dart';
 
 /// Toast 类型枚举
 enum ToastType { info, success, error, warning }
@@ -79,7 +81,43 @@ class MoeToast {
 
   /// 短暂提示（1.5秒，常用于操作反馈）
   static void brief(BuildContext context, String message) {
-    show(context, message, duration: const Duration(milliseconds: 1500));
+    show(context, message, duration: kDurationToast);
+  }
+
+  /// 可静默通知
+  /// 
+  /// 显示带"不再提醒"按钮的 Toast。
+  /// 
+  /// [noticeKey] 用于标识此类通知的唯一键名
+  /// [onDismissForever] 用户点击"不再提醒"时的回调
+  static void showDismissible(
+    BuildContext context,
+    String message, {
+    required String noticeKey,
+    required Future<void> Function() onDismissForever,
+    ToastType type = ToastType.warning,
+    Duration duration = const Duration(seconds: 4),
+  }) {
+    // 移除当前的 Toast
+    _dismiss();
+
+    final overlay = Overlay.of(context);
+    
+    _currentEntry = OverlayEntry(
+      builder: (context) => _DismissibleToastWidget(
+        message: message,
+        type: type,
+        onDismiss: _dismiss,
+        onDismissForever: () async {
+          await onDismissForever();
+          _dismiss();
+        },
+      ),
+    );
+
+    overlay.insert(_currentEntry!);
+
+    _timer = Timer(duration, _dismiss);
   }
 }
 
@@ -112,7 +150,7 @@ class _ToastWidgetState extends State<_ToastWidget>
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 200),
+      duration: kAnim,
     );
     _fadeAnimation = CurvedAnimation(
       parent: _controller,
@@ -151,7 +189,7 @@ class _ToastWidgetState extends State<_ToastWidget>
     final decoration = skin.toastDecoration(bgColor);
 
     return Positioned(
-      top: MediaQuery.of(context).size.height * 0.15,
+      top: MediaQuery.sizeOf(context).height * 0.15,
       left: 0,
       right: 0,
       child: Center(
@@ -161,32 +199,197 @@ class _ToastWidgetState extends State<_ToastWidget>
             scale: _scaleAnimation,
             child: Material(
               color: Colors.transparent,
-              child: Container(
-                constraints: BoxConstraints(
-                  maxWidth: MediaQuery.of(context).size.width * 0.8,
-                ),
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-                decoration: decoration,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (widget.icon != null) ...[
-                      Icon(widget.icon, color: Colors.white, size: 20),
-                      const SizedBox(width: 10),
-                    ],
-                    Flexible(
-                      child: Text(
-                        widget.message,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w500,
-                          height: 1.3,
+              child: MoeG2ClipRRect(
+                radius: MoeSmoothRadii.sm,
+                child: Container(
+                  constraints: BoxConstraints(
+                    maxWidth: MediaQuery.sizeOf(context).width * 0.8,
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                  decoration: decoration,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (widget.icon != null) ...[
+                        Icon(widget.icon, color: Colors.white, size: 20),
+                        const SizedBox(width: 10),
+                      ],
+                      Flexible(
+                        child: Text(
+                          widget.message,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w500,
+                            height: 1.3,
+                          ),
+                          textAlign: TextAlign.center,
                         ),
-                        textAlign: TextAlign.center,
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 可静默 Toast 组件（内部使用）
+class _DismissibleToastWidget extends StatefulWidget {
+  final String message;
+  final ToastType type;
+  final VoidCallback onDismiss;
+  final Future<void> Function() onDismissForever;
+
+  const _DismissibleToastWidget({
+    required this.message,
+    required this.type,
+    required this.onDismiss,
+    required this.onDismissForever,
+  });
+
+  @override
+  State<_DismissibleToastWidget> createState() => _DismissibleToastWidgetState();
+}
+
+class _DismissibleToastWidgetState extends State<_DismissibleToastWidget>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _fadeAnimation;
+  late Animation<double> _scaleAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: kAnim,
+    );
+    _fadeAnimation = CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeOut,
+    );
+    _scaleAnimation = Tween<double>(begin: 0.8, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeOutBack),
+    );
+    _controller.forward();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Color _getBackgroundColor(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    switch (widget.type) {
+      case ToastType.success:
+        return isDark ? const Color(0xFF1B5E20) : const Color(0xFF4CAF50);
+      case ToastType.error:
+        return isDark ? const Color(0xFFB71C1C) : const Color(0xFFE53935);
+      case ToastType.warning:
+        return isDark ? const Color(0xFFE65100) : const Color(0xFFFF9800);
+      case ToastType.info:
+        return isDark ? const Color(0xFF37474F) : const Color(0xFF424242);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final skin = context.skin;
+    final bgColor = _getBackgroundColor(context);
+    final decoration = skin.toastDecoration(bgColor);
+
+    return Positioned(
+      top: MediaQuery.sizeOf(context).height * 0.15,
+      left: 0,
+      right: 0,
+      child: Center(
+        child: FadeTransition(
+          opacity: _fadeAnimation,
+          child: ScaleTransition(
+            scale: _scaleAnimation,
+            child: Material(
+              color: Colors.transparent,
+              child: MoeG2ClipRRect(
+                radius: MoeSmoothRadii.sm,
+                child: Container(
+                  constraints: BoxConstraints(
+                    maxWidth: MediaQuery.sizeOf(context).width * 0.85,
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  decoration: decoration,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.warning_amber_outlined, color: Colors.white, size: 18),
+                          const SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              widget.message,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                height: 1.3,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          GestureDetector(
+                            onTap: widget.onDismiss,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              decoration: MoeG2Decoration(
+                                radius: 16,
+                                color: Colors.white.withValues(alpha: 0.2),
+                              ),
+                              child: const Text(
+                                '知道了',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          GestureDetector(
+                            onTap: widget.onDismissForever,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              decoration: MoeG2Decoration(
+                                radius: 16,
+                                color: Colors.white.withValues(alpha: 0.2),
+                              ),
+                              child: const Text(
+                                '不再提醒',
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),

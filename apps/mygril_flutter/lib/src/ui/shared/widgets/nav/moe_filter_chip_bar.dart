@@ -24,6 +24,7 @@ library;
 
 import 'package:flutter/material.dart';
 import '../../../theme/tokens.dart';
+import '../../effects/smooth_clip.dart';
 
 /// 筛选项定义
 class MoeFilterItem<T> {
@@ -155,9 +156,9 @@ class _FilterChipState<T> extends State<_FilterChip<T>> {
       child: AnimatedContainer(
         duration: kAnimFast,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
+        decoration: MoeG2Decoration(
+          radius: 20,
           color: bgColor,
-          borderRadius: BorderRadius.circular(20),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -183,9 +184,9 @@ class _FilterChipState<T> extends State<_FilterChip<T>> {
               const SizedBox(width: 6),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
+                decoration: MoeG2Decoration(
+                  radius: 10,
                   color: countBgColor,
-                  borderRadius: BorderRadius.circular(10),
                 ),
                 child: Text(
                   '${item.count}',

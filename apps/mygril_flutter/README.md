@@ -11,14 +11,16 @@
 
 ## 初始化项目（首次）
 
-建议在本目录内直接创建 Flutter 工程并覆盖默认模板：
+本仓库已包含 `android/`、`windows/`、`web/` 等平台目录，通常**不需要**再执行 `flutter create .`。
+
+如果你是把本目录单独拷贝出来、或平台目录缺失，可以在本目录执行以下命令重新生成平台目录：
 
 ```bash
 cd apps/mygril_flutter
 flutter create .
 ```
 
-执行后会生成 `android/`、`windows/`、`web/` 等平台目录。随后执行依赖安装：
+随后执行依赖安装：
 
 ```bash
 flutter pub get
@@ -51,16 +53,16 @@ flutter run -d windows --dart-define=API_BASE_URL=http://localhost:8000
 ## 构建 Web 并集成 FastAPI
 
 ```bash
-flutter build web --release --dart-define=API_BASE_URL=/
+flutter build web --release --base-href /app/ --pwa-strategy none --dart-define=API_BASE_URL=/
 # 产物输出到 build/web
-# FastAPI 已在 backend/app/main.py 自动尝试挂载 apps/mygril_flutter/build/web 到 /app
+# FastAPI 已在 cloud_backend/main.py 自动尝试挂载 apps/mygril_flutter/build/web 到 /app
 ```
 
 构建完成后启动后端：
 
 ```bash
-cd backend
-bash scripts/run_server.sh
+cd ../../cloud_backend
+python main.py
 # 浏览器访问 http://localhost:8000/app/#/
 ```
 
@@ -73,13 +75,11 @@ bash scripts/run_server.sh
 
 ## 📚 文档索引
 
+- [docs/README.md](./docs/README.md) - 文档库索引（推荐从这里开始）
 - [界面布局图.md](./界面布局图.md) - 详细的界面布局文档，包含窄屏和宽屏模式的布局说明
-- [COMPOSER_UPDATE.md](./COMPOSER_UPDATE.md) - Composer 组件更新说明，包含新UI设计和功能菜单说明
-- [API_ARCHITECTURE.md](./API_ARCHITECTURE.md) - API 架构文档
+- [API_ARCHITECTURE.md](./API_ARCHITECTURE.md) - 聊天调用链/架构说明（以当前实现为准）
 - [AUDIO_PLAYER_GUIDE.md](./AUDIO_PLAYER_GUIDE.md) - 音频播放器使用指南
 - [AUDIO_TEST_GUIDE.md](./AUDIO_TEST_GUIDE.md) - 音频测试指南
-- [CONSOLE_USAGE.md](./CONSOLE_USAGE.md) - 控制台使用说明
-- [前端说明.md](./前端说明.md) - 前端开发详细说明（注意：此文件可能存在编码问题）
 
 ## 功能里程碑（前端）
 

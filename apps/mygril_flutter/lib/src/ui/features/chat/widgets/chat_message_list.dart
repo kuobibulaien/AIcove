@@ -1,9 +1,10 @@
 /// 聊天消息列表组件
-/// 
+///
 /// 从 chat_page.dart 提取，负责显示消息列表和时间分隔器。
-/// 
+///
 /// 更新记录：
 /// - 2025-12-31: 从 chat_page.dart 提取
+/// - 2026-01-28: 添加消息分段显示功能（纯前端展示）
 library;
 
 import 'package:flutter/material.dart';
@@ -11,8 +12,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../features/chat/providers2.dart';
 import '../../../../features/chat/domain/message.dart';
 import '../../../../features/chat/presentation/widgets/message_bubble.dart';
+import '../../../../features/chat/presentation/widgets/message_action_sheet.dart';
 import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/effects/smooth_clip.dart';
+import '../../../../ui/shared/widgets/moe_toast.dart';
 import '../../../../features/settings/app_settings.dart';
+import '../../../../core/utils/message_formatter.dart';
 import 'animated_message_item.dart';
 
 /// 消息列表组件
@@ -21,6 +26,15 @@ class ChatMessageList extends ConsumerStatefulWidget {
   final String conversationId;
   final String? avatarUrl;
   final String displayName;
+  final void Function(Message message)? onEditMessage;
+  final void Function(Message message)? onRegenerateMessage;
+  
+  /// 分页加载：滑到顶部（历史消息方向）时触发
+  final Future<void> Function()? onLoadMore;
+  /// 是否正在加载更多
+  final bool isLoadingMore;
+  /// 是否还有更多历史消息可加载
+  final bool hasMoreMessages;
 
   const ChatMessageList({
     super.key,
@@ -28,6 +42,11 @@ class ChatMessageList extends ConsumerStatefulWidget {
     required this.conversationId,
     this.avatarUrl,
     required this.displayName,
+    this.onEditMessage,
+    this.onRegenerateMessage,
+    this.onLoadMore,
+    this.isLoadingMore = false,
+    this.hasMoreMessages = true,
   });
 
   @override
@@ -38,6 +57,13 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   final Set<String> _pendingAnimationIds = <String>{};
   DateTime? _latestAnimatedAt;
   List<_ListItem> _cachedListItems = [];
+  /// 缓存的消息格式化配置（用于检测配置变化）
+  MessageFormatConfig? _cachedFormatConfig;
+
+  /// 用于监听滚动位置，触发分页加载
+  late final ScrollController _scrollController;
+  /// 防止重复触发加载
+  bool _isLoadingTriggered = false;
 
   @override
   void initState() {
@@ -46,28 +72,67 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
       _latestAnimatedAt = widget.messages.last.createdAt;
     }
     _updateListItems();
+    
+    // 初始化 ScrollController 并添加监听
+    _scrollController = ScrollController();
+    _scrollController.addListener(_onScroll);
+  }
+  
+  @override
+  void dispose() {
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
+    super.dispose();
+  }
+  
+  /// 滚动监听：当接近列表顶部（历史消息方向）时触发加载更多
+  void _onScroll() {
+    // reverse=true 时，maxScrollExtent 是列表顶部（历史消息方向）
+    if (!_scrollController.hasClients) return;
+    
+    final position = _scrollController.position;
+    final maxScroll = position.maxScrollExtent;
+    final currentScroll = position.pixels;
+    
+    // 距离顶部 200 像素时触发加载
+    const threshold = 200.0;
+    
+    if (maxScroll - currentScroll <= threshold &&
+        !_isLoadingTriggered &&
+        !widget.isLoadingMore &&
+        widget.hasMoreMessages &&
+        widget.onLoadMore != null) {
+      _isLoadingTriggered = true;
+      widget.onLoadMore!().then((_) {
+        _isLoadingTriggered = false;
+      }).catchError((_) {
+        _isLoadingTriggered = false;
+      });
+    }
   }
 
-  void _updateListItems() {
-    _cachedListItems = _buildListItemsWithTimeDividers().reversed.toList();
+  void _updateListItems([MessageFormatConfig? config]) {
+    _cachedFormatConfig = config;
+    _cachedListItems = _buildListItemsWithTimeDividers(config).reversed.toList();
   }
 
   @override
   void didUpdateWidget(covariant ChatMessageList oldWidget) {
     super.didUpdateWidget(oldWidget);
 
-    // 缓存优化：仅当消息列表引用变化或会话变化时才重构列表项
-    // 避免键盘弹出/收起导致 MediaQuery 变化进而触发全量重建 (Layout Thrashing)
-    if (widget.messages != oldWidget.messages || 
-        widget.conversationId != oldWidget.conversationId) {
-      _updateListItems();
-    }
-
+    // 会话切换：重置状态并更新列表项
     if (oldWidget.conversationId != widget.conversationId) {
       _pendingAnimationIds.clear();
       _latestAnimatedAt =
           widget.messages.isNotEmpty ? widget.messages.last.createdAt : null;
+      _updateListItems();
       return;
+    }
+
+    // 缓存优化：仅当消息列表引用变化时才重构列表项
+    // 避免键盘弹出/收起导致 MediaQuery 变化进而触发全量重建 (Layout Thrashing)
+    if (widget.messages != oldWidget.messages) {
+      _updateListItems();
     }
 
     if (widget.messages.isEmpty) {
@@ -107,25 +172,94 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
       data: (settings) => settings.messageFontSize,
       orElse: () => 13.0,
     );
-    
+
+    // 获取消息格式化配置（用于分段显示）
+    final formatConfig = settingsAsync.maybeWhen(
+      data: (settings) => settings.messageFormatConfig,
+      orElse: () => const MessageFormatConfig(),
+    );
+
+    // 检测配置变化，需要重新构建列表项
+    if (_cachedFormatConfig != formatConfig) {
+      // 使用 addPostFrameCallback 避免在 build 中调用 setState
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _updateListItems(formatConfig);
+          setState(() {});
+        }
+      });
+    }
+
     // 构建包含时间分隔器的列表项（因为 ListView reverse=true，需要反转列表顺序）
     // 使用缓存的列表项，避免每次 build 重复计算
     final listItems = _cachedListItems;
+
+    // 计算实际 itemCount：如果正在加载更多，顶部多显示一个加载指示器
+    final itemCount = listItems.length + (widget.isLoadingMore ? 1 : 0);
     
     return ListView.builder(
+      controller: _scrollController, // 添加 ScrollController 用于分页触发
       reverse: true, // 从底部开始显示，新消息在下方
+      // 性能优化：增加缓存范围，减少滚动时的重建
+      cacheExtent: 500,
+      // 性能优化：禁用自动 keep alive，由我们自己控制
+      addAutomaticKeepAlives: false,
+      // 性能优化：添加重绘边界，隔离每个消息的重绘
+      addRepaintBoundaries: true,
       padding: EdgeInsets.only(
         left: 4,
         right: 4,
         top: 10,
-        bottom: MediaQuery.of(context).padding.bottom + 10,
+        bottom: MediaQuery.paddingOf(context).bottom + 10,
       ),
-      itemCount: listItems.length,
+      itemCount: itemCount,
       itemBuilder: (context, index) {
+        // 如果正在加载更多，最后一项显示加载指示器
+        if (widget.isLoadingMore && index == listItems.length) {
+          return _buildLoadingIndicator();
+        }
+
         final item = listItems[index];
 
         if (item is _TimeDivider) {
           return _buildTimeDivider(context, item.time);
+        } else if (item is _ChunkedMessageItem) {
+          // 分段消息：创建一个临时 Message 对象用于显示
+          final m = item.originalMessage;
+          final isMe = m.role == 'user';
+          final chunkMessage = Message(
+            id: '${m.id}_chunk_${item.chunkIndex}',
+            role: m.role,
+            content: item.chunkText,
+            createdAt: m.createdAt,
+            status: m.status,
+          );
+          final bubbleWidget = Padding(
+            padding: const EdgeInsets.symmetric(vertical: 3),
+            child: MessageBubble(
+              isMe: isMe,
+              message: chunkMessage,
+              avatarUrl: isMe ? null : widget.avatarUrl,
+              displayName: isMe ? null : widget.displayName,
+              fontSize: fontSize,
+              showCorner: item.showCorner,
+              showName: false,
+              onRetry: null, // 分段消息不支持重试
+              onLongPress: (bubbleKey) => _handleMessageLongPress(context, m, isMe, bubbleKey),
+            ),
+          );
+
+          // 只有第一个分段需要动画
+          final shouldAnimate = item.chunkIndex == 0 && _pendingAnimationIds.contains(m.id);
+          if (shouldAnimate) {
+            _pendingAnimationIds.remove(m.id);
+            return AnimatedMessageItem(
+              key: ValueKey('${m.id}_chunk_${item.chunkIndex}'),
+              isMe: isMe,
+              child: bubbleWidget,
+            );
+          }
+          return bubbleWidget;
         } else if (item is _MessageItem) {
           final m = item.message;
           final isMe = m.role == 'user';
@@ -137,9 +271,12 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
               avatarUrl: isMe ? null : widget.avatarUrl,
               displayName: isMe ? null : widget.displayName,
               fontSize: fontSize,
+              showCorner: item.showCorner,
+              showName: false, // 一对一聊天不显示名称，群聊功能上线后改为 true
               onRetry: (isMe && m.status == 'failed')
                   ? () => _showRetryDialog(context, m.id, actions)
                   : null,
+              onLongPress: (bubbleKey) => _handleMessageLongPress(context, m, isMe, bubbleKey),
             ),
           );
 
@@ -154,35 +291,113 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
           }
           return bubbleWidget;
         }
-        
+
         return const SizedBox.shrink();
       },
     );
   }
 
   /// 构建包含时间分隔器的列表项
-  List<_ListItem> _buildListItemsWithTimeDividers() {
+  ///
+  /// [config] 消息格式化配置，用于分段显示
+  List<_ListItem> _buildListItemsWithTimeDividers([MessageFormatConfig? config]) {
     final List<_ListItem> items = [];
     final messages = widget.messages;
-    
+    final enableChunking = config?.enableChunking ?? true;
+
     for (int i = 0; i < messages.length; i++) {
       final currentMessage = messages[i];
-      
+
       if (i == 0) {
         items.add(_TimeDivider(currentMessage.createdAt));
       } else {
         final previousMessage = messages[i - 1];
         final timeDiff = currentMessage.createdAt.difference(previousMessage.createdAt);
-        
+
         if (timeDiff.inMinutes >= 20) {
           items.add(_TimeDivider(currentMessage.createdAt));
         }
       }
-      
-      items.add(_MessageItem(currentMessage));
+
+      // 判断是否需要分段显示（仅对 AI 消息的纯文本内容进行分段）
+      final isAssistant = currentMessage.role == 'assistant';
+      final hasBlocks = currentMessage.blocks?.isNotEmpty ?? false;
+      final shouldChunk = enableChunking && isAssistant && !hasBlocks && currentMessage.content.isNotEmpty;
+
+      if (shouldChunk && config != null) {
+        // 对 AI 消息进行分段
+        final chunks = MessageFormatter.formatAndChunkText(currentMessage.content, config);
+        if (chunks.length > 1) {
+          // 多个分段：每个分段作为独立的列表项
+          for (int j = 0; j < chunks.length; j++) {
+            // 计算分段的 showCorner：
+            // - 第一个分段：如果后面还有分段，显示直角
+            // - 中间分段：显示直角
+            // - 最后一个分段：检查下一条消息是否是同发送者
+            bool showCorner = false;
+            if (j < chunks.length - 1) {
+              // 不是最后一个分段，后面还有分段
+              showCorner = true;
+            } else {
+              // 最后一个分段，检查下一条消息
+              if (i + 1 < messages.length) {
+                final nextMessage = messages[i + 1];
+                if (nextMessage.role == currentMessage.role) {
+                  final timeDiff = nextMessage.createdAt.difference(currentMessage.createdAt);
+                  if (timeDiff.inMinutes < 20) {
+                    showCorner = true;
+                  }
+                }
+              }
+            }
+
+            items.add(_ChunkedMessageItem(
+              originalMessage: currentMessage,
+              chunkText: chunks[j],
+              chunkIndex: j,
+              totalChunks: chunks.length,
+              showCorner: showCorner,
+            ));
+          }
+          continue; // 跳过下面的普通消息添加
+        }
+      }
+
+      // 普通消息（不分段或只有一个分段）
+      // 计算是否显示直角：
+      // 当前消息是组的开头 且 后一条消息是同一发送者 → showCorner = true
+      // 否则 showCorner = false（单条消息或组的后续消息用全圆角）
+      bool showCorner = false;
+      if (i + 1 < messages.length) {
+        final nextMessage = messages[i + 1];
+        // 后一条消息是同一发送者，说明当前是组的开头
+        if (nextMessage.role == currentMessage.role) {
+          // 还要检查时间间隔，超过20分钟会插入时间分隔器，就不算连续消息了
+          final timeDiff = nextMessage.createdAt.difference(currentMessage.createdAt);
+          if (timeDiff.inMinutes < 20) {
+            showCorner = true;
+          }
+        }
+      }
+
+      items.add(_MessageItem(currentMessage, showCorner: showCorner));
     }
-    
+
     return items;
+  }
+
+  /// 构建加载中指示器（用于分页加载时在顶部显示）
+  Widget _buildLoadingIndicator() {
+    return const Center(
+      child: Padding(
+        padding: EdgeInsets.symmetric(vertical: 16),
+        child: SizedBox(
+          width: 24,
+          height: 24,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      ),
+    );
   }
 
   /// 构建时间分隔器Widget
@@ -194,9 +409,9 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 8),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        decoration: BoxDecoration(
+        decoration: MoeG2Decoration(
+          radius: 12,
           color: colors.surfaceAlt,
-          borderRadius: BorderRadius.circular(12),
         ),
         child: Text(
           timeStr,
@@ -236,6 +451,38 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     return '$prefix$hh:$mm';
   }
 
+  /// 处理消息长按事件
+  Future<void> _handleMessageLongPress(BuildContext context, Message message, bool isMe, GlobalKey bubbleKey) async {
+    await showMessageActionMenu(
+      context,
+      targetKey: bubbleKey,
+      isUserMessage: isMe,
+      messageText: message.displayText,
+      onAction: (action) {
+        if (!context.mounted) return;
+        switch (action) {
+          case MessageAction.copy:
+            MoeToast.show(context, '已复制到剪贴板');
+            break;
+          case MessageAction.edit:
+            widget.onEditMessage?.call(message);
+            break;
+          case MessageAction.regenerate:
+            widget.onRegenerateMessage?.call(message);
+            break;
+          case MessageAction.quote:
+            // 设置引用消息
+            ref.read(quotedMessageProvider.notifier).state = QuotedMessage(
+              id: message.id,
+              content: message.displayText,
+              isUser: isMe,
+            );
+            break;
+        }
+      },
+    );
+  }
+
   Future<void> _showRetryDialog(
     BuildContext context,
     String messageId,
@@ -271,7 +518,28 @@ abstract class _ListItem {}
 /// 消息列表项
 class _MessageItem extends _ListItem {
   final Message message;
-  _MessageItem(this.message);
+  /// 是否显示直角（连续消息组的开头且后面还有同发送者消息）
+  final bool showCorner;
+
+  _MessageItem(this.message, {this.showCorner = false});
+}
+
+/// 分段消息列表项（用于 UI 分段显示）
+class _ChunkedMessageItem extends _ListItem {
+  final Message originalMessage;
+  final String chunkText;
+  final int chunkIndex;
+  final int totalChunks;
+  /// 是否显示直角
+  final bool showCorner;
+
+  _ChunkedMessageItem({
+    required this.originalMessage,
+    required this.chunkText,
+    required this.chunkIndex,
+    required this.totalChunks,
+    this.showCorner = false,
+  });
 }
 
 /// 时间分隔器列表项

@@ -15,10 +15,22 @@ class AutoReplyTriggerStorage {
     try {
       final decoded = jsonDecode(raw);
       if (decoded is List) {
-        return decoded
+        final triggers = decoded
             .whereType<Map>()
             .map((e) => AutoReplyTrigger.fromJson(e.cast<String, dynamic>()))
             .toList();
+
+        // 旧数据迁移：conversationId 为空的触发器标记为 expired
+        // 这些是没有 contactId 的旧数据，无法关联到具体会话
+        return triggers.map((t) {
+          if (t.conversationId.isEmpty && t.isActive) {
+            return t.copyWith(
+              status: AutoReplyTriggerStatus.expired,
+              expireReason: '旧数据迁移：缺少会话关联',
+            );
+          }
+          return t;
+        }).toList();
       }
     } catch (_) {}
     return const [];

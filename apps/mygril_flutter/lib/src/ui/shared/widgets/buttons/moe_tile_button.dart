@@ -24,6 +24,7 @@ library;
 
 import 'package:flutter/material.dart';
 import '../../../theme/tokens.dart';
+import '../../effects/smooth_clip.dart';
 
 /// 功能入口按钮组件
 class MoeTileButton extends StatefulWidget {
@@ -101,6 +102,7 @@ class _MoeTileButtonState extends State<MoeTileButton> {
     final labelColor = widget.labelColor ?? colors.text;
     final subtitleColor = widget.subtitleColor ?? colors.muted;
     final radius = widget.borderRadius ?? MoeRadii.borderMd;
+    final g2Radius = radius.topLeft.x;
     final padding = widget.contentPadding ?? const EdgeInsets.symmetric(horizontal: 16, vertical: 14);
 
     final currentBg = (_pressed && _isEnabled) ? pressedBg : bgColor;
@@ -113,9 +115,9 @@ class _MoeTileButtonState extends State<MoeTileButton> {
       child: AnimatedContainer(
         duration: kAnimFast,
         padding: padding,
-        decoration: BoxDecoration(
+        decoration: MoeG2Decoration(
+          radius: g2Radius,
           color: currentBg,
-          borderRadius: radius,
           border: widget.border != null ? Border.fromBorderSide(widget.border!) : null,
           boxShadow: widget.boxShadow ?? MoeShadows.soft,
         ),

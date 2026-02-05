@@ -3,12 +3,24 @@ import 'package:http/http.dart' as http;
 import '../config.dart';
 import '../api_logger.dart';
 import '../app_logger.dart';
+import 'providers/provider_adapter_factory.dart';
+import 'providers/provider_adapter.dart' show ToolCall;
 
 class SendMessageRichResult {
   final String text;
   final List<Map<String, dynamic>> toolResults;
+  final List<ToolCall> toolCalls; // AI 请求执行的工具调用
+  final Map<String, dynamic>? rawResponse; // 原始响应（用于两回合工具调用）
 
-  const SendMessageRichResult({required this.text, required this.toolResults});
+  const SendMessageRichResult({
+    required this.text,
+    required this.toolResults,
+    this.toolCalls = const [],
+    this.rawResponse,
+  });
+
+  /// 是否有待执行的工具调用
+  bool get hasToolCalls => toolCalls.isNotEmpty;
 
   String? firstTtsUrl() {
     for (final item in toolResults) {
@@ -200,11 +212,13 @@ class AgentApiClient {
     required List<Map<String, dynamic>> messages,
     required String userText,
     double? temperature,
+    double? topP, // 核采样参数
     String? token,
     Map<String, dynamic>? toolPrefs,
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
+    List<Map<String, dynamic>>? tools, // 原生 Tool Calling 工具定义
     TraceLogger? trace, // 可选的追踪日志器
   }) async {
     // 如果没有传入 trace，创建一个简单的日志记录器
@@ -221,19 +235,24 @@ class AgentApiClient {
       throw StateError('Missing providerApiKey for direct call');
     }
 
+    // 解析 provider 和 model
+    String provider = 'openai';
     String model = modelFullId;
     final idx = modelFullId.indexOf(':');
     if (idx > 0) {
+      provider = modelFullId.substring(0, idx);
       model = modelFullId.substring(idx + 1);
     }
 
+    // 获取对应的适配器
+    final adapter = ProviderAdapterFactory.getAdapter(provider);
+    
     final base = (trimmedBase == null || trimmedBase.isEmpty)
         ? 'https://api.openai.com/v1'
         : trimmedBase;
-    final normalizedBase = base.endsWith('/') ? base.substring(0, base.length - 1) : base;
-    final endpoint = normalizedBase.endsWith('/v1')
-        ? '$normalizedBase/chat/completions'
-        : '$normalizedBase/v1/chat/completions';
+    
+    // 使用适配器构建端点（默认 chat 类型）
+    final endpoint = adapter.buildEndpoint(base, modelType: 'chat');
 
     final directTrace = logger.startChild('直连请求');
     directTrace.info('直连目标地址', metadata: {
@@ -242,12 +261,53 @@ class AgentApiClient {
       'hasCustomConfig': customConfig != null,
     });
 
-    // 转换历史为 OpenAI Chat 格式
+    String coerceContent(dynamic content) {
+      if (content == null) return '';
+      if (content is String) return content;
+      if (content is List) {
+        final buf = StringBuffer();
+        for (final part in content) {
+          if (part is Map<String, dynamic>) {
+            final t = (part['text'] ?? part['input_text']) as String?;
+            if (t != null) buf.write(t);
+          }
+        }
+        return buf.toString();
+      }
+      return content.toString();
+    }
+
+    bool isContentEmpty(dynamic content) {
+      if (content == null) return true;
+      if (content is String) return content.trim().isEmpty;
+      if (content is List) return content.isEmpty;
+      return false;
+    }
+
+    // 转换历史为 OpenAI Chat 格式（支持 content 为 String 或多模态 List）
+    // 支持 role=tool 透传（两回合工具调用场景）
     final chatMessages = <Map<String, dynamic>>[];
     for (final m in messages) {
       final role = (m['role'] ?? '').toString();
-      final text = (m['content'] ?? '').toString();
-      if (text.isEmpty) continue;
+      final content = m['content'];
+
+      // role=tool 消息需要完整透传（包含 tool_call_id 等字段）
+      if (role == 'tool') {
+        chatMessages.add(Map<String, dynamic>.from(m));
+        continue;
+      }
+
+      // assistant 消息带有 tool_calls 时，即使 content 为空也要保留
+      if ((role == 'assistant' || role == 'ai') && m.containsKey('tool_calls')) {
+        chatMessages.add({
+          'role': 'assistant',
+          ...Map<String, dynamic>.from(m),
+        });
+        continue;
+      }
+
+      if (isContentEmpty(content)) continue;
+
       String r;
       if (role == 'system') {
         r = 'system';
@@ -256,42 +316,50 @@ class AgentApiClient {
       } else {
         r = 'user';
       }
-      chatMessages.add({'role': r, 'content': text});
+
+      chatMessages.add({'role': r, 'content': content});
     }
-    if (userText.trim().isNotEmpty) {
-      chatMessages.add({'role': 'user', 'content': userText.trim()});
+
+    // 兼容旧链路：当历史末尾不是 user 时，才把 userText 作为本轮输入追加，避免重复发送
+    final trimmedUserText = userText.trim();
+    final shouldAppendUserText =
+        trimmedUserText.isNotEmpty && (chatMessages.isEmpty || chatMessages.last['role'] != 'user');
+    if (shouldAppendUserText) {
+      chatMessages.add({'role': 'user', 'content': trimmedUserText});
     }
 
     // 计算原始对话文本长度，并生成预览日志（KISS：只做简单拼接；YAGNI：不做复杂分析）
     int totalChars = 0;
-    const maxPreviewLength = 2000;
+    const maxPreviewLength = 100; // 日志预览最大长度，超过则截断
     final previewBuffer = StringBuffer();
     for (final m in chatMessages) {
       final role = (m['role'] ?? '').toString();
-      final content = (m['content'] ?? '').toString();
-      totalChars += content.length;
+      final contentText = coerceContent(m['content']);
+      totalChars += contentText.length;
       if (previewBuffer.length < maxPreviewLength) {
         previewBuffer
           ..write('[')
           ..write(role)
           ..write('] ')
-          ..write(content)
+          ..write(contentText)
           ..write('\n');
       }
     }
     var promptPreview = previewBuffer.toString();
     if (promptPreview.length > maxPreviewLength) {
       promptPreview =
-          '${promptPreview.substring(0, maxPreviewLength)}…(已截断，仅日志预览)';
+          '${promptPreview.substring(0, maxPreviewLength)}…(已截断)';
     }
 
-    final payload = {
-      'model': model,
-      'messages': chatMessages,
-      if (temperature != null) 'temperature': temperature,
-      'stream': false,
-      ...?customConfig,
-    };
+    // 使用适配器构建请求体
+    final payload = adapter.buildRequestBody(
+      model: model,
+      messages: chatMessages,
+      temperature: temperature,
+      topP: topP,
+      customConfig: customConfig,
+      tools: tools,
+    );
 
     directTrace.info('发送直连请求', metadata: {
       'messagesCount': chatMessages.length,
@@ -302,38 +370,72 @@ class AgentApiClient {
     });
 
     try {
+      // 使用适配器构建请求头
+      final headers = adapter.buildHeaders(trimmedKey);
+
+      final sw = Stopwatch()..start();
       final resp = await _client
           .post(
             Uri.parse(endpoint),
-            headers: {
-              'Authorization': 'Bearer $trimmedKey',
-              'Content-Type': 'application/json',
-            },
+            headers: headers,
             body: jsonEncode(payload),
           )
           .timeout(timeout);
+      sw.stop();
+
+      final responseBodyStr = utf8.decode(resp.bodyBytes);
+
       if (resp.statusCode >= 200 && resp.statusCode < 300) {
-        final data = jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
-        String text = '';
-        final choices = (data['choices'] as List?) ?? const [];
-        if (choices.isNotEmpty) {
-          final first = choices.first as Map<String, dynamic>;
-          final msg = (first['message'] as Map<String, dynamic>?) ?? const <String, dynamic>{};
-          text = (msg['content'] ?? '').toString();
-        }
+        final data = jsonDecode(responseBodyStr) as Map<String, dynamic>;
+
+        // 使用适配器解析响应
+        final result = adapter.parseResponse(data);
+
+        // 记录 AI 对话日志（包含完整原始数据）
+        ApiLogger.add(ApiLogEntry(
+          time: DateTime.now(),
+          method: 'POST',
+          url: endpoint,
+          status: resp.statusCode,
+          durationMs: sw.elapsedMilliseconds,
+          requestBody: ApiLogger.safeSnippet(jsonEncode(payload)),
+          responseBody: ApiLogger.safeSnippet(responseBodyStr),
+          ok: true,
+          // 完整的原始对话数据
+          rawContext: jsonEncode(chatMessages),
+          rawAiResponse: result.text,
+        ));
 
         directTrace.info('直连响应成功', metadata: {
           'statusCode': resp.statusCode,
-          'textLength': text.length,
-          'text': text.length > 100 ? '${text.substring(0, 100)}...' : text,
+          'textLength': result.text.length,
+          'text': result.text.length > 100 ? '${result.text.substring(0, 100)}...' : result.text,
         });
         directTrace.end(additionalMessage: '直连调用完成');
 
         // 如果 logger 是自己创建的，需要结束它
         if (trace == null) logger.end();
 
-        return SendMessageRichResult(text: text, toolResults: const []);
+        return SendMessageRichResult(
+          text: result.text,
+          toolResults: result.toolResults,
+          toolCalls: result.toolCalls,
+          rawResponse: result.rawResponse,
+        );
       }
+
+      // 记录失败的 API 日志
+      ApiLogger.add(ApiLogEntry(
+        time: DateTime.now(),
+        method: 'POST',
+        url: endpoint,
+        status: resp.statusCode,
+        durationMs: sw.elapsedMilliseconds,
+        requestBody: ApiLogger.safeSnippet(jsonEncode(payload)),
+        responseBody: ApiLogger.safeSnippet(responseBodyStr),
+        ok: false,
+        rawContext: jsonEncode(chatMessages),
+      ));
 
       // HTTP 错误直接抛出，让上层显示真实原因
       directTrace.error('直连请求失败', metadata: {

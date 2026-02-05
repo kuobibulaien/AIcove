@@ -8,6 +8,7 @@
 /// - 2025-12-02: 创建并调优参数
 library;
 import 'package:flutter/material.dart';
+import '../../theme/tokens.dart';
 
 /// ============================================================
 /// 视差滑动路由配置
@@ -30,8 +31,8 @@ class ParallaxSlideConfig {
   final BoxShadow? shadow;
 
   const ParallaxSlideConfig({
-    this.duration = const Duration(milliseconds: 400),
-    this.reverseDuration = const Duration(milliseconds: 350),
+    this.duration = kAnimPage,
+    this.reverseDuration = kAnimPageReverse,
     this.curve = Curves.fastOutSlowIn,
     this.secondarySlideRatio = 0.08,
     this.shadow = const BoxShadow(
@@ -162,19 +163,36 @@ class ParallaxSlidePageRoute<T> extends PageRoute<T> {
   @override
   Widget buildTransitions(BuildContext context, Animation<double> animation,
       Animation<double> secondaryAnimation, Widget child) {
+    // 1. 进入动画：从右侧滑入
     final slideIn = Tween(
       begin: const Offset(1.0, 0.0),
       end: Offset.zero,
     ).chain(CurveTween(curve: config.curve));
+
+    // 2. 被覆盖时的动画：微幅左移（视差跟随效果）
+    final curvedSecondary = CurvedAnimation(
+      parent: secondaryAnimation,
+      curve: config.curve,
+    );
+    final slideOut = Tween(
+      begin: Offset.zero,
+      end: Offset(-config.secondarySlideRatio, 0.0),
+    );
+
+    // 组合动画：先处理被覆盖时的左移，再处理进入动画
+    Widget result = SlideTransition(
+      position: curvedSecondary.drive(slideOut),
+      child: child,
+    );
 
     return SlideTransition(
       position: animation.drive(slideIn),
       child: config.shadow != null
           ? DecoratedBox(
               decoration: BoxDecoration(boxShadow: [config.shadow!]),
-              child: child,
+              child: result,
             )
-          : child,
+          : result,
     );
   }
 }

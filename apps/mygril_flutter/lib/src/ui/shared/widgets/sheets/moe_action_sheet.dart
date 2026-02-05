@@ -29,6 +29,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../theme/tokens.dart';
+import '../../effects/smooth_clip.dart';
 
 /// 操作项定义
 class MoeSheetAction {
@@ -121,24 +122,23 @@ class MoeActionSheet extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             // 主体卡片
-            Container(
-              decoration: BoxDecoration(
+            MoeG2ClipRRect(
+              radius: 14,
+              child: Container(
                 color: sheetBgColor,
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // 顶部拖动指示器
-                  Container(
-                    margin: const EdgeInsets.only(top: 8, bottom: 4),
-                    width: 36,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: colors.muted.withValues(alpha: 0.3),
-                      borderRadius: BorderRadius.circular(2),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // 顶部拖动指示器
+                    Container(
+                      margin: const EdgeInsets.only(top: 8, bottom: 4),
+                      width: 36,
+                      height: 4,
+                      decoration: MoeG2Decoration(
+                        radius: 2,
+                        color: colors.muted.withValues(alpha: 0.3),
+                      ),
                     ),
-                  ),
 
                   // 标题区域
                   if (title != null || description != null)
@@ -201,27 +201,28 @@ class MoeActionSheet extends StatelessWidget {
                       ],
                     );
                   }),
-                ],
+                  ],
+                ),
               ),
             ),
 
             // 取消按钮
             if (showCancelButton) ...[
               const SizedBox(height: 8),
-              Container(
-                width: double.infinity,
-                decoration: BoxDecoration(
+              MoeG2ClipRRect(
+                radius: 14,
+                child: Container(
+                  width: double.infinity,
                   color: sheetBgColor,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: _ActionItem(
-                  action: MoeSheetAction(
-                    label: cancelText,
-                    onTap: () {},
+                  child: _ActionItem(
+                    action: MoeSheetAction(
+                      label: cancelText,
+                      onTap: () {},
+                    ),
+                    enableHaptics: enableHaptics,
+                    isCancelButton: true,
+                    onTap: () => Navigator.pop(context),
                   ),
-                  enableHaptics: enableHaptics,
-                  isCancelButton: true,
-                  onTap: () => Navigator.pop(context),
                 ),
               ),
             ],

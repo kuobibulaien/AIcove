@@ -5,7 +5,7 @@ import '../../../core/database/database_provider.dart';
 import '../../chat/providers2.dart';
 import '../../memory/services/memory_service.dart';
 import '../../settings/app_settings.dart';
-import '../domain/plugin.dart';
+import '../domain/index.dart';
 import 'memory_config.dart';
 
 /// 长期记忆插件
@@ -14,12 +14,57 @@ import 'memory_config.dart';
 /// - 在对话结束时提取关键事实并存储为向量记忆
 /// - 在用户发消息时检索相关记忆注入到 System Prompt
 /// - 输出格式：n天前的对话摘要"..."
-class MemoryPlugin implements Plugin {
-  MemoryConfig _config;
+class MemoryPlugin extends BasePlugin {
+  // ========== 元数据定义 ==========
+  static final _metadata = PluginMetadata(
+    id: 'memory',
+    name: '长期记忆',
+    description: '允许AI记住用户的长期喜好和重要信息',
+    version: '1.0.0',
+    author: 'MyGril Team',
+    icon: Icons.memory,
+    configSchema: {
+      'enabled': ConfigField(
+        type: ConfigFieldType.boolean,
+        label: '启用插件',
+        defaultValue: false,
+      ),
+      'triggerInterval': ConfigField(
+        type: ConfigFieldType.integer,
+        label: '触发间隔',
+        description: '每隔多少条消息触发一次记忆整理',
+        defaultValue: 10,
+      ),
+      'summarizeProviderId': ConfigField(
+        type: ConfigFieldType.string,
+        label: '总结模型提供商',
+        description: '用于生成记忆摘要的 AI 提供商 ID',
+      ),
+      'summarizeModelName': ConfigField(
+        type: ConfigFieldType.string,
+        label: '总结模型名称',
+        description: '用于生成记忆摘要的模型名称',
+      ),
+      'embeddingProviderId': ConfigField(
+        type: ConfigFieldType.string,
+        label: 'Embedding 提供商',
+        description: '用于向量化的 AI 提供商 ID',
+      ),
+      'embeddingModelName': ConfigField(
+        type: ConfigFieldType.string,
+        label: 'Embedding 模型',
+        description: '用于向量化的模型名称',
+      ),
+    },
+  );
+
+  // ========== 内部状态 ==========
+  MemoryConfig _memoryConfig;
   MemoryService? _service;
   final Ref _ref;
 
-  MemoryPlugin(this._config, this._ref) {
+  // ========== 构造函数 ==========
+  MemoryPlugin(this._memoryConfig, this._ref) : super(metadata: _metadata) {
     _initService();
   }
 
@@ -41,12 +86,12 @@ class MemoryPlugin implements Plugin {
 
   MemoryServiceConfig _resolveConfig(AppSettings settings) {
     return MemoryServiceConfig(
-      enabled: _config.enabled,
-      summarizePrompt: _config.summarizePrompt,
-      summarizeModel: _resolveModel(settings, _config.summarizeProviderId, _config.summarizeModelName),
-      embeddingModel: _resolveModel(settings, _config.embeddingProviderId, _config.embeddingModelName),
-      fallbackEmbeddingModel: _resolveModel(settings, _config.fallbackEmbeddingProviderId, _config.fallbackEmbeddingModelName),
-      fallbackEnabled: _config.fallbackEmbeddingEnabled,
+      enabled: _memoryConfig.enabled,
+      summarizePrompt: _memoryConfig.summarizePrompt,
+      summarizeModel: _resolveModel(settings, _memoryConfig.summarizeProviderId, _memoryConfig.summarizeModelName),
+      embeddingModel: _resolveModel(settings, _memoryConfig.embeddingProviderId, _memoryConfig.embeddingModelName),
+      fallbackEmbeddingModel: _resolveModel(settings, _memoryConfig.fallbackEmbeddingProviderId, _memoryConfig.fallbackEmbeddingModelName),
+      fallbackEnabled: _memoryConfig.fallbackEmbeddingEnabled,
     );
   }
 
@@ -70,32 +115,45 @@ class MemoryPlugin implements Plugin {
     );
   }
 
+  // ========== 重写 enabled getter ==========
   @override
-  String get id => 'memory';
+  bool get enabled => _memoryConfig.enabled;
+
+  // ========== 生命周期方法 ==========
 
   @override
-  String get name => '长期记忆';
+  Future<void> onInitialize() async {
+    await super.onInitialize();
+    debugPrint('[MemoryPlugin] 初始化完成');
+  }
 
   @override
-  String get description => '允许AI记住用户的长期喜好和重要信息';
+  Future<void> onDestroy() async {
+    _service = null;
+    await super.onDestroy();
+    debugPrint('[MemoryPlugin] 已销毁');
+  }
 
   @override
-  IconData get icon => Icons.memory;
+  Future<void> onConfigChanged(Map<String, dynamic> newConfig) async {
+    _memoryConfig = MemoryConfig.fromJson(newConfig);
+    _initService();
+    debugPrint('[MemoryPlugin] 配置已更新');
+  }
+
+  // ========== 现有功能（保留） ==========
 
   @override
-  bool get enabled => _config.enabled;
-
-  @override
-  Map<String, dynamic> getConfig() => _config.toJson();
+  Map<String, dynamic> getConfig() => _memoryConfig.toJson();
 
   @override
   void updateConfig(Map<String, dynamic> config) {
-    _config = MemoryConfig.fromJson(config);
+    _memoryConfig = MemoryConfig.fromJson(config);
     _initService();
   }
 
   @override
-  Future<String?> getSystemPrompt({String? userMessage}) async {
+  Future<String?> getSystemPrompt({String? userMessage, bool supportsToolCalling = false}) async {
     if (!enabled || _service == null || userMessage == null || userMessage.trim().isEmpty) {
       return null;
     }
@@ -136,7 +194,7 @@ class MemoryPlugin implements Plugin {
     if (conv == null) return;
 
     final msgCount = conv.messages.length;
-    if (msgCount > 0 && msgCount % _config.triggerInterval == 0) {
+    if (msgCount > 0 && msgCount % _memoryConfig.triggerInterval == 0) {
       AppLogger.info('MemoryPlugin', 'Triggering memory summarization', metadata: {'msgCount': msgCount});
 
       Future(() async {

@@ -7,6 +7,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import '../../../../ui/theme/tokens.dart';
 
 /// 带有出现动画的消息包装组件
 /// 实现从屏幕边缘滑入的效果（用户消息从右边，AI消息从左边）
@@ -36,7 +37,7 @@ class _AnimatedMessageItemState extends State<AnimatedMessageItem>
     
     // 创建动画控制器（400ms）
     _controller = AnimationController(
-      duration: const Duration(milliseconds: 400),
+      duration: kAnimPage,
       vsync: this,
     );
 

@@ -11,16 +11,17 @@ import '../../core/utils/message_formatter.dart';
 
 /// 模型类型枚举
 enum ModelType {
-  chat('chat', '基础对话', Icons.chat_bubble_outline),
-  embedding('embedding', '嵌入(Embedding)', Icons.code_outlined),
-  tts('tts', '文字转语音', Icons.volume_up_outlined),
-  stt('stt', '语音转文字', Icons.mic_outlined),
-  image('image', '图像生成', Icons.image_outlined);
+  chat('chat', '对话', Icons.chat_bubble_outline, Color(0xFF4A90E2)),
+  embedding('embedding', '嵌入', Icons.link, Color(0xFF10B981)),
+  tts('tts', '语音合成', Icons.volume_up_outlined, Color(0xFFEC4899)),
+  stt('stt', '语音识别', Icons.mic_outlined, Color(0xFFF59E0B)),
+  image('image', '图像生成', Icons.image_outlined, Color(0xFF8B5CF6));
 
-  const ModelType(this.value, this.label, this.icon);
+  const ModelType(this.value, this.label, this.icon, this.color);
   final String value;
   final String label;
   final IconData icon;
+  final Color color;
 
   static ModelType fromValue(String? value) {
     for (final type in ModelType.values) {
@@ -28,7 +29,111 @@ enum ModelType {
     }
     return ModelType.chat;
   }
+
+  /// 根据模型ID自动推断类型
+  static ModelType inferFromModelId(String modelId) {
+    final id = modelId.toLowerCase();
+
+    // TTS 模型识别
+    if (_ttsPatterns.hasMatch(id)) {
+      return ModelType.tts;
+    }
+
+    // STT 模型识别
+    if (_sttPatterns.hasMatch(id)) {
+      return ModelType.stt;
+    }
+
+    // Embedding 模型识别
+    if (_embeddingPatterns.hasMatch(id)) {
+      return ModelType.embedding;
+    }
+
+    // 图像生成模型识别
+    if (_imagePatterns.hasMatch(id)) {
+      return ModelType.image;
+    }
+
+    // 默认为对话模型
+    return ModelType.chat;
+  }
 }
+
+// TTS 模型匹配规则
+final _ttsPatterns = RegExp(
+  r'\b('
+  r'tts|'
+  r'text-to-speech|'
+  r'speech-synthesis|'
+  r'alloy|'        // OpenAI TTS voices
+  r'echo|'
+  r'fable|'
+  r'onyx|'
+  r'nova|'
+  r'shimmer|'
+  r'cosyvoice|'    // 阿里云语音
+  r'sambert|'
+  r'fish-speech|'
+  r'chattts|'
+  r'edge-tts|'
+  r'azure-tts|'
+  r'elevenlabs'
+  r')\b',
+  caseSensitive: false,
+);
+
+// STT 模型匹配规则
+final _sttPatterns = RegExp(
+  r'\b('
+  r'whisper|'
+  r'stt|'
+  r'speech-to-text|'
+  r'transcription|'
+  r'asr|'          // Automatic Speech Recognition
+  r'paraformer|'   // 阿里达摩院
+  r'sensevoice|'
+  r'funasr'
+  r')\b',
+  caseSensitive: false,
+);
+
+// Embedding 模型匹配规则
+final _embeddingPatterns = RegExp(
+  r'\b('
+  r'embed|'
+  r'embedding|'
+  r'text-embedding|'
+  r'ada-002|'
+  r'bge-|'          // BAAI BGE
+  r'm3e-|'          // M3E
+  r'gte-|'          // GTE
+  r'e5-|'           // E5
+  r'jina-embed|'
+  r'voyage-|'
+  r'cohere-embed'
+  r')\b',
+  caseSensitive: false,
+);
+
+// 图像生成模型匹配规则
+final _imagePatterns = RegExp(
+  r'\b('
+  r'dall-e|'
+  r'dalle|'
+  r'midjourney|'
+  r'stable-diffusion|'
+  r'sd-|'
+  r'sdxl|'
+  r'flux|'
+  r'imagen|'
+  r'ideogram|'
+  r'playground|'
+  r'kandinsky|'
+  r'cogview|'
+  r'wanx'           // 通义万相
+  r')\b',
+  caseSensitive: false,
+);
 
 /// 字体大小档位
 enum FontSize {
@@ -52,19 +157,25 @@ enum FontSize {
 
 /// 聊天背景色选项
 enum ChatBackgroundColor {
+  /// 默认色 - 跟随全局背景色
+  defaultColor('default', '默认', null),
   white('white', '纯白', Color(0xFFFFFFFF)),
   warm('warm', '暖色', Color(0xFFFFF7E1));
 
   const ChatBackgroundColor(this.value, this.label, this.color);
   final String value;
   final String label;
-  final Color color;
+  /// 背景色，null 表示跟随全局背景色
+  final Color? color;
+
+  /// 是否跟随全局背景色
+  bool get isDefault => this == ChatBackgroundColor.defaultColor;
 
   static ChatBackgroundColor fromValue(String? value) {
     for (final bg in ChatBackgroundColor.values) {
       if (bg.value == value) return bg;
     }
-    return ChatBackgroundColor.white;
+    return ChatBackgroundColor.defaultColor;
   }
 }
 
@@ -255,6 +366,14 @@ class ProviderAuth {
   final List<String> capabilities;
   final Map<String, dynamic> customConfig;
   final String modelType;
+  /// 是否禁用工具调用（默认 false，即默认启用工具调用）
+  final bool disableToolCalling;
+  /// 温度参数（null 表示使用全局默认值）
+  final double? temperature;
+  /// Top P 参数（null 表示不设置，使用服务商默认）
+  final double? topP;
+  /// 上下文消息数量限制（null 表示不限制，由软件自动管理）
+  final int? contextMessageLimit;
 
   const ProviderAuth({
     required this.id,
@@ -268,6 +387,10 @@ class ProviderAuth {
     this.capabilities = const <String>['chat'],
     this.customConfig = const <String, dynamic>{},
     this.modelType = 'chat',
+    this.disableToolCalling = false,
+    this.temperature,
+    this.topP,
+    this.contextMessageLimit,
   });
 
   ProviderAuth copyWith({
@@ -282,6 +405,13 @@ class ProviderAuth {
     List<String>? capabilities,
     Map<String, dynamic>? customConfig,
     String? modelType,
+    bool? disableToolCalling,
+    double? temperature,
+    double? topP,
+    int? contextMessageLimit,
+    bool clearTemperature = false,
+    bool clearTopP = false,
+    bool clearContextMessageLimit = false,
   }) =>
       ProviderAuth(
         id: id ?? this.id,
@@ -295,6 +425,10 @@ class ProviderAuth {
         capabilities: capabilities ?? this.capabilities,
         customConfig: customConfig ?? this.customConfig,
         modelType: modelType ?? this.modelType,
+        disableToolCalling: disableToolCalling ?? this.disableToolCalling,
+        temperature: clearTemperature ? null : (temperature ?? this.temperature),
+        topP: clearTopP ? null : (topP ?? this.topP),
+        contextMessageLimit: clearContextMessageLimit ? null : (contextMessageLimit ?? this.contextMessageLimit),
       );
 
   Map<String, dynamic> toJson() => {
@@ -309,6 +443,10 @@ class ProviderAuth {
         'capabilities': capabilities,
         'custom_config': customConfig,
         'model_type': modelType,
+        'disable_tool_calling': disableToolCalling,
+        if (temperature != null) 'temperature': temperature,
+        if (topP != null) 'top_p': topP,
+        if (contextMessageLimit != null) 'context_message_limit': contextMessageLimit,
       };
 
   factory ProviderAuth.fromJson(Map<String, dynamic> json) {
@@ -341,8 +479,69 @@ class ProviderAuth {
       capabilities: capabilities.isEmpty ? ['chat'] : capabilities,
       customConfig: customConfig,
       modelType: (json['model_type'] as String?) ?? 'chat',
+      disableToolCalling: (json['disable_tool_calling'] as bool?) ?? false,
+      temperature: (json['temperature'] as num?)?.toDouble(),
+      topP: (json['top_p'] as num?)?.toDouble(),
+      contextMessageLimit: json['context_message_limit'] as int?,
     );
   }
+}
+
+/// 模型级别配置
+/// 存储每个模型的独立设置（如禁用工具调用、温度等）
+class ModelConfig {
+  /// 是否禁用工具调用（默认 false，即启用）
+  final bool disableToolCalling;
+  /// 温度参数（null 表示使用全局默认值）
+  final double? temperature;
+  /// Top P 参数（null 表示不设置，使用服务商默认）
+  final double? topP;
+  /// 上下文消息数量限制（null 表示不限制，由软件自动管理）
+  final int? contextMessageLimit;
+
+  const ModelConfig({
+    this.disableToolCalling = false,
+    this.temperature,
+    this.topP,
+    this.contextMessageLimit,
+  });
+
+  /// 是否为默认配置（全部为默认值时可以删除以节省空间）
+  bool get isDefault =>
+      !disableToolCalling &&
+      temperature == null &&
+      topP == null &&
+      contextMessageLimit == null;
+
+  ModelConfig copyWith({
+    bool? disableToolCalling,
+    double? temperature,
+    bool clearTemperature = false,
+    double? topP,
+    bool clearTopP = false,
+    int? contextMessageLimit,
+    bool clearContextMessageLimit = false,
+  }) =>
+      ModelConfig(
+        disableToolCalling: disableToolCalling ?? this.disableToolCalling,
+        temperature: clearTemperature ? null : (temperature ?? this.temperature),
+        topP: clearTopP ? null : (topP ?? this.topP),
+        contextMessageLimit: clearContextMessageLimit ? null : (contextMessageLimit ?? this.contextMessageLimit),
+      );
+
+  Map<String, dynamic> toJson() => {
+        'disable_tool_calling': disableToolCalling,
+        if (temperature != null) 'temperature': temperature,
+        if (topP != null) 'top_p': topP,
+        if (contextMessageLimit != null) 'context_message_limit': contextMessageLimit,
+      };
+
+  factory ModelConfig.fromJson(Map<String, dynamic> json) => ModelConfig(
+        disableToolCalling: (json['disable_tool_calling'] as bool?) ?? false,
+        temperature: (json['temperature'] as num?)?.toDouble(),
+        topP: (json['top_p'] as num?)?.toDouble(),
+        contextMessageLimit: json['context_message_limit'] as int?,
+      );
 }
 
 /// 应用设置数据类
@@ -354,6 +553,12 @@ class AppSettings {
   final List<String> modelList;
   final List<String> allKnownModels;
   final Map<String, String> modelDisplayNames;
+  /// 模型类型映射：modelId -> ModelType.value
+  /// 只存储非 chat 类型的模型，chat 是默认值
+  final Map<String, String> modelTypes;
+  /// 模型级别配置映射：modelId -> ModelConfig
+  /// 只存储有自定义配置的模型
+  final Map<String, ModelConfig> modelConfigs;
   final String apiKey;
   final String apiBaseUrl;
   final bool imageGenerationEnabled;
@@ -372,6 +577,8 @@ class AppSettings {
   final ChatBackgroundColor chatBackgroundColor;
   final bool isDarkMode;
   final bool useSystemTheme;
+  final String accentColor;
+  final bool hideUserAvatar;
 
   const AppSettings({
     required this.ttsEnabled,
@@ -381,6 +588,8 @@ class AppSettings {
     required this.modelList,
     required this.allKnownModels,
     required this.modelDisplayNames,
+    required this.modelTypes,
+    required this.modelConfigs,
     required this.apiKey,
     required this.apiBaseUrl,
     required this.imageGenerationEnabled,
@@ -397,6 +606,8 @@ class AppSettings {
     required this.chatBackgroundColor,
     required this.isDarkMode,
     required this.useSystemTheme,
+    required this.accentColor,
+    this.hideUserAvatar = false,
     this.userAvatar,
     this.userName,
   });
@@ -409,6 +620,8 @@ class AppSettings {
     List<String>? modelList,
     List<String>? allKnownModels,
     Map<String, String>? modelDisplayNames,
+    Map<String, String>? modelTypes,
+    Map<String, ModelConfig>? modelConfigs,
     String? apiKey,
     String? apiBaseUrl,
     bool? imageGenerationEnabled,
@@ -425,6 +638,8 @@ class AppSettings {
     ChatBackgroundColor? chatBackgroundColor,
     bool? isDarkMode,
     bool? useSystemTheme,
+    String? accentColor,
+    bool? hideUserAvatar,
     String? userAvatar,
     String? userName,
   }) =>
@@ -436,6 +651,8 @@ class AppSettings {
         modelList: modelList ?? this.modelList,
         allKnownModels: allKnownModels ?? this.allKnownModels,
         modelDisplayNames: modelDisplayNames ?? this.modelDisplayNames,
+        modelTypes: modelTypes ?? this.modelTypes,
+        modelConfigs: modelConfigs ?? this.modelConfigs,
         apiKey: apiKey ?? this.apiKey,
         apiBaseUrl: apiBaseUrl ?? this.apiBaseUrl,
         imageGenerationEnabled: imageGenerationEnabled ?? this.imageGenerationEnabled,
@@ -452,10 +669,31 @@ class AppSettings {
         chatBackgroundColor: chatBackgroundColor ?? this.chatBackgroundColor,
         isDarkMode: isDarkMode ?? this.isDarkMode,
         useSystemTheme: useSystemTheme ?? this.useSystemTheme,
+        accentColor: accentColor ?? this.accentColor,
+        hideUserAvatar: hideUserAvatar ?? this.hideUserAvatar,
         userAvatar: userAvatar ?? this.userAvatar,
         userName: userName ?? this.userName,
       );
 
   String getModelDisplayName(String modelId) =>
       modelDisplayNames[modelId] ?? modelId;
+
+  /// 获取模型类型（优先使用用户设置，否则自动推断）
+  ModelType getModelType(String modelId) {
+    final stored = modelTypes[modelId];
+    if (stored != null) {
+      return ModelType.fromValue(stored);
+    }
+    return ModelType.inferFromModelId(modelId);
+  }
+
+  /// 获取模型配置（如果没有自定义配置，返回默认配置）
+  ModelConfig getModelConfig(String modelId) {
+    return modelConfigs[modelId] ?? const ModelConfig();
+  }
+
+  /// 检查模型是否禁用工具调用
+  bool isModelToolCallingDisabled(String modelId) {
+    return getModelConfig(modelId).disableToolCalling;
+  }
 }

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../ui/theme/tokens.dart';
 import 'package:mygril_flutter/src/core/utils/data_image.dart';
+import 'package:mygril_flutter/src/ui/shared/effects/smooth_clip.dart';
 
 import '../../domain/conversation.dart';
 import '../../../../ui/shared/widgets/meotalk_dialog.dart';
@@ -14,12 +15,14 @@ class ContactEditResult {
   final String? avatarUrl;
   final String? characterImage;
   final String? addressUser; // 角色对"我"的称呼
-  final String personaPrompt;
+  final String? description; // 角色简介（给用户看的介绍）
+  final String personaPrompt; // 人格提示词（给 AI 用的设定）
   const ContactEditResult({
     required this.displayName,
     this.avatarUrl,
     this.characterImage,
     this.addressUser,
+    this.description,
     required this.personaPrompt,
   });
 }
@@ -72,14 +75,14 @@ Future<ContactEditResult?> showContactEditDialog({
 
           Widget avatarPreview() {
             if (avatarBytes != null) {
-              return ClipRRect(
-                borderRadius: const BorderRadius.all(radiusBubble),
+              return MoeG2ClipRRect(
+                radius: radiusBubble.x,
                 child: Image.memory(avatarBytes!, width: 72, height: 72, fit: BoxFit.cover),
               );
             }
             if (avatarData != null && avatarData!.trim().isNotEmpty) {
-              return ClipRRect(
-                borderRadius: const BorderRadius.all(radiusBubble),
+              return MoeG2ClipRRect(
+                radius: radiusBubble.x,
                 child: Image.asset(
                   avatarData!,
                   width: 72,
@@ -89,8 +92,8 @@ Future<ContactEditResult?> showContactEditDialog({
                 ),
               );
             }
-            return ClipRRect(
-              borderRadius: const BorderRadius.all(radiusBubble),
+            return MoeG2ClipRRect(
+              radius: radiusBubble.x,
               child: _fallbackLetter(nameCtrl.text),
             );
           }
@@ -112,9 +115,9 @@ Future<ContactEditResult?> showContactEditDialog({
               width: 140,
               height: 180,
               alignment: Alignment.center,
-              decoration: BoxDecoration(
+              decoration: MoeG2Decoration(
+                radius: 12,
                 color: Colors.grey.shade200,
-                borderRadius: BorderRadius.circular(12),
               ),
               child: const Icon(Icons.image_not_supported_outlined, size: 42, color: Colors.grey),
             );
@@ -224,8 +227,8 @@ Widget _fallbackLetter(String name) {
   return Container(
     width: 72,
     height: 72,
-    decoration: const BoxDecoration(
-      borderRadius: BorderRadius.all(radiusBubble),
+    decoration: MoeG2Decoration(
+      radius: 10,
       color: Color(0xFFF0F0F0),
     ),
     alignment: Alignment.center,

@@ -30,6 +30,45 @@ class MessageRepository {
     return query.get();
   }
 
+  /// 在单个会话内搜索消息（按关键词 + 可选时间范围）
+  ///
+  /// - keyword: 文本关键字（会用 LIKE 做包含匹配）
+  /// - startTime/endTime: 毫秒时间戳范围，[startTime, endTime)（endTime 为开区间）
+  /// - 默认返回最新的在前（createdAt desc）
+  Future<List<Message>> searchByConversation(
+    String conversationId, {
+    String? keyword,
+    int? startTime,
+    int? endTime,
+    int limit = 200,
+  }) async {
+    final k = keyword?.trim();
+
+    var query = _db.select(_db.messages)
+      ..where((t) =>
+          t.conversationId.equals(conversationId) &
+          t.deletedAt.isNull() &
+          t.replacedBy.isNull());
+
+    if (k != null && k.isNotEmpty) {
+      // SQLite LIKE 默认对英文大小写不敏感；中文无大小写概念。
+      query = query..where((t) => t.content.like('%$k%'));
+    }
+
+    if (startTime != null) {
+      query = query..where((t) => t.createdAt.isBiggerOrEqualValue(startTime));
+    }
+    if (endTime != null) {
+      query = query..where((t) => t.createdAt.isSmallerThanValue(endTime));
+    }
+
+    query
+      ..orderBy([(t) => OrderingTerm.desc(t.createdAt)])
+      ..limit(limit);
+
+    return query.get();
+  }
+
   /// 获取单条消息
   Future<Message?> getById(String id) async {
     return (_db.select(_db.messages)..where((t) => t.id.equals(id)))
@@ -39,6 +78,11 @@ class MessageRepository {
   /// 创建消息
   Future<void> insert(MessagesCompanion data) async {
     await _db.into(_db.messages).insert(data);
+  }
+
+  /// 创建或更新消息（upsert）
+  Future<void> upsert(MessagesCompanion data) async {
+    await _db.into(_db.messages).insertOnConflictUpdate(data);
   }
 
   /// 批量创建消息
@@ -105,5 +149,15 @@ class MessageRepository {
     return (_db.delete(_db.messages)
           ..where((t) => t.conversationId.equals(conversationId)))
         .go();
+  }
+
+  /// 软删除会话的所有消息
+  Future<void> softDeleteByConversation(String conversationId, int deletedAt, int purgeAt) async {
+    await (_db.update(_db.messages)
+          ..where((t) => t.conversationId.equals(conversationId) & t.deletedAt.isNull()))
+        .write(MessagesCompanion(
+      deletedAt: Value(deletedAt),
+      purgeAt: Value(purgeAt),
+    ));
   }
 }

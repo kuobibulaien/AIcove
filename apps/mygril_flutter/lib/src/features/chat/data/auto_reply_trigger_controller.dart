@@ -49,11 +49,28 @@ class AutoReplyTriggerController
     String? prompt,
     AutoReplyTriggerPriority priority = AutoReplyTriggerPriority.medium,
   }) async {
+    // 获取当前会话的最后一条用户消息（用于作废判断）
+    final convId = contactId ?? ref.read(activeConversationIdProvider) ?? '';
+    final conversations = ref.read(conversationsProvider).valueOrNull ?? [];
+    final conv = conversations.where((c) => c.id == convId).firstOrNull;
+
+    String? lastUserMsgId;
+    DateTime? lastUserMsgAt;
+    if (conv != null) {
+      for (final m in conv.messages.reversed) {
+        if (m.role == 'user') {
+          lastUserMsgId = m.id;
+          lastUserMsgAt = m.createdAt;
+          break;
+        }
+      }
+    }
+
     final trigger = AutoReplyTrigger(
       id: _uuid.v4(),
       title: (title?.trim().isEmpty ?? true) ? '自定义触发' : title!.trim(),
       type: type,
-      status: AutoReplyTriggerStatus.scheduled,
+      status: AutoReplyTriggerStatus.pending,
       createdAt: DateTime.now(),
       nextFireAt: nextFireAt,
       allowNight: allowNight,
@@ -63,12 +80,129 @@ class AutoReplyTriggerController
       contactId: contactId,
       prompt: prompt,
       priority: priority,
+      conversationId: convId,
+      source: TriggerSource.userManual,
+      contextLastUserMessageId: lastUserMsgId,
+      contextLastUserMessageAt: lastUserMsgAt,
     );
     final current = state.valueOrNull ?? const <AutoReplyTrigger>[];
     final updated = [...current, trigger];
     await _persist(updated);
     AppLogger.info('AutoReplyTrigger', 'Created manual trigger: ${trigger.title} (Priority: ${priority.name})');
     _emitEvent(AutoReplyTriggerEventType.created, trigger);
+  }
+
+  /// 创建触发器（新版，支持所有新字段）
+  /// 由 TriggerPlugin 和 ContextAnalyzer 调用
+  Future<AutoReplyTrigger> createTrigger({
+    required String title,
+    required AutoReplyTriggerType type,
+    required DateTime nextFireAt,
+    required bool allowNight,
+    required bool requireExact,
+    required int delayMinutes,
+    required String conversationId,
+    String? prompt,
+    AutoReplyTriggerPriority priority = AutoReplyTriggerPriority.medium,
+    TriggerSource source = TriggerSource.userManual,
+    String? contextLastUserMessageId,
+    DateTime? contextLastUserMessageAt,
+    String? contextSnapshot,
+  }) async {
+    final trigger = AutoReplyTrigger(
+      id: _uuid.v4(),
+      title: title.trim().isEmpty ? '自定义触发' : title.trim(),
+      type: type,
+      status: AutoReplyTriggerStatus.pending,
+      createdAt: DateTime.now(),
+      nextFireAt: nextFireAt,
+      allowNight: allowNight,
+      requireExact: requireExact,
+      delayMinutes: delayMinutes,
+      manual: source == TriggerSource.userManual || source == TriggerSource.userRequest,
+      prompt: prompt,
+      priority: priority,
+      conversationId: conversationId,
+      source: source,
+      contextLastUserMessageId: contextLastUserMessageId,
+      contextLastUserMessageAt: contextLastUserMessageAt,
+      contextSnapshot: contextSnapshot,
+    );
+
+    final current = state.valueOrNull ?? const <AutoReplyTrigger>[];
+    final updated = [...current, trigger];
+    await _persist(updated);
+
+    AppLogger.info('AutoReplyTrigger', 'Created trigger', metadata: {
+      'title': trigger.title,
+      'priority': priority.name,
+      'source': source.name,
+      'conversationId': conversationId,
+    });
+    _emitEvent(AutoReplyTriggerEventType.created, trigger);
+
+    return trigger;
+  }
+
+  /// 作废触发器
+  Future<void> expireTrigger(String triggerId, String reason) async {
+    final current = state.valueOrNull ?? const <AutoReplyTrigger>[];
+    final target = current.where((t) => t.id == triggerId).firstOrNull;
+    if (target == null || !target.isActive) return;
+
+    final updated = current.map((t) {
+      if (t.id != triggerId) return t;
+      return t.copyWith(
+        status: AutoReplyTriggerStatus.expired,
+        expireReason: reason,
+        lastFiredAt: DateTime.now(),
+      );
+    }).toList();
+
+    await _persist(updated);
+    AppLogger.info('AutoReplyTrigger', 'Trigger expired', metadata: {
+      'id': triggerId,
+      'title': target.title,
+      'reason': reason,
+    });
+    _emitEvent(AutoReplyTriggerEventType.expired, target, reason: reason);
+  }
+
+  /// 获取指定会话的待触发列表
+  List<AutoReplyTrigger> getPendingTriggers(String conversationId) {
+    final current = state.valueOrNull ?? const <AutoReplyTrigger>[];
+    return current
+        .where((t) => t.conversationId == conversationId && t.isActive)
+        .toList()
+      ..sort((a, b) => a.nextFireAt.compareTo(b.nextFireAt));
+  }
+
+  /// 按 query 搜索触发器（用于 search_reminders 工具）
+  List<AutoReplyTrigger> searchTriggers({
+    required String query,
+    String? conversationId,
+    bool includeCompleted = false,
+    int limit = 5,
+  }) {
+    final current = state.valueOrNull ?? const <AutoReplyTrigger>[];
+    final lowerQuery = query.toLowerCase();
+
+    return current
+        .where((t) {
+          // 会话过滤
+          if (conversationId != null && t.conversationId != conversationId) {
+            return false;
+          }
+          // 状态过滤
+          if (!includeCompleted && !t.isActive) {
+            return false;
+          }
+          // 关键词匹配
+          return t.title.toLowerCase().contains(lowerQuery) ||
+              (t.prompt?.toLowerCase().contains(lowerQuery) ?? false);
+        })
+        .take(limit)
+        .toList();
   }
 
   Future<void> deleteTrigger(String id) async {
@@ -87,7 +221,7 @@ class AutoReplyTriggerController
     final updated = current.map((trigger) {
       if (trigger.id != id) return trigger;
       final nextStatus = trigger.status == AutoReplyTriggerStatus.paused
-          ? AutoReplyTriggerStatus.scheduled
+          ? AutoReplyTriggerStatus.pending
           : AutoReplyTriggerStatus.paused;
       return trigger.copyWith(status: nextStatus);
     }).toList();
@@ -115,27 +249,77 @@ class AutoReplyTriggerController
     final current = state.valueOrNull;
     if (current == null || current.isEmpty) return;
     final now = DateTime.now();
-    
+
     // Check if chat is active
     final activeChatId = ref.read(activeConversationIdProvider);
-    final isChatActive = activeChatId != null;
-    
+
     // 触发到期的触发器
     for (final trigger in current) {
       if (trigger.shouldFire(now, allowNightOverride: false)) {
-        // Check for Low Priority Drop Rule
-        if (trigger.priority == AutoReplyTriggerPriority.low && isChatActive) {
-           AppLogger.info('AutoReplyTrigger', 'Dropping low priority trigger because chat is active: ${trigger.title}');
-           // Mark as completed without firing
-           await _handleTrigger(trigger.id, now, drop: true);
-           continue;
+        // ===== 作废检查（在标记 fired 之前）=====
+        final expireCheckResult = await _checkShouldExpire(trigger, activeChatId);
+        if (expireCheckResult != null) {
+          // 应该作废，不触发
+          await expireTrigger(trigger.id, expireCheckResult);
+          continue;
         }
+        // ===== 作废检查结束 =====
+
         await _handleTrigger(trigger.id, now);
       }
     }
-    
+
     // 清理过期的已完成触发器（保留最近24小时的记录用于查看日志）
     await _cleanupCompletedTriggers(now);
+  }
+
+  /// 检查触发器是否应该作废
+  /// 返回作废原因字符串，如果不应作废则返回 null
+  Future<String?> _checkShouldExpire(AutoReplyTrigger trigger, String? activeChatId) async {
+    // 1. 获取触发器绑定的会话
+    final targetConvId = trigger.conversationId.isNotEmpty
+        ? trigger.conversationId
+        : activeChatId;
+
+    if (targetConvId == null || targetConvId.isEmpty) {
+      return '无目标会话';
+    }
+
+    // 2. 获取目标会话
+    final conversations = ref.read(conversationsProvider).valueOrNull ?? [];
+    final conv = conversations.where((c) => c.id == targetConvId).firstOrNull;
+    if (conv == null) {
+      return '目标会话不存在';
+    }
+
+    // 3. 获取当前会话中最后一条用户消息
+    String? currentLastUserMsgId;
+    DateTime? currentLastUserMsgAt;
+    for (final m in conv.messages.reversed) {
+      if (m.role == 'user') {
+        currentLastUserMsgId = m.id;
+        currentLastUserMsgAt = m.createdAt;
+        break;
+      }
+    }
+
+    // 4. 判断用户是否正在聊天界面
+    final isChatActive = activeChatId == targetConvId;
+
+    // 5. 检查是否应该作废
+    if (trigger.shouldExpire(
+      currentLastUserMessageId: currentLastUserMsgId,
+      currentLastUserMessageAt: currentLastUserMsgAt,
+      isChatActive: isChatActive,
+    )) {
+      return trigger.getExpireReason(
+        currentLastUserMessageId: currentLastUserMsgId,
+        currentLastUserMessageAt: currentLastUserMsgAt,
+        isChatActive: isChatActive,
+      );
+    }
+
+    return null; // 不应作废
   }
 
   /// 清理过期的已完成触发器
@@ -146,9 +330,10 @@ class AutoReplyTriggerController
     
     final cutoffTime = now.subtract(const Duration(hours: 24));
     final toDelete = current.where((trigger) {
-      return trigger.status == AutoReplyTriggerStatus.completed &&
-             trigger.lastFiredAt != null &&
-             trigger.lastFiredAt!.isBefore(cutoffTime);
+      return (trigger.status == AutoReplyTriggerStatus.fired ||
+              trigger.status == AutoReplyTriggerStatus.expired) &&
+          trigger.lastFiredAt != null &&
+          trigger.lastFiredAt!.isBefore(cutoffTime);
     }).toList();
     
     if (toDelete.isEmpty) return;
@@ -159,12 +344,12 @@ class AutoReplyTriggerController
     // 记录清理日志
     if (toDelete.isNotEmpty) {
       for (final deleted in toDelete) {
-        AppLogger.debug('AutoReplyTrigger', 'Auto-cleaned completed trigger: ${deleted.title} (fired at: ${deleted.lastFiredAt})');
+        AppLogger.debug('AutoReplyTrigger', 'Auto-cleaned trigger: ${deleted.title} (done at: ${deleted.lastFiredAt})');
       }
     }
   }
 
-  Future<void> _handleTrigger(String id, DateTime firedAt, {bool drop = false}) async {
+  Future<void> _handleTrigger(String id, DateTime firedAt) async {
     final current = state.valueOrNull ?? const <AutoReplyTrigger>[];
     if (current.isEmpty) return;
     var changed = false;
@@ -172,18 +357,12 @@ class AutoReplyTriggerController
       if (trigger.id != id) return trigger;
       changed = true;
       return trigger.copyWith(
-        status: AutoReplyTriggerStatus.completed,
+        status: AutoReplyTriggerStatus.fired,
         lastFiredAt: firedAt,
       );
     }).toList();
     if (!changed) return;
     await _persist(updated);
-    
-    if (drop) {
-      // If dropped, we don't fire the event or log as success
-      // Optionally log as dropped if needed
-      return;
-    }
 
     final fired = updated.firstWhere((e) => e.id == id);
     await _storage.appendLog(AutoReplyTriggerLog(
@@ -202,12 +381,13 @@ class AutoReplyTriggerController
     state = AsyncData(triggers);
   }
 
-  void _emitEvent(AutoReplyTriggerEventType type, AutoReplyTrigger trigger) {
+  void _emitEvent(AutoReplyTriggerEventType type, AutoReplyTrigger trigger, {String? reason}) {
     ref.read(autoReplyTriggerEventProvider.notifier).state = AutoReplyTriggerEvent(
       type: type,
       triggerId: trigger.id,
       title: trigger.title,
       timestamp: DateTime.now(),
+      reason: reason,
     );
   }
 }

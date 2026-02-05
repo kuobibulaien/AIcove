@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../domain/plugin.dart';
+import '../domain/index.dart';
 import '../../stickers/sticker_registry.dart';
 import 'sticker_config.dart';
 
@@ -11,28 +11,46 @@ import 'sticker_config.dart';
 /// 2. 插件解析 [xxx] 标签，匹配到对应表情包
 /// 3. 生成 sticker_convert 事件，携带表情包信息
 /// 4. 消息构建时将事件转换为 EmojiBlock
-class StickerPlugin implements Plugin {
-  StickerConfig _config;
+class StickerPlugin extends BasePlugin {
+  // ========== 元数据定义 ==========
+  static final _metadata = PluginMetadata(
+    id: 'sticker',
+    name: '表情包',
+    description: '自动将 [标签] 转换为表情包',
+    version: '1.0.0',
+    author: 'MyGril Team',
+    icon: Icons.emoji_emotions,
+    configSchema: {
+      'enabled': ConfigField(
+        type: ConfigFieldType.boolean,
+        label: '启用插件',
+        defaultValue: true,
+      ),
+    },
+  );
+
+  // ========== 内部状态 ==========
+  StickerConfig _stickerConfig;
   
-  StickerPlugin(this._config);
+  // ========== 构造函数 ==========
+  StickerPlugin(this._stickerConfig) : super(metadata: _metadata);
+
+  // ========== 重写 enabled getter ==========
+  @override
+  bool get enabled => _stickerConfig.enabled;
+
+  // ========== 生命周期方法 ==========
+
+  @override
+  Future<void> onInitialize() async {
+    await super.onInitialize();
+    debugPrint('[StickerPlugin] 初始化完成');
+  }
+
+  // ========== 现有功能（保留） ==========
   
   @override
-  String get id => 'sticker';
-  
-  @override
-  String get name => '表情包';
-  
-  @override
-  String get description => '自动将 [标签] 转换为表情包';
-  
-  @override
-  IconData get icon => Icons.emoji_emotions;
-  
-  @override
-  bool get enabled => _config.enabled;
-  
-  @override
-  Future<String?> getSystemPrompt({String? userMessage}) async {
+  Future<String?> getSystemPrompt({String? userMessage, bool supportsToolCalling = false}) async {
     if (!enabled) return null;
     
     // 获取所有可用标签
@@ -108,14 +126,14 @@ class StickerPlugin implements Plugin {
   
   @override
   void updateConfig(Map<String, dynamic> config) {
-    _config = StickerConfig.fromJson(config);
+    _stickerConfig = StickerConfig.fromJson(config);
   }
   
   @override
-  Map<String, dynamic> getConfig() => _config.toJson();
+  Map<String, dynamic> getConfig() => _stickerConfig.toJson();
   
   /// 更新配置（类型安全版本）
   void updateStickerConfig(StickerConfig config) {
-    _config = config;
+    _stickerConfig = config;
   }
 }

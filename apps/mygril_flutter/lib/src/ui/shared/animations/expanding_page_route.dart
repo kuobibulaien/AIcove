@@ -26,6 +26,8 @@
 /// - 2025-12-08: 添加目标圆角参数，适配现代手机屏幕圆角
 library;
 import 'package:flutter/material.dart';
+import '../../theme/tokens.dart';
+import '../effects/smooth_clip.dart';
 
 /// 自定义展开路由 - 实现"无缝展开"动画效果
 ///
@@ -60,8 +62,8 @@ class ExpandingPageRoute<T> extends PageRoute<T> {
     required this.sourceRect,
     this.sourceRadius = 12.0,
     this.targetRadius = 32.0,
-    this.openDuration = const Duration(milliseconds: 400),
-    this.closeDuration = const Duration(milliseconds: 350),
+    this.openDuration = kAnimPage,
+    this.closeDuration = kAnimPageReverse,
     this.animationCurve = Curves.easeInOutCubic,
   });
 
@@ -98,7 +100,7 @@ class ExpandingPageRoute<T> extends PageRoute<T> {
 
   @override
   Widget buildTransitions(BuildContext context, Animation<double> animation, Animation<double> secondaryAnimation, Widget child) {
-    final screenSize = MediaQuery.of(context).size;
+    final screenSize = MediaQuery.sizeOf(context);
 
     // 使用平滑曲线
     final curvedAnimation = CurvedAnimation(
@@ -131,8 +133,8 @@ class ExpandingPageRoute<T> extends PageRoute<T> {
               top: currentRect.top,
               width: currentRect.width,
               height: currentRect.height,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(currentRadius),
+              child: MoeG2ClipRRect(
+                radius: currentRadius,
                 child: child,
               ),
             ),
@@ -156,8 +158,8 @@ extension ExpandingNavigatorExtension on NavigatorState {
     required Widget page,
     required BuildContext sourceContext,
     double sourceRadius = 12.0,
-    Duration openDuration = const Duration(milliseconds: 400),
-    Duration closeDuration = const Duration(milliseconds: 350),
+    Duration openDuration = kAnimPage,
+    Duration closeDuration = kAnimPageReverse,
   }) {
     final RenderBox box = sourceContext.findRenderObject() as RenderBox;
     final position = box.localToGlobal(Offset.zero);

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/effects/smooth_clip.dart';
+import '../../../../ui/shared/widgets/index.dart';
 import '../../../../features/chat/data/auto_reply_trigger.dart';
 import '../../../../features/chat/data/auto_reply_trigger_controller.dart';
 import '../../../../features/chat/presentation/widgets/auto_reply_trigger_form.dart';
@@ -11,13 +13,13 @@ class AutoReplyTriggerListPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.moeColors;
+
     ref.listen<AutoReplyTriggerEvent?>(
       autoReplyTriggerEventProvider,
       (previous, next) {
         if (next == null) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_eventText(next))),
-        );
+        MoeToast.info(context, _eventText(next));
         ref.read(autoReplyTriggerEventProvider.notifier).state = null;
       },
     );
@@ -28,33 +30,40 @@ class AutoReplyTriggerListPage extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('待触发列表'),
-        backgroundColor: moeSurface,
-        foregroundColor: moeText,
+        backgroundColor: colors.headerColor,
+        foregroundColor: colors.headerContentColor,
         elevation: 0,
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(borderWidth),
           child: Container(
             height: borderWidth,
-            color: moeBorderLight,
+            color: colors.borderLight,
           ),
         ),
       ),
       floatingActionButton: FloatingActionButton(
-        backgroundColor: moePrimary,
+        backgroundColor: colors.primary,
         onPressed: () => showCreateAutoReplyTriggerSheet(context, ref),
         child: const Icon(Icons.add, color: Colors.white),
       ),
-      backgroundColor: moeSurface,
+      backgroundColor: colors.surface,
       body: triggersAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('加载失败: $e')),
+        loading: () => const Center(child: MoeLoadingIndicator()),
+        error: (e, _) => Center(
+          child: MoeEmptyState(
+            icon: Icons.error_outline,
+            title: '加载失败',
+            description: '$e',
+          ),
+        ),
         data: (triggers) {
+          // 显示活跃的触发器（排除已触发/已过期/已删除的）
           final pending = triggers
-              .where((t) => t.status != AutoReplyTriggerStatus.completed)
+              .where((t) => t.isActive || t.status == AutoReplyTriggerStatus.paused)
               .toList()
             ..sort((a, b) => a.nextFireAt.compareTo(b.nextFireAt));
           if (pending.isEmpty) {
-            return _buildEmptyState();
+            return _buildEmptyState(colors);
           }
           return ListView.separated(
             padding: const EdgeInsets.all(16),
@@ -62,20 +71,14 @@ class AutoReplyTriggerListPage extends ConsumerWidget {
             separatorBuilder: (_, __) => const SizedBox(height: 12),
             itemBuilder: (_, index) {
               final trigger = pending[index];
-              final statusColor = _colorForStatus(trigger.status);
+              final statusColor = _colorForStatus(trigger.status, colors);
               return Container(
                 padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: moeSurface,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: moeBorderLight),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.02),
-                      blurRadius: 6,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
+                decoration: MoeG2Decoration(
+                  radius: MoeSmoothRadii.sm,
+                  color: colors.componentBackground,
+                  border: Border.all(color: colors.borderLight),
+                  boxShadow: MoeShadows.soft,
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -85,9 +88,9 @@ class AutoReplyTriggerListPage extends ConsumerWidget {
                         Container(
                           width: 40,
                           height: 40,
-                          decoration: BoxDecoration(
+                          decoration: MoeG2Decoration(
+                            radius: 20,
                             color: statusColor.withValues(alpha: 0.12),
-                            borderRadius: BorderRadius.circular(20),
                           ),
                           child: Icon(
                             _iconForType(trigger.type),
@@ -104,19 +107,19 @@ class AutoReplyTriggerListPage extends ConsumerWidget {
                                   Expanded(
                                     child: Text(
                                       trigger.title,
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                         fontSize: 15,
                                         fontWeight: FontWeight.w600,
-                                        color: moeText,
+                                        color: colors.text,
                                       ),
                                     ),
                                   ),
                                   Container(
                                     padding:
                                         const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                    decoration: BoxDecoration(
+                                    decoration: MoeG2Decoration(
+                                      radius: 12,
                                       color: statusColor.withValues(alpha: 0.12),
-                                      borderRadius: BorderRadius.circular(12),
                                     ),
                                     child: Text(
                                       _labelForStatus(trigger.status),
@@ -132,7 +135,7 @@ class AutoReplyTriggerListPage extends ConsumerWidget {
                               const SizedBox(height: 6),
                               Text(
                                 '下次触发：${_formatDateTime(trigger.nextFireAt)}',
-                                style: const TextStyle(fontSize: 13, color: moeTextSecondary),
+                                style: TextStyle(fontSize: 13, color: colors.textSecondary),
                               ),
                             ],
                           ),
@@ -142,29 +145,27 @@ class AutoReplyTriggerListPage extends ConsumerWidget {
                     const SizedBox(height: 12),
                     Row(
                       children: [
-                        TextButton.icon(
+                        MoeSecondaryButton(
+                          label: '立即触发',
+                          icon: Icons.flash_on,
                           onPressed: () => controller.fireNow(trigger.id),
-                          icon: const Icon(Icons.flash_on, size: 18),
-                          label: const Text('立即触发'),
+                          size: MoeSecondaryButtonSize.sm,
                         ),
                         const SizedBox(width: 8),
-                        TextButton.icon(
+                        MoeSecondaryButton(
+                          label: trigger.status == AutoReplyTriggerStatus.paused ? '恢复' : '暂停',
+                          icon: trigger.status == AutoReplyTriggerStatus.paused
+                              ? Icons.play_arrow
+                              : Icons.pause,
                           onPressed: () => controller.togglePause(trigger.id),
-                          icon: Icon(
-                            trigger.status == AutoReplyTriggerStatus.paused
-                                ? Icons.play_arrow
-                                : Icons.pause,
-                            size: 18,
-                          ),
-                          label: Text(trigger.status == AutoReplyTriggerStatus.paused ? '恢复' : '暂停'),
+                          size: MoeSecondaryButtonSize.sm,
                         ),
                         const Spacer(),
-                        IconButton(
-                          tooltip: '删除',
-                          onPressed: () => controller.deleteTrigger(trigger.id),
-                          icon: const Icon(Icons.delete_outline),
-                          color: moeMuted,
-                        )
+                        MoeIconButton(
+                          icon: Icons.delete_outline,
+                          onTap: () => controller.deleteTrigger(trigger.id),
+                          semanticLabel: '删除',
+                        ),
                       ],
                     ),
                   ],
@@ -189,6 +190,8 @@ class AutoReplyTriggerListPage extends ConsumerWidget {
         return '已暂停：${event.title}';
       case AutoReplyTriggerEventType.resumed:
         return '已恢复：${event.title}';
+      case AutoReplyTriggerEventType.expired:
+        return '已作废：${event.title}${event.reason != null ? '（${event.reason}）' : ''}';
     }
   }
 
@@ -201,54 +204,53 @@ class AutoReplyTriggerListPage extends ConsumerWidget {
     }
   }
 
-  Color _colorForStatus(AutoReplyTriggerStatus status) {
+  Color _colorForStatus(AutoReplyTriggerStatus status, MoeColors colors) {
     switch (status) {
-      case AutoReplyTriggerStatus.scheduled:
-        return moePrimary;
+      case AutoReplyTriggerStatus.created:
+      case AutoReplyTriggerStatus.pending:
+        return colors.primary;
+      case AutoReplyTriggerStatus.preparing:
+        return const Color(0xFFFFA726); // 橙色，正在准备
+      case AutoReplyTriggerStatus.prepared:
+        return const Color(0xFF66BB6A); // 绿色，就绪
       case AutoReplyTriggerStatus.paused:
-        return moeMuted;
-      case AutoReplyTriggerStatus.completed:
+        return colors.muted;
+      case AutoReplyTriggerStatus.fired:
+        return const Color(0xFF9E9E9E);
+      case AutoReplyTriggerStatus.expired:
+        return const Color(0xFFEF5350); // 红色，已作废
+      case AutoReplyTriggerStatus.deleted:
         return const Color(0xFF9E9E9E);
     }
   }
 
   String _labelForStatus(AutoReplyTriggerStatus status) {
     switch (status) {
-      case AutoReplyTriggerStatus.scheduled:
+      case AutoReplyTriggerStatus.created:
+        return '已创建';
+      case AutoReplyTriggerStatus.preparing:
+        return '准备中';
+      case AutoReplyTriggerStatus.prepared:
+        return '已就绪';
+      case AutoReplyTriggerStatus.pending:
         return '等待触发';
       case AutoReplyTriggerStatus.paused:
         return '已暂停';
-      case AutoReplyTriggerStatus.completed:
-        return '已完成';
+      case AutoReplyTriggerStatus.fired:
+        return '已触发';
+      case AutoReplyTriggerStatus.expired:
+        return '已作废';
+      case AutoReplyTriggerStatus.deleted:
+        return '已删除';
     }
   }
 
-  Widget _buildEmptyState() {
+  Widget _buildEmptyState(MoeColors colors) {
     return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 72,
-            height: 72,
-            decoration: BoxDecoration(
-              color: moeBorderLight.withValues(alpha: 0.4),
-              borderRadius: BorderRadius.circular(36),
-            ),
-            child: const Icon(Icons.inbox_outlined, size: 32, color: moeMuted),
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            '目前没有待触发的提醒',
-            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: moeText),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'AI 会在需要时自动创建，你也可以手动添加新的触发器。',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 13, color: moeTextSecondary, height: 1.4),
-          ),
-        ],
+      child: MoeEmptyState(
+        icon: Icons.inbox_outlined,
+        title: '目前没有待触发的提醒',
+        description: 'AI 会在需要时自动创建，你也可以手动添加新的触发器。',
       ),
     );
   }

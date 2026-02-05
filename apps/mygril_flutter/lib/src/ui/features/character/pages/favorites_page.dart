@@ -1,8 +1,10 @@
 /// 我的收藏页面 - 展示收藏的角色卡片
 /// 
-/// 功能：以网格形式展示用户收藏的角色
+/// 功能：以网格形式展示用户收藏的角色（模板库）
+/// 点击后进入编辑页面，可以修改模板或另存为新角色卡
 /// 
 /// 更新记录：
+/// - 2026-01-06: 点击跳转到编辑页（editTemplate模式）
 /// - 2025-12-08: 从 role_card_page.dart 独立为单独文件
 /// - 2025-12-07: 在 role_card_page.dart 中创建，使用展开动画跳转
 library;
@@ -10,13 +12,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../ui/theme/tokens.dart';
-import '../../../../ui/shared/animations/expanding_page_route.dart';
+import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../../ui/shared/effects/frosted_glass_card.dart';
 import '../../../../ui/shared/widgets/moe_app_bar.dart';
 import '../../../../core/utils/data_image.dart';
 import '../../../../features/chat/domain/conversation.dart';
 import '../../../../features/chat/providers2.dart';
-import 'character_detail_page.dart';
+import 'contact_edit_page.dart';
 
 /// 我的收藏页面
 class FavoritesPage extends ConsumerWidget {
@@ -72,21 +74,15 @@ class FavoritesPage extends ConsumerWidget {
             itemCount: favorites.length,
             itemBuilder: (context, index) {
               final conv = favorites[index];
-              return Builder(
-                builder: (cardContext) {
-                  return _FavoriteCard(
-                    conversation: conv,
-                    onTap: () {
-                      Navigator.of(context).pushExpanding(
-                        page: CharacterDetailPage(
-                          conversationId: conv.id,
-                          initialConversation: conv,
-                          heroId: conv.id,
-                        ),
-                        sourceContext: cardContext,
-                        sourceRadius: 16,
-                      );
-                    },
+              return _FavoriteCard(
+                conversation: conv,
+                onTap: () {
+                  // 跳转到编辑页（模板编辑模式）
+                  Navigator.of(context).pushParallaxSlide(
+                    page: ContactEditPage(
+                      conversation: conv,
+                      editMode: EditMode.editTemplate,
+                    ),
                   );
                 },
               );
@@ -130,6 +126,7 @@ class _FavoriteCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return FrostedGlassCard(
       imageProvider: _getImageProvider(),
+      blurSigma: 0, // 不需要模糊
       onTap: onTap,
       child: Stack(
         fit: StackFit.expand,

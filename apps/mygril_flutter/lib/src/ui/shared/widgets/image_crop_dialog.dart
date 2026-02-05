@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:crop_your_image/crop_your_image.dart';
 import 'package:flutter/material.dart';
 import '../../theme/tokens.dart';
+import '../effects/smooth_clip.dart';
 
 /// 通用的图片裁剪弹窗
 /// 用于头像等场景的图片裁剪
@@ -31,7 +32,7 @@ class _ImageCropDialogState extends State<ImageCropDialog> with SingleTickerProv
     super.initState();
     _fadeController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 300),
+      duration: kAnimSlow,
     );
     _fadeAnimation = CurvedAnimation(
       parent: _fadeController,
@@ -39,7 +40,7 @@ class _ImageCropDialogState extends State<ImageCropDialog> with SingleTickerProv
     );
     
     // 延迟一小段时间让图片准备好，然后开始淡入动画
-    Future.delayed(const Duration(milliseconds: 100), () {
+    Future.delayed(kAnimXFast, () {
       if (mounted) {
         setState(() {
           _isImageReady = true;
@@ -117,7 +118,7 @@ class _ImageCropDialogState extends State<ImageCropDialog> with SingleTickerProv
             right: 0,
             child: Container(
               padding: EdgeInsets.only(
-                top: MediaQuery.of(context).padding.top + 8,
+                top: MediaQuery.paddingOf(context).top + 8,
                 left: 16,
                 right: 16,
                 bottom: 16,
@@ -169,7 +170,7 @@ class _ImageCropDialogState extends State<ImageCropDialog> with SingleTickerProv
                     children: [
                       // 占位空间，推算裁剪区域大小
                       SizedBox(
-                        height: MediaQuery.of(context).size.width * 0.8,
+                        height: MediaQuery.sizeOf(context).width * 0.8,
                       ),
                       const SizedBox(height: 24),
                       // 提示文字
@@ -178,9 +179,9 @@ class _ImageCropDialogState extends State<ImageCropDialog> with SingleTickerProv
                           horizontal: 20,
                           vertical: 10,
                         ),
-                        decoration: BoxDecoration(
+                        decoration: MoeG2Decoration(
+                          radius: 20,
                           color: Colors.black.withValues(alpha: 0.6),
-                          borderRadius: BorderRadius.circular(20),
                         ),
                         child: const Text(
                           '双指缩放和移动图片以调整裁剪区域',

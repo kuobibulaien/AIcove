@@ -1,6 +1,7 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:mygril_flutter/src/core/utils/data_image.dart';
+import 'package:mygril_flutter/src/ui/shared/effects/smooth_clip.dart';
 
 /// 角色卡片展示组件 - 高斯模糊背景风格
 /// 
@@ -26,8 +27,8 @@ class CharacterDisplay extends StatelessWidget {
     // 海报比例 3:4
     return AspectRatio(
       aspectRatio: 3 / 4,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
+      child: MoeG2ClipRRect(
+        radius: 16,
         child: Stack(
           fit: StackFit.expand,
           children: [

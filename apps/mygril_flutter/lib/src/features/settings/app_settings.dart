@@ -33,6 +33,18 @@ class _ModelMeta {
 
 String _normalizeModelId(String modelId) => modelId.trim();
 
+/// 将旧枚举值迁移为十六进制颜色值
+String _migrateAccentColor(String value) {
+  const legacyMap = {
+    'pink': 'FC96AA',
+    'blue': '4A90E2',
+    'mint': '4ECDC4',
+    'lavender': 'B39DDB',
+    'coral': 'FF8A65',
+  };
+  return legacyMap[value] ?? value;
+}
+
 _ModelMeta _calculateModelMeta(
   List<ProviderAuth> providers, {
   List<String>? fallbackVisible,
@@ -128,6 +140,18 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
   final displayNames =
       (data['model_display_names'] as Map? ?? const <String, dynamic>{})
           .map((key, value) => MapEntry(key.toString(), value?.toString() ?? ''));
+  final modelTypes =
+      (data['model_types'] as Map? ?? const <String, dynamic>{})
+          .map((key, value) => MapEntry(key.toString(), value?.toString() ?? ''));
+  // 解析模型级别配置
+  final modelConfigsRaw = data['model_configs'] as Map? ?? const <String, dynamic>{};
+  final modelConfigs = <String, ModelConfig>{};
+  for (final entry in modelConfigsRaw.entries) {
+    final key = entry.key.toString();
+    if (entry.value is Map) {
+      modelConfigs[key] = ModelConfig.fromJson((entry.value as Map).cast<String, dynamic>());
+    }
+  }
   final meta = _calculateModelMeta(
     providers,
     fallbackVisible: fallbackVisible,
@@ -137,8 +161,9 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
   final messageFormatConfig = data['message_format_config'] != null
       ? MessageFormatConfig.fromJson(data['message_format_config'] as Map<String, dynamic>)
       : const MessageFormatConfig();
-  
+
   final messageFontSize = (data['message_font_size'] as num?)?.toDouble() ?? FontSize.large.size;
+  final hideUserAvatar = data['hide_user_avatar'] == true;
   final userAvatar = data['user_avatar'] as String?;
   final userName = data['user_name'] as String?;
   final autoReplySettings = data['auto_reply_settings'] is Map
@@ -151,6 +176,9 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
   );
   final isDarkMode = (data['is_dark_mode'] as bool?) ?? false;
   final useSystemTheme = (data['use_system_theme'] as bool?) ?? true;
+  // 支持十六进制颜色值（如 'FC96AA'）或旧枚举值（如 'pink'）
+  final rawAccent = (data['accent_color'] as String?) ?? 'FC96AA';
+  final accentColor = _migrateAccentColor(rawAccent);
 
   return AppSettings(
     ttsEnabled: true,
@@ -160,6 +188,8 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     modelList: meta.visible.isEmpty ? <String>['deepseek-chat'] : meta.visible,
     allKnownModels: meta.allKnown.isEmpty ? <String>['deepseek-chat'] : meta.allKnown,
     modelDisplayNames: displayNames,
+    modelTypes: modelTypes,
+    modelConfigs: modelConfigs,
     apiKey: '',
     apiBaseUrl: 'https://api.openai.com/v1',
     imageGenerationEnabled: false,
@@ -172,10 +202,12 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     messageChunkingEnabled: data['message_chunking_enabled'] == true,
     messageFormatConfig: messageFormatConfig,
     messageFontSize: messageFontSize,
+    hideUserAvatar: hideUserAvatar,
     autoReplySettings: autoReplySettings,
     chatBackgroundColor: chatBackgroundColor,
     isDarkMode: isDarkMode,
     useSystemTheme: useSystemTheme,
+    accentColor: accentColor,
     userAvatar: userAvatar,
     userName: userName,
   );
@@ -219,6 +251,26 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
         names[modelId] = displayName.trim();
       }
       return _api.updatePartial({'model_display_names': names});
+    });
+  }
+
+  /// 设置模型类型（chat 类型会被移除，因为是默认值）
+  Future<void> setModelType({
+    required String modelId,
+    required ModelType type,
+  }) async {
+    await _commit(() async {
+      final data = await _api.fetchAll();
+      final types =
+          (data['model_types'] as Map? ?? const <String, dynamic>{})
+              .map((key, value) => MapEntry(key.toString(), value?.toString() ?? ''));
+      if (type == ModelType.chat) {
+        // chat 是默认值，不需要存储
+        types.remove(modelId);
+      } else {
+        types[modelId] = type.value;
+      }
+      return _api.updatePartial({'model_types': types});
     });
   }
 
@@ -267,12 +319,134 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     });
   }
 
+  /// 从指定渠道中删除一个模型（同时从 models/visible/hidden 中移除）
+  Future<void> deleteProviderModel({
+    required String providerId,
+    required String modelId,
+  }) async {
+    final current = state.value;
+    if (current == null) return;
+
+    final provider = current.providers.firstWhere(
+      (p) => p.id == providerId,
+      orElse: () => const ProviderAuth(id: '', apiBaseUrl: '', apiKeys: []),
+    );
+
+    if (provider.id.isEmpty) return;
+
+    final allModels = [...provider.models]..removeWhere((m) => m == modelId);
+    final visibleModels = [...provider.visibleModels]..removeWhere((m) => m == modelId);
+    final hiddenModels = [...provider.hiddenModels]..removeWhere((m) => m == modelId);
+
+    await updateProviderModels(
+      providerId: providerId,
+      allModels: allModels,
+      visibleModels: visibleModels,
+      hiddenModels: hiddenModels,
+    );
+  }
+
   Future<void> setProviderEnabled(String providerId, bool enabled) async {
     await _commit(() => _api.updateProvider(providerId: providerId, enabled: enabled));
   }
 
+  /// 设置渠道是否禁用工具调用
+  Future<void> setProviderDisableToolCalling(String providerId, bool disableToolCalling) async {
+    await _commit(() => _api.updateProvider(
+      providerId: providerId,
+      disableToolCalling: disableToolCalling,
+    ));
+  }
+
+  /// 更新渠道的模型参数（temperature, topP, contextMessageLimit）
+  Future<void> updateProviderParams({
+    required String providerId,
+    double? temperature,
+    bool clearTemperature = false,
+    double? topP,
+    bool clearTopP = false,
+    int? contextMessageLimit,
+    bool clearContextMessageLimit = false,
+  }) async {
+    await _commit(() => _api.updateProvider(
+      providerId: providerId,
+      temperature: temperature,
+      clearTemperature: clearTemperature,
+      topP: topP,
+      clearTopP: clearTopP,
+      contextMessageLimit: contextMessageLimit,
+      clearContextMessageLimit: clearContextMessageLimit,
+    ));
+  }
+
+  /// 设置模型是否禁用工具调用
+  Future<void> setModelDisableToolCalling({
+    required String modelId,
+    required bool disableToolCalling,
+  }) async {
+    await updateModelConfig(
+      modelId: modelId,
+      disableToolCalling: disableToolCalling,
+    );
+  }
+
+  /// 更新模型级别配置（温度、Top P、上下文消息数、工具调用等）
+  Future<void> updateModelConfig({
+    required String modelId,
+    bool? disableToolCalling,
+    double? temperature,
+    bool clearTemperature = false,
+    double? topP,
+    bool clearTopP = false,
+    int? contextMessageLimit,
+    bool clearContextMessageLimit = false,
+  }) async {
+    await _commit(() async {
+      final data = await _api.fetchAll();
+      final configs = (data['model_configs'] as Map? ?? const <String, dynamic>{})
+          .map((key, value) => MapEntry(key.toString(), value));
+
+      // 获取现有配置或创建新配置
+      final existing = configs[modelId] is Map
+          ? ModelConfig.fromJson((configs[modelId] as Map).cast<String, dynamic>())
+          : const ModelConfig();
+
+      final updated = existing.copyWith(
+        disableToolCalling: disableToolCalling,
+        temperature: temperature,
+        clearTemperature: clearTemperature,
+        topP: topP,
+        clearTopP: clearTopP,
+        contextMessageLimit: contextMessageLimit,
+        clearContextMessageLimit: clearContextMessageLimit,
+      );
+
+      if (updated.isDefault) {
+        // 全部为默认值时，移除配置以节省空间
+        configs.remove(modelId);
+      } else {
+        configs[modelId] = updated.toJson();
+      }
+      return _api.updatePartial({'model_configs': configs});
+    });
+  }
+
   Future<void> deleteProvider(String providerId) async {
     await _commit(() => _api.deleteProvider(providerId));
+  }
+
+  Future<void> reorderProviders(List<String> providerIds) async {
+    await _commit(() => _api.reorderProviders(providerIds));
+  }
+
+  Future<void> reorderProviderModels({
+    required String providerId,
+    required List<String> modelIds,
+  }) async {
+    await _commit(() => _api.reorderProviderModels(
+      providerId: providerId,
+      modelIds: modelIds,
+    ));
   }
 
   Future<void> editProvider({
@@ -335,6 +509,53 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
         ));
   }
 
+  /// 更新渠道的模型列表
+  Future<void> updateProviderModels({
+    required String providerId,
+    required List<String> allModels,
+    List<String>? visibleModels,
+    List<String>? hiddenModels,
+  }) async {
+    await _commit(() => _api.updateProvider(
+          providerId: providerId,
+          allModels: allModels,
+          visibleModels: visibleModels ?? allModels,
+          hiddenModels: hiddenModels,
+        ));
+  }
+
+  /// 添加自定义模型到渠道
+  Future<void> addCustomModel({
+    required String providerId,
+    required String modelId,
+    String? displayName,
+  }) async {
+    final current = state.value;
+    if (current == null) return;
+    
+    final provider = current.providers.firstWhere(
+      (p) => p.id == providerId,
+      orElse: () => const ProviderAuth(id: '', apiBaseUrl: '', apiKeys: []),
+    );
+    if (provider.id.isEmpty) return;
+    
+    // 添加到 visibleModels（不重复添加）
+    final newVisible = [...provider.visibleModels];
+    if (!newVisible.contains(modelId)) {
+      newVisible.add(modelId);
+    }
+    
+    await _commit(() => _api.updateProvider(
+          providerId: providerId,
+          visibleModels: newVisible,
+        ));
+    
+    // 如果有显示名称，同时设置
+    if (displayName != null && displayName.isNotEmpty) {
+      await setModelDisplayName(modelId: modelId, displayName: displayName);
+    }
+  }
+
   Future<void> setMessageChunkingEnabled(bool value) async {
     await _commit(() => _api.updatePartial({'message_chunking_enabled': value}));
   }
@@ -349,6 +570,10 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
 
   Future<void> setMessageFontSize(double size) async {
     await _commit(() => _api.updatePartial({'message_font_size': size}));
+  }
+
+  Future<void> setHideUserAvatar(bool hide) async {
+    await _commit(() => _api.updatePartial({'hide_user_avatar': hide}));
   }
 
   Future<void> setUserAvatar(String? avatar) async {
@@ -373,6 +598,10 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
 
   Future<void> setUseSystemTheme(bool useSystem) async {
     await _commit(() => _api.updatePartial({'use_system_theme': useSystem}));
+  }
+
+  Future<void> setAccentColor(String color) async {
+    await _commit(() => _api.updatePartial({'accent_color': color}));
   }
 
   /// 同时设置暗色模式和是否跟随系统（避免两次状态更新冲突）

@@ -2,7 +2,7 @@
 ///
 /// 职责：
 /// - 处理插件响应（TTS、表情包等）
-/// - 构建助手消息（分段、格式化）
+/// - 构建助手消息（完整存储，分段在 UI 层处理）
 /// - 解析后端 TTS 结果
 /// - 移除插件标签
 ///
@@ -13,7 +13,6 @@ import '../domain/message.dart';
 import '../id_gen.dart';
 import '../../plugins/domain/plugin.dart';
 import '../../../core/models/message_block.dart';
-import '../../../core/utils/message_formatter.dart';
 
 /// 助手消息构建结果
 class AssistantMessageBuildResult {
@@ -87,12 +86,11 @@ class ChatResponseHandler {
 
   /// 构建助手消息列表
   ///
-  /// 处理文本分段、表情包事件等
+  /// 处理表情包事件等，消息保持完整存储，分段在 UI 层处理
   AssistantMessageBuildResult buildAssistantMessages({
     required String replyText,
     required String processedText,
     required List<PluginEvent> pluginEvents,
-    required MessageFormatConfig messageConfig,
   }) {
     var sourceText = _selectAssistantText(processedText, pluginEvents, replyText);
 
@@ -115,24 +113,23 @@ class ChatResponseHandler {
       return const AssistantMessageBuildResult(messages: [], lastMessageText: '');
     }
 
-    final chunks = MessageFormatter.formatAndChunkText(sourceText, messageConfig);
-    final texts = chunks.isEmpty ? [sourceText] : chunks;
-    final aiMessages = texts
-        .map((chunk) => Message(
-              id: genId('msg'),
-              role: 'assistant',
-              content: chunk,
-              createdAt: DateTime.now(),
-              status: 'sent',
-            ))
-        .toList();
+    // 消息保持完整存储，不分段
+    final aiMessages = <Message>[
+      Message(
+        id: genId('msg'),
+        role: 'assistant',
+        content: sourceText,
+        createdAt: DateTime.now(),
+        status: 'sent',
+      ),
+    ];
 
     // 处理表情包事件
     _appendStickerMessages(aiMessages, pluginEvents);
 
     return AssistantMessageBuildResult(
       messages: aiMessages,
-      lastMessageText: texts.last,
+      lastMessageText: sourceText,
     );
   }
 

@@ -1,23 +1,22 @@
-/// 渐变高斯模糊卡片 - 公共组件
-/// 
-/// 用途：功能入口卡片，带粉白渐变 + 高斯模糊背景效果
-/// 
-/// 特点：
-/// - 粉白渐变背景 + 高斯模糊
-/// - 自动适配亮/暗色模式
-/// - iOS 风格平滑圆角
-/// 
+/// 功能入口卡片 - 公共组件
+///
+/// 用途：发现页顶部的快捷入口（如“我的角色卡”“定制角色卡”）
+///
+/// 设计目标：
+/// - 类 QQ 的深色卡片按钮样式：纯色卡面 + 轻阴影 + 左上角图标 + 左下角标题/副标题
+/// - 自动适配亮/暗色模式（颜色来自 theme tokens）
+///
 /// 更新记录：
 /// - 2025-12-08: 从 role_card_page.dart 抽取为公共组件
 library;
-import 'dart:ui';
+
 import 'package:flutter/material.dart';
 
 import '../../theme/tokens.dart';
 import 'smooth_clip.dart';
 
 /// 渐变高斯模糊卡片
-/// 
+///
 /// 用法：
 /// ```dart
 /// GradientBlurCard(
@@ -31,23 +30,23 @@ import 'smooth_clip.dart';
 class GradientBlurCard extends StatelessWidget {
   /// 标题
   final String title;
-  
+
   /// 副标题（可选）
   final String? subtitle;
-  
+
   /// 图标
   final IconData icon;
-  
+
   /// 图标颜色
   final Color iconColor;
-  
+
   /// 点击回调
   final VoidCallback onTap;
-  
-  /// 卡片高度，默认 80
+
+  /// 卡片高度，默认 150 (适合竖向布局)
   final double height;
-  
-  /// 圆角半径，默认 16
+
+  /// 圆角半径，默认 24
   final double radius;
 
   const GradientBlurCard({
@@ -57,108 +56,81 @@ class GradientBlurCard extends StatelessWidget {
     required this.icon,
     required this.iconColor,
     required this.onTap,
-    this.height = 80,
-    this.radius = 16,
+    this.height = 136,
+    this.radius = MoeRadii.lg,
   });
 
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return SmoothClipRRect(
-      radius: radius,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          child: Container(
-            height: height,
-            decoration: SmoothRectDecoration(
-              radius: radius,
-              border: Border.all(
-                color: colors.borderLight.withValues(alpha: 0.3),
-                width: 1,
-              ),
-            ),
+    return Container(
+      height: height,
+      decoration: MoeG2Decoration(
+        radius: radius,
+        boxShadow: MoeShadows.card,
+      ),
+      child: MoeG2ClipRRect(
+        radius: radius,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            splashColor: colors.accentColor.withValues(alpha: 0.10),
+            highlightColor: colors.accentColor.withValues(alpha: 0.06),
             child: Stack(
               fit: StackFit.expand,
               children: [
-                // 1. 粉白渐变高斯模糊背景
-                ImageFiltered(
-                  imageFilter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: isDark
-                            ? [const Color(0xFF2A1A2A), const Color(0xFF1A1A2A)]
-                            : [
-                                const Color(0xFFFFF0F5), // 极浅粉
-                                const Color(0xFFF8F0FF), // 极浅紫
-                                Colors.white,
-                              ],
-                        stops: isDark ? null : const [0.0, 0.5, 1.0],
-                      ),
+                // 1. 背景层
+                DecoratedBox(
+                  decoration: MoeG2Decoration(
+                    radius: radius,
+                    color: colors.componentBackground,
+                    border: Border.all(
+                      color: colors.borderLight.withValues(alpha: 0.7),
+                      width: borderWidth,
                     ),
                   ),
                 ),
-                // 2. 半透明遮罩增强层次
-                Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [
-                        Colors.white.withValues(alpha: 0.4),
-                        Colors.white.withValues(alpha: 0.1),
-                      ],
-                    ),
-                  ),
-                ),
-                // 3. 内容层
+
+                // 2. 内容层 - 垂直居中，左对齐
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Row(
+                  padding: const EdgeInsets.all(MoeSpacing.md),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // 图标容器
-                      Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: iconColor.withValues(alpha: 0.15),
-                          shape: BoxShape.circle,
+                      // 第一行：图标
+                      Icon(icon, color: iconColor, size: 28),
+
+                      const SizedBox(height: MoeSpacing.sm),
+
+                      // 第二行：主标题（加粗）
+                      Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: colors.text,
+                          height: 1.2,
                         ),
-                        child: Icon(icon, color: iconColor, size: 24),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      const SizedBox(width: 12),
-                      // 文字区
-                      Expanded(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              title,
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                color: colors.text,
-                              ),
-                            ),
-                            if (subtitle != null) ...[
-                              const SizedBox(height: 2),
-                              Text(
-                                subtitle!,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: colors.muted,
-                                ),
-                              ),
-                            ],
-                          ],
+
+                      const SizedBox(height: MoeSpacing.xs),
+
+                      // 第三行：副标题
+                      Text(
+                        subtitle ?? '',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: colors.muted,
+                          height: 1.2,
                         ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ],
                   ),

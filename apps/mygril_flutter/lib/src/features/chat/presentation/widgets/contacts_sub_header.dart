@@ -15,6 +15,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../ui/theme/skin_provider.dart';
 import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../providers2.dart';
 import 'momotalk_sort_dialog.dart';
 
@@ -71,10 +72,10 @@ class ContactsSubHeader extends ConsumerWidget {
               onTap: () => _showSortDialog(context, ref, sortMode),
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
+                decoration: MoeG2Decoration(
+                  radius: 4,
                   color: colors.surface,
                   border: Border.all(color: colors.divider),
-                  borderRadius: BorderRadius.circular(4),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withValues(alpha: 0.02),
@@ -109,23 +110,25 @@ class ContactsSubHeader extends ConsumerWidget {
           // 升序/降序切换按钮
           Tooltip(
             message: '切换顺序',
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onTap: () {
-                  ref.read(sortAscendingProvider.notifier).state = !isAscending;
-                },
-                borderRadius: BorderRadius.circular(4),
-                child: Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: colors.divider),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Icon(
-                    isAscending ? Icons.arrow_upward : Icons.arrow_downward,
-                    size: 16,
-                    color: colors.textSecondary,
+            child: MoeG2ClipRRect(
+              radius: 4,
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () {
+                    ref.read(sortAscendingProvider.notifier).state = !isAscending;
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: MoeG2Decoration(
+                      radius: 4,
+                      border: Border.all(color: colors.divider),
+                    ),
+                    child: Icon(
+                      isAscending ? Icons.arrow_upward : Icons.arrow_downward,
+                      size: 16,
+                      color: colors.textSecondary,
+                    ),
                   ),
                 ),
               ),

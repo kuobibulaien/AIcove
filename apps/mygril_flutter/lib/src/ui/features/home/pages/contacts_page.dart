@@ -5,6 +5,7 @@ import '../../../../features/chat/providers2.dart';
 import '../../../../features/chat/presentation/widgets/contacts_list_content.dart';
 import '../../../../features/chat/presentation/widgets/contacts_sub_header.dart';
 import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/settings_drawer_wrapper.dart';
 
 class ContactsPage extends ConsumerStatefulWidget {
@@ -74,16 +75,18 @@ class _ContactsPageState extends ConsumerState<ContactsPage> {
           centerTitle: false,
           actions: [
             // 加号按钮 - 添加新角色
-            Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onTap: () {
-                  context.go('/contact/new');
-                },
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
-                  padding: const EdgeInsets.all(8),
-                  child: Icon(Icons.add, color: colors.headerContentColor, size: 26),
+            MoeG2ClipRRect(
+              radius: 8,
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () {
+                    context.go('/contact/new');
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Icon(Icons.add, color: colors.headerContentColor, size: 26),
+                  ),
                 ),
               ),
             ),

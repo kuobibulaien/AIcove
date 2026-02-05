@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/effects/smooth_clip.dart';
 
 enum SortMode {
   latest,
@@ -21,15 +22,18 @@ class MomotalkSortDialog extends StatelessWidget {
     final colors = context.moeColors;
     
     return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      backgroundColor: colors.surface,
-      child: Container(
-        width: 300,
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      child: MoeG2ClipRRect(
+        radius: 12,
+        child: Container(
+          width: 300,
+          padding: const EdgeInsets.all(16),
+          color: colors.surface,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
             // Title Row
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -103,30 +107,31 @@ class MomotalkSortDialog extends StatelessWidget {
             const SizedBox(height: 24),
             
             // Confirm Button
-            ElevatedButton(
-              onPressed: () => Navigator.of(context).pop(),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: colors.surface,
-                foregroundColor: const Color(0xFF4C5B6F), // Dark blue text
-                elevation: 0,
-                side: BorderSide(color: colors.divider),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
+            MoeG2ClipRRect(
+              radius: 8,
+              child: ElevatedButton(
+                onPressed: () => Navigator.of(context).pop(),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: colors.surface,
+                  foregroundColor: const Color(0xFF4C5B6F), // Dark blue text
+                  elevation: 0,
+                  side: BorderSide(color: colors.divider),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
                 ),
-              ),
-              child: const Text(
-                '確認',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
+                child: const Text(
+                  '確認',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
                 ),
               ),
             ),
           ],
         ),
       ),
-    );
+    ),
+  );
   }
 
   Widget _buildOptionButton(
@@ -138,25 +143,30 @@ class MomotalkSortDialog extends StatelessWidget {
   }) {
     final colors = context.moeColors;
     
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFFFC879B) : colors.surface, // Pink if selected
-          border: Border.all(
-            color: isSelected ? const Color(0xFFFC879B) : colors.divider,
-          ),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        alignment: Alignment.center,
-        child: Text(
-          label,
-          style: TextStyle(
-            color: isSelected ? Colors.white : (isPlaceholder ? colors.muted : colors.text),
-            fontWeight: FontWeight.bold,
-            fontSize: 14,
+    return MoeG2ClipRRect(
+      radius: 8,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            decoration: MoeG2Decoration(
+              radius: 8,
+              color: isSelected ? const Color(0xFFFC879B) : colors.surface, // Pink if selected
+              border: Border.all(
+                color: isSelected ? const Color(0xFFFC879B) : colors.divider,
+              ),
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              label,
+              style: TextStyle(
+                color: isSelected ? Colors.white : (isPlaceholder ? colors.muted : colors.text),
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+              ),
+            ),
           ),
         ),
       ),

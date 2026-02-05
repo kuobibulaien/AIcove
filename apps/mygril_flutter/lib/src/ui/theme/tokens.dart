@@ -1,13 +1,51 @@
 import 'package:flutter/material.dart';
 
+// ===== 主题色预设 =====
+
+/// 主题色枚举 - 用于全局 AppBar、主按钮等强调色
+/// 
+/// 可通过设置界面切换，未来可扩展更多颜色
+enum MoeAccentColor {
+  /// 经典粉红（默认 MoeTalk 风格）
+  pink('pink', '粉红', Color(0xFFFC96AA), Color(0xFFF8869D)),
+  /// 淡蓝色（清爽风格）
+  blue('blue', '淡蓝', Color(0xFF4A90E2), Color(0xFF3A7BD5)),
+  /// 薄荷绿
+  mint('mint', '薄荷', Color(0xFF4ECDC4), Color(0xFF44A08D)),
+  /// 薰衣草紫
+  lavender('lavender', '薰衣草', Color(0xFFB39DDB), Color(0xFF9575CD)),
+  /// 珊瑚橙
+  coral('coral', '珊瑚', Color(0xFFFF8A65), Color(0xFFFF7043));
+
+  const MoeAccentColor(this.value, this.label, this.color, this.colorDark);
+  
+  /// 用于持久化的字符串值
+  final String value;
+  /// 显示名称
+  final String label;
+  /// 浅色模式颜色（标题栏、主按钮背景）
+  final Color color;
+  /// 深色模式颜色（或渐变终点）
+  final Color colorDark;
+
+  /// 从字符串值解析
+  static MoeAccentColor fromValue(String? value) {
+    for (final accent in MoeAccentColor.values) {
+      if (accent.value == value) return accent;
+    }
+    return MoeAccentColor.pink; // 默认粉红
+  }
+}
+
+
 // MoeTalk 风格 Token（来自 MoeTalk 官方 CSS）
 
 // ===== 浅色模式 =====
 const moePrimary = Color(0xFF4A90E2); // Momotalk User Bubble Blue
 const moeSurface = Color(0xFFF3F6F8); // 表面背景色
 const moeSurfaceAlt = Color(0xFFE8EDF2); // 次级表面背景色（略深）
-const moePanel = Color(0xFFDAE5F1); // 容器背景（卡片/聊天面板）
-const moeBgMain = Color(0xFFDAE1E5); // 主背景色
+const moePanel = Colors.white; // 容器背景（卡片/聊天面板）
+const moeBgMain = Color(0xFFF3F6F8); // 主背景色（与 surface 统一）
 const moeText = Color(0xFF222529); // 主文本颜色
 const moeTextSecondary = Color(0xFF454E59); // 次要文本颜色（时间戳等）
 const moeMuted = Color(0xFF7A8591); // 弱化文本颜色
@@ -19,10 +57,10 @@ const moeFocus = Color(0xFF4A90E2); // 聚焦/按钮颜色
 
 // ===== 暗色模式 =====
 const moePrimaryDark = Color(0xFF6BA1D8); // 主色调蓝色（暗色版，稍微降低亮度）
-const moeSurfaceDark = Color(0xFF1A1D23); // 表面背景色（深色背景）
+const moeSurfaceDark = Color(0xFF1C1C1C); // 表面背景色（深色背景）
 const moeSurfaceAltDark = Color(0xFF232830); // 次级表面背景色（略深）
-const moePanelDark = Color(0xFF2C323B); // 容器背景（卡片/聊天面板）
-const moeBgMainDark = Color(0xFF25292F); // 主背景色
+const moePanelDark = Color(0xFF333333); // 容器背景（卡片/聊天面板）
+const moeBgMainDark = Color(0xFF1C1C1C); // 主背景色
 const moeTextDark = Color(0xFFE5E8EB); // 主文本颜色（浅色文字）
 const moeTextSecondaryDark = Color(0xFFADB5BD); // 次要文本颜色
 const moeMutedDark = Color(0xFF8B95A1); // 弱化文本颜色
@@ -41,8 +79,8 @@ const double bottomBarHeight = 56.0; // Material Design标准底部导航条高�
 const moeHeaderPink = Color(0xFFFC96AA); // Momotalk Pink Header
 const moeHeaderContentLight = Color(0xFFFFFFFF); // Header text color (on pink)
 
-const moeHeaderGradientStart = Color(0xFFFC96AA); // 标题栏渐变起点
-const moeHeaderGradientEnd = Color(0xFFF8869D);   // 标题栏渐变终点
+const moeHeaderGradientStart = Color(0xFFFC96AA); // 标题栏渐变起点（已弃用，使用 MoeAccentColor）
+const moeHeaderGradientEnd = Color(0xFFF8869D);   // 标题栏渐变终点（已弃用，使用 MoeAccentColor）
 
 // 气泡 - MoeTalk 配色（浅色模式）
 const moeBubbleLeftBg = Color(0xFF4D5B75); // AI 消息背景（深蓝灰色）
@@ -130,6 +168,11 @@ class MoeColors extends ThemeExtension<MoeColors> {
   final Color dialogOverlay;
   final Color headerColor;
   final Color headerContentColor;
+  /// 主题强调色（用于 AppBar、主按钮等）
+  final Color accentColor;
+  /// 组件公共背景色（用于设置分组、卡片等容器）
+  final Color componentBackground;
+
 
   const MoeColors({
     required this.primary,
@@ -156,11 +199,16 @@ class MoeColors extends ThemeExtension<MoeColors> {
     required this.dialogOverlay,
     required this.headerColor,
     required this.headerContentColor,
+    required this.accentColor,
+    required this.componentBackground,
   });
 
   // 浅色主题
-  static const light = MoeColors(
-    primary: moePrimary,
+  static MoeColors light({Color? accentColor}) {
+    final color = accentColor ?? const Color(0xFFFC96AA);
+    return MoeColors(
+    // primary/focus 代表"全局强调色"（按钮/选中态等），应跟随用户选择的主题色
+    primary: color,
     surface: moeSurface,
     surfaceAlt: moeSurfaceAlt,
     panel: moePanel,
@@ -171,7 +219,7 @@ class MoeColors extends ThemeExtension<MoeColors> {
     border: moeBorder,
     borderLight: moeBorderLight,
     divider: moeDividerColor,
-    focus: moeFocus,
+    focus: color,
     bubbleLeftBg: moeBubbleLeftBg,
     bubbleLeftBorder: moeBubbleLeftBorder,
     bubbleLeftFg: moeBubbleLeftFg,
@@ -182,13 +230,22 @@ class MoeColors extends ThemeExtension<MoeColors> {
     dialogCancel: moeDialogCancel,
     dialogAccentLine: moeDialogAccentLine,
     dialogOverlay: moeDialogOverlay,
-    headerColor: moeHeaderPink,
+    headerColor: color,
     headerContentColor: moeHeaderContentLight,
+    accentColor: color,
+    componentBackground: Colors.white,
   );
+  }
 
   // 暗色主题
-  static const dark = MoeColors(
-    primary: moePrimaryDark,
+  static MoeColors dark({Color? accentColor}) {
+    final color = accentColor ?? const Color(0xFFFC96AA);
+    // 暗色模式下稍微降低饱和度
+    final hsl = HSLColor.fromColor(color);
+    final darkColor = hsl.withLightness((hsl.lightness * 0.9).clamp(0.0, 1.0)).toColor();
+    return MoeColors(
+    // primary/focus 代表"全局强调色"（按钮/选中态等），应跟随用户选择的主题色
+    primary: darkColor,
     surface: moeSurfaceDark,
     surfaceAlt: moeSurfaceAltDark,
     panel: moePanelDark,
@@ -199,7 +256,7 @@ class MoeColors extends ThemeExtension<MoeColors> {
     border: moeBorderDark,
     borderLight: moeBorderLightDark,
     divider: moeDividerColorDark,
-    focus: moeFocusDark,
+    focus: darkColor,
     bubbleLeftBg: moeBubbleLeftBgDark,
     bubbleLeftBorder: moeBubbleLeftBorderDark,
     bubbleLeftFg: moeBubbleLeftFgDark,
@@ -210,9 +267,12 @@ class MoeColors extends ThemeExtension<MoeColors> {
     dialogCancel: moeDialogCancelDark,
     dialogAccentLine: moeDialogAccentLineDark,
     dialogOverlay: moeDialogOverlayDark,
-    headerColor: moeSurfaceDark, // 暗色模式下Header跟随Surface
+    headerColor: darkColor,
     headerContentColor: moeTextDark,
+    accentColor: darkColor,
+    componentBackground: moePanelDark,
   );
+  }
 
   @override
   MoeColors copyWith({
@@ -240,6 +300,8 @@ class MoeColors extends ThemeExtension<MoeColors> {
     Color? dialogOverlay,
     Color? headerColor,
     Color? headerContentColor,
+    Color? accentColor,
+    Color? componentBackground,
   }) {
     return MoeColors(
       primary: primary ?? this.primary,
@@ -266,6 +328,8 @@ class MoeColors extends ThemeExtension<MoeColors> {
       dialogOverlay: dialogOverlay ?? this.dialogOverlay,
       headerColor: headerColor ?? this.headerColor,
       headerContentColor: headerContentColor ?? this.headerContentColor,
+      accentColor: accentColor ?? this.accentColor,
+      componentBackground: componentBackground ?? this.componentBackground,
     );
   }
 
@@ -297,24 +361,35 @@ class MoeColors extends ThemeExtension<MoeColors> {
       dialogOverlay: Color.lerp(dialogOverlay, other.dialogOverlay, t)!,
       headerColor: Color.lerp(headerColor, other.headerColor, t)!,
       headerContentColor: Color.lerp(headerContentColor, other.headerContentColor, t)!,
+      accentColor: Color.lerp(accentColor, other.accentColor, t)!,
+      componentBackground: Color.lerp(componentBackground, other.componentBackground, t)!,
     );
   }
 }
 
 // 便捷访问方法
 extension MoeColorsExtension on BuildContext {
-  MoeColors get moeColors => Theme.of(this).extension<MoeColors>() ?? MoeColors.light;
+  MoeColors get moeColors => Theme.of(this).extension<MoeColors>() ?? MoeColors.light();
 }
 
 // ===== Design Tokens =====
 
-// === 动画时长 ===
+/// 极速动画（键盘适配、即时反馈）
+const Duration kAnimXFast = Duration(milliseconds: 100);
 /// 快速动画（按压反馈、微交互）
 const Duration kAnimFast = Duration(milliseconds: 150);
 /// 标准动画（过渡、切换）
 const Duration kAnim = Duration(milliseconds: 240);
-/// 慢速动画（复杂过渡、页面切换）
+/// 慢速动画（复杂过渡、展开效果）
 const Duration kAnimSlow = Duration(milliseconds: 320);
+/// 页面打开动画
+const Duration kAnimPage = Duration(milliseconds: 400);
+/// 页面关闭动画
+const Duration kAnimPageReverse = Duration(milliseconds: 350);
+/// 较长动画（如滚动同步、复杂展开）
+const Duration kAnimLong = Duration(milliseconds: 1200);
+/// Toast 默认显示时长
+const Duration kDurationToast = Duration(milliseconds: 1500);
 
 // === 间距系统 ===
 /// 统一间距常量，遵循 4px 基准
@@ -358,6 +433,24 @@ class MoeRadii {
   static BorderRadius get borderXl => BorderRadius.circular(xl);
   static BorderRadius get borderCard => BorderRadius.circular(card);
   static BorderRadius get borderCapsule => BorderRadius.circular(capsule);
+}
+
+// === iOS 超椭圆圆角常量 ===
+/// iOS 风格平滑圆角（Squircle）专用常量
+/// 
+  /// 与 MoeRadii 区分：这里的值用于 SmoothClipRRect/SmoothRectDecoration（旧）以及 MoeG2ClipRRect/MoeG2Decoration（推荐）。
+/// 由于超椭圆曲线更饱满，同样的数值看起来会比普通圆角更"圆"。
+class MoeSmoothRadii {
+  MoeSmoothRadii._();
+  
+  /// 小容器（12px）- 简介气泡、小卡片
+  static const double sm = 12;
+  /// 卡片类（20px）- 角色卡、毛玻璃卡片
+  static const double md = 20;
+  /// 弹窗类（24px）- 确认弹窗、底部面板
+  static const double lg = 24;
+  /// 特殊大卡片（28px）- 全屏卡片、封面
+  static const double xl = 28;
 }
 
 // === 阴影预设 ===

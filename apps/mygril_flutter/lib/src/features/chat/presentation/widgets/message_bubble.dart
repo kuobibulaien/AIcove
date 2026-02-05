@@ -1,16 +1,22 @@
 /// 消息气泡组件（支持多模态）
 /// 遵循单一职责原则(S)：只负责消息的UI渲染
-/// 
+///
 /// 更新记录：
 /// - 2025-12-06: 接入皮肤系统（背景色、描边）
+/// - 2025-01-15: 图片预览改用公共组件 MoeImagePreview
+/// - 2026-01-18: 网络图片改用 CachedNetworkImageProvider 磁盘缓存
 library;
+
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:mygril_flutter/src/core/utils/data_image.dart';
 import '../../../../ui/theme/skin_provider.dart';
 import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../core/models/message_block.dart';
+import '../../../../ui/shared/widgets/media/moe_image_preview.dart';
 import '../../domain/message.dart';
 import '../../../settings/app_settings.dart';
 import 'audio_player_widget.dart';
@@ -21,9 +27,17 @@ class MessageBubble extends ConsumerWidget {
   final bool isMe;
   final Message message; // 使用完整的Message对象
   final String? avatarUrl; // 仅用于左侧（AI）
-  final String? displayName; // 对方名字（仅用于左侧）
+  final String? displayName; // 对方名字（仅用于群聊模式）
   final VoidCallback? onRetry; // 重新发送回调
+  final void Function(GlobalKey bubbleKey)? onLongPress; // 长按回调（传递气泡Key用于定位菜单）
   final double fontSize; // 字体大小
+
+  /// 是否显示直角（连续消息组的第一条且后面还有同发送者消息时为 true）
+  /// false = 全圆角（单条消息或组的后续消息）
+  final bool showCorner;
+
+  /// 是否显示名称（群聊模式为 true，一对一聊天为 false）
+  final bool showName;
 
   const MessageBubble({
     super.key,
@@ -32,7 +46,10 @@ class MessageBubble extends ConsumerWidget {
     this.avatarUrl,
     this.displayName,
     this.onRetry,
+    this.onLongPress,
     this.fontSize = 13.0,
+    this.showCorner = false,
+    this.showName = false,
   });
 
   /// 向后兼容：纯文本构造函数
@@ -43,7 +60,10 @@ class MessageBubble extends ConsumerWidget {
     this.avatarUrl,
     this.displayName,
     this.onRetry,
+    this.onLongPress,
     this.fontSize = 13.0,
+    this.showCorner = false,
+    this.showName = false,
   }) : message = Message.text(
           id: DateTime.now().millisecondsSinceEpoch.toString(),
           role: isMe ? 'user' : 'assistant',
@@ -61,17 +81,9 @@ class MessageBubble extends ConsumerWidget {
     final fg = isMe ? Colors.white : colors.bubbleLeftFg;
 
     final align = isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start;
-    
-    // Momotalk 风格圆角：
-    // AI (左侧): 左上角直角，其他圆角
-    // User (右侧): 右上角直角，其他圆角
-    final r = skin.bubbleRadius;
-    final radius = BorderRadius.only(
-      topLeft: isMe ? Radius.circular(r) : Radius.zero,
-      topRight: isMe ? Radius.zero : Radius.circular(r),
-      bottomLeft: Radius.circular(r),
-      bottomRight: Radius.circular(r),
-    );
+
+    // 圆角逻辑：统一使用大圆角（一对一聊天简洁风格）
+    final bubbleRadius = skin.bubbleRadius;
 
     // 获取要渲染的blocks
     final blocks = message.blocks ?? [];
@@ -80,14 +92,17 @@ class MessageBubble extends ConsumerWidget {
     // 检测消息是否发送失败
     final isFailed = isMe && message.status == 'failed';
 
-    // 获取用户头像
+    // 获取用户头像和隐藏设置
     final settingsAsync = ref.watch(appSettingsProvider);
-    final userAvatar = isMe ? settingsAsync.valueOrNull?.userAvatar : null;
+    final settings = settingsAsync.valueOrNull;
+    final userAvatar = isMe ? settings?.userAvatar : null;
+    final hideUserAvatar = settings?.hideUserAvatar ?? false;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       child: Row(
-        mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+        mainAxisAlignment:
+            isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (!isMe) ...[
@@ -118,8 +133,8 @@ class MessageBubble extends ConsumerWidget {
             child: Column(
               crossAxisAlignment: align,
               children: [
-                // AI 消息上方显示名字
-                if (!isMe && displayName != null)
+                // 群聊模式下，AI 消息上方显示名字
+                if (showName && !isMe && displayName != null)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 4, left: 0),
                     child: Text(
@@ -131,47 +146,63 @@ class MessageBubble extends ConsumerWidget {
                       ),
                     ),
                   ),
-                
+
                 // Render image/sticker blocks separately without bubble
-                ..._buildMediaBlocksOnly(blocks),
+                ..._buildMediaBlocksOnly(context, blocks),
                 // Render non-image blocks in bubble (text, audio, etc.)
                 if (_shouldShowBubble(blocks))
-                  Container(
-                    margin: const EdgeInsets.symmetric(vertical: 0),
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: bubbleColor,
-                      borderRadius: radius,
-                    ),
-                    // Non-image content (text, audio, etc.)
-                    child: hasBlocks
-                        ? _buildNonImageBlocksContent(blocks, fg)
-                        : Builder(
-                            builder: (context) {
-                              final text = message.displayText;
-                              if (text.trim().isEmpty) {
-                                // 空消息占位符（用于调试，避免完全不显示）
-                                return Text(
-                                  '[空消息]',
-                                  style: TextStyle(
-                                    color: fg.withValues(alpha: 0.5),
-                                    height: 1.42,
-                                    fontSize: fontSize - 1,
-                                    fontStyle: FontStyle.italic,
-                                  ),
-                                );
-                              }
-                              return Text(
-                                text,
-                                style: TextStyle(color: fg, height: 1.42, fontSize: fontSize),
-                              );
-                            },
-                          ),
+                  Builder(
+                    builder: (context) {
+                      final bubbleKey =
+                          GlobalKey(debugLabel: 'bubble_${message.id}');
+                      return GestureDetector(
+                        key: bubbleKey,
+                        onLongPress: onLongPress != null
+                            ? () => onLongPress!(bubbleKey)
+                            : null,
+                         child: Container(
+                           margin: const EdgeInsets.symmetric(vertical: 0),
+                           padding: const EdgeInsets.symmetric(
+                               horizontal: 10, vertical: 8),
+                           decoration: MoeG2Decoration(
+                             radius: bubbleRadius,
+                             color: bubbleColor,
+                           ),
+                           // Non-image content (text, audio, etc.)
+                           child: hasBlocks
+                              ? _buildNonImageBlocksContent(context, blocks, fg)
+                              : Builder(
+                                  builder: (context) {
+                                    final text = message.displayText;
+                                    if (text.trim().isEmpty) {
+                                      // 空消息占位符（用于调试，避免完全不显示）
+                                      return Text(
+                                        '[空消息]',
+                                        style: TextStyle(
+                                          color: fg.withValues(alpha: 0.5),
+                                          height: 1.42,
+                                          fontSize: fontSize - 1,
+                                          fontStyle: FontStyle.italic,
+                                        ),
+                                      );
+                                    }
+                                    return Text(
+                                      text,
+                                      style: TextStyle(
+                                          color: fg,
+                                          height: 1.42,
+                                          fontSize: fontSize),
+                                    );
+                                  },
+                                ),
+                        ),
+                      );
+                    },
                   ),
               ],
             ),
           ),
-          if (isMe) ...[
+          if (isMe && !hideUserAvatar) ...[
             const SizedBox(width: 8),
             _Avatar(avatarUrl: userAvatar, isUser: true),
           ],
@@ -191,23 +222,27 @@ class MessageBubble extends ConsumerWidget {
   }
 
   /// Build only image and sticker blocks without bubble wrapper
-  List<Widget> _buildMediaBlocksOnly(List<MessageBlock> blocks) {
+  List<Widget> _buildMediaBlocksOnly(
+      BuildContext context, List<MessageBlock> blocks) {
     final widgets = <Widget>[];
     for (final block in blocks) {
       if (block is ImageBlock) {
-        widgets.add(_buildImageBlock(block));
+        widgets.add(_buildImageBlock(context, block));
       } else if (block is EmojiBlock) {
-        widgets.add(_buildStickerBlock(block));
+        widgets.add(_buildStickerBlock(context, block));
       }
     }
     return widgets;
   }
 
   /// Build only non-image/non-sticker blocks content for bubble (text, audio, code, etc.)
-  Widget _buildNonImageBlocksContent(List<MessageBlock> blocks, Color textColor) {
+  Widget _buildNonImageBlocksContent(
+      BuildContext context, List<MessageBlock> blocks, Color textColor) {
     // Filter to only non-image and non-sticker blocks
-    final nonMediaBlocks = blocks.where((block) => block is! ImageBlock && block is! EmojiBlock).toList();
-    
+    final nonMediaBlocks = blocks
+        .where((block) => block is! ImageBlock && block is! EmojiBlock)
+        .toList();
+
     // Filter out empty text blocks
     final filteredBlocks = nonMediaBlocks.where((block) {
       if (block is TextBlock) {
@@ -215,19 +250,22 @@ class MessageBubble extends ConsumerWidget {
       }
       return true;
     }).toList();
-    
+
     if (filteredBlocks.isEmpty) {
       return const SizedBox.shrink();
     }
-    
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: filteredBlocks.map((block) => _buildBlock(block, textColor)).toList(),
+      children: filteredBlocks
+          .map((block) => _buildBlock(context, block, textColor))
+          .toList(),
     );
   }
 
   /// 根据Block类型渲染不同的组件
-  Widget _buildBlock(MessageBlock block, Color textColor) {
+  Widget _buildBlock(
+      BuildContext context, MessageBlock block, Color textColor) {
     if (block is TextBlock) {
       return Padding(
         padding: const EdgeInsets.only(bottom: 4),
@@ -237,7 +275,9 @@ class MessageBubble extends ConsumerWidget {
         ),
       );
     } else if (block is ImageBlock) {
-      return _buildImageBlock(block);
+      return _buildImageBlock(context, block);
+    } else if (block is FileBlock) {
+      return _buildFileBlock(context, block, textColor);
     } else if (block is AudioBlock) {
       return _buildAudioBlock(block, textColor);
     } else if (block is CodeBlock) {
@@ -251,12 +291,76 @@ class MessageBubble extends ConsumerWidget {
     return const SizedBox.shrink();
   }
 
+  Widget _buildFileBlock(
+      BuildContext context, FileBlock block, Color textColor) {
+    final colors = context.moeColors;
+    final subtitleColor = textColor.withValues(alpha: 0.75);
+    final sizeText = _formatBytes(block.fileSize);
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 6),
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: MoeG2Decoration(
+          radius: 10,
+          color: colors.surfaceAlt.withValues(alpha: 0.35),
+          border: Border.all(
+              color: colors.borderLight.withValues(alpha: 0.6), width: 0.5),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.insert_drive_file_outlined, color: textColor, size: 22),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    block.fileName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: textColor,
+                      fontSize: fontSize + 0.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '$sizeText · ${block.mimeType}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: subtitleColor, fontSize: fontSize - 0.5),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) return '${bytes}B';
+    final kb = bytes / 1024;
+    if (kb < 1024) return '${kb.toStringAsFixed(1)}KB';
+    final mb = kb / 1024;
+    if (mb < 1024) return '${mb.toStringAsFixed(1)}MB';
+    final gb = mb / 1024;
+    return '${gb.toStringAsFixed(1)}GB';
+  }
+
   /// 渲染图片块
-  Widget _buildImageBlock(ImageBlock block) {
+  Widget _buildImageBlock(BuildContext context, ImageBlock block) {
     Widget imageWidget;
-    
+    ImageProvider? imageProvider;
+
     // 优先显示本地图片
     if (block.localPath != null && block.localPath!.isNotEmpty) {
+      imageProvider = FileImage(File(block.localPath!));
       imageWidget = Image.file(
         File(block.localPath!),
         width: 200,
@@ -269,11 +373,27 @@ class MessageBubble extends ConsumerWidget {
         ),
       );
     } else if (block.url != null && block.url!.isNotEmpty) {
-      imageWidget = Image.network(
-        block.url!,
+      // 使用 CachedNetworkImageProvider 磁盘缓存，避免重复下载
+      imageProvider = CachedNetworkImageProvider(block.url!);
+      imageWidget = CachedNetworkImage(
+        imageUrl: block.url!,
         width: 200,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => Container(
+        fadeInDuration: Duration.zero,
+        fadeOutDuration: Duration.zero,
+        placeholder: (context, url) => Container(
+          width: 200,
+          height: 150,
+          color: Colors.grey.shade200,
+          child: const Center(
+            child: SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          ),
+        ),
+        errorWidget: (context, url, error) => Container(
           width: 200,
           height: 150,
           color: Colors.grey.shade300,
@@ -282,8 +402,10 @@ class MessageBubble extends ConsumerWidget {
       );
     } else if (block.base64 != null && block.base64!.isNotEmpty) {
       // 支持base64编码的图片
-      final dataBytes = decodeDataImage('data:image/jpeg;base64,${block.base64}');
+      final dataBytes =
+          decodeDataImage('data:image/jpeg;base64,${block.base64}');
       if (dataBytes != null) {
+        imageProvider = MemoryImage(dataBytes);
         imageWidget = Image.memory(
           dataBytes,
           width: 200,
@@ -311,33 +433,98 @@ class MessageBubble extends ConsumerWidget {
         child: const Icon(Icons.image, color: Colors.grey),
       );
     }
-    
+
+    // 生成唯一的 Hero tag
+    final heroTag = 'image_${block.id ?? block.hashCode}';
+
     return Padding(
       padding: const EdgeInsets.only(top: 8, bottom: 4),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(8),
-        child: imageWidget,
+      child: GestureDetector(
+        onTap: imageProvider != null
+            ? () => _showImagePreview(context, imageProvider!, heroTag)
+            : null,
+        child: Hero(
+          tag: heroTag,
+          child: MoeG2ClipRRect(radius: 10, child: imageWidget),
+        ),
       ),
     );
   }
 
-  /// 渲染表情包块（Sticker）
-  Widget _buildStickerBlock(EmojiBlock block) {
+  /// 显示图片全屏预览
+  void _showImagePreview(
+      BuildContext context, ImageProvider imageProvider, String heroTag) {
+    MoeImagePreview.show(context, imageProvider, heroTag: heroTag);
+  }
+
+  /// 渲染表情包块（Sticker）- 也支持点击预览
+  Widget _buildStickerBlock(BuildContext context, EmojiBlock block) {
+    final skin = context.skin;
+    final colors = context.moeColors;
+    final heroTag = 'sticker_${block.id ?? block.hashCode}';
+    const maxSize = 140.0;
+
+    final path = block.path.trim().replaceAll('\\', '/');
+    ImageProvider? imageProvider;
+    if (path.isNotEmpty) {
+      final isNetwork =
+          path.startsWith('http://') || path.startsWith('https://');
+      final isAsset =
+          path.startsWith('assets/') || path.startsWith('packages/');
+      if (isNetwork) {
+        // 网络图片使用 CachedNetworkImageProvider 磁盘缓存
+        imageProvider = CachedNetworkImageProvider(path);
+      } else if (isAsset) {
+        imageProvider = AssetImage(path);
+      } else {
+        final file = File(path);
+        if (file.existsSync()) {
+          imageProvider = FileImage(file);
+        }
+      }
+    }
+
+    final bubbleRadius = skin.bubbleRadius;
+
     return Padding(
       padding: const EdgeInsets.only(top: 4, bottom: 4),
-      child: Image.asset(
-        block.path,
-        width: 120,
-        height: 120,
-        fit: BoxFit.contain,
-        errorBuilder: (_, __, ___) => Container(
-          width: 120,
-          height: 120,
-          decoration: BoxDecoration(
-            color: Colors.grey.shade200,
-            borderRadius: BorderRadius.circular(8),
+      child: GestureDetector(
+        onTap: imageProvider != null
+            ? () => _showImagePreview(context, imageProvider!, heroTag)
+            : null,
+        child: Hero(
+          tag: heroTag,
+          child: MoeG2ClipRRect(
+            radius: bubbleRadius,
+            child: DecoratedBox(
+              decoration: MoeG2Decoration(
+                radius: bubbleRadius,
+                color: colors.surfaceAlt.withValues(alpha: 0.5),
+                border: Border.all(
+                    color: colors.borderLight.withValues(alpha: 0.95),
+                    width: 0.5),
+              ),
+              child: ConstrainedBox(
+                constraints:
+                    const BoxConstraints(maxWidth: maxSize, maxHeight: maxSize),
+                child: imageProvider != null
+                    ? Image(
+                        image: imageProvider!,
+                        fit: BoxFit.contain,
+                        errorBuilder: (_, __, ___) => Padding(
+                          padding: const EdgeInsets.all(18),
+                          child: Icon(Icons.emoji_emotions,
+                              color: colors.muted, size: 40),
+                        ),
+                      )
+                    : Padding(
+                        padding: const EdgeInsets.all(18),
+                        child: Icon(Icons.emoji_emotions,
+                            color: colors.muted, size: 40),
+                      ),
+              ),
+            ),
           ),
-          child: const Icon(Icons.emoji_emotions, color: Colors.grey, size: 40),
         ),
       ),
     );
@@ -356,9 +543,9 @@ class MessageBubble extends ConsumerWidget {
     return Container(
       margin: const EdgeInsets.only(top: 8, bottom: 4),
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
+      decoration: MoeG2Decoration(
+        radius: 8,
         color: Colors.black.withValues(alpha: 0.8),
-        borderRadius: BorderRadius.circular(8),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -394,7 +581,8 @@ class MessageBubble extends ConsumerWidget {
         children: [
           Text(
             block.content,
-            style: TextStyle(color: textColor.withValues(alpha: 0.8), fontSize: fontSize),
+            style: TextStyle(
+                color: textColor.withValues(alpha: 0.8), fontSize: fontSize),
           ),
         ],
       ),
@@ -406,9 +594,9 @@ class MessageBubble extends ConsumerWidget {
     return Container(
       margin: const EdgeInsets.only(top: 8, bottom: 4),
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
+      decoration: MoeG2Decoration(
+        radius: 8,
         color: Colors.red.shade100,
-        borderRadius: BorderRadius.circular(8),
         border: Border.all(color: Colors.red.shade300),
       ),
       child: Row(
@@ -419,7 +607,8 @@ class MessageBubble extends ConsumerWidget {
           Expanded(
             child: Text(
               block.message,
-              style: TextStyle(color: Colors.red.shade900, fontSize: fontSize + 1),
+              style:
+                  TextStyle(color: Colors.red.shade900, fontSize: fontSize + 1),
             ),
           ),
         ],
@@ -437,46 +626,59 @@ class _Avatar extends StatelessWidget {
     final colors = context.moeColors;
 
     // 优化头像大小：38px（原来的三分之二）
-    Widget buildFallback() =>
-        Center(child: Icon(isUser ? Icons.person : Icons.face, color: colors.muted, size: 20));
+    Widget buildFallback() => Center(
+        child: Icon(isUser ? Icons.person : Icons.face,
+            color: colors.muted, size: 20));
 
     Widget buildImage(String url) {
       final trimmed = url.trim();
+      // 解析对齐标记（如 #top），并获取清理后的路径和对齐方式
+      final alignment = trimmed.contains('#top') ? Alignment.topCenter : Alignment.center;
+      final cleanUrl = trimmed.split('#').first;
 
       // 优先检查是否为本地文件路径（用户头像）
-      if (isUser && File(trimmed).existsSync()) {
+      if (isUser && File(cleanUrl).existsSync()) {
         return Image.file(
-          File(trimmed),
+          File(cleanUrl),
           fit: BoxFit.cover,
+          alignment: alignment,
           gaplessPlayback: true,
           errorBuilder: (_, __, ___) => buildFallback(),
         );
       }
 
-      final dataBytes = decodeDataImage(trimmed);
+      final dataBytes = decodeDataImage(cleanUrl);
       if (dataBytes != null) {
         return Image.memory(
           dataBytes,
           fit: BoxFit.cover,
+          alignment: alignment,
           gaplessPlayback: true,
           errorBuilder: (_, __, ___) => buildFallback(),
         );
       }
-      final isNetwork = trimmed.startsWith('http://') || trimmed.startsWith('https://');
+      final isNetwork =
+          cleanUrl.startsWith('http://') || cleanUrl.startsWith('https://');
       // 支持本地 assets 头像，避免再渲染时丢失角色图片（KISS/SOLID）。
-      if (!isNetwork && (trimmed.startsWith('assets/') || !trimmed.contains('://'))) {
+      if (!isNetwork &&
+          (cleanUrl.startsWith('assets/') || !cleanUrl.contains('://'))) {
         return Image.asset(
-          trimmed,
+          cleanUrl,
           fit: BoxFit.cover,
+          alignment: alignment,
           gaplessPlayback: true,
           errorBuilder: (_, __, ___) => buildFallback(),
         );
       }
-      return Image.network(
-        trimmed,
+      // 网络图片使用 CachedNetworkImage 磁盘缓存
+      return CachedNetworkImage(
+        imageUrl: cleanUrl,
         fit: BoxFit.cover,
-        gaplessPlayback: true,
-        errorBuilder: (_, __, ___) => buildFallback(),
+        alignment: alignment,
+        fadeInDuration: Duration.zero,
+        fadeOutDuration: Duration.zero,
+        placeholder: (context, url) => buildFallback(),
+        errorWidget: (context, url, error) => buildFallback(),
       );
     }
 
@@ -485,10 +687,15 @@ class _Avatar extends StatelessWidget {
       width: 38,
       height: 38,
       margin: const EdgeInsets.only(right: 0, top: 0),
-      decoration:
-          BoxDecoration(borderRadius: const BorderRadius.all(radiusBubble), color: colors.surfaceAlt),
-      clipBehavior: Clip.antiAlias,
-      child: trimmedUrl != null && trimmedUrl.isNotEmpty ? buildImage(trimmedUrl) : buildFallback(),
+      child: MoeG2ClipRRect(
+        radius: radiusBubble.x,
+        child: Container(
+          color: colors.surfaceAlt,
+          child: trimmedUrl != null && trimmedUrl.isNotEmpty
+              ? buildImage(trimmedUrl)
+              : buildFallback(),
+        ),
+      ),
     );
   }
 }

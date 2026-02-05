@@ -23,6 +23,7 @@ library;
 
 import 'package:flutter/material.dart';
 import '../../../theme/tokens.dart';
+import '../../effects/smooth_clip.dart';
 
 /// 图标按钮组件
 class MoeIconButton extends StatefulWidget {
@@ -129,6 +130,7 @@ class _MoeIconButtonState extends State<MoeIconButton> {
     final hoverBg = widget.hoverBackgroundColor ?? colors.surfaceAlt.withValues(alpha: 0.3);
     
     final radius = widget.borderRadius ?? MoeRadii.borderSm;
+    final g2Radius = radius.topLeft.x;
 
     // 计算当前状态的颜色
     Color currentIconColor;
@@ -169,9 +171,9 @@ class _MoeIconButtonState extends State<MoeIconButton> {
           duration: kAnimFast,
           width: actualSize,
           height: actualSize,
-          decoration: BoxDecoration(
+          decoration: MoeG2Decoration(
+            radius: g2Radius,
             color: currentBgColor,
-            borderRadius: radius,
             border: widget.border != null ? Border.fromBorderSide(widget.border!) : null,
           ),
           child: Center(

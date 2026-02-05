@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers2.dart';
 import '../../domain/conversation.dart';
 import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/effects/smooth_clip.dart';
 import 'character_list_item.dart';
 
 class Sidebar extends ConsumerWidget {
@@ -43,15 +44,17 @@ class Sidebar extends ConsumerWidget {
                 // 加号按钮 - 添加新角色
                 Material(
                   color: Colors.transparent,
-                  child: InkWell(
-                    onTap: () async {
-                      final id = await ref.read(conversationsProvider.notifier).createNew();
-                      ref.read(activeConversationIdProvider.notifier).state = id;
-                    },
-                    borderRadius: BorderRadius.circular(8),
-                    child: Container(
-                      padding: const EdgeInsets.all(8),
-                      child: const Icon(Icons.add, color: Colors.white, size: 26),
+                  child: MoeG2ClipRRect(
+                    radius: 8,
+                    child: InkWell(
+                      onTap: () async {
+                        final id = await ref.read(conversationsProvider.notifier).createNew();
+                        ref.read(activeConversationIdProvider.notifier).state = id;
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.all(8),
+                        child: const Icon(Icons.add, color: Colors.white, size: 26),
+                      ),
                     ),
                   ),
                 ),

@@ -7,23 +7,24 @@
 
 ## 1) 目录地图（像“零件箱 vs 房间”）
 - 前端 UI 层：`apps/mygril_flutter/lib/src/ui/`
-  - 主题/颜色：`lib/src/ui/theme/`（优先用 tokens，不要页面里手写颜色）
-  - 公共组件：`lib/src/ui/shared/`（含 widgets, effects, animations）
-  - 页面路由：`lib/src/ui/features/<feature>/pages/`
+  - 主题/颜色：`apps/mygril_flutter/lib/src/ui/theme/`（优先用 tokens，不要页面里手写颜色）
+  - 公共组件：`apps/mygril_flutter/lib/src/ui/shared/`（含 widgets, effects, animations）
+  - 页面路由：`apps/mygril_flutter/lib/src/ui/features/<feature>/pages/`
 - 后端业务层：`apps/mygril_flutter/lib/src/features/<feature>/`
   - 业务模型：`domain/`
   - 数据与服务：`data/`
-  - 状态管理：`providers/`
+  - 状态管理：`providers/` 或 `*_providers.dart`
 - 公共核心：`apps/mygril_flutter/lib/src/core/` (utils, logic)
 - 备注：如果发现 `lib/core/` 和 `lib/src/core/` 并存，默认以 `lib/src/` 为主。
 
-## 2) UI/主题强约束（禁止“单页作品”）
-- 颜色/字体/间距/圆角：只能用现有 Theme/tokens（`lib/src/core/theme/`）
-- 按钮/弹窗/提示：优先复用现有公共组件（见 `docs/公共组件总览.md`）
+## 2) UI/主题强约束（禁止"单页作品"）
+- 颜色/字体/间距/圆角：只能用现有 Theme/tokens（`apps/mygril_flutter/lib/src/ui/theme/tokens.dart`）
+- 按钮/弹窗/提示：优先复用 Moe 系列公共组件（见 `apps/mygril_flutter/docs/公共组件总览.md`）
+- 统一导入：`import 'package:mygril_flutter/src/ui/shared/widgets/index.dart'`
 - 提示统一用 MoeToast（不要到处自己写 SnackBar/Toast）
 
 ## 3) 宽屏/窄屏必须同步
-- 断点与页面骨架以 `界面布局图.md` 为准（900px）
+- 断点与页面骨架以 `apps/mygril_flutter/界面布局图.md` 为准（900px）
 - 改页面时要说明：窄屏/宽屏是否都适配，哪里需要联动修改
 
 ## 4) 数据流/状态管理
@@ -31,14 +32,14 @@
 - UI 不直接发请求：页面只负责展示与触发 action；请求放 data/service/provider
 
 ## 5) API 调用与错误处理
-- 后端 REST：优先走 `lib/src/core/api_client.dart`
-- AI/消息相关：优先遵循 `API_ARCHITECTURE.md` 的术语与分层；实现以现有代码为准
+- 后端 REST：优先走 `apps/mygril_flutter/lib/src/core/api_client.dart`
+- AI/消息相关：优先看聊天入口 `apps/mygril_flutter/lib/src/features/chat/chat_actions.dart`；架构说明见 `apps/mygril_flutter/API_ARCHITECTURE.md`（以当前实现为准）
 - 错误提示/重试逻辑要统一，别每个页面各写一套
 
 ## 6) 复用规则（防止越写越散）
-- 发现"重复代码 ≥ 2 处"：先抽到 `core/widgets` 或 `core/utils`，再实现需求
+- 发现"重复代码 ≥ 2 处"：先抽到 `apps/mygril_flutter/lib/src/ui/shared/widgets/` 或 `apps/mygril_flutter/lib/src/core/utils/`，再实现需求
 - **主动抽象**：写新功能时，如果某段逻辑/组件明显可复用（如通用按钮、格式化工具、数据转换），应直接写成公共类，而非等重复后再抽取
-- **入库登记**：新建的公共组件/工具类必须登记到 `docs/公共组件总览.md`，格式参照已有条目（名称、文件路径、用途说明）
+- **入库登记**：新建的公共组件/工具类必须登记到 `apps/mygril_flutter/docs/公共组件总览.md`，格式参照已有条目（名称、文件路径、用途说明）
 
 ## 7) 交付检查清单（避免基础操作遗漏）
 - 依赖是否安装：`flutter pub get`
@@ -47,18 +48,21 @@
 
 # 项目背景信息
 项目目标：开发一个ai对话app（安卓端优先），使ai像真实恋人一样发消息陪伴用户。
-项目进度：项目需要多平台部署，部署后独立运行，所有AI调用在Flutter端完成，后端仅负责用户认证和数据同步。
+项目进度：项目需要多平台部署，部署后独立运行，所有 AI 调用在 Flutter 端完成；后端以认证/数据同步为主，并提供备份、云触发器、云记忆、额度等云端数据能力。
 项目实现思路：暂定技术栈为前端flutter跨平台部署。核心思路是调用工具生成多模态信息，同时能自主调用工具实现主动消息触发，使得ai能像一个真实的异地伴侣一样发送消息，解决传统单个大模型只能生成文本和不稳定多模态信息的痛点。
 
-资源文档库：apps\mygril_flutter\docs
-（生成的说明文档也写到这个文件夹里，这个文件夹是文档库）
-其中apps\mygril_flutter\docs\施工进度\项目推进中.md  用于保存施工进度。日期加事件的简要记录，同时备注对未来开发和排查有用的信息。如有变更则修改以往记录。一切以项目实际情况优先。
+资源文档库：`apps/mygril_flutter/docs/`（含索引文件 `apps/mygril_flutter/docs/README.md`）
+- 文档索引：`apps/mygril_flutter/docs/README.md`
+- 施工进度：`apps/mygril_flutter/docs/施工进度/项目推进中.md` - 日期+事件的简要记录
+- 公共组件：`apps/mygril_flutter/docs/公共组件总览.md`（小白版）、`apps/mygril_flutter/docs/前端公共组件库.md`（完整版）
+在动手之前必须先了解本项目相应的公共组件！！！
+- 后端服务：`apps/mygril_flutter/docs/后端公共服务库.md`
 ## 目录结构
 - `apps/mygril_flutter`: Flutter 客户端代码
-- `cloud_backend`: Python 后端代码 (仅负责认证和同步)
+- `cloud_backend`: Python 后端代码（以认证/云同步为主，也包含备份/触发器/云记忆/额度等云端数据能力）
 
 ## 快速开始 (Windows)
-1. 运行 `start.ps1` 初始化环境。
-2. 进入 `apps/mygril_flutter` 运行 `flutter run`。
+1. 运行 `start.ps1`（会自动安装后端依赖、可选构建 Web，并启动后端服务）。
+2. 开发调试：进入 `apps/mygril_flutter` 运行 `flutter run`（需要后端接口时，保持第 1 步的服务在跑）。
 
 

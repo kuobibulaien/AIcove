@@ -121,6 +121,12 @@ class $ConversationsTable extends Conversations
       defaultConstraints: GeneratedColumn.constraintIsAlways(
           'CHECK ("notification_sound" IN (0, 1))'),
       defaultValue: const Constant(true));
+  static const VerificationMeta _enabledPluginsMeta =
+      const VerificationMeta('enabledPlugins');
+  @override
+  late final GeneratedColumn<String> enabledPlugins = GeneratedColumn<String>(
+      'enabled_plugins', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   static const VerificationMeta _lastMessageMeta =
       const VerificationMeta('lastMessage');
   @override
@@ -201,6 +207,7 @@ class $ConversationsTable extends Conversations
         isFavorite,
         isMuted,
         notificationSound,
+        enabledPlugins,
         lastMessage,
         lastMessageTime,
         unreadCount,
@@ -311,6 +318,12 @@ class $ConversationsTable extends Conversations
           notificationSound.isAcceptableOrUnknown(
               data['notification_sound']!, _notificationSoundMeta));
     }
+    if (data.containsKey('enabled_plugins')) {
+      context.handle(
+          _enabledPluginsMeta,
+          enabledPlugins.isAcceptableOrUnknown(
+              data['enabled_plugins']!, _enabledPluginsMeta));
+    }
     if (data.containsKey('last_message')) {
       context.handle(
           _lastMessageMeta,
@@ -408,6 +421,8 @@ class $ConversationsTable extends Conversations
           .read(DriftSqlType.bool, data['${effectivePrefix}is_muted'])!,
       notificationSound: attachedDatabase.typeMapping.read(
           DriftSqlType.bool, data['${effectivePrefix}notification_sound'])!,
+      enabledPlugins: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}enabled_plugins']),
       lastMessage: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}last_message']),
       lastMessageTime: attachedDatabase.typeMapping
@@ -455,6 +470,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
   final bool isFavorite;
   final bool isMuted;
   final bool notificationSound;
+  final String? enabledPlugins;
   final String? lastMessage;
   final int? lastMessageTime;
   final int unreadCount;
@@ -482,6 +498,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       required this.isFavorite,
       required this.isMuted,
       required this.notificationSound,
+      this.enabledPlugins,
       this.lastMessage,
       this.lastMessageTime,
       required this.unreadCount,
@@ -527,6 +544,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
     map['is_favorite'] = Variable<bool>(isFavorite);
     map['is_muted'] = Variable<bool>(isMuted);
     map['notification_sound'] = Variable<bool>(notificationSound);
+    if (!nullToAbsent || enabledPlugins != null) {
+      map['enabled_plugins'] = Variable<String>(enabledPlugins);
+    }
     if (!nullToAbsent || lastMessage != null) {
       map['last_message'] = Variable<String>(lastMessage);
     }
@@ -588,6 +608,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       isFavorite: Value(isFavorite),
       isMuted: Value(isMuted),
       notificationSound: Value(notificationSound),
+      enabledPlugins: enabledPlugins == null && nullToAbsent
+          ? const Value.absent()
+          : Value(enabledPlugins),
       lastMessage: lastMessage == null && nullToAbsent
           ? const Value.absent()
           : Value(lastMessage),
@@ -636,6 +659,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       isFavorite: serializer.fromJson<bool>(json['isFavorite']),
       isMuted: serializer.fromJson<bool>(json['isMuted']),
       notificationSound: serializer.fromJson<bool>(json['notificationSound']),
+      enabledPlugins: serializer.fromJson<String?>(json['enabledPlugins']),
       lastMessage: serializer.fromJson<String?>(json['lastMessage']),
       lastMessageTime: serializer.fromJson<int?>(json['lastMessageTime']),
       unreadCount: serializer.fromJson<int>(json['unreadCount']),
@@ -670,6 +694,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       'isFavorite': serializer.toJson<bool>(isFavorite),
       'isMuted': serializer.toJson<bool>(isMuted),
       'notificationSound': serializer.toJson<bool>(notificationSound),
+      'enabledPlugins': serializer.toJson<String?>(enabledPlugins),
       'lastMessage': serializer.toJson<String?>(lastMessage),
       'lastMessageTime': serializer.toJson<int?>(lastMessageTime),
       'unreadCount': serializer.toJson<int>(unreadCount),
@@ -700,6 +725,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           bool? isFavorite,
           bool? isMuted,
           bool? notificationSound,
+          Value<String?> enabledPlugins = const Value.absent(),
           Value<String?> lastMessage = const Value.absent(),
           Value<int?> lastMessageTime = const Value.absent(),
           int? unreadCount,
@@ -734,6 +760,8 @@ class Conversation extends DataClass implements Insertable<Conversation> {
         isFavorite: isFavorite ?? this.isFavorite,
         isMuted: isMuted ?? this.isMuted,
         notificationSound: notificationSound ?? this.notificationSound,
+        enabledPlugins:
+            enabledPlugins.present ? enabledPlugins.value : this.enabledPlugins,
         lastMessage: lastMessage.present ? lastMessage.value : this.lastMessage,
         lastMessageTime: lastMessageTime.present
             ? lastMessageTime.value
@@ -785,6 +813,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       notificationSound: data.notificationSound.present
           ? data.notificationSound.value
           : this.notificationSound,
+      enabledPlugins: data.enabledPlugins.present
+          ? data.enabledPlugins.value
+          : this.enabledPlugins,
       lastMessage:
           data.lastMessage.present ? data.lastMessage.value : this.lastMessage,
       lastMessageTime: data.lastMessageTime.present
@@ -826,6 +857,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           ..write('isFavorite: $isFavorite, ')
           ..write('isMuted: $isMuted, ')
           ..write('notificationSound: $notificationSound, ')
+          ..write('enabledPlugins: $enabledPlugins, ')
           ..write('lastMessage: $lastMessage, ')
           ..write('lastMessageTime: $lastMessageTime, ')
           ..write('unreadCount: $unreadCount, ')
@@ -858,6 +890,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
         isFavorite,
         isMuted,
         notificationSound,
+        enabledPlugins,
         lastMessage,
         lastMessageTime,
         unreadCount,
@@ -889,6 +922,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           other.isFavorite == this.isFavorite &&
           other.isMuted == this.isMuted &&
           other.notificationSound == this.notificationSound &&
+          other.enabledPlugins == this.enabledPlugins &&
           other.lastMessage == this.lastMessage &&
           other.lastMessageTime == this.lastMessageTime &&
           other.unreadCount == this.unreadCount &&
@@ -918,6 +952,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
   final Value<bool> isFavorite;
   final Value<bool> isMuted;
   final Value<bool> notificationSound;
+  final Value<String?> enabledPlugins;
   final Value<String?> lastMessage;
   final Value<int?> lastMessageTime;
   final Value<int> unreadCount;
@@ -946,6 +981,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     this.isFavorite = const Value.absent(),
     this.isMuted = const Value.absent(),
     this.notificationSound = const Value.absent(),
+    this.enabledPlugins = const Value.absent(),
     this.lastMessage = const Value.absent(),
     this.lastMessageTime = const Value.absent(),
     this.unreadCount = const Value.absent(),
@@ -975,6 +1011,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     this.isFavorite = const Value.absent(),
     this.isMuted = const Value.absent(),
     this.notificationSound = const Value.absent(),
+    this.enabledPlugins = const Value.absent(),
     this.lastMessage = const Value.absent(),
     this.lastMessageTime = const Value.absent(),
     this.unreadCount = const Value.absent(),
@@ -1008,6 +1045,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     Expression<bool>? isFavorite,
     Expression<bool>? isMuted,
     Expression<bool>? notificationSound,
+    Expression<String>? enabledPlugins,
     Expression<String>? lastMessage,
     Expression<int>? lastMessageTime,
     Expression<int>? unreadCount,
@@ -1037,6 +1075,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       if (isFavorite != null) 'is_favorite': isFavorite,
       if (isMuted != null) 'is_muted': isMuted,
       if (notificationSound != null) 'notification_sound': notificationSound,
+      if (enabledPlugins != null) 'enabled_plugins': enabledPlugins,
       if (lastMessage != null) 'last_message': lastMessage,
       if (lastMessageTime != null) 'last_message_time': lastMessageTime,
       if (unreadCount != null) 'unread_count': unreadCount,
@@ -1069,6 +1108,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       Value<bool>? isFavorite,
       Value<bool>? isMuted,
       Value<bool>? notificationSound,
+      Value<String?>? enabledPlugins,
       Value<String?>? lastMessage,
       Value<int?>? lastMessageTime,
       Value<int>? unreadCount,
@@ -1097,6 +1137,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       isFavorite: isFavorite ?? this.isFavorite,
       isMuted: isMuted ?? this.isMuted,
       notificationSound: notificationSound ?? this.notificationSound,
+      enabledPlugins: enabledPlugins ?? this.enabledPlugins,
       lastMessage: lastMessage ?? this.lastMessage,
       lastMessageTime: lastMessageTime ?? this.lastMessageTime,
       unreadCount: unreadCount ?? this.unreadCount,
@@ -1162,6 +1203,9 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     if (notificationSound.present) {
       map['notification_sound'] = Variable<bool>(notificationSound.value);
     }
+    if (enabledPlugins.present) {
+      map['enabled_plugins'] = Variable<String>(enabledPlugins.value);
+    }
     if (lastMessage.present) {
       map['last_message'] = Variable<String>(lastMessage.value);
     }
@@ -1218,6 +1262,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
           ..write('isFavorite: $isFavorite, ')
           ..write('isMuted: $isMuted, ')
           ..write('notificationSound: $notificationSound, ')
+          ..write('enabledPlugins: $enabledPlugins, ')
           ..write('lastMessage: $lastMessage, ')
           ..write('lastMessageTime: $lastMessageTime, ')
           ..write('unreadCount: $unreadCount, ')
@@ -5050,6 +5095,7 @@ typedef $$ConversationsTableCreateCompanionBuilder = ConversationsCompanion
   Value<bool> isFavorite,
   Value<bool> isMuted,
   Value<bool> notificationSound,
+  Value<String?> enabledPlugins,
   Value<String?> lastMessage,
   Value<int?> lastMessageTime,
   Value<int> unreadCount,
@@ -5080,6 +5126,7 @@ typedef $$ConversationsTableUpdateCompanionBuilder = ConversationsCompanion
   Value<bool> isFavorite,
   Value<bool> isMuted,
   Value<bool> notificationSound,
+  Value<String?> enabledPlugins,
   Value<String?> lastMessage,
   Value<int?> lastMessageTime,
   Value<int> unreadCount,
@@ -5093,372 +5140,22 @@ typedef $$ConversationsTableUpdateCompanionBuilder = ConversationsCompanion
   Value<int> rowid,
 });
 
-final class $$ConversationsTableReferences
-    extends BaseReferences<_$AppDatabase, $ConversationsTable, Conversation> {
-  $$ConversationsTableReferences(
-      super.$_db, super.$_table, super.$_typedResult);
-
-  static MultiTypedResultKey<$MessagesTable, List<Message>> _messagesRefsTable(
-          _$AppDatabase db) =>
-      MultiTypedResultKey.fromTable(db.messages,
-          aliasName: $_aliasNameGenerator(
-              db.conversations.id, db.messages.conversationId));
-
-  $$MessagesTableProcessedTableManager get messagesRefs {
-    final manager = $$MessagesTableTableManager($_db, $_db.messages).filter(
-        (f) => f.conversationId.id.sqlEquals($_itemColumn<String>('id')!));
-
-    final cache = $_typedResult.readTableOrNull(_messagesRefsTable($_db));
-    return ProcessedTableManager(
-        manager.$state.copyWith(prefetchedData: cache));
-  }
-}
-
-class $$ConversationsTableFilterComposer
-    extends Composer<_$AppDatabase, $ConversationsTable> {
-  $$ConversationsTableFilterComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  ColumnFilters<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get title => $composableBuilder(
-      column: $table.title, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get displayName => $composableBuilder(
-      column: $table.displayName, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get avatarUrl => $composableBuilder(
-      column: $table.avatarUrl, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get characterImage => $composableBuilder(
-      column: $table.characterImage,
-      builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get blurredBackground => $composableBuilder(
-      column: $table.blurredBackground,
-      builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get selfAddress => $composableBuilder(
-      column: $table.selfAddress, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get addressUser => $composableBuilder(
-      column: $table.addressUser, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get voiceFile => $composableBuilder(
-      column: $table.voiceFile, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get personaPrompt => $composableBuilder(
-      column: $table.personaPrompt, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get defaultProvider => $composableBuilder(
-      column: $table.defaultProvider,
-      builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get sessionProvider => $composableBuilder(
-      column: $table.sessionProvider,
-      builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<bool> get isPinned => $composableBuilder(
-      column: $table.isPinned, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<bool> get isFavorite => $composableBuilder(
-      column: $table.isFavorite, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<bool> get isMuted => $composableBuilder(
-      column: $table.isMuted, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<bool> get notificationSound => $composableBuilder(
-      column: $table.notificationSound,
-      builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get lastMessage => $composableBuilder(
-      column: $table.lastMessage, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get lastMessageTime => $composableBuilder(
-      column: $table.lastMessageTime,
-      builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get unreadCount => $composableBuilder(
-      column: $table.unreadCount, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get parentConversationId => $composableBuilder(
-      column: $table.parentConversationId,
-      builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get forkFromMessageId => $composableBuilder(
-      column: $table.forkFromMessageId,
-      builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get conflictOf => $composableBuilder(
-      column: $table.conflictOf, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get deletedAt => $composableBuilder(
-      column: $table.deletedAt, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get purgeAt => $composableBuilder(
-      column: $table.purgeAt, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get createdAt => $composableBuilder(
-      column: $table.createdAt, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get updatedAt => $composableBuilder(
-      column: $table.updatedAt, builder: (column) => ColumnFilters(column));
-
-  Expression<bool> messagesRefs(
-      Expression<bool> Function($$MessagesTableFilterComposer f) f) {
-    final $$MessagesTableFilterComposer composer = $composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.id,
-        referencedTable: $db.messages,
-        getReferencedColumn: (t) => t.conversationId,
-        builder: (joinBuilder,
-                {$addJoinBuilderToRootComposer,
-                $removeJoinBuilderFromRootComposer}) =>
-            $$MessagesTableFilterComposer(
-              $db: $db,
-              $table: $db.messages,
-              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-              joinBuilder: joinBuilder,
-              $removeJoinBuilderFromRootComposer:
-                  $removeJoinBuilderFromRootComposer,
-            ));
-    return f(composer);
-  }
-}
-
-class $$ConversationsTableOrderingComposer
-    extends Composer<_$AppDatabase, $ConversationsTable> {
-  $$ConversationsTableOrderingComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  ColumnOrderings<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get title => $composableBuilder(
-      column: $table.title, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get displayName => $composableBuilder(
-      column: $table.displayName, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get avatarUrl => $composableBuilder(
-      column: $table.avatarUrl, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get characterImage => $composableBuilder(
-      column: $table.characterImage,
-      builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get blurredBackground => $composableBuilder(
-      column: $table.blurredBackground,
-      builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get selfAddress => $composableBuilder(
-      column: $table.selfAddress, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get addressUser => $composableBuilder(
-      column: $table.addressUser, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get voiceFile => $composableBuilder(
-      column: $table.voiceFile, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get personaPrompt => $composableBuilder(
-      column: $table.personaPrompt,
-      builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get defaultProvider => $composableBuilder(
-      column: $table.defaultProvider,
-      builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get sessionProvider => $composableBuilder(
-      column: $table.sessionProvider,
-      builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<bool> get isPinned => $composableBuilder(
-      column: $table.isPinned, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<bool> get isFavorite => $composableBuilder(
-      column: $table.isFavorite, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<bool> get isMuted => $composableBuilder(
-      column: $table.isMuted, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<bool> get notificationSound => $composableBuilder(
-      column: $table.notificationSound,
-      builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get lastMessage => $composableBuilder(
-      column: $table.lastMessage, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get lastMessageTime => $composableBuilder(
-      column: $table.lastMessageTime,
-      builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get unreadCount => $composableBuilder(
-      column: $table.unreadCount, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get parentConversationId => $composableBuilder(
-      column: $table.parentConversationId,
-      builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get forkFromMessageId => $composableBuilder(
-      column: $table.forkFromMessageId,
-      builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get conflictOf => $composableBuilder(
-      column: $table.conflictOf, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get deletedAt => $composableBuilder(
-      column: $table.deletedAt, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get purgeAt => $composableBuilder(
-      column: $table.purgeAt, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get createdAt => $composableBuilder(
-      column: $table.createdAt, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get updatedAt => $composableBuilder(
-      column: $table.updatedAt, builder: (column) => ColumnOrderings(column));
-}
-
-class $$ConversationsTableAnnotationComposer
-    extends Composer<_$AppDatabase, $ConversationsTable> {
-  $$ConversationsTableAnnotationComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  GeneratedColumn<String> get id =>
-      $composableBuilder(column: $table.id, builder: (column) => column);
-
-  GeneratedColumn<String> get title =>
-      $composableBuilder(column: $table.title, builder: (column) => column);
-
-  GeneratedColumn<String> get displayName => $composableBuilder(
-      column: $table.displayName, builder: (column) => column);
-
-  GeneratedColumn<String> get avatarUrl =>
-      $composableBuilder(column: $table.avatarUrl, builder: (column) => column);
-
-  GeneratedColumn<String> get characterImage => $composableBuilder(
-      column: $table.characterImage, builder: (column) => column);
-
-  GeneratedColumn<String> get blurredBackground => $composableBuilder(
-      column: $table.blurredBackground, builder: (column) => column);
-
-  GeneratedColumn<String> get selfAddress => $composableBuilder(
-      column: $table.selfAddress, builder: (column) => column);
-
-  GeneratedColumn<String> get addressUser => $composableBuilder(
-      column: $table.addressUser, builder: (column) => column);
-
-  GeneratedColumn<String> get voiceFile =>
-      $composableBuilder(column: $table.voiceFile, builder: (column) => column);
-
-  GeneratedColumn<String> get personaPrompt => $composableBuilder(
-      column: $table.personaPrompt, builder: (column) => column);
-
-  GeneratedColumn<String> get defaultProvider => $composableBuilder(
-      column: $table.defaultProvider, builder: (column) => column);
-
-  GeneratedColumn<String> get sessionProvider => $composableBuilder(
-      column: $table.sessionProvider, builder: (column) => column);
-
-  GeneratedColumn<bool> get isPinned =>
-      $composableBuilder(column: $table.isPinned, builder: (column) => column);
-
-  GeneratedColumn<bool> get isFavorite => $composableBuilder(
-      column: $table.isFavorite, builder: (column) => column);
-
-  GeneratedColumn<bool> get isMuted =>
-      $composableBuilder(column: $table.isMuted, builder: (column) => column);
-
-  GeneratedColumn<bool> get notificationSound => $composableBuilder(
-      column: $table.notificationSound, builder: (column) => column);
-
-  GeneratedColumn<String> get lastMessage => $composableBuilder(
-      column: $table.lastMessage, builder: (column) => column);
-
-  GeneratedColumn<int> get lastMessageTime => $composableBuilder(
-      column: $table.lastMessageTime, builder: (column) => column);
-
-  GeneratedColumn<int> get unreadCount => $composableBuilder(
-      column: $table.unreadCount, builder: (column) => column);
-
-  GeneratedColumn<String> get parentConversationId => $composableBuilder(
-      column: $table.parentConversationId, builder: (column) => column);
-
-  GeneratedColumn<String> get forkFromMessageId => $composableBuilder(
-      column: $table.forkFromMessageId, builder: (column) => column);
-
-  GeneratedColumn<String> get conflictOf => $composableBuilder(
-      column: $table.conflictOf, builder: (column) => column);
-
-  GeneratedColumn<int> get deletedAt =>
-      $composableBuilder(column: $table.deletedAt, builder: (column) => column);
-
-  GeneratedColumn<int> get purgeAt =>
-      $composableBuilder(column: $table.purgeAt, builder: (column) => column);
-
-  GeneratedColumn<int> get createdAt =>
-      $composableBuilder(column: $table.createdAt, builder: (column) => column);
-
-  GeneratedColumn<int> get updatedAt =>
-      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
-
-  Expression<T> messagesRefs<T extends Object>(
-      Expression<T> Function($$MessagesTableAnnotationComposer a) f) {
-    final $$MessagesTableAnnotationComposer composer = $composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.id,
-        referencedTable: $db.messages,
-        getReferencedColumn: (t) => t.conversationId,
-        builder: (joinBuilder,
-                {$addJoinBuilderToRootComposer,
-                $removeJoinBuilderFromRootComposer}) =>
-            $$MessagesTableAnnotationComposer(
-              $db: $db,
-              $table: $db.messages,
-              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-              joinBuilder: joinBuilder,
-              $removeJoinBuilderFromRootComposer:
-                  $removeJoinBuilderFromRootComposer,
-            ));
-    return f(composer);
-  }
-}
-
 class $$ConversationsTableTableManager extends RootTableManager<
     _$AppDatabase,
     $ConversationsTable,
     Conversation,
     $$ConversationsTableFilterComposer,
     $$ConversationsTableOrderingComposer,
-    $$ConversationsTableAnnotationComposer,
     $$ConversationsTableCreateCompanionBuilder,
-    $$ConversationsTableUpdateCompanionBuilder,
-    (Conversation, $$ConversationsTableReferences),
-    Conversation,
-    PrefetchHooks Function({bool messagesRefs})> {
+    $$ConversationsTableUpdateCompanionBuilder> {
   $$ConversationsTableTableManager(_$AppDatabase db, $ConversationsTable table)
       : super(TableManagerState(
           db: db,
           table: table,
-          createFilteringComposer: () =>
-              $$ConversationsTableFilterComposer($db: db, $table: table),
-          createOrderingComposer: () =>
-              $$ConversationsTableOrderingComposer($db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$ConversationsTableAnnotationComposer($db: db, $table: table),
+          filteringComposer:
+              $$ConversationsTableFilterComposer(ComposerState(db, table)),
+          orderingComposer:
+              $$ConversationsTableOrderingComposer(ComposerState(db, table)),
           updateCompanionCallback: ({
             Value<String> id = const Value.absent(),
             Value<String> title = const Value.absent(),
@@ -5476,6 +5173,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             Value<bool> isFavorite = const Value.absent(),
             Value<bool> isMuted = const Value.absent(),
             Value<bool> notificationSound = const Value.absent(),
+            Value<String?> enabledPlugins = const Value.absent(),
             Value<String?> lastMessage = const Value.absent(),
             Value<int?> lastMessageTime = const Value.absent(),
             Value<int> unreadCount = const Value.absent(),
@@ -5505,6 +5203,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             isFavorite: isFavorite,
             isMuted: isMuted,
             notificationSound: notificationSound,
+            enabledPlugins: enabledPlugins,
             lastMessage: lastMessage,
             lastMessageTime: lastMessageTime,
             unreadCount: unreadCount,
@@ -5534,6 +5233,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             Value<bool> isFavorite = const Value.absent(),
             Value<bool> isMuted = const Value.absent(),
             Value<bool> notificationSound = const Value.absent(),
+            Value<String?> enabledPlugins = const Value.absent(),
             Value<String?> lastMessage = const Value.absent(),
             Value<int?> lastMessageTime = const Value.absent(),
             Value<int> unreadCount = const Value.absent(),
@@ -5563,6 +5263,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             isFavorite: isFavorite,
             isMuted: isMuted,
             notificationSound: notificationSound,
+            enabledPlugins: enabledPlugins,
             lastMessage: lastMessage,
             lastMessageTime: lastMessageTime,
             unreadCount: unreadCount,
@@ -5575,51 +5276,300 @@ class $$ConversationsTableTableManager extends RootTableManager<
             updatedAt: updatedAt,
             rowid: rowid,
           ),
-          withReferenceMapper: (p0) => p0
-              .map((e) => (
-                    e.readTable(table),
-                    $$ConversationsTableReferences(db, table, e)
-                  ))
-              .toList(),
-          prefetchHooksCallback: ({messagesRefs = false}) {
-            return PrefetchHooks(
-              db: db,
-              explicitlyWatchedTables: [if (messagesRefs) db.messages],
-              addJoins: null,
-              getPrefetchedDataCallback: (items) async {
-                return [
-                  if (messagesRefs)
-                    await $_getPrefetchedData<Conversation, $ConversationsTable,
-                            Message>(
-                        currentTable: table,
-                        referencedTable: $$ConversationsTableReferences
-                            ._messagesRefsTable(db),
-                        managerFromTypedResult: (p0) =>
-                            $$ConversationsTableReferences(db, table, p0)
-                                .messagesRefs,
-                        referencedItemsForCurrentItem:
-                            (item, referencedItems) => referencedItems
-                                .where((e) => e.conversationId == item.id),
-                        typedResults: items)
-                ];
-              },
-            );
-          },
         ));
 }
 
-typedef $$ConversationsTableProcessedTableManager = ProcessedTableManager<
-    _$AppDatabase,
-    $ConversationsTable,
-    Conversation,
-    $$ConversationsTableFilterComposer,
-    $$ConversationsTableOrderingComposer,
-    $$ConversationsTableAnnotationComposer,
-    $$ConversationsTableCreateCompanionBuilder,
-    $$ConversationsTableUpdateCompanionBuilder,
-    (Conversation, $$ConversationsTableReferences),
-    Conversation,
-    PrefetchHooks Function({bool messagesRefs})>;
+class $$ConversationsTableFilterComposer
+    extends FilterComposer<_$AppDatabase, $ConversationsTable> {
+  $$ConversationsTableFilterComposer(super.$state);
+  ColumnFilters<String> get id => $state.composableBuilder(
+      column: $state.table.id,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get title => $state.composableBuilder(
+      column: $state.table.title,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get displayName => $state.composableBuilder(
+      column: $state.table.displayName,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get avatarUrl => $state.composableBuilder(
+      column: $state.table.avatarUrl,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get characterImage => $state.composableBuilder(
+      column: $state.table.characterImage,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get blurredBackground => $state.composableBuilder(
+      column: $state.table.blurredBackground,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get selfAddress => $state.composableBuilder(
+      column: $state.table.selfAddress,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get addressUser => $state.composableBuilder(
+      column: $state.table.addressUser,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get voiceFile => $state.composableBuilder(
+      column: $state.table.voiceFile,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get personaPrompt => $state.composableBuilder(
+      column: $state.table.personaPrompt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get defaultProvider => $state.composableBuilder(
+      column: $state.table.defaultProvider,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get sessionProvider => $state.composableBuilder(
+      column: $state.table.sessionProvider,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get isPinned => $state.composableBuilder(
+      column: $state.table.isPinned,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get isFavorite => $state.composableBuilder(
+      column: $state.table.isFavorite,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get isMuted => $state.composableBuilder(
+      column: $state.table.isMuted,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get notificationSound => $state.composableBuilder(
+      column: $state.table.notificationSound,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get enabledPlugins => $state.composableBuilder(
+      column: $state.table.enabledPlugins,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get lastMessage => $state.composableBuilder(
+      column: $state.table.lastMessage,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get lastMessageTime => $state.composableBuilder(
+      column: $state.table.lastMessageTime,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get unreadCount => $state.composableBuilder(
+      column: $state.table.unreadCount,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get parentConversationId => $state.composableBuilder(
+      column: $state.table.parentConversationId,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get forkFromMessageId => $state.composableBuilder(
+      column: $state.table.forkFromMessageId,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get conflictOf => $state.composableBuilder(
+      column: $state.table.conflictOf,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get deletedAt => $state.composableBuilder(
+      column: $state.table.deletedAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get purgeAt => $state.composableBuilder(
+      column: $state.table.purgeAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get createdAt => $state.composableBuilder(
+      column: $state.table.createdAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get updatedAt => $state.composableBuilder(
+      column: $state.table.updatedAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ComposableFilter messagesRefs(
+      ComposableFilter Function($$MessagesTableFilterComposer f) f) {
+    final $$MessagesTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.id,
+        referencedTable: $state.db.messages,
+        getReferencedColumn: (t) => t.conversationId,
+        builder: (joinBuilder, parentComposers) =>
+            $$MessagesTableFilterComposer(ComposerState(
+                $state.db, $state.db.messages, joinBuilder, parentComposers)));
+    return f(composer);
+  }
+}
+
+class $$ConversationsTableOrderingComposer
+    extends OrderingComposer<_$AppDatabase, $ConversationsTable> {
+  $$ConversationsTableOrderingComposer(super.$state);
+  ColumnOrderings<String> get id => $state.composableBuilder(
+      column: $state.table.id,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get title => $state.composableBuilder(
+      column: $state.table.title,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get displayName => $state.composableBuilder(
+      column: $state.table.displayName,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get avatarUrl => $state.composableBuilder(
+      column: $state.table.avatarUrl,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get characterImage => $state.composableBuilder(
+      column: $state.table.characterImage,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get blurredBackground => $state.composableBuilder(
+      column: $state.table.blurredBackground,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get selfAddress => $state.composableBuilder(
+      column: $state.table.selfAddress,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get addressUser => $state.composableBuilder(
+      column: $state.table.addressUser,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get voiceFile => $state.composableBuilder(
+      column: $state.table.voiceFile,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get personaPrompt => $state.composableBuilder(
+      column: $state.table.personaPrompt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get defaultProvider => $state.composableBuilder(
+      column: $state.table.defaultProvider,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get sessionProvider => $state.composableBuilder(
+      column: $state.table.sessionProvider,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get isPinned => $state.composableBuilder(
+      column: $state.table.isPinned,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get isFavorite => $state.composableBuilder(
+      column: $state.table.isFavorite,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get isMuted => $state.composableBuilder(
+      column: $state.table.isMuted,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get notificationSound => $state.composableBuilder(
+      column: $state.table.notificationSound,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get enabledPlugins => $state.composableBuilder(
+      column: $state.table.enabledPlugins,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get lastMessage => $state.composableBuilder(
+      column: $state.table.lastMessage,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get lastMessageTime => $state.composableBuilder(
+      column: $state.table.lastMessageTime,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get unreadCount => $state.composableBuilder(
+      column: $state.table.unreadCount,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get parentConversationId => $state.composableBuilder(
+      column: $state.table.parentConversationId,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get forkFromMessageId => $state.composableBuilder(
+      column: $state.table.forkFromMessageId,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get conflictOf => $state.composableBuilder(
+      column: $state.table.conflictOf,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get deletedAt => $state.composableBuilder(
+      column: $state.table.deletedAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get purgeAt => $state.composableBuilder(
+      column: $state.table.purgeAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get createdAt => $state.composableBuilder(
+      column: $state.table.createdAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get updatedAt => $state.composableBuilder(
+      column: $state.table.updatedAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+}
+
 typedef $$MessagesTableCreateCompanionBuilder = MessagesCompanion Function({
   required String id,
   required String conversationId,
@@ -5647,276 +5597,22 @@ typedef $$MessagesTableUpdateCompanionBuilder = MessagesCompanion Function({
   Value<int> rowid,
 });
 
-final class $$MessagesTableReferences
-    extends BaseReferences<_$AppDatabase, $MessagesTable, Message> {
-  $$MessagesTableReferences(super.$_db, super.$_table, super.$_typedResult);
-
-  static $ConversationsTable _conversationIdTable(_$AppDatabase db) =>
-      db.conversations.createAlias($_aliasNameGenerator(
-          db.messages.conversationId, db.conversations.id));
-
-  $$ConversationsTableProcessedTableManager get conversationId {
-    final $_column = $_itemColumn<String>('conversation_id')!;
-
-    final manager = $$ConversationsTableTableManager($_db, $_db.conversations)
-        .filter((f) => f.id.sqlEquals($_column));
-    final item = $_typedResult.readTableOrNull(_conversationIdTable($_db));
-    if (item == null) return manager;
-    return ProcessedTableManager(
-        manager.$state.copyWith(prefetchedData: [item]));
-  }
-
-  static MultiTypedResultKey<$MessageBlocksTable, List<MessageBlock>>
-      _messageBlocksRefsTable(_$AppDatabase db) =>
-          MultiTypedResultKey.fromTable(db.messageBlocks,
-              aliasName: $_aliasNameGenerator(
-                  db.messages.id, db.messageBlocks.messageId));
-
-  $$MessageBlocksTableProcessedTableManager get messageBlocksRefs {
-    final manager = $$MessageBlocksTableTableManager($_db, $_db.messageBlocks)
-        .filter((f) => f.messageId.id.sqlEquals($_itemColumn<String>('id')!));
-
-    final cache = $_typedResult.readTableOrNull(_messageBlocksRefsTable($_db));
-    return ProcessedTableManager(
-        manager.$state.copyWith(prefetchedData: cache));
-  }
-}
-
-class $$MessagesTableFilterComposer
-    extends Composer<_$AppDatabase, $MessagesTable> {
-  $$MessagesTableFilterComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  ColumnFilters<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get role => $composableBuilder(
-      column: $table.role, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get content => $composableBuilder(
-      column: $table.content, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get status => $composableBuilder(
-      column: $table.status, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get replacedBy => $composableBuilder(
-      column: $table.replacedBy, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get conflictOf => $composableBuilder(
-      column: $table.conflictOf, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get deletedAt => $composableBuilder(
-      column: $table.deletedAt, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get purgeAt => $composableBuilder(
-      column: $table.purgeAt, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get createdAt => $composableBuilder(
-      column: $table.createdAt, builder: (column) => ColumnFilters(column));
-
-  $$ConversationsTableFilterComposer get conversationId {
-    final $$ConversationsTableFilterComposer composer = $composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.conversationId,
-        referencedTable: $db.conversations,
-        getReferencedColumn: (t) => t.id,
-        builder: (joinBuilder,
-                {$addJoinBuilderToRootComposer,
-                $removeJoinBuilderFromRootComposer}) =>
-            $$ConversationsTableFilterComposer(
-              $db: $db,
-              $table: $db.conversations,
-              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-              joinBuilder: joinBuilder,
-              $removeJoinBuilderFromRootComposer:
-                  $removeJoinBuilderFromRootComposer,
-            ));
-    return composer;
-  }
-
-  Expression<bool> messageBlocksRefs(
-      Expression<bool> Function($$MessageBlocksTableFilterComposer f) f) {
-    final $$MessageBlocksTableFilterComposer composer = $composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.id,
-        referencedTable: $db.messageBlocks,
-        getReferencedColumn: (t) => t.messageId,
-        builder: (joinBuilder,
-                {$addJoinBuilderToRootComposer,
-                $removeJoinBuilderFromRootComposer}) =>
-            $$MessageBlocksTableFilterComposer(
-              $db: $db,
-              $table: $db.messageBlocks,
-              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-              joinBuilder: joinBuilder,
-              $removeJoinBuilderFromRootComposer:
-                  $removeJoinBuilderFromRootComposer,
-            ));
-    return f(composer);
-  }
-}
-
-class $$MessagesTableOrderingComposer
-    extends Composer<_$AppDatabase, $MessagesTable> {
-  $$MessagesTableOrderingComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  ColumnOrderings<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get role => $composableBuilder(
-      column: $table.role, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get content => $composableBuilder(
-      column: $table.content, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get status => $composableBuilder(
-      column: $table.status, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get replacedBy => $composableBuilder(
-      column: $table.replacedBy, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get conflictOf => $composableBuilder(
-      column: $table.conflictOf, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get deletedAt => $composableBuilder(
-      column: $table.deletedAt, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get purgeAt => $composableBuilder(
-      column: $table.purgeAt, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get createdAt => $composableBuilder(
-      column: $table.createdAt, builder: (column) => ColumnOrderings(column));
-
-  $$ConversationsTableOrderingComposer get conversationId {
-    final $$ConversationsTableOrderingComposer composer = $composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.conversationId,
-        referencedTable: $db.conversations,
-        getReferencedColumn: (t) => t.id,
-        builder: (joinBuilder,
-                {$addJoinBuilderToRootComposer,
-                $removeJoinBuilderFromRootComposer}) =>
-            $$ConversationsTableOrderingComposer(
-              $db: $db,
-              $table: $db.conversations,
-              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-              joinBuilder: joinBuilder,
-              $removeJoinBuilderFromRootComposer:
-                  $removeJoinBuilderFromRootComposer,
-            ));
-    return composer;
-  }
-}
-
-class $$MessagesTableAnnotationComposer
-    extends Composer<_$AppDatabase, $MessagesTable> {
-  $$MessagesTableAnnotationComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  GeneratedColumn<String> get id =>
-      $composableBuilder(column: $table.id, builder: (column) => column);
-
-  GeneratedColumn<String> get role =>
-      $composableBuilder(column: $table.role, builder: (column) => column);
-
-  GeneratedColumn<String> get content =>
-      $composableBuilder(column: $table.content, builder: (column) => column);
-
-  GeneratedColumn<String> get status =>
-      $composableBuilder(column: $table.status, builder: (column) => column);
-
-  GeneratedColumn<String> get replacedBy => $composableBuilder(
-      column: $table.replacedBy, builder: (column) => column);
-
-  GeneratedColumn<String> get conflictOf => $composableBuilder(
-      column: $table.conflictOf, builder: (column) => column);
-
-  GeneratedColumn<int> get deletedAt =>
-      $composableBuilder(column: $table.deletedAt, builder: (column) => column);
-
-  GeneratedColumn<int> get purgeAt =>
-      $composableBuilder(column: $table.purgeAt, builder: (column) => column);
-
-  GeneratedColumn<int> get createdAt =>
-      $composableBuilder(column: $table.createdAt, builder: (column) => column);
-
-  $$ConversationsTableAnnotationComposer get conversationId {
-    final $$ConversationsTableAnnotationComposer composer = $composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.conversationId,
-        referencedTable: $db.conversations,
-        getReferencedColumn: (t) => t.id,
-        builder: (joinBuilder,
-                {$addJoinBuilderToRootComposer,
-                $removeJoinBuilderFromRootComposer}) =>
-            $$ConversationsTableAnnotationComposer(
-              $db: $db,
-              $table: $db.conversations,
-              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-              joinBuilder: joinBuilder,
-              $removeJoinBuilderFromRootComposer:
-                  $removeJoinBuilderFromRootComposer,
-            ));
-    return composer;
-  }
-
-  Expression<T> messageBlocksRefs<T extends Object>(
-      Expression<T> Function($$MessageBlocksTableAnnotationComposer a) f) {
-    final $$MessageBlocksTableAnnotationComposer composer = $composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.id,
-        referencedTable: $db.messageBlocks,
-        getReferencedColumn: (t) => t.messageId,
-        builder: (joinBuilder,
-                {$addJoinBuilderToRootComposer,
-                $removeJoinBuilderFromRootComposer}) =>
-            $$MessageBlocksTableAnnotationComposer(
-              $db: $db,
-              $table: $db.messageBlocks,
-              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-              joinBuilder: joinBuilder,
-              $removeJoinBuilderFromRootComposer:
-                  $removeJoinBuilderFromRootComposer,
-            ));
-    return f(composer);
-  }
-}
-
 class $$MessagesTableTableManager extends RootTableManager<
     _$AppDatabase,
     $MessagesTable,
     Message,
     $$MessagesTableFilterComposer,
     $$MessagesTableOrderingComposer,
-    $$MessagesTableAnnotationComposer,
     $$MessagesTableCreateCompanionBuilder,
-    $$MessagesTableUpdateCompanionBuilder,
-    (Message, $$MessagesTableReferences),
-    Message,
-    PrefetchHooks Function({bool conversationId, bool messageBlocksRefs})> {
+    $$MessagesTableUpdateCompanionBuilder> {
   $$MessagesTableTableManager(_$AppDatabase db, $MessagesTable table)
       : super(TableManagerState(
           db: db,
           table: table,
-          createFilteringComposer: () =>
-              $$MessagesTableFilterComposer($db: db, $table: table),
-          createOrderingComposer: () =>
-              $$MessagesTableOrderingComposer($db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$MessagesTableAnnotationComposer($db: db, $table: table),
+          filteringComposer:
+              $$MessagesTableFilterComposer(ComposerState(db, table)),
+          orderingComposer:
+              $$MessagesTableOrderingComposer(ComposerState(db, table)),
           updateCompanionCallback: ({
             Value<String> id = const Value.absent(),
             Value<String> conversationId = const Value.absent(),
@@ -5969,77 +5665,145 @@ class $$MessagesTableTableManager extends RootTableManager<
             createdAt: createdAt,
             rowid: rowid,
           ),
-          withReferenceMapper: (p0) => p0
-              .map((e) =>
-                  (e.readTable(table), $$MessagesTableReferences(db, table, e)))
-              .toList(),
-          prefetchHooksCallback: (
-              {conversationId = false, messageBlocksRefs = false}) {
-            return PrefetchHooks(
-              db: db,
-              explicitlyWatchedTables: [
-                if (messageBlocksRefs) db.messageBlocks
-              ],
-              addJoins: <
-                  T extends TableManagerState<
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic>>(state) {
-                if (conversationId) {
-                  state = state.withJoin(
-                    currentTable: table,
-                    currentColumn: table.conversationId,
-                    referencedTable:
-                        $$MessagesTableReferences._conversationIdTable(db),
-                    referencedColumn:
-                        $$MessagesTableReferences._conversationIdTable(db).id,
-                  ) as T;
-                }
-
-                return state;
-              },
-              getPrefetchedDataCallback: (items) async {
-                return [
-                  if (messageBlocksRefs)
-                    await $_getPrefetchedData<Message, $MessagesTable,
-                            MessageBlock>(
-                        currentTable: table,
-                        referencedTable: $$MessagesTableReferences
-                            ._messageBlocksRefsTable(db),
-                        managerFromTypedResult: (p0) =>
-                            $$MessagesTableReferences(db, table, p0)
-                                .messageBlocksRefs,
-                        referencedItemsForCurrentItem:
-                            (item, referencedItems) => referencedItems
-                                .where((e) => e.messageId == item.id),
-                        typedResults: items)
-                ];
-              },
-            );
-          },
         ));
 }
 
-typedef $$MessagesTableProcessedTableManager = ProcessedTableManager<
-    _$AppDatabase,
-    $MessagesTable,
-    Message,
-    $$MessagesTableFilterComposer,
-    $$MessagesTableOrderingComposer,
-    $$MessagesTableAnnotationComposer,
-    $$MessagesTableCreateCompanionBuilder,
-    $$MessagesTableUpdateCompanionBuilder,
-    (Message, $$MessagesTableReferences),
-    Message,
-    PrefetchHooks Function({bool conversationId, bool messageBlocksRefs})>;
+class $$MessagesTableFilterComposer
+    extends FilterComposer<_$AppDatabase, $MessagesTable> {
+  $$MessagesTableFilterComposer(super.$state);
+  ColumnFilters<String> get id => $state.composableBuilder(
+      column: $state.table.id,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get role => $state.composableBuilder(
+      column: $state.table.role,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get content => $state.composableBuilder(
+      column: $state.table.content,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get status => $state.composableBuilder(
+      column: $state.table.status,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get replacedBy => $state.composableBuilder(
+      column: $state.table.replacedBy,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get conflictOf => $state.composableBuilder(
+      column: $state.table.conflictOf,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get deletedAt => $state.composableBuilder(
+      column: $state.table.deletedAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get purgeAt => $state.composableBuilder(
+      column: $state.table.purgeAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get createdAt => $state.composableBuilder(
+      column: $state.table.createdAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  $$ConversationsTableFilterComposer get conversationId {
+    final $$ConversationsTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.conversationId,
+        referencedTable: $state.db.conversations,
+        getReferencedColumn: (t) => t.id,
+        builder: (joinBuilder, parentComposers) =>
+            $$ConversationsTableFilterComposer(ComposerState($state.db,
+                $state.db.conversations, joinBuilder, parentComposers)));
+    return composer;
+  }
+
+  ComposableFilter messageBlocksRefs(
+      ComposableFilter Function($$MessageBlocksTableFilterComposer f) f) {
+    final $$MessageBlocksTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.id,
+        referencedTable: $state.db.messageBlocks,
+        getReferencedColumn: (t) => t.messageId,
+        builder: (joinBuilder, parentComposers) =>
+            $$MessageBlocksTableFilterComposer(ComposerState($state.db,
+                $state.db.messageBlocks, joinBuilder, parentComposers)));
+    return f(composer);
+  }
+}
+
+class $$MessagesTableOrderingComposer
+    extends OrderingComposer<_$AppDatabase, $MessagesTable> {
+  $$MessagesTableOrderingComposer(super.$state);
+  ColumnOrderings<String> get id => $state.composableBuilder(
+      column: $state.table.id,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get role => $state.composableBuilder(
+      column: $state.table.role,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get content => $state.composableBuilder(
+      column: $state.table.content,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get status => $state.composableBuilder(
+      column: $state.table.status,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get replacedBy => $state.composableBuilder(
+      column: $state.table.replacedBy,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get conflictOf => $state.composableBuilder(
+      column: $state.table.conflictOf,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get deletedAt => $state.composableBuilder(
+      column: $state.table.deletedAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get purgeAt => $state.composableBuilder(
+      column: $state.table.purgeAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get createdAt => $state.composableBuilder(
+      column: $state.table.createdAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  $$ConversationsTableOrderingComposer get conversationId {
+    final $$ConversationsTableOrderingComposer composer =
+        $state.composerBuilder(
+            composer: this,
+            getCurrentColumn: (t) => t.conversationId,
+            referencedTable: $state.db.conversations,
+            getReferencedColumn: (t) => t.id,
+            builder: (joinBuilder, parentComposers) =>
+                $$ConversationsTableOrderingComposer(ComposerState($state.db,
+                    $state.db.conversations, joinBuilder, parentComposers)));
+    return composer;
+  }
+}
+
 typedef $$MessageBlocksTableCreateCompanionBuilder = MessageBlocksCompanion
     Function({
   required String id,
@@ -6065,202 +5829,22 @@ typedef $$MessageBlocksTableUpdateCompanionBuilder = MessageBlocksCompanion
   Value<int> rowid,
 });
 
-final class $$MessageBlocksTableReferences
-    extends BaseReferences<_$AppDatabase, $MessageBlocksTable, MessageBlock> {
-  $$MessageBlocksTableReferences(
-      super.$_db, super.$_table, super.$_typedResult);
-
-  static $MessagesTable _messageIdTable(_$AppDatabase db) =>
-      db.messages.createAlias(
-          $_aliasNameGenerator(db.messageBlocks.messageId, db.messages.id));
-
-  $$MessagesTableProcessedTableManager get messageId {
-    final $_column = $_itemColumn<String>('message_id')!;
-
-    final manager = $$MessagesTableTableManager($_db, $_db.messages)
-        .filter((f) => f.id.sqlEquals($_column));
-    final item = $_typedResult.readTableOrNull(_messageIdTable($_db));
-    if (item == null) return manager;
-    return ProcessedTableManager(
-        manager.$state.copyWith(prefetchedData: [item]));
-  }
-}
-
-class $$MessageBlocksTableFilterComposer
-    extends Composer<_$AppDatabase, $MessageBlocksTable> {
-  $$MessageBlocksTableFilterComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  ColumnFilters<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get type => $composableBuilder(
-      column: $table.type, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get status => $composableBuilder(
-      column: $table.status, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get data => $composableBuilder(
-      column: $table.data, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get sortOrder => $composableBuilder(
-      column: $table.sortOrder, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get deletedAt => $composableBuilder(
-      column: $table.deletedAt, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get createdAt => $composableBuilder(
-      column: $table.createdAt, builder: (column) => ColumnFilters(column));
-
-  $$MessagesTableFilterComposer get messageId {
-    final $$MessagesTableFilterComposer composer = $composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.messageId,
-        referencedTable: $db.messages,
-        getReferencedColumn: (t) => t.id,
-        builder: (joinBuilder,
-                {$addJoinBuilderToRootComposer,
-                $removeJoinBuilderFromRootComposer}) =>
-            $$MessagesTableFilterComposer(
-              $db: $db,
-              $table: $db.messages,
-              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-              joinBuilder: joinBuilder,
-              $removeJoinBuilderFromRootComposer:
-                  $removeJoinBuilderFromRootComposer,
-            ));
-    return composer;
-  }
-}
-
-class $$MessageBlocksTableOrderingComposer
-    extends Composer<_$AppDatabase, $MessageBlocksTable> {
-  $$MessageBlocksTableOrderingComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  ColumnOrderings<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get type => $composableBuilder(
-      column: $table.type, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get status => $composableBuilder(
-      column: $table.status, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get data => $composableBuilder(
-      column: $table.data, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get sortOrder => $composableBuilder(
-      column: $table.sortOrder, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get deletedAt => $composableBuilder(
-      column: $table.deletedAt, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get createdAt => $composableBuilder(
-      column: $table.createdAt, builder: (column) => ColumnOrderings(column));
-
-  $$MessagesTableOrderingComposer get messageId {
-    final $$MessagesTableOrderingComposer composer = $composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.messageId,
-        referencedTable: $db.messages,
-        getReferencedColumn: (t) => t.id,
-        builder: (joinBuilder,
-                {$addJoinBuilderToRootComposer,
-                $removeJoinBuilderFromRootComposer}) =>
-            $$MessagesTableOrderingComposer(
-              $db: $db,
-              $table: $db.messages,
-              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-              joinBuilder: joinBuilder,
-              $removeJoinBuilderFromRootComposer:
-                  $removeJoinBuilderFromRootComposer,
-            ));
-    return composer;
-  }
-}
-
-class $$MessageBlocksTableAnnotationComposer
-    extends Composer<_$AppDatabase, $MessageBlocksTable> {
-  $$MessageBlocksTableAnnotationComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  GeneratedColumn<String> get id =>
-      $composableBuilder(column: $table.id, builder: (column) => column);
-
-  GeneratedColumn<String> get type =>
-      $composableBuilder(column: $table.type, builder: (column) => column);
-
-  GeneratedColumn<String> get status =>
-      $composableBuilder(column: $table.status, builder: (column) => column);
-
-  GeneratedColumn<String> get data =>
-      $composableBuilder(column: $table.data, builder: (column) => column);
-
-  GeneratedColumn<int> get sortOrder =>
-      $composableBuilder(column: $table.sortOrder, builder: (column) => column);
-
-  GeneratedColumn<int> get deletedAt =>
-      $composableBuilder(column: $table.deletedAt, builder: (column) => column);
-
-  GeneratedColumn<int> get createdAt =>
-      $composableBuilder(column: $table.createdAt, builder: (column) => column);
-
-  $$MessagesTableAnnotationComposer get messageId {
-    final $$MessagesTableAnnotationComposer composer = $composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.messageId,
-        referencedTable: $db.messages,
-        getReferencedColumn: (t) => t.id,
-        builder: (joinBuilder,
-                {$addJoinBuilderToRootComposer,
-                $removeJoinBuilderFromRootComposer}) =>
-            $$MessagesTableAnnotationComposer(
-              $db: $db,
-              $table: $db.messages,
-              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-              joinBuilder: joinBuilder,
-              $removeJoinBuilderFromRootComposer:
-                  $removeJoinBuilderFromRootComposer,
-            ));
-    return composer;
-  }
-}
-
 class $$MessageBlocksTableTableManager extends RootTableManager<
     _$AppDatabase,
     $MessageBlocksTable,
     MessageBlock,
     $$MessageBlocksTableFilterComposer,
     $$MessageBlocksTableOrderingComposer,
-    $$MessageBlocksTableAnnotationComposer,
     $$MessageBlocksTableCreateCompanionBuilder,
-    $$MessageBlocksTableUpdateCompanionBuilder,
-    (MessageBlock, $$MessageBlocksTableReferences),
-    MessageBlock,
-    PrefetchHooks Function({bool messageId})> {
+    $$MessageBlocksTableUpdateCompanionBuilder> {
   $$MessageBlocksTableTableManager(_$AppDatabase db, $MessageBlocksTable table)
       : super(TableManagerState(
           db: db,
           table: table,
-          createFilteringComposer: () =>
-              $$MessageBlocksTableFilterComposer($db: db, $table: table),
-          createOrderingComposer: () =>
-              $$MessageBlocksTableOrderingComposer($db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$MessageBlocksTableAnnotationComposer($db: db, $table: table),
+          filteringComposer:
+              $$MessageBlocksTableFilterComposer(ComposerState(db, table)),
+          orderingComposer:
+              $$MessageBlocksTableOrderingComposer(ComposerState(db, table)),
           updateCompanionCallback: ({
             Value<String> id = const Value.absent(),
             Value<String> messageId = const Value.absent(),
@@ -6305,62 +5889,111 @@ class $$MessageBlocksTableTableManager extends RootTableManager<
             createdAt: createdAt,
             rowid: rowid,
           ),
-          withReferenceMapper: (p0) => p0
-              .map((e) => (
-                    e.readTable(table),
-                    $$MessageBlocksTableReferences(db, table, e)
-                  ))
-              .toList(),
-          prefetchHooksCallback: ({messageId = false}) {
-            return PrefetchHooks(
-              db: db,
-              explicitlyWatchedTables: [],
-              addJoins: <
-                  T extends TableManagerState<
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic>>(state) {
-                if (messageId) {
-                  state = state.withJoin(
-                    currentTable: table,
-                    currentColumn: table.messageId,
-                    referencedTable:
-                        $$MessageBlocksTableReferences._messageIdTable(db),
-                    referencedColumn:
-                        $$MessageBlocksTableReferences._messageIdTable(db).id,
-                  ) as T;
-                }
-
-                return state;
-              },
-              getPrefetchedDataCallback: (items) async {
-                return [];
-              },
-            );
-          },
         ));
 }
 
-typedef $$MessageBlocksTableProcessedTableManager = ProcessedTableManager<
-    _$AppDatabase,
-    $MessageBlocksTable,
-    MessageBlock,
-    $$MessageBlocksTableFilterComposer,
-    $$MessageBlocksTableOrderingComposer,
-    $$MessageBlocksTableAnnotationComposer,
-    $$MessageBlocksTableCreateCompanionBuilder,
-    $$MessageBlocksTableUpdateCompanionBuilder,
-    (MessageBlock, $$MessageBlocksTableReferences),
-    MessageBlock,
-    PrefetchHooks Function({bool messageId})>;
+class $$MessageBlocksTableFilterComposer
+    extends FilterComposer<_$AppDatabase, $MessageBlocksTable> {
+  $$MessageBlocksTableFilterComposer(super.$state);
+  ColumnFilters<String> get id => $state.composableBuilder(
+      column: $state.table.id,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get type => $state.composableBuilder(
+      column: $state.table.type,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get status => $state.composableBuilder(
+      column: $state.table.status,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get data => $state.composableBuilder(
+      column: $state.table.data,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get sortOrder => $state.composableBuilder(
+      column: $state.table.sortOrder,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get deletedAt => $state.composableBuilder(
+      column: $state.table.deletedAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get createdAt => $state.composableBuilder(
+      column: $state.table.createdAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  $$MessagesTableFilterComposer get messageId {
+    final $$MessagesTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.messageId,
+        referencedTable: $state.db.messages,
+        getReferencedColumn: (t) => t.id,
+        builder: (joinBuilder, parentComposers) =>
+            $$MessagesTableFilterComposer(ComposerState(
+                $state.db, $state.db.messages, joinBuilder, parentComposers)));
+    return composer;
+  }
+}
+
+class $$MessageBlocksTableOrderingComposer
+    extends OrderingComposer<_$AppDatabase, $MessageBlocksTable> {
+  $$MessageBlocksTableOrderingComposer(super.$state);
+  ColumnOrderings<String> get id => $state.composableBuilder(
+      column: $state.table.id,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get type => $state.composableBuilder(
+      column: $state.table.type,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get status => $state.composableBuilder(
+      column: $state.table.status,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get data => $state.composableBuilder(
+      column: $state.table.data,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get sortOrder => $state.composableBuilder(
+      column: $state.table.sortOrder,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get deletedAt => $state.composableBuilder(
+      column: $state.table.deletedAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get createdAt => $state.composableBuilder(
+      column: $state.table.createdAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  $$MessagesTableOrderingComposer get messageId {
+    final $$MessagesTableOrderingComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.messageId,
+        referencedTable: $state.db.messages,
+        getReferencedColumn: (t) => t.id,
+        builder: (joinBuilder, parentComposers) =>
+            $$MessagesTableOrderingComposer(ComposerState(
+                $state.db, $state.db.messages, joinBuilder, parentComposers)));
+    return composer;
+  }
+}
+
 typedef $$ProvidersTableCreateCompanionBuilder = ProvidersCompanion Function({
   required String id,
   required String displayName,
@@ -6398,197 +6031,22 @@ typedef $$ProvidersTableUpdateCompanionBuilder = ProvidersCompanion Function({
   Value<int> rowid,
 });
 
-class $$ProvidersTableFilterComposer
-    extends Composer<_$AppDatabase, $ProvidersTable> {
-  $$ProvidersTableFilterComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  ColumnFilters<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get displayName => $composableBuilder(
-      column: $table.displayName, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get apiBaseUrl => $composableBuilder(
-      column: $table.apiBaseUrl, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<bool> get enabled => $composableBuilder(
-      column: $table.enabled, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get capabilities => $composableBuilder(
-      column: $table.capabilities, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get customConfig => $composableBuilder(
-      column: $table.customConfig, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get modelType => $composableBuilder(
-      column: $table.modelType, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get visibleModels => $composableBuilder(
-      column: $table.visibleModels, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get hiddenModels => $composableBuilder(
-      column: $table.hiddenModels, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get apiKeys => $composableBuilder(
-      column: $table.apiKeys, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get conflictOf => $composableBuilder(
-      column: $table.conflictOf, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get deletedAt => $composableBuilder(
-      column: $table.deletedAt, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get purgeAt => $composableBuilder(
-      column: $table.purgeAt, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get createdAt => $composableBuilder(
-      column: $table.createdAt, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get updatedAt => $composableBuilder(
-      column: $table.updatedAt, builder: (column) => ColumnFilters(column));
-}
-
-class $$ProvidersTableOrderingComposer
-    extends Composer<_$AppDatabase, $ProvidersTable> {
-  $$ProvidersTableOrderingComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  ColumnOrderings<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get displayName => $composableBuilder(
-      column: $table.displayName, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get apiBaseUrl => $composableBuilder(
-      column: $table.apiBaseUrl, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<bool> get enabled => $composableBuilder(
-      column: $table.enabled, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get capabilities => $composableBuilder(
-      column: $table.capabilities,
-      builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get customConfig => $composableBuilder(
-      column: $table.customConfig,
-      builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get modelType => $composableBuilder(
-      column: $table.modelType, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get visibleModels => $composableBuilder(
-      column: $table.visibleModels,
-      builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get hiddenModels => $composableBuilder(
-      column: $table.hiddenModels,
-      builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get apiKeys => $composableBuilder(
-      column: $table.apiKeys, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get conflictOf => $composableBuilder(
-      column: $table.conflictOf, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get deletedAt => $composableBuilder(
-      column: $table.deletedAt, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get purgeAt => $composableBuilder(
-      column: $table.purgeAt, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get createdAt => $composableBuilder(
-      column: $table.createdAt, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get updatedAt => $composableBuilder(
-      column: $table.updatedAt, builder: (column) => ColumnOrderings(column));
-}
-
-class $$ProvidersTableAnnotationComposer
-    extends Composer<_$AppDatabase, $ProvidersTable> {
-  $$ProvidersTableAnnotationComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  GeneratedColumn<String> get id =>
-      $composableBuilder(column: $table.id, builder: (column) => column);
-
-  GeneratedColumn<String> get displayName => $composableBuilder(
-      column: $table.displayName, builder: (column) => column);
-
-  GeneratedColumn<String> get apiBaseUrl => $composableBuilder(
-      column: $table.apiBaseUrl, builder: (column) => column);
-
-  GeneratedColumn<bool> get enabled =>
-      $composableBuilder(column: $table.enabled, builder: (column) => column);
-
-  GeneratedColumn<String> get capabilities => $composableBuilder(
-      column: $table.capabilities, builder: (column) => column);
-
-  GeneratedColumn<String> get customConfig => $composableBuilder(
-      column: $table.customConfig, builder: (column) => column);
-
-  GeneratedColumn<String> get modelType =>
-      $composableBuilder(column: $table.modelType, builder: (column) => column);
-
-  GeneratedColumn<String> get visibleModels => $composableBuilder(
-      column: $table.visibleModels, builder: (column) => column);
-
-  GeneratedColumn<String> get hiddenModels => $composableBuilder(
-      column: $table.hiddenModels, builder: (column) => column);
-
-  GeneratedColumn<String> get apiKeys =>
-      $composableBuilder(column: $table.apiKeys, builder: (column) => column);
-
-  GeneratedColumn<String> get conflictOf => $composableBuilder(
-      column: $table.conflictOf, builder: (column) => column);
-
-  GeneratedColumn<int> get deletedAt =>
-      $composableBuilder(column: $table.deletedAt, builder: (column) => column);
-
-  GeneratedColumn<int> get purgeAt =>
-      $composableBuilder(column: $table.purgeAt, builder: (column) => column);
-
-  GeneratedColumn<int> get createdAt =>
-      $composableBuilder(column: $table.createdAt, builder: (column) => column);
-
-  GeneratedColumn<int> get updatedAt =>
-      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
-}
-
 class $$ProvidersTableTableManager extends RootTableManager<
     _$AppDatabase,
     $ProvidersTable,
     Provider,
     $$ProvidersTableFilterComposer,
     $$ProvidersTableOrderingComposer,
-    $$ProvidersTableAnnotationComposer,
     $$ProvidersTableCreateCompanionBuilder,
-    $$ProvidersTableUpdateCompanionBuilder,
-    (Provider, BaseReferences<_$AppDatabase, $ProvidersTable, Provider>),
-    Provider,
-    PrefetchHooks Function()> {
+    $$ProvidersTableUpdateCompanionBuilder> {
   $$ProvidersTableTableManager(_$AppDatabase db, $ProvidersTable table)
       : super(TableManagerState(
           db: db,
           table: table,
-          createFilteringComposer: () =>
-              $$ProvidersTableFilterComposer($db: db, $table: table),
-          createOrderingComposer: () =>
-              $$ProvidersTableOrderingComposer($db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$ProvidersTableAnnotationComposer($db: db, $table: table),
+          filteringComposer:
+              $$ProvidersTableFilterComposer(ComposerState(db, table)),
+          orderingComposer:
+              $$ProvidersTableOrderingComposer(ComposerState(db, table)),
           updateCompanionCallback: ({
             Value<String> id = const Value.absent(),
             Value<String> displayName = const Value.absent(),
@@ -6661,25 +6119,167 @@ class $$ProvidersTableTableManager extends RootTableManager<
             updatedAt: updatedAt,
             rowid: rowid,
           ),
-          withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
-              .toList(),
-          prefetchHooksCallback: null,
         ));
 }
 
-typedef $$ProvidersTableProcessedTableManager = ProcessedTableManager<
-    _$AppDatabase,
-    $ProvidersTable,
-    Provider,
-    $$ProvidersTableFilterComposer,
-    $$ProvidersTableOrderingComposer,
-    $$ProvidersTableAnnotationComposer,
-    $$ProvidersTableCreateCompanionBuilder,
-    $$ProvidersTableUpdateCompanionBuilder,
-    (Provider, BaseReferences<_$AppDatabase, $ProvidersTable, Provider>),
-    Provider,
-    PrefetchHooks Function()>;
+class $$ProvidersTableFilterComposer
+    extends FilterComposer<_$AppDatabase, $ProvidersTable> {
+  $$ProvidersTableFilterComposer(super.$state);
+  ColumnFilters<String> get id => $state.composableBuilder(
+      column: $state.table.id,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get displayName => $state.composableBuilder(
+      column: $state.table.displayName,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get apiBaseUrl => $state.composableBuilder(
+      column: $state.table.apiBaseUrl,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get enabled => $state.composableBuilder(
+      column: $state.table.enabled,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get capabilities => $state.composableBuilder(
+      column: $state.table.capabilities,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get customConfig => $state.composableBuilder(
+      column: $state.table.customConfig,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get modelType => $state.composableBuilder(
+      column: $state.table.modelType,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get visibleModels => $state.composableBuilder(
+      column: $state.table.visibleModels,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get hiddenModels => $state.composableBuilder(
+      column: $state.table.hiddenModels,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get apiKeys => $state.composableBuilder(
+      column: $state.table.apiKeys,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get conflictOf => $state.composableBuilder(
+      column: $state.table.conflictOf,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get deletedAt => $state.composableBuilder(
+      column: $state.table.deletedAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get purgeAt => $state.composableBuilder(
+      column: $state.table.purgeAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get createdAt => $state.composableBuilder(
+      column: $state.table.createdAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get updatedAt => $state.composableBuilder(
+      column: $state.table.updatedAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+}
+
+class $$ProvidersTableOrderingComposer
+    extends OrderingComposer<_$AppDatabase, $ProvidersTable> {
+  $$ProvidersTableOrderingComposer(super.$state);
+  ColumnOrderings<String> get id => $state.composableBuilder(
+      column: $state.table.id,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get displayName => $state.composableBuilder(
+      column: $state.table.displayName,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get apiBaseUrl => $state.composableBuilder(
+      column: $state.table.apiBaseUrl,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get enabled => $state.composableBuilder(
+      column: $state.table.enabled,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get capabilities => $state.composableBuilder(
+      column: $state.table.capabilities,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get customConfig => $state.composableBuilder(
+      column: $state.table.customConfig,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get modelType => $state.composableBuilder(
+      column: $state.table.modelType,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get visibleModels => $state.composableBuilder(
+      column: $state.table.visibleModels,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get hiddenModels => $state.composableBuilder(
+      column: $state.table.hiddenModels,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get apiKeys => $state.composableBuilder(
+      column: $state.table.apiKeys,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get conflictOf => $state.composableBuilder(
+      column: $state.table.conflictOf,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get deletedAt => $state.composableBuilder(
+      column: $state.table.deletedAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get purgeAt => $state.composableBuilder(
+      column: $state.table.purgeAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get createdAt => $state.composableBuilder(
+      column: $state.table.createdAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get updatedAt => $state.composableBuilder(
+      column: $state.table.updatedAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+}
+
 typedef $$SyncScopesTableCreateCompanionBuilder = SyncScopesCompanion Function({
   Value<String> enabledScopes,
   required int updatedAt,
@@ -6691,86 +6291,22 @@ typedef $$SyncScopesTableUpdateCompanionBuilder = SyncScopesCompanion Function({
   Value<int> id,
 });
 
-class $$SyncScopesTableFilterComposer
-    extends Composer<_$AppDatabase, $SyncScopesTable> {
-  $$SyncScopesTableFilterComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  ColumnFilters<String> get enabledScopes => $composableBuilder(
-      column: $table.enabledScopes, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get updatedAt => $composableBuilder(
-      column: $table.updatedAt, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnFilters(column));
-}
-
-class $$SyncScopesTableOrderingComposer
-    extends Composer<_$AppDatabase, $SyncScopesTable> {
-  $$SyncScopesTableOrderingComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  ColumnOrderings<String> get enabledScopes => $composableBuilder(
-      column: $table.enabledScopes,
-      builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get updatedAt => $composableBuilder(
-      column: $table.updatedAt, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnOrderings(column));
-}
-
-class $$SyncScopesTableAnnotationComposer
-    extends Composer<_$AppDatabase, $SyncScopesTable> {
-  $$SyncScopesTableAnnotationComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  GeneratedColumn<String> get enabledScopes => $composableBuilder(
-      column: $table.enabledScopes, builder: (column) => column);
-
-  GeneratedColumn<int> get updatedAt =>
-      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
-
-  GeneratedColumn<int> get id =>
-      $composableBuilder(column: $table.id, builder: (column) => column);
-}
-
 class $$SyncScopesTableTableManager extends RootTableManager<
     _$AppDatabase,
     $SyncScopesTable,
     SyncScope,
     $$SyncScopesTableFilterComposer,
     $$SyncScopesTableOrderingComposer,
-    $$SyncScopesTableAnnotationComposer,
     $$SyncScopesTableCreateCompanionBuilder,
-    $$SyncScopesTableUpdateCompanionBuilder,
-    (SyncScope, BaseReferences<_$AppDatabase, $SyncScopesTable, SyncScope>),
-    SyncScope,
-    PrefetchHooks Function()> {
+    $$SyncScopesTableUpdateCompanionBuilder> {
   $$SyncScopesTableTableManager(_$AppDatabase db, $SyncScopesTable table)
       : super(TableManagerState(
           db: db,
           table: table,
-          createFilteringComposer: () =>
-              $$SyncScopesTableFilterComposer($db: db, $table: table),
-          createOrderingComposer: () =>
-              $$SyncScopesTableOrderingComposer($db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$SyncScopesTableAnnotationComposer($db: db, $table: table),
+          filteringComposer:
+              $$SyncScopesTableFilterComposer(ComposerState(db, table)),
+          orderingComposer:
+              $$SyncScopesTableOrderingComposer(ComposerState(db, table)),
           updateCompanionCallback: ({
             Value<String> enabledScopes = const Value.absent(),
             Value<int> updatedAt = const Value.absent(),
@@ -6791,25 +6327,47 @@ class $$SyncScopesTableTableManager extends RootTableManager<
             updatedAt: updatedAt,
             id: id,
           ),
-          withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
-              .toList(),
-          prefetchHooksCallback: null,
         ));
 }
 
-typedef $$SyncScopesTableProcessedTableManager = ProcessedTableManager<
-    _$AppDatabase,
-    $SyncScopesTable,
-    SyncScope,
-    $$SyncScopesTableFilterComposer,
-    $$SyncScopesTableOrderingComposer,
-    $$SyncScopesTableAnnotationComposer,
-    $$SyncScopesTableCreateCompanionBuilder,
-    $$SyncScopesTableUpdateCompanionBuilder,
-    (SyncScope, BaseReferences<_$AppDatabase, $SyncScopesTable, SyncScope>),
-    SyncScope,
-    PrefetchHooks Function()>;
+class $$SyncScopesTableFilterComposer
+    extends FilterComposer<_$AppDatabase, $SyncScopesTable> {
+  $$SyncScopesTableFilterComposer(super.$state);
+  ColumnFilters<String> get enabledScopes => $state.composableBuilder(
+      column: $state.table.enabledScopes,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get updatedAt => $state.composableBuilder(
+      column: $state.table.updatedAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get id => $state.composableBuilder(
+      column: $state.table.id,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+}
+
+class $$SyncScopesTableOrderingComposer
+    extends OrderingComposer<_$AppDatabase, $SyncScopesTable> {
+  $$SyncScopesTableOrderingComposer(super.$state);
+  ColumnOrderings<String> get enabledScopes => $state.composableBuilder(
+      column: $state.table.enabledScopes,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get updatedAt => $state.composableBuilder(
+      column: $state.table.updatedAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get id => $state.composableBuilder(
+      column: $state.table.id,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+}
+
 typedef $$SyncCursorsTableCreateCompanionBuilder = SyncCursorsCompanion
     Function({
   required String deviceId,
@@ -6829,109 +6387,22 @@ typedef $$SyncCursorsTableUpdateCompanionBuilder = SyncCursorsCompanion
   Value<int> rowid,
 });
 
-class $$SyncCursorsTableFilterComposer
-    extends Composer<_$AppDatabase, $SyncCursorsTable> {
-  $$SyncCursorsTableFilterComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  ColumnFilters<String> get deviceId => $composableBuilder(
-      column: $table.deviceId, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get conversationsCursor => $composableBuilder(
-      column: $table.conversationsCursor,
-      builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get messagesCursor => $composableBuilder(
-      column: $table.messagesCursor,
-      builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get providersCursor => $composableBuilder(
-      column: $table.providersCursor,
-      builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get updatedAt => $composableBuilder(
-      column: $table.updatedAt, builder: (column) => ColumnFilters(column));
-}
-
-class $$SyncCursorsTableOrderingComposer
-    extends Composer<_$AppDatabase, $SyncCursorsTable> {
-  $$SyncCursorsTableOrderingComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  ColumnOrderings<String> get deviceId => $composableBuilder(
-      column: $table.deviceId, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get conversationsCursor => $composableBuilder(
-      column: $table.conversationsCursor,
-      builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get messagesCursor => $composableBuilder(
-      column: $table.messagesCursor,
-      builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get providersCursor => $composableBuilder(
-      column: $table.providersCursor,
-      builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get updatedAt => $composableBuilder(
-      column: $table.updatedAt, builder: (column) => ColumnOrderings(column));
-}
-
-class $$SyncCursorsTableAnnotationComposer
-    extends Composer<_$AppDatabase, $SyncCursorsTable> {
-  $$SyncCursorsTableAnnotationComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  GeneratedColumn<String> get deviceId =>
-      $composableBuilder(column: $table.deviceId, builder: (column) => column);
-
-  GeneratedColumn<int> get conversationsCursor => $composableBuilder(
-      column: $table.conversationsCursor, builder: (column) => column);
-
-  GeneratedColumn<int> get messagesCursor => $composableBuilder(
-      column: $table.messagesCursor, builder: (column) => column);
-
-  GeneratedColumn<int> get providersCursor => $composableBuilder(
-      column: $table.providersCursor, builder: (column) => column);
-
-  GeneratedColumn<int> get updatedAt =>
-      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
-}
-
 class $$SyncCursorsTableTableManager extends RootTableManager<
     _$AppDatabase,
     $SyncCursorsTable,
     SyncCursor,
     $$SyncCursorsTableFilterComposer,
     $$SyncCursorsTableOrderingComposer,
-    $$SyncCursorsTableAnnotationComposer,
     $$SyncCursorsTableCreateCompanionBuilder,
-    $$SyncCursorsTableUpdateCompanionBuilder,
-    (SyncCursor, BaseReferences<_$AppDatabase, $SyncCursorsTable, SyncCursor>),
-    SyncCursor,
-    PrefetchHooks Function()> {
+    $$SyncCursorsTableUpdateCompanionBuilder> {
   $$SyncCursorsTableTableManager(_$AppDatabase db, $SyncCursorsTable table)
       : super(TableManagerState(
           db: db,
           table: table,
-          createFilteringComposer: () =>
-              $$SyncCursorsTableFilterComposer($db: db, $table: table),
-          createOrderingComposer: () =>
-              $$SyncCursorsTableOrderingComposer($db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$SyncCursorsTableAnnotationComposer($db: db, $table: table),
+          filteringComposer:
+              $$SyncCursorsTableFilterComposer(ComposerState(db, table)),
+          orderingComposer:
+              $$SyncCursorsTableOrderingComposer(ComposerState(db, table)),
           updateCompanionCallback: ({
             Value<String> deviceId = const Value.absent(),
             Value<int> conversationsCursor = const Value.absent(),
@@ -6964,25 +6435,67 @@ class $$SyncCursorsTableTableManager extends RootTableManager<
             updatedAt: updatedAt,
             rowid: rowid,
           ),
-          withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
-              .toList(),
-          prefetchHooksCallback: null,
         ));
 }
 
-typedef $$SyncCursorsTableProcessedTableManager = ProcessedTableManager<
-    _$AppDatabase,
-    $SyncCursorsTable,
-    SyncCursor,
-    $$SyncCursorsTableFilterComposer,
-    $$SyncCursorsTableOrderingComposer,
-    $$SyncCursorsTableAnnotationComposer,
-    $$SyncCursorsTableCreateCompanionBuilder,
-    $$SyncCursorsTableUpdateCompanionBuilder,
-    (SyncCursor, BaseReferences<_$AppDatabase, $SyncCursorsTable, SyncCursor>),
-    SyncCursor,
-    PrefetchHooks Function()>;
+class $$SyncCursorsTableFilterComposer
+    extends FilterComposer<_$AppDatabase, $SyncCursorsTable> {
+  $$SyncCursorsTableFilterComposer(super.$state);
+  ColumnFilters<String> get deviceId => $state.composableBuilder(
+      column: $state.table.deviceId,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get conversationsCursor => $state.composableBuilder(
+      column: $state.table.conversationsCursor,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get messagesCursor => $state.composableBuilder(
+      column: $state.table.messagesCursor,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get providersCursor => $state.composableBuilder(
+      column: $state.table.providersCursor,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get updatedAt => $state.composableBuilder(
+      column: $state.table.updatedAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+}
+
+class $$SyncCursorsTableOrderingComposer
+    extends OrderingComposer<_$AppDatabase, $SyncCursorsTable> {
+  $$SyncCursorsTableOrderingComposer(super.$state);
+  ColumnOrderings<String> get deviceId => $state.composableBuilder(
+      column: $state.table.deviceId,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get conversationsCursor => $state.composableBuilder(
+      column: $state.table.conversationsCursor,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get messagesCursor => $state.composableBuilder(
+      column: $state.table.messagesCursor,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get providersCursor => $state.composableBuilder(
+      column: $state.table.providersCursor,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get updatedAt => $state.composableBuilder(
+      column: $state.table.updatedAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+}
+
 typedef $$PendingOperationsTableCreateCompanionBuilder
     = PendingOperationsCompanion Function({
   required String opId,
@@ -7002,108 +6515,23 @@ typedef $$PendingOperationsTableUpdateCompanionBuilder
   Value<int> rowid,
 });
 
-class $$PendingOperationsTableFilterComposer
-    extends Composer<_$AppDatabase, $PendingOperationsTable> {
-  $$PendingOperationsTableFilterComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  ColumnFilters<String> get opId => $composableBuilder(
-      column: $table.opId, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get opType => $composableBuilder(
-      column: $table.opType, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get opData => $composableBuilder(
-      column: $table.opData, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get createdAt => $composableBuilder(
-      column: $table.createdAt, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<bool> get synced => $composableBuilder(
-      column: $table.synced, builder: (column) => ColumnFilters(column));
-}
-
-class $$PendingOperationsTableOrderingComposer
-    extends Composer<_$AppDatabase, $PendingOperationsTable> {
-  $$PendingOperationsTableOrderingComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  ColumnOrderings<String> get opId => $composableBuilder(
-      column: $table.opId, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get opType => $composableBuilder(
-      column: $table.opType, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get opData => $composableBuilder(
-      column: $table.opData, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get createdAt => $composableBuilder(
-      column: $table.createdAt, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<bool> get synced => $composableBuilder(
-      column: $table.synced, builder: (column) => ColumnOrderings(column));
-}
-
-class $$PendingOperationsTableAnnotationComposer
-    extends Composer<_$AppDatabase, $PendingOperationsTable> {
-  $$PendingOperationsTableAnnotationComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  GeneratedColumn<String> get opId =>
-      $composableBuilder(column: $table.opId, builder: (column) => column);
-
-  GeneratedColumn<String> get opType =>
-      $composableBuilder(column: $table.opType, builder: (column) => column);
-
-  GeneratedColumn<String> get opData =>
-      $composableBuilder(column: $table.opData, builder: (column) => column);
-
-  GeneratedColumn<int> get createdAt =>
-      $composableBuilder(column: $table.createdAt, builder: (column) => column);
-
-  GeneratedColumn<bool> get synced =>
-      $composableBuilder(column: $table.synced, builder: (column) => column);
-}
-
 class $$PendingOperationsTableTableManager extends RootTableManager<
     _$AppDatabase,
     $PendingOperationsTable,
     PendingOperation,
     $$PendingOperationsTableFilterComposer,
     $$PendingOperationsTableOrderingComposer,
-    $$PendingOperationsTableAnnotationComposer,
     $$PendingOperationsTableCreateCompanionBuilder,
-    $$PendingOperationsTableUpdateCompanionBuilder,
-    (
-      PendingOperation,
-      BaseReferences<_$AppDatabase, $PendingOperationsTable, PendingOperation>
-    ),
-    PendingOperation,
-    PrefetchHooks Function()> {
+    $$PendingOperationsTableUpdateCompanionBuilder> {
   $$PendingOperationsTableTableManager(
       _$AppDatabase db, $PendingOperationsTable table)
       : super(TableManagerState(
           db: db,
           table: table,
-          createFilteringComposer: () =>
-              $$PendingOperationsTableFilterComposer($db: db, $table: table),
-          createOrderingComposer: () =>
-              $$PendingOperationsTableOrderingComposer($db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$PendingOperationsTableAnnotationComposer(
-                  $db: db, $table: table),
+          filteringComposer:
+              $$PendingOperationsTableFilterComposer(ComposerState(db, table)),
+          orderingComposer: $$PendingOperationsTableOrderingComposer(
+              ComposerState(db, table)),
           updateCompanionCallback: ({
             Value<String> opId = const Value.absent(),
             Value<String> opType = const Value.absent(),
@@ -7136,28 +6564,67 @@ class $$PendingOperationsTableTableManager extends RootTableManager<
             synced: synced,
             rowid: rowid,
           ),
-          withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
-              .toList(),
-          prefetchHooksCallback: null,
         ));
 }
 
-typedef $$PendingOperationsTableProcessedTableManager = ProcessedTableManager<
-    _$AppDatabase,
-    $PendingOperationsTable,
-    PendingOperation,
-    $$PendingOperationsTableFilterComposer,
-    $$PendingOperationsTableOrderingComposer,
-    $$PendingOperationsTableAnnotationComposer,
-    $$PendingOperationsTableCreateCompanionBuilder,
-    $$PendingOperationsTableUpdateCompanionBuilder,
-    (
-      PendingOperation,
-      BaseReferences<_$AppDatabase, $PendingOperationsTable, PendingOperation>
-    ),
-    PendingOperation,
-    PrefetchHooks Function()>;
+class $$PendingOperationsTableFilterComposer
+    extends FilterComposer<_$AppDatabase, $PendingOperationsTable> {
+  $$PendingOperationsTableFilterComposer(super.$state);
+  ColumnFilters<String> get opId => $state.composableBuilder(
+      column: $state.table.opId,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get opType => $state.composableBuilder(
+      column: $state.table.opType,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get opData => $state.composableBuilder(
+      column: $state.table.opData,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get createdAt => $state.composableBuilder(
+      column: $state.table.createdAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get synced => $state.composableBuilder(
+      column: $state.table.synced,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+}
+
+class $$PendingOperationsTableOrderingComposer
+    extends OrderingComposer<_$AppDatabase, $PendingOperationsTable> {
+  $$PendingOperationsTableOrderingComposer(super.$state);
+  ColumnOrderings<String> get opId => $state.composableBuilder(
+      column: $state.table.opId,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get opType => $state.composableBuilder(
+      column: $state.table.opType,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get opData => $state.composableBuilder(
+      column: $state.table.opData,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get createdAt => $state.composableBuilder(
+      column: $state.table.createdAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get synced => $state.composableBuilder(
+      column: $state.table.synced,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+}
+
 typedef $$MemoriesTableCreateCompanionBuilder = MemoriesCompanion Function({
   required String id,
   required String content,
@@ -7201,224 +6668,22 @@ typedef $$MemoriesTableUpdateCompanionBuilder = MemoriesCompanion Function({
   Value<int> rowid,
 });
 
-class $$MemoriesTableFilterComposer
-    extends Composer<_$AppDatabase, $MemoriesTable> {
-  $$MemoriesTableFilterComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  ColumnFilters<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get content => $composableBuilder(
-      column: $table.content, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get embedding => $composableBuilder(
-      column: $table.embedding, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<double> get persistenceP => $composableBuilder(
-      column: $table.persistenceP, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<double> get emotionE => $composableBuilder(
-      column: $table.emotionE, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<double> get infoI => $composableBuilder(
-      column: $table.infoI, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<double> get judgeJ => $composableBuilder(
-      column: $table.judgeJ, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<double> get infoImportance => $composableBuilder(
-      column: $table.infoImportance,
-      builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<double> get timeCoef => $composableBuilder(
-      column: $table.timeCoef, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<double> get importance => $composableBuilder(
-      column: $table.importance, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get useCount => $composableBuilder(
-      column: $table.useCount, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get lastActiveAt => $composableBuilder(
-      column: $table.lastActiveAt, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get deletedAt => $composableBuilder(
-      column: $table.deletedAt, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get purgeAt => $composableBuilder(
-      column: $table.purgeAt, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<bool> get isSynced => $composableBuilder(
-      column: $table.isSynced, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get syncState => $composableBuilder(
-      column: $table.syncState, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get createdAt => $composableBuilder(
-      column: $table.createdAt, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get updatedAt => $composableBuilder(
-      column: $table.updatedAt, builder: (column) => ColumnFilters(column));
-}
-
-class $$MemoriesTableOrderingComposer
-    extends Composer<_$AppDatabase, $MemoriesTable> {
-  $$MemoriesTableOrderingComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  ColumnOrderings<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get content => $composableBuilder(
-      column: $table.content, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get embedding => $composableBuilder(
-      column: $table.embedding, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<double> get persistenceP => $composableBuilder(
-      column: $table.persistenceP,
-      builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<double> get emotionE => $composableBuilder(
-      column: $table.emotionE, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<double> get infoI => $composableBuilder(
-      column: $table.infoI, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<double> get judgeJ => $composableBuilder(
-      column: $table.judgeJ, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<double> get infoImportance => $composableBuilder(
-      column: $table.infoImportance,
-      builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<double> get timeCoef => $composableBuilder(
-      column: $table.timeCoef, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<double> get importance => $composableBuilder(
-      column: $table.importance, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get useCount => $composableBuilder(
-      column: $table.useCount, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get lastActiveAt => $composableBuilder(
-      column: $table.lastActiveAt,
-      builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get deletedAt => $composableBuilder(
-      column: $table.deletedAt, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get purgeAt => $composableBuilder(
-      column: $table.purgeAt, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<bool> get isSynced => $composableBuilder(
-      column: $table.isSynced, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get syncState => $composableBuilder(
-      column: $table.syncState, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get createdAt => $composableBuilder(
-      column: $table.createdAt, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get updatedAt => $composableBuilder(
-      column: $table.updatedAt, builder: (column) => ColumnOrderings(column));
-}
-
-class $$MemoriesTableAnnotationComposer
-    extends Composer<_$AppDatabase, $MemoriesTable> {
-  $$MemoriesTableAnnotationComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  GeneratedColumn<String> get id =>
-      $composableBuilder(column: $table.id, builder: (column) => column);
-
-  GeneratedColumn<String> get content =>
-      $composableBuilder(column: $table.content, builder: (column) => column);
-
-  GeneratedColumn<String> get embedding =>
-      $composableBuilder(column: $table.embedding, builder: (column) => column);
-
-  GeneratedColumn<double> get persistenceP => $composableBuilder(
-      column: $table.persistenceP, builder: (column) => column);
-
-  GeneratedColumn<double> get emotionE =>
-      $composableBuilder(column: $table.emotionE, builder: (column) => column);
-
-  GeneratedColumn<double> get infoI =>
-      $composableBuilder(column: $table.infoI, builder: (column) => column);
-
-  GeneratedColumn<double> get judgeJ =>
-      $composableBuilder(column: $table.judgeJ, builder: (column) => column);
-
-  GeneratedColumn<double> get infoImportance => $composableBuilder(
-      column: $table.infoImportance, builder: (column) => column);
-
-  GeneratedColumn<double> get timeCoef =>
-      $composableBuilder(column: $table.timeCoef, builder: (column) => column);
-
-  GeneratedColumn<double> get importance => $composableBuilder(
-      column: $table.importance, builder: (column) => column);
-
-  GeneratedColumn<int> get useCount =>
-      $composableBuilder(column: $table.useCount, builder: (column) => column);
-
-  GeneratedColumn<int> get lastActiveAt => $composableBuilder(
-      column: $table.lastActiveAt, builder: (column) => column);
-
-  GeneratedColumn<int> get deletedAt =>
-      $composableBuilder(column: $table.deletedAt, builder: (column) => column);
-
-  GeneratedColumn<int> get purgeAt =>
-      $composableBuilder(column: $table.purgeAt, builder: (column) => column);
-
-  GeneratedColumn<bool> get isSynced =>
-      $composableBuilder(column: $table.isSynced, builder: (column) => column);
-
-  GeneratedColumn<String> get syncState =>
-      $composableBuilder(column: $table.syncState, builder: (column) => column);
-
-  GeneratedColumn<int> get createdAt =>
-      $composableBuilder(column: $table.createdAt, builder: (column) => column);
-
-  GeneratedColumn<int> get updatedAt =>
-      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
-}
-
 class $$MemoriesTableTableManager extends RootTableManager<
     _$AppDatabase,
     $MemoriesTable,
     Memory,
     $$MemoriesTableFilterComposer,
     $$MemoriesTableOrderingComposer,
-    $$MemoriesTableAnnotationComposer,
     $$MemoriesTableCreateCompanionBuilder,
-    $$MemoriesTableUpdateCompanionBuilder,
-    (Memory, BaseReferences<_$AppDatabase, $MemoriesTable, Memory>),
-    Memory,
-    PrefetchHooks Function()> {
+    $$MemoriesTableUpdateCompanionBuilder> {
   $$MemoriesTableTableManager(_$AppDatabase db, $MemoriesTable table)
       : super(TableManagerState(
           db: db,
           table: table,
-          createFilteringComposer: () =>
-              $$MemoriesTableFilterComposer($db: db, $table: table),
-          createOrderingComposer: () =>
-              $$MemoriesTableOrderingComposer($db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$MemoriesTableAnnotationComposer($db: db, $table: table),
+          filteringComposer:
+              $$MemoriesTableFilterComposer(ComposerState(db, table)),
+          orderingComposer:
+              $$MemoriesTableOrderingComposer(ComposerState(db, table)),
           updateCompanionCallback: ({
             Value<String> id = const Value.absent(),
             Value<String> content = const Value.absent(),
@@ -7503,25 +6768,197 @@ class $$MemoriesTableTableManager extends RootTableManager<
             updatedAt: updatedAt,
             rowid: rowid,
           ),
-          withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
-              .toList(),
-          prefetchHooksCallback: null,
         ));
 }
 
-typedef $$MemoriesTableProcessedTableManager = ProcessedTableManager<
-    _$AppDatabase,
-    $MemoriesTable,
-    Memory,
-    $$MemoriesTableFilterComposer,
-    $$MemoriesTableOrderingComposer,
-    $$MemoriesTableAnnotationComposer,
-    $$MemoriesTableCreateCompanionBuilder,
-    $$MemoriesTableUpdateCompanionBuilder,
-    (Memory, BaseReferences<_$AppDatabase, $MemoriesTable, Memory>),
-    Memory,
-    PrefetchHooks Function()>;
+class $$MemoriesTableFilterComposer
+    extends FilterComposer<_$AppDatabase, $MemoriesTable> {
+  $$MemoriesTableFilterComposer(super.$state);
+  ColumnFilters<String> get id => $state.composableBuilder(
+      column: $state.table.id,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get content => $state.composableBuilder(
+      column: $state.table.content,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get embedding => $state.composableBuilder(
+      column: $state.table.embedding,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<double> get persistenceP => $state.composableBuilder(
+      column: $state.table.persistenceP,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<double> get emotionE => $state.composableBuilder(
+      column: $state.table.emotionE,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<double> get infoI => $state.composableBuilder(
+      column: $state.table.infoI,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<double> get judgeJ => $state.composableBuilder(
+      column: $state.table.judgeJ,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<double> get infoImportance => $state.composableBuilder(
+      column: $state.table.infoImportance,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<double> get timeCoef => $state.composableBuilder(
+      column: $state.table.timeCoef,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<double> get importance => $state.composableBuilder(
+      column: $state.table.importance,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get useCount => $state.composableBuilder(
+      column: $state.table.useCount,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get lastActiveAt => $state.composableBuilder(
+      column: $state.table.lastActiveAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get deletedAt => $state.composableBuilder(
+      column: $state.table.deletedAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get purgeAt => $state.composableBuilder(
+      column: $state.table.purgeAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get isSynced => $state.composableBuilder(
+      column: $state.table.isSynced,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get syncState => $state.composableBuilder(
+      column: $state.table.syncState,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get createdAt => $state.composableBuilder(
+      column: $state.table.createdAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get updatedAt => $state.composableBuilder(
+      column: $state.table.updatedAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+}
+
+class $$MemoriesTableOrderingComposer
+    extends OrderingComposer<_$AppDatabase, $MemoriesTable> {
+  $$MemoriesTableOrderingComposer(super.$state);
+  ColumnOrderings<String> get id => $state.composableBuilder(
+      column: $state.table.id,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get content => $state.composableBuilder(
+      column: $state.table.content,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get embedding => $state.composableBuilder(
+      column: $state.table.embedding,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<double> get persistenceP => $state.composableBuilder(
+      column: $state.table.persistenceP,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<double> get emotionE => $state.composableBuilder(
+      column: $state.table.emotionE,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<double> get infoI => $state.composableBuilder(
+      column: $state.table.infoI,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<double> get judgeJ => $state.composableBuilder(
+      column: $state.table.judgeJ,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<double> get infoImportance => $state.composableBuilder(
+      column: $state.table.infoImportance,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<double> get timeCoef => $state.composableBuilder(
+      column: $state.table.timeCoef,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<double> get importance => $state.composableBuilder(
+      column: $state.table.importance,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get useCount => $state.composableBuilder(
+      column: $state.table.useCount,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get lastActiveAt => $state.composableBuilder(
+      column: $state.table.lastActiveAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get deletedAt => $state.composableBuilder(
+      column: $state.table.deletedAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get purgeAt => $state.composableBuilder(
+      column: $state.table.purgeAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get isSynced => $state.composableBuilder(
+      column: $state.table.isSynced,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get syncState => $state.composableBuilder(
+      column: $state.table.syncState,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get createdAt => $state.composableBuilder(
+      column: $state.table.createdAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get updatedAt => $state.composableBuilder(
+      column: $state.table.updatedAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+}
+
 typedef $$MemoryTombstonesTableCreateCompanionBuilder
     = MemoryTombstonesCompanion Function({
   required String tombstoneId,
@@ -7545,126 +6982,23 @@ typedef $$MemoryTombstonesTableUpdateCompanionBuilder
   Value<int> rowid,
 });
 
-class $$MemoryTombstonesTableFilterComposer
-    extends Composer<_$AppDatabase, $MemoryTombstonesTable> {
-  $$MemoryTombstonesTableFilterComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  ColumnFilters<String> get tombstoneId => $composableBuilder(
-      column: $table.tombstoneId, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get memoryId => $composableBuilder(
-      column: $table.memoryId, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get reason => $composableBuilder(
-      column: $table.reason, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<String> get payloadHash => $composableBuilder(
-      column: $table.payloadHash, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get deletedAt => $composableBuilder(
-      column: $table.deletedAt, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get purgeAt => $composableBuilder(
-      column: $table.purgeAt, builder: (column) => ColumnFilters(column));
-
-  ColumnFilters<int> get cloudSyncedAt => $composableBuilder(
-      column: $table.cloudSyncedAt, builder: (column) => ColumnFilters(column));
-}
-
-class $$MemoryTombstonesTableOrderingComposer
-    extends Composer<_$AppDatabase, $MemoryTombstonesTable> {
-  $$MemoryTombstonesTableOrderingComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  ColumnOrderings<String> get tombstoneId => $composableBuilder(
-      column: $table.tombstoneId, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get memoryId => $composableBuilder(
-      column: $table.memoryId, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get reason => $composableBuilder(
-      column: $table.reason, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<String> get payloadHash => $composableBuilder(
-      column: $table.payloadHash, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get deletedAt => $composableBuilder(
-      column: $table.deletedAt, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get purgeAt => $composableBuilder(
-      column: $table.purgeAt, builder: (column) => ColumnOrderings(column));
-
-  ColumnOrderings<int> get cloudSyncedAt => $composableBuilder(
-      column: $table.cloudSyncedAt,
-      builder: (column) => ColumnOrderings(column));
-}
-
-class $$MemoryTombstonesTableAnnotationComposer
-    extends Composer<_$AppDatabase, $MemoryTombstonesTable> {
-  $$MemoryTombstonesTableAnnotationComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  GeneratedColumn<String> get tombstoneId => $composableBuilder(
-      column: $table.tombstoneId, builder: (column) => column);
-
-  GeneratedColumn<String> get memoryId =>
-      $composableBuilder(column: $table.memoryId, builder: (column) => column);
-
-  GeneratedColumn<String> get reason =>
-      $composableBuilder(column: $table.reason, builder: (column) => column);
-
-  GeneratedColumn<String> get payloadHash => $composableBuilder(
-      column: $table.payloadHash, builder: (column) => column);
-
-  GeneratedColumn<int> get deletedAt =>
-      $composableBuilder(column: $table.deletedAt, builder: (column) => column);
-
-  GeneratedColumn<int> get purgeAt =>
-      $composableBuilder(column: $table.purgeAt, builder: (column) => column);
-
-  GeneratedColumn<int> get cloudSyncedAt => $composableBuilder(
-      column: $table.cloudSyncedAt, builder: (column) => column);
-}
-
 class $$MemoryTombstonesTableTableManager extends RootTableManager<
     _$AppDatabase,
     $MemoryTombstonesTable,
     MemoryTombstone,
     $$MemoryTombstonesTableFilterComposer,
     $$MemoryTombstonesTableOrderingComposer,
-    $$MemoryTombstonesTableAnnotationComposer,
     $$MemoryTombstonesTableCreateCompanionBuilder,
-    $$MemoryTombstonesTableUpdateCompanionBuilder,
-    (
-      MemoryTombstone,
-      BaseReferences<_$AppDatabase, $MemoryTombstonesTable, MemoryTombstone>
-    ),
-    MemoryTombstone,
-    PrefetchHooks Function()> {
+    $$MemoryTombstonesTableUpdateCompanionBuilder> {
   $$MemoryTombstonesTableTableManager(
       _$AppDatabase db, $MemoryTombstonesTable table)
       : super(TableManagerState(
           db: db,
           table: table,
-          createFilteringComposer: () =>
-              $$MemoryTombstonesTableFilterComposer($db: db, $table: table),
-          createOrderingComposer: () =>
-              $$MemoryTombstonesTableOrderingComposer($db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$MemoryTombstonesTableAnnotationComposer($db: db, $table: table),
+          filteringComposer:
+              $$MemoryTombstonesTableFilterComposer(ComposerState(db, table)),
+          orderingComposer:
+              $$MemoryTombstonesTableOrderingComposer(ComposerState(db, table)),
           updateCompanionCallback: ({
             Value<String> tombstoneId = const Value.absent(),
             Value<String> memoryId = const Value.absent(),
@@ -7705,28 +7039,86 @@ class $$MemoryTombstonesTableTableManager extends RootTableManager<
             cloudSyncedAt: cloudSyncedAt,
             rowid: rowid,
           ),
-          withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
-              .toList(),
-          prefetchHooksCallback: null,
         ));
 }
 
-typedef $$MemoryTombstonesTableProcessedTableManager = ProcessedTableManager<
-    _$AppDatabase,
-    $MemoryTombstonesTable,
-    MemoryTombstone,
-    $$MemoryTombstonesTableFilterComposer,
-    $$MemoryTombstonesTableOrderingComposer,
-    $$MemoryTombstonesTableAnnotationComposer,
-    $$MemoryTombstonesTableCreateCompanionBuilder,
-    $$MemoryTombstonesTableUpdateCompanionBuilder,
-    (
-      MemoryTombstone,
-      BaseReferences<_$AppDatabase, $MemoryTombstonesTable, MemoryTombstone>
-    ),
-    MemoryTombstone,
-    PrefetchHooks Function()>;
+class $$MemoryTombstonesTableFilterComposer
+    extends FilterComposer<_$AppDatabase, $MemoryTombstonesTable> {
+  $$MemoryTombstonesTableFilterComposer(super.$state);
+  ColumnFilters<String> get tombstoneId => $state.composableBuilder(
+      column: $state.table.tombstoneId,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get memoryId => $state.composableBuilder(
+      column: $state.table.memoryId,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get reason => $state.composableBuilder(
+      column: $state.table.reason,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get payloadHash => $state.composableBuilder(
+      column: $state.table.payloadHash,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get deletedAt => $state.composableBuilder(
+      column: $state.table.deletedAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get purgeAt => $state.composableBuilder(
+      column: $state.table.purgeAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get cloudSyncedAt => $state.composableBuilder(
+      column: $state.table.cloudSyncedAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+}
+
+class $$MemoryTombstonesTableOrderingComposer
+    extends OrderingComposer<_$AppDatabase, $MemoryTombstonesTable> {
+  $$MemoryTombstonesTableOrderingComposer(super.$state);
+  ColumnOrderings<String> get tombstoneId => $state.composableBuilder(
+      column: $state.table.tombstoneId,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get memoryId => $state.composableBuilder(
+      column: $state.table.memoryId,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get reason => $state.composableBuilder(
+      column: $state.table.reason,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get payloadHash => $state.composableBuilder(
+      column: $state.table.payloadHash,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get deletedAt => $state.composableBuilder(
+      column: $state.table.deletedAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get purgeAt => $state.composableBuilder(
+      column: $state.table.purgeAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get cloudSyncedAt => $state.composableBuilder(
+      column: $state.table.cloudSyncedAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+}
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;

@@ -30,10 +30,10 @@ class MoeTalkSkin extends SkinConfig {
   // ===== 颜色方案 =====
   
   @override
-  MoeColors get lightColors => MoeColors.light;
+  MoeColors get lightColors => MoeColors.light();
   
   @override
-  MoeColors get darkColors => MoeColors.dark;
+  MoeColors get darkColors => MoeColors.dark();
   
   // ===== 形状参数 =====
   
@@ -41,7 +41,7 @@ class MoeTalkSkin extends SkinConfig {
   double get cardRadius => 10.0;
   
   @override
-  double get bubbleRadius => 10.0;
+  double get bubbleRadius => 18.0;
   
   @override
   double get buttonRadius => 8.0;
@@ -76,7 +76,6 @@ class MoeTalkSkin extends SkinConfig {
   BoxDecoration cardDecoration(MoeColors colors) {
     return BoxDecoration(
       color: colors.panel,
-      borderRadius: BorderRadius.circular(cardRadius),
       border: Border.all(color: colors.border, width: borderWidth),
     );
   }
@@ -95,7 +94,6 @@ class MoeTalkSkin extends SkinConfig {
   BoxDecoration toastDecoration(Color bgColor) {
     return BoxDecoration(
       color: bgColor.withValues(alpha: 0.95),
-      borderRadius: BorderRadius.circular(12),
       boxShadow: [
         BoxShadow(
           color: Colors.black.withValues(alpha: 0.2),
@@ -110,7 +108,6 @@ class MoeTalkSkin extends SkinConfig {
   BoxDecoration bubbleDecoration(MoeColors colors, {required bool isMe}) {
     return BoxDecoration(
       color: isMe ? colors.bubbleRightBg : colors.bubbleLeftBg,
-      borderRadius: BorderRadius.circular(bubbleRadius),
       border: Border.all(
         color: isMe ? colors.bubbleRightBorder : colors.bubbleLeftBorder,
         width: borderWidth,
@@ -132,7 +129,6 @@ class MoeTalkSkin extends SkinConfig {
   BoxDecoration inputDecoration(MoeColors colors) {
     return BoxDecoration(
       color: colors.surface,
-      borderRadius: BorderRadius.circular(buttonRadius),
       border: Border.all(color: colors.border, width: borderWidth),
     );
   }

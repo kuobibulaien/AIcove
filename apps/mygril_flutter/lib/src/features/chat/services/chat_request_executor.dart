@@ -16,8 +16,11 @@ import '../../settings/app_settings.dart';
 import '../../settings/mcp_api.dart';
 import '../../plugins/plugin_providers.dart';
 import '../../plugins/domain/plugin.dart';
+import '../../plugins/domain/plugin_content.dart';
+import '../../plugins/time_awareness/time_awareness_plugin.dart';
 import '../../../core/api/agent_api.dart';
 import '../../../core/app_logger.dart';
+import '../../../core/utils/token_estimator.dart';
 
 /// 请求上下文：封装一次请求所需的所有配置
 class ChatRequestContext {
@@ -29,7 +32,11 @@ class ChatRequestContext {
   final Map<String, dynamic> toolPrefs;
   final List<Map<String, dynamic>> messages;
   final String? userText;
-  
+  /// 模型级别温度参数（优先于全局设置）
+  final double? modelTemperature;
+  /// 模型级别 Top P 参数
+  final double? modelTopP;
+
   const ChatRequestContext({
     required this.settings,
     required this.modelFullId,
@@ -39,7 +46,12 @@ class ChatRequestContext {
     required this.toolPrefs,
     required this.messages,
     this.userText,
+    this.modelTemperature,
+    this.modelTopP,
   });
+
+  /// 获取实际使用的温度参数
+  double get effectiveTemperature => modelTemperature ?? settings.temperature;
 }
 
 /// 请求响应结果
@@ -47,12 +59,14 @@ class ChatRequestResult {
   final String replyText;
   final String processedText;
   final List<PluginEvent> pluginEvents;
+  final List<PluginContent> pluginContents;
   final List<Map<String, dynamic>> toolResults;
   
   const ChatRequestResult({
     required this.replyText,
     required this.processedText,
     required this.pluginEvents,
+    this.pluginContents = const [],
     required this.toolResults,
   });
 }
@@ -124,8 +138,11 @@ class ChatRequestExecutor {
       }
     } catch (_) {}
 
-    // 4. 构建消息列表
-    final reqMessages = history.map((m) => m.toHistoryJson()).toList();
+    // 4. 构建消息列表（根据时间增强插件配置决定是否添加时间戳）
+    final pluginManager = _ref.read(pluginManagerProvider);
+    final timeAwarenessPlugin = pluginManager.getPlugin('time_awareness') as TimeAwarenessPlugin?;
+    final includeTimestamp = timeAwarenessPlugin?.shouldIncludeTimestamp ?? false;
+    final reqMessages = history.map((m) => m.toHistoryJson(includeTimestamp: includeTimestamp)).toList();
     
     // 5. 构建系统提示词
     final systemParts = <String>[];
@@ -136,8 +153,7 @@ class ChatRequestExecutor {
       systemParts.add('你应该称呼用户为"${conv.addressUser}"。');
     }
 
-    // 6. 插件提示词
-    final pluginManager = _ref.read(pluginManagerProvider);
+    // 6. 插件提示词（复用前面定义的 pluginManager）
     final pluginPrompts = await pluginManager.getSystemPrompts(userMessage: userText ?? '');
     if (pluginPrompts.isNotEmpty) {
       systemParts.add(pluginPrompts);
@@ -150,6 +166,17 @@ class ChatRequestExecutor {
       });
     }
 
+    // Token 截断：确保消息总长度不超过模型上下文限制
+    final modelName = modelFull.contains(':')
+        ? modelFull.split(':').last
+        : modelFull;
+    final maxContextTokens = getModelContextLimit(modelName);
+    final truncatedMessages = truncateMessagesToFit(
+      messages: reqMessages,
+      maxContextTokens: maxContextTokens,
+      reserveTokens: 2048,
+    );
+
     return ChatRequestContext(
       settings: settings,
       modelFullId: modelFull,
@@ -157,8 +184,10 @@ class ChatRequestExecutor {
       providerApiKey: providerApiKey?.isEmpty == true ? null : providerApiKey,
       customConfig: providerAuth.customConfig,
       toolPrefs: toolPrefs,
-      messages: reqMessages,
+      messages: truncatedMessages,
       userText: userText,
+      modelTemperature: settings.getModelConfig(model).temperature,
+      modelTopP: settings.getModelConfig(model).topP,
     );
   }
 
@@ -182,7 +211,8 @@ class ChatRequestExecutor {
       modelFullId: context.modelFullId,
       messages: context.messages,
       userText: context.userText ?? '',
-      temperature: context.settings.temperature,
+      temperature: context.effectiveTemperature,
+      topP: context.modelTopP,
       token: context.settings.backendApiKey,
       toolPrefs: context.toolPrefs,
       providerApiBase: context.providerApiBase,
@@ -213,6 +243,7 @@ class ChatRequestExecutor {
       replyText: rich.text,
       processedText: pluginResult.processedText,
       pluginEvents: pluginResult.events,
+      pluginContents: pluginResult.contents,
       toolResults: rich.toolResults,
     );
   }

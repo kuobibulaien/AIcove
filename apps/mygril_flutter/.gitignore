@@ -44,3 +44,6 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 .ace-tool/
+
+# 本地 API Key 配置（不要提交到 git）
+assets/local_keys.json

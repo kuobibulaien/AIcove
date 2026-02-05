@@ -1,6 +1,65 @@
 /// TTS 文本解析器
 /// 负责解析 <tts></tts> 标记和文本拆分
 class TtsParser {
+  /// MiniMax 支持的语气词标签列表
+  /// 文档: https://platform.minimaxi.com/docs/api-reference/speech-t2a-http
+  static const _minimaxMoodTags = [
+    'laughs', // 笑声
+    'chuckle', // 轻笑
+    'coughs', // 咳嗽
+    'clear-throat', // 清嗓子
+    'groans', // 呻吟
+    'breath', // 正常换气
+    'pant', // 喘气
+    'inhale', // 吸气
+    'exhale', // 呼气
+    'gasps', // 倒吸气
+    'sniffs', // 吸鼻子
+    'sighs', // 叹气
+    'snorts', // 喷鼻息
+    'burps', // 打嗝
+    'lip-smacking', // 咂嘴
+    'humming', // 哼唱
+    'hissing', // 嘶嘶声
+    'emm', // 嗯
+    'whistles', // 口哨
+    'sneezes', // 喷嚏
+    'crying', // 抽泣
+    'applause', // 鼓掌
+  ];
+
+  /// 清理 MiniMax 专有标签（语气词和停顿）
+  ///
+  /// 用于 TTS 回退时，将原本用于语音合成的文本转为纯文本显示。
+  /// 只应在 <tts> 标签内部的文本上调用此方法。
+  ///
+  /// 清理的标签：
+  /// - 语气词：(laughs)、(sighs)、(crying) 等
+  /// - 停顿控制：<#1.5#>（表示停顿 1.5 秒）
+  static String stripMinimaxTags(String text) {
+    if (text.isEmpty) return text;
+    var result = text;
+
+    // 1. 移除语气词标签：(laughs)、(sighs) 等
+    // 构建正则：(laughs|chuckle|coughs|...)
+    final moodPattern = _minimaxMoodTags.join('|');
+    result = result.replaceAll(
+      RegExp('\\(($moodPattern)\\)', caseSensitive: false),
+      '',
+    );
+
+    // 2. 移除停顿控制标签：<#0.5#>、<#1.5#> 等
+    // 格式：<#x#>，x 为 0.01~99.99 的数字
+    result = result.replaceAll(
+      RegExp(r'<#\d+(?:\.\d{1,2})?#>'),
+      '',
+    );
+
+    // 3. 清理多余空格（连续空格合并为一个）
+    result = result.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+    return result;
+  }
   /// 解析文本中的 TTS 标记
   /// 返回标记列表和移除标记后的纯文本
   static TtsParseResult parse(String text) {

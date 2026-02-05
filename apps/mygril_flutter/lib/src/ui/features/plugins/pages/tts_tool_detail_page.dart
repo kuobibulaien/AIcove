@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../features/settings/mcp_api.dart';
 import '../../../../features/tts/tts_player.dart';
 
@@ -312,155 +313,163 @@ class _TtsToolDetailPageState extends ConsumerState<TtsToolDetailPage> {
   }
 
   Widget _buildInfoCard() {
+    final theme = Theme.of(context);
     final defaults = _response?.defaults;
     final selectedPreset = _findPreset(_selectedPresetId);
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: const BorderSide(color: moeBorderLight, width: borderWidth),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('音色配置', style: TextStyle(fontWeight: FontWeight.w700, color: moeText)),
-            const SizedBox(height: 12),
-            if (_presets.isNotEmpty) ...[
-              Row(
-                children: [
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      initialValue: _selectedPresetId,
-                      decoration: const InputDecoration(
-                        labelText: '选择预设',
-                        border: OutlineInputBorder(),
+    return MoeG2ClipRRect(
+      radius: 12,
+      child: Container(
+        decoration: MoeG2Decoration(
+          radius: 12,
+          color: theme.cardColor,
+          border: Border.all(color: moeBorderLight, width: borderWidth),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('音色配置', style: TextStyle(fontWeight: FontWeight.w700, color: moeText)),
+              const SizedBox(height: 12),
+              if (_presets.isNotEmpty) ...[
+                Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        initialValue: _selectedPresetId,
+                        decoration: const InputDecoration(
+                          labelText: '选择预设',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: _presets
+                            .map(
+                              (preset) => DropdownMenuItem<String>(
+                                value: preset.id,
+                                child: Text('${preset.name}${preset.builtin ? "（内置）" : ''}'),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (value) {
+                          if (value == null) return;
+                          final preset = _findPreset(value);
+                          if (preset == null) return;
+                          setState(() {
+                            _selectedPresetId = value;
+                            _applyConfigToFields(preset.config);
+                          });
+                        },
                       ),
-                      items: _presets
-                          .map(
-                            (preset) => DropdownMenuItem<String>(
-                              value: preset.id,
-                              child: Text('${preset.name}${preset.builtin ? "（内置）" : ''}'),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (value) {
-                        if (value == null) return;
-                        final preset = _findPreset(value);
-                        if (preset == null) return;
-                        setState(() {
-                          _selectedPresetId = value;
-                          _applyConfigToFields(preset.config);
-                        });
-                      },
                     ),
-                  ),
-                  if (selectedPreset != null && !selectedPreset.builtin)
-                    IconButton(
-                      tooltip: '删除预设',
-                      onPressed: _presetBusy ? null : () => _deletePreset(selectedPreset.id),
-                      icon: const Icon(Icons.delete_outline),
-                    ),
-                ],
+                    if (selectedPreset != null && !selectedPreset.builtin)
+                      IconButton(
+                        tooltip: '删除预设',
+                        onPressed: _presetBusy ? null : () => _deletePreset(selectedPreset.id),
+                        icon: const Icon(Icons.delete_outline),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+              ],
+              TextField(
+                controller: _apiKeyCtrl,
+                decoration: InputDecoration(
+                  labelText: 'API Key',
+                  hintText: defaults?.apiKey ?? '',
+                  border: const OutlineInputBorder(),
+                  helperText: '请填写 TTS 服务的 API Key',
+                ),
+                obscureText: true,
               ),
               const SizedBox(height: 12),
-            ],
-            TextField(
-              controller: _apiKeyCtrl,
-              decoration: InputDecoration(
-                labelText: 'API Key',
-                hintText: defaults?.apiKey ?? '',
-                border: const OutlineInputBorder(),
-                helperText: '请填写 TTS 服务的 API Key',
-              ),
-              obscureText: true,
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _audioUrlCtrl,
-              decoration: InputDecoration(
-                labelText: '音频文件 URL',
-                hintText: defaults?.promptAudioUrl ?? '',
-                border: const OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _requestUrlCtrl,
-              decoration: InputDecoration(
-                labelText: '请求地址（可选）',
-                hintText: defaults?.requestUrl ?? '',
-                border: const OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _speedCtrl,
-              decoration: InputDecoration(
-                labelText: '默认语速（倍速，可选）',
-                hintText: defaults?.speed?.toString() ?? '1.0',
-                suffixText: 'x',
-                border: const OutlineInputBorder(),
-              ),
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _promptTextCtrl,
-              minLines: 3,
-              maxLines: 6,
-              decoration: InputDecoration(
-                labelText: '提示词（引导模型模仿音色）',
-                hintText: defaults?.promptText ?? '',
-                border: const OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 12,
-              runSpacing: 8,
-              children: [
-                FilledButton.icon(
-                  onPressed: (_saving || _presetBusy) ? null : _save,
-                  icon: _saving
-                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                      : const Icon(Icons.save_outlined),
-                  label: const Text('保存音色设置'),
+              TextField(
+                controller: _audioUrlCtrl,
+                decoration: InputDecoration(
+                  labelText: '音频文件 URL',
+                  hintText: defaults?.promptAudioUrl ?? '',
+                  border: const OutlineInputBorder(),
                 ),
-                if (defaults != null)
-                  TextButton.icon(
-                    onPressed: (_saving || _presetBusy)
-                        ? null
-                        : () {
-                            _applyConfigToFields(defaults);
-                          },
-                    icon: const Icon(Icons.settings_backup_restore),
-                    label: const Text('恢复默认'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _requestUrlCtrl,
+                decoration: InputDecoration(
+                  labelText: '请求地址（可选）',
+                  hintText: defaults?.requestUrl ?? '',
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _speedCtrl,
+                decoration: InputDecoration(
+                  labelText: '默认语速（倍速，可选）',
+                  hintText: defaults?.speed?.toString() ?? '1.0',
+                  suffixText: 'x',
+                  border: const OutlineInputBorder(),
+                ),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _promptTextCtrl,
+                minLines: 3,
+                maxLines: 6,
+                decoration: InputDecoration(
+                  labelText: '提示词（引导模型模仿音色）',
+                  hintText: defaults?.promptText ?? '',
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                children: [
+                  FilledButton.icon(
+                    onPressed: (_saving || _presetBusy) ? null : _save,
+                    icon: _saving
+                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : const Icon(Icons.save_outlined),
+                    label: const Text('保存音色设置'),
                   ),
-                TextButton.icon(
-                  onPressed: (_saving || _presetBusy) ? null : _savePresetDialog,
-                  icon: const Icon(Icons.bookmark_add_outlined),
-                  label: const Text('保存为预设'),
-                ),
-              ],
-            ),
-          ],
+                  if (defaults != null)
+                    TextButton.icon(
+                      onPressed: (_saving || _presetBusy)
+                          ? null
+                          : () {
+                              _applyConfigToFields(defaults);
+                            },
+                      icon: const Icon(Icons.settings_backup_restore),
+                      label: const Text('恢复默认'),
+                    ),
+                  TextButton.icon(
+                    onPressed: (_saving || _presetBusy) ? null : _savePresetDialog,
+                    icon: const Icon(Icons.bookmark_add_outlined),
+                    label: const Text('保存为预设'),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
   Widget _buildTestCard() {
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: const BorderSide(color: moeBorderLight, width: borderWidth),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
+    final theme = Theme.of(context);
+
+    return MoeG2ClipRRect(
+      radius: 12,
+      child: Container(
+        decoration: MoeG2Decoration(
+          radius: 12,
+          color: theme.cardColor,
+          border: Border.all(color: moeBorderLight, width: borderWidth),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text('联通性测试', style: TextStyle(fontWeight: FontWeight.w700, color: moeText)),
@@ -492,6 +501,7 @@ class _TtsToolDetailPageState extends ConsumerState<TtsToolDetailPage> {
               ),
             ],
           ],
+          ),
         ),
       ),
     );

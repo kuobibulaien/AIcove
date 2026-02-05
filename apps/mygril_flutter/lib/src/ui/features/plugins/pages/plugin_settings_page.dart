@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
+import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../features/plugins/plugin_providers.dart';
 import 'memory_plugin_detail_page.dart';
 import 'tts_plugin_detail_page.dart';
@@ -49,72 +50,74 @@ class PluginSettingsPage extends ConsumerWidget {
   /// 构建插件列表项
   Widget _buildPluginListItem(BuildContext context, dynamic plugin) {
     final colors = context.moeColors;
-    return Container(
-      decoration: BoxDecoration(
-        color: colors.panel,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: colors.border,
-          width: 1,
+    return MoeG2ClipRRect(
+      radius: 12,
+      child: Container(
+        decoration: MoeG2Decoration(
+          radius: 12,
+          color: colors.panel,
+          border: Border.all(
+            color: colors.border,
+            width: 1,
+          ),
         ),
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: () {
-            _navigateToPluginDetail(context, plugin);
-          },
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                // 插件图标
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: colors.primary.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(
-                    plugin.icon,
-                    color: colors.primary,
-                    size: 24,
-                  ),
-                ),
-                const SizedBox(width: 12),
-
-                // 插件名称（居左）
-                Expanded(
-                  child: Text(
-                    plugin.name,
-                    style: TextStyle(
-                      color: colors.text,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () {
+              _navigateToPluginDetail(context, plugin);
+            },
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  // 插件图标
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: MoeG2Decoration(
+                      radius: 8,
+                      color: colors.primary.withValues(alpha: 0.1),
+                    ),
+                    child: Icon(
+                      plugin.icon,
+                      color: colors.primary,
+                      size: 24,
                     ),
                   ),
-                ),
+                  const SizedBox(width: 12),
 
-                // 已开启/已关闭状态（居右）
-                Text(
-                  plugin.enabled ? '已开启' : '已关闭',
-                  style: TextStyle(
-                    color: plugin.enabled ? colors.primary : colors.textSecondary,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
+                  // 插件名称（居左）
+                  Expanded(
+                    child: Text(
+                      plugin.name,
+                      style: TextStyle(
+                        color: colors.text,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
 
-                // 箭头图标
-                Icon(
-                  Icons.arrow_forward_ios,
-                  color: colors.textSecondary,
-                  size: 16,
-                ),
-              ],
+                  // 已启用/已禁用状态（居右）
+                  Text(
+                    plugin.enabled ? '已启用' : '已禁用',
+                    style: TextStyle(
+                      color: plugin.enabled ? colors.primary : colors.textSecondary,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+
+                  // 箭头图标
+                  Icon(
+                    Icons.arrow_forward_ios,
+                    color: colors.textSecondary,
+                    size: 16,
+                  ),
+                ],
+              ),
             ),
           ),
         ),

@@ -29,6 +29,7 @@ class ConversationConverter {
       isFavorite: Value(c.isFavorite),
       isMuted: Value(c.isMuted),
       notificationSound: Value(c.notificationSound),
+      enabledPlugins: Value(c.enabledPlugins != null ? jsonEncode(c.enabledPlugins) : null),
       lastMessage: Value(c.lastMessage),
       lastMessageTime: Value(c.lastMessageTime?.millisecondsSinceEpoch),
       unreadCount: Value(c.unreadCount),
@@ -56,6 +57,9 @@ class ConversationConverter {
       isFavorite: c.isFavorite,
       isMuted: c.isMuted,
       notificationSound: c.notificationSound,
+      enabledPlugins: c.enabledPlugins != null
+          ? (jsonDecode(c.enabledPlugins!) as List).cast<String>()
+          : null,
       lastMessage: c.lastMessage,
       lastMessageTime: c.lastMessageTime != null
           ? DateTime.fromMillisecondsSinceEpoch(c.lastMessageTime!)

@@ -1,23 +1,24 @@
 /// MoeAppBar - 统一的 AppBar 样式组件
-/// 
+///
 /// 遵循 DRY 原则：封装可换肤的 AppBar 样式
-/// 
+///
 /// 特性：
 /// - 从 SkinConfig 读取装饰样式
 /// - 支持皮肤切换
 /// - 统一的标题样式（粗体、24号字）
-/// 
+///
 /// 更新记录：
 /// - 2025-12-06: 从多个页面抽取公共 AppBar 样式
 /// - 2025-12-06: 接入皮肤系统
 library;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../theme/skin_provider.dart';
 import '../../theme/tokens.dart';
 
 /// MoeTalk 风格 AppBar
-/// 
+///
 /// 用法：
 /// ```dart
 /// Scaffold(
@@ -31,22 +32,22 @@ import '../../theme/tokens.dart';
 class MoeAppBar extends StatelessWidget implements PreferredSizeWidget {
   /// 标题文本
   final String title;
-  
+
   /// 是否显示返回按钮（默认 false，用于一级页面）
   final bool showBackButton;
-  
+
   /// 自定义 leading 组件（优先级高于 showBackButton）
   final Widget? leading;
-  
+
   /// leading 区域宽度
   final double? leadingWidth;
-  
+
   /// 右侧操作按钮
   final List<Widget>? actions;
-  
+
   /// 标题是否居中
   final bool centerTitle;
-  
+
   /// 标题左侧内边距（当有 leading 时生效）
   final double titleLeftPadding;
 
@@ -69,12 +70,12 @@ class MoeAppBar extends StatelessWidget implements PreferredSizeWidget {
     final skin = context.skin;
     final colors = context.moeColors;
     final decoration = skin.appBarDecoration(colors);
-    
+
     // 计算 leading 相关配置
     // 无自定义 leading 且不显示返回按钮时：设置 leadingWidth=0 消除左侧空白
     final hasLeading = leading != null || showBackButton;
     final effectiveLeadingWidth = leadingWidth ?? (hasLeading ? null : 0);
-    
+
     // 状态栏样式：颜色与 AppBar 同步
     final appBarColor = decoration.color ?? colors.headerColor;
     final systemOverlayStyle = SystemUiOverlayStyle(
@@ -89,7 +90,8 @@ class MoeAppBar extends StatelessWidget implements PreferredSizeWidget {
       foregroundColor: colors.headerContentColor,
       elevation: 0,
       leadingWidth: effectiveLeadingWidth,
-      titleSpacing: leading != null ? 0 : null,
+      // titleSpacing 默认会额外“挤”出一段空白；我们统一用 title 的 Padding 控制间距，避免重复叠加。
+      titleSpacing: 0,
       leading: leading,
       automaticallyImplyLeading: showBackButton,
       bottom: PreferredSize(
@@ -109,7 +111,11 @@ class MoeAppBar extends StatelessWidget implements PreferredSizeWidget {
         ),
       ),
       title: Padding(
-        padding: EdgeInsets.only(left: leading != null ? 0 : titleLeftPadding),
+        // 有 leading（含系统返回按钮）时不再额外加左 padding，避免“返回箭头和标题之间空一段”。
+        // centerTitle=true 时也不加 padding，保证视觉居中。
+        padding: EdgeInsets.only(
+          left: (centerTitle || hasLeading) ? 0 : titleLeftPadding,
+        ),
         child: Text(
           title,
           style: TextStyle(
@@ -145,7 +151,7 @@ class MoeDetailAppBar extends StatelessWidget implements PreferredSizeWidget {
     final skin = context.skin;
     final colors = context.moeColors;
     final decoration = skin.appBarDecoration(colors);
-    
+
     // 状态栏样式：颜色与 AppBar 同步
     final appBarColor = decoration.color ?? colors.headerColor;
     final systemOverlayStyle = SystemUiOverlayStyle(

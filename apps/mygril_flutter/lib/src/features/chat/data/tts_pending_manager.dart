@@ -6,7 +6,9 @@
 /// - 创建和替换占位消息
 /// - 监听 TTS 处理完成事件
 ///
-/// 遵循 DRY 原则：从 ChatActions 中提取的 TTS 相关逻辑
+/// 更新记录：
+/// - 2025-12-31: 遵循 DRY 原则，从 ChatActions 中提取的 TTS 相关逻辑
+/// - 2026-01-14: 添加 TTS 失败回退机制
 library;
 
 import 'dart:async';
@@ -22,6 +24,7 @@ import '../../plugins/plugin_providers.dart';
 import '../../../core/models/message_block.dart';
 import '../../../core/models/block_status.dart';
 import '../../../core/app_logger.dart';
+import '../services/tts_fallback_notification.dart';
 
 /// TTS 音频处理结果
 class TtsAudioResult {
@@ -53,6 +56,9 @@ class PendingTtsAudio {
   });
 }
 
+/// TTS 失败回退通知回调类型
+typedef TtsFallbackNotifier = void Function(String reason);
+
 /// TTS 待处理管理器
 class TtsPendingManager {
   TtsPendingManager(this._ref, this._ttsManager) {
@@ -65,6 +71,9 @@ class TtsPendingManager {
   static const Duration _ttsTimeout = Duration(seconds: 30);
   final Map<String, PendingTtsAudio> _pendingEvents = {};
   StreamSubscription<TtsPlayItem>? _subscription;
+  
+  /// TTS 失败回退通知回调
+  TtsFallbackNotifier? onTtsFallback;
 
   /// 设置 TTS 处理完成监听器
   void _setupProcessedListener() {
@@ -91,18 +100,30 @@ class TtsPendingManager {
     if (pending.completer.isCompleted) return;
 
     final audioUrl = item.audioUrl;
-    if (audioUrl == null || audioUrl.isEmpty) {
-      pending.completer.complete(const TtsAudioResult.failure('empty_url'));
-      return;
-    }
-
     final text = pending.originalText?.isNotEmpty == true
         ? pending.originalText!
         : ((item.event.data['originalText'] as String?)?.trim() ??
             (item.event.data['text'] as String?)?.trim() ??
             '');
 
-    // 就地替换占位语音条
+    // TTS 生成失败（空 URL），回退到文本消息
+    if (audioUrl == null || audioUrl.isEmpty) {
+      _log('tts:fallback', {
+        'eventId': item.id,
+        'reason': 'empty_url',
+        'textLength': text.length,
+      }, level: 'WARN');
+      await _fallbackToTextMessage(
+        convId: pending.convId,
+        placeholderId: pending.placeholderId,
+        text: text,
+        reason: 'empty_url',
+      );
+      pending.completer.complete(const TtsAudioResult.failure('empty_url'));
+      return;
+    }
+
+    // TTS 成功，就地替换占位语音条
     try {
       await _ref.read(conversationsProvider.notifier).updateOne(
         pending.convId,
@@ -134,6 +155,54 @@ class TtsPendingManager {
     } catch (_) {}
 
     pending.completer.complete(const TtsAudioResult.success(null));
+  }
+
+  /// 回退到文本消息
+  /// 
+  /// 当 TTS 生成失败时，将占位语音消息替换为原始文本消息
+  Future<void> _fallbackToTextMessage({
+    required String convId,
+    required String placeholderId,
+    required String text,
+    required String reason,
+  }) async {
+    // 如果文本为空，直接删除占位消息
+    if (text.isEmpty) {
+      await removePlaceholder(convId, placeholderId);
+      return;
+    }
+
+    try {
+      await _ref.read(conversationsProvider.notifier).updateOne(
+        convId,
+        (c) {
+          final updated = c.messages.map((m) {
+            if (m.id != placeholderId) return m;
+            // 替换为文本消息
+            return Message(
+              id: m.id,
+              role: m.role,
+              content: text,
+              createdAt: m.createdAt,
+              status: 'sent',
+            );
+          }).toList();
+          return c.copyWith(
+            messages: updated,
+            updatedAt: DateTime.now(),
+            lastMessage: text.length > 20 ? '${text.substring(0, 20)}...' : text,
+            lastMessageTime: DateTime.now(),
+          );
+        },
+      );
+      
+      // 触发通知回调
+      onTtsFallback?.call(reason);
+    } catch (e) {
+      _log('tts:fallback_error', {'error': e.toString()}, level: 'ERROR');
+      // 回退失败时，至少删除占位消息
+      await removePlaceholder(convId, placeholderId);
+    }
   }
 
   /// 创建 TTS 占位消息
@@ -182,8 +251,15 @@ class TtsPendingManager {
         if (p != null && !p.completer.isCompleted) {
           _log('tts:timeout', {'eventId': event.id, 'convId': convId}, level: 'WARN');
           p.completer.complete(const TtsAudioResult.failure('timeout'));
+          // 超时时回退到文本消息，而不是直接删除
+          final text = p.originalText ?? '';
           try {
-            await removePlaceholder(convId, placeholderId);
+            await _fallbackToTextMessage(
+              convId: convId,
+              placeholderId: placeholderId,
+              text: text,
+              reason: 'timeout',
+            );
           } catch (_) {}
         }
       });
@@ -258,7 +334,23 @@ class TtsPendingManager {
 }
 
 /// Provider 定义
-final ttsPendingManagerProvider = Provider((ref) {
+/// 注意：如果 TTS 插件不存在，返回 null 而不是抛异常
+final ttsPendingManagerProvider = Provider<TtsPendingManager?>((ref) {
   final ttsManager = ref.read(ttsPlayerManagerProvider);
-  return TtsPendingManager(ref, ttsManager);
+  if (ttsManager == null) {
+    // TTS 插件不存在，返回 null
+    return null;
+  }
+  
+  final manager = TtsPendingManager(ref, ttsManager);
+  
+  // 连接到全局通知服务
+  try {
+    final notificationService = ref.read(ttsFallbackNotificationServiceProvider);
+    manager.onTtsFallback = notificationService.notify;
+  } catch (_) {
+    // 服务未初始化，忽略
+  }
+  
+  return manager;
 });

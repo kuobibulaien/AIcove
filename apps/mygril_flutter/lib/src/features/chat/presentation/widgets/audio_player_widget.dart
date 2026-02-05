@@ -1,10 +1,18 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:path_provider/path_provider.dart';
+import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../core/models/message_block.dart';
 import '../../../../core/config.dart';
 import '../../../../core/models/block_status.dart';
+import '../../../../core/app_logger.dart';
 
 /// 音频播放器状态管理
 class AudioPlayerState {
@@ -44,6 +52,8 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
   final AudioPlayer _player;
   final String audioUrl;
   bool _completed = false;
+  bool _autoResetOnComplete = true;
+  bool _isReady = false; // 标记音频是否已准备就绪
 
   AudioPlayerController(this.audioUrl)
       : _player = AudioPlayer(),
@@ -60,6 +70,16 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
         isLoading: playerState.processingState == ProcessingState.loading ||
                    playerState.processingState == ProcessingState.buffering,
       );
+
+      // 播放完成后自动重置到开头，避免 UI 一直停留在“播放中”或无法重播
+      if (playerState.processingState == ProcessingState.completed &&
+          _autoResetOnComplete) {
+        _autoResetOnComplete = false;
+        unawaited(() async {
+          await _player.pause();
+          await _player.seek(Duration.zero);
+        }());
+      }
     });
 
     // 监听播放位置
@@ -75,21 +95,146 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
     });
 
     // 自动加载音频
+    _player.playbackEventStream.listen((_) {}, onError: (Object e, StackTrace st) {
+      AppLogger.error('AudioPlayer', '音频播放流出错', metadata: {
+        'error': e.toString(),
+      });
+      state = state.copyWith(
+        isPlaying: false,
+        isLoading: false,
+        error: '播放出错: $e',
+      );
+    });
+
     _loadAudio();
+  }
+
+  bool _isHttpUrl(String url) => url.startsWith('http://') || url.startsWith('https://');
+
+  bool _isDataUrl(String url) => url.startsWith('data:');
+
+  bool _isFileUrl(String url) => url.startsWith('file://');
+
+  bool _looksLikeAbsoluteFilePath(String path) {
+    if (path.startsWith('/')) return true; // Android/iOS
+    return RegExp(r'^[a-zA-Z]:\\\\').hasMatch(path); // Windows
+  }
+
+  String _guessFileExtFromMime(String mime) {
+    final m = mime.toLowerCase();
+    if (m.contains('wav')) return 'wav';
+    if (m.contains('ogg')) return 'ogg';
+    if (m.contains('mpeg') || m.contains('mp3')) return 'mp3';
+    return 'bin';
+  }
+
+  String _guessFileExtFromBytes(List<int> bytes, {required String fallbackExt}) {
+    bool startsWithAscii(String s) {
+      if (bytes.length < s.length) return false;
+      for (var i = 0; i < s.length; i++) {
+        if (bytes[i] != s.codeUnitAt(i)) return false;
+      }
+      return true;
+    }
+
+    if (startsWithAscii('RIFF') &&
+        bytes.length >= 12 &&
+        String.fromCharCodes(bytes.sublist(8, 12)) == 'WAVE') {
+      return 'wav';
+    }
+    if (startsWithAscii('OggS')) return 'ogg';
+    if (startsWithAscii('ID3')) return 'mp3';
+    if (bytes.length >= 2 && bytes[0] == 0xFF && (bytes[1] & 0xE0) == 0xE0) return 'mp3';
+    return fallbackExt;
+  }
+
+  Future<String> _writeDataUrlToTempFile(String dataUrl) async {
+    final commaIndex = dataUrl.indexOf(',');
+    if (commaIndex <= 'data:'.length) {
+      throw Exception('data url 格式不正确');
+    }
+
+    final meta = dataUrl.substring('data:'.length, commaIndex);
+    final dataPart = dataUrl.substring(commaIndex + 1);
+
+    final parts = meta.split(';');
+    final mime = parts.isNotEmpty ? parts.first : 'application/octet-stream';
+    final isBase64 = parts.any((p) => p.toLowerCase() == 'base64');
+    if (!isBase64) {
+      throw Exception('暂不支持非 base64 的 data url');
+    }
+
+    final bytes = base64Decode(dataPart);
+    if (bytes.isEmpty) {
+      throw Exception('音频数据为空');
+    }
+
+    final fallbackExt = _guessFileExtFromMime(mime);
+    final ext = _guessFileExtFromBytes(bytes, fallbackExt: fallbackExt);
+    final hash = md5.convert(utf8.encode(dataUrl)).toString();
+
+    final dir = await getTemporaryDirectory();
+    final cacheDir = Directory('${dir.path}${Platform.pathSeparator}mygril_audio_cache');
+    if (!await cacheDir.exists()) {
+      await cacheDir.create(recursive: true);
+    }
+
+    final file = File('${cacheDir.path}${Platform.pathSeparator}audio_$hash.$ext');
+    if (!await file.exists()) {
+      await file.writeAsBytes(bytes, flush: true);
+      AppLogger.info('AudioPlayer', '已将 data url 落地为临时文件', metadata: {
+        'ext': ext,
+        'size': bytes.length,
+        'path': file.path,
+      });
+    }
+
+    return file.path;
+  }
+
+  Future<String> _resolvePlayableSource(String rawUrl) async {
+    if (_isHttpUrl(rawUrl)) return rawUrl;
+
+    if (_isDataUrl(rawUrl)) {
+      return _writeDataUrlToTempFile(rawUrl);
+    }
+
+    if (_isFileUrl(rawUrl)) {
+      return Uri.parse(rawUrl).toFilePath();
+    }
+
+    if (_looksLikeAbsoluteFilePath(rawUrl) && await File(rawUrl).exists()) {
+      return rawUrl;
+    }
+
+    return '${resolvedApiBase()}$rawUrl';
   }
 
   Future<void> _loadAudio() async {
     try {
       state = state.copyWith(isLoading: true, error: null);
+      _isReady = false;
 
       // 构建完整URL
-      final fullUrl = audioUrl.startsWith('http')
-          ? audioUrl
-          : '${resolvedApiBase()}$audioUrl';
+      _autoResetOnComplete = true;
+      final resolved = await _resolvePlayableSource(audioUrl);
 
-      await _player.setUrl(fullUrl);
+      if (_isHttpUrl(resolved)) {
+        await _player.setUrl(resolved);
+      } else if (await File(resolved).exists()) {
+        await _player.setFilePath(resolved);
+      } else {
+        await _player.setUrl(resolved);
+      }
+
+      // 音频加载完成，标记为就绪
+      _isReady = true;
       state = state.copyWith(isLoading: false);
     } catch (e) {
+      AppLogger.error('AudioPlayer', '音频加载失败', metadata: {
+        'error': e.toString(),
+      });
+      _isReady = false;
       state = state.copyWith(
         isLoading: false,
         error: '加载失败: $e',
@@ -97,18 +242,44 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
     }
   }
 
+  Future<void> reload() async {
+    await _loadAudio();
+  }
+
   Future<void> togglePlayPause() async {
     try {
+      if (state.error != null) {
+        await _loadAudio();
+        if (state.error != null) return;
+      }
+
       if (state.isPlaying) {
         await _player.pause();
       } else {
-        // 如果上一次已经完整播放结束，再次点击时先把进度重置到开头，保证可以重播
-        if (_completed &&
-            state.duration > Duration.zero &&
-            state.position >= state.duration) {
+        _autoResetOnComplete = true;
+
+        // 如果音频还没准备好，等待加载完成
+        if (!_isReady) {
+          await _loadAudio();
+          if (!_isReady || state.error != null) return;
+        }
+
+        // 首次播放或播放完成后重播，都从头开始
+        // 这样可以避免首次播放时因为缓冲导致的"吞字"问题
+        if (_completed ||
+            state.position >= state.duration && state.duration > Duration.zero) {
           await _player.seek(Duration.zero);
           _completed = false;
         }
+
+        // 确保从位置0开始播放（首次播放的关键修复）
+        // just_audio 在 setUrl/setFilePath 后，position 可能不是 0
+        final currentPos = _player.position;
+        if (currentPos.inMilliseconds > 100) {
+          // 如果当前位置超过100ms，说明可能有偏移，重置到开头
+          await _player.seek(Duration.zero);
+        }
+
         await _player.play();
       }
     } catch (e) {
@@ -237,6 +408,17 @@ class AudioPlayerWidget extends ConsumerWidget {
       );
     }
 
+    if (state.error != null) {
+      return GestureDetector(
+        onTap: controller.reload,
+        child: Icon(
+          Icons.refresh_rounded,
+          color: color.withValues(alpha: 0.9),
+          size: size,
+        ),
+      );
+    }
+
     return GestureDetector(
       onTap: controller.togglePlayPause,
       child: Icon(
@@ -273,7 +455,7 @@ class _AnimatedWaveformState extends State<_AnimatedWaveform>
   void initState() {
     super.initState();
     _controller = AnimationController(
-      duration: const Duration(milliseconds: 1200),
+      duration: kAnimLong,
       vsync: this,
     )..repeat();
     
@@ -341,9 +523,9 @@ class _AnimatedWaveformState extends State<_AnimatedWaveform>
               return Container(
                 width: 3,
                 height: height * heightFactor,
-                decoration: BoxDecoration(
+                decoration: MoeG2Decoration(
+                  radius: 1.5,
                   color: widget.color.withValues(alpha: widget.isPlaying ? 0.9 : 0.6),
-                  borderRadius: BorderRadius.circular(1.5),
                 ),
               );
             }),

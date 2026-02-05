@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'smooth_clip.dart';
 import '../../../core/utils/role_transition_tags.dart';
 import '../../../core/utils/blurred_background_cache.dart';
+import '../../theme/tokens.dart';
 
 /// 角色背景 Hero 组件
 ///
@@ -58,7 +59,7 @@ class _RoleBackgroundHeroState extends State<RoleBackgroundHero> {
 
   Future<void> _loadBlurredAsync() async {
     // 等待 Hero 动画完成后再替换（约 300ms）
-    await Future.delayed(const Duration(milliseconds: 350));
+    await Future.delayed(kAnimPageReverse);
     if (!mounted) return;
 
     final blurred = await BlurredBackgroundCache.getBlurredFuture(
@@ -100,7 +101,7 @@ class _RoleBackgroundHeroState extends State<RoleBackgroundHero> {
       animation: animation,
       builder: (context, child) {
         final currentRadius = lerpDouble(fromRadius, toRadius, animation.value) ?? fromRadius;
-        return SmoothClipRRect(
+        return MoeG2ClipRRect(
           radius: currentRadius,
           child: _buildBackgroundImage(),
         );
@@ -110,7 +111,7 @@ class _RoleBackgroundHeroState extends State<RoleBackgroundHero> {
 
   Widget _buildBackground() {
     if (widget.borderRadius > 0) {
-      return SmoothClipRRect(
+      return MoeG2ClipRRect(
         radius: widget.borderRadius,
         child: _buildBackgroundImage(),
       );
@@ -124,7 +125,7 @@ class _RoleBackgroundHeroState extends State<RoleBackgroundHero> {
     // 详情页：如果从 fallback 切换到 blurred，使用淡入动画
     if (widget.isDestination && !_isFallback) {
       return AnimatedSwitcher(
-        duration: const Duration(milliseconds: 150),
+        duration: kAnimFast,
         child: _buildImageWidget(image, key: ValueKey(_isFallback)),
       );
     }

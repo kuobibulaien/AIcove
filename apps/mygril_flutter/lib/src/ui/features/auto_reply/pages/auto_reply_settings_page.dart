@@ -17,6 +17,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../../features/settings/app_settings.dart';
@@ -90,8 +91,8 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('主动回复设置'),
-        backgroundColor: colors.surface,
-        foregroundColor: colors.text,
+        backgroundColor: colors.headerColor,
+        foregroundColor: colors.headerContentColor,
         elevation: 0,
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(borderWidth),
@@ -210,15 +211,14 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage> {
   }
 
   Widget _buildEnabledSwitch(AutoReplySettings draft, MoeColors colors) {
-    return SwitchListTile(
-      value: draft.enabled,
-      onChanged: (value) => _updateDraft(draft.copyWith(enabled: value)),
-      activeColor: colors.primary,
-      title: const Text('允许 AI 主动发消息'),
-      subtitle: Text(
-        draft.enabled ? 'AI 会根据对话氛围自动排程提醒' : '关闭后仅在你发起对话时才会回应',
-        style: const TextStyle(fontSize: 13),
-      ),
+    return MoeSettingsRow(
+      icon: Icons.chat_bubble_outline,
+      label: '允许 AI 主动发消息',
+      subtitle: draft.enabled ? 'AI 会根据对话氛围自动排程提醒' : '关闭后仅在你发起对话时才会回应',
+      trailingType: MoeSettingsRowTrailing.switchControl,
+      switchValue: draft.enabled,
+      onSwitchChanged: (value) => _updateDraft(draft.copyWith(enabled: value)),
+      showDivider: false,
     );
   }
 
@@ -226,9 +226,9 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage> {
     return Container(
       margin: const EdgeInsets.only(top: 12),
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
+      decoration: MoeG2Decoration(
+        radius: 12,
         color: colors.surface,
-        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: colors.borderLight),
       ),
       child: Text(
@@ -239,12 +239,14 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage> {
   }
 
   Widget _buildExactAlarmSwitch(AutoReplySettings draft, MoeColors colors) {
-    return SwitchListTile(
-      value: draft.allowExactAlarm,
-      onChanged: (value) => _updateDraft(draft.copyWith(allowExactAlarm: value)),
-      title: const Text('尝试使用精准提醒'),
-      subtitle: const Text('需要系统授权，能减小延迟但更耗电'),
-      activeColor: colors.primary,
+    return MoeSettingsRow(
+      icon: Icons.access_time,
+      label: '尝试使用精准提醒',
+      subtitle: '需要系统授权，能减小延迟但更耗电',
+      trailingType: MoeSettingsRowTrailing.switchControl,
+      switchValue: draft.allowExactAlarm,
+      onSwitchChanged: (value) => _updateDraft(draft.copyWith(allowExactAlarm: value)),
+      showDivider: false,
     );
   }
 
@@ -307,6 +309,12 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage> {
         return '已暂停：${event.title}';
       case AutoReplyTriggerEventType.resumed:
         return '已恢复：${event.title}';
+      case AutoReplyTriggerEventType.expired:
+        final reason = event.reason;
+        if (reason != null && reason.isNotEmpty) {
+          return '已过期：${event.title}（$reason）';
+        }
+        return '已过期：${event.title}';
     }
   }
 }

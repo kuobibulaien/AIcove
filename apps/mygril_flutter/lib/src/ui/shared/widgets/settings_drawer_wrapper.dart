@@ -23,7 +23,7 @@ class SettingsDrawerWrapper extends StatefulWidget {
     super.key,
     required this.child,
     required this.settingsBuilder,
-    this.animationDuration = const Duration(milliseconds: 350),
+    this.animationDuration = kAnimPageReverse,
     this.secondarySlideRatio = 0.08,
   });
 

@@ -8,6 +8,7 @@ library;
 
 import 'package:flutter/material.dart';
 import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/effects/smooth_clip.dart';
 
 /// TTS 帮助说明组件
 class TtsHelpSection extends StatelessWidget {
@@ -19,9 +20,9 @@ class TtsHelpSection extends StatelessWidget {
 
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
+      decoration: MoeG2Decoration(
+        radius: 12,
         color: colors.panel.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: colors.border.withValues(alpha: 0.5),
           width: 1,
@@ -46,11 +47,12 @@ class TtsHelpSection extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           Text(
-            '启用 TTS 插件后，AI 会自动使用 <tts>文本</tts> 标记需要转换为语音的内容。\n\n'
-            '标记规则：\n'
-            '• 每个 <tts></tts> 标记内的文本不超过设定的字数限制\n'
-            '• 超过限制的文本会自动拆分成多段\n'
-            '• 一轮对话可以使用多个 <tts></tts> 标记\n'
+            '启用后，AI 可以调用「speak」工具将文字转为语音播放。\n\n'
+            '工作模式：\n'
+            '• 支持工具调用的模型：使用原生 Tool Calling（更可靠）\n'
+            '• 不支持的模型：自动降级为 <tts> 标记方式\n\n'
+            '使用提示：\n'
+            '• 在添加模型渠道时勾选"工具调用"能力可启用原生模式\n'
             '• 语音会按顺序自动转换和播放',
             style: TextStyle(
               color: colors.textSecondary,

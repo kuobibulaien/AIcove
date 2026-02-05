@@ -20,6 +20,7 @@ export 'buttons/moe_tile_button.dart';
 export 'form/moe_text_field.dart';
 export 'form/moe_switch.dart';
 export 'form/moe_checkbox.dart';
+export 'form/moe_toggle_bar.dart';
 
 // === 列表组件 ===
 export 'list/moe_settings_group.dart';
@@ -34,8 +35,23 @@ export 'feedback/moe_empty_state.dart';
 export 'sheets/moe_action_sheet.dart';
 export 'sheets/moe_bottom_sheet.dart';
 
+// === 菜单组件 ===
+export 'menus/moe_popup_menu.dart';
+
 // === 导航组件 ===
 export 'nav/moe_filter_chip_bar.dart';
+export 'nav/moe_bottom_tabs.dart';
+export 'nav/moe_seg_tab_bar.dart';
+
+// === 供应商组件 ===
+export 'provider/index.dart';
+
+// === 配置组件 ===
+export 'config_form_widget.dart';
+
+// === 媒体组件 ===
+export 'media/moe_image_preview.dart';
+export 'media/attachment_preview.dart';
 
 // === 已有组件 ===
 export 'moe_app_bar.dart';

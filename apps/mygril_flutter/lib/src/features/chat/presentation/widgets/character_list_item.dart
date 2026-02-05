@@ -1,12 +1,15 @@
 /// 消息列表卡片组件 - MoeTalk 风格
-/// 
+///
 /// 更新记录：
 /// - 2025-12-06: 接入皮肤系统（背景色、描边）
 library;
+
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:mygril_flutter/src/core/utils/data_image.dart';
 import '../../../../ui/theme/skin_provider.dart';
 import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/effects/smooth_clip.dart';
 
 import '../../domain/conversation.dart';
 
@@ -15,6 +18,7 @@ class CharacterListItem extends StatelessWidget {
   final Conversation conversation;
   final bool isActive;
   final VoidCallback onTap;
+  final GestureTapDownCallback? onTapDown;
   final VoidCallback? onEdit;
 
   const CharacterListItem({
@@ -22,6 +26,7 @@ class CharacterListItem extends StatelessWidget {
     required this.conversation,
     this.isActive = false,
     required this.onTap,
+    this.onTapDown,
     this.onEdit,
   });
 
@@ -63,6 +68,7 @@ class CharacterListItem extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
+        onTapDown: onTapDown,
         child: Container(
           // 左右内边距，保证卡片内容居中
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -79,16 +85,18 @@ class CharacterListItem extends StatelessWidget {
               Container(
                 width: 56,
                 height: 56,
-                decoration: BoxDecoration(
-                  borderRadius: const BorderRadius.all(radiusBubble),
+                decoration: MoeG2Decoration(
+                  radius: radiusBubble.x,
                   color: colors.surface, // 使用主题背景色，自动适配深浅模式
                   border: Border.all(
                     color: colors.borderLight, // 添加细微描边，增强边界感
                     width: 0.5,
                   ),
                 ),
-                clipBehavior: Clip.antiAlias,
-                child: _buildAvatarContent(conversation),
+                child: MoeG2ClipRRect(
+                  radius: radiusBubble.x,
+                  child: _buildAvatarContent(conversation),
+                ),
               ),
               const SizedBox(width: 12),
               // 中间：名称 + 最后一条消息
@@ -169,15 +177,19 @@ class CharacterListItem extends StatelessWidget {
                   const SizedBox(height: 6),
                   if (!conversation.isMuted && conversation.unreadCount > 0)
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      constraints: const BoxConstraints(minWidth: 20, minHeight: 20),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFF4D4F),
-                        borderRadius: BorderRadius.circular(10),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      constraints:
+                          const BoxConstraints(minWidth: 20, minHeight: 20),
+                      decoration: MoeG2Decoration(
+                        radius: 10,
+                        color: Color(0xFFFF4D4F),
                       ),
                       child: Center(
                         child: Text(
-                          conversation.unreadCount > 99 ? '99+' : '${conversation.unreadCount}',
+                          conversation.unreadCount > 99
+                              ? '99+'
+                              : '${conversation.unreadCount}',
                           style: const TextStyle(
                             fontSize: 11,
                             color: Colors.white,
@@ -200,30 +212,43 @@ class CharacterListItem extends StatelessWidget {
 Widget _buildAvatarContent(Conversation conversation) {
   final avatarBytes = decodeDataImage(conversation.avatarUrl);
   if (avatarBytes != null) {
-    return Image.memory(avatarBytes, fit: BoxFit.cover);
+    return Image.memory(avatarBytes, fit: BoxFit.cover, gaplessPlayback: true);
   }
 
   final avatar = conversation.avatarUrl;
   if (avatar != null && avatar.startsWith('http')) {
-    return Image.network(avatar, fit: BoxFit.cover);
+    // 使用 CachedNetworkImage，确保"列表页 ↔ 聊天页"可以复用同一套缓存（减少闪烁/重复下载）
+    return CachedNetworkImage(
+      imageUrl: avatar,
+      fit: BoxFit.cover,
+      fadeInDuration: Duration.zero,
+      placeholder: (context, url) => _buildFallbackLetter(conversation),
+      errorWidget: (context, url, error) => _buildFallbackLetter(conversation),
+    );
   }
   if (avatar != null && avatar.trim().isNotEmpty) {
+    // 解析对齐标记（如 #top）
+    final alignment = avatar.contains('#top') ? Alignment.topCenter : Alignment.center;
+    final cleanUrl = avatar.split('#').first;
     return Image.asset(
-      avatar,
+      cleanUrl,
       fit: BoxFit.cover,
+      alignment: alignment,
+      gaplessPlayback: true,
       errorBuilder: (_, __, ___) => _buildFallbackLetter(conversation),
     );
   }
 
   final charBytes = decodeDataImage(conversation.characterImage);
   if (charBytes != null) {
-    return Image.memory(charBytes, fit: BoxFit.cover);
+    return Image.memory(charBytes, fit: BoxFit.cover, gaplessPlayback: true);
   }
   final char = conversation.characterImage;
   if (char != null && char.trim().isNotEmpty) {
     return Image.asset(
       char,
       fit: BoxFit.cover,
+      gaplessPlayback: true,
       errorBuilder: (_, __, ___) => _buildFallbackLetter(conversation),
     );
   }
@@ -232,7 +257,8 @@ Widget _buildAvatarContent(Conversation conversation) {
 }
 
 Widget _buildFallbackLetter(Conversation conversation) {
-  final text = conversation.displayName.isNotEmpty ? conversation.displayName[0] : '新';
+  final text =
+      conversation.displayName.isNotEmpty ? conversation.displayName[0] : '新';
   return Center(
     child: Text(
       text,

@@ -8,17 +8,14 @@ final autoReplyServiceProvider = Provider((ref) => AutoReplyService(ref));
 
 class AutoReplyService {
   final Ref _ref;
-  
+
   AutoReplyService(this._ref) {
     _listenToEvents();
   }
 
   void _listenToEvents() {
-    // We listen to the state of the event provider.
-    // Note: listen callback fires immediately with current value if we use fireImmediately: true, 
-    // but here we only want changes.
     _ref.listen<AutoReplyTriggerEvent?>(
-      autoReplyTriggerEventProvider, 
+      autoReplyTriggerEventProvider,
       (previous, next) {
         if (next != null && next.type == AutoReplyTriggerEventType.fired) {
           _handleFiredEvent(next);
@@ -28,26 +25,29 @@ class AutoReplyService {
   }
 
   Future<void> _handleFiredEvent(AutoReplyTriggerEvent event) async {
-    AppLogger.info('AutoReplyService', 'Trigger fired', metadata: {'title': event.title, 'id': event.triggerId});
-    
-    try {
-       final trigger = AutoReplyTrigger(
-         id: event.triggerId, 
-         title: event.title, 
-         type: AutoReplyTriggerType.fixed, 
-         status: AutoReplyTriggerStatus.completed, 
-         createdAt: DateTime.now(), 
-         nextFireAt: DateTime.now(), 
-         allowNight: true, 
-         requireExact: false, 
-         delayMinutes: 0, 
-         manual: false
-       );
+    AppLogger.info('AutoReplyService', 'Trigger fired', metadata: {
+      'title': event.title,
+      'id': event.triggerId,
+    });
 
-       await _ref.read(chatActionsProvider).sendProactiveTrigger(trigger);
+    try {
+      // 从 state 中获取真实的触发器数据
+      final triggers = _ref.read(autoReplyTriggersProvider).valueOrNull ?? [];
+      final trigger = triggers.where((t) => t.id == event.triggerId).firstOrNull;
+
+      if (trigger == null) {
+        AppLogger.warning('AutoReplyService', 'Trigger not found in state', metadata: {
+          'triggerId': event.triggerId,
+        });
+        return;
+      }
+
+      await _ref.read(chatActionsProvider).sendProactiveTrigger(trigger);
 
     } catch (e) {
-       AppLogger.error('AutoReplyService', 'Failed to process fired trigger', metadata: {'error': e.toString()});
+      AppLogger.error('AutoReplyService', 'Failed to process fired trigger', metadata: {
+        'error': e.toString(),
+      });
     }
   }
 }

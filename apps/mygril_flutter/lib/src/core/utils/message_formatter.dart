@@ -1,14 +1,17 @@
 import 'kaomoji_parser.dart';
 
 /// 消息格式化配置
+///
+/// 注意：分段功能是纯前端展示逻辑，不影响消息存储。
+/// 消息在数据库中保持完整，分段仅在 UI 渲染时处理。
 class MessageFormatConfig {
-  /// 是否启用分段
+  /// 是否启用分段显示
   final bool enableChunking;
 
   /// 是否过滤标点
   final bool filterPunctuation;
 
-  /// 分段标点列表
+  /// 分段标点列表（用空格分隔便于编辑）
   final List<String> chunkPunctuations;
 
   /// 过滤标点列表
@@ -18,7 +21,7 @@ class MessageFormatConfig {
   final double stickerProbability;
 
   const MessageFormatConfig({
-    this.enableChunking = false,
+    this.enableChunking = true, // 默认开启分段
     this.filterPunctuation = false,
     this.chunkPunctuations = const ['。', '！', '？', '，', '、', '；', '…'],
     this.filterPunctuations = const ['。', '，', '、', '；', '…', ',', ';'],
@@ -53,7 +56,7 @@ class MessageFormatConfig {
 
   factory MessageFormatConfig.fromJson(Map<String, dynamic> json) {
     return MessageFormatConfig(
-      enableChunking: json['enableChunking'] as bool? ?? false,
+      enableChunking: json['enableChunking'] as bool? ?? true, // 默认开启
       filterPunctuation: json['filterPunctuation'] as bool? ?? false,
       chunkPunctuations: (json['chunkPunctuations'] as List<dynamic>?)?.cast<String>() ??
           const ['。', '！', '？', '，', '、', '；', '…'],

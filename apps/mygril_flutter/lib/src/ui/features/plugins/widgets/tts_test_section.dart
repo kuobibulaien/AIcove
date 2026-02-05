@@ -1,9 +1,11 @@
 /// TtsTestSection - TTS 测试功能组件
-/// 
+///
 /// 从 tts_plugin_detail_page.dart 提取，处理 TTS 测试功能。
-/// 
+///
 /// 更新记录：
 /// - 2025-12-31: 从 tts_plugin_detail_page.dart 提取
+/// - 2026-01-15: 适配新的 TtsService 构造函数（从统一模型管理获取 API 配置）
+/// - 2026-01-27: 删除阿里云音色列表，音色管理统一到 tts_settings_form.dart
 library;
 
 import 'package:flutter/material.dart';
@@ -12,8 +14,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/models/message_block.dart';
 import '../../../../features/plugins/plugin_providers.dart';
 import '../../../../features/plugins/tts/tts_service.dart';
+import '../../../../features/settings/app_settings.dart';
 import '../../../../features/chat/presentation/widgets/audio_player_widget.dart';
 import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
 
 /// 测试状态枚举
@@ -47,6 +51,39 @@ class _TtsTestSectionState extends ConsumerState<TtsTestSection> {
       return;
     }
 
+    // 获取 TTS 配置
+    final config = ref.read(ttsPluginConfigProvider);
+    if (config.selectedProviderId == null) {
+      MoeToast.warning(context, '请先选择 TTS 渠道');
+      return;
+    }
+
+    if (config.selectedModelId == null) {
+      MoeToast.warning(context, '请先选择 TTS 模型');
+      return;
+    }
+
+    if (config.selectedVoicePresetId == null) {
+      MoeToast.warning(context, '请先选择音色');
+      return;
+    }
+
+    // 从 appSettingsProvider 获取 API 配置
+    final appSettings = ref.read(appSettingsProvider).valueOrNull;
+    if (appSettings == null) {
+      MoeToast.warning(context, '设置加载中，请稍后重试');
+      return;
+    }
+
+    // 现在通过模型类型标签选择 TTS 模型，不再要求渠道具有 'tts' capability
+    final provider = appSettings.providers
+        .where((p) => p.id == config.selectedProviderId)
+        .firstOrNull;
+    if (provider == null) {
+      MoeToast.warning(context, '未找到选中的渠道');
+      return;
+    }
+
     setState(() {
       _testStatus = TtsTestStatus.testing;
       _testError = null;
@@ -55,8 +92,14 @@ class _TtsTestSectionState extends ConsumerState<TtsTestSection> {
 
     try {
       // 使用当前配置创建 TTS 服务
-      final config = ref.read(ttsPluginConfigProvider);
-      final service = TtsService(config);
+      final apiKey = provider.apiKeys.isNotEmpty ? provider.apiKeys.first : null;
+      final service = TtsService(
+        config: config,
+        apiKey: apiKey,
+        requestUrl: provider.apiBaseUrl,
+        requestFormat: provider.customConfig['requestFormat'] as String? ?? 'openai_tts',
+        model: config.selectedModelId,
+      );
 
       // 调用转换
       final result = await service.convert(testText);
@@ -93,9 +136,9 @@ class _TtsTestSectionState extends ConsumerState<TtsTestSection> {
 
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
+      decoration: MoeG2Decoration(
+        radius: 12,
         color: colors.panel,
-        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: colors.border),
       ),
       child: Column(
@@ -128,38 +171,14 @@ class _TtsTestSectionState extends ConsumerState<TtsTestSection> {
             ),
           ),
           const SizedBox(height: 8),
-          TextField(
+          MoeTextField(
             controller: _testTextController,
             maxLines: 3,
-            style: TextStyle(
-              color: colors.text,
-              fontSize: 14,
-            ),
-            decoration: InputDecoration(
-              hintText: '输入要测试转换的文本...',
-              hintStyle: TextStyle(
-                color: colors.muted,
-                fontSize: 14,
-              ),
-              filled: true,
-              fillColor: colors.surface,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: colors.border),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: colors.border),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: colors.primary, width: 2),
-              ),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 10,
-              ),
-            ),
+            hint: '输入要测试转换的文本...',
+            fillColor: colors.surface,
+            borderColor: colors.border,
+            focusBorderColor: colors.primary,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           ),
           const SizedBox(height: 16),
 
@@ -188,9 +207,9 @@ class _TtsTestSectionState extends ConsumerState<TtsTestSection> {
           const SizedBox(height: 16),
           Container(
             padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
+            decoration: MoeG2Decoration(
+              radius: 8,
               color: colors.primary.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(8),
               border: Border.all(color: colors.primary.withValues(alpha: 0.3)),
             ),
             child: Column(
@@ -232,9 +251,9 @@ class _TtsTestSectionState extends ConsumerState<TtsTestSection> {
           const SizedBox(height: 16),
           Container(
             padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
+            decoration: MoeG2Decoration(
+              radius: 8,
               color: colors.accent.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(8),
               border: Border.all(color: colors.accent.withValues(alpha: 0.3)),
             ),
             child: Row(

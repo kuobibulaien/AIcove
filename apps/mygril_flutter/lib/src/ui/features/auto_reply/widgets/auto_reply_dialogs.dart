@@ -8,8 +8,9 @@ library;
 
 import 'package:flutter/material.dart';
 
-import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
+import '../../../../ui/theme/tokens.dart';
 import '../../../../features/settings/app_settings.dart';
 
 /// 模型选择选项
@@ -93,35 +94,36 @@ Future<String?> showEditPromptSheet({
     context: context,
     title: '编辑 AI 分析提示词',
     showCloseButton: true,
-    maxHeight: MediaQuery.of(context).size.height * 0.9,
+    maxHeight: MediaQuery.sizeOf(context).height * 0.9,
     builder: (context) {
       final colors = context.moeColors;
+      // 键盘处理由 MoeBottomSheet 统一处理，内部使用固定 padding
       return Padding(
-        padding: EdgeInsets.only(
-          left: 16,
-          right: 16,
-          top: 16,
-          bottom: MediaQuery.of(context).viewInsets.bottom + 16,
-        ),
+        padding: const EdgeInsets.all(16),
         child: Column(
           children: [
             Expanded(
-              child: TextField(
-                controller: controller,
-                maxLines: null,
-                expands: true,
-                textAlignVertical: TextAlignVertical.top,
-                decoration: InputDecoration(
-                  hintText: '请输入提示词...',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  contentPadding: const EdgeInsets.all(12),
+              child: Container(
+                decoration: MoeG2Decoration(
+                  radius: 8,
+                  color: colors.surfaceAlt,
+                  border: Border.all(color: colors.borderLight),
                 ),
-                style: TextStyle(
-                  fontSize: 13,
-                  fontFamily: 'monospace',
-                  color: colors.text,
+                child: TextField(
+                  controller: controller,
+                  maxLines: null,
+                  expands: true,
+                  textAlignVertical: TextAlignVertical.top,
+                  decoration: const InputDecoration(
+                    hintText: '请输入提示词...',
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.all(12),
+                  ),
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontFamily: 'monospace',
+                    color: colors.text,
+                  ),
                 ),
               ),
             ),

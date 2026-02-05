@@ -10,7 +10,8 @@ class Conversation {
   final String? selfAddress; // 角色的自称（例如：我、本小姐、奴家等）
   final String? addressUser; // 角色对"我"的称呼（例如：老师、先生、主人等）
   final String? voiceFile; // 音色文件路径/数据（用于 TTS）
-  final String personaPrompt;
+  final String? description; // 角色简介（给用户看的介绍）
+  final String personaPrompt; // 人格提示词（给 AI 用的设定）
   final List<Message> messages;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -21,6 +22,8 @@ class Conversation {
   final bool isFavorite; // 是否收藏（我的角色卡）
   final bool isMuted; // 消息免打扰
   final bool notificationSound; // 消息提示音
+  // 插件设置
+  final List<String>? enabledPlugins; // 允许使用的插件ID列表，null表示允许所有
   // 消息列表相关字段
   final String? lastMessage; // 最后一条消息内容
   final DateTime? lastMessageTime; // 最后消息时间戳
@@ -36,6 +39,7 @@ class Conversation {
     this.selfAddress,
     this.addressUser,
     this.voiceFile,
+    this.description,
     this.personaPrompt = '',
     this.messages = const [],
     required this.createdAt,
@@ -46,6 +50,7 @@ class Conversation {
     this.isFavorite = false,
     this.isMuted = false,
     this.notificationSound = true,
+    this.enabledPlugins,
     this.lastMessage,
     this.lastMessageTime,
     this.unreadCount = 0,
@@ -61,6 +66,7 @@ class Conversation {
     String? selfAddress,
     String? addressUser,
     String? voiceFile,
+    String? description,
     String? personaPrompt,
     List<Message>? messages,
     DateTime? createdAt,
@@ -71,6 +77,7 @@ class Conversation {
     bool? isFavorite,
     bool? isMuted,
     bool? notificationSound,
+    List<String>? enabledPlugins,
     String? lastMessage,
     DateTime? lastMessageTime,
     int? unreadCount,
@@ -85,6 +92,7 @@ class Conversation {
       selfAddress: selfAddress ?? this.selfAddress,
       addressUser: addressUser ?? this.addressUser,
       voiceFile: voiceFile ?? this.voiceFile,
+      description: description ?? this.description,
       personaPrompt: personaPrompt ?? this.personaPrompt,
       messages: messages ?? this.messages,
       createdAt: createdAt ?? this.createdAt,
@@ -95,6 +103,7 @@ class Conversation {
       isFavorite: isFavorite ?? this.isFavorite,
       isMuted: isMuted ?? this.isMuted,
       notificationSound: notificationSound ?? this.notificationSound,
+      enabledPlugins: enabledPlugins ?? this.enabledPlugins,
       lastMessage: lastMessage ?? this.lastMessage,
       lastMessageTime: lastMessageTime ?? this.lastMessageTime,
       unreadCount: unreadCount ?? this.unreadCount,

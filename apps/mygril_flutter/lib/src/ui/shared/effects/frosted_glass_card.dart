@@ -11,10 +11,12 @@
 /// 更新记录：
 /// - 2025-12-07: 从 role_card_page.dart 抽取，简化为纯毛玻璃效果
 /// - 2025-12-07: 改用 SmoothClipRRect 实现 iOS 风格平滑圆角
+/// - 2026-01-22: 圆角统一升级为 MoeG2ClipRRect / MoeG2Decoration（Figma G2 连续曲线）
 /// - 2025-12-25: 修复描边不生效与阴影被裁剪问题，增强卡片边角线条可见性
 library;
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import '../../theme/tokens.dart';
 import 'smooth_clip.dart';
 
 /// 毛玻璃卡片 - 图片背景 + 高斯模糊
@@ -31,7 +33,7 @@ class FrostedGlassCard extends StatelessWidget {
   /// 卡片高度
   final double? height;
   
-  /// 圆角半径
+  /// 圆角半径，默认 MoeSmoothRadii.md (20px)
   final double borderRadius;
   
   /// 模糊强度 (默认 25)
@@ -49,7 +51,7 @@ class FrostedGlassCard extends StatelessWidget {
     required this.child,
     this.width,
     this.height,
-    this.borderRadius = 16,
+    this.borderRadius = MoeSmoothRadii.md,
     this.blurSigma = 25,
     this.boxShadow,
     this.onTap,
@@ -59,12 +61,12 @@ class FrostedGlassCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    // 使用 SmoothClipRRect 实现 iOS 风格平滑圆角
+    // 使用 MoeG2ClipRRect / MoeG2Decoration 实现 G2 连续曲线圆角
     // 阴影需要绘制在裁剪外层，否则会被 Clip 吞掉
     final card = Container(
       width: width,
       height: height,
-      decoration: SmoothRectDecoration(
+      decoration: MoeG2Decoration(
         radius: borderRadius,
         boxShadow: boxShadow ?? [
           BoxShadow(
@@ -79,10 +81,10 @@ class FrostedGlassCard extends StatelessWidget {
           ),
         ],
       ),
-      child: SmoothClipRRect(
+      child: MoeG2ClipRRect(
         radius: borderRadius,
         child: Container(
-          foregroundDecoration: SmoothRectDecoration(
+          foregroundDecoration: MoeG2Decoration(
             radius: borderRadius,
             border: Border.all(
               color: isDark
@@ -172,15 +174,15 @@ class FrostedGlassContainer extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    // 使用 SmoothClipRRect 实现 iOS 风格平滑圆角
+    // 使用 MoeG2ClipRRect / MoeG2Decoration 实现 G2 连续曲线圆角
     // 不使用 BackdropFilter，只做玻璃底色/描边
-    return SmoothClipRRect(
+    return MoeG2ClipRRect(
       radius: borderRadius,
       child: Container(
         width: width,
         height: height,
         padding: padding,
-        decoration: SmoothRectDecoration(
+        decoration: MoeG2Decoration(
           radius: borderRadius,
           // 半透明底色（与外层背景融合）
           color: isDark

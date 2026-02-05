@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:mygril_flutter/src/core/models/message_block.dart';
+import 'package:mygril_flutter/src/ui/shared/effects/smooth_clip.dart';
 
 /// 表情包显示 Widget
 /// 用于在聊天界面显示表情包
@@ -43,20 +44,23 @@ class EmojiWidget extends StatelessWidget {
 
   /// 构建网络图片
   Widget _buildNetworkImage() {
-    return Image.network(
-      block.path,
-      width: size,
-      height: size,
-      fit: BoxFit.contain,
-      loadingBuilder: showLoading
-          ? (context, child, loadingProgress) {
-              if (loadingProgress == null) return child;
-              return _buildLoadingIndicator();
-            }
-          : null,
-      errorBuilder: (context, error, stackTrace) {
-        return errorPlaceholder ?? _buildError('加载失败');
-      },
+    return MoeG2ClipRRect(
+      radius: 10, // 与项目规范 radiusBubble 保持一致
+      child: Image.network(
+        block.path,
+        width: size,
+        height: size,
+        fit: BoxFit.contain,
+        loadingBuilder: showLoading
+            ? (context, child, loadingProgress) {
+                if (loadingProgress == null) return child;
+                return _buildLoadingIndicator();
+              }
+            : null,
+        errorBuilder: (context, error, stackTrace) {
+          return errorPlaceholder ?? _buildError('加载失败');
+        },
+      ),
     );
   }
 
@@ -69,14 +73,17 @@ class EmojiWidget extends StatelessWidget {
       return errorPlaceholder ?? _buildError('文件不存在');
     }
 
-    return Image.file(
-      file,
-      width: size,
-      height: size,
-      fit: BoxFit.contain,
-      errorBuilder: (context, error, stackTrace) {
-        return errorPlaceholder ?? _buildError('加载失败');
-      },
+    return MoeG2ClipRRect(
+      radius: 10, // 与项目规范 radiusBubble 保持一致
+      child: Image.file(
+        file,
+        width: size,
+        height: size,
+        fit: BoxFit.contain,
+        errorBuilder: (context, error, stackTrace) {
+          return errorPlaceholder ?? _buildError('加载失败');
+        },
+      ),
     );
   }
 
@@ -96,9 +103,9 @@ class EmojiWidget extends StatelessWidget {
     return Container(
       width: size,
       height: size,
-      decoration: BoxDecoration(
+      decoration: MoeG2Decoration(
+        radius: 10, // 与项目规范 radiusBubble 保持一致
         color: Colors.grey[200],
-        borderRadius: BorderRadius.circular(8),
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,

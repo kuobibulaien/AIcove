@@ -23,6 +23,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../theme/tokens.dart';
+import '../../effects/smooth_clip.dart';
 
 /// 开关尺寸枚举
 enum MoeSwitchSize { sm, md }
@@ -155,7 +156,7 @@ class _MoeSwitchState extends State<MoeSwitch> {
     final inactiveThumb = widget.thumbColor ?? widget.inactiveColor ?? Colors.white;
     final disabledThumb = widget.disabledThumbColor ?? colors.muted;
     
-    final radius = widget.borderRadius ?? BorderRadius.circular(_height / 2);
+    final radius = widget.borderRadius?.topLeft.x ?? (_height / 2);
 
     // 计算当前状态
     final trackColor = !_isEnabled
@@ -181,9 +182,9 @@ class _MoeSwitchState extends State<MoeSwitch> {
           duration: kAnim,
           width: _width,
           height: _height,
-          decoration: BoxDecoration(
+          decoration: MoeG2Decoration(
+            radius: radius,
             color: trackColor,
-            borderRadius: radius,
           ),
           child: AnimatedAlign(
             duration: kAnim,

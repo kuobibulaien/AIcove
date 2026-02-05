@@ -22,6 +22,7 @@ library;
 
 import 'package:flutter/material.dart';
 import '../../../theme/tokens.dart';
+import '../../effects/smooth_clip.dart';
 
 /// 次级按钮尺寸枚举
 enum MoeSecondaryButtonSize { sm, md, lg }
@@ -137,17 +138,22 @@ class _MoeSecondaryButtonState extends State<MoeSecondaryButton> {
     final disabledBg = widget.disabledBackgroundColor ?? colors.surfaceAlt.withValues(alpha: 0.5);
     final disabledFg = widget.disabledForegroundColor ?? colors.muted;
     final radius = widget.borderRadius ?? MoeRadii.borderSm;
+    final g2Radius = radius.topLeft.x;
 
     final currentBg = !_isEnabled
         ? disabledBg
         : (_pressed ? pressedBg : bgColor);
     final currentFg = !_isEnabled ? disabledFg : fgColor;
 
-    final effectiveDecoration = widget.decoration ?? BoxDecoration(
+    final userDecoration = widget.decoration;
+    final effectiveBorder =
+        userDecoration?.border ?? (widget.border != null ? Border.fromBorderSide(widget.border!) : null);
+    final effectiveShadow = userDecoration?.boxShadow ?? widget.boxShadow;
+    final effectiveDecoration = MoeG2Decoration(
+      radius: g2Radius,
       color: currentBg,
-      borderRadius: radius,
-      border: widget.border != null ? Border.fromBorderSide(widget.border!) : null,
-      boxShadow: widget.boxShadow,
+      border: effectiveBorder,
+      boxShadow: effectiveShadow,
     );
 
     final scale = (widget.enableScale && _pressed && _isEnabled) 
@@ -167,7 +173,7 @@ class _MoeSecondaryButtonState extends State<MoeSecondaryButton> {
           width: widget.width,
           height: _height,
           padding: _padding,
-          decoration: effectiveDecoration.copyWith(color: currentBg),
+          decoration: effectiveDecoration,
           child: Center(
             child: Row(
               mainAxisSize: MainAxisSize.min,

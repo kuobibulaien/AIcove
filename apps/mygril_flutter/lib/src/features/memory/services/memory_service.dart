@@ -223,4 +223,33 @@ class MemoryService {
   Future<int> purgeExpiredTrash() async {
     return await _repository.purgeExpired();
   }
+
+  // ==================== 回收站操作 ====================
+
+  /// 删除记忆（移入回收站）
+  Future<void> deleteMemory(String id, {String reason = 'user_delete'}) async {
+    await _repository.softDelete(id, reason: reason);
+    AppLogger.info('MemoryService', 'Memory moved to trash', metadata: {'id': id, 'reason': reason});
+  }
+
+  /// 恢复记忆（从回收站恢复）
+  Future<void> restoreMemory(String id) async {
+    await _repository.restore(id);
+    AppLogger.info('MemoryService', 'Memory restored from trash', metadata: {'id': id});
+  }
+
+  /// 获取回收站中的记忆列表
+  Future<List<MemoryEntity>> getTrashMemories() async {
+    return await _repository.getTrash();
+  }
+
+  /// 获取所有有效记忆
+  Future<List<MemoryEntity>> getAllMemories() async {
+    return await _repository.getAllActive();
+  }
+
+  /// 获取有效记忆数量
+  Future<int> getActiveCount() async {
+    return await _repository.getActiveCount();
+  }
 }

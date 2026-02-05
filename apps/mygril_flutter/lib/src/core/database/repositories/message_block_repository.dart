@@ -35,6 +35,11 @@ class MessageBlockRepository {
     await _db.into(_db.messageBlocks).insert(data);
   }
 
+  /// 创建或更新内容块（upsert）
+  Future<void> upsert(MessageBlocksCompanion data) async {
+    await _db.into(_db.messageBlocks).insertOnConflictUpdate(data);
+  }
+
   /// 批量创建内容块
   Future<void> insertAll(List<MessageBlocksCompanion> blocks) async {
     await _db.batch((batch) {

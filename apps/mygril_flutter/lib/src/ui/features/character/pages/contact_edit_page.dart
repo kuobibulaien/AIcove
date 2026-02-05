@@ -6,11 +6,22 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../ui/theme/tokens.dart';
-import '../../../../ui/shared/widgets/image_crop_dialog.dart';
+import '../../../../ui/shared/effects/smooth_clip.dart';
+import '../../../../ui/shared/widgets/index.dart';
 import '../../../../features/chat/domain/conversation.dart';
 import '../../../../core/utils/data_image.dart';
 import '../../../../features/chat/presentation/widgets/contact_edit_dialog.dart';
 import '../../../../features/chat/providers2.dart';
+
+/// 编辑模式枚举
+/// - create: 新建角色（保存后直接进入对话）
+/// - editConversation: 编辑对话中的角色（可保存为新角色卡）
+/// - editTemplate: 编辑模板/收藏的角色卡（可直接保存或保存为新角色卡）
+enum EditMode {
+  create,           // 新建角色
+  editConversation, // 编辑对话中的角色
+  editTemplate,     // 编辑模板（我的角色卡）
+}
 
 /// 新建/编辑角色卡页面
 /// 
@@ -24,11 +35,19 @@ import '../../../../features/chat/providers2.dart';
 ///   - 音色设置（上传 mp3/wav 音频）
 /// 
 /// 更新记录：
+/// - 2026-01-06: 添加 EditMode 枚举，支持"保存为新角色卡"功能
 /// - 2025-12-08: 重构布局，新增自称、音色设置
 class ContactEditPage extends ConsumerStatefulWidget {
   final Conversation conversation;
-  final bool isNew; // 是否为新建模式
-  const ContactEditPage({super.key, required this.conversation, this.isNew = false});
+  final EditMode editMode;
+  
+  /// 兼容旧 API：isNew=true 等价于 editMode=create
+  const ContactEditPage({
+    super.key,
+    required this.conversation,
+    @Deprecated('Use editMode instead') bool isNew = false,
+    EditMode? editMode,
+  }) : editMode = editMode ?? (isNew ? EditMode.create : EditMode.editConversation);
 
   @override
   ConsumerState<ContactEditPage> createState() => _ContactEditPageState();
@@ -60,7 +79,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     final conv = widget.conversation;
     
     _nameCtrl = TextEditingController(text: conv.displayName);
-    _descCtrl = TextEditingController(text: conv.lastMessage ?? '');
+    _descCtrl = TextEditingController(text: conv.description ?? '');
     _personaCtrl = TextEditingController(text: conv.personaPrompt);
     _selfAddressCtrl = TextEditingController(text: conv.selfAddress ?? '');
     _addressUserCtrl = TextEditingController(text: conv.addressUser ?? '');
@@ -72,7 +91,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
       _avatarBytes = decodeDataImage(_avatarCtrl.text);
     }
     // 判断是否使用一致图像
-    if (widget.isNew) {
+    if (widget.editMode == EditMode.create) {
       _useSameImage = true;
     } else {
       _useSameImage = _refImageCtrl.text.isEmpty || _refImageCtrl.text == _avatarCtrl.text;
@@ -112,13 +131,8 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.of(context).pop(),
         ),
-        title: Text(widget.isNew ? '新建角色卡' : '编辑角色信息'),
-        actions: [
-          TextButton(
-            onPressed: _onSave,
-            child: const Text('保存'),
-          ),
-        ],
+        title: Text(_getTitle()),
+        actions: _buildActions(colors),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(borderWidth),
           child: Container(height: borderWidth, color: colors.divider),
@@ -136,17 +150,17 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
                 child: Container(
                   width: 160,
                   height: 220,
-                  decoration: BoxDecoration(
+                  decoration: MoeG2Decoration(
+                    radius: 12,
                     color: colors.surfaceAlt.withValues(alpha: 0.3),
-                    borderRadius: BorderRadius.circular(12),
                     border: Border.all(
                       color: colors.borderLight,
                       width: 1,
                     ),
                   ),
                   child: _avatarBytes != null
-                      ? ClipRRect(
-                          borderRadius: BorderRadius.circular(11),
+                      ? MoeG2ClipRRect(
+                          radius: 11,
                           child: Image.memory(_avatarBytes!, fit: BoxFit.cover),
                         )
                       : Center(
@@ -276,21 +290,14 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
 
   Widget _buildTextField(TextEditingController controller, String hint, {int maxLines = 1}) {
     final colors = context.moeColors;
-    return TextField(
+    return MoeTextField(
       controller: controller,
       maxLines: maxLines,
       minLines: maxLines > 1 ? 2 : 1,
-      decoration: InputDecoration(
-        hintText: hint,
-        hintStyle: TextStyle(color: colors.muted),
-        filled: true,
-        fillColor: colors.surfaceAlt.withValues(alpha: 0.3),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide.none,
-        ),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      ),
+      hint: hint,
+      fillColor: colors.surfaceAlt.withValues(alpha: 0.3),
+      borderWidth: 0,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
     );
   }
 
@@ -317,8 +324,8 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
           opaque: false,
           barrierDismissible: false,
           barrierColor: Colors.black,
-          transitionDuration: const Duration(milliseconds: 250),
-          reverseTransitionDuration: const Duration(milliseconds: 200),
+          transitionDuration: kAnim,
+          reverseTransitionDuration: kAnim,
           pageBuilder: (context, animation, secondaryAnimation) => ImageCropDialog(
             imageBytes: file.bytes!,
             fileName: file.name,
@@ -384,62 +391,178 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     return '\n[称呼设置]: ${map.toString()}';
   }
 
-  Future<void> _onSave() async {
-    final name = _nameCtrl.text.trim();
-    if (name.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请输入角色名称')),
-      );
-      return;
-    }
+  // ========== 标题和保存按钮逻辑 ==========
 
+  String _getTitle() {
+    switch (widget.editMode) {
+      case EditMode.create:
+        return '新建角色卡';
+      case EditMode.editConversation:
+        return '编辑角色信息';
+      case EditMode.editTemplate:
+        return '编辑模板';
+    }
+  }
+
+  List<Widget> _buildActions(MoeColors colors) {
+    switch (widget.editMode) {
+      case EditMode.create:
+        // 新建模式：只有"保存"
+        return [
+          TextButton(
+            onPressed: _onSave,
+            child: Text('保存', style: TextStyle(color: colors.headerContentColor)),
+          ),
+        ];
+      case EditMode.editConversation:
+        // 编辑对话角色："保存" + 更多菜单（保存为新角色卡）
+        return [
+          TextButton(
+            onPressed: _onSave,
+            child: Text('保存', style: TextStyle(color: colors.headerContentColor)),
+          ),
+          PopupMenuButton<String>(
+            icon: Icon(Icons.more_vert, color: colors.headerContentColor),
+            onSelected: (value) {
+              if (value == 'saveAsNew') _onSaveAsNewTemplate();
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'saveAsNew',
+                child: Row(
+                  children: [
+                    Icon(Icons.bookmark_add_outlined, size: 20),
+                    SizedBox(width: 12),
+                    Text('保存为新角色卡'),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ];
+      case EditMode.editTemplate:
+        // 编辑模板："保存" + "保存为新角色卡"（两个按钮）
+        return [
+          TextButton(
+            onPressed: _onSaveAsNewTemplate,
+            child: Text('另存为', style: TextStyle(color: colors.headerContentColor.withValues(alpha: 0.8))),
+          ),
+          TextButton(
+            onPressed: _onSaveTemplate,
+            child: Text('保存', style: TextStyle(color: colors.headerContentColor)),
+          ),
+        ];
+    }
+  }
+
+  /// 构建编辑结果数据
+  ContactEditResult _buildEditResult() {
+    final name = _nameCtrl.text.trim();
     final avatar = _avatarCtrl.text.trim().isEmpty ? null : _avatarCtrl.text.trim();
     final characterImage = _useSameImage
         ? avatar
         : (_refImageCtrl.text.trim().isEmpty ? null : _refImageCtrl.text.trim());
-
-    // 构建人格提示词（含称呼 JSON）
     String persona = _personaCtrl.text.trim();
     final addressJson = _buildAddressJson();
     if (addressJson.isNotEmpty) {
       persona = persona + addressJson;
     }
-
-    // 音色文件转 base64 (TODO: 后续使用)
-    // String? voiceFile;
-    // if (_voiceFileBytes != null && _voiceFileName != null) {
-    //   voiceFile = buildDataImage(_voiceFileBytes!, fileName: _voiceFileName);
-    // }
-
-    // selfAddress 已通过 _buildAddressJson 处理，不需要单独变量
     final addressUser = _addressUserCtrl.text.trim().isEmpty ? null : _addressUserCtrl.text.trim();
+    final description = _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim();
 
-    if (widget.isNew) {
+    return ContactEditResult(
+      displayName: name,
+      avatarUrl: avatar,
+      characterImage: characterImage,
+      addressUser: addressUser,
+      description: description,
+      personaPrompt: persona,
+    );
+  }
+
+  /// 验证表单
+  bool _validateForm() {
+    final name = _nameCtrl.text.trim();
+    if (name.isEmpty) {
+      MoeToast.error(context, '请输入角色名称');
+      return false;
+    }
+    return true;
+  }
+
+  /// 保存（覆盖当前角色）
+  Future<void> _onSave() async {
+    if (!_validateForm()) return;
+    final result = _buildEditResult();
+
+    if (widget.editMode == EditMode.create) {
+      // 新建模式：创建新角色并进入对话
       final notifier = ref.read(conversationsProvider.notifier);
       final id = await notifier.createNew();
 
       await notifier.applyContactEdit(
         id,
-        displayName: name,
-        avatarUrl: avatar,
-        characterImage: characterImage,
-        addressUser: addressUser,
-        personaPrompt: persona,
+        displayName: result.displayName,
+        avatarUrl: result.avatarUrl,
+        characterImage: result.characterImage,
+        addressUser: result.addressUser,
+        description: result.description,
+        personaPrompt: result.personaPrompt,
       );
 
       ref.read(activeConversationIdProvider.notifier).state = id;
       if (!mounted) return;
       context.go('/chat/$id');
     } else {
-      Navigator.of(context).pop<ContactEditResult>(
-        ContactEditResult(
-          displayName: name,
-          avatarUrl: avatar,
-          characterImage: characterImage,
-          addressUser: addressUser,
-          personaPrompt: persona,
-        ),
-      );
+      // 编辑模式：返回编辑结果
+      Navigator.of(context).pop<ContactEditResult>(result);
     }
+  }
+
+  /// 保存模板（直接更新模板角色卡）
+  Future<void> _onSaveTemplate() async {
+    if (!_validateForm()) return;
+    final result = _buildEditResult();
+
+    final notifier = ref.read(conversationsProvider.notifier);
+    await notifier.applyContactEdit(
+      widget.conversation.id,
+      displayName: result.displayName,
+      avatarUrl: result.avatarUrl,
+      characterImage: result.characterImage,
+      addressUser: result.addressUser,
+      description: result.description,
+      personaPrompt: result.personaPrompt,
+    );
+
+    if (!mounted) return;
+    MoeToast.success(context, '模板已保存');
+    Navigator.of(context).pop();
+  }
+
+  /// 保存为新角色卡（创建新角色并标记为收藏）
+  Future<void> _onSaveAsNewTemplate() async {
+    if (!_validateForm()) return;
+    final result = _buildEditResult();
+
+    final notifier = ref.read(conversationsProvider.notifier);
+    final id = await notifier.createNew();
+
+    await notifier.applyContactEdit(
+      id,
+      displayName: result.displayName,
+      avatarUrl: result.avatarUrl,
+      characterImage: result.characterImage,
+      addressUser: result.addressUser,
+      description: result.description,
+      personaPrompt: result.personaPrompt,
+    );
+
+    // 标记为收藏（加入"我的角色卡"）
+    await notifier.updateConversationSettings(id, isFavorite: true);
+
+    if (!mounted) return;
+    MoeToast.success(context, '已保存到我的角色卡');
+    Navigator.of(context).pop();
   }
 }

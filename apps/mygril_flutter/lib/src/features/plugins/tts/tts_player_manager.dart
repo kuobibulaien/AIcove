@@ -4,11 +4,20 @@ import '../domain/plugin.dart';
 import 'tts_service.dart';
 import '../../../core/app_logger.dart';
 
+/// TtsService 获取器类型定义
+/// 用于延迟获取最新的 TtsService 实例，解决 Provider 异步加载顺序问题
+typedef TtsServiceGetter = TtsService? Function();
+
 /// TTS 播放队列管理器（简化版）
 /// 职责：负责管理多个 TTS 事件的顺序「生成」，并通过事件流把可用的音频 URL 通知给上层。
 /// 注意：不再在这里直接播放音频，播放由前端语音条组件控制（KISS / YAGNI）。
+///
+/// 重要变更 2026-01-28：
+/// - 不再在构造函数中接收 TtsService 实例
+/// - 改为使用 TtsServiceGetter 延迟获取，确保每次调用时获取最新配置
 class TtsPlayerManager {
-  TtsService _ttsService;
+  /// 获取最新 TtsService 的回调函数
+  TtsServiceGetter _serviceGetter;
 
   /// 待处理的 TTS 队列
   final List<TtsPlayItem> _queue = [];
@@ -19,7 +28,7 @@ class TtsPlayerManager {
   /// 当前正在处理的条目
   TtsPlayItem? _currentItem;
 
-  /// 播放状态流（主要用于 UI 显示“转换中/空闲”等整体状态）
+  /// 播放状态流（主要用于 UI 显示"转换中/空闲"等整体状态）
   final _playStateController = StreamController<TtsPlayState>.broadcast();
   Stream<TtsPlayState> get playStateStream => _playStateController.stream;
 
@@ -30,11 +39,17 @@ class TtsPlayerManager {
   /// 当前播放状态
   TtsPlayState _currentState = TtsPlayState.idle;
 
-  TtsPlayerManager(this._ttsService);
+  TtsPlayerManager(this._serviceGetter);
 
-  /// 在配置变化时更新服务实例（保持单一职责：管理队列，而不是关心配置来源）
+  /// 在配置变化时更新服务获取器
+  void updateServiceGetter(TtsServiceGetter getter) {
+    _serviceGetter = getter;
+  }
+
+  /// 兼容旧代码：直接传入 TtsService 实例
+  @Deprecated('使用 updateServiceGetter 代替')
   void updateService(TtsService service) {
-    _ttsService = service;
+    _serviceGetter = () => service;
   }
 
   /// 添加 TTS 事件到队列
@@ -99,7 +114,23 @@ class TtsPlayerManager {
 
       try {
         item.status = TtsPlayItemStatus.converting;
-        final result = await _ttsService.convert(item.text);
+
+        // 每次转换时获取最新的 TtsService，确保配置是最新的
+        final ttsService = _serviceGetter();
+        if (ttsService == null) {
+          throw Exception('TTS 服务未初始化，请检查插件配置');
+        }
+
+        // 调试日志：检查 TtsService 的配置状态
+        AppLogger.info('TTS', '开始转换，检查服务配置', metadata: {
+          'requestUrl': ttsService.requestUrl,
+          'requestFormat': ttsService.requestFormat,
+          'hasApiKey': ttsService.apiKey?.isNotEmpty == true,
+          'model': ttsService.model,
+          'textToConvert': item.text.length > 50 ? '${item.text.substring(0, 50)}...' : item.text,
+        });
+
+        final result = await ttsService.convert(item.text);
 
         if (result.success) {
           item.audioUrl = result.audioUrl;

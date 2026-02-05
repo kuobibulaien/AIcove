@@ -22,6 +22,7 @@ library;
 
 import 'package:flutter/material.dart';
 import '../../../theme/tokens.dart';
+import '../../effects/smooth_clip.dart';
 
 /// 主按钮尺寸枚举
 enum MoePrimaryButtonSize { sm, md, lg }
@@ -157,12 +158,15 @@ class _MoePrimaryButtonState extends State<MoePrimaryButton> {
     final colors = context.moeColors;
     
     // 解析样式（优先使用传入值，否则使用主题默认值）
-    final bgColor = widget.backgroundColor ?? colors.dialogWarning;
-    final fgColor = widget.foregroundColor ?? colors.text;
+    // 主按钮使用 accentColor 作为默认背景色，与 AppBar 一致
+    final bgColor = widget.backgroundColor ?? colors.accentColor;
+    // 浅色按钮背景上使用白色文字
+    final fgColor = widget.foregroundColor ?? Colors.white;
     final pressedBg = widget.pressedBackgroundColor ?? _darkenColor(bgColor, 0.1);
     final disabledBg = widget.disabledBackgroundColor ?? colors.surfaceAlt;
     final disabledFg = widget.disabledForegroundColor ?? colors.muted;
     final radius = widget.borderRadius ?? MoeRadii.borderSm;
+    final g2Radius = radius.topLeft.x;
     final shadow = widget.boxShadow ?? MoeShadows.soft;
 
     // 计算当前状态的颜色
@@ -172,11 +176,15 @@ class _MoePrimaryButtonState extends State<MoePrimaryButton> {
     final currentFg = !_isEnabled ? disabledFg : fgColor;
 
     // 构建装饰
-    final effectiveDecoration = widget.decoration ?? BoxDecoration(
+    final userDecoration = widget.decoration;
+    final effectiveBorder =
+        userDecoration?.border ?? (widget.border != null ? Border.fromBorderSide(widget.border!) : null);
+    final effectiveShadow = userDecoration?.boxShadow ?? (_isEnabled ? shadow : null);
+    final effectiveDecoration = MoeG2Decoration(
+      radius: g2Radius,
       color: currentBg,
-      borderRadius: radius,
-      border: widget.border != null ? Border.fromBorderSide(widget.border!) : null,
-      boxShadow: _isEnabled ? shadow : null,
+      border: effectiveBorder,
+      boxShadow: effectiveShadow,
     );
 
     // 计算缩放
@@ -197,7 +205,7 @@ class _MoePrimaryButtonState extends State<MoePrimaryButton> {
           width: widget.width,
           height: _height,
           padding: _padding,
-          decoration: effectiveDecoration.copyWith(color: currentBg),
+          decoration: effectiveDecoration,
           child: Center(
             child: widget.isLoading
                 ? SizedBox(

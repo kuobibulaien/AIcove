@@ -1,23 +1,147 @@
 import 'dart:convert';
 
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// SharedPreferences 键名，统一管理模型与渠道配置。
 const _kStoreKey = 'mygril.ui_models.v1';
 
+/// 本地 API Key 配置缓存（避免重复读取 assets）
+Map<String, String>? _localKeysCache;
+
+/// 加载本地 API Key 配置
+/// 从 assets/local_keys.json 读取，格式：{"provider_id": "api_key", ...}
+Future<Map<String, String>> _loadLocalKeys() async {
+  if (_localKeysCache != null) return _localKeysCache!;
+
+  try {
+    final jsonStr = await rootBundle.loadString('assets/local_keys.json');
+    final data = jsonDecode(jsonStr) as Map<String, dynamic>;
+    _localKeysCache = data.map((k, v) => MapEntry(k, v?.toString() ?? ''));
+    return _localKeysCache!;
+  } catch (e) {
+    // 文件不存在或解析失败，返回空 map
+    _localKeysCache = {};
+    return _localKeysCache!;
+  }
+}
+
 /// 数据存储的默认结构（KISS：只保留最小必要字段）。
 /// 首次初始化时提供DeepSeek测试配置，删除后不再自动恢复。
+/// API Key 从 assets/local_keys.json 读取，不硬编码在代码中。
 Map<String, dynamic> _defaultStoreData() => <String, dynamic>{
       'providers': [
+        // === 英文供应商 ===
         {
           'id': 'deepseek',
           'displayName': 'DeepSeek（测试）',
-          'apiKeys': <String>['sk-91b7553cdfd84799b7552b34d1665153'],
+          'apiKeys': <String>[], // 从 local_keys.json 加载
           'apiBaseUrl': 'https://api.deepseek.com/v1',
           'enabled': true,
           'models': <String>['deepseek-chat'],
           'visible_models': <String>['deepseek-chat'],
+          'hidden_models': <String>[],
+          'capabilities': <String>['chat'],
+          'model_type': 'chat',
+        },
+        {
+          'id': 'openrouter',
+          'displayName': 'OpenRouter',
+          'apiKeys': <String>[],
+          'apiBaseUrl': 'https://openrouter.ai/api/v1',
+          'enabled': false,
+          'models': <String>[],
+          'visible_models': <String>[],
+          'hidden_models': <String>[],
+          'capabilities': <String>['chat'],
+          'model_type': 'chat',
+        },
+        {
+          'id': 'minimax',
+          'displayName': 'MiniMax',
+          'apiKeys': <String>[], // 从 local_keys.json 加载
+          'apiBaseUrl': 'https://api.minimaxi.com/v1',
+          'enabled': false,
+          'models': <String>[
+            'speech-2.8-hd',
+            'speech-2.8-turbo',
+            'speech-2.6-hd',
+            'speech-2.6-turbo',
+            'speech-02-hd',
+            'speech-02-turbo',
+          ],
+          'visible_models': <String>[
+            'speech-2.8-hd',
+            'speech-2.8-turbo',
+          ],
+          'hidden_models': <String>[],
+          'capabilities': <String>['tts'],
+          'model_type': 'tts',
+        },
+        {
+          'id': 'kimi',
+          'displayName': 'Kimi',
+          'apiKeys': <String>[], // 从 local_keys.json 加载
+          'apiBaseUrl': 'https://api.moonshot.cn/v1',
+          'enabled': false,
+          'models': <String>[],
+          'visible_models': <String>[],
+          'hidden_models': <String>[],
+          'capabilities': <String>['chat'],
+          'model_type': 'chat',
+        },
+        // === 中文供应商 ===
+        {
+          'id': 'gitee-ai',
+          'displayName': '模力方舟',
+          'apiKeys': <String>[], // 从 local_keys.json 加载
+          'apiBaseUrl': 'https://ai.gitee.com/v1',
+          'enabled': true,
+          'models': <String>['IndexTTS-2'],
+          'visible_models': <String>['IndexTTS-2'],
+          'hidden_models': <String>[],
+          'capabilities': <String>['tts'],
+          'model_type': 'tts',
+        },
+        {
+          'id': 'aliyun',
+          'displayName': '阿里云',
+          'apiKeys': <String>[],
+          'apiBaseUrl': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+          'enabled': false,
+          'models': <String>[
+            'cosyvoice-v3-plus',
+            'qwen3-tts-vc-realtime-2026-01-15',
+          ],
+          'visible_models': <String>[
+            'cosyvoice-v3-plus',
+            'qwen3-tts-vc-realtime-2026-01-15',
+          ],
+          'hidden_models': <String>[],
+          'capabilities': <String>['chat', 'tts'],
+          'model_type': 'chat',
+        },
+        {
+          'id': 'siliconflow',
+          'displayName': '硅基流动',
+          'apiKeys': <String>[],
+          'apiBaseUrl': 'https://api.siliconflow.cn/v1',
+          'enabled': false,
+          'models': <String>[],
+          'visible_models': <String>[],
+          'hidden_models': <String>[],
+          'capabilities': <String>['chat'],
+          'model_type': 'chat',
+        },
+        {
+          'id': 'volcengine',
+          'displayName': '火山引擎',
+          'apiKeys': <String>[],
+          'apiBaseUrl': 'https://ark.cn-beijing.volces.com/api/v3',
+          'enabled': false,
+          'models': <String>[],
+          'visible_models': <String>[],
           'hidden_models': <String>[],
           'capabilities': <String>['chat'],
           'model_type': 'chat',
@@ -127,6 +251,29 @@ Map<String, dynamic> _normalizeData(Map<String, dynamic> raw) {
         capabilities.add('chat');
       }
 
+      // 迁移：给阿里云渠道自动补上 tts capability
+      var customConfig = provider['custom_config'] as Map<String, dynamic>? ?? {};
+      if (id == 'aliyun' && !capabilities.contains('tts')) {
+        capabilities.add('tts');
+      }
+
+      // 迁移：把旧的 tts_models 迁移到 visible_models
+      final ttsModels = customConfig['tts_models'];
+      if (ttsModels is List && visible.isEmpty) {
+        for (final model in ttsModels) {
+          final m = model?.toString().trim() ?? '';
+          if (m.isNotEmpty && !visible.contains(m)) {
+            visible.add(m);
+            if (!models.contains(m)) {
+              models.add(m);
+            }
+          }
+        }
+        // 清理旧的 tts_models
+        customConfig = Map<String, dynamic>.from(customConfig);
+        customConfig.remove('tts_models');
+      }
+
       final visibleSet = <String>{};
       final hiddenSet = <String>{};
 
@@ -159,8 +306,13 @@ Map<String, dynamic> _normalizeData(Map<String, dynamic> raw) {
         'visible_models': visibleList,
         'hidden_models': hiddenList,
         'capabilities': capabilities,
-        'custom_config': provider['custom_config'] ?? {},
+        'custom_config': customConfig,
         'model_type': modelType,
+        // 保留模型参数字段
+        if (provider['disable_tool_calling'] == true) 'disable_tool_calling': true,
+        if (provider['temperature'] != null) 'temperature': provider['temperature'],
+        if (provider['top_p'] != null) 'top_p': provider['top_p'],
+        if (provider['context_message_limit'] != null) 'context_message_limit': provider['context_message_limit'],
       });
 
       if (enabled) {
@@ -308,6 +460,17 @@ class UiModelsApi {
     List<String>? capabilities,
     Map<String, dynamic>? customConfig,
     String? modelType,
+    List<String>? allModels,
+    List<String>? visibleModels,
+    List<String>? hiddenModels,
+    bool? disableToolCalling,
+    // 模型参数
+    double? temperature,
+    bool clearTemperature = false,
+    double? topP,
+    bool clearTopP = false,
+    int? contextMessageLimit,
+    bool clearContextMessageLimit = false,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     final current = await _loadStore(prefs);
@@ -341,6 +504,35 @@ class UiModelsApi {
     if (modelType != null && modelType.trim().isNotEmpty) {
       provider['model_type'] = modelType.trim();
     }
+    // 模型列表更新
+    if (allModels != null) {
+      provider['models'] = _cleanStrings(allModels)..sort(_caseSort);
+    }
+    if (visibleModels != null) {
+      provider['visible_models'] = _cleanStrings(visibleModels);
+    }
+    if (hiddenModels != null) {
+      provider['hidden_models'] = _cleanStrings(hiddenModels);
+    }
+    if (disableToolCalling != null) {
+      provider['disable_tool_calling'] = disableToolCalling;
+    }
+    // 模型参数更新
+    if (clearTemperature) {
+      provider.remove('temperature');
+    } else if (temperature != null) {
+      provider['temperature'] = temperature;
+    }
+    if (clearTopP) {
+      provider.remove('top_p');
+    } else if (topP != null) {
+      provider['top_p'] = topP;
+    }
+    if (clearContextMessageLimit) {
+      provider.remove('context_message_limit');
+    } else if (contextMessageLimit != null) {
+      provider['context_message_limit'] = contextMessageLimit;
+    }
     providers[index] = provider;
     current['providers'] = providers;
     return _writeStore(prefs, current);
@@ -358,21 +550,121 @@ class UiModelsApi {
     return _writeStore(prefs, current);
   }
 
+  Future<Map<String, dynamic>> reorderProviders(List<String> providerIds) async {
+    final prefs = await SharedPreferences.getInstance();
+    final current = await _loadStore(prefs);
+    final providers = (current['providers'] as List)
+        .cast<Map<String, dynamic>>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+    
+    // 按照新的顺序重新排列
+    final reordered = <Map<String, dynamic>>[];
+    for (final id in providerIds) {
+      final provider = providers.firstWhere(
+        (p) => p['id'] == id,
+        orElse: () => <String, dynamic>{},
+      );
+      if (provider.isNotEmpty) {
+        reordered.add(provider);
+      }
+    }
+    
+    current['providers'] = reordered;
+    return _writeStore(prefs, current);
+  }
+
+  Future<Map<String, dynamic>> reorderProviderModels({
+    required String providerId,
+    required List<String> modelIds,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final current = await _loadStore(prefs);
+    final providers = (current['providers'] as List)
+        .cast<Map<String, dynamic>>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+    
+    final index = providers.indexWhere((p) => p['id'] == providerId);
+    if (index < 0) return current;
+    
+    final provider = providers[index];
+    
+    // 更新 visible_models 的顺序
+    provider['visible_models'] = modelIds;
+    providers[index] = provider;
+    current['providers'] = providers;
+    
+    return _writeStore(prefs, current);
+  }
+
   Future<Map<String, dynamic>> _loadStore(SharedPreferences prefs) async {
     final raw = prefs.getString(_kStoreKey);
     if (raw == null || raw.isEmpty) {
-      final defaults = _defaultStoreData();
+      final defaults = await _applyLocalKeys(_defaultStoreData());
       await prefs.setString(_kStoreKey, jsonEncode(defaults));
       return _normalizeData(defaults);
     }
     try {
       final data = jsonDecode(raw) as Map<String, dynamic>;
-      return _normalizeData(data);
+      // 每次加载时检查并补充本地 key（用户清空数据后自动恢复）
+      final withKeys = await _applyLocalKeys(data);
+      return _normalizeData(withKeys);
     } catch (e) {
-      final defaults = _defaultStoreData();
+      final defaults = await _applyLocalKeys(_defaultStoreData());
       await prefs.setString(_kStoreKey, jsonEncode(defaults));
       return _normalizeData(defaults);
     }
+  }
+
+  /// 将本地 key 注入到 provider 配置中
+  /// 只有当 provider 的 apiKeys 为空时才注入
+  /// 同时为阿里云等渠道补充默认模型列表
+  Future<Map<String, dynamic>> _applyLocalKeys(Map<String, dynamic> data) async {
+    final localKeys = await _loadLocalKeys();
+    final providers = data['providers'];
+    if (providers is! List) return data;
+
+    // 获取默认配置，用于补充模型列表
+    final defaults = _defaultStoreData();
+    final defaultProviders = (defaults['providers'] as List).cast<Map<String, dynamic>>();
+
+    for (final provider in providers) {
+      if (provider is! Map) continue;
+      final id = provider['id'] as String?;
+      if (id == null) continue;
+
+      // 注入本地 key
+      final existingKeys = provider['apiKeys'];
+      final hasKey = existingKeys is List && existingKeys.isNotEmpty &&
+                     existingKeys.any((k) => k?.toString().trim().isNotEmpty == true);
+
+      if (!hasKey && localKeys.containsKey(id)) {
+        final localKey = localKeys[id]?.trim() ?? '';
+        if (localKey.isNotEmpty) {
+          provider['apiKeys'] = <String>[localKey];
+        }
+      }
+
+      // 补充模型列表（当模型列表为空时，从默认配置补充）
+      final models = provider['models'];
+      final hasModels = models is List && models.isNotEmpty;
+      if (!hasModels) {
+        final defaultProvider = defaultProviders.firstWhere(
+          (p) => p['id'] == id,
+          orElse: () => <String, dynamic>{},
+        );
+        if (defaultProvider.isNotEmpty) {
+          final defaultModels = defaultProvider['models'];
+          if (defaultModels is List && defaultModels.isNotEmpty) {
+            provider['models'] = List<String>.from(defaultModels);
+            provider['visible_models'] = List<String>.from(defaultProvider['visible_models'] ?? defaultModels);
+          }
+        }
+      }
+    }
+
+    return data;
   }
 
   Future<Map<String, dynamic>> _writeStore(

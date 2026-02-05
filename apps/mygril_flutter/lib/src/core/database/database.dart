@@ -31,6 +31,7 @@ class Conversations extends Table {
   BoolColumn get isFavorite => boolean().withDefault(const Constant(false))();
   BoolColumn get isMuted => boolean().withDefault(const Constant(false))();
   BoolColumn get notificationSound => boolean().withDefault(const Constant(true))();
+  TextColumn get enabledPlugins => text().nullable()(); // JSON array of plugin IDs
 
   // 会话摘要缓存
   TextColumn get lastMessage => text().nullable()();
@@ -231,7 +232,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 4;
 
   @override
   MigrationStrategy get migration {
@@ -248,6 +249,10 @@ class AppDatabase extends _$AppDatabase {
         // v2 -> v3: 新增 blurredBackground 列
         if (from < 3) {
           await customStatement('ALTER TABLE conversations ADD COLUMN blurred_background TEXT');
+        }
+        // v3 -> v4: 新增 enabledPlugins 列
+        if (from < 4) {
+          await customStatement('ALTER TABLE conversations ADD COLUMN enabled_plugins TEXT');
         }
       },
     );

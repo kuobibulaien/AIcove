@@ -31,12 +31,21 @@ class Message {
 
   /// 获取显示文本（智能fallback）
   /// 优先从blocks中提取，否则使用content字段
+  /// 对于多模态内容返回占位符文本
   String get displayText {
     if (blocks != null && blocks!.isNotEmpty) {
       final textBlocks = blocks!.whereType<TextBlock>();
       if (textBlocks.isNotEmpty) {
         return textBlocks.map((b) => b.content).join('\n\n');
       }
+      // 多模态内容的占位符
+      final firstBlock = blocks!.first;
+      if (firstBlock is ImageBlock) return '[图片]';
+      if (firstBlock is FileBlock) return '[文件]';
+      if (firstBlock is AudioBlock) return '[语音]';
+      if (firstBlock is EmojiBlock) return '[表情]';
+      if (firstBlock is ToolBlock) return '[工具调用]';
+      if (firstBlock is ThinkingBlock) return '[思考中...]';
     }
     return content;
   }
@@ -58,12 +67,26 @@ class Message {
   }
 
   /// 转换为API历史格式（向后兼容）
-  Map<String, dynamic> toHistoryJson() {
+  /// 
+  /// [includeTimestamp] 为 true 时，在消息内容前添加时间戳前缀 [YYYY-MM-DD HH:mm]
+  /// 用于让 AI 感知消息的时间顺序
+  Map<String, dynamic> toHistoryJson({bool includeTimestamp = false}) {
+    // 格式化时间戳前缀
+    String addTimestampPrefix(String text) {
+      if (!includeTimestamp) return text;
+      final y = createdAt.year.toString();
+      final m = createdAt.month.toString().padLeft(2, '0');
+      final d = createdAt.day.toString().padLeft(2, '0');
+      final h = createdAt.hour.toString().padLeft(2, '0');
+      final min = createdAt.minute.toString().padLeft(2, '0');
+      return '[$y-$m-$d $h:$min]: $text';
+    }
+
     // 如果没有blocks，使用简单格式（向后兼容）
     if (blocks == null || blocks!.isEmpty) {
       return {
         'role': role,
-        'content': content,
+        'content': addTimestampPrefix(content),
       };
     }
 
@@ -73,7 +96,7 @@ class Message {
       if (block is TextBlock) {
         contentParts.add({
           'type': 'text',
-          'text': block.content,
+          'text': addTimestampPrefix(block.content),
         });
       } else if (block is ImageBlock) {
         if (block.url != null) {

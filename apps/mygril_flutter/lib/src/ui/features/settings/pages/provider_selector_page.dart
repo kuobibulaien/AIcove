@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/effects/smooth_clip.dart';
+import '../../../../ui/shared/widgets/index.dart';
 import '../../../../features/settings/provider_state.dart';
 import '../../../../features/settings/app_settings.dart';
 
@@ -11,20 +13,12 @@ class ProviderSelectorPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final providerInfoAsync = ref.watch(providerInfoProvider);
+    final colors = context.moeColors;
 
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: moeSurface,
-        foregroundColor: moeText,
-        elevation: 0,
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(borderWidth),
-          child: Container(
-            color: moeBorderLight,
-            height: borderWidth,
-          ),
-        ),
-        title: const Text('选择提供商和模型', style: TextStyle(fontWeight: FontWeight.w600, color: moeText)),
+      appBar: MoeAppBar(
+        title: '选择提供商和模型',
+        showBackButton: true,
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -35,58 +29,44 @@ class ProviderSelectorPage extends ConsumerWidget {
           ),
         ],
       ),
-      backgroundColor: moeSurface,
+      backgroundColor: colors.surface,
       body: providerInfoAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
+        loading: () => const Center(
+          child: MoeLoadingIndicator(message: '获取可用模型中...'),
+        ),
         error: (e, _) => Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.error_outline, size: 48, color: Colors.red),
-              const SizedBox(height: 16),
-              Text('加载失败: $e', style: const TextStyle(color: moeTextSecondary)),
-              const SizedBox(height: 16),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.refresh),
-                label: const Text('重试'),
-                onPressed: () {
-                  ref.read(providerInfoProvider.notifier).refresh();
-                },
-              ),
-            ],
+          child: MoeEmptyState(
+            icon: Icons.error_outline,
+            title: '加载失败',
+            description: e.toString(),
+            action: MoePrimaryButton(
+              label: '重试',
+              icon: Icons.refresh,
+              onPressed: () {
+                ref.read(providerInfoProvider.notifier).refresh();
+              },
+            ),
           ),
         ),
         data: (providerInfo) {
           if (providerInfo.providers.isEmpty) {
-            return const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.cloud_off, size: 48, color: moeMuted),
-                  SizedBox(height: 16),
-                  Text('后端未配置任何提供商', style: TextStyle(color: moeTextSecondary)),
-                  SizedBox(height: 8),
-                  Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 32),
-                    child: Text(
-                      '请在后端 .env 文件中配置 API Key',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: moeMuted, fontSize: 12),
-                    ),
-                  ),
-                ],
+            return Center(
+              child: MoeEmptyState(
+                icon: Icons.cloud_off,
+                title: '后端未配置任何提供商',
+                description: '请在后端 .env 文件中配置相应的 API Key',
               ),
             );
           }
 
           return ListView(
+            padding: const EdgeInsets.symmetric(vertical: 8),
             children: [
-              const SizedBox(height: 8),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 child: Text(
                   '从后端获取的可用提供商和模型',
-                  style: TextStyle(color: moeTextSecondary, fontSize: 12),
+                  style: TextStyle(color: colors.textSecondary, fontSize: 12),
                 ),
               ),
               ...providerInfo.providers.map((provider) {
@@ -96,7 +76,7 @@ class ProviderSelectorPage extends ConsumerWidget {
                   models: models,
                 );
               }),
-              const SizedBox(height: 16),
+              const SizedBox(height: 32),
             ],
           );
         },
@@ -116,68 +96,78 @@ class _ProviderCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.moeColors;
     final settings = ref.watch(appSettingsProvider).value;
     final currentModel = settings?.defaultModelName ?? '';
 
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      color: moeSurfaceAlt,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: MoeG2ClipRRect(
+        radius: 12,
+        child: Container(
+          decoration: MoeG2Decoration(
+            radius: 12,
+            color: colors.surfaceAlt,
+            border: Border.all(color: colors.borderLight, width: borderWidth),
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(_getProviderIcon(provider), color: moePrimary, size: 24),
-                const SizedBox(width: 8),
-                Text(
-                  _getProviderDisplayName(provider),
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                    color: moeText,
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: Row(
+                    children: [
+                      Icon(_getProviderIcon(provider), color: colors.primary, size: 24),
+                      const SizedBox(width: 8),
+                      Text(
+                        _getProviderDisplayName(provider),
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                          color: colors.text,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
+                if (models.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text(
+                      '该提供商未配置模型',
+                      style: TextStyle(color: colors.muted, fontSize: 13),
+                    ),
+                  )
+                else
+                  ...models.map((model) {
+                    final isSelected = model == currentModel;
+                    return MoeListTile(
+                      title: Text(
+                        model,
+                        style: TextStyle(
+                          color: isSelected ? colors.primary : colors.text,
+                          fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                        ),
+                      ),
+                      leading: Icon(
+                        isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                        color: isSelected ? colors.primary : colors.muted,
+                        size: 20,
+                      ),
+                      trailing: isSelected ? Icon(Icons.check, color: colors.primary, size: 18) : null,
+                      selected: isSelected,
+                      onTap: () {
+                        ref.read(appSettingsProvider.notifier).setDefaultModelName(model);
+                        MoeToast.success(context, '已设置默认模型为: $model');
+                      },
+                    );
+                  }),
+                const SizedBox(height: 8),
               ],
             ),
-            const SizedBox(height: 12),
-            if (models.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 8),
-                child: Text(
-                  '该提供商未配置模型',
-                  style: TextStyle(color: moeMuted, fontSize: 12),
-                ),
-              )
-            else
-              ...models.map((model) {
-                final isSelected = model == currentModel;
-                return ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(
-                    isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-                    color: isSelected ? moePrimary : moeMuted,
-                  ),
-                  title: Text(
-                    model,
-                    style: TextStyle(
-                      color: isSelected ? moeText : moeTextSecondary,
-                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                    ),
-                  ),
-                  onTap: () {
-                    ref.read(appSettingsProvider.notifier).setDefaultModelName(model);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('已设置默认模型为: $model'),
-                        duration: const Duration(seconds: 1),
-                      ),
-                    );
-                  },
-                );
-              }),
-          ],
+          ),
         ),
       ),
     );
