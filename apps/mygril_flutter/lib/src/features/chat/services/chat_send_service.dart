@@ -694,6 +694,7 @@ class ChatSendService {
         _getEffectivePlugins(pluginManager, config.enabledPluginIds);
     final allToolEvents = <PluginEvent>[];
     final allToolAudioResults = <ToolAudioResult>[]; // 鏀堕泦 speak 宸ュ叿浜х敓鐨勯煶棰?
+    final allToolContents = <PluginContent>[]; // draw_image 工具生成的图片内容
 
     // 瑙ｆ瀽 provider 鐢ㄤ簬鑾峰彇閫傞厤鍣?
     String provider = 'openai';
@@ -795,6 +796,19 @@ class ChatSendService {
                 name: tc.name,
                 result: '{"success": true, "message": "璇煶宸叉挱鏀剧粰鐢ㄦ埛"}',
               ));
+            } else if (tc.name == 'draw_image') {
+              final imageContents = _extractToolImageContents(resultStr);
+              if (imageContents.isNotEmpty) {
+                allToolContents.addAll(imageContents);
+                AppLogger.info('ChatSendService', 'Collected draw_image tool images', metadata: {
+                  'count': imageContents.length,
+                });
+              }
+              toolResults.add(ToolResult(
+                toolCallId: tc.id,
+                name: tc.name,
+                result: resultStr,
+              ));
             } else {
               toolResults.add(ToolResult(
                 toolCallId: tc.id,
@@ -870,18 +884,50 @@ class ChatSendService {
 
     // 鍚堝苟宸ュ叿璋冪敤浜嬩欢鍜屾彃浠朵簨浠?
     final allEvents = [...allToolEvents, ...pluginResult.events];
+    final allContents = [...allToolContents, ...pluginResult.contents];
 
     return ApiCallResult(
       replyText: lastRich?.text ?? '',
       processedText: pluginResult.processedText,
       pluginEvents: allEvents,
-      pluginContents: pluginResult.contents,
+      pluginContents: allContents,
       toolResults: lastRich?.toolResults ?? [],
       toolAudioResults: allToolAudioResults,
     );
   }
 
   /// 浠?API 鍝嶅簲鏋勫缓 assistant 娑堟伅锛堢敤浜庡伐鍏疯皟鐢ㄧ殑娑堟伅杩藉姞锛?
+  List<PluginImageContent> _extractToolImageContents(String result) {
+    final trimmed = result.trim();
+    if (trimmed.isEmpty) return const <PluginImageContent>[];
+
+    try {
+      final payload = jsonDecode(trimmed);
+      if (payload is! Map<String, dynamic>) return const <PluginImageContent>[];
+      if (payload['success'] != true) return const <PluginImageContent>[];
+
+      final images = payload['images'];
+      if (images is! List) return const <PluginImageContent>[];
+
+      final contents = <PluginImageContent>[];
+      for (final image in images) {
+        if (image is! Map) continue;
+        final localPath = image['localPath']?.toString().trim() ?? '';
+        if (localPath.isEmpty) continue;
+        final captionRaw = image['caption']?.toString().trim();
+        contents.add(
+          PluginImageContent(
+            localPath,
+            caption:
+                (captionRaw == null || captionRaw.isEmpty) ? null : captionRaw,
+          ),
+        );
+      }
+      return contents;
+    } catch (_) {
+      return const <PluginImageContent>[];
+    }
+  }
   Map<String, dynamic> _buildAssistantMessageFromRich(
       SendMessageRichResult rich, String provider) {
     // 鏍规嵁 provider 绫诲瀷鏋勫缓涓嶅悓鏍煎紡
@@ -1151,3 +1197,4 @@ class ApiConfig {
 
 /// Provider
 final chatSendServiceProvider = Provider((ref) => ChatSendService(ref));
+

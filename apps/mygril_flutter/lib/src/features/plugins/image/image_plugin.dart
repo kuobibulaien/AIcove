@@ -10,7 +10,6 @@ import 'package:path_provider/path_provider.dart';
 import '../../../core/api/agent_api.dart';
 import '../../../core/app_logger.dart';
 import '../../settings/app_settings.dart';
-import '../../settings/settings_models.dart';
 import '../domain/index.dart';
 import 'image_config.dart';
 
@@ -105,6 +104,15 @@ class ImagePlugin extends BasePlugin {
     final settings = _ref.read(appSettingsProvider).valueOrNull;
     if (settings == null || _resolveTarget(settings) == null) return [];
     return [_drawImageTool];
+  }
+
+  @override
+  Future<PluginProcessResult> processResponse(String text) async {
+    return PluginProcessResult(
+      processedText: text,
+      events: const [],
+      contents: const [],
+    );
   }
 
   AITool get _drawImageTool => AITool(

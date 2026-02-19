@@ -8,10 +8,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/moe_app_bar.dart';
-import '../../../../ui/shared/widgets/moe_toast.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../../features/plugins/plugin_providers.dart';
 import '../../../../features/settings/app_settings.dart';
+import '../../plugins/pages/image_plugin_detail_page.dart';
 import '../../plugins/pages/memory_plugin_detail_page.dart';
 import '../../plugins/pages/tts_plugin_detail_page.dart';
 import '../../plugins/pages/sticker_settings_page.dart';
@@ -154,8 +154,8 @@ class ChatPluginSettingsPage extends ConsumerWidget {
         page = const TtsPluginDetailPage();
         break;
       case 'image':
-        MoeToast.brief(context, '绘图设置功能开发中');
-        return;
+        page = const ImagePluginDetailPage();
+        break;
     }
 
     if (page != null) {

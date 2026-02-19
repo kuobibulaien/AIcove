@@ -84,6 +84,7 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
           break;
         case ApiFormat.novelai:
           _urlCtrl.text = 'https://api.novelai.net';
+          _selectedCapability = 'image';
           break;
       }
     });
