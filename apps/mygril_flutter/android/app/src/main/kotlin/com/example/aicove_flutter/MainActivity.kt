@@ -1,4 +1,4 @@
-package com.example.mygril_flutter
+package com.example.aicove_flutter
 
 import android.os.Build
 import android.os.Bundle
