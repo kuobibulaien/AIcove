@@ -1,14 +1,14 @@
 # SQLite 本地存储落地计划（Android / Windows）
 
-面向：MyGril Flutter 客户端  
+面向：AIcove Flutter 客户端  
 目标：替换当前 SharedPreferences 的整包 JSON 存储，让聊天数据像通讯软件一样“分表存储、按需读取”，并且 **一套代码同时支持 Android + Windows**（未来可扩展 macOS / 鸿蒙）。  
 
 ## 0. 现状说明（为什么要做）
 
 当前聊天数据主要由 `ConversationsNotifier` 负责本地持久化：  
-- 文件：`apps/mygril_flutter/lib/src/features/chat/providers2.dart`  
+- 文件：`apps/aicove_flutter/lib/src/features/chat/providers2.dart`  
 - 存储：SharedPreferences  
-- key：`mygril.conversations`  
+- key：`aicove.conversations`  
 
 这种方式像“把所有聊天记录写在一张很大的便签上”：  
 - 数据越多越卡：每次写入都要把整坨 JSON 重新编码/存一遍  
@@ -75,17 +75,17 @@
 
 落地时建议建立以下目录（都在 Flutter 主工程内）：  
 
-`apps/mygril_flutter/lib/src/core/database/`（数据库核心）
+`apps/aicove_flutter/lib/src/core/database/`（数据库核心）
 - `database_service.dart`：打开数据库、PRAGMA 初始化、事务封装、迁移入口  
 - `database_schema.dart`：建表常量/公共 SQL（若采用 Drift 则这里会转为 table 定义）  
 - `migrations/`：迁移脚本（v1/v2…）  
 
-`apps/mygril_flutter/lib/src/core/database/repositories/`（数据访问）
+`apps/aicove_flutter/lib/src/core/database/repositories/`（数据访问）
 - `conversation_repository.dart`：对话 CRUD、对话列表查询、更新会话摘要字段  
 - `message_repository.dart`：消息增删改查、分页、写入消息时同步更新会话摘要  
 - `memory_repository.dart`：记忆 CRUD、（可选）向量搜索/关键词检索入口  
 
-`apps/mygril_flutter/lib/src/core/database/backup/`（备份）
+`apps/aicove_flutter/lib/src/core/database/backup/`（备份）
 - `backup_service.dart`：导出/导入/合并/覆盖策略、校验、临时目录管理  
 - `backup_format.dart`：manifest / data json 的结构定义  
 
@@ -114,7 +114,7 @@
 
 ## 6. 迁移策略（SharedPreferences → SQLite）
 
-迁移目标：把 `mygril.conversations` 的 JSON 结构，拆成：
+迁移目标：把 `aicove.conversations` 的 JSON 结构，拆成：
 - conversations（一行一个会话）
 - messages（一行一条消息）
 - message_blocks（一行一个 block）
@@ -159,4 +159,4 @@ Phase 5（0.5 天）
 ## 10. 施工入口（给“动工 AI”看的）
 
 本文件是“本地库落地计划”。真正的施工手册（包含：最终表字段、同步接口、回收站、分支、重生成覆盖、备份格式、加密策略、施工顺序）在：
-- `apps/mygril_flutter/docs/备份与同步方案/施工手册_备份与云同步.md`
+- `apps/aicove_flutter/docs/备份与同步方案/施工手册_备份与云同步.md`

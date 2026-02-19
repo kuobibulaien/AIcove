@@ -27,7 +27,7 @@
 适用于使用 go_router 的项目。需要在**两个路由**中分别配置动画。
 
 ```dart
-import 'package:mygril_flutter/src/core/widgets/parallax_slide_page_route.dart';
+import 'package:aicove_flutter/src/core/widgets/parallax_slide_page_route.dart';
 
 final router = GoRouter(
   routes: [
@@ -66,7 +66,7 @@ final router = GoRouter(
 适用于直接使用 Navigator 的场景。
 
 ```dart
-import 'package:mygril_flutter/src/core/widgets/parallax_slide_page_route.dart';
+import 'package:aicove_flutter/src/core/widgets/parallax_slide_page_route.dart';
 
 // 使用扩展方法
 Navigator.of(context).pushParallaxSlide(

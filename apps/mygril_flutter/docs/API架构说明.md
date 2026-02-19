@@ -1,7 +1,7 @@
 # API 架构说明
 
 > 更新日期：2026-01-21
-> 适用范围：`apps/mygril_flutter/lib/src/features/chat/`、`apps/mygril_flutter/lib/src/core/api/agent_api.dart`
+> 适用范围：`apps/aicove_flutter/lib/src/features/chat/`、`apps/aicove_flutter/lib/src/core/api/agent_api.dart`
 
 ## 当前实现
 

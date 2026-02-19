@@ -1,4 +1,4 @@
-# MyGril Flutter 前端
+# AIcove Flutter 前端
 
 本目录存放 Flutter 前端源码与构建产物。目标平台：Web（集成到 FastAPI 的 `/app` 路径）、Android、Windows。
 
@@ -16,7 +16,7 @@
 如果你是把本目录单独拷贝出来、或平台目录缺失，可以在本目录执行以下命令重新生成平台目录：
 
 ```bash
-cd apps/mygril_flutter
+cd apps/aicove_flutter
 flutter create .
 ```
 
@@ -55,7 +55,7 @@ flutter run -d windows --dart-define=API_BASE_URL=http://localhost:8000
 ```bash
 flutter build web --release --base-href /app/ --pwa-strategy none --dart-define=API_BASE_URL=/
 # 产物输出到 build/web
-# FastAPI 已在 cloud_backend/main.py 自动尝试挂载 apps/mygril_flutter/build/web 到 /app
+# FastAPI 已在 cloud_backend/main.py 自动尝试挂载 apps/aicove_flutter/build/web 到 /app
 ```
 
 构建完成后启动后端：

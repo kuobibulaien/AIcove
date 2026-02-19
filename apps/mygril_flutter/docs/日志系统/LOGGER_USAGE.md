@@ -9,7 +9,7 @@
 如果你只需要记录简单的日志，可以继续使用原有的方式：
 
 ```dart
-import 'package:mygril_flutter/src/core/app_logger.dart';
+import 'package:aicove_flutter/src/core/app_logger.dart';
 
 // 记录不同级别的日志
 AppLogger.debug('ChatPage', '开始加载消息');
