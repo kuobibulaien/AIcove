@@ -3,7 +3,7 @@ version: '3.8'
 services:
   app:
     build: .
-    container_name: mygril-sync
+    container_name: aicove-sync
     restart: unless-stopped
     ports:
       - "8000:8000"
@@ -15,8 +15,8 @@ services:
     volumes:
       - ./data:/app/data
     networks:
-      - mygril-network
+      - aicove-network
 
 networks:
-  mygril-network:
+  aicove-network:
     driver: bridge

@@ -1,4 +1,4 @@
-# MyGril Cloud Sync - Docker镜像
+# AIcove Cloud Sync - Docker镜像
 FROM python:3.11-slim
 
 # 设置工作目录

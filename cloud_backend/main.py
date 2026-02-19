@@ -1,4 +1,4 @@
-"""MyGril 云同步服务 - 主入口"""
+"""AIcove 云同步服务 - 主入口"""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -16,8 +16,8 @@ from memory_api import router as memory_router
 
 # 创建FastAPI应用
 app = FastAPI(
-    title="MyGril Cloud Sync",
-    description="MyGril AI女友助手 - 云同步服务",
+    title="AIcove Cloud Sync",
+    description="AIcove AI女友助手 - 云同步服务",
     version="1.0.0"
 )
 
@@ -41,7 +41,7 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     """应用启动时执行"""
-    print("🚀 正在启动 MyGril 云同步服务...")
+    print("🚀 正在启动 AIcove 云同步服务...")
     try:
         init_db()
         print("✅ 数据库初始化成功")
@@ -56,7 +56,7 @@ async def startup_event():
 async def root():
     """服务根路径"""
     return {
-        "service": "MyGril Cloud Sync",
+        "service": "AIcove Cloud Sync",
         "version": "1.0.0",
         "status": "running",
         "docs": "/docs",
@@ -78,7 +78,7 @@ async def root():
 @app.get("/health")
 async def health_check():
     """健康检查端点"""
-    return {"status": "ok", "service": "MyGril Cloud Sync"}
+    return {"status": "ok", "service": "AIcove Cloud Sync"}
 
 
 # 注册路由
@@ -110,7 +110,7 @@ from fastapi.staticfiles import StaticFiles
 import os
 
 # 构建产物路径
-build_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "apps", "mygril_flutter", "build", "web")
+build_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "apps", "aicove_flutter", "build", "web")
 
 if os.path.exists(build_dir):
     app.mount("/app", StaticFiles(directory=build_dir, html=True), name="app")

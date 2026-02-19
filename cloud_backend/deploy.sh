@@ -1,9 +1,9 @@
 #!/bin/bash
-# MyGril Cloud 一键部署脚本
+# AIcove Cloud 一键部署脚本
 # 使用方法：chmod +x deploy.sh && ./deploy.sh
 
 echo "=========================================="
-echo "  MyGril Cloud 一键部署脚本"
+echo "  AIcove Cloud 一键部署脚本"
 echo "  服务器IP: localhost"
 echo "=========================================="
 echo ""
@@ -37,7 +37,7 @@ if [ ! -f .env ]; then
     SECRET_KEY=$(openssl rand -hex 32)
     
     cat > .env << EOF
-# MyGril Cloud 配置文件
+# AIcove Cloud 配置文件
 # 自动生成于 $(date)
 
 # 安全密钥（已自动生成）
@@ -86,7 +86,7 @@ sleep 5
 # 7. 检查状态
 echo ""
 echo "🔍 检查服务状态..."
-if docker ps | grep -q mygril-sync; then
+if docker ps | grep -q aicove-sync; then
     echo "✅ 容器运行中"
 else
     echo "❌ 容器未运行，查看日志："

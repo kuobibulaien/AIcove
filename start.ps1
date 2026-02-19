@@ -1,4 +1,4 @@
-﻿# MyGril Project Startup Script (PowerShell)
+# AIcove Project Startup Script (PowerShell)
 # Encoding: UTF-8 with BOM
 
 [CmdletBinding()]
@@ -21,7 +21,7 @@ function Write-Err { param([string]$msg) Write-Host $msg -ForegroundColor Red }
 function Write-Banner {
     Write-Host ""
     Write-Host "====================================" -ForegroundColor Cyan
-    Write-Host "    MyGril Project Startup" -ForegroundColor Cyan
+    Write-Host "    AIcove Project Startup" -ForegroundColor Cyan
     Write-Host "====================================" -ForegroundColor Cyan
     Write-Host ""
 }
@@ -39,7 +39,7 @@ $BACKEND_DIR = Join-Path $ROOT_DIR "cloud_backend"
 $BACKEND_VENV = Join-Path $BACKEND_DIR ".venv"
 $BACKEND_PYTHON = Join-Path $BACKEND_VENV "Scripts\python.exe"
 $BACKEND_PIP = Join-Path $BACKEND_VENV "Scripts\pip.exe"
-$FLUTTER_APP_DIR = Join-Path $ROOT_DIR "apps\mygril_flutter"
+$FLUTTER_APP_DIR = Join-Path $ROOT_DIR "apps\aicove_flutter"
 $FLUTTER_BUILD_DIR = Join-Path $FLUTTER_APP_DIR "build\web"
 
 $FLUTTER_PATHS = @(
@@ -496,7 +496,7 @@ try {
             Write-Host "Troubleshooting:" -ForegroundColor Yellow
             Write-Host "  - Check Flutter is installed (flutter --version)" -ForegroundColor Cyan
             Write-Host "  - Run: flutter doctor" -ForegroundColor Cyan
-            Write-Host "  - Check apps\mygril_flutter directory exists" -ForegroundColor Cyan
+            Write-Host "  - Check apps\aicove_flutter directory exists" -ForegroundColor Cyan
             Write-Host ""
             Write-Host "Note: You can skip Flutter build with:" -ForegroundColor Yellow
             Write-Host "      .\start.ps1 -SkipFlutter" -ForegroundColor Yellow
@@ -510,7 +510,7 @@ try {
     # Show startup success message
     Write-Host ""
     Write-Host "========================================" -ForegroundColor Green
-    Write-Host "  🚀 MyGril Service Started!" -ForegroundColor Green
+    Write-Host "  🚀 AIcove Service Started!" -ForegroundColor Green
     Write-Host "========================================" -ForegroundColor Green
     Write-Host ""
     Write-Host "  Backend API:  " -NoNewline

@@ -1,4 +1,4 @@
-# MyGril Cloud Sync 云同步服务
+# AIcove Cloud Sync 云同步服务
 
 云端后端服务：以「用户认证 + 云端数据相关能力」为主（同步/备份/触发器/记忆/额度等），所有 AI 对话逻辑在 Flutter 客户端完成。
 
@@ -14,7 +14,7 @@
 - ✅ 云触发器（自动化任务）
 - ✅ 云记忆库（长期记忆）
 - ✅ Key 分发与额度管理
-- ✅ （可选）挂载 Flutter Web：`/app`（检测到 `apps/mygril_flutter/build/web` 时自动启用）
+- ✅ （可选）挂载 Flutter Web：`/app`（检测到 `apps/aicove_flutter/build/web` 时自动启用）
 - ✅ RESTful API
 
 ## 📦 技术栈
@@ -162,7 +162,7 @@ ENCRYPTION_KEY=base64-fernet-key
 
 修改 `.env`:
 ```env
-DATABASE_URL=postgresql://user:password@localhost/mygril
+DATABASE_URL=postgresql://user:password@localhost/aicove
 ```
 
 ## 📊 项目结构

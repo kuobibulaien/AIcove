@@ -1,6 +1,6 @@
-# MyGril Cloud Sync - Windows启动脚本
+# AIcove Cloud Sync - Windows启动脚本
 
-Write-Host "🚀 启动 MyGril 云同步服务..." -ForegroundColor Green
+Write-Host "🚀 启动 AIcove 云同步服务..." -ForegroundColor Green
 
 # 检查.env文件
 if (-not (Test-Path ".env")) {

@@ -1,7 +1,7 @@
 #!/bin/bash
-# MyGril Cloud Sync - 启动脚本
+# AIcove Cloud Sync - 启动脚本
 
-echo "🚀 启动 MyGril 云同步服务..."
+echo "🚀 启动 AIcove 云同步服务..."
 
 # 检查.env文件
 if [ ! -f .env ]; then
