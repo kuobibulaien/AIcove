@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// SharedPreferences 键名，统一管理模型与渠道配置。
-const _kStoreKey = 'mygril.ui_models.v1';
+const _kStoreKey = 'aicove.ui_models.v1';
 
 /// 本地 API Key 配置缓存（避免重复读取 assets）
 Map<String, String>? _localKeysCache;
@@ -62,7 +62,7 @@ Map<String, dynamic> _defaultStoreData() => <String, dynamic>{
           'displayName': 'MiniMax',
           'apiKeys': <String>[], // 从 local_keys.json 加载
           'apiBaseUrl': 'https://api.minimaxi.com/v1',
-          'enabled': false,
+          'enabled': true,
           'models': <String>[
             'speech-2.8-hd',
             'speech-2.8-turbo',
@@ -93,23 +93,11 @@ Map<String, dynamic> _defaultStoreData() => <String, dynamic>{
         },
         // === 中文供应商 ===
         {
-          'id': 'gitee-ai',
-          'displayName': '模力方舟',
-          'apiKeys': <String>[], // 从 local_keys.json 加载
-          'apiBaseUrl': 'https://ai.gitee.com/v1',
-          'enabled': true,
-          'models': <String>['IndexTTS-2'],
-          'visible_models': <String>['IndexTTS-2'],
-          'hidden_models': <String>[],
-          'capabilities': <String>['tts'],
-          'model_type': 'tts',
-        },
-        {
           'id': 'aliyun',
           'displayName': '阿里云',
           'apiKeys': <String>[],
           'apiBaseUrl': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-          'enabled': false,
+          'enabled': true,
           'models': <String>[
             'cosyvoice-v3-plus',
             'qwen3-tts-vc-realtime-2026-01-15',
@@ -119,8 +107,8 @@ Map<String, dynamic> _defaultStoreData() => <String, dynamic>{
             'qwen3-tts-vc-realtime-2026-01-15',
           ],
           'hidden_models': <String>[],
-          'capabilities': <String>['chat', 'tts'],
-          'model_type': 'chat',
+          'capabilities': <String>['tts'],
+          'model_type': 'tts',
         },
         {
           'id': 'siliconflow',
@@ -151,14 +139,16 @@ Map<String, dynamic> _defaultStoreData() => <String, dynamic>{
       'default_model': 'deepseek-chat',
       'model_display_names': <String, String>{'deepseek-chat': 'DeepSeek Chat'},
       'backend_api_key': '',
+      'image_generation_enabled': false,
       'message_chunking_enabled': false,
       'message_format_config': null, // 默认为 null，由前端使用默认配置
-      'message_font_size': 13.0, // 默认中等大小
+      'text_scale_factor': 1.0, // 全局字体缩放因子（默认 1.0）
       'auto_reply_settings': _defaultAutoReplySettings(),
       // 主题与界面设置相关字段（后续可按需扩展）
-      'chat_background_color': 'white', // 对应 ChatBackgroundColor.white
+      'chat_background_color': 'default', // 默认跟随全局背景色
       'is_dark_mode': false,
       'use_system_theme': true,
+      'hide_user_avatar': true,
       'user_avatar': null,
       'user_name': null,
     };
@@ -172,6 +162,24 @@ Map<String, dynamic> _defaultAutoReplySettings() => <String, dynamic>{
       'quiet_hours_end': '08:00',
       'allow_exact_alarm': false,
     };
+
+const _novelAiDefaultModels = <String>[
+  'nai-diffusion-4-5-curated-preview',
+  'nai-diffusion-4-5-full',
+  'nai-diffusion-3',
+];
+
+bool _isNovelAiProvider({
+  required String providerId,
+  required String apiBaseUrl,
+}) {
+  final id = providerId.toLowerCase().trim();
+  if (id == 'novelai' || id == 'nai') {
+    return true;
+  }
+  final base = apiBaseUrl.toLowerCase();
+  return base.contains('novelai.net');
+}
 
 Map<String, dynamic> _normalizeAutoReplySettings(dynamic source) {
   final defaults = _defaultAutoReplySettings();
@@ -201,12 +209,15 @@ Map<String, dynamic> _normalizeAutoReplySettings(dynamic source) {
 
   return <String, dynamic>{
     'enabled': source['enabled'] == true,
-    'daily_limit': clampInt(source['daily_limit'] as num?, 1, 10, defaults['daily_limit'] as int),
-    'min_interval_minutes':
-        clampInt(source['min_interval_minutes'] as num?, 15, 720, defaults['min_interval_minutes'] as int),
+    'daily_limit': clampInt(
+        source['daily_limit'] as num?, 1, 10, defaults['daily_limit'] as int),
+    'min_interval_minutes': clampInt(source['min_interval_minutes'] as num?, 15,
+        720, defaults['min_interval_minutes'] as int),
     'quiet_hours_enabled': source['quiet_hours_enabled'] != false,
-    'quiet_hours_start': normalizeTime(source['quiet_hours_start'] as String?, defaults['quiet_hours_start'] as String),
-    'quiet_hours_end': normalizeTime(source['quiet_hours_end'] as String?, defaults['quiet_hours_end'] as String),
+    'quiet_hours_start': normalizeTime(source['quiet_hours_start'] as String?,
+        defaults['quiet_hours_start'] as String),
+    'quiet_hours_end': normalizeTime(source['quiet_hours_end'] as String?,
+        defaults['quiet_hours_end'] as String),
     'allow_exact_alarm': source['allow_exact_alarm'] == true,
   };
 }
@@ -241,8 +252,10 @@ Map<String, dynamic> _normalizeData(Map<String, dynamic> raw) {
       final displayName = (provider['displayName'] as String?)?.trim();
       final apiKeys = _cleanStrings(provider['apiKeys']);
       final apiBaseUrl =
-          (provider['apiBaseUrl'] as String? ?? 'https://api.openai.com/v1').trim();
-      final enabled = provider['enabled'] is bool ? provider['enabled'] as bool : true;
+          (provider['apiBaseUrl'] as String? ?? 'https://api.openai.com/v1')
+              .trim();
+      final enabled =
+          provider['enabled'] is bool ? provider['enabled'] as bool : true;
       final models = _cleanStrings(provider['models'])..sort(_caseSort);
       final visible = _cleanStrings(provider['visible_models']);
       final hidden = _cleanStrings(provider['hidden_models']);
@@ -252,7 +265,8 @@ Map<String, dynamic> _normalizeData(Map<String, dynamic> raw) {
       }
 
       // 迁移：给阿里云渠道自动补上 tts capability
-      var customConfig = provider['custom_config'] as Map<String, dynamic>? ?? {};
+      var customConfig =
+          provider['custom_config'] as Map<String, dynamic>? ?? {};
       if (id == 'aliyun' && !capabilities.contains('tts')) {
         capabilities.add('tts');
       }
@@ -309,10 +323,13 @@ Map<String, dynamic> _normalizeData(Map<String, dynamic> raw) {
         'custom_config': customConfig,
         'model_type': modelType,
         // 保留模型参数字段
-        if (provider['disable_tool_calling'] == true) 'disable_tool_calling': true,
-        if (provider['temperature'] != null) 'temperature': provider['temperature'],
+        if (provider['disable_tool_calling'] == true)
+          'disable_tool_calling': true,
+        if (provider['temperature'] != null)
+          'temperature': provider['temperature'],
         if (provider['top_p'] != null) 'top_p': provider['top_p'],
-        if (provider['context_message_limit'] != null) 'context_message_limit': provider['context_message_limit'],
+        if (provider['context_message_limit'] != null)
+          'context_message_limit': provider['context_message_limit'],
       });
 
       if (enabled) {
@@ -327,7 +344,8 @@ Map<String, dynamic> _normalizeData(Map<String, dynamic> raw) {
 
   data['providers'] = normalizedProviders;
   data['visible_models'] = visibleUnion..sort(_caseSort);
-  data['auto_reply_settings'] = _normalizeAutoReplySettings(data['auto_reply_settings']);
+  data['auto_reply_settings'] =
+      _normalizeAutoReplySettings(data['auto_reply_settings']);
   return data;
 }
 
@@ -355,6 +373,10 @@ class UiModelsApi {
     required String apiKey,
     required String apiBaseUrl,
   }) async {
+    if (_isNovelAiProvider(providerId: providerId, apiBaseUrl: apiBaseUrl)) {
+      return _novelAiDefaultModels;
+    }
+
     try {
       final url = '${apiBaseUrl.replaceAll(RegExp(r'/+$'), '')}/models';
       final response = await http.get(
@@ -368,10 +390,11 @@ class UiModelsApi {
 
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       final models = (data['data'] as List?)
-          ?.whereType<Map>()
-          .map((e) => (e['id'] as String?)?.trim() ?? '')
-          .where((e) => e.isNotEmpty)
-          .toList() ?? <String>[];
+              ?.whereType<Map>()
+              .map((e) => (e['id'] as String?)?.trim() ?? '')
+              .where((e) => e.isNotEmpty)
+              .toList() ??
+          <String>[];
 
       if (models.isEmpty) {
         throw Exception('No models found');
@@ -407,14 +430,28 @@ class UiModelsApi {
         .map((e) => Map<String, dynamic>.from(e))
         .toList();
 
-    final models =
-        allModels != null ? _cleanStrings(allModels) : await previewProvider(
-              providerId: providerId,
-              apiKey: apiKey,
-              apiBaseUrl: apiBaseUrl,
-            );
+    List<String> models;
+    if (allModels != null) {
+      models = _cleanStrings(allModels);
+    } else {
+      try {
+        models = await previewProvider(
+          providerId: providerId,
+          apiKey: apiKey,
+          apiBaseUrl: apiBaseUrl,
+        );
+      } catch (e) {
+        if (_isNovelAiProvider(providerId: providerId, apiBaseUrl: apiBaseUrl)) {
+          models = _novelAiDefaultModels;
+        } else {
+          rethrow;
+        }
+      }
+    }
 
-    if (model != null && model.trim().isNotEmpty && !models.contains(model.trim())) {
+    if (model != null &&
+        model.trim().isNotEmpty &&
+        !models.contains(model.trim())) {
       models.insert(0, model.trim());
     }
 
@@ -427,16 +464,21 @@ class UiModelsApi {
 
     final entry = <String, dynamic>{
       'id': providerId,
-      'displayName': displayName?.trim().isEmpty == true ? null : displayName?.trim(),
+      'displayName':
+          displayName?.trim().isEmpty == true ? null : displayName?.trim(),
       'apiKeys': apiKey.trim().isEmpty ? <String>[] : <String>[apiKey.trim()],
-      'apiBaseUrl': apiBaseUrl.trim().isEmpty ? 'https://api.openai.com/v1' : apiBaseUrl.trim(),
+      'apiBaseUrl': apiBaseUrl.trim().isEmpty
+          ? 'https://api.openai.com/v1'
+          : apiBaseUrl.trim(),
       'enabled': true,
       'models': models,
       'visible_models': visible,
       'hidden_models': hidden.where((m) => !visible.contains(m)).toList(),
       'capabilities': caps,
       'custom_config': customConfig ?? {},
-      'model_type': modelType?.trim().isEmpty == true ? 'chat' : (modelType?.trim() ?? 'chat'),
+      'model_type': modelType?.trim().isEmpty == true
+          ? 'chat'
+          : (modelType?.trim() ?? 'chat'),
     };
 
     providers.removeWhere((p) => p['id'] == providerId);
@@ -484,7 +526,8 @@ class UiModelsApi {
     }
     final provider = providers[index];
     if (displayName != null) {
-      provider['displayName'] = displayName.trim().isEmpty ? null : displayName.trim();
+      provider['displayName'] =
+          displayName.trim().isEmpty ? null : displayName.trim();
     }
     if (apiBaseUrl != null && apiBaseUrl.trim().isNotEmpty) {
       provider['apiBaseUrl'] = apiBaseUrl.trim();
@@ -550,14 +593,15 @@ class UiModelsApi {
     return _writeStore(prefs, current);
   }
 
-  Future<Map<String, dynamic>> reorderProviders(List<String> providerIds) async {
+  Future<Map<String, dynamic>> reorderProviders(
+      List<String> providerIds) async {
     final prefs = await SharedPreferences.getInstance();
     final current = await _loadStore(prefs);
     final providers = (current['providers'] as List)
         .cast<Map<String, dynamic>>()
         .map((e) => Map<String, dynamic>.from(e))
         .toList();
-    
+
     // 按照新的顺序重新排列
     final reordered = <Map<String, dynamic>>[];
     for (final id in providerIds) {
@@ -569,7 +613,7 @@ class UiModelsApi {
         reordered.add(provider);
       }
     }
-    
+
     current['providers'] = reordered;
     return _writeStore(prefs, current);
   }
@@ -584,17 +628,17 @@ class UiModelsApi {
         .cast<Map<String, dynamic>>()
         .map((e) => Map<String, dynamic>.from(e))
         .toList();
-    
+
     final index = providers.indexWhere((p) => p['id'] == providerId);
     if (index < 0) return current;
-    
+
     final provider = providers[index];
-    
+
     // 更新 visible_models 的顺序
     provider['visible_models'] = modelIds;
     providers[index] = provider;
     current['providers'] = providers;
-    
+
     return _writeStore(prefs, current);
   }
 
@@ -620,14 +664,16 @@ class UiModelsApi {
   /// 将本地 key 注入到 provider 配置中
   /// 只有当 provider 的 apiKeys 为空时才注入
   /// 同时为阿里云等渠道补充默认模型列表
-  Future<Map<String, dynamic>> _applyLocalKeys(Map<String, dynamic> data) async {
+  Future<Map<String, dynamic>> _applyLocalKeys(
+      Map<String, dynamic> data) async {
     final localKeys = await _loadLocalKeys();
     final providers = data['providers'];
     if (providers is! List) return data;
 
     // 获取默认配置，用于补充模型列表
     final defaults = _defaultStoreData();
-    final defaultProviders = (defaults['providers'] as List).cast<Map<String, dynamic>>();
+    final defaultProviders =
+        (defaults['providers'] as List).cast<Map<String, dynamic>>();
 
     for (final provider in providers) {
       if (provider is! Map) continue;
@@ -636,8 +682,9 @@ class UiModelsApi {
 
       // 注入本地 key
       final existingKeys = provider['apiKeys'];
-      final hasKey = existingKeys is List && existingKeys.isNotEmpty &&
-                     existingKeys.any((k) => k?.toString().trim().isNotEmpty == true);
+      final hasKey = existingKeys is List &&
+          existingKeys.isNotEmpty &&
+          existingKeys.any((k) => k?.toString().trim().isNotEmpty == true);
 
       if (!hasKey && localKeys.containsKey(id)) {
         final localKey = localKeys[id]?.trim() ?? '';
@@ -658,7 +705,8 @@ class UiModelsApi {
           final defaultModels = defaultProvider['models'];
           if (defaultModels is List && defaultModels.isNotEmpty) {
             provider['models'] = List<String>.from(defaultModels);
-            provider['visible_models'] = List<String>.from(defaultProvider['visible_models'] ?? defaultModels);
+            provider['visible_models'] = List<String>.from(
+                defaultProvider['visible_models'] ?? defaultModels);
           }
         }
       }

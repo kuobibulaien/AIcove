@@ -7,6 +7,8 @@ import '../../../core/app_logger.dart';
 import '../providers2.dart';
 import 'auto_reply_trigger.dart';
 import 'auto_reply_trigger_storage.dart';
+import 'background_service.dart';
+import '../../settings/app_settings.dart';
 
 final autoReplyTriggerEventProvider =
     StateProvider<AutoReplyTriggerEvent?>((ref) => null);
@@ -51,6 +53,10 @@ class AutoReplyTriggerController
   }) async {
     // 获取当前会话的最后一条用户消息（用于作废判断）
     final convId = contactId ?? ref.read(activeConversationIdProvider) ?? '';
+    if (convId.isEmpty) {
+      AppLogger.warning('AutoReplyTrigger', 'Skip creating manual trigger: no conversation bound');
+      return;
+    }
     final conversations = ref.read(conversationsProvider).valueOrNull ?? [];
     final conv = conversations.where((c) => c.id == convId).firstOrNull;
 
@@ -109,6 +115,11 @@ class AutoReplyTriggerController
     DateTime? contextLastUserMessageAt,
     String? contextSnapshot,
   }) async {
+    final normalizedConversationId = conversationId.trim();
+    if (normalizedConversationId.isEmpty) {
+      throw ArgumentError('conversationId is required');
+    }
+
     final trigger = AutoReplyTrigger(
       id: _uuid.v4(),
       title: title.trim().isEmpty ? '自定义触发' : title.trim(),
@@ -122,7 +133,7 @@ class AutoReplyTriggerController
       manual: source == TriggerSource.userManual || source == TriggerSource.userRequest,
       prompt: prompt,
       priority: priority,
-      conversationId: conversationId,
+      conversationId: normalizedConversationId,
       source: source,
       contextLastUserMessageId: contextLastUserMessageId,
       contextLastUserMessageAt: contextLastUserMessageAt,
@@ -137,7 +148,7 @@ class AutoReplyTriggerController
       'title': trigger.title,
       'priority': priority.name,
       'source': source.name,
-      'conversationId': conversationId,
+      'conversationId': normalizedConversationId,
     });
     _emitEvent(AutoReplyTriggerEventType.created, trigger);
 
@@ -160,6 +171,7 @@ class AutoReplyTriggerController
     }).toList();
 
     await _persist(updated);
+    await BackgroundService.cancelTaskByTriggerId(triggerId);
     AppLogger.info('AutoReplyTrigger', 'Trigger expired', metadata: {
       'id': triggerId,
       'title': target.title,
@@ -212,6 +224,7 @@ class AutoReplyTriggerController
     if (target.isEmpty) return;
     final updated = current.where((e) => e.id != id).toList();
     await _persist(updated);
+    await BackgroundService.cancelTaskByTriggerId(id);
     AppLogger.info('AutoReplyTrigger', 'Deleted trigger: $id');
     _emitEvent(AutoReplyTriggerEventType.deleted, target.first);
   }
@@ -236,6 +249,17 @@ class AutoReplyTriggerController
   }
 
   Future<void> fireNow(String id) async {
+    final current = state.valueOrNull ?? const <AutoReplyTrigger>[];
+    final trigger = current.where((t) => t.id == id).firstOrNull;
+    if (trigger == null) return;
+
+    final activeChatId = ref.read(activeConversationIdProvider);
+    final expireReason = await _checkShouldExpire(trigger, activeChatId);
+    if (expireReason != null) {
+      await expireTrigger(id, expireReason);
+      return;
+    }
+
     await _handleTrigger(id, DateTime.now());
   }
 
@@ -248,13 +272,62 @@ class AutoReplyTriggerController
   Future<void> _pollDueTriggers() async {
     final current = state.valueOrNull;
     if (current == null || current.isEmpty) return;
+    final settings = await ref.read(appSettingsProvider.future);
+    final autoReplySettings = settings.autoReplySettings;
+    if (!autoReplySettings.enabled) return;
+
     final now = DateTime.now();
+    final quietHoursActive = autoReplySettings.quietHoursEnabled &&
+        _isInQuietHours(now,
+            start: autoReplySettings.quietHoursStart,
+            end: autoReplySettings.quietHoursEnd);
+
+    final firedTodayCount = current.where((t) {
+      if (t.status != AutoReplyTriggerStatus.fired || t.lastFiredAt == null) {
+        return false;
+      }
+      return _isSameDay(t.lastFiredAt!, now);
+    }).length;
+    if (firedTodayCount >= autoReplySettings.dailyLimit) {
+      AppLogger.info('AutoReplyTrigger', 'Skip polling: daily limit reached', metadata: {
+        'dailyLimit': autoReplySettings.dailyLimit,
+        'firedToday': firedTodayCount,
+      });
+      return;
+    }
+
+    final latestFiredAt = current
+        .where((t) => t.status == AutoReplyTriggerStatus.fired && t.lastFiredAt != null)
+        .map((t) => t.lastFiredAt!)
+        .fold<DateTime?>(null, (latest, firedAt) {
+      if (latest == null || firedAt.isAfter(latest)) return firedAt;
+      return latest;
+    });
+    if (latestFiredAt != null &&
+        now.difference(latestFiredAt).inMinutes < autoReplySettings.minIntervalMinutes) {
+      return;
+    }
 
     // Check if chat is active
     final activeChatId = ref.read(activeConversationIdProvider);
 
     // 触发到期的触发器
     for (final trigger in current) {
+      if (quietHoursActive && !trigger.allowNight) {
+        continue;
+      }
+
+      if (trigger.requireExact && !autoReplySettings.allowExactAlarm) {
+        continue;
+      }
+
+      if (trigger.requireExact &&
+          autoReplySettings.allowExactAlarm &&
+          now.difference(trigger.nextFireAt) > const Duration(minutes: 2)) {
+        await expireTrigger(trigger.id, '错过精确触发窗口');
+        continue;
+      }
+
       if (trigger.shouldFire(now, allowNightOverride: false)) {
         // ===== 作废检查（在标记 fired 之前）=====
         final expireCheckResult = await _checkShouldExpire(trigger, activeChatId);
@@ -271,6 +344,33 @@ class AutoReplyTriggerController
 
     // 清理过期的已完成触发器（保留最近24小时的记录用于查看日志）
     await _cleanupCompletedTriggers(now);
+  }
+
+  bool _isSameDay(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  bool _isInQuietHours(DateTime now, {required String start, required String end}) {
+    int parseMinutes(String value, int fallbackHour, int fallbackMinute) {
+      final parts = value.split(':');
+      if (parts.length != 2) return fallbackHour * 60 + fallbackMinute;
+      final hour = int.tryParse(parts[0]);
+      final minute = int.tryParse(parts[1]);
+      if (hour == null || minute == null) {
+        return fallbackHour * 60 + fallbackMinute;
+      }
+      return hour.clamp(0, 23).toInt() * 60 + minute.clamp(0, 59).toInt();
+    }
+
+    final nowMinutes = now.hour * 60 + now.minute;
+    final startMinutes = parseMinutes(start, 22, 0);
+    final endMinutes = parseMinutes(end, 8, 0);
+
+    if (startMinutes == endMinutes) return false;
+    if (startMinutes < endMinutes) {
+      return nowMinutes >= startMinutes && nowMinutes < endMinutes;
+    }
+    return nowMinutes >= startMinutes || nowMinutes < endMinutes;
   }
 
   /// 检查触发器是否应该作废
@@ -350,8 +450,13 @@ class AutoReplyTriggerController
   }
 
   Future<void> _handleTrigger(String id, DateTime firedAt) async {
-    final current = state.valueOrNull ?? const <AutoReplyTrigger>[];
+    final current = await _storage.loadTriggers();
     if (current.isEmpty) return;
+    final latest = current.where((t) => t.id == id).firstOrNull;
+    if (latest == null || !latest.isActive) {
+      return;
+    }
+
     var changed = false;
     final updated = current.map((trigger) {
       if (trigger.id != id) return trigger;
@@ -365,15 +470,83 @@ class AutoReplyTriggerController
     await _persist(updated);
 
     final fired = updated.firstWhere((e) => e.id == id);
+    AppLogger.info('AutoReplyTrigger', 'Trigger due, dispatching send', metadata: {
+      'triggerId': fired.id,
+      'title': fired.title,
+    });
+    _emitEvent(AutoReplyTriggerEventType.fired, fired);
+  }
+
+  Future<void> completeTriggeredSend({
+    required String triggerId,
+    required DateTime firedAt,
+    required bool success,
+    required bool retryable,
+    required String reason,
+  }) async {
+    final current = state.valueOrNull ?? const <AutoReplyTrigger>[];
+    final target = current.where((t) => t.id == triggerId).firstOrNull;
+    if (target == null) return;
+
+    final now = DateTime.now();
+    List<AutoReplyTrigger> updated = current;
+
+    if (success) {
+      updated = current.map((t) {
+        if (t.id != triggerId) return t;
+        return t.copyWith(
+          status: AutoReplyTriggerStatus.fired,
+          lastFiredAt: firedAt,
+          expireReason: null,
+        );
+      }).toList();
+      await _persist(updated);
+      await BackgroundService.cancelTaskByTriggerId(triggerId);
+    } else if (retryable) {
+      final retryAt = now.add(const Duration(minutes: 1));
+      updated = current.map((t) {
+        if (t.id != triggerId) return t;
+        return t.copyWith(
+          status: AutoReplyTriggerStatus.pending,
+          nextFireAt: retryAt,
+          lastFiredAt: null,
+          expireReason: reason,
+        );
+      }).toList();
+      await _persist(updated);
+      AppLogger.warning('AutoReplyTrigger', 'Trigger send failed, scheduled retry', metadata: {
+        'triggerId': triggerId,
+        'retryAt': retryAt.toIso8601String(),
+        'reason': reason,
+      });
+    } else {
+      updated = current.map((t) {
+        if (t.id != triggerId) return t;
+        return t.copyWith(
+          status: AutoReplyTriggerStatus.expired,
+          lastFiredAt: now,
+          expireReason: reason,
+        );
+      }).toList();
+      await _persist(updated);
+      await BackgroundService.cancelTaskByTriggerId(triggerId);
+      final expired = updated.where((t) => t.id == triggerId).firstOrNull;
+      if (expired != null) {
+        _emitEvent(AutoReplyTriggerEventType.expired, expired, reason: reason);
+      }
+      AppLogger.info('AutoReplyTrigger', 'Trigger expired after non-retryable send result', metadata: {
+        'triggerId': triggerId,
+        'reason': reason,
+      });
+    }
+
     await _storage.appendLog(AutoReplyTriggerLog(
       id: _uuid.v4(),
-      triggerId: fired.id,
-      title: fired.title,
+      triggerId: target.id,
+      title: target.title,
       firedAt: firedAt,
-      success: true,
+      success: success,
     ));
-    AppLogger.info('AutoReplyTrigger', 'Trigger fired: ${fired.title}');
-    _emitEvent(AutoReplyTriggerEventType.fired, fired);
   }
 
   Future<void> _persist(List<AutoReplyTrigger> triggers) async {

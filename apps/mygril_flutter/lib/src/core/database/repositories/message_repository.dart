@@ -108,7 +108,8 @@ class MessageRepository {
   }
 
   /// 重生成覆盖（旧消息标记 replacedBy）
-  Future<void> markReplaced(String oldId, String newId, int deletedAt, int purgeAt) async {
+  Future<void> markReplaced(
+      String oldId, String newId, int deletedAt, int purgeAt) async {
     await (_db.update(_db.messages)..where((t) => t.id.equals(oldId)))
         .write(MessagesCompanion(
       replacedBy: Value(newId),
@@ -140,7 +141,8 @@ class MessageRepository {
   Future<int> purgeExpired() async {
     final now = DateTime.now().millisecondsSinceEpoch;
     return (_db.delete(_db.messages)
-          ..where((t) => t.purgeAt.isNotNull() & t.purgeAt.isSmallerOrEqualValue(now)))
+          ..where((t) =>
+              t.purgeAt.isNotNull() & t.purgeAt.isSmallerOrEqualValue(now)))
         .go();
   }
 
@@ -152,12 +154,169 @@ class MessageRepository {
   }
 
   /// 软删除会话的所有消息
-  Future<void> softDeleteByConversation(String conversationId, int deletedAt, int purgeAt) async {
+  Future<void> softDeleteByConversation(
+      String conversationId, int deletedAt, int purgeAt) async {
     await (_db.update(_db.messages)
-          ..where((t) => t.conversationId.equals(conversationId) & t.deletedAt.isNull()))
+          ..where((t) =>
+              t.conversationId.equals(conversationId) & t.deletedAt.isNull()))
         .write(MessagesCompanion(
       deletedAt: Value(deletedAt),
       purgeAt: Value(purgeAt),
     ));
+  }
+
+  /// 获取会话的全量有效消息（按时间升序）
+  Future<List<Message>> getAllByConversationOrdered(
+      String conversationId) async {
+    return (_db.select(_db.messages)
+          ..where((t) =>
+              t.conversationId.equals(conversationId) &
+              t.deletedAt.isNull() &
+              t.replacedBy.isNull())
+          ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]))
+        .get();
+  }
+
+  /// 获取会话中截止某时刻前未总结的消息
+  Future<List<Message>> getUnsummarizedBefore(
+      String conversationId, int beforeTimestamp) async {
+    return (_db.select(_db.messages)
+          ..where((t) =>
+              t.conversationId.equals(conversationId) &
+              t.deletedAt.isNull() &
+              t.replacedBy.isNull() &
+              t.summarized.equals(false) &
+              t.createdAt.isSmallerThanValue(beforeTimestamp))
+          ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]))
+        .get();
+  }
+
+  /// 批量标记消息为已总结
+  Future<void> markMessagesSummarized(
+      List<String> messageIds, int summarizedAt) async {
+    if (messageIds.isEmpty) return;
+    await (_db.update(_db.messages)..where((t) => t.id.isIn(messageIds))).write(
+      MessagesCompanion(
+        summarized: const Value(true),
+        summarizedAt: Value(summarizedAt),
+      ),
+    );
+  }
+
+  Future<SummarizationRecord?> getSummarizationRecord({
+    required String conversationId,
+    required String dateKey,
+    required String roundKey,
+  }) {
+    return (_db.select(_db.summarizationRecords)
+          ..where((t) =>
+              t.conversationId.equals(conversationId) &
+              t.dateKey.equals(dateKey) &
+              t.roundKey.equals(roundKey))
+          ..limit(1))
+        .getSingleOrNull();
+  }
+
+  Future<void> upsertSummarizationRecord({
+    required String conversationId,
+    required String dateKey,
+    required String roundKey,
+    required int roundIndex,
+    required int firstMsgTime,
+    required int lastMsgTime,
+    required int messageCount,
+    bool summarized = false,
+    int? summarizedAt,
+    String? errorMessage,
+  }) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await _db.into(_db.summarizationRecords).insertOnConflictUpdate(
+          SummarizationRecordsCompanion.insert(
+            id: '${conversationId}_$roundKey',
+            conversationId: conversationId,
+            dateKey: dateKey,
+            roundKey: roundKey,
+            roundIndex: Value(roundIndex),
+            firstMsgTime: firstMsgTime,
+            lastMsgTime: lastMsgTime,
+            messageCount: messageCount,
+            summarized: Value(summarized),
+            summarizedAt: Value(summarizedAt),
+            errorMessage: Value(errorMessage),
+            createdAt: now,
+          ),
+        );
+  }
+
+  Future<void> markRoundSuccess({
+    required String conversationId,
+    required String dateKey,
+    required String roundKey,
+    required int summarizedAt,
+  }) async {
+    await (_db.update(_db.summarizationRecords)
+          ..where((t) =>
+              t.conversationId.equals(conversationId) &
+              t.dateKey.equals(dateKey) &
+              t.roundKey.equals(roundKey)))
+        .write(
+      SummarizationRecordsCompanion(
+        summarized: const Value(true),
+        summarizedAt: Value(summarizedAt),
+        errorMessage: const Value(null),
+      ),
+    );
+  }
+
+  Future<void> markRoundSuccessAndMessages({
+    required String conversationId,
+    required String dateKey,
+    required String roundKey,
+    required int summarizedAt,
+    required List<String> messageIds,
+  }) async {
+    await _db.transaction(() async {
+      await (_db.update(_db.summarizationRecords)
+            ..where((t) =>
+                t.conversationId.equals(conversationId) &
+                t.dateKey.equals(dateKey) &
+                t.roundKey.equals(roundKey)))
+          .write(
+        SummarizationRecordsCompanion(
+          summarized: const Value(true),
+          summarizedAt: Value(summarizedAt),
+          errorMessage: const Value(null),
+        ),
+      );
+
+      if (messageIds.isNotEmpty) {
+        await (_db.update(_db.messages)..where((t) => t.id.isIn(messageIds)))
+            .write(
+          MessagesCompanion(
+            summarized: const Value(true),
+            summarizedAt: Value(summarizedAt),
+          ),
+        );
+      }
+    });
+  }
+
+  Future<void> markRoundFailure({
+    required String conversationId,
+    required String dateKey,
+    required String roundKey,
+    required String errorMessage,
+  }) async {
+    await (_db.update(_db.summarizationRecords)
+          ..where((t) =>
+              t.conversationId.equals(conversationId) &
+              t.dateKey.equals(dateKey) &
+              t.roundKey.equals(roundKey)))
+        .write(
+      SummarizationRecordsCompanion(
+        summarized: const Value(false),
+        errorMessage: Value(errorMessage),
+      ),
+    );
   }
 }

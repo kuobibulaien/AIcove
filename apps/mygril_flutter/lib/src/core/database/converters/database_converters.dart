@@ -18,6 +18,9 @@ class ConversationConverter {
       displayName: Value(c.displayName),
       avatarUrl: Value(c.avatarUrl),
       characterImage: Value(c.characterImage),
+      chatBackgroundImage: Value(c.chatBackgroundImage),
+      chatBackgroundMaskOpacity: Value(c.chatBackgroundMaskOpacity),
+      chatBackgroundBlurSigma: Value(c.chatBackgroundBlurSigma),
       blurredBackground: Value(c.blurredBackground),
       selfAddress: Value(c.selfAddress),
       addressUser: Value(c.addressUser),
@@ -29,7 +32,8 @@ class ConversationConverter {
       isFavorite: Value(c.isFavorite),
       isMuted: Value(c.isMuted),
       notificationSound: Value(c.notificationSound),
-      enabledPlugins: Value(c.enabledPlugins != null ? jsonEncode(c.enabledPlugins) : null),
+      enabledPlugins:
+          Value(c.enabledPlugins != null ? jsonEncode(c.enabledPlugins) : null),
       lastMessage: Value(c.lastMessage),
       lastMessageTime: Value(c.lastMessageTime?.millisecondsSinceEpoch),
       unreadCount: Value(c.unreadCount),
@@ -39,13 +43,17 @@ class ConversationConverter {
   }
 
   /// Database → Domain（不含消息）
-  static domain.Conversation fromDb(db.Conversation c, {List<domain.Message>? messages}) {
+  static domain.Conversation fromDb(db.Conversation c,
+      {List<domain.Message>? messages}) {
     return domain.Conversation(
       id: c.id,
       title: c.title,
       displayName: c.displayName,
       avatarUrl: c.avatarUrl,
       characterImage: c.characterImage,
+      chatBackgroundImage: c.chatBackgroundImage,
+      chatBackgroundMaskOpacity: c.chatBackgroundMaskOpacity,
+      chatBackgroundBlurSigma: c.chatBackgroundBlurSigma,
       blurredBackground: c.blurredBackground,
       selfAddress: c.selfAddress,
       addressUser: c.addressUser,
@@ -75,7 +83,8 @@ class ConversationConverter {
 /// 消息转换器
 class MessageConverter {
   /// Domain → Database Companion
-  static db.MessagesCompanion toCompanion(domain.Message m, String conversationId) {
+  static db.MessagesCompanion toCompanion(
+      domain.Message m, String conversationId) {
     return db.MessagesCompanion(
       id: Value(m.id),
       conversationId: Value(conversationId),
@@ -102,7 +111,8 @@ class MessageConverter {
 /// 消息块转换器
 class MessageBlockConverter {
   /// Domain → Database Companion
-  static db.MessageBlocksCompanion toCompanion(MessageBlock b, String messageId, int sortOrder) {
+  static db.MessageBlocksCompanion toCompanion(
+      MessageBlock b, String messageId, int sortOrder) {
     return db.MessageBlocksCompanion(
       id: Value(b.id),
       messageId: Value(messageId),

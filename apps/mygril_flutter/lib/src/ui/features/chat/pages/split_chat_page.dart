@@ -159,17 +159,17 @@ class _SplitChatPageState extends ConsumerState<SplitChatPage>
                                         'MomoTalk',
                                         style: TextStyle(
                                           color: colors.headerContentColor,
-                                          fontWeight: FontWeight.w800,
+                                          fontWeight: MoeFontWeights.emphasis,
                                           fontSize: 24,
                                           letterSpacing: 0.8,
                                         ),
                                       );
                                     }
                                     return Text(
-                                      'MyGril',
+                                      'AIcove',
                                       style: TextStyle(
                                         color: colors.headerContentColor,
-                                        fontWeight: FontWeight.w800,
+                                        fontWeight: MoeFontWeights.emphasis,
                                         fontSize: 24,
                                         letterSpacing: 0.8,
                                       ),

@@ -174,7 +174,7 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
     final hash = md5.convert(utf8.encode(dataUrl)).toString();
 
     final dir = await getTemporaryDirectory();
-    final cacheDir = Directory('${dir.path}${Platform.pathSeparator}mygril_audio_cache');
+    final cacheDir = Directory('${dir.path}${Platform.pathSeparator}aicove_audio_cache');
     if (!await cacheDir.exists()) {
       await cacheDir.create(recursive: true);
     }
@@ -366,7 +366,7 @@ class AudioPlayerWidget extends ConsumerWidget {
             style: TextStyle(
               color: textColor.withValues(alpha: 0.9),
               fontSize: 13,
-              fontWeight: FontWeight.w500,
+              fontWeight: MoeFontWeights.emphasis,
             ),
           ),
         ],

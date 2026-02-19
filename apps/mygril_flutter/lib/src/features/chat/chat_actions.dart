@@ -13,12 +13,15 @@
 /// - 2026-01-28: 使用 deliverSegmentedMessages 统一消息交付，移除占位符机制
 library;
 
+import 'dart:convert';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'data/auto_reply_trigger.dart';
 import 'data/analyzer_scheduler.dart';
 import 'services/chat_send_service.dart';
 import 'services/chat_tts_handler.dart';
+import 'domain/message.dart';
 import '../settings/app_settings.dart';
 import 'conversation_providers.dart';
 import 'chat_providers.dart';
@@ -29,6 +32,27 @@ export 'chat_providers.dart';
 export 'services/chat_types.dart';
 export 'services/chat_send_service.dart' show ChatSendService, ApiCallResult, ApiConfig, SendRequest;
 export 'services/chat_tts_handler.dart' show ChatTtsHandler;
+
+class ProactiveSendResult {
+  final bool success;
+  final bool retryable;
+  final String reason;
+
+  const ProactiveSendResult._({
+    required this.success,
+    required this.retryable,
+    required this.reason,
+  });
+
+  const ProactiveSendResult.success()
+      : this._(success: true, retryable: false, reason: 'sent');
+
+  const ProactiveSendResult.skipped(String reason)
+      : this._(success: false, retryable: false, reason: reason);
+
+  const ProactiveSendResult.failed(String reason, {bool retryable = true})
+      : this._(success: false, retryable: retryable, reason: reason);
+}
 
 class ChatActions {
   ChatActions(this._ref)
@@ -117,6 +141,7 @@ class ChatActions {
       _ref.read(errorProvider.notifier).state = e.toString();
     } finally {
       _ref.read(sendingProvider.notifier).state = false;
+      _ref.read(analyzerSchedulerProvider).scheduleAnalysis();
     }
   }
 
@@ -154,13 +179,22 @@ class ChatActions {
       _ref.read(errorProvider.notifier).state = e.toString();
     } finally {
       _ref.read(sendingProvider.notifier).state = false;
+      _ref.read(analyzerSchedulerProvider).scheduleAnalysis();
     }
   }
 
   /// 主动触发器发送
   /// 注意：作废检查已在 AutoReplyTriggerController._pollDueTriggers() 中完成
   /// 此方法被调用时，触发器已确认可以触发
-  Future<void> sendProactiveTrigger(AutoReplyTrigger trigger) async {
+  Future<ProactiveSendResult> sendProactiveTrigger(AutoReplyTrigger trigger) async {
+    final settings = await _ref.read(appSettingsProvider.future);
+    if (!settings.autoReplySettings.enabled) {
+      AppLogger.info('ChatActions', 'Skip proactive trigger: auto-reply disabled', metadata: {
+        'triggerId': trigger.id,
+      });
+      return const ProactiveSendResult.skipped('auto_reply_disabled');
+    }
+
     // 确定目标会话：优先使用触发器绑定的会话，否则使用当前活跃会话
     final targetConvId = trigger.conversationId.isNotEmpty
         ? trigger.conversationId
@@ -168,7 +202,7 @@ class ChatActions {
 
     if (targetConvId == null || targetConvId.isEmpty) {
       AppLogger.warning('ChatActions', '触发器发送失败：无目标会话', metadata: {'triggerId': trigger.id});
-      return;
+      return const ProactiveSendResult.skipped('target_conversation_missing');
     }
 
     // 获取目标会话
@@ -176,16 +210,52 @@ class ChatActions {
     final conv = conversations.where((c) => c.id == targetConvId).firstOrNull;
     if (conv == null) {
       AppLogger.warning('ChatActions', '触发器发送失败：会话不存在', metadata: {'convId': targetConvId});
-      return;
+      return const ProactiveSendResult.skipped('target_conversation_not_found');
     }
 
-    _ref.read(sendingProvider.notifier).state = true;
-    _ref.read(errorProvider.notifier).state = null;
-
     try {
-      final settings = await _ref.read(appSettingsProvider.future);
-      final config = await _sendService.prepareApiConfig(conv: conv, history: conv.messages, userText: trigger.title);
-      final result = await _sendService.executeApiCall(config: config, sessionId: targetConvId, userText: trigger.title);
+      if (trigger.hasCachedContent) {
+        final cachedReply = trigger.cachedContent!.trim();
+        if (cachedReply.isNotEmpty) {
+          final cachedResult = ApiCallResult(
+            replyText: cachedReply,
+            processedText: cachedReply,
+            pluginEvents: const [],
+            toolResults: const [],
+          );
+          final buildResult =
+              _sendService.buildAssistantMessages(apiResult: cachedResult, settings: settings);
+          await _ttsHandler.deliverSegmentedMessages(
+            convId: targetConvId,
+            userMsgId: '',
+            buildResult: buildResult,
+            replyText: cachedReply,
+            pluginEvents: const [],
+            ttsEnabled: settings.ttsEnabled,
+          );
+          AppLogger.info('ChatActions', '触发器发送成功（cached）', metadata: {
+            'triggerId': trigger.id,
+            'title': trigger.title,
+          });
+          return const ProactiveSendResult.success();
+        }
+      }
+
+      final proactiveInput = (trigger.prompt?.trim().isNotEmpty ?? false)
+          ? trigger.prompt!.trim()
+          : trigger.title;
+      final snapshotHistory = _buildSnapshotHistory(trigger.contextSnapshot);
+      final history = snapshotHistory.isNotEmpty ? snapshotHistory : conv.messages;
+      final config = await _sendService.prepareApiConfig(
+        conv: conv,
+        history: history,
+        userText: proactiveInput,
+      );
+      final result = await _sendService.executeApiCall(
+        config: config,
+        sessionId: targetConvId,
+        userText: proactiveInput,
+      );
       final buildResult = _sendService.buildAssistantMessages(apiResult: result, settings: settings);
 
       // 触发器没有 userMsgId，使用空字符串
@@ -202,15 +272,62 @@ class ChatActions {
         'triggerId': trigger.id,
         'title': trigger.title,
       });
+      return const ProactiveSendResult.success();
     } catch (e) {
-      _ref.read(errorProvider.notifier).state = e.toString();
       AppLogger.error('ChatActions', '触发器发送失败', metadata: {
         'triggerId': trigger.id,
         'error': e.toString(),
       });
-    } finally {
-      _ref.read(sendingProvider.notifier).state = false;
+      return ProactiveSendResult.failed(e.toString());
     }
+  }
+
+  List<Message> _buildSnapshotHistory(String? contextSnapshot) {
+    if (contextSnapshot == null || contextSnapshot.trim().isEmpty) {
+      return const <Message>[];
+    }
+    try {
+      final decoded = jsonDecode(contextSnapshot);
+      if (decoded is! List) return const <Message>[];
+
+      final now = DateTime.now();
+      final history = <Message>[];
+      for (var i = 0; i < decoded.length; i++) {
+        final raw = decoded[i];
+        if (raw is! Map) continue;
+        final map = Map<String, dynamic>.from(raw.cast<String, dynamic>());
+        final role = (map['role'] as String?) ?? 'user';
+        final content = _extractSnapshotText(map['content']);
+        if (content.trim().isEmpty) continue;
+        history.add(Message(
+          id: 'snapshot_$i',
+          role: role,
+          content: content,
+          createdAt: now,
+          status: 'sent',
+        ));
+      }
+      return history;
+    } catch (_) {
+      return const <Message>[];
+    }
+  }
+
+  String _extractSnapshotText(dynamic rawContent) {
+    if (rawContent is String) return rawContent;
+    if (rawContent is! List) return '';
+
+    final texts = <String>[];
+    for (final part in rawContent) {
+      if (part is! Map) continue;
+      final map = Map<String, dynamic>.from(part.cast<String, dynamic>());
+      if (map['type'] != 'text') continue;
+      final text = (map['text'] as String?) ?? '';
+      if (text.isNotEmpty) {
+        texts.add(text);
+      }
+    }
+    return texts.join('\n');
   }
 
   /// 重发失败的消息

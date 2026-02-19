@@ -1,7 +1,7 @@
 /// 设置相关数据模型
-/// 
+///
 /// 从 app_settings.dart 提取，包含枚举类型和数据类。
-/// 
+///
 /// 更新记录：
 /// - 2025-12-31: 从 app_settings.dart 提取
 library;
@@ -65,13 +65,13 @@ final _ttsPatterns = RegExp(
   r'tts|'
   r'text-to-speech|'
   r'speech-synthesis|'
-  r'alloy|'        // OpenAI TTS voices
+  r'alloy|' // OpenAI TTS voices
   r'echo|'
   r'fable|'
   r'onyx|'
   r'nova|'
   r'shimmer|'
-  r'cosyvoice|'    // 阿里云语音
+  r'cosyvoice|' // 阿里云语音
   r'sambert|'
   r'fish-speech|'
   r'chattts|'
@@ -89,8 +89,8 @@ final _sttPatterns = RegExp(
   r'stt|'
   r'speech-to-text|'
   r'transcription|'
-  r'asr|'          // Automatic Speech Recognition
-  r'paraformer|'   // 阿里达摩院
+  r'asr|' // Automatic Speech Recognition
+  r'paraformer|' // 阿里达摩院
   r'sensevoice|'
   r'funasr'
   r')\b',
@@ -104,10 +104,10 @@ final _embeddingPatterns = RegExp(
   r'embedding|'
   r'text-embedding|'
   r'ada-002|'
-  r'bge-|'          // BAAI BGE
-  r'm3e-|'          // M3E
-  r'gte-|'          // GTE
-  r'e5-|'           // E5
+  r'bge-|' // BAAI BGE
+  r'm3e-|' // M3E
+  r'gte-|' // GTE
+  r'e5-|' // E5
   r'jina-embed|'
   r'voyage-|'
   r'cohere-embed'
@@ -130,43 +130,40 @@ final _imagePatterns = RegExp(
   r'playground|'
   r'kandinsky|'
   r'cogview|'
-  r'wanx'           // 通义万相
+  r'wanx' // 通义万相
   r')\b',
   caseSensitive: false,
 );
-
-/// 字体大小档位
-enum FontSize {
-  smallest(11, '极小'),
-  small(12, '小'),
-  medium(13, '中'),
-  large(14, '大'),
-  largest(15, '极大');
-
-  const FontSize(this.size, this.label);
-  final double size;
-  final String label;
-
-  static FontSize fromSize(double size) {
-    for (final fs in FontSize.values) {
-      if (fs.size == size) return fs;
-    }
-    return FontSize.medium;
-  }
-}
 
 /// 聊天背景色选项
 enum ChatBackgroundColor {
   /// 默认色 - 跟随全局背景色
   defaultColor('default', '默认', null),
   white('white', '纯白', Color(0xFFFFFFFF)),
+
+  /// Momotalk 经典皮肤：浅灰背景 + 粉色强调（AppBar/主按钮）
+  momotalk(
+    'momotalk',
+    'Momotalk',
+    Color(0xFFF3F6F8),
+    accentColor: Color(0xFFFC96AA),
+  ),
   warm('warm', '暖色', Color(0xFFFFF7E1));
 
-  const ChatBackgroundColor(this.value, this.label, this.color);
+  const ChatBackgroundColor(
+    this.value,
+    this.label,
+    this.color, {
+    this.accentColor,
+  });
   final String value;
   final String label;
+
   /// 背景色，null 表示跟随全局背景色
   final Color? color;
+
+  /// 该皮肤预设的强调色（null 表示沿用用户自定义主题色）
+  final Color? accentColor;
 
   /// 是否跟随全局背景色
   bool get isDefault => this == ChatBackgroundColor.defaultColor;
@@ -192,7 +189,8 @@ class AutoReplySettings {
   final String? analyzerModel;
   final String? analyzerProvider;
 
-  static const String defaultAnalyzerPrompt = '''You are the "Scheduler" for an AI girlfriend. Your job is to analyze the chat history and ORGANIZE the trigger list.
+  static const String defaultAnalyzerPrompt =
+      '''You are the "Scheduler" for an AI girlfriend. Your job is to analyze the chat history and ORGANIZE the trigger list.
 
 You will receive:
 1. Current conversation history
@@ -264,8 +262,11 @@ Do not output markdown. Just JSON.''';
       quietHoursEnd: quietHoursEnd ?? this.quietHoursEnd,
       allowExactAlarm: allowExactAlarm ?? this.allowExactAlarm,
       analyzerPrompt: analyzerPrompt ?? this.analyzerPrompt,
-      analyzerModel: clearAnalyzerModel ? null : (analyzerModel ?? this.analyzerModel),
-      analyzerProvider: clearAnalyzerProvider ? null : (analyzerProvider ?? this.analyzerProvider),
+      analyzerModel:
+          clearAnalyzerModel ? null : (analyzerModel ?? this.analyzerModel),
+      analyzerProvider: clearAnalyzerProvider
+          ? null
+          : (analyzerProvider ?? this.analyzerProvider),
     );
   }
 
@@ -306,9 +307,11 @@ Do not output markdown. Just JSON.''';
     return AutoReplySettings(
       enabled: json['enabled'] == true,
       dailyLimit: clampInt(json['daily_limit'] as num?, 1, 10, 3),
-      minIntervalMinutes: clampInt(json['min_interval_minutes'] as num?, 15, 720, 120),
+      minIntervalMinutes:
+          clampInt(json['min_interval_minutes'] as num?, 15, 720, 120),
       quietHoursEnabled: json['quiet_hours_enabled'] != false,
-      quietHoursStart: normalizeTime(json['quiet_hours_start'] as String?, '22:00'),
+      quietHoursStart:
+          normalizeTime(json['quiet_hours_start'] as String?, '22:00'),
       quietHoursEnd: normalizeTime(json['quiet_hours_end'] as String?, '08:00'),
       allowExactAlarm: json['allow_exact_alarm'] == true,
       analyzerPrompt: (json['analyzer_prompt'] as String?)?.isEmpty == false
@@ -348,7 +351,8 @@ class CustomModel {
         name: (json['name'] as String?) ?? '',
         displayName: json['displayName'] as String?,
         apiKey: (json['apiKey'] as String?) ?? '',
-        apiBaseUrl: (json['apiBaseUrl'] as String?) ?? 'https://api.openai.com/v1',
+        apiBaseUrl:
+            (json['apiBaseUrl'] as String?) ?? 'https://api.openai.com/v1',
         provider: (json['provider'] as String?) ?? 'openai',
       );
 }
@@ -366,12 +370,16 @@ class ProviderAuth {
   final List<String> capabilities;
   final Map<String, dynamic> customConfig;
   final String modelType;
+
   /// 是否禁用工具调用（默认 false，即默认启用工具调用）
   final bool disableToolCalling;
+
   /// 温度参数（null 表示使用全局默认值）
   final double? temperature;
+
   /// Top P 参数（null 表示不设置，使用服务商默认）
   final double? topP;
+
   /// 上下文消息数量限制（null 表示不限制，由软件自动管理）
   final int? contextMessageLimit;
 
@@ -426,9 +434,12 @@ class ProviderAuth {
         customConfig: customConfig ?? this.customConfig,
         modelType: modelType ?? this.modelType,
         disableToolCalling: disableToolCalling ?? this.disableToolCalling,
-        temperature: clearTemperature ? null : (temperature ?? this.temperature),
+        temperature:
+            clearTemperature ? null : (temperature ?? this.temperature),
         topP: clearTopP ? null : (topP ?? this.topP),
-        contextMessageLimit: clearContextMessageLimit ? null : (contextMessageLimit ?? this.contextMessageLimit),
+        contextMessageLimit: clearContextMessageLimit
+            ? null
+            : (contextMessageLimit ?? this.contextMessageLimit),
       );
 
   Map<String, dynamic> toJson() => {
@@ -446,20 +457,24 @@ class ProviderAuth {
         'disable_tool_calling': disableToolCalling,
         if (temperature != null) 'temperature': temperature,
         if (topP != null) 'top_p': topP,
-        if (contextMessageLimit != null) 'context_message_limit': contextMessageLimit,
+        if (contextMessageLimit != null)
+          'context_message_limit': contextMessageLimit,
       };
 
   factory ProviderAuth.fromJson(Map<String, dynamic> json) {
-    List<String> clean(Iterable<dynamic>? source) => (source ?? const <dynamic>[])
-        .map((e) => e is String ? e.trim() : e.toString().trim())
-        .where((e) => e.isNotEmpty)
-        .toList();
+    List<String> clean(Iterable<dynamic>? source) =>
+        (source ?? const <dynamic>[])
+            .map((e) => e is String ? e.trim() : e.toString().trim())
+            .where((e) => e.isNotEmpty)
+            .toList();
 
     final models = clean((json['models'] as List?)?.cast<dynamic>());
     final visible = clean((json['visible_models'] as List?)?.cast<dynamic>());
     final hidden = clean((json['hidden_models'] as List?)?.cast<dynamic>());
-    final capabilities = clean((json['capabilities'] as List?)?.cast<dynamic>());
-    final customConfig = (json['custom_config'] as Map?)?.cast<String, dynamic>() ?? {};
+    final capabilities =
+        clean((json['capabilities'] as List?)?.cast<dynamic>());
+    final customConfig =
+        (json['custom_config'] as Map?)?.cast<String, dynamic>() ?? {};
 
     final combinedModels = <String>[
       ...models,
@@ -471,10 +486,13 @@ class ProviderAuth {
       id: (json['id'] as String?) ?? '',
       displayName: json['displayName'] as String?,
       apiKeys: clean((json['apiKeys'] as List?)?.cast<dynamic>()),
-      apiBaseUrl: (json['apiBaseUrl'] as String?) ?? 'https://api.openai.com/v1',
+      apiBaseUrl:
+          (json['apiBaseUrl'] as String?) ?? 'https://api.openai.com/v1',
       enabled: (json['enabled'] as bool?) ?? true,
       models: combinedModels,
-      visibleModels: visible.isEmpty && combinedModels.isNotEmpty ? [combinedModels.first] : visible,
+      visibleModels: visible.isEmpty && combinedModels.isNotEmpty
+          ? [combinedModels.first]
+          : visible,
       hiddenModels: hidden.where((e) => !visible.contains(e)).toList(),
       capabilities: capabilities.isEmpty ? ['chat'] : capabilities,
       customConfig: customConfig,
@@ -492,10 +510,13 @@ class ProviderAuth {
 class ModelConfig {
   /// 是否禁用工具调用（默认 false，即启用）
   final bool disableToolCalling;
+
   /// 温度参数（null 表示使用全局默认值）
   final double? temperature;
+
   /// Top P 参数（null 表示不设置，使用服务商默认）
   final double? topP;
+
   /// 上下文消息数量限制（null 表示不限制，由软件自动管理）
   final int? contextMessageLimit;
 
@@ -524,16 +545,20 @@ class ModelConfig {
   }) =>
       ModelConfig(
         disableToolCalling: disableToolCalling ?? this.disableToolCalling,
-        temperature: clearTemperature ? null : (temperature ?? this.temperature),
+        temperature:
+            clearTemperature ? null : (temperature ?? this.temperature),
         topP: clearTopP ? null : (topP ?? this.topP),
-        contextMessageLimit: clearContextMessageLimit ? null : (contextMessageLimit ?? this.contextMessageLimit),
+        contextMessageLimit: clearContextMessageLimit
+            ? null
+            : (contextMessageLimit ?? this.contextMessageLimit),
       );
 
   Map<String, dynamic> toJson() => {
         'disable_tool_calling': disableToolCalling,
         if (temperature != null) 'temperature': temperature,
         if (topP != null) 'top_p': topP,
-        if (contextMessageLimit != null) 'context_message_limit': contextMessageLimit,
+        if (contextMessageLimit != null)
+          'context_message_limit': contextMessageLimit,
       };
 
   factory ModelConfig.fromJson(Map<String, dynamic> json) => ModelConfig(
@@ -553,9 +578,11 @@ class AppSettings {
   final List<String> modelList;
   final List<String> allKnownModels;
   final Map<String, String> modelDisplayNames;
+
   /// 模型类型映射：modelId -> ModelType.value
   /// 只存储非 chat 类型的模型，chat 是默认值
   final Map<String, String> modelTypes;
+
   /// 模型级别配置映射：modelId -> ModelConfig
   /// 只存储有自定义配置的模型
   final Map<String, ModelConfig> modelConfigs;
@@ -570,7 +597,9 @@ class AppSettings {
   final String backendApiKey;
   final bool messageChunkingEnabled;
   final MessageFormatConfig messageFormatConfig;
-  final double messageFontSize;
+
+  /// 全局字体缩放因子（0.8~1.5，默认 1.0）
+  final double textScaleFactor;
   final String? userAvatar;
   final String? userName;
   final AutoReplySettings autoReplySettings;
@@ -601,13 +630,13 @@ class AppSettings {
     required this.backendApiKey,
     required this.messageChunkingEnabled,
     required this.messageFormatConfig,
-    required this.messageFontSize,
+    required this.textScaleFactor,
     required this.autoReplySettings,
     required this.chatBackgroundColor,
     required this.isDarkMode,
     required this.useSystemTheme,
     required this.accentColor,
-    this.hideUserAvatar = false,
+    this.hideUserAvatar = true,
     this.userAvatar,
     this.userName,
   });
@@ -633,7 +662,7 @@ class AppSettings {
     String? backendApiKey,
     bool? messageChunkingEnabled,
     MessageFormatConfig? messageFormatConfig,
-    double? messageFontSize,
+    double? textScaleFactor,
     AutoReplySettings? autoReplySettings,
     ChatBackgroundColor? chatBackgroundColor,
     bool? isDarkMode,
@@ -655,16 +684,18 @@ class AppSettings {
         modelConfigs: modelConfigs ?? this.modelConfigs,
         apiKey: apiKey ?? this.apiKey,
         apiBaseUrl: apiBaseUrl ?? this.apiBaseUrl,
-        imageGenerationEnabled: imageGenerationEnabled ?? this.imageGenerationEnabled,
+        imageGenerationEnabled:
+            imageGenerationEnabled ?? this.imageGenerationEnabled,
         maxFileUploadMB: maxFileUploadMB ?? this.maxFileUploadMB,
         historyMessageLimit: historyMessageLimit ?? this.historyMessageLimit,
         customModels: customModels ?? this.customModels,
         providers: providers ?? this.providers,
         modelProviderMap: modelProviderMap ?? this.modelProviderMap,
         backendApiKey: backendApiKey ?? this.backendApiKey,
-        messageChunkingEnabled: messageChunkingEnabled ?? this.messageChunkingEnabled,
+        messageChunkingEnabled:
+            messageChunkingEnabled ?? this.messageChunkingEnabled,
         messageFormatConfig: messageFormatConfig ?? this.messageFormatConfig,
-        messageFontSize: messageFontSize ?? this.messageFontSize,
+        textScaleFactor: textScaleFactor ?? this.textScaleFactor,
         autoReplySettings: autoReplySettings ?? this.autoReplySettings,
         chatBackgroundColor: chatBackgroundColor ?? this.chatBackgroundColor,
         isDarkMode: isDarkMode ?? this.isDarkMode,

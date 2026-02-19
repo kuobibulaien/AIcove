@@ -5,8 +5,7 @@
 library;
 
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
-import 'package:mygril_flutter/src/core/utils/data_image.dart';
+import 'package:aicove_flutter/src/core/utils/avatar_helper.dart';
 import '../../../../ui/theme/skin_provider.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
@@ -113,7 +112,7 @@ class CharacterListItem extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              fontWeight: FontWeight.w600,
+                              fontWeight: MoeFontWeights.emphasis,
                               fontSize: 16,
                               color: titleColor,
                               letterSpacing: 0.2,
@@ -193,7 +192,7 @@ class CharacterListItem extends StatelessWidget {
                           style: const TextStyle(
                             fontSize: 11,
                             color: Colors.white,
-                            fontWeight: FontWeight.w600,
+                            fontWeight: MoeFontWeights.emphasis,
                             height: 1.2,
                           ),
                         ),
@@ -210,63 +209,10 @@ class CharacterListItem extends StatelessWidget {
 }
 
 Widget _buildAvatarContent(Conversation conversation) {
-  final avatarBytes = decodeDataImage(conversation.avatarUrl);
-  if (avatarBytes != null) {
-    return Image.memory(avatarBytes, fit: BoxFit.cover, gaplessPlayback: true);
-  }
-
-  final avatar = conversation.avatarUrl;
-  if (avatar != null && avatar.startsWith('http')) {
-    // 使用 CachedNetworkImage，确保"列表页 ↔ 聊天页"可以复用同一套缓存（减少闪烁/重复下载）
-    return CachedNetworkImage(
-      imageUrl: avatar,
-      fit: BoxFit.cover,
-      fadeInDuration: Duration.zero,
-      placeholder: (context, url) => _buildFallbackLetter(conversation),
-      errorWidget: (context, url, error) => _buildFallbackLetter(conversation),
-    );
-  }
-  if (avatar != null && avatar.trim().isNotEmpty) {
-    // 解析对齐标记（如 #top）
-    final alignment = avatar.contains('#top') ? Alignment.topCenter : Alignment.center;
-    final cleanUrl = avatar.split('#').first;
-    return Image.asset(
-      cleanUrl,
-      fit: BoxFit.cover,
-      alignment: alignment,
-      gaplessPlayback: true,
-      errorBuilder: (_, __, ___) => _buildFallbackLetter(conversation),
-    );
-  }
-
-  final charBytes = decodeDataImage(conversation.characterImage);
-  if (charBytes != null) {
-    return Image.memory(charBytes, fit: BoxFit.cover, gaplessPlayback: true);
-  }
-  final char = conversation.characterImage;
-  if (char != null && char.trim().isNotEmpty) {
-    return Image.asset(
-      char,
-      fit: BoxFit.cover,
-      gaplessPlayback: true,
-      errorBuilder: (_, __, ___) => _buildFallbackLetter(conversation),
-    );
-  }
-
-  return _buildFallbackLetter(conversation);
-}
-
-Widget _buildFallbackLetter(Conversation conversation) {
-  final text =
-      conversation.displayName.isNotEmpty ? conversation.displayName[0] : '新';
-  return Center(
-    child: Text(
-      text,
-      style: const TextStyle(
-        fontSize: 24,
-        color: Color(0xFF999999),
-        fontWeight: FontWeight.w500,
-      ),
-    ),
+  final helper = AvatarHelper(
+    avatarUrl: conversation.avatarUrl,
+    characterImage: conversation.characterImage,
+    displayName: conversation.displayName,
   );
+  return helper.buildAvatarWidget();
 }

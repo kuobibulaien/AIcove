@@ -187,7 +187,7 @@ class _MoeSecondaryButtonState extends State<MoeSecondaryButton> {
                   widget.label,
                   style: TextStyle(
                     fontSize: _fontSize,
-                    fontWeight: FontWeight.w500,
+                    fontWeight: MoeFontWeights.emphasis,
                     color: currentFg,
                   ),
                 ),

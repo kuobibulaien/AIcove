@@ -13,7 +13,6 @@ import 'tts_config.dart';
 /// 重构说明：API Key 和 URL 现在作为独立参数传入，
 /// 与 TtsConfig 中的业务配置分离。
 /// 支持的请求格式：openai_tts、siliconflow_indextts、aliyun_cosyvoice、aliyun_qwen_tts
-/// 2026-01-27: 移除模力方舟支持（gitee_indextts），稳定性太差
 ///
 /// 2026-01-25: 添加 model 参数，支持用户选择具体模型
 /// 2026-01-26: 阿里云格式支持自动创建音色
@@ -337,8 +336,6 @@ class TtsService {
 
   Duration _resolveTimeout(String effectiveFormat) {
     switch (effectiveFormat) {
-      // 2026-01-27: 模力方舟已移除
-      // case 'gitee_indextts':
       case 'siliconflow_indextts':
         return const Duration(seconds: 30);
       case 'aliyun_cosyvoice':
@@ -352,8 +349,8 @@ class TtsService {
   /// 根据配置构造同步语音接口地址
   ///
   /// 兼容多种写法：
-  /// - 只填基础地址，如：https://ai.gitee.com/v1
-  /// - 直接填完整地址，如：https://ai.gitee.com/v1/audio/speech
+  /// - 只填基础地址（会自动补齐语音端点）
+  /// - 直接填完整语音地址（保留原路径）
   /// - 阿里云使用专用端点
   /// - 硅基流动使用 /audio/speech 端点
   Uri _buildSpeechUri(String rawUrl, String effectiveFormat) {
@@ -433,11 +430,6 @@ class TtsService {
       return configured;
     }
 
-    // 2026-01-27: 模力方舟已移除（稳定性太差）
-    // if (_looksLikeGiteeAi(rawUrl)) {
-    //   return 'gitee_indextts';
-    // }
-
     if (_looksLikeSiliconFlow(rawUrl)) {
       return 'siliconflow_indextts';
     }
@@ -456,18 +448,6 @@ class TtsService {
 
     return configured.isEmpty ? 'openai_tts' : configured;
   }
-
-  // 2026-01-27: 模力方舟已移除，保留方法以备将来恢复
-  // bool _looksLikeGiteeAi(String rawUrl) {
-  //   final lower = rawUrl.toLowerCase();
-  //   if (lower.contains('ai.gitee.com')) return true;
-  //   try {
-  //     final uri = Uri.parse(rawUrl);
-  //     return uri.host.toLowerCase() == 'ai.gitee.com';
-  //   } catch (_) {
-  //     return false;
-  //   }
-  // }
 
   bool _looksLikeSiliconFlow(String rawUrl) {
     final lower = rawUrl.toLowerCase();
@@ -569,9 +549,6 @@ class TtsService {
     switch (effectiveFormat) {
       case 'openai_tts':
         return _buildOpenAiTtsBody(text);
-      // 2026-01-27: 模力方舟已移除
-      // case 'gitee_indextts':
-      //   return _buildGiteeIndexTtsBody(text);
       case 'siliconflow_indextts':
         return _buildSiliconFlowIndexTtsBody(text);
       case 'aliyun_cosyvoice':
@@ -595,38 +572,6 @@ class TtsService {
     }
     return body;
   }
-
-  // 2026-01-27: 模力方舟已移除（稳定性太差），保留代码以备将来恢复
-  // /// 模力方舟 IndexTTS-2 格式: {input, model, prompt_audio_url, prompt_text, emo_text, use_emo_text}
-  // Map<String, dynamic> _buildGiteeIndexTtsBody(String text) {
-  //   final body = <String, dynamic>{
-  //     'input': text,
-  //     'model': model ?? config.model ?? 'IndexTTS-2',
-  //   };
-  //
-  //   // 参考音频 URL（声音克隆）
-  //   final promptAudioUrl = config.effectivePromptAudioUrl?.trim();
-  //   if (promptAudioUrl != null && promptAudioUrl.isNotEmpty) {
-  //     body['prompt_audio_url'] = promptAudioUrl;
-  //   }
-  //
-  //   // 参考文本（与参考音频对应）
-  //   final promptText = config.effectivePromptText?.trim();
-  //   if (promptText != null && promptText.isNotEmpty) {
-  //     body['prompt_text'] = promptText;
-  //   }
-  //
-  //   // 情感控制（IndexTTS-2 专用）
-  //   final emoText = config.effectiveEmoText?.trim();
-  //   if (emoText != null && emoText.isNotEmpty) {
-  //     body['emo_text'] = emoText;
-  //     body['use_emo_text'] = true;
-  //   } else {
-  //     body['use_emo_text'] = false;
-  //   }
-  //
-  //   return body;
-  // }
 
   /// 硅基流动 IndexTTS-2 格式
   /// 文档: https://docs.siliconflow.cn/cn/userguide/capabilities/text-to-speech
@@ -1112,7 +1057,7 @@ class TtsService {
         if (audio is Map<String, dynamic>) {
           audioUrl = audio['url'] as String?;
         }
-        // 模力方舟 IndexTTS-2 格式: { output: { file_url: "..." } }
+        // 兼容 output 中的多种字段命名
         audioUrl ??= output['file_url'] as String? ??
             output['audio_url'] as String? ??
             output['url'] as String?;

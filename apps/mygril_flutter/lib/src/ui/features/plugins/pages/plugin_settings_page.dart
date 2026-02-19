@@ -31,7 +31,7 @@ class PluginSettingsPage extends ConsumerWidget {
           style: TextStyle(
             color: colors.text,
             fontSize: 18,
-            fontWeight: FontWeight.w600,
+            fontWeight: MoeFontWeights.emphasis,
           ),
         ),
       ),
@@ -94,7 +94,7 @@ class PluginSettingsPage extends ConsumerWidget {
                       style: TextStyle(
                         color: colors.text,
                         fontSize: 16,
-                        fontWeight: FontWeight.w600,
+                        fontWeight: MoeFontWeights.emphasis,
                       ),
                     ),
                   ),
@@ -105,7 +105,7 @@ class PluginSettingsPage extends ConsumerWidget {
                     style: TextStyle(
                       color: plugin.enabled ? colors.primary : colors.textSecondary,
                       fontSize: 14,
-                      fontWeight: FontWeight.w500,
+                      fontWeight: MoeFontWeights.emphasis,
                     ),
                   ),
                   const SizedBox(width: 8),

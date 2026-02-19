@@ -9,7 +9,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import '../models/export_format.dart';
 import '../../../core/database/repositories/repositories.dart';
 
-/// 会话导出服务
+/// 浼氳瘽瀵煎嚭鏈嶅姟
 class ConversationExporter {
   final ConversationRepository _convRepo;
   final MessageRepository _msgRepo;
@@ -23,7 +23,7 @@ class ConversationExporter {
         _msgRepo = msgRepo,
         _blockRepo = blockRepo;
 
-  /// 导出多个会话
+  /// 瀵煎嚭澶氫釜浼氳瘽
   Future<ExportResult> exportConversations({
     required List<String> conversationIds,
     ExportOptions options = const ExportOptions(),
@@ -32,10 +32,10 @@ class ConversationExporter {
     onProgress?.call(const ExportProgress(
       ExportPhase.preparing,
       0.0,
-      message: '准备导出...',
+      message: '鍑嗗瀵煎嚭...',
     ));
 
-    // 1. 创建临时目录
+    // 1. 鍒涘缓涓存椂鐩綍
     final tempDir = await getTemporaryDirectory();
     final exportId = DateTime.now().millisecondsSinceEpoch.toString();
     final exportDir = Directory(p.join(tempDir.path, 'export_$exportId'));
@@ -44,32 +44,32 @@ class ConversationExporter {
     await filesDir.create();
 
     try {
-      // 2. 查询数据
+      // 2. 鏌ヨ鏁版嵁
       onProgress?.call(const ExportProgress(
         ExportPhase.queryingData,
         0.1,
-        message: '查询数据...',
+        message: '鏌ヨ鏁版嵁...',
       ));
 
       final conversations = <Map<String, dynamic>>[];
       final allMessages = <Map<String, dynamic>>[];
-      final fileMapping = <String, String>{}; // 原路径 → ZIP内路径
+      final fileMapping = <String, String>{}; // 鍘熻矾寰?鈫?ZIP鍐呰矾寰?
       int totalFileCount = 0;
 
       for (var i = 0; i < conversationIds.length; i++) {
         final convId = conversationIds[i];
         final progress = 0.1 + (0.3 * i / conversationIds.length);
 
-        // 查询会话
+        // 鏌ヨ浼氳瘽
         final dbConv = await _convRepo.getById(convId);
         if (dbConv == null) continue;
 
-        // 查询消息（全部）
+        // 鏌ヨ娑堟伅锛堝叏閮級
         final dbMsgs = await _msgRepo.getByConversation(convId);
         final messageIds = dbMsgs.map((m) => m.id).toList();
         final dbBlocks = await _blockRepo.getByMessages(messageIds);
 
-        // 按 messageId 分组 blocks
+        // 鎸?messageId 鍒嗙粍 blocks
         final blocksByMsgId = <String, List<Map<String, dynamic>>>{};
         for (final dbBlock in dbBlocks) {
           blocksByMsgId.putIfAbsent(dbBlock.messageId, () => []).add({
@@ -77,18 +77,18 @@ class ConversationExporter {
             'type': dbBlock.type,
             'status': dbBlock.status,
             'sort_order': dbBlock.sortOrder,
-            'data': dbBlock.data != null ? jsonDecode(dbBlock.data!) : null,
+            'data': jsonDecode(dbBlock.data),
           });
         }
 
-        // 3. 复制文件并更新路径
+        // 3. 澶嶅埗鏂囦欢骞舵洿鏂拌矾寰?
         onProgress?.call(ExportProgress(
           ExportPhase.copyingFiles,
           progress,
-          message: '处理 ${dbConv.displayName} 的文件...',
+          message: '澶勭悊 ${dbConv.displayName} 鐨勬枃浠?..',
         ));
 
-        // 复制头像
+        // 澶嶅埗澶村儚
         if (dbConv.avatarUrl != null && dbConv.avatarUrl!.isNotEmpty) {
           final newPath = await _copyFileIfExists(
             dbConv.avatarUrl!,
@@ -101,8 +101,9 @@ class ConversationExporter {
           }
         }
 
-        // 复制角色立绘
-        if (dbConv.characterImage != null && dbConv.characterImage!.isNotEmpty) {
+        // 澶嶅埗瑙掕壊绔嬬粯
+        if (dbConv.characterImage != null &&
+            dbConv.characterImage!.isNotEmpty) {
           final newPath = await _copyFileIfExists(
             dbConv.characterImage!,
             filesDir,
@@ -114,14 +115,28 @@ class ConversationExporter {
           }
         }
 
-        // 构建会话 JSON
+        // copy chat background
+        if (dbConv.chatBackgroundImage != null &&
+            dbConv.chatBackgroundImage!.isNotEmpty) {
+          final newPath = await _copyFileIfExists(
+            dbConv.chatBackgroundImage!,
+            filesDir,
+            'chat_bg_${dbConv.id}',
+          );
+          if (newPath != null) {
+            fileMapping[dbConv.chatBackgroundImage!] = newPath;
+            totalFileCount++;
+          }
+        }
+
+        // 鏋勫缓浼氳瘽 JSON
         conversations.add(_buildConversationJson(dbConv, fileMapping));
 
-        // 构建消息 JSON 并复制附件
+        // 鏋勫缓娑堟伅 JSON 骞跺鍒堕檮浠?
         for (final dbMsg in dbMsgs) {
           final blocks = blocksByMsgId[dbMsg.id] ?? [];
-          
-          // 复制消息中的媒体文件
+
+          // 澶嶅埗娑堟伅涓殑濯掍綋鏂囦欢
           for (final block in blocks) {
             final data = block['data'] as Map<String, dynamic>?;
             if (data == null) continue;
@@ -154,14 +169,14 @@ class ConversationExporter {
         }
       }
 
-      // 4. 生成 JSON 文件
+      // 4. 鐢熸垚 JSON 鏂囦欢
       onProgress?.call(const ExportProgress(
         ExportPhase.packaging,
         0.7,
-        message: '生成导出文件...',
+        message: '鐢熸垚瀵煎嚭鏂囦欢...',
       ));
 
-      // 获取应用版本
+      // 鑾峰彇搴旂敤鐗堟湰
       final packageInfo = await PackageInfo.fromPlatform();
 
       // manifest.json
@@ -175,8 +190,8 @@ class ConversationExporter {
         messageCount: allMessages.length,
         fileCount: totalFileCount,
       );
-      await File(p.join(exportDir.path, 'manifest.json'))
-          .writeAsString(const JsonEncoder.withIndent('  ').convert(manifest.toJson()));
+      await File(p.join(exportDir.path, 'manifest.json')).writeAsString(
+          const JsonEncoder.withIndent('  ').convert(manifest.toJson()));
 
       // conversations.json
       await File(p.join(exportDir.path, 'conversations.json'))
@@ -192,11 +207,11 @@ class ConversationExporter {
         'messages': allMessages,
       }));
 
-      // 5. 打包成 ZIP
+      // 5. 鎵撳寘鎴?ZIP
       onProgress?.call(const ExportProgress(
         ExportPhase.packaging,
         0.85,
-        message: '压缩文件...',
+        message: '鍘嬬缉鏂囦欢...',
       ));
 
       final archive = Archive();
@@ -204,31 +219,32 @@ class ConversationExporter {
 
       final zipBytes = ZipEncoder().encode(archive);
       if (zipBytes == null) {
-        throw Exception('ZIP 压缩失败');
+        throw Exception('ZIP 鍘嬬缉澶辫触');
       }
 
-      // 生成文件名
+      // 鐢熸垚鏂囦欢鍚?
       final dateStr = _formatDate(DateTime.now());
       String fileName;
       if (conversations.length == 1) {
         final name = conversations.first['display_name'] as String? ?? 'export';
         fileName = 'export_${name}_$dateStr$kExportFileExtension';
       } else {
-        fileName = 'export_${conversations.length}个角色_$dateStr$kExportFileExtension';
+        fileName =
+            'export_${conversations.length}涓鑹瞋$dateStr$kExportFileExtension';
       }
 
-      // 保存到下载目录
+      // 淇濆瓨鍒颁笅杞界洰褰?
       final downloadsDir = await _getDownloadsDirectory();
       final outputFile = File(p.join(downloadsDir.path, fileName));
       await outputFile.writeAsBytes(zipBytes);
 
-      // 6. 清理临时目录
+      // 6. 娓呯悊涓存椂鐩綍
       await exportDir.delete(recursive: true);
 
-      onProgress?.call(ExportProgress(
+      onProgress?.call(const ExportProgress(
         ExportPhase.done,
         1.0,
-        message: '导出完成！',
+        message: 'Export completed',
       ));
 
       return ExportResult(
@@ -240,7 +256,7 @@ class ConversationExporter {
         sizeBytes: await outputFile.length(),
       );
     } catch (e) {
-      // 清理临时目录
+      // 娓呯悊涓存椂鐩綍
       if (await exportDir.exists()) {
         await exportDir.delete(recursive: true);
       }
@@ -248,18 +264,21 @@ class ConversationExporter {
     }
   }
 
-  /// 复制文件到导出目录
+  /// 澶嶅埗鏂囦欢鍒板鍑虹洰褰?
   Future<String?> _copyFileIfExists(
     String sourcePath,
     Directory targetDir,
     String baseName,
   ) async {
-    // 跳过网络 URL
+    // 璺宠繃缃戠粶 URL
     if (sourcePath.startsWith('http://') || sourcePath.startsWith('https://')) {
       return null;
     }
+    if (sourcePath.startsWith('data:image')) {
+      return null;
+    }
 
-    // 跳过 assets
+    // 璺宠繃 assets
     if (sourcePath.startsWith('assets/')) {
       return null;
     }
@@ -277,7 +296,7 @@ class ConversationExporter {
     return targetPath;
   }
 
-  /// 构建会话 JSON
+  /// 鏋勫缓浼氳瘽 JSON
   Map<String, dynamic> _buildConversationJson(
     dynamic dbConv,
     Map<String, String> fileMapping,
@@ -288,6 +307,9 @@ class ConversationExporter {
       'display_name': dbConv.displayName,
       'avatar_file': fileMapping[dbConv.avatarUrl],
       'character_image_file': fileMapping[dbConv.characterImage],
+      'chat_background_image_file':
+          fileMapping[dbConv.chatBackgroundImage] ?? dbConv.chatBackgroundImage,
+      'chat_background_mask_opacity': dbConv.chatBackgroundMaskOpacity,
       'voice_file': dbConv.voiceFile,
       'persona_prompt': dbConv.personaPrompt,
       'self_address': dbConv.selfAddress,
@@ -303,20 +325,20 @@ class ConversationExporter {
     };
   }
 
-  /// 构建消息 JSON
+  /// 鏋勫缓娑堟伅 JSON
   Map<String, dynamic> _buildMessageJson(
     dynamic dbMsg,
     List<Map<String, dynamic>> blocks,
     Map<String, String> fileMapping,
   ) {
-    // 更新 blocks 中的文件路径
+    // 鏇存柊 blocks 涓殑鏂囦欢璺緞
     final updatedBlocks = blocks.map((block) {
       final data = block['data'] as Map<String, dynamic>?;
       if (data == null) return block;
 
       final newData = Map<String, dynamic>.from(data);
-      
-      // 更新各种文件路径
+
+      // 鏇存柊鍚勭鏂囦欢璺緞
       for (final key in ['localPath', 'url', 'filePath', 'path']) {
         if (newData[key] != null && fileMapping.containsKey(newData[key])) {
           newData[key] = fileMapping[newData[key]];
@@ -340,7 +362,7 @@ class ConversationExporter {
     };
   }
 
-  /// 将目录添加到 Archive
+  /// 灏嗙洰褰曟坊鍔犲埌 Archive
   Future<void> _addDirectoryToArchive(
     Archive archive,
     Directory dir,
@@ -359,7 +381,7 @@ class ConversationExporter {
     }
   }
 
-  /// 获取下载目录
+  /// 鑾峰彇涓嬭浇鐩綍
   Future<Directory> _getDownloadsDirectory() async {
     if (Platform.isAndroid) {
       // Android: /storage/emulated/0/Download
@@ -367,11 +389,11 @@ class ConversationExporter {
       if (await dir.exists()) {
         return dir;
       }
-      // 备用：应用外部目录
+      // 澶囩敤锛氬簲鐢ㄥ閮ㄧ洰褰?
       final extDir = await getExternalStorageDirectory();
       return extDir ?? await getApplicationDocumentsDirectory();
     } else if (Platform.isWindows) {
-      // Windows: 用户下载文件夹
+      // Windows: 鐢ㄦ埛涓嬭浇鏂囦欢澶?
       final userProfile = Platform.environment['USERPROFILE'];
       if (userProfile != null) {
         final dir = Directory(p.join(userProfile, 'Downloads'));
@@ -380,11 +402,11 @@ class ConversationExporter {
         }
       }
     }
-    // 默认：应用文档目录
+    // 榛樿锛氬簲鐢ㄦ枃妗ｇ洰褰?
     return await getApplicationDocumentsDirectory();
   }
 
-  /// 格式化日期
+  /// 鏍煎紡鍖栨棩鏈?
   String _formatDate(DateTime date) {
     return '${date.year}${date.month.toString().padLeft(2, '0')}${date.day.toString().padLeft(2, '0')}';
   }

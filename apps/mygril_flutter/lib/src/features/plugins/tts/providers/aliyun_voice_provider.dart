@@ -177,6 +177,15 @@ class AliyunQwenVoiceProvider implements TtsVoiceProvider {
   }
 
   /// 从 voice ID 中提取显示名称
+  @override
+  Future<VoicePreset?> queryVoiceStatus({
+    required String apiKey,
+    required String voiceId,
+    VoicePreset? voice,
+  }) async {
+    return null;
+  }
+
   String _extractVoiceName(String voiceId) {
     // voice ID 格式可能是: prefix_timestamp 或纯 ID
     final parts = voiceId.split('_');

@@ -229,7 +229,7 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
                     style: TextStyle(
                       color: colors.text,
                       fontSize: 16,
-                      fontWeight: FontWeight.w600,
+                      fontWeight: MoeFontWeights.emphasis,
                     ),
                   ),
                   // 推荐标识
@@ -249,7 +249,7 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
                         style: TextStyle(
                           color: colors.primary,
                           fontSize: 11,
-                          fontWeight: FontWeight.w600,
+                          fontWeight: MoeFontWeights.emphasis,
                         ),
                       ),
                     ),
@@ -294,7 +294,7 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
                       color: isRecommended ? colors.primary : colors.muted,
                       fontSize: 11,
                       fontWeight:
-                          isRecommended ? FontWeight.w600 : FontWeight.normal,
+                          isRecommended ? MoeFontWeights.emphasis : MoeFontWeights.normal,
                     ),
                   );
                 }).toList(),
@@ -784,7 +784,7 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
                   style: TextStyle(
                     color: colors.text,
                     fontSize: 14,
-                    fontWeight: FontWeight.w500,
+                    fontWeight: MoeFontWeights.emphasis,
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -801,7 +801,7 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
                   style: TextStyle(
                     color: colors.text,
                     fontSize: 14,
-                    fontWeight: FontWeight.w500,
+                    fontWeight: MoeFontWeights.emphasis,
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -933,7 +933,7 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
                   style: TextStyle(
                     color: colors.text,
                     fontSize: 14,
-                    fontWeight: FontWeight.w500,
+                    fontWeight: MoeFontWeights.emphasis,
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -970,7 +970,7 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
                               style: TextStyle(
                                 color: colors.primary,
                                 fontSize: 13,
-                                fontWeight: FontWeight.w500,
+                                fontWeight: MoeFontWeights.emphasis,
                               ),
                             ),
                           ],
@@ -1041,7 +1041,7 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
                               style: TextStyle(
                                 color: colors.primary,
                                 fontSize: 13,
-                                fontWeight: FontWeight.w500,
+                                fontWeight: MoeFontWeights.emphasis,
                               ),
                             ),
                           ],
@@ -1653,7 +1653,7 @@ class _FetchVoicesSheetContentState extends State<_FetchVoicesSheetContent> {
         style: TextStyle(
           color: colors.textSecondary,
           fontSize: 13,
-          fontWeight: FontWeight.w600,
+          fontWeight: MoeFontWeights.emphasis,
         ),
       ),
     );

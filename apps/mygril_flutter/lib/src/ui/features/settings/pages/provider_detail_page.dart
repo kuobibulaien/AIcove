@@ -464,7 +464,7 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
                           provider.displayName ?? provider.id,
                           style: TextStyle(
                             fontSize: 18,
-                            fontWeight: FontWeight.w600,
+                            fontWeight: MoeFontWeights.emphasis,
                             color: colors.text,
                           ),
                         ),
@@ -685,7 +685,7 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
               '模型列表 (${visible.length})',
               style: TextStyle(
                 fontSize: 13,
-                fontWeight: FontWeight.w600,
+                fontWeight: MoeFontWeights.emphasis,
                 color: colors.textSecondary.withValues(alpha: 0.8),
               ),
             ),
@@ -821,7 +821,7 @@ class _ActionButton extends StatelessWidget {
               style: TextStyle(
                 fontSize: 14,
                 color: isPrimary ? colors.headerContentColor : colors.textSecondary,
-                fontWeight: isPrimary ? FontWeight.w600 : FontWeight.normal,
+                fontWeight: isPrimary ? MoeFontWeights.emphasis : MoeFontWeights.normal,
               ),
             ),
           ],

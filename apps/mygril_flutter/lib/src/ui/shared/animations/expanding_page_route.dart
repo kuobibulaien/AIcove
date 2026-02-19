@@ -1,5 +1,5 @@
 /// 原地展开路由 - 实现 Container Transform 动画效果
-/// 
+///
 /// 使用方法：
 /// ```dart
 /// Navigator.of(context).push(
@@ -10,7 +10,7 @@
 ///   ),
 /// );
 /// ```
-/// 
+///
 /// 或使用扩展方法：
 /// ```dart
 /// Navigator.of(context).pushExpanding(
@@ -18,16 +18,20 @@
 ///   sourceContext: cardContext,
 /// );
 /// ```
-/// 
+///
 /// 更新记录：
 /// - 2025-12-01: 创建，实现"原地展开"动画效果
 /// - 2025-12-08: 修复返回动画闪烁问题（背景层透明度随 progress 变化）
 /// - 2025-12-08: 禁止底层页面左移动画（覆写 canTransitionFrom）
 /// - 2025-12-08: 添加目标圆角参数，适配现代手机屏幕圆角
 library;
+
 import 'package:flutter/material.dart';
 import '../../theme/tokens.dart';
 import '../effects/smooth_clip.dart';
+
+/// Shared curve for role-card expanding transitions.
+const Curve kExpandingPageTransitionCurve = Curves.easeInOutCubic;
 
 /// 自定义展开路由 - 实现"无缝展开"动画效果
 ///
@@ -64,7 +68,7 @@ class ExpandingPageRoute<T> extends PageRoute<T> {
     this.targetRadius = 32.0,
     this.openDuration = kAnimPage,
     this.closeDuration = kAnimPageReverse,
-    this.animationCurve = Curves.easeInOutCubic,
+    this.animationCurve = kExpandingPageTransitionCurve,
   });
 
   @override
@@ -94,12 +98,14 @@ class ExpandingPageRoute<T> extends PageRoute<T> {
   bool canTransitionFrom(TransitionRoute<dynamic> previousRoute) => false;
 
   @override
-  Widget buildPage(BuildContext context, Animation<double> animation, Animation<double> secondaryAnimation) {
+  Widget buildPage(BuildContext context, Animation<double> animation,
+      Animation<double> secondaryAnimation) {
     return page;
   }
 
   @override
-  Widget buildTransitions(BuildContext context, Animation<double> animation, Animation<double> secondaryAnimation, Widget child) {
+  Widget buildTransitions(BuildContext context, Animation<double> animation,
+      Animation<double> secondaryAnimation, Widget child) {
     final screenSize = MediaQuery.sizeOf(context);
 
     // 使用平滑曲线
@@ -122,7 +128,8 @@ class ExpandingPageRoute<T> extends PageRoute<T> {
         )!;
 
         // 计算当前圆角：从卡片圆角渐变到目标圆角
-        final currentRadius = sourceRadius + (targetRadius - sourceRadius) * progress;
+        final currentRadius =
+            sourceRadius + (targetRadius - sourceRadius) * progress;
 
         // 展开的容器（无遮罩、无阴影、无淡入淡出）
         // Positioned 必须在 Stack 内部使用
@@ -148,7 +155,7 @@ class ExpandingPageRoute<T> extends PageRoute<T> {
 /// Navigator 扩展方法，简化展开路由的使用
 extension ExpandingNavigatorExtension on NavigatorState {
   /// 使用展开动画导航到新页面
-  /// 
+  ///
   /// [page] 目标页面
   /// [sourceContext] 源卡片的 BuildContext，用于获取位置
   /// [sourceRadius] 源卡片的圆角，默认 12.0
@@ -164,11 +171,12 @@ extension ExpandingNavigatorExtension on NavigatorState {
     final RenderBox box = sourceContext.findRenderObject() as RenderBox;
     final position = box.localToGlobal(Offset.zero);
     final size = box.size;
-    
+
     return push<T>(
       ExpandingPageRoute(
         page: page,
-        sourceRect: Rect.fromLTWH(position.dx, position.dy, size.width, size.height),
+        sourceRect:
+            Rect.fromLTWH(position.dx, position.dy, size.width, size.height),
         sourceRadius: sourceRadius,
         openDuration: openDuration,
         closeDuration: closeDuration,
@@ -184,4 +192,3 @@ Rect getSourceRect(BuildContext context) {
   final size = box.size;
   return Rect.fromLTWH(position.dx, position.dy, size.width, size.height);
 }
-

@@ -20,6 +20,8 @@ import '../../../../features/settings/app_settings.dart';
 import '../../../../core/utils/message_formatter.dart';
 import 'animated_message_item.dart';
 
+const double _kMessageItemVerticalPadding = 2.0;
+
 /// 消息列表组件
 class ChatMessageList extends ConsumerStatefulWidget {
   final List<Message> messages;
@@ -28,11 +30,13 @@ class ChatMessageList extends ConsumerStatefulWidget {
   final String displayName;
   final void Function(Message message)? onEditMessage;
   final void Function(Message message)? onRegenerateMessage;
-  
+
   /// 分页加载：滑到顶部（历史消息方向）时触发
   final Future<void> Function()? onLoadMore;
+
   /// 是否正在加载更多
   final bool isLoadingMore;
+
   /// 是否还有更多历史消息可加载
   final bool hasMoreMessages;
 
@@ -57,11 +61,13 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   final Set<String> _pendingAnimationIds = <String>{};
   DateTime? _latestAnimatedAt;
   List<_ListItem> _cachedListItems = [];
+
   /// 缓存的消息格式化配置（用于检测配置变化）
   MessageFormatConfig? _cachedFormatConfig;
 
   /// 用于监听滚动位置，触发分页加载
   late final ScrollController _scrollController;
+
   /// 防止重复触发加载
   bool _isLoadingTriggered = false;
 
@@ -72,31 +78,31 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
       _latestAnimatedAt = widget.messages.last.createdAt;
     }
     _updateListItems();
-    
+
     // 初始化 ScrollController 并添加监听
     _scrollController = ScrollController();
     _scrollController.addListener(_onScroll);
   }
-  
+
   @override
   void dispose() {
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     super.dispose();
   }
-  
+
   /// 滚动监听：当接近列表顶部（历史消息方向）时触发加载更多
   void _onScroll() {
     // reverse=true 时，maxScrollExtent 是列表顶部（历史消息方向）
     if (!_scrollController.hasClients) return;
-    
+
     final position = _scrollController.position;
     final maxScroll = position.maxScrollExtent;
     final currentScroll = position.pixels;
-    
+
     // 距离顶部 200 像素时触发加载
     const threshold = 200.0;
-    
+
     if (maxScroll - currentScroll <= threshold &&
         !_isLoadingTriggered &&
         !widget.isLoadingMore &&
@@ -113,7 +119,8 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
 
   void _updateListItems([MessageFormatConfig? config]) {
     _cachedFormatConfig = config;
-    _cachedListItems = _buildListItemsWithTimeDividers(config).reversed.toList();
+    _cachedListItems =
+        _buildListItemsWithTimeDividers(config).reversed.toList();
   }
 
   @override
@@ -146,9 +153,8 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     if (threshold == null) {
       newMessages = List<Message>.from(widget.messages);
     } else {
-      newMessages = widget.messages
-          .where((m) => m.createdAt.isAfter(threshold))
-          .toList();
+      newMessages =
+          widget.messages.where((m) => m.createdAt.isAfter(threshold)).toList();
     }
 
     if (newMessages.isEmpty) {
@@ -168,10 +174,6 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   Widget build(BuildContext context) {
     final actions = ref.watch(chatActionsProvider);
     final settingsAsync = ref.watch(appSettingsProvider);
-    final fontSize = settingsAsync.maybeWhen(
-      data: (settings) => settings.messageFontSize,
-      orElse: () => 13.0,
-    );
 
     // 获取消息格式化配置（用于分段显示）
     final formatConfig = settingsAsync.maybeWhen(
@@ -196,7 +198,7 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
 
     // 计算实际 itemCount：如果正在加载更多，顶部多显示一个加载指示器
     final itemCount = listItems.length + (widget.isLoadingMore ? 1 : 0);
-    
+
     return ListView.builder(
       controller: _scrollController, // 添加 ScrollController 用于分页触发
       reverse: true, // 从底部开始显示，新消息在下方
@@ -235,22 +237,25 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
             status: m.status,
           );
           final bubbleWidget = Padding(
-            padding: const EdgeInsets.symmetric(vertical: 3),
+            padding: const EdgeInsets.symmetric(
+                vertical: _kMessageItemVerticalPadding),
             child: MessageBubble(
               isMe: isMe,
               message: chunkMessage,
               avatarUrl: isMe ? null : widget.avatarUrl,
               displayName: isMe ? null : widget.displayName,
-              fontSize: fontSize,
               showCorner: item.showCorner,
               showName: false,
+              showAvatar: item.showAvatar,
               onRetry: null, // 分段消息不支持重试
-              onLongPress: (bubbleKey) => _handleMessageLongPress(context, m, isMe, bubbleKey),
+              onLongPress: (bubbleKey) =>
+                  _handleMessageLongPress(context, m, isMe, bubbleKey),
             ),
           );
 
           // 只有第一个分段需要动画
-          final shouldAnimate = item.chunkIndex == 0 && _pendingAnimationIds.contains(m.id);
+          final shouldAnimate =
+              item.chunkIndex == 0 && _pendingAnimationIds.contains(m.id);
           if (shouldAnimate) {
             _pendingAnimationIds.remove(m.id);
             return AnimatedMessageItem(
@@ -264,19 +269,21 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
           final m = item.message;
           final isMe = m.role == 'user';
           final bubbleWidget = Padding(
-            padding: const EdgeInsets.symmetric(vertical: 3),
+            padding: const EdgeInsets.symmetric(
+                vertical: _kMessageItemVerticalPadding),
             child: MessageBubble(
               isMe: isMe,
               message: m,
               avatarUrl: isMe ? null : widget.avatarUrl,
               displayName: isMe ? null : widget.displayName,
-              fontSize: fontSize,
               showCorner: item.showCorner,
               showName: false, // 一对一聊天不显示名称，群聊功能上线后改为 true
+              showAvatar: item.showAvatar,
               onRetry: (isMe && m.status == 'failed')
                   ? () => _showRetryDialog(context, m.id, actions)
                   : null,
-              onLongPress: (bubbleKey) => _handleMessageLongPress(context, m, isMe, bubbleKey),
+              onLongPress: (bubbleKey) =>
+                  _handleMessageLongPress(context, m, isMe, bubbleKey),
             ),
           );
 
@@ -300,50 +307,64 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   /// 构建包含时间分隔器的列表项
   ///
   /// [config] 消息格式化配置，用于分段显示
-  List<_ListItem> _buildListItemsWithTimeDividers([MessageFormatConfig? config]) {
+  List<_ListItem> _buildListItemsWithTimeDividers(
+      [MessageFormatConfig? config]) {
     final List<_ListItem> items = [];
     final messages = widget.messages;
     final enableChunking = config?.enableChunking ?? true;
 
     for (int i = 0; i < messages.length; i++) {
       final currentMessage = messages[i];
+      bool hasTimeDivider = false;
 
       if (i == 0) {
         items.add(_TimeDivider(currentMessage.createdAt));
+        hasTimeDivider = true;
       } else {
         final previousMessage = messages[i - 1];
-        final timeDiff = currentMessage.createdAt.difference(previousMessage.createdAt);
+        final timeDiff =
+            currentMessage.createdAt.difference(previousMessage.createdAt);
 
         if (timeDiff.inMinutes >= 20) {
           items.add(_TimeDivider(currentMessage.createdAt));
+          hasTimeDivider = true;
+        }
+      }
+
+      // 计算 showAvatar：本组第一条消息才显示头像
+      // 条件：前面没有同发送者的消息（前面是不同发送者、时间分隔器、或是第一条消息）
+      bool showAvatar = true;
+      if (!hasTimeDivider && i > 0) {
+        final previousMessage = messages[i - 1];
+        if (previousMessage.role == currentMessage.role) {
+          showAvatar = false;
         }
       }
 
       // 判断是否需要分段显示（仅对 AI 消息的纯文本内容进行分段）
       final isAssistant = currentMessage.role == 'assistant';
       final hasBlocks = currentMessage.blocks?.isNotEmpty ?? false;
-      final shouldChunk = enableChunking && isAssistant && !hasBlocks && currentMessage.content.isNotEmpty;
+      final shouldChunk = enableChunking &&
+          isAssistant &&
+          !hasBlocks &&
+          currentMessage.content.isNotEmpty;
 
       if (shouldChunk && config != null) {
         // 对 AI 消息进行分段
-        final chunks = MessageFormatter.formatAndChunkText(currentMessage.content, config);
+        final chunks =
+            MessageFormatter.formatAndChunkText(currentMessage.content, config);
         if (chunks.length > 1) {
           // 多个分段：每个分段作为独立的列表项
           for (int j = 0; j < chunks.length; j++) {
-            // 计算分段的 showCorner：
-            // - 第一个分段：如果后面还有分段，显示直角
-            // - 中间分段：显示直角
-            // - 最后一个分段：检查下一条消息是否是同发送者
             bool showCorner = false;
             if (j < chunks.length - 1) {
-              // 不是最后一个分段，后面还有分段
               showCorner = true;
             } else {
-              // 最后一个分段，检查下一条消息
               if (i + 1 < messages.length) {
                 final nextMessage = messages[i + 1];
                 if (nextMessage.role == currentMessage.role) {
-                  final timeDiff = nextMessage.createdAt.difference(currentMessage.createdAt);
+                  final timeDiff = nextMessage.createdAt
+                      .difference(currentMessage.createdAt);
                   if (timeDiff.inMinutes < 20) {
                     showCorner = true;
                   }
@@ -357,30 +378,28 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
               chunkIndex: j,
               totalChunks: chunks.length,
               showCorner: showCorner,
+              showAvatar: j == 0 && showAvatar, // 只有第一个分段且该消息是组首条才显示头像
             ));
           }
-          continue; // 跳过下面的普通消息添加
+          continue;
         }
       }
 
-      // 普通消息（不分段或只有一个分段）
-      // 计算是否显示直角：
-      // 当前消息是组的开头 且 后一条消息是同一发送者 → showCorner = true
-      // 否则 showCorner = false（单条消息或组的后续消息用全圆角）
+      // 普通消息
       bool showCorner = false;
       if (i + 1 < messages.length) {
         final nextMessage = messages[i + 1];
-        // 后一条消息是同一发送者，说明当前是组的开头
         if (nextMessage.role == currentMessage.role) {
-          // 还要检查时间间隔，超过20分钟会插入时间分隔器，就不算连续消息了
-          final timeDiff = nextMessage.createdAt.difference(currentMessage.createdAt);
+          final timeDiff =
+              nextMessage.createdAt.difference(currentMessage.createdAt);
           if (timeDiff.inMinutes < 20) {
             showCorner = true;
           }
         }
       }
 
-      items.add(_MessageItem(currentMessage, showCorner: showCorner));
+      items.add(_MessageItem(currentMessage,
+          showCorner: showCorner, showAvatar: showAvatar));
     }
 
     return items;
@@ -418,7 +437,7 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
           style: TextStyle(
             color: colors.muted,
             fontSize: 12,
-            fontWeight: FontWeight.w400,
+            fontWeight: MoeFontWeights.normal,
           ),
         ),
       ),
@@ -452,7 +471,8 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   }
 
   /// 处理消息长按事件
-  Future<void> _handleMessageLongPress(BuildContext context, Message message, bool isMe, GlobalKey bubbleKey) async {
+  Future<void> _handleMessageLongPress(BuildContext context, Message message,
+      bool isMe, GlobalKey bubbleKey) async {
     await showMessageActionMenu(
       context,
       targetKey: bubbleKey,
@@ -518,10 +538,14 @@ abstract class _ListItem {}
 /// 消息列表项
 class _MessageItem extends _ListItem {
   final Message message;
+
   /// 是否显示直角（连续消息组的开头且后面还有同发送者消息）
   final bool showCorner;
 
-  _MessageItem(this.message, {this.showCorner = false});
+  /// 是否显示头像（连续消息组的第一条消息才显示）
+  final bool showAvatar;
+
+  _MessageItem(this.message, {this.showCorner = false, this.showAvatar = true});
 }
 
 /// 分段消息列表项（用于 UI 分段显示）
@@ -530,8 +554,12 @@ class _ChunkedMessageItem extends _ListItem {
   final String chunkText;
   final int chunkIndex;
   final int totalChunks;
+
   /// 是否显示直角
   final bool showCorner;
+
+  /// 是否显示头像（仅第一个分段的第一条才显示）
+  final bool showAvatar;
 
   _ChunkedMessageItem({
     required this.originalMessage,
@@ -539,6 +567,7 @@ class _ChunkedMessageItem extends _ListItem {
     required this.chunkIndex,
     required this.totalChunks,
     this.showCorner = false,
+    this.showAvatar = true,
   });
 }
 

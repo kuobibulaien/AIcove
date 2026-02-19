@@ -22,6 +22,7 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import '../../../theme/tokens.dart';
 import '../../effects/smooth_clip.dart';
 
 /// 供应商头像尺寸枚举
@@ -190,14 +191,6 @@ class ProviderAvatar extends StatelessWidget {
       bgColor: Color(0xFF3370FF),
       fgColor: Colors.white,
     ),
-    'gitee': const _ProviderBrand(
-      bgColor: Color(0xFFC71D23),
-      fgColor: Colors.white,
-    ),
-    '模力方舟': const _ProviderBrand(
-      bgColor: Color(0xFFC71D23),
-      fgColor: Colors.white,
-    ),
   };
 
   /// SVG 图标路径映射
@@ -218,8 +211,6 @@ class ProviderAvatar extends StatelessWidget {
     'volcengine': 'assets/icons/providers/bytedance-color.svg',
     '火山引擎': 'assets/icons/providers/bytedance-color.svg',
     '火山': 'assets/icons/providers/bytedance-color.svg',
-    'gitee': 'assets/icons/providers/giteeai.svg',
-    '模力方舟': 'assets/icons/providers/giteeai.svg',
   };
 
   /// 根据名称匹配品牌
@@ -306,7 +297,7 @@ class ProviderAvatar extends StatelessWidget {
         style: TextStyle(
           color: fgColor,
           fontSize: size.fontSize,
-          fontWeight: FontWeight.w600,
+          fontWeight: MoeFontWeights.emphasis,
           height: 1,
         ),
       ),

@@ -4,7 +4,7 @@ import 'dart:io';
 
 /// 目录结构迁移脚本
 /// 
-/// 使用方法：在 mygril_flutter 目录下运行
+/// 使用方法：在 aicove_flutter 目录下运行
 /// dart run tool/migrate_structure.dart
 /// 
 /// 功能：
@@ -16,7 +16,7 @@ void main() async {
   final libDir = Directory('lib/src');
   
   if (!libDir.existsSync()) {
-    print('❌ 错误：请在 mygril_flutter 目录下运行此脚本');
+    print('❌ 错误：请在 aicove_flutter 目录下运行此脚本');
     exit(1);
   }
   

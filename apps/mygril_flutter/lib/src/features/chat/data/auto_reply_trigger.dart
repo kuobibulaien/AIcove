@@ -161,6 +161,10 @@ class AutoReplyTrigger {
     required DateTime? currentLastUserMessageAt,
     required bool isChatActive,
   }) {
+    if (manual) {
+      return false;
+    }
+
     final hasNewUserMessage = _checkHasNewUserMessage(
       currentLastUserMessageId: currentLastUserMessageId,
       currentLastUserMessageAt: currentLastUserMessageAt,

@@ -139,7 +139,7 @@ class CapabilitySelector extends StatelessWidget {
               style: TextStyle(
                 fontSize: 14,
                 color: textColor,
-                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
               ),
             ),
           ],
@@ -253,7 +253,7 @@ class CapabilitySingleSelector extends StatelessWidget {
               style: TextStyle(
                 fontSize: 14,
                 color: textColor,
-                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
               ),
             ),
           ],
@@ -388,7 +388,7 @@ class CapabilityFilter extends StatelessWidget {
               style: TextStyle(
                 fontSize: 13,
                 color: fgColor,
-                fontWeight: isSelected ? FontWeight.w500 : FontWeight.normal,
+                fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
               ),
             ),
           ],

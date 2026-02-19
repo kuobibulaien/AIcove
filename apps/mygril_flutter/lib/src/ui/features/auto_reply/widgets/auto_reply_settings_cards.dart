@@ -31,7 +31,7 @@ class AutoReplyIntroCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('说明', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+              Text('说明', style: TextStyle(fontSize: 15, fontWeight: MoeFontWeights.emphasis)),
               SizedBox(height: 8),
               Text(
                 '开启后，AI 会在聊天结束或特殊时间主动联系你。所有触发器都会遵守你设置的频率、冷却与免打扰策略，并可在下方查看或自定义。',
@@ -72,7 +72,7 @@ class DailyLimitCard extends StatelessWidget {
               children: [
                 Icon(Icons.repeat, color: colors.primary),
                 const SizedBox(width: 8),
-                const Text('每日触发上限', style: TextStyle(fontWeight: FontWeight.w600)),
+                const Text('每日触发上限', style: TextStyle(fontWeight: MoeFontWeights.emphasis)),
                 const Spacer(),
                 Text('${draft.dailyLimit} 次/天', style: TextStyle(color: colors.primary)),
               ],
@@ -125,7 +125,7 @@ class IntervalCard extends StatelessWidget {
               children: [
                 Icon(Icons.timelapse, color: colors.primary),
                 const SizedBox(width: 8),
-                const Text('最短间隔', style: TextStyle(fontWeight: FontWeight.w600)),
+                const Text('最短间隔', style: TextStyle(fontWeight: MoeFontWeights.emphasis)),
                 const Spacer(),
                 Text('$hours 小时', style: TextStyle(color: colors.primary)),
               ],
@@ -247,7 +247,7 @@ class AnalyzerModelCard extends StatelessWidget {
                 Icon(Icons.smart_toy_outlined, color: colors.primary),
                 const SizedBox(width: 8),
                 const Expanded(
-                  child: Text('AI 管家模型', style: TextStyle(fontWeight: FontWeight.w600)),
+                  child: Text('AI 管家模型', style: TextStyle(fontWeight: MoeFontWeights.emphasis)),
                 ),
                 if (hasCustomModel)
                   Container(
@@ -336,7 +336,7 @@ class AnalyzerPromptCard extends StatelessWidget {
                 Icon(Icons.psychology_outlined, color: colors.primary),
                 const SizedBox(width: 8),
                 const Expanded(
-                  child: Text('AI 分析提示词', style: TextStyle(fontWeight: FontWeight.w600)),
+                  child: Text('AI 分析提示词', style: TextStyle(fontWeight: MoeFontWeights.emphasis)),
                 ),
                 if (!isDefault)
                   Container(

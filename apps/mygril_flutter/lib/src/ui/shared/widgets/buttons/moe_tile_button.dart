@@ -141,7 +141,7 @@ class _MoeTileButtonState extends State<MoeTileButton> {
                     widget.label,
                     style: TextStyle(
                       fontSize: 15,
-                      fontWeight: FontWeight.w500,
+                      fontWeight: MoeFontWeights.emphasis,
                       color: widget.enabled ? labelColor : colors.muted,
                     ),
                   ),

@@ -41,7 +41,7 @@ class MoeTalkSkin extends SkinConfig {
   double get cardRadius => 10.0;
   
   @override
-  double get bubbleRadius => 18.0;
+  double get bubbleRadius => 12.0;
   
   @override
   double get buttonRadius => 8.0;

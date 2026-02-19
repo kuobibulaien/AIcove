@@ -43,7 +43,7 @@ class ImageAttachmentPreview extends StatelessWidget {
                   '图片附件',
                   style: TextStyle(
                     fontSize: 14,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: MoeFontWeights.emphasis,
                     color: colors.text,
                   ),
                 ),
@@ -136,7 +136,7 @@ class FileAttachmentPreview extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: 14,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: MoeFontWeights.emphasis,
                     color: colors.text,
                   ),
                 ),

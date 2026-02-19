@@ -58,6 +58,14 @@ class ConversationRepository {
     ));
   }
 
+  /// 清除未读计数
+  Future<void> clearUnread(String id) async {
+    await (_db.update(_db.conversations)..where((t) => t.id.equals(id)))
+        .write(const ConversationsCompanion(
+      unreadCount: Value(0),
+    ));
+  }
+
   /// 获取回收站中的会话
   Future<List<Conversation>> getDeleted() async {
     final now = DateTime.now().millisecondsSinceEpoch;

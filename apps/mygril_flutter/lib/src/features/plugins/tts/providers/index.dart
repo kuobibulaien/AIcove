@@ -4,7 +4,7 @@
 ///
 /// 使用示例:
 /// ```dart
-/// import 'package:mygril_flutter/src/features/plugins/tts/providers/index.dart';
+/// import 'package:aicove_flutter/src/features/plugins/tts/providers/index.dart';
 ///
 /// // 获取指定渠道的 Provider
 /// final provider = TtsProviderFactory.getProvider('siliconflow');

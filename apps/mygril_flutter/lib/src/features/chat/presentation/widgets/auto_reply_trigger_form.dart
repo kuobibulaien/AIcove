@@ -93,7 +93,7 @@ class _CreateTriggerSheetState extends ConsumerState<_CreateTriggerSheet> {
           Text(
             '创建自定义触发',
             style: TextStyle(
-                fontSize: 16, fontWeight: FontWeight.w700, color: colors.text),
+                fontSize: 16, fontWeight: MoeFontWeights.emphasis, color: colors.text),
           ),
           const SizedBox(height: 16),
           MoeTextField(
@@ -105,7 +105,7 @@ class _CreateTriggerSheetState extends ConsumerState<_CreateTriggerSheet> {
           conversationsAsync.when(
             data: (conversations) {
               return DropdownButtonFormField<String>(
-                value: _selectedContactId,
+                initialValue: _selectedContactId,
                 decoration: InputDecoration(
                   labelText: '指定联系人 (可选)',
                   hintText: '默认使用当前活跃对话',
@@ -220,7 +220,7 @@ class _CreateTriggerSheetState extends ConsumerState<_CreateTriggerSheet> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text('延迟 ${_delayMinutes.round()} 分钟后触发',
-            style: TextStyle(fontWeight: FontWeight.w600, color: colors.text)),
+            style: TextStyle(fontWeight: MoeFontWeights.emphasis, color: colors.text)),
         Slider(
           value: _delayMinutes,
           divisions: 23,
@@ -257,12 +257,14 @@ class _CreateTriggerSheetState extends ConsumerState<_CreateTriggerSheet> {
               initialDate: _selectedDate ?? now,
             );
             if (pickedDate == null) return;
+            if (!mounted) return;
             final pickedTime = await showTimePicker(
               context: context,
               initialTime: _selectedTime ??
                   TimeOfDay.fromDateTime(now.add(const Duration(minutes: 5))),
             );
             if (pickedTime == null) return;
+            if (!mounted) return;
             setState(() {
               _selectedDate = pickedDate;
               _selectedTime = pickedTime;
@@ -300,11 +302,16 @@ class _CreateTriggerSheetState extends ConsumerState<_CreateTriggerSheet> {
         source: TriggerSource.userManual,
       );
 
-      await ref.read(chatActionsProvider).sendProactiveTrigger(trigger);
-
-      if (mounted) {
-        MoeToast.success(context, '测试指令已发送');
-        Navigator.of(context).pop();
+      final result = await ref.read(chatActionsProvider).sendProactiveTrigger(trigger);
+      if (result.success) {
+        if (mounted) {
+          MoeToast.success(context, '测试指令已发送');
+          Navigator.of(context).pop();
+        }
+      } else {
+        setState(() {
+          _error = '测试失败：${result.reason}';
+        });
       }
     } catch (e) {
       setState(() {

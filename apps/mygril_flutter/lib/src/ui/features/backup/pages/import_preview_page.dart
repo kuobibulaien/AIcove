@@ -9,6 +9,7 @@ import '../../../../features/backup/backup_providers.dart';
 import '../../../../features/chat/conversation_providers.dart';
 import '../../../shared/effects/smooth_clip.dart';
 import '../../../shared/widgets/index.dart';
+import '../../../theme/tokens.dart';
 
 /// 导入预览页面
 class ImportPreviewPage extends ConsumerStatefulWidget {
@@ -133,7 +134,7 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
                         Text(
                           widget.file.path.split('/').last.split('\\').last,
                           style: theme.textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.w600,
+                            fontWeight: MoeFontWeights.emphasis,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -223,7 +224,7 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
     return Text(
       title,
       style: Theme.of(context).textTheme.titleSmall?.copyWith(
-            fontWeight: FontWeight.bold,
+            fontWeight: MoeFontWeights.emphasis,
           ),
     );
   }
@@ -363,7 +364,7 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
                         Text(
                           conv.displayName,
                           style: theme.textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.w600,
+                            fontWeight: MoeFontWeights.emphasis,
                           ),
                         ),
                         const SizedBox(height: 2),
@@ -599,7 +600,7 @@ class _ConflictDialogState extends State<_ConflictDialog> {
                       Text(
                         conflict.name,
                         style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w600,
+                          fontWeight: MoeFontWeights.emphasis,
                         ),
                       ),
                       const SizedBox(height: 8),

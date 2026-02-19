@@ -41,7 +41,7 @@ Future<void> _fixChatPages() async {
     
     // 修复 widgets 引用（chat/presentation/widgets/）
     content = content.replaceAll(
-      "import 'package:mygril_flutter/src/features/chat/presentation/widgets/",
+      "import 'package:aicove_flutter/src/features/chat/presentation/widgets/",
       "import '../../../../features/chat/presentation/widgets/",
     );
     content = content.replaceAll(

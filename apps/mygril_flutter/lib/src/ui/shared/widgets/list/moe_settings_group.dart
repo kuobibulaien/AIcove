@@ -108,7 +108,7 @@ class MoeSettingsGroup extends StatelessWidget {
     );
     final defaultTitleStyle = titleStyle ?? TextStyle(
       fontSize: 13,
-      fontWeight: FontWeight.w600,
+      fontWeight: MoeFontWeights.emphasis,
       color: titleColor ?? colors.textSecondary.withValues(alpha: 0.8),
     );
 

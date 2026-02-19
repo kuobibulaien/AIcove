@@ -5,7 +5,6 @@ library;
 
 import 'package:flutter/material.dart';
 import '../../../../ui/theme/tokens.dart';
-import '../../../../ui/shared/effects/smooth_clip.dart';
 
 /// 更多面板操作类型
 enum ComposerAction { model, gallery, camera, file }
@@ -72,34 +71,27 @@ class MoreActionTile extends StatelessWidget {
 
     return Material(
       color: Colors.transparent,
-      child: MoeG2ClipRRect(
-        radius: 14,
-        child: InkWell(
-          onTap: onTap,
-          child: Container(
-            decoration: MoeG2Decoration(
-              radius: 14,
-              color: colors.surfaceAlt,
-              border: Border.all(color: colors.borderLight, width: 0.5),
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(icon, size: 26, color: colors.text),
-                const SizedBox(height: 8),
-                Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: colors.text,
-                    fontWeight: FontWeight.w600,
-                  ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 26, color: colors.text),
+              const SizedBox(height: 8),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: colors.text,
+                  fontWeight: MoeFontWeights.emphasis,
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),

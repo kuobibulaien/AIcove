@@ -36,7 +36,8 @@ Future<bool?> showAddProviderSheet(BuildContext context) {
 enum ApiFormat {
   openai('openai', 'OpenAI'),
   claude('claude', 'Claude'),
-  gemini('gemini', 'Gemini');
+  gemini('gemini', 'Gemini'),
+  novelai('novelai', 'NovelAI');
 
   const ApiFormat(this.value, this.label);
   final String value;
@@ -74,10 +75,16 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
       switch (format) {
         case ApiFormat.openai:
           _urlCtrl.text = 'https://api.openai.com/v1';
+          break;
         case ApiFormat.claude:
           _urlCtrl.text = 'https://api.anthropic.com/v1';
+          break;
         case ApiFormat.gemini:
           _urlCtrl.text = 'https://generativelanguage.googleapis.com/v1beta';
+          break;
+        case ApiFormat.novelai:
+          _urlCtrl.text = 'https://api.novelai.net';
+          break;
       }
     });
   }
@@ -96,6 +103,12 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
 
     try {
       final notifier = ref.read(appSettingsProvider.notifier);
+      final isNovelAi = _selectedFormat == ApiFormat.novelai;
+      const novelAiModels = <String>[
+        'nai-diffusion-4-5-curated-preview',
+        'nai-diffusion-4-5-full',
+        'nai-diffusion-3',
+      ];
 
       await notifier.importCustomModel(
         name: null,
@@ -107,6 +120,11 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
             : null,
         capabilities: [_selectedCapability],
         modelType: _selectedCapability,
+        customConfig: {
+          'requestFormat': isNovelAi ? 'novelai' : _selectedFormat.value,
+        },
+        allModels: isNovelAi ? novelAiModels : null,
+        visibleModels: isNovelAi ? [novelAiModels.first] : null,
       );
       if (mounted) {
         Navigator.of(context).pop(true);
@@ -171,7 +189,7 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                         '添加供应商',
                         style: TextStyle(
                           fontSize: 18,
-                          fontWeight: FontWeight.w700,
+                          fontWeight: MoeFontWeights.emphasis,
                           color: colors.text,
                         ),
                       ),
@@ -335,7 +353,7 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
         title,
         style: TextStyle(
           fontSize: 13,
-          fontWeight: FontWeight.w600,
+          fontWeight: MoeFontWeights.emphasis,
           color: colors.textSecondary,
         ),
       ),
@@ -404,7 +422,7 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
               style: TextStyle(
                 fontSize: 11,
                 color: textColor,
-                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
               ),
             ),
           ],

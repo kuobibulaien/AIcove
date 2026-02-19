@@ -9,6 +9,7 @@ import '../../../../features/backup/backup_providers.dart';
 import '../../../shared/animations/parallax_slide_page_route.dart';
 import '../../../shared/effects/smooth_clip.dart';
 import '../../../shared/widgets/index.dart';
+import '../../../theme/tokens.dart';
 import 'import_preview_page.dart';
 
 /// 导入文件选择页面
@@ -41,12 +42,12 @@ class _ImportFilePageState extends ConsumerState<ImportFilePage> {
             Text(
               '选择要导入的备份文件',
               style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.bold,
+                fontWeight: MoeFontWeights.emphasis,
               ),
             ),
             const SizedBox(height: 8),
             Text(
-              '支持 .mygril 格式的备份文件',
+              '支持 .aicove 格式的备份文件',
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
@@ -136,12 +137,12 @@ class _ImportFilePageState extends ConsumerState<ImportFilePage> {
                 Text(
                   _isLoading ? '正在读取文件...' : '点击选择文件',
                   style: theme.textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w600,
+                    fontWeight: MoeFontWeights.emphasis,
                   ),
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '.mygril',
+                  '.aicove',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
@@ -177,7 +178,7 @@ class _ImportFilePageState extends ConsumerState<ImportFilePage> {
               Text(
                 '如何获取备份文件？',
                 style: theme.textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
+                  fontWeight: MoeFontWeights.emphasis,
                 ),
               ),
             ],
@@ -224,10 +225,10 @@ class _ImportFilePageState extends ConsumerState<ImportFilePage> {
       }
 
       // 检查文件扩展名
-      if (!filePath.toLowerCase().endsWith('.mygril')) {
+      if (!filePath.toLowerCase().endsWith('.aicove')) {
         setState(() {
           _isLoading = false;
-          _errorMessage = '请选择 .mygril 格式的备份文件';
+          _errorMessage = '请选择 .aicove 格式的备份文件';
         });
         return;
       }

@@ -189,7 +189,7 @@ class _StickerSettingsPageState extends ConsumerState<StickerSettingsPage> {
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 14,
-                            fontWeight: FontWeight.w600,
+                            fontWeight: MoeFontWeights.emphasis,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -308,7 +308,7 @@ class _StickerSettingsPageState extends ConsumerState<StickerSettingsPage> {
                       const SizedBox(width: 4),
                       Text(
                         '[$tag]',
-                        style: TextStyle(color: colors.primary, fontSize: 14, fontWeight: FontWeight.w600),
+                        style: TextStyle(color: colors.primary, fontSize: 14, fontWeight: MoeFontWeights.emphasis),
                       ),
                     ],
                   ),

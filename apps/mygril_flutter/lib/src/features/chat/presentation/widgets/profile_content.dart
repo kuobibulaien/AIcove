@@ -4,7 +4,7 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:mygril_flutter/src/ui/shared/effects/smooth_clip.dart';
+import 'package:aicove_flutter/src/ui/shared/effects/smooth_clip.dart';
 
 import '../../../../ui/theme/tokens.dart';
 import '../../../../core/utils/data_image.dart';
@@ -219,7 +219,7 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       fontSize: 20,
-                      fontWeight: FontWeight.w600,
+                      fontWeight: MoeFontWeights.emphasis,
                     ),
                     decoration: const InputDecoration(
                       hintText: '输入名称',
@@ -256,7 +256,7 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
                   userName,
                   style: const TextStyle(
                     fontSize: 24,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: MoeFontWeights.emphasis,
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -296,11 +296,11 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
               MoeSettingsRow(
                 icon: Icons.info_outline,
                 label: '关于',
-                subtitle: 'MyGril v1.0.0',
+                subtitle: 'AIcove v1.0.0',
                 onTap: () {
                   showAboutDialog(
                     context: context,
-                    applicationName: 'MyGril',
+                    applicationName: 'AIcove',
                     applicationVersion: '1.0.0',
                     applicationIcon: const Icon(Icons.chat_bubble_outline, size: 48),
                     children: const [

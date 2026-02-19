@@ -1,60 +1,54 @@
 import 'dart:convert';
 import 'dart:math';
 
-/// 记忆实体
-///
-/// 字段设计参考：记忆存储与召回方案.md、记忆重要性计算.md
-/// - P=1 为核心记忆，不参与自动淘汰，timeCoef 强制为 1
-/// - importance = infoImportance * timeCoef
+/// 记忆实体（四层架构）
 class MemoryEntity {
   final String id;
-  final String content; // 记忆文本（对话摘要/事实）
-  final List<double> embedding; // 向量
+  final String content;
+  final List<double> embedding;
 
-  // AI 打分项（0~1）
-  final double persistenceP; // P 持久性（1.0=核心记忆）
-  final double emotionE; // E 情绪值（负面权重大）
-  final double infoI; // I 信息量
-  final double judgeJ; // J 综合判断
+  // v2 memory fields
+  final String layer; // L1/L2/L3/L4
+  final String category; // 6分类
+  final String? conversationId; // 旧数据可空，新写入必须非空
+  final String? contentHash;
+  final bool needsEnrichment;
 
-  // 计算后的重要性字段
-  final double infoImportance; // 信息重要性
-  final double timeCoef; // 时间系数 (0.8~1)
-  final double importance; // 最终重要性
+  // legacy scoring fields (kept for backward compatibility)
+  final double persistenceP;
+  final double emotionE;
+  final double infoI;
+  final double judgeJ;
+  final double infoImportance;
+  final double timeCoef;
+  final double importance;
 
-  // 系统维护字段
-  final int useCount; // 被注入topK的次数
-  final DateTime? lastActiveAt; // 最后被注入的时间
-
-  // 回收站字段
+  // system maintenance
+  final int useCount;
+  final DateTime? lastActiveAt;
   final DateTime? deletedAt;
   final DateTime? purgeAt;
-
-  // 同步字段
   final bool isSynced;
-  final String syncState; // local/synced/modified
-
-  // 时间戳
+  final String syncState;
   final DateTime createdAt;
   final DateTime updatedAt;
 
-  /// 是否为核心记忆（P=1，不参与自动淘汰）
-  bool get isCoreMemory => persistenceP >= 1.0;
-
-  /// 是否在回收站中
-  bool get isDeleted => deletedAt != null;
-
-  MemoryEntity({
+  const MemoryEntity({
     required this.id,
     required this.content,
-    required this.embedding,
+    this.embedding = const [],
+    this.layer = 'L3',
+    this.category = 'daily_chatter',
+    this.conversationId,
+    this.contentHash,
+    this.needsEnrichment = false,
     this.persistenceP = 0.5,
     this.emotionE = 0.0,
     this.infoI = 0.5,
     this.judgeJ = 0.5,
-    double? infoImportance,
-    double? timeCoef,
-    double? importance,
+    this.infoImportance = 0.5,
+    this.timeCoef = 1.0,
+    this.importance = 0.5,
     this.useCount = 0,
     this.lastActiveAt,
     this.deletedAt,
@@ -63,118 +57,91 @@ class MemoryEntity {
     this.syncState = 'local',
     required this.createdAt,
     DateTime? updatedAt,
-  })  : infoImportance = infoImportance ?? _calcInfoImportance(persistenceP, emotionE, infoI, judgeJ),
-        timeCoef = timeCoef ?? 1.0,
-        importance = importance ?? (infoImportance ?? _calcInfoImportance(persistenceP, emotionE, infoI, judgeJ)) * (timeCoef ?? 1.0),
-        updatedAt = updatedAt ?? createdAt;
+  }) : updatedAt = updatedAt ?? createdAt;
 
-  /// 计算信息重要性
-  /// infoImportance = 0.60*P + 0.20*J + 0.15*E + 0.05*I
-  static double _calcInfoImportance(double p, double e, double i, double j) {
-    final raw = 0.60 * p + 0.20 * j + 0.15 * e + 0.05 * i;
-    return raw.clamp(0.0, 1.0);
+  bool get isCoreMemory => category == 'core_preference' || persistenceP >= 1.0;
+  bool get isProfileMemory => layer == 'L1';
+  bool get isDeleted => deletedAt != null;
+
+  static double categoryToPersistenceP(String category) {
+    switch (category) {
+      case 'core_preference':
+        return 1.0;
+      case 'identity_fact':
+        return 0.9;
+      case 'emotional_event':
+        return 0.7;
+      case 'ongoing_plan':
+        return 0.5;
+      case 'temporary_state':
+        return 0.3;
+      case 'daily_chatter':
+      default:
+        return 0.1;
+    }
   }
 
-  /// 计算时间系数
-  /// timeCoef = 0.8 + 0.2 * exp(- effectiveAge / 30)
-  /// effectiveAge = ageDays / (1 + ln(1 + useCount))
-  /// P=1 强制 timeCoef = 1
   static double calcTimeCoef({
     required DateTime createdAt,
     required DateTime? lastActiveAt,
     required int useCount,
     required double persistenceP,
   }) {
-    // 核心记忆不受时间衰减影响
     if (persistenceP >= 1.0) return 1.0;
-
-    final referenceTime = lastActiveAt ?? createdAt;
-    final ageDays = DateTime.now().difference(referenceTime).inDays.toDouble();
+    final ref = lastActiveAt ?? createdAt;
+    final ageDays = DateTime.now().difference(ref).inDays.toDouble();
     final effectiveAge = ageDays / (1 + log(1 + useCount));
     final coef = 0.8 + 0.2 * exp(-effectiveAge / 30);
     return coef.clamp(0.8, 1.0);
   }
 
-  /// 重新计算所有重要性字段
   MemoryEntity recalculateImportance() {
-    final newInfoImportance = _calcInfoImportance(persistenceP, emotionE, infoI, judgeJ);
-    final newTimeCoef = calcTimeCoef(
+    final info =
+        (0.60 * persistenceP + 0.20 * judgeJ + 0.15 * emotionE + 0.05 * infoI)
+            .clamp(0.0, 1.0);
+    final coef = calcTimeCoef(
       createdAt: createdAt,
       lastActiveAt: lastActiveAt,
       useCount: useCount,
       persistenceP: persistenceP,
     );
-    final newImportance = newInfoImportance * newTimeCoef;
-
     return copyWith(
-      infoImportance: newInfoImportance,
-      timeCoef: newTimeCoef,
-      importance: newImportance,
+      infoImportance: info,
+      timeCoef: coef,
+      importance: info * coef,
       updatedAt: DateTime.now(),
     );
   }
 
-  /// 记录被命中（注入topK时调用）
-  MemoryEntity markAsHit() {
+  MemoryEntity markAsHit({bool markNeedsEnrichment = false}) {
     final now = DateTime.now();
-    final newUseCount = useCount + 1;
-    final newTimeCoef = calcTimeCoef(
+    final newUse = useCount + 1;
+    final coef = calcTimeCoef(
       createdAt: createdAt,
       lastActiveAt: now,
-      useCount: newUseCount,
+      useCount: newUse,
       persistenceP: persistenceP,
     );
-
     return copyWith(
-      useCount: newUseCount,
+      useCount: newUse,
       lastActiveAt: now,
-      timeCoef: newTimeCoef,
-      importance: infoImportance * newTimeCoef,
+      timeCoef: coef,
+      importance: infoImportance * coef,
+      needsEnrichment: markNeedsEnrichment ? true : needsEnrichment,
       updatedAt: now,
     );
   }
 
-  /// 移入回收站
-  MemoryEntity moveToTrash() {
-    final now = DateTime.now();
-    final purge = now.add(const Duration(days: 7));
-    return copyWith(
-      deletedAt: now,
-      purgeAt: purge,
-      updatedAt: now,
-    );
-  }
-
-  /// 从回收站恢复
-  MemoryEntity restoreFromTrash() {
-    return MemoryEntity(
-      id: id,
-      content: content,
-      embedding: embedding,
-      persistenceP: persistenceP,
-      emotionE: emotionE,
-      infoI: infoI,
-      judgeJ: judgeJ,
-      infoImportance: infoImportance,
-      timeCoef: timeCoef,
-      importance: importance,
-      useCount: useCount,
-      lastActiveAt: lastActiveAt,
-      deletedAt: null, // 清除回收站标记
-      purgeAt: null,
-      isSynced: isSynced,
-      syncState: syncState,
-      createdAt: createdAt,
-      updatedAt: DateTime.now(),
-    );
-  }
-
-  /// 转换为数据库 Map
   Map<String, dynamic> toMap() {
     return {
       'id': id,
       'content': content,
       'embedding': embedding.isNotEmpty ? jsonEncode(embedding) : null,
+      'layer': layer,
+      'category': category,
+      'conversation_id': conversationId,
+      'content_hash': contentHash,
+      'needs_enrichment': needsEnrichment ? 1 : 0,
       'persistence_p': persistenceP,
       'emotion_e': emotionE,
       'info_i': infoI,
@@ -193,23 +160,29 @@ class MemoryEntity {
     };
   }
 
-  /// 从数据库 Map 创建
   factory MemoryEntity.fromMap(Map<String, dynamic> map) {
-    List<double> embedding = [];
-    if (map['embedding'] != null) {
-      final embeddingData = map['embedding'];
-      if (embeddingData is String && embeddingData.isNotEmpty) {
-        embedding = (jsonDecode(embeddingData) as List)
-            .map((e) => (e as num).toDouble())
-            .toList();
-      }
+    List<double> embedding = const [];
+    final emb = map['embedding'];
+    if (emb is String && emb.isNotEmpty) {
+      embedding =
+          (jsonDecode(emb) as List).map((e) => (e as num).toDouble()).toList();
     }
+    final category = (map['category'] as String?) ?? 'daily_chatter';
+    final persistence = (map['persistence_p'] as num?)?.toDouble() ??
+        categoryToPersistenceP(category);
 
     return MemoryEntity(
       id: map['id'] as String,
-      content: map['content'] as String,
+      content: (map['content'] as String?) ?? '',
       embedding: embedding,
-      persistenceP: (map['persistence_p'] as num?)?.toDouble() ?? 0.5,
+      layer: (map['layer'] as String?) ?? 'L3',
+      category: category,
+      conversationId: map['conversation_id'] as String?,
+      contentHash: map['content_hash'] as String?,
+      needsEnrichment: map['needs_enrichment'] is bool
+          ? (map['needs_enrichment'] as bool)
+          : ((map['needs_enrichment'] as int? ?? 0) == 1),
+      persistenceP: persistence,
       emotionE: (map['emotion_e'] as num?)?.toDouble() ?? 0.0,
       infoI: (map['info_i'] as num?)?.toDouble() ?? 0.5,
       judgeJ: (map['judge_j'] as num?)?.toDouble() ?? 0.5,
@@ -226,7 +199,9 @@ class MemoryEntity {
       purgeAt: map['purge_at'] != null
           ? DateTime.fromMillisecondsSinceEpoch(map['purge_at'] as int)
           : null,
-      isSynced: (map['is_synced'] as int?) == 1,
+      isSynced: map['is_synced'] is bool
+          ? (map['is_synced'] as bool)
+          : ((map['is_synced'] as int?) == 1),
       syncState: (map['sync_state'] as String?) ?? 'local',
       createdAt: DateTime.fromMillisecondsSinceEpoch(map['created_at'] as int),
       updatedAt: map['updated_at'] != null
@@ -239,6 +214,11 @@ class MemoryEntity {
     String? id,
     String? content,
     List<double>? embedding,
+    String? layer,
+    String? category,
+    String? conversationId,
+    String? contentHash,
+    bool? needsEnrichment,
     double? persistenceP,
     double? emotionE,
     double? infoI,
@@ -259,6 +239,11 @@ class MemoryEntity {
       id: id ?? this.id,
       content: content ?? this.content,
       embedding: embedding ?? this.embedding,
+      layer: layer ?? this.layer,
+      category: category ?? this.category,
+      conversationId: conversationId ?? this.conversationId,
+      contentHash: contentHash ?? this.contentHash,
+      needsEnrichment: needsEnrichment ?? this.needsEnrichment,
       persistenceP: persistenceP ?? this.persistenceP,
       emotionE: emotionE ?? this.emotionE,
       infoI: infoI ?? this.infoI,
@@ -279,8 +264,8 @@ class MemoryEntity {
 
   @override
   String toString() {
-    return 'MemoryEntity(id: $id, content: ${content.length > 30 ? '${content.substring(0, 30)}...' : content}, '
-        'P: $persistenceP, importance: ${importance.toStringAsFixed(3)}, useCount: $useCount, '
-        'isDeleted: $isDeleted)';
+    final short =
+        content.length > 30 ? '${content.substring(0, 30)}...' : content;
+    return 'MemoryEntity(id: $id, layer: $layer, category: $category, content: $short)';
   }
 }

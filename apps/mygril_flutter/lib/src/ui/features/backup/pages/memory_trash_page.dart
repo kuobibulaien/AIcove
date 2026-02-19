@@ -148,7 +148,7 @@ class MemoryTrashPage extends ConsumerWidget {
         Text(
           value,
           style: theme.textTheme.bodySmall?.copyWith(
-            fontWeight: FontWeight.w500,
+            fontWeight: MoeFontWeights.emphasis,
             color: valueColor,
           ),
         ),

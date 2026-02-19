@@ -32,10 +32,10 @@ class Sidebar extends ConsumerWidget {
             child: Row(
               children: [
                 const Text(
-                  'MyGril',
+                  'AIcove',
                   style: TextStyle(
                     color: Colors.white,
-                    fontWeight: FontWeight.w700,
+                    fontWeight: MoeFontWeights.emphasis,
                     fontSize: 22,
                     letterSpacing: 0.5,
                   ),

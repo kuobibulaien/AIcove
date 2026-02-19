@@ -201,7 +201,7 @@ class _MoeSettingsRowState extends State<MoeSettingsRow> {
                         overflow: widget.labelMaxLines != null ? TextOverflow.ellipsis : null,
                         style: TextStyle(
                           fontSize: 15,
-                          fontWeight: FontWeight.w500,
+                          fontWeight: MoeFontWeights.emphasis,
                           color: widget.enabled ? labelColor : colors.muted,
                         ),
                       ),

@@ -151,7 +151,7 @@ class MoeActionSheet extends StatelessWidget {
                               title!,
                               style: TextStyle(
                                 fontSize: 13,
-                                fontWeight: FontWeight.w600,
+                                fontWeight: MoeFontWeights.emphasis,
                                 color: colors.muted,
                               ),
                               textAlign: TextAlign.center,
@@ -320,8 +320,8 @@ class _ActionItemState extends State<_ActionItem> {
                     style: TextStyle(
                       fontSize: widget.isCancelButton ? 17 : 16,
                       fontWeight: widget.isCancelButton
-                          ? FontWeight.w600
-                          : FontWeight.w500,
+                          ? MoeFontWeights.emphasis
+                          : MoeFontWeights.emphasis,
                       color: textColor,
                     ),
                   ),

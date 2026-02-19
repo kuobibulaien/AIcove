@@ -42,7 +42,14 @@ class AutoReplyService {
         return;
       }
 
-      await _ref.read(chatActionsProvider).sendProactiveTrigger(trigger);
+      final result = await _ref.read(chatActionsProvider).sendProactiveTrigger(trigger);
+      await _ref.read(autoReplyTriggersProvider.notifier).completeTriggeredSend(
+        triggerId: trigger.id,
+        firedAt: event.timestamp,
+        success: result.success,
+        retryable: result.retryable,
+        reason: result.reason,
+      );
 
     } catch (e) {
       AppLogger.error('AutoReplyService', 'Failed to process fired trigger', metadata: {

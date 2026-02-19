@@ -36,7 +36,7 @@ lib/src/features/emoji/
 ```dart
 // lib/src/app.dart 或 main.dart
 
-import 'package:mygril_flutter/src/features/emoji/data/emoji_manager.dart';
+import 'package:aicove_flutter/src/features/emoji/data/emoji_manager.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -55,9 +55,9 @@ void main() async {
 ```dart
 // lib/src/features/chat/data/chat_repository.dart 或类似位置
 
-import 'package:mygril_flutter/src/features/emoji/data/emoji_manager.dart';
-import 'package:mygril_flutter/src/features/emoji/data/emoji_matcher.dart';
-import 'package:mygril_flutter/src/features/emoji/data/emoji_parser.dart';
+import 'package:aicove_flutter/src/features/emoji/data/emoji_manager.dart';
+import 'package:aicove_flutter/src/features/emoji/data/emoji_matcher.dart';
+import 'package:aicove_flutter/src/features/emoji/data/emoji_parser.dart';
 
 class ChatRepository {
   final EmojiManager _emojiManager = EmojiManager();
@@ -101,8 +101,8 @@ class ChatRepository {
 ```dart
 // lib/src/features/chat/presentation/widgets/message_bubble.dart
 
-import 'package:mygril_flutter/src/core/models/message_block.dart';
-import 'package:mygril_flutter/src/features/emoji/presentation/emoji_widget.dart';
+import 'package:aicove_flutter/src/core/models/message_block.dart';
+import 'package:aicove_flutter/src/features/emoji/presentation/emoji_widget.dart';
 
 class MessageBubble extends StatelessWidget {
   final Message message;

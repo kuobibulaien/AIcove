@@ -98,13 +98,13 @@ class UiSettingsPage extends ConsumerWidget {
 
         const SizedBox(height: 24),
 
-        // ========== 消息字体大小设置 ==========
-        _buildSectionTitle(context, '消息字体'),
+        // ========== 全局字体大小设置 ==========
+        _buildSectionTitle(context, '字体大小'),
         const SizedBox(height: 12),
         MoeSettingsGroup(
           margin: EdgeInsets.zero,
           children: [
-            _buildFontSizeSlider(context, ref, settings, colors),
+            _buildTextScaleSlider(context, ref, settings, colors),
           ],
         ),
 
@@ -188,7 +188,7 @@ class UiSettingsPage extends ConsumerWidget {
     return Text(
       title,
       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.bold,
+            fontWeight: MoeFontWeights.emphasis,
           ),
     );
   }
@@ -294,43 +294,51 @@ class UiSettingsPage extends ConsumerWidget {
     );
   }
 
-  /// 字体大小滑块（自定义内容）
-  Widget _buildFontSizeSlider(
+  /// 全局字体大小滑块（支持点击数字手动输入）
+  Widget _buildTextScaleSlider(
     BuildContext context,
     WidgetRef ref,
     AppSettings settings,
     MoeColors colors,
   ) {
+    const double minScale = 0.8;
+    const double maxScale = 1.5;
+    final scale = settings.textScaleFactor.clamp(minScale, maxScale);
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
       child: Column(
         children: [
           Row(
             children: [
-              Icon(Icons.text_fields, size: 20, color: colors.textSecondary),
+              Icon(Icons.format_size, size: 20, color: colors.textSecondary),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  '消息字体大小',
+                  '全局字体大小',
                   style: TextStyle(
                     fontSize: 15,
-                    fontWeight: FontWeight.w500,
+                    fontWeight: MoeFontWeights.emphasis,
                     color: colors.text,
                   ),
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: MoeG2Decoration(
-                  radius: 6,
-                  color: colors.accentColor.withValues(alpha: 0.15),
-                ),
-                child: Text(
-                  settings.messageFontSize.toStringAsFixed(1),
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: colors.accentColor,
+              // 点击可手动输入
+              GestureDetector(
+                onTap: () => _showScaleInputDialog(context, ref, scale, colors),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: MoeG2Decoration(
+                    radius: 6,
+                    color: colors.accentColor.withValues(alpha: 0.15),
+                  ),
+                  child: Text(
+                    scale.toStringAsFixed(2),
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: MoeFontWeights.emphasis,
+                      color: colors.accentColor,
+                    ),
                   ),
                 ),
               ),
@@ -342,18 +350,71 @@ class UiSettingsPage extends ConsumerWidget {
               Text('较小', style: TextStyle(fontSize: 12, color: colors.textSecondary)),
               Expanded(
                 child: Slider(
-                  value: settings.messageFontSize.clamp(12.0, 20.0),
-                  min: 12.0,
-                  max: 20.0,
-                  divisions: 16,
+                  value: scale,
+                  min: minScale,
+                  max: maxScale,
+                  divisions: 14, // 0.05 步长：(1.5-0.8)/0.05 = 14
                   activeColor: colors.accentColor,
                   onChanged: (value) {
-                    ref.read(appSettingsProvider.notifier).setMessageFontSize(value);
+                    ref.read(appSettingsProvider.notifier).setTextScaleFactor(value);
                   },
                 ),
               ),
               Text('较大', style: TextStyle(fontSize: 12, color: colors.textSecondary)),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 弹窗手动输入缩放值
+  void _showScaleInputDialog(
+    BuildContext context,
+    WidgetRef ref,
+    double currentScale,
+    MoeColors colors,
+  ) {
+    final controller = TextEditingController(text: currentScale.toStringAsFixed(2));
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('输入字体缩放值'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: controller,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                hintText: '范围 0.80 ~ 1.50',
+                border: OutlineInputBorder(),
+              ),
+              autofocus: true,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '1.00 为默认大小，0.80 最小，1.50 最大',
+              style: TextStyle(fontSize: 12, color: colors.muted),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () {
+              final value = double.tryParse(controller.text);
+              if (value != null) {
+                ref.read(appSettingsProvider.notifier).setTextScaleFactor(
+                  value.clamp(0.8, 1.5),
+                );
+              }
+              Navigator.of(context).pop();
+            },
+            child: const Text('确定'),
           ),
         ],
       ),
@@ -401,7 +462,7 @@ class UiSettingsPage extends ConsumerWidget {
                         option.label,
                         style: TextStyle(
                           fontSize: 13,
-                          fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                          fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
                           color: colors.text,
                         ),
                       ),
@@ -437,7 +498,7 @@ class UiSettingsPage extends ConsumerWidget {
                 '分段标点',
                 style: TextStyle(
                   fontSize: 15,
-                  fontWeight: FontWeight.w500,
+                  fontWeight: MoeFontWeights.emphasis,
                   color: colors.text,
                 ),
               ),
@@ -500,7 +561,7 @@ class UiSettingsPage extends ConsumerWidget {
         label,
         style: TextStyle(
           color: isSelected ? colors.primary : colors.text,
-          fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+          fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
         ),
       ),
       onPressed: () async {

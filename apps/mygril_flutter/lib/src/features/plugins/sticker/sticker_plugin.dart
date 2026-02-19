@@ -18,7 +18,7 @@ class StickerPlugin extends BasePlugin {
     name: '表情包',
     description: '自动将 [标签] 转换为表情包',
     version: '1.0.0',
-    author: 'MyGril Team',
+    author: 'AIcove Team',
     icon: Icons.emoji_emotions,
     configSchema: {
       'enabled': ConfigField(

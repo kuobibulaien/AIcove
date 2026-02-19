@@ -316,7 +316,7 @@ class _UiGalleryPageState extends State<UiGalleryPage> {
             title,
             style: const TextStyle(
               fontSize: 16,
-              fontWeight: FontWeight.bold,
+              fontWeight: MoeFontWeights.emphasis,
               color: moePrimary,
             ),
           ),
@@ -343,7 +343,7 @@ class _UiGalleryPageState extends State<UiGalleryPage> {
                 style: TextStyle(
                   fontSize: 14,
                   color: colors.text,
-                  fontWeight: FontWeight.w500,
+                  fontWeight: MoeFontWeights.emphasis,
                 ),
               ),
               Expanded(
@@ -601,7 +601,7 @@ class _UiGalleryPageState extends State<UiGalleryPage> {
                   name,
                   style: TextStyle(
                     fontSize: 14,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: MoeFontWeights.emphasis,
                     color: colors.text,
                   ),
                 ),

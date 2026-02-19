@@ -8,6 +8,7 @@
 library;
 
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:chat_bottom_container/chat_bottom_container.dart';
 import 'package:flutter/material.dart';
@@ -53,7 +54,8 @@ class _ComposerState extends ConsumerState<Composer> {
   final _inputFocus = FocusNode();
 
   // chat_bottom_container 控制器
-  final _panelController = ChatBottomPanelContainerController<ComposerPanelType>();
+  final _panelController =
+      ChatBottomPanelContainerController<ComposerPanelType>();
   ComposerPanelType _currentPanelType = ComposerPanelType.none;
 
   // 记录键盘高度，用于更多面板的高度
@@ -107,6 +109,20 @@ class _ComposerState extends ConsumerState<Composer> {
     return resolved >= minHeight ? resolved : minHeight;
   }
 
+  Widget _buildComposerGlassLayer({required Widget child}) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final tint = isDark
+        ? Colors.black.withValues(alpha: 0.18)
+        : Colors.white.withValues(alpha: 0.22);
+
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ui.ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+        child: ColoredBox(color: tint, child: child),
+      ),
+    );
+  }
+
   Future<void> _showKeyboardWithPreAnimation() async {
     if (!mounted || widget.disabled) return;
 
@@ -147,7 +163,8 @@ class _ComposerState extends ConsumerState<Composer> {
   void _submit() {
     final attachment = _selectedAttachment;
     if (attachment != null) {
-      if (attachment.type == AttachmentType.image && widget.onImageSelected != null) {
+      if (attachment.type == AttachmentType.image &&
+          widget.onImageSelected != null) {
         widget.onImageSelected!(attachment.path);
       } else if (attachment.type == AttachmentType.file) {
         if (widget.onFileSelected == null) {
@@ -196,8 +213,6 @@ class _ComposerState extends ConsumerState<Composer> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.moeColors;
-
     // 监听编辑文本变化
     ref.listen<String?>(editingTextProvider, (previous, next) {
       if (next != null && next.isNotEmpty) {
@@ -210,8 +225,7 @@ class _ComposerState extends ConsumerState<Composer> {
       }
     });
 
-    return Container(
-      color: colors.surface,
+    return _buildComposerGlassLayer(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -241,19 +255,18 @@ class _ComposerState extends ConsumerState<Composer> {
     final colors = context.moeColors;
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final inputBgColor = isDark ? colors.panel : Colors.white;
+    final inputBgColor = isDark
+        ? colors.panel.withValues(alpha: 0.78)
+        : Colors.white.withValues(alpha: 0.86);
     final inputStyle = skin.inputDecoration(colors);
 
-    return Container(
-      decoration: BoxDecoration(
-        color: colors.surface,
-        border: Border(top: BorderSide(color: colors.border, width: 1)),
-      ),
+    return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          _buildMoreButton(isActive: _currentPanelType != ComposerPanelType.none),
+          _buildMoreButton(
+              isActive: _currentPanelType != ComposerPanelType.none),
           const SizedBox(width: 8),
           Expanded(
             child: Container(
@@ -261,7 +274,7 @@ class _ComposerState extends ConsumerState<Composer> {
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: MoeG2Decoration(
                 radius: skin.buttonRadius,
-                color: inputBgColor,
+                color: Colors.transparent,
                 border: inputStyle.border,
                 boxShadow: inputStyle.boxShadow,
               ),
@@ -283,7 +296,8 @@ class _ComposerState extends ConsumerState<Composer> {
                   if (_suppressKeyboard) {
                     _cancelPendingKeyboardShow();
                     setState(() => _suppressKeyboard = false);
-                    _panelController.updatePanelType(ChatBottomPanelType.keyboard);
+                    _panelController
+                        .updatePanelType(ChatBottomPanelType.keyboard);
                     _inputFocus.requestFocus();
                     SystemChannels.textInput.invokeMethod('TextInput.show');
                     return;
@@ -311,7 +325,7 @@ class _ComposerState extends ConsumerState<Composer> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: colors.surface,
+        color: Colors.transparent,
         border: Border(top: BorderSide(color: colors.border, width: 0.5)),
       ),
       child: Row(
@@ -335,7 +349,7 @@ class _ComposerState extends ConsumerState<Composer> {
                   style: TextStyle(
                     fontSize: 12,
                     color: colors.accentColor,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: MoeFontWeights.emphasis,
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -362,8 +376,6 @@ class _ComposerState extends ConsumerState<Composer> {
   }
 
   Widget _buildPanelContainer() {
-    final colors = context.moeColors;
-
     return ChatBottomPanelContainer<ComposerPanelType>(
       controller: _panelController,
       inputFocusNode: _inputFocus,
@@ -376,7 +388,8 @@ class _ComposerState extends ConsumerState<Composer> {
           final height = _resolvedKeyboardPanelHeight(context);
           panel = SizedBox(width: double.infinity, height: height);
         } else {
-          panel = _panelController.buildInPanel(panelType) ?? const SizedBox.shrink();
+          panel = _panelController.buildInPanel(panelType) ??
+              const SizedBox.shrink();
         }
         final duration = _panelController.isKeyboardHeightChangedByItself
             ? kAnimXFast
@@ -387,7 +400,7 @@ class _ComposerState extends ConsumerState<Composer> {
           ChatBottomPanelType.other => 'other:${data?.name ?? 'null'}',
         };
         return Container(
-          color: colors.surface,
+          color: Colors.transparent,
           child: AnimatedSize(
             alignment: Alignment.topCenter,
             duration: duration,
@@ -403,7 +416,8 @@ class _ComposerState extends ConsumerState<Composer> {
                 return Stack(
                   alignment: Alignment.topCenter,
                   children: [
-                    for (final child in previousChildren) Positioned.fill(child: child),
+                    for (final child in previousChildren)
+                      Positioned.fill(child: child),
                     if (currentChild != null) currentChild,
                   ],
                 );
@@ -420,7 +434,9 @@ class _ComposerState extends ConsumerState<Composer> {
           return SizedBox(height: height);
         }
         if (type != ComposerPanelType.more) return const SizedBox.shrink();
-        return SizedBox(height: height, child: ComposerMorePanel(onAction: _handlePanelAction));
+        return SizedBox(
+            height: height,
+            child: ComposerMorePanel(onAction: _handlePanelAction));
       },
       onPanelTypeChange: (panelType, data) {
         setState(() {
@@ -454,7 +470,7 @@ class _ComposerState extends ConsumerState<Composer> {
         if (resolved > 0) _keyboardHeight = resolved;
         return resolved;
       },
-      panelBgColor: colors.surface,
+      panelBgColor: Colors.transparent,
     );
   }
 
@@ -473,47 +489,39 @@ class _ComposerState extends ConsumerState<Composer> {
 
   Widget _buildMoreButton({required bool isActive}) {
     final colors = context.moeColors;
-    return MoeG2ClipRRect(
-      radius: 12,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: _onMorePressed,
-          child: Container(
-            width: 42,
-            height: 42,
-            decoration: MoeG2Decoration(
-              radius: 12,
-              color: isActive ? colors.surfaceAlt : colors.surfaceAlt.withValues(alpha: 0.6),
-              border: Border.all(color: colors.borderLight, width: 0.5),
-            ),
-            child: Icon(Icons.add, color: colors.text, size: 22),
-          ),
+    return SizedBox(
+      width: 42,
+      height: 42,
+      child: IconButton(
+        onPressed: _onMorePressed,
+        style: IconButton.styleFrom(
+          padding: EdgeInsets.zero,
+          shape: const CircleBorder(),
+        ),
+        icon: Icon(
+          isActive ? Icons.close_rounded : Icons.add_rounded,
+          color: isActive ? colors.accentColor : colors.muted,
+          size: 24,
         ),
       ),
     );
   }
 
   Widget _buildSendButton() {
-    return Material(
-      color: moePrimary,
-      shape: const CircleBorder(),
-      elevation: 2,
-      child: InkWell(
-        onTap: widget.disabled ? null : _submit,
-        customBorder: const CircleBorder(),
-        child: Container(
-          width: 42,
-          height: 42,
-          decoration: const BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: LinearGradient(
-              colors: [moeHeaderGradientStart, moeHeaderGradientEnd],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-          ),
-          child: const Icon(Icons.send_rounded, color: Colors.white, size: 20),
+    final colors = context.moeColors;
+    return SizedBox(
+      width: 42,
+      height: 42,
+      child: IconButton(
+        onPressed: widget.disabled ? null : _submit,
+        style: IconButton.styleFrom(
+          padding: EdgeInsets.zero,
+          shape: const CircleBorder(),
+        ),
+        icon: Icon(
+          Icons.arrow_upward_rounded,
+          color: widget.disabled ? colors.muted : colors.accentColor,
+          size: 24,
         ),
       ),
     );
@@ -546,7 +554,9 @@ class _ComposerState extends ConsumerState<Composer> {
             for (final model in models)
               MoeListTile(
                 leading: Icon(
-                  model == currentModel ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                  model == currentModel
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
                   color: model == currentModel ? colors.primary : colors.muted,
                   size: 20,
                 ),
@@ -555,8 +565,13 @@ class _ComposerState extends ConsumerState<Composer> {
                       ? settings.modelDisplayNames[model]!
                       : model,
                 ),
-                subtitle: settings.modelDisplayNames[model]?.trim().isNotEmpty == true ? Text(model) : null,
-                trailing: model == currentModel ? Icon(Icons.check, color: colors.primary, size: 18) : null,
+                subtitle:
+                    settings.modelDisplayNames[model]?.trim().isNotEmpty == true
+                        ? Text(model)
+                        : null,
+                trailing: model == currentModel
+                    ? Icon(Icons.check, color: colors.primary, size: 18)
+                    : null,
                 selected: model == currentModel,
                 onTap: () => Navigator.of(sheetContext).pop(model),
               ),
@@ -565,7 +580,8 @@ class _ComposerState extends ConsumerState<Composer> {
       },
     );
 
-    if (selected == null || selected.trim().isEmpty || selected == currentModel) return;
+    if (selected == null || selected.trim().isEmpty || selected == currentModel)
+      return;
     await ref.read(appSettingsProvider.notifier).setDefaultModelName(selected);
     if (!mounted) return;
     MoeToast.success(context, '已切换默认模型：$selected');

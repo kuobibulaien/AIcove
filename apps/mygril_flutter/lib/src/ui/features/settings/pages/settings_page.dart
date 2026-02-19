@@ -15,7 +15,7 @@ import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/moe_app_bar.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../../features/settings/app_settings.dart';
-import 'package:mygril_flutter/src/ui/features/settings/pages/model_list_page.dart';
+import 'package:aicove_flutter/src/ui/features/settings/pages/model_list_page.dart';
 
 import 'chat_plugin_settings_page.dart';
 import 'ui_settings_page.dart';
@@ -123,7 +123,7 @@ class _SettingsContentState extends ConsumerState<SettingsContent> {
       minLeadingWidth: 24,
       horizontalTitleGap: 12,
       leading: Icon(icon, color: colors.text, size: 24),
-      title: Text(title, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: colors.text)),
+      title: Text(title, style: TextStyle(fontSize: 15, fontWeight: MoeFontWeights.emphasis, color: colors.text)),
       subtitle: subtitle != null 
           ? Text(subtitle, style: TextStyle(fontSize: 13, color: colors.muted)) 
           : null,

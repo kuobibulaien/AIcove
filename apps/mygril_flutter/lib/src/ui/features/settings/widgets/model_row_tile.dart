@@ -279,7 +279,7 @@ class ModelRowTile extends ConsumerWidget {
                   '模型类型',
                   style: TextStyle(
                     fontSize: 14,
-                    fontWeight: FontWeight.w500,
+                    fontWeight: MoeFontWeights.emphasis,
                     color: context.moeColors.text,
                   ),
                 ),
@@ -320,7 +320,7 @@ class ModelRowTile extends ConsumerWidget {
                               style: TextStyle(
                                 fontSize: 13,
                                 color: isSelected ? type.color : context.moeColors.text,
-                                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                                fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
                               ),
                             ),
                           ],
@@ -336,7 +336,7 @@ class ModelRowTile extends ConsumerWidget {
                   '模型参数',
                   style: TextStyle(
                     fontSize: 14,
-                    fontWeight: FontWeight.w500,
+                    fontWeight: MoeFontWeights.emphasis,
                     color: context.moeColors.text,
                   ),
                 ),
@@ -540,7 +540,7 @@ class _ModelTypeChip extends StatelessWidget {
             style: TextStyle(
               fontSize: 10,
               color: fgColor,
-              fontWeight: FontWeight.w500,
+              fontWeight: MoeFontWeights.emphasis,
               height: 1,
             ),
           ),

@@ -1,7 +1,7 @@
 /// 聊天请求执行器
-/// 
+///
 /// 封装发送消息的通用流程，减少 ChatActions 中的重复代码。
-/// 
+///
 /// 更新记录：
 /// - 2025-12-31: 从 chat_actions.dart 提取
 library;
@@ -18,6 +18,7 @@ import '../../plugins/plugin_providers.dart';
 import '../../plugins/domain/plugin.dart';
 import '../../plugins/domain/plugin_content.dart';
 import '../../plugins/time_awareness/time_awareness_plugin.dart';
+import '../../plugins/memory/memory_plugin.dart';
 import '../../../core/api/agent_api.dart';
 import '../../../core/app_logger.dart';
 import '../../../core/utils/token_estimator.dart';
@@ -32,8 +33,10 @@ class ChatRequestContext {
   final Map<String, dynamic> toolPrefs;
   final List<Map<String, dynamic>> messages;
   final String? userText;
+
   /// 模型级别温度参数（优先于全局设置）
   final double? modelTemperature;
+
   /// 模型级别 Top P 参数
   final double? modelTopP;
 
@@ -61,7 +64,7 @@ class ChatRequestResult {
   final List<PluginEvent> pluginEvents;
   final List<PluginContent> pluginContents;
   final List<Map<String, dynamic>> toolResults;
-  
+
   const ChatRequestResult({
     required this.replyText,
     required this.processedText,
@@ -72,7 +75,7 @@ class ChatRequestResult {
 }
 
 /// 聊天请求执行器
-/// 
+///
 /// 封装配置加载、API 调用、插件处理的通用流程
 class ChatRequestExecutor {
   final Ref _ref;
@@ -99,7 +102,8 @@ class ChatRequestExecutor {
     configTrace?.note('配置', metadata: {
       'ttsEnabled': settings.ttsEnabled,
       'autoTools': toolPrefs['auto_tools_enabled'] == true,
-      'enabledToolsCount': (toolPrefs['mcp_enabled_tools'] as List?)?.length ?? 0,
+      'enabledToolsCount':
+          (toolPrefs['mcp_enabled_tools'] as List?)?.length ?? 0,
     });
     configTrace?.end();
 
@@ -119,17 +123,21 @@ class ChatRequestExecutor {
     var providerApiBase = providerAuth.apiBaseUrl.trim().isEmpty
         ? settings.apiBaseUrl
         : providerAuth.apiBaseUrl.trim();
-    var providerApiKey =
-        providerAuth.apiKeys.isNotEmpty ? providerAuth.apiKeys.first.trim() : null;
+    var providerApiKey = providerAuth.apiKeys.isNotEmpty
+        ? providerAuth.apiKeys.first.trim()
+        : null;
 
     // 3. 直连配置覆盖
     try {
       final cfg = await direct.loadDirectConfig();
       if (cfg.enabled) {
-        if ((providerApiBase.isEmpty || providerApiBase == settings.apiBaseUrl) && cfg.apiBase.isNotEmpty) {
+        if ((providerApiBase.isEmpty ||
+                providerApiBase == settings.apiBaseUrl) &&
+            cfg.apiBase.isNotEmpty) {
           providerApiBase = cfg.apiBase;
         }
-        if ((providerApiKey == null || providerApiKey.isEmpty) && cfg.apiKey.isNotEmpty) {
+        if ((providerApiKey == null || providerApiKey.isEmpty) &&
+            cfg.apiKey.isNotEmpty) {
           providerApiKey = cfg.apiKey;
         }
         if (!modelFull.contains(':') && cfg.model.isNotEmpty) {
@@ -140,10 +148,14 @@ class ChatRequestExecutor {
 
     // 4. 构建消息列表（根据时间增强插件配置决定是否添加时间戳）
     final pluginManager = _ref.read(pluginManagerProvider);
-    final timeAwarenessPlugin = pluginManager.getPlugin('time_awareness') as TimeAwarenessPlugin?;
-    final includeTimestamp = timeAwarenessPlugin?.shouldIncludeTimestamp ?? false;
-    final reqMessages = history.map((m) => m.toHistoryJson(includeTimestamp: includeTimestamp)).toList();
-    
+    final timeAwarenessPlugin =
+        pluginManager.getPlugin('time_awareness') as TimeAwarenessPlugin?;
+    final includeTimestamp =
+        timeAwarenessPlugin?.shouldIncludeTimestamp ?? false;
+    final reqMessages = history
+        .map((m) => m.toHistoryJson(includeTimestamp: includeTimestamp))
+        .toList();
+
     // 5. 构建系统提示词
     final systemParts = <String>[];
     if (conv.personaPrompt.isNotEmpty) {
@@ -154,7 +166,8 @@ class ChatRequestExecutor {
     }
 
     // 6. 插件提示词（复用前面定义的 pluginManager）
-    final pluginPrompts = await pluginManager.getSystemPrompts(userMessage: userText ?? '');
+    final pluginPrompts =
+        await pluginManager.getSystemPrompts(userMessage: userText ?? '');
     if (pluginPrompts.isNotEmpty) {
       systemParts.add(pluginPrompts);
     }
@@ -167,15 +180,30 @@ class ChatRequestExecutor {
     }
 
     // Token 截断：确保消息总长度不超过模型上下文限制
-    final modelName = modelFull.contains(':')
-        ? modelFull.split(':').last
-        : modelFull;
+    final modelName =
+        modelFull.contains(':') ? modelFull.split(':').last : modelFull;
     final maxContextTokens = getModelContextLimit(modelName);
     final truncatedMessages = truncateMessagesToFit(
       messages: reqMessages,
       maxContextTokens: maxContextTokens,
       reserveTokens: 2048,
     );
+
+    if (truncatedMessages.length < reqMessages.length) {
+      final memoryPlugin = pluginManager.getPlugin('memory');
+      if (memoryPlugin is MemoryPlugin && memoryPlugin.enabled) {
+        final systemCount = systemParts.isNotEmpty ? 1 : 0;
+        final keptHistoryCount =
+            (truncatedMessages.length - systemCount).clamp(0, history.length);
+        final droppedCount = history.length - keptHistoryCount;
+        if (droppedCount > 0) {
+          memoryPlugin.triggerPreFlush(
+            conversationId: conv.id,
+            droppedMessages: history.take(droppedCount).toList(),
+          );
+        }
+      }
+    }
 
     return ChatRequestContext(
       settings: settings,
@@ -199,7 +227,8 @@ class ChatRequestExecutor {
   }) async {
     final apiCallTrace = trace?.startChild('调用AI API');
     apiCallTrace?.note('连接', metadata: {
-      'endpoint': context.providerApiBase.isNotEmpty ? context.providerApiBase : '后端网关',
+      'endpoint':
+          context.providerApiBase.isNotEmpty ? context.providerApiBase : '后端网关',
       'model': context.modelFullId,
       'history': context.messages.length,
     });
@@ -249,7 +278,8 @@ class ChatRequestExecutor {
   }
 
   /// 构建工具偏好配置
-  Map<String, dynamic> _buildToolPrefs(AppSettings settings, McpConfigDto? config) {
+  Map<String, dynamic> _buildToolPrefs(
+      AppSettings settings, McpConfigDto? config) {
     final prefs = <String, dynamic>{
       'tts_enabled': settings.ttsEnabled,
     };
@@ -284,10 +314,9 @@ class ChatRequestExecutor {
   /// 获取 MCP 配置（带缓存）
   Future<McpConfigDto?> _getMcpConfig() async {
     final now = DateTime.now();
-    if (_cachedMcpConfig != null && _cachedMcpFetchedAt != null) {
-      if (now.difference(_cachedMcpFetchedAt!).inSeconds < 30) {
-        return _cachedMcpConfig;
-      }
+    if (_cachedMcpFetchedAt != null &&
+        now.difference(_cachedMcpFetchedAt!) < McpApi.mobileConfigCacheTtl) {
+      return _cachedMcpConfig;
     }
     try {
       final res = await _mcpApi.fetchConfig();
@@ -296,7 +325,8 @@ class ChatRequestExecutor {
       return _cachedMcpConfig;
     } catch (e) {
       _cachedMcpConfig = null;
-      _cachedMcpFetchedAt = null;
+      // Negative cache to avoid repeated retries in weak mobile networks.
+      _cachedMcpFetchedAt = DateTime.now();
       AppLogger.warning('ChatRequestExecutor', 'MCP 配置获取失败: $e');
       return null;
     }

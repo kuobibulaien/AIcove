@@ -98,7 +98,7 @@ class MoeEmptyState extends StatelessWidget {
             title,
             style: titleStyle ?? TextStyle(
               fontSize: 16,
-              fontWeight: FontWeight.w500,
+              fontWeight: MoeFontWeights.emphasis,
               color: colors.text,
             ),
             textAlign: TextAlign.center,

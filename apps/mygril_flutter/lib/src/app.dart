@@ -427,7 +427,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         return TtsFallbackNotificationListener(
           child: MaterialApp.router(
             debugShowCheckedModeBanner: false,
-            title: 'MyGril',
+            title: 'AIcove',
             theme: lightTheme,
             darkTheme: darkTheme,
             themeMode: themeMode,
@@ -444,7 +444,17 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
             routerConfig: _router,
             // 桌面端包裹自定义标题栏
             builder: (context, child) {
-              return DesktopWindowFrame(child: child ?? const SizedBox.shrink());
+              // 将设置页的 1.0 映射为历史默认观感（约 1.2x）
+              const baselineScale = 1.2;
+              final scale =
+                  settings.textScaleFactor.clamp(0.8, 1.5) * baselineScale;
+              return MediaQuery(
+                data: MediaQuery.of(context).copyWith(
+                  textScaler: TextScaler.linear(scale),
+                ),
+                child:
+                    DesktopWindowFrame(child: child ?? const SizedBox.shrink()),
+              );
             },
           ),
         );
@@ -453,8 +463,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   }
 
   /// 构建主题（浅色或暗色）
-  ThemeData _buildTheme(
-      {required bool isDark, required Color accent}) {
+  ThemeData _buildTheme({required bool isDark, required Color accent}) {
     // Material3 的默认组件（ElevatedButton、Switch、ProgressIndicator 等）主要跟随 colorScheme.primary。
     // 这里用用户选择的主题色作为 seed/primary，避免"主题粉色但按钮仍是蓝色"的割裂感。
     final seed = accent;
@@ -471,29 +480,38 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     final baseText =
         isDark ? ThemeData.dark().textTheme : ThemeData.light().textTheme;
     final boldText = baseText.copyWith(
-      // 标题/显示类：更粗一点
+      // 标题/显示类：统一使用 MoeFontWeights.emphasis
       displayLarge:
-          baseText.displayLarge?.copyWith(fontWeight: FontWeight.w700),
+          baseText.displayLarge?.copyWith(fontWeight: MoeFontWeights.emphasis),
       displayMedium:
-          baseText.displayMedium?.copyWith(fontWeight: FontWeight.w700),
+          baseText.displayMedium?.copyWith(fontWeight: MoeFontWeights.emphasis),
       displaySmall:
-          baseText.displaySmall?.copyWith(fontWeight: FontWeight.w700),
+          baseText.displaySmall?.copyWith(fontWeight: MoeFontWeights.emphasis),
       headlineLarge:
-          baseText.headlineLarge?.copyWith(fontWeight: FontWeight.w700),
-      headlineMedium:
-          baseText.headlineMedium?.copyWith(fontWeight: FontWeight.w700),
+          baseText.headlineLarge?.copyWith(fontWeight: MoeFontWeights.emphasis),
+      headlineMedium: baseText.headlineMedium
+          ?.copyWith(fontWeight: MoeFontWeights.emphasis),
       headlineSmall:
-          baseText.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
-      titleLarge: baseText.titleLarge?.copyWith(fontWeight: FontWeight.w700),
-      titleMedium: baseText.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-      titleSmall: baseText.titleSmall?.copyWith(fontWeight: FontWeight.w700),
-      // 正文/标签：半粗，兼顾易读与"圆体"观感（不引入外部字体，KISS）
-      bodyLarge: baseText.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
-      bodyMedium: baseText.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
-      bodySmall: baseText.bodySmall?.copyWith(fontWeight: FontWeight.w600),
-      labelLarge: baseText.labelLarge?.copyWith(fontWeight: FontWeight.w600),
-      labelMedium: baseText.labelMedium?.copyWith(fontWeight: FontWeight.w600),
-      labelSmall: baseText.labelSmall?.copyWith(fontWeight: FontWeight.w600),
+          baseText.headlineSmall?.copyWith(fontWeight: MoeFontWeights.emphasis),
+      titleLarge:
+          baseText.titleLarge?.copyWith(fontWeight: MoeFontWeights.emphasis),
+      titleMedium:
+          baseText.titleMedium?.copyWith(fontWeight: MoeFontWeights.emphasis),
+      titleSmall:
+          baseText.titleSmall?.copyWith(fontWeight: MoeFontWeights.emphasis),
+      // 正文/标签：同样使用 emphasis，保持一致
+      bodyLarge:
+          baseText.bodyLarge?.copyWith(fontWeight: MoeFontWeights.emphasis),
+      bodyMedium:
+          baseText.bodyMedium?.copyWith(fontWeight: MoeFontWeights.emphasis),
+      bodySmall:
+          baseText.bodySmall?.copyWith(fontWeight: MoeFontWeights.emphasis),
+      labelLarge:
+          baseText.labelLarge?.copyWith(fontWeight: MoeFontWeights.emphasis),
+      labelMedium:
+          baseText.labelMedium?.copyWith(fontWeight: MoeFontWeights.emphasis),
+      labelSmall:
+          baseText.labelSmall?.copyWith(fontWeight: MoeFontWeights.emphasis),
     );
 
     return ThemeData(

@@ -24,7 +24,8 @@ Color _hexToColor(String hex) {
 final accentColorProvider = Provider<Color>((ref) {
   final settingsAsync = ref.watch(appSettingsProvider);
   return settingsAsync.when(
-    data: (s) => _hexToColor(s.accentColor),
+    data: (s) =>
+        s.chatBackgroundColor.accentColor ?? _hexToColor(s.accentColor),
     loading: () => const Color(0xFFFC96AA),
     error: (_, __) => const Color(0xFFFC96AA),
   );
@@ -33,7 +34,12 @@ final accentColorProvider = Provider<Color>((ref) {
 /// 主题色设置操作扩展 (用于在 UI 中便捷修改)
 extension AccentColorRefExtension on WidgetRef {
   void setAccentColor(Color color) {
-    final hex = color.value.toRadixString(16).substring(2).toUpperCase();
+    final hex = color
+        .toARGB32()
+        .toRadixString(16)
+        .padLeft(8, '0')
+        .substring(2)
+        .toUpperCase();
     read(appSettingsProvider.notifier).setAccentColor(hex);
   }
 }

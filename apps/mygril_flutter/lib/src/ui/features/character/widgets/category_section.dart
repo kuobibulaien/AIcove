@@ -40,7 +40,7 @@ class CategorySection extends ConsumerWidget {
                 title,
                 style: TextStyle(
                   fontSize: 18,
-                  fontWeight: FontWeight.bold,
+                  fontWeight: MoeFontWeights.emphasis,
                   color: colors.text,
                 ),
               ),

@@ -37,6 +37,24 @@ class $ConversationsTable extends Conversations
   late final GeneratedColumn<String> characterImage = GeneratedColumn<String>(
       'character_image', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _chatBackgroundImageMeta =
+      const VerificationMeta('chatBackgroundImage');
+  @override
+  late final GeneratedColumn<String> chatBackgroundImage =
+      GeneratedColumn<String>('chat_background_image', aliasedName, true,
+          type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _chatBackgroundMaskOpacityMeta =
+      const VerificationMeta('chatBackgroundMaskOpacity');
+  @override
+  late final GeneratedColumn<double> chatBackgroundMaskOpacity =
+      GeneratedColumn<double>('chat_background_mask_opacity', aliasedName, true,
+          type: DriftSqlType.double, requiredDuringInsert: false);
+  static const VerificationMeta _chatBackgroundBlurSigmaMeta =
+      const VerificationMeta('chatBackgroundBlurSigma');
+  @override
+  late final GeneratedColumn<double> chatBackgroundBlurSigma =
+      GeneratedColumn<double>('chat_background_blur_sigma', aliasedName, true,
+          type: DriftSqlType.double, requiredDuringInsert: false);
   static const VerificationMeta _blurredBackgroundMeta =
       const VerificationMeta('blurredBackground');
   @override
@@ -196,6 +214,9 @@ class $ConversationsTable extends Conversations
         displayName,
         avatarUrl,
         characterImage,
+        chatBackgroundImage,
+        chatBackgroundMaskOpacity,
+        chatBackgroundBlurSigma,
         blurredBackground,
         selfAddress,
         addressUser,
@@ -257,6 +278,26 @@ class $ConversationsTable extends Conversations
           _characterImageMeta,
           characterImage.isAcceptableOrUnknown(
               data['character_image']!, _characterImageMeta));
+    }
+    if (data.containsKey('chat_background_image')) {
+      context.handle(
+          _chatBackgroundImageMeta,
+          chatBackgroundImage.isAcceptableOrUnknown(
+              data['chat_background_image']!, _chatBackgroundImageMeta));
+    }
+    if (data.containsKey('chat_background_mask_opacity')) {
+      context.handle(
+          _chatBackgroundMaskOpacityMeta,
+          chatBackgroundMaskOpacity.isAcceptableOrUnknown(
+              data['chat_background_mask_opacity']!,
+              _chatBackgroundMaskOpacityMeta));
+    }
+    if (data.containsKey('chat_background_blur_sigma')) {
+      context.handle(
+          _chatBackgroundBlurSigmaMeta,
+          chatBackgroundBlurSigma.isAcceptableOrUnknown(
+              data['chat_background_blur_sigma']!,
+              _chatBackgroundBlurSigmaMeta));
     }
     if (data.containsKey('blurred_background')) {
       context.handle(
@@ -399,6 +440,14 @@ class $ConversationsTable extends Conversations
           .read(DriftSqlType.string, data['${effectivePrefix}avatar_url']),
       characterImage: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}character_image']),
+      chatBackgroundImage: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}chat_background_image']),
+      chatBackgroundMaskOpacity: attachedDatabase.typeMapping.read(
+          DriftSqlType.double,
+          data['${effectivePrefix}chat_background_mask_opacity']),
+      chatBackgroundBlurSigma: attachedDatabase.typeMapping.read(
+          DriftSqlType.double,
+          data['${effectivePrefix}chat_background_blur_sigma']),
       blurredBackground: attachedDatabase.typeMapping.read(
           DriftSqlType.string, data['${effectivePrefix}blurred_background']),
       selfAddress: attachedDatabase.typeMapping
@@ -459,6 +508,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
   final String displayName;
   final String? avatarUrl;
   final String? characterImage;
+  final String? chatBackgroundImage;
+  final double? chatBackgroundMaskOpacity;
+  final double? chatBackgroundBlurSigma;
   final String? blurredBackground;
   final String? selfAddress;
   final String? addressUser;
@@ -487,6 +539,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       required this.displayName,
       this.avatarUrl,
       this.characterImage,
+      this.chatBackgroundImage,
+      this.chatBackgroundMaskOpacity,
+      this.chatBackgroundBlurSigma,
       this.blurredBackground,
       this.selfAddress,
       this.addressUser,
@@ -520,6 +575,17 @@ class Conversation extends DataClass implements Insertable<Conversation> {
     }
     if (!nullToAbsent || characterImage != null) {
       map['character_image'] = Variable<String>(characterImage);
+    }
+    if (!nullToAbsent || chatBackgroundImage != null) {
+      map['chat_background_image'] = Variable<String>(chatBackgroundImage);
+    }
+    if (!nullToAbsent || chatBackgroundMaskOpacity != null) {
+      map['chat_background_mask_opacity'] =
+          Variable<double>(chatBackgroundMaskOpacity);
+    }
+    if (!nullToAbsent || chatBackgroundBlurSigma != null) {
+      map['chat_background_blur_sigma'] =
+          Variable<double>(chatBackgroundBlurSigma);
     }
     if (!nullToAbsent || blurredBackground != null) {
       map['blurred_background'] = Variable<String>(blurredBackground);
@@ -585,6 +651,16 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       characterImage: characterImage == null && nullToAbsent
           ? const Value.absent()
           : Value(characterImage),
+      chatBackgroundImage: chatBackgroundImage == null && nullToAbsent
+          ? const Value.absent()
+          : Value(chatBackgroundImage),
+      chatBackgroundMaskOpacity:
+          chatBackgroundMaskOpacity == null && nullToAbsent
+              ? const Value.absent()
+              : Value(chatBackgroundMaskOpacity),
+      chatBackgroundBlurSigma: chatBackgroundBlurSigma == null && nullToAbsent
+          ? const Value.absent()
+          : Value(chatBackgroundBlurSigma),
       blurredBackground: blurredBackground == null && nullToAbsent
           ? const Value.absent()
           : Value(blurredBackground),
@@ -647,6 +723,12 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       displayName: serializer.fromJson<String>(json['displayName']),
       avatarUrl: serializer.fromJson<String?>(json['avatarUrl']),
       characterImage: serializer.fromJson<String?>(json['characterImage']),
+      chatBackgroundImage:
+          serializer.fromJson<String?>(json['chatBackgroundImage']),
+      chatBackgroundMaskOpacity:
+          serializer.fromJson<double?>(json['chatBackgroundMaskOpacity']),
+      chatBackgroundBlurSigma:
+          serializer.fromJson<double?>(json['chatBackgroundBlurSigma']),
       blurredBackground:
           serializer.fromJson<String?>(json['blurredBackground']),
       selfAddress: serializer.fromJson<String?>(json['selfAddress']),
@@ -683,6 +765,11 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       'displayName': serializer.toJson<String>(displayName),
       'avatarUrl': serializer.toJson<String?>(avatarUrl),
       'characterImage': serializer.toJson<String?>(characterImage),
+      'chatBackgroundImage': serializer.toJson<String?>(chatBackgroundImage),
+      'chatBackgroundMaskOpacity':
+          serializer.toJson<double?>(chatBackgroundMaskOpacity),
+      'chatBackgroundBlurSigma':
+          serializer.toJson<double?>(chatBackgroundBlurSigma),
       'blurredBackground': serializer.toJson<String?>(blurredBackground),
       'selfAddress': serializer.toJson<String?>(selfAddress),
       'addressUser': serializer.toJson<String?>(addressUser),
@@ -714,6 +801,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           String? displayName,
           Value<String?> avatarUrl = const Value.absent(),
           Value<String?> characterImage = const Value.absent(),
+          Value<String?> chatBackgroundImage = const Value.absent(),
+          Value<double?> chatBackgroundMaskOpacity = const Value.absent(),
+          Value<double?> chatBackgroundBlurSigma = const Value.absent(),
           Value<String?> blurredBackground = const Value.absent(),
           Value<String?> selfAddress = const Value.absent(),
           Value<String?> addressUser = const Value.absent(),
@@ -743,6 +833,15 @@ class Conversation extends DataClass implements Insertable<Conversation> {
         avatarUrl: avatarUrl.present ? avatarUrl.value : this.avatarUrl,
         characterImage:
             characterImage.present ? characterImage.value : this.characterImage,
+        chatBackgroundImage: chatBackgroundImage.present
+            ? chatBackgroundImage.value
+            : this.chatBackgroundImage,
+        chatBackgroundMaskOpacity: chatBackgroundMaskOpacity.present
+            ? chatBackgroundMaskOpacity.value
+            : this.chatBackgroundMaskOpacity,
+        chatBackgroundBlurSigma: chatBackgroundBlurSigma.present
+            ? chatBackgroundBlurSigma.value
+            : this.chatBackgroundBlurSigma,
         blurredBackground: blurredBackground.present
             ? blurredBackground.value
             : this.blurredBackground,
@@ -789,6 +888,15 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       characterImage: data.characterImage.present
           ? data.characterImage.value
           : this.characterImage,
+      chatBackgroundImage: data.chatBackgroundImage.present
+          ? data.chatBackgroundImage.value
+          : this.chatBackgroundImage,
+      chatBackgroundMaskOpacity: data.chatBackgroundMaskOpacity.present
+          ? data.chatBackgroundMaskOpacity.value
+          : this.chatBackgroundMaskOpacity,
+      chatBackgroundBlurSigma: data.chatBackgroundBlurSigma.present
+          ? data.chatBackgroundBlurSigma.value
+          : this.chatBackgroundBlurSigma,
       blurredBackground: data.blurredBackground.present
           ? data.blurredBackground.value
           : this.blurredBackground,
@@ -846,6 +954,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           ..write('displayName: $displayName, ')
           ..write('avatarUrl: $avatarUrl, ')
           ..write('characterImage: $characterImage, ')
+          ..write('chatBackgroundImage: $chatBackgroundImage, ')
+          ..write('chatBackgroundMaskOpacity: $chatBackgroundMaskOpacity, ')
+          ..write('chatBackgroundBlurSigma: $chatBackgroundBlurSigma, ')
           ..write('blurredBackground: $blurredBackground, ')
           ..write('selfAddress: $selfAddress, ')
           ..write('addressUser: $addressUser, ')
@@ -879,6 +990,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
         displayName,
         avatarUrl,
         characterImage,
+        chatBackgroundImage,
+        chatBackgroundMaskOpacity,
+        chatBackgroundBlurSigma,
         blurredBackground,
         selfAddress,
         addressUser,
@@ -911,6 +1025,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           other.displayName == this.displayName &&
           other.avatarUrl == this.avatarUrl &&
           other.characterImage == this.characterImage &&
+          other.chatBackgroundImage == this.chatBackgroundImage &&
+          other.chatBackgroundMaskOpacity == this.chatBackgroundMaskOpacity &&
+          other.chatBackgroundBlurSigma == this.chatBackgroundBlurSigma &&
           other.blurredBackground == this.blurredBackground &&
           other.selfAddress == this.selfAddress &&
           other.addressUser == this.addressUser &&
@@ -941,6 +1058,9 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
   final Value<String> displayName;
   final Value<String?> avatarUrl;
   final Value<String?> characterImage;
+  final Value<String?> chatBackgroundImage;
+  final Value<double?> chatBackgroundMaskOpacity;
+  final Value<double?> chatBackgroundBlurSigma;
   final Value<String?> blurredBackground;
   final Value<String?> selfAddress;
   final Value<String?> addressUser;
@@ -970,6 +1090,9 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     this.displayName = const Value.absent(),
     this.avatarUrl = const Value.absent(),
     this.characterImage = const Value.absent(),
+    this.chatBackgroundImage = const Value.absent(),
+    this.chatBackgroundMaskOpacity = const Value.absent(),
+    this.chatBackgroundBlurSigma = const Value.absent(),
     this.blurredBackground = const Value.absent(),
     this.selfAddress = const Value.absent(),
     this.addressUser = const Value.absent(),
@@ -1000,6 +1123,9 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     required String displayName,
     this.avatarUrl = const Value.absent(),
     this.characterImage = const Value.absent(),
+    this.chatBackgroundImage = const Value.absent(),
+    this.chatBackgroundMaskOpacity = const Value.absent(),
+    this.chatBackgroundBlurSigma = const Value.absent(),
     this.blurredBackground = const Value.absent(),
     this.selfAddress = const Value.absent(),
     this.addressUser = const Value.absent(),
@@ -1034,6 +1160,9 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     Expression<String>? displayName,
     Expression<String>? avatarUrl,
     Expression<String>? characterImage,
+    Expression<String>? chatBackgroundImage,
+    Expression<double>? chatBackgroundMaskOpacity,
+    Expression<double>? chatBackgroundBlurSigma,
     Expression<String>? blurredBackground,
     Expression<String>? selfAddress,
     Expression<String>? addressUser,
@@ -1064,6 +1193,12 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       if (displayName != null) 'display_name': displayName,
       if (avatarUrl != null) 'avatar_url': avatarUrl,
       if (characterImage != null) 'character_image': characterImage,
+      if (chatBackgroundImage != null)
+        'chat_background_image': chatBackgroundImage,
+      if (chatBackgroundMaskOpacity != null)
+        'chat_background_mask_opacity': chatBackgroundMaskOpacity,
+      if (chatBackgroundBlurSigma != null)
+        'chat_background_blur_sigma': chatBackgroundBlurSigma,
       if (blurredBackground != null) 'blurred_background': blurredBackground,
       if (selfAddress != null) 'self_address': selfAddress,
       if (addressUser != null) 'address_user': addressUser,
@@ -1097,6 +1232,9 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       Value<String>? displayName,
       Value<String?>? avatarUrl,
       Value<String?>? characterImage,
+      Value<String?>? chatBackgroundImage,
+      Value<double?>? chatBackgroundMaskOpacity,
+      Value<double?>? chatBackgroundBlurSigma,
       Value<String?>? blurredBackground,
       Value<String?>? selfAddress,
       Value<String?>? addressUser,
@@ -1126,6 +1264,11 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       displayName: displayName ?? this.displayName,
       avatarUrl: avatarUrl ?? this.avatarUrl,
       characterImage: characterImage ?? this.characterImage,
+      chatBackgroundImage: chatBackgroundImage ?? this.chatBackgroundImage,
+      chatBackgroundMaskOpacity:
+          chatBackgroundMaskOpacity ?? this.chatBackgroundMaskOpacity,
+      chatBackgroundBlurSigma:
+          chatBackgroundBlurSigma ?? this.chatBackgroundBlurSigma,
       blurredBackground: blurredBackground ?? this.blurredBackground,
       selfAddress: selfAddress ?? this.selfAddress,
       addressUser: addressUser ?? this.addressUser,
@@ -1169,6 +1312,18 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     }
     if (characterImage.present) {
       map['character_image'] = Variable<String>(characterImage.value);
+    }
+    if (chatBackgroundImage.present) {
+      map['chat_background_image'] =
+          Variable<String>(chatBackgroundImage.value);
+    }
+    if (chatBackgroundMaskOpacity.present) {
+      map['chat_background_mask_opacity'] =
+          Variable<double>(chatBackgroundMaskOpacity.value);
+    }
+    if (chatBackgroundBlurSigma.present) {
+      map['chat_background_blur_sigma'] =
+          Variable<double>(chatBackgroundBlurSigma.value);
     }
     if (blurredBackground.present) {
       map['blurred_background'] = Variable<String>(blurredBackground.value);
@@ -1251,6 +1406,9 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
           ..write('displayName: $displayName, ')
           ..write('avatarUrl: $avatarUrl, ')
           ..write('characterImage: $characterImage, ')
+          ..write('chatBackgroundImage: $chatBackgroundImage, ')
+          ..write('chatBackgroundMaskOpacity: $chatBackgroundMaskOpacity, ')
+          ..write('chatBackgroundBlurSigma: $chatBackgroundBlurSigma, ')
           ..write('blurredBackground: $blurredBackground, ')
           ..write('selfAddress: $selfAddress, ')
           ..write('addressUser: $addressUser, ')
@@ -1316,6 +1474,22 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
       type: DriftSqlType.string,
       requiredDuringInsert: false,
       defaultValue: const Constant('sent'));
+  static const VerificationMeta _summarizedMeta =
+      const VerificationMeta('summarized');
+  @override
+  late final GeneratedColumn<bool> summarized = GeneratedColumn<bool>(
+      'summarized', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("summarized" IN (0, 1))'),
+      defaultValue: const Constant(false));
+  static const VerificationMeta _summarizedAtMeta =
+      const VerificationMeta('summarizedAt');
+  @override
+  late final GeneratedColumn<int> summarizedAt = GeneratedColumn<int>(
+      'summarized_at', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
   static const VerificationMeta _replacedByMeta =
       const VerificationMeta('replacedBy');
   @override
@@ -1353,6 +1527,8 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
         role,
         content,
         status,
+        summarized,
+        summarizedAt,
         replacedBy,
         conflictOf,
         deletedAt,
@@ -1397,6 +1573,18 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
     if (data.containsKey('status')) {
       context.handle(_statusMeta,
           status.isAcceptableOrUnknown(data['status']!, _statusMeta));
+    }
+    if (data.containsKey('summarized')) {
+      context.handle(
+          _summarizedMeta,
+          summarized.isAcceptableOrUnknown(
+              data['summarized']!, _summarizedMeta));
+    }
+    if (data.containsKey('summarized_at')) {
+      context.handle(
+          _summarizedAtMeta,
+          summarizedAt.isAcceptableOrUnknown(
+              data['summarized_at']!, _summarizedAtMeta));
     }
     if (data.containsKey('replaced_by')) {
       context.handle(
@@ -1443,6 +1631,10 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
           .read(DriftSqlType.string, data['${effectivePrefix}content'])!,
       status: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}status'])!,
+      summarized: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}summarized'])!,
+      summarizedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}summarized_at']),
       replacedBy: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}replaced_by']),
       conflictOf: attachedDatabase.typeMapping
@@ -1468,6 +1660,8 @@ class Message extends DataClass implements Insertable<Message> {
   final String role;
   final String content;
   final String status;
+  final bool summarized;
+  final int? summarizedAt;
   final String? replacedBy;
   final String? conflictOf;
   final int? deletedAt;
@@ -1479,6 +1673,8 @@ class Message extends DataClass implements Insertable<Message> {
       required this.role,
       required this.content,
       required this.status,
+      required this.summarized,
+      this.summarizedAt,
       this.replacedBy,
       this.conflictOf,
       this.deletedAt,
@@ -1492,6 +1688,10 @@ class Message extends DataClass implements Insertable<Message> {
     map['role'] = Variable<String>(role);
     map['content'] = Variable<String>(content);
     map['status'] = Variable<String>(status);
+    map['summarized'] = Variable<bool>(summarized);
+    if (!nullToAbsent || summarizedAt != null) {
+      map['summarized_at'] = Variable<int>(summarizedAt);
+    }
     if (!nullToAbsent || replacedBy != null) {
       map['replaced_by'] = Variable<String>(replacedBy);
     }
@@ -1515,6 +1715,10 @@ class Message extends DataClass implements Insertable<Message> {
       role: Value(role),
       content: Value(content),
       status: Value(status),
+      summarized: Value(summarized),
+      summarizedAt: summarizedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(summarizedAt),
       replacedBy: replacedBy == null && nullToAbsent
           ? const Value.absent()
           : Value(replacedBy),
@@ -1540,6 +1744,8 @@ class Message extends DataClass implements Insertable<Message> {
       role: serializer.fromJson<String>(json['role']),
       content: serializer.fromJson<String>(json['content']),
       status: serializer.fromJson<String>(json['status']),
+      summarized: serializer.fromJson<bool>(json['summarized']),
+      summarizedAt: serializer.fromJson<int?>(json['summarizedAt']),
       replacedBy: serializer.fromJson<String?>(json['replacedBy']),
       conflictOf: serializer.fromJson<String?>(json['conflictOf']),
       deletedAt: serializer.fromJson<int?>(json['deletedAt']),
@@ -1556,6 +1762,8 @@ class Message extends DataClass implements Insertable<Message> {
       'role': serializer.toJson<String>(role),
       'content': serializer.toJson<String>(content),
       'status': serializer.toJson<String>(status),
+      'summarized': serializer.toJson<bool>(summarized),
+      'summarizedAt': serializer.toJson<int?>(summarizedAt),
       'replacedBy': serializer.toJson<String?>(replacedBy),
       'conflictOf': serializer.toJson<String?>(conflictOf),
       'deletedAt': serializer.toJson<int?>(deletedAt),
@@ -1570,6 +1778,8 @@ class Message extends DataClass implements Insertable<Message> {
           String? role,
           String? content,
           String? status,
+          bool? summarized,
+          Value<int?> summarizedAt = const Value.absent(),
           Value<String?> replacedBy = const Value.absent(),
           Value<String?> conflictOf = const Value.absent(),
           Value<int?> deletedAt = const Value.absent(),
@@ -1581,6 +1791,9 @@ class Message extends DataClass implements Insertable<Message> {
         role: role ?? this.role,
         content: content ?? this.content,
         status: status ?? this.status,
+        summarized: summarized ?? this.summarized,
+        summarizedAt:
+            summarizedAt.present ? summarizedAt.value : this.summarizedAt,
         replacedBy: replacedBy.present ? replacedBy.value : this.replacedBy,
         conflictOf: conflictOf.present ? conflictOf.value : this.conflictOf,
         deletedAt: deletedAt.present ? deletedAt.value : this.deletedAt,
@@ -1596,6 +1809,11 @@ class Message extends DataClass implements Insertable<Message> {
       role: data.role.present ? data.role.value : this.role,
       content: data.content.present ? data.content.value : this.content,
       status: data.status.present ? data.status.value : this.status,
+      summarized:
+          data.summarized.present ? data.summarized.value : this.summarized,
+      summarizedAt: data.summarizedAt.present
+          ? data.summarizedAt.value
+          : this.summarizedAt,
       replacedBy:
           data.replacedBy.present ? data.replacedBy.value : this.replacedBy,
       conflictOf:
@@ -1614,6 +1832,8 @@ class Message extends DataClass implements Insertable<Message> {
           ..write('role: $role, ')
           ..write('content: $content, ')
           ..write('status: $status, ')
+          ..write('summarized: $summarized, ')
+          ..write('summarizedAt: $summarizedAt, ')
           ..write('replacedBy: $replacedBy, ')
           ..write('conflictOf: $conflictOf, ')
           ..write('deletedAt: $deletedAt, ')
@@ -1624,8 +1844,19 @@ class Message extends DataClass implements Insertable<Message> {
   }
 
   @override
-  int get hashCode => Object.hash(id, conversationId, role, content, status,
-      replacedBy, conflictOf, deletedAt, purgeAt, createdAt);
+  int get hashCode => Object.hash(
+      id,
+      conversationId,
+      role,
+      content,
+      status,
+      summarized,
+      summarizedAt,
+      replacedBy,
+      conflictOf,
+      deletedAt,
+      purgeAt,
+      createdAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -1635,6 +1866,8 @@ class Message extends DataClass implements Insertable<Message> {
           other.role == this.role &&
           other.content == this.content &&
           other.status == this.status &&
+          other.summarized == this.summarized &&
+          other.summarizedAt == this.summarizedAt &&
           other.replacedBy == this.replacedBy &&
           other.conflictOf == this.conflictOf &&
           other.deletedAt == this.deletedAt &&
@@ -1648,6 +1881,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
   final Value<String> role;
   final Value<String> content;
   final Value<String> status;
+  final Value<bool> summarized;
+  final Value<int?> summarizedAt;
   final Value<String?> replacedBy;
   final Value<String?> conflictOf;
   final Value<int?> deletedAt;
@@ -1660,6 +1895,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     this.role = const Value.absent(),
     this.content = const Value.absent(),
     this.status = const Value.absent(),
+    this.summarized = const Value.absent(),
+    this.summarizedAt = const Value.absent(),
     this.replacedBy = const Value.absent(),
     this.conflictOf = const Value.absent(),
     this.deletedAt = const Value.absent(),
@@ -1673,6 +1910,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     required String role,
     required String content,
     this.status = const Value.absent(),
+    this.summarized = const Value.absent(),
+    this.summarizedAt = const Value.absent(),
     this.replacedBy = const Value.absent(),
     this.conflictOf = const Value.absent(),
     this.deletedAt = const Value.absent(),
@@ -1690,6 +1929,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     Expression<String>? role,
     Expression<String>? content,
     Expression<String>? status,
+    Expression<bool>? summarized,
+    Expression<int>? summarizedAt,
     Expression<String>? replacedBy,
     Expression<String>? conflictOf,
     Expression<int>? deletedAt,
@@ -1703,6 +1944,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
       if (role != null) 'role': role,
       if (content != null) 'content': content,
       if (status != null) 'status': status,
+      if (summarized != null) 'summarized': summarized,
+      if (summarizedAt != null) 'summarized_at': summarizedAt,
       if (replacedBy != null) 'replaced_by': replacedBy,
       if (conflictOf != null) 'conflict_of': conflictOf,
       if (deletedAt != null) 'deleted_at': deletedAt,
@@ -1718,6 +1961,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
       Value<String>? role,
       Value<String>? content,
       Value<String>? status,
+      Value<bool>? summarized,
+      Value<int?>? summarizedAt,
       Value<String?>? replacedBy,
       Value<String?>? conflictOf,
       Value<int?>? deletedAt,
@@ -1730,6 +1975,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
       role: role ?? this.role,
       content: content ?? this.content,
       status: status ?? this.status,
+      summarized: summarized ?? this.summarized,
+      summarizedAt: summarizedAt ?? this.summarizedAt,
       replacedBy: replacedBy ?? this.replacedBy,
       conflictOf: conflictOf ?? this.conflictOf,
       deletedAt: deletedAt ?? this.deletedAt,
@@ -1756,6 +2003,12 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     }
     if (status.present) {
       map['status'] = Variable<String>(status.value);
+    }
+    if (summarized.present) {
+      map['summarized'] = Variable<bool>(summarized.value);
+    }
+    if (summarizedAt.present) {
+      map['summarized_at'] = Variable<int>(summarizedAt.value);
     }
     if (replacedBy.present) {
       map['replaced_by'] = Variable<String>(replacedBy.value);
@@ -1786,6 +2039,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
           ..write('role: $role, ')
           ..write('content: $content, ')
           ..write('status: $status, ')
+          ..write('summarized: $summarized, ')
+          ..write('summarizedAt: $summarizedAt, ')
           ..write('replacedBy: $replacedBy, ')
           ..write('conflictOf: $conflictOf, ')
           ..write('deletedAt: $deletedAt, ')
@@ -3828,6 +4083,46 @@ class $MemoriesTable extends Memories with TableInfo<$MemoriesTable, Memory> {
   late final GeneratedColumn<String> embedding = GeneratedColumn<String>(
       'embedding', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _layerMeta = const VerificationMeta('layer');
+  @override
+  late final GeneratedColumn<String> layer = GeneratedColumn<String>(
+      'layer', aliasedName, false,
+      type: DriftSqlType.string,
+      requiredDuringInsert: false,
+      defaultValue: const Constant('L3'));
+  static const VerificationMeta _categoryMeta =
+      const VerificationMeta('category');
+  @override
+  late final GeneratedColumn<String> category = GeneratedColumn<String>(
+      'category', aliasedName, false,
+      type: DriftSqlType.string,
+      requiredDuringInsert: false,
+      defaultValue: const Constant('daily_chatter'));
+  static const VerificationMeta _conversationIdMeta =
+      const VerificationMeta('conversationId');
+  @override
+  late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
+      'conversation_id', aliasedName, true,
+      type: DriftSqlType.string,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('REFERENCES conversations (id)'));
+  static const VerificationMeta _contentHashMeta =
+      const VerificationMeta('contentHash');
+  @override
+  late final GeneratedColumn<String> contentHash = GeneratedColumn<String>(
+      'content_hash', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _needsEnrichmentMeta =
+      const VerificationMeta('needsEnrichment');
+  @override
+  late final GeneratedColumn<bool> needsEnrichment = GeneratedColumn<bool>(
+      'needs_enrichment', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'CHECK ("needs_enrichment" IN (0, 1))'),
+      defaultValue: const Constant(false));
   static const VerificationMeta _persistencePMeta =
       const VerificationMeta('persistenceP');
   @override
@@ -3943,6 +4238,11 @@ class $MemoriesTable extends Memories with TableInfo<$MemoriesTable, Memory> {
         id,
         content,
         embedding,
+        layer,
+        category,
+        conversationId,
+        contentHash,
+        needsEnrichment,
         persistenceP,
         emotionE,
         infoI,
@@ -3983,6 +4283,32 @@ class $MemoriesTable extends Memories with TableInfo<$MemoriesTable, Memory> {
     if (data.containsKey('embedding')) {
       context.handle(_embeddingMeta,
           embedding.isAcceptableOrUnknown(data['embedding']!, _embeddingMeta));
+    }
+    if (data.containsKey('layer')) {
+      context.handle(
+          _layerMeta, layer.isAcceptableOrUnknown(data['layer']!, _layerMeta));
+    }
+    if (data.containsKey('category')) {
+      context.handle(_categoryMeta,
+          category.isAcceptableOrUnknown(data['category']!, _categoryMeta));
+    }
+    if (data.containsKey('conversation_id')) {
+      context.handle(
+          _conversationIdMeta,
+          conversationId.isAcceptableOrUnknown(
+              data['conversation_id']!, _conversationIdMeta));
+    }
+    if (data.containsKey('content_hash')) {
+      context.handle(
+          _contentHashMeta,
+          contentHash.isAcceptableOrUnknown(
+              data['content_hash']!, _contentHashMeta));
+    }
+    if (data.containsKey('needs_enrichment')) {
+      context.handle(
+          _needsEnrichmentMeta,
+          needsEnrichment.isAcceptableOrUnknown(
+              data['needs_enrichment']!, _needsEnrichmentMeta));
     }
     if (data.containsKey('persistence_p')) {
       context.handle(
@@ -4071,6 +4397,16 @@ class $MemoriesTable extends Memories with TableInfo<$MemoriesTable, Memory> {
           .read(DriftSqlType.string, data['${effectivePrefix}content'])!,
       embedding: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}embedding']),
+      layer: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}layer'])!,
+      category: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}category'])!,
+      conversationId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}conversation_id']),
+      contentHash: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}content_hash']),
+      needsEnrichment: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}needs_enrichment'])!,
       persistenceP: attachedDatabase.typeMapping
           .read(DriftSqlType.double, data['${effectivePrefix}persistence_p'])!,
       emotionE: attachedDatabase.typeMapping
@@ -4114,6 +4450,11 @@ class Memory extends DataClass implements Insertable<Memory> {
   final String id;
   final String content;
   final String? embedding;
+  final String layer;
+  final String category;
+  final String? conversationId;
+  final String? contentHash;
+  final bool needsEnrichment;
   final double persistenceP;
   final double emotionE;
   final double infoI;
@@ -4133,6 +4474,11 @@ class Memory extends DataClass implements Insertable<Memory> {
       {required this.id,
       required this.content,
       this.embedding,
+      required this.layer,
+      required this.category,
+      this.conversationId,
+      this.contentHash,
+      required this.needsEnrichment,
       required this.persistenceP,
       required this.emotionE,
       required this.infoI,
@@ -4156,6 +4502,15 @@ class Memory extends DataClass implements Insertable<Memory> {
     if (!nullToAbsent || embedding != null) {
       map['embedding'] = Variable<String>(embedding);
     }
+    map['layer'] = Variable<String>(layer);
+    map['category'] = Variable<String>(category);
+    if (!nullToAbsent || conversationId != null) {
+      map['conversation_id'] = Variable<String>(conversationId);
+    }
+    if (!nullToAbsent || contentHash != null) {
+      map['content_hash'] = Variable<String>(contentHash);
+    }
+    map['needs_enrichment'] = Variable<bool>(needsEnrichment);
     map['persistence_p'] = Variable<double>(persistenceP);
     map['emotion_e'] = Variable<double>(emotionE);
     map['info_i'] = Variable<double>(infoI);
@@ -4187,6 +4542,15 @@ class Memory extends DataClass implements Insertable<Memory> {
       embedding: embedding == null && nullToAbsent
           ? const Value.absent()
           : Value(embedding),
+      layer: Value(layer),
+      category: Value(category),
+      conversationId: conversationId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(conversationId),
+      contentHash: contentHash == null && nullToAbsent
+          ? const Value.absent()
+          : Value(contentHash),
+      needsEnrichment: Value(needsEnrichment),
       persistenceP: Value(persistenceP),
       emotionE: Value(emotionE),
       infoI: Value(infoI),
@@ -4218,6 +4582,11 @@ class Memory extends DataClass implements Insertable<Memory> {
       id: serializer.fromJson<String>(json['id']),
       content: serializer.fromJson<String>(json['content']),
       embedding: serializer.fromJson<String?>(json['embedding']),
+      layer: serializer.fromJson<String>(json['layer']),
+      category: serializer.fromJson<String>(json['category']),
+      conversationId: serializer.fromJson<String?>(json['conversationId']),
+      contentHash: serializer.fromJson<String?>(json['contentHash']),
+      needsEnrichment: serializer.fromJson<bool>(json['needsEnrichment']),
       persistenceP: serializer.fromJson<double>(json['persistenceP']),
       emotionE: serializer.fromJson<double>(json['emotionE']),
       infoI: serializer.fromJson<double>(json['infoI']),
@@ -4242,6 +4611,11 @@ class Memory extends DataClass implements Insertable<Memory> {
       'id': serializer.toJson<String>(id),
       'content': serializer.toJson<String>(content),
       'embedding': serializer.toJson<String?>(embedding),
+      'layer': serializer.toJson<String>(layer),
+      'category': serializer.toJson<String>(category),
+      'conversationId': serializer.toJson<String?>(conversationId),
+      'contentHash': serializer.toJson<String?>(contentHash),
+      'needsEnrichment': serializer.toJson<bool>(needsEnrichment),
       'persistenceP': serializer.toJson<double>(persistenceP),
       'emotionE': serializer.toJson<double>(emotionE),
       'infoI': serializer.toJson<double>(infoI),
@@ -4264,6 +4638,11 @@ class Memory extends DataClass implements Insertable<Memory> {
           {String? id,
           String? content,
           Value<String?> embedding = const Value.absent(),
+          String? layer,
+          String? category,
+          Value<String?> conversationId = const Value.absent(),
+          Value<String?> contentHash = const Value.absent(),
+          bool? needsEnrichment,
           double? persistenceP,
           double? emotionE,
           double? infoI,
@@ -4283,6 +4662,12 @@ class Memory extends DataClass implements Insertable<Memory> {
         id: id ?? this.id,
         content: content ?? this.content,
         embedding: embedding.present ? embedding.value : this.embedding,
+        layer: layer ?? this.layer,
+        category: category ?? this.category,
+        conversationId:
+            conversationId.present ? conversationId.value : this.conversationId,
+        contentHash: contentHash.present ? contentHash.value : this.contentHash,
+        needsEnrichment: needsEnrichment ?? this.needsEnrichment,
         persistenceP: persistenceP ?? this.persistenceP,
         emotionE: emotionE ?? this.emotionE,
         infoI: infoI ?? this.infoI,
@@ -4305,6 +4690,16 @@ class Memory extends DataClass implements Insertable<Memory> {
       id: data.id.present ? data.id.value : this.id,
       content: data.content.present ? data.content.value : this.content,
       embedding: data.embedding.present ? data.embedding.value : this.embedding,
+      layer: data.layer.present ? data.layer.value : this.layer,
+      category: data.category.present ? data.category.value : this.category,
+      conversationId: data.conversationId.present
+          ? data.conversationId.value
+          : this.conversationId,
+      contentHash:
+          data.contentHash.present ? data.contentHash.value : this.contentHash,
+      needsEnrichment: data.needsEnrichment.present
+          ? data.needsEnrichment.value
+          : this.needsEnrichment,
       persistenceP: data.persistenceP.present
           ? data.persistenceP.value
           : this.persistenceP,
@@ -4336,6 +4731,11 @@ class Memory extends DataClass implements Insertable<Memory> {
           ..write('id: $id, ')
           ..write('content: $content, ')
           ..write('embedding: $embedding, ')
+          ..write('layer: $layer, ')
+          ..write('category: $category, ')
+          ..write('conversationId: $conversationId, ')
+          ..write('contentHash: $contentHash, ')
+          ..write('needsEnrichment: $needsEnrichment, ')
           ..write('persistenceP: $persistenceP, ')
           ..write('emotionE: $emotionE, ')
           ..write('infoI: $infoI, ')
@@ -4356,25 +4756,31 @@ class Memory extends DataClass implements Insertable<Memory> {
   }
 
   @override
-  int get hashCode => Object.hash(
-      id,
-      content,
-      embedding,
-      persistenceP,
-      emotionE,
-      infoI,
-      judgeJ,
-      infoImportance,
-      timeCoef,
-      importance,
-      useCount,
-      lastActiveAt,
-      deletedAt,
-      purgeAt,
-      isSynced,
-      syncState,
-      createdAt,
-      updatedAt);
+  int get hashCode => Object.hashAll([
+        id,
+        content,
+        embedding,
+        layer,
+        category,
+        conversationId,
+        contentHash,
+        needsEnrichment,
+        persistenceP,
+        emotionE,
+        infoI,
+        judgeJ,
+        infoImportance,
+        timeCoef,
+        importance,
+        useCount,
+        lastActiveAt,
+        deletedAt,
+        purgeAt,
+        isSynced,
+        syncState,
+        createdAt,
+        updatedAt
+      ]);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -4382,6 +4788,11 @@ class Memory extends DataClass implements Insertable<Memory> {
           other.id == this.id &&
           other.content == this.content &&
           other.embedding == this.embedding &&
+          other.layer == this.layer &&
+          other.category == this.category &&
+          other.conversationId == this.conversationId &&
+          other.contentHash == this.contentHash &&
+          other.needsEnrichment == this.needsEnrichment &&
           other.persistenceP == this.persistenceP &&
           other.emotionE == this.emotionE &&
           other.infoI == this.infoI &&
@@ -4403,6 +4814,11 @@ class MemoriesCompanion extends UpdateCompanion<Memory> {
   final Value<String> id;
   final Value<String> content;
   final Value<String?> embedding;
+  final Value<String> layer;
+  final Value<String> category;
+  final Value<String?> conversationId;
+  final Value<String?> contentHash;
+  final Value<bool> needsEnrichment;
   final Value<double> persistenceP;
   final Value<double> emotionE;
   final Value<double> infoI;
@@ -4423,6 +4839,11 @@ class MemoriesCompanion extends UpdateCompanion<Memory> {
     this.id = const Value.absent(),
     this.content = const Value.absent(),
     this.embedding = const Value.absent(),
+    this.layer = const Value.absent(),
+    this.category = const Value.absent(),
+    this.conversationId = const Value.absent(),
+    this.contentHash = const Value.absent(),
+    this.needsEnrichment = const Value.absent(),
     this.persistenceP = const Value.absent(),
     this.emotionE = const Value.absent(),
     this.infoI = const Value.absent(),
@@ -4444,6 +4865,11 @@ class MemoriesCompanion extends UpdateCompanion<Memory> {
     required String id,
     required String content,
     this.embedding = const Value.absent(),
+    this.layer = const Value.absent(),
+    this.category = const Value.absent(),
+    this.conversationId = const Value.absent(),
+    this.contentHash = const Value.absent(),
+    this.needsEnrichment = const Value.absent(),
     this.persistenceP = const Value.absent(),
     this.emotionE = const Value.absent(),
     this.infoI = const Value.absent(),
@@ -4468,6 +4894,11 @@ class MemoriesCompanion extends UpdateCompanion<Memory> {
     Expression<String>? id,
     Expression<String>? content,
     Expression<String>? embedding,
+    Expression<String>? layer,
+    Expression<String>? category,
+    Expression<String>? conversationId,
+    Expression<String>? contentHash,
+    Expression<bool>? needsEnrichment,
     Expression<double>? persistenceP,
     Expression<double>? emotionE,
     Expression<double>? infoI,
@@ -4489,6 +4920,11 @@ class MemoriesCompanion extends UpdateCompanion<Memory> {
       if (id != null) 'id': id,
       if (content != null) 'content': content,
       if (embedding != null) 'embedding': embedding,
+      if (layer != null) 'layer': layer,
+      if (category != null) 'category': category,
+      if (conversationId != null) 'conversation_id': conversationId,
+      if (contentHash != null) 'content_hash': contentHash,
+      if (needsEnrichment != null) 'needs_enrichment': needsEnrichment,
       if (persistenceP != null) 'persistence_p': persistenceP,
       if (emotionE != null) 'emotion_e': emotionE,
       if (infoI != null) 'info_i': infoI,
@@ -4512,6 +4948,11 @@ class MemoriesCompanion extends UpdateCompanion<Memory> {
       {Value<String>? id,
       Value<String>? content,
       Value<String?>? embedding,
+      Value<String>? layer,
+      Value<String>? category,
+      Value<String?>? conversationId,
+      Value<String?>? contentHash,
+      Value<bool>? needsEnrichment,
       Value<double>? persistenceP,
       Value<double>? emotionE,
       Value<double>? infoI,
@@ -4532,6 +4973,11 @@ class MemoriesCompanion extends UpdateCompanion<Memory> {
       id: id ?? this.id,
       content: content ?? this.content,
       embedding: embedding ?? this.embedding,
+      layer: layer ?? this.layer,
+      category: category ?? this.category,
+      conversationId: conversationId ?? this.conversationId,
+      contentHash: contentHash ?? this.contentHash,
+      needsEnrichment: needsEnrichment ?? this.needsEnrichment,
       persistenceP: persistenceP ?? this.persistenceP,
       emotionE: emotionE ?? this.emotionE,
       infoI: infoI ?? this.infoI,
@@ -4562,6 +5008,21 @@ class MemoriesCompanion extends UpdateCompanion<Memory> {
     }
     if (embedding.present) {
       map['embedding'] = Variable<String>(embedding.value);
+    }
+    if (layer.present) {
+      map['layer'] = Variable<String>(layer.value);
+    }
+    if (category.present) {
+      map['category'] = Variable<String>(category.value);
+    }
+    if (conversationId.present) {
+      map['conversation_id'] = Variable<String>(conversationId.value);
+    }
+    if (contentHash.present) {
+      map['content_hash'] = Variable<String>(contentHash.value);
+    }
+    if (needsEnrichment.present) {
+      map['needs_enrichment'] = Variable<bool>(needsEnrichment.value);
     }
     if (persistenceP.present) {
       map['persistence_p'] = Variable<double>(persistenceP.value);
@@ -4620,6 +5081,11 @@ class MemoriesCompanion extends UpdateCompanion<Memory> {
           ..write('id: $id, ')
           ..write('content: $content, ')
           ..write('embedding: $embedding, ')
+          ..write('layer: $layer, ')
+          ..write('category: $category, ')
+          ..write('conversationId: $conversationId, ')
+          ..write('contentHash: $contentHash, ')
+          ..write('needsEnrichment: $needsEnrichment, ')
           ..write('persistenceP: $persistenceP, ')
           ..write('emotionE: $emotionE, ')
           ..write('infoI: $infoI, ')
@@ -5046,6 +5512,1189 @@ class MemoryTombstonesCompanion extends UpdateCompanion<MemoryTombstone> {
   }
 }
 
+class $DiariesTable extends Diaries with TableInfo<$DiariesTable, Diary> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $DiariesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+      'id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _conversationIdMeta =
+      const VerificationMeta('conversationId');
+  @override
+  late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
+      'conversation_id', aliasedName, false,
+      type: DriftSqlType.string,
+      requiredDuringInsert: true,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('REFERENCES conversations (id)'));
+  static const VerificationMeta _dateMeta = const VerificationMeta('date');
+  @override
+  late final GeneratedColumn<int> date = GeneratedColumn<int>(
+      'date', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _contentMeta =
+      const VerificationMeta('content');
+  @override
+  late final GeneratedColumn<String> content = GeneratedColumn<String>(
+      'content', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _embeddingMeta =
+      const VerificationMeta('embedding');
+  @override
+  late final GeneratedColumn<String> embedding = GeneratedColumn<String>(
+      'embedding', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _moodMeta = const VerificationMeta('mood');
+  @override
+  late final GeneratedColumn<String> mood = GeneratedColumn<String>(
+      'mood', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _keywordsMeta =
+      const VerificationMeta('keywords');
+  @override
+  late final GeneratedColumn<String> keywords = GeneratedColumn<String>(
+      'keywords', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _isSyncedMeta =
+      const VerificationMeta('isSynced');
+  @override
+  late final GeneratedColumn<bool> isSynced = GeneratedColumn<bool>(
+      'is_synced', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("is_synced" IN (0, 1))'),
+      defaultValue: const Constant(false));
+  static const VerificationMeta _syncStateMeta =
+      const VerificationMeta('syncState');
+  @override
+  late final GeneratedColumn<String> syncState = GeneratedColumn<String>(
+      'sync_state', aliasedName, false,
+      type: DriftSqlType.string,
+      requiredDuringInsert: false,
+      defaultValue: const Constant('local'));
+  static const VerificationMeta _createdAtMeta =
+      const VerificationMeta('createdAt');
+  @override
+  late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
+      'created_at', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _updatedAtMeta =
+      const VerificationMeta('updatedAt');
+  @override
+  late final GeneratedColumn<int> updatedAt = GeneratedColumn<int>(
+      'updated_at', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  @override
+  List<GeneratedColumn> get $columns => [
+        id,
+        conversationId,
+        date,
+        content,
+        embedding,
+        mood,
+        keywords,
+        isSynced,
+        syncState,
+        createdAt,
+        updatedAt
+      ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'diaries';
+  @override
+  VerificationContext validateIntegrity(Insertable<Diary> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('conversation_id')) {
+      context.handle(
+          _conversationIdMeta,
+          conversationId.isAcceptableOrUnknown(
+              data['conversation_id']!, _conversationIdMeta));
+    } else if (isInserting) {
+      context.missing(_conversationIdMeta);
+    }
+    if (data.containsKey('date')) {
+      context.handle(
+          _dateMeta, date.isAcceptableOrUnknown(data['date']!, _dateMeta));
+    } else if (isInserting) {
+      context.missing(_dateMeta);
+    }
+    if (data.containsKey('content')) {
+      context.handle(_contentMeta,
+          content.isAcceptableOrUnknown(data['content']!, _contentMeta));
+    } else if (isInserting) {
+      context.missing(_contentMeta);
+    }
+    if (data.containsKey('embedding')) {
+      context.handle(_embeddingMeta,
+          embedding.isAcceptableOrUnknown(data['embedding']!, _embeddingMeta));
+    }
+    if (data.containsKey('mood')) {
+      context.handle(
+          _moodMeta, mood.isAcceptableOrUnknown(data['mood']!, _moodMeta));
+    }
+    if (data.containsKey('keywords')) {
+      context.handle(_keywordsMeta,
+          keywords.isAcceptableOrUnknown(data['keywords']!, _keywordsMeta));
+    }
+    if (data.containsKey('is_synced')) {
+      context.handle(_isSyncedMeta,
+          isSynced.isAcceptableOrUnknown(data['is_synced']!, _isSyncedMeta));
+    }
+    if (data.containsKey('sync_state')) {
+      context.handle(_syncStateMeta,
+          syncState.isAcceptableOrUnknown(data['sync_state']!, _syncStateMeta));
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(_createdAtMeta,
+          createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta));
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(_updatedAtMeta,
+          updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta));
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  Diary map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return Diary(
+      id: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}id'])!,
+      conversationId: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}conversation_id'])!,
+      date: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}date'])!,
+      content: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}content'])!,
+      embedding: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}embedding']),
+      mood: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}mood']),
+      keywords: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}keywords']),
+      isSynced: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}is_synced'])!,
+      syncState: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}sync_state'])!,
+      createdAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}created_at'])!,
+      updatedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}updated_at'])!,
+    );
+  }
+
+  @override
+  $DiariesTable createAlias(String alias) {
+    return $DiariesTable(attachedDatabase, alias);
+  }
+}
+
+class Diary extends DataClass implements Insertable<Diary> {
+  final String id;
+  final String conversationId;
+  final int date;
+  final String content;
+  final String? embedding;
+  final String? mood;
+  final String? keywords;
+  final bool isSynced;
+  final String syncState;
+  final int createdAt;
+  final int updatedAt;
+  const Diary(
+      {required this.id,
+      required this.conversationId,
+      required this.date,
+      required this.content,
+      this.embedding,
+      this.mood,
+      this.keywords,
+      required this.isSynced,
+      required this.syncState,
+      required this.createdAt,
+      required this.updatedAt});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['conversation_id'] = Variable<String>(conversationId);
+    map['date'] = Variable<int>(date);
+    map['content'] = Variable<String>(content);
+    if (!nullToAbsent || embedding != null) {
+      map['embedding'] = Variable<String>(embedding);
+    }
+    if (!nullToAbsent || mood != null) {
+      map['mood'] = Variable<String>(mood);
+    }
+    if (!nullToAbsent || keywords != null) {
+      map['keywords'] = Variable<String>(keywords);
+    }
+    map['is_synced'] = Variable<bool>(isSynced);
+    map['sync_state'] = Variable<String>(syncState);
+    map['created_at'] = Variable<int>(createdAt);
+    map['updated_at'] = Variable<int>(updatedAt);
+    return map;
+  }
+
+  DiariesCompanion toCompanion(bool nullToAbsent) {
+    return DiariesCompanion(
+      id: Value(id),
+      conversationId: Value(conversationId),
+      date: Value(date),
+      content: Value(content),
+      embedding: embedding == null && nullToAbsent
+          ? const Value.absent()
+          : Value(embedding),
+      mood: mood == null && nullToAbsent ? const Value.absent() : Value(mood),
+      keywords: keywords == null && nullToAbsent
+          ? const Value.absent()
+          : Value(keywords),
+      isSynced: Value(isSynced),
+      syncState: Value(syncState),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory Diary.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return Diary(
+      id: serializer.fromJson<String>(json['id']),
+      conversationId: serializer.fromJson<String>(json['conversationId']),
+      date: serializer.fromJson<int>(json['date']),
+      content: serializer.fromJson<String>(json['content']),
+      embedding: serializer.fromJson<String?>(json['embedding']),
+      mood: serializer.fromJson<String?>(json['mood']),
+      keywords: serializer.fromJson<String?>(json['keywords']),
+      isSynced: serializer.fromJson<bool>(json['isSynced']),
+      syncState: serializer.fromJson<String>(json['syncState']),
+      createdAt: serializer.fromJson<int>(json['createdAt']),
+      updatedAt: serializer.fromJson<int>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'conversationId': serializer.toJson<String>(conversationId),
+      'date': serializer.toJson<int>(date),
+      'content': serializer.toJson<String>(content),
+      'embedding': serializer.toJson<String?>(embedding),
+      'mood': serializer.toJson<String?>(mood),
+      'keywords': serializer.toJson<String?>(keywords),
+      'isSynced': serializer.toJson<bool>(isSynced),
+      'syncState': serializer.toJson<String>(syncState),
+      'createdAt': serializer.toJson<int>(createdAt),
+      'updatedAt': serializer.toJson<int>(updatedAt),
+    };
+  }
+
+  Diary copyWith(
+          {String? id,
+          String? conversationId,
+          int? date,
+          String? content,
+          Value<String?> embedding = const Value.absent(),
+          Value<String?> mood = const Value.absent(),
+          Value<String?> keywords = const Value.absent(),
+          bool? isSynced,
+          String? syncState,
+          int? createdAt,
+          int? updatedAt}) =>
+      Diary(
+        id: id ?? this.id,
+        conversationId: conversationId ?? this.conversationId,
+        date: date ?? this.date,
+        content: content ?? this.content,
+        embedding: embedding.present ? embedding.value : this.embedding,
+        mood: mood.present ? mood.value : this.mood,
+        keywords: keywords.present ? keywords.value : this.keywords,
+        isSynced: isSynced ?? this.isSynced,
+        syncState: syncState ?? this.syncState,
+        createdAt: createdAt ?? this.createdAt,
+        updatedAt: updatedAt ?? this.updatedAt,
+      );
+  Diary copyWithCompanion(DiariesCompanion data) {
+    return Diary(
+      id: data.id.present ? data.id.value : this.id,
+      conversationId: data.conversationId.present
+          ? data.conversationId.value
+          : this.conversationId,
+      date: data.date.present ? data.date.value : this.date,
+      content: data.content.present ? data.content.value : this.content,
+      embedding: data.embedding.present ? data.embedding.value : this.embedding,
+      mood: data.mood.present ? data.mood.value : this.mood,
+      keywords: data.keywords.present ? data.keywords.value : this.keywords,
+      isSynced: data.isSynced.present ? data.isSynced.value : this.isSynced,
+      syncState: data.syncState.present ? data.syncState.value : this.syncState,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('Diary(')
+          ..write('id: $id, ')
+          ..write('conversationId: $conversationId, ')
+          ..write('date: $date, ')
+          ..write('content: $content, ')
+          ..write('embedding: $embedding, ')
+          ..write('mood: $mood, ')
+          ..write('keywords: $keywords, ')
+          ..write('isSynced: $isSynced, ')
+          ..write('syncState: $syncState, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(id, conversationId, date, content, embedding,
+      mood, keywords, isSynced, syncState, createdAt, updatedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is Diary &&
+          other.id == this.id &&
+          other.conversationId == this.conversationId &&
+          other.date == this.date &&
+          other.content == this.content &&
+          other.embedding == this.embedding &&
+          other.mood == this.mood &&
+          other.keywords == this.keywords &&
+          other.isSynced == this.isSynced &&
+          other.syncState == this.syncState &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt);
+}
+
+class DiariesCompanion extends UpdateCompanion<Diary> {
+  final Value<String> id;
+  final Value<String> conversationId;
+  final Value<int> date;
+  final Value<String> content;
+  final Value<String?> embedding;
+  final Value<String?> mood;
+  final Value<String?> keywords;
+  final Value<bool> isSynced;
+  final Value<String> syncState;
+  final Value<int> createdAt;
+  final Value<int> updatedAt;
+  final Value<int> rowid;
+  const DiariesCompanion({
+    this.id = const Value.absent(),
+    this.conversationId = const Value.absent(),
+    this.date = const Value.absent(),
+    this.content = const Value.absent(),
+    this.embedding = const Value.absent(),
+    this.mood = const Value.absent(),
+    this.keywords = const Value.absent(),
+    this.isSynced = const Value.absent(),
+    this.syncState = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  DiariesCompanion.insert({
+    required String id,
+    required String conversationId,
+    required int date,
+    required String content,
+    this.embedding = const Value.absent(),
+    this.mood = const Value.absent(),
+    this.keywords = const Value.absent(),
+    this.isSynced = const Value.absent(),
+    this.syncState = const Value.absent(),
+    required int createdAt,
+    required int updatedAt,
+    this.rowid = const Value.absent(),
+  })  : id = Value(id),
+        conversationId = Value(conversationId),
+        date = Value(date),
+        content = Value(content),
+        createdAt = Value(createdAt),
+        updatedAt = Value(updatedAt);
+  static Insertable<Diary> custom({
+    Expression<String>? id,
+    Expression<String>? conversationId,
+    Expression<int>? date,
+    Expression<String>? content,
+    Expression<String>? embedding,
+    Expression<String>? mood,
+    Expression<String>? keywords,
+    Expression<bool>? isSynced,
+    Expression<String>? syncState,
+    Expression<int>? createdAt,
+    Expression<int>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (conversationId != null) 'conversation_id': conversationId,
+      if (date != null) 'date': date,
+      if (content != null) 'content': content,
+      if (embedding != null) 'embedding': embedding,
+      if (mood != null) 'mood': mood,
+      if (keywords != null) 'keywords': keywords,
+      if (isSynced != null) 'is_synced': isSynced,
+      if (syncState != null) 'sync_state': syncState,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  DiariesCompanion copyWith(
+      {Value<String>? id,
+      Value<String>? conversationId,
+      Value<int>? date,
+      Value<String>? content,
+      Value<String?>? embedding,
+      Value<String?>? mood,
+      Value<String?>? keywords,
+      Value<bool>? isSynced,
+      Value<String>? syncState,
+      Value<int>? createdAt,
+      Value<int>? updatedAt,
+      Value<int>? rowid}) {
+    return DiariesCompanion(
+      id: id ?? this.id,
+      conversationId: conversationId ?? this.conversationId,
+      date: date ?? this.date,
+      content: content ?? this.content,
+      embedding: embedding ?? this.embedding,
+      mood: mood ?? this.mood,
+      keywords: keywords ?? this.keywords,
+      isSynced: isSynced ?? this.isSynced,
+      syncState: syncState ?? this.syncState,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (conversationId.present) {
+      map['conversation_id'] = Variable<String>(conversationId.value);
+    }
+    if (date.present) {
+      map['date'] = Variable<int>(date.value);
+    }
+    if (content.present) {
+      map['content'] = Variable<String>(content.value);
+    }
+    if (embedding.present) {
+      map['embedding'] = Variable<String>(embedding.value);
+    }
+    if (mood.present) {
+      map['mood'] = Variable<String>(mood.value);
+    }
+    if (keywords.present) {
+      map['keywords'] = Variable<String>(keywords.value);
+    }
+    if (isSynced.present) {
+      map['is_synced'] = Variable<bool>(isSynced.value);
+    }
+    if (syncState.present) {
+      map['sync_state'] = Variable<String>(syncState.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<int>(createdAt.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<int>(updatedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DiariesCompanion(')
+          ..write('id: $id, ')
+          ..write('conversationId: $conversationId, ')
+          ..write('date: $date, ')
+          ..write('content: $content, ')
+          ..write('embedding: $embedding, ')
+          ..write('mood: $mood, ')
+          ..write('keywords: $keywords, ')
+          ..write('isSynced: $isSynced, ')
+          ..write('syncState: $syncState, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $SummarizationRecordsTable extends SummarizationRecords
+    with TableInfo<$SummarizationRecordsTable, SummarizationRecord> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $SummarizationRecordsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+      'id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _conversationIdMeta =
+      const VerificationMeta('conversationId');
+  @override
+  late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
+      'conversation_id', aliasedName, false,
+      type: DriftSqlType.string,
+      requiredDuringInsert: true,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('REFERENCES conversations (id)'));
+  static const VerificationMeta _dateKeyMeta =
+      const VerificationMeta('dateKey');
+  @override
+  late final GeneratedColumn<String> dateKey = GeneratedColumn<String>(
+      'date_key', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _roundKeyMeta =
+      const VerificationMeta('roundKey');
+  @override
+  late final GeneratedColumn<String> roundKey = GeneratedColumn<String>(
+      'round_key', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _roundIndexMeta =
+      const VerificationMeta('roundIndex');
+  @override
+  late final GeneratedColumn<int> roundIndex = GeneratedColumn<int>(
+      'round_index', aliasedName, false,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultValue: const Constant(0));
+  static const VerificationMeta _firstMsgTimeMeta =
+      const VerificationMeta('firstMsgTime');
+  @override
+  late final GeneratedColumn<int> firstMsgTime = GeneratedColumn<int>(
+      'first_msg_time', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _lastMsgTimeMeta =
+      const VerificationMeta('lastMsgTime');
+  @override
+  late final GeneratedColumn<int> lastMsgTime = GeneratedColumn<int>(
+      'last_msg_time', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _messageCountMeta =
+      const VerificationMeta('messageCount');
+  @override
+  late final GeneratedColumn<int> messageCount = GeneratedColumn<int>(
+      'message_count', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _summarizedMeta =
+      const VerificationMeta('summarized');
+  @override
+  late final GeneratedColumn<bool> summarized = GeneratedColumn<bool>(
+      'summarized', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("summarized" IN (0, 1))'),
+      defaultValue: const Constant(false));
+  static const VerificationMeta _summarizedAtMeta =
+      const VerificationMeta('summarizedAt');
+  @override
+  late final GeneratedColumn<int> summarizedAt = GeneratedColumn<int>(
+      'summarized_at', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _errorMessageMeta =
+      const VerificationMeta('errorMessage');
+  @override
+  late final GeneratedColumn<String> errorMessage = GeneratedColumn<String>(
+      'error_message', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _createdAtMeta =
+      const VerificationMeta('createdAt');
+  @override
+  late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
+      'created_at', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  @override
+  List<GeneratedColumn> get $columns => [
+        id,
+        conversationId,
+        dateKey,
+        roundKey,
+        roundIndex,
+        firstMsgTime,
+        lastMsgTime,
+        messageCount,
+        summarized,
+        summarizedAt,
+        errorMessage,
+        createdAt
+      ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'summarization_records';
+  @override
+  VerificationContext validateIntegrity(
+      Insertable<SummarizationRecord> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('conversation_id')) {
+      context.handle(
+          _conversationIdMeta,
+          conversationId.isAcceptableOrUnknown(
+              data['conversation_id']!, _conversationIdMeta));
+    } else if (isInserting) {
+      context.missing(_conversationIdMeta);
+    }
+    if (data.containsKey('date_key')) {
+      context.handle(_dateKeyMeta,
+          dateKey.isAcceptableOrUnknown(data['date_key']!, _dateKeyMeta));
+    } else if (isInserting) {
+      context.missing(_dateKeyMeta);
+    }
+    if (data.containsKey('round_key')) {
+      context.handle(_roundKeyMeta,
+          roundKey.isAcceptableOrUnknown(data['round_key']!, _roundKeyMeta));
+    } else if (isInserting) {
+      context.missing(_roundKeyMeta);
+    }
+    if (data.containsKey('round_index')) {
+      context.handle(
+          _roundIndexMeta,
+          roundIndex.isAcceptableOrUnknown(
+              data['round_index']!, _roundIndexMeta));
+    }
+    if (data.containsKey('first_msg_time')) {
+      context.handle(
+          _firstMsgTimeMeta,
+          firstMsgTime.isAcceptableOrUnknown(
+              data['first_msg_time']!, _firstMsgTimeMeta));
+    } else if (isInserting) {
+      context.missing(_firstMsgTimeMeta);
+    }
+    if (data.containsKey('last_msg_time')) {
+      context.handle(
+          _lastMsgTimeMeta,
+          lastMsgTime.isAcceptableOrUnknown(
+              data['last_msg_time']!, _lastMsgTimeMeta));
+    } else if (isInserting) {
+      context.missing(_lastMsgTimeMeta);
+    }
+    if (data.containsKey('message_count')) {
+      context.handle(
+          _messageCountMeta,
+          messageCount.isAcceptableOrUnknown(
+              data['message_count']!, _messageCountMeta));
+    } else if (isInserting) {
+      context.missing(_messageCountMeta);
+    }
+    if (data.containsKey('summarized')) {
+      context.handle(
+          _summarizedMeta,
+          summarized.isAcceptableOrUnknown(
+              data['summarized']!, _summarizedMeta));
+    }
+    if (data.containsKey('summarized_at')) {
+      context.handle(
+          _summarizedAtMeta,
+          summarizedAt.isAcceptableOrUnknown(
+              data['summarized_at']!, _summarizedAtMeta));
+    }
+    if (data.containsKey('error_message')) {
+      context.handle(
+          _errorMessageMeta,
+          errorMessage.isAcceptableOrUnknown(
+              data['error_message']!, _errorMessageMeta));
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(_createdAtMeta,
+          createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta));
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+        {conversationId, dateKey, roundKey},
+      ];
+  @override
+  SummarizationRecord map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return SummarizationRecord(
+      id: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}id'])!,
+      conversationId: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}conversation_id'])!,
+      dateKey: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}date_key'])!,
+      roundKey: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}round_key'])!,
+      roundIndex: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}round_index'])!,
+      firstMsgTime: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}first_msg_time'])!,
+      lastMsgTime: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}last_msg_time'])!,
+      messageCount: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}message_count'])!,
+      summarized: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}summarized'])!,
+      summarizedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}summarized_at']),
+      errorMessage: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}error_message']),
+      createdAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}created_at'])!,
+    );
+  }
+
+  @override
+  $SummarizationRecordsTable createAlias(String alias) {
+    return $SummarizationRecordsTable(attachedDatabase, alias);
+  }
+}
+
+class SummarizationRecord extends DataClass
+    implements Insertable<SummarizationRecord> {
+  final String id;
+  final String conversationId;
+  final String dateKey;
+  final String roundKey;
+  final int roundIndex;
+  final int firstMsgTime;
+  final int lastMsgTime;
+  final int messageCount;
+  final bool summarized;
+  final int? summarizedAt;
+  final String? errorMessage;
+  final int createdAt;
+  const SummarizationRecord(
+      {required this.id,
+      required this.conversationId,
+      required this.dateKey,
+      required this.roundKey,
+      required this.roundIndex,
+      required this.firstMsgTime,
+      required this.lastMsgTime,
+      required this.messageCount,
+      required this.summarized,
+      this.summarizedAt,
+      this.errorMessage,
+      required this.createdAt});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['conversation_id'] = Variable<String>(conversationId);
+    map['date_key'] = Variable<String>(dateKey);
+    map['round_key'] = Variable<String>(roundKey);
+    map['round_index'] = Variable<int>(roundIndex);
+    map['first_msg_time'] = Variable<int>(firstMsgTime);
+    map['last_msg_time'] = Variable<int>(lastMsgTime);
+    map['message_count'] = Variable<int>(messageCount);
+    map['summarized'] = Variable<bool>(summarized);
+    if (!nullToAbsent || summarizedAt != null) {
+      map['summarized_at'] = Variable<int>(summarizedAt);
+    }
+    if (!nullToAbsent || errorMessage != null) {
+      map['error_message'] = Variable<String>(errorMessage);
+    }
+    map['created_at'] = Variable<int>(createdAt);
+    return map;
+  }
+
+  SummarizationRecordsCompanion toCompanion(bool nullToAbsent) {
+    return SummarizationRecordsCompanion(
+      id: Value(id),
+      conversationId: Value(conversationId),
+      dateKey: Value(dateKey),
+      roundKey: Value(roundKey),
+      roundIndex: Value(roundIndex),
+      firstMsgTime: Value(firstMsgTime),
+      lastMsgTime: Value(lastMsgTime),
+      messageCount: Value(messageCount),
+      summarized: Value(summarized),
+      summarizedAt: summarizedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(summarizedAt),
+      errorMessage: errorMessage == null && nullToAbsent
+          ? const Value.absent()
+          : Value(errorMessage),
+      createdAt: Value(createdAt),
+    );
+  }
+
+  factory SummarizationRecord.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return SummarizationRecord(
+      id: serializer.fromJson<String>(json['id']),
+      conversationId: serializer.fromJson<String>(json['conversationId']),
+      dateKey: serializer.fromJson<String>(json['dateKey']),
+      roundKey: serializer.fromJson<String>(json['roundKey']),
+      roundIndex: serializer.fromJson<int>(json['roundIndex']),
+      firstMsgTime: serializer.fromJson<int>(json['firstMsgTime']),
+      lastMsgTime: serializer.fromJson<int>(json['lastMsgTime']),
+      messageCount: serializer.fromJson<int>(json['messageCount']),
+      summarized: serializer.fromJson<bool>(json['summarized']),
+      summarizedAt: serializer.fromJson<int?>(json['summarizedAt']),
+      errorMessage: serializer.fromJson<String?>(json['errorMessage']),
+      createdAt: serializer.fromJson<int>(json['createdAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'conversationId': serializer.toJson<String>(conversationId),
+      'dateKey': serializer.toJson<String>(dateKey),
+      'roundKey': serializer.toJson<String>(roundKey),
+      'roundIndex': serializer.toJson<int>(roundIndex),
+      'firstMsgTime': serializer.toJson<int>(firstMsgTime),
+      'lastMsgTime': serializer.toJson<int>(lastMsgTime),
+      'messageCount': serializer.toJson<int>(messageCount),
+      'summarized': serializer.toJson<bool>(summarized),
+      'summarizedAt': serializer.toJson<int?>(summarizedAt),
+      'errorMessage': serializer.toJson<String?>(errorMessage),
+      'createdAt': serializer.toJson<int>(createdAt),
+    };
+  }
+
+  SummarizationRecord copyWith(
+          {String? id,
+          String? conversationId,
+          String? dateKey,
+          String? roundKey,
+          int? roundIndex,
+          int? firstMsgTime,
+          int? lastMsgTime,
+          int? messageCount,
+          bool? summarized,
+          Value<int?> summarizedAt = const Value.absent(),
+          Value<String?> errorMessage = const Value.absent(),
+          int? createdAt}) =>
+      SummarizationRecord(
+        id: id ?? this.id,
+        conversationId: conversationId ?? this.conversationId,
+        dateKey: dateKey ?? this.dateKey,
+        roundKey: roundKey ?? this.roundKey,
+        roundIndex: roundIndex ?? this.roundIndex,
+        firstMsgTime: firstMsgTime ?? this.firstMsgTime,
+        lastMsgTime: lastMsgTime ?? this.lastMsgTime,
+        messageCount: messageCount ?? this.messageCount,
+        summarized: summarized ?? this.summarized,
+        summarizedAt:
+            summarizedAt.present ? summarizedAt.value : this.summarizedAt,
+        errorMessage:
+            errorMessage.present ? errorMessage.value : this.errorMessage,
+        createdAt: createdAt ?? this.createdAt,
+      );
+  SummarizationRecord copyWithCompanion(SummarizationRecordsCompanion data) {
+    return SummarizationRecord(
+      id: data.id.present ? data.id.value : this.id,
+      conversationId: data.conversationId.present
+          ? data.conversationId.value
+          : this.conversationId,
+      dateKey: data.dateKey.present ? data.dateKey.value : this.dateKey,
+      roundKey: data.roundKey.present ? data.roundKey.value : this.roundKey,
+      roundIndex:
+          data.roundIndex.present ? data.roundIndex.value : this.roundIndex,
+      firstMsgTime: data.firstMsgTime.present
+          ? data.firstMsgTime.value
+          : this.firstMsgTime,
+      lastMsgTime:
+          data.lastMsgTime.present ? data.lastMsgTime.value : this.lastMsgTime,
+      messageCount: data.messageCount.present
+          ? data.messageCount.value
+          : this.messageCount,
+      summarized:
+          data.summarized.present ? data.summarized.value : this.summarized,
+      summarizedAt: data.summarizedAt.present
+          ? data.summarizedAt.value
+          : this.summarizedAt,
+      errorMessage: data.errorMessage.present
+          ? data.errorMessage.value
+          : this.errorMessage,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SummarizationRecord(')
+          ..write('id: $id, ')
+          ..write('conversationId: $conversationId, ')
+          ..write('dateKey: $dateKey, ')
+          ..write('roundKey: $roundKey, ')
+          ..write('roundIndex: $roundIndex, ')
+          ..write('firstMsgTime: $firstMsgTime, ')
+          ..write('lastMsgTime: $lastMsgTime, ')
+          ..write('messageCount: $messageCount, ')
+          ..write('summarized: $summarized, ')
+          ..write('summarizedAt: $summarizedAt, ')
+          ..write('errorMessage: $errorMessage, ')
+          ..write('createdAt: $createdAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+      id,
+      conversationId,
+      dateKey,
+      roundKey,
+      roundIndex,
+      firstMsgTime,
+      lastMsgTime,
+      messageCount,
+      summarized,
+      summarizedAt,
+      errorMessage,
+      createdAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is SummarizationRecord &&
+          other.id == this.id &&
+          other.conversationId == this.conversationId &&
+          other.dateKey == this.dateKey &&
+          other.roundKey == this.roundKey &&
+          other.roundIndex == this.roundIndex &&
+          other.firstMsgTime == this.firstMsgTime &&
+          other.lastMsgTime == this.lastMsgTime &&
+          other.messageCount == this.messageCount &&
+          other.summarized == this.summarized &&
+          other.summarizedAt == this.summarizedAt &&
+          other.errorMessage == this.errorMessage &&
+          other.createdAt == this.createdAt);
+}
+
+class SummarizationRecordsCompanion
+    extends UpdateCompanion<SummarizationRecord> {
+  final Value<String> id;
+  final Value<String> conversationId;
+  final Value<String> dateKey;
+  final Value<String> roundKey;
+  final Value<int> roundIndex;
+  final Value<int> firstMsgTime;
+  final Value<int> lastMsgTime;
+  final Value<int> messageCount;
+  final Value<bool> summarized;
+  final Value<int?> summarizedAt;
+  final Value<String?> errorMessage;
+  final Value<int> createdAt;
+  final Value<int> rowid;
+  const SummarizationRecordsCompanion({
+    this.id = const Value.absent(),
+    this.conversationId = const Value.absent(),
+    this.dateKey = const Value.absent(),
+    this.roundKey = const Value.absent(),
+    this.roundIndex = const Value.absent(),
+    this.firstMsgTime = const Value.absent(),
+    this.lastMsgTime = const Value.absent(),
+    this.messageCount = const Value.absent(),
+    this.summarized = const Value.absent(),
+    this.summarizedAt = const Value.absent(),
+    this.errorMessage = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  SummarizationRecordsCompanion.insert({
+    required String id,
+    required String conversationId,
+    required String dateKey,
+    required String roundKey,
+    this.roundIndex = const Value.absent(),
+    required int firstMsgTime,
+    required int lastMsgTime,
+    required int messageCount,
+    this.summarized = const Value.absent(),
+    this.summarizedAt = const Value.absent(),
+    this.errorMessage = const Value.absent(),
+    required int createdAt,
+    this.rowid = const Value.absent(),
+  })  : id = Value(id),
+        conversationId = Value(conversationId),
+        dateKey = Value(dateKey),
+        roundKey = Value(roundKey),
+        firstMsgTime = Value(firstMsgTime),
+        lastMsgTime = Value(lastMsgTime),
+        messageCount = Value(messageCount),
+        createdAt = Value(createdAt);
+  static Insertable<SummarizationRecord> custom({
+    Expression<String>? id,
+    Expression<String>? conversationId,
+    Expression<String>? dateKey,
+    Expression<String>? roundKey,
+    Expression<int>? roundIndex,
+    Expression<int>? firstMsgTime,
+    Expression<int>? lastMsgTime,
+    Expression<int>? messageCount,
+    Expression<bool>? summarized,
+    Expression<int>? summarizedAt,
+    Expression<String>? errorMessage,
+    Expression<int>? createdAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (conversationId != null) 'conversation_id': conversationId,
+      if (dateKey != null) 'date_key': dateKey,
+      if (roundKey != null) 'round_key': roundKey,
+      if (roundIndex != null) 'round_index': roundIndex,
+      if (firstMsgTime != null) 'first_msg_time': firstMsgTime,
+      if (lastMsgTime != null) 'last_msg_time': lastMsgTime,
+      if (messageCount != null) 'message_count': messageCount,
+      if (summarized != null) 'summarized': summarized,
+      if (summarizedAt != null) 'summarized_at': summarizedAt,
+      if (errorMessage != null) 'error_message': errorMessage,
+      if (createdAt != null) 'created_at': createdAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  SummarizationRecordsCompanion copyWith(
+      {Value<String>? id,
+      Value<String>? conversationId,
+      Value<String>? dateKey,
+      Value<String>? roundKey,
+      Value<int>? roundIndex,
+      Value<int>? firstMsgTime,
+      Value<int>? lastMsgTime,
+      Value<int>? messageCount,
+      Value<bool>? summarized,
+      Value<int?>? summarizedAt,
+      Value<String?>? errorMessage,
+      Value<int>? createdAt,
+      Value<int>? rowid}) {
+    return SummarizationRecordsCompanion(
+      id: id ?? this.id,
+      conversationId: conversationId ?? this.conversationId,
+      dateKey: dateKey ?? this.dateKey,
+      roundKey: roundKey ?? this.roundKey,
+      roundIndex: roundIndex ?? this.roundIndex,
+      firstMsgTime: firstMsgTime ?? this.firstMsgTime,
+      lastMsgTime: lastMsgTime ?? this.lastMsgTime,
+      messageCount: messageCount ?? this.messageCount,
+      summarized: summarized ?? this.summarized,
+      summarizedAt: summarizedAt ?? this.summarizedAt,
+      errorMessage: errorMessage ?? this.errorMessage,
+      createdAt: createdAt ?? this.createdAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (conversationId.present) {
+      map['conversation_id'] = Variable<String>(conversationId.value);
+    }
+    if (dateKey.present) {
+      map['date_key'] = Variable<String>(dateKey.value);
+    }
+    if (roundKey.present) {
+      map['round_key'] = Variable<String>(roundKey.value);
+    }
+    if (roundIndex.present) {
+      map['round_index'] = Variable<int>(roundIndex.value);
+    }
+    if (firstMsgTime.present) {
+      map['first_msg_time'] = Variable<int>(firstMsgTime.value);
+    }
+    if (lastMsgTime.present) {
+      map['last_msg_time'] = Variable<int>(lastMsgTime.value);
+    }
+    if (messageCount.present) {
+      map['message_count'] = Variable<int>(messageCount.value);
+    }
+    if (summarized.present) {
+      map['summarized'] = Variable<bool>(summarized.value);
+    }
+    if (summarizedAt.present) {
+      map['summarized_at'] = Variable<int>(summarizedAt.value);
+    }
+    if (errorMessage.present) {
+      map['error_message'] = Variable<String>(errorMessage.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<int>(createdAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SummarizationRecordsCompanion(')
+          ..write('id: $id, ')
+          ..write('conversationId: $conversationId, ')
+          ..write('dateKey: $dateKey, ')
+          ..write('roundKey: $roundKey, ')
+          ..write('roundIndex: $roundIndex, ')
+          ..write('firstMsgTime: $firstMsgTime, ')
+          ..write('lastMsgTime: $lastMsgTime, ')
+          ..write('messageCount: $messageCount, ')
+          ..write('summarized: $summarized, ')
+          ..write('summarizedAt: $summarizedAt, ')
+          ..write('errorMessage: $errorMessage, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -5060,6 +6709,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $MemoriesTable memories = $MemoriesTable(this);
   late final $MemoryTombstonesTable memoryTombstones =
       $MemoryTombstonesTable(this);
+  late final $DiariesTable diaries = $DiariesTable(this);
+  late final $SummarizationRecordsTable summarizationRecords =
+      $SummarizationRecordsTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -5073,7 +6725,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         syncCursors,
         pendingOperations,
         memories,
-        memoryTombstones
+        memoryTombstones,
+        diaries,
+        summarizationRecords
       ];
 }
 
@@ -5084,6 +6738,9 @@ typedef $$ConversationsTableCreateCompanionBuilder = ConversationsCompanion
   required String displayName,
   Value<String?> avatarUrl,
   Value<String?> characterImage,
+  Value<String?> chatBackgroundImage,
+  Value<double?> chatBackgroundMaskOpacity,
+  Value<double?> chatBackgroundBlurSigma,
   Value<String?> blurredBackground,
   Value<String?> selfAddress,
   Value<String?> addressUser,
@@ -5115,6 +6772,9 @@ typedef $$ConversationsTableUpdateCompanionBuilder = ConversationsCompanion
   Value<String> displayName,
   Value<String?> avatarUrl,
   Value<String?> characterImage,
+  Value<String?> chatBackgroundImage,
+  Value<double?> chatBackgroundMaskOpacity,
+  Value<double?> chatBackgroundBlurSigma,
   Value<String?> blurredBackground,
   Value<String?> selfAddress,
   Value<String?> addressUser,
@@ -5162,6 +6822,9 @@ class $$ConversationsTableTableManager extends RootTableManager<
             Value<String> displayName = const Value.absent(),
             Value<String?> avatarUrl = const Value.absent(),
             Value<String?> characterImage = const Value.absent(),
+            Value<String?> chatBackgroundImage = const Value.absent(),
+            Value<double?> chatBackgroundMaskOpacity = const Value.absent(),
+            Value<double?> chatBackgroundBlurSigma = const Value.absent(),
             Value<String?> blurredBackground = const Value.absent(),
             Value<String?> selfAddress = const Value.absent(),
             Value<String?> addressUser = const Value.absent(),
@@ -5192,6 +6855,9 @@ class $$ConversationsTableTableManager extends RootTableManager<
             displayName: displayName,
             avatarUrl: avatarUrl,
             characterImage: characterImage,
+            chatBackgroundImage: chatBackgroundImage,
+            chatBackgroundMaskOpacity: chatBackgroundMaskOpacity,
+            chatBackgroundBlurSigma: chatBackgroundBlurSigma,
             blurredBackground: blurredBackground,
             selfAddress: selfAddress,
             addressUser: addressUser,
@@ -5222,6 +6888,9 @@ class $$ConversationsTableTableManager extends RootTableManager<
             required String displayName,
             Value<String?> avatarUrl = const Value.absent(),
             Value<String?> characterImage = const Value.absent(),
+            Value<String?> chatBackgroundImage = const Value.absent(),
+            Value<double?> chatBackgroundMaskOpacity = const Value.absent(),
+            Value<double?> chatBackgroundBlurSigma = const Value.absent(),
             Value<String?> blurredBackground = const Value.absent(),
             Value<String?> selfAddress = const Value.absent(),
             Value<String?> addressUser = const Value.absent(),
@@ -5252,6 +6921,9 @@ class $$ConversationsTableTableManager extends RootTableManager<
             displayName: displayName,
             avatarUrl: avatarUrl,
             characterImage: characterImage,
+            chatBackgroundImage: chatBackgroundImage,
+            chatBackgroundMaskOpacity: chatBackgroundMaskOpacity,
+            chatBackgroundBlurSigma: chatBackgroundBlurSigma,
             blurredBackground: blurredBackground,
             selfAddress: selfAddress,
             addressUser: addressUser,
@@ -5304,6 +6976,22 @@ class $$ConversationsTableFilterComposer
 
   ColumnFilters<String> get characterImage => $state.composableBuilder(
       column: $state.table.characterImage,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get chatBackgroundImage => $state.composableBuilder(
+      column: $state.table.chatBackgroundImage,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<double> get chatBackgroundMaskOpacity =>
+      $state.composableBuilder(
+          column: $state.table.chatBackgroundMaskOpacity,
+          builder: (column, joinBuilders) =>
+              ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<double> get chatBackgroundBlurSigma => $state.composableBuilder(
+      column: $state.table.chatBackgroundBlurSigma,
       builder: (column, joinBuilders) =>
           ColumnFilters(column, joinBuilders: joinBuilders));
 
@@ -5429,6 +7117,50 @@ class $$ConversationsTableFilterComposer
                 $state.db, $state.db.messages, joinBuilder, parentComposers)));
     return f(composer);
   }
+
+  ComposableFilter memoriesRefs(
+      ComposableFilter Function($$MemoriesTableFilterComposer f) f) {
+    final $$MemoriesTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.id,
+        referencedTable: $state.db.memories,
+        getReferencedColumn: (t) => t.conversationId,
+        builder: (joinBuilder, parentComposers) =>
+            $$MemoriesTableFilterComposer(ComposerState(
+                $state.db, $state.db.memories, joinBuilder, parentComposers)));
+    return f(composer);
+  }
+
+  ComposableFilter diariesRefs(
+      ComposableFilter Function($$DiariesTableFilterComposer f) f) {
+    final $$DiariesTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.id,
+        referencedTable: $state.db.diaries,
+        getReferencedColumn: (t) => t.conversationId,
+        builder: (joinBuilder, parentComposers) => $$DiariesTableFilterComposer(
+            ComposerState(
+                $state.db, $state.db.diaries, joinBuilder, parentComposers)));
+    return f(composer);
+  }
+
+  ComposableFilter summarizationRecordsRefs(
+      ComposableFilter Function($$SummarizationRecordsTableFilterComposer f)
+          f) {
+    final $$SummarizationRecordsTableFilterComposer composer =
+        $state.composerBuilder(
+            composer: this,
+            getCurrentColumn: (t) => t.id,
+            referencedTable: $state.db.summarizationRecords,
+            getReferencedColumn: (t) => t.conversationId,
+            builder: (joinBuilder, parentComposers) =>
+                $$SummarizationRecordsTableFilterComposer(ComposerState(
+                    $state.db,
+                    $state.db.summarizationRecords,
+                    joinBuilder,
+                    parentComposers)));
+    return f(composer);
+  }
 }
 
 class $$ConversationsTableOrderingComposer
@@ -5458,6 +7190,23 @@ class $$ConversationsTableOrderingComposer
       column: $state.table.characterImage,
       builder: (column, joinBuilders) =>
           ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get chatBackgroundImage => $state.composableBuilder(
+      column: $state.table.chatBackgroundImage,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<double> get chatBackgroundMaskOpacity => $state
+      .composableBuilder(
+          column: $state.table.chatBackgroundMaskOpacity,
+          builder: (column, joinBuilders) =>
+              ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<double> get chatBackgroundBlurSigma =>
+      $state.composableBuilder(
+          column: $state.table.chatBackgroundBlurSigma,
+          builder: (column, joinBuilders) =>
+              ColumnOrderings(column, joinBuilders: joinBuilders));
 
   ColumnOrderings<String> get blurredBackground => $state.composableBuilder(
       column: $state.table.blurredBackground,
@@ -5576,6 +7325,8 @@ typedef $$MessagesTableCreateCompanionBuilder = MessagesCompanion Function({
   required String role,
   required String content,
   Value<String> status,
+  Value<bool> summarized,
+  Value<int?> summarizedAt,
   Value<String?> replacedBy,
   Value<String?> conflictOf,
   Value<int?> deletedAt,
@@ -5589,6 +7340,8 @@ typedef $$MessagesTableUpdateCompanionBuilder = MessagesCompanion Function({
   Value<String> role,
   Value<String> content,
   Value<String> status,
+  Value<bool> summarized,
+  Value<int?> summarizedAt,
   Value<String?> replacedBy,
   Value<String?> conflictOf,
   Value<int?> deletedAt,
@@ -5619,6 +7372,8 @@ class $$MessagesTableTableManager extends RootTableManager<
             Value<String> role = const Value.absent(),
             Value<String> content = const Value.absent(),
             Value<String> status = const Value.absent(),
+            Value<bool> summarized = const Value.absent(),
+            Value<int?> summarizedAt = const Value.absent(),
             Value<String?> replacedBy = const Value.absent(),
             Value<String?> conflictOf = const Value.absent(),
             Value<int?> deletedAt = const Value.absent(),
@@ -5632,6 +7387,8 @@ class $$MessagesTableTableManager extends RootTableManager<
             role: role,
             content: content,
             status: status,
+            summarized: summarized,
+            summarizedAt: summarizedAt,
             replacedBy: replacedBy,
             conflictOf: conflictOf,
             deletedAt: deletedAt,
@@ -5645,6 +7402,8 @@ class $$MessagesTableTableManager extends RootTableManager<
             required String role,
             required String content,
             Value<String> status = const Value.absent(),
+            Value<bool> summarized = const Value.absent(),
+            Value<int?> summarizedAt = const Value.absent(),
             Value<String?> replacedBy = const Value.absent(),
             Value<String?> conflictOf = const Value.absent(),
             Value<int?> deletedAt = const Value.absent(),
@@ -5658,6 +7417,8 @@ class $$MessagesTableTableManager extends RootTableManager<
             role: role,
             content: content,
             status: status,
+            summarized: summarized,
+            summarizedAt: summarizedAt,
             replacedBy: replacedBy,
             conflictOf: conflictOf,
             deletedAt: deletedAt,
@@ -5688,6 +7449,16 @@ class $$MessagesTableFilterComposer
 
   ColumnFilters<String> get status => $state.composableBuilder(
       column: $state.table.status,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get summarized => $state.composableBuilder(
+      column: $state.table.summarized,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get summarizedAt => $state.composableBuilder(
+      column: $state.table.summarizedAt,
       builder: (column, joinBuilders) =>
           ColumnFilters(column, joinBuilders: joinBuilders));
 
@@ -5762,6 +7533,16 @@ class $$MessagesTableOrderingComposer
 
   ColumnOrderings<String> get status => $state.composableBuilder(
       column: $state.table.status,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get summarized => $state.composableBuilder(
+      column: $state.table.summarized,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get summarizedAt => $state.composableBuilder(
+      column: $state.table.summarizedAt,
       builder: (column, joinBuilders) =>
           ColumnOrderings(column, joinBuilders: joinBuilders));
 
@@ -6629,6 +8410,11 @@ typedef $$MemoriesTableCreateCompanionBuilder = MemoriesCompanion Function({
   required String id,
   required String content,
   Value<String?> embedding,
+  Value<String> layer,
+  Value<String> category,
+  Value<String?> conversationId,
+  Value<String?> contentHash,
+  Value<bool> needsEnrichment,
   Value<double> persistenceP,
   Value<double> emotionE,
   Value<double> infoI,
@@ -6650,6 +8436,11 @@ typedef $$MemoriesTableUpdateCompanionBuilder = MemoriesCompanion Function({
   Value<String> id,
   Value<String> content,
   Value<String?> embedding,
+  Value<String> layer,
+  Value<String> category,
+  Value<String?> conversationId,
+  Value<String?> contentHash,
+  Value<bool> needsEnrichment,
   Value<double> persistenceP,
   Value<double> emotionE,
   Value<double> infoI,
@@ -6688,6 +8479,11 @@ class $$MemoriesTableTableManager extends RootTableManager<
             Value<String> id = const Value.absent(),
             Value<String> content = const Value.absent(),
             Value<String?> embedding = const Value.absent(),
+            Value<String> layer = const Value.absent(),
+            Value<String> category = const Value.absent(),
+            Value<String?> conversationId = const Value.absent(),
+            Value<String?> contentHash = const Value.absent(),
+            Value<bool> needsEnrichment = const Value.absent(),
             Value<double> persistenceP = const Value.absent(),
             Value<double> emotionE = const Value.absent(),
             Value<double> infoI = const Value.absent(),
@@ -6709,6 +8505,11 @@ class $$MemoriesTableTableManager extends RootTableManager<
             id: id,
             content: content,
             embedding: embedding,
+            layer: layer,
+            category: category,
+            conversationId: conversationId,
+            contentHash: contentHash,
+            needsEnrichment: needsEnrichment,
             persistenceP: persistenceP,
             emotionE: emotionE,
             infoI: infoI,
@@ -6730,6 +8531,11 @@ class $$MemoriesTableTableManager extends RootTableManager<
             required String id,
             required String content,
             Value<String?> embedding = const Value.absent(),
+            Value<String> layer = const Value.absent(),
+            Value<String> category = const Value.absent(),
+            Value<String?> conversationId = const Value.absent(),
+            Value<String?> contentHash = const Value.absent(),
+            Value<bool> needsEnrichment = const Value.absent(),
             Value<double> persistenceP = const Value.absent(),
             Value<double> emotionE = const Value.absent(),
             Value<double> infoI = const Value.absent(),
@@ -6751,6 +8557,11 @@ class $$MemoriesTableTableManager extends RootTableManager<
             id: id,
             content: content,
             embedding: embedding,
+            layer: layer,
+            category: category,
+            conversationId: conversationId,
+            contentHash: contentHash,
+            needsEnrichment: needsEnrichment,
             persistenceP: persistenceP,
             emotionE: emotionE,
             infoI: infoI,
@@ -6786,6 +8597,26 @@ class $$MemoriesTableFilterComposer
 
   ColumnFilters<String> get embedding => $state.composableBuilder(
       column: $state.table.embedding,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get layer => $state.composableBuilder(
+      column: $state.table.layer,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get category => $state.composableBuilder(
+      column: $state.table.category,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get contentHash => $state.composableBuilder(
+      column: $state.table.contentHash,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get needsEnrichment => $state.composableBuilder(
+      column: $state.table.needsEnrichment,
       builder: (column, joinBuilders) =>
           ColumnFilters(column, joinBuilders: joinBuilders));
 
@@ -6863,6 +8694,18 @@ class $$MemoriesTableFilterComposer
       column: $state.table.updatedAt,
       builder: (column, joinBuilders) =>
           ColumnFilters(column, joinBuilders: joinBuilders));
+
+  $$ConversationsTableFilterComposer get conversationId {
+    final $$ConversationsTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.conversationId,
+        referencedTable: $state.db.conversations,
+        getReferencedColumn: (t) => t.id,
+        builder: (joinBuilder, parentComposers) =>
+            $$ConversationsTableFilterComposer(ComposerState($state.db,
+                $state.db.conversations, joinBuilder, parentComposers)));
+    return composer;
+  }
 }
 
 class $$MemoriesTableOrderingComposer
@@ -6880,6 +8723,26 @@ class $$MemoriesTableOrderingComposer
 
   ColumnOrderings<String> get embedding => $state.composableBuilder(
       column: $state.table.embedding,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get layer => $state.composableBuilder(
+      column: $state.table.layer,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get category => $state.composableBuilder(
+      column: $state.table.category,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get contentHash => $state.composableBuilder(
+      column: $state.table.contentHash,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get needsEnrichment => $state.composableBuilder(
+      column: $state.table.needsEnrichment,
       builder: (column, joinBuilders) =>
           ColumnOrderings(column, joinBuilders: joinBuilders));
 
@@ -6957,6 +8820,19 @@ class $$MemoriesTableOrderingComposer
       column: $state.table.updatedAt,
       builder: (column, joinBuilders) =>
           ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  $$ConversationsTableOrderingComposer get conversationId {
+    final $$ConversationsTableOrderingComposer composer =
+        $state.composerBuilder(
+            composer: this,
+            getCurrentColumn: (t) => t.conversationId,
+            referencedTable: $state.db.conversations,
+            getReferencedColumn: (t) => t.id,
+            builder: (joinBuilder, parentComposers) =>
+                $$ConversationsTableOrderingComposer(ComposerState($state.db,
+                    $state.db.conversations, joinBuilder, parentComposers)));
+    return composer;
+  }
 }
 
 typedef $$MemoryTombstonesTableCreateCompanionBuilder
@@ -7120,6 +8996,499 @@ class $$MemoryTombstonesTableOrderingComposer
           ColumnOrderings(column, joinBuilders: joinBuilders));
 }
 
+typedef $$DiariesTableCreateCompanionBuilder = DiariesCompanion Function({
+  required String id,
+  required String conversationId,
+  required int date,
+  required String content,
+  Value<String?> embedding,
+  Value<String?> mood,
+  Value<String?> keywords,
+  Value<bool> isSynced,
+  Value<String> syncState,
+  required int createdAt,
+  required int updatedAt,
+  Value<int> rowid,
+});
+typedef $$DiariesTableUpdateCompanionBuilder = DiariesCompanion Function({
+  Value<String> id,
+  Value<String> conversationId,
+  Value<int> date,
+  Value<String> content,
+  Value<String?> embedding,
+  Value<String?> mood,
+  Value<String?> keywords,
+  Value<bool> isSynced,
+  Value<String> syncState,
+  Value<int> createdAt,
+  Value<int> updatedAt,
+  Value<int> rowid,
+});
+
+class $$DiariesTableTableManager extends RootTableManager<
+    _$AppDatabase,
+    $DiariesTable,
+    Diary,
+    $$DiariesTableFilterComposer,
+    $$DiariesTableOrderingComposer,
+    $$DiariesTableCreateCompanionBuilder,
+    $$DiariesTableUpdateCompanionBuilder> {
+  $$DiariesTableTableManager(_$AppDatabase db, $DiariesTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          filteringComposer:
+              $$DiariesTableFilterComposer(ComposerState(db, table)),
+          orderingComposer:
+              $$DiariesTableOrderingComposer(ComposerState(db, table)),
+          updateCompanionCallback: ({
+            Value<String> id = const Value.absent(),
+            Value<String> conversationId = const Value.absent(),
+            Value<int> date = const Value.absent(),
+            Value<String> content = const Value.absent(),
+            Value<String?> embedding = const Value.absent(),
+            Value<String?> mood = const Value.absent(),
+            Value<String?> keywords = const Value.absent(),
+            Value<bool> isSynced = const Value.absent(),
+            Value<String> syncState = const Value.absent(),
+            Value<int> createdAt = const Value.absent(),
+            Value<int> updatedAt = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              DiariesCompanion(
+            id: id,
+            conversationId: conversationId,
+            date: date,
+            content: content,
+            embedding: embedding,
+            mood: mood,
+            keywords: keywords,
+            isSynced: isSynced,
+            syncState: syncState,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String id,
+            required String conversationId,
+            required int date,
+            required String content,
+            Value<String?> embedding = const Value.absent(),
+            Value<String?> mood = const Value.absent(),
+            Value<String?> keywords = const Value.absent(),
+            Value<bool> isSynced = const Value.absent(),
+            Value<String> syncState = const Value.absent(),
+            required int createdAt,
+            required int updatedAt,
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              DiariesCompanion.insert(
+            id: id,
+            conversationId: conversationId,
+            date: date,
+            content: content,
+            embedding: embedding,
+            mood: mood,
+            keywords: keywords,
+            isSynced: isSynced,
+            syncState: syncState,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            rowid: rowid,
+          ),
+        ));
+}
+
+class $$DiariesTableFilterComposer
+    extends FilterComposer<_$AppDatabase, $DiariesTable> {
+  $$DiariesTableFilterComposer(super.$state);
+  ColumnFilters<String> get id => $state.composableBuilder(
+      column: $state.table.id,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get date => $state.composableBuilder(
+      column: $state.table.date,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get content => $state.composableBuilder(
+      column: $state.table.content,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get embedding => $state.composableBuilder(
+      column: $state.table.embedding,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get mood => $state.composableBuilder(
+      column: $state.table.mood,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get keywords => $state.composableBuilder(
+      column: $state.table.keywords,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get isSynced => $state.composableBuilder(
+      column: $state.table.isSynced,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get syncState => $state.composableBuilder(
+      column: $state.table.syncState,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get createdAt => $state.composableBuilder(
+      column: $state.table.createdAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get updatedAt => $state.composableBuilder(
+      column: $state.table.updatedAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  $$ConversationsTableFilterComposer get conversationId {
+    final $$ConversationsTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.conversationId,
+        referencedTable: $state.db.conversations,
+        getReferencedColumn: (t) => t.id,
+        builder: (joinBuilder, parentComposers) =>
+            $$ConversationsTableFilterComposer(ComposerState($state.db,
+                $state.db.conversations, joinBuilder, parentComposers)));
+    return composer;
+  }
+}
+
+class $$DiariesTableOrderingComposer
+    extends OrderingComposer<_$AppDatabase, $DiariesTable> {
+  $$DiariesTableOrderingComposer(super.$state);
+  ColumnOrderings<String> get id => $state.composableBuilder(
+      column: $state.table.id,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get date => $state.composableBuilder(
+      column: $state.table.date,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get content => $state.composableBuilder(
+      column: $state.table.content,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get embedding => $state.composableBuilder(
+      column: $state.table.embedding,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get mood => $state.composableBuilder(
+      column: $state.table.mood,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get keywords => $state.composableBuilder(
+      column: $state.table.keywords,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get isSynced => $state.composableBuilder(
+      column: $state.table.isSynced,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get syncState => $state.composableBuilder(
+      column: $state.table.syncState,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get createdAt => $state.composableBuilder(
+      column: $state.table.createdAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get updatedAt => $state.composableBuilder(
+      column: $state.table.updatedAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  $$ConversationsTableOrderingComposer get conversationId {
+    final $$ConversationsTableOrderingComposer composer =
+        $state.composerBuilder(
+            composer: this,
+            getCurrentColumn: (t) => t.conversationId,
+            referencedTable: $state.db.conversations,
+            getReferencedColumn: (t) => t.id,
+            builder: (joinBuilder, parentComposers) =>
+                $$ConversationsTableOrderingComposer(ComposerState($state.db,
+                    $state.db.conversations, joinBuilder, parentComposers)));
+    return composer;
+  }
+}
+
+typedef $$SummarizationRecordsTableCreateCompanionBuilder
+    = SummarizationRecordsCompanion Function({
+  required String id,
+  required String conversationId,
+  required String dateKey,
+  required String roundKey,
+  Value<int> roundIndex,
+  required int firstMsgTime,
+  required int lastMsgTime,
+  required int messageCount,
+  Value<bool> summarized,
+  Value<int?> summarizedAt,
+  Value<String?> errorMessage,
+  required int createdAt,
+  Value<int> rowid,
+});
+typedef $$SummarizationRecordsTableUpdateCompanionBuilder
+    = SummarizationRecordsCompanion Function({
+  Value<String> id,
+  Value<String> conversationId,
+  Value<String> dateKey,
+  Value<String> roundKey,
+  Value<int> roundIndex,
+  Value<int> firstMsgTime,
+  Value<int> lastMsgTime,
+  Value<int> messageCount,
+  Value<bool> summarized,
+  Value<int?> summarizedAt,
+  Value<String?> errorMessage,
+  Value<int> createdAt,
+  Value<int> rowid,
+});
+
+class $$SummarizationRecordsTableTableManager extends RootTableManager<
+    _$AppDatabase,
+    $SummarizationRecordsTable,
+    SummarizationRecord,
+    $$SummarizationRecordsTableFilterComposer,
+    $$SummarizationRecordsTableOrderingComposer,
+    $$SummarizationRecordsTableCreateCompanionBuilder,
+    $$SummarizationRecordsTableUpdateCompanionBuilder> {
+  $$SummarizationRecordsTableTableManager(
+      _$AppDatabase db, $SummarizationRecordsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          filteringComposer: $$SummarizationRecordsTableFilterComposer(
+              ComposerState(db, table)),
+          orderingComposer: $$SummarizationRecordsTableOrderingComposer(
+              ComposerState(db, table)),
+          updateCompanionCallback: ({
+            Value<String> id = const Value.absent(),
+            Value<String> conversationId = const Value.absent(),
+            Value<String> dateKey = const Value.absent(),
+            Value<String> roundKey = const Value.absent(),
+            Value<int> roundIndex = const Value.absent(),
+            Value<int> firstMsgTime = const Value.absent(),
+            Value<int> lastMsgTime = const Value.absent(),
+            Value<int> messageCount = const Value.absent(),
+            Value<bool> summarized = const Value.absent(),
+            Value<int?> summarizedAt = const Value.absent(),
+            Value<String?> errorMessage = const Value.absent(),
+            Value<int> createdAt = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              SummarizationRecordsCompanion(
+            id: id,
+            conversationId: conversationId,
+            dateKey: dateKey,
+            roundKey: roundKey,
+            roundIndex: roundIndex,
+            firstMsgTime: firstMsgTime,
+            lastMsgTime: lastMsgTime,
+            messageCount: messageCount,
+            summarized: summarized,
+            summarizedAt: summarizedAt,
+            errorMessage: errorMessage,
+            createdAt: createdAt,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String id,
+            required String conversationId,
+            required String dateKey,
+            required String roundKey,
+            Value<int> roundIndex = const Value.absent(),
+            required int firstMsgTime,
+            required int lastMsgTime,
+            required int messageCount,
+            Value<bool> summarized = const Value.absent(),
+            Value<int?> summarizedAt = const Value.absent(),
+            Value<String?> errorMessage = const Value.absent(),
+            required int createdAt,
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              SummarizationRecordsCompanion.insert(
+            id: id,
+            conversationId: conversationId,
+            dateKey: dateKey,
+            roundKey: roundKey,
+            roundIndex: roundIndex,
+            firstMsgTime: firstMsgTime,
+            lastMsgTime: lastMsgTime,
+            messageCount: messageCount,
+            summarized: summarized,
+            summarizedAt: summarizedAt,
+            errorMessage: errorMessage,
+            createdAt: createdAt,
+            rowid: rowid,
+          ),
+        ));
+}
+
+class $$SummarizationRecordsTableFilterComposer
+    extends FilterComposer<_$AppDatabase, $SummarizationRecordsTable> {
+  $$SummarizationRecordsTableFilterComposer(super.$state);
+  ColumnFilters<String> get id => $state.composableBuilder(
+      column: $state.table.id,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get dateKey => $state.composableBuilder(
+      column: $state.table.dateKey,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get roundKey => $state.composableBuilder(
+      column: $state.table.roundKey,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get roundIndex => $state.composableBuilder(
+      column: $state.table.roundIndex,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get firstMsgTime => $state.composableBuilder(
+      column: $state.table.firstMsgTime,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get lastMsgTime => $state.composableBuilder(
+      column: $state.table.lastMsgTime,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get messageCount => $state.composableBuilder(
+      column: $state.table.messageCount,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get summarized => $state.composableBuilder(
+      column: $state.table.summarized,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get summarizedAt => $state.composableBuilder(
+      column: $state.table.summarizedAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get errorMessage => $state.composableBuilder(
+      column: $state.table.errorMessage,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get createdAt => $state.composableBuilder(
+      column: $state.table.createdAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  $$ConversationsTableFilterComposer get conversationId {
+    final $$ConversationsTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.conversationId,
+        referencedTable: $state.db.conversations,
+        getReferencedColumn: (t) => t.id,
+        builder: (joinBuilder, parentComposers) =>
+            $$ConversationsTableFilterComposer(ComposerState($state.db,
+                $state.db.conversations, joinBuilder, parentComposers)));
+    return composer;
+  }
+}
+
+class $$SummarizationRecordsTableOrderingComposer
+    extends OrderingComposer<_$AppDatabase, $SummarizationRecordsTable> {
+  $$SummarizationRecordsTableOrderingComposer(super.$state);
+  ColumnOrderings<String> get id => $state.composableBuilder(
+      column: $state.table.id,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get dateKey => $state.composableBuilder(
+      column: $state.table.dateKey,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get roundKey => $state.composableBuilder(
+      column: $state.table.roundKey,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get roundIndex => $state.composableBuilder(
+      column: $state.table.roundIndex,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get firstMsgTime => $state.composableBuilder(
+      column: $state.table.firstMsgTime,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get lastMsgTime => $state.composableBuilder(
+      column: $state.table.lastMsgTime,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get messageCount => $state.composableBuilder(
+      column: $state.table.messageCount,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get summarized => $state.composableBuilder(
+      column: $state.table.summarized,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get summarizedAt => $state.composableBuilder(
+      column: $state.table.summarizedAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get errorMessage => $state.composableBuilder(
+      column: $state.table.errorMessage,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get createdAt => $state.composableBuilder(
+      column: $state.table.createdAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  $$ConversationsTableOrderingComposer get conversationId {
+    final $$ConversationsTableOrderingComposer composer =
+        $state.composerBuilder(
+            composer: this,
+            getCurrentColumn: (t) => t.conversationId,
+            referencedTable: $state.db.conversations,
+            getReferencedColumn: (t) => t.id,
+            builder: (joinBuilder, parentComposers) =>
+                $$ConversationsTableOrderingComposer(ComposerState($state.db,
+                    $state.db.conversations, joinBuilder, parentComposers)));
+    return composer;
+  }
+}
+
 class $AppDatabaseManager {
   final _$AppDatabase _db;
   $AppDatabaseManager(this._db);
@@ -7141,4 +9510,8 @@ class $AppDatabaseManager {
       $$MemoriesTableTableManager(_db, _db.memories);
   $$MemoryTombstonesTableTableManager get memoryTombstones =>
       $$MemoryTombstonesTableTableManager(_db, _db.memoryTombstones);
+  $$DiariesTableTableManager get diaries =>
+      $$DiariesTableTableManager(_db, _db.diaries);
+  $$SummarizationRecordsTableTableManager get summarizationRecords =>
+      $$SummarizationRecordsTableTableManager(_db, _db.summarizationRecords);
 }

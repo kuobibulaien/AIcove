@@ -315,7 +315,7 @@ class _PopupMenuContent extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 11,
                   color: fg,
-                  fontWeight: FontWeight.w500,
+                  fontWeight: MoeFontWeights.emphasis,
                 ),
               ),
             ],

@@ -11,7 +11,7 @@ import '../../../core/database/database.dart';
 import '../../../core/database/repositories/repositories.dart';
 import '../../chat/id_gen.dart';
 
-/// 会话导入服务
+/// 浼氳瘽瀵煎叆鏈嶅姟
 class ConversationImporter {
   final ConversationRepository _convRepo;
   final MessageRepository _msgRepo;
@@ -25,37 +25,39 @@ class ConversationImporter {
         _msgRepo = msgRepo,
         _blockRepo = blockRepo;
 
-  /// 预览导入文件（不写入数据库）
+  /// 棰勮瀵煎叆鏂囦欢锛堜笉鍐欏叆鏁版嵁搴擄級
   Future<ImportPreview> preview(File file) async {
     final importDir = await _extractToTempDir(file);
 
     try {
-      // 读取 manifest
+      // 璇诲彇 manifest
       final manifestFile = File(p.join(importDir.path, 'manifest.json'));
       if (!await manifestFile.exists()) {
-        throw ImportException('无效的导入文件：缺少 manifest.json');
+        throw ImportException('鏃犳晥鐨勫鍏ユ枃浠讹細缂哄皯 manifest.json');
       }
 
       final manifestJson = jsonDecode(await manifestFile.readAsString());
       final manifest = ExportManifest.fromJson(manifestJson);
 
-      // 检查版本兼容性
+      // 妫€鏌ョ増鏈吋瀹规€?
       final isCompatible = manifest.formatVersion <= kExportFormatVersion;
       String? incompatibleReason;
       if (!isCompatible) {
-        incompatibleReason = '文件版本过新（v${manifest.formatVersion}），请更新 App';
+        incompatibleReason = '鏂囦欢鐗堟湰杩囨柊锛坴${manifest.formatVersion}锛夛紝璇锋洿鏂?App';
       }
 
-      // 读取 conversations
-      final conversationsFile = File(p.join(importDir.path, 'conversations.json'));
+      // 璇诲彇 conversations
+      final conversationsFile =
+          File(p.join(importDir.path, 'conversations.json'));
       if (!await conversationsFile.exists()) {
-        throw ImportException('无效的导入文件：缺少 conversations.json');
+        throw ImportException('鏃犳晥鐨勫鍏ユ枃浠讹細缂哄皯 conversations.json');
       }
 
-      final conversationsJson = jsonDecode(await conversationsFile.readAsString());
+      final conversationsJson =
+          jsonDecode(await conversationsFile.readAsString());
       final convList = conversationsJson['conversations'] as List<dynamic>;
 
-      // 读取 messages 统计
+      // 璇诲彇 messages 缁熻
       final messagesFile = File(p.join(importDir.path, 'messages.json'));
       Map<String, int> messageCountByConv = {};
       Map<String, int> imageCountByConv = {};
@@ -70,7 +72,7 @@ class ConversationImporter {
           final convId = msg['conversation_id'] as String;
           messageCountByConv[convId] = (messageCountByConv[convId] ?? 0) + 1;
 
-          // 统计最后消息时间
+          // 缁熻鏈€鍚庢秷鎭椂闂?
           final createdAt = msg['created_at'] as int?;
           if (createdAt != null) {
             final current = lastMessageTimeByConv[convId];
@@ -79,7 +81,7 @@ class ConversationImporter {
             }
           }
 
-          // 统计媒体文件
+          // 缁熻濯掍綋鏂囦欢
           final blocks = msg['blocks'] as List<dynamic>?;
           if (blocks != null) {
             for (final block in blocks) {
@@ -94,13 +96,15 @@ class ConversationImporter {
         }
       }
 
-      // 构建预览
+      // 鏋勫缓棰勮
       final conversations = convList.map((conv) {
         final id = conv['id'] as String;
         final lastTime = lastMessageTimeByConv[id];
         return ConversationPreview(
           id: id,
-          displayName: conv['display_name'] as String? ?? conv['title'] as String? ?? '未知',
+          displayName: conv['display_name'] as String? ??
+              conv['title'] as String? ??
+              '鏈煡',
           avatarPath: conv['avatar_file'] as String?,
           messageCount: messageCountByConv[id] ?? 0,
           imageCount: imageCountByConv[id] ?? 0,
@@ -122,12 +126,12 @@ class ConversationImporter {
         incompatibleReason: incompatibleReason,
       );
     } finally {
-      // 清理临时目录
+      // 娓呯悊涓存椂鐩綍
       await importDir.delete(recursive: true);
     }
   }
 
-  /// 执行导入
+  /// 鎵ц瀵煎叆
   Future<ImportResult> import({
     required File file,
     required List<String> selectedScopes,
@@ -138,32 +142,32 @@ class ConversationImporter {
     onProgress?.call(const ImportProgress(
       ImportPhase.extracting,
       0.0,
-      message: '解压文件...',
+      message: '瑙ｅ帇鏂囦欢...',
     ));
 
     final importDir = await _extractToTempDir(file);
 
     try {
-      // 验证格式
+      // 楠岃瘉鏍煎紡
       onProgress?.call(const ImportProgress(
         ImportPhase.validating,
         0.1,
-        message: '验证文件格式...',
+        message: '楠岃瘉鏂囦欢鏍煎紡...',
       ));
 
       final manifestFile = File(p.join(importDir.path, 'manifest.json'));
       if (!await manifestFile.exists()) {
-        throw ImportException('无效的导入文件');
+        throw ImportException('Invalid import file');
       }
 
       final manifestJson = jsonDecode(await manifestFile.readAsString());
       final manifest = ExportManifest.fromJson(manifestJson);
 
       if (manifest.formatVersion > kExportFormatVersion) {
-        throw ImportException('文件版本过新，请更新 App');
+        throw ImportException('鏂囦欢鐗堟湰杩囨柊锛岃鏇存柊 App');
       }
 
-      // 读取数据
+      // 璇诲彇鏁版嵁
       final conversationsJson = jsonDecode(
         await File(p.join(importDir.path, 'conversations.json')).readAsString(),
       );
@@ -174,21 +178,21 @@ class ConversationImporter {
       final convList = conversationsJson['conversations'] as List<dynamic>;
       final msgList = messagesJson['messages'] as List<dynamic>;
 
-      // 过滤选中的会话
+      // 杩囨护閫変腑鐨勪細璇?
       final selectedConvs = convList
           .where((c) => selectedConversationIds.contains(c['id']))
           .toList();
 
-      // 获取应用数据目录
+      // 鑾峰彇搴旂敤鏁版嵁鐩綍
       final appDir = await getApplicationDocumentsDirectory();
       final filesDir = Directory(p.join(appDir.path, 'imported_files'));
       await filesDir.create(recursive: true);
 
-      // 检查冲突
+      // 妫€鏌ュ啿绐?
       onProgress?.call(const ImportProgress(
         ImportPhase.importing,
         0.2,
-        message: '检查冲突...',
+        message: '妫€鏌ュ啿绐?..',
       ));
 
       final conflicts = <ImportConflict>[];
@@ -203,16 +207,15 @@ class ConversationImporter {
           conflicts.add(ImportConflict(
             type: 'conversation',
             id: convId,
-            name: conv['display_name'] as String? ?? '未知',
+            name: conv['display_name'] as String? ?? '鏈煡',
             resolution: resolution,
           ));
         }
       }
 
-      // 如果有未解决的冲突，返回等待用户处理
-      final unresolvedConflicts = conflicts
-          .where((c) => c.resolution == null)
-          .toList();
+      // 濡傛灉鏈夋湭瑙ｅ喅鐨勫啿绐侊紝杩斿洖绛夊緟鐢ㄦ埛澶勭悊
+      final unresolvedConflicts =
+          conflicts.where((c) => c.resolution == null).toList();
       if (unresolvedConflicts.isNotEmpty) {
         return ImportResult(
           conversationIds: [],
@@ -222,7 +225,7 @@ class ConversationImporter {
         );
       }
 
-      // 导入数据
+      // 瀵煎叆鏁版嵁
       final importedConvIds = <String>[];
       int messagesImported = 0;
       int filesImported = 0;
@@ -237,10 +240,10 @@ class ConversationImporter {
           ImportPhase.importing,
           progress,
           currentItem: conv['display_name'] as String?,
-          message: '导入 ${conv['display_name']}...',
+          message: '瀵煎叆 ${conv['display_name']}...',
         ));
 
-        // 确定新 ID
+        // 纭畾鏂?ID
         String newConvId;
         final resolution = conflictResolutions[originalId];
 
@@ -256,7 +259,7 @@ class ConversationImporter {
             case ImportConflictResolution.replace:
               newConvId = originalId;
               if (resolution == ImportConflictResolution.replace) {
-                // 删除旧数据
+                // 鍒犻櫎鏃ф暟鎹?
                 await _msgRepo.deleteByConversation(originalId);
               }
               break;
@@ -267,10 +270,10 @@ class ConversationImporter {
           newConvId = originalId;
         }
 
-        // 复制文件
+        // 澶嶅埗鏂囦欢
         final fileMapping = <String, String>{};
-        
-        // 复制头像
+
+        // 澶嶅埗澶村儚
         final avatarFile = conv['avatar_file'] as String?;
         if (avatarFile != null) {
           final newPath = await _copyImportedFile(
@@ -285,7 +288,7 @@ class ConversationImporter {
           }
         }
 
-        // 复制立绘
+        // 澶嶅埗绔嬬粯
         final characterFile = conv['character_image_file'] as String?;
         if (characterFile != null) {
           final newPath = await _copyImportedFile(
@@ -300,19 +303,35 @@ class ConversationImporter {
           }
         }
 
-        // 导入会话
+        // copy chat background
+        final chatBackgroundFile =
+            conv['chat_background_image_file'] as String?;
+        if (chatBackgroundFile != null &&
+            chatBackgroundFile.startsWith('files/')) {
+          final newPath = await _copyImportedFile(
+            importDir,
+            chatBackgroundFile,
+            filesDir,
+            'chat_bg_$newConvId',
+          );
+          if (newPath != null) {
+            fileMapping[chatBackgroundFile] = newPath;
+            filesImported++;
+          }
+        }
+
+        // 瀵煎叆浼氳瘽
         if (!existingConvIds.contains(originalId) ||
             resolution == ImportConflictResolution.createNew) {
           await _importConversation(conv, newConvId, fileMapping);
         }
         importedConvIds.add(newConvId);
 
-        // 导入消息
-        final convMessages = msgList
-            .where((m) => m['conversation_id'] == originalId)
-            .toList();
+        // 瀵煎叆娑堟伅
+        final convMessages =
+            msgList.where((m) => m['conversation_id'] == originalId).toList();
 
-        // 获取已有消息 ID（用于合并模式去重）
+        // 鑾峰彇宸叉湁娑堟伅 ID锛堢敤浜庡悎骞舵ā寮忓幓閲嶏級
         Set<String> existingMsgIds = {};
         if (resolution == ImportConflictResolution.merge) {
           final existingMsgs = await _msgRepo.getByConversation(newConvId);
@@ -322,14 +341,14 @@ class ConversationImporter {
         for (final msg in convMessages) {
           final msgId = msg['id'] as String;
 
-          // 合并模式跳过已存在的消息
+          // 鍚堝苟妯″紡璺宠繃宸插瓨鍦ㄧ殑娑堟伅
           if (resolution == ImportConflictResolution.merge &&
               existingMsgIds.contains(msgId)) {
             skipped++;
             continue;
           }
 
-          // 复制消息中的文件
+          // 澶嶅埗娑堟伅涓殑鏂囦欢
           final blocks = msg['blocks'] as List<dynamic>?;
           if (blocks != null) {
             for (final block in blocks) {
@@ -362,7 +381,7 @@ class ConversationImporter {
       onProgress?.call(const ImportProgress(
         ImportPhase.done,
         1.0,
-        message: '导入完成！',
+        message: 'Import completed',
       ));
 
       return ImportResult(
@@ -373,12 +392,12 @@ class ConversationImporter {
         conflicts: [],
       );
     } finally {
-      // 清理临时目录
+      // 娓呯悊涓存椂鐩綍
       await importDir.delete(recursive: true);
     }
   }
 
-  /// 解压到临时目录
+  /// 瑙ｅ帇鍒颁复鏃剁洰褰?
   Future<Directory> _extractToTempDir(File file) async {
     final bytes = await file.readAsBytes();
     final archive = ZipDecoder().decodeBytes(bytes);
@@ -403,7 +422,7 @@ class ConversationImporter {
     return importDir;
   }
 
-  /// 复制导入的文件
+  /// 澶嶅埗瀵煎叆鐨勬枃浠?
   Future<String?> _copyImportedFile(
     Directory importDir,
     String relativePath,
@@ -423,7 +442,7 @@ class ConversationImporter {
     return targetPath;
   }
 
-  /// 导入会话
+  /// 瀵煎叆浼氳瘽
   Future<void> _importConversation(
     Map<String, dynamic> conv,
     String newId,
@@ -435,8 +454,16 @@ class ConversationImporter {
       id: newId,
       title: conv['title'] as String? ?? conv['display_name'] as String? ?? '',
       displayName: conv['display_name'] as String? ?? '',
-      avatarUrl: Value(fileMapping[conv['avatar_file']] ?? conv['avatar_file'] as String?),
-      characterImage: Value(fileMapping[conv['character_image_file']] ?? conv['character_image_file'] as String?),
+      avatarUrl: Value(
+          fileMapping[conv['avatar_file']] ?? conv['avatar_file'] as String?),
+      characterImage: Value(fileMapping[conv['character_image_file']] ??
+          conv['character_image_file'] as String?),
+      chatBackgroundImage: Value(
+        fileMapping[conv['chat_background_image_file']] ??
+            conv['chat_background_image_file'] as String?,
+      ),
+      chatBackgroundMaskOpacity:
+          Value((conv['chat_background_mask_opacity'] as num?)?.toDouble()),
       voiceFile: Value(conv['voice_file'] as String?),
       personaPrompt: Value(conv['persona_prompt'] as String? ?? ''),
       selfAddress: Value(conv['self_address'] as String?),
@@ -451,7 +478,7 @@ class ConversationImporter {
     ));
   }
 
-  /// 导入消息
+  /// 瀵煎叆娑堟伅
   Future<void> _importMessage(
     Map<String, dynamic> msg,
     String convId,
@@ -469,14 +496,14 @@ class ConversationImporter {
       createdAt: msg['created_at'] as int? ?? nowMs,
     ));
 
-    // 导入 blocks
+    // 瀵煎叆 blocks
     final blocks = msg['blocks'] as List<dynamic>?;
     if (blocks != null) {
       for (var i = 0; i < blocks.length; i++) {
         final block = blocks[i];
         final data = block['data'] as Map<String, dynamic>?;
 
-        // 更新文件路径
+        // 鏇存柊鏂囦欢璺緞
         Map<String, dynamic>? updatedData;
         if (data != null) {
           updatedData = Map<String, dynamic>.from(data);
@@ -502,7 +529,7 @@ class ConversationImporter {
   }
 }
 
-/// 导入异常
+/// 瀵煎叆寮傚父
 class ImportException implements Exception {
   final String message;
   ImportException(this.message);

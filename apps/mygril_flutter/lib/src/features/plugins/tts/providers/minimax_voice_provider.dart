@@ -205,6 +205,15 @@ class MinimaxVoiceProvider implements TtsVoiceProvider {
 
   /// 生成符合 MiniMax 要求的 voice_id
   /// 规则：8-256字符，字母开头
+  @override
+  Future<VoicePreset?> queryVoiceStatus({
+    required String apiKey,
+    required String voiceId,
+    VoicePreset? voice,
+  }) async {
+    return null;
+  }
+
   String _generateVoiceId(String name) {
     // 移除非字母数字字符
     var sanitized = name.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');

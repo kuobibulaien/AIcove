@@ -42,7 +42,7 @@ class MomotalkSortDialog extends StatelessWidget {
                   '排列',
                   style: TextStyle(
                     fontSize: 18,
-                    fontWeight: FontWeight.bold,
+                    fontWeight: MoeFontWeights.emphasis,
                     color: colors.text,
                   ),
                 ),
@@ -121,7 +121,7 @@ class MomotalkSortDialog extends StatelessWidget {
                 child: const Text(
                   '確認',
                   style: TextStyle(
-                    fontWeight: FontWeight.bold,
+                    fontWeight: MoeFontWeights.emphasis,
                     fontSize: 16,
                   ),
                 ),
@@ -163,7 +163,7 @@ class MomotalkSortDialog extends StatelessWidget {
               label,
               style: TextStyle(
                 color: isSelected ? Colors.white : (isPlaceholder ? colors.muted : colors.text),
-                fontWeight: FontWeight.bold,
+                fontWeight: MoeFontWeights.emphasis,
                 fontSize: 14,
               ),
             ),

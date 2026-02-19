@@ -1,14 +1,13 @@
 /// HorizontalRoleCard - 横向角色卡片组件
-/// 
+///
 /// 从 role_card_page.dart 提取，显示左图右文风格的角色卡片。
 /// 使用 ExpandingPageRoute 实现无缝展开动画。
-/// 
+///
 /// 更新记录：
 /// - 2025-12-31: 从 role_card_page.dart 提取
 library;
 
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -16,9 +15,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/animations/expanding_page_route.dart';
+import '../../../../ui/shared/animations/hero_rect_tweens.dart';
 import '../../../../ui/shared/effects/frosted_glass_card.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
-import '../../../../core/utils/data_image.dart';
+import '../../../../core/utils/avatar_helper.dart';
 import '../../../../core/utils/blurred_background_manager.dart';
 import '../../../../core/utils/image_preheat_queue.dart';
 import '../../../../core/utils/role_transition_tags.dart';
@@ -89,51 +89,25 @@ class _HorizontalRoleCardState extends ConsumerState<HorizontalRoleCard> {
   }
 
   /// 获取图片字节（支持 base64 和 asset）
+  /// 使用立绘优先级：characterImage → avatarUrl
   Future<Uint8List?> _getImageBytes() async {
-    final charImage = widget.conversation.characterImage;
-    if (charImage != null && charImage.isNotEmpty) {
-      final charBytes = decodeDataImage(charImage);
-      if (charBytes != null) return charBytes;
-      // asset 路径
-      if (charImage.startsWith('assets/')) {
-        try {
-          final data = await rootBundle.load(charImage);
-          return data.buffer.asUint8List();
-        } catch (_) {}
-      }
-    }
-
-    final avatar = widget.conversation.avatarUrl;
-    if (avatar != null && avatar.isNotEmpty) {
-      final avatarBytes = decodeDataImage(avatar);
-      if (avatarBytes != null) return avatarBytes;
-      if (avatar.startsWith('assets/')) {
-        try {
-          final data = await rootBundle.load(avatar);
-          return data.buffer.asUint8List();
-        } catch (_) {}
-      }
-    }
-    return null;
+    final helper = AvatarHelper(
+      avatarUrl: widget.conversation.avatarUrl,
+      characterImage: widget.conversation.characterImage,
+      displayName: widget.conversation.displayName,
+    );
+    return helper.getCharacterBytes();
   }
 
   /// 获取图片 Provider（用于背景 Hero）
+  /// 使用立绘优先级：characterImage → avatarUrl
   ImageProvider? _getImageProvider() {
-    final charImage = widget.conversation.characterImage;
-    if (charImage != null && charImage.isNotEmpty) {
-      final charBytes = decodeDataImage(charImage);
-      if (charBytes != null) return MemoryImage(charBytes);
-      return AssetImage(charImage);
-    }
-
-    final avatar = widget.conversation.avatarUrl;
-    if (avatar != null && avatar.isNotEmpty) {
-      final avatarBytes = decodeDataImage(avatar);
-      if (avatarBytes != null) return MemoryImage(avatarBytes);
-      if (avatar.startsWith('http')) return NetworkImage(avatar);
-      return AssetImage(avatar);
-    }
-    return null;
+    final helper = AvatarHelper(
+      avatarUrl: widget.conversation.avatarUrl,
+      characterImage: widget.conversation.characterImage,
+      displayName: widget.conversation.displayName,
+    );
+    return helper.getCharacterProvider();
   }
 
   /// 导航到详情页（使用 ExpandingPageRoute 无缝展开）
@@ -207,7 +181,9 @@ class _HorizontalRoleCardState extends ConsumerState<HorizontalRoleCard> {
                     ),
                   )
                 else
-                  Container(color: isDark ? const Color(0xFF1E1E1E) : Colors.grey[200]),
+                  Container(
+                      color:
+                          isDark ? const Color(0xFF1E1E1E) : Colors.grey[200]),
 
                 // 2. 轻微玻璃提亮/压暗
                 Container(
@@ -238,18 +214,18 @@ class _HorizontalRoleCardState extends ConsumerState<HorizontalRoleCard> {
                       flex: 4,
                       child: Padding(
                         padding: const EdgeInsets.all(16),
-                          child: AspectRatio(
-                            aspectRatio: 3 / 4,
-                            child: Hero(
-                              tag: RoleTransitionTags.image(widget.heroId),
-                              child: MoeG2ClipRRect(
-                                // 嵌套圆角公式：R_inner = R_outer - Padding
-                                // 20 - 16 = 4
-                                radius: MoeSmoothRadii.md - 16,
-                                child: _buildImage(context),
-                              ),
+                        child: AspectRatio(
+                          aspectRatio: 3 / 4,
+                          child: Hero(
+                            tag: RoleTransitionTags.image(widget.heroId),
+                            child: MoeG2ClipRRect(
+                              // 嵌套圆角公式：R_inner = R_outer - Padding
+                              // 20 - 16 = 4
+                              radius: MoeSmoothRadii.md - 16,
+                              child: _buildImage(context),
                             ),
                           ),
+                        ),
                       ),
                     ),
                     // 右侧信息区 (flex 6)
@@ -265,7 +241,7 @@ class _HorizontalRoleCardState extends ConsumerState<HorizontalRoleCard> {
                               widget.conversation.displayName,
                               style: TextStyle(
                                 fontSize: 20,
-                                fontWeight: FontWeight.w900,
+                                fontWeight: MoeFontWeights.emphasis,
                                 color: colors.text,
                               ),
                               maxLines: 1,
@@ -276,6 +252,8 @@ class _HorizontalRoleCardState extends ConsumerState<HorizontalRoleCard> {
                             Expanded(
                               child: Hero(
                                 tag: RoleTransitionTags.intro(widget.heroId),
+                                createRectTween:
+                                    createExpandingAlignedHeroRectTween,
                                 child: Material(
                                   type: MaterialType.transparency,
                                   child: SizedBox(
@@ -286,8 +264,10 @@ class _HorizontalRoleCardState extends ConsumerState<HorizontalRoleCard> {
                                         _getIntroText(),
                                         style: TextStyle(
                                           fontSize: 14,
+                                          fontWeight: MoeFontWeights.normal,
                                           height: 1.4,
-                                          color: colors.text.withValues(alpha: 0.9),
+                                          color: colors.text
+                                              .withValues(alpha: 0.9),
                                         ),
                                         maxLines: 4,
                                         overflow: TextOverflow.ellipsis,
@@ -323,44 +303,18 @@ class _HorizontalRoleCardState extends ConsumerState<HorizontalRoleCard> {
   }
 
   Widget _buildImage(BuildContext context, {BoxFit fit = BoxFit.cover}) {
-    final charImage = widget.conversation.characterImage;
-    if (charImage != null && charImage.isNotEmpty) {
-      final charBytes = decodeDataImage(charImage);
-      if (charBytes != null) {
-        return Image.memory(charBytes, fit: fit, gaplessPlayback: true);
-      }
-      return Image.asset(
-        charImage,
-        fit: fit,
-        gaplessPlayback: true,
-        errorBuilder: (_, __, ___) => _buildFallback(),
-      );
-    }
-
-    final avatar = widget.conversation.avatarUrl;
-    if (avatar != null && avatar.isNotEmpty) {
-      final avatarBytes = decodeDataImage(avatar);
-      if (avatarBytes != null) {
-        return Image.memory(avatarBytes, fit: fit, gaplessPlayback: true);
-      }
-      if (avatar.startsWith('http')) {
-        return Image.network(avatar, fit: fit, gaplessPlayback: true);
-      }
-      return Image.asset(
-        avatar,
-        fit: fit,
-        gaplessPlayback: true,
-        errorBuilder: (_, __, ___) => _buildFallback(),
-      );
-    }
-    return _buildFallback();
-  }
-
-  Widget _buildFallback() {
-    return Container(
-      color: Colors.grey[300],
-      child: const Center(
-        child: Icon(Icons.person, color: Colors.white, size: 40),
+    final helper = AvatarHelper(
+      avatarUrl: widget.conversation.avatarUrl,
+      characterImage: widget.conversation.characterImage,
+      displayName: widget.conversation.displayName,
+    );
+    return helper.buildCharacterWidget(
+      fit: fit,
+      fallback: Container(
+        color: Colors.grey[300],
+        child: const Center(
+          child: Icon(Icons.person, color: Colors.white, size: 40),
+        ),
       ),
     );
   }

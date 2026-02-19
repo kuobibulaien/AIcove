@@ -154,7 +154,7 @@ class _TtsTestSectionState extends ConsumerState<TtsTestSection> {
                 style: TextStyle(
                   color: colors.text,
                   fontSize: 16,
-                  fontWeight: FontWeight.w600,
+                  fontWeight: MoeFontWeights.emphasis,
                 ),
               ),
             ],
@@ -167,7 +167,7 @@ class _TtsTestSectionState extends ConsumerState<TtsTestSection> {
             style: TextStyle(
               color: colors.text,
               fontSize: 14,
-              fontWeight: FontWeight.w500,
+              fontWeight: MoeFontWeights.emphasis,
             ),
           ),
           const SizedBox(height: 8),
@@ -224,7 +224,7 @@ class _TtsTestSectionState extends ConsumerState<TtsTestSection> {
                       style: TextStyle(
                         color: colors.primary,
                         fontSize: 14,
-                        fontWeight: FontWeight.w600,
+                        fontWeight: MoeFontWeights.emphasis,
                       ),
                     ),
                   ],
@@ -270,7 +270,7 @@ class _TtsTestSectionState extends ConsumerState<TtsTestSection> {
                         style: TextStyle(
                           color: colors.accent,
                           fontSize: 14,
-                          fontWeight: FontWeight.w600,
+                          fontWeight: MoeFontWeights.emphasis,
                         ),
                       ),
                       const SizedBox(height: 4),

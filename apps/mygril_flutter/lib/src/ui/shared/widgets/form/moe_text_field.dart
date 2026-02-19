@@ -278,7 +278,7 @@ class _MoeTextFieldState extends State<MoeTextField> {
             widget.label!,
             style: TextStyle(
               fontSize: 12,
-              fontWeight: FontWeight.w500,
+              fontWeight: MoeFontWeights.emphasis,
               color: _hasError ? errorBorderColor : labelColor,
             ),
           ),

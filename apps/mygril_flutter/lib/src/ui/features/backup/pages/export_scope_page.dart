@@ -7,6 +7,7 @@ import '../../../../features/backup/backup_providers.dart';
 import '../../../shared/animations/parallax_slide_page_route.dart';
 import '../../../shared/effects/smooth_clip.dart';
 import '../../../shared/widgets/index.dart';
+import '../../../theme/tokens.dart';
 import 'export_character_page.dart';
 
 /// 导出范围选择页面
@@ -78,7 +79,7 @@ class ExportScopePage extends ConsumerWidget {
                 Text(
                   '媒体文件',
                   style: theme.textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
+                    fontWeight: MoeFontWeights.emphasis,
                   ),
                 ),
                 const SizedBox(height: 12),

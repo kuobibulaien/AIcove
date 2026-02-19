@@ -5,29 +5,35 @@ class Conversation {
   final String title;
   final String displayName;
   final String? avatarUrl;
-  final String? characterImage; // 角色立绘/参考图路径
-  final String? blurredBackground; // 模糊背景图（base64）
-  final String? selfAddress; // 角色的自称（例如：我、本小姐、奴家等）
-  final String? addressUser; // 角色对"我"的称呼（例如：老师、先生、主人等）
-  final String? voiceFile; // 音色文件路径/数据（用于 TTS）
-  final String? description; // 角色简介（给用户看的介绍）
-  final String personaPrompt; // 人格提示词（给 AI 用的设定）
+  final String? characterImage; // character image / reference image
+  final String? chatBackgroundImage; // per-conversation chat background image
+  final double? chatBackgroundMaskOpacity; // 0.0 - 1.0, null uses default
+  final double? chatBackgroundBlurSigma; // 0.0 - 30.0, null uses default (0)
+  final String? blurredBackground; // blurred poster background (base64)
+  final String? selfAddress; // assistant self-address
+  final String? addressUser; // how assistant addresses user
+  final String? voiceFile; // voice id / bound voice asset
+  final String? description; // character description for user
+  final String personaPrompt; // persona prompt for model
   final List<Message> messages;
   final DateTime createdAt;
   final DateTime updatedAt;
   final String? defaultProvider;
   final String? sessionProvider;
-  // 聊天设置（每个角色独立）
-  final bool isPinned; // 是否置顶
-  final bool isFavorite; // 是否收藏（我的角色卡）
-  final bool isMuted; // 消息免打扰
-  final bool notificationSound; // 消息提示音
-  // 插件设置
-  final List<String>? enabledPlugins; // 允许使用的插件ID列表，null表示允许所有
-  // 消息列表相关字段
-  final String? lastMessage; // 最后一条消息内容
-  final DateTime? lastMessageTime; // 最后消息时间戳
-  final int unreadCount; // 未读消息数量
+
+  // Conversation-level settings
+  final bool isPinned;
+  final bool isFavorite;
+  final bool isMuted;
+  final bool notificationSound;
+
+  // Plugin settings: null means allow all
+  final List<String>? enabledPlugins;
+
+  // Message list summary fields
+  final String? lastMessage;
+  final DateTime? lastMessageTime;
+  final int unreadCount;
 
   const Conversation({
     required this.id,
@@ -35,6 +41,9 @@ class Conversation {
     required this.displayName,
     this.avatarUrl,
     this.characterImage,
+    this.chatBackgroundImage,
+    this.chatBackgroundMaskOpacity,
+    this.chatBackgroundBlurSigma,
     this.blurredBackground,
     this.selfAddress,
     this.addressUser,
@@ -62,6 +71,9 @@ class Conversation {
     String? displayName,
     String? avatarUrl,
     String? characterImage,
+    String? chatBackgroundImage,
+    double? chatBackgroundMaskOpacity,
+    double? chatBackgroundBlurSigma,
     String? blurredBackground,
     String? selfAddress,
     String? addressUser,
@@ -88,6 +100,11 @@ class Conversation {
       displayName: displayName ?? this.displayName,
       avatarUrl: avatarUrl ?? this.avatarUrl,
       characterImage: characterImage ?? this.characterImage,
+      chatBackgroundImage: chatBackgroundImage ?? this.chatBackgroundImage,
+      chatBackgroundMaskOpacity:
+          chatBackgroundMaskOpacity ?? this.chatBackgroundMaskOpacity,
+      chatBackgroundBlurSigma:
+          chatBackgroundBlurSigma ?? this.chatBackgroundBlurSigma,
       blurredBackground: blurredBackground ?? this.blurredBackground,
       selfAddress: selfAddress ?? this.selfAddress,
       addressUser: addressUser ?? this.addressUser,
@@ -110,4 +127,3 @@ class Conversation {
     );
   }
 }
-

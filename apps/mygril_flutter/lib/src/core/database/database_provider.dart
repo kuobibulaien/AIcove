@@ -36,3 +36,8 @@ final providerRepositoryProvider = Provider<ProviderRepository>((ref) {
 final memoryRepositoryProvider = Provider<MemoryRepository>((ref) {
   return MemoryRepository(ref.watch(databaseProvider));
 });
+
+/// 日记 Repository
+final diaryRepositoryProvider = Provider<DiaryRepository>((ref) {
+  return DiaryRepository(ref.watch(databaseProvider));
+});

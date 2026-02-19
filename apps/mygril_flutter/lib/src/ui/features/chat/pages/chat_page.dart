@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,6 +12,7 @@ import '../../../../features/chat/presentation/widgets/composer.dart';
 import '../../../../features/chat/presentation/widgets/contact_edit_dialog.dart';
 import '../../../../ui/features/character/pages/contact_edit_page.dart';
 import '../../../../features/chat/presentation/widgets/chat_settings_dialog.dart';
+import 'chat_background_settings_page.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
@@ -20,6 +22,7 @@ import '../../../../core/database/database.dart' as db;
 import '../../../../core/database/database_provider.dart';
 import '../../../../core/database/converters/database_converters.dart';
 import '../../../../core/models/message_block.dart';
+import '../../../../core/utils/data_image.dart';
 import '../../../../core/utils/image_preheat_queue.dart';
 import '../widgets/chat_message_list.dart';
 
@@ -38,34 +41,36 @@ class ChatPage extends ConsumerStatefulWidget {
 }
 
 class _ChatPageState extends ConsumerState<ChatPage> {
-  /// 分页加载状态
+  /// 鍒嗛〉鍔犺浇鐘舵€?
   bool _isLoadingMore = false;
 
-  /// 是否还有更多历史消息
+  /// 鏄惁杩樻湁鏇村鍘嗗彶娑堟伅
   bool _hasMoreMessages = true;
 
-  /// 已预加载过的会话 ID，避免重复预加载
+  /// 宸查鍔犺浇杩囩殑浼氳瘽 ID锛岄伩鍏嶉噸澶嶉鍔犺浇
   String? _preloadedConversationId;
   bool _didSchedulePrecache = false;
 
   @override
   void initState() {
     super.initState();
-    // 进入聊天页时尽早把 activeConversationId 设置到位，避免首帧先渲染到“默认会话”造成闪跳/卡顿
+    // 杩涘叆鑱婂ぉ椤垫椂灏芥棭鎶?activeConversationId 璁剧疆鍒颁綅锛岄伩鍏嶉甯у厛娓叉煋鍒?榛樿浼氳瘽"閫犳垚闂烦/鍗￠】
     final targetId = widget.conversationId;
     if (targetId == null) return;
     final activeId = ref.read(activeConversationIdProvider);
     if (activeId != targetId) {
       ref.read(activeConversationIdProvider.notifier).state = targetId;
     }
+    // 娓呴櫎璇ヤ細璇濈殑鏈璁℃暟
+    ref.read(conversationsProvider.notifier).clearUnread(targetId);
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // 不要在 didChangeDependencies 里直接跑大量预缓存：
-    // 这里处于“路由刚切换、转场动画要开始”的关键路径，任何同步循环/IO 都可能导致“点击后先顿一下”。
-    // 预缓存放到首帧之后后台进行（不阻塞动画），避免卡顿；图片是否闪烁主要靠“进入前预热/缓存命中”解决。
+    // 涓嶈鍦?didChangeDependencies 閲岀洿鎺ヨ窇澶ч噺棰勭紦瀛橈細
+    // 杩欓噷澶勪簬鈥滆矾鐢卞垰鍒囨崲銆佽浆鍦哄姩鐢昏寮€濮嬧€濈殑鍏抽敭璺緞锛屼换浣曞悓姝ュ惊鐜?IO 閮藉彲鑳藉鑷粹€滅偣鍑诲悗鍏堥】涓€涓嬧€濄€?
+    // 棰勭紦瀛樻斁鍒伴甯т箣鍚庡悗鍙拌繘琛岋紙涓嶉樆濉炲姩鐢伙級锛岄伩鍏嶅崱椤匡紱鍥剧墖鏄惁闂儊涓昏闈犫€滆繘鍏ュ墠棰勭儹/缂撳瓨鍛戒腑鈥濊В鍐炽€?
     _scheduleImagePrecache();
   }
 
@@ -79,15 +84,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     });
   }
 
-  /// 触发图片预加载
+  /// 瑙﹀彂鍥剧墖棰勫姞杞?
   void _triggerImagePreload() {
     final targetId = widget.conversationId;
     if (targetId == null || targetId == _preloadedConversationId) {
-      // 宽屏内嵌 ChatPage（conversationId==null）不走预缓存；同会话只预缓存一次
+      // 瀹藉睆鍐呭祵 ChatPage锛坈onversationId==null锛変笉璧伴缂撳瓨锛涘悓浼氳瘽鍙缂撳瓨涓€娆?
       return;
     }
 
-    // 获取会话数据
+    // 鑾峰彇浼氳瘽鏁版嵁
     final initial = widget.initialConversation?.id == targetId
         ? widget.initialConversation
         : null;
@@ -107,17 +112,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
   }
 
-  /// 预加载会话中的图片（后台预热，不阻塞转场/首帧）
+  /// 棰勫姞杞戒細璇濅腑鐨勫浘鐗囷紙鍚庡彴棰勭儹锛屼笉闃诲杞満/棣栧抚锛?
   Future<void> _preloadImages(Conversation conv) async {
     if (_preloadedConversationId == conv.id) return;
 
     try {
-      const maxMessagesToScan = 10; // 只扫首屏附近的消息，避免一次性扫描过多 blocks
-      const maxImagesToCache = 24; // 控制预缓存上限，避免 ImageCache/解码压力过大
+      const maxMessagesToScan = 10; // 鍙壂棣栧睆闄勮繎鐨勬秷鎭紝閬垮厤涓€娆℃€ф壂鎻忚繃澶?blocks
+      const maxImagesToCache = 24; // 鎺у埗棰勭紦瀛樹笂闄愶紝閬垮厤 ImageCache/瑙ｇ爜鍘嬪姏杩囧ぇ
 
       final providers = <ImageProvider>[];
 
-      // 1. 预缓存头像
+      // 1. 棰勭紦瀛樺ご鍍?
       final avatarUrl = conv.avatarUrl ?? conv.characterImage;
       if (avatarUrl != null && avatarUrl.isNotEmpty) {
         final provider = _getImageProvider(avatarUrl);
@@ -126,7 +131,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         }
       }
 
-      // 2. 预缓存首屏消息中的图片/表情
+      // 2. 棰勭紦瀛橀灞忔秷鎭腑鐨勫浘鐗?琛ㄦ儏
       final messages = conv.messages;
       final start = messages.length > maxMessagesToScan
           ? messages.length - maxMessagesToScan
@@ -154,16 +159,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
       _preloadedConversationId = conv.id;
     } catch (_) {
-      // 预加载失败不影响正常流程
+      // 棰勫姞杞藉け璐ヤ笉褰卞搷姝ｅ父娴佺▼
     }
   }
 
-  /// 根据 URL 获取对应的 ImageProvider
+  /// 鏍规嵁 URL 鑾峰彇瀵瑰簲鐨?ImageProvider
   ImageProvider? _getImageProvider(String url) {
     final trimmed = url.trim();
     if (trimmed.isEmpty) return null;
 
-    // data:image/...;base64,... 可能很大，预缓存会引入额外同步 decode 成本，这里选择跳过（不阻塞首帧）。
+    // data:image/...;base64,... 鍙兘寰堝ぇ锛岄缂撳瓨浼氬紩鍏ラ澶栧悓姝?decode 鎴愭湰锛岃繖閲岄€夋嫨璺宠繃锛堜笉闃诲棣栧抚锛夈€?
     if (trimmed.startsWith('data:image')) return null;
 
     final isNetwork =
@@ -176,24 +181,24 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     } else if (isAsset) {
       return AssetImage(trimmed);
     } else {
-      // 本地文件（避免 existsSync 同步 IO，交给 ImageProvider 自己处理失败情况）
+      // 鏈湴鏂囦欢锛堥伩鍏?existsSync 鍚屾 IO锛屼氦缁?ImageProvider 鑷繁澶勭悊澶辫触鎯呭喌锛?
       return FileImage(File(trimmed));
     }
   }
 
-  /// 根据 MessageBlock 获取对应的 ImageProvider
+  /// 鏍规嵁 MessageBlock 鑾峰彇瀵瑰簲鐨?ImageProvider
   ImageProvider? _getBlockImageProvider(MessageBlock block) {
     if (block is ImageBlock) {
-      // base64 图片预缓存会带来同步解码开销（实际渲染时已有兜底），这里跳过避免影响动画流畅度
+      // base64 鍥剧墖棰勭紦瀛樹細甯︽潵鍚屾瑙ｇ爜寮€閿€锛堝疄闄呮覆鏌撴椂宸叉湁鍏滃簳锛夛紝杩欓噷璺宠繃閬垮厤褰卞搷鍔ㄧ敾娴佺晠搴?
       if (block.base64 != null && block.base64!.isNotEmpty) return null;
 
-      // 网络图片
+      // 缃戠粶鍥剧墖
       if (block.url != null && block.url!.isNotEmpty) {
         return CachedNetworkImageProvider(block.url!);
       }
-      // 本地图片
+      // 鏈湴鍥剧墖
       if (block.localPath != null && block.localPath!.isNotEmpty) {
-        // 避免 existsSync 同步 IO
+        // 閬垮厤 existsSync 鍚屾 IO
         return FileImage(File(block.localPath!));
       }
     } else if (block is EmojiBlock) {
@@ -205,23 +210,105 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     return null;
   }
 
+  Widget _buildConversationBackground({
+    required Conversation? conv,
+    required Color fallbackColor,
+    required Widget child,
+  }) {
+    final raw = conv?.chatBackgroundImage?.trim();
+    if (raw == null || raw.isEmpty) {
+      return Container(color: fallbackColor, child: child);
+    }
+
+    final image = _buildBackgroundImage(raw);
+    if (image == null) {
+      return Container(color: fallbackColor, child: child);
+    }
+    final maskOpacity =
+        (conv?.chatBackgroundMaskOpacity ?? 0.8).clamp(0.0, 1.0);
+    final topMaskOpacity = (maskOpacity + 0.12).clamp(0.0, 1.0);
+    final blurSigma =
+        (conv?.chatBackgroundBlurSigma ?? 0.0).clamp(0.0, 30.0);
+
+    final Widget bgImage = blurSigma > 0.1
+        ? ImageFiltered(
+            imageFilter: ui.ImageFilter.blur(
+              sigmaX: blurSigma,
+              sigmaY: blurSigma,
+              tileMode: TileMode.decal,
+            ),
+            child: image,
+          )
+        : image;
+
+    return Container(
+      color: fallbackColor,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          bgImage,
+          IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    fallbackColor.withValues(alpha: topMaskOpacity),
+                    fallbackColor.withValues(
+                        alpha: (maskOpacity * 0.9).clamp(0.0, 1.0)),
+                    fallbackColor.withValues(alpha: maskOpacity),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget? _buildBackgroundImage(String raw) {
+    final bytes = decodeDataImage(raw);
+    if (bytes != null) {
+      return Image.memory(
+        bytes,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+      );
+    }
+
+    final provider = _getImageProvider(raw);
+    if (provider == null) return null;
+    return Image(
+      image: provider,
+      fit: BoxFit.cover,
+      gaplessPlayback: true,
+      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+    );
+  }
+
   @override
   void didUpdateWidget(covariant ChatPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // 如果 conversationId 变化，更新 provider 并重置分页状态
+    // 濡傛灉 conversationId 鍙樺寲锛屾洿鏂?provider 骞堕噸缃垎椤电姸鎬?
     final targetId = widget.conversationId;
     if (targetId != oldWidget.conversationId && targetId != null) {
       ref.read(activeConversationIdProvider.notifier).state = targetId;
-      // 切换会话时重置分页状态
+      // 鍒囨崲浼氳瘽鏃堕噸缃垎椤电姸鎬?
       setState(() {
         _hasMoreMessages = true;
         _isLoadingMore = false;
       });
       _scheduleImagePrecache();
+      // 娓呴櫎鏂颁細璇濈殑鏈璁℃暟
+      ref.read(conversationsProvider.notifier).clearUnread(targetId);
     }
   }
 
-  /// 加载更多历史消息（分页加载）
+  /// 鍔犺浇鏇村鍘嗗彶娑堟伅锛堝垎椤靛姞杞斤級
   Future<void> _loadMoreMessages(Conversation conv) async {
     if (_isLoadingMore || !_hasMoreMessages) return;
     if (conv.messages.isEmpty) {
@@ -235,11 +322,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       final msgRepo = ref.read(messageRepositoryProvider);
       final blockRepo = ref.read(messageBlockRepositoryProvider);
 
-      // 获取当前最旧消息的时间
+      // 鑾峰彇褰撳墠鏈€鏃ф秷鎭殑鏃堕棿
       final oldestMessage = conv.messages.first;
       final oldestTime = oldestMessage.createdAt.millisecondsSinceEpoch;
 
-      // 从数据库加载更早的消息
+      // 浠庢暟鎹簱鍔犺浇鏇存棭鐨勬秷鎭?
       final dbMsgs = await msgRepo.getByConversation(
         conv.id,
         limit: 30,
@@ -254,11 +341,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         return;
       }
 
-      // 批量获取 blocks
+      // 鎵归噺鑾峰彇 blocks
       final messageIds = dbMsgs.map((m) => m.id).toList();
       final dbBlocks = await blockRepo.getByMessages(messageIds);
 
-      // 按 messageId 分组
+      // 鎸?messageId 鍒嗙粍
       final blocksByMsgId = <String, List<MessageBlock>>{};
       for (final dbBlock in dbBlocks) {
         final block = MessageBlockConverter.fromDb(dbBlock);
@@ -267,24 +354,24 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         }
       }
 
-      // 组装消息（reversed: 数据库返回 desc，UI 需要 asc）
+      // 缁勮娑堟伅锛坮eversed: 鏁版嵁搴撹繑鍥?desc锛孶I 闇€瑕?asc锛?
       final olderMessages = dbMsgs.reversed.map((dbMsg) {
         final blocks = blocksByMsgId[dbMsg.id];
         return MessageConverter.fromDb(dbMsg, blocks: blocks);
       }).toList();
 
-      // 更新会话，把更旧的消息插入到头部
+      // 鏇存柊浼氳瘽锛屾妸鏇存棫鐨勬秷鎭彃鍏ュ埌澶撮儴
       await ref.read(conversationsProvider.notifier).updateOne(
             conv.id,
             (c) => c.copyWith(messages: [...olderMessages, ...c.messages]),
           );
 
-      // 如果加载的消息少于30条，说明没有更多了
+      // 濡傛灉鍔犺浇鐨勬秷鎭皯浜?0鏉★紝璇存槑娌℃湁鏇村浜?
       if (dbMsgs.length < 30) {
         setState(() => _hasMoreMessages = false);
       }
     } catch (e) {
-      debugPrint('加载更多消息失败: $e');
+      debugPrint('鍔犺浇鏇村娑堟伅澶辫触: $e');
     } finally {
       if (mounted) {
         setState(() => _isLoadingMore = false);
@@ -309,9 +396,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               },
               orElse: () => initial,
             );
-    // 注意：移除了 sendingProvider 的 watch，改在 _ChatAppBarTitle 中局部监听
-    // 这样发送状态变化时只重建标题，不会影响 Composer 输入框
-    final actions = ref.read(chatActionsProvider); // 改用 read，actions 不会变
+    // 娉ㄦ剰锛氱Щ闄や簡 sendingProvider 鐨?watch锛屾敼鍦?_ChatAppBarTitle 涓眬閮ㄧ洃鍚?
+    // 杩欐牱鍙戦€佺姸鎬佸彉鍖栨椂鍙噸寤烘爣棰橈紝涓嶄細褰卞搷 Composer 杈撳叆妗?
+    final actions = ref.read(chatActionsProvider); // 鏀圭敤 read锛宎ctions 涓嶄細鍙?
     final sidebarVisible = ref.watch(sidebarVisibleProvider);
     final settingsAsync = ref.watch(appSettingsProvider);
     final colors = context.moeColors;
@@ -319,45 +406,57 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final chatBgColor = settingsAsync.maybeWhen(
       data: (settings) {
         if (isDark) return colors.bgMain;
-        // 默认色跟随全局背景色
+        // 榛樿鑹茶窡闅忓叏灞€鑳屾櫙鑹?
         return settings.chatBackgroundColor.color ?? colors.surface;
       },
       orElse: () => isDark ? colors.bgMain : colors.surface,
     );
+    final hasCustomBackground =
+        (conv?.chatBackgroundImage?.trim().isNotEmpty ?? false);
+    final extendBehindAppBar = hasCustomBackground;
+    final listTopSpacing = extendBehindAppBar
+        ? MediaQuery.paddingOf(context).top + kToolbarHeight
+        : 0.0;
 
     return Scaffold(
-      // 由输入组件自己管理“键盘/更多面板”占位与位移，避免 Scaffold 自动挤压布局造成跳动
+      // 鐢辫緭鍏ョ粍浠惰嚜宸辩鐞嗏€滈敭鐩?鏇村闈㈡澘鈥濆崰浣嶄笌浣嶇Щ锛岄伩鍏?Scaffold 鑷姩鎸ゅ帇甯冨眬閫犳垚璺冲姩
       resizeToAvoidBottomInset: false,
+      extendBodyBehindAppBar: extendBehindAppBar,
       appBar: AppBar(
-        backgroundColor: colors.headerColor,
+        backgroundColor:
+            hasCustomBackground ? Colors.transparent : colors.headerColor,
         foregroundColor: colors.headerContentColor,
         elevation: 0,
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.transparent,
         titleTextStyle: TextStyle(
-          fontSize: 22, // 详情页标题稍微小一点
-          fontWeight: FontWeight.w800,
+          fontSize: 22, // 璇︽儏椤垫爣棰樼◢寰皬涓€鐐?
+          fontWeight: MoeFontWeights.emphasis,
           color: colors.headerContentColor,
           letterSpacing: 0.8,
         ),
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(borderWidth),
-          child: Container(
-            height: borderWidth,
-            decoration: BoxDecoration(
-              color: colors.divider,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.04),
-                  offset: const Offset(0, 1),
-                  blurRadius: 0,
+        bottom: hasCustomBackground
+            ? null
+            : PreferredSize(
+                preferredSize: const Size.fromHeight(borderWidth),
+                child: Container(
+                  height: borderWidth,
+                  decoration: BoxDecoration(
+                    color: colors.divider,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.04),
+                        offset: const Offset(0, 1),
+                        blurRadius: 0,
+                      ),
+                    ],
+                  ),
                 ),
-              ],
-            ),
-          ),
-        ),
+              ),
         title: Consumer(
           builder: (context, ref, _) {
             final sending = ref.watch(sendingProvider);
-            return Text(sending ? '对方输入中...' : (conv?.displayName ?? '聊天'));
+            return Text(sending ? '瀵规柟杈撳叆涓?..' : (conv?.displayName ?? '鑱婂ぉ'));
           },
         ),
         centerTitle: false,
@@ -386,7 +485,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           if (conv != null)
             IconButton(
               icon: Icon(Icons.more_horiz, color: colors.headerContentColor),
-              tooltip: '更多',
+              tooltip: '鏇村',
               onPressed: () async {
                 await showChatSettingsDialog(
                   context: context,
@@ -394,7 +493,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   onSearchMessages: () {
                     showMoeBottomSheet(
                       context: context,
-                      title: '查找聊天记录',
+                      title: '鏌ユ壘鑱婂ぉ璁板綍',
                       showCloseButton: true,
                       maxHeight: MediaQuery.sizeOf(context).height * 0.85,
                       builder: (context) =>
@@ -402,7 +501,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     );
                   },
                   onEditContact: () async {
-                    // 编辑角色页面（视差滑动动画）
+                    // 缂栬緫瑙掕壊椤甸潰锛堣宸粦鍔ㄥ姩鐢伙級
                     final result =
                         await Navigator.of(context).push<ContactEditResult>(
                       ParallaxSlidePageRoute(
@@ -418,14 +517,45 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                             conv.id,
                             displayName: result.displayName,
                             avatarUrl: result.avatarUrl,
+                            clearAvatarUrl: result.clearAvatarUrl,
                             characterImage: result.characterImage,
+                            clearCharacterImage: result.clearCharacterImage,
+                            chatBackgroundImage: result.chatBackgroundImage,
+                            clearChatBackgroundImage:
+                                result.clearChatBackgroundImage,
+                            clearChatBackgroundMaskOpacity:
+                                result.clearChatBackgroundImage,
+                            selfAddress: result.selfAddress,
+                            clearSelfAddress: result.clearSelfAddress,
                             addressUser: result.addressUser,
+                            clearAddressUser: result.clearAddressUser,
+                            voiceFile: result.voiceFile,
+                            clearVoiceFile: result.clearVoiceFile,
                             description: result.description,
+                            clearDescription: result.clearDescription,
                             personaPrompt: result.personaPrompt,
+                            enabledPlugins: result.enabledPlugins,
+                            clearEnabledPlugins: result.clearEnabledPlugins,
                           );
                       if (!context.mounted) return;
-                      MoeToast.brief(context, '已保存角色信息');
+                      MoeToast.brief(context, 'Character saved');
                     }
+                  },
+                  onChatBackgroundSettings: (result) async {
+                    await ref
+                        .read(conversationsProvider.notifier)
+                        .applyContactEdit(
+                          conv.id,
+                          chatBackgroundImage: result.backgroundImage,
+                          clearChatBackgroundImage: result.clearBackgroundImage,
+                          chatBackgroundMaskOpacity: result.maskOpacity,
+                          clearChatBackgroundMaskOpacity:
+                              result.clearMaskOpacity,
+                          chatBackgroundBlurSigma: result.blurSigma,
+                          clearChatBackgroundBlurSigma: result.clearBlurSigma,
+                        );
+                    if (!context.mounted) return;
+                    MoeToast.brief(context, 'Chat background updated');
                   },
                   onPinnedChanged: (value) async {
                     await ref
@@ -435,7 +565,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                           isPinned: value,
                         );
                     if (!context.mounted) return;
-                    MoeToast.brief(context, value ? '已置顶' : '已取消置顶');
+                    MoeToast.brief(
+                      context,
+                      value ? 'Pinned' : 'Unpinned',
+                    );
                   },
                   onMutedChanged: (value) async {
                     await ref
@@ -445,7 +578,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                           isMuted: value,
                         );
                     if (!context.mounted) return;
-                    MoeToast.brief(context, value ? '已开启免打扰' : '已关闭免打扰');
+                    MoeToast.brief(context, value ? '宸插紑鍚厤鎵撴壈' : '宸插叧闂厤鎵撴壈');
                   },
                   onNotificationSoundChanged: (value) async {
                     await ref
@@ -455,14 +588,14 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                           notificationSound: value,
                         );
                     if (!context.mounted) return;
-                    MoeToast.brief(context, value ? '已开启提示音' : '已关闭提示音');
+                    MoeToast.brief(context, value ? '宸插紑鍚彁绀洪煶' : '宸插叧闂彁绀洪煶');
                   },
                   onClearMessages: () async {
                     await ref
                         .read(conversationsProvider.notifier)
                         .clearMessages(conv.id);
                     if (!context.mounted) return;
-                    MoeToast.brief(context, '已清空聊天记录');
+                    MoeToast.brief(context, 'Chat history cleared');
                   },
                   onDeleteConversation: () async {
                     await ref
@@ -479,7 +612,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                           clearEnabledPlugins: plugins == null,
                         );
                     if (!context.mounted) return;
-                    MoeToast.brief(context, '插件设置已更新');
+                    MoeToast.brief(context, 'Plugin settings updated');
                   },
                 );
               },
@@ -487,13 +620,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           const SizedBox(width: 8),
         ],
       ),
-      body: Container(
-        color: moePanel,
+      body: _buildConversationBackground(
+        conv: conv,
+        fallbackColor: chatBgColor,
         child: Column(
           children: [
-            // 错误信息不再显示在UI中，避免影响聊天体验
-            // 如需调试，可以在控制台查看error状态
-            // 加载状态通过AppBar的"对方输入中..."和消息气泡状态显示
+            if (listTopSpacing > 0) SizedBox(height: listTopSpacing),
+            // 閿欒淇℃伅涓嶅啀鏄剧ず鍦║I涓紝閬垮厤褰卞搷鑱婂ぉ浣撻獙
+            // 濡傞渶璋冭瘯锛屽彲浠ュ湪鎺у埗鍙版煡鐪媏rror鐘舵€?
+            // 鍔犺浇鐘舵€侀€氳繃AppBar鐨?瀵规柟杈撳叆涓?.."鍜屾秷鎭皵娉＄姸鎬佹樉绀?
             Expanded(
               child: conv == null
                   ? const Center(child: CircularProgressIndicator())
@@ -502,60 +637,63 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                       onTap: () {
                         final keyboardHeight =
                             MediaQuery.viewInsetsOf(context).bottom;
-                        // 键盘显示中：只隐藏键盘但不立刻丢焦点，让输入框跟着键盘动画一起回收（避免被键盘盖住）
+                        // 閿洏鏄剧ず涓細鍙殣钘忛敭鐩樹絾涓嶇珛鍒讳涪鐒︾偣锛岃杈撳叆妗嗚窡鐫€閿洏鍔ㄧ敾涓€璧峰洖鏀讹紙閬垮厤琚敭鐩樼洊浣忥級
                         if (keyboardHeight > 0) {
                           SystemChannels.textInput
                               .invokeMethod('TextInput.hide');
                           return;
                         }
-                        // 键盘未显示：丢焦点用于关闭“更多面板”（更多面板会保持一个只读焦点）
+                        // 閿洏鏈樉绀猴細涓㈢劍鐐圭敤浜庡叧闂€滄洿澶氶潰鏉库€濓紙鏇村闈㈡澘浼氫繚鎸佷竴涓彧璇荤劍鐐癸級
                         FocusManager.instance.primaryFocus?.unfocus();
                       },
-                      child: Container(
-                        // MoeTalk风格：消息区域背景色可配置
-                        color: chatBgColor,
-                        child: ChatMessageList(
-                          key: ValueKey(conv.id),
-                          conversationId: conv.id,
-                          messages: conv.messages,
-                          avatarUrl: conv.avatarUrl ?? conv.characterImage,
-                          displayName: conv.displayName,
-                          onLoadMore: () => _loadMoreMessages(conv),
-                          isLoadingMore: _isLoadingMore,
-                          hasMoreMessages: _hasMoreMessages,
-                          onEditMessage: (message) async {
-                            final text = await actions.editMessage(message.id);
-                            if (text != null && text.isNotEmpty) {
-                              ref.read(editingTextProvider.notifier).state =
-                                  text;
-                            }
-                          },
-                          onRegenerateMessage: (message) {
-                            if (ref.read(sendingProvider)) {
-                              MoeToast.brief(context, '请等待当前消息发送完成');
-                              return;
-                            }
-                            actions.regenerate(message.id);
-                          },
-                        ),
+                      child: ChatMessageList(
+                        key: ValueKey(conv.id),
+                        conversationId: conv.id,
+                        messages: conv.messages,
+                        avatarUrl: conv.avatarUrl ?? conv.characterImage,
+                        displayName: conv.displayName,
+                        onLoadMore: () => _loadMoreMessages(conv),
+                        isLoadingMore: _isLoadingMore,
+                        hasMoreMessages: _hasMoreMessages,
+                        onEditMessage: (message) async {
+                          final text = await actions.editMessage(message.id);
+                          if (text != null && text.isNotEmpty) {
+                            ref.read(editingTextProvider.notifier).state = text;
+                          }
+                        },
+                        onRegenerateMessage: (message) {
+                          if (ref.read(sendingProvider)) {
+                            MoeToast.brief(
+                              context,
+                              'Please wait for current message to finish',
+                            );
+                            return;
+                          }
+                          actions.regenerate(message.id);
+                        },
                       ),
                     ),
             ),
-            // 输入栏使用内部 SafeArea 处理系统小白条，键盘适配后续单独评估
+            // 杈撳叆鏍忎娇鐢ㄥ唴閮?SafeArea 澶勭悊绯荤粺灏忕櫧鏉★紝閿洏閫傞厤鍚庣画鍗曠嫭璇勪及
             Composer(
-              disabled: false, // 移除禁用逻辑，允许用户随时输入
+              disabled: false, // 绉婚櫎绂佺敤閫昏緫锛屽厑璁哥敤鎴烽殢鏃惰緭鍏?
               onSend: (text) {
-                // 如果正在发送，不处理新消息（在回调时检查，避免重建）
+                // 濡傛灉姝ｅ湪鍙戦€侊紝涓嶅鐞嗘柊娑堟伅锛堝湪鍥炶皟鏃舵鏌ワ紝閬垮厤閲嶅缓锛?
                 if (ref.read(sendingProvider)) {
-                  MoeToast.brief(context, '请等待当前消息发送完成');
+                  MoeToast.brief(
+                    context,
+                    'Please wait for current message to finish',
+                  );
                   return;
                 }
-                // 检查是否有引用消息
+                // 妫€鏌ユ槸鍚︽湁寮曠敤娑堟伅
                 final quoted = ref.read(quotedMessageProvider);
                 if (quoted != null) {
-                  // 带引用发送
-                  final quotedPrefix =
-                      '> 引用「${quoted.content.length > 30 ? '${quoted.content.substring(0, 30)}...' : quoted.content}」\n\n';
+                  // 甯﹀紩鐢ㄥ彂閫?
+                  final quotedText = quoted.content.length > 30
+                      ? '${quoted.content.substring(0, 30)}...'
+                      : quoted.content;
+                  final quotedPrefix = '> Quote: $quotedText\n\n';
                   actions.send(quotedPrefix + text);
                   ref.read(quotedMessageProvider.notifier).state = null;
                 } else {
@@ -563,17 +701,23 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 }
               },
               onImageSelected: (imagePath) {
-                // 如果正在发送，不处理新图片
+                // 濡傛灉姝ｅ湪鍙戦€侊紝涓嶅鐞嗘柊鍥剧墖
                 if (ref.read(sendingProvider)) {
-                  MoeToast.brief(context, '请等待当前消息发送完成');
+                  MoeToast.brief(
+                    context,
+                    'Please wait for current message to finish',
+                  );
                   return;
                 }
                 actions.sendWithImage(imagePath);
               },
               onFileSelected: (filePath) {
-                // 如果正在发送，不处理新文件
+                // 濡傛灉姝ｅ湪鍙戦€侊紝涓嶅鐞嗘柊鏂囦欢
                 if (ref.read(sendingProvider)) {
-                  MoeToast.brief(context, '请等待当前消息发送完成');
+                  MoeToast.brief(
+                    context,
+                    'Please wait for current message to finish',
+                  );
                   return;
                 }
                 actions.sendWithFile(filePath);
@@ -627,7 +771,7 @@ class _ChatMessageSearchContentState
     final keyword = _keyword.trim();
     final date = _selectedDate;
 
-    // 两个条件都没填时，不做“全库搜索”，避免一下子刷出太多记录。
+    // 涓や釜鏉′欢閮芥病濉椂锛屼笉鍋氣€滃叏搴撴悳绱⑩€濓紝閬垮厤涓€涓嬪瓙鍒峰嚭澶璁板綍銆?
     if (keyword.isEmpty && date == null) {
       if (!mounted || seq != _searchSeq) return;
       setState(() {
@@ -725,13 +869,13 @@ class _ChatMessageSearchContentState
 
     return Column(
       children: [
-        // 关键词搜索框
+        // 鍏抽敭璇嶆悳绱㈡
         Padding(
           padding: const EdgeInsets.all(16),
           child: MoeTextField(
             controller: _searchCtrl,
             autofocus: true,
-            hint: '输入关键词（可选）',
+            hint: '杈撳叆鍏抽敭璇嶏紙鍙€夛級',
             prefixIcon: Icons.search,
             suffix: _searchCtrl.text.isNotEmpty
                 ? IconButton(
@@ -741,7 +885,8 @@ class _ChatMessageSearchContentState
                 : null,
             borderColor: colors.borderLight,
             focusBorderColor: colors.primary,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             onChanged: (value) {
               setState(() => _keyword = value);
               _scheduleSearch();
@@ -749,7 +894,7 @@ class _ChatMessageSearchContentState
           ),
         ),
 
-        // 日期筛选
+        // 鏃ユ湡绛涢€?
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: MoeG2ClipRRect(
@@ -767,21 +912,22 @@ class _ChatMessageSearchContentState
                 color: Colors.transparent,
                 child: ListTile(
                   dense: true,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
-                  title: const Text('日期'),
-                  subtitle: Text(date == null ? '全部' : _formatDay(date)),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                  title: const Text('鏃ユ湡'),
+                  subtitle: Text(date == null ? '鍏ㄩ儴' : _formatDay(date)),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       IconButton(
-                        tooltip: '选择日期',
+                        tooltip: '閫夋嫨鏃ユ湡',
                         icon: const Icon(Icons.calendar_month, size: 20),
                         color: moePrimary,
                         onPressed: _pickDate,
                       ),
                       if (date != null)
                         IconButton(
-                          tooltip: '清除日期',
+                          tooltip: '娓呴櫎鏃ユ湡',
                           icon: const Icon(Icons.close, size: 20),
                           color: colors.muted,
                           onPressed: _clearDate,
@@ -797,36 +943,36 @@ class _ChatMessageSearchContentState
 
         const SizedBox(height: 12),
 
-        // 结果区
+        // 缁撴灉鍖?
         Expanded(
           child: _loading
               ? const Center(child: MoeLoadingIndicator())
               : (_error != null)
                   ? MoeEmptyState(
                       icon: Icons.error_outline,
-                      title: '搜索失败',
+                      title: '鎼滅储澶辫触',
                       description: _error!,
                     )
                   : (keyword.isEmpty && date == null)
                       ? const MoeEmptyState(
                           icon: Icons.search,
-                          title: '请输入关键词或选择日期',
+                          title: '璇疯緭鍏ュ叧閿瘝鎴栭€夋嫨鏃ユ湡',
                         )
                       : (_results.isEmpty)
                           ? const MoeEmptyState(
                               icon: Icons.search_off,
-                              title: '未找到匹配的聊天记录',
+                              title: '鏈壘鍒板尮閰嶇殑鑱婂ぉ璁板綍',
                             )
                           : Column(
                               children: [
                                 Padding(
-                                  padding: const EdgeInsets.fromLTRB(
-                                      16, 0, 16, 8),
+                                  padding:
+                                      const EdgeInsets.fromLTRB(16, 0, 16, 8),
                                   child: Row(
                                     children: [
                                       Expanded(
                                         child: Text(
-                                          '共 ${_results.length} 条（最多显示 200 条）',
+                                          '鍏?${_results.length} 鏉★紙鏈€澶氭樉绀?200 鏉★級',
                                           style: TextStyle(
                                             fontSize: 12,
                                             color: colors.muted,
@@ -847,13 +993,13 @@ class _ChatMessageSearchContentState
                                         const SizedBox(height: 8),
                                     itemBuilder: (context, index) {
                                       final m = _results[index];
-                                      final time = DateTime
-                                          .fromMillisecondsSinceEpoch(
+                                      final time =
+                                          DateTime.fromMillisecondsSinceEpoch(
                                               m.createdAt);
                                       final roleLabel =
-                                          m.role == 'user' ? '我' : 'TA';
+                                          m.role == 'user' ? 'Me' : 'TA';
                                       final text = m.content.trim().isEmpty
-                                          ? '[非文本消息]'
+                                          ? '[Non-text message]'
                                           : m.content.trim();
 
                                       return Container(
@@ -879,15 +1025,17 @@ class _ChatMessageSearchContentState
                                                       vertical: 2),
                                                   decoration: MoeG2Decoration(
                                                     radius: 999,
-                                                    color: colors.muted.withValues(alpha: 0.12),
+                                                    color: colors.muted
+                                                        .withValues(
+                                                            alpha: 0.12),
                                                   ),
                                                   child: Text(
                                                     roleLabel,
                                                     style: TextStyle(
                                                       fontSize: 12,
                                                       color: colors.text,
-                                                      fontWeight:
-                                                          FontWeight.w600,
+                                                      fontWeight: MoeFontWeights
+                                                          .emphasis,
                                                     ),
                                                   ),
                                                 ),

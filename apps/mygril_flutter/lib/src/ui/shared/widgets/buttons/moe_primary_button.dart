@@ -228,7 +228,7 @@ class _MoePrimaryButtonState extends State<MoePrimaryButton> {
                         widget.label,
                         style: TextStyle(
                           fontSize: _fontSize,
-                          fontWeight: FontWeight.w600,
+                          fontWeight: MoeFontWeights.emphasis,
                           color: currentFg,
                         ),
                       ),

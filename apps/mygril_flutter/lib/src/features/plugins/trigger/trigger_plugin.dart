@@ -1,4 +1,4 @@
-// ignore_for_file: avoid_print
+﻿// ignore_for_file: avoid_print
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,53 +10,53 @@ import 'trigger_config.dart';
 import '../../chat/data/auto_reply_trigger.dart';
 import '../../chat/data/auto_reply_trigger_controller.dart';
 import '../../chat/conversation_providers.dart';
+import '../../settings/app_settings.dart';
 
-/// 智能触发器插件
-/// 允许 AI 根据对话设置定时提醒
+/// 鏅鸿兘瑙﹀彂鍣ㄦ彃浠?/// 鍏佽 AI 鏍规嵁瀵硅瘽璁剧疆瀹氭椂鎻愰啋
 class TriggerPlugin extends BasePlugin {
-  // ========== 元数据定义 ==========
+  // ========== 鍏冩暟鎹畾涔?==========
   static final _metadata = PluginMetadata(
     id: 'trigger',
-    name: '智能触发器',
-    description: '允许AI根据对话设置定时提醒',
+    name: '鏅鸿兘瑙﹀彂鍣?',
+    description: '鍏佽AI鏍规嵁瀵硅瘽璁剧疆瀹氭椂鎻愰啋',
     version: '2.0.0',
-    author: 'MyGril Team',
+    author: 'AIcove Team',
     icon: Icons.alarm,
     configSchema: {
       'enabled': ConfigField(
         type: ConfigFieldType.boolean,
-        label: '启用插件',
+        label: '鍚敤鎻掍欢',
         defaultValue: false,
       ),
     },
   );
 
-  // ========== 内部状态 ==========
+  // ========== 鍐呴儴鐘舵€?==========
   TriggerConfig _triggerConfig;
   final Ref _ref;
 
-  // ========== 构造函数 ==========
+  // ========== 鏋勯€犲嚱鏁?==========
   TriggerPlugin(this._triggerConfig, this._ref) : super(metadata: _metadata);
 
-  // ========== 重写 enabled getter ==========
+  // ========== 閲嶅啓 enabled getter ==========
   @override
   bool get enabled => _triggerConfig.enabled;
 
-  // ========== 生命周期方法 ==========
+  // ========== 鐢熷懡鍛ㄦ湡鏂规硶 ==========
 
   @override
   Future<void> onInitialize() async {
     await super.onInitialize();
-    debugPrint('[TriggerPlugin] 初始化完成');
+    debugPrint('[TriggerPlugin] 鍒濆鍖栧畬鎴?');
   }
 
   @override
   Future<void> onConfigChanged(Map<String, dynamic> newConfig) async {
     _triggerConfig = TriggerConfig.fromJson(newConfig);
-    debugPrint('[TriggerPlugin] 配置已更新');
+    debugPrint('[TriggerPlugin] 閰嶇疆宸叉洿鏂?');
   }
 
-  // ========== 现有功能（保留） ==========
+  // ========== 鐜版湁鍔熻兘锛堜繚鐣欙級 ==========
 
   @override
   Map<String, dynamic> getConfig() => _triggerConfig.toJson();
@@ -69,37 +69,31 @@ class TriggerPlugin extends BasePlugin {
   @override
   Future<String?> getSystemPrompt({String? userMessage, bool supportsToolCalling = false}) async {
     if (!enabled) return null;
+    final lowerMsg = (userMessage ?? '').toLowerCase();
+    final isReminderRelated = lowerMsg.contains('提醒') ||
+        lowerMsg.contains('闹钟') ||
+        lowerMsg.contains('取消') ||
+        lowerMsg.contains('remind') ||
+        lowerMsg.contains('alarm') ||
+        lowerMsg.contains('reminder');
+    if (!isReminderRelated) return null;
 
-    // 当支持原生工具调用时，检查用户消息是否涉及提醒相关
-    if (supportsToolCalling && userMessage != null) {
-      final lowerMsg = userMessage.toLowerCase();
-      final isReminderRelated = lowerMsg.contains('提醒') ||
-          lowerMsg.contains('闹钟') ||
-          lowerMsg.contains('叫我') ||
-          lowerMsg.contains('remind') ||
-          lowerMsg.contains('alarm') ||
-          lowerMsg.contains('取消') ||
-          lowerMsg.contains('删掉') ||
-          lowerMsg.contains('有哪些') ||
-          lowerMsg.contains('查看');
-
-      if (isReminderRelated) {
-        return '''
-你可以使用以下工具来管理提醒：
-- create_reminder: 当用户要求设置提醒/闹钟时使用
-- delete_reminder: 当用户要求取消提醒时使用
-- list_reminders: 当用户想查看提醒列表时使用
-- search_reminders: 当用户想搜索特定提醒时使用
-
-请根据用户的需求选择合适的工具。
-''';
-      }
+    if (!supportsToolCalling) {
+      return _triggerConfig.logicSystemPrompt;
     }
 
-    return null;
+    return '''
+${_triggerConfig.logicSystemPrompt}
+
+Use these tools for reminder management:
+- create_reminder
+- delete_reminder
+- list_reminders
+- search_reminders
+''';
   }
 
-  // ========== 新增：工具注册 ==========
+  // ========== 鏂板锛氬伐鍏锋敞鍐?==========
 
   @override
   List<AITool> getTools() {
@@ -116,29 +110,26 @@ class TriggerPlugin extends BasePlugin {
   AITool get _createReminderTool => AITool(
     name: 'create_reminder',
     description: '''
-创建一个定时提醒。当用户明确要求设置提醒、闹钟、定时任务时调用此工具。
+鍒涘缓涓€涓畾鏃舵彁閱掋€傚綋鐢ㄦ埛鏄庣‘瑕佹眰璁剧疆鎻愰啋銆侀椆閽熴€佸畾鏃朵换鍔℃椂璋冪敤姝ゅ伐鍏枫€?
+浣跨敤鍦烘櫙锛?- "鏄庡ぉ鏃╀笂8鐐瑰彨鎴戣捣搴?
+- "2灏忔椂鍚庢彁閱掓垜鍠濇按"
+- "涓嬪崍3鐐规彁閱掓垜寮€浼?
 
-使用场景：
-- "明天早上8点叫我起床"
-- "2小时后提醒我喝水"
-- "下午3点提醒我开会"
-
-不要在用户没有明确要求时调用此工具。
-''',
+涓嶈鍦ㄧ敤鎴锋病鏈夋槑纭姹傛椂璋冪敤姝ゅ伐鍏枫€?''',
     parameters: {
       'title': ToolParameter(
         type: 'string',
-        description: '提醒的标题/描述，简洁说明这个提醒是干什么的',
+        description: '鎻愰啋鐨勬爣棰?鎻忚堪锛岀畝娲佽鏄庤繖涓彁閱掓槸骞蹭粈涔堢殑',
         required: true,
       ),
       'time': ToolParameter(
         type: 'string',
-        description: '触发时间。支持格式：ISO 8601（2026-01-27T08:00:00）或简单时间（08:00，会自动判断今天/明天）',
+        description: '瑙﹀彂鏃堕棿銆傛敮鎸佹牸寮忥細ISO 8601锛?026-01-27T08:00:00锛夋垨绠€鍗曟椂闂达紙08:00锛屼細鑷姩鍒ゆ柇浠婂ぉ/鏄庡ぉ锛?',
         required: true,
       ),
       'prompt': ToolParameter(
         type: 'string',
-        description: '触发时的指导提示，告诉你到时候该说什么',
+        description: '瑙﹀彂鏃剁殑鎸囧鎻愮ず锛屽憡璇変綘鍒版椂鍊欒璇翠粈涔?',
         required: false,
       ),
     },
@@ -148,26 +139,22 @@ class TriggerPlugin extends BasePlugin {
   AITool get _deleteReminderTool => AITool(
     name: 'delete_reminder',
     description: '''
-删除一个已存在的提醒。当用户要求取消、删除某个提醒时调用。
+鍒犻櫎涓€涓凡瀛樺湪鐨勬彁閱掋€傚綋鐢ㄦ埛瑕佹眰鍙栨秷銆佸垹闄ゆ煇涓彁閱掓椂璋冪敤銆?
+浣跨敤鍦烘櫙锛?- "鍙栨秷鏄庡ぉ鐨勯椆閽?
+- "涓嶇敤鎻愰啋鎴戜簡"
+- "鎶婇偅涓彁閱掑垹鎺?
 
-使用场景：
-- "取消明天的闹钟"
-- "不用提醒我了"
-- "把那个提醒删掉"
-
-参数规则：
-- 优先传 id（最准确）
-- 如果没有 id，请传 query（例如"明天早上叫我起床"/"起床闹钟"），工具内部会 search
+鍙傛暟瑙勫垯锛?- 浼樺厛浼?id锛堟渶鍑嗙‘锛?- 濡傛灉娌℃湁 id锛岃浼?query锛堜緥濡?鏄庡ぉ鏃╀笂鍙垜璧峰簥"/"璧峰簥闂归挓"锛夛紝宸ュ叿鍐呴儴浼?search
 ''',
     parameters: {
       'id': ToolParameter(
         type: 'string',
-        description: '要删除的提醒ID（如果已知，优先提供）',
+        description: '瑕佸垹闄ょ殑鎻愰啋ID锛堝鏋滃凡鐭ワ紝浼樺厛鎻愪緵锛?',
         required: false,
       ),
       'query': ToolParameter(
         type: 'string',
-        description: '不知道 id 时使用：用一句话描述你要取消的提醒（例如"明天早上叫我起床"）',
+        description: '涓嶇煡閬?id 鏃朵娇鐢細鐢ㄤ竴鍙ヨ瘽鎻忚堪浣犺鍙栨秷鐨勬彁閱掞紙渚嬪"鏄庡ぉ鏃╀笂鍙垜璧峰簥"锛?',
         required: false,
       ),
     },
@@ -177,18 +164,16 @@ class TriggerPlugin extends BasePlugin {
   AITool get _listRemindersTool => AITool(
     name: 'list_reminders',
     description: '''
-列出提醒列表（触发器列表）。当用户问"我有哪些提醒/闹钟/待办"时调用。
-返回 JSON 数组，包含每条提醒的 id/title/next_fire_at/status/priority 等。
-''',
+鍒楀嚭鎻愰啋鍒楄〃锛堣Е鍙戝櫒鍒楄〃锛夈€傚綋鐢ㄦ埛闂?鎴戞湁鍝簺鎻愰啋/闂归挓/寰呭姙"鏃惰皟鐢ㄣ€?杩斿洖 JSON 鏁扮粍锛屽寘鍚瘡鏉℃彁閱掔殑 id/title/next_fire_at/status/priority 绛夈€?''',
     parameters: {
       'include_completed': ToolParameter(
         type: 'boolean',
-        description: '是否包含已完成/已作废的提醒（默认 false）',
+        description: '鏄惁鍖呭惈宸插畬鎴?宸蹭綔搴熺殑鎻愰啋锛堥粯璁?false锛?',
         required: false,
       ),
       'limit': ToolParameter(
         type: 'integer',
-        description: '最多返回多少条（默认 20）',
+        description: '鏈€澶氳繑鍥炲灏戞潯锛堥粯璁?20锛?',
         required: false,
       ),
     },
@@ -198,53 +183,56 @@ class TriggerPlugin extends BasePlugin {
   AITool get _searchRemindersTool => AITool(
     name: 'search_reminders',
     description: '''
-搜索提醒列表。适用于：用户说"把那个起床提醒删掉/取消明天的闹钟"但没有 id。
-返回 JSON 数组，包含候选提醒的 id/title/next_fire_at 等。
-''',
+鎼滅储鎻愰啋鍒楄〃銆傞€傜敤浜庯細鐢ㄦ埛璇?鎶婇偅涓捣搴婃彁閱掑垹鎺?鍙栨秷鏄庡ぉ鐨勯椆閽?浣嗘病鏈?id銆?杩斿洖 JSON 鏁扮粍锛屽寘鍚€欓€夋彁閱掔殑 id/title/next_fire_at 绛夈€?''',
     parameters: {
       'query': ToolParameter(
         type: 'string',
-        description: '搜索关键词/自然语言描述（例如"起床""明天早上8点""开会提醒"）',
+        description: '鎼滅储鍏抽敭璇?鑷劧璇█鎻忚堪锛堜緥濡?璧峰簥""鏄庡ぉ鏃╀笂8鐐?"寮€浼氭彁閱?锛?',
         required: true,
       ),
       'include_completed': ToolParameter(
         type: 'boolean',
-        description: '是否包含已完成/已作废的提醒（默认 false）',
+        description: '鏄惁鍖呭惈宸插畬鎴?宸蹭綔搴熺殑鎻愰啋锛堥粯璁?false锛?',
         required: false,
       ),
       'limit': ToolParameter(
         type: 'integer',
-        description: '最多返回多少条（默认 5）',
+        description: '鏈€澶氳繑鍥炲灏戞潯锛堥粯璁?5锛?',
         required: false,
       ),
     },
     handler: _handleSearchReminders,
   );
 
-  // ========== 工具处理函数 ==========
+  // ========== 宸ュ叿澶勭悊鍑芥暟 ==========
 
   Future<String?> _handleCreateReminder(Map<String, dynamic> args) async {
+    final settings = await _ref.read(appSettingsProvider.future);
+    if (!settings.autoReplySettings.enabled) {
+      return jsonEncode({'ok': false, 'error': '主动回复已关闭，无法创建提醒'});
+    }
+
     final title = args['title'] as String? ?? '';
     final timeStr = args['time'] as String? ?? '';
     final prompt = args['prompt'] as String?;
 
     if (title.isEmpty || timeStr.isEmpty) {
-      return jsonEncode({'ok': false, 'error': '缺少必要参数 title 或 time'});
+      return jsonEncode({'ok': false, 'error': '缂哄皯蹇呰鍙傛暟 title 鎴?time'});
     }
 
-    // 解析时间
+    // 瑙ｆ瀽鏃堕棿
     final scheduledTime = _parseTime(timeStr);
     if (scheduledTime == null) {
-      return jsonEncode({'ok': false, 'error': '无法解析时间格式：$timeStr'});
+      return jsonEncode({'ok': false, 'error': '鏃犳硶瑙ｆ瀽鏃堕棿鏍煎紡锛?timeStr'});
     }
 
-    // 获取当前会话信息
+    // 鑾峰彇褰撳墠浼氳瘽淇℃伅
     final convId = _ref.read(activeConversationIdProvider);
     if (convId == null || convId.isEmpty) {
-      return jsonEncode({'ok': false, 'error': '当前没有活跃的会话'});
+      return jsonEncode({'ok': false, 'error': '褰撳墠娌℃湁娲昏穬鐨勪細璇?'});
     }
 
-    // 获取会话中最后一条用户消息（用于作废判断）
+    // 鑾峰彇浼氳瘽涓渶鍚庝竴鏉＄敤鎴锋秷鎭紙鐢ㄤ簬浣滃簾鍒ゆ柇锛?
     final conversations = _ref.read(conversationsProvider).valueOrNull ?? [];
     final conv = conversations.where((c) => c.id == convId).firstOrNull;
 
@@ -260,7 +248,7 @@ class TriggerPlugin extends BasePlugin {
       }
     }
 
-    // 创建触发器
+    // 鍒涘缓瑙﹀彂鍣?
     final trigger = await _ref.read(autoReplyTriggersProvider.notifier).createTrigger(
       title: title,
       type: AutoReplyTriggerType.fixed,
@@ -269,14 +257,14 @@ class TriggerPlugin extends BasePlugin {
       requireExact: false,
       delayMinutes: 0,
       prompt: prompt,
-      priority: AutoReplyTriggerPriority.high, // 用户要求 = 高优先级
+      priority: AutoReplyTriggerPriority.high, // 鐢ㄦ埛瑕佹眰 = 楂樹紭鍏堢骇
       source: TriggerSource.userRequest,
       conversationId: convId,
       contextLastUserMessageId: lastUserMsgId,
       contextLastUserMessageAt: lastUserMsgAt,
     );
 
-    AppLogger.info('TriggerPlugin', '通过工具调用创建触发器', metadata: {
+    AppLogger.info('TriggerPlugin', '閫氳繃宸ュ叿璋冪敤鍒涘缓瑙﹀彂鍣?', metadata: {
       'title': title,
       'time': scheduledTime.toIso8601String(),
       'triggerId': trigger.id,
@@ -288,7 +276,7 @@ class TriggerPlugin extends BasePlugin {
         'id': trigger.id,
         'title': trigger.title,
         'time': _formatTime(scheduledTime),
-        'message': '好的，我会在 ${_formatTime(scheduledTime)} 提醒你～',
+        'message': '濂界殑锛屾垜浼氬湪 ${_formatTime(scheduledTime)} 鎻愰啋浣狅綖',
       },
     });
   }
@@ -299,8 +287,17 @@ class TriggerPlugin extends BasePlugin {
 
     final convId = _ref.read(activeConversationIdProvider);
 
-    // 1) 优先按 id 删除（最准确）
+    // 1) 浼樺厛鎸?id 鍒犻櫎锛堟渶鍑嗙‘锛?
     if (id != null && id.isNotEmpty) {
+      final allTriggers =
+          _ref.read(autoReplyTriggersProvider).valueOrNull ?? const <AutoReplyTrigger>[];
+      final target = allTriggers.where((t) => t.id == id).firstOrNull;
+      if (target == null) {
+        return jsonEncode({'ok': false, 'error': '未找到该提醒'});
+      }
+      if (convId != null && convId.isNotEmpty && target.conversationId != convId) {
+        return jsonEncode({'ok': false, 'error': '只能删除当前会话的提醒'});
+      }
       await _ref.read(autoReplyTriggersProvider.notifier).deleteTrigger(id);
       AppLogger.info('TriggerPlugin', '通过工具调用删除触发器', metadata: {'id': id});
       return jsonEncode({
@@ -309,9 +306,9 @@ class TriggerPlugin extends BasePlugin {
       });
     }
 
-    // 2) 否则按 query 删除：先在当前会话里搜索匹配的提醒
+    // 2) 鍚﹀垯鎸?query 鍒犻櫎锛氬厛鍦ㄥ綋鍓嶄細璇濋噷鎼滅储鍖归厤鐨勬彁閱?
     if (query == null || query.isEmpty) {
-      return jsonEncode({'ok': false, 'error': '请告诉我要取消哪个提醒（例如"起床闹钟"）'});
+      return jsonEncode({'ok': false, 'error': '璇峰憡璇夋垜瑕佸彇娑堝摢涓彁閱掞紙渚嬪"璧峰簥闂归挓"锛?'});
     }
 
     final candidates = _ref.read(autoReplyTriggersProvider.notifier).searchTriggers(
@@ -322,14 +319,17 @@ class TriggerPlugin extends BasePlugin {
     );
 
     if (candidates.isEmpty) {
-      return jsonEncode({'ok': false, 'error': '没找到匹配"$query"的提醒'});
+      return jsonEncode({'ok': false, 'error': '娌℃壘鍒板尮閰? \"$query\" 鐨勬彁閱?'});
     }
 
     if (candidates.length > 1) {
-      final preview = candidates.take(3).map((t) => '「${t.title}」(id: ${t.id})').join('、');
+      final preview = candidates
+          .take(3)
+          .map((t) => '${t.title} (id: ${t.id})')
+          .join(', ');
       return jsonEncode({
         'ok': false,
-        'error': '找到了多条匹配的提醒：$preview… 请指定要取消哪一个（可以用 id）',
+        'error': '鎵惧埌澶氭潯鍖归厤鎻愰啋锛? $preview 銆傝鎸囧畾瑕佸彇娑堢殑 id銆?',
         'candidates': candidates.map((t) => {
           'id': t.id,
           'title': t.title,
@@ -340,14 +340,14 @@ class TriggerPlugin extends BasePlugin {
 
     final target = candidates.first;
     await _ref.read(autoReplyTriggersProvider.notifier).deleteTrigger(target.id);
-    AppLogger.info('TriggerPlugin', '通过工具调用删除触发器(query)', metadata: {
+    AppLogger.info('TriggerPlugin', '閫氳繃宸ュ叿璋冪敤鍒犻櫎瑙﹀彂鍣?query)', metadata: {
       'query': query,
       'id': target.id,
     });
 
     return jsonEncode({
       'ok': true,
-      'result': {'message': '好的，已取消：${target.title}'},
+      'result': {'message': '濂界殑锛屽凡鍙栨秷锛?{target.title}'},
     });
   }
 
@@ -386,7 +386,7 @@ class TriggerPlugin extends BasePlugin {
     final limit = (args['limit'] as num?)?.toInt() ?? 5;
 
     if (query.isEmpty) {
-      return jsonEncode({'ok': false, 'error': '请提供搜索关键词'});
+      return jsonEncode({'ok': false, 'error': '璇锋彁渚涙悳绱㈠叧閿瘝'});
     }
 
     final convId = _ref.read(activeConversationIdProvider);
@@ -409,18 +409,18 @@ class TriggerPlugin extends BasePlugin {
     });
   }
 
-  // ========== 保留兼容：XML 标签解析（标记废弃） ==========
+  // ========== 淇濈暀鍏煎锛歑ML 鏍囩瑙ｆ瀽锛堟爣璁板簾寮冿級 ==========
 
   @override
-  @Deprecated('请使用原生工具调用，此方法仅作为兜底兼容')
+  @Deprecated('璇蜂娇鐢ㄥ師鐢熷伐鍏疯皟鐢紝姝ゆ柟娉曚粎浣滀负鍏滃簳鍏煎')
   Future<PluginProcessResult> processResponse(String text) async {
     if (!enabled) {
       return PluginProcessResult(processedText: text, events: []);
     }
 
-    // 检测是否使用了废弃的 XML 标签格式
+    // 妫€娴嬫槸鍚︿娇鐢ㄤ簡搴熷純鐨?XML 鏍囩鏍煎紡
     if (text.contains('<create_trigger') || text.contains('<delete_trigger')) {
-      AppLogger.warning('TriggerPlugin', 'AI 使用了废弃的 XML 标签格式，应使用原生工具调用');
+      AppLogger.warning('TriggerPlugin', 'AI 浣跨敤浜嗗簾寮冪殑 XML 鏍囩鏍煎紡锛屽簲浣跨敤鍘熺敓宸ュ叿璋冪敤');
     }
 
     final events = <PluginEvent>[];
@@ -501,15 +501,15 @@ class TriggerPlugin extends BasePlugin {
     );
   }
 
-  // ========== 辅助方法 ==========
+  // ========== 杈呭姪鏂规硶 ==========
 
   DateTime? _parseTime(String timeStr) {
-    // 尝试 ISO 8601 格式
+    // 灏濊瘯 ISO 8601 鏍煎紡
     try {
       return DateTime.parse(timeStr);
     } catch (_) {}
 
-    // 尝试 HH:mm 格式
+    // 灏濊瘯 HH:mm 鏍煎紡
     try {
       final parts = timeStr.split(':');
       if (parts.length >= 2) {
@@ -534,8 +534,9 @@ class TriggerPlugin extends BasePlugin {
 
     final timeStr = '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
 
-    if (isToday) return '今天 $timeStr';
-    if (isTomorrow) return '明天 $timeStr';
-    return '${time.month}月${time.day}日 $timeStr';
+    if (isToday) return '浠婂ぉ $timeStr';
+    if (isTomorrow) return '鏄庡ぉ $timeStr';
+    return '${time.month}鏈?{time.day}鏃?$timeStr';
   }
 }
+

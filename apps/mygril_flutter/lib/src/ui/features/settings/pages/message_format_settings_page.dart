@@ -69,7 +69,7 @@ class _MessageFormatSettingsPageState extends ConsumerState<MessageFormatSetting
                     children: [
                       ListTile(
                         leading: Icon(Icons.segment, color: colors.primary),
-                        title: const Text('消息分段', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
+                        title: const Text('消息分段', style: TextStyle(fontSize: 15, fontWeight: MoeFontWeights.emphasis)),
                         subtitle: Text(
                           currentConfig.enableChunking ? '已开启' : '已关闭',
                           style: TextStyle(fontSize: 13, color: colors.muted),
@@ -101,7 +101,7 @@ class _MessageFormatSettingsPageState extends ConsumerState<MessageFormatSetting
                     children: [
                       ListTile(
                         leading: Icon(Icons.emoji_emotions, color: colors.primary),
-                        title: const Text('表情包管理', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
+                        title: const Text('表情包管理', style: TextStyle(fontSize: 15, fontWeight: MoeFontWeights.emphasis)),
                         subtitle: Text('按标签分组查看和管理', style: TextStyle(fontSize: 13, color: colors.muted)),
                         trailing: Icon(Icons.arrow_forward_ios, size: 16, color: colors.muted),
                         onTap: () => Navigator.of(context).push(ParallaxSlidePageRoute(page: const StickerSettingsPage())),
@@ -131,7 +131,7 @@ class _MessageFormatSettingsPageState extends ConsumerState<MessageFormatSetting
       padding: const EdgeInsets.only(bottom: 12),
       child: Text(
         title,
-        style: TextStyle(color: colors.textSecondary, fontWeight: FontWeight.w600, fontSize: 13),
+        style: TextStyle(color: colors.textSecondary, fontWeight: MoeFontWeights.emphasis, fontSize: 13),
       ),
     );
   }

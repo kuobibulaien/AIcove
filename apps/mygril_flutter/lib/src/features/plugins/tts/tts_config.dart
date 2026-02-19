@@ -62,10 +62,6 @@ enum VoiceProviderType {
 
 /// TTS 模型类型
 enum TtsModelType {
-  // 2026-01-27: 模力方舟稳定性太差，已注释
-  // /// 模力方舟 IndexTTS-2（每次请求带 prompt_audio_url）
-  // indexTts,
-
   /// 阿里云 CosyVoice（需要先创建音色，获得 voice_id）
   cosyVoice,
 
@@ -84,7 +80,6 @@ enum TtsModelType {
 /// - IndexTTS-2（硅基流动）：使用 siliconFlowVoiceUri 或系统预置音色
 ///
 /// 2026-01-27: 添加 providerType 标识音色来源渠道
-/// 2026-01-27: 移除模力方舟支持（稳定性太差）
 class VoicePreset {
   /// 唯一标识
   final String id;

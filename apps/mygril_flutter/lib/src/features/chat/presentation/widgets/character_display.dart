@@ -1,7 +1,8 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:mygril_flutter/src/core/utils/data_image.dart';
-import 'package:mygril_flutter/src/ui/shared/effects/smooth_clip.dart';
+import 'package:aicove_flutter/src/core/utils/data_image.dart';
+import 'package:aicove_flutter/src/ui/shared/effects/smooth_clip.dart';
+import '../../../../ui/theme/tokens.dart';
 
 /// 角色卡片展示组件 - 高斯模糊背景风格
 /// 
@@ -120,7 +121,7 @@ class CharacterDisplay extends StatelessWidget {
               displayName,
               style: const TextStyle(
                 fontSize: 22,
-                fontWeight: FontWeight.bold,
+                fontWeight: MoeFontWeights.emphasis,
                 color: Colors.white,
                 shadows: [
                   Shadow(color: Colors.black54, blurRadius: 4),

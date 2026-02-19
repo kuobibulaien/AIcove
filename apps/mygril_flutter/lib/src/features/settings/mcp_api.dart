@@ -64,13 +64,15 @@ class McpConfigDto {
 
   factory McpConfigDto.fromJson(Map<String, dynamic> json) {
     final tools = (json['enabled_tools'] ??
-            json['enabledTools'] ??
-            const <dynamic>[]) as List<dynamic>;
+        json['enabledTools'] ??
+        const <dynamic>[]) as List<dynamic>;
     return McpConfigDto(
       enabled: (json['enabled'] as bool?) ?? false,
-      enabledTools: tools.map((e) => e.toString()).where((e) => e.isNotEmpty).toList(),
+      enabledTools:
+          tools.map((e) => e.toString()).where((e) => e.isNotEmpty).toList(),
       delegate: McpDelegateConfigDto.fromJson(
-        (json['delegate'] as Map<String, dynamic>?) ?? const <String, dynamic>{},
+        (json['delegate'] as Map<String, dynamic>?) ??
+            const <String, dynamic>{},
       ),
     );
   }
@@ -107,10 +109,23 @@ class McpToolInfoDto {
   });
 
   factory McpToolInfoDto.fromJson(Map<String, dynamic> json) {
+    final id = _readString(json['id']) ??
+        _readString(json['tool_id']) ??
+        _readString(json['toolId']) ??
+        _readString(json['name']) ??
+        _readString(json['tool_name']) ??
+        _readString(json['toolName']) ??
+        '';
+    final description =
+        _readString(json['description']) ?? _readString(json['title']) ?? '';
     return McpToolInfoDto(
-      id: _readString(json['id']) ?? '',
-      description: _readString(json['description']) ?? '',
-      enabled: (json['enabled'] as bool?) ?? false,
+      id: id,
+      description: description,
+      // Standard MCP tools/list usually does not include "enabled".
+      enabled: _readBool(
+        json['enabled'] ?? json['is_enabled'] ?? json['isEnabled'],
+        fallback: true,
+      ),
     );
   }
 
@@ -130,15 +145,63 @@ class McpConfigResponseDto {
   const McpConfigResponseDto({required this.config, required this.tools});
 
   factory McpConfigResponseDto.fromJson(Map<String, dynamic> json) {
-    final configJson = (json['config'] as Map<String, dynamic>?) ?? const <String, dynamic>{};
-    final toolsJson = (json['tools'] as List<dynamic>? ?? const <dynamic>[])
-        .whereType<Map<String, dynamic>>()
+    final root = _readMap(json['result']) ?? json;
+
+    final configJson = (_readMap(root['config']) ??
+            _readMap(root['mcp_config']) ??
+            const <String, dynamic>{})
+        .cast<String, dynamic>();
+
+    final toolsRaw = _extractTools(root);
+    final toolsJson = toolsRaw
         .map(McpToolInfoDto.fromJson)
+        .where((t) => t.id.isNotEmpty)
         .toList();
+
+    final fallbackEnabledTools = toolsJson
+        .where((t) => t.enabled)
+        .map((t) => t.id)
+        .toList(growable: false);
+
+    final parsedConfig = configJson.isEmpty
+        ? McpConfigDto(
+            enabled: fallbackEnabledTools.isNotEmpty,
+            enabledTools: fallbackEnabledTools,
+            delegate: const McpDelegateConfigDto(enabled: false),
+          )
+        : McpConfigDto.fromJson(configJson);
+
+    final normalizedConfig = parsedConfig.copyWith(
+      enabled: configJson.isEmpty
+          ? parsedConfig.enabled
+          : _readBool(configJson['enabled'], fallback: parsedConfig.enabled),
+      enabledTools: parsedConfig.enabledTools.isNotEmpty
+          ? parsedConfig.enabledTools
+          : fallbackEnabledTools,
+    );
+
     return McpConfigResponseDto(
-      config: McpConfigDto.fromJson(configJson),
+      config: normalizedConfig,
       tools: toolsJson,
     );
+  }
+
+  static List<Map<String, dynamic>> _extractTools(Map<String, dynamic> root) {
+    final directTools = _readMapList(root['tools']);
+    if (directTools.isNotEmpty) return directTools;
+
+    final itemTools = _readMapList(root['items']);
+    if (itemTools.isNotEmpty) return itemTools;
+
+    final result = _readMap(root['result']);
+    if (result != null) {
+      final nestedTools = _readMapList(result['tools']);
+      if (nestedTools.isNotEmpty) return nestedTools;
+      final nestedItems = _readMapList(result['items']);
+      if (nestedItems.isNotEmpty) return nestedItems;
+    }
+
+    return const <Map<String, dynamic>>[];
   }
 }
 
@@ -173,7 +236,7 @@ class TtsToolConfigDto {
 
   factory TtsToolConfigDto.fromJson(Map<String, dynamic> json) {
     double? parseSpeed(dynamic value) {
-      if (value == null || value == '' ) return null;
+      if (value == null || value == '') return null;
       final parsed = double.tryParse(value.toString());
       if (parsed == null || parsed <= 0) return null;
       return parsed;
@@ -181,10 +244,16 @@ class TtsToolConfigDto {
 
     return TtsToolConfigDto(
       apiKey: _readString(json['api_key']) ?? _readString(json['apiKey']) ?? '',
-      promptAudioUrl: _readString(json['prompt_audio_url']) ?? _readString(json['promptAudioUrl']) ?? '',
-      promptText: _readString(json['prompt_text']) ?? _readString(json['promptText']) ?? '',
+      promptAudioUrl: _readString(json['prompt_audio_url']) ??
+          _readString(json['promptAudioUrl']) ??
+          '',
+      promptText: _readString(json['prompt_text']) ??
+          _readString(json['promptText']) ??
+          '',
       speed: parseSpeed(json['speed']),
-      requestUrl: _readString(json['request_url']) ?? _readString(json['requestUrl']) ?? '',
+      requestUrl: _readString(json['request_url']) ??
+          _readString(json['requestUrl']) ??
+          '',
     );
   }
 
@@ -207,14 +276,20 @@ class TtsPresetDto {
   final bool builtin;
   final TtsToolConfigDto config;
 
-  const TtsPresetDto({required this.id, required this.name, required this.builtin, required this.config});
+  const TtsPresetDto(
+      {required this.id,
+      required this.name,
+      required this.builtin,
+      required this.config});
 
   factory TtsPresetDto.fromJson(Map<String, dynamic> json) {
     return TtsPresetDto(
       id: _readString(json['id']) ?? '',
       name: _readString(json['name']) ?? '未命名预设',
       builtin: json['builtin'] == true,
-      config: TtsToolConfigDto.fromJson((json['config'] as Map<String, dynamic>? ?? const <String, dynamic>{})),
+      config: TtsToolConfigDto.fromJson(
+          (json['config'] as Map<String, dynamic>? ??
+              const <String, dynamic>{})),
     );
   }
 }
@@ -224,11 +299,14 @@ class TtsToolConfigResponseDto {
   final TtsToolConfigDto defaults;
   final List<TtsPresetDto> presets;
 
-  const TtsToolConfigResponseDto({required this.config, required this.defaults, required this.presets});
+  const TtsToolConfigResponseDto(
+      {required this.config, required this.defaults, required this.presets});
 
   factory TtsToolConfigResponseDto.fromJson(Map<String, dynamic> json) {
-    final cfg = (json['config'] as Map<String, dynamic>?) ?? const <String, dynamic>{};
-    final defs = (json['defaults'] as Map<String, dynamic>?) ?? const <String, dynamic>{};
+    final cfg =
+        (json['config'] as Map<String, dynamic>?) ?? const <String, dynamic>{};
+    final defs = (json['defaults'] as Map<String, dynamic>?) ??
+        const <String, dynamic>{};
     final presetsRaw = (json['presets'] as List<dynamic>? ?? const <dynamic>[])
         .whereType<Map<String, dynamic>>()
         .map(TtsPresetDto.fromJson)
@@ -256,12 +334,24 @@ class TtsToolTestResponseDto {
 }
 
 class McpApi {
+  static const Duration mobileConfigCacheTtl = Duration(minutes: 2);
+  static const String defaultJsonRpcPath = '/mcp/rpc';
+
   final ApiClient _api;
   McpApi([ApiClient? api]) : _api = api ?? ApiClient();
 
-  Future<McpConfigResponseDto> fetchConfig() async {
-    final res = await _api.getJson('/mcp/config');
-    return McpConfigResponseDto.fromJson(res);
+  Future<McpConfigResponseDto> fetchConfig({
+    bool allowStandardFallback = true,
+  }) async {
+    try {
+      final res = await _api.getJson('/mcp/config');
+      return McpConfigResponseDto.fromJson(res);
+    } catch (_) {
+      if (!allowStandardFallback) rethrow;
+      final fallback = await _fetchConfigFromStandardMcp();
+      if (fallback != null) return fallback;
+      rethrow;
+    }
   }
 
   Future<McpConfigResponseDto> updateConfig(McpConfigDto config) async {
@@ -274,6 +364,32 @@ class McpApi {
     return McpToolTestResultDto.fromJson(res);
   }
 
+  /// JSON-RPC 2.0 wrapper for standard MCP gateway endpoints.
+  Future<Map<String, dynamic>> callJsonRpc({
+    required String method,
+    Map<String, dynamic>? params,
+    String path = defaultJsonRpcPath,
+    String? id,
+  }) async {
+    final requestId =
+        id ?? 'mobile-${DateTime.now().microsecondsSinceEpoch.toString()}';
+    final body = <String, dynamic>{
+      'jsonrpc': '2.0',
+      'id': requestId,
+      'method': method,
+      if (params != null) 'params': params,
+    };
+
+    final res = await _api.postJson(path, body);
+    final error = _readMap(res['error']);
+    if (error != null) {
+      final code = error['code'];
+      final message = _readString(error['message']) ?? 'unknown error';
+      throw StateError('MCP JSON-RPC $method failed (code=$code): $message');
+    }
+    return res;
+  }
+
   Future<TtsToolConfigResponseDto> fetchTtsConfig() async {
     final res = await _api.getJson('/mcp/tts/config');
     return TtsToolConfigResponseDto.fromJson(res);
@@ -284,7 +400,8 @@ class McpApi {
     return TtsToolConfigResponseDto.fromJson(res);
   }
 
-  Future<TtsToolConfigResponseDto> createTtsPreset({required String name, required TtsToolConfigDto dto}) async {
+  Future<TtsToolConfigResponseDto> createTtsPreset(
+      {required String name, required TtsToolConfigDto dto}) async {
     final body = {
       'name': name,
       ...dto.toJson(),
@@ -322,10 +439,90 @@ class McpApi {
     }
     return out;
   }
+
+  Future<McpConfigResponseDto?> _fetchConfigFromStandardMcp() async {
+    // Path 1: JSON-RPC MCP gateway.
+    try {
+      await _tryInitializeStandardMcp();
+      final toolsList = await callJsonRpc(
+        method: 'tools/list',
+        params: const <String, dynamic>{},
+      );
+      return McpConfigResponseDto.fromJson(toolsList);
+    } catch (_) {
+      // Ignore and continue to non-RPC fallback.
+    }
+
+    // Path 2: Non-standard but common fallback endpoint.
+    try {
+      final res = await _api.getJson('/mcp/tools');
+      return McpConfigResponseDto.fromJson(res);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _tryInitializeStandardMcp() async {
+    const protocolVersions = <String>[
+      '2025-03-26',
+      '2024-11-05',
+      '2024-10-07',
+    ];
+    for (final version in protocolVersions) {
+      try {
+        await callJsonRpc(
+          method: 'initialize',
+          params: <String, dynamic>{
+            'protocolVersion': version,
+            'capabilities': const <String, dynamic>{},
+            'clientInfo': const <String, dynamic>{
+              'name': 'mygril_flutter',
+              'version': '1.0.0',
+            },
+          },
+        );
+        return;
+      } catch (_) {
+        // Try next version.
+      }
+    }
+    // Some gateways do not require initialize and allow tools/list directly.
+  }
 }
 
 String? _readString(dynamic value) {
   if (value == null) return null;
   if (value is String) return value;
   return value.toString();
+}
+
+bool _readBool(dynamic value, {required bool fallback}) {
+  if (value == null) return fallback;
+  if (value is bool) return value;
+  final s = value.toString().trim().toLowerCase();
+  if (s == 'true' || s == '1' || s == 'yes') return true;
+  if (s == 'false' || s == '0' || s == 'no') return false;
+  return fallback;
+}
+
+Map<String, dynamic>? _readMap(dynamic value) {
+  if (value is Map<String, dynamic>) return value;
+  if (value is Map) {
+    final out = <String, dynamic>{};
+    value.forEach((k, v) {
+      out[k.toString()] = v;
+    });
+    return out;
+  }
+  return null;
+}
+
+List<Map<String, dynamic>> _readMapList(dynamic value) {
+  if (value is! List) return const <Map<String, dynamic>>[];
+  final out = <Map<String, dynamic>>[];
+  for (final item in value) {
+    final map = _readMap(item);
+    if (map != null) out.add(map);
+  }
+  return out;
 }

@@ -150,7 +150,7 @@ class _TabItem extends StatelessWidget {
               style: TextStyle(
                 fontSize: 13,
                 color: color,
-                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
               ),
             ),
           ],

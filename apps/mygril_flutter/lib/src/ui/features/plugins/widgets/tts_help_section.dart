@@ -40,7 +40,7 @@ class TtsHelpSection extends StatelessWidget {
                 style: TextStyle(
                   color: colors.text,
                   fontSize: 14,
-                  fontWeight: FontWeight.w600,
+                  fontWeight: MoeFontWeights.emphasis,
                 ),
               ),
             ],

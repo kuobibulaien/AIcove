@@ -20,7 +20,8 @@ class ContextAnalyzer {
 
   Future<void> analyzeAndSchedule(Conversation conversation) async {
     final settings = await _ref.read(appSettingsProvider.future);
-    if (!settings.autoReplySettings.enabled) return;
+    final autoReplySettings = settings.autoReplySettings;
+    if (!autoReplySettings.enabled) return;
 
     final history = conversation.messages;
     // Only analyze last 10 messages to save tokens
@@ -34,7 +35,12 @@ class ContextAnalyzer {
 
     // 获取当前未完成的触发器列表
     final currentTriggers = _ref.read(autoReplyTriggersProvider).valueOrNull ?? [];
-    final pendingTriggers = currentTriggers.where((t) => t.isActive).toList();
+    final pendingTriggers = currentTriggers
+        .where((t) =>
+            t.isActive &&
+            t.conversationId == conversation.id &&
+            t.source == TriggerSource.aiScheduler)
+        .toList();
 
     // 默认提示词
     const defaultPrompt = '''
@@ -59,7 +65,10 @@ Do not output markdown. Just JSON.
 ''';
 
     // 构建系统消息，包含现有触发器信息
-    final systemContent = StringBuffer(defaultPrompt);
+    final analyzerPrompt = autoReplySettings.analyzerPrompt.trim().isNotEmpty
+        ? autoReplySettings.analyzerPrompt
+        : defaultPrompt;
+    final systemContent = StringBuffer(analyzerPrompt);
     if (pendingTriggers.isNotEmpty) {
       systemContent.write('\n\nEXISTING PENDING TRIGGERS:\n');
       systemContent.write(jsonEncode(pendingTriggers.map((t) => {
@@ -80,7 +89,6 @@ Do not output markdown. Just JSON.
     try {
       // 优先使用配置的独立 AI 管家模型，否则使用默认对话模型
       // 无论哪种情况，都使用新的 sessionId 隔离上下文，防止污染
-      final autoReplySettings = settings.autoReplySettings;
       final String model;
       final String provider;
       
@@ -127,7 +135,7 @@ Do not output markdown. Just JSON.
         providerApiKey: apiKey,
       );
 
-      _processResponse(
+      await _processResponse(
         jsonStr: response, 
         conversation: conversation, 
         settings: settings,
@@ -140,14 +148,14 @@ Do not output markdown. Just JSON.
     }
   }
 
-  void _processResponse({
+  Future<void> _processResponse({
     required String jsonStr,
     required Conversation conversation,
     required AppSettings settings,
     String? apiKey,
     String? apiBase,
     String? model,
-  }) {
+  }) async {
     try {
       // Clean up markdown if present
       var clean = jsonStr.trim();
@@ -160,10 +168,21 @@ Do not output markdown. Just JSON.
       final controller = _ref.read(autoReplyTriggersProvider.notifier);
       
       final currentTriggers = _ref.read(autoReplyTriggersProvider).valueOrNull ?? [];
-      final pendingTriggers = currentTriggers.where((t) => t.isActive).toList();
+      final pendingTriggers = currentTriggers
+          .where((t) =>
+              t.isActive &&
+              t.conversationId == conversation.id &&
+              t.source == TriggerSource.aiScheduler)
+          .toList();
 
       final aiTriggerIds = <String>{};
       final triggersToAdd = <Map<String, dynamic>>[];
+      final snapshotSource = conversation.messages.length > 10
+          ? conversation.messages.sublist(conversation.messages.length - 10)
+          : conversation.messages;
+      final contextSnapshot = jsonEncode(
+        snapshotSource.map((m) => m.toHistoryJson()).toList(),
+      );
       
       for (final item in aiTriggers) {
         if (item is Map<String, dynamic>) {
@@ -179,7 +198,7 @@ Do not output markdown. Just JSON.
       // 删除过期的
       for (final existing in pendingTriggers) {
         if (!aiTriggerIds.contains(existing.id)) {
-          controller.deleteTrigger(existing.id);
+          await controller.deleteTrigger(existing.id);
         }
       }
 
@@ -210,7 +229,7 @@ Do not output markdown. Just JSON.
         }
 
         // 1. 使用新的 createTrigger 方法创建触发器
-        controller.createTrigger(
+        final createdTrigger = await controller.createTrigger(
           title: title,
           type: AutoReplyTriggerType.delay,
           nextFireAt: DateTime.now().add(Duration(minutes: minutes)),
@@ -223,18 +242,21 @@ Do not output markdown. Just JSON.
           conversationId: conversation.id,
           contextLastUserMessageId: lastUserMsgId,
           contextLastUserMessageAt: lastUserMsgAt,
+          contextSnapshot: contextSnapshot,
         );
 
         // 2. 注册后台 WorkManager 任务 (仅当 API Key 存在时)
         if (apiKey != null && apiKey.isNotEmpty) {
-          BackgroundService.scheduleOneOffTask(
-            uniqueName: 'trigger_${DateTime.now().millisecondsSinceEpoch}_$minutes',
+          await BackgroundService.scheduleOneOffTask(
+            uniqueName: 'trigger_${createdTrigger.id}',
             delay: Duration(minutes: minutes),
             inputData: {
+              'triggerId': createdTrigger.id,
               'apiKey': apiKey,
               'apiBase': apiBase,
               'model': model,
               'prompt': prompt, // AI 生成的 System Prompt
+              'contextSnapshot': contextSnapshot,
               'convId': conversation.id,
               'userTitle': conversation.addressUser ?? 'User',
               'characterName': conversation.title,
@@ -244,7 +266,12 @@ Do not output markdown. Just JSON.
         }
 
         AppLogger.info('ContextAnalyzer', 'Scheduled trigger',
-            metadata: {'title': title, 'minutes': minutes, 'source': 'aiScheduler'});
+            metadata: {
+              'triggerId': createdTrigger.id,
+              'title': title,
+              'minutes': minutes,
+              'source': 'aiScheduler'
+            });
       }
     } catch (e) {
       AppLogger.warning('ContextAnalyzer', 'Failed to parse scheduler JSON', 

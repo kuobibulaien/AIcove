@@ -45,7 +45,7 @@ class TtsPluginDetailPage extends ConsumerWidget {
           style: TextStyle(
             color: colors.text,
             fontSize: 18,
-            fontWeight: FontWeight.w600,
+            fontWeight: MoeFontWeights.emphasis,
           ),
         ),
       ),
@@ -78,7 +78,7 @@ class TtsPluginDetailPage extends ConsumerWidget {
               style: TextStyle(
                 color: colors.text,
                 fontSize: 16,
-                fontWeight: FontWeight.w600,
+                fontWeight: MoeFontWeights.emphasis,
               ),
             ),
             const SizedBox(height: 16),

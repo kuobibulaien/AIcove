@@ -145,7 +145,7 @@ class _ImageCropDialogState extends State<ImageCropDialog> with SingleTickerProv
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 18,
-                      fontWeight: FontWeight.w600,
+                      fontWeight: MoeFontWeights.emphasis,
                     ),
                   ),
                   IconButton(

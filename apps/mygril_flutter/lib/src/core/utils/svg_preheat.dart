@@ -3,7 +3,6 @@
 /// 在 App 启动时预加载 SVG 图标，避免首次进入界面时的卡顿。
 library;
 
-import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 /// 供应商 SVG 图标路径列表
@@ -18,7 +17,6 @@ const List<String> _providerSvgPaths = [
   'assets/icons/providers/siliconflow-color.svg',
   'assets/icons/providers/alibabacloud-color.svg',
   'assets/icons/providers/bytedance-color.svg',
-  'assets/icons/providers/giteeai.svg',
 ];
 
 /// 预热所有供应商 SVG 图标
@@ -26,8 +24,6 @@ const List<String> _providerSvgPaths = [
 /// 将 SVG 解析结果缓存到 flutter_svg 的全局缓存中，
 /// 避免首次显示时的解析延迟。
 Future<void> preheatProviderSvgIcons() async {
-  final loader = SvgAssetLoader;
-  
   for (final path in _providerSvgPaths) {
     try {
       // 预加载 SVG 到缓存

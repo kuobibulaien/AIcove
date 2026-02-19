@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:mygril_flutter/src/core/models/message_block.dart';
-import 'package:mygril_flutter/src/ui/shared/effects/smooth_clip.dart';
+import 'package:aicove_flutter/src/core/models/message_block.dart';
+import 'package:aicove_flutter/src/ui/shared/effects/smooth_clip.dart';
 
 /// 表情包显示 Widget
 /// 用于在聊天界面显示表情包

@@ -148,7 +148,7 @@ class _MoeListTileState extends State<MoeListTile> {
                   DefaultTextStyle(
                     style: widget.titleStyle ?? TextStyle(
                       fontSize: 15,
-                      fontWeight: FontWeight.w500,
+                      fontWeight: MoeFontWeights.emphasis,
                       color: widget.enabled ? colors.text : colors.muted,
                     ),
                     maxLines: 1,

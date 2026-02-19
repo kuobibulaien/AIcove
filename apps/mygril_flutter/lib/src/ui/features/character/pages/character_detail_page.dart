@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../../ui/theme/tokens.dart';
-import '../../../../core/utils/data_image.dart';
+import '../../../../core/utils/avatar_helper.dart';
 import '../../../../core/utils/role_transition_tags.dart';
 import '../../../../core/utils/blurred_background_cache.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
+import '../../../../ui/shared/animations/hero_rect_tweens.dart';
 import '../../../../ui/shared/effects/frosted_glass_card.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../features/chat/domain/conversation.dart';
@@ -15,12 +16,12 @@ import '../../../../ui/shared/widgets/moe_toast.dart';
 import '../../../../features/chat/presentation/widgets/contact_edit_dialog.dart';
 
 /// 角色详情页面
-/// 
+///
 /// 设计说明：
 /// - 全局高斯模糊背景（固定不动）
 /// - 内容区域作为普通列表整体滚动（像看漫画一样）
 /// - 底部悬浮"开始聊天"按钮
-/// 
+///
 /// 更新记录：
 /// - 2025-12-07: 创建角色详情页，使用沉浸式布局
 /// - 2025-12-07: 优化为漫画式滚动体验，全局模糊背景固定
@@ -30,14 +31,15 @@ class CharacterDetailPage extends ConsumerStatefulWidget {
   final String heroId;
 
   const CharacterDetailPage({
-    super.key, 
+    super.key,
     required this.conversationId,
     required this.initialConversation,
     required this.heroId,
   });
 
   @override
-  ConsumerState<CharacterDetailPage> createState() => _CharacterDetailPageState();
+  ConsumerState<CharacterDetailPage> createState() =>
+      _CharacterDetailPageState();
 }
 
 class _CharacterDetailPageState extends ConsumerState<CharacterDetailPage> {
@@ -82,13 +84,15 @@ class _CharacterDetailPageState extends ConsumerState<CharacterDetailPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
 
-      final blurAsset = _deriveBlurAssetPath(widget.initialConversation.characterImage);
+      final blurAsset =
+          _deriveBlurAssetPath(widget.initialConversation.characterImage);
       if (blurAsset != null) return; // 有预制模糊图就不用生成
 
       final imageProvider = _getImageProvider(widget.initialConversation);
       if (imageProvider == null) return;
 
-      BlurredBackgroundCache.warm(widget.conversationId, imageProvider, context);
+      BlurredBackgroundCache.warm(
+          widget.conversationId, imageProvider, context);
     });
   }
 
@@ -101,9 +105,10 @@ class _CharacterDetailPageState extends ConsumerState<CharacterDetailPage> {
     // 监听最新的会话列表，找到当前会话
     final conversationsAsync = ref.watch(conversationsProvider);
     final conversation = conversationsAsync.value?.firstWhere(
-      (c) => c.id == widget.conversationId,
-      orElse: () => widget.initialConversation,
-    ) ?? widget.initialConversation;
+          (c) => c.id == widget.conversationId,
+          orElse: () => widget.initialConversation,
+        ) ??
+        widget.initialConversation;
 
     // 获取路由动画（用于按钮淡入淡出）
     final routeAnimation = _routeAnimation ?? ModalRoute.of(context)?.animation;
@@ -144,7 +149,7 @@ class _CharacterDetailPageState extends ConsumerState<CharacterDetailPage> {
                               conversation.displayName,
                               style: TextStyle(
                                 fontSize: 20,
-                                fontWeight: FontWeight.w900,
+                                fontWeight: MoeFontWeights.emphasis,
                                 color: colors.text,
                               ),
                               textAlign: TextAlign.center,
@@ -263,7 +268,8 @@ class _CharacterDetailPageState extends ConsumerState<CharacterDetailPage> {
             ),
           )
         else
-          _buildGeneratedBackgroundImage(context, conversation.id, imageProvider),
+          _buildGeneratedBackgroundImage(
+              context, conversation.id, imageProvider),
         // 轻微玻璃提亮/压暗（与卡片一致）
         Builder(builder: (context) {
           final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -327,27 +333,19 @@ class _CharacterDetailPageState extends ConsumerState<CharacterDetailPage> {
     );
   }
 
-  /// 获取图片 Provider
+  /// 获取图片 Provider（立绘优先级）
   ImageProvider? _getImageProvider(Conversation conversation) {
-    final charImage = conversation.characterImage;
-    if (charImage != null && charImage.isNotEmpty) {
-      final charBytes = decodeDataImage(charImage);
-      if (charBytes != null) return MemoryImage(charBytes);
-      return AssetImage(charImage);
-    }
-
-    final avatar = conversation.avatarUrl;
-    if (avatar != null && avatar.isNotEmpty) {
-      final avatarBytes = decodeDataImage(avatar);
-      if (avatarBytes != null) return MemoryImage(avatarBytes);
-      if (avatar.startsWith('http')) return NetworkImage(avatar);
-      return AssetImage(avatar);
-    }
-    return null;
+    final helper = AvatarHelper(
+      avatarUrl: conversation.avatarUrl,
+      characterImage: conversation.characterImage,
+      displayName: conversation.displayName,
+    );
+    return helper.getCharacterProvider();
   }
 
   /// 角色立绘展示（将 Hero 移入 AspectRatio 内部，确保 Hero 的内容比例恒定为 3:4，解决形变问题）
-  Widget _buildCharacterImage(BuildContext context, Conversation conversation, Size screenSize) {
+  Widget _buildCharacterImage(
+      BuildContext context, Conversation conversation, Size screenSize) {
     return Center(
       child: Container(
         constraints: const BoxConstraints(
@@ -359,7 +357,8 @@ class _CharacterDetailPageState extends ConsumerState<CharacterDetailPage> {
             tag: RoleTransitionTags.image(widget.heroId),
             child: MoeG2ClipRRect(
               radius: 16,
-              child: _buildImageContent(context, conversation, fit: BoxFit.cover),
+              child:
+                  _buildImageContent(context, conversation, fit: BoxFit.cover),
             ),
           ),
         ),
@@ -370,7 +369,8 @@ class _CharacterDetailPageState extends ConsumerState<CharacterDetailPage> {
   /// 信息卡片区域（简介 + 人格设定）
   Widget _buildInfoCard(BuildContext context, Conversation conversation) {
     final colors = context.moeColors;
-    final hasDescription = conversation.description != null && conversation.description!.isNotEmpty;
+    final hasDescription = conversation.description != null &&
+        conversation.description!.isNotEmpty;
     final hasPersona = conversation.personaPrompt.isNotEmpty;
 
     return Padding(
@@ -379,7 +379,8 @@ class _CharacterDetailPageState extends ConsumerState<CharacterDetailPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // 称呼标签
-          if (conversation.addressUser != null && conversation.addressUser!.isNotEmpty) ...[
+          if (conversation.addressUser != null &&
+              conversation.addressUser!.isNotEmpty) ...[
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
               decoration: MoeG2Decoration(
@@ -393,7 +394,7 @@ class _CharacterDetailPageState extends ConsumerState<CharacterDetailPage> {
                 '称呼我为「${conversation.addressUser}」',
                 style: TextStyle(
                   color: colors.primary,
-                  fontWeight: FontWeight.w500,
+                  fontWeight: MoeFontWeights.emphasis,
                   fontSize: 14,
                 ),
               ),
@@ -404,6 +405,7 @@ class _CharacterDetailPageState extends ConsumerState<CharacterDetailPage> {
           // 简介卡片（Hero 动画）
           Hero(
             tag: RoleTransitionTags.intro(widget.heroId),
+            createRectTween: createExpandingAlignedHeroRectTween,
             child: Material(
               type: MaterialType.transparency,
               child: SizedBox(
@@ -416,11 +418,11 @@ class _CharacterDetailPageState extends ConsumerState<CharacterDetailPage> {
                         : (hasPersona ? conversation.personaPrompt : '暂无简介'),
                     style: TextStyle(
                       fontSize: 14,
+                      fontWeight: MoeFontWeights.normal,
                       height: 1.4,
                       color: colors.text.withValues(alpha: 0.9),
                     ),
-                    maxLines: hasDescription ? null : 4,
-                    overflow: hasDescription ? null : TextOverflow.ellipsis,
+                    // 不限行数，有多长展示多长
                   ),
                 ),
               ),
@@ -439,7 +441,7 @@ class _CharacterDetailPageState extends ConsumerState<CharacterDetailPage> {
                   '人格设定',
                   style: TextStyle(
                     fontSize: 13,
-                    fontWeight: FontWeight.w500,
+                    fontWeight: MoeFontWeights.emphasis,
                     color: colors.muted,
                   ),
                 ),
@@ -453,6 +455,7 @@ class _CharacterDetailPageState extends ConsumerState<CharacterDetailPage> {
                 conversation.personaPrompt,
                 style: TextStyle(
                   fontSize: 13,
+                  fontWeight: MoeFontWeights.normal,
                   height: 1.5,
                   color: colors.text.withValues(alpha: 0.8),
                 ),
@@ -468,7 +471,7 @@ class _CharacterDetailPageState extends ConsumerState<CharacterDetailPage> {
   Widget _buildBottomButtons(BuildContext context, Conversation conversation) {
     final colors = context.moeColors;
     final isFavorite = conversation.isFavorite;
-    
+
     return Row(
       children: [
         // 收藏按钮
@@ -490,9 +493,9 @@ class _CharacterDetailPageState extends ConsumerState<CharacterDetailPage> {
             ),
           ),
         ),
-        
+
         const SizedBox(width: 16),
-        
+
         // 开始聊天按钮
         Expanded(
           child: MoeG2ClipRRect(
@@ -509,7 +512,8 @@ class _CharacterDetailPageState extends ConsumerState<CharacterDetailPage> {
                 icon: const Icon(Icons.chat_bubble_outline),
                 label: const Text(
                   '开始聊天',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                      fontSize: 18, fontWeight: MoeFontWeights.emphasis),
                 ),
               ),
             ),
@@ -520,55 +524,32 @@ class _CharacterDetailPageState extends ConsumerState<CharacterDetailPage> {
   }
 
   /// 切换收藏状态
-  Future<void> _toggleFavorite(BuildContext context, Conversation conversation) async {
+  Future<void> _toggleFavorite(
+      BuildContext context, Conversation conversation) async {
     final newFavorite = !conversation.isFavorite;
     await ref.read(conversationsProvider.notifier).updateConversationSettings(
-      conversation.id,
-      isFavorite: newFavorite,
-    );
+          conversation.id,
+          isFavorite: newFavorite,
+        );
     if (context.mounted) {
       MoeToast.brief(context, newFavorite ? '已添加到我的角色卡 ❤️' : '已从我的角色卡移除');
     }
   }
 
-  Widget _buildImageContent(BuildContext context, Conversation conversation, {BoxFit fit = BoxFit.cover}) {
-    final charImage = conversation.characterImage;
-    if (charImage != null && charImage.isNotEmpty) {
-      final charBytes = decodeDataImage(charImage);
-      if (charBytes != null) {
-        return Image.memory(charBytes, fit: fit, gaplessPlayback: true);
-      }
-      return Image.asset(
-        charImage,
-        fit: fit,
-        gaplessPlayback: true,
-        errorBuilder: (_, __, ___) => _buildAvatarFallback(context, conversation, fit),
-      );
-    }
-    return _buildAvatarFallback(context, conversation, fit);
-  }
-
-  Widget _buildAvatarFallback(BuildContext context, Conversation conversation, BoxFit fit) {
-    final avatar = conversation.avatarUrl;
-    if (avatar != null && avatar.isNotEmpty) {
-      final avatarBytes = decodeDataImage(avatar);
-      if (avatarBytes != null) {
-        return Image.memory(avatarBytes, fit: fit, gaplessPlayback: true);
-      }
-      if (avatar.startsWith('http')) {
-        return Image.network(avatar, fit: fit, gaplessPlayback: true);
-      }
-      return Image.asset(
-        avatar,
-        fit: fit,
-        gaplessPlayback: true,
-        errorBuilder: (_, __, ___) => Container(color: Colors.grey[200]),
-      );
-    }
-    return Container(
-      color: Colors.grey[200],
-      child: const Center(
-        child: Icon(Icons.person, size: 80, color: Colors.grey),
+  Widget _buildImageContent(BuildContext context, Conversation conversation,
+      {BoxFit fit = BoxFit.cover}) {
+    final helper = AvatarHelper(
+      avatarUrl: conversation.avatarUrl,
+      characterImage: conversation.characterImage,
+      displayName: conversation.displayName,
+    );
+    return helper.buildCharacterWidget(
+      fit: fit,
+      fallback: Container(
+        color: Colors.grey[200],
+        child: const Center(
+          child: Icon(Icons.person, size: 80, color: Colors.grey),
+        ),
       ),
     );
   }
@@ -579,7 +560,8 @@ class _CharacterDetailPageState extends ConsumerState<CharacterDetailPage> {
     context.go('/chat/${conversation.id}', extra: conversation);
   }
 
-  Future<void> _navigateToEdit(BuildContext context, Conversation conversation) async {
+  Future<void> _navigateToEdit(
+      BuildContext context, Conversation conversation) async {
     final result = await Navigator.of(context).push<ContactEditResult>(
       ParallaxSlidePageRoute(
         page: ContactEditPage(
@@ -591,14 +573,27 @@ class _CharacterDetailPageState extends ConsumerState<CharacterDetailPage> {
 
     if (result != null) {
       await ref.read(conversationsProvider.notifier).applyContactEdit(
-        conversation.id,
-        displayName: result.displayName,
-        avatarUrl: result.avatarUrl,
-        characterImage: result.characterImage,
-        addressUser: result.addressUser,
-        description: result.description,
-        personaPrompt: result.personaPrompt,
-      );
+            conversation.id,
+            displayName: result.displayName,
+            avatarUrl: result.avatarUrl,
+            clearAvatarUrl: result.clearAvatarUrl,
+            characterImage: result.characterImage,
+            clearCharacterImage: result.clearCharacterImage,
+            chatBackgroundImage: result.chatBackgroundImage,
+            clearChatBackgroundImage: result.clearChatBackgroundImage,
+            clearChatBackgroundMaskOpacity: result.clearChatBackgroundImage,
+            selfAddress: result.selfAddress,
+            clearSelfAddress: result.clearSelfAddress,
+            addressUser: result.addressUser,
+            clearAddressUser: result.clearAddressUser,
+            voiceFile: result.voiceFile,
+            clearVoiceFile: result.clearVoiceFile,
+            description: result.description,
+            clearDescription: result.clearDescription,
+            personaPrompt: result.personaPrompt,
+            enabledPlugins: result.enabledPlugins,
+            clearEnabledPlugins: result.clearEnabledPlugins,
+          );
       if (context.mounted) {
         MoeToast.brief(context, '已保存角色信息');
       }

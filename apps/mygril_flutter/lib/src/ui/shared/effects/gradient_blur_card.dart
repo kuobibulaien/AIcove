@@ -111,7 +111,7 @@ class GradientBlurCard extends StatelessWidget {
                         title,
                         style: TextStyle(
                           fontSize: 16,
-                          fontWeight: FontWeight.bold,
+                          fontWeight: MoeFontWeights.emphasis,
                           color: colors.text,
                           height: 1.2,
                         ),

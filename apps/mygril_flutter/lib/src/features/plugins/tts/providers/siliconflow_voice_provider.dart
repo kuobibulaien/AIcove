@@ -178,6 +178,15 @@ class SiliconFlowVoiceProvider implements TtsVoiceProvider {
   }
 
   /// 获取硅基流动的预置音色列表
+  @override
+  Future<VoicePreset?> queryVoiceStatus({
+    required String apiKey,
+    required String voiceId,
+    VoicePreset? voice,
+  }) async {
+    return null;
+  }
+
   List<VoicePreset> _getPresetVoices() {
     return SiliconFlowTtsService.presetVoices.map((voice) {
       return VoicePreset(

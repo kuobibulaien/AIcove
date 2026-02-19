@@ -5,7 +5,7 @@
 const int kExportFormatVersion = 1;
 
 /// 导出文件扩展名
-const String kExportFileExtension = '.mygril';
+const String kExportFileExtension = '.aicove';
 
 /// 同步范围（Scope）定义
 /// 基于 docs/备份与同步方案/同步范围清单.md
@@ -306,7 +306,7 @@ class ExportManifest {
   const ExportManifest({
     required this.formatVersion,
     required this.appVersion,
-    this.appName = 'MyGril',
+    this.appName = 'AIcove',
     required this.exportTime,
     this.exportDevice,
     required this.includedScopes,
@@ -335,7 +335,7 @@ class ExportManifest {
     return ExportManifest(
       formatVersion: json['format_version'] as int,
       appVersion: json['app_version'] as String,
-      appName: json['app_name'] as String? ?? 'MyGril',
+      appName: json['app_name'] as String? ?? 'AIcove',
       exportTime: DateTime.parse(json['export_time'] as String),
       exportDevice: json['export_device'] as String?,
       includedScopes: (json['included_scopes'] as List<dynamic>?)

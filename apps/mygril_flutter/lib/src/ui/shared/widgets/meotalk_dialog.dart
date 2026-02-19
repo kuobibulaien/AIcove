@@ -62,7 +62,7 @@ class MeoTalkDialog extends StatelessWidget {
                   title,
                   style: TextStyle(
                     fontSize: 18,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: MoeFontWeights.emphasis,
                     color: colors.text,
                   ),
                   textAlign: TextAlign.center,

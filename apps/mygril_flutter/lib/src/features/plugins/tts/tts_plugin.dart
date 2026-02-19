@@ -17,7 +17,7 @@ class TtsPlugin extends BasePlugin {
     name: '语音合成 (TTS)',
     description: '将标记文本自动转换为语音',
     version: '1.0.0',
-    author: 'MyGril Team',
+    author: 'AIcove Team',
     icon: Icons.volume_up,
     configSchema: {
       'enabled': ConfigField(

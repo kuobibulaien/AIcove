@@ -4,8 +4,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'auto_reply_trigger.dart';
 
-const _triggerStoreKey = 'mygril.auto_triggers.v1';
-const _triggerLogStoreKey = 'mygril.auto_trigger_logs.v1';
+const _triggerStoreKey = 'aicove.auto_triggers.v1';
+const _triggerLogStoreKey = 'aicove.auto_trigger_logs.v1';
 
 class AutoReplyTriggerStorage {
   Future<List<AutoReplyTrigger>> loadTriggers() async {

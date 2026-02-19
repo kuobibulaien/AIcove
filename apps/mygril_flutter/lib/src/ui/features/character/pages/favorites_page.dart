@@ -162,7 +162,7 @@ class _FavoriteCard extends StatelessWidget {
                   conversation.displayName,
                   style: const TextStyle(
                     fontSize: 16,
-                    fontWeight: FontWeight.bold,
+                    fontWeight: MoeFontWeights.emphasis,
                     color: Colors.white,
                   ),
                   maxLines: 1,

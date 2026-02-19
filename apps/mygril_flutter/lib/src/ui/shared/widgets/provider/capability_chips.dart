@@ -147,7 +147,7 @@ class CapabilityChips extends StatelessWidget {
             style: TextStyle(
               fontSize: size.fontSize,
               color: fgColor,
-              fontWeight: FontWeight.w500,
+              fontWeight: MoeFontWeights.emphasis,
               height: 1,
             ),
           ),
@@ -171,7 +171,7 @@ class CapabilityChips extends StatelessWidget {
         style: TextStyle(
           fontSize: size.fontSize,
           color: colors.textSecondary,
-          fontWeight: FontWeight.w500,
+          fontWeight: MoeFontWeights.emphasis,
           height: 1,
         ),
       ),
@@ -222,7 +222,7 @@ class CapabilityChip extends StatelessWidget {
             style: TextStyle(
               fontSize: size.fontSize,
               color: fgColor,
-              fontWeight: FontWeight.w500,
+              fontWeight: MoeFontWeights.emphasis,
               height: 1,
             ),
           ),
@@ -420,7 +420,7 @@ class ModelFeatureChips extends StatelessWidget {
             style: TextStyle(
               fontSize: size.fontSize,
               color: fgColor,
-              fontWeight: FontWeight.w500,
+              fontWeight: MoeFontWeights.emphasis,
               height: 1,
             ),
           ),
@@ -444,7 +444,7 @@ class ModelFeatureChips extends StatelessWidget {
         style: TextStyle(
           fontSize: size.fontSize,
           color: colors.textSecondary,
-          fontWeight: FontWeight.w500,
+          fontWeight: MoeFontWeights.emphasis,
           height: 1,
         ),
       ),

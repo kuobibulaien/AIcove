@@ -1,11 +1,11 @@
-/// 聊天发送服务
+/// 鑱婂ぉ鍙戦€佹湇鍔?
 ///
-/// 封装消息发送的核心流程，包括配置准备、API调用、消息交付等。
-/// 从 chat_actions.dart 提取，遵循单一职责原则。
+/// 灏佽娑堟伅鍙戦€佺殑鏍稿績娴佺▼锛屽寘鎷厤缃噯澶囥€丄PI璋冪敤銆佹秷鎭氦浠樼瓑銆?
+/// 浠?chat_actions.dart 鎻愬彇锛岄伒寰崟涓€鑱岃矗鍘熷垯銆?
 ///
-/// 更新记录：
-/// - 2025-12-31: 从 chat_actions.dart 提取
-/// - 2026-01-27: 升级 executeApiCall 支持两回合/递归工具调用
+/// 鏇存柊璁板綍锛?
+/// - 2025-12-31: 浠?chat_actions.dart 鎻愬彇
+/// - 2026-01-27: 鍗囩骇 executeApiCall 鏀寔涓ゅ洖鍚?閫掑綊宸ュ叿璋冪敤
 library;
 
 import 'dart:async';
@@ -22,8 +22,11 @@ import '../../settings/direct_mode.dart' as direct;
 import '../../settings/app_settings.dart';
 import '../../settings/mcp_api.dart';
 import '../../plugins/plugin_providers.dart';
+import '../../plugins/plugin_manager.dart';
 import '../../plugins/domain/plugin.dart';
 import '../../plugins/domain/plugin_content.dart';
+import '../../plugins/domain/handlers/ai_tool.dart';
+import '../../plugins/memory/memory_plugin.dart';
 import '../../../core/api/agent_api.dart';
 import '../../../core/api/providers/provider_adapter.dart' show ToolResult;
 import '../../../core/api/providers/provider_adapter_factory.dart';
@@ -33,32 +36,33 @@ import '../../../core/utils/token_estimator.dart';
 import 'chat_message_processor.dart';
 import 'chat_types.dart';
 
-/// 发送请求的输入参数
+/// 鍙戦€佽姹傜殑杈撳叆鍙傛暟
 class SendRequest {
   final Conversation conversation;
   final String? text;
   final String? imagePath;
   final Message userMessage;
-  
+
   const SendRequest({
     required this.conversation,
     this.text,
     this.imagePath,
     required this.userMessage,
   });
-  
+
   String get convId => conversation.id;
-  String get displayText => text ?? (imagePath != null ? '[图片]' : '');
+  String get displayText => text ?? (imagePath != null ? '[鍥剧墖]' : '');
 }
 
-/// API 调用结果
+/// API 璋冪敤缁撴灉
 class ApiCallResult {
   final String replyText;
   final String processedText;
   final List<PluginEvent> pluginEvents;
   final List<PluginContent> pluginContents;
   final List<Map<String, dynamic>> toolResults;
-  /// 工具调用产生的音频列表（speak 工具）
+
+  /// 宸ュ叿璋冪敤浜х敓鐨勯煶棰戝垪琛紙speak 宸ュ叿锛?
   final List<ToolAudioResult> toolAudioResults;
 
   const ApiCallResult({
@@ -70,11 +74,11 @@ class ApiCallResult {
     this.toolAudioResults = const [],
   });
 
-  /// 是否有工具调用产生的音频
+  /// 鏄惁鏈夊伐鍏疯皟鐢ㄤ骇鐢熺殑闊抽
   bool get hasToolAudio => toolAudioResults.isNotEmpty;
 }
 
-/// 工具调用产生的音频结果
+/// 宸ュ叿璋冪敤浜х敓鐨勯煶棰戠粨鏋?
 class ToolAudioResult {
   final String audioUrl;
   final String text;
@@ -82,9 +86,9 @@ class ToolAudioResult {
   const ToolAudioResult({required this.audioUrl, required this.text});
 }
 
-/// 聊天发送服务
-/// 
-/// 提供消息发送的核心功能，将复杂流程拆分为可独立测试的步骤。
+/// 鑱婂ぉ鍙戦€佹湇鍔?
+///
+/// 鎻愪緵娑堟伅鍙戦€佺殑鏍稿績鍔熻兘锛屽皢澶嶆潅娴佺▼鎷嗗垎涓哄彲鐙珛娴嬭瘯鐨勬楠ゃ€?
 class ChatSendService {
   final Ref _ref;
   final McpApi _mcpApi = McpApi();
@@ -93,15 +97,15 @@ class ChatSendService {
 
   ChatSendService(this._ref);
 
-  /// 创建用户消息
+  /// 鍒涘缓鐢ㄦ埛娑堟伅
   Message createUserMessage({
     required String? text,
     required String? imagePath,
   }) {
     final now = DateTime.now();
-    
+
     if (imagePath != null && imagePath.isNotEmpty) {
-      // 图片消息
+      // 鍥剧墖娑堟伅
       final msgId = genId('msg');
       return Message.fromBlocks(
         id: msgId,
@@ -116,8 +120,8 @@ class ChatSendService {
         status: 'sending',
       );
     }
-    
-    // 文本消息
+
+    // 鏂囨湰娑堟伅
     return Message(
       id: genId('msg'),
       role: 'user',
@@ -127,7 +131,7 @@ class ChatSendService {
     );
   }
 
-  /// 创建用户文件消息（按“文本附件”发送，供 AI 阅读）
+  /// 鍒涘缓鐢ㄦ埛鏂囦欢娑堟伅锛堟寜鈥滄枃鏈檮浠垛€濆彂閫侊紝渚?AI 闃呰锛?
   Future<Message> createUserFileMessage({required String filePath}) async {
     final trimmed = filePath.trim();
     if (trimmed.isEmpty) {
@@ -160,7 +164,7 @@ class ChatSendService {
     );
   }
 
-  /// 添加用户消息到对话
+  /// 娣诲姞鐢ㄦ埛娑堟伅鍒板璇?
   Future<void> addUserMessage({
     required String convId,
     required Message userMsg,
@@ -168,37 +172,38 @@ class ChatSendService {
   }) async {
     final now = DateTime.now();
     await _ref.read(conversationsProvider.notifier).updateOne(
-      convId,
-      (c) => c.copyWith(
-        messages: [...c.messages, userMsg],
-        updatedAt: now,
-        lastMessage: displayText,
-        lastMessageTime: now,
-      ),
-    );
+          convId,
+          (c) => c.copyWith(
+            messages: [...c.messages, userMsg],
+            updatedAt: now,
+            lastMessage: displayText,
+            lastMessageTime: now,
+          ),
+        );
   }
 
-  /// 准备 API 调用配置
+  /// 鍑嗗 API 璋冪敤閰嶇疆
   Future<ApiConfig> prepareApiConfig({
     required Conversation conv,
     required List<Message> history,
     required String? userText,
     TraceLogger? trace,
   }) async {
-    final configTrace = trace?.startChild('加载配置');
-    
+    final configTrace = trace?.startChild('鍔犺浇閰嶇疆');
+
     final settings = await _ref.read(appSettingsProvider.future);
     final mcpConfig = await _getMcpConfig();
     final toolPrefs = _buildToolPrefs(settings, mcpConfig);
 
-    configTrace?.note('配置', metadata: {
+    configTrace?.note('閰嶇疆', metadata: {
       'ttsEnabled': settings.ttsEnabled,
       'autoTools': toolPrefs['auto_tools_enabled'] == true,
-      'enabledToolsCount': (toolPrefs['mcp_enabled_tools'] as List?)?.length ?? 0,
+      'enabledToolsCount':
+          (toolPrefs['mcp_enabled_tools'] as List?)?.length ?? 0,
     });
     configTrace?.end();
 
-    // 准备模型和渠道信息
+    // 鍑嗗妯″瀷鍜屾笭閬撲俊鎭?
     final model = settings.defaultModelName;
     final provider = settings.modelProviderMap[model] ?? 'openai';
     var modelFull = '$provider:$model';
@@ -214,17 +219,21 @@ class ChatSendService {
     var providerApiBase = providerAuth.apiBaseUrl.trim().isEmpty
         ? settings.apiBaseUrl
         : providerAuth.apiBaseUrl.trim();
-    var providerApiKey =
-        providerAuth.apiKeys.isNotEmpty ? providerAuth.apiKeys.first.trim() : null;
+    var providerApiKey = providerAuth.apiKeys.isNotEmpty
+        ? providerAuth.apiKeys.first.trim()
+        : null;
 
-    // 直连配置覆盖
+    // 鐩磋繛閰嶇疆瑕嗙洊
     try {
       final cfg = await direct.loadDirectConfig();
       if (cfg.enabled) {
-        if ((providerApiBase.isEmpty || providerApiBase == settings.apiBaseUrl) && cfg.apiBase.isNotEmpty) {
+        if ((providerApiBase.isEmpty ||
+                providerApiBase == settings.apiBaseUrl) &&
+            cfg.apiBase.isNotEmpty) {
           providerApiBase = cfg.apiBase;
         }
-        if ((providerApiKey == null || providerApiKey.isEmpty) && cfg.apiKey.isNotEmpty) {
+        if ((providerApiKey == null || providerApiKey.isEmpty) &&
+            cfg.apiKey.isNotEmpty) {
           providerApiKey = cfg.apiKey;
         }
         if (!modelFull.contains(':') && cfg.model.isNotEmpty) {
@@ -233,10 +242,11 @@ class ChatSendService {
       }
     } catch (_) {}
 
-    // 构建消息列表（支持图片/文件等多模态）
-    final reqMessages = await _buildRequestMessages(history, settings: settings);
-    
-    // 构建系统提示词
+    // 鏋勫缓娑堟伅鍒楄〃锛堟敮鎸佸浘鐗?鏂囦欢绛夊妯℃€侊級
+    final reqMessages =
+        await _buildRequestMessages(history, settings: settings);
+
+    // 鏋勫缓绯荤粺鎻愮ず璇?
     final systemParts = <String>[];
     if (conv.personaPrompt.isNotEmpty) {
       systemParts.add(conv.personaPrompt);
@@ -245,11 +255,15 @@ class ChatSendService {
       systemParts.add('你应该称呼用户为"${conv.addressUser}"。');
     }
 
-    // 插件提示词
-    // 默认支持工具调用，除非用户在模型设置中明确禁用
+    // 鎻掍欢鎻愮ず璇?
+    // 榛樿鏀寔宸ュ叿璋冪敤锛岄櫎闈炵敤鎴峰湪妯″瀷璁剧疆涓槑纭鐢?
     final supportsToolCalling = !settings.isModelToolCallingDisabled(model);
+    final enabledPluginIds = conv.enabledPlugins?.toSet();
     final pluginManager = _ref.read(pluginManagerProvider);
-    final pluginPrompts = await pluginManager.getSystemPrompts(
+    final effectivePlugins =
+        _getEffectivePlugins(pluginManager, enabledPluginIds);
+    final pluginPrompts = await _buildPluginPromptsWithFilter(
+      effectivePlugins,
       userMessage: userText ?? '',
       supportsToolCalling: supportsToolCalling,
     );
@@ -257,13 +271,13 @@ class ChatSendService {
       systemParts.add(pluginPrompts);
     }
 
-    // 收集插件工具定义（仅当模型支持 Tool Calling 时）
+    // 鏀堕泦鎻掍欢宸ュ叿瀹氫箟锛堜粎褰撴ā鍨嬫敮鎸?Tool Calling 鏃讹級
     List<Map<String, dynamic>>? tools;
     if (supportsToolCalling) {
-      final aiTools = pluginManager.getAllTools();
+      final aiTools = _collectPluginTools(effectivePlugins);
       if (aiTools.isNotEmpty) {
         tools = aiTools.map((t) => t.toOpenAISchema()).toList();
-        AppLogger.debug('ChatSendService', '收集插件工具', metadata: {
+        AppLogger.debug('ChatSendService', '鏀堕泦鎻掍欢宸ュ叿', metadata: {
           'toolCount': tools.length,
           'toolNames': aiTools.map((t) => t.name).toList(),
         });
@@ -277,17 +291,38 @@ class ChatSendService {
       });
     }
 
-    // Token 截断：确保消息总长度不超过模型上下文限制
-    // 解析模型名称（移除 provider 前缀，如 "openai:gpt-4o" -> "gpt-4o"）
-    final modelName = modelFull.contains(':')
-        ? modelFull.split(':').last
-        : modelFull;
+    // Token 鎴柇锛氱‘淇濇秷鎭€婚暱搴︿笉瓒呰繃妯″瀷涓婁笅鏂囬檺鍒?
+    // 瑙ｆ瀽妯″瀷鍚嶇О锛堢Щ闄?provider 鍓嶇紑锛屽 "openai:gpt-4o" -> "gpt-4o"锛?
+    final modelName =
+        modelFull.contains(':') ? modelFull.split(':').last : modelFull;
     final maxContextTokens = getModelContextLimit(modelName);
     final truncatedMessages = truncateMessagesToFit(
       messages: reqMessages,
       maxContextTokens: maxContextTokens,
-      reserveTokens: 2048, // 为模型回复预留 2K token
+      reserveTokens: 2048, // reserve for completion
     );
+
+    if (truncatedMessages.length < reqMessages.length) {
+      MemoryPlugin? memoryPlugin;
+      for (final plugin in effectivePlugins) {
+        if (plugin is MemoryPlugin && plugin.enabled) {
+          memoryPlugin = plugin;
+          break;
+        }
+      }
+      if (memoryPlugin != null) {
+        final systemCount = systemParts.isNotEmpty ? 1 : 0;
+        final keptHistoryCount =
+            (truncatedMessages.length - systemCount).clamp(0, history.length);
+        final droppedCount = history.length - keptHistoryCount;
+        if (droppedCount > 0) {
+          memoryPlugin.triggerPreFlush(
+            conversationId: conv.id,
+            droppedMessages: history.take(droppedCount).toList(),
+          );
+        }
+      }
+    }
 
     return ApiConfig(
       settings: settings,
@@ -298,9 +333,118 @@ class ChatSendService {
       toolPrefs: toolPrefs,
       messages: truncatedMessages,
       tools: tools,
+      enabledPluginIds: enabledPluginIds,
       modelTemperature: settings.getModelConfig(model).temperature,
       modelTopP: settings.getModelConfig(model).topP,
-      modelContextMessageLimit: settings.getModelConfig(model).contextMessageLimit,
+      modelContextMessageLimit:
+          settings.getModelConfig(model).contextMessageLimit,
+    );
+  }
+
+  List<Plugin> _getEffectivePlugins(
+    PluginManager pluginManager,
+    Set<String>? enabledPluginIds,
+  ) {
+    final globallyEnabled = pluginManager.getEnabledPlugins();
+    if (enabledPluginIds == null) {
+      return globallyEnabled;
+    }
+    return [
+      for (final plugin in globallyEnabled)
+        if (enabledPluginIds.contains(plugin.id)) plugin,
+    ];
+  }
+
+  Future<String> _buildPluginPromptsWithFilter(
+    List<Plugin> plugins, {
+    required String userMessage,
+    required bool supportsToolCalling,
+  }) async {
+    if (plugins.isEmpty) return '';
+
+    final prompts = <String>[];
+    for (final plugin in plugins) {
+      try {
+        final prompt = await plugin.getSystemPrompt(
+          userMessage: userMessage,
+          supportsToolCalling: supportsToolCalling,
+        );
+        if (prompt != null && prompt.isNotEmpty) {
+          prompts.add(prompt);
+        }
+      } catch (e) {
+        AppLogger.warning('ChatSendService', '插件提示词构建失败', metadata: {
+          'pluginId': plugin.id,
+          'error': e.toString(),
+        });
+      }
+    }
+    return prompts.join('\n\n');
+  }
+
+  List<AITool> _collectPluginTools(List<Plugin> plugins) {
+    final tools = <AITool>[];
+    for (final plugin in plugins) {
+      try {
+        tools.addAll(plugin.getTools());
+      } catch (e) {
+        AppLogger.warning('ChatSendService', '鎻掍欢宸ュ叿鏀堕泦澶辫触', metadata: {
+          'pluginId': plugin.id,
+          'error': e.toString(),
+        });
+      }
+    }
+    return tools;
+  }
+
+  AITool? _findToolByName(List<Plugin> plugins, String name) {
+    for (final plugin in plugins) {
+      try {
+        final tools = plugin.getTools();
+        for (final tool in tools) {
+          if (tool.name == name) return tool;
+        }
+      } catch (e) {
+        AppLogger.warning('ChatSendService', '鎻掍欢宸ュ叿鏌ユ壘澶辫触', metadata: {
+          'pluginId': plugin.id,
+          'toolName': name,
+          'error': e.toString(),
+        });
+      }
+    }
+    return null;
+  }
+
+  Future<PluginProcessResult> _processResponseWithPlugins(
+    List<Plugin> plugins,
+    String text,
+  ) async {
+    if (plugins.isEmpty) {
+      return PluginProcessResult(processedText: text, events: const []);
+    }
+
+    String currentText = text;
+    final allEvents = <PluginEvent>[];
+    final allContents = <PluginContent>[];
+
+    for (final plugin in plugins) {
+      try {
+        final result = await plugin.processResponse(currentText);
+        currentText = result.processedText;
+        allEvents.addAll(result.events);
+        allContents.addAll(result.contents);
+      } catch (e) {
+        AppLogger.warning('ChatSendService', '鎻掍欢鍝嶅簲澶勭悊澶辫触', metadata: {
+          'pluginId': plugin.id,
+          'error': e.toString(),
+        });
+      }
+    }
+
+    return PluginProcessResult(
+      processedText: currentText,
+      events: allEvents,
+      contents: allContents,
     );
   }
 
@@ -340,7 +484,10 @@ class ChatSendService {
       if (block is ImageBlock) {
         final url = block.url?.trim();
         if (url != null && url.isNotEmpty) {
-          parts.add({'type': 'image_url', 'image_url': {'url': url}});
+          parts.add({
+            'type': 'image_url',
+            'image_url': {'url': url}
+          });
           continue;
         }
 
@@ -363,7 +510,7 @@ class ChatSendService {
               'image_url': {'url': 'data:$mime;base64,$encoded'},
             });
           } else {
-            parts.add({'type': 'text', 'text': '[图片读取失败]'});
+            parts.add({'type': 'text', 'text': '[鍥剧墖璇诲彇澶辫触]'});
           }
         }
         continue;
@@ -383,7 +530,7 @@ class ChatSendService {
       return {'role': message.role, 'content': content};
     }
 
-    // 只有 1 段文本时，退化为纯文本，兼容更多 OpenAI 兼容实现
+    // 鍙湁 1 娈垫枃鏈椂锛岄€€鍖栦负绾枃鏈紝鍏煎鏇村 OpenAI 鍏煎瀹炵幇
     if (parts.length == 1 && parts.first['type'] == 'text') {
       return {'role': message.role, 'content': parts.first['text']};
     }
@@ -422,7 +569,8 @@ class ChatSendService {
     'sh',
   };
 
-  Future<String> _readTextFileForAi(FileBlock block, {required AppSettings settings}) async {
+  Future<String> _readTextFileForAi(FileBlock block,
+      {required AppSettings settings}) async {
     final path = block.filePath.trim();
     if (path.isEmpty) return '';
 
@@ -441,20 +589,20 @@ class ChatSendService {
       final content = utf8.decode(bytes, allowMalformed: false);
       final safeContent = _truncateForPrompt(content);
       final lang = ext.isEmpty ? 'text' : ext;
-      return '用户上传了文件：${block.fileName}（${block.fileSize}B）。\n\n```$lang\n$safeContent\n```';
+      return '鐢ㄦ埛涓婁紶浜嗘枃浠讹細${block.fileName}锛?{block.fileSize}B锛夈€俓n\n```$lang\n$safeContent\n```';
     } catch (_) {
       try {
-        // 兜底：允许不完全 UTF-8，但若包含大量 NUL 字符则视为二进制
+        // 鍏滃簳锛氬厑璁镐笉瀹屽叏 UTF-8锛屼絾鑻ュ寘鍚ぇ閲?NUL 瀛楃鍒欒涓轰簩杩涘埗
         final bytes = await File(path).readAsBytes();
         final content = utf8.decode(bytes, allowMalformed: true);
         if (content.contains('\u0000')) {
-          return '用户上传了文件：${block.fileName}（${block.mimeType}），但文件似乎是二进制内容，无法读取。';
+          return '用户上传了文件：${block.fileName}（${block.mimeType}），但内容疑似二进制，无法读取。';
         }
         final safeContent = _truncateForPrompt(content);
         final lang = ext.isEmpty ? 'text' : ext;
-        return '用户上传了文件：${block.fileName}（${block.fileSize}B）。\n\n```$lang\n$safeContent\n```';
+        return '鐢ㄦ埛涓婁紶浜嗘枃浠讹細${block.fileName}锛?{block.fileSize}B锛夈€俓n\n```$lang\n$safeContent\n```';
       } catch (e) {
-        return '用户上传了文件：${block.fileName}，但读取失败：$e';
+        return '鐢ㄦ埛涓婁紶浜嗘枃浠讹細${block.fileName}锛屼絾璇诲彇澶辫触锛?e';
       }
     }
   }
@@ -462,7 +610,7 @@ class ChatSendService {
   String _truncateForPrompt(String content) {
     const maxChars = 40000;
     if (content.length <= maxChars) return content;
-    return '${content.substring(0, maxChars)}\n…(内容过长，已截断，仅发送前 $maxChars 字符)';
+    return '${content.substring(0, maxChars)}\n鈥?鍐呭杩囬暱锛屽凡鎴柇锛屼粎鍙戦€佸墠 $maxChars 瀛楃)';
   }
 
   String _guessMimeType(String filePath) {
@@ -505,23 +653,25 @@ class ChatSendService {
     }
   }
 
-  /// 暴露 prepareApiConfig 的返回类型
+  /// 鏆撮湶 prepareApiConfig 鐨勮繑鍥炵被鍨?
   Future<ApiConfig> getApiConfig({
     required Conversation conv,
     required List<Message> history,
     required String? userText,
     TraceLogger? trace,
-  }) => prepareApiConfig(conv: conv, history: history, userText: userText, trace: trace);
+  }) =>
+      prepareApiConfig(
+          conv: conv, history: history, userText: userText, trace: trace);
 
-  /// 执行 API 调用（支持两回合/递归工具调用）
+  /// 鎵ц API 璋冪敤锛堟敮鎸佷袱鍥炲悎/閫掑綊宸ュ叿璋冪敤锛?
   ///
-  /// 流程：
-  /// 1. 调用 AI API
-  /// 2. 如果 AI 返回 tool_calls，执行工具并收集结果
-  /// 3. 将工具结果追加到消息列表，再次调用 API
-  /// 4. 重复直到 AI 返回纯文本或达到最大回合数
+  /// 娴佺▼锛?
+  /// 1. 璋冪敤 AI API
+  /// 2. 濡傛灉 AI 杩斿洖 tool_calls锛屾墽琛屽伐鍏峰苟鏀堕泦缁撴灉
+  /// 3. 灏嗗伐鍏风粨鏋滆拷鍔犲埌娑堟伅鍒楄〃锛屽啀娆¤皟鐢?API
+  /// 4. 閲嶅鐩村埌 AI 杩斿洖绾枃鏈垨杈惧埌鏈€澶у洖鍚堟暟
   ///
-  /// [maxRounds] 最大回合数，防止无限循环（默认 5）
+  /// [maxRounds] 鏈€澶у洖鍚堟暟锛岄槻姝㈡棤闄愬惊鐜紙榛樿 5锛?
   Future<ApiCallResult> executeApiCall({
     required ApiConfig config,
     required String sessionId,
@@ -529,9 +679,10 @@ class ChatSendService {
     TraceLogger? trace,
     int maxRounds = 5,
   }) async {
-    final apiCallTrace = trace?.startChild('调用AI API');
-    apiCallTrace?.note('连接', metadata: {
-      'endpoint': config.providerApiBase.isNotEmpty ? config.providerApiBase : '后端网关',
+    final apiCallTrace = trace?.startChild('璋冪敤AI API');
+    apiCallTrace?.note('杩炴帴', metadata: {
+      'endpoint':
+          config.providerApiBase.isNotEmpty ? config.providerApiBase : '鍚庣缃戝叧',
       'model': config.modelFullId,
       'history': config.messages.length,
       'maxRounds': maxRounds,
@@ -539,10 +690,12 @@ class ChatSendService {
 
     final agent = AgentApiClient();
     final pluginManager = _ref.read(pluginManagerProvider);
+    final effectivePlugins =
+        _getEffectivePlugins(pluginManager, config.enabledPluginIds);
     final allToolEvents = <PluginEvent>[];
-    final allToolAudioResults = <ToolAudioResult>[]; // 收集 speak 工具产生的音频
+    final allToolAudioResults = <ToolAudioResult>[]; // 鏀堕泦 speak 宸ュ叿浜х敓鐨勯煶棰?
 
-    // 解析 provider 用于获取适配器
+    // 瑙ｆ瀽 provider 鐢ㄤ簬鑾峰彇閫傞厤鍣?
     String provider = 'openai';
     final idx = config.modelFullId.indexOf(':');
     if (idx > 0) {
@@ -550,13 +703,13 @@ class ChatSendService {
     }
     final adapter = ProviderAdapterFactory.getAdapter(provider);
 
-    // 可变的消息列表（每轮可能追加工具结果）
+    // 鍙彉鐨勬秷鎭垪琛紙姣忚疆鍙兘杩藉姞宸ュ叿缁撴灉锛?
     var currentMessages = List<Map<String, dynamic>>.from(config.messages);
     SendMessageRichResult? lastRich;
 
     for (var round = 1; round <= maxRounds; round++) {
-      final roundTrace = apiCallTrace?.startChild('第${round}轮API调用');
-      roundTrace?.note('请求', metadata: {
+      final roundTrace = apiCallTrace?.startChild('绗?round杞瓵PI璋冪敤');
+      roundTrace?.note('璇锋眰', metadata: {
         'round': round,
         'messagesCount': currentMessages.length,
       });
@@ -566,9 +719,9 @@ class ChatSendService {
         sessionId: sessionId,
         modelFullId: config.modelFullId,
         messages: currentMessages,
-        userText: round == 1 ? (userText ?? '') : '', // 只在第一轮传 userText
+        userText: round == 1 ? (userText ?? '') : '', // 鍙湪绗竴杞紶 userText
         temperature: config.effectiveTemperature,
-        topP: config.modelTopP, // 模型级别 Top P（null 时由服务商默认）
+        topP: config.modelTopP, // 妯″瀷绾у埆 Top P锛坣ull 鏃剁敱鏈嶅姟鍟嗛粯璁わ級
         token: config.settings.backendApiKey,
         toolPrefs: config.toolPrefs,
         providerApiBase: config.providerApiBase,
@@ -578,20 +731,20 @@ class ChatSendService {
         trace: roundTrace,
       );
 
-      roundTrace?.note('响应', metadata: {
+      roundTrace?.note('鍝嶅簲', metadata: {
         'textLength': lastRich.text.length,
         'toolCalls': lastRich.toolCalls.length,
       });
 
-      // 如果没有工具调用，结束循环
+      // 濡傛灉娌℃湁宸ュ叿璋冪敤锛岀粨鏉熷惊鐜?
       if (!lastRich.hasToolCalls) {
-        roundTrace?.end(additionalMessage: '无工具调用，结束');
+        roundTrace?.end(additionalMessage: '鏃犲伐鍏疯皟鐢紝缁撴潫');
         break;
       }
 
-      // 执行工具调用
-      final toolTrace = roundTrace?.startChild('执行工具调用');
-      toolTrace?.note('工具', metadata: {
+      // 鎵ц宸ュ叿璋冪敤
+      final toolTrace = roundTrace?.startChild('鎵ц宸ュ叿璋冪敤');
+      toolTrace?.note('宸ュ叿', metadata: {
         'count': lastRich.toolCalls.length,
         'names': lastRich.toolCalls.map((t) => t.name).toList(),
       });
@@ -599,21 +752,21 @@ class ChatSendService {
       final toolResults = <ToolResult>[];
       for (final tc in lastRich.toolCalls) {
         try {
-          final tool = pluginManager.findToolByName(tc.name);
+          final tool = _findToolByName(effectivePlugins, tc.name);
           if (tool != null) {
-            AppLogger.info('ChatSendService', '执行工具调用', metadata: {
+            AppLogger.info('ChatSendService', '鎵ц宸ュ叿璋冪敤', metadata: {
               'round': round,
               'name': tc.name,
               'args': tc.arguments,
             });
             final result = await tool.handler(tc.arguments);
             final resultStr = result ?? '';
-            AppLogger.info('ChatSendService', '工具调用完成', metadata: {
+            AppLogger.info('ChatSendService', '宸ュ叿璋冪敤瀹屾垚', metadata: {
               'name': tc.name,
               'result': resultStr,
             });
 
-            // 如果是 speak 工具，解析返回的 JSON 收集音频
+            // 濡傛灉鏄?speak 宸ュ叿锛岃В鏋愯繑鍥炵殑 JSON 鏀堕泦闊抽
             if (tc.name == 'speak') {
               try {
                 final parsed = jsonDecode(resultStr) as Map<String, dynamic>;
@@ -621,23 +774,26 @@ class ChatSendService {
                 final audioUrl = parsed['audioUrl'] as String?;
                 final text = parsed['text'] as String? ?? '';
                 if (success && audioUrl != null && audioUrl.isNotEmpty) {
-                  allToolAudioResults.add(ToolAudioResult(audioUrl: audioUrl, text: text));
-                  AppLogger.info('ChatSendService', '收集到 speak 工具音频', metadata: {
-                    'audioUrlLength': audioUrl.length,
-                    'text': text,
-                  });
+                  allToolAudioResults
+                      .add(ToolAudioResult(audioUrl: audioUrl, text: text));
+                  AppLogger.info('ChatSendService', '鏀堕泦鍒?speak 宸ュ叿闊抽',
+                      metadata: {
+                        'audioUrlLength': audioUrl.length,
+                        'text': text,
+                      });
                 }
               } catch (e) {
-                AppLogger.warning('ChatSendService', '解析 speak 结果失败', metadata: {'error': e.toString()});
+                AppLogger.warning('ChatSendService', '瑙ｆ瀽 speak 缁撴灉澶辫触',
+                    metadata: {'error': e.toString()});
               }
 
-              // 【重要】speak 工具是"副作用工具"，AI 不需要看到音频数据
-              // 只返回执行结果摘要，避免 base64 音频数据污染上下文
-              // 参考：https://github.com/openai/codex/issues/6426 (tool output truncation)
+              // 銆愰噸瑕併€憇peak 宸ュ叿鏄?鍓綔鐢ㄥ伐鍏?锛孉I 涓嶉渶瑕佺湅鍒伴煶棰戞暟鎹?
+              // 鍙繑鍥炴墽琛岀粨鏋滄憳瑕侊紝閬垮厤 base64 闊抽鏁版嵁姹℃煋涓婁笅鏂?
+              // 鍙傝€冿細https://github.com/openai/codex/issues/6426 (tool output truncation)
               toolResults.add(ToolResult(
                 toolCallId: tc.id,
                 name: tc.name,
-                result: '{"success": true, "message": "语音已播放给用户"}',
+                result: '{"success": true, "message": "璇煶宸叉挱鏀剧粰鐢ㄦ埛"}',
               ));
             } else {
               toolResults.add(ToolResult(
@@ -647,7 +803,8 @@ class ChatSendService {
               ));
             }
           } else {
-            AppLogger.warning('ChatSendService', '未找到工具', metadata: {'name': tc.name});
+            AppLogger.warning('ChatSendService', '未找到工具',
+                metadata: {'name': tc.name});
             toolResults.add(ToolResult(
               toolCallId: tc.id,
               name: tc.name,
@@ -655,7 +812,7 @@ class ChatSendService {
             ));
           }
         } catch (e) {
-          AppLogger.error('ChatSendService', '工具调用失败', metadata: {
+          AppLogger.error('ChatSendService', '宸ュ叿璋冪敤澶辫触', metadata: {
             'name': tc.name,
             'error': e.toString(),
           });
@@ -668,47 +825,50 @@ class ChatSendService {
       }
       toolTrace?.end();
 
-      // 如果是最后一轮，不再追加消息
+      // 濡傛灉鏄渶鍚庝竴杞紝涓嶅啀杩藉姞娑堟伅
       if (round == maxRounds) {
-        AppLogger.warning('ChatSendService', '达到最大回合数', metadata: {'maxRounds': maxRounds});
-        roundTrace?.end(additionalMessage: '达到最大回合数');
+        AppLogger.warning('ChatSendService', '杈惧埌鏈€澶у洖鍚堟暟',
+            metadata: {'maxRounds': maxRounds});
+        roundTrace?.end(additionalMessage: '杈惧埌鏈€澶у洖鍚堟暟');
         break;
       }
 
-      // 构建工具结果消息，追加到 currentMessages
-      // 从 rawResponse 构建 assistant 消息
-      final assistantMessage = _buildAssistantMessageFromRich(lastRich, provider);
+      // 鏋勫缓宸ュ叿缁撴灉娑堟伅锛岃拷鍔犲埌 currentMessages
+      // 浠?rawResponse 鏋勫缓 assistant 娑堟伅
+      final assistantMessage =
+          _buildAssistantMessageFromRich(lastRich, provider);
       final toolResultMessages = adapter.buildToolResultMessages(
         assistantMessage: assistantMessage,
         toolResults: toolResults,
       );
       currentMessages = [...currentMessages, ...toolResultMessages];
 
-      roundTrace?.note('追加工具结果', metadata: {
+      roundTrace?.note('杩藉姞宸ュ叿缁撴灉', metadata: {
         'newMessagesCount': toolResultMessages.length,
         'totalMessages': currentMessages.length,
       });
       roundTrace?.end(additionalMessage: '继续下一轮');
     }
 
-    apiCallTrace?.note('完成', metadata: {
+    apiCallTrace?.note('瀹屾垚', metadata: {
       'textLength': lastRich?.text.length ?? 0,
       'toolResults': lastRich?.toolResults.length ?? 0,
     });
-    apiCallTrace?.end(additionalMessage: 'API调用成功');
+    apiCallTrace?.end(additionalMessage: 'API璋冪敤鎴愬姛');
 
-    // 插件处理（处理降级模式的标签解析）
-    final pluginTrace = trace?.startChild('运行插件');
-    final pluginResult = await pluginManager.processResponse(lastRich?.text ?? '');
+    // 鎻掍欢澶勭悊锛堝鐞嗛檷绾фā寮忕殑鏍囩瑙ｆ瀽锛?
+    final pluginTrace = trace?.startChild('杩愯鎻掍欢');
+    final pluginResult = await _processResponseWithPlugins(
+        effectivePlugins, lastRich?.text ?? '');
 
-    pluginTrace?.note('插件处理', metadata: {
+    pluginTrace?.note('鎻掍欢澶勭悊', metadata: {
       'original': lastRich?.text.length ?? 0,
       'processed': pluginResult.processedText.length,
       'events': pluginResult.events.length,
     });
     pluginTrace?.end();
 
-    // 合并工具调用事件和插件事件
+    // 鍚堝苟宸ュ叿璋冪敤浜嬩欢鍜屾彃浠朵簨浠?
     final allEvents = [...allToolEvents, ...pluginResult.events];
 
     return ApiCallResult(
@@ -721,25 +881,28 @@ class ChatSendService {
     );
   }
 
-  /// 从 API 响应构建 assistant 消息（用于工具调用的消息追加）
-  Map<String, dynamic> _buildAssistantMessageFromRich(SendMessageRichResult rich, String provider) {
-    // 根据 provider 类型构建不同格式
+  /// 浠?API 鍝嶅簲鏋勫缓 assistant 娑堟伅锛堢敤浜庡伐鍏疯皟鐢ㄧ殑娑堟伅杩藉姞锛?
+  Map<String, dynamic> _buildAssistantMessageFromRich(
+      SendMessageRichResult rich, String provider) {
+    // 鏍规嵁 provider 绫诲瀷鏋勫缓涓嶅悓鏍煎紡
     switch (provider) {
       case 'claude':
       case 'anthropic':
-        // Anthropic 格式：返回原始 content 数组
+        // Anthropic 鏍煎紡锛氳繑鍥炲師濮?content 鏁扮粍
         return rich.rawResponse ?? {'content': []};
       case 'gemini':
       case 'google':
-        // Gemini 格式：返回 candidates[0].content
+        // Gemini 鏍煎紡锛氳繑鍥?candidates[0].content
         final candidates = (rich.rawResponse?['candidates'] as List?) ?? [];
         if (candidates.isNotEmpty) {
           final first = candidates.first as Map<String, dynamic>;
           return {'content': first['content']};
         }
-        return {'content': {'parts': []}};
+        return {
+          'content': {'parts': []}
+        };
       default:
-        // OpenAI 格式：返回 choices[0].message
+        // OpenAI 鏍煎紡锛氳繑鍥?choices[0].message
         final choices = (rich.rawResponse?['choices'] as List?) ?? [];
         if (choices.isNotEmpty) {
           final first = choices.first as Map<String, dynamic>;
@@ -749,15 +912,15 @@ class ChatSendService {
     }
   }
 
-  /// 构建助手消息
+  /// 鏋勫缓鍔╂墜娑堟伅
   ///
-  /// 返回 AssistantMessageBuildResult，包含消息列表和 TTS 占位消息 ID
+  /// 杩斿洖 AssistantMessageBuildResult锛屽寘鍚秷鎭垪琛ㄥ拰 TTS 鍗犱綅娑堟伅 ID
   AssistantMessageBuildResult buildAssistantMessages({
     required ApiCallResult apiResult,
     required AppSettings settings,
   }) {
-    // 路径A：如果有工具调用产生的音频（speak 工具），直接返回音频消息
-    // 不再走路径B（<tts>标签解析）
+    // 璺緞A锛氬鏋滄湁宸ュ叿璋冪敤浜х敓鐨勯煶棰戯紙speak 宸ュ叿锛夛紝鐩存帴杩斿洖闊抽娑堟伅
+    // 涓嶅啀璧拌矾寰凚锛?tts>鏍囩瑙ｆ瀽锛?
     if (apiResult.hasToolAudio) {
       AppLogger.info('ChatSendService', '使用工具调用音频（路径A）', metadata: {
         'audioCount': apiResult.toolAudioResults.length,
@@ -768,12 +931,15 @@ class ChatSendService {
         audioMessages.add(Message.fromBlocks(
           id: audioId,
           role: 'assistant',
-          blocks: [AudioBlock(messageId: audioId, url: audio.audioUrl, text: audio.text)],
+          blocks: [
+            AudioBlock(
+                messageId: audioId, url: audio.audioUrl, text: audio.text)
+          ],
           createdAt: DateTime.now(),
           status: 'sent',
         ));
       }
-      // 如果 AI 还有文本回复，也一并返回（不分段，保持完整存储）
+      // 濡傛灉 AI 杩樻湁鏂囨湰鍥炲锛屼篃涓€骞惰繑鍥烇紙涓嶅垎娈碉紝淇濇寔瀹屾暣瀛樺偍锛?
       final textContent = apiResult.processedText.trim();
       if (textContent.isNotEmpty) {
         audioMessages.add(Message(
@@ -786,12 +952,13 @@ class ChatSendService {
       }
       return AssistantMessageBuildResult(
         messages: audioMessages,
-        lastMessageText: audioMessages.isNotEmpty ? audioMessages.last.displayText : '',
+        lastMessageText:
+            audioMessages.isNotEmpty ? audioMessages.last.displayText : '',
       );
     }
 
-    // 路径B：没有工具音频，走正常的消息处理流程（可能含 <tts> 标签）
-    // 注意：分段逻辑已移至 UI 层，这里保持消息完整存储
+    // 璺緞B锛氭病鏈夊伐鍏烽煶棰戯紝璧版甯哥殑娑堟伅澶勭悊娴佺▼锛堝彲鑳藉惈 <tts> 鏍囩锛?
+    // 娉ㄦ剰锛氬垎娈甸€昏緫宸茬Щ鑷?UI 灞傦紝杩欓噷淇濇寔娑堟伅瀹屾暣瀛樺偍
     return chatMessageProcessor.buildAssistantMessages(
       replyText: apiResult.replyText,
       processedText: apiResult.processedText,
@@ -800,7 +967,7 @@ class ChatSendService {
     );
   }
 
-  /// 交付助手消息到对话
+  /// 浜や粯鍔╂墜娑堟伅鍒板璇?
   Future<void> deliverAssistantMessages({
     required String convId,
     required String userMsgId,
@@ -809,7 +976,7 @@ class ChatSendService {
     TraceLogger? trace,
   }) async {
     final forwardTrace = trace?.startChild('向用户转发消息');
-    forwardTrace?.info('消息分段完成', metadata: {
+    forwardTrace?.info('娑堟伅鍒嗘瀹屾垚', metadata: {
       'chunksCount': messages.length,
       'firstChunk': messages.isNotEmpty ? messages.first.displayText : '',
     });
@@ -833,14 +1000,15 @@ class ChatSendService {
       },
     );
 
-    forwardTrace?.info('消息已转发到用户', metadata: {
+    forwardTrace?.info('娑堟伅宸茶浆鍙戝埌鐢ㄦ埛', metadata: {
       'messagesCount': messages.length,
-      'hasAudio': messages.any((m) => m.blocks?.any((b) => b is AudioBlock) ?? false),
+      'hasAudio':
+          messages.any((m) => m.blocks?.any((b) => b is AudioBlock) ?? false),
     });
-    forwardTrace?.end(additionalMessage: '转发成功');
+    forwardTrace?.end(additionalMessage: '杞彂鎴愬姛');
   }
 
-  /// 标记用户消息发送失败
+  /// 鏍囪鐢ㄦ埛娑堟伅鍙戦€佸け璐?
   Future<void> markUserMessageFailed({
     required String convId,
     required String userMsgId,
@@ -862,18 +1030,18 @@ class ChatSendService {
     );
   }
 
-  /// 读取图片为 Base64
+  /// 璇诲彇鍥剧墖涓?Base64
   Future<String?> readImageAsBase64(String imagePath) async {
     try {
       final bytes = await File(imagePath).readAsBytes();
       return base64Encode(bytes);
     } catch (e) {
-      AppLogger.error('ChatSendService', '读取图片失败: $e');
+      AppLogger.error('ChatSendService', '璇诲彇鍥剧墖澶辫触: $e');
       return null;
     }
   }
 
-  /// 准备历史消息
+  /// 鍑嗗鍘嗗彶娑堟伅
   List<Message> prepareHistory({
     required Conversation conv,
     required Message userMsg,
@@ -886,8 +1054,9 @@ class ChatSendService {
     return all.sublist(all.length - limit);
   }
 
-  /// 构建工具偏好配置
-  Map<String, dynamic> _buildToolPrefs(AppSettings settings, McpConfigDto? config) {
+  /// 鏋勫缓宸ュ叿鍋忓ソ閰嶇疆
+  Map<String, dynamic> _buildToolPrefs(
+      AppSettings settings, McpConfigDto? config) {
     final prefs = <String, dynamic>{
       'tts_enabled': settings.ttsEnabled,
     };
@@ -919,13 +1088,12 @@ class ChatSendService {
     return prefs;
   }
 
-  /// 获取 MCP 配置
+  /// 鑾峰彇 MCP 閰嶇疆
   Future<McpConfigDto?> _getMcpConfig() async {
     final now = DateTime.now();
-    if (_cachedMcpConfig != null && _cachedMcpFetchedAt != null) {
-      if (now.difference(_cachedMcpFetchedAt!).inSeconds < 30) {
-        return _cachedMcpConfig;
-      }
+    if (_cachedMcpFetchedAt != null &&
+        now.difference(_cachedMcpFetchedAt!) < McpApi.mobileConfigCacheTtl) {
+      return _cachedMcpConfig;
     }
     try {
       final res = await _mcpApi.fetchConfig();
@@ -934,13 +1102,14 @@ class ChatSendService {
       return _cachedMcpConfig;
     } catch (_) {
       _cachedMcpConfig = null;
-      _cachedMcpFetchedAt = null;
+      // Negative cache to avoid repeated retries in weak mobile networks.
+      _cachedMcpFetchedAt = DateTime.now();
       return null;
     }
   }
 }
 
-/// API 配置类
+/// API 閰嶇疆绫?
 class ApiConfig {
   final AppSettings settings;
   final String modelFullId;
@@ -949,12 +1118,15 @@ class ApiConfig {
   final Map<String, dynamic> customConfig;
   final Map<String, dynamic> toolPrefs;
   final List<Map<String, dynamic>> messages;
-  final List<Map<String, dynamic>>? tools; // 原生 Tool Calling 工具定义
-  /// 模型级别温度参数（优先于全局设置）
+  final List<Map<String, dynamic>>? tools; // 鍘熺敓 Tool Calling 宸ュ叿瀹氫箟
+  final Set<String>? enabledPluginIds; // 瑙掕壊绾ф彃浠剁櫧鍚嶅崟锛坣ull=鍏ㄩ儴锛?
+  /// 妯″瀷绾у埆娓╁害鍙傛暟锛堜紭鍏堜簬鍏ㄥ眬璁剧疆锛?
   final double? modelTemperature;
-  /// 模型级别 Top P 参数
+
+  /// 妯″瀷绾у埆 Top P 鍙傛暟
   final double? modelTopP;
-  /// 模型级别上下文消息数限制
+
+  /// 妯″瀷绾у埆涓婁笅鏂囨秷鎭暟闄愬埗
   final int? modelContextMessageLimit;
 
   const ApiConfig({
@@ -966,13 +1138,14 @@ class ApiConfig {
     required this.toolPrefs,
     required this.messages,
     this.tools,
+    this.enabledPluginIds,
     this.modelTemperature,
     this.modelTopP,
     this.modelContextMessageLimit,
   });
 
-  /// 获取实际使用的温度参数
-  /// 优先级：模型设置 > 全局设置
+  /// 鑾峰彇瀹為檯浣跨敤鐨勬俯搴﹀弬鏁?
+  /// 浼樺厛绾э細妯″瀷璁剧疆 > 鍏ㄥ眬璁剧疆
   double get effectiveTemperature => modelTemperature ?? settings.temperature;
 }
 

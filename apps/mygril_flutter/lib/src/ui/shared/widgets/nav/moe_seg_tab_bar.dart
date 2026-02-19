@@ -102,7 +102,7 @@ class MoeSegTabBar extends StatelessWidget {
           style: TextStyle(
             fontSize: 13,
             color: isSelected ? Colors.white : colors.textSecondary,
-            fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+            fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
           ),
         ),
       ),
@@ -202,7 +202,7 @@ class MoeSegTabBarWithIcon extends StatelessWidget {
               style: TextStyle(
                 fontSize: 13,
                 color: isSelected ? Colors.white : colors.textSecondary,
-                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
               ),
             ),
           ],

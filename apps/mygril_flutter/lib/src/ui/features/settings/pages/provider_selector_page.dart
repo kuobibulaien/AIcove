@@ -125,7 +125,7 @@ class _ProviderCard extends ConsumerWidget {
                         _getProviderDisplayName(provider),
                         style: TextStyle(
                           fontSize: 18,
-                          fontWeight: FontWeight.w600,
+                          fontWeight: MoeFontWeights.emphasis,
                           color: colors.text,
                         ),
                       ),
@@ -148,7 +148,7 @@ class _ProviderCard extends ConsumerWidget {
                         model,
                         style: TextStyle(
                           color: isSelected ? colors.primary : colors.text,
-                          fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                          fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
                         ),
                       ),
                       leading: Icon(

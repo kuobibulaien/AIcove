@@ -174,7 +174,7 @@ class _FilterChipState<T> extends State<_FilterChip<T>> {
               item.label,
               style: TextStyle(
                 fontSize: 14,
-                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.emphasis,
                 color: textColor,
               ),
             ),
@@ -192,7 +192,7 @@ class _FilterChipState<T> extends State<_FilterChip<T>> {
                   '${item.count}',
                   style: TextStyle(
                     fontSize: 11,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: MoeFontWeights.emphasis,
                     color: countTextColor,
                   ),
                 ),

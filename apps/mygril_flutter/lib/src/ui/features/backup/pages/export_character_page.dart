@@ -12,6 +12,7 @@ import '../../../../features/chat/domain/conversation.dart';
 import '../../../shared/animations/parallax_slide_page_route.dart';
 import '../../../shared/effects/smooth_clip.dart';
 import '../../../shared/widgets/index.dart';
+import '../../../theme/tokens.dart';
 import 'chat_preview_page.dart';
 
 /// 导出角色选择页面
@@ -176,7 +177,7 @@ class _ExportCharacterPageState extends ConsumerState<ExportCharacterPage> {
                         Text(
                           conv.displayName,
                           style: theme.textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.w600,
+                            fontWeight: MoeFontWeights.emphasis,
                           ),
                         ),
                         const SizedBox(height: 4),

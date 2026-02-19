@@ -4,8 +4,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../ui/theme/tokens.dart';
-import 'package:mygril_flutter/src/core/utils/data_image.dart';
-import 'package:mygril_flutter/src/ui/shared/effects/smooth_clip.dart';
+import 'package:aicove_flutter/src/core/utils/data_image.dart';
+import 'package:aicove_flutter/src/ui/shared/effects/smooth_clip.dart';
 
 import '../../domain/conversation.dart';
 import '../../../../ui/shared/widgets/meotalk_dialog.dart';
@@ -14,16 +14,41 @@ class ContactEditResult {
   final String displayName;
   final String? avatarUrl;
   final String? characterImage;
+  final String? chatBackgroundImage;
+  final String? selfAddress; // 角色自称
   final String? addressUser; // 角色对"我"的称呼
+  final String? voiceFile; // 绑定音色（预设ID或音频数据）
   final String? description; // 角色简介（给用户看的介绍）
   final String personaPrompt; // 人格提示词（给 AI 用的设定）
+  final List<String>? enabledPlugins; // 允许插件列表，null=允许全部
+  final bool clearAvatarUrl;
+  final bool clearCharacterImage;
+  final bool clearChatBackgroundImage;
+  final bool clearSelfAddress;
+  final bool clearAddressUser;
+  final bool clearVoiceFile;
+  final bool clearDescription;
+  final bool clearEnabledPlugins;
+
   const ContactEditResult({
     required this.displayName,
     this.avatarUrl,
     this.characterImage,
+    this.chatBackgroundImage,
+    this.selfAddress,
     this.addressUser,
+    this.voiceFile,
     this.description,
     required this.personaPrompt,
+    this.enabledPlugins,
+    this.clearAvatarUrl = false,
+    this.clearCharacterImage = false,
+    this.clearChatBackgroundImage = false,
+    this.clearSelfAddress = false,
+    this.clearAddressUser = false,
+    this.clearVoiceFile = false,
+    this.clearDescription = false,
+    this.clearEnabledPlugins = false,
   });
 }
 
@@ -32,7 +57,8 @@ Future<ContactEditResult?> showContactEditDialog({
   required Conversation conversation,
 }) {
   final nameCtrl = TextEditingController(text: conversation.displayName);
-  final addressCtrl = TextEditingController(text: conversation.addressUser ?? '');
+  final addressCtrl =
+      TextEditingController(text: conversation.addressUser ?? '');
   final personaCtrl = TextEditingController(text: conversation.personaPrompt);
 
   String? avatarData = conversation.avatarUrl;
@@ -77,7 +103,8 @@ Future<ContactEditResult?> showContactEditDialog({
             if (avatarBytes != null) {
               return MoeG2ClipRRect(
                 radius: radiusBubble.x,
-                child: Image.memory(avatarBytes!, width: 72, height: 72, fit: BoxFit.cover),
+                child: Image.memory(avatarBytes!,
+                    width: 72, height: 72, fit: BoxFit.cover),
               );
             }
             if (avatarData != null && avatarData!.trim().isNotEmpty) {
@@ -100,7 +127,8 @@ Future<ContactEditResult?> showContactEditDialog({
 
           Widget characterPreview() {
             if (characterBytes != null) {
-              return Image.memory(characterBytes!, width: 140, height: 180, fit: BoxFit.cover);
+              return Image.memory(characterBytes!,
+                  width: 140, height: 180, fit: BoxFit.cover);
             }
             if (characterData != null && characterData!.trim().isNotEmpty) {
               return Image.asset(
@@ -119,7 +147,8 @@ Future<ContactEditResult?> showContactEditDialog({
                 radius: 12,
                 color: Colors.grey.shade200,
               ),
-              child: const Icon(Icons.image_not_supported_outlined, size: 42, color: Colors.grey),
+              child: const Icon(Icons.image_not_supported_outlined,
+                  size: 42, color: Colors.grey),
             );
           }
 
@@ -204,8 +233,12 @@ Future<ContactEditResult?> showContactEditDialog({
             confirmText: '保存',
             onCancel: () => Navigator.of(context).pop(),
             onConfirm: () {
-              final name = nameCtrl.text.trim().isEmpty ? conversation.displayName : nameCtrl.text.trim();
-              final address = addressCtrl.text.trim().isEmpty ? null : addressCtrl.text.trim();
+              final name = nameCtrl.text.trim().isEmpty
+                  ? conversation.displayName
+                  : nameCtrl.text.trim();
+              final address = addressCtrl.text.trim().isEmpty
+                  ? null
+                  : addressCtrl.text.trim();
               final persona = personaCtrl.text.trim();
               Navigator.of(context).pop(ContactEditResult(
                 displayName: name,
@@ -229,12 +262,15 @@ Widget _fallbackLetter(String name) {
     height: 72,
     decoration: MoeG2Decoration(
       radius: 10,
-      color: Color(0xFFF0F0F0),
+      color: const Color(0xFFF0F0F0),
     ),
     alignment: Alignment.center,
     child: Text(
       letter,
-      style: const TextStyle(fontSize: 24, color: Color(0xFF999999), fontWeight: FontWeight.w600),
+      style: const TextStyle(
+          fontSize: 24,
+          color: Color(0xFF999999),
+          fontWeight: MoeFontWeights.emphasis),
     ),
   );
 }

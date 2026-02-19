@@ -45,8 +45,9 @@ Future<ModelOption?> showAnalyzerModelPicker({
     subtitle: settings.defaultModelName,
   ));
   
-  // 从 providers 中提取所有可用模型
+  // 从 providers 中提取对话类型的可用模型（排除 TTS 等非对话模型）
   for (final provider in settings.providers) {
+    if (provider.modelType != 'chat') continue;
     for (final model in provider.models) {
       availableModels.add(ModelOption(
         model: model,

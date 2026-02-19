@@ -52,18 +52,17 @@ class ChatRequestBuilder {
   final Ref _ref;
   final McpApi _mcpApi = McpApi();
 
-  // MCP 配置缓存（30秒有效期）
+  // MCP 配置缓存（移动端优化 TTL）
   McpConfigDto? _cachedMcpConfig;
   DateTime? _cachedMcpFetchedAt;
-  static const Duration _mcpCacheDuration = Duration(seconds: 30);
+  static const Duration _mcpCacheDuration = McpApi.mobileConfigCacheTtl;
 
   /// 获取 MCP 配置（带缓存）
   Future<McpConfigDto?> getMcpConfig() async {
     final now = DateTime.now();
-    if (_cachedMcpConfig != null && _cachedMcpFetchedAt != null) {
-      if (now.difference(_cachedMcpFetchedAt!).inSeconds < _mcpCacheDuration.inSeconds) {
-        return _cachedMcpConfig;
-      }
+    if (_cachedMcpFetchedAt != null &&
+        now.difference(_cachedMcpFetchedAt!) < _mcpCacheDuration) {
+      return _cachedMcpConfig;
     }
     try {
       final res = await _mcpApi.fetchConfig();
@@ -72,13 +71,15 @@ class ChatRequestBuilder {
       return _cachedMcpConfig;
     } catch (_) {
       _cachedMcpConfig = null;
-      _cachedMcpFetchedAt = null;
+      // Negative cache to avoid repeated retries in weak mobile networks.
+      _cachedMcpFetchedAt = DateTime.now();
       return null;
     }
   }
 
   /// 构建工具偏好设置
-  Map<String, dynamic> buildToolPrefs(AppSettings settings, McpConfigDto? config) {
+  Map<String, dynamic> buildToolPrefs(
+      AppSettings settings, McpConfigDto? config) {
     final prefs = <String, dynamic>{
       'tts_enabled': settings.ttsEnabled,
     };
@@ -136,7 +137,8 @@ class ChatRequestBuilder {
     try {
       final cfg = await direct.loadDirectConfig();
       if (cfg.enabled) {
-        if ((providerApiBase.isEmpty || providerApiBase == settings.apiBaseUrl) &&
+        if ((providerApiBase.isEmpty ||
+                providerApiBase == settings.apiBaseUrl) &&
             cfg.apiBase.isNotEmpty) {
           providerApiBase = cfg.apiBase;
         }
@@ -177,13 +179,15 @@ class ChatRequestBuilder {
     }
 
     // 3. 用户称呼
-    if (conversation.addressUser != null && conversation.addressUser!.isNotEmpty) {
+    if (conversation.addressUser != null &&
+        conversation.addressUser!.isNotEmpty) {
       systemParts.add('你应该称呼用户为"${conversation.addressUser}"。');
     }
 
     // 4. 插件提示词（如 TTS）
     final pluginManager = _ref.read(pluginManagerProvider);
-    final pluginPrompts = await pluginManager.getSystemPrompts(userMessage: userMessage);
+    final pluginPrompts =
+        await pluginManager.getSystemPrompts(userMessage: userMessage);
     if (pluginPrompts.isNotEmpty) {
       systemParts.add(pluginPrompts);
       AppLogger.debug('ChatRequestBuilder', '添加插件提示词', metadata: {
@@ -215,9 +219,18 @@ class ChatRequestBuilder {
   }) async {
     // 根据时间增强插件配置决定是否添加时间戳
     final pluginManager = _ref.read(pluginManagerProvider);
-    final timeAwarenessPlugin = pluginManager.getPlugin('time_awareness') as TimeAwarenessPlugin?;
-    final includeTimestamp = timeAwarenessPlugin?.shouldIncludeTimestamp ?? false;
-    final reqMessages = history.map((m) => m.toHistoryJson(includeTimestamp: includeTimestamp)).toList();
+    final timeAwarenessPlugin =
+        pluginManager.getPlugin('time_awareness') as TimeAwarenessPlugin?;
+    final includeTimestamp =
+        timeAwarenessPlugin?.shouldIncludeTimestamp ?? false;
+    final reqMessages = history
+        .map((m) => m.toHistoryJson(includeTimestamp: includeTimestamp))
+        .toList();
+
+    // 将最后一条消息的时间传给时间感知插件，用于计算对话间隔
+    if (timeAwarenessPlugin != null && history.isNotEmpty) {
+      timeAwarenessPlugin.setLastMessageTime(history.last.createdAt);
+    }
 
     final systemPrompt = await buildSystemPrompt(
       conversation: conversation,

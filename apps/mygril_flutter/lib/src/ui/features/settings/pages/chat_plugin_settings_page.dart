@@ -1,7 +1,7 @@
 /// 聊天插件设置页面
 ///
 /// 整合所有聊天相关插件的入口：
-/// - 记忆库、消息分段、表情包、主动关怀、语音设置、绘图设置
+/// - 记忆库、表情包、主动关怀、语音设置、绘图设置
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -16,7 +16,6 @@ import '../../plugins/pages/memory_plugin_detail_page.dart';
 import '../../plugins/pages/tts_plugin_detail_page.dart';
 import '../../plugins/pages/sticker_settings_page.dart';
 import '../../auto_reply/pages/auto_reply_settings_page.dart';
-import 'ui_settings_page.dart';
 
 /// 聊天插件配置项
 class ChatPluginItem {
@@ -42,12 +41,6 @@ const chatPluginItems = [
     name: '记忆库',
     subtitle: '长期记忆设置',
     icon: Icons.psychology_outlined,
-  ),
-  ChatPluginItem(
-    id: 'chunk',
-    name: '消息分段',
-    subtitle: '模拟真人分段发送',
-    icon: Icons.segment,
   ),
   ChatPluginItem(
     id: 'sticker',
@@ -97,7 +90,7 @@ class ChatPluginSettingsPage extends ConsumerWidget {
             minLeadingWidth: 24,
             horizontalTitleGap: 12,
             leading: Icon(item.icon, color: colors.text, size: 24),
-            title: Text(item.name, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: colors.text)),
+            title: Text(item.name, style: TextStyle(fontSize: 15, fontWeight: MoeFontWeights.emphasis, color: colors.text)),
             subtitle: Wrap(
               spacing: 8,
               runSpacing: 4,
@@ -137,8 +130,6 @@ class ChatPluginSettingsPage extends ConsumerWidget {
         return ref.watch(triggerPluginConfigProvider).enabled;
       case 'sticker':
         return ref.watch(stickerPluginConfigProvider).enabled;
-      case 'chunk':
-        return ref.watch(appSettingsProvider).value?.messageFormatConfig.enableChunking;
       case 'image':
         return ref.watch(appSettingsProvider).value?.imageGenerationEnabled;
       default:
@@ -152,10 +143,6 @@ class ChatPluginSettingsPage extends ConsumerWidget {
     switch (item.id) {
       case 'memory':
         page = const MemoryPluginDetailPage();
-        break;
-      case 'chunk':
-        // 分段设置已移至界面设置页面
-        page = const UiSettingsPage();
         break;
       case 'sticker':
         page = const StickerSettingsPage();

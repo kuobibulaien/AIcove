@@ -10,7 +10,7 @@ void main() async {
   final libDir = Directory('lib/src');
   
   if (!libDir.existsSync()) {
-    print('❌ 错误：请在 mygril_flutter 目录下运行此脚本');
+    print('❌ 错误：请在 aicove_flutter 目录下运行此脚本');
     exit(1);
   }
   

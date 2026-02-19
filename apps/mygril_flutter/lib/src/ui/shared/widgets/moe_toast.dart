@@ -220,7 +220,7 @@ class _ToastWidgetState extends State<_ToastWidget>
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 15,
-                            fontWeight: FontWeight.w500,
+                            fontWeight: MoeFontWeights.emphasis,
                             height: 1.3,
                           ),
                           textAlign: TextAlign.center,
@@ -338,7 +338,7 @@ class _DismissibleToastWidgetState extends State<_DismissibleToastWidget>
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 14,
-                                fontWeight: FontWeight.w500,
+                                fontWeight: MoeFontWeights.emphasis,
                                 height: 1.3,
                               ),
                             ),
@@ -362,7 +362,7 @@ class _DismissibleToastWidgetState extends State<_DismissibleToastWidget>
                                 style: TextStyle(
                                   color: Colors.white,
                                   fontSize: 12,
-                                  fontWeight: FontWeight.w500,
+                                  fontWeight: MoeFontWeights.emphasis,
                                 ),
                               ),
                             ),
@@ -381,7 +381,7 @@ class _DismissibleToastWidgetState extends State<_DismissibleToastWidget>
                                 style: TextStyle(
                                   color: Colors.white70,
                                   fontSize: 12,
-                                  fontWeight: FontWeight.w500,
+                                  fontWeight: MoeFontWeights.emphasis,
                                 ),
                               ),
                             ),

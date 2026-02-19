@@ -145,7 +145,7 @@ String _calculateRelativePath(String filePath) {
   // 计算从当前文件到 app_logger.dart 的相对路径
   final parts = filePath.replaceAll('\\', '/').split('/');
   final libIndex = parts.indexOf('lib');
-  if (libIndex < 0) return "package:mygril_flutter/src/core/app_logger.dart";
+  if (libIndex < 0) return "package:aicove_flutter/src/core/app_logger.dart";
   
   final depth = parts.length - libIndex - 2; // -2 for 'lib' and filename
   if (depth <= 0) {

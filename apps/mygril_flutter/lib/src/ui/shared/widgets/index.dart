@@ -2,7 +2,7 @@
 /// 
 /// 使用方式：
 /// ```dart
-/// import 'package:mygril_flutter/src/ui/shared/widgets/index.dart';
+/// import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 /// ```
 /// 
 /// 更新记录：

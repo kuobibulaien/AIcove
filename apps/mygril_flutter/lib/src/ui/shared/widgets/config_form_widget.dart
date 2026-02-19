@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../features/plugins/domain/index.dart';
+import '../../theme/tokens.dart';
 import 'index.dart';
 
 /// 配置表单组件
@@ -211,7 +212,7 @@ class _ConfigFormWidgetState extends State<ConfigFormWidget> {
           padding: const EdgeInsets.only(left: 16, bottom: 8),
           child: Text(
             field.label,
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            style: const TextStyle(fontSize: 16, fontWeight: MoeFontWeights.emphasis),
           ),
         ),
         if (field.description != null)

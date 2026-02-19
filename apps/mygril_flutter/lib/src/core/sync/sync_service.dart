@@ -49,10 +49,12 @@ class SyncService {
     await _db.into(_db.syncCursors).insertOnConflictUpdate(
           SyncCursorsCompanion(
             deviceId: Value(_deviceId),
-            conversationsCursor:
-                Value(conversationsCursor ?? existing?.conversationsCursor ?? 0),
-            messagesCursor: Value(messagesCursor ?? existing?.messagesCursor ?? 0),
-            providersCursor: Value(providersCursor ?? existing?.providersCursor ?? 0),
+            conversationsCursor: Value(
+                conversationsCursor ?? existing?.conversationsCursor ?? 0),
+            messagesCursor:
+                Value(messagesCursor ?? existing?.messagesCursor ?? 0),
+            providersCursor:
+                Value(providersCursor ?? existing?.providersCursor ?? 0),
             updatedAt: Value(now),
           ),
         );
@@ -68,7 +70,8 @@ class SyncService {
       params['providers_cursor'] = cursor.providersCursor;
     }
 
-    final response = await _dio.get('/api/v1/sync/v2/pull', queryParameters: params);
+    final response =
+        await _dio.get('/api/v1/sync/v2/pull', queryParameters: params);
     final data = response.data as Map<String, dynamic>;
 
     // 应用会话变更
@@ -143,7 +146,8 @@ class SyncService {
   }
 
   /// 添加待同步操作
-  Future<void> addPendingOperation(String opType, Map<String, dynamic> data) async {
+  Future<void> addPendingOperation(
+      String opType, Map<String, dynamic> data) async {
     final opId = const Uuid().v4();
     await _db.into(_db.pendingOperations).insert(
           PendingOperationsCompanion(
@@ -168,6 +172,9 @@ class SyncService {
       displayName: Value(data['display_name'] as String? ?? ''),
       avatarUrl: Value(data['avatar_url'] as String?),
       characterImage: Value(data['character_image'] as String?),
+      chatBackgroundImage: Value(data['chat_background_image'] as String?),
+      chatBackgroundMaskOpacity:
+          Value((data['chat_background_mask_opacity'] as num?)?.toDouble()),
       selfAddress: Value(data['self_address'] as String?),
       addressUser: Value(data['address_user'] as String?),
       voiceFile: Value(data['voice_file'] as String?),
@@ -184,8 +191,10 @@ class SyncService {
       forkFromMessageId: Value(data['fork_from_message_id'] as String?),
       deletedAt: Value(data['deleted_at'] as int?),
       purgeAt: Value(data['purge_at'] as int?),
-      createdAt: Value(data['created_at'] as int? ?? DateTime.now().millisecondsSinceEpoch),
-      updatedAt: Value(data['updated_at'] as int? ?? DateTime.now().millisecondsSinceEpoch),
+      createdAt: Value(
+          data['created_at'] as int? ?? DateTime.now().millisecondsSinceEpoch),
+      updatedAt: Value(
+          data['updated_at'] as int? ?? DateTime.now().millisecondsSinceEpoch),
     );
 
     if (existing == null) {
@@ -212,7 +221,8 @@ class SyncService {
       replacedBy: Value(data['replaced_by'] as String?),
       deletedAt: Value(data['deleted_at'] as int?),
       purgeAt: Value(data['purge_at'] as int?),
-      createdAt: Value(data['created_at'] as int? ?? DateTime.now().millisecondsSinceEpoch),
+      createdAt: Value(
+          data['created_at'] as int? ?? DateTime.now().millisecondsSinceEpoch),
     );
 
     if (existing == null) {
@@ -244,7 +254,8 @@ class SyncService {
       data: Value(jsonEncode(data['data'] ?? {})),
       sortOrder: Value(data['sort_order'] as int? ?? 0),
       deletedAt: Value(data['deleted_at'] as int?),
-      createdAt: Value(data['created_at'] as int? ?? DateTime.now().millisecondsSinceEpoch),
+      createdAt: Value(
+          data['created_at'] as int? ?? DateTime.now().millisecondsSinceEpoch),
     );
 
     if (existing == null) {
@@ -275,8 +286,10 @@ class SyncService {
       apiKeys: Value(jsonEncode(data['api_keys'] ?? [])),
       deletedAt: Value(data['deleted_at'] as int?),
       purgeAt: Value(data['purge_at'] as int?),
-      createdAt: Value(data['created_at'] as int? ?? DateTime.now().millisecondsSinceEpoch),
-      updatedAt: Value(data['updated_at'] as int? ?? DateTime.now().millisecondsSinceEpoch),
+      createdAt: Value(
+          data['created_at'] as int? ?? DateTime.now().millisecondsSinceEpoch),
+      updatedAt: Value(
+          data['updated_at'] as int? ?? DateTime.now().millisecondsSinceEpoch),
     );
 
     if (existing == null) {

@@ -181,7 +181,7 @@ class _LogViewerPageState extends State<LogViewerPage> {
           style: TextStyle(
             color: colors.text,
             fontSize: 18,
-            fontWeight: FontWeight.w600,
+            fontWeight: MoeFontWeights.emphasis,
           ),
         ),
         actions: _isSelectionMode
@@ -324,7 +324,7 @@ class _LogViewerPageState extends State<LogViewerPage> {
                       style: TextStyle(
                         fontSize: 12,
                         color: isSelected ? Colors.white : colors.textSecondary,
-                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                        fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
                       ),
                     ),
                   ),
@@ -366,7 +366,7 @@ class _LogViewerPageState extends State<LogViewerPage> {
                       style: TextStyle(
                         fontSize: 12,
                         color: isSelected ? Colors.white : colors.textSecondary,
-                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                        fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
                       ),
                     ),
                   ),
@@ -1007,7 +1007,7 @@ class _LogHistoryListPageState extends State<LogHistoryListPage> {
           style: TextStyle(
             color: colors.text,
             fontSize: 18,
-            fontWeight: FontWeight.w600,
+            fontWeight: MoeFontWeights.emphasis,
           ),
         ),
         actions: [
@@ -1210,7 +1210,7 @@ class _LogHistoryDetailPageState extends State<LogHistoryDetailPage> {
           style: TextStyle(
             color: colors.text,
             fontSize: 18,
-            fontWeight: FontWeight.w600,
+            fontWeight: MoeFontWeights.emphasis,
           ),
         ),
         actions: [

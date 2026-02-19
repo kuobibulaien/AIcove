@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:typed_data';
+import 'package:archive/archive.dart';
 import 'package:http/http.dart' as http;
 import '../config.dart';
 import '../api_logger.dart';
@@ -33,6 +35,22 @@ class SendMessageRichResult {
     }
     return null;
   }
+}
+
+class ImageGenerationResult {
+  final List<Uint8List> images;
+  final String provider;
+  final String model;
+  final Map<String, dynamic>? rawResponse;
+
+  const ImageGenerationResult({
+    required this.images,
+    required this.provider,
+    required this.model,
+    this.rawResponse,
+  });
+
+  bool get isEmpty => images.isEmpty;
 }
 
 class AgentApiClient {
@@ -109,6 +127,229 @@ class AgentApiClient {
       return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     }
     throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+
+  Future<ImageGenerationResult> generateImage({
+    required String provider,
+    required String model,
+    required String prompt,
+    String? negativePrompt,
+    int width = 1024,
+    int height = 1024,
+    int count = 1,
+    int? steps,
+    double? guidanceScale,
+    int? seed,
+    String? sampler,
+    String? providerApiBase,
+    String? providerApiKey,
+    Map<String, dynamic>? customConfig,
+  }) async {
+    final normalizedProvider = provider.toLowerCase().trim();
+    final trimmedBase = providerApiBase?.trim();
+    final trimmedKey = providerApiKey?.trim();
+    if (trimmedKey == null || trimmedKey.isEmpty) {
+      throw StateError('Missing providerApiKey for image generation');
+    }
+    final base = (trimmedBase == null || trimmedBase.isEmpty)
+        ? (normalizedProvider == 'novelai'
+            ? 'https://api.novelai.net'
+            : 'https://api.openai.com/v1')
+        : trimmedBase;
+    if (normalizedProvider == 'novelai' || normalizedProvider == 'nai') {
+      return _generateImageWithNovelAI(
+        provider: normalizedProvider,
+        model: model,
+        prompt: prompt,
+        negativePrompt: negativePrompt,
+        width: width,
+        height: height,
+        count: count,
+        steps: steps,
+        guidanceScale: guidanceScale,
+        seed: seed,
+        sampler: sampler,
+        baseUrl: base,
+        apiKey: trimmedKey,
+        customConfig: customConfig,
+      );
+    }
+    return _generateImageWithOpenAICompatible(
+      provider: normalizedProvider,
+      model: model,
+      prompt: prompt,
+      negativePrompt: negativePrompt,
+      width: width,
+      height: height,
+      count: count,
+      baseUrl: base,
+      apiKey: trimmedKey,
+      customConfig: customConfig,
+    );
+  }
+
+  Future<ImageGenerationResult> _generateImageWithOpenAICompatible({
+    required String provider,
+    required String model,
+    required String prompt,
+    required int width,
+    required int height,
+    required int count,
+    required String baseUrl,
+    required String apiKey,
+    String? negativePrompt,
+    Map<String, dynamic>? customConfig,
+  }) async {
+    final adapter = ProviderAdapterFactory.getAdapter(provider);
+    final endpoint = adapter.buildEndpoint(baseUrl, modelType: 'image');
+    final payload = <String, dynamic>{
+      'model': model,
+      'prompt': prompt,
+      'n': count.clamp(1, 4),
+      'size': '${width.clamp(256, 2048)}x${height.clamp(256, 2048)}',
+      // Force base64 to avoid optional external URL download hop.
+      'response_format': 'b64_json',
+      if (negativePrompt != null && negativePrompt.trim().isNotEmpty)
+        'negative_prompt': negativePrompt.trim(),
+      ...?customConfig,
+    };
+    final headers = adapter.buildHeaders(apiKey);
+    final resp = await _client
+        .post(
+          Uri.parse(endpoint),
+          headers: headers,
+          body: jsonEncode(payload),
+        )
+        .timeout(timeout);
+    final bodyString = utf8.decode(resp.bodyBytes);
+    if (resp.statusCode < 200 || resp.statusCode >= 300) {
+      throw Exception('HTTP ${resp.statusCode}: $bodyString');
+    }
+    final data = jsonDecode(bodyString) as Map<String, dynamic>;
+    final images = <Uint8List>[];
+    final items = (data['data'] as List?) ?? const [];
+    for (final item in items) {
+      if (item is! Map<String, dynamic>) continue;
+      final b64 = item['b64_json']?.toString();
+      if (b64 != null && b64.isNotEmpty) {
+        images.add(base64Decode(b64));
+      }
+    }
+    return ImageGenerationResult(
+      images: images,
+      provider: provider,
+      model: model,
+      rawResponse: data,
+    );
+  }
+
+  Future<ImageGenerationResult> _generateImageWithNovelAI({
+    required String provider,
+    required String model,
+    required String prompt,
+    required int width,
+    required int height,
+    required int count,
+    required String baseUrl,
+    required String apiKey,
+    String? negativePrompt,
+    int? steps,
+    double? guidanceScale,
+    int? seed,
+    String? sampler,
+    Map<String, dynamic>? customConfig,
+  }) async {
+    final normalized = baseUrl.endsWith('/')
+        ? baseUrl.substring(0, baseUrl.length - 1)
+        : baseUrl;
+    final endpoint = '$normalized/ai/generate-image';
+    final params = <String, dynamic>{
+      'width': width.clamp(256, 2048),
+      'height': height.clamp(256, 2048),
+      'n_samples': count.clamp(1, 4),
+      if (steps != null) 'steps': steps.clamp(1, 100),
+      if (guidanceScale != null) 'scale': guidanceScale,
+      if (seed != null) 'seed': seed,
+      if (sampler != null && sampler.trim().isNotEmpty)
+        'sampler': sampler.trim(),
+      if (negativePrompt != null && negativePrompt.trim().isNotEmpty)
+        'uc': negativePrompt.trim(),
+    };
+    final configParams = customConfig?['image_parameters'];
+    if (configParams is Map<String, dynamic>) {
+      params.addAll(configParams);
+    }
+    final payload = <String, dynamic>{
+      'input': prompt,
+      'model': model,
+      'action': 'generate',
+      'parameters': params,
+    };
+    final resp = await _client
+        .post(
+          Uri.parse(endpoint),
+          headers: <String, String>{
+            'Authorization': 'Bearer $apiKey',
+            'Content-Type': 'application/json',
+            'Accept': 'application/zip',
+          },
+          body: jsonEncode(payload),
+        )
+        .timeout(timeout);
+    if (resp.statusCode < 200 || resp.statusCode >= 300) {
+      throw Exception('HTTP ${resp.statusCode}: ${utf8.decode(resp.bodyBytes)}');
+    }
+    final bytes = resp.bodyBytes;
+    final images = _extractImageBytesFromNovelAIResponse(bytes, resp.headers);
+    return ImageGenerationResult(
+      images: images,
+      provider: provider,
+      model: model,
+    );
+  }
+
+  List<Uint8List> _extractImageBytesFromNovelAIResponse(
+    Uint8List bytes,
+    Map<String, String> headers,
+  ) {
+    final contentType = headers['content-type']?.toLowerCase() ?? '';
+    // Prefer ZIP parse if content type or magic number indicates PKZIP.
+    final isZip = contentType.contains('zip') ||
+        (bytes.length > 3 && bytes[0] == 0x50 && bytes[1] == 0x4B);
+    if (isZip) {
+      final archive = ZipDecoder().decodeBytes(bytes, verify: false);
+      final results = <Uint8List>[];
+      for (final file in archive.files) {
+        if (!file.isFile) continue;
+        final content = file.content;
+        if (content is List<int>) {
+          results.add(Uint8List.fromList(content));
+        }
+      }
+      return results;
+    }
+
+    // Fallback JSON parse for potential non-zip responses.
+    try {
+      final data = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+      final image = data['image']?.toString();
+      if (image != null && image.isNotEmpty) {
+        return [base64Decode(image)];
+      }
+      final dataList = data['data'];
+      if (dataList is List) {
+        final results = <Uint8List>[];
+        for (final item in dataList) {
+          if (item is! Map<String, dynamic>) continue;
+          final b64 = item['b64_json']?.toString();
+          if (b64 != null && b64.isNotEmpty) {
+            results.add(base64Decode(b64));
+          }
+        }
+        return results;
+      }
+    } catch (_) {}
+    return const <Uint8List>[];
   }
 
   Future<String> sendMessage({

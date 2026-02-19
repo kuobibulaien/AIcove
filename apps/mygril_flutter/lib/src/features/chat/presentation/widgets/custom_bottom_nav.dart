@@ -85,7 +85,7 @@ class _NavItem extends StatelessWidget {
             label,
             style: TextStyle(
               fontSize: 12,
-              fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+              fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
               color: isSelected ? colors.primary : colors.muted,
             ),
           ),

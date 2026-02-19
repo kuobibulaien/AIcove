@@ -6,6 +6,7 @@ import '../../../../features/backup/models/export_format.dart';
 import '../../../shared/animations/parallax_slide_page_route.dart';
 import '../../../shared/effects/smooth_clip.dart';
 import '../../../shared/widgets/index.dart';
+import '../../../theme/tokens.dart';
 import 'export_scope_page.dart';
 import 'import_file_page.dart';
 import 'memory_trash_page.dart';
@@ -117,7 +118,7 @@ class DataManagementPage extends ConsumerWidget {
     return Text(
       title,
       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.bold,
+            fontWeight: MoeFontWeights.emphasis,
           ),
     );
   }
@@ -178,7 +179,7 @@ class DataManagementPage extends ConsumerWidget {
             ),
           ),
           title: const Text('导入数据'),
-          subtitle: const Text('从 .mygril 文件还原'),
+          subtitle: const Text('从 .aicove 文件还原'),
           trailing: const Icon(LucideIcons.chevronRight, size: 20),
           onTap: () {
             Navigator.of(context).push(
@@ -331,14 +332,14 @@ class DataManagementPage extends ConsumerWidget {
               Text(
                 '说明',
                 style: theme.textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
+                  fontWeight: MoeFontWeights.emphasis,
                 ),
               ),
             ],
           ),
           const SizedBox(height: 8),
           Text(
-            '• 导出的 .mygril 文件可以传输到其他设备\n'
+            '• 导出的 .aicove 文件可以传输到其他设备\n'
             '• 导入时可以选择合并或新建角色\n'
             '• 云同步需要登录账号才能使用',
             style: theme.textTheme.bodySmall?.copyWith(

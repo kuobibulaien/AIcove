@@ -1,4 +1,4 @@
-import 'package:mygril_flutter/src/core/models/message_block.dart';
+import 'package:aicove_flutter/src/core/models/message_block.dart';
 import '../domain/emoji_model.dart';
 import 'emoji_matcher.dart';
 import 'emoji_manager.dart';

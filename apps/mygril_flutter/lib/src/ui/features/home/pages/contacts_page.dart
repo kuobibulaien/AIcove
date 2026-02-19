@@ -66,7 +66,7 @@ class _ContactsPageState extends ConsumerState<ContactsPage> {
           title: Text(
             'MomoTalk',
             style: TextStyle(
-              fontWeight: FontWeight.w800,
+              fontWeight: MoeFontWeights.emphasis,
               fontSize: 24,
               color: colors.headerContentColor,
               letterSpacing: 0.8,

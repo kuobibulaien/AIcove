@@ -5,7 +5,7 @@
 /// 特性：
 /// - 从 SkinConfig 读取装饰样式
 /// - 支持皮肤切换
-/// - 统一的标题样式（粗体、24号字）
+/// - 统一的标题样式（粗体、20号字）
 ///
 /// 更新记录：
 /// - 2025-12-06: 从多个页面抽取公共 AppBar 样式
@@ -119,8 +119,8 @@ class MoeAppBar extends StatelessWidget implements PreferredSizeWidget {
         child: Text(
           title,
           style: TextStyle(
-            fontWeight: FontWeight.w800,
-            fontSize: 24,
+            fontWeight: MoeFontWeights.emphasis,
+            fontSize: 20,
             color: colors.headerContentColor,
             letterSpacing: 0.8,
           ),
@@ -182,8 +182,8 @@ class MoeDetailAppBar extends StatelessWidget implements PreferredSizeWidget {
         ),
       ),
       titleTextStyle: TextStyle(
-        fontSize: 22,
-        fontWeight: FontWeight.w800,
+        fontSize: 18,
+        fontWeight: MoeFontWeights.emphasis,
         color: colors.headerContentColor,
         letterSpacing: 0.8,
       ),

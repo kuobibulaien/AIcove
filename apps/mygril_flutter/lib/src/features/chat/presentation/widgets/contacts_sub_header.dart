@@ -37,11 +37,15 @@ class ContactsSubHeader extends ConsumerWidget {
     final isAscending = ref.watch(sortAscendingProvider);
     final listAsync = ref.watch(conversationsProvider);
     
+    // 计算未读消息总数（累加每个会话的 unreadCount）
     final count = listAsync.maybeWhen(
       data: (list) {
         final q = searchQuery.trim().toLowerCase();
-        if (q.isEmpty) return list.length;
-        return list.where((c) => c.displayName.toLowerCase().contains(q)).length;
+        final filtered = q.isEmpty
+            ? list
+            : list.where((c) => c.displayName.toLowerCase().contains(q));
+        // 累加所有会话的未读消息数
+        return filtered.fold<int>(0, (sum, c) => sum + c.unreadCount);
       },
       orElse: () => 0,
     );
@@ -61,7 +65,7 @@ class ContactsSubHeader extends ConsumerWidget {
             style: TextStyle(
               color: colors.text,
               fontSize: 15,
-              fontWeight: FontWeight.bold,
+              fontWeight: MoeFontWeights.emphasis,
             ),
           ),
           const Spacer(),
@@ -92,7 +96,7 @@ class ContactsSubHeader extends ConsumerWidget {
                       style: TextStyle(
                         color: colors.text,
                         fontSize: 13,
-                        fontWeight: FontWeight.w500,
+                        fontWeight: MoeFontWeights.emphasis,
                       ),
                     ),
                     const SizedBox(width: 4),

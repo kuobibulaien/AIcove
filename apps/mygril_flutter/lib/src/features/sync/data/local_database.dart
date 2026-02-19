@@ -1,5 +1,5 @@
 import 'package:drift/drift.dart';
-import 'package:mygril_flutter/src/core/database/database.dart';
+import 'package:aicove_flutter/src/core/database/database.dart';
 import '../models/sync_models.dart';
 
 /// 兼容层：旧的 features/sync 模块本地库。

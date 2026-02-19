@@ -1,5 +1,5 @@
 // 插件系统统一导出
-// 使用：import 'package:mygril_flutter/src/features/plugins/domain/index.dart';
+// 使用：import 'package:aicove_flutter/src/features/plugins/domain/index.dart';
 
 // 核心类
 export 'plugin.dart';

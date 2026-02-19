@@ -109,7 +109,7 @@ class AutoReplyTriggerListPage extends ConsumerWidget {
                                       trigger.title,
                                       style: TextStyle(
                                         fontSize: 15,
-                                        fontWeight: FontWeight.w600,
+                                        fontWeight: MoeFontWeights.emphasis,
                                         color: colors.text,
                                       ),
                                     ),
@@ -125,7 +125,7 @@ class AutoReplyTriggerListPage extends ConsumerWidget {
                                       _labelForStatus(trigger.status),
                                       style: TextStyle(
                                         fontSize: 12,
-                                        fontWeight: FontWeight.w600,
+                                        fontWeight: MoeFontWeights.emphasis,
                                         color: statusColor,
                                       ),
                                     ),
