@@ -27,7 +27,8 @@ class SendMessageRichResult {
   String? firstTtsUrl() {
     for (final item in toolResults) {
       final name = (item['name'] ?? '').toString();
-      final payload = (item['payload'] as Map<String, dynamic>?) ?? const <String, dynamic>{};
+      final payload = (item['payload'] as Map<String, dynamic>?) ??
+          const <String, dynamic>{};
       if (name == 'tts') {
         final url = payload['audio_url']?.toString();
         if (url != null && url.isNotEmpty) return url;
@@ -54,6 +55,19 @@ class ImageGenerationResult {
 }
 
 class AgentApiClient {
+  static const _novelAiDefaultBase = 'https://image.novelai.net';
+  static const _novelAiLegacyBase = 'https://api.novelai.net';
+  static const _novelAiDefaultModel = 'nai-diffusion-4-5-curated';
+  static const Map<String, String> _novelAiModelAliases = {
+    // Backward compatibility for older local presets.
+    'nai-diffusion-4-5-curated-preview': 'nai-diffusion-4-5-curated',
+  };
+  static const List<String> _novelAiModelFallbackOrder = <String>[
+    'nai-diffusion-4-5-curated',
+    'nai-diffusion-4-5-full',
+    'nai-diffusion-3',
+  ];
+
   final http.Client _client;
   final Duration timeout;
 
@@ -151,29 +165,55 @@ class AgentApiClient {
     if (trimmedKey == null || trimmedKey.isEmpty) {
       throw StateError('Missing providerApiKey for image generation');
     }
-    final base = (trimmedBase == null || trimmedBase.isEmpty)
-        ? (normalizedProvider == 'novelai'
-            ? 'https://api.novelai.net'
-            : 'https://api.openai.com/v1')
-        : trimmedBase;
-    if (normalizedProvider == 'novelai' || normalizedProvider == 'nai') {
-      return _generateImageWithNovelAI(
-        provider: normalizedProvider,
-        model: model,
-        prompt: prompt,
-        negativePrompt: negativePrompt,
-        width: width,
-        height: height,
-        count: count,
-        steps: steps,
-        guidanceScale: guidanceScale,
-        seed: seed,
-        sampler: sampler,
-        baseUrl: base,
-        apiKey: trimmedKey,
+    final isNovelAi =
+        normalizedProvider == 'novelai' || normalizedProvider == 'nai';
+    if (isNovelAi) {
+      final base = _normalizeNovelAiBaseUrl(trimmedBase);
+      final normalizedNovelAiModel = _normalizeNovelAiModel(
+        model,
         customConfig: customConfig,
       );
+      final candidates = _buildNovelAiModelCandidates(normalizedNovelAiModel);
+      Object? lastError;
+      for (final candidate in candidates) {
+        try {
+          return await _generateImageWithNovelAI(
+            provider: normalizedProvider,
+            model: candidate,
+            prompt: prompt,
+            negativePrompt: negativePrompt,
+            width: width,
+            height: height,
+            count: count,
+            steps: steps,
+            guidanceScale: guidanceScale,
+            seed: seed,
+            sampler: sampler,
+            baseUrl: base,
+            apiKey: trimmedKey,
+            customConfig: customConfig,
+          );
+        } catch (e) {
+          lastError = e;
+          if (!_isNovelAiModelEnumError(e) || candidate == candidates.last) {
+            rethrow;
+          }
+          _evt(
+              'image:novelai_model_retry',
+              {
+                'reason': 'enum_error',
+                'from': candidate,
+                'to': candidates[candidates.indexOf(candidate) + 1],
+                'baseUrl': base,
+              },
+              level: 'WARN');
+        }
+      }
+      if (lastError != null) throw lastError;
     }
+    final base = (trimmedBase == null || trimmedBase.isEmpty)
+        ? 'https://api.openai.com/v1'
+        : trimmedBase;
     return _generateImageWithOpenAICompatible(
       provider: normalizedProvider,
       model: model,
@@ -186,6 +226,58 @@ class AgentApiClient {
       apiKey: trimmedKey,
       customConfig: customConfig,
     );
+  }
+
+  String _normalizeNovelAiModel(
+    String model, {
+    Map<String, dynamic>? customConfig,
+  }) {
+    final explicit = model.trim();
+    final fromConfig =
+        customConfig?['defaultImageModel']?.toString().trim() ?? '';
+    final candidate = explicit.isNotEmpty ? explicit : fromConfig;
+    if (candidate.isEmpty) return _novelAiDefaultModel;
+    return _novelAiModelAliases[candidate] ?? candidate;
+  }
+
+  String _normalizeNovelAiBaseUrl(String? baseUrl) {
+    final trimmed = baseUrl?.trim() ?? '';
+    if (trimmed.isEmpty) return _novelAiDefaultBase;
+    final lowered = trimmed.toLowerCase();
+    if (lowered.startsWith(_novelAiLegacyBase)) {
+      return _novelAiDefaultBase + trimmed.substring(_novelAiLegacyBase.length);
+    }
+    try {
+      final uri = Uri.parse(trimmed);
+      if (uri.host.toLowerCase() == 'api.novelai.net') {
+        return uri.replace(host: 'image.novelai.net').toString();
+      }
+    } catch (_) {}
+    return trimmed;
+  }
+
+  List<String> _buildNovelAiModelCandidates(String primary) {
+    final normalizedPrimary = _novelAiModelAliases[primary] ?? primary;
+    final candidates = <String>[];
+    void add(String modelId) {
+      final fixed = (_novelAiModelAliases[modelId] ?? modelId).trim();
+      if (fixed.isEmpty || candidates.contains(fixed)) return;
+      candidates.add(fixed);
+    }
+
+    add(normalizedPrimary);
+    for (final fallback in _novelAiModelFallbackOrder) {
+      add(fallback);
+    }
+    if (candidates.isEmpty) {
+      return const <String>[_novelAiDefaultModel];
+    }
+    return candidates;
+  }
+
+  bool _isNovelAiModelEnumError(Object error) {
+    final message = error.toString().toLowerCase();
+    return message.contains('model must be a valid enum value');
   }
 
   Future<ImageGenerationResult> _generateImageWithOpenAICompatible({
@@ -263,18 +355,54 @@ class AgentApiClient {
         ? baseUrl.substring(0, baseUrl.length - 1)
         : baseUrl;
     final endpoint = '$normalized/ai/generate-image';
+    final samplerValue = sampler?.trim();
+    final negativePromptValue = negativePrompt?.trim();
     final params = <String, dynamic>{
+      'params_version': 3,
       'width': width.clamp(256, 2048),
       'height': height.clamp(256, 2048),
       'n_samples': count.clamp(1, 4),
-      if (steps != null) 'steps': steps.clamp(1, 100),
-      if (guidanceScale != null) 'scale': guidanceScale,
+      'steps': (steps ?? 23).clamp(1, 50),
+      'scale': guidanceScale ?? 5.0,
+      'sampler': (samplerValue != null && samplerValue.isNotEmpty)
+          ? samplerValue
+          : 'k_euler_ancestral',
+      'qualityToggle': true,
+      'legacy': false,
+      'noise_schedule': 'karras',
+      'add_original_image': true,
       if (seed != null) 'seed': seed,
-      if (sampler != null && sampler.trim().isNotEmpty)
-        'sampler': sampler.trim(),
-      if (negativePrompt != null && negativePrompt.trim().isNotEmpty)
-        'uc': negativePrompt.trim(),
+      if (negativePromptValue != null && negativePromptValue.isNotEmpty)
+        'negative_prompt': negativePromptValue,
+      if (negativePromptValue != null && negativePromptValue.isNotEmpty)
+        'uc': negativePromptValue,
     };
+    if (_isNovelAiV4Model(model)) {
+      final v4Negative =
+          (negativePromptValue == null || negativePromptValue.isEmpty)
+              ? 'lowres'
+              : negativePromptValue;
+      params.addAll(<String, dynamic>{
+        'use_coords': false,
+        'legacy_uc': false,
+        'characterPrompts': const <dynamic>[],
+        'v4_prompt': <String, dynamic>{
+          'caption': <String, dynamic>{
+            'base_caption': prompt,
+            'char_captions': const <dynamic>[],
+          },
+          'use_coords': false,
+          'use_order': true,
+        },
+        'v4_negative_prompt': <String, dynamic>{
+          'caption': <String, dynamic>{
+            'base_caption': v4Negative,
+            'char_captions': const <dynamic>[],
+          },
+          'legacy_uc': false,
+        },
+      });
+    }
     final configParams = customConfig?['image_parameters'];
     if (configParams is Map<String, dynamic>) {
       params.addAll(configParams);
@@ -297,7 +425,8 @@ class AgentApiClient {
         )
         .timeout(timeout);
     if (resp.statusCode < 200 || resp.statusCode >= 300) {
-      throw Exception('HTTP ${resp.statusCode}: ${utf8.decode(resp.bodyBytes)}');
+      throw Exception(
+          'HTTP ${resp.statusCode}: ${utf8.decode(resp.bodyBytes)}');
     }
     final bytes = resp.bodyBytes;
     final images = _extractImageBytesFromNovelAIResponse(bytes, resp.headers);
@@ -306,6 +435,11 @@ class AgentApiClient {
       provider: provider,
       model: model,
     );
+  }
+
+  bool _isNovelAiV4Model(String model) {
+    final value = model.toLowerCase().trim();
+    return value.startsWith('nai-diffusion-4');
   }
 
   List<Uint8List> _extractImageBytesFromNovelAIResponse(
@@ -370,16 +504,19 @@ class AgentApiClient {
 
     // 1) 优先走统一 /v1/messages 端点
     try {
-      final data = await _postJson('/v1/messages', {
-        'model': modelFullId,
-        'messages': messages,
-        if (temperature != null) 'temperature': temperature,
-        'stream': false,
-        if (providerApiBase != null && providerApiBase.trim().isNotEmpty)
-          'api_base': providerApiBase.trim(),
-        if (providerApiKey != null && providerApiKey.trim().isNotEmpty)
-          'api_key': providerApiKey.trim(),
-      }, headers: hdrs);
+      final data = await _postJson(
+          '/v1/messages',
+          {
+            'model': modelFullId,
+            'messages': messages,
+            if (temperature != null) 'temperature': temperature,
+            'stream': false,
+            if (providerApiBase != null && providerApiBase.trim().isNotEmpty)
+              'api_base': providerApiBase.trim(),
+            if (providerApiKey != null && providerApiKey.trim().isNotEmpty)
+              'api_key': providerApiKey.trim(),
+          },
+          headers: hdrs);
       final content = (data['content'] as List?) ?? const [];
       if (content.isNotEmpty) {
         final first = content.first as Map<String, dynamic>;
@@ -463,7 +600,8 @@ class AgentApiClient {
     TraceLogger? trace, // 可选的追踪日志器
   }) async {
     // 如果没有传入 trace，创建一个简单的日志记录器
-    final logger = trace ?? AppLogger.startTrace('API调用', source: 'AgentApiClient');
+    final logger =
+        trace ?? AppLogger.startTrace('API调用', source: 'AgentApiClient');
 
     // 统一走直连链路，避免前后端双通道的额外复杂度（KISS/YAGNI）
     final trimmedBase = providerApiBase?.trim();
@@ -487,11 +625,11 @@ class AgentApiClient {
 
     // 获取对应的适配器
     final adapter = ProviderAdapterFactory.getAdapter(provider);
-    
+
     final base = (trimmedBase == null || trimmedBase.isEmpty)
         ? 'https://api.openai.com/v1'
         : trimmedBase;
-    
+
     // 使用适配器构建端点（默认 chat 类型）
     final endpoint = adapter.buildEndpoint(base, modelType: 'chat');
 
@@ -539,7 +677,8 @@ class AgentApiClient {
       }
 
       // assistant 消息带有 tool_calls 时，即使 content 为空也要保留
-      if ((role == 'assistant' || role == 'ai') && m.containsKey('tool_calls')) {
+      if ((role == 'assistant' || role == 'ai') &&
+          m.containsKey('tool_calls')) {
         chatMessages.add({
           'role': 'assistant',
           ...Map<String, dynamic>.from(m),
@@ -563,8 +702,8 @@ class AgentApiClient {
 
     // 兼容旧链路：当历史末尾不是 user 时，才把 userText 作为本轮输入追加，避免重复发送
     final trimmedUserText = userText.trim();
-    final shouldAppendUserText =
-        trimmedUserText.isNotEmpty && (chatMessages.isEmpty || chatMessages.last['role'] != 'user');
+    final shouldAppendUserText = trimmedUserText.isNotEmpty &&
+        (chatMessages.isEmpty || chatMessages.last['role'] != 'user');
     if (shouldAppendUserText) {
       chatMessages.add({'role': 'user', 'content': trimmedUserText});
     }
@@ -588,8 +727,7 @@ class AgentApiClient {
     }
     var promptPreview = previewBuffer.toString();
     if (promptPreview.length > maxPreviewLength) {
-      promptPreview =
-          '${promptPreview.substring(0, maxPreviewLength)}…(已截断)';
+      promptPreview = '${promptPreview.substring(0, maxPreviewLength)}…(已截断)';
     }
 
     // 使用适配器构建请求体
@@ -650,7 +788,9 @@ class AgentApiClient {
         directTrace.info('直连响应成功', metadata: {
           'statusCode': resp.statusCode,
           'textLength': result.text.length,
-          'text': result.text.length > 100 ? '${result.text.substring(0, 100)}...' : result.text,
+          'text': result.text.length > 100
+              ? '${result.text.substring(0, 100)}...'
+              : result.text,
         });
         directTrace.end(additionalMessage: '直连调用完成');
 
@@ -697,7 +837,7 @@ class AgentApiClient {
   }
 
   /// 流式发送消息（支持分段）- 返回消息块流
-  /// 
+  ///
   /// 应用原则：
   /// - KISS: 简单的 SSE 解析，只处理必要的字段
   /// - SOLID: 职责单一，只负责接收和解析 SSE 流
@@ -714,7 +854,7 @@ class AgentApiClient {
     String? providerApiKey,
   }) async* {
     final uri = _uri('/api/chat/stream');
-    
+
     // 构建请求体（与 sendMessageRich 类似）
     String provider = 'openai';
     String model = modelFullId;
@@ -756,7 +896,7 @@ class AgentApiClient {
       'model': model,
       if (toolPrefs != null && toolPrefs.isNotEmpty) 'tool_prefs': toolPrefs,
     };
-    
+
     final trimmedBase = providerApiBase?.trim();
     if (trimmedBase != null && trimmedBase.isNotEmpty) {
       payload['api_base'] = trimmedBase;
@@ -785,25 +925,30 @@ class AgentApiClient {
     }
 
     // 解析 SSE 流
-    await for (final chunk in response.stream.transform(utf8.decoder).transform(const LineSplitter())) {
+    await for (final chunk in response.stream
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())) {
       if (chunk.isEmpty) continue;
-      
+
       // SSE 格式: data: {json}
       if (chunk.startsWith('data: ')) {
         final data = chunk.substring(6).trim();
-        
+
         // 结束标记
         if (data == '[DONE]') {
           _evt('sse:done', {'path': '/api/chat/stream'}, level: 'INFO');
           break;
         }
-        
+
         try {
           final json = jsonDecode(data) as Map<String, dynamic>;
-          _evt('sse:event', {
-            'keys': json.keys.toList(),
-            'type': json['type'],
-          }, level: 'DBUG');
+          _evt(
+              'sse:event',
+              {
+                'keys': json.keys.toList(),
+                'type': json['type'],
+              },
+              level: 'DBUG');
           yield json;
         } catch (_) {
           // 忽略解析错误
@@ -819,12 +964,14 @@ class AgentApiClient {
       final headers = <String, String>{
         if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
       };
-      
-      await _client.post(
-        uri,
-        headers: headers,
-        body: jsonEncode({'timestamp': timestamp.toIso8601String()}),
-      ).timeout(const Duration(seconds: 5));
+
+      await _client
+          .post(
+            uri,
+            headers: headers,
+            body: jsonEncode({'timestamp': timestamp.toIso8601String()}),
+          )
+          .timeout(const Duration(seconds: 5));
     } catch (e) {
       // 心跳失败不应阻断流程，仅记录日志
       _evt('syncTriggerHeartbeat', {'error': e.toString()}, level: 'WARN');

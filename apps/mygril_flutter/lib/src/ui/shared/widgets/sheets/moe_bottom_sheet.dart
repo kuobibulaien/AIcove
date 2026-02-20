@@ -41,6 +41,7 @@ Future<T?> showMoeBottomSheet<T>({
   bool isScrollControlled = true,
   bool isDismissible = true,
   bool enableDrag = true,
+  bool useRootNavigator = false,
 }) async {
   return showModalBottomSheet<T>(
     context: context,
@@ -48,6 +49,7 @@ Future<T?> showMoeBottomSheet<T>({
     isScrollControlled: isScrollControlled,
     isDismissible: isDismissible,
     enableDrag: enableDrag,
+    useRootNavigator: useRootNavigator,
     // 注意：transitionAnimationController 需要 StatefulWidget 的 TickerProvider
     // 这里使用 showGeneralDialog 替代方案或接受默认动画
     // 由于 AnimatedPadding 已使用 kAnimXFast，整体体验已足够流畅

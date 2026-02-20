@@ -134,7 +134,7 @@ class VoiceManagerService {
         name: voiceName,
         sourceType: VoiceSourceType.url,
         providerType: VoiceProviderType.aliyun,
-        source: '阿里云 · ${isCosyVoice ? 'CosyVoice' : 'Qwen-TTS'}',
+        source: '声音复刻 · ${isCosyVoice ? 'CosyVoice' : 'Qwen-TTS'}',
         promptAudioUrl: audioUrl,
         promptText: promptText,
         aliyunVoiceId: voiceId,

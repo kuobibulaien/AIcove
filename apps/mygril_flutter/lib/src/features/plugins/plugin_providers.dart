@@ -23,9 +23,9 @@ import 'time_awareness/time_awareness_config.dart';
 
 String? _lastTtsProviderDiag;
 
-/// 鎻掍欢绠＄悊鍣?Provider
+/// 注释已清理乱码
 final pluginManagerProvider = Provider<PluginManager>((ref) {
-  // 鐩戝惉閰嶇疆鍙樺寲锛屽苟鍦ㄥ彉鍖栨椂鏇存柊鎻掍欢瀹炰緥
+  // 监听配置变化，并在变化时更新插件实例
   final ttsConfig = ref.watch(ttsPluginConfigProvider);
   final triggerConfig = ref.watch(triggerPluginConfigProvider);
   final memoryConfig = ref.watch(memoryPluginConfigProvider);
@@ -33,7 +33,7 @@ final pluginManagerProvider = Provider<PluginManager>((ref) {
   final imageConfig = ref.watch(imagePluginConfigProvider);
   final timeAwarenessConfig = ref.watch(timeAwarenessPluginConfigProvider);
 
-  // 浠?appSettingsProvider 鑾峰彇 TTS 娓犻亾閰嶇疆
+  // 注释已清理乱码
   String? ttsApiKey;
   String ttsRequestUrl = '';
   String ttsRequestFormat = 'openai_tts';
@@ -44,7 +44,7 @@ final pluginManagerProvider = Provider<PluginManager>((ref) {
     ProviderAuth? selectedProvider;
 
     if (ttsConfig.selectedProviderId != null) {
-      // 鐜板湪閫氳繃妯″瀷绫诲瀷鏍囩閫夋嫨 TTS 妯″瀷锛屼笉鍐嶈姹傛笭閬撳叿鏈?'tts' capability
+      // 注释已清理乱码
       selectedProvider = settings.providers
           .where(
             (p) => p.id == ttsConfig.selectedProviderId,
@@ -67,16 +67,16 @@ final pluginManagerProvider = Provider<PluginManager>((ref) {
       }
     }
 
-    // 璇婃柇鏃ュ織锛氬憡璇変綘"瀵硅瘽閲屼负浠€涔堟病鏈夎蛋鍒拌闊虫彃浠?
+    // 注释已清理乱码
     final diagKey =
         'enabled:${ttsConfig.enabled}|selected:${ttsConfig.selectedProviderId}|model:$ttsSelectedModel|found:${selectedProvider != null}|url:$ttsRequestUrl|fmt:$ttsRequestFormat';
     if (_lastTtsProviderDiag != diagKey) {
       _lastTtsProviderDiag = diagKey;
-      // 绮剧畝妯″瀷鍒楄〃锛氬彧鏄剧ず鏁伴噺鍜屽綋鍓嶄娇鐢ㄧ殑妯″瀷
+      // 精简模型列表：只显示数量和当前使用的模型
       final models = selectedProvider?.models ?? [];
       final modelsSummary =
-          models.isEmpty ? '[]' : '鍏?{models.length}涓? 褰撳墠: $ttsSelectedModel';
-      AppLogger.info('TTS', 'TTS 鎻掍欢閰嶇疆璇婃柇', metadata: {
+          models.isEmpty ? '[]' : '共 ${models.length} 个，当前: $ttsSelectedModel';
+      AppLogger.info('TTS', 'TTS 配置诊断', metadata: {
         'pluginEnabled': ttsConfig.enabled,
         'selectedProviderId': ttsConfig.selectedProviderId,
         'selectedModelId': ttsConfig.selectedModelId,
@@ -94,18 +94,18 @@ final pluginManagerProvider = Provider<PluginManager>((ref) {
     if (ttsConfig.enabled) {
       if (ttsConfig.selectedProviderId == null ||
           ttsConfig.selectedProviderId!.trim().isEmpty) {
-        AppLogger.warning('TTS', 'TTS 鎻掍欢宸插惎鐢紝浣嗘湭閫夋嫨娓犻亾');
+        AppLogger.warning('TTS', 'TTS 插件已启用，但未选择渠道');
       } else if (selectedProvider == null) {
-        AppLogger.warning('TTS', 'TTS 鎻掍欢宸插惎鐢紝浣嗘湭鎵惧埌瀵瑰簲娓犻亾', metadata: {
+        AppLogger.warning('TTS', 'TTS 插件已启用，但所选渠道不存在', metadata: {
           'selectedProviderId': ttsConfig.selectedProviderId,
         });
       } else if (ttsRequestUrl.trim().isEmpty) {
-        AppLogger.warning('TTS', 'TTS 鎻掍欢宸插惎鐢紝浣嗘笭閬?API 鍦板潃涓虹┖', metadata: {
+        AppLogger.warning('TTS', 'TTS 插件已启用，但渠道 API 地址为空', metadata: {
           'selectedProviderId': ttsConfig.selectedProviderId,
         });
       } else if (ttsSelectedModel == null) {
         final availableCount = selectedProvider.models.length;
-        AppLogger.warning('TTS', 'TTS 鎻掍欢宸插惎鐢紝浣嗘湭閫夋嫨妯″瀷', metadata: {
+        AppLogger.warning('TTS', 'TTS 插件已启用，但未匹配到可用模型', metadata: {
           'selectedProviderId': ttsConfig.selectedProviderId,
           'selectedModelId': ttsConfig.selectedModelId,
           'availableModelsCount': availableCount,
@@ -145,13 +145,13 @@ final pluginManagerProvider = Provider<PluginManager>((ref) {
   return _pluginManagerSingleton!;
 });
 
-/// Memory 鎻掍欢閰嶇疆 Provider
+/// Memory 插件配置 Provider
 final memoryPluginConfigProvider =
     StateNotifierProvider<MemoryPluginConfigNotifier, MemoryConfig>(
   (ref) => MemoryPluginConfigNotifier(),
 );
 
-/// Memory 鎻掍欢閰嶇疆 Notifier
+/// Memory 插件配置 Notifier
 class MemoryPluginConfigNotifier extends StateNotifier<MemoryConfig> {
   static const _storageKey = 'aicove.plugins.memory.config';
 
@@ -224,16 +224,16 @@ class MemoryPluginConfigNotifier extends StateNotifier<MemoryConfig> {
   }
 }
 
-// PluginManager 鍗曚緥
+// PluginManager 单例
 PluginManager? _pluginManagerSingleton;
 
-/// TTS 鎻掍欢閰嶇疆 Provider
+/// TTS 插件配置 Provider
 final ttsPluginConfigProvider =
     StateNotifierProvider<TtsPluginConfigNotifier, TtsConfig>(
   (ref) => TtsPluginConfigNotifier(),
 );
 
-/// TTS 鎻掍欢閰嶇疆 Notifier
+/// TTS 插件配置 Notifier
 class TtsPluginConfigNotifier extends StateNotifier<TtsConfig> {
   static const _storageKey = 'aicove.plugins.tts.config';
 
@@ -280,13 +280,13 @@ class TtsPluginConfigNotifier extends StateNotifier<TtsConfig> {
     await _saveConfig();
   }
 
-  /// 璁剧疆閫変腑鐨?TTS 娓犻亾
+  /// 注释已清理乱码
   Future<void> setSelectedProvider(String? providerId) async {
     state = state.copyWith(selectedProviderId: providerId);
     await _saveConfig();
   }
 
-  /// 璁剧疆閫変腑鐨?TTS 妯″瀷
+  /// 注释已清理乱码
   Future<void> setSelectedModel(String? modelId) async {
     state = state.copyWith(selectedModelId: modelId);
     await _saveConfig();
@@ -319,22 +319,22 @@ class TtsPluginConfigNotifier extends StateNotifier<TtsConfig> {
     await _saveConfig();
   }
 
-  /// 璁剧疆璇煶浣跨敤棰戠巼 (0-100)
+  /// 注释已清理乱码
   Future<void> setVoiceFrequency(int frequency) async {
     state = state.copyWith(voiceFrequency: frequency.clamp(0, 100));
     await _saveConfig();
   }
 
-  /// 娣诲姞闊宠壊棰勮
+  /// 注释已清理乱码
   Future<void> addVoicePreset(VoicePreset preset) async {
     final newPresets = [...state.voicePresets, preset];
     state = state.copyWith(voicePresets: newPresets);
     await _saveConfig();
   }
 
-  /// 鏇存柊闊宠壊棰勮
+  /// 注释已清理乱码
   Future<void> updateVoicePreset(VoicePreset preset) async {
-    AppLogger.info('TTS', '鏇存柊闊宠壊棰勮', metadata: {
+    AppLogger.info('TTS', '更新语音预设', metadata: {
       'presetId': preset.id,
       'presetName': preset.name,
       'aliyunVoiceId': preset.aliyunVoiceId,
@@ -365,11 +365,11 @@ class TtsPluginConfigNotifier extends StateNotifier<TtsConfig> {
     await _saveConfig();
   }
 
-  /// 鍒犻櫎闊宠壊棰勮
+  /// 注释已清理乱码
   Future<void> deleteVoicePreset(String presetId) async {
     final newPresets =
         state.voicePresets.where((p) => p.id != presetId).toList();
-    // 濡傛灉鍒犻櫎鐨勬槸褰撳墠閫変腑鐨勯煶鑹诧紝娓呯┖閫夋嫨
+    // 注释已清理乱码
     String? newSelectedId = state.selectedVoicePresetId;
     if (newSelectedId == presetId) {
       newSelectedId = null;
@@ -381,13 +381,13 @@ class TtsPluginConfigNotifier extends StateNotifier<TtsConfig> {
     await _saveConfig();
   }
 
-  /// 閫夋嫨闊宠壊棰勮
+  /// 注释已清理乱码
   Future<void> selectVoicePreset(String? presetId) async {
     state = state.copyWith(selectedVoicePresetId: presetId);
     await _saveConfig();
   }
 
-  /// 鎵归噺娣诲姞闊宠壊棰勮锛堢敤浜庝粠娓犻亾鍟嗚幏鍙栭缃煶鑹诧級
+  /// 注释已清理乱码
   Future<void> addVoicePresets(List<VoicePreset> presets) async {
     // Filter out already existing presets by id.
     final existingIds = state.voicePresets.map((p) => p.id).toSet();
@@ -401,8 +401,8 @@ class TtsPluginConfigNotifier extends StateNotifier<TtsConfig> {
   }
 }
 
-/// TTS 鎾斁鍣ㄧ鐞嗗櫒 Provider锛堝崟渚嬶級
-/// 娉ㄦ剰锛氬鏋?TTS 鎻掍欢涓嶅瓨鍦紝杩斿洖 null 鑰屼笉鏄姏寮傚父锛岀‘淇濊В鑰﹀悎
+/// TTS 播放器管理器 Provider（单例）
+/// 注释已清理乱码
 final ttsPlayerManagerProvider = Provider<TtsPlayerManager?>((ref) {
   final pluginManager = ref.watch(pluginManagerProvider);
   final ttsPlugin = pluginManager.getPlugin('tts') as TtsPlugin?;
@@ -411,8 +411,8 @@ final ttsPlayerManagerProvider = Provider<TtsPlayerManager?>((ref) {
     return null;
   }
 
-  // 鍒涘缓 TtsService 鑾峰彇鍣紝姣忔璋冪敤鏃朵粠 PluginManager 鑾峰彇鏈€鏂扮殑 TtsPlugin.service
-  // 杩欐牱鍙互纭繚鍗充娇 Provider 鍙 read 涓€娆★紝涔熻兘鑾峰彇鍒版渶鏂扮殑閰嶇疆
+  // 创建 TtsService 获取器，每次调用时从 PluginManager 获取最新的 TtsPlugin.service
+  // 这样可以确保即使 Provider 只被 read 一次，也能获取到最新的配置
   TtsService? getLatestTtsService() {
     final currentPlugin = pluginManager.getPlugin('tts') as TtsPlugin?;
     final service = currentPlugin?.service;
@@ -430,35 +430,35 @@ final ttsPlayerManagerProvider = Provider<TtsPlayerManager?>((ref) {
   // Use singleton manager and refresh getter each rebuild.
   if (_ttsManagerSingleton == null) {
     _ttsManagerSingleton = TtsPlayerManager(getLatestTtsService);
-    AppLogger.info('TTS', 'TtsPlayerManager 鍗曚緥鍒涘缓');
+    AppLogger.info('TTS', 'TtsPlayerManager 初始化');
   } else {
     _ttsManagerSingleton!.updateServiceGetter(getLatestTtsService);
-    AppLogger.debug('TTS', 'TtsPlayerManager 鏈嶅姟鑾峰彇鍣ㄥ凡鏇存柊');
+    AppLogger.debug('TTS', 'TtsPlayerManager 服务引用已刷新');
   }
 
   return _ttsManagerSingleton!;
 });
 
-// 椤跺眰鍗曚緥瀛樻斁
+// 注释已清理乱码
 TtsPlayerManager? _ttsManagerSingleton;
 
-/// TTS 鎾斁鐘舵€?Provider
+/// 注释已清理乱码
 final ttsPlayStateProvider = StreamProvider<TtsPlayState>((ref) {
   final manager = ref.watch(ttsPlayerManagerProvider);
   if (manager == null) {
-    // TTS 鎻掍欢涓嶅瓨鍦紝杩斿洖绌烘祦
+    // TTS 插件不存在，返回空流
     return Stream.value(TtsPlayState.idle);
   }
   return manager.playStateStream;
 });
 
-/// Trigger 鎻掍欢閰嶇疆 Provider
+/// Trigger 插件配置 Provider
 final triggerPluginConfigProvider =
     StateNotifierProvider<TriggerPluginConfigNotifier, TriggerConfig>(
   (ref) => TriggerPluginConfigNotifier(),
 );
 
-/// Trigger 鎻掍欢閰嶇疆 Notifier
+/// Trigger 插件配置 Notifier
 class TriggerPluginConfigNotifier extends StateNotifier<TriggerConfig> {
   static const _storageKey = 'aicove.plugins.trigger.config';
 
@@ -495,13 +495,13 @@ class TriggerPluginConfigNotifier extends StateNotifier<TriggerConfig> {
   }
 }
 
-/// Sticker 鎻掍欢閰嶇疆 Provider
+/// Sticker 插件配置 Provider
 final stickerPluginConfigProvider =
     StateNotifierProvider<StickerPluginConfigNotifier, StickerConfig>(
   (ref) => StickerPluginConfigNotifier(),
 );
 
-/// Sticker 鎻掍欢閰嶇疆 Notifier
+/// Sticker 插件配置 Notifier
 class StickerPluginConfigNotifier extends StateNotifier<StickerConfig> {
   static const _storageKey = 'aicove.plugins.sticker.config';
 
@@ -538,13 +538,13 @@ class StickerPluginConfigNotifier extends StateNotifier<StickerConfig> {
   }
 }
 
-/// Image 鎻掍欢閰嶇疆 Provider
+/// Image 插件配置 Provider
 final imagePluginConfigProvider =
     StateNotifierProvider<ImagePluginConfigNotifier, ImageConfig>(
   (ref) => ImagePluginConfigNotifier(),
 );
 
-/// Image 鎻掍欢閰嶇疆 Notifier
+/// Image 插件配置 Notifier
 class ImagePluginConfigNotifier extends StateNotifier<ImageConfig> {
   static const _storageKey = 'aicove.plugins.image.config';
 
@@ -623,15 +623,20 @@ class ImagePluginConfigNotifier extends StateNotifier<ImageConfig> {
     state = state.copyWith(defaultCount: count.clamp(1, 4));
     await _saveConfig();
   }
+
+  Future<void> setDrawingSystemPrompt(String text) async {
+    state = state.copyWith(drawingSystemPrompt: text);
+    await _saveConfig();
+  }
 }
 
-/// TimeAwareness 鎻掍欢閰嶇疆 Provider
+/// TimeAwareness 插件配置 Provider
 final timeAwarenessPluginConfigProvider = StateNotifierProvider<
     TimeAwarenessPluginConfigNotifier, TimeAwarenessConfig>(
   (ref) => TimeAwarenessPluginConfigNotifier(),
 );
 
-/// TimeAwareness 鎻掍欢閰嶇疆 Notifier
+/// TimeAwareness 插件配置 Notifier
 class TimeAwarenessPluginConfigNotifier
     extends StateNotifier<TimeAwarenessConfig> {
   static const _storageKey = 'aicove.plugins.time_awareness.config';

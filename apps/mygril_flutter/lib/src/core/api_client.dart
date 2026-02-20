@@ -22,13 +22,17 @@ class ApiClient {
     return Uri.parse('$base$p');
   }
 
+  bool _isHttpStatusException(Object error) {
+    final message = error.toString();
+    return message.startsWith('Exception: HTTP ');
+  }
+
   Future<Map<String, dynamic>> getJson(String path) async {
     final uri = _uri(path);
     final sw = Stopwatch()..start();
     try {
-      final res = await _client
-          .get(uri, headers: {'Content-Type': 'application/json'})
-          .timeout(timeout);
+      final res = await _client.get(uri,
+          headers: {'Content-Type': 'application/json'}).timeout(timeout);
       sw.stop();
       ApiLogger.add(ApiLogEntry(
         time: DateTime.now(),
@@ -45,6 +49,9 @@ class ApiClient {
       }
       throw Exception('HTTP ${res.statusCode}: ${res.body}');
     } catch (e) {
+      if (_isHttpStatusException(e)) {
+        rethrow;
+      }
       sw.stop();
       ApiLogger.add(ApiLogEntry(
         time: DateTime.now(),
@@ -60,7 +67,8 @@ class ApiClient {
     }
   }
 
-  Future<Map<String, dynamic>> postJson(String path, Map<String, dynamic> body) async {
+  Future<Map<String, dynamic>> postJson(
+      String path, Map<String, dynamic> body) async {
     final uri = _uri(path);
     final payload = jsonEncode(body);
     final sw = Stopwatch()..start();
@@ -88,6 +96,9 @@ class ApiClient {
       }
       throw Exception('HTTP ${res.statusCode}: ${res.body}');
     } catch (e) {
+      if (_isHttpStatusException(e)) {
+        rethrow;
+      }
       sw.stop();
       ApiLogger.add(ApiLogEntry(
         time: DateTime.now(),
@@ -103,7 +114,8 @@ class ApiClient {
     }
   }
 
-  Future<Map<String, dynamic>> putJson(String path, Map<String, dynamic> body) async {
+  Future<Map<String, dynamic>> putJson(
+      String path, Map<String, dynamic> body) async {
     final uri = _uri(path);
     final payload = jsonEncode(body);
     final sw = Stopwatch()..start();
@@ -131,6 +143,9 @@ class ApiClient {
       }
       throw Exception('HTTP ${res.statusCode}: ${res.body}');
     } catch (e) {
+      if (_isHttpStatusException(e)) {
+        rethrow;
+      }
       sw.stop();
       ApiLogger.add(ApiLogEntry(
         time: DateTime.now(),
@@ -146,7 +161,9 @@ class ApiClient {
     }
   }
 
-  Future<Map<String, dynamic>> putJsonAuth(String path, Map<String, dynamic> body, {String? bearerToken}) async {
+  Future<Map<String, dynamic>> putJsonAuth(
+      String path, Map<String, dynamic> body,
+      {String? bearerToken}) async {
     final uri = _uri(path);
     final payload = jsonEncode(body);
     final sw = Stopwatch()..start();
@@ -178,6 +195,9 @@ class ApiClient {
       }
       throw Exception('HTTP ${res.statusCode}: ${res.body}');
     } catch (e) {
+      if (_isHttpStatusException(e)) {
+        rethrow;
+      }
       sw.stop();
       ApiLogger.add(ApiLogEntry(
         time: DateTime.now(),
@@ -217,6 +237,9 @@ class ApiClient {
       }
       throw Exception('HTTP ${res.statusCode}: ${res.body}');
     } catch (e) {
+      if (_isHttpStatusException(e)) {
+        rethrow;
+      }
       sw.stop();
       ApiLogger.add(ApiLogEntry(
         time: DateTime.now(),

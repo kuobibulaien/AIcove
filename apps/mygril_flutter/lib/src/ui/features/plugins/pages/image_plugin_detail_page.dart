@@ -66,8 +66,9 @@ class ImagePluginDetailPage extends ConsumerWidget {
               icon: Icons.brush_outlined,
               label: '启用绘图工具',
               subtitle: settings.imageGenerationEnabled ? '已启用' : '已禁用',
-              subtitleColor:
-                  settings.imageGenerationEnabled ? colors.primary : colors.muted,
+              subtitleColor: settings.imageGenerationEnabled
+                  ? colors.primary
+                  : colors.muted,
               trailingType: MoeSettingsRowTrailing.switchControl,
               switchValue: settings.imageGenerationEnabled,
               onSwitchChanged: (value) =>
@@ -178,6 +179,29 @@ class ImagePluginDetailPage extends ConsumerWidget {
             ),
           ],
         ),
+        const SizedBox(height: 16),
+        MoeSettingsGroup(
+          title: '高级设置',
+          margin: const EdgeInsets.symmetric(horizontal: 16),
+          children: [
+            MoeSettingsRow(
+              icon: Icons.description_outlined,
+              label: '绘图提示词规范',
+              subtitle: config.drawingSystemPrompt ==
+                      ImageConfig.defaultDrawingSystemPrompt
+                  ? '使用默认 NovelAI 提示词规范'
+                  : '已自定义',
+              labelMaxLines: 1,
+              trailingType: MoeSettingsRowTrailing.chevron,
+              onTap: () => _editDrawingSystemPrompt(
+                context: context,
+                notifier: configNotifier,
+                current: config.drawingSystemPrompt,
+              ),
+              showDivider: false,
+            ),
+          ],
+        ),
       ],
     );
   }
@@ -198,9 +222,8 @@ class ImagePluginDetailPage extends ConsumerWidget {
     if (providers.isEmpty) return null;
     if (config.selectedProviderId != null &&
         config.selectedProviderId!.trim().isNotEmpty) {
-      final selected = providers
-          .where((p) => p.id == config.selectedProviderId)
-          .firstOrNull;
+      final selected =
+          providers.where((p) => p.id == config.selectedProviderId).firstOrNull;
       if (selected != null) return selected;
     }
     return providers.first;
@@ -222,9 +245,10 @@ class ImagePluginDetailPage extends ConsumerWidget {
     if (selected != null && selected.isNotEmpty) {
       if (models.isEmpty || models.contains(selected)) return selected;
     }
-    if (models.isNotEmpty) return models.first;
-    final fromCustom = provider.customConfig['defaultImageModel']?.toString().trim();
+    final fromCustom =
+        provider.customConfig['defaultImageModel']?.toString().trim();
     if (fromCustom != null && fromCustom.isNotEmpty) return fromCustom;
+    if (models.isNotEmpty) return models.first;
     return null;
   }
 
@@ -424,6 +448,72 @@ class ImagePluginDetailPage extends ConsumerWidget {
     );
     if (ok == true) {
       await notifier.setDefaultNegativePrompt(controller.text);
+    }
+    controller.dispose();
+  }
+
+  Future<void> _editDrawingSystemPrompt({
+    required BuildContext context,
+    required ImagePluginConfigNotifier notifier,
+    required String current,
+  }) async {
+    final controller = TextEditingController(text: current);
+    final result = await showDialog<String?>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('绘图提示词规范'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                const Text(
+                  '此提示词会作为系统指令发送给 AI，告诉它如何书写绘图 prompt。',
+                  style: TextStyle(fontSize: 13, color: Colors.grey),
+                ),
+                const SizedBox(height: 8),
+                Flexible(
+                  child: TextField(
+                    controller: controller,
+                    maxLines: 12,
+                    style: const TextStyle(fontSize: 13),
+                    decoration: const InputDecoration(
+                      hintText: '输入自定义绘图提示词规范…',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                GestureDetector(
+                  onTap: () {
+                    controller.text =
+                        ImageConfig.defaultDrawingSystemPrompt;
+                  },
+                  child: const Text(
+                    '恢复默认',
+                    style: TextStyle(fontSize: 13, color: Colors.blue),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(null),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(controller.text),
+              child: const Text('保存'),
+            ),
+          ],
+        );
+      },
+    );
+    if (result != null) {
+      await notifier.setDrawingSystemPrompt(result);
     }
     controller.dispose();
   }

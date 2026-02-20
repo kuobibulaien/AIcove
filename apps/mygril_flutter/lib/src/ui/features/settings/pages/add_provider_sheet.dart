@@ -83,7 +83,7 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
           _urlCtrl.text = 'https://generativelanguage.googleapis.com/v1beta';
           break;
         case ApiFormat.novelai:
-          _urlCtrl.text = 'https://api.novelai.net';
+          _urlCtrl.text = 'https://image.novelai.net';
           _selectedCapability = 'image';
           break;
       }
@@ -106,7 +106,7 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
       final notifier = ref.read(appSettingsProvider.notifier);
       final isNovelAi = _selectedFormat == ApiFormat.novelai;
       const novelAiModels = <String>[
-        'nai-diffusion-4-5-curated-preview',
+        'nai-diffusion-4-5-curated',
         'nai-diffusion-4-5-full',
         'nai-diffusion-3',
       ];
@@ -123,6 +123,7 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
         modelType: _selectedCapability,
         customConfig: {
           'requestFormat': isNovelAi ? 'novelai' : _selectedFormat.value,
+          if (isNovelAi) 'defaultImageModel': novelAiModels.first,
         },
         allModels: isNovelAi ? novelAiModels : null,
         visibleModels: isNovelAi ? [novelAiModels.first] : null,
@@ -269,7 +270,7 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                                 width: 160,
                                 child: TextField(
                                   controller: _keyCtrl,
-                                  obscureText: true,
+                                  obscureText: false,
                                   textAlign: TextAlign.end,
                                   style: TextStyle(
                                       fontSize: 14, color: colors.text),
@@ -423,7 +424,9 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
               style: TextStyle(
                 fontSize: 11,
                 color: textColor,
-                fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
+                fontWeight: isSelected
+                    ? MoeFontWeights.emphasis
+                    : MoeFontWeights.normal,
               ),
             ),
           ],

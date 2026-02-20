@@ -78,6 +78,6 @@ class LexicalTokenizerZh {
       '收到',
     };
     if (fillers.contains(t.toLowerCase())) return true;
-    return RegExp(r'^[~!,.?，。！？…\s]+$').hasMatch(t);
+    return RegExp(r'^[~!,.?，。！？；、\\s]+$').hasMatch(t);
   }
 }

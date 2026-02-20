@@ -41,36 +41,36 @@ class ChatPage extends ConsumerStatefulWidget {
 }
 
 class _ChatPageState extends ConsumerState<ChatPage> {
-  /// 鍒嗛〉鍔犺浇鐘舵€?
+  /// 注释已清理乱码
   bool _isLoadingMore = false;
 
-  /// 鏄惁杩樻湁鏇村鍘嗗彶娑堟伅
+  /// 是否还有更多历史消息
   bool _hasMoreMessages = true;
 
-  /// 宸查鍔犺浇杩囩殑浼氳瘽 ID锛岄伩鍏嶉噸澶嶉鍔犺浇
+  /// 注释已清理乱码
   String? _preloadedConversationId;
   bool _didSchedulePrecache = false;
 
   @override
   void initState() {
     super.initState();
-    // 杩涘叆鑱婂ぉ椤垫椂灏芥棭鎶?activeConversationId 璁剧疆鍒颁綅锛岄伩鍏嶉甯у厛娓叉煋鍒?榛樿浼氳瘽"閫犳垚闂烦/鍗￠】
+    // 注释已清理乱码
     final targetId = widget.conversationId;
     if (targetId == null) return;
     final activeId = ref.read(activeConversationIdProvider);
     if (activeId != targetId) {
       ref.read(activeConversationIdProvider.notifier).state = targetId;
     }
-    // 娓呴櫎璇ヤ細璇濈殑鏈璁℃暟
+    // 注释已清理乱码
     ref.read(conversationsProvider.notifier).clearUnread(targetId);
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // 涓嶈鍦?didChangeDependencies 閲岀洿鎺ヨ窇澶ч噺棰勭紦瀛橈細
-    // 杩欓噷澶勪簬鈥滆矾鐢卞垰鍒囨崲銆佽浆鍦哄姩鐢昏寮€濮嬧€濈殑鍏抽敭璺緞锛屼换浣曞悓姝ュ惊鐜?IO 閮藉彲鑳藉鑷粹€滅偣鍑诲悗鍏堥】涓€涓嬧€濄€?
-    // 棰勭紦瀛樻斁鍒伴甯т箣鍚庡悗鍙拌繘琛岋紙涓嶉樆濉炲姩鐢伙級锛岄伩鍏嶅崱椤匡紱鍥剧墖鏄惁闂儊涓昏闈犫€滆繘鍏ュ墠棰勭儹/缂撳瓨鍛戒腑鈥濊В鍐炽€?
+    // 注释已清理乱码
+    // 注释已清理乱码
+    // 注释已清理乱码
     _scheduleImagePrecache();
   }
 
@@ -84,15 +84,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     });
   }
 
-  /// 瑙﹀彂鍥剧墖棰勫姞杞?
+  /// 注释已清理乱码
   void _triggerImagePreload() {
     final targetId = widget.conversationId;
     if (targetId == null || targetId == _preloadedConversationId) {
-      // 瀹藉睆鍐呭祵 ChatPage锛坈onversationId==null锛変笉璧伴缂撳瓨锛涘悓浼氳瘽鍙缂撳瓨涓€娆?
+      // 注释已清理乱码
       return;
     }
 
-    // 鑾峰彇浼氳瘽鏁版嵁
+    // 获取会话数据
     final initial = widget.initialConversation?.id == targetId
         ? widget.initialConversation
         : null;
@@ -112,17 +112,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
   }
 
-  /// 棰勫姞杞戒細璇濅腑鐨勫浘鐗囷紙鍚庡彴棰勭儹锛屼笉闃诲杞満/棣栧抚锛?
+  /// 注释已清理乱码
   Future<void> _preloadImages(Conversation conv) async {
     if (_preloadedConversationId == conv.id) return;
 
     try {
-      const maxMessagesToScan = 10; // 鍙壂棣栧睆闄勮繎鐨勬秷鎭紝閬垮厤涓€娆℃€ф壂鎻忚繃澶?blocks
-      const maxImagesToCache = 24; // 鎺у埗棰勭紦瀛樹笂闄愶紝閬垮厤 ImageCache/瑙ｇ爜鍘嬪姏杩囧ぇ
+      const maxMessagesToScan = 10; // 注释已清理乱码
+      const maxImagesToCache = 24; // 注释已清理乱码
 
       final providers = <ImageProvider>[];
 
-      // 1. 棰勭紦瀛樺ご鍍?
+      // 注释已清理乱码
       final avatarUrl = conv.avatarUrl ?? conv.characterImage;
       if (avatarUrl != null && avatarUrl.isNotEmpty) {
         final provider = _getImageProvider(avatarUrl);
@@ -131,7 +131,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         }
       }
 
-      // 2. 棰勭紦瀛橀灞忔秷鎭腑鐨勫浘鐗?琛ㄦ儏
+      // 注释已清理乱码
       final messages = conv.messages;
       final start = messages.length > maxMessagesToScan
           ? messages.length - maxMessagesToScan
@@ -159,16 +159,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
       _preloadedConversationId = conv.id;
     } catch (_) {
-      // 棰勫姞杞藉け璐ヤ笉褰卞搷姝ｅ父娴佺▼
+      // 注释已清理乱码
     }
   }
 
-  /// 鏍规嵁 URL 鑾峰彇瀵瑰簲鐨?ImageProvider
+  /// 注释已清理乱码
   ImageProvider? _getImageProvider(String url) {
     final trimmed = url.trim();
     if (trimmed.isEmpty) return null;
 
-    // data:image/...;base64,... 鍙兘寰堝ぇ锛岄缂撳瓨浼氬紩鍏ラ澶栧悓姝?decode 鎴愭湰锛岃繖閲岄€夋嫨璺宠繃锛堜笉闃诲棣栧抚锛夈€?
+    // 注释已清理乱码
     if (trimmed.startsWith('data:image')) return null;
 
     final isNetwork =
@@ -181,24 +181,24 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     } else if (isAsset) {
       return AssetImage(trimmed);
     } else {
-      // 鏈湴鏂囦欢锛堥伩鍏?existsSync 鍚屾 IO锛屼氦缁?ImageProvider 鑷繁澶勭悊澶辫触鎯呭喌锛?
+      // 注释已清理乱码
       return FileImage(File(trimmed));
     }
   }
 
-  /// 鏍规嵁 MessageBlock 鑾峰彇瀵瑰簲鐨?ImageProvider
+  /// 注释已清理乱码
   ImageProvider? _getBlockImageProvider(MessageBlock block) {
     if (block is ImageBlock) {
-      // base64 鍥剧墖棰勭紦瀛樹細甯︽潵鍚屾瑙ｇ爜寮€閿€锛堝疄闄呮覆鏌撴椂宸叉湁鍏滃簳锛夛紝杩欓噷璺宠繃閬垮厤褰卞搷鍔ㄧ敾娴佺晠搴?
+      // 注释已清理乱码
       if (block.base64 != null && block.base64!.isNotEmpty) return null;
 
-      // 缃戠粶鍥剧墖
+      // 网络图片
       if (block.url != null && block.url!.isNotEmpty) {
         return CachedNetworkImageProvider(block.url!);
       }
-      // 鏈湴鍥剧墖
+      // 本地图片
       if (block.localPath != null && block.localPath!.isNotEmpty) {
-        // 閬垮厤 existsSync 鍚屾 IO
+        // 避免 existsSync 同步 IO
         return FileImage(File(block.localPath!));
       }
     } else if (block is EmojiBlock) {
@@ -293,22 +293,22 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   @override
   void didUpdateWidget(covariant ChatPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // 濡傛灉 conversationId 鍙樺寲锛屾洿鏂?provider 骞堕噸缃垎椤电姸鎬?
+    // 注释已清理乱码
     final targetId = widget.conversationId;
     if (targetId != oldWidget.conversationId && targetId != null) {
       ref.read(activeConversationIdProvider.notifier).state = targetId;
-      // 鍒囨崲浼氳瘽鏃堕噸缃垎椤电姸鎬?
+      // 注释已清理乱码
       setState(() {
         _hasMoreMessages = true;
         _isLoadingMore = false;
       });
       _scheduleImagePrecache();
-      // 娓呴櫎鏂颁細璇濈殑鏈璁℃暟
+      // 注释已清理乱码
       ref.read(conversationsProvider.notifier).clearUnread(targetId);
     }
   }
 
-  /// 鍔犺浇鏇村鍘嗗彶娑堟伅锛堝垎椤靛姞杞斤級
+  /// 注释已清理乱码
   Future<void> _loadMoreMessages(Conversation conv) async {
     if (_isLoadingMore || !_hasMoreMessages) return;
     if (conv.messages.isEmpty) {
@@ -322,11 +322,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       final msgRepo = ref.read(messageRepositoryProvider);
       final blockRepo = ref.read(messageBlockRepositoryProvider);
 
-      // 鑾峰彇褰撳墠鏈€鏃ф秷鎭殑鏃堕棿
+      // 注释已清理乱码
       final oldestMessage = conv.messages.first;
       final oldestTime = oldestMessage.createdAt.millisecondsSinceEpoch;
 
-      // 浠庢暟鎹簱鍔犺浇鏇存棭鐨勬秷鎭?
+      // 注释已清理乱码
       final dbMsgs = await msgRepo.getByConversation(
         conv.id,
         limit: 30,
@@ -341,11 +341,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         return;
       }
 
-      // 鎵归噺鑾峰彇 blocks
+      // 批量获取 blocks
       final messageIds = dbMsgs.map((m) => m.id).toList();
       final dbBlocks = await blockRepo.getByMessages(messageIds);
 
-      // 鎸?messageId 鍒嗙粍
+      // 注释已清理乱码
       final blocksByMsgId = <String, List<MessageBlock>>{};
       for (final dbBlock in dbBlocks) {
         final block = MessageBlockConverter.fromDb(dbBlock);
@@ -354,24 +354,24 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         }
       }
 
-      // 缁勮娑堟伅锛坮eversed: 鏁版嵁搴撹繑鍥?desc锛孶I 闇€瑕?asc锛?
+      // 注释已清理乱码
       final olderMessages = dbMsgs.reversed.map((dbMsg) {
         final blocks = blocksByMsgId[dbMsg.id];
         return MessageConverter.fromDb(dbMsg, blocks: blocks);
       }).toList();
 
-      // 鏇存柊浼氳瘽锛屾妸鏇存棫鐨勬秷鎭彃鍏ュ埌澶撮儴
+      // 更新会话，把更旧的消息插入到头部
       await ref.read(conversationsProvider.notifier).updateOne(
             conv.id,
             (c) => c.copyWith(messages: [...olderMessages, ...c.messages]),
           );
 
-      // 濡傛灉鍔犺浇鐨勬秷鎭皯浜?0鏉★紝璇存槑娌℃湁鏇村浜?
+      // 注释已清理乱码
       if (dbMsgs.length < 30) {
         setState(() => _hasMoreMessages = false);
       }
     } catch (e) {
-      debugPrint('鍔犺浇鏇村娑堟伅澶辫触: $e');
+      debugPrint('加载更多消息失败: $e');
     } finally {
       if (mounted) {
         setState(() => _isLoadingMore = false);
@@ -396,9 +396,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               },
               orElse: () => initial,
             );
-    // 娉ㄦ剰锛氱Щ闄や簡 sendingProvider 鐨?watch锛屾敼鍦?_ChatAppBarTitle 涓眬閮ㄧ洃鍚?
-    // 杩欐牱鍙戦€佺姸鎬佸彉鍖栨椂鍙噸寤烘爣棰橈紝涓嶄細褰卞搷 Composer 杈撳叆妗?
-    final actions = ref.read(chatActionsProvider); // 鏀圭敤 read锛宎ctions 涓嶄細鍙?
+    // 注释已清理乱码
+    // 注释已清理乱码
+    final actions = ref.read(chatActionsProvider); // 注释已清理乱码
     final sidebarVisible = ref.watch(sidebarVisibleProvider);
     final settingsAsync = ref.watch(appSettingsProvider);
     final colors = context.moeColors;
@@ -406,7 +406,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final chatBgColor = settingsAsync.maybeWhen(
       data: (settings) {
         if (isDark) return colors.bgMain;
-        // 榛樿鑹茶窡闅忓叏灞€鑳屾櫙鑹?
+        // 注释已清理乱码
         return settings.chatBackgroundColor.color ?? colors.surface;
       },
       orElse: () => isDark ? colors.bgMain : colors.surface,
@@ -419,7 +419,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         : 0.0;
 
     return Scaffold(
-      // 鐢辫緭鍏ョ粍浠惰嚜宸辩鐞嗏€滈敭鐩?鏇村闈㈡澘鈥濆崰浣嶄笌浣嶇Щ锛岄伩鍏?Scaffold 鑷姩鎸ゅ帇甯冨眬閫犳垚璺冲姩
+      // 注释已清理乱码
       resizeToAvoidBottomInset: false,
       extendBodyBehindAppBar: extendBehindAppBar,
       appBar: AppBar(
@@ -430,7 +430,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         scrolledUnderElevation: 0,
         surfaceTintColor: Colors.transparent,
         titleTextStyle: TextStyle(
-          fontSize: 22, // 璇︽儏椤垫爣棰樼◢寰皬涓€鐐?
+          fontSize: 22, // 注释已清理乱码
           fontWeight: MoeFontWeights.emphasis,
           color: colors.headerContentColor,
           letterSpacing: 0.8,
@@ -456,7 +456,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         title: Consumer(
           builder: (context, ref, _) {
             final sending = ref.watch(sendingProvider);
-            return Text(sending ? '瀵规柟杈撳叆涓?..' : (conv?.displayName ?? '鑱婂ぉ'));
+            return Text(sending ? '对方输入中...' : (conv?.displayName ?? '聊天'));
           },
         ),
         centerTitle: false,
@@ -485,7 +485,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           if (conv != null)
             IconButton(
               icon: Icon(Icons.more_horiz, color: colors.headerContentColor),
-              tooltip: '鏇村',
+                  tooltip: '更多',
               onPressed: () async {
                 await showChatSettingsDialog(
                   context: context,
@@ -493,7 +493,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   onSearchMessages: () {
                     showMoeBottomSheet(
                       context: context,
-                      title: '鏌ユ壘鑱婂ぉ璁板綍',
+                      title: '查找聊天记录',
                       showCloseButton: true,
                       maxHeight: MediaQuery.sizeOf(context).height * 0.85,
                       builder: (context) =>
@@ -501,7 +501,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     );
                   },
                   onEditContact: () async {
-                    // 缂栬緫瑙掕壊椤甸潰锛堣宸粦鍔ㄥ姩鐢伙級
+                    // 注释已清理乱码
                     final result =
                         await Navigator.of(context).push<ContactEditResult>(
                       ParallaxSlidePageRoute(
@@ -578,7 +578,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                           isMuted: value,
                         );
                     if (!context.mounted) return;
-                    MoeToast.brief(context, value ? '宸插紑鍚厤鎵撴壈' : '宸插叧闂厤鎵撴壈');
+                    MoeToast.brief(context, value ? '已开启免打扰' : '已关闭免打扰');
                   },
                   onNotificationSoundChanged: (value) async {
                     await ref
@@ -588,7 +588,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                           notificationSound: value,
                         );
                     if (!context.mounted) return;
-                    MoeToast.brief(context, value ? '宸插紑鍚彁绀洪煶' : '宸插叧闂彁绀洪煶');
+                    MoeToast.brief(context, value ? '已开启提示音' : '已关闭提示音');
                   },
                   onClearMessages: () async {
                     await ref
@@ -623,12 +623,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       body: _buildConversationBackground(
         conv: conv,
         fallbackColor: chatBgColor,
-        child: Column(
+        child: Stack(
           children: [
+            // 注释已清理乱码
+            Column(
+              children: [
             if (listTopSpacing > 0) SizedBox(height: listTopSpacing),
-            // 閿欒淇℃伅涓嶅啀鏄剧ず鍦║I涓紝閬垮厤褰卞搷鑱婂ぉ浣撻獙
-            // 濡傞渶璋冭瘯锛屽彲浠ュ湪鎺у埗鍙版煡鐪媏rror鐘舵€?
-            // 鍔犺浇鐘舵€侀€氳繃AppBar鐨?瀵规柟杈撳叆涓?.."鍜屾秷鎭皵娉＄姸鎬佹樉绀?
+            // 注释已清理乱码
+            // 注释已清理乱码
+            // 注释已清理乱码
             Expanded(
               child: conv == null
                   ? const Center(child: CircularProgressIndicator())
@@ -637,13 +640,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                       onTap: () {
                         final keyboardHeight =
                             MediaQuery.viewInsetsOf(context).bottom;
-                        // 閿洏鏄剧ず涓細鍙殣钘忛敭鐩樹絾涓嶇珛鍒讳涪鐒︾偣锛岃杈撳叆妗嗚窡鐫€閿洏鍔ㄧ敾涓€璧峰洖鏀讹紙閬垮厤琚敭鐩樼洊浣忥級
+                        // 注释已清理乱码
                         if (keyboardHeight > 0) {
                           SystemChannels.textInput
                               .invokeMethod('TextInput.hide');
                           return;
                         }
-                        // 閿洏鏈樉绀猴細涓㈢劍鐐圭敤浜庡叧闂€滄洿澶氶潰鏉库€濓紙鏇村闈㈡澘浼氫繚鎸佷竴涓彧璇荤劍鐐癸級
+                        // 注释已清理乱码
                         FocusManager.instance.primaryFocus?.unfocus();
                       },
                       child: ChatMessageList(
@@ -674,11 +677,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                       ),
                     ),
             ),
-            // 杈撳叆鏍忎娇鐢ㄥ唴閮?SafeArea 澶勭悊绯荤粺灏忕櫧鏉★紝閿洏閫傞厤鍚庣画鍗曠嫭璇勪及
-            Composer(
-              disabled: false, // 绉婚櫎绂佺敤閫昏緫锛屽厑璁哥敤鎴烽殢鏃惰緭鍏?
+              ],
+            ),
+            // Composer floats at bottom for BackdropFilter blur
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Composer(
+              disabled: false, // 注释已清理乱码
               onSend: (text) {
-                // 濡傛灉姝ｅ湪鍙戦€侊紝涓嶅鐞嗘柊娑堟伅锛堝湪鍥炶皟鏃舵鏌ワ紝閬垮厤閲嶅缓锛?
+                // 注释已清理乱码
                 if (ref.read(sendingProvider)) {
                   MoeToast.brief(
                     context,
@@ -686,10 +695,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   );
                   return;
                 }
-                // 妫€鏌ユ槸鍚︽湁寮曠敤娑堟伅
+                // 检查是否有引用消息
                 final quoted = ref.read(quotedMessageProvider);
                 if (quoted != null) {
-                  // 甯﹀紩鐢ㄥ彂閫?
+                  // 注释已清理乱码
                   final quotedText = quoted.content.length > 30
                       ? '${quoted.content.substring(0, 30)}...'
                       : quoted.content;
@@ -701,7 +710,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 }
               },
               onImageSelected: (imagePath) {
-                // 濡傛灉姝ｅ湪鍙戦€侊紝涓嶅鐞嗘柊鍥剧墖
+                // 如果正在发送，不处理新图片
                 if (ref.read(sendingProvider)) {
                   MoeToast.brief(
                     context,
@@ -712,7 +721,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 actions.sendWithImage(imagePath);
               },
               onFileSelected: (filePath) {
-                // 濡傛灉姝ｅ湪鍙戦€侊紝涓嶅鐞嗘柊鏂囦欢
+                // 如果正在发送，不处理新文件
                 if (ref.read(sendingProvider)) {
                   MoeToast.brief(
                     context,
@@ -722,6 +731,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 }
                 actions.sendWithFile(filePath);
               },
+            ),
             ),
           ],
         ),
@@ -771,7 +781,7 @@ class _ChatMessageSearchContentState
     final keyword = _keyword.trim();
     final date = _selectedDate;
 
-    // 涓や釜鏉′欢閮芥病濉椂锛屼笉鍋氣€滃叏搴撴悳绱⑩€濓紝閬垮厤涓€涓嬪瓙鍒峰嚭澶璁板綍銆?
+    // 注释已清理乱码
     if (keyword.isEmpty && date == null) {
       if (!mounted || seq != _searchSeq) return;
       setState(() {
@@ -869,13 +879,13 @@ class _ChatMessageSearchContentState
 
     return Column(
       children: [
-        // 鍏抽敭璇嶆悳绱㈡
+        // 注释已清理乱码
         Padding(
           padding: const EdgeInsets.all(16),
           child: MoeTextField(
             controller: _searchCtrl,
             autofocus: true,
-            hint: '杈撳叆鍏抽敭璇嶏紙鍙€夛級',
+            hint: '输入关键词（可选）',
             prefixIcon: Icons.search,
             suffix: _searchCtrl.text.isNotEmpty
                 ? IconButton(
@@ -894,7 +904,7 @@ class _ChatMessageSearchContentState
           ),
         ),
 
-        // 鏃ユ湡绛涢€?
+        // 注释已清理乱码
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: MoeG2ClipRRect(
@@ -914,20 +924,20 @@ class _ChatMessageSearchContentState
                   dense: true,
                   contentPadding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
-                  title: const Text('鏃ユ湡'),
-                  subtitle: Text(date == null ? '鍏ㄩ儴' : _formatDay(date)),
+                  title: const Text('日期'),
+                  subtitle: Text(date == null ? '全部' : _formatDay(date)),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       IconButton(
-                        tooltip: '閫夋嫨鏃ユ湡',
+                        tooltip: '选择日期',
                         icon: const Icon(Icons.calendar_month, size: 20),
                         color: moePrimary,
                         onPressed: _pickDate,
                       ),
                       if (date != null)
                         IconButton(
-                          tooltip: '娓呴櫎鏃ユ湡',
+                          tooltip: '清除日期',
                           icon: const Icon(Icons.close, size: 20),
                           color: colors.muted,
                           onPressed: _clearDate,
@@ -943,25 +953,25 @@ class _ChatMessageSearchContentState
 
         const SizedBox(height: 12),
 
-        // 缁撴灉鍖?
+        // 注释已清理乱码
         Expanded(
           child: _loading
               ? const Center(child: MoeLoadingIndicator())
               : (_error != null)
                   ? MoeEmptyState(
                       icon: Icons.error_outline,
-                      title: '鎼滅储澶辫触',
+                      title: '搜索失败',
                       description: _error!,
                     )
                   : (keyword.isEmpty && date == null)
                       ? const MoeEmptyState(
                           icon: Icons.search,
-                          title: '璇疯緭鍏ュ叧閿瘝鎴栭€夋嫨鏃ユ湡',
+                          title: '请输入关键词或选择日期',
                         )
                       : (_results.isEmpty)
                           ? const MoeEmptyState(
                               icon: Icons.search_off,
-                              title: '鏈壘鍒板尮閰嶇殑鑱婂ぉ璁板綍',
+                              title: '未找到匹配的聊天记录',
                             )
                           : Column(
                               children: [
@@ -972,7 +982,7 @@ class _ChatMessageSearchContentState
                                     children: [
                                       Expanded(
                                         child: Text(
-                                          '鍏?${_results.length} 鏉★紙鏈€澶氭樉绀?200 鏉★級',
+                                          '共 ${_results.length} 条（最多显示 200 条）',
                                           style: TextStyle(
                                             fontSize: 12,
                                             color: colors.muted,

@@ -11,6 +11,7 @@ import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:chat_bottom_container/chat_bottom_container.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -50,6 +51,8 @@ class Composer extends ConsumerStatefulWidget {
 }
 
 class _ComposerState extends ConsumerState<Composer> {
+  static const Duration _kKeyboardInterruptGuard = Duration(milliseconds: 280);
+
   final _ctrl = TextEditingController();
   final _inputFocus = FocusNode();
 
@@ -61,7 +64,14 @@ class _ComposerState extends ConsumerState<Composer> {
   // 记录键盘高度，用于更多面板的高度
   double _keyboardHeight = 270;
   bool _suppressKeyboard = false;
-  int _keyboardShowRequestId = 0;
+
+  /// 桌面端焦点粘性保护：区分主动失焦和被动失焦（如输入法抢焦点）
+  bool _intentionalUnfocus = false;
+  ComposerPanelType _desiredPanelType = ComposerPanelType.none;
+  _PanelIntent? _pendingPanelIntent;
+  bool _isProcessingPanelIntent = false;
+  bool _isKeyboardGuardActive = false;
+  Timer? _keyboardGuardTimer;
 
   // 选中的附件
   SelectedAttachment? _selectedAttachment;
@@ -69,9 +79,56 @@ class _ComposerState extends ConsumerState<Composer> {
   @override
   void initState() {
     super.initState();
+    // 桌面端焦点粘性保护：输入法（如语音输入）可能短暂抢走焦点，自动恢复
+    if (!_supportsSoftKeyboardPanel) {
+      _inputFocus.addListener(_onDesktopFocusChange);
+    }
     // 延迟检查是否有待编辑的文本
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkEditingText();
+    });
+  }
+
+  /// 桌面端焦点变化监听：检测被动失焦并自动恢复
+  void _onDesktopFocusChange() {
+    if (_inputFocus.hasFocus) {
+      // 焦点回来了，重置标志
+      _intentionalUnfocus = false;
+      return;
+    }
+    // 焦点丢失
+    if (_intentionalUnfocus) {
+      // 是我们主动调用 unfocus() 的，不恢复
+      _intentionalUnfocus = false;
+      return;
+    }
+    // 被动丢失焦点（如输入法抢走），短暂延迟后自动恢复
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (!mounted || widget.disabled) return;
+      if (_inputFocus.hasFocus) return; // 已经自行恢复
+      if (_intentionalUnfocus) return; // 期间有主动失焦操作
+
+      // 更多面板正在显示（或即将显示）时，不恢复焦点。
+      // 否则 chat_bottom_container 的内部焦点监听器会把 requestFocus 解读为
+      // "用户要打字了"，自动切到 keyboard 模式并关闭面板。
+      if (_desiredPanelType == ComposerPanelType.more ||
+          _currentPanelType == ComposerPanelType.more) {
+        return;
+      }
+
+      // 如果当前路由不在最上层（有弹窗/底部弹窗/新页面盖在上面），不抢焦点
+      final route = ModalRoute.of(context);
+      if (route != null && !route.isCurrent) return;
+
+      // 如果焦点移到了另一个文本输入框，说明是用户主动点击，不抢焦点
+      final primaryFocus = FocusManager.instance.primaryFocus;
+      if (primaryFocus != null && primaryFocus.context != null) {
+        final editableState =
+            primaryFocus.context!.findAncestorStateOfType<EditableTextState>();
+        if (editableState != null) return;
+      }
+
+      _inputFocus.requestFocus();
     });
   }
 
@@ -91,14 +148,11 @@ class _ComposerState extends ConsumerState<Composer> {
 
   @override
   void dispose() {
-    _keyboardShowRequestId += 1;
+    _keyboardGuardTimer?.cancel();
+    _inputFocus.removeListener(_onDesktopFocusChange);
     _ctrl.dispose();
     _inputFocus.dispose();
     super.dispose();
-  }
-
-  void _cancelPendingKeyboardShow() {
-    _keyboardShowRequestId += 1;
   }
 
   double _resolvedKeyboardPanelHeight(BuildContext context) {
@@ -107,6 +161,18 @@ class _ComposerState extends ConsumerState<Composer> {
     final safeAreaBottom = _panelController.safeAreaBottom;
     final minHeight = safeAreaBottom > 0 ? safeAreaBottom : 0.0;
     return resolved >= minHeight ? resolved : minHeight;
+  }
+
+  bool get _supportsSoftKeyboardPanel {
+    if (kIsWeb) return false;
+    return switch (defaultTargetPlatform) {
+      TargetPlatform.android || TargetPlatform.iOS => true,
+      TargetPlatform.fuchsia ||
+      TargetPlatform.linux ||
+      TargetPlatform.macOS ||
+      TargetPlatform.windows =>
+        false,
+    };
   }
 
   Widget _buildComposerGlassLayer({required Widget child}) {
@@ -123,41 +189,172 @@ class _ComposerState extends ConsumerState<Composer> {
     );
   }
 
-  Future<void> _showKeyboardWithPreAnimation() async {
+  void _showKeyboardWithPreAnimation() {
+    _requestPanelIntent(
+      ComposerPanelType.keyboard,
+      preferPreAnimation: true,
+      explicitShow: true,
+    );
+  }
+
+  void _showKeyboardDirect({bool explicitShow = true}) {
+    _requestPanelIntent(
+      ComposerPanelType.keyboard,
+      preferPreAnimation: false,
+      explicitShow: explicitShow,
+    );
+  }
+
+  void _requestPanelIntent(
+    ComposerPanelType target, {
+    bool preferPreAnimation = true,
+    bool explicitShow = true,
+  }) {
+    if (!mounted) return;
+    if (widget.disabled && target != ComposerPanelType.none) return;
+    _desiredPanelType = target;
+    _pendingPanelIntent = _PanelIntent(
+      target: target,
+      preferPreAnimation: preferPreAnimation,
+      explicitShow: explicitShow,
+    );
+    _drainPanelIntents();
+  }
+
+  void _drainPanelIntents() {
+    if (!mounted || _isProcessingPanelIntent || _isKeyboardGuardActive) return;
+
+    final next = _pendingPanelIntent;
+    if (next == null) return;
+
+    _pendingPanelIntent = null;
+    _isProcessingPanelIntent = true;
+    _performPanelIntent(next).whenComplete(() {
+      _isProcessingPanelIntent = false;
+      _drainPanelIntents();
+    });
+  }
+
+  void _armKeyboardGuard([Duration duration = _kKeyboardInterruptGuard]) {
+    _isKeyboardGuardActive = true;
+    _keyboardGuardTimer?.cancel();
+    _keyboardGuardTimer = Timer(duration, () {
+      _isKeyboardGuardActive = false;
+      _drainPanelIntents();
+    });
+  }
+
+  Future<void> _performPanelIntent(_PanelIntent intent) async {
+    if (!mounted) return;
+    final target = intent.target;
+    if (widget.disabled && target != ComposerPanelType.none) return;
+
+    switch (target) {
+      case ComposerPanelType.none:
+        _intentionalUnfocus = true;
+        _inputFocus.unfocus();
+        if (_currentPanelType != ComposerPanelType.none) {
+          _panelController.updatePanelType(ChatBottomPanelType.none);
+        }
+        if (_suppressKeyboard) {
+          setState(() => _suppressKeyboard = false);
+        }
+      case ComposerPanelType.more:
+        if (!_suppressKeyboard) {
+          setState(() => _suppressKeyboard = true);
+        }
+        _panelController.updatePanelType(
+          ChatBottomPanelType.other,
+          data: ComposerPanelType.more,
+          forceHandleFocus: ChatBottomHandleFocus.requestFocus,
+        );
+        if (!_supportsSoftKeyboardPanel) return;
+        await SystemChannels.textInput.invokeMethod('TextInput.hide');
+        _armKeyboardGuard();
+      case ComposerPanelType.keyboard:
+        await _performKeyboardTransition(
+          preferPreAnimation: intent.preferPreAnimation,
+          explicitShow: intent.explicitShow,
+        );
+    }
+  }
+
+  Future<void> _performKeyboardTransition({
+    required bool preferPreAnimation,
+    required bool explicitShow,
+  }) async {
     if (!mounted || widget.disabled) return;
 
-    _cancelPendingKeyboardShow();
-    final requestId = _keyboardShowRequestId;
-
-    // 键盘已弹出时不重复处理，避免闪烁/重置动画。
-    final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
-    if (keyboardVisible && !_suppressKeyboard) return;
-
-    // 从“更多面板”回到键盘：底部高度已经到位，直接弹键盘即可。
-    if (_currentPanelType == ComposerPanelType.more) {
-      setState(() => _suppressKeyboard = false);
-      _panelController.updatePanelType(ChatBottomPanelType.keyboard);
+    if (!_supportsSoftKeyboardPanel) {
+      if (_suppressKeyboard) {
+        setState(() => _suppressKeyboard = false);
+      }
+      if (_currentPanelType != ComposerPanelType.none) {
+        _panelController.updatePanelType(ChatBottomPanelType.none);
+      }
+      _desiredPanelType = ComposerPanelType.none;
       _inputFocus.requestFocus();
-      SystemChannels.textInput.invokeMethod('TextInput.show');
       return;
     }
 
-    // 先走一次“像更多面板一样的展开动画”，再真正弹出系统键盘。
-    setState(() => _suppressKeyboard = true);
+    final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
+    if (keyboardVisible &&
+        !_suppressKeyboard &&
+        _currentPanelType == ComposerPanelType.keyboard) {
+      return;
+    }
+
+    // 关键修复：从完全收起状态点击输入框时，不再执行 hide->show 预动画，
+    // 避免和系统因点按自动唤起产生 show/hide 竞争导致抖动。
+    final shouldUsePreAnimation =
+        preferPreAnimation && _currentPanelType != ComposerPanelType.none;
+    if (!shouldUsePreAnimation) {
+      if (_suppressKeyboard) {
+        setState(() => _suppressKeyboard = false);
+      }
+      _panelController.updatePanelType(ChatBottomPanelType.keyboard);
+      _inputFocus.requestFocus();
+      if (explicitShow) {
+        await SystemChannels.textInput.invokeMethod('TextInput.show');
+      }
+      _armKeyboardGuard();
+      return;
+    }
+
+    if (_currentPanelType == ComposerPanelType.more) {
+      if (_suppressKeyboard) {
+        setState(() => _suppressKeyboard = false);
+      }
+      _panelController.updatePanelType(ChatBottomPanelType.keyboard);
+      _inputFocus.requestFocus();
+      if (explicitShow) {
+        await SystemChannels.textInput.invokeMethod('TextInput.show');
+      }
+      _armKeyboardGuard();
+      return;
+    }
+
+    if (!_suppressKeyboard) {
+      setState(() => _suppressKeyboard = true);
+    }
     _panelController.updatePanelType(
       ChatBottomPanelType.other,
       data: ComposerPanelType.keyboard,
       forceHandleFocus: ChatBottomHandleFocus.requestFocus,
     );
-    SystemChannels.textInput.invokeMethod('TextInput.hide');
+    await SystemChannels.textInput.invokeMethod('TextInput.hide');
+    _armKeyboardGuard(kAnimXFast);
 
     await Future.delayed(kAnimXFast);
-    if (!mounted) return;
-    if (requestId != _keyboardShowRequestId) return;
+    if (!mounted || _desiredPanelType != ComposerPanelType.keyboard) return;
 
     setState(() => _suppressKeyboard = false);
     _panelController.updatePanelType(ChatBottomPanelType.keyboard);
-    SystemChannels.textInput.invokeMethod('TextInput.show');
+    _inputFocus.requestFocus();
+    if (explicitShow) {
+      await SystemChannels.textInput.invokeMethod('TextInput.show');
+    }
+    _armKeyboardGuard();
   }
 
   void _submit() {
@@ -184,31 +381,16 @@ class _ComposerState extends ConsumerState<Composer> {
     _ctrl.clear();
   }
 
-  void _hidePanel() {
-    _inputFocus.unfocus();
-    if (_currentPanelType == ComposerPanelType.none) return;
-    _panelController.updatePanelType(ChatBottomPanelType.none);
-  }
-
   void _onMorePressed() {
     if (widget.disabled) return;
-    _cancelPendingKeyboardShow();
-    if (_currentPanelType == ComposerPanelType.more) {
-      setState(() => _suppressKeyboard = false);
-      _panelController.updatePanelType(ChatBottomPanelType.keyboard);
-      _inputFocus.requestFocus();
-      SystemChannels.textInput.invokeMethod('TextInput.show');
-      return;
+    final pendingTarget = _pendingPanelIntent?.target;
+    final isMoreOpen = _currentPanelType == ComposerPanelType.more ||
+        pendingTarget == ComposerPanelType.more;
+    if (isMoreOpen) {
+      _showKeyboardDirect();
+    } else {
+      _requestPanelIntent(ComposerPanelType.more);
     }
-
-    // 更多面板：保持输入框焦点，但不弹出键盘（readOnly + TextInput.hide）
-    setState(() => _suppressKeyboard = true);
-    _panelController.updatePanelType(
-      ChatBottomPanelType.other,
-      data: ComposerPanelType.more,
-      forceHandleFocus: ChatBottomHandleFocus.requestFocus,
-    );
-    SystemChannels.textInput.invokeMethod('TextInput.hide');
   }
 
   @override
@@ -225,27 +407,29 @@ class _ComposerState extends ConsumerState<Composer> {
       }
     });
 
-    return _buildComposerGlassLayer(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // 引用消息预览
-          _buildQuotedMessagePreview(),
-          if (_selectedAttachment?.type == AttachmentType.image)
-            ImageAttachmentPreview(
-              imagePath: _selectedAttachment!.path,
-              onRemove: () => setState(() => _selectedAttachment = null),
-            ),
-          if (_selectedAttachment?.type == AttachmentType.file)
-            FileAttachmentPreview(
-              filePath: _selectedAttachment!.path,
-              fileName: _selectedAttachment!.name,
-              fileSizeBytes: _selectedAttachment!.sizeBytes,
-              onRemove: () => setState(() => _selectedAttachment = null),
-            ),
-          _buildInputBar(),
-          _buildPanelContainer(),
-        ],
+    return TextFieldTapRegion(
+      child: _buildComposerGlassLayer(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 引用消息预览
+            _buildQuotedMessagePreview(),
+            if (_selectedAttachment?.type == AttachmentType.image)
+              ImageAttachmentPreview(
+                imagePath: _selectedAttachment!.path,
+                onRemove: () => setState(() => _selectedAttachment = null),
+              ),
+            if (_selectedAttachment?.type == AttachmentType.file)
+              FileAttachmentPreview(
+                filePath: _selectedAttachment!.path,
+                fileName: _selectedAttachment!.name,
+                fileSizeBytes: _selectedAttachment!.sizeBytes,
+                onRemove: () => setState(() => _selectedAttachment = null),
+              ),
+            _buildInputBar(),
+            _buildPanelContainer(),
+          ],
+        ),
       ),
     );
   }
@@ -253,11 +437,6 @@ class _ComposerState extends ConsumerState<Composer> {
   Widget _buildInputBar() {
     final skin = context.skin;
     final colors = context.moeColors;
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final inputBgColor = isDark
-        ? colors.panel.withValues(alpha: 0.78)
-        : Colors.white.withValues(alpha: 0.86);
     final inputStyle = skin.inputDecoration(colors);
 
     return Padding(
@@ -293,16 +472,9 @@ class _ComposerState extends ConsumerState<Composer> {
                 enabled: !widget.disabled,
                 onTap: () {
                   if (widget.disabled) return;
-                  if (_suppressKeyboard) {
-                    _cancelPendingKeyboardShow();
-                    setState(() => _suppressKeyboard = false);
-                    _panelController
-                        .updatePanelType(ChatBottomPanelType.keyboard);
-                    _inputFocus.requestFocus();
-                    SystemChannels.textInput.invokeMethod('TextInput.show');
-                    return;
-                  }
-                  _showKeyboardWithPreAnimation();
+                  final shouldExplicitShow = _suppressKeyboard ||
+                      _currentPanelType == ComposerPanelType.more;
+                  _showKeyboardDirect(explicitShow: shouldExplicitShow);
                 },
                 onSubmitted: (_) => _submit(),
               ),
@@ -383,10 +555,14 @@ class _ComposerState extends ConsumerState<Composer> {
       customPanelContainer: (panelType, data) {
         final Widget panel;
         if (panelType == ChatBottomPanelType.keyboard) {
-          final nativeHeight = _panelController.keyboardHeight;
-          if (nativeHeight > 0) _keyboardHeight = nativeHeight;
-          final height = _resolvedKeyboardPanelHeight(context);
-          panel = SizedBox(width: double.infinity, height: height);
+          if (_supportsSoftKeyboardPanel) {
+            final nativeHeight = _panelController.keyboardHeight;
+            if (nativeHeight > 0) _keyboardHeight = nativeHeight;
+            final height = _resolvedKeyboardPanelHeight(context);
+            panel = SizedBox(width: double.infinity, height: height);
+          } else {
+            panel = const SizedBox.shrink();
+          }
         } else {
           panel = _panelController.buildInPanel(panelType) ??
               const SizedBox.shrink();
@@ -431,6 +607,7 @@ class _ComposerState extends ConsumerState<Composer> {
         if (type == null) return const SizedBox.shrink();
         final height = _resolvedKeyboardPanelHeight(context);
         if (type == ComposerPanelType.keyboard) {
+          if (!_supportsSoftKeyboardPanel) return const SizedBox.shrink();
           return SizedBox(height: height);
         }
         if (type != ComposerPanelType.more) return const SizedBox.shrink();
@@ -442,7 +619,6 @@ class _ComposerState extends ConsumerState<Composer> {
         setState(() {
           switch (panelType) {
             case ChatBottomPanelType.none:
-              _cancelPendingKeyboardShow();
               _currentPanelType = ComposerPanelType.none;
               _suppressKeyboard = false;
             case ChatBottomPanelType.keyboard:
@@ -460,6 +636,10 @@ class _ComposerState extends ConsumerState<Composer> {
                 _suppressKeyboard = false;
               }
           }
+
+          if (_pendingPanelIntent == null && !_isProcessingPanelIntent) {
+            _desiredPanelType = _currentPanelType;
+          }
         });
       },
       changeKeyboardPanelHeight: (height) {
@@ -475,9 +655,11 @@ class _ComposerState extends ConsumerState<Composer> {
   }
 
   void _handlePanelAction(ComposerAction action) {
+    // PC端（桌面端）：先收起面板，然后直接执行操作
+    // 移动端：模型选择器需要先收面板再弹窗，其余操作直接执行
     switch (action) {
       case ComposerAction.model:
-        _openModelPicker();
+        _openModelPickerFromMorePanel();
       case ComposerAction.gallery:
         _pickImage(ImageSource.gallery);
       case ComposerAction.camera:
@@ -485,6 +667,25 @@ class _ComposerState extends ConsumerState<Composer> {
       case ComposerAction.file:
         _pickFile();
     }
+  }
+
+  Future<void> _openModelPickerFromMorePanel() async {
+    // PC端（桌面端）：直接弹出模型选择器，不先收面板
+    // 原因：PC端的焦点恢复逻辑（_onDesktopFocusChange）和 chat_bottom_container
+    // 的 inputFocusNodeListener 在面板收起后会产生竞争，导致 showMoeBottomSheet
+    // 弹出后立即被关闭。在PC端直接弹窗可以避免这个问题。
+    if (!_supportsSoftKeyboardPanel) {
+      _requestPanelIntent(ComposerPanelType.none);
+      // 不等待动画，直接弹出（面板收起是瞬间的，因为 PC 端没有键盘面板高度过渡）
+      if (!mounted) return;
+      await _openModelPicker();
+      return;
+    }
+    // 移动端：原有逻辑，先收面板等动画再弹窗
+    _requestPanelIntent(ComposerPanelType.none);
+    await Future<void>.delayed(kAnimFast);
+    if (!mounted) return;
+    await _openModelPicker();
   }
 
   Widget _buildMoreButton({required bool isActive}) {
@@ -528,13 +729,20 @@ class _ComposerState extends ConsumerState<Composer> {
   }
 
   Future<void> _openModelPicker() async {
-    final settings = ref.read(appSettingsProvider).valueOrNull;
+    var settings = ref.read(appSettingsProvider).valueOrNull;
+    if (settings == null) {
+      try {
+        settings = await ref.read(appSettingsProvider.future);
+      } catch (_) {}
+    }
+    if (!mounted) return;
     if (settings == null) {
       MoeToast.brief(context, '设置加载中，请稍后再试');
       return;
     }
+    final loadedSettings = settings;
     final colors = context.moeColors;
-    final models = settings.modelList;
+    final models = loadedSettings.modelList;
     if (models.isEmpty) {
       await showMeoTalkAlert(
         context: context,
@@ -544,10 +752,11 @@ class _ComposerState extends ConsumerState<Composer> {
       return;
     }
 
-    final currentModel = settings.defaultModelName;
+    final currentModel = loadedSettings.defaultModelName;
     final selected = await showMoeBottomSheet<String>(
       context: context,
       title: '选择模型',
+      useRootNavigator: true,
       builder: (sheetContext) {
         return ListView(
           children: [
@@ -561,14 +770,17 @@ class _ComposerState extends ConsumerState<Composer> {
                   size: 20,
                 ),
                 title: Text(
-                  settings.modelDisplayNames[model]?.trim().isNotEmpty == true
-                      ? settings.modelDisplayNames[model]!
+                  loadedSettings.modelDisplayNames[model]?.trim().isNotEmpty ==
+                          true
+                      ? loadedSettings.modelDisplayNames[model]!
                       : model,
                 ),
-                subtitle:
-                    settings.modelDisplayNames[model]?.trim().isNotEmpty == true
-                        ? Text(model)
-                        : null,
+                subtitle: loadedSettings.modelDisplayNames[model]
+                            ?.trim()
+                            .isNotEmpty ==
+                        true
+                    ? Text(model)
+                    : null,
                 trailing: model == currentModel
                     ? Icon(Icons.check, color: colors.primary, size: 18)
                     : null,
@@ -580,8 +792,11 @@ class _ComposerState extends ConsumerState<Composer> {
       },
     );
 
-    if (selected == null || selected.trim().isEmpty || selected == currentModel)
+    if (selected == null ||
+        selected.trim().isEmpty ||
+        selected == currentModel) {
       return;
+    }
     await ref.read(appSettingsProvider.notifier).setDefaultModelName(selected);
     if (!mounted) return;
     MoeToast.success(context, '已切换默认模型：$selected');
@@ -631,4 +846,16 @@ class _ComposerState extends ConsumerState<Composer> {
         break;
     }
   }
+}
+
+class _PanelIntent {
+  final ComposerPanelType target;
+  final bool preferPreAnimation;
+  final bool explicitShow;
+
+  const _PanelIntent({
+    required this.target,
+    required this.preferPreAnimation,
+    required this.explicitShow,
+  });
 }

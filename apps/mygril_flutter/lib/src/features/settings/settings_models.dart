@@ -135,6 +135,24 @@ final _imagePatterns = RegExp(
   caseSensitive: false,
 );
 
+/// 全局背景色选项（影响整个 App 的 Scaffold 底色）
+enum GlobalBackgroundColor {
+  white('white', '纯白', Color(0xFFFFFFFF)),
+  momotalk('momotalk', 'Momotalk', Color(0xFFF3F6F8));
+
+  const GlobalBackgroundColor(this.value, this.label, this.color);
+  final String value;
+  final String label;
+  final Color color;
+
+  static GlobalBackgroundColor fromValue(String? value) {
+    for (final bg in GlobalBackgroundColor.values) {
+      if (bg.value == value) return bg;
+    }
+    return GlobalBackgroundColor.white;
+  }
+}
+
 /// 聊天背景色选项
 enum ChatBackgroundColor {
   /// 默认色 - 跟随全局背景色
@@ -357,7 +375,7 @@ class CustomModel {
       );
 }
 
-/// 渠道认证配置
+/// 提供商认证配置
 class ProviderAuth {
   final String id;
   final String? displayName;
@@ -371,16 +389,16 @@ class ProviderAuth {
   final Map<String, dynamic> customConfig;
   final String modelType;
 
-  /// 是否禁用工具调用（默认 false，即默认启用工具调用）
+  /// 是否禁用工具调用，默认 false（即默认启用工具调用）
   final bool disableToolCalling;
 
-  /// 温度参数（null 表示使用全局默认值）
+  /// 温度参数，null 表示使用全局默认值
   final double? temperature;
 
-  /// Top P 参数（null 表示不设置，使用服务商默认）
+  /// Top P 参数，null 表示不覆盖，使用提供商默认
   final double? topP;
 
-  /// 上下文消息数量限制（null 表示不限制，由软件自动管理）
+  /// 上下文消息数量限制，null 表示不限制，超过时自动截断
   final int? contextMessageLimit;
 
   const ProviderAuth({
@@ -505,19 +523,19 @@ class ProviderAuth {
   }
 }
 
-/// 模型级别配置
-/// 存储每个模型的独立设置（如禁用工具调用、温度等）
+/// 模型级配置项
+/// 存储每个模型的覆盖配置，包括工具调用、温度等
 class ModelConfig {
-  /// 是否禁用工具调用（默认 false，即启用）
+  /// 是否禁用工具调用，默认 false（不禁用）
   final bool disableToolCalling;
 
-  /// 温度参数（null 表示使用全局默认值）
+  /// 温度参数，null 表示使用全局默认值
   final double? temperature;
 
-  /// Top P 参数（null 表示不设置，使用服务商默认）
+  /// Top P 参数，null 表示不覆盖，使用提供商默认
   final double? topP;
 
-  /// 上下文消息数量限制（null 表示不限制，由软件自动管理）
+  /// 上下文消息数量限制，null 表示不限制，超过时自动截断
   final int? contextMessageLimit;
 
   const ModelConfig({
@@ -527,7 +545,7 @@ class ModelConfig {
     this.contextMessageLimit,
   });
 
-  /// 是否为默认配置（全部为默认值时可以删除以节省空间）
+  /// 是否为默认配置（全部为默认值时可删除以节省空间）
   bool get isDefault =>
       !disableToolCalling &&
       temperature == null &&
@@ -569,6 +587,14 @@ class ModelConfig {
       );
 }
 
+/// 全局字体缩放上下限
+const double kMinTextScaleFactor = 0.8;
+const double kMaxTextScaleFactor = 1.5;
+
+/// 全局界面缩放上下限
+const double kMinUiScaleFactor = 0.85;
+const double kMaxUiScaleFactor = 1.20;
+
 /// 应用设置数据类
 class AppSettings {
   final bool ttsEnabled;
@@ -600,9 +626,14 @@ class AppSettings {
 
   /// 全局字体缩放因子（0.8~1.5，默认 1.0）
   final double textScaleFactor;
+
+  /// 全局界面缩放因子（0.85~1.20，默认 1.0）
+  /// 作用于布局与组件大小，不仅影响文字。
+  final double uiScaleFactor;
   final String? userAvatar;
   final String? userName;
   final AutoReplySettings autoReplySettings;
+  final GlobalBackgroundColor globalBackgroundColor;
   final ChatBackgroundColor chatBackgroundColor;
   final bool isDarkMode;
   final bool useSystemTheme;
@@ -631,7 +662,9 @@ class AppSettings {
     required this.messageChunkingEnabled,
     required this.messageFormatConfig,
     required this.textScaleFactor,
+    required this.uiScaleFactor,
     required this.autoReplySettings,
+    required this.globalBackgroundColor,
     required this.chatBackgroundColor,
     required this.isDarkMode,
     required this.useSystemTheme,
@@ -663,7 +696,9 @@ class AppSettings {
     bool? messageChunkingEnabled,
     MessageFormatConfig? messageFormatConfig,
     double? textScaleFactor,
+    double? uiScaleFactor,
     AutoReplySettings? autoReplySettings,
+    GlobalBackgroundColor? globalBackgroundColor,
     ChatBackgroundColor? chatBackgroundColor,
     bool? isDarkMode,
     bool? useSystemTheme,
@@ -696,7 +731,10 @@ class AppSettings {
             messageChunkingEnabled ?? this.messageChunkingEnabled,
         messageFormatConfig: messageFormatConfig ?? this.messageFormatConfig,
         textScaleFactor: textScaleFactor ?? this.textScaleFactor,
+        uiScaleFactor: uiScaleFactor ?? this.uiScaleFactor,
         autoReplySettings: autoReplySettings ?? this.autoReplySettings,
+        globalBackgroundColor:
+            globalBackgroundColor ?? this.globalBackgroundColor,
         chatBackgroundColor: chatBackgroundColor ?? this.chatBackgroundColor,
         isDarkMode: isDarkMode ?? this.isDarkMode,
         useSystemTheme: useSystemTheme ?? this.useSystemTheme,

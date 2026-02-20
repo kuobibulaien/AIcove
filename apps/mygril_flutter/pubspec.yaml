@@ -20,36 +20,36 @@ dependencies:
   file_picker: ^8.0.3
   image_picker: ^1.0.7
   crop_your_image: ^2.0.0
-  uuid: ^4.2.1  # 鐢ㄤ簬鐢熸垚Block鍜孧essage鐨勫敮涓€ID
-  flutter_slidable: ^3.1.0  # 鐢ㄤ簬鑱旂郴浜哄崱鐗囩殑宸︽粦鎿嶄綔
-  figma_squircle: ^0.6.3    # Figma 椋庢牸骞虫粦鍦嗚 (G2鏇茬巼杩炵画)
-  flutter_local_notifications: ^17.0.0 # 鏈湴閫氱煡
-  timezone: ^0.9.2 # 鏃跺尯鏀寔
-  # 浜戝悓姝ョ浉鍏?
-  dio: ^5.4.0  # HTTP瀹㈡埛绔?
-  path_provider: ^2.1.2  # 鏂囦欢璺緞
+  uuid: ^4.2.1  # 用于生成Block和Message的唯一ID
+  flutter_slidable: ^3.1.0  # 用于联系人卡片的左滑操作
+  figma_squircle: ^0.6.3    # 注释已清理乱码
+  flutter_local_notifications: ^17.0.0 # 本地通知
+  timezone: ^0.9.2 # 时区支持
+  # 注释已清理乱码
+  dio: ^5.4.0  # 注释已清理乱码
+  path_provider: ^2.1.2  # 文件路径
   crypto: ^3.0.3
-  flutter_secure_storage: ^9.0.0  # 瀹夊叏瀛樺偍Token
-  workmanager: ^0.6.0-rc.1 # 鍚庡彴浠诲姟绠＄悊 (淇Flutter 3.x鍏煎鎬?
-  # 鑱婂ぉ搴曢儴闈㈡澘锛堥敭鐩?鏇村闈㈡澘骞虫粦鍒囨崲锛?
+  flutter_secure_storage: ^9.0.0  # 安全存储Token
+  workmanager: ^0.6.0-rc.1 # 注释已清理乱码
+  # 注释已清理乱码
   chat_bottom_container: ^0.4.0
-  # 鍥剧墖棰勮锛堟敮鎸佺缉鏀俱€丠ero鍔ㄧ敾锛?
+  # 注释已清理乱码
   photo_view: ^0.15.0
-  # 缃戠粶鍥剧墖缂撳瓨锛堟€ц兘浼樺寲锛?
+  # 注释已清理乱码
   cached_network_image: ^3.3.1
-  # 鏈湴鏁版嵁搴?(Drift)
+  # 注释已清理乱码
   drift: ^2.18.0
   sqlite3_flutter_libs: ^0.5.0  # Android/iOS/macOS/Windows SQLite
   path: ^1.9.0
-  # 鏁版嵁澶囦唤瀵煎叆瀵煎嚭
-  archive: ^3.6.0  # ZIP 鍘嬬缉瑙ｅ帇
-  share_plus: ^9.0.0  # 鍒嗕韩鏂囦欢
-  package_info_plus: ^8.0.0  # 鑾峰彇搴旂敤鐗堟湰
-  lucide_icons: ^0.257.0  # 鍥炬爣搴?
-  pretty_qr_code: ^3.3.0  # 浜岀淮鐮佺敓鎴?
-  flutter_colorpicker: ^1.1.0  # 棰滆壊閫夋嫨鍣?
-  flutter_svg: ^2.0.10  # SVG 鍥炬爣鏀寔
-  window_manager: ^0.4.3  # Windows/macOS/Linux 鏃犺竟妗嗙獥鍙ｇ鐞?
+  # 数据备份导入导出
+  archive: ^3.6.0  # ZIP 压缩解压
+  share_plus: ^9.0.0  # 分享文件
+  package_info_plus: ^8.0.0  # 获取应用版本
+  lucide_icons: ^0.257.0  # 注释已清理乱码
+  pretty_qr_code: ^3.3.0  # 注释已清理乱码
+  flutter_colorpicker: ^1.1.0  # 注释已清理乱码
+  flutter_svg: ^2.0.10  # SVG 图标支持
+  window_manager: ^0.4.3  # 注释已清理乱码
 
   flutter_web_plugins:
     sdk: flutter
@@ -58,7 +58,7 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
-  # Drift 浠ｇ爜鐢熸垚
+  # Drift 代码生成
   drift_dev: ^2.18.0
   build_runner: ^2.4.0
 

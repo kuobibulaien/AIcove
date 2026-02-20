@@ -6,7 +6,6 @@ import '../../../../ui/theme/accent_color_provider.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
-import '../../../../core/utils/message_formatter.dart';
 
 /// 预设颜色列表
 const _presetColors = [
@@ -20,7 +19,7 @@ const _presetColors = [
 ];
 
 /// 界面设置页面
-/// 
+///
 /// 使用 MoeSettingsGroup 统一样式重构
 class UiSettingsPage extends ConsumerWidget {
   const UiSettingsPage({super.key});
@@ -77,10 +76,12 @@ class UiSettingsPage extends ConsumerWidget {
               trailingType: MoeSettingsRowTrailing.switchControl,
               switchValue: settings.isDarkMode,
               onSwitchChanged: (value) {
-                ref.read(appSettingsProvider.notifier).setDarkModeAndSystemTheme(
-                  isDark: value,
-                  useSystem: false,
-                );
+                ref
+                    .read(appSettingsProvider.notifier)
+                    .setDarkModeAndSystemTheme(
+                      isDark: value,
+                      useSystem: false,
+                    );
               },
             ),
             MoeSettingsRow(
@@ -105,6 +106,18 @@ class UiSettingsPage extends ConsumerWidget {
           margin: EdgeInsets.zero,
           children: [
             _buildTextScaleSlider(context, ref, settings, colors),
+          ],
+        ),
+
+        const SizedBox(height: 24),
+
+        // ========== 全局界面缩放设置 ==========
+        _buildSectionTitle(context, '界面缩放'),
+        const SizedBox(height: 12),
+        MoeSettingsGroup(
+          margin: EdgeInsets.zero,
+          children: [
+            _buildUiScaleSlider(context, ref, settings, colors),
           ],
         ),
 
@@ -156,8 +169,11 @@ class UiSettingsPage extends ConsumerWidget {
               trailingType: MoeSettingsRowTrailing.switchControl,
               switchValue: settings.messageFormatConfig.enableChunking,
               onSwitchChanged: (value) async {
-                final newConfig = settings.messageFormatConfig.copyWith(enableChunking: value);
-                await ref.read(appSettingsProvider.notifier).updateMessageFormatConfig(newConfig);
+                final newConfig = settings.messageFormatConfig
+                    .copyWith(enableChunking: value);
+                await ref
+                    .read(appSettingsProvider.notifier)
+                    .updateMessageFormatConfig(newConfig);
               },
             ),
             MoeSettingsRow(
@@ -167,8 +183,11 @@ class UiSettingsPage extends ConsumerWidget {
               trailingType: MoeSettingsRowTrailing.switchControl,
               switchValue: settings.messageFormatConfig.filterPunctuation,
               onSwitchChanged: (value) async {
-                final newConfig = settings.messageFormatConfig.copyWith(filterPunctuation: value);
-                await ref.read(appSettingsProvider.notifier).updateMessageFormatConfig(newConfig);
+                final newConfig = settings.messageFormatConfig
+                    .copyWith(filterPunctuation: value);
+                await ref
+                    .read(appSettingsProvider.notifier)
+                    .updateMessageFormatConfig(newConfig);
               },
             ),
           ],
@@ -213,7 +232,8 @@ class UiSettingsPage extends ConsumerWidget {
             runSpacing: 10,
             children: [
               ..._presetColors.map((color) {
-                final isSelected = (currentColor.value & 0xFFFFFF) == (color.value & 0xFFFFFF);
+                final isSelected =
+                    (currentColor.value & 0xFFFFFF) == (color.value & 0xFFFFFF);
                 return GestureDetector(
                   onTap: () => ref.setAccentColor(color),
                   child: Container(
@@ -241,12 +261,21 @@ class UiSettingsPage extends ConsumerWidget {
                   height: 40,
                   decoration: BoxDecoration(
                     gradient: const SweepGradient(
-                      colors: [Colors.red, Colors.yellow, Colors.green, Colors.cyan, Colors.blue, Colors.purple, Colors.red],
+                      colors: [
+                        Colors.red,
+                        Colors.yellow,
+                        Colors.green,
+                        Colors.cyan,
+                        Colors.blue,
+                        Colors.purple,
+                        Colors.red
+                      ],
                     ),
                     shape: BoxShape.circle,
                     border: Border.all(color: colors.border, width: 1),
                   ),
-                  child: const Icon(Icons.colorize, color: Colors.white, size: 18),
+                  child:
+                      const Icon(Icons.colorize, color: Colors.white, size: 18),
                 ),
               ),
             ],
@@ -262,7 +291,8 @@ class UiSettingsPage extends ConsumerWidget {
   }
 
   /// 显示颜色选择器弹窗
-  void _showColorPickerDialog(BuildContext context, WidgetRef ref, Color currentColor) {
+  void _showColorPickerDialog(
+      BuildContext context, WidgetRef ref, Color currentColor) {
     var pickerColor = currentColor;
     showDialog(
       context: context,
@@ -301,9 +331,9 @@ class UiSettingsPage extends ConsumerWidget {
     AppSettings settings,
     MoeColors colors,
   ) {
-    const double minScale = 0.8;
-    const double maxScale = 1.5;
-    final scale = settings.textScaleFactor.clamp(minScale, maxScale);
+    const minScale = kMinTextScaleFactor;
+    const maxScale = kMaxTextScaleFactor;
+    final scale = settings.textScaleFactor.clamp(minScale, maxScale).toDouble();
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
@@ -327,7 +357,8 @@ class UiSettingsPage extends ConsumerWidget {
               GestureDetector(
                 onTap: () => _showScaleInputDialog(context, ref, scale, colors),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                   decoration: MoeG2Decoration(
                     radius: 6,
                     color: colors.accentColor.withValues(alpha: 0.15),
@@ -347,7 +378,8 @@ class UiSettingsPage extends ConsumerWidget {
           const SizedBox(height: 8),
           Row(
             children: [
-              Text('较小', style: TextStyle(fontSize: 12, color: colors.textSecondary)),
+              Text('较小',
+                  style: TextStyle(fontSize: 12, color: colors.textSecondary)),
               Expanded(
                 child: Slider(
                   value: scale,
@@ -356,11 +388,14 @@ class UiSettingsPage extends ConsumerWidget {
                   divisions: 14, // 0.05 步长：(1.5-0.8)/0.05 = 14
                   activeColor: colors.accentColor,
                   onChanged: (value) {
-                    ref.read(appSettingsProvider.notifier).setTextScaleFactor(value);
+                    ref
+                        .read(appSettingsProvider.notifier)
+                        .setTextScaleFactor(value);
                   },
                 ),
               ),
-              Text('较大', style: TextStyle(fontSize: 12, color: colors.textSecondary)),
+              Text('较大',
+                  style: TextStyle(fontSize: 12, color: colors.textSecondary)),
             ],
           ),
         ],
@@ -375,7 +410,8 @@ class UiSettingsPage extends ConsumerWidget {
     double currentScale,
     MoeColors colors,
   ) {
-    final controller = TextEditingController(text: currentScale.toStringAsFixed(2));
+    final controller =
+        TextEditingController(text: currentScale.toStringAsFixed(2));
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -385,7 +421,8 @@ class UiSettingsPage extends ConsumerWidget {
           children: [
             TextField(
               controller: controller,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
               decoration: const InputDecoration(
                 hintText: '范围 0.80 ~ 1.50',
                 border: OutlineInputBorder(),
@@ -409,8 +446,147 @@ class UiSettingsPage extends ConsumerWidget {
               final value = double.tryParse(controller.text);
               if (value != null) {
                 ref.read(appSettingsProvider.notifier).setTextScaleFactor(
-                  value.clamp(0.8, 1.5),
-                );
+                      value.clamp(kMinTextScaleFactor, kMaxTextScaleFactor),
+                    );
+              }
+              Navigator.of(context).pop();
+            },
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 全局界面缩放滑块（作用于布局和组件大小）
+  Widget _buildUiScaleSlider(
+    BuildContext context,
+    WidgetRef ref,
+    AppSettings settings,
+    MoeColors colors,
+  ) {
+    const minScale = kMinUiScaleFactor;
+    const maxScale = kMaxUiScaleFactor;
+    final scale = settings.uiScaleFactor.clamp(minScale, maxScale).toDouble();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Icon(Icons.zoom_out_map, size: 20, color: colors.textSecondary),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  '全局界面缩放',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: MoeFontWeights.emphasis,
+                    color: colors.text,
+                  ),
+                ),
+              ),
+              GestureDetector(
+                onTap: () =>
+                    _showUiScaleInputDialog(context, ref, scale, colors),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: MoeG2Decoration(
+                    radius: 6,
+                    color: colors.accentColor.withValues(alpha: 0.15),
+                  ),
+                  child: Text(
+                    scale.toStringAsFixed(2),
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: MoeFontWeights.emphasis,
+                      color: colors.accentColor,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Text('较小',
+                  style: TextStyle(fontSize: 12, color: colors.textSecondary)),
+              Expanded(
+                child: Slider(
+                  value: scale,
+                  min: minScale,
+                  max: maxScale,
+                  divisions: 7, // 0.05 步长：(1.20-0.85)/0.05 = 7
+                  activeColor: colors.accentColor,
+                  onChanged: (value) {
+                    ref
+                        .read(appSettingsProvider.notifier)
+                        .setUiScaleFactor(value);
+                  },
+                ),
+              ),
+              Text('较大',
+                  style: TextStyle(fontSize: 12, color: colors.textSecondary)),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            '用于微调整体界面大小（推荐 0.95~1.05）',
+            style: TextStyle(fontSize: 12, color: colors.muted),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 弹窗手动输入界面缩放值
+  void _showUiScaleInputDialog(
+    BuildContext context,
+    WidgetRef ref,
+    double currentScale,
+    MoeColors colors,
+  ) {
+    final controller =
+        TextEditingController(text: currentScale.toStringAsFixed(2));
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('输入界面缩放值'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: controller,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                hintText: '范围 0.85 ~ 1.20',
+                border: OutlineInputBorder(),
+              ),
+              autofocus: true,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '1.00 为默认大小，建议在 0.95 ~ 1.05 间微调',
+              style: TextStyle(fontSize: 12, color: colors.muted),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () {
+              final value = double.tryParse(controller.text);
+              if (value != null) {
+                ref.read(appSettingsProvider.notifier).setUiScaleFactor(
+                      value.clamp(kMinUiScaleFactor, kMaxUiScaleFactor),
+                    );
               }
               Navigator.of(context).pop();
             },
@@ -440,7 +616,9 @@ class UiSettingsPage extends ConsumerWidget {
               padding: const EdgeInsets.symmetric(horizontal: 4),
               child: GestureDetector(
                 onTap: () {
-                  ref.read(appSettingsProvider.notifier).setChatBackgroundColor(option);
+                  ref
+                      .read(appSettingsProvider.notifier)
+                      .setChatBackgroundColor(option);
                 },
                 child: Container(
                   height: 72,
@@ -456,13 +634,16 @@ class UiSettingsPage extends ConsumerWidget {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       if (isSelected)
-                        Icon(Icons.check_circle, color: colors.accentColor, size: 28),
+                        Icon(Icons.check_circle,
+                            color: colors.accentColor, size: 28),
                       const SizedBox(height: 4),
                       Text(
                         option.label,
                         style: TextStyle(
                           fontSize: 13,
-                          fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
+                          fontWeight: isSelected
+                              ? MoeFontWeights.emphasis
+                              : MoeFontWeights.normal,
                           color: colors.text,
                         ),
                       ),
@@ -512,14 +693,18 @@ class UiSettingsPage extends ConsumerWidget {
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  _buildPunctuationChip(context, ref, settings, colors, '默认', ['。', '！', '？', '，', '、', '；', '…']),
-                  _buildPunctuationChip(context, ref, settings, colors, '精简', ['。', '！', '？']),
-                  _buildPunctuationChip(context, ref, settings, colors, '详细', ['。', '！', '？', '，', '、', '；', '：', '…']),
+                  _buildPunctuationChip(context, ref, settings, colors, '默认',
+                      ['。', '！', '？', '，', '、', '；', '…']),
+                  _buildPunctuationChip(
+                      context, ref, settings, colors, '精简', ['。', '！', '？']),
+                  _buildPunctuationChip(context, ref, settings, colors, '详细',
+                      ['。', '！', '？', '，', '、', '；', '：', '…']),
                 ],
               ),
               const SizedBox(height: 12),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: MoeG2Decoration(
                   radius: 8,
                   color: colors.surfaceAlt,
@@ -532,7 +717,8 @@ class UiSettingsPage extends ConsumerWidget {
                     Expanded(
                       child: Text(
                         '当前：${config.chunkPunctuations.join(" ")}',
-                        style: TextStyle(fontSize: 13, color: colors.textSecondary),
+                        style: TextStyle(
+                            fontSize: 13, color: colors.textSecondary),
                       ),
                     ),
                   ],
@@ -554,21 +740,28 @@ class UiSettingsPage extends ConsumerWidget {
     String label,
     List<String> punctuations,
   ) {
-    final isSelected = _listEquals(settings.messageFormatConfig.chunkPunctuations, punctuations);
+    final isSelected = _listEquals(
+        settings.messageFormatConfig.chunkPunctuations, punctuations);
 
     return ActionChip(
       label: Text(
         label,
         style: TextStyle(
           color: isSelected ? colors.primary : colors.text,
-          fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
+          fontWeight:
+              isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
         ),
       ),
       onPressed: () async {
-        final newConfig = settings.messageFormatConfig.copyWith(chunkPunctuations: punctuations);
-        await ref.read(appSettingsProvider.notifier).updateMessageFormatConfig(newConfig);
+        final newConfig = settings.messageFormatConfig
+            .copyWith(chunkPunctuations: punctuations);
+        await ref
+            .read(appSettingsProvider.notifier)
+            .updateMessageFormatConfig(newConfig);
       },
-      backgroundColor: isSelected ? colors.primary.withValues(alpha: 0.15) : colors.componentBackground,
+      backgroundColor: isSelected
+          ? colors.primary.withValues(alpha: 0.15)
+          : colors.componentBackground,
       side: BorderSide(color: isSelected ? colors.primary : colors.borderLight),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),

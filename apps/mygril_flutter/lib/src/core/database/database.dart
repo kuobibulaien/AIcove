@@ -1,6 +1,6 @@
-/// Drift 鏁版嵁搴撳畾涔夛紙鏂藉伐鎵嬪唽 4.x 瀵瑰簲鐨勬湰鍦拌〃缁撴瀯锛?
+/// 注释已清理乱码
 ///
-/// 杩愯浠ｇ爜鐢熸垚: flutter pub run build_runner build
+/// 运行代码生成: flutter pub run build_runner build
 library;
 
 import 'dart:io';
@@ -11,7 +11,7 @@ import 'package:path/path.dart' as p;
 
 part 'database.g.dart';
 
-/// 浼氳瘽/瑙掕壊鍗¤〃
+/// 会话/角色卡表
 class Conversations extends Table {
   TextColumn get id => text()();
   TextColumn get title => text()();
@@ -31,7 +31,7 @@ class Conversations extends Table {
   TextColumn get voiceFile => text().nullable()();
   TextColumn get personaPrompt => text().withDefault(const Constant(''))();
 
-  // 鍗曡鑹茶缃?
+  // 注释已清理乱码
   TextColumn get defaultProvider => text().nullable()();
   TextColumn get sessionProvider => text().nullable()();
   BoolColumn get isPinned => boolean().withDefault(const Constant(false))();
@@ -42,23 +42,23 @@ class Conversations extends Table {
   TextColumn get enabledPlugins =>
       text().nullable()(); // JSON array of plugin IDs
 
-  // 浼氳瘽鎽樿缂撳瓨
+  // 会话摘要缓存
   TextColumn get lastMessage => text().nullable()();
   IntColumn get lastMessageTime => integer().nullable()(); // unix ms
   IntColumn get unreadCount => integer().withDefault(const Constant(0))();
 
-  // 鍒嗘敮瀛楁
+  // 分支字段
   TextColumn get parentConversationId => text().nullable()();
   TextColumn get forkFromMessageId => text().nullable()();
 
-  // 鍐茬獊瀛楁
+  // 冲突字段
   TextColumn get conflictOf => text().nullable()();
 
-  // 鍥炴敹绔欏瓧娈?
+  // 注释已清理乱码
   IntColumn get deletedAt => integer().nullable()();
   IntColumn get purgeAt => integer().nullable()();
 
-  // 鏃堕棿鎴?
+  // 注释已清理乱码
   IntColumn get createdAt => integer()();
   IntColumn get updatedAt => integer()();
 
@@ -66,7 +66,7 @@ class Conversations extends Table {
   Set<Column> get primaryKey => {id};
 }
 
-/// 娑堟伅琛?
+/// 注释已清理乱码
 class Messages extends Table {
   TextColumn get id => text()();
   TextColumn get conversationId => text().references(Conversations, #id)();
@@ -75,27 +75,27 @@ class Messages extends Table {
   TextColumn get status => text()
       .withDefault(const Constant('sent'))(); // 'sending' | 'sent' | 'failed'
   BoolColumn get summarized =>
-      boolean().withDefault(const Constant(false))(); // 鏄惁宸茶璁板繂鎬荤粨
-  IntColumn get summarizedAt => integer().nullable()(); // 鎬荤粨瀹屾垚鏃堕棿锛坲nix ms锛?
+      boolean().withDefault(const Constant(false))(); // 是否已被记忆总结
+  IntColumn get summarizedAt => integer().nullable()(); // 注释已清理乱码
 
-  // 閲嶇敓鎴愯鐩栧瓧娈?
+  // 注释已清理乱码
   TextColumn get replacedBy => text().nullable()();
 
-  // 鍐茬獊瀛楁
+  // 冲突字段
   TextColumn get conflictOf => text().nullable()();
 
-  // 鍥炴敹绔欏瓧娈?
+  // 注释已清理乱码
   IntColumn get deletedAt => integer().nullable()();
   IntColumn get purgeAt => integer().nullable()();
 
-  // 鏃堕棿鎴?
+  // 注释已清理乱码
   IntColumn get createdAt => integer()();
 
   @override
   Set<Column> get primaryKey => {id};
 }
 
-/// 澶氭ā鎬佸唴瀹瑰潡琛?
+/// 注释已清理乱码
 class MessageBlocks extends Table {
   TextColumn get id => text()();
   TextColumn get messageId => text().references(Messages, #id)();
@@ -111,7 +111,7 @@ class MessageBlocks extends Table {
   Set<Column> get primaryKey => {id};
 }
 
-/// 娓犻亾鍟嗛厤缃〃
+/// 渠道商配置表
 class Providers extends Table {
   TextColumn get id => text()();
   TextColumn get displayName => text()();
@@ -125,16 +125,16 @@ class Providers extends Table {
   TextColumn get visibleModels => text().withDefault(const Constant('[]'))();
   TextColumn get hiddenModels => text().withDefault(const Constant('[]'))();
   TextColumn get apiKeys =>
-      text().withDefault(const Constant('[]'))(); // JSON array锛堟湰鍦版槑鏂囷紝浜戠鍔犲瘑锛?
+      text().withDefault(const Constant('[]'))(); // 注释已清理乱码
 
-  // 鍐茬獊瀛楁
+  // 冲突字段
   TextColumn get conflictOf => text().nullable()();
 
-  // 鍥炴敹绔欏瓧娈?
+  // 注释已清理乱码
   IntColumn get deletedAt => integer().nullable()();
   IntColumn get purgeAt => integer().nullable()();
 
-  // 鏃堕棿鎴?
+  // 注释已清理乱码
   IntColumn get createdAt => integer()();
   IntColumn get updatedAt => integer()();
 
@@ -142,20 +142,20 @@ class Providers extends Table {
   Set<Column> get primaryKey => {id};
 }
 
-/// 鍚屾鑼冨洿閰嶇疆琛?
+/// 注释已清理乱码
 class SyncScopes extends Table {
   TextColumn get enabledScopes => text()
       .withDefault(const Constant('["chat.history", "characters.cards"]'))();
   IntColumn get updatedAt => integer()();
 
-  // 鍗曡琛紝鐢ㄥ浐瀹?id
+  // 注释已清理乱码
   IntColumn get id => integer().withDefault(const Constant(1))();
 
   @override
   Set<Column> get primaryKey => {id};
 }
 
-/// 鍚屾娓告爣琛紙璁板綍鍚屾浣嶇疆锛?
+/// 注释已清理乱码
 class SyncCursors extends Table {
   TextColumn get deviceId => text()();
   IntColumn get conversationsCursor =>
@@ -168,7 +168,7 @@ class SyncCursors extends Table {
   Set<Column> get primaryKey => {deviceId};
 }
 
-/// 寰呭悓姝ユ搷浣滈槦鍒楋紙绂荤嚎鏃舵殏瀛橈級
+/// 注释已清理乱码
 class PendingOperations extends Table {
   TextColumn get opId => text()();
   TextColumn get opType => text()();
@@ -180,57 +180,57 @@ class PendingOperations extends Table {
   Set<Column> get primaryKey => {opId};
 }
 
-/// 璁板繂琛紙鏈夋晥璁板繂 + 鍥炴敹绔欒蹇嗭級
+/// 记忆表（有效记忆 + 回收站记忆）
 ///
-/// 鏈湴涓婇檺鐢遍厤缃帶鍒讹紙榛樿 800锛夛紝瓒呴鏃舵寜鍒嗙被浼樺厛绾?+ use_count 鍋氬帇缂?娣樻卑
-/// L1 涓?core_preference 璁板繂涓嶅弬涓庤嚜鍔ㄦ窐姹?
+/// 注释已清理乱码
+/// 注释已清理乱码
 class Memories extends Table {
   TextColumn get id => text()();
-  TextColumn get content => text()(); // 璁板繂鏂囨湰锛堝璇濇憳瑕?浜嬪疄锛?
-  TextColumn get embedding => text().nullable()(); // 鍚戦噺锛孞SON鏍煎紡瀛樺偍
+  TextColumn get content => text()(); // 注释已清理乱码
+  TextColumn get embedding => text().nullable()(); // 向量，JSON格式存储
   TextColumn get layer =>
       text().withDefault(const Constant('L3'))(); // L1/L2/L3/L4
   TextColumn get category =>
-      text().withDefault(const Constant('daily_chatter'))(); // AI鍒嗙被
+      text().withDefault(const Constant('daily_chatter'))(); // AI分类
   TextColumn get conversationId =>
-      text().references(Conversations, #id).nullable()(); // 鏃ф暟鎹彲绌?
-  TextColumn get contentHash => text().nullable()(); // 鍘婚噸鍝堝笇
+      text().references(Conversations, #id).nullable()(); // 注释已清理乱码
+  TextColumn get contentHash => text().nullable()(); // 去重哈希
   BoolColumn get needsEnrichment =>
-      boolean().withDefault(const Constant(false))(); // 琚彫鍥炲悗寰呴噸涓板瘜
+      boolean().withDefault(const Constant(false))(); // 被召回后待重丰富
 
-  // AI 鎵撳垎椤癸紙0~1锛?
+  // 注释已清理乱码
   RealColumn get persistenceP =>
-      real().withDefault(const Constant(0.5))(); // P 鎸佷箙鎬?
+      real().withDefault(const Constant(0.5))(); // 注释已清理乱码
   RealColumn get emotionE =>
-      real().withDefault(const Constant(0.0))(); // E 鎯呯华鍊?
-  RealColumn get infoI => real().withDefault(const Constant(0.5))(); // I 淇℃伅閲?
+      real().withDefault(const Constant(0.0))(); // 注释已清理乱码
+  RealColumn get infoI => real().withDefault(const Constant(0.5))(); // 注释已清理乱码
   RealColumn get judgeJ =>
-      real().withDefault(const Constant(0.5))(); // J 缁煎悎鍒ゆ柇
+      real().withDefault(const Constant(0.5))(); // J 综合判断
 
-  // 璁＄畻鍚庣殑閲嶈鎬у瓧娈?
+  // 注释已清理乱码
   RealColumn get infoImportance =>
-      real().withDefault(const Constant(0.5))(); // 淇℃伅閲嶈鎬?
+      real().withDefault(const Constant(0.5))(); // 注释已清理乱码
   RealColumn get timeCoef =>
-      real().withDefault(const Constant(1.0))(); // 鏃堕棿绯绘暟 (0.8~1)
+      real().withDefault(const Constant(1.0))(); // 注释已清理乱码
   RealColumn get importance =>
-      real().withDefault(const Constant(0.5))(); // 鏈€缁堥噸瑕佹€?
+      real().withDefault(const Constant(0.5))(); // 注释已清理乱码
 
-  // 绯荤粺缁存姢瀛楁
+  // 系统维护字段
   IntColumn get useCount =>
-      integer().withDefault(const Constant(0))(); // 琚敞鍏opK鐨勬鏁?
+      integer().withDefault(const Constant(0))(); // 注释已清理乱码
   IntColumn get lastActiveAt =>
-      integer().nullable()(); // 鏈€鍚庤娉ㄥ叆鐨勬椂闂?(unix ms)
+      integer().nullable()(); // 注释已清理乱码
 
-  // 鍥炴敹绔欏瓧娈?
+  // 注释已清理乱码
   IntColumn get deletedAt => integer().nullable()();
   IntColumn get purgeAt => integer().nullable()();
 
-  // 鍚屾瀛楁
+  // 同步字段
   BoolColumn get isSynced => boolean().withDefault(const Constant(false))();
   TextColumn get syncState =>
       text().withDefault(const Constant('local'))(); // local/synced/modified
 
-  // 鏃堕棿鎴?
+  // 注释已清理乱码
   IntColumn get createdAt => integer()();
   IntColumn get updatedAt => integer()();
 
@@ -238,12 +238,12 @@ class Memories extends Table {
   Set<Column> get primaryKey => {id};
 }
 
-/// 鎬荤粨骞傜瓑璁板綍锛堟寜鏃?杞锛?
+/// 注释已清理乱码
 class SummarizationRecords extends Table {
   TextColumn get id => text()();
   TextColumn get conversationId => text().references(Conversations, #id)();
-  TextColumn get dateKey => text()(); // yyyy-MM-dd锛堝綊灞炴棩鏈燂級
-  TextColumn get roundKey => text()(); // 骞傜瓑閿細day:date 鎴?sha1(date|start|end)
+  TextColumn get dateKey => text()(); // yyyy-MM-dd（归属日期）
+  TextColumn get roundKey => text()(); // 注释已清理乱码
   IntColumn get roundIndex => integer().withDefault(const Constant(0))();
   IntColumn get firstMsgTime => integer()();
   IntColumn get lastMsgTime => integer()();
@@ -262,44 +262,44 @@ class SummarizationRecords extends Table {
       ];
 }
 
-/// 璁板繂澧撶琛紙鐢ㄤ簬骞傜瓑銆侀槻閲嶅涓婁紶锛?
+/// 注释已清理乱码
 class MemoryTombstones extends Table {
   TextColumn get tombstoneId => text()();
-  TextColumn get memoryId => text()(); // 瀵瑰簲鐨勮蹇?id
+  TextColumn get memoryId => text()(); // 注释已清理乱码
   TextColumn get reason =>
       text()(); // evicted / replaced / user_delete / conflict_patch
-  TextColumn get payloadHash => text().nullable()(); // 鍙€夛紝鐢ㄤ簬骞傜瓑涓庤皟璇?
+  TextColumn get payloadHash => text().nullable()(); // 注释已清理乱码
 
-  // 鏃堕棿瀛楁
+  // 注释已清理乱码
   IntColumn get deletedAt => integer()();
   IntColumn get purgeAt => integer()();
-  IntColumn get cloudSyncedAt => integer().nullable()(); // 鎴愬姛涓婁紶澧撶鍒颁簯绔殑鏃堕棿
+  IntColumn get cloudSyncedAt => integer().nullable()(); // 注释已清理乱码
 
   @override
   Set<Column> get primaryKey => {tombstoneId};
 }
 
-/// 鏃ヨ琛?
+/// 注释已清理乱码
 ///
-/// 浠ヨ鑹茶瑙掕褰曟瘡澶╀笌鐢ㄦ埛鐨勪簰鍔紝浣滀负闀挎湡璁板繂瀛樺偍
-/// 姣忓ぉ姣忎釜瑙掕壊鏈€澶氫竴绡囨棩璁?
+/// 注释已清理乱码
+/// 注释已清理乱码
 class Diaries extends Table {
   TextColumn get id => text()();
   TextColumn get conversationId =>
-      text().references(Conversations, #id)(); // 鍏宠仈瑙掕壊
-  IntColumn get date => integer()(); // 鏃ヨ鏃ユ湡锛堢簿纭埌澶╋紝unix ms锛?
-  TextColumn get content => text()(); // 鏃ヨ鍐呭锛堣鑹茶瑙掞紝绗竴浜虹О锛?
-  TextColumn get embedding => text().nullable()(); // 鍚戦噺锛孞SON鏍煎紡瀛樺偍
+      text().references(Conversations, #id)(); // 关联角色
+  IntColumn get date => integer()(); // 注释已清理乱码
+  TextColumn get content => text()(); // 注释已清理乱码
+  TextColumn get embedding => text().nullable()(); // 向量，JSON格式存储
 
-  // 鍏冩暟鎹?
-  TextColumn get mood => text().nullable()(); // 褰撳ぉ蹇冩儏
-  TextColumn get keywords => text().nullable()(); // 鍏抽敭璇嶆爣绛撅紝JSON鏁扮粍
+  // 注释已清理乱码
+  TextColumn get mood => text().nullable()(); // 当天心情
+  TextColumn get keywords => text().nullable()(); // 注释已清理乱码
 
-  // 鍚屾瀛楁
+  // 同步字段
   BoolColumn get isSynced => boolean().withDefault(const Constant(false))();
   TextColumn get syncState => text().withDefault(const Constant('local'))();
 
-  // 鏃堕棿鎴?
+  // 注释已清理乱码
   IntColumn get createdAt => integer()();
   IntColumn get updatedAt => integer()();
 
@@ -334,26 +334,26 @@ class AppDatabase extends _$AppDatabase {
         await _ensureMemoryFts();
       },
       onUpgrade: (Migrator m, int from, int to) async {
-        // v1 -> v2: 鏂板 memories 鍜?memory_tombstones 琛?
+        // 注释已清理乱码
         if (from < 2) {
           await m.createTable(memories);
           await m.createTable(memoryTombstones);
         }
-        // v2 -> v3: 鏂板 blurredBackground 鍒?
+        // 注释已清理乱码
         if (from < 3) {
           await customStatement(
               'ALTER TABLE conversations ADD COLUMN blurred_background TEXT');
         }
-        // v3 -> v4: 鏂板 enabledPlugins 鍒?
+        // 注释已清理乱码
         if (from < 4) {
           await customStatement(
               'ALTER TABLE conversations ADD COLUMN enabled_plugins TEXT');
         }
-        // v4 -> v5: 鏂板 diaries 鏃ヨ琛?
+        // 注释已清理乱码
         if (from < 5) {
           await m.createTable(diaries);
         }
-        // v5 -> v6: 璁板繂澧炲己锛堝垎灞傚瓧娈点€佹秷鎭€荤粨瀛楁銆佽疆娆″箓绛夈€丗TS锛?
+        // 注释已清理乱码
         if (from < 6) {
           await _safeAddColumn(
               'messages', 'summarized INTEGER NOT NULL DEFAULT 0');
@@ -393,7 +393,7 @@ class AppDatabase extends _$AppDatabase {
     try {
       await customStatement('ALTER TABLE $table ADD COLUMN $columnDef');
     } catch (_) {
-      // 骞傜瓑杩佺Щ锛氶噸澶嶆墽琛屾椂蹇界暐鈥渄uplicate column name鈥?
+      // 注释已清理乱码
     }
   }
 
@@ -405,7 +405,7 @@ USING fts5(memory_id, conversation_id, tokenized_content)
   }
 
   Future<void> _backfillMemoryFts() async {
-    // FTS5 铏氳〃瀵?memory_id 娌℃湁鍞竴绾︽潫锛屽厛娓呯┖鍐嶆寜缁熶竴鍒嗚瘝瑙勫垯鍥炲～銆?
+    // 注释已清理乱码
     await customStatement('DELETE FROM memory_fts');
     final rows = await customSelect('''
 SELECT id, COALESCE(conversation_id, '') AS conversation_id, content
@@ -492,7 +492,7 @@ LazyDatabase _openConnection() {
     return NativeDatabase.createInBackground(
       file,
       setup: (db) {
-        // 鍚敤澶栭敭鍜?WAL 妯″紡
+        // 注释已清理乱码
         db.execute('PRAGMA foreign_keys = ON');
         db.execute('PRAGMA journal_mode = WAL');
       },

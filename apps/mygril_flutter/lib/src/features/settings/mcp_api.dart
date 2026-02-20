@@ -346,8 +346,11 @@ class McpApi {
     try {
       final res = await _api.getJson('/mcp/config');
       return McpConfigResponseDto.fromJson(res);
-    } catch (_) {
+    } catch (e) {
       if (!allowStandardFallback) rethrow;
+      // Fast-fail on transport-level errors (connection refused/timeout/etc.)
+      // to avoid spending extra time on equivalent fallback endpoints.
+      if (_isTransportUnavailableError(e)) rethrow;
       final fallback = await _fetchConfigFromStandardMcp();
       if (fallback != null) return fallback;
       rethrow;
@@ -449,7 +452,8 @@ class McpApi {
         params: const <String, dynamic>{},
       );
       return McpConfigResponseDto.fromJson(toolsList);
-    } catch (_) {
+    } catch (e) {
+      if (_isTransportUnavailableError(e)) return null;
       // Ignore and continue to non-RPC fallback.
     }
 
@@ -457,7 +461,8 @@ class McpApi {
     try {
       final res = await _api.getJson('/mcp/tools');
       return McpConfigResponseDto.fromJson(res);
-    } catch (_) {
+    } catch (e) {
+      if (_isTransportUnavailableError(e)) return null;
       return null;
     }
   }
@@ -482,11 +487,38 @@ class McpApi {
           },
         );
         return;
-      } catch (_) {
+      } catch (e) {
+        if (_isTransportUnavailableError(e)) {
+          // Network is unavailable; no need to try more protocol versions.
+          return;
+        }
         // Try next version.
       }
     }
     // Some gateways do not require initialize and allow tools/list directly.
+  }
+
+  bool _isTransportUnavailableError(Object error) {
+    final message = error.toString().toLowerCase();
+    return message.contains('socketexception') ||
+        message.contains('connection refused') ||
+        message.contains('failed host lookup') ||
+        message.contains('timed out') ||
+        message.contains('timeout') ||
+        message.contains('errno = 61') ||
+        message.contains('errno = 111') ||
+        message.contains('errno = 10061') ||
+        message.contains('errno = 1225') ||
+        // Gateway-level transient failures: retrying alternative MCP paths
+        // on the same host usually just amplifies latency and log noise.
+        message.contains('http 502') ||
+        message.contains('http 503') ||
+        message.contains('http 504') ||
+        message.contains('bad gateway') ||
+        message.contains('service unavailable') ||
+        message.contains('gateway timeout') ||
+        message.contains('upstream connect error') ||
+        message.contains('upstream request timeout');
   }
 }
 

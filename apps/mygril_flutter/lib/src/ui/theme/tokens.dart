@@ -216,15 +216,16 @@ class MoeColors extends ThemeExtension<MoeColors> {
   });
 
   // 浅色主题
-  static MoeColors light({Color? accentColor}) {
+  static MoeColors light({Color? accentColor, Color? globalBgColor}) {
     final color = accentColor ?? const Color(0xFFFC96AA);
+    final bg = globalBgColor ?? moeSurface;
     return MoeColors(
       // primary/focus 代表"全局强调色"（按钮/选中态等），应跟随用户选择的主题色
       primary: color,
-      surface: moeSurface,
+      surface: bg,
       surfaceAlt: moeSurfaceAlt,
       panel: moePanel,
-      bgMain: moeBgMain,
+      bgMain: bg,
       text: moeText,
       textSecondary: moeTextSecondary,
       muted: moeMuted,

@@ -169,21 +169,154 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
   }
 
   Future<void> _testConnection(ProviderAuth provider) async {
+    final models = provider.visibleModels;
+    if (models.isEmpty) {
+      MoeToast.show(context, '当前渠道没有可用模型', type: ToastType.error);
+      return;
+    }
+
+    final displayNames = ref.read(appSettingsProvider).value?.modelDisplayNames ?? {};
     final notifier = ref.read(appSettingsProvider.notifier);
-    MoeToast.show(context, '正在测试连接...');
-    try {
-      final result = await notifier.previewProviderModels(
-        providerId: provider.id,
-        apiKey: provider.apiKeys.isNotEmpty ? provider.apiKeys.first : '',
-        apiBaseUrl: provider.apiBaseUrl,
-      );
-      if (mounted) {
-        MoeToast.show(context, '连接成功，发现 ${result.length} 个模型');
-      }
-    } catch (e) {
-      if (mounted) {
-        MoeToast.show(context, '连接失败: $e', type: ToastType.error);
-      }
+    final apiKey = provider.apiKeys.isNotEmpty ? provider.apiKeys.first : '';
+
+    // 每个模型的测试状态：null=空闲, true=成功, false=失败
+    // 用 Map<String, _TestState> 管理
+    final testStates = <String, _ModelTestState>{};
+    // 待测试队列
+    final queue = <String>[];
+    var isTesting = false;
+
+    await showMoeBottomSheet(
+      context: context,
+      title: '测试模型',
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setSheetState) {
+            // 按顺序执行队列中的测试
+            Future<void> processQueue() async {
+              if (isTesting) return;
+              isTesting = true;
+              while (queue.isNotEmpty) {
+                final modelId = queue.removeAt(0);
+                setSheetState(() {
+                  testStates[modelId] = _ModelTestState.loading;
+                });
+                try {
+                  await notifier.testModel(
+                    providerId: provider.id,
+                    apiKey: apiKey,
+                    apiBaseUrl: provider.apiBaseUrl,
+                    modelId: modelId,
+                  );
+                  setSheetState(() {
+                    testStates[modelId] = _ModelTestState.success;
+                  });
+                } catch (_) {
+                  setSheetState(() {
+                    testStates[modelId] = _ModelTestState.failure;
+                  });
+                }
+              }
+              isTesting = false;
+            }
+
+            final colors = sheetContext.moeColors;
+
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // 全选按钮
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      GestureDetector(
+                        onTap: () {
+                          // 把所有未测试/未排队的模型加入队列
+                          for (final m in models) {
+                            final st = testStates[m];
+                            if (st == null && !queue.contains(m)) {
+                              queue.add(m);
+                              setSheetState(() {
+                                testStates[m] = _ModelTestState.queued;
+                              });
+                            }
+                          }
+                          processQueue();
+                        },
+                        child: Text(
+                          '全部测试',
+                          style: TextStyle(fontSize: 13, color: colors.primary, fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // 模型列表
+                ListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+                  itemCount: models.length,
+                  itemBuilder: (context, index) {
+                    final modelId = models[index];
+                    final displayName = displayNames[modelId];
+                    final state = testStates[modelId];
+
+                    return ListTile(
+                      dense: true,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      title: Text(
+                        displayName?.isNotEmpty == true ? displayName! : modelId,
+                        style: TextStyle(fontSize: 14, color: colors.text),
+                      ),
+                      subtitle: displayName?.isNotEmpty == true
+                          ? Text(modelId, style: TextStyle(fontSize: 11, color: colors.muted))
+                          : null,
+                      trailing: _buildTestStateIcon(state, colors),
+                      onTap: () {
+                        // 空闲或已有结果时，点击（重新）加入队列
+                        if (state == null || state == _ModelTestState.success || state == _ModelTestState.failure) {
+                          queue.add(modelId);
+                          setSheetState(() {
+                            testStates[modelId] = _ModelTestState.queued;
+                          });
+                          processQueue();
+                        }
+                      },
+                    );
+                  },
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildTestStateIcon(_ModelTestState? state, MoeColors colors) {
+    switch (state) {
+      case null:
+        return const SizedBox(width: 24, height: 24);
+      case _ModelTestState.queued:
+        return Icon(Icons.schedule, size: 20, color: colors.muted);
+      case _ModelTestState.loading:
+        return SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: colors.primary,
+          ),
+        );
+      case _ModelTestState.success:
+        return const Icon(Icons.check_circle, size: 20, color: Color(0xFF4CAF50));
+      case _ModelTestState.failure:
+        return const Icon(Icons.cancel, size: 20, color: Color(0xFFE53935));
     }
   }
 
@@ -431,7 +564,7 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
         actions: [
           IconButton(
             icon: Icon(Icons.speed_outlined, color: colors.text),
-            tooltip: '测试连接',
+            tooltip: '测试模型',
             onPressed: () => _testConnection(provider),
           ),
           IconButton(
@@ -830,3 +963,6 @@ class _ActionButton extends StatelessWidget {
     );
   }
 }
+
+/// 模型测试状态
+enum _ModelTestState { queued, loading, success, failure }

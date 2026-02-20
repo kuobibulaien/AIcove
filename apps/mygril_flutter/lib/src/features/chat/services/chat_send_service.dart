@@ -1,11 +1,11 @@
-/// 鑱婂ぉ鍙戦€佹湇鍔?
+/// 注释已清理乱码
 ///
-/// 灏佽娑堟伅鍙戦€佺殑鏍稿績娴佺▼锛屽寘鎷厤缃噯澶囥€丄PI璋冪敤銆佹秷鎭氦浠樼瓑銆?
-/// 浠?chat_actions.dart 鎻愬彇锛岄伒寰崟涓€鑱岃矗鍘熷垯銆?
+/// 注释已清理乱码
+/// 注释已清理乱码
 ///
-/// 鏇存柊璁板綍锛?
-/// - 2025-12-31: 浠?chat_actions.dart 鎻愬彇
-/// - 2026-01-27: 鍗囩骇 executeApiCall 鏀寔涓ゅ洖鍚?閫掑綊宸ュ叿璋冪敤
+/// 注释已清理乱码
+/// 注释已清理乱码
+/// 注释已清理乱码
 library;
 
 import 'dart:async';
@@ -36,7 +36,7 @@ import '../../../core/utils/token_estimator.dart';
 import 'chat_message_processor.dart';
 import 'chat_types.dart';
 
-/// 鍙戦€佽姹傜殑杈撳叆鍙傛暟
+/// 发送请求的输入参数
 class SendRequest {
   final Conversation conversation;
   final String? text;
@@ -51,10 +51,10 @@ class SendRequest {
   });
 
   String get convId => conversation.id;
-  String get displayText => text ?? (imagePath != null ? '[鍥剧墖]' : '');
+  String get displayText => text ?? (imagePath != null ? '[图片]' : '');
 }
 
-/// API 璋冪敤缁撴灉
+/// API 调用结果
 class ApiCallResult {
   final String replyText;
   final String processedText;
@@ -62,7 +62,7 @@ class ApiCallResult {
   final List<PluginContent> pluginContents;
   final List<Map<String, dynamic>> toolResults;
 
-  /// 宸ュ叿璋冪敤浜х敓鐨勯煶棰戝垪琛紙speak 宸ュ叿锛?
+  /// 注释已清理乱码
   final List<ToolAudioResult> toolAudioResults;
 
   const ApiCallResult({
@@ -74,11 +74,11 @@ class ApiCallResult {
     this.toolAudioResults = const [],
   });
 
-  /// 鏄惁鏈夊伐鍏疯皟鐢ㄤ骇鐢熺殑闊抽
+  /// 注释已清理乱码
   bool get hasToolAudio => toolAudioResults.isNotEmpty;
 }
 
-/// 宸ュ叿璋冪敤浜х敓鐨勯煶棰戠粨鏋?
+/// 注释已清理乱码
 class ToolAudioResult {
   final String audioUrl;
   final String text;
@@ -86,9 +86,9 @@ class ToolAudioResult {
   const ToolAudioResult({required this.audioUrl, required this.text});
 }
 
-/// 鑱婂ぉ鍙戦€佹湇鍔?
+/// 注释已清理乱码
 ///
-/// 鎻愪緵娑堟伅鍙戦€佺殑鏍稿績鍔熻兘锛屽皢澶嶆潅娴佺▼鎷嗗垎涓哄彲鐙珛娴嬭瘯鐨勬楠ゃ€?
+/// 注释已清理乱码
 class ChatSendService {
   final Ref _ref;
   final McpApi _mcpApi = McpApi();
@@ -97,7 +97,7 @@ class ChatSendService {
 
   ChatSendService(this._ref);
 
-  /// 鍒涘缓鐢ㄦ埛娑堟伅
+  /// 创建用户消息
   Message createUserMessage({
     required String? text,
     required String? imagePath,
@@ -105,7 +105,7 @@ class ChatSendService {
     final now = DateTime.now();
 
     if (imagePath != null && imagePath.isNotEmpty) {
-      // 鍥剧墖娑堟伅
+      // 图片消息
       final msgId = genId('msg');
       return Message.fromBlocks(
         id: msgId,
@@ -121,7 +121,7 @@ class ChatSendService {
       );
     }
 
-    // 鏂囨湰娑堟伅
+    // 文本消息
     return Message(
       id: genId('msg'),
       role: 'user',
@@ -131,7 +131,7 @@ class ChatSendService {
     );
   }
 
-  /// 鍒涘缓鐢ㄦ埛鏂囦欢娑堟伅锛堟寜鈥滄枃鏈檮浠垛€濆彂閫侊紝渚?AI 闃呰锛?
+  /// 注释已清理乱码
   Future<Message> createUserFileMessage({required String filePath}) async {
     final trimmed = filePath.trim();
     if (trimmed.isEmpty) {
@@ -164,7 +164,7 @@ class ChatSendService {
     );
   }
 
-  /// 娣诲姞鐢ㄦ埛娑堟伅鍒板璇?
+  /// 注释已清理乱码
   Future<void> addUserMessage({
     required String convId,
     required Message userMsg,
@@ -182,20 +182,20 @@ class ChatSendService {
         );
   }
 
-  /// 鍑嗗 API 璋冪敤閰嶇疆
+  /// 准备 API 璋冪敤配置
   Future<ApiConfig> prepareApiConfig({
     required Conversation conv,
     required List<Message> history,
     required String? userText,
     TraceLogger? trace,
   }) async {
-    final configTrace = trace?.startChild('鍔犺浇閰嶇疆');
+    final configTrace = trace?.startChild('加载配置');
 
     final settings = await _ref.read(appSettingsProvider.future);
     final mcpConfig = await _getMcpConfig();
     final toolPrefs = _buildToolPrefs(settings, mcpConfig);
 
-    configTrace?.note('閰嶇疆', metadata: {
+    configTrace?.note('配置', metadata: {
       'ttsEnabled': settings.ttsEnabled,
       'autoTools': toolPrefs['auto_tools_enabled'] == true,
       'enabledToolsCount':
@@ -203,7 +203,7 @@ class ChatSendService {
     });
     configTrace?.end();
 
-    // 鍑嗗妯″瀷鍜屾笭閬撲俊鎭?
+    // 注释已清理乱码
     final model = settings.defaultModelName;
     final provider = settings.modelProviderMap[model] ?? 'openai';
     var modelFull = '$provider:$model';
@@ -223,7 +223,7 @@ class ChatSendService {
         ? providerAuth.apiKeys.first.trim()
         : null;
 
-    // 鐩磋繛閰嶇疆瑕嗙洊
+    // 注释已清理乱码
     try {
       final cfg = await direct.loadDirectConfig();
       if (cfg.enabled) {
@@ -242,11 +242,11 @@ class ChatSendService {
       }
     } catch (_) {}
 
-    // 鏋勫缓娑堟伅鍒楄〃锛堟敮鎸佸浘鐗?鏂囦欢绛夊妯℃€侊級
+    // 注释已清理乱码
     final reqMessages =
         await _buildRequestMessages(history, settings: settings);
 
-    // 鏋勫缓绯荤粺鎻愮ず璇?
+    // 注释已清理乱码
     final systemParts = <String>[];
     if (conv.personaPrompt.isNotEmpty) {
       systemParts.add(conv.personaPrompt);
@@ -255,8 +255,8 @@ class ChatSendService {
       systemParts.add('你应该称呼用户为"${conv.addressUser}"。');
     }
 
-    // 鎻掍欢鎻愮ず璇?
-    // 榛樿鏀寔宸ュ叿璋冪敤锛岄櫎闈炵敤鎴峰湪妯″瀷璁剧疆涓槑纭鐢?
+    // 注释已清理乱码
+    // 注释已清理乱码
     final supportsToolCalling = !settings.isModelToolCallingDisabled(model);
     final enabledPluginIds = conv.enabledPlugins?.toSet();
     final pluginManager = _ref.read(pluginManagerProvider);
@@ -271,13 +271,13 @@ class ChatSendService {
       systemParts.add(pluginPrompts);
     }
 
-    // 鏀堕泦鎻掍欢宸ュ叿瀹氫箟锛堜粎褰撴ā鍨嬫敮鎸?Tool Calling 鏃讹級
+    // 注释已清理乱码
     List<Map<String, dynamic>>? tools;
     if (supportsToolCalling) {
       final aiTools = _collectPluginTools(effectivePlugins);
       if (aiTools.isNotEmpty) {
         tools = aiTools.map((t) => t.toOpenAISchema()).toList();
-        AppLogger.debug('ChatSendService', '鏀堕泦鎻掍欢宸ュ叿', metadata: {
+        AppLogger.debug('ChatSendService', '收集插件工具', metadata: {
           'toolCount': tools.length,
           'toolNames': aiTools.map((t) => t.name).toList(),
         });
@@ -291,8 +291,8 @@ class ChatSendService {
       });
     }
 
-    // Token 鎴柇锛氱‘淇濇秷鎭€婚暱搴︿笉瓒呰繃妯″瀷涓婁笅鏂囬檺鍒?
-    // 瑙ｆ瀽妯″瀷鍚嶇О锛堢Щ闄?provider 鍓嶇紑锛屽 "openai:gpt-4o" -> "gpt-4o"锛?
+    // 注释已清理乱码
+    // 注释已清理乱码
     final modelName =
         modelFull.contains(':') ? modelFull.split(':').last : modelFull;
     final maxContextTokens = getModelContextLimit(modelName);
@@ -388,7 +388,7 @@ class ChatSendService {
       try {
         tools.addAll(plugin.getTools());
       } catch (e) {
-        AppLogger.warning('ChatSendService', '鎻掍欢宸ュ叿鏀堕泦澶辫触', metadata: {
+        AppLogger.warning('ChatSendService', '插件工具收集失败', metadata: {
           'pluginId': plugin.id,
           'error': e.toString(),
         });
@@ -405,7 +405,7 @@ class ChatSendService {
           if (tool.name == name) return tool;
         }
       } catch (e) {
-        AppLogger.warning('ChatSendService', '鎻掍欢宸ュ叿鏌ユ壘澶辫触', metadata: {
+        AppLogger.warning('ChatSendService', '插件工具查找失败', metadata: {
           'pluginId': plugin.id,
           'toolName': name,
           'error': e.toString(),
@@ -434,7 +434,7 @@ class ChatSendService {
         allEvents.addAll(result.events);
         allContents.addAll(result.contents);
       } catch (e) {
-        AppLogger.warning('ChatSendService', '鎻掍欢鍝嶅簲澶勭悊澶辫触', metadata: {
+        AppLogger.warning('ChatSendService', '插件响应处理失败', metadata: {
           'pluginId': plugin.id,
           'error': e.toString(),
         });
@@ -510,7 +510,7 @@ class ChatSendService {
               'image_url': {'url': 'data:$mime;base64,$encoded'},
             });
           } else {
-            parts.add({'type': 'text', 'text': '[鍥剧墖璇诲彇澶辫触]'});
+            parts.add({'type': 'text', 'text': '[图片读取失败]'});
           }
         }
         continue;
@@ -530,7 +530,7 @@ class ChatSendService {
       return {'role': message.role, 'content': content};
     }
 
-    // 鍙湁 1 娈垫枃鏈椂锛岄€€鍖栦负绾枃鏈紝鍏煎鏇村 OpenAI 鍏煎瀹炵幇
+    // 只有 1 段文本时，退化为纯文本，兼容更多 OpenAI 兼容实现
     if (parts.length == 1 && parts.first['type'] == 'text') {
       return {'role': message.role, 'content': parts.first['text']};
     }
@@ -589,10 +589,10 @@ class ChatSendService {
       final content = utf8.decode(bytes, allowMalformed: false);
       final safeContent = _truncateForPrompt(content);
       final lang = ext.isEmpty ? 'text' : ext;
-      return '鐢ㄦ埛涓婁紶浜嗘枃浠讹細${block.fileName}锛?{block.fileSize}B锛夈€俓n\n```$lang\n$safeContent\n```';
+      return '用户上传了文件：${block.fileName}（${block.fileSize}B）。\n\n```$lang\n$safeContent\n```';
     } catch (_) {
       try {
-        // 鍏滃簳锛氬厑璁镐笉瀹屽叏 UTF-8锛屼絾鑻ュ寘鍚ぇ閲?NUL 瀛楃鍒欒涓轰簩杩涘埗
+        // 注释已清理乱码
         final bytes = await File(path).readAsBytes();
         final content = utf8.decode(bytes, allowMalformed: true);
         if (content.contains('\u0000')) {
@@ -600,9 +600,9 @@ class ChatSendService {
         }
         final safeContent = _truncateForPrompt(content);
         final lang = ext.isEmpty ? 'text' : ext;
-        return '鐢ㄦ埛涓婁紶浜嗘枃浠讹細${block.fileName}锛?{block.fileSize}B锛夈€俓n\n```$lang\n$safeContent\n```';
+        return '用户上传了文件：${block.fileName}（${block.fileSize}B）。\n\n```$lang\n$safeContent\n```';
       } catch (e) {
-        return '鐢ㄦ埛涓婁紶浜嗘枃浠讹細${block.fileName}锛屼絾璇诲彇澶辫触锛?e';
+        return '用户上传了文件：${block.fileName}，但读取失败：$e';
       }
     }
   }
@@ -610,7 +610,7 @@ class ChatSendService {
   String _truncateForPrompt(String content) {
     const maxChars = 40000;
     if (content.length <= maxChars) return content;
-    return '${content.substring(0, maxChars)}\n鈥?鍐呭杩囬暱锛屽凡鎴柇锛屼粎鍙戦€佸墠 $maxChars 瀛楃)';
+    return '${content.substring(0, maxChars)}\n...(内容过长，已截断，仅发送前 $maxChars 字符)';
   }
 
   String _guessMimeType(String filePath) {
@@ -653,7 +653,7 @@ class ChatSendService {
     }
   }
 
-  /// 鏆撮湶 prepareApiConfig 鐨勮繑鍥炵被鍨?
+  /// 注释已清理乱码
   Future<ApiConfig> getApiConfig({
     required Conversation conv,
     required List<Message> history,
@@ -663,15 +663,15 @@ class ChatSendService {
       prepareApiConfig(
           conv: conv, history: history, userText: userText, trace: trace);
 
-  /// 鎵ц API 璋冪敤锛堟敮鎸佷袱鍥炲悎/閫掑綊宸ュ叿璋冪敤锛?
+  /// 注释已清理乱码
   ///
-  /// 娴佺▼锛?
-  /// 1. 璋冪敤 AI API
-  /// 2. 濡傛灉 AI 杩斿洖 tool_calls锛屾墽琛屽伐鍏峰苟鏀堕泦缁撴灉
-  /// 3. 灏嗗伐鍏风粨鏋滆拷鍔犲埌娑堟伅鍒楄〃锛屽啀娆¤皟鐢?API
-  /// 4. 閲嶅鐩村埌 AI 杩斿洖绾枃鏈垨杈惧埌鏈€澶у洖鍚堟暟
+  /// 注释已清理乱码
+  /// 1. 调用 AI API
+  /// 注释已清理乱码
+  /// 注释已清理乱码
+  /// 注释已清理乱码
   ///
-  /// [maxRounds] 鏈€澶у洖鍚堟暟锛岄槻姝㈡棤闄愬惊鐜紙榛樿 5锛?
+  /// 注释已清理乱码
   Future<ApiCallResult> executeApiCall({
     required ApiConfig config,
     required String sessionId,
@@ -679,10 +679,10 @@ class ChatSendService {
     TraceLogger? trace,
     int maxRounds = 5,
   }) async {
-    final apiCallTrace = trace?.startChild('璋冪敤AI API');
-    apiCallTrace?.note('杩炴帴', metadata: {
+    final apiCallTrace = trace?.startChild('调用AI API');
+    apiCallTrace?.note('连接', metadata: {
       'endpoint':
-          config.providerApiBase.isNotEmpty ? config.providerApiBase : '鍚庣缃戝叧',
+          config.providerApiBase.isNotEmpty ? config.providerApiBase : '后端网关',
       'model': config.modelFullId,
       'history': config.messages.length,
       'maxRounds': maxRounds,
@@ -693,10 +693,10 @@ class ChatSendService {
     final effectivePlugins =
         _getEffectivePlugins(pluginManager, config.enabledPluginIds);
     final allToolEvents = <PluginEvent>[];
-    final allToolAudioResults = <ToolAudioResult>[]; // 鏀堕泦 speak 宸ュ叿浜х敓鐨勯煶棰?
+    final allToolAudioResults = <ToolAudioResult>[]; // 注释已清理乱码
     final allToolContents = <PluginContent>[]; // draw_image 工具生成的图片内容
 
-    // 瑙ｆ瀽 provider 鐢ㄤ簬鑾峰彇閫傞厤鍣?
+    // 注释已清理乱码
     String provider = 'openai';
     final idx = config.modelFullId.indexOf(':');
     if (idx > 0) {
@@ -704,13 +704,13 @@ class ChatSendService {
     }
     final adapter = ProviderAdapterFactory.getAdapter(provider);
 
-    // 鍙彉鐨勬秷鎭垪琛紙姣忚疆鍙兘杩藉姞宸ュ叿缁撴灉锛?
+    // 注释已清理乱码
     var currentMessages = List<Map<String, dynamic>>.from(config.messages);
     SendMessageRichResult? lastRich;
 
     for (var round = 1; round <= maxRounds; round++) {
-      final roundTrace = apiCallTrace?.startChild('绗?round杞瓵PI璋冪敤');
-      roundTrace?.note('璇锋眰', metadata: {
+      final roundTrace = apiCallTrace?.startChild('第$round轮 API 调用');
+      roundTrace?.note('请求', metadata: {
         'round': round,
         'messagesCount': currentMessages.length,
       });
@@ -720,9 +720,9 @@ class ChatSendService {
         sessionId: sessionId,
         modelFullId: config.modelFullId,
         messages: currentMessages,
-        userText: round == 1 ? (userText ?? '') : '', // 鍙湪绗竴杞紶 userText
+        userText: round == 1 ? (userText ?? '') : '', // 只在第一轮传 userText
         temperature: config.effectiveTemperature,
-        topP: config.modelTopP, // 妯″瀷绾у埆 Top P锛坣ull 鏃剁敱鏈嶅姟鍟嗛粯璁わ級
+        topP: config.modelTopP, // 注释已清理乱码
         token: config.settings.backendApiKey,
         toolPrefs: config.toolPrefs,
         providerApiBase: config.providerApiBase,
@@ -732,20 +732,20 @@ class ChatSendService {
         trace: roundTrace,
       );
 
-      roundTrace?.note('鍝嶅簲', metadata: {
+      roundTrace?.note('响应', metadata: {
         'textLength': lastRich.text.length,
         'toolCalls': lastRich.toolCalls.length,
       });
 
-      // 濡傛灉娌℃湁宸ュ叿璋冪敤锛岀粨鏉熷惊鐜?
+      // 注释已清理乱码
       if (!lastRich.hasToolCalls) {
-        roundTrace?.end(additionalMessage: '鏃犲伐鍏疯皟鐢紝缁撴潫');
+        roundTrace?.end(additionalMessage: '无工具调用，结束');
         break;
       }
 
-      // 鎵ц宸ュ叿璋冪敤
-      final toolTrace = roundTrace?.startChild('鎵ц宸ュ叿璋冪敤');
-      toolTrace?.note('宸ュ叿', metadata: {
+      // 执行工具调用
+      final toolTrace = roundTrace?.startChild('执行工具调用');
+      toolTrace?.note('工具', metadata: {
         'count': lastRich.toolCalls.length,
         'names': lastRich.toolCalls.map((t) => t.name).toList(),
       });
@@ -755,19 +755,19 @@ class ChatSendService {
         try {
           final tool = _findToolByName(effectivePlugins, tc.name);
           if (tool != null) {
-            AppLogger.info('ChatSendService', '鎵ц宸ュ叿璋冪敤', metadata: {
+            AppLogger.info('ChatSendService', '执行工具调用', metadata: {
               'round': round,
               'name': tc.name,
               'args': tc.arguments,
             });
             final result = await tool.handler(tc.arguments);
             final resultStr = result ?? '';
-            AppLogger.info('ChatSendService', '宸ュ叿璋冪敤瀹屾垚', metadata: {
+            AppLogger.info('ChatSendService', '工具调用完成', metadata: {
               'name': tc.name,
               'result': resultStr,
             });
 
-            // 濡傛灉鏄?speak 宸ュ叿锛岃В鏋愯繑鍥炵殑 JSON 鏀堕泦闊抽
+            // 注释已清理乱码
             if (tc.name == 'speak') {
               try {
                 final parsed = jsonDecode(resultStr) as Map<String, dynamic>;
@@ -777,32 +777,34 @@ class ChatSendService {
                 if (success && audioUrl != null && audioUrl.isNotEmpty) {
                   allToolAudioResults
                       .add(ToolAudioResult(audioUrl: audioUrl, text: text));
-                  AppLogger.info('ChatSendService', '鏀堕泦鍒?speak 宸ュ叿闊抽',
+                  AppLogger.info('ChatSendService', '收集到 speak 工具音频',
                       metadata: {
                         'audioUrlLength': audioUrl.length,
                         'text': text,
                       });
                 }
               } catch (e) {
-                AppLogger.warning('ChatSendService', '瑙ｆ瀽 speak 缁撴灉澶辫触',
+                AppLogger.warning('ChatSendService', '解析 speak 结果失败',
                     metadata: {'error': e.toString()});
               }
 
-              // 銆愰噸瑕併€憇peak 宸ュ叿鏄?鍓綔鐢ㄥ伐鍏?锛孉I 涓嶉渶瑕佺湅鍒伴煶棰戞暟鎹?
-              // 鍙繑鍥炴墽琛岀粨鏋滄憳瑕侊紝閬垮厤 base64 闊抽鏁版嵁姹℃煋涓婁笅鏂?
-              // 鍙傝€冿細https://github.com/openai/codex/issues/6426 (tool output truncation)
+              // 注释已清理乱码
+              // 注释已清理乱码
+              // 参考：https://github.com/openai/codex/issues/6426 (tool output truncation)
               toolResults.add(ToolResult(
                 toolCallId: tc.id,
                 name: tc.name,
-                result: '{"success": true, "message": "璇煶宸叉挱鏀剧粰鐢ㄦ埛"}',
+                result: '{"success": true, "message": "语音已播放给用户"}',
               ));
             } else if (tc.name == 'draw_image') {
               final imageContents = _extractToolImageContents(resultStr);
               if (imageContents.isNotEmpty) {
                 allToolContents.addAll(imageContents);
-                AppLogger.info('ChatSendService', 'Collected draw_image tool images', metadata: {
-                  'count': imageContents.length,
-                });
+                AppLogger.info(
+                    'ChatSendService', 'Collected draw_image tool images',
+                    metadata: {
+                      'count': imageContents.length,
+                    });
               }
               toolResults.add(ToolResult(
                 toolCallId: tc.id,
@@ -826,7 +828,7 @@ class ChatSendService {
             ));
           }
         } catch (e) {
-          AppLogger.error('ChatSendService', '宸ュ叿璋冪敤澶辫触', metadata: {
+          AppLogger.error('ChatSendService', '工具调用失败', metadata: {
             'name': tc.name,
             'error': e.toString(),
           });
@@ -839,16 +841,16 @@ class ChatSendService {
       }
       toolTrace?.end();
 
-      // 濡傛灉鏄渶鍚庝竴杞紝涓嶅啀杩藉姞娑堟伅
+      // 如果是最后一轮，不再追加消息
       if (round == maxRounds) {
-        AppLogger.warning('ChatSendService', '杈惧埌鏈€澶у洖鍚堟暟',
+        AppLogger.warning('ChatSendService', '达到最大回合数',
             metadata: {'maxRounds': maxRounds});
-        roundTrace?.end(additionalMessage: '杈惧埌鏈€澶у洖鍚堟暟');
+        roundTrace?.end(additionalMessage: '达到最大回合数');
         break;
       }
 
-      // 鏋勫缓宸ュ叿缁撴灉娑堟伅锛岃拷鍔犲埌 currentMessages
-      // 浠?rawResponse 鏋勫缓 assistant 娑堟伅
+      // 构建工具结果消息，追加到 currentMessages
+      // 注释已清理乱码
       final assistantMessage =
           _buildAssistantMessageFromRich(lastRich, provider);
       final toolResultMessages = adapter.buildToolResultMessages(
@@ -857,32 +859,32 @@ class ChatSendService {
       );
       currentMessages = [...currentMessages, ...toolResultMessages];
 
-      roundTrace?.note('杩藉姞宸ュ叿缁撴灉', metadata: {
+      roundTrace?.note('追加工具结果', metadata: {
         'newMessagesCount': toolResultMessages.length,
         'totalMessages': currentMessages.length,
       });
       roundTrace?.end(additionalMessage: '继续下一轮');
     }
 
-    apiCallTrace?.note('瀹屾垚', metadata: {
+    apiCallTrace?.note('完成', metadata: {
       'textLength': lastRich?.text.length ?? 0,
       'toolResults': lastRich?.toolResults.length ?? 0,
     });
-    apiCallTrace?.end(additionalMessage: 'API璋冪敤鎴愬姛');
+    apiCallTrace?.end(additionalMessage: 'API调用成功');
 
-    // 鎻掍欢澶勭悊锛堝鐞嗛檷绾фā寮忕殑鏍囩瑙ｆ瀽锛?
-    final pluginTrace = trace?.startChild('杩愯鎻掍欢');
+    // 注释已清理乱码
+    final pluginTrace = trace?.startChild('运行插件');
     final pluginResult = await _processResponseWithPlugins(
         effectivePlugins, lastRich?.text ?? '');
 
-    pluginTrace?.note('鎻掍欢澶勭悊', metadata: {
+    pluginTrace?.note('插件处理', metadata: {
       'original': lastRich?.text.length ?? 0,
       'processed': pluginResult.processedText.length,
       'events': pluginResult.events.length,
     });
     pluginTrace?.end();
 
-    // 鍚堝苟宸ュ叿璋冪敤浜嬩欢鍜屾彃浠朵簨浠?
+    // 注释已清理乱码
     final allEvents = [...allToolEvents, ...pluginResult.events];
     final allContents = [...allToolContents, ...pluginResult.contents];
 
@@ -896,7 +898,7 @@ class ChatSendService {
     );
   }
 
-  /// 浠?API 鍝嶅簲鏋勫缓 assistant 娑堟伅锛堢敤浜庡伐鍏疯皟鐢ㄧ殑娑堟伅杩藉姞锛?
+  /// 注释已清理乱码
   List<PluginImageContent> _extractToolImageContents(String result) {
     final trimmed = result.trim();
     if (trimmed.isEmpty) return const <PluginImageContent>[];
@@ -928,17 +930,18 @@ class ChatSendService {
       return const <PluginImageContent>[];
     }
   }
+
   Map<String, dynamic> _buildAssistantMessageFromRich(
       SendMessageRichResult rich, String provider) {
-    // 鏍规嵁 provider 绫诲瀷鏋勫缓涓嶅悓鏍煎紡
+    // 根据 provider 类型构建不同格式
     switch (provider) {
       case 'claude':
       case 'anthropic':
-        // Anthropic 鏍煎紡锛氳繑鍥炲師濮?content 鏁扮粍
+        // 注释已清理乱码
         return rich.rawResponse ?? {'content': []};
       case 'gemini':
       case 'google':
-        // Gemini 鏍煎紡锛氳繑鍥?candidates[0].content
+        // 注释已清理乱码
         final candidates = (rich.rawResponse?['candidates'] as List?) ?? [];
         if (candidates.isNotEmpty) {
           final first = candidates.first as Map<String, dynamic>;
@@ -948,7 +951,7 @@ class ChatSendService {
           'content': {'parts': []}
         };
       default:
-        // OpenAI 鏍煎紡锛氳繑鍥?choices[0].message
+        // 注释已清理乱码
         final choices = (rich.rawResponse?['choices'] as List?) ?? [];
         if (choices.isNotEmpty) {
           final first = choices.first as Map<String, dynamic>;
@@ -958,15 +961,15 @@ class ChatSendService {
     }
   }
 
-  /// 鏋勫缓鍔╂墜娑堟伅
+  /// 构建助手消息
   ///
-  /// 杩斿洖 AssistantMessageBuildResult锛屽寘鍚秷鎭垪琛ㄥ拰 TTS 鍗犱綅娑堟伅 ID
+  /// 返回 AssistantMessageBuildResult，包含消息列表和 TTS 占位消息 ID
   AssistantMessageBuildResult buildAssistantMessages({
     required ApiCallResult apiResult,
     required AppSettings settings,
   }) {
-    // 璺緞A锛氬鏋滄湁宸ュ叿璋冪敤浜х敓鐨勯煶棰戯紙speak 宸ュ叿锛夛紝鐩存帴杩斿洖闊抽娑堟伅
-    // 涓嶅啀璧拌矾寰凚锛?tts>鏍囩瑙ｆ瀽锛?
+    // 注释已清理乱码
+    // 注释已清理乱码
     if (apiResult.hasToolAudio) {
       AppLogger.info('ChatSendService', '使用工具调用音频（路径A）', metadata: {
         'audioCount': apiResult.toolAudioResults.length,
@@ -985,7 +988,7 @@ class ChatSendService {
           status: 'sent',
         ));
       }
-      // 濡傛灉 AI 杩樻湁鏂囨湰鍥炲锛屼篃涓€骞惰繑鍥烇紙涓嶅垎娈碉紝淇濇寔瀹屾暣瀛樺偍锛?
+      // 注释已清理乱码
       final textContent = apiResult.processedText.trim();
       if (textContent.isNotEmpty) {
         audioMessages.add(Message(
@@ -1003,8 +1006,8 @@ class ChatSendService {
       );
     }
 
-    // 璺緞B锛氭病鏈夊伐鍏烽煶棰戯紝璧版甯哥殑娑堟伅澶勭悊娴佺▼锛堝彲鑳藉惈 <tts> 鏍囩锛?
-    // 娉ㄦ剰锛氬垎娈甸€昏緫宸茬Щ鑷?UI 灞傦紝杩欓噷淇濇寔娑堟伅瀹屾暣瀛樺偍
+    // 注释已清理乱码
+    // 注释已清理乱码
     return chatMessageProcessor.buildAssistantMessages(
       replyText: apiResult.replyText,
       processedText: apiResult.processedText,
@@ -1013,7 +1016,7 @@ class ChatSendService {
     );
   }
 
-  /// 浜や粯鍔╂墜娑堟伅鍒板璇?
+  /// 注释已清理乱码
   Future<void> deliverAssistantMessages({
     required String convId,
     required String userMsgId,
@@ -1022,7 +1025,7 @@ class ChatSendService {
     TraceLogger? trace,
   }) async {
     final forwardTrace = trace?.startChild('向用户转发消息');
-    forwardTrace?.info('娑堟伅鍒嗘瀹屾垚', metadata: {
+    forwardTrace?.info('消息分段完成', metadata: {
       'chunksCount': messages.length,
       'firstChunk': messages.isNotEmpty ? messages.first.displayText : '',
     });
@@ -1046,15 +1049,15 @@ class ChatSendService {
       },
     );
 
-    forwardTrace?.info('娑堟伅宸茶浆鍙戝埌鐢ㄦ埛', metadata: {
+    forwardTrace?.info('消息已转发到用户', metadata: {
       'messagesCount': messages.length,
       'hasAudio':
           messages.any((m) => m.blocks?.any((b) => b is AudioBlock) ?? false),
     });
-    forwardTrace?.end(additionalMessage: '杞彂鎴愬姛');
+    forwardTrace?.end(additionalMessage: '转发成功');
   }
 
-  /// 鏍囪鐢ㄦ埛娑堟伅鍙戦€佸け璐?
+  /// 注释已清理乱码
   Future<void> markUserMessageFailed({
     required String convId,
     required String userMsgId,
@@ -1076,18 +1079,18 @@ class ChatSendService {
     );
   }
 
-  /// 璇诲彇鍥剧墖涓?Base64
+  /// 注释已清理乱码
   Future<String?> readImageAsBase64(String imagePath) async {
     try {
       final bytes = await File(imagePath).readAsBytes();
       return base64Encode(bytes);
     } catch (e) {
-      AppLogger.error('ChatSendService', '璇诲彇鍥剧墖澶辫触: $e');
+      AppLogger.error('ChatSendService', '读取图片失败: $e');
       return null;
     }
   }
 
-  /// 鍑嗗鍘嗗彶娑堟伅
+  /// 准备历史消息
   List<Message> prepareHistory({
     required Conversation conv,
     required Message userMsg,
@@ -1100,7 +1103,7 @@ class ChatSendService {
     return all.sublist(all.length - limit);
   }
 
-  /// 鏋勫缓宸ュ叿鍋忓ソ閰嶇疆
+  /// 注释已清理乱码
   Map<String, dynamic> _buildToolPrefs(
       AppSettings settings, McpConfigDto? config) {
     final prefs = <String, dynamic>{
@@ -1134,7 +1137,7 @@ class ChatSendService {
     return prefs;
   }
 
-  /// 鑾峰彇 MCP 閰嶇疆
+  /// 获取 MCP 配置
   Future<McpConfigDto?> _getMcpConfig() async {
     final now = DateTime.now();
     if (_cachedMcpFetchedAt != null &&
@@ -1155,7 +1158,7 @@ class ChatSendService {
   }
 }
 
-/// API 閰嶇疆绫?
+/// 注释已清理乱码
 class ApiConfig {
   final AppSettings settings;
   final String modelFullId;
@@ -1164,15 +1167,15 @@ class ApiConfig {
   final Map<String, dynamic> customConfig;
   final Map<String, dynamic> toolPrefs;
   final List<Map<String, dynamic>> messages;
-  final List<Map<String, dynamic>>? tools; // 鍘熺敓 Tool Calling 宸ュ叿瀹氫箟
-  final Set<String>? enabledPluginIds; // 瑙掕壊绾ф彃浠剁櫧鍚嶅崟锛坣ull=鍏ㄩ儴锛?
-  /// 妯″瀷绾у埆娓╁害鍙傛暟锛堜紭鍏堜簬鍏ㄥ眬璁剧疆锛?
+  final List<Map<String, dynamic>>? tools; // 原生 Tool Calling 工具定义
+  final Set<String>? enabledPluginIds; // 注释已清理乱码
+  /// 注释已清理乱码
   final double? modelTemperature;
 
-  /// 妯″瀷绾у埆 Top P 鍙傛暟
+  /// 模型级别 Top P 参数
   final double? modelTopP;
 
-  /// 妯″瀷绾у埆涓婁笅鏂囨秷鎭暟闄愬埗
+  /// 注释已清理乱码
   final int? modelContextMessageLimit;
 
   const ApiConfig({
@@ -1190,11 +1193,10 @@ class ApiConfig {
     this.modelContextMessageLimit,
   });
 
-  /// 鑾峰彇瀹為檯浣跨敤鐨勬俯搴﹀弬鏁?
-  /// 浼樺厛绾э細妯″瀷璁剧疆 > 鍏ㄥ眬璁剧疆
+  /// 注释已清理乱码
+  /// 优先级：模型设置 > 全局设置
   double get effectiveTemperature => modelTemperature ?? settings.temperature;
 }
 
 /// Provider
 final chatSendServiceProvider = Provider((ref) => ChatSendService(ref));
-

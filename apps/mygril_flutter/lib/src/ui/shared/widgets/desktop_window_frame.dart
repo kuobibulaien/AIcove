@@ -7,9 +7,21 @@ import 'package:window_manager/window_manager.dart';
 bool get isDesktop =>
     !kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
 
+/// macOS 风格窗口按钮的尺寸常量
+const double kMacButtonSize = 13;
+const double kMacButtonSpacing = 8;
+const double kMacButtonPadding = 10;
+
+/// macOS 风格窗口按钮占用的总宽度（按钮们 + 左右 padding）
+/// 用于其他组件计算需要留出的空间
+double get kMacButtonsWidth =>
+    isDesktop ? kMacButtonPadding + (kMacButtonSize * 3) + (kMacButtonSpacing * 2) + kMacButtonPadding : 0;
+
 /// 桌面端窗口框架
-/// 为 Windows/macOS/Linux 提供自定义标题栏（拖拽移动 + 窗口控制按钮）
-/// 移动端和 Web 端直接返回 child，不做任何处理
+///
+/// 不再使用 Windows 标题栏，而是让 child 填满整个窗口，
+/// 仅在左上角叠加 macOS 风格的红黄绿交通灯按钮，
+/// 并在顶部提供透明拖拽区域用于移动窗口。
 class DesktopWindowFrame extends StatelessWidget {
   final Widget child;
 
@@ -22,24 +34,66 @@ class DesktopWindowFrame extends StatelessWidget {
       return child;
     }
 
-    return Column(
+    // Stack：child 填满 → 顶部拖拽条 → 左上角 macOS 按钮
+    return Stack(
       children: [
-        const DesktopTitleBar(),
-        Expanded(child: child),
+        // 内容区填满整个窗口（无标题栏偏移）
+        Positioned.fill(child: child),
+        // 顶部透明拖拽区域（用于拖动窗口 + 双击最大化）
+        const Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          height: 40,
+          child: _DragArea(),
+        ),
+        // 右上角窗口控制按钮（Windows 风格排列）
+        const Positioned(
+          top: kMacButtonPadding,
+          right: kMacButtonPadding,
+          child: MacWindowButtons(),
+        ),
       ],
     );
   }
 }
 
-/// 自定义标题栏（简洁风格，类似 Telegram/微信）
-class DesktopTitleBar extends StatefulWidget {
-  const DesktopTitleBar({super.key});
+/// 顶部透明拖拽区域
+/// 拖拽移动窗口 + 双击最大化/还原
+class _DragArea extends StatelessWidget {
+  const _DragArea();
 
   @override
-  State<DesktopTitleBar> createState() => _DesktopTitleBarState();
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onPanStart: (_) => windowManager.startDragging(),
+      onDoubleTap: () async {
+        if (await windowManager.isMaximized()) {
+          await windowManager.unmaximize();
+        } else {
+          await windowManager.maximize();
+        }
+      },
+      child: const SizedBox.expand(),
+    );
+  }
 }
 
-class _DesktopTitleBarState extends State<DesktopTitleBar> with WindowListener {
+/// macOS 风格的窗口控制按钮（红黄绿交通灯）
+///
+/// 可以直接放到 AppBar 的 leading 中，或者通过 Stack 叠加到页面左上角。
+/// 当鼠标悬停时显示功能图标（关闭 x / 最小化 - / 最大化 +）。
+class MacWindowButtons extends StatefulWidget {
+  const MacWindowButtons({super.key});
+
+  @override
+  State<MacWindowButtons> createState() => _MacWindowButtonsState();
+}
+
+class _MacWindowButtonsState extends State<MacWindowButtons>
+    with WindowListener {
+  bool _isHovered = false;
   bool _isMaximized = false;
 
   @override
@@ -63,124 +117,109 @@ class _DesktopTitleBarState extends State<DesktopTitleBar> with WindowListener {
   }
 
   @override
-  void onWindowMaximize() {
-    setState(() => _isMaximized = true);
-  }
+  void onWindowMaximize() => setState(() => _isMaximized = true);
 
   @override
-  void onWindowUnmaximize() {
-    setState(() => _isMaximized = false);
-  }
+  void onWindowUnmaximize() => setState(() => _isMaximized = false);
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    // 标题栏透明，让 Mica 云母效果显示出来
-    const bgColor = Colors.transparent;
-
-    return GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      onPanStart: (_) => windowManager.startDragging(),
-      onDoubleTap: () async {
-        if (await windowManager.isMaximized()) {
-          await windowManager.unmaximize();
-        } else {
-          await windowManager.maximize();
-        }
-      },
-      child: Container(
-        height: 32,
-        color: bgColor,
-        child: Row(
-          children: [
-            // 左侧留白（与下方内容对齐）
-            const Expanded(child: SizedBox.shrink()),
-            // 窗口控制按钮（右侧）
-            _WindowButton(
-              icon: Icons.horizontal_rule_rounded,
-              onPressed: () => windowManager.minimize(),
-              isDark: isDark,
-            ),
-            _WindowButton(
-              icon: _isMaximized
-                  ? Icons.filter_none_rounded
-                  : Icons.check_box_outline_blank_rounded,
-              iconSize: _isMaximized ? 12 : 14,
-              onPressed: () async {
-                if (await windowManager.isMaximized()) {
-                  await windowManager.unmaximize();
-                } else {
-                  await windowManager.maximize();
-                }
-              },
-              isDark: isDark,
-            ),
-            _WindowButton(
-              icon: Icons.close_rounded,
-              onPressed: () => windowManager.close(),
-              isDark: isDark,
-              isClose: true,
-            ),
-          ],
-        ),
+    return MouseRegion(
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 最小化（黄色）— Windows 顺序：最左
+          _MacButton(
+            color: const Color(0xFFFFBD2E),
+            hoverIcon: Icons.remove,
+            isHovered: _isHovered,
+            onPressed: () => windowManager.minimize(),
+          ),
+          const SizedBox(width: kMacButtonSpacing),
+          // 最大化/还原（绿色）— Windows 顺序：中间
+          _MacButton(
+            color: const Color(0xFF27C93F),
+            hoverIcon: _isMaximized ? Icons.fullscreen_exit : Icons.fullscreen,
+            isHovered: _isHovered,
+            onPressed: () async {
+              if (await windowManager.isMaximized()) {
+                await windowManager.unmaximize();
+              } else {
+                await windowManager.maximize();
+              }
+            },
+          ),
+          const SizedBox(width: kMacButtonSpacing),
+          // 关闭（红色）— Windows 顺序：最右
+          _MacButton(
+            color: const Color(0xFFFF5F57),
+            hoverIcon: Icons.close,
+            isHovered: _isHovered,
+            onPressed: () => windowManager.close(),
+          ),
+        ],
       ),
     );
   }
 }
 
-/// 窗口控制按钮（简洁风格）
-class _WindowButton extends StatefulWidget {
-  final IconData icon;
-  final double iconSize;
+/// 单个 macOS 风格圆形按钮
+class _MacButton extends StatefulWidget {
+  final Color color;
+  final IconData hoverIcon;
+  final bool isHovered;
   final VoidCallback onPressed;
-  final bool isDark;
-  final bool isClose;
 
-  const _WindowButton({
-    required this.icon,
-    this.iconSize = 16,
+  const _MacButton({
+    required this.color,
+    required this.hoverIcon,
+    required this.isHovered,
     required this.onPressed,
-    required this.isDark,
-    this.isClose = false,
   });
 
   @override
-  State<_WindowButton> createState() => _WindowButtonState();
+  State<_MacButton> createState() => _MacButtonState();
 }
 
-class _WindowButtonState extends State<_WindowButton> {
-  bool _isHovered = false;
+class _MacButtonState extends State<_MacButton> {
+  bool _isPressed = false;
 
   @override
   Widget build(BuildContext context) {
-    // 悬停时：关闭按钮变红，其他按钮微微变暗/亮
-    final hoverColor = widget.isClose
-        ? const Color(0xFFE81123)
-        : (widget.isDark
-            ? Colors.white.withValues(alpha: 0.1)
-            : Colors.black.withValues(alpha: 0.06));
-    // 图标颜色：根据主题使用深色或浅色
-    final iconColor = widget.isDark ? Colors.white : Colors.black87;
-    // 关闭按钮悬停时图标变白
-    final actualIconColor = (widget.isClose && _isHovered) ? Colors.white : iconColor;
+    // 按下时颜色稍微变暗
+    final bgColor = _isPressed
+        ? Color.lerp(widget.color, Colors.black, 0.15)!
+        : widget.color;
 
-    return MouseRegion(
-      onEnter: (_) => setState(() => _isHovered = true),
-      onExit: (_) => setState(() => _isHovered = false),
-      child: GestureDetector(
-        onTap: widget.onPressed,
-        child: Container(
-          width: 46,
-          height: 32,
-          color: _isHovered ? hoverColor : Colors.transparent,
-          alignment: Alignment.center,
-          child: Icon(
-            widget.icon,
-            size: widget.iconSize,
-            color: actualIconColor,
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _isPressed = true),
+      onTapUp: (_) {
+        setState(() => _isPressed = false);
+        widget.onPressed();
+      },
+      onTapCancel: () => setState(() => _isPressed = false),
+      child: Container(
+        width: kMacButtonSize,
+        height: kMacButtonSize,
+        decoration: BoxDecoration(
+          color: bgColor,
+          shape: BoxShape.circle,
+          // 添加微妙的边框，让按钮更精致
+          border: Border.all(
+            color: Colors.black.withValues(alpha: 0.12),
+            width: 0.5,
           ),
         ),
+        alignment: Alignment.center,
+        child: widget.isHovered
+            ? Icon(
+                widget.hoverIcon,
+                size: kMacButtonSize - 4,
+                color: Colors.black.withValues(alpha: 0.5),
+              )
+            : null,
       ),
     );
   }

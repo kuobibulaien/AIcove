@@ -212,7 +212,8 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
         left: 4,
         right: 4,
         top: 10,
-        bottom: MediaQuery.paddingOf(context).bottom + 10,
+        // 底部留出足够空间给浮动的 Composer（约 70px 高度）
+        bottom: MediaQuery.paddingOf(context).bottom + 70,
       ),
       itemCount: itemCount,
       itemBuilder: (context, index) {

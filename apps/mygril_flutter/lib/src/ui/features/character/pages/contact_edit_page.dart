@@ -23,8 +23,8 @@ import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/theme/tokens.dart';
 
-/// 缂栬緫妯″紡鏋氫妇
-/// - create: 鏂板缓瑙掕壊锛堜繚瀛樺悗鐩存帴杩涘叆瀵硅瘽锛?/// - editConversation: 缂栬緫瀵硅瘽涓殑瑙掕壊锛堝彲淇濆瓨涓烘柊瑙掕壊鍗★級
+/// 编辑模式枚举
+/// 注释已清理乱码
 /// - editTemplate: template/favorite role card edit mode
 enum EditMode {
   create,
@@ -32,14 +32,14 @@ enum EditMode {
   editTemplate,
 }
 
-/// 鏂板缓/缂栬緫瑙掕壊鍗￠〉闈€?///
-/// 閲嶆瀯璇存槑锛?026-02-07锛夛細
-/// - 鍘绘帀 AppBar锛屾敼涓烘矇娴稿紡妯＄硦鑳屾櫙甯冨眬锛堝鐢?CharacterDetailPage 椋庢牸锛?/// - 澶村儚 + 瑙掕壊鍚嶇О鏀逛负涓€琛屾樉绀?/// - 鎻愮ず璇嶅拰绠€浠嬮粯璁ゅ彧璇伙紝鐐瑰嚮缂栬緫鍥炬爣寮瑰嚭杩戝叏灞忓簳閮ㄥ脊绐楃紪杈?/// - 搴曢儴鎻掍欢/闊宠壊鍖哄煙淇濇寔涓嶅彉
+/// 注释已清理乱码
+/// 注释已清理乱码
+/// 注释已清理乱码
 class ContactEditPage extends ConsumerStatefulWidget {
   final Conversation conversation;
   final EditMode editMode;
 
-  /// 鍏煎鏃?API锛歩sNew=true 绛変环浜?editMode=create
+  /// 注释已清理乱码
   const ContactEditPage({
     super.key,
     required this.conversation,
@@ -124,7 +124,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
       _lastAutoSavedSignature = _buildEditSignature(_buildEditResult());
     }
 
-    // 棰勭儹妯＄硦鑳屾櫙
+    // 注释已清理乱码
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final provider = _getImageProvider();
@@ -157,7 +157,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     super.dispose();
   }
 
-  /// 鑾峰彇绔嬬粯 ImageProvider锛堢敤浜庤儗鏅ā绯婏級
+  /// 获取立绘 ImageProvider（用于背景模糊）
   ImageProvider? _getImageProvider() {
     final helper = AvatarHelper(
       avatarUrl:
@@ -185,25 +185,25 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
         backgroundColor: colors.surface,
         body: Stack(
           children: [
-            // 1. 妯＄硦鑳屾櫙锛堝浐瀹氫笉鍔級
+            // 1. 模糊背景（固定不动）
             Positioned.fill(
               child: _buildBlurredBackground(colors),
             ),
 
-            // 2. 鍙粴鍔ㄥ唴瀹瑰尯
+            // 2. 可滚动内容区
             Positioned.fill(
               child: SingleChildScrollView(
                 physics: const BouncingScrollPhysics(),
                 child: Column(
                   children: [
-                    // 椤堕儴瀹夊叏鍖?                    SizedBox(height: statusBarHeight + 16),
+                    // 注释已清理乱码
 
-                    // 瀵艰埅鏍忥紙宸﹁繑鍥?+ 鍙虫洿澶氾級
+                    // 注释已清理乱码
                     _buildNavBar(colors),
 
                     const SizedBox(height: 24),
 
-                    // 澶村儚 + 鍚嶇О锛堜竴琛屾樉绀猴級
+                    // 头像 + 名称（一行显示）
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 24),
                       child: _buildAvatarNameRow(colors),
@@ -228,14 +228,14 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
                         onEdit: () => _openFullScreenEditor(
                           title: 'Edit Description',
                           controller: _descCtrl,
-                          hint: '涓€鍙ヨ瘽浠嬬粛杩欎釜瑙掕壊锛堝彲閫夛級',
+                          hint: '一句话介绍这个角色（可选）',
                         ),
                       ),
                     ),
 
                     const SizedBox(height: 16),
 
-                    // 鎻愮ず璇嶏紙涓昏灞曠ず鍖猴紝鏀惧ぇ + 鍐呴儴鍙粦鍔級
+                    // 提示词（主要展示区，放大 + 内部可滑动）
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 24),
                       child: _buildPromptSection(colors),
@@ -243,13 +243,13 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
 
                     const SizedBox(height: 16),
 
-                    // 鎻掍欢 + 闊宠壊缁戝畾
+                    // 注释已清理乱码
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 24),
                       child: _buildBottomCard(colors, voicePresets),
                     ),
 
-                    // 搴曢儴鐣欑櫧
+                    // 底部留白
                     const SizedBox(height: 48),
                   ],
                 ),
@@ -261,7 +261,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     );
   }
 
-  // ==================== 妯＄硦鑳屾櫙 ====================
+  // ==================== 模糊背景 ====================
 
   Widget _buildBlurredBackground(MoeColors colors) {
     final provider = _getImageProvider();
@@ -290,7 +290,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
           )
         else
           _buildGeneratedBlur(provider),
-        // 鍙犲眰鎻愪寒/鍘嬫殫
+        // 叠层提亮/压暗
         Container(
           color: isDark
               ? Colors.black.withValues(alpha: 0.25)
@@ -342,7 +342,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     );
   }
 
-  // ==================== 鑷姩淇濆瓨 ====================
+  // ==================== 自动保存 ====================
 
   void _onAutoSaveFieldChanged() {
     _scheduleAutoSave();
@@ -416,20 +416,20 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     }
   }
 
-  // ==================== 瀵艰埅鏍?====================
+  // 注释已清理乱码
 
   Widget _buildNavBar(MoeColors colors) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Row(
         children: [
-          // 杩斿洖鎸夐挳
+          // 注释已清理乱码
           _buildCircleButton(
             icon: Icons.arrow_back,
             onTap: () => unawaited(_handleBack()),
           ),
           const Spacer(),
-          // 鍙充晶鎿嶄綔鎸夐挳
+          // 注释已清理乱码
           ..._buildNavActions(colors),
         ],
       ),
@@ -518,7 +518,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     return button;
   }
 
-  // ==================== 澶村儚 + 鍚嶇О涓€琛?====================
+  // 注释已清理乱码
 
   Widget _buildAvatarNameRow(MoeColors colors) {
     final helper = AvatarHelper(
@@ -532,7 +532,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     // Avatar + name in one row
     return Row(
       children: [
-        // 澶村儚锛堝渾瑙掔煩褰紝娌跨敤鑱旂郴浜哄崱鐗囬鏍硷級
+        // 注释已清理乱码
         GestureDetector(
           onTap: _pickAvatarImage,
           child: Container(
@@ -697,7 +697,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     );
   }
 
-  // ==================== 鍙鍖哄潡 + 缂栬緫鍏ュ彛 ====================
+  // ==================== 只读区块 + 编辑入口 ====================
 
   Widget _buildReadonlySection(
     MoeColors colors, {
@@ -715,7 +715,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 鏍囬琛?+ 缂栬緫鎸夐挳
+          // 注释已清理乱码
           Row(
             children: [
               Icon(icon, size: 18, color: colors.primary),
@@ -730,7 +730,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
                   ),
                 ),
               ),
-              // 缂栬緫鎸夐挳
+              // 注释已清理乱码
               GestureDetector(
                 onTap: onEdit,
                 child: Container(
@@ -752,7 +752,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
 
           const SizedBox(height: 10),
 
-          // 鍙鏂囨湰鍐呭
+          // 只读文本内容
           GestureDetector(
             onTap: onEdit,
             child: SizedBox(
@@ -776,7 +776,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     );
   }
 
-  // ==================== 鎻愮ず璇嶄富灞曠ず鍖猴紙鏀惧ぇ + 鍙粦鍔級====================
+  // ==================== 提示词主展示区（放大 + 可滑动）====================
 
   Widget _buildPromptSection(MoeColors colors) {
     final hasContent = _personaCtrl.text.trim().isNotEmpty;
@@ -784,7 +784,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     void openEditor() => _openFullScreenEditor(
           title: 'Edit Prompt',
           controller: _personaCtrl,
-          hint: '璇︾粏鎻忚堪瑙掕壊鐨勬€ф牸銆佽璇濇柟寮忋€佽涓鸿竟鐣屽拰涓栫晫瑙?..',
+          hint: '详细描述角色的性格、说话方式、行为边界和世界观...',
         );
 
     return FrostedGlassContainer(
@@ -793,7 +793,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 鏍囬琛?+ 缂栬緫鎸夐挳
+          // 注释已清理乱码
           Row(
             children: [
               Icon(Icons.auto_awesome, size: 18, color: colors.primary),
@@ -870,7 +870,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     );
   }
 
-  // ==================== 鍏ㄥ睆缂栬緫寮圭獥 ====================
+  // ==================== 全屏编辑弹窗 ====================
 
   Future<void> _openFullScreenEditor({
     required String title,
@@ -889,7 +889,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     setState(() {});
   }
 
-  // ==================== 搴曢儴鍗＄墖锛堟彃浠?+ 闊宠壊锛?===================
+  // 注释已清理乱码
 
   Widget _buildBottomCard(MoeColors colors, List<VoicePreset> voicePresets) {
     return FrostedGlassContainer(
@@ -901,11 +901,11 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
           _buildSectionTitle(
             colors,
             icon: Icons.extension_outlined,
-            title: '鎻掍欢',
-            subtitle: '榛樿鍏ㄩ儴寮€鍚紝鍙寜瑙掕壊鍗曠嫭璋冩暣',
+            title: '插件',
+            subtitle: '默认全部开启，可按角色单独调整',
           ),
           const SizedBox(height: 8),
-          // 涓€琛屾樉绀哄凡閫夋暟閲忥紝鐐瑰嚮寮瑰嚭閫夋嫨寮圭獥
+          // 一行显示已选数量，点击弹出选择弹窗
           MoeG2ClipRRect(
             radius: 12,
             child: Material(
@@ -939,8 +939,8 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
           _buildSectionTitle(
             colors,
             icon: Icons.record_voice_over_outlined,
-            title: '缁戝畾闊宠壊',
-            subtitle: '鍙负褰撳墠瑙掕壊缁戝畾鐙珛闊宠壊',
+            title: '绑定音色',
+            subtitle: '可为当前角色绑定独立音色',
           ),
           const SizedBox(height: 8),
           MoeG2ClipRRect(
@@ -970,7 +970,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
                             setState(() => _boundVoiceId = null);
                             _scheduleAutoSave();
                           },
-                          tooltip: '娓呴櫎缁戝畾',
+                          tooltip: '清除绑定',
                         ),
                       Icon(Icons.chevron_right, color: colors.muted),
                     ],
@@ -984,7 +984,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     );
   }
 
-  // ==================== 鎻掍欢閫夋嫨 ====================
+  // ==================== 插件选择 ====================
 
   String _pluginSummaryText() {
     final total = chatPluginItems.length;
@@ -999,7 +999,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
   Future<void> _showPluginPicker() async {
     await showMoeBottomSheet(
       context: context,
-      title: '閫夋嫨鎻掍欢',
+      title: '选择插件',
       builder: (sheetContext) {
         return StatefulBuilder(
           builder: (ctx, setSheetState) {
@@ -1061,7 +1061,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     );
   }
 
-  // ==================== 澶嶇敤鐨勫皬缁勪欢 ====================
+  // ==================== 复用的小组件 ====================
 
   Widget _buildPluginChip(MoeColors colors, ChatPluginItem item) {
     final selected = _selectedPluginIds.contains(item.id);
@@ -1144,7 +1144,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     );
   }
 
-  // ==================== 鍥剧墖閫夋嫨 ====================
+  // ==================== 图片选择 ====================
 
   Future<void> _pickAvatarImage() async {
     final result = await FilePicker.platform.pickFiles(
@@ -1229,7 +1229,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     _scheduleAutoSave();
   }
 
-  // ==================== 闊宠壊閫夋嫨 ====================
+  // 注释已清理乱码
 
   Future<void> _showVoicePicker(List<VoicePreset> voicePresets) async {
     const followGlobalToken = '__follow_global__';
@@ -1245,7 +1245,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
             children: [
               ListTile(
                 leading: Icon(Icons.sync, color: colors.primary),
-                title: const Text('璺熼殢鍏ㄥ眬闊宠壊'),
+                title: const Text('跟随全局音色'),
                 subtitle:
                     const Text('Use the currently selected chat-plugin voice'),
                 trailing: _boundVoiceId == null
@@ -1289,17 +1289,17 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
   String _voiceDisplayName(List<VoicePreset> voicePresets) {
     final id = _boundVoiceId;
     if (id == null || id.isEmpty) {
-      return '璺熼殢鍏ㄥ眬闊宠壊';
+      return '跟随全局音色';
     }
 
     for (final preset in voicePresets) {
       if (preset.id == id) return preset.name;
     }
 
-    return '宸茬粦瀹氳嚜瀹氫箟闊宠壊';
+    return '已绑定自定义音色';
   }
 
-  // ==================== 淇濆瓨閫昏緫锛堜繚鎸佷笉鍙橈級====================
+  // ==================== 保存逻辑（保持不变）====================
 
   ContactEditResult _buildEditResult() {
     final name = _nameCtrl.text.trim();

@@ -7,8 +7,8 @@ import '../../plugins/trigger/trigger_plugin.dart';
 import '../../plugins/memory/memory_plugin.dart';
 import '../providers2.dart';
 
-/// 浼氳瘽绠＄悊鍣?
-/// 璐熻矗鐩戝惉鐢ㄦ埛娲诲姩鍜?App 鐢熷懡鍛ㄦ湡锛屽喅瀹氫綍鏃惰Е鍙戔€滅瀹?AI鈥濊繘琛屾暣鐞嗐€?
+/// 注释已清理乱码
+/// 注释已清理乱码
 final sessionManagerProvider = Provider<SessionManager>((ref) {
   final manager = SessionManager(ref);
   ref.onDispose(() => manager.dispose());
@@ -20,7 +20,7 @@ class SessionManager {
   Timer? _inactivityTimer;
   AppLifecycleListener? _lifecycleListener;
 
-  // 5鍒嗛挓鏃犳搷浣滆涓烘寕鏈?
+  // 注释已清理乱码
   static const Duration _inactivityTimeout = Duration(minutes: 5);
 
   SessionManager(this._ref) {
@@ -30,30 +30,30 @@ class SessionManager {
   void _init() {
     AppLogger.info('SessionManager', 'Initializing session manager...');
 
-    // 1. 鐩戝惉 App 鐢熷懡鍛ㄦ湡 (鍚庡彴缁撶畻鏈哄埗)
+    // 1. 监听 App 生命周期 (后台结算机制)
     _lifecycleListener = AppLifecycleListener(
       onStateChange: _onLifecycleChanged,
     );
 
-    // 2. 鐩戝惉鐢ㄦ埛娑堟伅娲诲姩 (鍓嶅彴璁℃椂鏈哄埗)
-    // 鐩戝惉 activeConversationProvider锛屽綋娑堟伅鍒楄〃鍙樺寲鏃堕噸缃鏃跺櫒
+    // 2. 监听用户消息活动 (前台计时机制)
+    // 监听 activeConversationProvider，当消息列表变化时重置计时器
     _ref.listen(activeConversationProvider, (previous, next) {
       if (next == null) return;
 
-      // 濡傛灉鏄柊浼氳瘽锛屾垨鑰呮秷鎭暟閲忓鍔犱簡
+      // 如果是新会话，或者消息数量增加了
       final prevLen = previous?.messages.length ?? 0;
       final nextLen = next.messages.length;
 
       if (nextLen > prevLen) {
         final lastMsg = next.messages.last;
-        // 鍙湁鐢ㄦ埛鍙戠殑娑堟伅鎵嶉噸缃鏃跺櫒 (閬垮厤 AI 鍥炲瑙﹀彂閲嶇疆)
+        // 只有用户发的消息才重置计时器 (避免 AI 回复触发重置)
         if (lastMsg.role == 'user') {
           _resetInactivityTimer();
         }
       }
     });
 
-    // 鍒濆鍖栧惎鍔ㄨ鏃跺櫒
+    // 初始化启动计时器
     _resetInactivityTimer();
   }
 
@@ -62,7 +62,7 @@ class SessionManager {
     _lifecycleListener?.dispose();
   }
 
-  /// 閲嶇疆鍓嶅彴鎸傛満璁℃椂鍣?
+  /// 注释已清理乱码
   void _resetInactivityTimer() {
     _inactivityTimer?.cancel();
     AppLogger.debug('SessionManager', 'User active. Timer reset.');
@@ -74,12 +74,12 @@ class SessionManager {
     });
   }
 
-  /// 澶勭悊鐢熷懡鍛ㄦ湡鍙樺寲
+  /// 处理生命周期变化
   void _onLifecycleChanged(AppLifecycleState state) {
     if (state == AppLifecycleState.paused) {
       AppLogger.info('SessionManager',
           'App paused. Triggering immediate session summary.');
-      // 鍙栨秷鍓嶅彴璁℃椂鍣紝鍥犱负宸茬粡杩涘叆鍚庡彴缁撶畻娴佺▼
+      // 取消前台计时器，因为已经进入后台结算流程
       _inactivityTimer?.cancel();
       _handleSessionEnd(isForegroundTimeout: false);
     } else if (state == AppLifecycleState.resumed) {
@@ -88,36 +88,36 @@ class SessionManager {
     }
   }
 
-  /// 澶勭悊浼氳瘽缁撴潫閫昏緫 (鏍稿績)
+  /// 处理会话结束逻辑 (核心)
   ///
-  /// 浼氳瘽缁撴潫鏃舵墽琛岋細
-  /// 1. MemoryPlugin: 璁板繂鎽樿锛堟彁鍙栧璇濅腑鐨勫叧閿簨瀹烇級
-  /// 2. TriggerPlugin: 鍒嗘瀽鏄惁闇€瑕佸垱寤哄畾鏃舵彁閱?
-  /// 3. 鍓嶅彴鎸傛満鏃? 瑙﹀彂涓诲姩娑堟伅
+  /// 会话结束时执行：
+  /// 注释已清理乱码
+  /// 注释已清理乱码
+  /// 注释已清理乱码
   Future<void> _handleSessionEnd({required bool isForegroundTimeout}) async {
     final pluginManager = _ref.read(pluginManagerProvider);
-    // 记忆总结已改为次日首条消息触发，这里不再执行 SessionEnd 总结。
+    // 注释已清理乱码
     final memoryPlugin = pluginManager.getPlugin('memory') as MemoryPlugin?;
     if (memoryPlugin != null && memoryPlugin.enabled) {
       AppLogger.debug('SessionManager',
           'Memory summarization is handled by next-day trigger.');
     }
 
-    // === 2. 瑙﹀彂鍣ㄥ垎鏋?(Logic Track) ===
+    // 注释已清理乱码
     final triggerPlugin = pluginManager.getPlugin('trigger') as TriggerPlugin?;
 
     if (triggerPlugin != null && triggerPlugin.enabled) {
       AppLogger.info('SessionManager', 'Starting Logic Track analysis...');
-      // TODO: 璋冪敤 TriggerPlugin 鐨?analyzeSession 鏂规硶
+      // 注释已清理乱码
       // await triggerPlugin.analyzeSession();
     } else {
       AppLogger.debug('SessionManager', 'TriggerPlugin not found or disabled.');
     }
 
-    // === 3. 涓诲姩娑堟伅 (Chat Track) ===
+    // === 3. 主动消息 (Chat Track) ===
     if (isForegroundTimeout) {
       AppLogger.info('SessionManager', 'Starting Chat Track proactive poke...');
-      // TODO: 璋冪敤 ChatActions 鍙戦€佷富鍔ㄦ秷鎭?
+      // 注释已清理乱码
       // _ref.read(chatActionsProvider).sendProactivePoke();
     }
   }

@@ -9,10 +9,10 @@ import '../../../../ui/features/character/pages/role_card_page.dart';
 import '../../../../features/chat/presentation/widgets/profile_content.dart';
 import '../../../../ui/shared/widgets/nav/moe_side_nav.dart';
 import '../../../../ui/theme/tokens.dart';
-import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/settings_drawer_wrapper.dart';
 import '../../../../ui/shared/widgets/settings_drawer_panel.dart';
 import '../../../../features/chat/presentation/widgets/momotalk_sort_dialog.dart';
+
 
 class SplitChatPage extends ConsumerStatefulWidget {
   const SplitChatPage({super.key});
@@ -25,7 +25,7 @@ class _SplitChatPageState extends ConsumerState<SplitChatPage>
     with SingleTickerProviderStateMixin {
   int _currentIndex = 0;
   final GlobalKey<SettingsDrawerWrapperState> _drawerKey = GlobalKey();
-  double _sidebarWidth = 320; // 可调节的侧边栏宽度
+  double? _sidebarWidth; // 首次 build 时按窗口宽度 40% 初始化
   final String _searchQuery = '';
   
   // 淡入淡出动画控制器
@@ -94,10 +94,13 @@ class _SplitChatPageState extends ConsumerState<SplitChatPage>
     final isAscending = ref.watch(sortAscendingProvider);
     final colors = context.moeColors;
 
+    // 首次 build 时按窗口宽度 40% 初始化侧边栏宽度（四六开）
+    _sidebarWidth ??= MediaQuery.sizeOf(context).width * 0.4;
+
     // 侧边导航栏宽度
     const sideNavWidth = 64.0;
     // 内容面板实际宽度（包含侧边导航）
-    final contentPanelWidth = sidebarVisible ? _sidebarWidth : 0.0;
+    final contentPanelWidth = sidebarVisible ? _sidebarWidth! : 0.0;
 
     return SettingsDrawerWrapper(
       key: _drawerKey,
@@ -105,45 +108,21 @@ class _SplitChatPageState extends ConsumerState<SplitChatPage>
       child: Scaffold(
         body: Stack(
           children: [
-            // 基础布局：三栏并列（侧边导航 + 内容面板 + 聊天区）
+            // 基础布局：左区（粉色header + 侧边栏|列表）+ 右区（聊天）
             Row(
               children: [
-                // 左侧侧边导航栏（类似QQ）
-                if (sidebarVisible)
-                  MoeSideNav(
-                    currentIndex: _currentIndex,
-                    onTap: _switchTab,
-                    onSettingsTap: _openSettings,
-                    items: const [
-                      SideNavItem(
-                        icon: Icons.chat_bubble_outline,
-                        activeIcon: Icons.chat_bubble,
-                        label: '消息',
-                      ),
-                      SideNavItem(
-                        icon: Icons.style_outlined,
-                        activeIcon: Icons.style,
-                        label: '角色卡',
-                      ),
-                      SideNavItem(
-                        icon: Icons.person_outline,
-                        activeIcon: Icons.person,
-                        label: '我的',
-                      ),
-                    ],
-                  ),
-                // 中间内容面板
+                // 左区整体
                 AnimatedContainer(
                   duration: kAnim,
                   curve: Curves.easeInOut,
-                  width: sidebarVisible ? (_sidebarWidth - sideNavWidth) : 0,
+                  width: sidebarVisible ? _sidebarWidth! : 0,
                   child: sidebarVisible
                       ? Column(
                           children: [
-                            // 顶部导航栏
+                            // 粉色 header 横跨左区全宽，MomoTalk 贴住左边
                             Container(
                               height: 56 + borderWidth,
-                              padding: const EdgeInsets.only(left: 12, right: 8),
+                              padding: const EdgeInsets.only(left: 16, right: 8),
                               decoration: BoxDecoration(
                                 color: colors.headerColor,
                                 border: Border(
@@ -152,64 +131,78 @@ class _SplitChatPageState extends ConsumerState<SplitChatPage>
                               ),
                               child: Row(
                                 children: [
-                                  // 标题
-                                  Builder(builder: (context) {
-                                    if (_currentIndex == 0) {
-                                      return Text(
-                                        'MomoTalk',
-                                        style: TextStyle(
-                                          color: colors.headerContentColor,
-                                          fontWeight: MoeFontWeights.emphasis,
-                                          fontSize: 24,
-                                          letterSpacing: 0.8,
-                                        ),
-                                      );
-                                    }
-                                    return Text(
-                                      'AIcove',
+                                  Expanded(
+                                    child: Text(
+                                      _currentIndex == 0 ? 'MomoTalk' : 'AIcove',
                                       style: TextStyle(
                                         color: colors.headerContentColor,
                                         fontWeight: MoeFontWeights.emphasis,
                                         fontSize: 24,
                                         letterSpacing: 0.8,
                                       ),
-                                    );
-                                  }),
-                                  const Spacer(),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
                                   // 加号按钮 - 仅在消息标签页显示
                                   if (_currentIndex == 0)
-                                    MoeG2ClipRRect(
-                                      radius: 8,
-                                      child: Material(
-                                        color: Colors.transparent,
-                                        child: InkWell(
-                                          onTap: () {
-                                            context.go('/contact/new');
-                                          },
-                                          child: Padding(
-                                            padding: const EdgeInsets.all(8),
-                                            child: Icon(Icons.add, color: colors.headerContentColor, size: 26),
-                                          ),
-                                        ),
-                                      ),
+                                    IconButton(
+                                      onPressed: () => context.go('/contact/new'),
+                                      icon: Icon(Icons.add, color: colors.headerContentColor, size: 26),
+                                      splashRadius: 20,
                                     ),
                                 ],
                               ),
                             ),
-                            // 次级标题栏：未读消息计数 + 排序按钮 (仅在消息页显示)
-                            if (_currentIndex == 0)
-                              ContactsSubHeader(searchQuery: _searchQuery),
-                            // 内容区域
+                            // 下方：侧边栏 + 内容列表 并排
                             Expanded(
-                              child: Container(
-                                color: colors.surface,
-                                child: FadeTransition(
-                                  opacity: _fadeAnimation,
-                                  child: IndexedStack(
-                                    index: _currentIndex,
-                                    children: _buildPages(sortMode, isAscending),
+                              child: Row(
+                                children: [
+                                  // 侧边导航栏（在 header 下方）
+                                  MoeSideNav(
+                                    currentIndex: _currentIndex,
+                                    onTap: _switchTab,
+                                    onSettingsTap: _openSettings,
+                                    items: const [
+                                      SideNavItem(
+                                        icon: Icons.chat_bubble_outline,
+                                        activeIcon: Icons.chat_bubble,
+                                        label: '消息',
+                                      ),
+                                      SideNavItem(
+                                        icon: Icons.style_outlined,
+                                        activeIcon: Icons.style,
+                                        label: '角色卡',
+                                      ),
+                                      SideNavItem(
+                                        icon: Icons.person_outline,
+                                        activeIcon: Icons.person,
+                                        label: '我的',
+                                      ),
+                                    ],
                                   ),
-                                ),
+                                  // 内容列表（含未读消息栏）
+                                  Expanded(
+                                    child: Container(
+                                      color: colors.surface,
+                                      child: Column(
+                                        children: [
+                                          // 未读消息栏（仅消息页显示）
+                                          if (_currentIndex == 0)
+                                            ContactsSubHeader(searchQuery: _searchQuery),
+                                          Expanded(
+                                            child: FadeTransition(
+                                              opacity: _fadeAnimation,
+                                              child: IndexedStack(
+                                                index: _currentIndex,
+                                                children: _buildPages(sortMode, isAscending),
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ],
@@ -235,8 +228,7 @@ class _SplitChatPageState extends ConsumerState<SplitChatPage>
                     behavior: HitTestBehavior.translucent,
                     onHorizontalDragUpdate: (details) {
                       setState(() {
-                        _sidebarWidth += details.delta.dx;
-                        _sidebarWidth = _sidebarWidth.clamp(200.0, 600.0);
+                        _sidebarWidth = (_sidebarWidth! + details.delta.dx).clamp(200.0, 600.0);
                       });
                     },
                     child: const SizedBox.expand(),

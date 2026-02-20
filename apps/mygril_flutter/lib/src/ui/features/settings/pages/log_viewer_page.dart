@@ -4,7 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../../../core/api_logger.dart' show ApiLogEntry, ApiLogger, truncateLongText;
+import '../../../../core/api_logger.dart'
+    show ApiLogEntry, ApiLogger, truncateLongText;
 import '../../../../core/app_logger.dart';
 import '../../../../core/log_history_service.dart';
 import '../../../../ui/theme/tokens.dart';
@@ -239,34 +240,36 @@ class _LogViewerPageState extends State<LogViewerPage> {
               return ValueListenableBuilder<List<LogEntry>>(
                 valueListenable: AppLogger.entries,
                 builder: (context, systemLogs, __) {
-            final entries = _buildUnifiedEntries(apiLogs, systemLogs);
+                  final entries = _buildUnifiedEntries(apiLogs, systemLogs);
 
-            // 只有当日志数量增加时才滚动到底部（新日志到来）
-            if (entries.length > _lastLogCount) {
-              _lastLogCount = entries.length;
-              WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
-            } else if (entries.length < _lastLogCount) {
-              // 日志被清空或减少时，更新计数但不滚动
-              _lastLogCount = entries.length;
-            }
+                  // 只有当日志数量增加时才滚动到底部（新日志到来）
+                  if (entries.length > _lastLogCount) {
+                    _lastLogCount = entries.length;
+                    WidgetsBinding.instance
+                        .addPostFrameCallback((_) => _scrollToBottom());
+                  } else if (entries.length < _lastLogCount) {
+                    // 日志被清空或减少时，更新计数但不滚动
+                    _lastLogCount = entries.length;
+                  }
 
-            if (entries.isEmpty) {
-              return Center(
-                child: Text(
-                  '暂无日志',
-                  style: TextStyle(color: colors.textSecondary),
-                ),
-              );
-            }
+                  if (entries.isEmpty) {
+                    return Center(
+                      child: Text(
+                        '暂无日志',
+                        style: TextStyle(color: colors.textSecondary),
+                      ),
+                    );
+                  }
 
-            return ListView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.all(12),
-              itemCount: entries.length,
-              itemBuilder: (context, index) {
-                return _buildLogItem(entries[index], index, entries.length);
-              },
-            );
+                  return ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.all(12),
+                    itemCount: entries.length,
+                    itemBuilder: (context, index) {
+                      return _buildLogItem(
+                          entries[index], index, entries.length);
+                    },
+                  );
                 },
               );
             },
@@ -310,9 +313,11 @@ class _LogViewerPageState extends State<LogViewerPage> {
                     _saveTypeFilter(filter);
                   },
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
-                      color: isSelected ? chipColor : colors.componentBackground,
+                      color:
+                          isSelected ? chipColor : colors.componentBackground,
                       borderRadius: BorderRadius.circular(16),
                       border: Border.all(
                         color: isSelected ? chipColor : colors.borderLight,
@@ -324,7 +329,9 @@ class _LogViewerPageState extends State<LogViewerPage> {
                       style: TextStyle(
                         fontSize: 12,
                         color: isSelected ? Colors.white : colors.textSecondary,
-                        fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
+                        fontWeight: isSelected
+                            ? MoeFontWeights.emphasis
+                            : MoeFontWeights.normal,
                       ),
                     ),
                   ),
@@ -352,9 +359,12 @@ class _LogViewerPageState extends State<LogViewerPage> {
                     _saveLevelFilter(filter);
                   },
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
-                      color: isSelected ? colors.primary : colors.componentBackground,
+                      color: isSelected
+                          ? colors.primary
+                          : colors.componentBackground,
                       borderRadius: BorderRadius.circular(16),
                       border: Border.all(
                         color: isSelected ? colors.primary : colors.borderLight,
@@ -366,7 +376,9 @@ class _LogViewerPageState extends State<LogViewerPage> {
                       style: TextStyle(
                         fontSize: 12,
                         color: isSelected ? Colors.white : colors.textSecondary,
-                        fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
+                        fontWeight: isSelected
+                            ? MoeFontWeights.emphasis
+                            : MoeFontWeights.normal,
                       ),
                     ),
                   ),
@@ -534,7 +546,8 @@ class _LogViewerPageState extends State<LogViewerPage> {
     // 对话日志使用特殊格式
     if (log.isConversation) {
       buffer.writeln('[$time] [对话] ${log.url}');
-      buffer.writeln('状态: ${log.status ?? '--'} | 耗时: ${log.durationMs}ms | 结果: ${log.ok ? '成功' : '失败'}');
+      buffer.writeln(
+          '状态: ${log.status ?? '--'} | 耗时: ${log.durationMs}ms | 结果: ${log.ok ? '成功' : '失败'}');
 
       // 显示完整的上下文消息
       if (log.rawContext != null && log.rawContext!.isNotEmpty) {
@@ -580,7 +593,8 @@ class _LogViewerPageState extends State<LogViewerPage> {
 
     // 普通 API 日志保持原有格式
     buffer.writeln('[$time] [API] ${log.method} ${log.url}');
-    buffer.writeln('状态: ${log.status ?? '--'} | 耗时: ${log.durationMs}ms | 结果: ${log.ok ? '成功' : '失败'}');
+    buffer.writeln(
+        '状态: ${log.status ?? '--'} | 耗时: ${log.durationMs}ms | 结果: ${log.ok ? '成功' : '失败'}');
 
     if (log.requestBody.isNotEmpty) {
       buffer.writeln('--- 请求体 ---');
@@ -634,7 +648,8 @@ class _LogViewerPageState extends State<LogViewerPage> {
 
   String _formatSystemLogFull(LogEntry log) {
     final buffer = StringBuffer();
-    buffer.write('[${log.formattedTime}] [${log.level.label}] [${log.source}] ${log.message}');
+    buffer.write(
+        '[${log.formattedTime}] [${log.level.label}] [${log.source}] ${log.message}');
 
     if (log.metadata != null && log.metadata!.isNotEmpty) {
       buffer.writeln();
@@ -980,12 +995,19 @@ class _LogHistoryListPageState extends State<LogHistoryListPage> {
 
   Future<void> _loadFiles() async {
     setState(() => _isLoading = true);
-    final files = await LogHistoryService.getHistoryFiles();
-    if (mounted) {
-      setState(() {
-        _files = files;
-        _isLoading = false;
-      });
+    try {
+      final files = await LogHistoryService.getHistoryFiles();
+      if (mounted) {
+        setState(() {
+          _files = files;
+          _isLoading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        MoeToast.error(context, '加载历史日志失败');
+      }
     }
   }
 
@@ -1100,7 +1122,8 @@ class _LogHistoryListPageState extends State<LogHistoryListPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             IconButton(
-              icon: Icon(Icons.visibility_outlined, color: colors.text, size: 20),
+              icon:
+                  Icon(Icons.visibility_outlined, color: colors.text, size: 20),
               onPressed: () => _viewFile(file),
               tooltip: '查看',
             ),
@@ -1260,8 +1283,11 @@ class _LogHistoryDetailPageState extends State<LogHistoryDetailPage> {
     // 解析 API 日志
     final apiLogs = _data!['apiLogs'] as List? ?? [];
     for (final log in apiLogs) {
-      final time = DateTime.tryParse(log['time'] ?? '') ?? DateTime.now();
-      final title = '[API] ${log['method']} ${log['status'] ?? '--'} ${_shortenUrl(log['url'] ?? '')}';
+      if (log is! Map<String, dynamic>) continue;
+      final time =
+          DateTime.tryParse((log['time'] ?? '').toString()) ?? DateTime.now();
+      final title =
+          '[API] ${log['method'] ?? '--'} ${log['status'] ?? '--'} ${_shortenUrl((log['url'] ?? '').toString())}';
       entries.add(_UnifiedLogEntry(
         time: time,
         title: title,
@@ -1274,10 +1300,12 @@ class _LogHistoryDetailPageState extends State<LogHistoryDetailPage> {
     // 解析系统日志
     final appLogs = _data!['appLogs'] as List? ?? [];
     for (final log in appLogs) {
-      final time = DateTime.tryParse(log['time'] ?? '') ?? DateTime.now();
-      final levelIndex = log['level'] as int? ?? 0;
-      final level = LogLevel.values[levelIndex.clamp(0, LogLevel.values.length - 1)];
-      final title = '[${level.label}] [${log['source']}] ${log['message']}';
+      if (log is! Map<String, dynamic>) continue;
+      final time =
+          DateTime.tryParse((log['time'] ?? '').toString()) ?? DateTime.now();
+      final level = _parseLogLevel(log['level']);
+      final title =
+          '[${level.label}] [${log['source'] ?? '--'}] ${log['message'] ?? ''}';
       entries.add(_UnifiedLogEntry(
         time: time,
         title: title,
@@ -1289,6 +1317,36 @@ class _LogHistoryDetailPageState extends State<LogHistoryDetailPage> {
 
     entries.sort((a, b) => a.time.compareTo(b.time));
     return entries;
+  }
+
+  LogLevel _parseLogLevel(dynamic rawLevel) {
+    if (rawLevel is int) {
+      return LogLevel.values[_clampLogLevelIndex(rawLevel)];
+    }
+
+    if (rawLevel is String) {
+      final normalized = rawLevel.trim();
+      final parsedIndex = int.tryParse(normalized);
+      if (parsedIndex != null) {
+        return LogLevel.values[_clampLogLevelIndex(parsedIndex)];
+      }
+
+      final upper = normalized.toUpperCase();
+      for (final level in LogLevel.values) {
+        if (level.label == upper || level.name.toUpperCase() == upper) {
+          return level;
+        }
+      }
+    }
+
+    return LogLevel.info;
+  }
+
+  int _clampLogLevelIndex(int index) {
+    final maxIndex = LogLevel.values.length - 1;
+    if (index < 0) return 0;
+    if (index > maxIndex) return maxIndex;
+    return index;
   }
 
   String _shortenUrl(String url) {

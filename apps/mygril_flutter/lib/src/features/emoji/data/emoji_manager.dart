@@ -41,7 +41,7 @@ class EmojiManager {
       await _loadDatabase();
 
       _initialized = true;
-      print('[EmojiManager] 初始化完成，共加载 ${_database?.emojis.length ?? 0} 个表情包');
+      print('[EmojiManager] 初始化完成，已加载 ${_database?.emojis.length ?? 0} 个表情包');
     } catch (e) {
       print('[EmojiManager] 初始化失败: $e');
       rethrow;

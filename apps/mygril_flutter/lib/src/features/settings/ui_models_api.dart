@@ -4,6 +4,8 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../core/api/providers/provider_adapter_factory.dart';
+
 /// SharedPreferences 键名，统一管理模型与渠道配置。
 const _kStoreKey = 'aicove.ui_models.v1';
 
@@ -143,6 +145,7 @@ Map<String, dynamic> _defaultStoreData() => <String, dynamic>{
       'message_chunking_enabled': false,
       'message_format_config': null, // 默认为 null，由前端使用默认配置
       'text_scale_factor': 1.0, // 全局字体缩放因子（默认 1.0）
+      'ui_scale_factor': 1.0, // 全局界面缩放因子（默认 1.0）
       'auto_reply_settings': _defaultAutoReplySettings(),
       // 主题与界面设置相关字段（后续可按需扩展）
       'chat_background_color': 'default', // 默认跟随全局背景色
@@ -164,10 +167,15 @@ Map<String, dynamic> _defaultAutoReplySettings() => <String, dynamic>{
     };
 
 const _novelAiDefaultModels = <String>[
-  'nai-diffusion-4-5-curated-preview',
+  'nai-diffusion-4-5-curated',
   'nai-diffusion-4-5-full',
   'nai-diffusion-3',
 ];
+
+const _novelAiModelAliases = <String, String>{
+  // Older local presets used this id, but NovelAI now expects "curated".
+  'nai-diffusion-4-5-curated-preview': 'nai-diffusion-4-5-curated',
+};
 
 bool _isNovelAiProvider({
   required String providerId,
@@ -179,6 +187,37 @@ bool _isNovelAiProvider({
   }
   final base = apiBaseUrl.toLowerCase();
   return base.contains('novelai.net');
+}
+
+String _normalizeNovelAiBaseUrl(String apiBaseUrl) {
+  final trimmed = apiBaseUrl.trim();
+  if (trimmed.isEmpty) return 'https://image.novelai.net';
+  if (trimmed.toLowerCase().startsWith('https://api.novelai.net')) {
+    return 'https://image.novelai.net${trimmed.substring('https://api.novelai.net'.length)}';
+  }
+  try {
+    final uri = Uri.parse(trimmed);
+    if (uri.host.toLowerCase() == 'api.novelai.net') {
+      return uri.replace(host: 'image.novelai.net').toString();
+    }
+  } catch (_) {}
+  return trimmed;
+}
+
+String _normalizeNovelAiModelId(String modelId) {
+  final trimmed = modelId.trim();
+  if (trimmed.isEmpty) return trimmed;
+  return _novelAiModelAliases[trimmed] ?? trimmed;
+}
+
+List<String> _normalizeNovelAiModels(Iterable<String> models) {
+  final normalized = <String>[];
+  for (final model in models) {
+    final fixed = _normalizeNovelAiModelId(model);
+    if (fixed.isEmpty || normalized.contains(fixed)) continue;
+    normalized.add(fixed);
+  }
+  return normalized;
 }
 
 Map<String, dynamic> _normalizeAutoReplySettings(dynamic source) {
@@ -251,7 +290,7 @@ Map<String, dynamic> _normalizeData(Map<String, dynamic> raw) {
       if (id.isEmpty) continue;
       final displayName = (provider['displayName'] as String?)?.trim();
       final apiKeys = _cleanStrings(provider['apiKeys']);
-      final apiBaseUrl =
+      var apiBaseUrl =
           (provider['apiBaseUrl'] as String? ?? 'https://api.openai.com/v1')
               .trim();
       final enabled =
@@ -265,8 +304,10 @@ Map<String, dynamic> _normalizeData(Map<String, dynamic> raw) {
       }
 
       // 迁移：给阿里云渠道自动补上 tts capability
-      var customConfig =
-          provider['custom_config'] as Map<String, dynamic>? ?? {};
+      var customConfig = provider['custom_config'] is Map
+          ? Map<String, dynamic>.from(
+              provider['custom_config'] as Map<dynamic, dynamic>)
+          : <String, dynamic>{};
       if (id == 'aliyun' && !capabilities.contains('tts')) {
         capabilities.add('tts');
       }
@@ -286,6 +327,43 @@ Map<String, dynamic> _normalizeData(Map<String, dynamic> raw) {
         // 清理旧的 tts_models
         customConfig = Map<String, dynamic>.from(customConfig);
         customConfig.remove('tts_models');
+      }
+
+      final requestFormat =
+          customConfig['requestFormat']?.toString().trim().toLowerCase();
+      final isNovelAi =
+          _isNovelAiProvider(providerId: id, apiBaseUrl: apiBaseUrl) ||
+              requestFormat == 'novelai' ||
+              requestFormat == 'nai';
+      if (isNovelAi) {
+        apiBaseUrl = _normalizeNovelAiBaseUrl(apiBaseUrl);
+        final fixedModels = _normalizeNovelAiModels(models)..sort(_caseSort);
+        models
+          ..clear()
+          ..addAll(fixedModels);
+        final fixedVisible = _normalizeNovelAiModels(visible);
+        visible
+          ..clear()
+          ..addAll(fixedVisible.where((m) => models.contains(m)));
+        final fixedHidden = _normalizeNovelAiModels(hidden);
+        hidden
+          ..clear()
+          ..addAll(
+            fixedHidden
+                .where((m) => models.contains(m) && !visible.contains(m)),
+          );
+
+        customConfig['requestFormat'] = 'novelai';
+        final currentDefault =
+            customConfig['defaultImageModel']?.toString().trim() ?? '';
+        final normalizedDefault = _normalizeNovelAiModelId(currentDefault);
+        if (normalizedDefault.isNotEmpty) {
+          customConfig['defaultImageModel'] = normalizedDefault;
+        } else if (visible.isNotEmpty) {
+          customConfig['defaultImageModel'] = visible.first;
+        } else if (models.isNotEmpty) {
+          customConfig['defaultImageModel'] = models.first;
+        }
       }
 
       final visibleSet = <String>{};
@@ -406,6 +484,48 @@ class UiModelsApi {
     }
   }
 
+  /// 测试指定模型是否可用：发送一条极简的 chat completion 请求
+  /// 返回模型的回复文本（成功则非空），失败则抛出异常
+  Future<String> testModel({
+    required String providerId,
+    required String apiKey,
+    required String apiBaseUrl,
+    required String modelId,
+  }) async {
+    try {
+      final adapter = ProviderAdapterFactory.getAdapter(providerId);
+      final endpoint = adapter.buildEndpoint(
+        apiBaseUrl.replaceAll(RegExp(r'/+$'), ''),
+        modelType: 'chat',
+      );
+      final headers = adapter.buildHeaders(apiKey);
+      final body = adapter.buildRequestBody(
+        model: modelId,
+        messages: [
+          {'role': 'user', 'content': 'hi'},
+        ],
+        customConfig: {'max_tokens': 3},
+      );
+
+      final response = await http
+          .post(Uri.parse(endpoint), headers: headers, body: jsonEncode(body))
+          .timeout(const Duration(seconds: 15));
+
+      if (response.statusCode != 200) {
+        final msg = response.body.length > 200
+            ? response.body.substring(0, 200)
+            : response.body;
+        throw Exception('HTTP ${response.statusCode}: $msg');
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final result = adapter.parseResponse(data);
+      return result.text.isNotEmpty ? result.text : '(模型响应成功，无文本内容)';
+    } catch (e) {
+      throw Exception('模型测试失败: $e');
+    }
+  }
+
   Future<Map<String, dynamic>> importProvider({
     required String providerId,
     String? model,
@@ -429,6 +549,12 @@ class UiModelsApi {
         .cast<Map<String, dynamic>>()
         .map((e) => Map<String, dynamic>.from(e))
         .toList();
+    final requestFormat =
+        customConfig?['requestFormat']?.toString().trim().toLowerCase();
+    final isNovelAi =
+        _isNovelAiProvider(providerId: providerId, apiBaseUrl: apiBaseUrl) ||
+            requestFormat == 'novelai' ||
+            requestFormat == 'nai';
 
     List<String> models;
     if (allModels != null) {
@@ -441,7 +567,7 @@ class UiModelsApi {
           apiBaseUrl: apiBaseUrl,
         );
       } catch (e) {
-        if (_isNovelAiProvider(providerId: providerId, apiBaseUrl: apiBaseUrl)) {
+        if (isNovelAi) {
           models = _novelAiDefaultModels;
         } else {
           rethrow;
@@ -454,28 +580,54 @@ class UiModelsApi {
         !models.contains(model.trim())) {
       models.insert(0, model.trim());
     }
+    if (isNovelAi) {
+      models = _normalizeNovelAiModels(models);
+    }
 
-    final visible = _cleanStrings(
+    var visible = _cleanStrings(
       visibleModels ?? (model != null ? [model] : models.take(3)),
     );
-    final hidden = _cleanStrings(hiddenModels);
+    var hidden = _cleanStrings(hiddenModels);
+    if (isNovelAi) {
+      visible = _normalizeNovelAiModels(visible);
+      hidden = _normalizeNovelAiModels(hidden);
+    }
     final caps = _cleanStrings(capabilities);
     if (caps.isEmpty) caps.add('chat');
+    final normalizedConfig = Map<String, dynamic>.from(customConfig ?? {});
+    if (isNovelAi) {
+      normalizedConfig['requestFormat'] = 'novelai';
+      if ((normalizedConfig['defaultImageModel']?.toString().trim() ?? '')
+          .isEmpty) {
+        if (visible.isNotEmpty) {
+          normalizedConfig['defaultImageModel'] = visible.first;
+        } else if (models.isNotEmpty) {
+          normalizedConfig['defaultImageModel'] = models.first;
+        }
+      } else {
+        normalizedConfig['defaultImageModel'] = _normalizeNovelAiModelId(
+          normalizedConfig['defaultImageModel']?.toString() ?? '',
+        );
+      }
+    }
+    final normalizedApiBaseUrl = isNovelAi
+        ? _normalizeNovelAiBaseUrl(apiBaseUrl)
+        : (apiBaseUrl.trim().isEmpty
+            ? 'https://api.openai.com/v1'
+            : apiBaseUrl.trim());
 
     final entry = <String, dynamic>{
       'id': providerId,
       'displayName':
           displayName?.trim().isEmpty == true ? null : displayName?.trim(),
       'apiKeys': apiKey.trim().isEmpty ? <String>[] : <String>[apiKey.trim()],
-      'apiBaseUrl': apiBaseUrl.trim().isEmpty
-          ? 'https://api.openai.com/v1'
-          : apiBaseUrl.trim(),
+      'apiBaseUrl': normalizedApiBaseUrl,
       'enabled': true,
       'models': models,
       'visible_models': visible,
       'hidden_models': hidden.where((m) => !visible.contains(m)).toList(),
       'capabilities': caps,
-      'custom_config': customConfig ?? {},
+      'custom_config': normalizedConfig,
       'model_type': modelType?.trim().isEmpty == true
           ? 'chat'
           : (modelType?.trim() ?? 'chat'),
@@ -530,7 +682,20 @@ class UiModelsApi {
           displayName.trim().isEmpty ? null : displayName.trim();
     }
     if (apiBaseUrl != null && apiBaseUrl.trim().isNotEmpty) {
-      provider['apiBaseUrl'] = apiBaseUrl.trim();
+      final nextBase = apiBaseUrl.trim();
+      final mergedRequestFormat = (customConfig?['requestFormat'] ??
+              (provider['custom_config'] is Map
+                  ? (provider['custom_config'] as Map)['requestFormat']
+                  : null))
+          ?.toString()
+          .trim()
+          .toLowerCase();
+      final isNovelAi =
+          _isNovelAiProvider(providerId: providerId, apiBaseUrl: nextBase) ||
+              mergedRequestFormat == 'novelai' ||
+              mergedRequestFormat == 'nai';
+      provider['apiBaseUrl'] =
+          isNovelAi ? _normalizeNovelAiBaseUrl(nextBase) : nextBase;
     }
     if (apiKeys != null) {
       provider['apiKeys'] = _cleanStrings(apiKeys);

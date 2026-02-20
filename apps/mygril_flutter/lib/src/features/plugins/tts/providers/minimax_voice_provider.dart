@@ -63,7 +63,7 @@ class MinimaxVoiceProvider implements TtsVoiceProvider {
           name: voice.name ?? voice.voiceId,
           sourceType: VoiceSourceType.url,
           providerType: VoiceProviderType.custom,
-          source: 'MiniMax 复刻 · ${voice.createdTime ?? ""}',
+          source: 'MiniMax 复刻音色 · ${voice.createdTime ?? ""}',
         )..setMinimaxVoiceId(voice.voiceId);
       }).toList();
 

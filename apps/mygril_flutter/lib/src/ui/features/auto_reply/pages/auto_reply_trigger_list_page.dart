@@ -191,7 +191,7 @@ class AutoReplyTriggerListPage extends ConsumerWidget {
       case AutoReplyTriggerEventType.resumed:
         return '已恢复：${event.title}';
       case AutoReplyTriggerEventType.expired:
-        return '已作废：${event.title}${event.reason != null ? '（${event.reason}）' : ''}';
+        return '已过期：${event.title}${event.reason != null ? '（${event.reason}）' : ''}';
     }
   }
 

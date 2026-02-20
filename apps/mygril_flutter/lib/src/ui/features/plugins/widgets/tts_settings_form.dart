@@ -977,7 +977,7 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'ID: ${preset!.aliyunVoiceId ?? "未知"}',
+                          'ID: ${preset!.aliyunVoiceId ?? "δ֪"}',
                           style: TextStyle(color: colors.muted, fontSize: 11),
                         ),
                         if (preset.aliyunTargetModel != null)
@@ -1048,7 +1048,7 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'URI: ${preset!.siliconFlowVoiceUri ?? "未知"}',
+                          'URI: ${preset!.siliconFlowVoiceUri ?? "δ֪"}',
                           style: TextStyle(color: colors.muted, fontSize: 11),
                         ),
                       ],
@@ -1438,7 +1438,7 @@ class _FetchVoicesSheetContentState extends State<_FetchVoicesSheetContent> {
         aliyunVoiceId: v.voiceId,
         aliyunTargetModel: v.targetModel,
         aliyunVoiceStatus: 'OK', // Qwen-TTS 音色创建后即可用
-        source: '阿里云已创建 · ${v.gmtCreate ?? ""}',
+        source: '已创建音色 · ${v.gmtCreate ?? ""}',
       )).toList();
 
       if (!mounted) return;

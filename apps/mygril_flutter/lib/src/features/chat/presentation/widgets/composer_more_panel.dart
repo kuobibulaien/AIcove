@@ -17,39 +17,88 @@ class ComposerMorePanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 14, 12, 12),
-      child: GridView.count(
-        crossAxisCount: 4,
-        physics: const NeverScrollableScrollPhysics(),
-        shrinkWrap: true,
-        mainAxisSpacing: 12,
-        crossAxisSpacing: 12,
-        children: [
-          MoreActionTile(
-            icon: Icons.tune,
-            label: '模型',
-            onTap: () => onAction(ComposerAction.model),
-          ),
-          MoreActionTile(
-            icon: Icons.photo_library_outlined,
-            label: '相册',
-            onTap: () => onAction(ComposerAction.gallery),
-          ),
-          MoreActionTile(
-            icon: Icons.photo_camera_outlined,
-            label: '拍照',
-            onTap: () => onAction(ComposerAction.camera),
-          ),
-          MoreActionTile(
-            icon: Icons.attach_file,
-            label: '文件',
-            onTap: () => onAction(ComposerAction.file),
-          ),
-        ],
+    final actions = <_MoreActionSpec>[
+      _MoreActionSpec(
+        icon: Icons.tune,
+        label: '模型',
+        onTap: () => onAction(ComposerAction.model),
       ),
+      _MoreActionSpec(
+        icon: Icons.photo_library_outlined,
+        label: '相册',
+        onTap: () => onAction(ComposerAction.gallery),
+      ),
+      _MoreActionSpec(
+        icon: Icons.photo_camera_outlined,
+        label: '拍照',
+        onTap: () => onAction(ComposerAction.camera),
+      ),
+      _MoreActionSpec(
+        icon: Icons.attach_file,
+        label: '文件',
+        onTap: () => onAction(ComposerAction.file),
+      ),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const horizontalPadding = 12.0;
+        const topPadding = 14.0;
+        const bottomPadding = 12.0;
+        const spacing = 10.0;
+        const labelTopGap = 8.0;
+        const labelHeight = 18.0;
+        const buttonSide = 64.0; // ~= 1.5 * composer input min height (42)
+
+        final usableWidth = (constraints.maxWidth - horizontalPadding * 2)
+            .clamp(0.0, 2000.0)
+            .toDouble();
+        final columns = usableWidth >= 360 ? 4 : 3;
+        final rawItemWidth = columns == 4
+            ? (usableWidth - spacing * 3) / 4
+            : (usableWidth - spacing * 2) / 3;
+        final itemWidth = rawItemWidth.clamp(0.0, 260.0).toDouble();
+        const itemHeight = buttonSide + labelTopGap + labelHeight;
+
+        return SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(
+            horizontalPadding,
+            topPadding,
+            horizontalPadding,
+            bottomPadding,
+          ),
+          child: Wrap(
+            spacing: spacing,
+            runSpacing: spacing,
+            children: [
+              for (final action in actions)
+                SizedBox(
+                  width: itemWidth,
+                  height: itemHeight,
+                  child: MoreActionTile(
+                    icon: action.icon,
+                    label: action.label,
+                    onTap: action.onTap,
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
+}
+
+class _MoreActionSpec {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  const _MoreActionSpec({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
 }
 
 /// 更多面板操作按钮
@@ -68,33 +117,68 @@ class MoreActionTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
+    const radius = 14.0;
+    const maxButtonSide = 64.0;
+    const minButtonSide = 52.0;
+    const labelTopGap = 8.0;
+    const labelHeight = 18.0;
 
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 26, color: colors.text),
-              const SizedBox(height: 8),
-              Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: colors.text,
-                  fontWeight: MoeFontWeights.emphasis,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final side = constraints.maxWidth.clamp(minButtonSide, maxButtonSide);
+        return Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(radius),
+            canRequestFocus: false,
+            splashFactory: NoSplash.splashFactory,
+            splashColor: Colors.transparent,
+            highlightColor: Colors.transparent,
+            hoverColor: Colors.transparent,
+            focusColor: Colors.transparent,
+            overlayColor: WidgetStateProperty.all(Colors.transparent),
+            child: Column(
+              children: [
+                SizedBox(
+                  width: side,
+                  height: side,
+                  child: Material(
+                    color: colors.panel.withValues(alpha: 0.9),
+                    borderRadius: BorderRadius.circular(radius),
+                    clipBehavior: Clip.antiAlias,
+                    child: Ink(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(radius),
+                        border: Border.all(
+                          color: colors.border.withValues(alpha: 0.55),
+                        ),
+                      ),
+                      child: Center(
+                        child: Icon(icon, size: 30, color: colors.accentColor),
+                      ),
+                    ),
+                  ),
                 ),
-              ),
-            ],
+                const SizedBox(height: labelTopGap),
+                SizedBox(
+                  height: labelHeight,
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: colors.text,
+                      fontWeight: MoeFontWeights.emphasis,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }

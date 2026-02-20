@@ -373,8 +373,15 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     // Initialize AutoReplyService to listen for triggers
     ref.watch(autoReplyServiceProvider);
 
+    // 读取全局背景色设置（浅色模式下生效）
+    final globalBgColor = settingsAsync.maybeWhen(
+      data: (s) => s.globalBackgroundColor.color,
+      orElse: () => moeSurface,
+    );
+
     // 创建浅色主题
-    final lightTheme = _buildTheme(isDark: false, accent: accentColor);
+    final lightTheme = _buildTheme(
+        isDark: false, accent: accentColor, globalBgColor: globalBgColor);
 
     // 创建暗色主题
     final darkTheme = _buildTheme(isDark: true, accent: accentColor);
@@ -446,14 +453,23 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
             builder: (context, child) {
               // 将设置页的 1.0 映射为历史默认观感（约 1.2x）
               const baselineScale = 1.2;
-              final scale =
-                  settings.textScaleFactor.clamp(0.8, 1.5) * baselineScale;
+              final textScale = settings.textScaleFactor
+                      .clamp(kMinTextScaleFactor, kMaxTextScaleFactor)
+                      .toDouble() *
+                  baselineScale;
+              final uiScale = settings.uiScaleFactor
+                  .clamp(kMinUiScaleFactor, kMaxUiScaleFactor)
+                  .toDouble();
               return MediaQuery(
                 data: MediaQuery.of(context).copyWith(
-                  textScaler: TextScaler.linear(scale),
+                  textScaler: TextScaler.linear(textScale),
                 ),
-                child:
-                    DesktopWindowFrame(child: child ?? const SizedBox.shrink()),
+                child: DesktopWindowFrame(
+                  child: _GlobalUiScale(
+                    scale: uiScale,
+                    child: child ?? const SizedBox.shrink(),
+                  ),
+                ),
               );
             },
           ),
@@ -463,7 +479,8 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   }
 
   /// 构建主题（浅色或暗色）
-  ThemeData _buildTheme({required bool isDark, required Color accent}) {
+  ThemeData _buildTheme(
+      {required bool isDark, required Color accent, Color? globalBgColor}) {
     // Material3 的默认组件（ElevatedButton、Switch、ProgressIndicator 等）主要跟随 colorScheme.primary。
     // 这里用用户选择的主题色作为 seed/primary，避免"主题粉色但按钮仍是蓝色"的割裂感。
     final seed = accent;
@@ -517,7 +534,8 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     return ThemeData(
       colorScheme: scheme,
       useMaterial3: true,
-      scaffoldBackgroundColor: isDark ? moeSurfaceDark : moeSurface,
+      scaffoldBackgroundColor:
+          isDark ? moeSurfaceDark : (globalBgColor ?? moeSurface),
       // 跨平台字体回退栈（Web 优先使用 Noto Sans SC，已在 index.html 预加载）
       fontFamilyFallback: const [
         // 首选：Google Fonts 中文字体（Web 平台必需）
@@ -557,8 +575,52 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       extensions: <ThemeExtension<dynamic>>[
         isDark
             ? MoeColors.dark(accentColor: accent)
-            : MoeColors.light(accentColor: accent),
+            : MoeColors.light(
+                accentColor: accent, globalBgColor: globalBgColor),
       ],
+    );
+  }
+}
+
+/// 全局界面缩放容器
+///
+/// 通过反向 SizedBox + Transform.scale，让缩放后依然铺满视口，
+/// 用于手动微调不同设备上的整体观感。
+class _GlobalUiScale extends StatelessWidget {
+  final double scale;
+  final Widget child;
+
+  const _GlobalUiScale({
+    required this.scale,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final effectiveScale = scale.clamp(kMinUiScaleFactor, kMaxUiScaleFactor);
+    if ((effectiveScale - 1.0).abs() < 0.001) {
+      return child;
+    }
+
+    final viewport = MediaQuery.sizeOf(context);
+
+    return ClipRect(
+      child: OverflowBox(
+        alignment: Alignment.topCenter,
+        minWidth: 0,
+        minHeight: 0,
+        maxWidth: double.infinity,
+        maxHeight: double.infinity,
+        child: Transform.scale(
+          scale: effectiveScale,
+          alignment: Alignment.topCenter,
+          child: SizedBox(
+            width: viewport.width / effectiveScale,
+            height: viewport.height / effectiveScale,
+            child: child,
+          ),
+        ),
+      ),
     );
   }
 }

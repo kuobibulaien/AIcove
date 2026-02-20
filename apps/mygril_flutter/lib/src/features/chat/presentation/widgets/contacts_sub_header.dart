@@ -60,15 +60,18 @@ class ContactsSubHeader extends ConsumerWidget {
       ),
       child: Row(
         children: [
-          Text(
-            '未读消息 ($count)',
-            style: TextStyle(
-              color: colors.text,
-              fontSize: 15,
-              fontWeight: MoeFontWeights.emphasis,
+          Expanded(
+            child: Text(
+              '未读消息 ($count)',
+              style: TextStyle(
+                color: colors.text,
+                fontSize: 15,
+                fontWeight: MoeFontWeights.emphasis,
+              ),
+              overflow: TextOverflow.ellipsis,
             ),
           ),
-          const Spacer(),
+          const SizedBox(width: 8),
           // 排序模式按钮
           Tooltip(
             message: '排序方式',

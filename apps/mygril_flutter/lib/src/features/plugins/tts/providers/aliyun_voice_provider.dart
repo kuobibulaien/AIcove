@@ -48,7 +48,7 @@ class AliyunQwenVoiceProvider implements TtsVoiceProvider {
           name: _extractVoiceName(voice.voiceId),
           sourceType: VoiceSourceType.preset,
           providerType: VoiceProviderType.aliyun,
-          source: '阿里云 Qwen-TTS · ${voice.gmtCreate ?? ""}',
+          source: '已创建 Qwen-TTS 音色 · ${voice.gmtCreate ?? ""}',
           aliyunVoiceId: voice.voiceId,
           aliyunTargetModel: voice.targetModel,
           aliyunVoiceStatus: 'OK', // Qwen-TTS 音色创建后即可用

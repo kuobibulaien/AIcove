@@ -170,7 +170,12 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
       : const MessageFormatConfig();
 
   final textScaleFactor =
-      (data['text_scale_factor'] as num?)?.toDouble() ?? 1.0;
+      ((data['text_scale_factor'] as num?)?.toDouble() ?? 1.0)
+          .clamp(kMinTextScaleFactor, kMaxTextScaleFactor)
+          .toDouble();
+  final uiScaleFactor = ((data['ui_scale_factor'] as num?)?.toDouble() ?? 1.0)
+      .clamp(kMinUiScaleFactor, kMaxUiScaleFactor)
+      .toDouble();
   final hideUserAvatar = data['hide_user_avatar'] != false;
   final userAvatar = data['user_avatar'] as String?;
   final userName = data['user_name'] as String?;
@@ -181,6 +186,9 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
       : const AutoReplySettings();
   final chatBackgroundColor = ChatBackgroundColor.fromValue(
     data['chat_background_color'] as String?,
+  );
+  final globalBackgroundColor = GlobalBackgroundColor.fromValue(
+    data['global_background_color'] as String?,
   );
   final isDarkMode = (data['is_dark_mode'] as bool?) ?? false;
   final useSystemTheme = (data['use_system_theme'] as bool?) ?? true;
@@ -211,8 +219,10 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     messageChunkingEnabled: data['message_chunking_enabled'] == true,
     messageFormatConfig: messageFormatConfig,
     textScaleFactor: textScaleFactor,
+    uiScaleFactor: uiScaleFactor,
     hideUserAvatar: hideUserAvatar,
     autoReplySettings: autoReplySettings,
+    globalBackgroundColor: globalBackgroundColor,
     chatBackgroundColor: chatBackgroundColor,
     isDarkMode: isDarkMode,
     useSystemTheme: useSystemTheme,
@@ -499,6 +509,21 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     );
   }
 
+  /// 测试指定模型是否可用（发一条极简请求验证）
+  Future<String> testModel({
+    required String providerId,
+    required String apiKey,
+    required String apiBaseUrl,
+    required String modelId,
+  }) {
+    return _api.testModel(
+      providerId: providerId,
+      apiKey: apiKey,
+      apiBaseUrl: apiBaseUrl,
+      modelId: modelId,
+    );
+  }
+
   Future<void> importCustomModel({
     required String? name,
     required String apiKey,
@@ -595,7 +620,19 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
 
   Future<void> setTextScaleFactor(double scale) async {
     await _commit(
-        () => _api.updatePartial({'text_scale_factor': scale.clamp(0.8, 1.5)}));
+      () => _api.updatePartial({
+        'text_scale_factor':
+            scale.clamp(kMinTextScaleFactor, kMaxTextScaleFactor),
+      }),
+    );
+  }
+
+  Future<void> setUiScaleFactor(double scale) async {
+    await _commit(
+      () => _api.updatePartial({
+        'ui_scale_factor': scale.clamp(kMinUiScaleFactor, kMaxUiScaleFactor),
+      }),
+    );
   }
 
   Future<void> setHideUserAvatar(bool hide) async {
@@ -613,6 +650,11 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
   Future<void> updateAutoReplySettings(AutoReplySettings settings) async {
     await _commit(
         () => _api.updatePartial({'auto_reply_settings': settings.toJson()}));
+  }
+
+  Future<void> setGlobalBackgroundColor(GlobalBackgroundColor color) async {
+    await _commit(
+        () => _api.updatePartial({'global_background_color': color.value}));
   }
 
   Future<void> setChatBackgroundColor(ChatBackgroundColor color) async {

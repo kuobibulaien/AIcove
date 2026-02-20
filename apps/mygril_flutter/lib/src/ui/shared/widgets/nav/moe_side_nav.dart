@@ -53,7 +53,7 @@ class MoeSideNav extends StatelessWidget {
     return Container(
       width: width,
       decoration: BoxDecoration(
-        color: colors.headerColor,
+        color: colors.surface,
         border: Border(
           right: BorderSide(color: colors.divider, width: borderWidth),
         ),
