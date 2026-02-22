@@ -123,6 +123,9 @@ class _MoeListTileState extends State<MoeListTile> {
       onTapCancel: _isEnabled ? () => setState(() => _pressed = false) : null,
       onTap: _isEnabled ? widget.onTap : null,
       onLongPress: _isEnabled ? widget.onLongPress : null,
+      onSecondaryTapUp: (_isEnabled && widget.onLongPress != null)
+          ? (_) => widget.onLongPress!()
+          : null,
       child: AnimatedContainer(
         duration: kAnimFast,
         color: currentBg,

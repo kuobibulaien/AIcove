@@ -37,12 +37,12 @@ class ImagePlugin extends BasePlugin {
       'defaultWidth': ConfigField(
         type: ConfigFieldType.integer,
         label: '默认宽度',
-        defaultValue: 1024,
+        defaultValue: 832,
       ),
       'defaultHeight': ConfigField(
         type: ConfigFieldType.integer,
         label: '默认高度',
-        defaultValue: 1024,
+        defaultValue: 1216,
       ),
       'defaultSteps': ConfigField(
         type: ConfigFieldType.integer,
@@ -92,8 +92,7 @@ class ImagePlugin extends BasePlugin {
     if (!enabled || !supportsToolCalling) return null;
     final settings = _ref.read(appSettingsProvider).valueOrNull;
     if (settings == null || _resolveTarget(settings) == null) return null;
-    final prompt = _config.drawingSystemPrompt.trim();
-    return prompt.isNotEmpty ? prompt : ImageConfig.defaultDrawingSystemPrompt;
+    return _config.effectiveSystemPrompt;
   }
 
   @override

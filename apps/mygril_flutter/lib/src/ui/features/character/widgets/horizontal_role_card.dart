@@ -44,6 +44,7 @@ class HorizontalRoleCard extends ConsumerStatefulWidget {
 
 class _HorizontalRoleCardState extends ConsumerState<HorizontalRoleCard> {
   ImageProvider? _blurredBackgroundProvider;
+  int _backgroundLoadToken = 0;
 
   @override
   void initState() {
@@ -51,13 +52,29 @@ class _HorizontalRoleCardState extends ConsumerState<HorizontalRoleCard> {
     _loadBlurredBackground();
   }
 
+  @override
+  void didUpdateWidget(covariant HorizontalRoleCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final imageChanged = oldWidget.conversation.id != widget.conversation.id ||
+        oldWidget.conversation.characterImage !=
+            widget.conversation.characterImage ||
+        oldWidget.conversation.avatarUrl != widget.conversation.avatarUrl;
+    if (!imageChanged) return;
+
+    setState(() {
+      _blurredBackgroundProvider = null;
+    });
+    _loadBlurredBackground();
+  }
+
   /// 加载或生成模糊背景
   Future<void> _loadBlurredBackground() async {
+    final token = ++_backgroundLoadToken;
     final blurAsset = _deriveBlurAssetPath(widget.conversation.characterImage);
     if (blurAsset != null) {
       try {
         await rootBundle.load(blurAsset);
-        if (mounted) {
+        if (mounted && token == _backgroundLoadToken) {
           setState(() {
             _blurredBackgroundProvider = AssetImage(blurAsset);
           });
@@ -72,7 +89,7 @@ class _HorizontalRoleCardState extends ConsumerState<HorizontalRoleCard> {
     if (imageBytes == null) return;
 
     final path = await BlurredBackgroundManager.getOrGenerate(imageBytes);
-    if (mounted && path != null) {
+    if (mounted && token == _backgroundLoadToken && path != null) {
       setState(() {
         _blurredBackgroundProvider = FileImage(File(path));
       });

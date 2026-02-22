@@ -1,4 +1,4 @@
-import 'dart:typed_data';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -160,12 +160,24 @@ class AvatarHelper {
       );
     }
 
-    // 3. asset 图片
+    // 3. asset / 本地文件
     final cleanPath = cleanUrl(trimmed);
     final alignment = useAlignment ? parseAlignment(trimmed) : Alignment.center;
+    final isAsset =
+        cleanPath.startsWith('assets/') || cleanPath.startsWith('packages/');
 
-    return Image.asset(
-      cleanPath,
+    if (isAsset) {
+      return Image.asset(
+        cleanPath,
+        fit: fit,
+        alignment: alignment,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) => fallback,
+      );
+    }
+
+    return Image.file(
+      File(cleanPath),
       fit: fit,
       alignment: alignment,
       gaplessPlayback: true,
@@ -187,9 +199,12 @@ class AvatarHelper {
       return CachedNetworkImageProvider(trimmed);
     }
 
-    // 3. asset 图片
+    // 3. asset / 本地文件
     final cleanPath = cleanUrl(trimmed);
-    return AssetImage(cleanPath);
+    final isAsset =
+        cleanPath.startsWith('assets/') || cleanPath.startsWith('packages/');
+    if (isAsset) return AssetImage(cleanPath);
+    return FileImage(File(cleanPath));
   }
 
   Future<Uint8List?> _getBytesFromUrl(String? url) async {
@@ -201,15 +216,24 @@ class AvatarHelper {
     final bytes = decodeDataImage(trimmed);
     if (bytes != null) return bytes;
 
-    // 2. asset 图片
+    // 2. asset / 本地文件
     final cleanPath = cleanUrl(trimmed);
-    if (cleanPath.startsWith('assets/')) {
+    if (cleanPath.startsWith('assets/') || cleanPath.startsWith('packages/')) {
       try {
         final data = await rootBundle.load(cleanPath);
         return data.buffer.asUint8List();
       } catch (_) {
         return null;
       }
+    }
+
+    try {
+      final file = File(cleanPath);
+      if (await file.exists()) {
+        return await file.readAsBytes();
+      }
+    } catch (_) {
+      return null;
     }
 
     return null;

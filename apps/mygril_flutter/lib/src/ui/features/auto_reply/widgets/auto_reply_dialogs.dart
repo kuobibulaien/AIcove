@@ -1,7 +1,7 @@
 /// AutoReplyDialogs - 自动回复相关对话框
-/// 
+///
 /// 从 auto_reply_settings_page.dart 提取，处理模型选择和提示词编辑。
-/// 
+///
 /// 更新记录：
 /// - 2025-12-31: 从 auto_reply_settings_page.dart 提取，改用底部弹窗
 library;
@@ -36,15 +36,24 @@ Future<ModelOption?> showAnalyzerModelPicker({
 }) async {
   // 构建可用模型列表
   final availableModels = <ModelOption>[];
-  
+
   // 添加 "使用默认模型" 选项
+  final defaultModelLabel =
+      settings.getModelDisplayName(settings.defaultModelName);
+  final defaultModelProvider =
+      settings.getModelProviderId(settings.defaultModelName);
+  final defaultSubtitle =
+      defaultModelProvider == null || defaultModelProvider.isEmpty
+          ? defaultModelLabel
+          : '$defaultModelLabel ($defaultModelProvider)';
+
   availableModels.add(ModelOption(
     model: null,
     provider: null,
     displayName: '使用默认对话模型',
-    subtitle: settings.defaultModelName,
+    subtitle: defaultSubtitle,
   ));
-  
+
   // 从 providers 中提取对话类型的可用模型（排除 TTS 等非对话模型）
   for (final provider in settings.providers) {
     if (provider.modelType != 'chat') continue;
@@ -52,7 +61,7 @@ Future<ModelOption?> showAnalyzerModelPicker({
       availableModels.add(ModelOption(
         model: model,
         provider: provider.id,
-        displayName: model,
+        displayName: settings.getModelDisplayName(model),
         subtitle: provider.id,
       ));
     }
@@ -67,16 +76,26 @@ Future<ModelOption?> showAnalyzerModelPicker({
       itemCount: availableModels.length,
       itemBuilder: (context, index) {
         final option = availableModels[index];
-        final isSelected = option.model == draft.analyzerModel;
+        String? currentProvider = draft.analyzerProvider;
+        if (draft.analyzerModel?.isNotEmpty == true &&
+            (currentProvider == null || currentProvider.isEmpty)) {
+          currentProvider = settings.getModelProviderId(draft.analyzerModel!);
+        }
+        final isUsingDefault =
+            option.model == null && draft.analyzerModel == null;
+        final isSelected = isUsingDefault ||
+            (option.model == draft.analyzerModel &&
+                option.provider == currentProvider);
         final colors = context.moeColors;
-        
+
         return ListTile(
           leading: Icon(
             isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
             color: isSelected ? colors.primary : colors.muted,
           ),
           title: Text(option.displayName),
-          subtitle: Text(option.subtitle, style: TextStyle(color: colors.muted)),
+          subtitle:
+              Text(option.subtitle, style: TextStyle(color: colors.muted)),
           onTap: () => Navigator.pop(context, option),
         );
       },

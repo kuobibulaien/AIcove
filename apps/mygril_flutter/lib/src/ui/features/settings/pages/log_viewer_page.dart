@@ -45,6 +45,36 @@ class _UnifiedLogEntry {
   bool get needsFold => extraContent != null && extraContent!.isNotEmpty;
 }
 
+class _ConversationRoundLog {
+  final int roundIndex;
+  final ApiLogEntry? requestLog;
+  final ApiLogEntry? toolLog;
+
+  const _ConversationRoundLog({
+    required this.roundIndex,
+    this.requestLog,
+    this.toolLog,
+  });
+}
+
+class _ConversationTurnLog {
+  final String turnKey;
+  final String? sessionId;
+  final String? turnId;
+  final DateTime startedAt;
+  final List<_ConversationRoundLog> rounds;
+  final ApiLogEntry? finalLog;
+
+  const _ConversationTurnLog({
+    required this.turnKey,
+    required this.sessionId,
+    required this.turnId,
+    required this.startedAt,
+    required this.rounds,
+    this.finalLog,
+  });
+}
+
 class LogViewerPage extends StatefulWidget {
   const LogViewerPage({super.key});
 
@@ -240,6 +270,35 @@ class _LogViewerPageState extends State<LogViewerPage> {
               return ValueListenableBuilder<List<LogEntry>>(
                 valueListenable: AppLogger.entries,
                 builder: (context, systemLogs, __) {
+                  if (_typeFilter == LogTypeFilter.conversation) {
+                    final turns = _buildConversationTurns(apiLogs);
+
+                    if (turns.length > _lastLogCount) {
+                      _lastLogCount = turns.length;
+                      WidgetsBinding.instance
+                          .addPostFrameCallback((_) => _scrollToBottom());
+                    } else if (turns.length < _lastLogCount) {
+                      _lastLogCount = turns.length;
+                    }
+
+                    if (turns.isEmpty) {
+                      return Center(
+                        child: Text(
+                          '暂无对话日志',
+                          style: TextStyle(color: colors.textSecondary),
+                        ),
+                      );
+                    }
+
+                    return ListView.builder(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.all(12),
+                      itemCount: turns.length,
+                      itemBuilder: (context, index) =>
+                          _buildConversationTurnItem(turns[index], index),
+                    );
+                  }
+
                   final entries = _buildUnifiedEntries(apiLogs, systemLogs);
 
                   // 只有当日志数量增加时才滚动到底部（新日志到来）
@@ -309,6 +368,8 @@ class _LogViewerPageState extends State<LogViewerPage> {
                     setState(() {
                       _typeFilter = filter;
                       _expandedIndices.clear();
+                      _selectedIndices.clear();
+                      _isSelectionMode = false;
                     });
                     _saveTypeFilter(filter);
                   },
@@ -355,6 +416,8 @@ class _LogViewerPageState extends State<LogViewerPage> {
                     setState(() {
                       _levelFilter = filter;
                       _expandedIndices.clear();
+                      _selectedIndices.clear();
+                      _isSelectionMode = false;
                     });
                     _saveLevelFilter(filter);
                   },
@@ -392,6 +455,299 @@ class _LogViewerPageState extends State<LogViewerPage> {
   }
 
   /// 合并并按时间排序所有日志
+  List<_ConversationTurnLog> _buildConversationTurns(
+      List<ApiLogEntry> apiLogs) {
+    final hideTime = _hideBeforeTime;
+    final logs = apiLogs
+        .where((log) => log.isConversation)
+        .where((log) => hideTime == null || !log.time.isBefore(hideTime))
+        .toList()
+      ..sort((a, b) => a.time.compareTo(b.time));
+
+    final grouped = <String, List<ApiLogEntry>>{};
+    var legacyIndex = 0;
+    for (final log in logs) {
+      final turnId = log.turnId?.trim();
+      final sessionId = log.sessionId?.trim();
+      final key = (turnId != null && turnId.isNotEmpty)
+          ? '${sessionId ?? ''}::$turnId'
+          : 'legacy_${legacyIndex++}_${log.time.millisecondsSinceEpoch}';
+      grouped.putIfAbsent(key, () => <ApiLogEntry>[]).add(log);
+    }
+
+    final turns = <_ConversationTurnLog>[];
+    for (final entry in grouped.entries) {
+      final turnLogs = entry.value..sort((a, b) => a.time.compareTo(b.time));
+      final roundRequestLogs = <int, ApiLogEntry>{};
+      final roundToolLogs = <int, ApiLogEntry>{};
+      ApiLogEntry? finalLog;
+
+      for (final log in turnLogs) {
+        final round = log.roundIndex ?? 1;
+        final eventType = (log.eventType ?? '').trim();
+        final hasToolResult =
+            log.rawToolResults != null && log.rawToolResults!.isNotEmpty;
+        final hasFinalReply =
+            log.finalReply != null && log.finalReply!.isNotEmpty;
+
+        if (eventType == 'final_response' || hasFinalReply) {
+          finalLog = log;
+          continue;
+        }
+
+        if (eventType == 'tool_execution' || hasToolResult) {
+          roundToolLogs[round] = log;
+        } else {
+          roundRequestLogs[round] = log;
+        }
+      }
+
+      final roundIndexes = <int>{
+        ...roundRequestLogs.keys,
+        ...roundToolLogs.keys,
+      }.toList()
+        ..sort();
+      final rounds = <_ConversationRoundLog>[
+        for (final roundIndex in roundIndexes)
+          _ConversationRoundLog(
+            roundIndex: roundIndex,
+            requestLog: roundRequestLogs[roundIndex],
+            toolLog: roundToolLogs[roundIndex],
+          )
+      ];
+
+      turns.add(_ConversationTurnLog(
+        turnKey: entry.key,
+        sessionId: _firstNonEmpty(turnLogs.map((e) => e.sessionId)),
+        turnId: _firstNonEmpty(turnLogs.map((e) => e.turnId)),
+        startedAt: turnLogs.first.time,
+        rounds: rounds,
+        finalLog: finalLog,
+      ));
+    }
+
+    turns.sort((a, b) => a.startedAt.compareTo(b.startedAt));
+    return turns;
+  }
+
+  String? _firstNonEmpty(Iterable<String?> values) {
+    for (final value in values) {
+      final trimmed = value?.trim();
+      if (trimmed != null && trimmed.isNotEmpty) {
+        return trimmed;
+      }
+    }
+    return null;
+  }
+
+  Widget _buildConversationTurnItem(_ConversationTurnLog turn, int index) {
+    final colors = context.moeColors;
+    final meta = <String>[
+      _formatTime(turn.startedAt),
+      if (turn.turnId != null) 'turn=${turn.turnId}',
+      if (turn.sessionId != null) 'session=${turn.sessionId}',
+      if (turn.turnId == null) turn.turnKey,
+    ].join(' | ');
+    final finalReply = _resolveFinalReply(turn);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: MoeG2Decoration(
+        radius: 10,
+        color: colors.componentBackground,
+        border: Border.all(
+          color: Colors.deepPurple.withValues(alpha: 0.35),
+          width: borderWidth,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Turn ${index + 1} (${turn.rounds.length} rounds)',
+            style: const TextStyle(
+              color: Colors.deepPurple,
+              fontSize: 12,
+              fontWeight: MoeFontWeights.emphasis,
+              fontFamily: 'monospace',
+            ),
+          ),
+          const SizedBox(height: 4),
+          SelectableText(
+            meta,
+            style: TextStyle(
+              color: colors.textSecondary,
+              fontSize: 10,
+              fontFamily: 'monospace',
+            ),
+          ),
+          const SizedBox(height: 10),
+          ...[
+            for (var i = 0; i < turn.rounds.length; i++) ...[
+              _buildConversationRoundItem(turn.rounds[i]),
+              if (i != turn.rounds.length - 1) const SizedBox(height: 8),
+            ],
+          ],
+          if (finalReply.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            _buildConversationSection(
+              title: 'Final reply delivered to user',
+              content: finalReply,
+              titleColor: Colors.green,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildConversationRoundItem(_ConversationRoundLog round) {
+    final colors = context.moeColors;
+    final requestLog = round.requestLog;
+    final toolLog = round.toolLog;
+    final contextText = _prettyJson(requestLog?.rawContext) ?? '(empty)';
+    final toolCallsText =
+        _prettyJson(toolLog?.rawToolCalls ?? requestLog?.rawToolCalls) ??
+            '(none)';
+    final toolResultsText = _prettyJson(toolLog?.rawToolResults) ?? '(none)';
+    final aiReply = requestLog?.rawAiResponse?.trim().isNotEmpty == true
+        ? requestLog!.rawAiResponse!
+        : '(empty)';
+
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: MoeG2Decoration(
+        radius: 8,
+        color: colors.surface.withValues(alpha: 0.6),
+        border: Border.all(
+          color: Colors.deepPurple.withValues(alpha: 0.25),
+          width: borderWidth,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'Round ${round.roundIndex}',
+                style: const TextStyle(
+                  color: Colors.deepPurple,
+                  fontSize: 11,
+                  fontFamily: 'monospace',
+                  fontWeight: MoeFontWeights.emphasis,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                _formatTime((requestLog ?? toolLog)?.time ?? DateTime.now()),
+                style: TextStyle(
+                  color: colors.muted,
+                  fontSize: 10,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          _buildConversationSection(
+            title: 'Full context received by AI',
+            content: contextText,
+          ),
+          const SizedBox(height: 6),
+          _buildConversationSection(
+            title: 'AI -> Tool Calls',
+            content: toolCallsText,
+          ),
+          const SizedBox(height: 6),
+          _buildConversationSection(
+            title: 'Tool -> AI Results',
+            content: toolResultsText,
+          ),
+          const SizedBox(height: 6),
+          _buildConversationSection(
+            title: 'Raw AI response',
+            content: aiReply,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildConversationSection({
+    required String title,
+    required String content,
+    Color? titleColor,
+  }) {
+    final colors = context.moeColors;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: TextStyle(
+            color: titleColor ?? colors.textSecondary,
+            fontSize: 10,
+            fontFamily: 'monospace',
+            fontWeight: MoeFontWeights.emphasis,
+          ),
+        ),
+        const SizedBox(height: 3),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: colors.surface.withValues(alpha: 0.75),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: colors.borderLight, width: borderWidth),
+          ),
+          child: SelectableText(
+            content,
+            style: TextStyle(
+              color: colors.text,
+              fontSize: 10,
+              height: 1.35,
+              fontFamily: 'monospace',
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _resolveFinalReply(_ConversationTurnLog turn) {
+    final finalReply = turn.finalLog?.finalReply?.trim();
+    if (finalReply != null && finalReply.isNotEmpty) {
+      return finalReply;
+    }
+
+    final finalRawReply = turn.finalLog?.rawAiResponse?.trim();
+    if (finalRawReply != null && finalRawReply.isNotEmpty) {
+      return finalRawReply;
+    }
+
+    for (var i = turn.rounds.length - 1; i >= 0; i--) {
+      final text = turn.rounds[i].requestLog?.rawAiResponse?.trim();
+      if (text != null && text.isNotEmpty) {
+        return text;
+      }
+    }
+    return '';
+  }
+
+  String? _prettyJson(String? raw) {
+    if (raw == null) return null;
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(trimmed);
+      return const JsonEncoder.withIndent('  ').convert(decoded);
+    } catch (_) {
+      return raw;
+    }
+  }
+
   List<_UnifiedLogEntry> _buildUnifiedEntries(
     List<ApiLogEntry> apiLogs,
     List<LogEntry> systemLogs,
@@ -532,7 +888,7 @@ class _LogViewerPageState extends State<LogViewerPage> {
   String? _formatMetadata(Map<String, dynamic>? metadata) {
     if (metadata == null || metadata.isEmpty) return null;
     try {
-      final encoder = const JsonEncoder.withIndent('  ');
+      const encoder = JsonEncoder.withIndent('  ');
       return encoder.convert(metadata);
     } catch (_) {
       return metadata.toString();
@@ -655,7 +1011,7 @@ class _LogViewerPageState extends State<LogViewerPage> {
       buffer.writeln();
       buffer.writeln('--- metadata ---');
       try {
-        final encoder = const JsonEncoder.withIndent('  ');
+        const encoder = JsonEncoder.withIndent('  ');
         buffer.write(encoder.convert(log.metadata));
       } catch (_) {
         buffer.write(log.metadata.toString());
@@ -668,7 +1024,7 @@ class _LogViewerPageState extends State<LogViewerPage> {
   String _tryFormatJson(String text) {
     try {
       final decoded = jsonDecode(text);
-      final encoder = const JsonEncoder.withIndent('  ');
+      const encoder = JsonEncoder.withIndent('  ');
       return encoder.convert(decoded);
     } catch (_) {
       return text;

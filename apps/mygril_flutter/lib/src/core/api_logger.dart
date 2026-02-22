@@ -10,7 +10,8 @@ import 'package:path_provider/path_provider.dart';
 /// [text] 原始文本
 /// [maxLength] 最大长度（默认100）
 /// [headRatio] 头部占比（默认0.6，即头部占60%）
-String truncateLongText(String text, {int maxLength = 100, double headRatio = 0.6}) {
+String truncateLongText(String text,
+    {int maxLength = 100, double headRatio = 0.6}) {
   if (text.length <= maxLength) return text;
 
   final headLen = (maxLength * headRatio).round();
@@ -39,8 +40,32 @@ class ApiLogEntry {
   /// AI 收到的原始上下文（完整消息列表，JSON 格式）
   final String? rawContext;
 
+  /// 直连请求的完整 JSON 请求体（不截断）
+  final String? rawRequestBody;
+
+  /// 直连请求的完整 JSON 响应体（不截断）
+  final String? rawResponseBody;
+
+  /// 解析后的 tool_calls（JSON 字符串）
+  final String? rawToolCalls;
+  final String? sessionId;
+  final String? turnId;
+  final int? roundIndex;
+  final String? eventType;
+  final String? rawToolResults;
+  final String? finalReply;
+
   /// 是否为 AI 对话日志（用于筛选）
-  bool get isConversation => rawAiResponse != null || rawContext != null;
+  bool get isConversation =>
+      rawAiResponse != null ||
+      rawContext != null ||
+      rawRequestBody != null ||
+      rawResponseBody != null ||
+      rawToolCalls != null ||
+      rawToolResults != null ||
+      finalReply != null ||
+      turnId != null ||
+      sessionId != null;
 
   const ApiLogEntry({
     required this.time,
@@ -53,6 +78,15 @@ class ApiLogEntry {
     required this.ok,
     this.rawAiResponse,
     this.rawContext,
+    this.rawRequestBody,
+    this.rawResponseBody,
+    this.rawToolCalls,
+    this.sessionId,
+    this.turnId,
+    this.roundIndex,
+    this.eventType,
+    this.rawToolResults,
+    this.finalReply,
   });
 
   /// 转换为 JSON
@@ -68,6 +102,15 @@ class ApiLogEntry {
       'ok': ok,
       if (rawAiResponse != null) 'rawAiResponse': rawAiResponse,
       if (rawContext != null) 'rawContext': rawContext,
+      if (rawRequestBody != null) 'rawRequestBody': rawRequestBody,
+      if (rawResponseBody != null) 'rawResponseBody': rawResponseBody,
+      if (rawToolCalls != null) 'rawToolCalls': rawToolCalls,
+      if (sessionId != null) 'sessionId': sessionId,
+      if (turnId != null) 'turnId': turnId,
+      if (roundIndex != null) 'roundIndex': roundIndex,
+      if (eventType != null) 'eventType': eventType,
+      if (rawToolResults != null) 'rawToolResults': rawToolResults,
+      if (finalReply != null) 'finalReply': finalReply,
     };
   }
 
@@ -84,6 +127,15 @@ class ApiLogEntry {
       ok: json['ok'] as bool,
       rawAiResponse: json['rawAiResponse'] as String?,
       rawContext: json['rawContext'] as String?,
+      rawRequestBody: json['rawRequestBody'] as String?,
+      rawResponseBody: json['rawResponseBody'] as String?,
+      rawToolCalls: json['rawToolCalls'] as String?,
+      sessionId: json['sessionId'] as String?,
+      turnId: json['turnId'] as String?,
+      roundIndex: json['roundIndex'] as int?,
+      eventType: json['eventType'] as String?,
+      rawToolResults: json['rawToolResults'] as String?,
+      finalReply: json['finalReply'] as String?,
     );
   }
 }
@@ -96,7 +148,8 @@ class ApiLogEntry {
 /// - 初始化前的日志会被缓冲，初始化后批量写入
 /// - 缓存文件路径，避免重复计算
 class ApiLogger {
-  static final ValueNotifier<List<ApiLogEntry>> entries = ValueNotifier<List<ApiLogEntry>>(<ApiLogEntry>[]);
+  static final ValueNotifier<List<ApiLogEntry>> entries =
+      ValueNotifier<List<ApiLogEntry>>(<ApiLogEntry>[]);
   static const int _max = 200;
   static const String _logDirName = 'logs';
 
@@ -107,7 +160,7 @@ class ApiLogger {
   // 文件路径缓存
   static String? _cachedLogDirPath;
   static String? _cachedTodayFilePath;
-  static int? _cachedFileDay;  // 缓存的日期（用于检测跨天）
+  static int? _cachedFileDay; // 缓存的日期（用于检测跨天）
 
   // 写入队列
   static final List<ApiLogEntry> _writeQueue = [];
@@ -142,7 +195,8 @@ class ApiLogger {
     if (_cachedTodayFilePath != null) return _cachedTodayFilePath!;
 
     final logDirPath = await _getLogDirPath();
-    final fileName = 'api_${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}.jsonl';
+    final fileName =
+        'api_${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}.jsonl';
     _cachedTodayFilePath = '$logDirPath/$fileName';
     _cachedFileDay = today;
     return _cachedTodayFilePath!;
@@ -177,7 +231,7 @@ class ApiLogger {
         }
       }
     } catch (e) {
-      _initialized = true;  // 即使失败也标记为已初始化，避免死循环
+      _initialized = true; // 即使失败也标记为已初始化，避免死循环
       _initCompleter!.complete();
       if (kDebugMode) {
         debugPrint('ApiLogger 初始化失败: $e');
@@ -246,8 +300,11 @@ class ApiLogger {
   static String safeSnippet(String s, {int max = 800}) {
     String out = s;
     // 屏蔽常见敏感字段
-    out = out.replaceAllMapped(RegExp(r'("api_key"\s*:\s*")([^"\\]{4,})(")', multiLine: true), (m) => '${m.group(1)}***${m.group(3)}');
-    out = out.replaceAllMapped(RegExp(r'(sk-)[A-Za-z0-9]{8,}'), (m) => '${m.group(1)}****');
+    out = out.replaceAllMapped(
+        RegExp(r'("api_key"\s*:\s*")([^"\\]{4,})(")', multiLine: true),
+        (m) => '${m.group(1)}***${m.group(3)}');
+    out = out.replaceAllMapped(
+        RegExp(r'(sk-)[A-Za-z0-9]{8,}'), (m) => '${m.group(1)}****');
 
     // 尝试解析 JSON 并截断 system 角色的长提示词
     try {

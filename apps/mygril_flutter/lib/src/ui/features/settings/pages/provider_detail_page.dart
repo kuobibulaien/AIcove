@@ -756,7 +756,7 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
                     focusNode: _keyFocusNode,
                     style: TextStyle(fontSize: 14, color: colors.text),
                     textAlign: TextAlign.end,
-                    obscureText: true,
+                    obscureText: false,
                     decoration: const InputDecoration(
                       border: InputBorder.none,
                       isDense: true,

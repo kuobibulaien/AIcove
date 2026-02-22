@@ -85,11 +85,6 @@ class AliyunQwenTtsWebSocket {
             final data = jsonDecode(message as String) as Map<String, dynamic>;
             final type = data['type'] as String?;
 
-            AppLogger.debug('TTS-WS', '收到消息', metadata: {
-              'type': type,
-              'eventId': data['event_id'],
-            });
-
             switch (type) {
               case 'session.created':
                 // 会话创建成功，发送配置
@@ -246,7 +241,6 @@ class AliyunQwenTtsWebSocket {
 
     AppLogger.debug('TTS-WS', '发送 session.update', metadata: {
       'voiceId': voiceId,
-      'responseFormat': responseFormat,
     });
     socket.add(jsonEncode(event));
   }

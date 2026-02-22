@@ -7,17 +7,25 @@
 /// - 2026-01-28: 添加消息分段显示功能（纯前端展示）
 library;
 
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:image_gallery_saver/image_gallery_saver.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../../../../features/chat/providers2.dart';
 import '../../../../features/chat/domain/message.dart';
 import '../../../../features/chat/presentation/widgets/message_bubble.dart';
 import '../../../../features/chat/presentation/widgets/message_action_sheet.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
+import '../../../../ui/shared/widgets/meotalk_dialog.dart';
 import '../../../../ui/shared/widgets/moe_toast.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../../core/utils/message_formatter.dart';
+import '../../../../core/models/message_block.dart';
 import 'animated_message_item.dart';
 
 const double _kMessageItemVerticalPadding = 2.0;
@@ -30,6 +38,9 @@ class ChatMessageList extends ConsumerStatefulWidget {
   final String displayName;
   final void Function(Message message)? onEditMessage;
   final void Function(Message message)? onRegenerateMessage;
+
+  /// 上下文截断点消息ID（此消息之后为新话题）
+  final String? contextStartMessageId;
 
   /// 分页加载：滑到顶部（历史消息方向）时触发
   final Future<void> Function()? onLoadMore;
@@ -48,6 +59,7 @@ class ChatMessageList extends ConsumerStatefulWidget {
     required this.displayName,
     this.onEditMessage,
     this.onRegenerateMessage,
+    this.contextStartMessageId,
     this.onLoadMore,
     this.isLoadingMore = false,
     this.hasMoreMessages = true,
@@ -174,6 +186,7 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   Widget build(BuildContext context) {
     final actions = ref.watch(chatActionsProvider);
     final settingsAsync = ref.watch(appSettingsProvider);
+    final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
 
     // 获取消息格式化配置（用于分段显示）
     final formatConfig = settingsAsync.maybeWhen(
@@ -212,8 +225,9 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
         left: 4,
         right: 4,
         top: 10,
-        // 底部留出足够空间给浮动的 Composer（约 70px 高度）
-        bottom: MediaQuery.paddingOf(context).bottom + 70,
+        // 保证输入框上方始终是消息列表底部：
+        // 常态预留 Composer 高度，键盘弹出时再叠加键盘高度。
+        bottom: MediaQuery.paddingOf(context).bottom + 70 + keyboardInset,
       ),
       itemCount: itemCount,
       itemBuilder: (context, index) {
@@ -226,6 +240,8 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
 
         if (item is _TimeDivider) {
           return _buildTimeDivider(context, item.time);
+        } else if (item is _NewTopicDivider) {
+          return _buildNewTopicDivider(context);
         } else if (item is _ChunkedMessageItem) {
           // 分段消息：创建一个临时 Message 对象用于显示
           final m = item.originalMessage;
@@ -251,6 +267,8 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
               onRetry: null, // 分段消息不支持重试
               onLongPress: (bubbleKey) =>
                   _handleMessageLongPress(context, m, isMe, bubbleKey),
+              onMediaLongPress: (mediaKey, block) =>
+                  _handleMediaLongPress(context, m, isMe, mediaKey, block),
             ),
           );
 
@@ -281,10 +299,12 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
               showName: false, // 一对一聊天不显示名称，群聊功能上线后改为 true
               showAvatar: item.showAvatar,
               onRetry: (isMe && m.status == 'failed')
-                  ? () => _showRetryDialog(context, m.id, actions)
+                  ? () => actions.recallFailedMessage(m.id)
                   : null,
               onLongPress: (bubbleKey) =>
                   _handleMessageLongPress(context, m, isMe, bubbleKey),
+              onMediaLongPress: (mediaKey, block) =>
+                  _handleMediaLongPress(context, m, isMe, mediaKey, block),
             ),
           );
 
@@ -382,6 +402,11 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
               showAvatar: j == 0 && showAvatar, // 只有第一个分段且该消息是组首条才显示头像
             ));
           }
+          // 在截断点消息之后插入新话题分隔线（分段消息场景）
+          if (widget.contextStartMessageId != null &&
+              currentMessage.id == widget.contextStartMessageId) {
+            items.add(_NewTopicDivider());
+          }
           continue;
         }
       }
@@ -401,6 +426,12 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
 
       items.add(_MessageItem(currentMessage,
           showCorner: showCorner, showAvatar: showAvatar));
+
+      // 在截断点消息之后插入新话题分隔线
+      if (widget.contextStartMessageId != null &&
+          currentMessage.id == widget.contextStartMessageId) {
+        items.add(_NewTopicDivider());
+      }
     }
 
     return items;
@@ -440,6 +471,40 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
             fontSize: 12,
             fontWeight: MoeFontWeights.normal,
           ),
+        ),
+      ),
+    );
+  }
+
+  /// 构建新话题分隔线Widget
+  Widget _buildNewTopicDivider(BuildContext context) {
+    final colors = context.moeColors;
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        child: Row(
+          children: [
+            Expanded(
+              child: Container(
+                  height: 0.5, color: colors.muted.withValues(alpha: 0.3)),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Text(
+                '以上为历史话题',
+                style: TextStyle(
+                  color: colors.muted,
+                  fontSize: 11,
+                  fontWeight: MoeFontWeights.normal,
+                ),
+              ),
+            ),
+            Expanded(
+              child: Container(
+                  height: 0.5, color: colors.muted.withValues(alpha: 0.3)),
+            ),
+          ],
         ),
       ),
     );
@@ -499,36 +564,196 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
               isUser: isMe,
             );
             break;
+          case MessageAction.save:
+            break; // 文本消息不支持保存
         }
       },
     );
   }
 
-  Future<void> _showRetryDialog(
-    BuildContext context,
-    String messageId,
-    ChatActions actions,
-  ) async {
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('重新发送'),
-        content: const Text('是否重新发送该消息？'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('发送'),
-          ),
-        ],
-      ),
+  /// 处理媒体（图片/音频）长按或右键事件
+  Future<void> _handleMediaLongPress(BuildContext context, Message message,
+      bool isMe, GlobalKey mediaKey, MessageBlock block) async {
+    final mediaType = block is AudioBlock ? MediaType.audio : MediaType.image;
+    await showMediaActionMenu(
+      context,
+      targetKey: mediaKey,
+      mediaType: mediaType,
+      onAction: (action) {
+        if (!context.mounted) return;
+        switch (action) {
+          case MessageAction.save:
+            _saveMediaBlock(context, block);
+            break;
+          case MessageAction.quote:
+            final quoteText = block is ImageBlock
+                ? '[图片]'
+                : block is AudioBlock
+                    ? '[语音]'
+                    : '[媒体]';
+            ref.read(quotedMessageProvider.notifier).state = QuotedMessage(
+              id: message.id,
+              content: quoteText,
+              isUser: isMe,
+            );
+            break;
+          default:
+            break;
+        }
+      },
     );
+  }
 
-    if (result == true) {
-      await actions.retry(messageId);
+  /// 保存媒体文件
+  /// - Android 图片：自动保存到系统相册（带权限申请）
+  /// - 其他场景：按平台保存（桌面选择路径，移动端使用系统保存面板）
+  Future<void> _saveMediaBlock(BuildContext context, MessageBlock block) async {
+    try {
+      String? sourcePath;
+      String defaultFileName;
+      final isImage = block is ImageBlock;
+
+      if (isImage) {
+        sourcePath = block.localPath;
+        // 如果没有本地路径但有 URL，用 URL 的文件名
+        if (sourcePath == null || sourcePath.isEmpty) {
+          if (block.url != null && block.url!.isNotEmpty) {
+            // 网络图片：尝试从缓存目录取
+            // CachedNetworkImage 使用 DefaultCacheManager，缓存路径不直接可知
+            // 退回到提示用户在预览中长按保存
+            if (context.mounted) {
+              MoeToast.show(context, '网络图片请在预览中保存');
+            }
+            return;
+          }
+          if (block.base64 != null && block.base64!.isNotEmpty) {
+            // base64 图片：写入临时文件再保存
+            final tempDir = await getTemporaryDirectory();
+            final tempFile = File(
+                '${tempDir.path}/save_${DateTime.now().millisecondsSinceEpoch}.png');
+            final bytes = _decodeBase64Image(block.base64!);
+            if (bytes == null) {
+              if (context.mounted) MoeToast.show(context, '图片数据无效');
+              return;
+            }
+            await tempFile.writeAsBytes(bytes);
+            sourcePath = tempFile.path;
+          }
+        }
+        final ext = sourcePath != null
+            ? sourcePath.split('.').last.toLowerCase()
+            : 'png';
+        defaultFileName = 'image_${DateTime.now().millisecondsSinceEpoch}.$ext';
+      } else if (block is AudioBlock) {
+        sourcePath = block.url;
+        // AudioBlock.url 可能是本地路径
+        final ext = sourcePath.split('.').last.toLowerCase();
+        defaultFileName = 'audio_${DateTime.now().millisecondsSinceEpoch}.$ext';
+      } else {
+        return;
+      }
+
+      if (sourcePath == null || sourcePath.isEmpty) {
+        if (context.mounted) MoeToast.show(context, '文件不存在');
+        return;
+      }
+
+      final sourceFile = File(sourcePath);
+      if (!sourceFile.existsSync()) {
+        if (context.mounted) MoeToast.show(context, '文件不存在');
+        return;
+      }
+
+      if (Platform.isAndroid && isImage) {
+        final granted = await _ensureAndroidGalleryPermission();
+        if (!context.mounted) return;
+        if (!granted) {
+          if (context.mounted) MoeToast.show(context, '未授予相册权限，无法保存');
+          return;
+        }
+
+        final result = await ImageGallerySaver.saveFile(
+          sourceFile.path,
+          name: defaultFileName,
+        );
+        if (_isGallerySaveSuccess(result)) {
+          if (context.mounted) MoeToast.show(context, '已保存到相册');
+        } else {
+          if (context.mounted) MoeToast.show(context, '保存到相册失败');
+        }
+        return;
+      }
+
+      if (Platform.isAndroid || Platform.isIOS) {
+        final bytes = await sourceFile.readAsBytes();
+        final savePath = await FilePicker.platform.saveFile(
+          dialogTitle: '保存文件',
+          fileName: defaultFileName,
+          bytes: bytes,
+        );
+        if (savePath == null) return;
+        if (context.mounted) MoeToast.show(context, '已保存');
+        return;
+      }
+
+      final savePath = await FilePicker.platform.saveFile(
+        dialogTitle: '保存文件',
+        fileName: defaultFileName,
+      );
+      if (savePath == null) return; // 用户取消
+      await sourceFile.copy(savePath);
+      if (context.mounted) MoeToast.show(context, '已保存');
+    } catch (e) {
+      if (context.mounted) MoeToast.show(context, '保存失败: $e');
+    }
+  }
+
+  Future<bool> _ensureAndroidGalleryPermission() async {
+    final hasPermission = await _hasAndroidGalleryPermission();
+    if (hasPermission) return true;
+    if (!mounted) return false;
+
+    final confirm = await showMeoTalkConfirm(
+      context: context,
+      title: '需要相册权限',
+      message: '保存图片到系统相册需要相册访问权限。',
+      hint: '授权后可直接将聊天图片保存到你的相册。',
+      cancelText: '取消',
+      confirmText: '去授权',
+    );
+    if (confirm != true) return false;
+
+    final photosStatus = await Permission.photos.request();
+    if (photosStatus.isGranted || photosStatus.isLimited) return true;
+
+    final storageStatus = await Permission.storage.request();
+    return storageStatus.isGranted;
+  }
+
+  Future<bool> _hasAndroidGalleryPermission() async {
+    final photosStatus = await Permission.photos.status;
+    if (photosStatus.isGranted || photosStatus.isLimited) return true;
+
+    final storageStatus = await Permission.storage.status;
+    return storageStatus.isGranted;
+  }
+
+  bool _isGallerySaveSuccess(dynamic result) {
+    if (result is bool) return result;
+    if (result is Map) {
+      final success = result['isSuccess'] ?? result['success'];
+      if (success is bool) return success;
+      if (success is num) return success != 0;
+    }
+    return false;
+  }
+
+  /// 解码 base64 图片数据
+  static List<int>? _decodeBase64Image(String base64Str) {
+    try {
+      return base64Decode(base64Str);
+    } catch (_) {
+      return null;
     }
   }
 }
@@ -577,3 +802,6 @@ class _TimeDivider extends _ListItem {
   final DateTime time;
   _TimeDivider(this.time);
 }
+
+/// 新话题分隔线列表项
+class _NewTopicDivider extends _ListItem {}

@@ -1,15 +1,16 @@
-/// TTS 处理服务
+/// TTS 与多模态消息交付服务
 ///
-/// 封装 TTS 语音消息的生成与交付逻辑。
+/// 封装 TTS 语音消息的生成与交付逻辑，同时处理表情包等多模态内容的顺序交付。
 ///
 /// 核心方法：`deliverSegmentedMessages()`
-/// - 无 TTS 标签时：直接交付文本消息
-/// - 有 TTS 标签时：按 <tts> 标签分段，文本直接发，语音生成完再发，按顺序交替
+/// - 无多模态标签时：直接交付文本消息
+/// - 有多模态标签时：按 <tts>/[表情包] 分段，文本直接发，语音生成完再发，表情包直接发
 ///
 /// 更新记录：
 /// - 2025-12-31: 从 chat_actions.dart 提取
 /// - 2026-01-14: 添加 TTS 失败回退机制
 /// - 2026-01-28: 重写为顺序发送模式，移除占位符机制
+/// - 2026-02-21: 统一多模态交付，支持表情包按位置顺序发送
 library;
 
 import 'dart:async';
@@ -90,31 +91,34 @@ class ChatTtsHandler {
       return;
     }
 
-    // 有 TTS 标签 → 按段顺序发送
+    // 有 TTS 标签 → 按段顺序发送（同时处理表情包等多模态内容）
     await _deliverWithTtsSegments(
       convId: convId,
       userMsgId: userMsgId,
       replyText: replyText,
+      pluginEvents: pluginEvents,
       trace: trace,
     );
   }
 
-  /// 按 TTS 标签分段，顺序发送文本和语音消息
+  /// 按多模态标签分段，顺序发送文本、语音和表情包消息
   ///
   /// 流程：
-  /// 1. 解析 replyText 得到 [text, tts, text, tts, ...] 片段
+  /// 1. 解析 replyText 得到 [text, tts, text, sticker, text, ...] 片段
   /// 2. 遍历片段：
   ///    - text 段 → 直接添加为文本消息
   ///    - tts 段 → 调用 TtsPlayerManager 生成语音 → 成功则发语音消息，失败则发文本消息
+  ///    - sticker 段 → 直接添加为表情包消息
   /// 3. 每发完一段就更新对话，用户实时看到消息
   Future<void> _deliverWithTtsSegments({
     required String convId,
     required String userMsgId,
     required String replyText,
+    required List<PluginEvent> pluginEvents,
     TraceLogger? trace,
   }) async {
-    // 解析 TTS 标签分段
-    final segments = chatMessageProcessor.parseTtsSegments(replyText);
+    // 解析多模态标签分段（TTS + 表情包）
+    final segments = chatMessageProcessor.parseMultimodalSegments(replyText, pluginEvents);
 
     if (segments.isEmpty) {
       // 解析失败，降级为直接交付原始文本
@@ -136,11 +140,12 @@ class ChatTtsHandler {
       return;
     }
 
-    AppLogger.info('ChatTtsHandler', '开始 TTS 分段交付', metadata: {
+    AppLogger.info('ChatTtsHandler', '开始多模态分段交付', metadata: {
       'convId': convId,
       'segmentCount': segments.length,
-      'ttsSegments': segments.where((s) => s.type == TtsSegmentType.tts).length,
-      'textSegments': segments.where((s) => s.type == TtsSegmentType.text).length,
+      'ttsSegments': segments.where((s) => s.type == MultimodalSegmentType.tts).length,
+      'textSegments': segments.where((s) => s.type == MultimodalSegmentType.text).length,
+      'stickerSegments': segments.where((s) => s.type == MultimodalSegmentType.sticker).length,
     });
 
     // 先标记用户消息为已发送
@@ -160,7 +165,7 @@ class ChatTtsHandler {
       final segment = segments[i];
       final isLast = i == segments.length - 1;
 
-      if (segment.type == TtsSegmentType.text) {
+      if (segment.type == MultimodalSegmentType.text) {
         // 文本段：直接发送
         final textMsg = Message(
           id: genId('msg'),
@@ -180,6 +185,40 @@ class ChatTtsHandler {
           'segmentIndex': i,
           'textLength': segment.content.length,
         });
+      } else if (segment.type == MultimodalSegmentType.sticker) {
+        // 表情包段：直接发送
+        final assetPath = segment.stickerData?['assetPath'] as String?;
+        final stickerId = segment.stickerData?['stickerId'] as String?;
+        final tag = segment.stickerData?['tag'] as String?;
+
+        if (assetPath != null && assetPath.isNotEmpty) {
+          final stickerMsgId = genId('sticker');
+          final stickerMsg = Message.fromBlocks(
+            id: stickerMsgId,
+            role: 'assistant',
+            blocks: [
+              EmojiBlock(
+                messageId: genId('emoji'),
+                emojiId: stickerId ?? tag ?? 'unknown',
+                path: assetPath,
+                matchedTag: tag,
+              ),
+            ],
+            createdAt: DateTime.now(),
+            status: 'sent',
+          );
+
+          await _appendMessageToConversation(
+            convId: convId,
+            message: stickerMsg,
+            lastMessagePreview: isLast ? '[表情]' : null,
+          );
+
+          AppLogger.info('ChatTtsHandler', '已发送表情包段', metadata: {
+            'segmentIndex': i,
+            'tag': tag,
+          });
+        }
       } else {
         // TTS 段：生成语音后发送
         final ttsText = segment.content.trim();
@@ -231,7 +270,7 @@ class ChatTtsHandler {
       }
     }
 
-    AppLogger.info('ChatTtsHandler', 'TTS 分段交付完成', metadata: {
+    AppLogger.info('ChatTtsHandler', '多模态分段交付完成', metadata: {
       'convId': convId,
       'totalSegments': segments.length,
     });

@@ -25,6 +25,7 @@ import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../widgets/model_search_sheet.dart';
 import 'add_provider_sheet.dart';
+import 'default_model_settings_page.dart';
 import 'provider_detail_page.dart';
 
 class ModelListPage extends ConsumerStatefulWidget {
@@ -147,7 +148,7 @@ class _ModelListPageState extends ConsumerState<ModelListPage> {
       },
       child: Scaffold(
         appBar: MoeAppBar(
-          title: '供应商',
+          title: '模型管理',
           showBackButton: true,
           actions: [
             MoeIconButton(
@@ -182,84 +183,120 @@ class _ModelListPageState extends ConsumerState<ModelListPage> {
     // 优先使用本地状态（乐观更新），否则使用设置中的数据
     final providers = _localProviders ?? settings.providers;
 
-    if (providers.isEmpty) {
-      return Center(
-        child: MoeEmptyState(
-          icon: Icons.cloud_off,
-          title: '还没有任何供应商',
-          description: '右上角可以「新增」供应商',
-          action: MoePrimaryButton(
-            label: '新增供应商',
-            icon: Icons.add,
-            onPressed: () => showAddProviderSheet(context),
-          ),
-        ),
-      );
-    }
-
     final selectedCount = providers.where((p) => _selected.contains(p.id)).length;
 
     return GestureDetector(
       onTap: _selectMode ? _exitSelectMode : null,
       child: Stack(
         children: [
-          Padding(
+          ListView(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-            child: MoeSettingsGroup(
-              margin: EdgeInsets.zero,
-              padding: EdgeInsets.zero,
-              children: [
-                ReorderableListView.builder(
-                  shrinkWrap: true,
+            children: [
+              // ============ 默认模型设置 ============
+              MoeSettingsGroup(
+                margin: EdgeInsets.zero,
+                padding: EdgeInsets.zero,
+                children: [
+                  MoeSettingsRow(
+                    iconWidget: SizedBox(
+                      width: 32,
+                      height: 32,
+                      child: DecoratedBox(
+                        decoration: MoeG2Decoration(
+                          radius: 8,
+                          color: colors.primary.withValues(alpha: 0.1),
+                        ),
+                        child: Icon(Icons.tune, color: colors.primary, size: 18),
+                      ),
+                    ),
+                    iconContainerWidth: 40,
+                    label: '默认模型设置',
+                    subtitle: '聊天模型、图片识别模型',
+                    trailingType: MoeSettingsRowTrailing.chevron,
+                    onTap: () {
+                      Navigator.of(context).push(
+                        ParallaxSlidePageRoute(
+                          page: const DefaultModelSettingsPage(),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 16),
+
+              // ============ 渠道供应商列表 ============
+              if (providers.isEmpty)
+                MoeEmptyState(
+                  icon: Icons.cloud_off,
+                  title: '还没有任何供应商',
+                  description: '右上角可以「新增」供应商',
+                  action: MoePrimaryButton(
+                    label: '新增供应商',
+                    icon: Icons.add,
+                    onPressed: () => showAddProviderSheet(context),
+                  ),
+                )
+              else
+                MoeSettingsGroup(
+                  margin: EdgeInsets.zero,
                   padding: EdgeInsets.zero,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: providers.length,
-                  onReorder: _onReorderProviders,
-                  buildDefaultDragHandles: false,
-                  proxyDecorator: (child, index, animation) {
-                    return AnimatedBuilder(
-                      animation: animation,
-                      builder: (context, child) {
-                        final t = Curves.easeInOut.transform(animation.value);
-                        final scale = lerpDouble(1.0, 0.98, t) ?? 1.0;
-                        return Transform.scale(
-                          scale: scale,
-                          child: Opacity(
-                            opacity: 0.95,
-                            child: child,
-                          ),
-                        );
-                      },
-                      child: child,
-                    );
-                  },
-                  itemBuilder: (context, index) {
-                    final p = providers[index];
-                    return ReorderableDelayedDragStartListener(
-                      key: ValueKey(p.id),
-                      index: index,
-                      child: _SettleAnim(
-                        active: _settleKeys.contains(p.id),
-                        child: _ProviderRow(
-                          provider: p,
-                          selectMode: _selectMode,
-                          selected: _selected.contains(p.id),
-                          onToggleSelect: () => _toggleSelected(p.id),
-                          onOpenDetail: () {
-                            Navigator.of(context).push(
-                              ParallaxSlidePageRoute(
-                                page: ProviderDetailPage(providerId: p.id),
+                  children: [
+                    ReorderableListView.builder(
+                      shrinkWrap: true,
+                      padding: EdgeInsets.zero,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: providers.length,
+                      onReorder: _onReorderProviders,
+                      buildDefaultDragHandles: false,
+                      proxyDecorator: (child, index, animation) {
+                        return AnimatedBuilder(
+                          animation: animation,
+                          builder: (context, child) {
+                            final t = Curves.easeInOut.transform(animation.value);
+                            final scale = lerpDouble(1.0, 0.98, t) ?? 1.0;
+                            return Transform.scale(
+                              scale: scale,
+                              child: Opacity(
+                                opacity: 0.95,
+                                child: child,
                               ),
                             );
                           },
-                          showDivider: index != providers.length - 1,
-                        ),
-                      ),
-                    );
-                  },
+                          child: child,
+                        );
+                      },
+                      itemBuilder: (context, index) {
+                        final p = providers[index];
+                        return ReorderableDelayedDragStartListener(
+                          key: ValueKey(p.id),
+                          index: index,
+                          child: _SettleAnim(
+                            active: _settleKeys.contains(p.id),
+                            child: _ProviderRow(
+                              provider: p,
+                              selectMode: _selectMode,
+                              selected: _selected.contains(p.id),
+                              onToggleSelect: () => _toggleSelected(p.id),
+                              onOpenDetail: () {
+                                Navigator.of(context).push(
+                                  ParallaxSlidePageRoute(
+                                    page: ProviderDetailPage(providerId: p.id),
+                                  ),
+                                );
+                              },
+                              showDivider: index != providers.length - 1,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
                 ),
-              ],
-            ),
+
+              const SizedBox(height: 80), // 底部留白
+            ],
           ),
         Positioned(
           left: 0,

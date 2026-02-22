@@ -1,3 +1,18 @@
+/// 画师串预设
+class ArtistPreset {
+  final String name;
+  final String content;
+
+  const ArtistPreset({required this.name, required this.content});
+
+  Map<String, dynamic> toJson() => {'name': name, 'content': content};
+
+  factory ArtistPreset.fromJson(Map<String, dynamic> json) => ArtistPreset(
+        name: json['name'] as String? ?? '',
+        content: json['content'] as String? ?? '',
+      );
+}
+
 class ImageConfig {
   final String? selectedProviderId;
   final String? selectedModelId;
@@ -8,12 +23,21 @@ class ImageConfig {
   final double defaultGuidanceScale;
   final int defaultCount;
   final String drawingSystemPrompt;
+  final List<ArtistPreset> artistPresets;
+  final String? selectedArtistPresetName;
+
+  /// 内置默认画师串预设
+  static const defaultArtistPresets = [
+    ArtistPreset(
+      name: '防冻液',
+      content:
+          '[[omochi monaka]] ,{{kele mimi}} ,[ruriri], [[[[[d omm]]]]] ,[[[[[[[tianliang_duohe_fangdongye]]]]]] ,Ningen Mame, {{year 2024}},',
+    ),
+  ];
 
   /// NovelAI 生图提示词规范（默认值），作为 system prompt 注入给 AI。
   static const defaultDrawingSystemPrompt = '''
-当用户明确要求"画图/生成图片/做一张图/插画/海报/壁纸"时，请优先调用 `draw_image` 工具，不要只返回文字描述。
-你可以先澄清关键需求（风格、主体、构图、尺寸），然后再调用工具。
-工具执行后，用一句简短自然的话说明"图已生成"即可。
+如果对话场景涉及到生成图片，可调用`draw_image` 工具。你可以自行使用此工具提升角色扮演效果，如生成自拍或生活图片等。自行决定使用用途。
 
 ## 提示词书写规范（NovelAI V4/V4.5）
 你传给 draw_image 工具的 prompt 必须遵循以下格式，不要写自然语言段落：
@@ -52,12 +76,14 @@ lowres, bad anatomy, bad hands, missing fingers, extra digits, fewer digits, cro
     this.selectedProviderId,
     this.selectedModelId,
     this.defaultNegativePrompt = '',
-    this.defaultWidth = 1024,
-    this.defaultHeight = 1024,
+    this.defaultWidth = 832,
+    this.defaultHeight = 1216,
     this.defaultSteps = 28,
     this.defaultGuidanceScale = 5.0,
     this.defaultCount = 1,
     this.drawingSystemPrompt = defaultDrawingSystemPrompt,
+    this.artistPresets = defaultArtistPresets,
+    this.selectedArtistPresetName,
   });
 
   ImageConfig copyWith({
@@ -72,6 +98,9 @@ lowres, bad anatomy, bad hands, missing fingers, extra digits, fewer digits, cro
     double? defaultGuidanceScale,
     int? defaultCount,
     String? drawingSystemPrompt,
+    List<ArtistPreset>? artistPresets,
+    String? selectedArtistPresetName,
+    bool clearSelectedArtistPreset = false,
   }) {
     return ImageConfig(
       selectedProviderId: clearSelectedProviderId
@@ -87,6 +116,10 @@ lowres, bad anatomy, bad hands, missing fingers, extra digits, fewer digits, cro
       defaultGuidanceScale: defaultGuidanceScale ?? this.defaultGuidanceScale,
       defaultCount: defaultCount ?? this.defaultCount,
       drawingSystemPrompt: drawingSystemPrompt ?? this.drawingSystemPrompt,
+      artistPresets: artistPresets ?? this.artistPresets,
+      selectedArtistPresetName: clearSelectedArtistPreset
+          ? null
+          : (selectedArtistPresetName ?? this.selectedArtistPresetName),
     );
   }
 
@@ -101,6 +134,8 @@ lowres, bad anatomy, bad hands, missing fingers, extra digits, fewer digits, cro
       'defaultGuidanceScale': defaultGuidanceScale,
       'defaultCount': defaultCount,
       'drawingSystemPrompt': drawingSystemPrompt,
+      'artistPresets': artistPresets.map((e) => e.toJson()).toList(),
+      'selectedArtistPresetName': selectedArtistPresetName,
     };
   }
 
@@ -109,14 +144,40 @@ lowres, bad anatomy, bad hands, missing fingers, extra digits, fewer digits, cro
       selectedProviderId: json['selectedProviderId'] as String?,
       selectedModelId: json['selectedModelId'] as String?,
       defaultNegativePrompt: json['defaultNegativePrompt'] as String? ?? '',
-      defaultWidth: (json['defaultWidth'] as num?)?.toInt() ?? 1024,
-      defaultHeight: (json['defaultHeight'] as num?)?.toInt() ?? 1024,
+      defaultWidth: (json['defaultWidth'] as num?)?.toInt() ?? 832,
+      defaultHeight: (json['defaultHeight'] as num?)?.toInt() ?? 1216,
       defaultSteps: (json['defaultSteps'] as num?)?.toInt() ?? 28,
       defaultGuidanceScale:
           (json['defaultGuidanceScale'] as num?)?.toDouble() ?? 5.0,
       defaultCount: (json['defaultCount'] as num?)?.toInt() ?? 1,
       drawingSystemPrompt:
           json['drawingSystemPrompt'] as String? ?? defaultDrawingSystemPrompt,
+      artistPresets: (json['artistPresets'] as List<dynamic>?)
+              ?.map((e) => ArtistPreset.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          defaultArtistPresets,
+      selectedArtistPresetName:
+          json['selectedArtistPresetName'] as String?,
     );
+  }
+
+  /// 获取当前选中的画师串预设（如果有）
+  ArtistPreset? get selectedArtistPreset {
+    if (selectedArtistPresetName == null) return null;
+    return artistPresets
+        .where((p) => p.name == selectedArtistPresetName)
+        .firstOrNull;
+  }
+
+  /// 组合最终发送给 AI 的 system prompt（含画师串预设提示）
+  String get effectiveSystemPrompt {
+    final base = drawingSystemPrompt.trim().isNotEmpty
+        ? drawingSystemPrompt
+        : defaultDrawingSystemPrompt;
+    final preset = selectedArtistPreset;
+    if (preset == null) return base;
+    return '$base\n\n## 用户默认画师串预设\n'
+        '用户设置的默认画师串预设是：\n${preset.content}\n'
+        '如果没有其他需要，请在生成图片的 prompt 前面加上这段画师串。';
   }
 }

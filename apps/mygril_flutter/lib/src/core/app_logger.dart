@@ -91,6 +91,10 @@ class AppLogger {
   static const int maxEntries = 1000;  // 内存中最多保存 1000 条日志
   static const String _logDirName = 'logs';
 
+  /// 最小日志级别（低于此级别的日志会被丢弃）
+  /// 默认 debug 模式下输出所有，release 模式下只输出 info 及以上
+  static LogLevel minLevel = kDebugMode ? LogLevel.debug : LogLevel.info;
+
   // 初始化状态
   static bool _initialized = false;
   static Completer<void>? _initCompleter;
@@ -213,6 +217,9 @@ class AppLogger {
 
   /// 添加日志
   static void add(LogEntry entry) {
+    // 0. 级别过滤：低于最小级别的日志直接丢弃
+    if (entry.level.value < minLevel.value) return;
+
     // 1. 更新内存中的日志列表
     final list = List<LogEntry>.from(entries.value);
     list.add(entry);

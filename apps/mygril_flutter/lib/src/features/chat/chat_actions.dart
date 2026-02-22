@@ -26,11 +26,13 @@ import '../settings/app_settings.dart';
 import 'conversation_providers.dart';
 import 'chat_providers.dart';
 import '../../core/app_logger.dart';
+import '../../core/database/database_provider.dart';
 
 // 重新导出公共类型，保持向后兼容
 export 'chat_providers.dart';
 export 'services/chat_types.dart';
-export 'services/chat_send_service.dart' show ChatSendService, ApiCallResult, ApiConfig, SendRequest;
+export 'services/chat_send_service.dart'
+    show ChatSendService, ApiCallResult, ApiConfig, SendRequest;
 export 'services/chat_tts_handler.dart' show ChatTtsHandler;
 
 class ProactiveSendResult {
@@ -65,7 +67,7 @@ class ChatActions {
 
   // ===== 公开 API =====
 
-  /// 发送文本消息
+  /// 发送文本消息（支持自动轮询多个默认聊天模型）
   Future<void> send(String text) async {
     final conv = _ref.read(activeConversationProvider);
     if (conv == null || text.trim().isEmpty) return;
@@ -76,14 +78,40 @@ class ChatActions {
     _ref.read(errorProvider.notifier).state = null;
 
     final userMsg = _sendService.createUserMessage(text: text, imagePath: null);
-    await _sendService.addUserMessage(convId: convId, userMsg: userMsg, displayText: text);
+    await _sendService.addUserMessage(
+        convId: convId, userMsg: userMsg, displayText: text);
 
     try {
       final settings = await _ref.read(appSettingsProvider.future);
-      final history = _sendService.prepareHistory(conv: conv, userMsg: userMsg, limit: settings.historyMessageLimit);
-      final config = await _sendService.prepareApiConfig(conv: conv, history: history, userText: text, trace: trace);
-      final result = await _sendService.executeApiCall(config: config, sessionId: convId, userText: text, trace: trace);
-      final buildResult = _sendService.buildAssistantMessages(apiResult: result, settings: settings);
+      final history = _sendService.prepareHistory(
+          conv: conv, userMsg: userMsg, limit: settings.historyMessageLimit);
+
+      // 构建轮询模型列表：defaultChatModels > defaultModelName
+      final modelsToTry = settings.defaultChatModels.isNotEmpty
+          ? settings.defaultChatModels
+          : [settings.defaultModelName];
+
+      final (result, usedSettings) = await _executeWithFailover(
+        modelsToTry: modelsToTry,
+        buildConfig: (model) => _sendService.prepareApiConfig(
+          conv: conv,
+          history: history,
+          userText: text,
+          trace: trace,
+          overrideModel: model,
+        ),
+        execute: (config) => _sendService.executeApiCall(
+          config: config,
+          sessionId: convId,
+          userText: text,
+          turnId: userMsg.id,
+          trace: trace,
+        ),
+        settings: settings,
+      );
+
+      final buildResult = _sendService.buildAssistantMessages(
+          apiResult: result, settings: usedSettings);
 
       // 统一的消息交付入口：自动处理 TTS 分段发送
       await _ttsHandler.deliverSegmentedMessages(
@@ -92,7 +120,7 @@ class ChatActions {
         buildResult: buildResult,
         replyText: result.replyText,
         pluginEvents: result.pluginEvents,
-        ttsEnabled: settings.ttsEnabled,
+        ttsEnabled: usedSettings.ttsEnabled,
         trace: trace,
       );
 
@@ -100,17 +128,19 @@ class ChatActions {
     } catch (e) {
       trace.error('失败', metadata: {'error': e.toString()});
       trace.end(additionalMessage: '失败');
-      await _sendService.markUserMessageFailed(convId: convId, userMsgId: userMsg.id);
+      await _sendService.markUserMessageFailed(
+          convId: convId, userMsgId: userMsg.id);
       _ref.read(errorProvider.notifier).state = e.toString();
     } finally {
       _ref.read(sendingProvider.notifier).state = false;
+      _ref.read(modelFailoverInfoProvider.notifier).state = null;
       // 委托给 AnalyzerScheduler：5分钟无新消息后触发 AI 管家分析
       _ref.read(analyzerSchedulerProvider).scheduleAnalysis();
     }
   }
 
-  /// 发送图片消息
-  Future<void> sendWithImage(String imagePath) async {
+  /// 发送图片消息（可附带文字说明，支持图片识别模型 + 轮询）
+  Future<void> sendWithImage(String imagePath, {String? text}) async {
     final conv = _ref.read(activeConversationProvider);
     if (conv == null || imagePath.trim().isEmpty) return;
     final convId = conv.id;
@@ -118,15 +148,56 @@ class ChatActions {
     _ref.read(sendingProvider.notifier).state = true;
     _ref.read(errorProvider.notifier).state = null;
 
-    final userMsg = _sendService.createUserMessage(text: null, imagePath: imagePath);
-    await _sendService.addUserMessage(convId: convId, userMsg: userMsg, displayText: '[图片]');
+    final userText = text?.trim();
+    final hasText = userText != null && userText.isNotEmpty;
+    final userMsg = _sendService.createUserMessage(
+      text: hasText ? userText : null,
+      imagePath: imagePath,
+    );
+    final displayText = hasText ? userText : '[图片]';
+    await _sendService.addUserMessage(
+        convId: convId, userMsg: userMsg, displayText: displayText);
 
     try {
       final settings = await _ref.read(appSettingsProvider.future);
-      final history = _sendService.prepareHistory(conv: conv, userMsg: userMsg, limit: settings.historyMessageLimit);
-      final config = await _sendService.prepareApiConfig(conv: conv, history: history, userText: '[image]');
-      final result = await _sendService.executeApiCall(config: config, sessionId: convId, userText: '[image]');
-      final buildResult = _sendService.buildAssistantMessages(apiResult: result, settings: settings);
+      final history = _sendService.prepareHistory(
+          conv: conv, userMsg: userMsg, limit: settings.historyMessageLimit);
+      final apiText = hasText ? userText : '[image]';
+
+      // 图片识别模型优先，然后 fallback 到聊天模型列表
+      final modelsToTry = <String>[];
+      if (settings.defaultVisionModel != null &&
+          settings.defaultVisionModel!.isNotEmpty) {
+        modelsToTry.add(settings.defaultVisionModel!);
+      }
+      if (settings.defaultChatModels.isNotEmpty) {
+        for (final m in settings.defaultChatModels) {
+          if (!modelsToTry.contains(m)) modelsToTry.add(m);
+        }
+      }
+      if (modelsToTry.isEmpty) {
+        modelsToTry.add(settings.defaultModelName);
+      }
+
+      final (result, usedSettings) = await _executeWithFailover(
+        modelsToTry: modelsToTry,
+        buildConfig: (model) => _sendService.prepareApiConfig(
+          conv: conv,
+          history: history,
+          userText: apiText,
+          overrideModel: model,
+        ),
+        execute: (config) => _sendService.executeApiCall(
+          config: config,
+          sessionId: convId,
+          userText: apiText,
+          turnId: userMsg.id,
+        ),
+        settings: settings,
+      );
+
+      final buildResult = _sendService.buildAssistantMessages(
+          apiResult: result, settings: usedSettings);
 
       await _ttsHandler.deliverSegmentedMessages(
         convId: convId,
@@ -134,13 +205,15 @@ class ChatActions {
         buildResult: buildResult,
         replyText: result.replyText,
         pluginEvents: result.pluginEvents,
-        ttsEnabled: settings.ttsEnabled,
+        ttsEnabled: usedSettings.ttsEnabled,
       );
     } catch (e) {
-      await _sendService.markUserMessageFailed(convId: convId, userMsgId: userMsg.id);
+      await _sendService.markUserMessageFailed(
+          convId: convId, userMsgId: userMsg.id);
       _ref.read(errorProvider.notifier).state = e.toString();
     } finally {
       _ref.read(sendingProvider.notifier).state = false;
+      _ref.read(modelFailoverInfoProvider.notifier).state = null;
       _ref.read(analyzerSchedulerProvider).scheduleAnalysis();
     }
   }
@@ -154,17 +227,24 @@ class ChatActions {
     _ref.read(sendingProvider.notifier).state = true;
     _ref.read(errorProvider.notifier).state = null;
 
-    final userMsg = await _sendService.createUserFileMessage(filePath: filePath);
-    await _sendService.addUserMessage(convId: convId, userMsg: userMsg, displayText: '[文件]');
+    final userMsg =
+        await _sendService.createUserFileMessage(filePath: filePath);
+    await _sendService.addUserMessage(
+        convId: convId, userMsg: userMsg, displayText: '[文件]');
 
     try {
       final settings = await _ref.read(appSettingsProvider.future);
-      final history =
-          _sendService.prepareHistory(conv: conv, userMsg: userMsg, limit: settings.historyMessageLimit);
-      final config = await _sendService.prepareApiConfig(conv: conv, history: history, userText: '[file]');
-      final result =
-          await _sendService.executeApiCall(config: config, sessionId: convId, userText: '[file]');
-      final buildResult = _sendService.buildAssistantMessages(apiResult: result, settings: settings);
+      final history = _sendService.prepareHistory(
+          conv: conv, userMsg: userMsg, limit: settings.historyMessageLimit);
+      final config = await _sendService.prepareApiConfig(
+          conv: conv, history: history, userText: '[file]');
+      final result = await _sendService.executeApiCall(
+          config: config,
+          sessionId: convId,
+          userText: '[file]',
+          turnId: userMsg.id);
+      final buildResult = _sendService.buildAssistantMessages(
+          apiResult: result, settings: settings);
 
       await _ttsHandler.deliverSegmentedMessages(
         convId: convId,
@@ -175,7 +255,8 @@ class ChatActions {
         ttsEnabled: settings.ttsEnabled,
       );
     } catch (e) {
-      await _sendService.markUserMessageFailed(convId: convId, userMsgId: userMsg.id);
+      await _sendService.markUserMessageFailed(
+          convId: convId, userMsgId: userMsg.id);
       _ref.read(errorProvider.notifier).state = e.toString();
     } finally {
       _ref.read(sendingProvider.notifier).state = false;
@@ -186,12 +267,15 @@ class ChatActions {
   /// 主动触发器发送
   /// 注意：作废检查已在 AutoReplyTriggerController._pollDueTriggers() 中完成
   /// 此方法被调用时，触发器已确认可以触发
-  Future<ProactiveSendResult> sendProactiveTrigger(AutoReplyTrigger trigger) async {
+  Future<ProactiveSendResult> sendProactiveTrigger(
+      AutoReplyTrigger trigger) async {
     final settings = await _ref.read(appSettingsProvider.future);
     if (!settings.autoReplySettings.enabled) {
-      AppLogger.info('ChatActions', 'Skip proactive trigger: auto-reply disabled', metadata: {
-        'triggerId': trigger.id,
-      });
+      AppLogger.info(
+          'ChatActions', 'Skip proactive trigger: auto-reply disabled',
+          metadata: {
+            'triggerId': trigger.id,
+          });
       return const ProactiveSendResult.skipped('auto_reply_disabled');
     }
 
@@ -201,7 +285,8 @@ class ChatActions {
         : _ref.read(activeConversationIdProvider);
 
     if (targetConvId == null || targetConvId.isEmpty) {
-      AppLogger.warning('ChatActions', '触发器发送失败：无目标会话', metadata: {'triggerId': trigger.id});
+      AppLogger.warning('ChatActions', '触发器发送失败：无目标会话',
+          metadata: {'triggerId': trigger.id});
       return const ProactiveSendResult.skipped('target_conversation_missing');
     }
 
@@ -209,7 +294,8 @@ class ChatActions {
     final conversations = _ref.read(conversationsProvider).valueOrNull ?? [];
     final conv = conversations.where((c) => c.id == targetConvId).firstOrNull;
     if (conv == null) {
-      AppLogger.warning('ChatActions', '触发器发送失败：会话不存在', metadata: {'convId': targetConvId});
+      AppLogger.warning('ChatActions', '触发器发送失败：会话不存在',
+          metadata: {'convId': targetConvId});
       return const ProactiveSendResult.skipped('target_conversation_not_found');
     }
 
@@ -223,8 +309,8 @@ class ChatActions {
             pluginEvents: const [],
             toolResults: const [],
           );
-          final buildResult =
-              _sendService.buildAssistantMessages(apiResult: cachedResult, settings: settings);
+          final buildResult = _sendService.buildAssistantMessages(
+              apiResult: cachedResult, settings: settings);
           await _ttsHandler.deliverSegmentedMessages(
             convId: targetConvId,
             userMsgId: '',
@@ -245,7 +331,8 @@ class ChatActions {
           ? trigger.prompt!.trim()
           : trigger.title;
       final snapshotHistory = _buildSnapshotHistory(trigger.contextSnapshot);
-      final history = snapshotHistory.isNotEmpty ? snapshotHistory : conv.messages;
+      final history =
+          snapshotHistory.isNotEmpty ? snapshotHistory : conv.messages;
       final config = await _sendService.prepareApiConfig(
         conv: conv,
         history: history,
@@ -255,8 +342,10 @@ class ChatActions {
         config: config,
         sessionId: targetConvId,
         userText: proactiveInput,
+        turnId: 'trigger_${trigger.id}',
       );
-      final buildResult = _sendService.buildAssistantMessages(apiResult: result, settings: settings);
+      final buildResult = _sendService.buildAssistantMessages(
+          apiResult: result, settings: settings);
 
       // 触发器没有 userMsgId，使用空字符串
       await _ttsHandler.deliverSegmentedMessages(
@@ -344,23 +433,44 @@ class ChatActions {
     _ref.read(sendingProvider.notifier).state = true;
     _ref.read(errorProvider.notifier).state = null;
 
-    await _ref.read(conversationsProvider.notifier).updateOne(convId, (c) => c.copyWith(
-      messages: c.messages.map((m) => m.id == messageId ? m.copyWith(status: 'sending') : m).toList(),
-    ));
+    await _ref.read(conversationsProvider.notifier).updateOne(
+        convId,
+        (c) => c.copyWith(
+              messages: c.messages
+                  .map((m) =>
+                      m.id == messageId ? m.copyWith(status: 'sending') : m)
+                  .toList(),
+            ));
 
     try {
       final settings = await _ref.read(appSettingsProvider.future);
       final msgIndex = conv.messages.indexWhere((m) => m.id == messageId);
-      final history = msgIndex > 0 ? conv.messages.sublist(0, msgIndex + 1) : conv.messages;
+      // 取重试消息及之前的历史，并过滤掉其他失败消息
+      final rawHistory =
+          msgIndex > 0 ? conv.messages.sublist(0, msgIndex + 1) : conv.messages;
+      final history = rawHistory
+          .where((m) => m.status != 'failed' || m.id == messageId)
+          .toList();
 
-      final config = await _sendService.prepareApiConfig(conv: conv, history: history, userText: failedMsg.displayText);
-      final result = await _sendService.executeApiCall(config: config, sessionId: convId, userText: failedMsg.displayText);
-      final buildResult = _sendService.buildAssistantMessages(apiResult: result, settings: settings);
+      final config = await _sendService.prepareApiConfig(
+          conv: conv, history: history, userText: failedMsg.displayText);
+      final result = await _sendService.executeApiCall(
+          config: config,
+          sessionId: convId,
+          userText: failedMsg.displayText,
+          turnId: messageId);
+      final buildResult = _sendService.buildAssistantMessages(
+          apiResult: result, settings: settings);
 
       // 先标记原消息为成功
-      await _ref.read(conversationsProvider.notifier).updateOne(convId, (c) => c.copyWith(
-        messages: c.messages.map((m) => m.id == messageId ? m.copyWith(status: 'sent') : m).toList(),
-      ));
+      await _ref.read(conversationsProvider.notifier).updateOne(
+          convId,
+          (c) => c.copyWith(
+                messages: c.messages
+                    .map((m) =>
+                        m.id == messageId ? m.copyWith(status: 'sent') : m)
+                    .toList(),
+              ));
 
       await _ttsHandler.deliverSegmentedMessages(
         convId: convId,
@@ -371,9 +481,14 @@ class ChatActions {
         ttsEnabled: settings.ttsEnabled,
       );
     } catch (e) {
-      await _ref.read(conversationsProvider.notifier).updateOne(convId, (c) => c.copyWith(
-        messages: c.messages.map((m) => m.id == messageId ? m.copyWith(status: 'failed') : m).toList(),
-      ));
+      await _ref.read(conversationsProvider.notifier).updateOne(
+          convId,
+          (c) => c.copyWith(
+                messages: c.messages
+                    .map((m) =>
+                        m.id == messageId ? m.copyWith(status: 'failed') : m)
+                    .toList(),
+              ));
       _ref.read(errorProvider.notifier).state = e.toString();
     } finally {
       _ref.read(sendingProvider.notifier).state = false;
@@ -403,18 +518,35 @@ class ChatActions {
     _ref.read(sendingProvider.notifier).state = true;
     _ref.read(errorProvider.notifier).state = null;
 
+    // 收集被移除的消息 ID，用于数据库软删除
+    final removedMessages = conv.messages.sublist(userMsgIndex + 1);
+
     // 删除AI消息及其后的所有消息，保留到用户消息
-    await _ref.read(conversationsProvider.notifier).updateOne(convId, (c) => c.copyWith(
-      messages: c.messages.sublist(0, userMsgIndex + 1),
-    ));
+    await _ref.read(conversationsProvider.notifier).updateOne(
+        convId,
+        (c) => c.copyWith(
+              messages: c.messages.sublist(0, userMsgIndex + 1),
+            ));
+
+    // 在数据库中软删除被移除的消息
+    await _softDeleteMessages(removedMessages.map((m) => m.id).toList());
 
     try {
       final settings = await _ref.read(appSettingsProvider.future);
       final updatedConv = _ref.read(activeConversationProvider)!;
-      final history = _sendService.prepareHistory(conv: updatedConv, userMsg: userMsg, limit: settings.historyMessageLimit);
-      final config = await _sendService.prepareApiConfig(conv: updatedConv, history: history, userText: userText);
-      final result = await _sendService.executeApiCall(config: config, sessionId: convId, userText: userText);
-      final buildResult = _sendService.buildAssistantMessages(apiResult: result, settings: settings);
+      final history = _sendService.prepareHistory(
+          conv: updatedConv,
+          userMsg: userMsg,
+          limit: settings.historyMessageLimit);
+      final config = await _sendService.prepareApiConfig(
+          conv: updatedConv, history: history, userText: userText);
+      final result = await _sendService.executeApiCall(
+          config: config,
+          sessionId: convId,
+          userText: userText,
+          turnId: userMsg.id);
+      final buildResult = _sendService.buildAssistantMessages(
+          apiResult: result, settings: settings);
 
       await _ttsHandler.deliverSegmentedMessages(
         convId: convId,
@@ -433,6 +565,36 @@ class ChatActions {
     }
   }
 
+  /// 撤回失败消息：将失败消息的文本回填到输入框，并从会话中删除该消息
+  void recallFailedMessage(String messageId) {
+    final conv = _ref.read(activeConversationProvider);
+    if (conv == null) return;
+    final convId = conv.id;
+
+    final idx = conv.messages.indexWhere(
+      (m) => m.id == messageId && m.status == 'failed',
+    );
+    if (idx < 0) return;
+    final failedMsg = conv.messages[idx];
+
+    // 将失败消息文本填入输入框
+    final text = failedMsg.displayText;
+    if (text.isNotEmpty) {
+      _ref.read(editingTextProvider.notifier).state = text;
+    }
+
+    // 从会话中删除该失败消息
+    _ref.read(conversationsProvider.notifier).updateOne(convId, (c) {
+      final newMessages = c.messages.where((m) => m.id != messageId).toList();
+      final lastMsg = newMessages.isNotEmpty ? newMessages.last : null;
+      return c.copyWith(
+        messages: newMessages,
+        lastMessage: lastMsg?.displayText ?? '',
+        lastMessageTime: lastMsg?.createdAt ?? c.createdAt,
+      );
+    });
+  }
+
   /// 编辑消息：删除指定消息及其后的所有消息，返回被删除消息的文本用于填充输入框
   Future<String?> editMessage(String messageId) async {
     final conv = _ref.read(activeConversationProvider);
@@ -446,6 +608,7 @@ class ChatActions {
     final text = msg.displayText;
 
     // 删除该消息及其后的所有消息
+    final removedMessages = conv.messages.sublist(msgIndex);
     await _ref.read(conversationsProvider.notifier).updateOne(convId, (c) {
       final newMessages = c.messages.sublist(0, msgIndex);
       final lastMsg = newMessages.isNotEmpty ? newMessages.last : null;
@@ -456,6 +619,9 @@ class ChatActions {
       );
     });
 
+    // 在数据库中软删除被移除的消息
+    await _softDeleteMessages(removedMessages.map((m) => m.id).toList());
+
     return text;
   }
 
@@ -463,6 +629,68 @@ class ChatActions {
   /// 委托给 AnalyzerScheduler 处理后台分析逻辑
   void onAppBackground() {
     _ref.read(analyzerSchedulerProvider).onAppBackground();
+  }
+
+  // ===== 内部：模型轮询 =====
+
+  /// 按模型列表顺序尝试发送，失败后自动切换下一个模型
+  /// 返回 (API调用结果, 使用的设置)
+  Future<(ApiCallResult, AppSettings)> _executeWithFailover({
+    required List<String> modelsToTry,
+    required Future<ApiConfig> Function(String model) buildConfig,
+    required Future<ApiCallResult> Function(ApiConfig config) execute,
+    required AppSettings settings,
+  }) async {
+    // 只有一个模型时，直接调用不做轮询
+    if (modelsToTry.length <= 1) {
+      final model = modelsToTry.isNotEmpty
+          ? modelsToTry.first
+          : settings.defaultModelName;
+      final config = await buildConfig(model);
+      final result = await execute(config);
+      return (result, settings);
+    }
+
+    Object? lastError;
+    for (var i = 0; i < modelsToTry.length; i++) {
+      final model = modelsToTry[i];
+      try {
+        final config = await buildConfig(model);
+        final result = await execute(config);
+        // 成功，清除轮询通知
+        _ref.read(modelFailoverInfoProvider.notifier).state = null;
+        return (result, settings);
+      } catch (e) {
+        lastError = e;
+        AppLogger.warning('ChatActions', '模型 $model 调用失败，尝试下一个', metadata: {
+          'failedModel': model,
+          'attempt': i + 1,
+          'total': modelsToTry.length,
+          'error': e.toString(),
+        });
+
+        // 还有下一个模型可以尝试
+        if (i < modelsToTry.length - 1) {
+          final nextModel = modelsToTry[i + 1];
+          final displayName = settings.getModelDisplayName(nextModel);
+          _ref.read(modelFailoverInfoProvider.notifier).state = displayName;
+        }
+      }
+    }
+
+    // 所有模型都失败了，抛出最后一个错误
+    throw lastError!;
+  }
+
+  /// 在数据库中软删除指定的消息（及其内容块）
+  Future<void> _softDeleteMessages(List<String> messageIds) async {
+    if (messageIds.isEmpty) return;
+    final msgRepo = _ref.read(messageRepositoryProvider);
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final purgeAt = now + 30 * 24 * 60 * 60 * 1000; // 30天后物理清除
+    for (final id in messageIds) {
+      await msgRepo.softDelete(id, now, purgeAt);
+    }
   }
 }
 

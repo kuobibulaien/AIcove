@@ -33,6 +33,33 @@ class _ModelMeta {
 
 String _normalizeModelId(String modelId) => modelId.trim();
 
+String _buildProviderModelRef(String providerId, String modelId) =>
+    '${providerId.trim()}:${modelId.trim()}';
+
+String _normalizeStoredModelRef(
+  String modelRef, {
+  required Map<String, String> providerMap,
+  required Set<String> providerIds,
+}) {
+  final ref = modelRef.trim();
+  if (ref.isEmpty) return ref;
+
+  final idx = ref.indexOf(':');
+  if (idx > 0 && idx < ref.length - 1) {
+    final providerId = ref.substring(0, idx).trim();
+    final modelId = ref.substring(idx + 1).trim();
+    if (providerIds.contains(providerId) && modelId.isNotEmpty) {
+      return _buildProviderModelRef(providerId, modelId);
+    }
+  }
+
+  final providerId = providerMap[ref];
+  if (providerId == null || providerId.isEmpty) {
+    return ref;
+  }
+  return _buildProviderModelRef(providerId, ref);
+}
+
 /// 将旧枚举值迁移为十六进制颜色值
 String _migrateAccentColor(String value) {
   const legacyMap = {
@@ -53,34 +80,48 @@ _ModelMeta _calculateModelMeta(
   final visible = <String>[];
   final allKnown = <String>[];
   final providerMap = <String, String>{};
+  final providerIds = <String>{};
 
   for (final provider in providers) {
     // 只收集 chat 类型的 provider 的模型到对话模型列表
     if (provider.modelType != 'chat') continue;
+    providerIds.add(provider.id);
     for (final model in provider.models) {
       final id = _normalizeModelId(model);
       if (id.isEmpty) continue;
-      if (!allKnown.contains(id)) {
-        allKnown.add(id);
+      final modelRef = _buildProviderModelRef(provider.id, id);
+      if (!allKnown.contains(modelRef)) {
+        allKnown.add(modelRef);
       }
+      providerMap[modelRef] = provider.id;
       providerMap.putIfAbsent(id, () => provider.id);
     }
     for (final model in provider.visibleModels) {
       final id = _normalizeModelId(model);
       if (id.isEmpty) continue;
-      if (!visible.contains(id)) {
-        visible.add(id);
+      final modelRef = _buildProviderModelRef(provider.id, id);
+      if (!visible.contains(modelRef)) {
+        visible.add(modelRef);
       }
+      if (!allKnown.contains(modelRef)) {
+        allKnown.add(modelRef);
+      }
+      providerMap[modelRef] = provider.id;
+      providerMap.putIfAbsent(id, () => provider.id);
     }
   }
 
   if (visible.isEmpty && fallbackVisible != null) {
     for (final model in fallbackVisible) {
-      final id = _normalizeModelId(model);
-      if (id.isNotEmpty &&
-          providerMap.containsKey(id) &&
-          !visible.contains(id)) {
-        visible.add(id);
+      final modelRef = _normalizeStoredModelRef(
+        model,
+        providerMap: providerMap,
+        providerIds: providerIds,
+      );
+      if (modelRef.isNotEmpty &&
+          providerMap.containsKey(modelRef) &&
+          !visible.contains(modelRef)) {
+        visible.add(modelRef);
       }
     }
   }
@@ -90,7 +131,13 @@ _ModelMeta _calculateModelMeta(
   }
 
   final defaultModel = () {
-    final candidate = serverDefault?.trim();
+    final candidate = serverDefault == null
+        ? null
+        : _normalizeStoredModelRef(
+            serverDefault,
+            providerMap: providerMap,
+            providerIds: providerIds,
+          );
     if (candidate != null &&
         candidate.isNotEmpty &&
         visible.contains(candidate)) {
@@ -176,6 +223,10 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
   final uiScaleFactor = ((data['ui_scale_factor'] as num?)?.toDouble() ?? 1.0)
       .clamp(kMinUiScaleFactor, kMaxUiScaleFactor)
       .toDouble();
+  final imagePreviewScale =
+      ((data['image_preview_scale'] as num?)?.toDouble() ?? 1.0)
+          .clamp(kMinImagePreviewScale, kMaxImagePreviewScale)
+          .toDouble();
   final hideUserAvatar = data['hide_user_avatar'] != false;
   final userAvatar = data['user_avatar'] as String?;
   final userName = data['user_name'] as String?;
@@ -195,6 +246,30 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
   // 支持十六进制颜色值（如 'FC96AA'）或旧枚举值（如 'pink'）
   final rawAccent = (data['accent_color'] as String?) ?? 'FC96AA';
   final accentColor = _migrateAccentColor(rawAccent);
+
+  // 解析默认聊天模型列表和图片识别模型
+  final chatProviderIds =
+      providers.where((p) => p.modelType == 'chat').map((p) => p.id).toSet();
+  final defaultChatModels = <String>[];
+  for (final model in _cleanStrings(data['default_chat_models'])) {
+    final modelRef = _normalizeStoredModelRef(
+      model,
+      providerMap: meta.providerMap,
+      providerIds: chatProviderIds,
+    );
+    if (modelRef.isNotEmpty && !defaultChatModels.contains(modelRef)) {
+      defaultChatModels.add(modelRef);
+    }
+  }
+  final rawDefaultVisionModel = data['default_vision_model'] as String?;
+  final defaultVisionModel = rawDefaultVisionModel == null
+      ? null
+      : _normalizeStoredModelRef(
+          rawDefaultVisionModel,
+          providerMap: meta.providerMap,
+          providerIds: chatProviderIds,
+        );
+  final skipVisionCompatDialog = data['skip_vision_compat_dialog'] == true;
 
   return AppSettings(
     ttsEnabled: true,
@@ -220,6 +295,7 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     messageFormatConfig: messageFormatConfig,
     textScaleFactor: textScaleFactor,
     uiScaleFactor: uiScaleFactor,
+    imagePreviewScale: imagePreviewScale,
     hideUserAvatar: hideUserAvatar,
     autoReplySettings: autoReplySettings,
     globalBackgroundColor: globalBackgroundColor,
@@ -229,6 +305,9 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     accentColor: accentColor,
     userAvatar: userAvatar,
     userName: userName,
+    defaultChatModels: defaultChatModels,
+    defaultVisionModel: defaultVisionModel,
+    skipVisionCompatDialog: skipVisionCompatDialog,
   );
 }
 
@@ -252,8 +331,24 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     state = AsyncData(await build());
   }
 
+  String _normalizeModelRefForPersist(String modelRef) {
+    final trimmed = modelRef.trim();
+    if (trimmed.isEmpty) return trimmed;
+
+    final settings = state.value;
+    if (settings == null) return trimmed;
+
+    final providerId = settings.getModelProviderId(trimmed);
+    final rawModelId = settings.getRawModelId(trimmed);
+    if (providerId == null || providerId.isEmpty) {
+      return rawModelId;
+    }
+    return settings.buildModelRef(providerId, rawModelId);
+  }
+
   Future<void> setDefaultModelName(String modelId) async {
-    await _commit(() => _api.updatePartial({'default_model': modelId}));
+    final modelRef = _normalizeModelRefForPersist(modelId);
+    await _commit(() => _api.updatePartial({'default_model': modelRef}));
   }
 
   Future<void> setModelDisplayName({
@@ -635,6 +730,15 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     );
   }
 
+  Future<void> setImagePreviewScale(double scale) async {
+    await _commit(
+      () => _api.updatePartial({
+        'image_preview_scale':
+            scale.clamp(kMinImagePreviewScale, kMaxImagePreviewScale),
+      }),
+    );
+  }
+
   Future<void> setHideUserAvatar(bool hide) async {
     await _commit(() => _api.updatePartial({'hide_user_avatar': hide}));
   }
@@ -683,15 +787,39 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
         }));
   }
 
+  /// 设置默认聊天模型列表（有序，第一个为首选）
+  Future<void> setDefaultChatModels(List<String> models) async {
+    final normalized = <String>[];
+    for (final model in models) {
+      final modelRef = _normalizeModelRefForPersist(model);
+      if (modelRef.isNotEmpty && !normalized.contains(modelRef)) {
+        normalized.add(modelRef);
+      }
+    }
+    await _commit(
+      () => _api.updatePartial({'default_chat_models': normalized}),
+    );
+  }
+
+  /// 设置默认图片识别模型
+  Future<void> setDefaultVisionModel(String? modelId) async {
+    final normalized =
+        modelId == null ? null : _normalizeModelRefForPersist(modelId);
+    await _commit(
+      () => _api.updatePartial({'default_vision_model': normalized}),
+    );
+  }
+
+  /// 设置是否跳过视觉兼容性弹窗
+  Future<void> setSkipVisionCompatDialog(bool skip) async {
+    await _commit(
+        () => _api.updatePartial({'skip_vision_compat_dialog': skip}));
+  }
+
   Future<void> _commit(
     Future<Map<String, dynamic>> Function() mutation,
   ) async {
-    try {
-      final data = await mutation();
-      state = AsyncData(_mapToSettings(data));
-    } catch (err, stack) {
-      state = AsyncError(err, stack);
-      rethrow;
-    }
+    final data = await mutation();
+    state = AsyncData(_mapToSettings(data));
   }
 }

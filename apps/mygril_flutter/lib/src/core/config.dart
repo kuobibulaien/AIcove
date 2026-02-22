@@ -21,13 +21,18 @@ const String _localApiUrl = 'http://localhost:8001';
 /// 局域网开发API地址（手机通过WiFi访问电脑）
 const String _lanApiUrl = 'http://localhost:8001';
 
+/// 是否启用后端服务器
+/// 设置为 false 时，App 纯客户端运行，直接调用 OpenAI 等服务商 API
+/// 所有走后端的请求（MCP 配置、云同步等）会被跳过，不会发起网络请求
+const bool backendEnabled = false; // ← 不需要后端时设为 false
+
 /// 是否使用本地API（开发模式）
 /// 设置为 true 可以快速切换到本地开发环境
 const bool _useLocalApi = false;  // ← 电脑本机开发用 true
 
 /// 是否使用局域网API（手机测试模式）
 /// 设置为 true 可以让手机通过WiFi连接电脑后端
-const bool _useLanApi = true;  // ← 手机连电脑测试用 true
+const bool _useLanApi = false;  // ← 手机连电脑测试用 true
 
 /// 编译时注入的API地址（优先级最高）
 const String apiBaseUrl = String.fromEnvironment(

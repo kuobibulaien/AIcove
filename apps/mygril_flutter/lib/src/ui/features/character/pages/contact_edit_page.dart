@@ -32,6 +32,12 @@ enum EditMode {
   editTemplate,
 }
 
+enum _ExitAction {
+  discard,
+  save,
+  cancel,
+}
+
 /// 注释已清理乱码
 /// 注释已清理乱码
 /// 注释已清理乱码
@@ -72,7 +78,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
   String? _lastAutoSavedSignature;
   bool _allowNativePop = false;
 
-  bool get _enableAutoSave => widget.editMode == EditMode.editConversation;
+  bool get _enableAutoSave => false;
   List<TextEditingController> get _autoSaveControllers => [
         _nameCtrl,
         _descCtrl,
@@ -94,7 +100,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     _addressUserCtrl = TextEditingController(text: conv.addressUser ?? '');
     _avatarCtrl = TextEditingController(text: conv.avatarUrl ?? '');
     _refImageCtrl = TextEditingController(
-      text: (conv.characterImage ?? conv.avatarUrl ?? ''),
+      text: (conv.characterImage ?? ''),
     );
     _chatBackgroundCtrl = TextEditingController(
       text: conv.chatBackgroundImage ?? '',
@@ -110,6 +116,10 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     final allPluginIds = chatPluginItems.map((e) => e.id).toSet();
     if (conv.enabledPlugins == null) {
       _selectedPluginIds = {...allPluginIds};
+      // 新建角色时，默认不启用 TTS 插件（需用户手动绑定音色后才开启）
+      if (widget.editMode == EditMode.create) {
+        _selectedPluginIds.remove('tts');
+      }
     } else {
       _selectedPluginIds = {...conv.enabledPlugins!};
     }
@@ -121,8 +131,8 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
       for (final controller in _autoSaveControllers) {
         controller.addListener(_onAutoSaveFieldChanged);
       }
-      _lastAutoSavedSignature = _buildEditSignature(_buildEditResult());
     }
+    _lastAutoSavedSignature = _buildEditSignature(_buildEditResult());
 
     // 注释已清理乱码
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -172,11 +182,10 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
-    final statusBarHeight = MediaQuery.paddingOf(context).top;
     final voicePresets = ref.watch(ttsPluginConfigProvider).voicePresets;
 
     return PopScope(
-      canPop: !_enableAutoSave || _allowNativePop,
+      canPop: _allowNativePop,
       onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
         await _handleBack();
@@ -199,7 +208,13 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
                     // 注释已清理乱码
 
                     // 注释已清理乱码
-                    _buildNavBar(colors),
+                    SafeArea(
+                      bottom: false,
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: _buildNavBar(colors),
+                      ),
+                    ),
 
                     const SizedBox(height: 24),
 
@@ -208,11 +223,10 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
                       padding: const EdgeInsets.symmetric(horizontal: 24),
                       child: _buildAvatarNameRow(colors),
                     ),
-
                     const SizedBox(height: 16),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: _buildChatBackgroundSection(colors),
+                      child: _buildCharacterImageSection(colors),
                     ),
                     const SizedBox(height: 16),
 
@@ -222,11 +236,11 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
                       child: _buildReadonlySection(
                         colors,
                         icon: Icons.notes,
-                        title: 'Description',
+                        title: '角色描述',
                         content: _descCtrl.text,
-                        placeholder: 'No description yet',
+                        placeholder: '暂无描述',
                         onEdit: () => _openFullScreenEditor(
-                          title: 'Edit Description',
+                          title: '编辑描述',
                           controller: _descCtrl,
                           hint: '一句话介绍这个角色（可选）',
                         ),
@@ -246,7 +260,13 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
                     // 注释已清理乱码
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: _buildBottomCard(colors, voicePresets),
+                      child: Column(
+                        children: [
+                          _buildBottomCard(colors, voicePresets),
+                          const SizedBox(height: 16),
+                          _buildChatBackgroundSection(colors),
+                        ],
+                      ),
                     ),
 
                     // 底部留白
@@ -451,13 +471,18 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
             icon: Icons.more_horiz,
             onTap: () => _showMoreMenu(colors),
           ),
+          const SizedBox(width: 8),
+          _buildCircleButton(
+            icon: Icons.check,
+            onTap: _onSave,
+          ),
         ];
       case EditMode.editTemplate:
         return [
           _buildCircleButton(
             icon: Icons.copy_outlined,
             onTap: _onSaveAsNewTemplate,
-            tooltip: 'Save As',
+            tooltip: '另存为',
           ),
           const SizedBox(width: 8),
           _buildCircleButton(
@@ -473,7 +498,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
       context: context,
       actions: [
         MoeSheetAction(
-          label: 'Save as New Card',
+          label: '保存为新角色卡',
           icon: Icons.bookmark_add_outlined,
           onTap: _onSaveAsNewTemplate,
         ),
@@ -482,14 +507,58 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
   }
 
   Future<void> _handleBack() async {
-    await _flushAutoSave();
-    if (!mounted) return;
-    if (_enableAutoSave && !_allowNativePop) {
+    final action = await _confirmExitAction();
+    if (!mounted || action == _ExitAction.cancel) return;
+
+    if (action == _ExitAction.save) {
+      await _saveCurrentAndExit();
+      return;
+    }
+
+    _allowAndPop();
+  }
+
+  bool _hasUnsavedChanges() {
+    final baseline = _lastAutoSavedSignature;
+    if (baseline == null) return false;
+    final current = _buildEditSignature(_buildEditResult());
+    return current != baseline;
+  }
+
+  Future<_ExitAction> _confirmExitAction() async {
+    if (!_hasUnsavedChanges()) return _ExitAction.discard;
+
+    final result = await showMeoTalkDialog(
+      context: context,
+      title: '退出编辑',
+      content: const Text('当前有未保存的修改，是否先保存？'),
+      cancelText: '不保存',
+      confirmText: '保存',
+    );
+
+    if (result == null) return _ExitAction.cancel;
+    return result ? _ExitAction.save : _ExitAction.discard;
+  }
+
+  Future<void> _saveCurrentAndExit() async {
+    switch (widget.editMode) {
+      case EditMode.create:
+      case EditMode.editConversation:
+        await _onSave();
+        return;
+      case EditMode.editTemplate:
+        await _onSaveTemplate();
+        return;
+    }
+  }
+
+  void _allowAndPop<T extends Object?>([T? result]) {
+    if (!_allowNativePop) {
       setState(() {
         _allowNativePop = true;
       });
     }
-    Navigator.of(context).pop();
+    Navigator.of(context).pop<T>(result);
   }
 
   /// Circular translucent action button
@@ -571,7 +640,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
               color: colors.text,
             ),
             decoration: InputDecoration(
-              hintText: 'Enter character name',
+              hintText: '输入角色名称',
               hintStyle: TextStyle(
                 fontSize: 20,
                 fontWeight: MoeFontWeights.normal,
@@ -583,6 +652,88 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildCharacterImageSection(MoeColors colors) {
+    final helper = AvatarHelper(
+      avatarUrl:
+          _avatarCtrl.text.trim().isEmpty ? null : _avatarCtrl.text.trim(),
+      characterImage:
+          _refImageCtrl.text.trim().isEmpty ? null : _refImageCtrl.text.trim(),
+      displayName: _nameCtrl.text,
+    );
+    final hasCharacterImage = _refImageCtrl.text.trim().isNotEmpty;
+
+    return FrostedGlassContainer(
+      borderRadius: 16,
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildSectionTitle(
+            colors,
+            icon: Icons.portrait_outlined,
+            title: '角色立绘',
+            subtitle: '立绘用于角色卡和详情展示，不等同于头像',
+          ),
+          const SizedBox(height: 8),
+          MoeG2ClipRRect(
+            radius: 12,
+            child: Container(
+              width: double.infinity,
+              height: 180,
+              decoration: MoeG2Decoration(
+                radius: 12,
+                color: colors.surfaceAlt.withValues(alpha: 0.25),
+                border: Border.all(color: colors.borderLight, width: 0.5),
+              ),
+              child: Center(
+                child: AspectRatio(
+                  aspectRatio: 3 / 4,
+                  child: MoeG2ClipRRect(
+                    radius: 10,
+                    child: helper.buildCharacterWidget(
+                      fit: BoxFit.cover,
+                      fallback: Container(
+                        color: colors.surface,
+                        alignment: Alignment.center,
+                        child: Icon(
+                          Icons.image_outlined,
+                          color: colors.muted,
+                          size: 28,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _pickCharacterImage,
+                  icon: const Icon(Icons.photo_library_outlined),
+                  label: Text(hasCharacterImage ? '更换立绘' : '上传立绘'),
+                ),
+              ),
+              if (hasCharacterImage) ...[
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _clearCharacterImage,
+                    icon: const Icon(Icons.close),
+                    label: const Text('清空立绘'),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -782,7 +933,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     final hasContent = _personaCtrl.text.trim().isNotEmpty;
 
     void openEditor() => _openFullScreenEditor(
-          title: 'Edit Prompt',
+          title: '编辑提示词',
           controller: _personaCtrl,
           hint: '详细描述角色的性格、说话方式、行为边界和世界观...',
         );
@@ -800,7 +951,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Prompt',
+                  '提示词',
                   style: TextStyle(
                     fontSize: 15,
                     fontWeight: MoeFontWeights.emphasis,
@@ -856,7 +1007,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
                     )
                   : Center(
                       child: Text(
-                        'No character prompt set',
+                        '暂无角色提示词',
                         style: TextStyle(
                           fontSize: 14,
                           color: colors.muted,
@@ -991,9 +1142,9 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     final selected = _selectedPluginIds
         .where((id) => chatPluginItems.any((p) => p.id == id))
         .length;
-    if (selected == total) return 'Enabled all $total plugins';
-    if (selected == 0) return 'No plugin enabled';
-    return 'Enabled $selected / $total plugins';
+    if (selected == total) return '已启用全部 $total 个插件';
+    if (selected == 0) return '未启用任何插件';
+    return '已启用 $selected / $total 个插件';
   }
 
   Future<void> _showPluginPicker() async {
@@ -1155,8 +1306,9 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
 
     final file = result.files.first;
     if (file.bytes == null) return;
+    final originalBytes = file.bytes!;
 
-    Uint8List? finalBytes = file.bytes;
+    Uint8List finalBytes = originalBytes;
 
     if (mounted) {
       final croppedBytes = await Navigator.of(context).push<Uint8List>(
@@ -1168,7 +1320,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
           reverseTransitionDuration: kAnim,
           pageBuilder: (context, animation, secondaryAnimation) =>
               ImageCropDialog(
-            imageBytes: file.bytes!,
+            imageBytes: originalBytes,
             fileName: file.name,
           ),
           transitionsBuilder: (context, animation, secondaryAnimation, child) {
@@ -1191,13 +1343,43 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
       }
     }
 
-    if (finalBytes == null) return;
-
-    final dataUrl = buildDataImage(finalBytes, fileName: file.name);
+    final avatarDataUrl = buildDataImage(finalBytes, fileName: file.name);
+    final characterDataUrl = buildDataImage(originalBytes, fileName: file.name);
+    final prevAvatar = _avatarCtrl.text.trim();
+    final prevRefImage = _refImageCtrl.text.trim();
     setState(() {
       _avatarBytes = finalBytes;
-      _avatarCtrl.text = dataUrl;
+      _avatarCtrl.text = avatarDataUrl;
+      // 头像上传时，立绘应保存原图而不是裁剪图；
+      // 仅在“立绘未独立设置”时同步，避免覆盖用户单独配置的立绘。
+      if (prevRefImage.isEmpty || prevRefImage == prevAvatar) {
+        _refImageCtrl.text = characterDataUrl;
+      }
+    });
+    _scheduleAutoSave();
+  }
+
+  Future<void> _pickCharacterImage() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) return;
+
+    final file = result.files.first;
+    final bytes = file.bytes;
+    if (bytes == null) return;
+
+    final dataUrl = buildDataImage(bytes, fileName: file.name);
+    setState(() {
       _refImageCtrl.text = dataUrl;
+    });
+    _scheduleAutoSave();
+  }
+
+  void _clearCharacterImage() {
+    setState(() {
+      _refImageCtrl.clear();
     });
     _scheduleAutoSave();
   }
@@ -1246,8 +1428,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
               ListTile(
                 leading: Icon(Icons.sync, color: colors.primary),
                 title: const Text('跟随全局音色'),
-                subtitle:
-                    const Text('Use the currently selected chat-plugin voice'),
+                subtitle: const Text('使用当前聊天插件里选择的音色'),
                 trailing: _boundVoiceId == null
                     ? Icon(Icons.check, color: colors.primary)
                     : null,
@@ -1281,7 +1462,13 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
 
     if (!mounted || selected == null) return;
     setState(() {
-      _boundVoiceId = selected == followGlobalToken ? null : selected;
+      if (selected == followGlobalToken) {
+        _boundVoiceId = null;
+      } else {
+        _boundVoiceId = selected;
+        // 绑定音色后自动启用 TTS 插件
+        _selectedPluginIds.add('tts');
+      }
     });
     _scheduleAutoSave();
   }
@@ -1307,7 +1494,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
         _avatarCtrl.text.trim().isEmpty ? null : _avatarCtrl.text.trim();
 
     final refImage = _refImageCtrl.text.trim();
-    final characterImage = refImage.isEmpty ? avatar : refImage;
+    final characterImage = refImage.isEmpty ? null : refImage;
     final chatBackgroundImage = _chatBackgroundCtrl.text.trim().isEmpty
         ? null
         : _chatBackgroundCtrl.text.trim();
@@ -1371,7 +1558,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
   bool _validateForm() {
     final name = _nameCtrl.text.trim();
     if (name.isEmpty) {
-      MoeToast.error(context, 'Please enter character name');
+      MoeToast.error(context, '请输入角色名称');
       return false;
     }
     return true;
@@ -1415,7 +1602,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
       if (!mounted) return;
       context.go('/chat/$id');
     } else {
-      Navigator.of(context).pop<ContactEditResult>(result);
+      _allowAndPop<ContactEditResult>(result);
     }
   }
 
@@ -1426,8 +1613,8 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     await _applyResult(widget.conversation.id, result);
 
     if (!mounted) return;
-    MoeToast.success(context, 'Template saved');
-    Navigator.of(context).pop();
+    MoeToast.success(context, '角色卡已保存');
+    _allowAndPop();
   }
 
   Future<void> _onSaveAsNewTemplate() async {
@@ -1443,7 +1630,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     await notifier.updateConversationSettings(id, isFavorite: true);
 
     if (!mounted) return;
-    MoeToast.success(context, 'Saved to My Characters');
-    Navigator.of(context).pop();
+    MoeToast.success(context, '已保存到我的角色卡');
+    _allowAndPop();
   }
 }

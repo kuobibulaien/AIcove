@@ -54,6 +54,9 @@ class Conversations extends Table {
   // 冲突字段
   TextColumn get conflictOf => text().nullable()();
 
+  // 上下文截断：新话题起始消息ID，此ID之后的消息才纳入AI上下文
+  TextColumn get contextStartMessageId => text().nullable()();
+
   // 注释已清理乱码
   IntColumn get deletedAt => integer().nullable()();
   IntColumn get purgeAt => integer().nullable()();
@@ -324,7 +327,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
   @override
-  int get schemaVersion => 9;
+  int get schemaVersion => 10;
 
   @override
   MigrationStrategy get migration {
@@ -384,6 +387,11 @@ class AppDatabase extends _$AppDatabase {
         if (from < 9) {
           await _safeAddColumn(
               'conversations', 'chat_background_blur_sigma REAL');
+        }
+        // v9 -> v10: add contextStartMessageId column
+        if (from < 10) {
+          await _safeAddColumn(
+              'conversations', 'context_start_message_id TEXT');
         }
       },
     );
@@ -492,9 +500,20 @@ LazyDatabase _openConnection() {
     return NativeDatabase.createInBackground(
       file,
       setup: (db) {
-        // 注释已清理乱码
+        // Keep foreign key constraints on for all platforms.
         db.execute('PRAGMA foreign_keys = ON');
-        db.execute('PRAGMA journal_mode = WAL');
+        try {
+          db.execute('PRAGMA journal_mode = WAL');
+        } catch (e) {
+          // Some Windows environments can transiently fail switching to WAL.
+          // Fall back so database open doesn't crash the whole app.
+          try {
+            db.execute('PRAGMA journal_mode = DELETE');
+          } catch (_) {}
+          stderr.writeln(
+            '[Database] Failed to enable WAL, fallback to DELETE: $e',
+          );
+        }
       },
     );
   });

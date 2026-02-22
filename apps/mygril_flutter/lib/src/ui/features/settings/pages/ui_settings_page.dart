@@ -141,6 +141,7 @@ class UiSettingsPage extends ConsumerWidget {
         MoeSettingsGroup(
           margin: EdgeInsets.zero,
           children: [
+            _buildImagePreviewScaleSlider(context, ref, settings, colors),
             MoeSettingsRow(
               icon: Icons.account_circle_outlined,
               label: '隐藏用户头像',
@@ -586,6 +587,148 @@ class UiSettingsPage extends ConsumerWidget {
               if (value != null) {
                 ref.read(appSettingsProvider.notifier).setUiScaleFactor(
                       value.clamp(kMinUiScaleFactor, kMaxUiScaleFactor),
+                    );
+              }
+              Navigator.of(context).pop();
+            },
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 图片预览大小滑块
+  Widget _buildImagePreviewScaleSlider(
+    BuildContext context,
+    WidgetRef ref,
+    AppSettings settings,
+    MoeColors colors,
+  ) {
+    const minScale = kMinImagePreviewScale;
+    const maxScale = kMaxImagePreviewScale;
+    final scale =
+        settings.imagePreviewScale.clamp(minScale, maxScale).toDouble();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Icon(Icons.photo_size_select_large,
+                  size: 20, color: colors.textSecondary),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  '图片预览大小',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: MoeFontWeights.emphasis,
+                    color: colors.text,
+                  ),
+                ),
+              ),
+              GestureDetector(
+                onTap: () => _showImagePreviewScaleInputDialog(
+                    context, ref, scale, colors),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: MoeG2Decoration(
+                    radius: 6,
+                    color: colors.accentColor.withValues(alpha: 0.15),
+                  ),
+                  child: Text(
+                    scale.toStringAsFixed(2),
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: MoeFontWeights.emphasis,
+                      color: colors.accentColor,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Text('较小',
+                  style: TextStyle(fontSize: 12, color: colors.textSecondary)),
+              Expanded(
+                child: Slider(
+                  value: scale,
+                  min: minScale,
+                  max: maxScale,
+                  divisions: 20, // 0.05 步长：(1.5-0.5)/0.05 = 20
+                  activeColor: colors.accentColor,
+                  onChanged: (value) {
+                    ref
+                        .read(appSettingsProvider.notifier)
+                        .setImagePreviewScale(value);
+                  },
+                ),
+              ),
+              Text('较大',
+                  style: TextStyle(fontSize: 12, color: colors.textSecondary)),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            '调整聊天中图片和表情包的显示大小',
+            style: TextStyle(fontSize: 12, color: colors.muted),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 弹窗手动输入图片预览缩放值
+  void _showImagePreviewScaleInputDialog(
+    BuildContext context,
+    WidgetRef ref,
+    double currentScale,
+    MoeColors colors,
+  ) {
+    final controller =
+        TextEditingController(text: currentScale.toStringAsFixed(2));
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('输入图片预览缩放值'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: controller,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                hintText: '范围 0.50 ~ 1.50',
+                border: OutlineInputBorder(),
+              ),
+              autofocus: true,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '1.00 为默认大小，0.50 最小，1.50 最大',
+              style: TextStyle(fontSize: 12, color: colors.muted),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () {
+              final value = double.tryParse(controller.text);
+              if (value != null) {
+                ref.read(appSettingsProvider.notifier).setImagePreviewScale(
+                      value.clamp(
+                          kMinImagePreviewScale, kMaxImagePreviewScale),
                     );
               }
               Navigator.of(context).pop();

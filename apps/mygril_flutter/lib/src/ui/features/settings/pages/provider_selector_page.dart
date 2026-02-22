@@ -63,7 +63,8 @@ class ProviderSelectorPage extends ConsumerWidget {
             padding: const EdgeInsets.symmetric(vertical: 8),
             children: [
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 child: Text(
                   '从后端获取的可用提供商和模型',
                   style: TextStyle(color: colors.textSecondary, fontSize: 12),
@@ -119,7 +120,8 @@ class _ProviderCard extends ConsumerWidget {
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                   child: Row(
                     children: [
-                      Icon(_getProviderIcon(provider), color: colors.primary, size: 24),
+                      Icon(_getProviderIcon(provider),
+                          color: colors.primary, size: 24),
                       const SizedBox(width: 8),
                       Text(
                         _getProviderDisplayName(provider),
@@ -142,25 +144,42 @@ class _ProviderCard extends ConsumerWidget {
                   )
                 else
                   ...models.map((model) {
-                    final isSelected = model == currentModel;
+                    final canQualify =
+                        settings?.providers.any((p) => p.id == provider) ??
+                            false;
+                    final modelRef = canQualify
+                        ? settings!.buildModelRef(provider, model)
+                        : model;
+                    final isSelected =
+                        modelRef == currentModel || model == currentModel;
                     return MoeListTile(
                       title: Text(
-                        model,
+                        settings?.getModelDisplayName(modelRef) ?? model,
                         style: TextStyle(
                           color: isSelected ? colors.primary : colors.text,
-                          fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
+                          fontWeight: isSelected
+                              ? MoeFontWeights.emphasis
+                              : MoeFontWeights.normal,
                         ),
                       ),
                       leading: Icon(
-                        isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                        isSelected
+                            ? Icons.radio_button_checked
+                            : Icons.radio_button_unchecked,
                         color: isSelected ? colors.primary : colors.muted,
                         size: 20,
                       ),
-                      trailing: isSelected ? Icon(Icons.check, color: colors.primary, size: 18) : null,
+                      trailing: isSelected
+                          ? Icon(Icons.check, color: colors.primary, size: 18)
+                          : null,
                       selected: isSelected,
                       onTap: () {
-                        ref.read(appSettingsProvider.notifier).setDefaultModelName(model);
-                        MoeToast.success(context, '已设置默认模型为: $model');
+                        ref
+                            .read(appSettingsProvider.notifier)
+                            .setDefaultModelName(modelRef);
+                        final label =
+                            settings?.getModelDisplayName(modelRef) ?? model;
+                        MoeToast.success(context, '已设置默认模型为: $label');
                       },
                     );
                   }),

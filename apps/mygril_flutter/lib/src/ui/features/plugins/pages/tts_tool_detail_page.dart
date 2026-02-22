@@ -191,7 +191,7 @@ class _TtsToolDetailPageState extends ConsumerState<TtsToolDetailPage> {
               children: [
                 TextField(
                   controller: _apiKeyCtrl,
-                  obscureText: true,
+                  obscureText: false,
                   decoration: const InputDecoration(
                     labelText: 'API Key',
                     border: OutlineInputBorder(),

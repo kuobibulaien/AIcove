@@ -8,6 +8,10 @@ import '../../core/api/providers/provider_adapter_factory.dart';
 
 /// SharedPreferences 键名，统一管理模型与渠道配置。
 const _kStoreKey = 'aicove.ui_models.v1';
+const _kLegacyStoreKeys = <String>[
+  // Historical key used by older app naming.
+  'mygril.ui_models.v1',
+];
 
 /// 本地 API Key 配置缓存（避免重复读取 assets）
 Map<String, String>? _localKeysCache;
@@ -113,6 +117,28 @@ Map<String, dynamic> _defaultStoreData() => <String, dynamic>{
           'model_type': 'tts',
         },
         {
+          'id': 'novelai',
+          'displayName': 'NovelAI',
+          'apiKeys': <String>[],
+          'apiBaseUrl': 'https://image.novelai.net',
+          'enabled': false,
+          'models': <String>[
+            'nai-diffusion-4-5-curated',
+            'nai-diffusion-4-5-full',
+            'nai-diffusion-3',
+          ],
+          'visible_models': <String>[
+            'nai-diffusion-4-5-curated',
+          ],
+          'hidden_models': <String>[],
+          'capabilities': <String>['image'],
+          'model_type': 'image',
+          'customConfig': <String, dynamic>{
+            'requestFormat': 'novelai',
+            'defaultImageModel': 'nai-diffusion-4-5-curated',
+          },
+        },
+        {
           'id': 'siliconflow',
           'displayName': '硅基流动',
           'apiKeys': <String>[],
@@ -154,6 +180,7 @@ Map<String, dynamic> _defaultStoreData() => <String, dynamic>{
       'hide_user_avatar': true,
       'user_avatar': null,
       'user_name': null,
+      'skip_vision_compat_dialog': false,
     };
 
 Map<String, dynamic> _defaultAutoReplySettings() => <String, dynamic>{
@@ -810,6 +837,9 @@ class UiModelsApi {
   Future<Map<String, dynamic>> _loadStore(SharedPreferences prefs) async {
     final raw = prefs.getString(_kStoreKey);
     if (raw == null || raw.isEmpty) {
+      final migrated = await _tryMigrateLegacyStore(prefs);
+      if (migrated != null) return migrated;
+
       final defaults = await _applyLocalKeys(_defaultStoreData());
       await prefs.setString(_kStoreKey, jsonEncode(defaults));
       return _normalizeData(defaults);
@@ -820,10 +850,33 @@ class UiModelsApi {
       final withKeys = await _applyLocalKeys(data);
       return _normalizeData(withKeys);
     } catch (e) {
+      final migrated = await _tryMigrateLegacyStore(prefs);
+      if (migrated != null) return migrated;
+
       final defaults = await _applyLocalKeys(_defaultStoreData());
       await prefs.setString(_kStoreKey, jsonEncode(defaults));
       return _normalizeData(defaults);
     }
+  }
+
+  Future<Map<String, dynamic>?> _tryMigrateLegacyStore(
+      SharedPreferences prefs) async {
+    for (final legacyKey in _kLegacyStoreKeys) {
+      final raw = prefs.getString(legacyKey);
+      if (raw == null || raw.isEmpty) continue;
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is! Map<String, dynamic>) continue;
+        final withKeys =
+            await _applyLocalKeys(Map<String, dynamic>.from(decoded));
+        final normalized = _normalizeData(withKeys);
+        await prefs.setString(_kStoreKey, jsonEncode(normalized));
+        return normalized;
+      } catch (_) {
+        // Ignore invalid legacy payload.
+      }
+    }
+    return null;
   }
 
   /// 将本地 key 注入到 provider 配置中

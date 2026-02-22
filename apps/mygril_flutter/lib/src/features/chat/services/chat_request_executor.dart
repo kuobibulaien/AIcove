@@ -108,8 +108,9 @@ class ChatRequestExecutor {
     configTrace?.end();
 
     // 2. 准备模型和渠道信息
-    final model = settings.defaultModelName;
-    final provider = settings.modelProviderMap[model] ?? 'openai';
+    final modelRef = settings.defaultModelName;
+    final model = settings.getRawModelId(modelRef);
+    final provider = settings.getModelProviderId(modelRef) ?? 'openai';
     var modelFull = '$provider:$model';
 
     final providerAuth = settings.providers.firstWhere(
@@ -214,8 +215,8 @@ class ChatRequestExecutor {
       toolPrefs: toolPrefs,
       messages: truncatedMessages,
       userText: userText,
-      modelTemperature: settings.getModelConfig(model).temperature,
-      modelTopP: settings.getModelConfig(model).topP,
+      modelTemperature: settings.getModelConfig(modelRef).temperature,
+      modelTopP: settings.getModelConfig(modelRef).topP,
     );
   }
 

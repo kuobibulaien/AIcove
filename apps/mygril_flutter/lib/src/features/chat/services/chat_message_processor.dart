@@ -7,6 +7,7 @@
 /// - 2026-01-06: 增加多媒体内容处理支持 (PluginContent)
 /// - 2026-01-28: 移除分段逻辑，分段改为纯前端展示
 /// - 2026-01-28: TTS 标签必须拆分，文本和语音交替出现
+/// - 2026-02-21: 统一多模态拆分机制，表情包也按原始位置拆分保证语序
 library;
 
 import '../domain/message.dart';
@@ -17,41 +18,63 @@ import '../../plugins/tts/tts_parser.dart';
 import '../../../core/models/message_block.dart';
 import 'chat_types.dart';
 
-/// 公开的 TTS 片段类型（供 ChatTtsHandler 使用）
-enum TtsSegmentType { text, tts }
+/// 多模态片段类型（供 ChatTtsHandler 使用）
+enum MultimodalSegmentType { text, tts, sticker }
 
-/// 公开的 TTS 片段（供 ChatTtsHandler 使用）
-class TtsSegment {
-  final TtsSegmentType type;
+/// 多模态片段（供 ChatTtsHandler 使用）
+class MultimodalSegment {
+  final MultimodalSegmentType type;
   final String content;
-  const TtsSegment({required this.type, required this.content});
+
+  /// 表情包段携带的事件数据（stickerId, assetPath, tag 等）
+  final Map<String, dynamic>? stickerData;
+
+  const MultimodalSegment({
+    required this.type,
+    required this.content,
+    this.stickerData,
+  });
 }
 
-/// 内部 TTS 内容片段类型
-enum _TtsSegmentType { text, tts }
+// ===== 内部类型 =====
 
-/// 内部 TTS 内容片段
-class _TtsSegment {
-  final _TtsSegmentType type;
+enum _SegType { text, tts, sticker }
+
+class _Seg {
+  final _SegType type;
   final String content;
-  const _TtsSegment(this.type, this.content);
+  final Map<String, dynamic>? stickerData;
+  const _Seg(this.type, this.content, {this.stickerData});
+}
+
+/// 内部标记位置（用于排序和去重叠）
+class _Marker {
+  final int start;
+  final int end;
+  final _SegType type;
+  final String content;
+  final Map<String, dynamic>? data;
+  const _Marker({
+    required this.start,
+    required this.end,
+    required this.type,
+    required this.content,
+    this.data,
+  });
 }
 
 /// 助手消息处理服务
 ///
 /// 提供消息构建、文本处理等无状态工具方法
-/// 注意：普通分段逻辑已移至 UI 层，但 TTS 标签必须在存储时拆分
+/// 注意：普通分段逻辑已移至 UI 层，但多模态标签（TTS、表情包）必须在存储时拆分
 class ChatMessageProcessor {
   const ChatMessageProcessor();
 
   /// 构建助手消息列表
   ///
-  /// [contents] 可选的多媒体内容列表，如果提供则优先处理
-  ///
-  /// 注意：
-  /// - 普通分段已移至 UI 层
-  /// - TTS 标签拆分也不在这里处理，由 ChatTtsHandler.sendMessagesWithTts 顺序发送
-  /// - 此方法只返回纯文本消息（移除 TTS 标签后的文本）
+  /// 多模态拆分机制：当回复中包含 <tts> 或 [表情包] 标签时，
+  /// 按标签在原文中的位置拆分，保证"文字-多媒体-文字"的原始语序。
+  /// 这与前端的标点分段（enableChunking）无关，是数据层的必要处理。
   AssistantMessageBuildResult buildAssistantMessages({
     required String replyText,
     required String processedText,
@@ -66,39 +89,72 @@ class ChatMessageProcessor {
     }
 
     // 2. 处理传统文本（如果 contents 中没有文本，或者 contents 为空）
-    final hasTextContent = contents?.any((c) => c is PluginTextContent) ?? false;
+    final hasTextContent =
+        contents?.any((c) => c is PluginTextContent) ?? false;
     if (!hasTextContent) {
-      // 检查是否有 TTS 事件（<tts> 标签）
-      final hasTts = pluginEvents.any((e) => e.type == 'tts_convert');
+      // 检查是否有多模态事件（TTS 语音或表情包）
+      final hasMultimodal = pluginEvents.any(
+        (e) => e.type == 'tts_convert' || e.type == 'sticker_convert',
+      );
 
-      if (hasTts) {
-        // 有 TTS 标签：只返回非 TTS 部分的文本
-        // TTS 部分由 ChatTtsHandler.sendMessagesWithTts 顺序处理
-        final segments = _parseTtsSegments(replyText);
+      if (hasMultimodal) {
+        // 有多模态标签：按标签位置拆分，保证语序正确
+        // TTS 段由 ChatTtsHandler 顺序处理，这里跳过
+        final segments = _parseMultimodalSegments(replyText, pluginEvents);
         for (final segment in segments) {
           if (segment.content.trim().isEmpty) continue;
 
-          if (segment.type == _TtsSegmentType.text) {
-            // 只添加普通文本消息
-            aiMessages.add(Message(
-              id: genId('msg'),
-              role: 'assistant',
-              content: segment.content.trim(),
-              createdAt: DateTime.now(),
-              status: 'sent',
-            ));
+          switch (segment.type) {
+            case _SegType.text:
+              aiMessages.add(Message(
+                id: genId('msg'),
+                role: 'assistant',
+                content: segment.content.trim(),
+                createdAt: DateTime.now(),
+                status: 'sent',
+              ));
+            case _SegType.tts:
+              // TTS 段不在这里处理，交给 ChatTtsHandler
+              break;
+            case _SegType.sticker:
+              final assetPath =
+                  segment.stickerData?['assetPath'] as String?;
+              final stickerId =
+                  segment.stickerData?['stickerId'] as String?;
+              final tag = segment.stickerData?['tag'] as String?;
+              if (assetPath != null && assetPath.isNotEmpty) {
+                aiMessages.add(Message.fromBlocks(
+                  id: genId('sticker'),
+                  role: 'assistant',
+                  blocks: [
+                    EmojiBlock(
+                      messageId: genId('emoji'),
+                      emojiId: stickerId ?? tag ?? 'unknown',
+                      path: assetPath,
+                      matchedTag: tag,
+                    ),
+                  ],
+                  createdAt: DateTime.now(),
+                  status: 'sent',
+                ));
+              }
           }
-          // TTS 段不在这里处理，交给 ChatTtsHandler
         }
       } else {
-        // 无 TTS 标签：保持消息完整
-        var sourceText = selectAssistantText(processedText, pluginEvents, replyText);
+        // 无多模态标签：保持消息完整
+        var sourceText =
+            selectAssistantText(processedText, pluginEvents, replyText);
 
         // 如果文本为空但有 trigger 事件，生成确认消息
         if (sourceText.isEmpty) {
-          final triggerEvents = pluginEvents.where((e) => e.type == 'trigger_created').toList();
+          final triggerEvents = pluginEvents
+              .where((e) => e.type == 'trigger_created')
+              .toList();
           if (triggerEvents.isNotEmpty) {
-            final titles = triggerEvents.map((e) => e.data['title'] as String?).where((t) => t != null).toList();
+            final titles = triggerEvents
+                .map((e) => e.data['title'] as String?)
+                .where((t) => t != null)
+                .toList();
             if (titles.isNotEmpty) {
               sourceText = '好的，已设置提醒：${titles.join("、")} ✓';
             }
@@ -118,36 +174,11 @@ class ChatMessageProcessor {
       }
     }
 
-    // 3. 处理表情包事件
-    final stickerEvents = pluginEvents.where((e) => e.type == 'sticker_convert').toList();
-    for (final event in stickerEvents) {
-      final stickerId = event.data['stickerId'] as String?;
-      final assetPath = event.data['assetPath'] as String?;
-      final tag = event.data['tag'] as String?;
-
-      if (assetPath != null && assetPath.isNotEmpty) {
-        final stickerMsg = Message.fromBlocks(
-          id: genId('sticker'),
-          role: 'assistant',
-          blocks: [
-            EmojiBlock(
-              messageId: genId('emoji'),
-              emojiId: stickerId ?? tag ?? 'unknown',
-              path: assetPath,
-              matchedTag: tag,
-            ),
-          ],
-          createdAt: DateTime.now(),
-          status: 'sent',
-        );
-        aiMessages.add(stickerMsg);
-      }
-    }
+    // 注意：表情包已在上面的多模态拆分中按位置处理，不再单独追加
 
     // 计算最后一条消息预览
-    final lastMessageText = aiMessages.isNotEmpty
-        ? aiMessages.last.displayText
-        : '';
+    final lastMessageText =
+        aiMessages.isNotEmpty ? aiMessages.last.displayText : '';
 
     return AssistantMessageBuildResult(
       messages: aiMessages,
@@ -155,64 +186,131 @@ class ChatMessageProcessor {
     );
   }
 
-  /// 解析 TTS 标签，返回按顺序排列的片段列表
+  /// 解析多模态标签，返回按原文位置排列的片段列表
   ///
-  /// 公开此方法供 ChatTtsHandler 使用，用于顺序发送文本和语音消息
-  List<TtsSegment> parseTtsSegments(String text) {
-    final internal = _parseTtsSegments(text);
-    return internal.map((s) => TtsSegment(
-      type: s.type == _TtsSegmentType.text ? TtsSegmentType.text : TtsSegmentType.tts,
-      content: s.content,
-    )).toList();
+  /// 公开此方法供 ChatTtsHandler 使用，用于顺序发送文本、语音和表情包消息
+  List<MultimodalSegment> parseMultimodalSegments(
+    String text,
+    List<PluginEvent> pluginEvents,
+  ) {
+    final internal = _parseMultimodalSegments(text, pluginEvents);
+    return internal
+        .map((s) => MultimodalSegment(
+              type: switch (s.type) {
+                _SegType.text => MultimodalSegmentType.text,
+                _SegType.tts => MultimodalSegmentType.tts,
+                _SegType.sticker => MultimodalSegmentType.sticker,
+              },
+              content: s.content,
+              stickerData: s.stickerData,
+            ))
+        .toList();
   }
 
-  /// 解析文本中的 TTS 标签，按位置拆分成片段
+  /// 解析文本中的多模态标签（<tts> 和 [表情包]），按位置拆分成片段
   ///
-  /// 输入: "你好！<tts>今天天气很好</tts>，我们去公园吧？<tts>走吧</tts>"
-  /// 输出: [text("你好！"), tts("今天天气很好"), text("，我们去公园吧？"), tts("走吧")]
+  /// 输入: "早安呀~ [早安] <tts>今天天气很好</tts> 出去走走吧"
+  /// 输出: [text("早安呀~"), sticker("早安"), tts("今天天气很好"), text("出去走走吧")]
   ///
-  /// 注意：此方法只处理 <tts> 标签的拆分，不做任何 trim 操作，
-  /// 避免丢失标点符号或空格。最终判空在调用处进行。
-  List<_TtsSegment> _parseTtsSegments(String text) {
-    final segments = <_TtsSegment>[];
-
-    // 先移除非 TTS 的插件标签（如 trigger），但保留其他所有文本
+  /// 注意：
+  /// - [tag] 只有匹配到实际表情包事件时才作为 sticker 段
+  /// - 嵌套在 <tts> 内部的 [tag] 会被忽略（属于语音内容的一部分）
+  List<_Seg> _parseMultimodalSegments(
+    String text,
+    List<PluginEvent> pluginEvents,
+  ) {
+    // 先移除非多模态的插件标签（如 trigger），保留 TTS 和 sticker 标签
     final cleanedText = _stripNonTtsTags(text);
 
+    // 收集已匹配的表情包标签
+    final stickerDataByTag = <String, Map<String, dynamic>>{};
+    for (final event in pluginEvents) {
+      if (event.type == 'sticker_convert') {
+        final tag = event.data['tag'] as String?;
+        if (tag != null) stickerDataByTag[tag] = event.data;
+      }
+    }
+
+    // 收集所有标记位置
+    final markers = <_Marker>[];
+
+    // TTS 标记
     final ttsRegex = RegExp(r'<tts>(.*?)</tts>', dotAll: true);
+    for (final match in ttsRegex.allMatches(cleanedText)) {
+      final content = match.group(1)?.trim() ?? '';
+      if (content.isNotEmpty) {
+        markers.add(_Marker(
+          start: match.start,
+          end: match.end,
+          type: _SegType.tts,
+          content: content,
+        ));
+      }
+    }
+
+    // 表情包标记（只匹配已确认的表情包标签）
+    final stickerRegex = RegExp(r'\[([^\[\]]+)\]');
+    for (final match in stickerRegex.allMatches(cleanedText)) {
+      final tag = match.group(1)?.trim() ?? '';
+      if (stickerDataByTag.containsKey(tag)) {
+        markers.add(_Marker(
+          start: match.start,
+          end: match.end,
+          type: _SegType.sticker,
+          content: tag,
+          data: stickerDataByTag[tag],
+        ));
+      }
+    }
+
+    // 移除被 TTS 标记包含的表情包标记（嵌套场景）
+    markers.removeWhere((m) {
+      if (m.type != _SegType.sticker) return false;
+      return markers.any((other) =>
+          other.type == _SegType.tts &&
+          m.start >= other.start &&
+          m.end <= other.end);
+    });
+
+    // 按位置排序
+    markers.sort((a, b) => a.start.compareTo(b.start));
+
+    // 按标记位置切分文本
+    final segments = <_Seg>[];
     int lastEnd = 0;
 
-    for (final match in ttsRegex.allMatches(cleanedText)) {
-      // 添加 TTS 标签前的文本（保持原样，不 trim）
-      if (match.start > lastEnd) {
-        final beforeText = cleanedText.substring(lastEnd, match.start);
-        // 只有在内容非空白时才添加
-        if (beforeText.trim().isNotEmpty) {
-          segments.add(_TtsSegment(_TtsSegmentType.text, beforeText.trim()));
+    for (final marker in markers) {
+      // 标记前的文本
+      if (marker.start > lastEnd) {
+        final beforeText =
+            cleanedText.substring(lastEnd, marker.start).trim();
+        if (beforeText.isNotEmpty) {
+          segments.add(_Seg(_SegType.text, beforeText));
         }
       }
 
-      // 添加 TTS 内容
-      final ttsContent = match.group(1);
-      if (ttsContent != null && ttsContent.trim().isNotEmpty) {
-        segments.add(_TtsSegment(_TtsSegmentType.tts, ttsContent.trim()));
-      }
+      // 多模态段
+      segments.add(_Seg(
+        marker.type,
+        marker.content,
+        stickerData: marker.data,
+      ));
 
-      lastEnd = match.end;
+      lastEnd = marker.end;
     }
 
-    // 添加最后一个 TTS 标签后的文本
+    // 最后一个标记后的文本
     if (lastEnd < cleanedText.length) {
-      final afterText = cleanedText.substring(lastEnd);
-      if (afterText.trim().isNotEmpty) {
-        segments.add(_TtsSegment(_TtsSegmentType.text, afterText.trim()));
+      final afterText = cleanedText.substring(lastEnd).trim();
+      if (afterText.isNotEmpty) {
+        segments.add(_Seg(_SegType.text, afterText));
       }
     }
 
     return segments;
   }
 
-  /// 移除非 TTS 的插件标签（保留其他所有文本）
+  /// 移除非多模态的插件标签（保留 TTS 和表情包标签）
   ///
   /// 只移除标签本身，不改动其他任何字符（包括空格、标点）
   String _stripNonTtsTags(String text) {
@@ -223,7 +321,8 @@ class ChatMessageProcessor {
       '',
     );
     result = result.replaceAll(
-      RegExp(r'<create_trigger\s[^>]*?>.*?</create_trigger>', caseSensitive: false, dotAll: true),
+      RegExp(r'<create_trigger\s[^>]*?>.*?</create_trigger>',
+          caseSensitive: false, dotAll: true),
       '',
     );
     // 移除 <delete_trigger ... /> 标签
@@ -234,11 +333,11 @@ class ChatMessageProcessor {
     // 注意：不做 trim，保留原始文本格式
     return result;
   }
-  
+
   /// 处理 PluginContent 列表，将其转换为 Message 列表
   List<Message> _processPluginContents(List<PluginContent> contents) {
     final messages = <Message>[];
-    
+
     for (final content in contents) {
       switch (content) {
         case PluginTextContent(:final text):
@@ -251,7 +350,7 @@ class ChatMessageProcessor {
               status: 'sent',
             ));
           }
-          
+
         case PluginImageContent(:final localPath, :final caption):
           final msgId = genId('img');
           messages.add(Message.fromBlocks(
@@ -261,18 +360,17 @@ class ChatMessageProcessor {
               ImageBlock(
                 messageId: msgId,
                 localPath: localPath,
-                prompt: caption, // 使用 prompt 字段存储说明文字
+                prompt: caption,
               ),
             ],
             createdAt: DateTime.now(),
             status: 'sent',
           ));
-          
+
         case PluginAudioContent(:final localPath, :final duration):
           final msgId = genId('audio');
-          // AudioBlock 需要 url，对于本地文件需要转换为 file:// 格式
-          final audioUrl = localPath.startsWith('file://') 
-              ? localPath 
+          final audioUrl = localPath.startsWith('file://')
+              ? localPath
               : 'file://$localPath';
           messages.add(Message.fromBlocks(
             id: msgId,
@@ -287,14 +385,12 @@ class ChatMessageProcessor {
             createdAt: DateTime.now(),
             status: 'sent',
           ));
-          
+
         case PluginWidgetContent():
-          // Widget 内容暂不支持持久化，可以考虑生成占位消息
-          // 或者在 UI 层特殊处理（需要进一步设计）
           break;
       }
     }
-    
+
     return messages;
   }
 
@@ -330,16 +426,17 @@ class ChatMessageProcessor {
     final ttsMatches = ttsRegex.allMatches(result).map((m) {
       final content = m.group(1)?.trim();
       if (content == null || content.isEmpty) return null;
-      // 清理 TTS 内容中的 MiniMax 标签（语气词、停顿等）
       return TtsParser.stripMinimaxTags(content);
     }).where((v) => v != null && v.isNotEmpty).toList();
     result = result.replaceAll(ttsRegex, '');
 
     // 移除 <create_trigger ... /> 标签
-    result = result.replaceAll(RegExp(r'<create_trigger\s[^>]*?/?>', caseSensitive: false), '');
+    result = result.replaceAll(
+        RegExp(r'<create_trigger\s[^>]*?/?>', caseSensitive: false), '');
 
     // 移除 <delete_trigger ... /> 标签
-    result = result.replaceAll(RegExp(r'<delete_trigger\s[^>]*?/?>', caseSensitive: false), '');
+    result = result.replaceAll(
+        RegExp(r'<delete_trigger\s[^>]*?/?>', caseSensitive: false), '');
 
     result = result.trim();
 
@@ -352,7 +449,8 @@ class ChatMessageProcessor {
   }
 
   /// 收集 TTS 文本片段
-  List<String> collectTtsTexts(String replyText, List<PluginEvent> pluginEvents) {
+  List<String> collectTtsTexts(
+      String replyText, List<PluginEvent> pluginEvents) {
     final segments = <String>[];
     for (final event in pluginEvents) {
       if (event.type != 'tts_convert') continue;

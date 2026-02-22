@@ -35,10 +35,7 @@
 （注意：这里的"实体"指不必要的复杂度/重复代码，不是指公共类。可复用的公共组件/工具类应当积极创建并入库。）
 遵循 KISS、YAGNI、DRY、SOLID 原则：简洁、只做必要的、不重复、高内聚低耦合。
 
-# 批量操作省 token 规则
-对于"全局替换字符串"、"批量重命名"、"批量加 import"等重复性操作，**禁止**逐文件 Read + Edit。
-必须优先使用 Bash/PowerShell 脚本批量处理，然后用 Grep 抽查确认，最后 flutter run 验证。
-逐文件编辑只适用于每个文件改动逻辑不同的场景。
+
 
 # MCP服务调用规则
 鼓励优先使用MCP服务调用解决问题。在解决问题之前，先思考mcp对本次任务有什么帮助。
@@ -47,3 +44,4 @@
 开始工作前必须要先大致搞明白项目基础状况。
 本目录下的readme.md，工作前必须阅读！Please always refer to the root README.md file to understand the project structure, installation steps, and goals. Treat the content of README.md as part of this context.
 apps\aicove_flutter\docs\公共组件总览.md，在涉及修改前端界面时也是必读。
+

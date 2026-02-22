@@ -25,16 +25,22 @@ class ContextAnalyzer {
 
     final history = conversation.messages;
     // Only analyze last 10 messages to save tokens
-    final recent = history.length > 10 ? history.sublist(history.length - 10) : history;
-    
+    final recent =
+        history.length > 10 ? history.sublist(history.length - 10) : history;
+
     // 根据时间增强插件配置决定是否添加时间戳
     final pluginManager = _ref.read(pluginManagerProvider);
-    final timeAwarenessPlugin = pluginManager.getPlugin('time_awareness') as TimeAwarenessPlugin?;
-    final includeTimestamp = timeAwarenessPlugin?.shouldIncludeTimestamp ?? false;
-    final messagesJson = recent.map((m) => m.toHistoryJson(includeTimestamp: includeTimestamp)).toList();
+    final timeAwarenessPlugin =
+        pluginManager.getPlugin('time_awareness') as TimeAwarenessPlugin?;
+    final includeTimestamp =
+        timeAwarenessPlugin?.shouldIncludeTimestamp ?? false;
+    final messagesJson = recent
+        .map((m) => m.toHistoryJson(includeTimestamp: includeTimestamp))
+        .toList();
 
     // 获取当前未完成的触发器列表
-    final currentTriggers = _ref.read(autoReplyTriggersProvider).valueOrNull ?? [];
+    final currentTriggers =
+        _ref.read(autoReplyTriggersProvider).valueOrNull ?? [];
     final pendingTriggers = currentTriggers
         .where((t) =>
             t.isActive &&
@@ -71,14 +77,16 @@ Do not output markdown. Just JSON.
     final systemContent = StringBuffer(analyzerPrompt);
     if (pendingTriggers.isNotEmpty) {
       systemContent.write('\n\nEXISTING PENDING TRIGGERS:\n');
-      systemContent.write(jsonEncode(pendingTriggers.map((t) => {
-        'id': t.id,
-        'title': t.title,
-        'delay_minutes': t.delayMinutes,
-        'allow_night': t.allowNight,
-        'priority': t.priority.name,
-        'next_fire_at': t.nextFireAt.toIso8601String(),
-      }).toList()));
+      systemContent.write(jsonEncode(pendingTriggers
+          .map((t) => {
+                'id': t.id,
+                'title': t.title,
+                'delay_minutes': t.delayMinutes,
+                'allow_night': t.allowNight,
+                'priority': t.priority.name,
+                'next_fire_at': t.nextFireAt.toIso8601String(),
+              })
+          .toList()));
     }
 
     messagesJson.add({
@@ -91,38 +99,45 @@ Do not output markdown. Just JSON.
       // 无论哪种情况，都使用新的 sessionId 隔离上下文，防止污染
       final String model;
       final String provider;
-      
+
       if (autoReplySettings.analyzerModel?.isNotEmpty == true) {
         // 使用用户指定的独立模型
-        model = autoReplySettings.analyzerModel!;
+        final analyzerRef = autoReplySettings.analyzerModel!;
+        model = settings.getRawModelId(analyzerRef);
         provider = autoReplySettings.analyzerProvider?.isNotEmpty == true
             ? autoReplySettings.analyzerProvider!
-            : (settings.modelProviderMap[model] ?? 'openai');
+            : (settings.getModelProviderId(analyzerRef) ?? 'openai');
         AppLogger.info('ContextAnalyzer', '使用独立 AI 管家模型', metadata: {
           'model': model,
           'provider': provider,
         });
       } else {
         // 使用默认对话模型（但仍隔离 session）
-        model = settings.defaultModelName;
-        provider = settings.modelProviderMap[model] ?? 'openai';
+        final defaultRef = settings.defaultModelName;
+        model = settings.getRawModelId(defaultRef);
+        provider = settings.getModelProviderId(defaultRef) ?? 'openai';
         AppLogger.info('ContextAnalyzer', '使用默认模型（隔离 session）', metadata: {
           'model': model,
           'provider': provider,
         });
       }
-      
+
       final modelFull = '$provider:$model';
       final providerAuth = settings.providers.firstWhere(
-        (p) => p.id == provider, 
-        orElse: () => ProviderAuth(id: provider, apiKeys: [], apiBaseUrl: settings.apiBaseUrl),
+        (p) => p.id == provider,
+        orElse: () => ProviderAuth(
+            id: provider, apiKeys: [], apiBaseUrl: settings.apiBaseUrl),
       );
-      final apiKey = providerAuth.apiKeys.isNotEmpty ? providerAuth.apiKeys.first : null;
-      final apiBase = providerAuth.apiBaseUrl.isNotEmpty ? providerAuth.apiBaseUrl : settings.apiBaseUrl;
+      final apiKey =
+          providerAuth.apiKeys.isNotEmpty ? providerAuth.apiKeys.first : null;
+      final apiBase = providerAuth.apiBaseUrl.isNotEmpty
+          ? providerAuth.apiBaseUrl
+          : settings.apiBaseUrl;
 
       // 关键：使用独立的 sessionId，完全隔离触发器分析与聊天上下文
-      final isolatedSessionId = 'scheduler_${DateTime.now().millisecondsSinceEpoch}';
-      
+      final isolatedSessionId =
+          'scheduler_${DateTime.now().millisecondsSinceEpoch}';
+
       final response = await _agent.sendMessage(
         agentId: 'scheduler',
         sessionId: isolatedSessionId,
@@ -136,15 +151,15 @@ Do not output markdown. Just JSON.
       );
 
       await _processResponse(
-        jsonStr: response, 
-        conversation: conversation, 
-        settings: settings,
-        apiKey: apiKey,
-        apiBase: apiBase,
-        model: modelFull
-      );
+          jsonStr: response,
+          conversation: conversation,
+          settings: settings,
+          apiKey: apiKey,
+          apiBase: apiBase,
+          model: modelFull);
     } catch (e) {
-      AppLogger.error('ContextAnalyzer', 'Failed to analyze context', metadata: {'error': e.toString()});
+      AppLogger.error('ContextAnalyzer', 'Failed to analyze context',
+          metadata: {'error': e.toString()});
     }
   }
 
@@ -166,8 +181,9 @@ Do not output markdown. Just JSON.
 
       final List<dynamic> aiTriggers = jsonDecode(clean);
       final controller = _ref.read(autoReplyTriggersProvider.notifier);
-      
-      final currentTriggers = _ref.read(autoReplyTriggersProvider).valueOrNull ?? [];
+
+      final currentTriggers =
+          _ref.read(autoReplyTriggersProvider).valueOrNull ?? [];
       final pendingTriggers = currentTriggers
           .where((t) =>
               t.isActive &&
@@ -183,7 +199,7 @@ Do not output markdown. Just JSON.
       final contextSnapshot = jsonEncode(
         snapshotSource.map((m) => m.toHistoryJson()).toList(),
       );
-      
+
       for (final item in aiTriggers) {
         if (item is Map<String, dynamic>) {
           final existingId = item['id'] as String?;
@@ -207,14 +223,20 @@ Do not output markdown. Just JSON.
         final title = item['title'] as String? ?? 'Auto Trigger';
         final minutes = (item['delay_minutes'] as num?)?.toInt() ?? 60;
         final allowNight = item['allow_night'] as bool? ?? false;
-        final prompt = item['prompt'] as String? ?? 'Initiate conversation based on trigger: $title';
+        final prompt = item['prompt'] as String? ??
+            'Initiate conversation based on trigger: $title';
         final priorityStr = item['priority'] as String? ?? 'medium';
 
         AutoReplyTriggerPriority priority;
         switch (priorityStr.toLowerCase()) {
-          case 'high': priority = AutoReplyTriggerPriority.high; break;
-          case 'low': priority = AutoReplyTriggerPriority.low; break;
-          default: priority = AutoReplyTriggerPriority.medium;
+          case 'high':
+            priority = AutoReplyTriggerPriority.high;
+            break;
+          case 'low':
+            priority = AutoReplyTriggerPriority.low;
+            break;
+          default:
+            priority = AutoReplyTriggerPriority.medium;
         }
 
         // 获取会话中最后一条用户消息（用于作废判断）
@@ -262,19 +284,19 @@ Do not output markdown. Just JSON.
               'characterName': conversation.title,
             },
           );
-          AppLogger.info('ContextAnalyzer', 'Scheduled background task', metadata: {'delay': minutes});
+          AppLogger.info('ContextAnalyzer', 'Scheduled background task',
+              metadata: {'delay': minutes});
         }
 
-        AppLogger.info('ContextAnalyzer', 'Scheduled trigger',
-            metadata: {
-              'triggerId': createdTrigger.id,
-              'title': title,
-              'minutes': minutes,
-              'source': 'aiScheduler'
-            });
+        AppLogger.info('ContextAnalyzer', 'Scheduled trigger', metadata: {
+          'triggerId': createdTrigger.id,
+          'title': title,
+          'minutes': minutes,
+          'source': 'aiScheduler'
+        });
       }
     } catch (e) {
-      AppLogger.warning('ContextAnalyzer', 'Failed to parse scheduler JSON', 
+      AppLogger.warning('ContextAnalyzer', 'Failed to parse scheduler JSON',
           metadata: {'json': jsonStr, 'error': e.toString()});
     }
   }

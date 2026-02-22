@@ -20,6 +20,7 @@ import 'package:aicove_flutter/src/ui/features/settings/pages/model_list_page.da
 import 'chat_plugin_settings_page.dart';
 import 'ui_settings_page.dart';
 import '../../backup/pages/data_management_page.dart';
+import '../../debug/pages/debug_center_page.dart';
 
 /// 设置页面 - 带AppBar 的完整页面（小屏使用）
 class SettingsPage extends StatelessWidget {
@@ -57,12 +58,12 @@ class _SettingsContentState extends ConsumerState<SettingsContent> {
       data: (settings) {
         return ListView(
           children: [
-            // ============ 渠道列表 ============
+            // ============ 模型管理 ============
             _buildSettingItem(
               context,
               icon: Icons.list_alt,
-              title: '渠道列表',
-              subtitle: '管理所有类型的渠道商',
+              title: '模型管理',
+              subtitle: '管理模型渠道和默认设置',
               onTap: () => _navigateTo(context, const ModelListPage()),
             ),
 
@@ -100,6 +101,18 @@ class _SettingsContentState extends ConsumerState<SettingsContent> {
               title: '数据管理',
               subtitle: '备份、导入导出、云同步',
               onTap: () => _navigateTo(context, const DataManagementPage()),
+            ),
+
+            // ============ 组间分割 ============
+            _buildGroupDivider(colors),
+
+            // ============ 调试中心 ============
+            _buildSettingItem(
+              context,
+              icon: Icons.bug_report_outlined,
+              title: '调试中心',
+              subtitle: '日志、组件库、工具提示词',
+              onTap: () => _navigateTo(context, const DebugCenterPage()),
             ),
 
             const SizedBox(height: 24),

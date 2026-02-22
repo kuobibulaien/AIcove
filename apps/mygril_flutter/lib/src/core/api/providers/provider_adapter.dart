@@ -41,16 +41,25 @@ class ToolCall {
 
   factory ToolCall.fromOpenAI(Map<String, dynamic> json) {
     final function = json['function'] as Map<String, dynamic>? ?? {};
-    final argsStr = function['arguments'] as String? ?? '{}';
-    Map<String, dynamic> args;
-    try {
-      args = jsonDecode(argsStr) as Map<String, dynamic>;
-    } catch (_) {
-      args = {};
+    final rawArgs = function['arguments'];
+    Map<String, dynamic> args = {};
+
+    if (rawArgs is Map<String, dynamic>) {
+      args = Map<String, dynamic>.from(rawArgs);
+    } else if (rawArgs is String && rawArgs.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(rawArgs);
+        if (decoded is Map<String, dynamic>) {
+          args = decoded;
+        }
+      } catch (_) {
+        args = {};
+      }
     }
+
     return ToolCall(
-      id: json['id'] as String? ?? '',
-      name: function['name'] as String? ?? '',
+      id: json['id']?.toString() ?? '',
+      name: function['name']?.toString() ?? '',
       arguments: args,
     );
   }

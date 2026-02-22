@@ -36,7 +36,7 @@ enum ComposerPanelType { none, keyboard, more }
 class Composer extends ConsumerStatefulWidget {
   final bool disabled;
   final ValueChanged<String> onSend;
-  final ValueChanged<String>? onImageSelected;
+  final void Function(String imagePath, {String? text})? onImageSelected;
   final ValueChanged<String>? onFileSelected;
   const Composer({
     super.key,
@@ -359,10 +359,15 @@ class _ComposerState extends ConsumerState<Composer> {
 
   void _submit() {
     final attachment = _selectedAttachment;
+    final text = _ctrl.text.trim();
+
     if (attachment != null) {
       if (attachment.type == AttachmentType.image &&
           widget.onImageSelected != null) {
-        widget.onImageSelected!(attachment.path);
+        widget.onImageSelected!(
+          attachment.path,
+          text: text.isNotEmpty ? text : null,
+        );
       } else if (attachment.type == AttachmentType.file) {
         if (widget.onFileSelected == null) {
           MoeToast.brief(context, '当前页面暂未接入文件发送');
@@ -375,9 +380,8 @@ class _ComposerState extends ConsumerState<Composer> {
       return;
     }
 
-    final t = _ctrl.text.trim();
-    if (t.isEmpty || widget.disabled) return;
-    widget.onSend(t);
+    if (text.isEmpty || widget.disabled) return;
+    widget.onSend(text);
     _ctrl.clear();
   }
 
@@ -761,31 +765,35 @@ class _ComposerState extends ConsumerState<Composer> {
         return ListView(
           children: [
             for (final model in models)
-              MoeListTile(
-                leading: Icon(
-                  model == currentModel
-                      ? Icons.radio_button_checked
-                      : Icons.radio_button_unchecked,
-                  color: model == currentModel ? colors.primary : colors.muted,
-                  size: 20,
-                ),
-                title: Text(
-                  loadedSettings.modelDisplayNames[model]?.trim().isNotEmpty ==
-                          true
-                      ? loadedSettings.modelDisplayNames[model]!
-                      : model,
-                ),
-                subtitle: loadedSettings.modelDisplayNames[model]
-                            ?.trim()
-                            .isNotEmpty ==
-                        true
-                    ? Text(model)
-                    : null,
-                trailing: model == currentModel
-                    ? Icon(Icons.check, color: colors.primary, size: 18)
-                    : null,
-                selected: model == currentModel,
-                onTap: () => Navigator.of(sheetContext).pop(model),
+              Builder(
+                builder: (_) {
+                  final modelId = loadedSettings.getRawModelId(model);
+                  final displayName = loadedSettings.getModelDisplayName(model);
+                  final providerId = loadedSettings.getModelProviderId(model);
+                  final subtitleParts = <String>[
+                    if (providerId != null && providerId.isNotEmpty) providerId,
+                    if (displayName != modelId) modelId,
+                  ];
+                  return MoeListTile(
+                    leading: Icon(
+                      model == currentModel
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_unchecked,
+                      color:
+                          model == currentModel ? colors.primary : colors.muted,
+                      size: 20,
+                    ),
+                    title: Text(displayName),
+                    subtitle: subtitleParts.isEmpty
+                        ? null
+                        : Text(subtitleParts.join(' / ')),
+                    trailing: model == currentModel
+                        ? Icon(Icons.check, color: colors.primary, size: 18)
+                        : null,
+                    selected: model == currentModel,
+                    onTap: () => Navigator.of(sheetContext).pop(model),
+                  );
+                },
               ),
           ],
         );
@@ -799,7 +807,12 @@ class _ComposerState extends ConsumerState<Composer> {
     }
     await ref.read(appSettingsProvider.notifier).setDefaultModelName(selected);
     if (!mounted) return;
-    MoeToast.success(context, '已切换默认模型：$selected');
+    final selectedLabel = loadedSettings.getModelDisplayName(selected);
+    final selectedProvider = loadedSettings.getModelProviderId(selected);
+    final summary = selectedProvider == null || selectedProvider.isEmpty
+        ? selectedLabel
+        : '$selectedLabel ($selectedProvider)';
+    MoeToast.success(context, '已切换默认模型：$summary');
   }
 
   Future<void> _pickImage(ImageSource source) async {

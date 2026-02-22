@@ -1,7 +1,7 @@
 /// CategorySection - 角色分类区段组件
-/// 
+///
 /// 从 role_card_page.dart 提取，显示一个角色分类的横向列表。
-/// 
+///
 /// 更新记录：
 /// - 2025-12-31: 从 role_card_page.dart 提取
 library;
@@ -53,7 +53,7 @@ class CategorySection extends ConsumerWidget {
             // 计算卡片宽度：容器宽度 - 左边距(16) - 间距(12) - 露出部分(20)
             final availableWidth = constraints.maxWidth;
             final cardWidth = (availableWidth - 48).clamp(280.0, 400.0);
-            
+
             return SizedBox(
               height: 200, // 卡片高度
               child: ListView.separated(
@@ -66,6 +66,7 @@ class CategorySection extends ConsumerWidget {
                   final conv = conversations[index];
                   final heroId = '${conv.id}_${title}_$index';
                   return HorizontalRoleCard(
+                    key: ValueKey(conv.id),
                     conversation: conv,
                     cardWidth: cardWidth,
                     heroId: heroId,

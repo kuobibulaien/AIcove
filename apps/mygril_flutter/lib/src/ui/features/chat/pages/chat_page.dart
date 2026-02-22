@@ -18,6 +18,7 @@ import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../features/settings/app_settings.dart';
+import '../../../../features/chat/services/chat_send_service.dart';
 import '../../../../core/database/database.dart' as db;
 import '../../../../core/database/database_provider.dart';
 import '../../../../core/database/converters/database_converters.dart';
@@ -82,6 +83,163 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       if (!mounted) return;
       _triggerImagePreload();
     });
+  }
+
+  /// 检查视觉兼容性，必要时弹窗确认
+  ///
+  /// 返回 true 表示可以继续发送，false 表示用户取消
+  Future<bool> _checkVisionCompat({
+    required Conversation conv,
+    bool currentMessageHasImage = false,
+  }) async {
+    final settings = await ref.read(appSettingsProvider.future);
+
+    // 已勾选"不再提醒"→ 直接放行
+    if (settings.skipVisionCompatDialog) return true;
+
+    // 判断当前聊天模型是否支持视觉
+    final chatModels = settings.defaultChatModels.isNotEmpty
+        ? settings.defaultChatModels
+        : [settings.defaultModelName];
+    final primaryModel = chatModels.first;
+    if (ChatSendService.isVisionModel(settings.getRawModelId(primaryModel))) {
+      return true;
+    }
+
+    // 判断上下文 / 当前消息是否包含图片
+    final historyHasImage = conv.messages.any((m) => m.images.isNotEmpty);
+    if (!historyHasImage && !currentMessageHasImage) return true;
+
+    // 需要弹窗
+    if (!mounted) return false;
+    final confirmed = await _showVisionCompatDialog(
+      context: context,
+      modelName: settings.getModelDisplayName(primaryModel),
+      hasVisionModel: settings.defaultVisionModel != null &&
+          settings.defaultVisionModel!.isNotEmpty,
+    );
+    return confirmed == true;
+  }
+
+  /// 显示视觉兼容性确认弹窗
+  Future<bool?> _showVisionCompatDialog({
+    required BuildContext context,
+    required String modelName,
+    required bool hasVisionModel,
+  }) {
+    var dontShowAgain = false;
+    final colors = context.moeColors;
+
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      barrierColor: Colors.black54,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          backgroundColor: colors.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: Text(
+            '当前模型不支持图片',
+            style: TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.w600,
+              color: colors.text,
+            ),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '当前聊天模型（$modelName）不支持图片理解，'
+                '上下文中的图片可能导致调用失败。',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: colors.textSecondary,
+                  height: 1.5,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                hasVisionModel
+                    ? '点击确认后，将通过视觉辅助模型自动将图片转为文字描述。\n'
+                        '建议切换到原生支持多模态的模型（如 GPT-4o、Gemini）以获得最佳体验。'
+                    : '建议前往设置中配置视觉辅助模型，'
+                        '或切换到原生支持多模态的模型（如 GPT-4o、Gemini）。',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: colors.muted,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 16),
+              // "不再提醒"复选框
+              InkWell(
+                borderRadius: BorderRadius.circular(4),
+                onTap: () {
+                  setDialogState(() => dontShowAgain = !dontShowAgain);
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: Checkbox(
+                          value: dontShowAgain,
+                          onChanged: (v) {
+                            setDialogState(() => dontShowAgain = v ?? false);
+                          },
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        '不再提醒',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: colors.muted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: Text(
+                '取消',
+                style: TextStyle(color: colors.muted),
+              ),
+            ),
+            TextButton(
+              onPressed: () {
+                if (dontShowAgain) {
+                  ref
+                      .read(appSettingsProvider.notifier)
+                      .setSkipVisionCompatDialog(true);
+                }
+                Navigator.of(ctx).pop(true);
+              },
+              child: Text(
+                hasVisionModel ? '使用视觉辅助模型发送' : '仍然发送',
+                style: TextStyle(color: colors.accentColor),
+              ),
+            ),
+          ],
+          // "不再提醒"复选框放在 content 底部
+          contentPadding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
+        ),
+      ),
+    );
   }
 
   /// 注释已清理乱码
@@ -227,8 +385,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final maskOpacity =
         (conv?.chatBackgroundMaskOpacity ?? 0.8).clamp(0.0, 1.0);
     final topMaskOpacity = (maskOpacity + 0.12).clamp(0.0, 1.0);
-    final blurSigma =
-        (conv?.chatBackgroundBlurSigma ?? 0.0).clamp(0.0, 30.0);
+    final blurSigma = (conv?.chatBackgroundBlurSigma ?? 0.0).clamp(0.0, 30.0);
 
     final Widget bgImage = blurSigma > 0.1
         ? ImageFiltered(
@@ -402,6 +559,22 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final sidebarVisible = ref.watch(sidebarVisibleProvider);
     final settingsAsync = ref.watch(appSettingsProvider);
     final colors = context.moeColors;
+
+    // 监听模型轮询通知，弹 toast 提示
+    ref.listen<String?>(modelFailoverInfoProvider, (prev, next) {
+      if (next != null && next.isNotEmpty && mounted) {
+        MoeToast.info(context, '自动尝试下一个模型: $next');
+      }
+    });
+
+    // 监听发送错误，弹出失败原因提示
+    ref.listen<String?>(errorProvider, (prev, next) {
+      if (next != null && next.isNotEmpty && mounted) {
+        MoeToast.show(context, '发送失败: $next',
+            type: ToastType.error, duration: const Duration(seconds: 3));
+      }
+    });
+
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final chatBgColor = settingsAsync.maybeWhen(
       data: (settings) {
@@ -482,10 +655,51 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               )
             : null,
         actions: [
-          if (conv != null)
+          if (conv != null) ...[
+            IconButton(
+              icon: Icon(Icons.add_comment_outlined,
+                  color: colors.headerContentColor),
+              tooltip: '新话题',
+              onPressed: () async {
+                if (conv.messages.isEmpty) {
+                  MoeToast.brief(context, '当前没有聊天记录');
+                  return;
+                }
+                final ok = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    title: const Text('开始新话题'),
+                    content: const Text('之前的聊天记录不会删除，但AI将只看到新话题中的消息。'),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('取消'),
+                      ),
+                      FilledButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        child: const Text('确定'),
+                      ),
+                    ],
+                  ),
+                );
+                if (ok == true && context.mounted) {
+                  final lastMsgId = conv.messages.last.id;
+                  await ref.read(conversationsProvider.notifier).updateOne(
+                        conv.id,
+                        (c) => c.copyWith(
+                          contextStartMessageId: lastMsgId,
+                          updatedAt: DateTime.now(),
+                        ),
+                      );
+                  if (context.mounted) {
+                    MoeToast.brief(context, '已开始新话题');
+                  }
+                }
+              },
+            ),
             IconButton(
               icon: Icon(Icons.more_horiz, color: colors.headerContentColor),
-                  tooltip: '更多',
+              tooltip: '更多',
               onPressed: () async {
                 await showChatSettingsDialog(
                   context: context,
@@ -617,6 +831,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 );
               },
             ),
+          ],
           const SizedBox(width: 8),
         ],
       ),
@@ -628,55 +843,58 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             // 注释已清理乱码
             Column(
               children: [
-            if (listTopSpacing > 0) SizedBox(height: listTopSpacing),
-            // 注释已清理乱码
-            // 注释已清理乱码
-            // 注释已清理乱码
-            Expanded(
-              child: conv == null
-                  ? const Center(child: CircularProgressIndicator())
-                  : GestureDetector(
-                      behavior: HitTestBehavior.translucent,
-                      onTap: () {
-                        final keyboardHeight =
-                            MediaQuery.viewInsetsOf(context).bottom;
-                        // 注释已清理乱码
-                        if (keyboardHeight > 0) {
-                          SystemChannels.textInput
-                              .invokeMethod('TextInput.hide');
-                          return;
-                        }
-                        // 注释已清理乱码
-                        FocusManager.instance.primaryFocus?.unfocus();
-                      },
-                      child: ChatMessageList(
-                        key: ValueKey(conv.id),
-                        conversationId: conv.id,
-                        messages: conv.messages,
-                        avatarUrl: conv.avatarUrl ?? conv.characterImage,
-                        displayName: conv.displayName,
-                        onLoadMore: () => _loadMoreMessages(conv),
-                        isLoadingMore: _isLoadingMore,
-                        hasMoreMessages: _hasMoreMessages,
-                        onEditMessage: (message) async {
-                          final text = await actions.editMessage(message.id);
-                          if (text != null && text.isNotEmpty) {
-                            ref.read(editingTextProvider.notifier).state = text;
-                          }
-                        },
-                        onRegenerateMessage: (message) {
-                          if (ref.read(sendingProvider)) {
-                            MoeToast.brief(
-                              context,
-                              'Please wait for current message to finish',
-                            );
-                            return;
-                          }
-                          actions.regenerate(message.id);
-                        },
-                      ),
-                    ),
-            ),
+                if (listTopSpacing > 0) SizedBox(height: listTopSpacing),
+                // 注释已清理乱码
+                // 注释已清理乱码
+                // 注释已清理乱码
+                Expanded(
+                  child: conv == null
+                      ? const Center(child: CircularProgressIndicator())
+                      : GestureDetector(
+                          behavior: HitTestBehavior.translucent,
+                          onTap: () {
+                            final keyboardHeight =
+                                MediaQuery.viewInsetsOf(context).bottom;
+                            // 注释已清理乱码
+                            if (keyboardHeight > 0) {
+                              SystemChannels.textInput
+                                  .invokeMethod('TextInput.hide');
+                              return;
+                            }
+                            // 注释已清理乱码
+                            FocusManager.instance.primaryFocus?.unfocus();
+                          },
+                          child: ChatMessageList(
+                            key: ValueKey(conv.id),
+                            conversationId: conv.id,
+                            messages: conv.messages,
+                            avatarUrl: conv.avatarUrl ?? conv.characterImage,
+                            displayName: conv.displayName,
+                            contextStartMessageId: conv.contextStartMessageId,
+                            onLoadMore: () => _loadMoreMessages(conv),
+                            isLoadingMore: _isLoadingMore,
+                            hasMoreMessages: _hasMoreMessages,
+                            onEditMessage: (message) async {
+                              final text =
+                                  await actions.editMessage(message.id);
+                              if (text != null && text.isNotEmpty) {
+                                ref.read(editingTextProvider.notifier).state =
+                                    text;
+                              }
+                            },
+                            onRegenerateMessage: (message) {
+                              if (ref.read(sendingProvider)) {
+                                MoeToast.brief(
+                                  context,
+                                  'Please wait for current message to finish',
+                                );
+                                return;
+                              }
+                              actions.regenerate(message.id);
+                            },
+                          ),
+                        ),
+                ),
               ],
             ),
             // Composer floats at bottom for BackdropFilter blur
@@ -685,53 +903,68 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               right: 0,
               bottom: 0,
               child: Composer(
-              disabled: false, // 注释已清理乱码
-              onSend: (text) {
-                // 注释已清理乱码
-                if (ref.read(sendingProvider)) {
-                  MoeToast.brief(
-                    context,
-                    'Please wait for current message to finish',
-                  );
-                  return;
-                }
-                // 检查是否有引用消息
-                final quoted = ref.read(quotedMessageProvider);
-                if (quoted != null) {
+                disabled: false, // 注释已清理乱码
+                onSend: (text) async {
                   // 注释已清理乱码
-                  final quotedText = quoted.content.length > 30
-                      ? '${quoted.content.substring(0, 30)}...'
-                      : quoted.content;
-                  final quotedPrefix = '> Quote: $quotedText\n\n';
-                  actions.send(quotedPrefix + text);
-                  ref.read(quotedMessageProvider.notifier).state = null;
-                } else {
-                  actions.send(text);
-                }
-              },
-              onImageSelected: (imagePath) {
-                // 如果正在发送，不处理新图片
-                if (ref.read(sendingProvider)) {
-                  MoeToast.brief(
-                    context,
-                    'Please wait for current message to finish',
-                  );
-                  return;
-                }
-                actions.sendWithImage(imagePath);
-              },
-              onFileSelected: (filePath) {
-                // 如果正在发送，不处理新文件
-                if (ref.read(sendingProvider)) {
-                  MoeToast.brief(
-                    context,
-                    'Please wait for current message to finish',
-                  );
-                  return;
-                }
-                actions.sendWithFile(filePath);
-              },
-            ),
+                  if (ref.read(sendingProvider)) {
+                    MoeToast.brief(
+                      context,
+                      'Please wait for current message to finish',
+                    );
+                    return;
+                  }
+                  // 视觉兼容性检查
+                  final conv = ref.read(activeConversationProvider);
+                  if (conv != null) {
+                    final ok = await _checkVisionCompat(conv: conv);
+                    if (!ok) return;
+                  }
+                  // 检查是否有引用消息
+                  final quoted = ref.read(quotedMessageProvider);
+                  if (quoted != null) {
+                    // 注释已清理乱码
+                    final quotedText = quoted.content.length > 30
+                        ? '${quoted.content.substring(0, 30)}...'
+                        : quoted.content;
+                    final quotedPrefix = '> Quote: $quotedText\n\n';
+                    actions.send(quotedPrefix + text);
+                    ref.read(quotedMessageProvider.notifier).state = null;
+                  } else {
+                    actions.send(text);
+                  }
+                },
+                onImageSelected: (imagePath, {String? text}) async {
+                  // 如果正在发送，不处理新图片
+                  if (ref.read(sendingProvider)) {
+                    MoeToast.brief(
+                      context,
+                      'Please wait for current message to finish',
+                    );
+                    return;
+                  }
+                  // 视觉兼容性检查（当前消息包含图片）
+                  final conv = ref.read(activeConversationProvider);
+                  if (conv != null) {
+                    final ok = await _checkVisionCompat(
+                      conv: conv,
+                      currentMessageHasImage: true,
+                    );
+                    if (!ok) return;
+                  }
+                  actions.sendWithImage(imagePath, text: text);
+                },
+                onFileSelected: (filePath) {
+                  // 如果正在发送，不处理新文件
+                  if (ref.read(sendingProvider)) {
+                    MoeToast.brief(
+                      context,
+                      'Please wait for current message to finish',
+                    );
+                    return;
+                  }
+                  actions.sendWithFile(filePath);
+                },
+              ),
             ),
           ],
         ),

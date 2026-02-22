@@ -52,28 +52,16 @@ class StickerPlugin extends BasePlugin {
   @override
   Future<String?> getSystemPrompt({String? userMessage, bool supportsToolCalling = false}) async {
     if (!enabled) return null;
-    
+
     // 获取所有可用标签
     final registry = StickerRegistry.instance;
     final tags = registry.allTags.toList()..sort();
-    
+
     if (tags.isEmpty) return null;
-    
-    return '''
-你可以在回复中使用表情包来增加趣味性。使用方法：在合适的地方用 [标签] 标记。
 
-可用的表情包标签：${tags.join('、')}
-
-示例：
-- "晚安呀~ [晚安]"
-- "太感谢你了！[谢谢]"
-- "好累啊 [摸鱼]"
-
-注意：
-- 不要每句话都用表情包，适度使用
-- 表情包放在句尾效果更自然
-- 同义词会自动匹配（如"睡觉"会匹配到"晚安"组的表情包）
-''';
+    // 使用 config 中的模板，将 {tags} 占位符替换为实际标签列表
+    return _stickerConfig.systemPromptTemplate
+        .replaceAll('{tags}', tags.join('、'));
   }
   
   @override

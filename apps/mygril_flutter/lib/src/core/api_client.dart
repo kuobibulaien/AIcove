@@ -3,6 +3,13 @@ import 'package:http/http.dart' as http;
 import 'config.dart';
 import 'api_logger.dart';
 
+/// 后端不可用时抛出的异常（用于快速失败，不发起网络请求）
+class BackendDisabledException implements Exception {
+  const BackendDisabledException();
+  @override
+  String toString() => 'BackendDisabledException: 后端已禁用 (backendEnabled=false)';
+}
+
 /// 极简 API 客户端：统一超时与 JSON 解析（KISS/YAGNI）
 class ApiClient {
   final http.Client _client;
@@ -22,12 +29,20 @@ class ApiClient {
     return Uri.parse('$base$p');
   }
 
+  /// 后端禁用时，对走后端的请求快速失败（0 延迟）
+  void _guardBackend(String path) {
+    // 完整 URL（如直连 Provider API）不受影响
+    if (path.startsWith('http://') || path.startsWith('https://')) return;
+    if (!backendEnabled) throw const BackendDisabledException();
+  }
+
   bool _isHttpStatusException(Object error) {
     final message = error.toString();
     return message.startsWith('Exception: HTTP ');
   }
 
   Future<Map<String, dynamic>> getJson(String path) async {
+    _guardBackend(path);
     final uri = _uri(path);
     final sw = Stopwatch()..start();
     try {
@@ -69,6 +84,7 @@ class ApiClient {
 
   Future<Map<String, dynamic>> postJson(
       String path, Map<String, dynamic> body) async {
+    _guardBackend(path);
     final uri = _uri(path);
     final payload = jsonEncode(body);
     final sw = Stopwatch()..start();
@@ -116,6 +132,7 @@ class ApiClient {
 
   Future<Map<String, dynamic>> putJson(
       String path, Map<String, dynamic> body) async {
+    _guardBackend(path);
     final uri = _uri(path);
     final payload = jsonEncode(body);
     final sw = Stopwatch()..start();
@@ -164,6 +181,7 @@ class ApiClient {
   Future<Map<String, dynamic>> putJsonAuth(
       String path, Map<String, dynamic> body,
       {String? bearerToken}) async {
+    _guardBackend(path);
     final uri = _uri(path);
     final payload = jsonEncode(body);
     final sw = Stopwatch()..start();
@@ -214,6 +232,7 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>> deleteJson(String path) async {
+    _guardBackend(path);
     final uri = _uri(path);
     final sw = Stopwatch()..start();
     try {

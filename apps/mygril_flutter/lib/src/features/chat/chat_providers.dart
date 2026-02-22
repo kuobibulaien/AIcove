@@ -32,3 +32,9 @@ final sortModeProvider = StateProvider<SortMode>((ref) => SortMode.latest);
 
 /// 升序/降序 Provider
 final sortAscendingProvider = StateProvider<bool>((ref) => false);
+
+// ===== 模型轮询通知 =====
+
+/// 模型切换通知（轮询时 UI 层监听此 Provider 弹 toast）
+/// 值为正在尝试的模型名称，null 表示无通知
+final modelFailoverInfoProvider = StateProvider<String?>((ref) => null);

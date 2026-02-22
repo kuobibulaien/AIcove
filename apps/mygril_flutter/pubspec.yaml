@@ -1,4 +1,4 @@
-﻿name: aicove_flutter
+name: aicove_flutter
 description: Flutter frontend for AIcove AI companion
 publish_to: 'none'
 
@@ -19,6 +19,8 @@ dependencies:
   audio_session: ^0.1.21
   file_picker: ^8.0.3
   image_picker: ^1.0.7
+  image_gallery_saver: ^2.0.3
+  permission_handler: ^11.3.1
   crop_your_image: ^2.0.0
   uuid: ^4.2.1  # 用于生成Block和Message的唯一ID
   flutter_slidable: ^3.1.0  # 用于联系人卡片的左滑操作
@@ -53,6 +55,7 @@ dependencies:
 
   flutter_web_plugins:
     sdk: flutter
+  just_audio_windows: ^0.2.2
 
 dev_dependencies:
   flutter_test:

@@ -121,9 +121,15 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
 
     // 当前选中的模型
     final selectedModelId = config.selectedModelId;
+    final selectedProviderId = config.selectedProviderId;
     final selectedEntry = ttsModels
-        .where((e) => e.modelId == selectedModelId)
-        .firstOrNull;
+            .where((e) =>
+                e.modelId == selectedModelId &&
+                (selectedProviderId == null ||
+                    selectedProviderId.isEmpty ||
+                    e.providerId == selectedProviderId))
+            .firstOrNull ??
+        ttsModels.where((e) => e.modelId == selectedModelId).firstOrNull;
 
     return MoeSettingsGroup(
       title: 'TTS 模型',
@@ -167,7 +173,8 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
       title: '选择 TTS 模型',
       description: '从已配置的语音合成模型中选择',
       actions: models.map((entry) {
-        final isSelected = entry.modelId == config.selectedModelId;
+        final isSelected = entry.modelId == config.selectedModelId &&
+            entry.providerId == config.selectedProviderId;
         return MoeSheetAction(
           icon: isSelected ? Icons.check_circle : Icons.graphic_eq,
           label: entry.displayName,
@@ -293,8 +300,9 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
                     style: TextStyle(
                       color: isRecommended ? colors.primary : colors.muted,
                       fontSize: 11,
-                      fontWeight:
-                          isRecommended ? MoeFontWeights.emphasis : MoeFontWeights.normal,
+                      fontWeight: isRecommended
+                          ? MoeFontWeights.emphasis
+                          : MoeFontWeights.normal,
                     ),
                   );
                 }).toList(),
@@ -432,7 +440,8 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
     final selectedModelId = config.selectedModelId;
 
     // 判断当前模型类型
-    final isCosyVoice = selectedModelId?.toLowerCase().contains('cosyvoice') ?? false;
+    final isCosyVoice =
+        selectedModelId?.toLowerCase().contains('cosyvoice') ?? false;
     final isQwenTts = selectedModelId?.toLowerCase().contains('qwen') ?? false;
     final isSiliconFlow = _isCurrentProviderSiliconFlow(config);
     final isAliyun = _isCurrentProviderAliyun(config);
@@ -476,7 +485,8 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
             padding: const EdgeInsets.all(16),
             child: Row(
               children: [
-                Icon(Icons.warning_amber_outlined, color: colors.muted, size: 18),
+                Icon(Icons.warning_amber_outlined,
+                    color: colors.muted, size: 18),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -516,7 +526,8 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
                 preset.canUseWithModel(selectedModelId);
 
             // 构建副标题：显示音色来源和状态
-            String subtitle = _buildVoicePresetSubtitle(preset, isAvailable, isAliyun, isSiliconFlow);
+            String subtitle = _buildVoicePresetSubtitle(
+                preset, isAvailable, isAliyun, isSiliconFlow);
 
             return MoeSettingsRow(
               icon: isSelected ? Icons.check_circle : Icons.mic,
@@ -532,7 +543,8 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
                   // 删除按钮（内置音色不显示）
                   if (!preset.isBuiltIn)
                     GestureDetector(
-                      onTap: () => _confirmDeleteVoice(preset, notifier, colors),
+                      onTap: () =>
+                          _confirmDeleteVoice(preset, notifier, colors),
                       child: Padding(
                         padding: const EdgeInsets.all(8),
                         child: Icon(
@@ -600,7 +612,8 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
     final provider = appSettings.providers
         .where((p) => p.id == config.selectedProviderId)
         .firstOrNull;
-    return provider != null && VoiceManagerService.isSiliconFlowProvider(provider);
+    return provider != null &&
+        VoiceManagerService.isSiliconFlowProvider(provider);
   }
 
   /// 判断当前渠道是否是阿里云
@@ -614,7 +627,8 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
   }
 
   /// 构建音色预设的副标题（简化版：只显示推荐和不可用）
-  String _buildVoicePresetSubtitle(VoicePreset preset, bool isAvailable, bool isAliyun, bool isSiliconFlow) {
+  String _buildVoicePresetSubtitle(
+      VoicePreset preset, bool isAvailable, bool isAliyun, bool isSiliconFlow) {
     final parts = <String>[];
 
     // 显示音色类型（调试用）
@@ -655,7 +669,8 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
     final provider = appSettings?.providers
         .where((p) => p.id == config.selectedProviderId)
         .firstOrNull;
-    final apiKey = provider?.apiKeys.isNotEmpty == true ? provider!.apiKeys.first : null;
+    final apiKey =
+        provider?.apiKeys.isNotEmpty == true ? provider!.apiKeys.first : null;
 
     showMoeBottomSheet(
       context: context,
@@ -748,11 +763,12 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
     final isEdit = preset != null;
     final isBuiltIn = preset?.isBuiltIn ?? false;
 
-    final nameController = TextEditingController(text: preset?.name ?? prefillName ?? '');
+    final nameController =
+        TextEditingController(text: preset?.name ?? prefillName ?? '');
     final audioUrlController =
         TextEditingController(text: preset?.promptAudioUrl ?? prefillUrl ?? '');
-    final promptTextController =
-        TextEditingController(text: preset?.promptText ?? prefillPromptText ?? '');
+    final promptTextController = TextEditingController(
+        text: preset?.promptText ?? prefillPromptText ?? '');
     // source 字段由内置直链或用户上传时自动设置，不由用户手动填写
     final effectiveSource = preset?.source ?? prefillSource;
 
@@ -770,7 +786,8 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
         builder: (context, setSheetState) {
           // 判断当前是直链模式还是本地文件模式
           final hasUrl = audioUrlController.text.trim().isNotEmpty;
-          final hasLocalFile = localAudioPath != null && localAudioPath!.isNotEmpty;
+          final hasLocalFile =
+              localAudioPath != null && localAudioPath!.isNotEmpty;
 
           return SingleChildScrollView(
             padding: const EdgeInsets.all(16),
@@ -849,7 +866,8 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
                           await voicesDir.create(recursive: true);
                         }
 
-                        final fileName = '${DateTime.now().millisecondsSinceEpoch}_${file.name}';
+                        final fileName =
+                            '${DateTime.now().millisecondsSinceEpoch}_${file.name}';
                         final savedFile = File('${voicesDir.path}/$fileName');
                         await savedFile.writeAsBytes(bytes);
 
@@ -866,15 +884,18 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
                       decoration: MoeG2Decoration(
                         radius: 8,
                         color: colors.muted.withValues(alpha: 0.1),
-                        border: Border.all(color: colors.muted.withValues(alpha: 0.2)),
+                        border: Border.all(
+                            color: colors.muted.withValues(alpha: 0.2)),
                       ),
                       child: Row(
                         children: [
-                          Icon(Icons.upload_file, color: colors.muted, size: 20),
+                          Icon(Icons.upload_file,
+                              color: colors.muted, size: 20),
                           const SizedBox(width: 8),
                           Text(
                             '选择本地音频文件',
-                            style: TextStyle(color: colors.textSecondary, fontSize: 14),
+                            style: TextStyle(
+                                color: colors.textSecondary, fontSize: 14),
                           ),
                         ],
                       ),
@@ -888,7 +909,8 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
                     decoration: MoeG2Decoration(
                       radius: 8,
                       color: colors.primary.withValues(alpha: 0.1),
-                      border: Border.all(color: colors.primary.withValues(alpha: 0.3)),
+                      border: Border.all(
+                          color: colors.primary.withValues(alpha: 0.3)),
                     ),
                     child: Row(
                       children: [
@@ -917,7 +939,8 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
                             },
                             child: Padding(
                               padding: const EdgeInsets.all(4),
-                              child: Icon(Icons.close, color: colors.muted, size: 18),
+                              child: Icon(Icons.close,
+                                  color: colors.muted, size: 18),
                             ),
                           ),
                       ],
@@ -963,7 +986,8 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
                       children: [
                         Row(
                           children: [
-                            Icon(Icons.cloud_done, color: colors.primary, size: 16),
+                            Icon(Icons.cloud_done,
+                                color: colors.primary, size: 16),
                             const SizedBox(width: 8),
                             Text(
                               '阿里云音色 ID',
@@ -993,7 +1017,9 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
                       ],
                     ),
                   ),
-                ] else if (preset != null && !preset.isBuiltIn && (hasUrl || hasLocalFile)) ...[
+                ] else if (preset != null &&
+                    !preset.isBuiltIn &&
+                    (hasUrl || hasLocalFile)) ...[
                   // 有音频但还没有音色ID，显示等待生成提示
                   const SizedBox(height: 16),
                   Container(
@@ -1004,7 +1030,8 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
                     ),
                     child: Row(
                       children: [
-                        Icon(Icons.hourglass_empty, color: colors.muted, size: 16),
+                        Icon(Icons.hourglass_empty,
+                            color: colors.muted, size: 16),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
@@ -1034,7 +1061,8 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
                       children: [
                         Row(
                           children: [
-                            Icon(Icons.cloud_done, color: colors.primary, size: 16),
+                            Icon(Icons.cloud_done,
+                                color: colors.primary, size: 16),
                             const SizedBox(width: 8),
                             Text(
                               '硅基流动音色 URI',
@@ -1095,7 +1123,8 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
 
                             final audioUrl = audioUrlController.text.trim();
                             final hasUrlInput = audioUrl.isNotEmpty;
-                            final hasFileInput = localAudioPath != null && localAudioPath!.isNotEmpty;
+                            final hasFileInput = localAudioPath != null &&
+                                localAudioPath!.isNotEmpty;
 
                             // 校验：必须有音频来源
                             if (!hasUrlInput && !hasFileInput) {
@@ -1113,10 +1142,12 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
                               name: name,
                               sourceType: finalSourceType,
                               promptAudioUrl: hasUrlInput ? audioUrl : null,
-                              localAudioPath: hasFileInput ? localAudioPath : null,
-                              promptText: promptTextController.text.trim().isEmpty
-                                  ? null
-                                  : promptTextController.text.trim(),
+                              localAudioPath:
+                                  hasFileInput ? localAudioPath : null,
+                              promptText:
+                                  promptTextController.text.trim().isEmpty
+                                      ? null
+                                      : promptTextController.text.trim(),
                               source: effectiveSource,
                               // 保留已有的渠道音色信息
                               aliyunVoiceId: preset?.aliyunVoiceId,
@@ -1219,14 +1250,13 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
   ) {
     // 获取阿里云渠道的 API Key（不再依赖 tts capability，通过 requestFormat 或 id 识别）
     final appSettings = ref.read(appSettingsProvider).valueOrNull;
-    final aliyunProvider = appSettings?.providers
-        .where((p) => p.enabled)
-        .where((p) {
-          final format = p.customConfig['requestFormat'] as String?;
-          return format == 'aliyun_cosyvoice' || format == 'aliyun_qwen_tts' ||
-                 p.id == 'aliyun';
-        })
-        .firstOrNull;
+    final aliyunProvider =
+        appSettings?.providers.where((p) => p.enabled).where((p) {
+      final format = p.customConfig['requestFormat'] as String?;
+      return format == 'aliyun_cosyvoice' ||
+          format == 'aliyun_qwen_tts' ||
+          p.id == 'aliyun';
+    }).firstOrNull;
 
     if (aliyunProvider == null || aliyunProvider.apiKeys.isEmpty) {
       MoeToast.warning(context, '请先在模型管理中配置阿里云 API Key');
@@ -1391,7 +1421,8 @@ class _FetchVoicesSheetContent extends StatefulWidget {
   });
 
   @override
-  State<_FetchVoicesSheetContent> createState() => _FetchVoicesSheetContentState();
+  State<_FetchVoicesSheetContent> createState() =>
+      _FetchVoicesSheetContentState();
 }
 
 class _FetchVoicesSheetContentState extends State<_FetchVoicesSheetContent> {
@@ -1430,16 +1461,18 @@ class _FetchVoicesSheetContentState extends State<_FetchVoicesSheetContent> {
       // 获取 Qwen-TTS 音色列表
       final qwenVoices = await service.listQwenVoices(pageSize: 100);
 
-      final voices = qwenVoices.map((v) => VoicePreset(
-        id: 'aliyun_${v.voiceId}', // 使用特殊前缀避免ID冲突
-        name: _extractVoiceName(v.voiceId),
-        sourceType: VoiceSourceType.preset,
-        providerType: VoiceProviderType.aliyun,
-        aliyunVoiceId: v.voiceId,
-        aliyunTargetModel: v.targetModel,
-        aliyunVoiceStatus: 'OK', // Qwen-TTS 音色创建后即可用
-        source: '已创建音色 · ${v.gmtCreate ?? ""}',
-      )).toList();
+      final voices = qwenVoices
+          .map((v) => VoicePreset(
+                id: 'aliyun_${v.voiceId}', // 使用特殊前缀避免ID冲突
+                name: _extractVoiceName(v.voiceId),
+                sourceType: VoiceSourceType.preset,
+                providerType: VoiceProviderType.aliyun,
+                aliyunVoiceId: v.voiceId,
+                aliyunTargetModel: v.targetModel,
+                aliyunVoiceStatus: 'OK', // Qwen-TTS 音色创建后即可用
+                source: '已创建音色 · ${v.gmtCreate ?? ""}',
+              ))
+          .toList();
 
       if (!mounted) return;
 
@@ -1457,7 +1490,8 @@ class _FetchVoicesSheetContentState extends State<_FetchVoicesSheetContent> {
         _aliyunError = '获取失败: $e';
         _loading = false;
       });
-      AppLogger.warning('TTS', '获取阿里云音色列表失败', metadata: {'error': e.toString()});
+      AppLogger.warning('TTS', '获取阿里云音色列表失败',
+          metadata: {'error': e.toString()});
     }
   }
 
@@ -1502,7 +1536,8 @@ class _FetchVoicesSheetContentState extends State<_FetchVoicesSheetContent> {
       // 获取用户已上传的音色
       List<VoicePreset> userVoices = [];
       try {
-        userVoices = await VoiceManagerService.getSiliconFlowUserVoices(widget.apiKey!);
+        userVoices =
+            await VoiceManagerService.getSiliconFlowUserVoices(widget.apiKey!);
       } catch (e) {
         AppLogger.warning('TTS', '获取用户音色失败', metadata: {'error': e.toString()});
       }
@@ -1567,7 +1602,8 @@ class _FetchVoicesSheetContentState extends State<_FetchVoicesSheetContent> {
             else if (_error != null)
               Padding(
                 padding: const EdgeInsets.all(16),
-                child: Text(_error!, style: TextStyle(color: colors.accent, fontSize: 13)),
+                child: Text(_error!,
+                    style: TextStyle(color: colors.accent, fontSize: 13)),
               )
             else if (presetVoices.isEmpty && userUploadedVoices.isEmpty)
               Padding(
@@ -1575,10 +1611,13 @@ class _FetchVoicesSheetContentState extends State<_FetchVoicesSheetContent> {
                 child: Text('暂无可用音色', style: TextStyle(color: colors.muted)),
               )
             else ...[
-              ...presetVoices.map((voice) => _buildProviderVoiceItem(voice, existingIds, colors)),
+              ...presetVoices.map((voice) =>
+                  _buildProviderVoiceItem(voice, existingIds, colors)),
               if (userUploadedVoices.isNotEmpty) ...[
-                _buildSectionHeader('硅基流动已上传 (${userUploadedVoices.length})', colors),
-                ...userUploadedVoices.map((voice) => _buildProviderVoiceItem(voice, existingIds, colors)),
+                _buildSectionHeader(
+                    '硅基流动已上传 (${userUploadedVoices.length})', colors),
+                ...userUploadedVoices.map((voice) =>
+                    _buildProviderVoiceItem(voice, existingIds, colors)),
               ],
             ],
           ],
@@ -1610,7 +1649,8 @@ class _FetchVoicesSheetContentState extends State<_FetchVoicesSheetContent> {
             else if (_aliyunError != null)
               Padding(
                 padding: const EdgeInsets.all(16),
-                child: Text(_aliyunError!, style: TextStyle(color: colors.accent, fontSize: 13)),
+                child: Text(_aliyunError!,
+                    style: TextStyle(color: colors.accent, fontSize: 13)),
               )
             else if (_aliyunVoices.isEmpty)
               Padding(
@@ -1636,7 +1676,8 @@ class _FetchVoicesSheetContentState extends State<_FetchVoicesSheetContent> {
                 ),
               )
             else
-              ..._aliyunVoices.map((voice) => _buildAliyunVoiceItem(voice, existingIds, colors)),
+              ..._aliyunVoices.map(
+                  (voice) => _buildAliyunVoiceItem(voice, existingIds, colors)),
           ],
 
           const SizedBox(height: 24),
@@ -1670,7 +1711,8 @@ class _FetchVoicesSheetContentState extends State<_FetchVoicesSheetContent> {
       icon: alreadyAdded ? Icons.check : Icons.add_circle_outline,
       iconColor: alreadyAdded ? colors.primary : null,
       label: voice.name,
-      subtitle: voice.source ?? (voice.sourceType == VoiceSourceType.preset ? '预置音色' : '用户上传'),
+      subtitle: voice.source ??
+          (voice.sourceType == VoiceSourceType.preset ? '预置音色' : '用户上传'),
       trailingType: MoeSettingsRowTrailing.none,
       enabled: !alreadyAdded,
       onTap: alreadyAdded ? null : () => widget.onVoiceSelected(voice),
@@ -1730,7 +1772,8 @@ class _FetchVoicesSheetContentState extends State<_FetchVoicesSheetContent> {
   }
 
   /// 确认删除阿里云音色
-  Future<void> _confirmDeleteAliyunVoice(VoicePreset voice, MoeColors colors) async {
+  Future<void> _confirmDeleteAliyunVoice(
+      VoicePreset voice, MoeColors colors) async {
     final confirmed = await showMeoTalkDialog(
       context: context,
       title: '删除阿里云音色',

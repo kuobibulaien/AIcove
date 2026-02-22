@@ -595,6 +595,10 @@ const double kMaxTextScaleFactor = 1.5;
 const double kMinUiScaleFactor = 0.85;
 const double kMaxUiScaleFactor = 1.20;
 
+/// 图片预览大小缩放上下限
+const double kMinImagePreviewScale = 0.5;
+const double kMaxImagePreviewScale = 1.5;
+
 /// 应用设置数据类
 class AppSettings {
   final bool ttsEnabled;
@@ -630,6 +634,10 @@ class AppSettings {
   /// 全局界面缩放因子（0.85~1.20，默认 1.0）
   /// 作用于布局与组件大小，不仅影响文字。
   final double uiScaleFactor;
+
+  /// 图片预览大小缩放因子（0.5~1.5，默认 1.0）
+  /// 仅影响消息中的图片缩略图大小，不影响全屏预览。
+  final double imagePreviewScale;
   final String? userAvatar;
   final String? userName;
   final AutoReplySettings autoReplySettings;
@@ -639,6 +647,15 @@ class AppSettings {
   final bool useSystemTheme;
   final String accentColor;
   final bool hideUserAvatar;
+
+  /// 默认聊天模型列表（有序，第一个为首选，失败后自动轮询下一个）
+  final List<String> defaultChatModels;
+
+  /// 默认图片识别模型（单选，用于 sendWithImage）
+  final String? defaultVisionModel;
+
+  /// 是否跳过视觉兼容性提示弹窗（用户勾选"不再提醒"后为 true）
+  final bool skipVisionCompatDialog;
 
   const AppSettings({
     required this.ttsEnabled,
@@ -663,6 +680,7 @@ class AppSettings {
     required this.messageFormatConfig,
     required this.textScaleFactor,
     required this.uiScaleFactor,
+    this.imagePreviewScale = 1.0,
     required this.autoReplySettings,
     required this.globalBackgroundColor,
     required this.chatBackgroundColor,
@@ -670,6 +688,9 @@ class AppSettings {
     required this.useSystemTheme,
     required this.accentColor,
     this.hideUserAvatar = true,
+    this.defaultChatModels = const <String>[],
+    this.defaultVisionModel,
+    this.skipVisionCompatDialog = false,
     this.userAvatar,
     this.userName,
   });
@@ -697,6 +718,7 @@ class AppSettings {
     MessageFormatConfig? messageFormatConfig,
     double? textScaleFactor,
     double? uiScaleFactor,
+    double? imagePreviewScale,
     AutoReplySettings? autoReplySettings,
     GlobalBackgroundColor? globalBackgroundColor,
     ChatBackgroundColor? chatBackgroundColor,
@@ -704,6 +726,9 @@ class AppSettings {
     bool? useSystemTheme,
     String? accentColor,
     bool? hideUserAvatar,
+    List<String>? defaultChatModels,
+    String? defaultVisionModel,
+    bool? skipVisionCompatDialog,
     String? userAvatar,
     String? userName,
   }) =>
@@ -732,6 +757,7 @@ class AppSettings {
         messageFormatConfig: messageFormatConfig ?? this.messageFormatConfig,
         textScaleFactor: textScaleFactor ?? this.textScaleFactor,
         uiScaleFactor: uiScaleFactor ?? this.uiScaleFactor,
+        imagePreviewScale: imagePreviewScale ?? this.imagePreviewScale,
         autoReplySettings: autoReplySettings ?? this.autoReplySettings,
         globalBackgroundColor:
             globalBackgroundColor ?? this.globalBackgroundColor,
@@ -740,25 +766,108 @@ class AppSettings {
         useSystemTheme: useSystemTheme ?? this.useSystemTheme,
         accentColor: accentColor ?? this.accentColor,
         hideUserAvatar: hideUserAvatar ?? this.hideUserAvatar,
+        defaultChatModels: defaultChatModels ?? this.defaultChatModels,
+        defaultVisionModel: defaultVisionModel ?? this.defaultVisionModel,
+        skipVisionCompatDialog:
+            skipVisionCompatDialog ?? this.skipVisionCompatDialog,
         userAvatar: userAvatar ?? this.userAvatar,
         userName: userName ?? this.userName,
       );
 
-  String getModelDisplayName(String modelId) =>
-      modelDisplayNames[modelId] ?? modelId;
+  bool _isKnownProviderId(String providerId) {
+    for (final provider in providers) {
+      if (provider.id == providerId) return true;
+    }
+    return false;
+  }
+
+  /// 从模型引用中提取原始模型 ID。
+  ///
+  /// 支持两种格式：
+  /// 1) 旧格式：`gpt-4o`
+  /// 2) 新格式：`provider:gpt-4o`
+  String getRawModelId(String modelRef) {
+    final ref = modelRef.trim();
+    if (ref.isEmpty) return ref;
+    final idx = ref.indexOf(':');
+    if (idx <= 0 || idx >= ref.length - 1) {
+      return ref;
+    }
+    final providerId = ref.substring(0, idx).trim();
+    if (!_isKnownProviderId(providerId)) {
+      return ref;
+    }
+    return ref.substring(idx + 1).trim();
+  }
+
+  /// 获取模型引用对应的 providerId。
+  ///
+  /// 对于新格式优先解析前缀；旧格式回退到 `modelProviderMap`。
+  String? getModelProviderId(String modelRef) {
+    final ref = modelRef.trim();
+    if (ref.isEmpty) return null;
+
+    final idx = ref.indexOf(':');
+    if (idx > 0 && idx < ref.length - 1) {
+      final providerId = ref.substring(0, idx).trim();
+      if (_isKnownProviderId(providerId)) {
+        return providerId;
+      }
+    }
+
+    final rawId = getRawModelId(ref);
+    return modelProviderMap[ref] ?? modelProviderMap[rawId];
+  }
+
+  /// 组装 provider 维度唯一模型引用：`provider:model`。
+  String buildModelRef(String providerId, String modelId) {
+    final pid = providerId.trim();
+    final rawId = getRawModelId(modelId);
+    if (pid.isEmpty) return rawId;
+    return '$pid:$rawId';
+  }
+
+  /// 转为请求层使用的 `provider:model` 形式，未知 provider 时使用 fallback。
+  String toModelFullId(String modelRef, {String fallbackProvider = 'openai'}) {
+    final rawId = getRawModelId(modelRef);
+    final providerId = getModelProviderId(modelRef) ?? fallbackProvider;
+    return '$providerId:$rawId';
+  }
+
+  String getModelDisplayName(String modelId) {
+    final ref = modelId.trim();
+    if (ref.isEmpty) return ref;
+
+    final direct = modelDisplayNames[ref];
+    if (direct != null && direct.trim().isNotEmpty) {
+      return direct;
+    }
+
+    final rawId = getRawModelId(ref);
+    final raw = modelDisplayNames[rawId];
+    if (raw != null && raw.trim().isNotEmpty) {
+      return raw;
+    }
+
+    return rawId;
+  }
 
   /// 获取模型类型（优先使用用户设置，否则自动推断）
   ModelType getModelType(String modelId) {
-    final stored = modelTypes[modelId];
+    final ref = modelId.trim();
+    final rawId = getRawModelId(ref);
+    final stored = modelTypes[ref] ?? modelTypes[rawId];
     if (stored != null) {
       return ModelType.fromValue(stored);
     }
-    return ModelType.inferFromModelId(modelId);
+    return ModelType.inferFromModelId(rawId);
   }
 
   /// 获取模型配置（如果没有自定义配置，返回默认配置）
   ModelConfig getModelConfig(String modelId) {
-    return modelConfigs[modelId] ?? const ModelConfig();
+    final ref = modelId.trim();
+    final rawId = getRawModelId(ref);
+    return modelConfigs[ref] ?? modelConfigs[rawId] ?? const ModelConfig();
   }
 
   /// 检查模型是否禁用工具调用

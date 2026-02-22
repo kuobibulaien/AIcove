@@ -192,6 +192,11 @@ class MemoryPluginConfigNotifier extends StateNotifier<MemoryConfig> {
     await _saveConfig();
   }
 
+  Future<void> setSummarizePrompt(String prompt) async {
+    state = state.copyWith(summarizePrompt: prompt);
+    await _saveConfig();
+  }
+
   Future<void> setSummarizeModel(String? providerId, String? modelName) async {
     state = state.copyWith(
       summarizeProviderId: providerId,
@@ -316,6 +321,11 @@ class TtsPluginConfigNotifier extends StateNotifier<TtsConfig> {
       emoText: emoText,
       useEmoText: useEmoText,
     );
+    await _saveConfig();
+  }
+
+  Future<void> setSystemPromptTemplate(String template) async {
+    state = state.copyWith(systemPromptTemplate: template);
     await _saveConfig();
   }
 
@@ -485,6 +495,11 @@ class TriggerPluginConfigNotifier extends StateNotifier<TriggerConfig> {
     await _saveConfig();
   }
 
+  Future<void> setLogicSystemPrompt(String prompt) async {
+    state = state.copyWith(logicSystemPrompt: prompt);
+    await _saveConfig();
+  }
+
   Future<void> _saveConfig() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -525,6 +540,11 @@ class StickerPluginConfigNotifier extends StateNotifier<StickerConfig> {
 
   Future<void> setEnabled(bool enabled) async {
     state = state.copyWith(enabled: enabled);
+    await _saveConfig();
+  }
+
+  Future<void> setSystemPromptTemplate(String template) async {
+    state = state.copyWith(systemPromptTemplate: template);
     await _saveConfig();
   }
 
@@ -628,6 +648,46 @@ class ImagePluginConfigNotifier extends StateNotifier<ImageConfig> {
     state = state.copyWith(drawingSystemPrompt: text);
     await _saveConfig();
   }
+
+  Future<void> addArtistPreset(ArtistPreset preset) async {
+    final updated = [...state.artistPresets, preset];
+    state = state.copyWith(artistPresets: updated);
+    await _saveConfig();
+  }
+
+  Future<void> removeArtistPreset(String name) async {
+    final updated =
+        state.artistPresets.where((p) => p.name != name).toList();
+    final clearSelection = state.selectedArtistPresetName == name;
+    state = state.copyWith(
+      artistPresets: updated,
+      clearSelectedArtistPreset: clearSelection,
+    );
+    await _saveConfig();
+  }
+
+  Future<void> selectArtistPreset(String? name) async {
+    state = state.copyWith(
+      selectedArtistPresetName: name,
+      clearSelectedArtistPreset: name == null,
+    );
+    await _saveConfig();
+  }
+
+  Future<void> updateArtistPreset(
+      String oldName, ArtistPreset newPreset) async {
+    final updated = state.artistPresets.map((p) {
+      return p.name == oldName ? newPreset : p;
+    }).toList();
+    final nameChanged =
+        oldName != newPreset.name && state.selectedArtistPresetName == oldName;
+    state = state.copyWith(
+      artistPresets: updated,
+      selectedArtistPresetName:
+          nameChanged ? newPreset.name : state.selectedArtistPresetName,
+    );
+    await _saveConfig();
+  }
 }
 
 /// TimeAwareness 插件配置 Provider
@@ -685,6 +745,11 @@ class TimeAwarenessPluginConfigNotifier
 
   Future<void> setIncludeCurrentTime(bool include) async {
     state = state.copyWith(includeCurrentTime: include);
+    await _saveConfig();
+  }
+
+  Future<void> setCurrentTimePromptTemplate(String template) async {
+    state = state.copyWith(currentTimePromptTemplate: template);
     await _saveConfig();
   }
 }

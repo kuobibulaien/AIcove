@@ -103,8 +103,9 @@ class ChatRequestConfigBuilder {
     final mcpConfig = await getMcpConfig();
     final toolPrefs = buildToolPrefs(settings, mcpConfig);
 
-    final model = settings.defaultModelName;
-    final provider = settings.modelProviderMap[model] ?? 'openai';
+    final modelRef = settings.defaultModelName;
+    final model = settings.getRawModelId(modelRef);
+    final provider = settings.getModelProviderId(modelRef) ?? 'openai';
     var modelFull = '$provider:$model';
 
     // 获取 Provider 认证信息

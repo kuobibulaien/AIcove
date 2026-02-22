@@ -170,6 +170,9 @@ class _MoeSettingsRowState extends State<MoeSettingsRow> {
           onTapCancel: _isEnabled ? () => setState(() => _pressed = false) : null,
           onTap: _isEnabled ? _handleTap : null,
           onLongPress: widget.onLongPress,
+          onSecondaryTapUp: widget.onLongPress != null
+              ? (_) => widget.onLongPress!()
+              : null,
           child: AnimatedContainer(
             duration: kAnimFast,
             color: currentBg,

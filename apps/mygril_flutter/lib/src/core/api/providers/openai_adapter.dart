@@ -1,8 +1,7 @@
-/// OpenAI API 适配器
-///
-/// 更新记录：
-/// - 2026-01-27: 添加 buildToolResultMessages 支持两回合工具调用
+/// OpenAI API adapter
 library;
+
+import 'dart:convert';
 
 import 'provider_adapter.dart';
 
@@ -15,7 +14,6 @@ class OpenAIAdapter implements ProviderAdapter {
     final normalized = baseUrl.endsWith('/')
         ? baseUrl.substring(0, baseUrl.length - 1)
         : baseUrl;
-
     final base = normalized.endsWith('/v1') ? normalized : '$normalized/v1';
 
     switch (modelType) {
@@ -50,13 +48,15 @@ class OpenAIAdapter implements ProviderAdapter {
     Map<String, dynamic>? customConfig,
     List<Map<String, dynamic>>? tools,
   }) {
+    final hasTools = tools != null && tools.isNotEmpty;
     return {
       'model': model,
       'messages': messages,
       if (temperature != null) 'temperature': temperature,
       if (topP != null) 'top_p': topP,
       'stream': false,
-      if (tools != null && tools.isNotEmpty) 'tools': tools,
+      if (hasTools) 'tools': tools,
+      if (hasTools) 'tool_choice': 'auto',
       ...?customConfig,
     };
   }
@@ -69,17 +69,27 @@ class OpenAIAdapter implements ProviderAdapter {
     final choices = (response['choices'] as List?) ?? const [];
     if (choices.isNotEmpty) {
       final first = choices.first as Map<String, dynamic>;
-      final msg =
-          (first['message'] as Map<String, dynamic>?) ?? const <String, dynamic>{};
-      text = (msg['content'] ?? '').toString();
+      final msg = (first['message'] as Map<String, dynamic>?) ??
+          const <String, dynamic>{};
+      text = _extractText(msg['content']);
 
-      // 解析 tool_calls
       final rawToolCalls = msg['tool_calls'] as List?;
       if (rawToolCalls != null) {
         for (final tc in rawToolCalls) {
           if (tc is Map<String, dynamic>) {
             toolCalls.add(ToolCall.fromOpenAI(tc));
           }
+        }
+      }
+
+      if (toolCalls.isEmpty) {
+        final functionCall = msg['function_call'] as Map<String, dynamic>?;
+        if (functionCall != null) {
+          toolCalls.add(ToolCall(
+            id: '',
+            name: functionCall['name']?.toString() ?? '',
+            arguments: _parseArguments(functionCall['arguments']),
+          ));
         }
       }
     }
@@ -97,26 +107,72 @@ class OpenAIAdapter implements ProviderAdapter {
     required Map<String, dynamic> assistantMessage,
     required List<ToolResult> toolResults,
   }) {
-    // OpenAI 格式：
-    // 1. assistant 消息（带 tool_calls）
-    // 2. 每个工具调用对应一条 role=tool 消息
     final messages = <Map<String, dynamic>>[];
+    final hasLegacyFunctionCall = assistantMessage['function_call'] is Map &&
+        ((assistantMessage['tool_calls'] as List?)?.isEmpty ?? true);
 
-    // 添加 assistant 消息（确保有 role 字段）
-    messages.add({
-      'role': 'assistant',
-      ...assistantMessage,
-    });
+    messages.add({'role': 'assistant', ...assistantMessage});
 
-    // 添加 tool 结果消息
+    if (hasLegacyFunctionCall) {
+      for (final result in toolResults) {
+        messages.add({
+          'role': 'function',
+          'name': result.name,
+          'content': result.result,
+        });
+      }
+      return messages;
+    }
+
     for (final result in toolResults) {
-      messages.add({
-        'role': 'tool',
-        'tool_call_id': result.toolCallId,
-        'content': result.result,
-      });
+      if (result.toolCallId.trim().isNotEmpty) {
+        messages.add({
+          'role': 'tool',
+          'tool_call_id': result.toolCallId,
+          'content': result.result,
+        });
+      } else {
+        messages.add({
+          'role': 'function',
+          'name': result.name,
+          'content': result.result,
+        });
+      }
     }
 
     return messages;
+  }
+
+  Map<String, dynamic> _parseArguments(dynamic rawArgs) {
+    if (rawArgs is Map<String, dynamic>) {
+      return Map<String, dynamic>.from(rawArgs);
+    }
+    if (rawArgs is String && rawArgs.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(rawArgs);
+        if (decoded is Map<String, dynamic>) {
+          return decoded;
+        }
+      } catch (_) {
+        return <String, dynamic>{};
+      }
+    }
+    return <String, dynamic>{};
+  }
+
+  String _extractText(dynamic content) {
+    if (content == null) return '';
+    if (content is String) return content;
+    if (content is List) {
+      final buffer = StringBuffer();
+      for (final part in content) {
+        if (part is Map<String, dynamic>) {
+          final text = part['text']?.toString();
+          if (text != null) buffer.write(text);
+        }
+      }
+      return buffer.toString();
+    }
+    return content.toString();
   }
 }

@@ -121,6 +121,9 @@ class _MoeImagePreviewState extends State<MoeImagePreview>
   bool _isDragging = false;
   PhotoViewScaleState _scaleState = PhotoViewScaleState.initial;
 
+  // 多指触控追踪：当有 >=2 个手指时禁用垂直拖动，让 PhotoView 处理缩放
+  int _pointerCount = 0;
+
   // 关闭按钮动画控制器
   late final AnimationController _closeButtonController;
 
@@ -165,7 +168,8 @@ class _MoeImagePreviewState extends State<MoeImagePreview>
   }
 
   void _onVerticalDragStart(DragStartDetails details) {
-    if (_scaleState != PhotoViewScaleState.initial) return;
+    // 多指触控时不启用垂直拖动，让 PhotoView 处理双指缩放
+    if (_scaleState != PhotoViewScaleState.initial || _pointerCount > 1) return;
     setState(() {
       _isDragging = true;
       _closeButtonController.reverse();
@@ -174,6 +178,11 @@ class _MoeImagePreviewState extends State<MoeImagePreview>
 
   void _onVerticalDragUpdate(DragUpdateDetails details) {
     if (!_isDragging) return;
+    // 拖动过程中出现多指时，取消拖动
+    if (_pointerCount > 1) {
+      _cancelDrag();
+      return;
+    }
     setState(() {
       _dragOffset += details.delta;
     });
@@ -196,6 +205,15 @@ class _MoeImagePreviewState extends State<MoeImagePreview>
     }
   }
 
+  /// 取消拖动（多指介入时调用）
+  void _cancelDrag() {
+    setState(() {
+      _isDragging = false;
+      _dragOffset = Offset.zero;
+    });
+    _closeButtonController.forward();
+  }
+
   @override
   Widget build(BuildContext context) {
     // 获取实际背景色（支持自动适配主题）
@@ -208,7 +226,13 @@ class _MoeImagePreviewState extends State<MoeImagePreview>
         backgroundColor: Colors.transparent,
         // 禁用 Scaffold 的 resizeToAvoidBottomInset，保持键盘状态
         resizeToAvoidBottomInset: false,
-        body: GestureDetector(
+        body: Listener(
+          // 追踪触摸点数量，多指时让 PhotoView 处理缩放
+          onPointerDown: (_) => _pointerCount++,
+          onPointerUp: (_) => _pointerCount = max(_pointerCount - 1, 0),
+          onPointerCancel: (_) => _pointerCount = max(_pointerCount - 1, 0),
+          child: GestureDetector(
+          // 仅在单指且未缩放时响应垂直拖动
           onVerticalDragStart:
               _scaleState == PhotoViewScaleState.initial ? _onVerticalDragStart : null,
           onVerticalDragUpdate:
@@ -281,6 +305,7 @@ class _MoeImagePreviewState extends State<MoeImagePreview>
         ),
       ),
       ),
+      ),
     );
   }
 }
@@ -305,6 +330,10 @@ class _MoeImagePreviewRoute extends PageRoute<void> {
 
   @override
   bool get opaque => false; // 关键：让背景透明，Hero 动画更自然
+
+  // 阻止底层路由播放次要动画（左移/缩小），否则透明背景下会看到底层页面在移动
+  @override
+  bool canTransitionFrom(TransitionRoute<dynamic> previousRoute) => false;
 
   @override
   bool get barrierDismissible => true;

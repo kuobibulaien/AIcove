@@ -113,8 +113,9 @@ class ChatRequestBuilder {
 
   /// 解析 Provider 配置（包含直连兜底逻辑）
   Future<ProviderConfig> resolveProviderConfig(AppSettings settings) async {
-    final model = settings.defaultModelName;
-    final provider = settings.modelProviderMap[model] ?? 'openai';
+    final modelRef = settings.defaultModelName;
+    final model = settings.getRawModelId(modelRef);
+    final provider = settings.getModelProviderId(modelRef) ?? 'openai';
     var modelFull = '$provider:$model';
 
     final providerAuth = settings.providers.firstWhere(

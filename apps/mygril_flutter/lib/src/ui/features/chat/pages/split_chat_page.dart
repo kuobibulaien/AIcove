@@ -133,7 +133,7 @@ class _SplitChatPageState extends ConsumerState<SplitChatPage>
                                 children: [
                                   Expanded(
                                     child: Text(
-                                      _currentIndex == 0 ? 'MomoTalk' : 'AIcove',
+                                      'AIcove',
                                       style: TextStyle(
                                         color: colors.headerContentColor,
                                         fontWeight: MoeFontWeights.emphasis,

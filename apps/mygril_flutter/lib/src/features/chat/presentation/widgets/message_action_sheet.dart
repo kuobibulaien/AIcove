@@ -16,6 +16,7 @@ enum MessageAction {
   edit,       // 编辑（用户消息）
   regenerate, // 重新生成（AI消息）
   quote,      // 引用回复
+  save,       // 保存（图片/音频）
 }
 
 /// 显示消息操作悬浮菜单（在消息上方显示气泡菜单）
@@ -57,6 +58,40 @@ Future<void> showMessageActionMenu(
         label: '重新生成',
         onTap: () => onAction(MessageAction.regenerate),
       ),
+  ];
+
+  await MoePopupMenu.show(
+    context,
+    targetKey: targetKey,
+    items: items,
+  );
+}
+
+/// 媒体类型（决定菜单项）
+enum MediaType { image, audio }
+
+/// 显示媒体消息操作菜单（图片/音频的长按或右键菜单）
+///
+/// [targetKey] 目标元素的 GlobalKey
+/// [mediaType] 媒体类型
+/// [onAction] 操作回调
+Future<void> showMediaActionMenu(
+  BuildContext context, {
+  required GlobalKey targetKey,
+  required MediaType mediaType,
+  required void Function(MessageAction action) onAction,
+}) async {
+  final items = <MoePopupMenuItem>[
+    MoePopupMenuItem(
+      icon: Icons.save_alt_rounded,
+      label: '保存',
+      onTap: () => onAction(MessageAction.save),
+    ),
+    MoePopupMenuItem(
+      icon: Icons.format_quote_rounded,
+      label: '引用',
+      onTap: () => onAction(MessageAction.quote),
+    ),
   ];
 
   await MoePopupMenu.show(

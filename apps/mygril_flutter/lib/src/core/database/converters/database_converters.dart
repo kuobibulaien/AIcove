@@ -34,6 +34,7 @@ class ConversationConverter {
       notificationSound: Value(c.notificationSound),
       enabledPlugins:
           Value(c.enabledPlugins != null ? jsonEncode(c.enabledPlugins) : null),
+      contextStartMessageId: Value(c.contextStartMessageId),
       lastMessage: Value(c.lastMessage),
       lastMessageTime: Value(c.lastMessageTime?.millisecondsSinceEpoch),
       unreadCount: Value(c.unreadCount),
@@ -68,6 +69,7 @@ class ConversationConverter {
       enabledPlugins: c.enabledPlugins != null
           ? (jsonDecode(c.enabledPlugins!) as List).cast<String>()
           : null,
+      contextStartMessageId: c.contextStartMessageId,
       lastMessage: c.lastMessage,
       lastMessageTime: c.lastMessageTime != null
           ? DateTime.fromMillisecondsSinceEpoch(c.lastMessageTime!)

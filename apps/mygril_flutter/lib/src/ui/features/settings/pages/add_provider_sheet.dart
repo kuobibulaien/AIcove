@@ -1,16 +1,17 @@
-/// AddProviderSheet - 添加供应商底部弹窗
+/// AddProviderSheet - 娣诲姞渚涘簲鍟嗗簳閮ㄥ脊绐?
 ///
-/// 设计特点：
-/// - 底部弹窗形式
-/// - 第一步：选择 API 格式（OpenAI/Claude/Gemini）
-/// - 第二步：填写基础配置（显示名称、API Key、API 地址）
-/// - 第三步：选择模型用途（对话/嵌入/图片/语音，单选）
+/// 璁捐鐗圭偣锛?
+/// - 搴曢儴寮圭獥褰㈠紡
+/// - 绗竴姝ワ細閫夋嫨 API 鏍煎紡锛圤penAI/Claude/Gemini锛?
+/// - 绗簩姝ワ細濉啓鍩虹閰嶇疆锛堟樉绀哄悕绉般€丄PI Key銆丄PI 鍦板潃锛?
+/// - 绗笁姝ワ細閫夋嫨妯″瀷鐢ㄩ€旓紙瀵硅瘽/宓屽叆/鍥剧墖/璇煶锛屽崟閫夛級
 ///
-/// 更新记录：
-/// - 2026-01-31: 移除TTS用途的二级API格式选择
-/// - 2026-01-25: 用途改为多选，一行一个布局
-/// - 2026-01-22: 用途改为单选，API格式改为三选一切换框
-/// - 2026-01-21: 创建添加供应商底部弹窗
+/// 鏇存柊璁板綍锛?
+/// - 2026-02-21: NovelAI 绉诲叆鍐呯疆渚涘簲鍟嗗垪琛紝姝ゅ浠呬繚鐣?3 绉嶆爣鍑?API 鏍煎紡
+/// - 2026-01-31: 绉婚櫎TTS鐢ㄩ€旂殑浜岀骇API鏍煎紡閫夋嫨
+/// - 2026-01-25: 鐢ㄩ€旀敼涓哄閫夛紝涓€琛屼竴涓竷灞€
+/// - 2026-01-22: 鐢ㄩ€旀敼涓哄崟閫夛紝API鏍煎紡鏀逛负涓夐€変竴鍒囨崲妗?
+/// - 2026-01-21: 鍒涘缓娣诲姞渚涘簲鍟嗗簳閮ㄥ脊绐?
 library;
 
 import 'package:flutter/material.dart';
@@ -22,7 +23,7 @@ import '../../../theme/tokens.dart';
 import '../../../shared/effects/smooth_clip.dart';
 import '../../../shared/widgets/index.dart';
 
-/// 显示添加供应商底部弹窗
+/// 鏄剧ず娣诲姞渚涘簲鍟嗗簳閮ㄥ脊绐?
 Future<bool?> showAddProviderSheet(BuildContext context) {
   return showModalBottomSheet<bool>(
     context: context,
@@ -32,19 +33,18 @@ Future<bool?> showAddProviderSheet(BuildContext context) {
   );
 }
 
-/// API 格式枚举
+/// API 鏍煎紡鏋氫妇
 enum ApiFormat {
   openai('openai', 'OpenAI'),
   claude('claude', 'Claude'),
-  gemini('gemini', 'Gemini'),
-  novelai('novelai', 'NovelAI');
+  gemini('gemini', 'Gemini');
 
   const ApiFormat(this.value, this.label);
   final String value;
   final String label;
 }
 
-/// 添加供应商底部弹窗
+/// 娣诲姞渚涘簲鍟嗗簳閮ㄥ脊绐?
 class AddProviderSheet extends ConsumerStatefulWidget {
   const AddProviderSheet({super.key});
 
@@ -82,21 +82,21 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
         case ApiFormat.gemini:
           _urlCtrl.text = 'https://generativelanguage.googleapis.com/v1beta';
           break;
-        case ApiFormat.novelai:
-          _urlCtrl.text = 'https://image.novelai.net';
-          _selectedCapability = 'image';
-          break;
       }
     });
   }
 
   Future<void> _submit() async {
-    if (_keyCtrl.text.trim().isEmpty) {
-      MoeToast.show(context, '请输入 API Key');
+    final apiKey = _keyCtrl.text.trim();
+    final apiBaseUrl = _urlCtrl.text.trim();
+    final displayName = _displayCtrl.text.trim();
+
+    if (apiKey.isEmpty) {
+      MoeToast.show(context, '\u8bf7\u8f93\u5165 API Key');
       return;
     }
-    if (_urlCtrl.text.trim().isEmpty) {
-      MoeToast.show(context, '请输入 API 地址');
+    if (apiBaseUrl.isEmpty) {
+      MoeToast.show(context, '\u8bf7\u8f93\u5165 API \u5730\u5740');
       return;
     }
 
@@ -104,37 +104,53 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
 
     try {
       final notifier = ref.read(appSettingsProvider.notifier);
-      final isNovelAi = _selectedFormat == ApiFormat.novelai;
-      const novelAiModels = <String>[
-        'nai-diffusion-4-5-curated',
-        'nai-diffusion-4-5-full',
-        'nai-diffusion-3',
-      ];
+      var warningMessage = '';
+      List<String> allModels = const <String>[];
+      List<String> visibleModels = const <String>[];
+
+      try {
+        final preview = await notifier.previewProviderModels(
+          providerId: _selectedFormat.value,
+          apiKey: apiKey,
+          apiBaseUrl: apiBaseUrl,
+        );
+        allModels = preview;
+        visibleModels =
+            preview.isNotEmpty ? <String>[preview.first] : const <String>[];
+      } catch (_) {
+        warningMessage =
+            '\u65e0\u6cd5\u8fde\u63a5\u5230\u6a21\u578b\u670d\u52a1\uff0c\u5df2\u5148\u4fdd\u5b58\u6e20\u9053\u3002\u8bf7\u68c0\u67e5 API \u5730\u5740\u6216 Key\uff0c\u53ef\u5728\u8be6\u60c5\u9875\u5237\u65b0\u6a21\u578b\u5217\u8868\u3002';
+      }
 
       await notifier.importCustomModel(
         name: null,
-        apiKey: _keyCtrl.text.trim(),
-        apiBaseUrl: _urlCtrl.text.trim(),
+        apiKey: apiKey,
+        apiBaseUrl: apiBaseUrl,
         provider: _selectedFormat.value,
-        displayName: _displayCtrl.text.trim().isNotEmpty
-            ? _displayCtrl.text.trim()
-            : null,
+        displayName: displayName.isNotEmpty ? displayName : null,
+        allModels: allModels,
+        visibleModels: visibleModels,
         capabilities: [_selectedCapability],
         modelType: _selectedCapability,
         customConfig: {
-          'requestFormat': isNovelAi ? 'novelai' : _selectedFormat.value,
-          if (isNovelAi) 'defaultImageModel': novelAiModels.first,
+          'requestFormat': _selectedFormat.value,
         },
-        allModels: isNovelAi ? novelAiModels : null,
-        visibleModels: isNovelAi ? [novelAiModels.first] : null,
       );
-      if (mounted) {
-        Navigator.of(context).pop(true);
-        MoeToast.show(context, '添加成功');
+
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+      if (warningMessage.isEmpty) {
+        MoeToast.show(context, '\u6dfb\u52a0\u6210\u529f');
+      } else {
+        MoeToast.show(context, warningMessage, type: ToastType.warning);
       }
     } catch (e) {
       if (mounted) {
-        MoeToast.show(context, '添加失败: $e', type: ToastType.error);
+        MoeToast.show(
+          context,
+          _buildSubmitErrorMessage(e),
+          type: ToastType.error,
+        );
       }
     } finally {
       if (mounted) {
@@ -143,17 +159,25 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
     }
   }
 
+  String _buildSubmitErrorMessage(Object error) {
+    final raw = error.toString();
+    if (raw.contains('provider_id') && raw.contains('api_key')) {
+      return '\u6dfb\u52a0\u5931\u8d25\uff1aAPI Key \u4e0d\u80fd\u4e3a\u7a7a';
+    }
+    return '\u6dfb\u52a0\u5931\u8d25\uff1a$raw';
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
     final viewInsets = MediaQuery.of(context).viewInsets;
     final screenHeight = MediaQuery.of(context).size.height;
 
-    final sheetBorderRadius = SmoothBorderRadius.vertical(
+    const sheetBorderRadius = SmoothBorderRadius.vertical(
       top: SmoothRadius(cornerRadius: 24, cornerSmoothing: 0.6),
     );
 
-    // 不把整个 sheet 往上顶：只在内部内容区给键盘让位，观感更像“输入区抬起”。
+    // 涓嶆妸鏁翠釜 sheet 寰€涓婇《锛氬彧鍦ㄥ唴閮ㄥ唴瀹瑰尯缁欓敭鐩樿浣嶏紝瑙傛劅鏇村儚"杈撳叆鍖烘姮璧?銆?
     return MoeG2ClipRRect.borderRadius(
       borderRadius: sheetBorderRadius,
       child: Container(
@@ -170,7 +194,7 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // 装饰条
+                // 瑁呴グ鏉?
                 Container(
                   margin: const EdgeInsets.only(top: 12, bottom: 8),
                   width: 32,
@@ -181,14 +205,14 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                   ),
                 ),
 
-                // 标题
+                // 鏍囬
                 Padding(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
                   child: Row(
                     children: [
                       Text(
-                        '添加供应商',
+                        '\u6dfb\u52a0\u4f9b\u5e94\u5546',
                         style: TextStyle(
                           fontSize: 18,
                           fontWeight: MoeFontWeights.emphasis,
@@ -213,8 +237,8 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // 1. 选择 API 格式
-                        _buildSectionTitle('API 格式', colors),
+                        // 1. 閫夋嫨 API 鏍煎紡
+                        _buildSectionTitle('API \u683c\u5f0f', colors),
                         const SizedBox(height: 8),
                         MoeSettingsGroup(
                           margin: EdgeInsets.zero,
@@ -234,15 +258,15 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
 
                         const SizedBox(height: 20),
 
-                        // 2. 基础配置
-                        _buildSectionTitle('基础配置', colors),
+                        // 2. 鍩虹閰嶇疆
+                        _buildSectionTitle('\u57fa\u7840\u914d\u7f6e', colors),
                         const SizedBox(height: 8),
                         MoeSettingsGroup(
                           margin: EdgeInsets.zero,
                           children: [
                             MoeSettingsRow(
                               icon: Icons.badge_outlined,
-                              label: '显示名称',
+                              label: '\u663e\u793a\u540d\u79f0',
                               trailingType: MoeSettingsRowTrailing.custom,
                               trailing: SizedBox(
                                 width: 160,
@@ -252,7 +276,7 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                                   style: TextStyle(
                                       fontSize: 14, color: colors.text),
                                   decoration: InputDecoration(
-                                    hintText: '可留空',
+                                    hintText: '\u53ef\u7559\u7a7a',
                                     hintStyle: TextStyle(
                                         color: colors.muted, fontSize: 14),
                                     border: InputBorder.none,
@@ -275,7 +299,7 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                                   style: TextStyle(
                                       fontSize: 14, color: colors.text),
                                   decoration: InputDecoration(
-                                    hintText: '必填',
+                                    hintText: '\u5fc5\u586b',
                                     hintStyle: TextStyle(
                                         color: colors.muted, fontSize: 14),
                                     border: InputBorder.none,
@@ -287,7 +311,7 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                             ),
                             MoeSettingsRow(
                               icon: Icons.link_outlined,
-                              label: 'API 地址',
+                              label: 'API \u5730\u5740',
                               trailingType: MoeSettingsRowTrailing.custom,
                               trailing: SizedBox(
                                 width: 180,
@@ -311,26 +335,28 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
 
                         const SizedBox(height: 20),
 
-                        // 3. 选择用途（单行4选1，放在底部）
-                        _buildSectionTitle('选择用途', colors),
+                        // 3. 閫夋嫨鐢ㄩ€旓紙鍗曡4閫?锛屾斁鍦ㄥ簳閮級
+                        _buildSectionTitle('\u9009\u62e9\u7528\u9014', colors),
                         const SizedBox(height: 8),
                         _buildCapabilityRow(colors),
 
                         const SizedBox(height: 24),
 
-                        // 提交按钮
+                        // 鎻愪氦鎸夐挳
                         Row(
                           children: [
                             Expanded(
                               child: MoeSecondaryButton(
-                                label: '取消',
+                                label: '\u53d6\u6d88',
                                 onPressed: () => Navigator.of(context).pop(),
                               ),
                             ),
                             const SizedBox(width: 16),
                             Expanded(
                               child: MoePrimaryButton(
-                                label: _submitting ? '添加中...' : '立即添加',
+                                label: _submitting
+                                    ? '\u6dfb\u52a0\u4e2d...'
+                                    : '\u7acb\u5373\u6dfb\u52a0',
                                 onPressed: _submitting ? null : _submit,
                               ),
                             ),
@@ -362,7 +388,7 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
     );
   }
 
-  /// 单行4选1的用途选择器
+  /// 鍗曡4閫?鐨勭敤閫旈€夋嫨鍣?
   Widget _buildCapabilityRow(MoeColors colors) {
     final capabilities = [
       ModelCapability.chat,

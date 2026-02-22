@@ -150,6 +150,7 @@ class InteractiveEmojiWidget extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       onLongPress: onLongPress ?? () => _showEmojiInfo(context),
+      onSecondaryTapUp: (_) => (onLongPress ?? () => _showEmojiInfo(context))(),
       child: EmojiWidget(
         block: block,
         size: size,

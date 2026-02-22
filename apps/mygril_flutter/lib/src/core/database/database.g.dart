@@ -183,6 +183,12 @@ class $ConversationsTable extends Conversations
   late final GeneratedColumn<String> conflictOf = GeneratedColumn<String>(
       'conflict_of', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _contextStartMessageIdMeta =
+      const VerificationMeta('contextStartMessageId');
+  @override
+  late final GeneratedColumn<String> contextStartMessageId =
+      GeneratedColumn<String>('context_start_message_id', aliasedName, true,
+          type: DriftSqlType.string, requiredDuringInsert: false);
   static const VerificationMeta _deletedAtMeta =
       const VerificationMeta('deletedAt');
   @override
@@ -235,6 +241,7 @@ class $ConversationsTable extends Conversations
         parentConversationId,
         forkFromMessageId,
         conflictOf,
+        contextStartMessageId,
         deletedAt,
         purgeAt,
         createdAt,
@@ -401,6 +408,12 @@ class $ConversationsTable extends Conversations
           conflictOf.isAcceptableOrUnknown(
               data['conflict_of']!, _conflictOfMeta));
     }
+    if (data.containsKey('context_start_message_id')) {
+      context.handle(
+          _contextStartMessageIdMeta,
+          contextStartMessageId.isAcceptableOrUnknown(
+              data['context_start_message_id']!, _contextStartMessageIdMeta));
+    }
     if (data.containsKey('deleted_at')) {
       context.handle(_deletedAtMeta,
           deletedAt.isAcceptableOrUnknown(data['deleted_at']!, _deletedAtMeta));
@@ -485,6 +498,9 @@ class $ConversationsTable extends Conversations
           DriftSqlType.string, data['${effectivePrefix}fork_from_message_id']),
       conflictOf: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}conflict_of']),
+      contextStartMessageId: attachedDatabase.typeMapping.read(
+          DriftSqlType.string,
+          data['${effectivePrefix}context_start_message_id']),
       deletedAt: attachedDatabase.typeMapping
           .read(DriftSqlType.int, data['${effectivePrefix}deleted_at']),
       purgeAt: attachedDatabase.typeMapping
@@ -529,6 +545,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
   final String? parentConversationId;
   final String? forkFromMessageId;
   final String? conflictOf;
+  final String? contextStartMessageId;
   final int? deletedAt;
   final int? purgeAt;
   final int createdAt;
@@ -560,6 +577,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       this.parentConversationId,
       this.forkFromMessageId,
       this.conflictOf,
+      this.contextStartMessageId,
       this.deletedAt,
       this.purgeAt,
       required this.createdAt,
@@ -628,6 +646,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
     }
     if (!nullToAbsent || conflictOf != null) {
       map['conflict_of'] = Variable<String>(conflictOf);
+    }
+    if (!nullToAbsent || contextStartMessageId != null) {
+      map['context_start_message_id'] = Variable<String>(contextStartMessageId);
     }
     if (!nullToAbsent || deletedAt != null) {
       map['deleted_at'] = Variable<int>(deletedAt);
@@ -703,6 +724,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       conflictOf: conflictOf == null && nullToAbsent
           ? const Value.absent()
           : Value(conflictOf),
+      contextStartMessageId: contextStartMessageId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(contextStartMessageId),
       deletedAt: deletedAt == null && nullToAbsent
           ? const Value.absent()
           : Value(deletedAt),
@@ -750,6 +774,8 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       forkFromMessageId:
           serializer.fromJson<String?>(json['forkFromMessageId']),
       conflictOf: serializer.fromJson<String?>(json['conflictOf']),
+      contextStartMessageId:
+          serializer.fromJson<String?>(json['contextStartMessageId']),
       deletedAt: serializer.fromJson<int?>(json['deletedAt']),
       purgeAt: serializer.fromJson<int?>(json['purgeAt']),
       createdAt: serializer.fromJson<int>(json['createdAt']),
@@ -788,6 +814,8 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       'parentConversationId': serializer.toJson<String?>(parentConversationId),
       'forkFromMessageId': serializer.toJson<String?>(forkFromMessageId),
       'conflictOf': serializer.toJson<String?>(conflictOf),
+      'contextStartMessageId':
+          serializer.toJson<String?>(contextStartMessageId),
       'deletedAt': serializer.toJson<int?>(deletedAt),
       'purgeAt': serializer.toJson<int?>(purgeAt),
       'createdAt': serializer.toJson<int>(createdAt),
@@ -822,6 +850,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           Value<String?> parentConversationId = const Value.absent(),
           Value<String?> forkFromMessageId = const Value.absent(),
           Value<String?> conflictOf = const Value.absent(),
+          Value<String?> contextStartMessageId = const Value.absent(),
           Value<int?> deletedAt = const Value.absent(),
           Value<int?> purgeAt = const Value.absent(),
           int? createdAt,
@@ -873,6 +902,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
             ? forkFromMessageId.value
             : this.forkFromMessageId,
         conflictOf: conflictOf.present ? conflictOf.value : this.conflictOf,
+        contextStartMessageId: contextStartMessageId.present
+            ? contextStartMessageId.value
+            : this.contextStartMessageId,
         deletedAt: deletedAt.present ? deletedAt.value : this.deletedAt,
         purgeAt: purgeAt.present ? purgeAt.value : this.purgeAt,
         createdAt: createdAt ?? this.createdAt,
@@ -939,6 +971,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           : this.forkFromMessageId,
       conflictOf:
           data.conflictOf.present ? data.conflictOf.value : this.conflictOf,
+      contextStartMessageId: data.contextStartMessageId.present
+          ? data.contextStartMessageId.value
+          : this.contextStartMessageId,
       deletedAt: data.deletedAt.present ? data.deletedAt.value : this.deletedAt,
       purgeAt: data.purgeAt.present ? data.purgeAt.value : this.purgeAt,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
@@ -975,6 +1010,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           ..write('parentConversationId: $parentConversationId, ')
           ..write('forkFromMessageId: $forkFromMessageId, ')
           ..write('conflictOf: $conflictOf, ')
+          ..write('contextStartMessageId: $contextStartMessageId, ')
           ..write('deletedAt: $deletedAt, ')
           ..write('purgeAt: $purgeAt, ')
           ..write('createdAt: $createdAt, ')
@@ -1011,6 +1047,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
         parentConversationId,
         forkFromMessageId,
         conflictOf,
+        contextStartMessageId,
         deletedAt,
         purgeAt,
         createdAt,
@@ -1046,6 +1083,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           other.parentConversationId == this.parentConversationId &&
           other.forkFromMessageId == this.forkFromMessageId &&
           other.conflictOf == this.conflictOf &&
+          other.contextStartMessageId == this.contextStartMessageId &&
           other.deletedAt == this.deletedAt &&
           other.purgeAt == this.purgeAt &&
           other.createdAt == this.createdAt &&
@@ -1079,6 +1117,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
   final Value<String?> parentConversationId;
   final Value<String?> forkFromMessageId;
   final Value<String?> conflictOf;
+  final Value<String?> contextStartMessageId;
   final Value<int?> deletedAt;
   final Value<int?> purgeAt;
   final Value<int> createdAt;
@@ -1111,6 +1150,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     this.parentConversationId = const Value.absent(),
     this.forkFromMessageId = const Value.absent(),
     this.conflictOf = const Value.absent(),
+    this.contextStartMessageId = const Value.absent(),
     this.deletedAt = const Value.absent(),
     this.purgeAt = const Value.absent(),
     this.createdAt = const Value.absent(),
@@ -1144,6 +1184,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     this.parentConversationId = const Value.absent(),
     this.forkFromMessageId = const Value.absent(),
     this.conflictOf = const Value.absent(),
+    this.contextStartMessageId = const Value.absent(),
     this.deletedAt = const Value.absent(),
     this.purgeAt = const Value.absent(),
     required int createdAt,
@@ -1181,6 +1222,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     Expression<String>? parentConversationId,
     Expression<String>? forkFromMessageId,
     Expression<String>? conflictOf,
+    Expression<String>? contextStartMessageId,
     Expression<int>? deletedAt,
     Expression<int>? purgeAt,
     Expression<int>? createdAt,
@@ -1218,6 +1260,8 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
         'parent_conversation_id': parentConversationId,
       if (forkFromMessageId != null) 'fork_from_message_id': forkFromMessageId,
       if (conflictOf != null) 'conflict_of': conflictOf,
+      if (contextStartMessageId != null)
+        'context_start_message_id': contextStartMessageId,
       if (deletedAt != null) 'deleted_at': deletedAt,
       if (purgeAt != null) 'purge_at': purgeAt,
       if (createdAt != null) 'created_at': createdAt,
@@ -1253,6 +1297,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       Value<String?>? parentConversationId,
       Value<String?>? forkFromMessageId,
       Value<String?>? conflictOf,
+      Value<String?>? contextStartMessageId,
       Value<int?>? deletedAt,
       Value<int?>? purgeAt,
       Value<int>? createdAt,
@@ -1287,6 +1332,8 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       parentConversationId: parentConversationId ?? this.parentConversationId,
       forkFromMessageId: forkFromMessageId ?? this.forkFromMessageId,
       conflictOf: conflictOf ?? this.conflictOf,
+      contextStartMessageId:
+          contextStartMessageId ?? this.contextStartMessageId,
       deletedAt: deletedAt ?? this.deletedAt,
       purgeAt: purgeAt ?? this.purgeAt,
       createdAt: createdAt ?? this.createdAt,
@@ -1380,6 +1427,10 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     if (conflictOf.present) {
       map['conflict_of'] = Variable<String>(conflictOf.value);
     }
+    if (contextStartMessageId.present) {
+      map['context_start_message_id'] =
+          Variable<String>(contextStartMessageId.value);
+    }
     if (deletedAt.present) {
       map['deleted_at'] = Variable<int>(deletedAt.value);
     }
@@ -1427,6 +1478,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
           ..write('parentConversationId: $parentConversationId, ')
           ..write('forkFromMessageId: $forkFromMessageId, ')
           ..write('conflictOf: $conflictOf, ')
+          ..write('contextStartMessageId: $contextStartMessageId, ')
           ..write('deletedAt: $deletedAt, ')
           ..write('purgeAt: $purgeAt, ')
           ..write('createdAt: $createdAt, ')
@@ -6759,6 +6811,7 @@ typedef $$ConversationsTableCreateCompanionBuilder = ConversationsCompanion
   Value<String?> parentConversationId,
   Value<String?> forkFromMessageId,
   Value<String?> conflictOf,
+  Value<String?> contextStartMessageId,
   Value<int?> deletedAt,
   Value<int?> purgeAt,
   required int createdAt,
@@ -6793,6 +6846,7 @@ typedef $$ConversationsTableUpdateCompanionBuilder = ConversationsCompanion
   Value<String?> parentConversationId,
   Value<String?> forkFromMessageId,
   Value<String?> conflictOf,
+  Value<String?> contextStartMessageId,
   Value<int?> deletedAt,
   Value<int?> purgeAt,
   Value<int> createdAt,
@@ -6843,6 +6897,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             Value<String?> parentConversationId = const Value.absent(),
             Value<String?> forkFromMessageId = const Value.absent(),
             Value<String?> conflictOf = const Value.absent(),
+            Value<String?> contextStartMessageId = const Value.absent(),
             Value<int?> deletedAt = const Value.absent(),
             Value<int?> purgeAt = const Value.absent(),
             Value<int> createdAt = const Value.absent(),
@@ -6876,6 +6931,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             parentConversationId: parentConversationId,
             forkFromMessageId: forkFromMessageId,
             conflictOf: conflictOf,
+            contextStartMessageId: contextStartMessageId,
             deletedAt: deletedAt,
             purgeAt: purgeAt,
             createdAt: createdAt,
@@ -6909,6 +6965,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             Value<String?> parentConversationId = const Value.absent(),
             Value<String?> forkFromMessageId = const Value.absent(),
             Value<String?> conflictOf = const Value.absent(),
+            Value<String?> contextStartMessageId = const Value.absent(),
             Value<int?> deletedAt = const Value.absent(),
             Value<int?> purgeAt = const Value.absent(),
             required int createdAt,
@@ -6942,6 +6999,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             parentConversationId: parentConversationId,
             forkFromMessageId: forkFromMessageId,
             conflictOf: conflictOf,
+            contextStartMessageId: contextStartMessageId,
             deletedAt: deletedAt,
             purgeAt: purgeAt,
             createdAt: createdAt,
@@ -7082,6 +7140,11 @@ class $$ConversationsTableFilterComposer
 
   ColumnFilters<String> get conflictOf => $state.composableBuilder(
       column: $state.table.conflictOf,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get contextStartMessageId => $state.composableBuilder(
+      column: $state.table.contextStartMessageId,
       builder: (column, joinBuilders) =>
           ColumnFilters(column, joinBuilders: joinBuilders));
 
@@ -7295,6 +7358,11 @@ class $$ConversationsTableOrderingComposer
 
   ColumnOrderings<String> get conflictOf => $state.composableBuilder(
       column: $state.table.conflictOf,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get contextStartMessageId => $state.composableBuilder(
+      column: $state.table.contextStartMessageId,
       builder: (column, joinBuilders) =>
           ColumnOrderings(column, joinBuilders: joinBuilders));
 
