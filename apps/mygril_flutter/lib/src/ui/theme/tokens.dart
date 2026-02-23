@@ -108,6 +108,18 @@ const moeBubbleRightBorderDark = moePrimaryDark;
 const moeAccent = Color(0xFFFC879B);
 const moeAccentDark = Color(0xFFFC879B); // 暗色模式强调色保持一致
 
+// Toast 语义色 - 浅色模式
+const moeToastSuccess = Color(0xFF4CAF50); // 成功（绿）
+const moeToastError = Color(0xFFE53935); // 错误（红）
+const moeToastWarning = Color(0xFFFF9800); // 警告（橙）
+const moeToastInfo = Color(0xFF424242); // 信息（灰）
+
+// Toast 语义色 - 暗色模式
+const moeToastSuccessDark = Color(0xFF1B5E20);
+const moeToastErrorDark = Color(0xFFB71C1C);
+const moeToastWarningDark = Color(0xFFE65100);
+const moeToastInfoDark = Color(0xFF37474F);
+
 // 弹窗专用色（MeoTalk 风格）- 浅色模式
 const moeDialogWarning = Color(0xFFFFD60A); // 黄色确认按钮（警告/确认操作）
 const moeDialogCancel = Color(0xFF8BBBE9); // 蓝灰色取消按钮
@@ -186,6 +198,12 @@ class MoeColors extends ThemeExtension<MoeColors> {
   /// 组件公共背景色（用于设置分组、卡片等容器）
   final Color componentBackground;
 
+  // Toast 语义色
+  final Color toastSuccess;
+  final Color toastError;
+  final Color toastWarning;
+  final Color toastInfo;
+
   const MoeColors({
     required this.primary,
     required this.surface,
@@ -213,6 +231,10 @@ class MoeColors extends ThemeExtension<MoeColors> {
     required this.headerContentColor,
     required this.accentColor,
     required this.componentBackground,
+    required this.toastSuccess,
+    required this.toastError,
+    required this.toastWarning,
+    required this.toastInfo,
   });
 
   // 浅色主题
@@ -247,6 +269,10 @@ class MoeColors extends ThemeExtension<MoeColors> {
       headerContentColor: moeHeaderContentLight,
       accentColor: color,
       componentBackground: Colors.white,
+      toastSuccess: moeToastSuccess,
+      toastError: moeToastError,
+      toastWarning: moeToastWarning,
+      toastInfo: moeToastInfo,
     );
   }
 
@@ -285,6 +311,10 @@ class MoeColors extends ThemeExtension<MoeColors> {
       headerContentColor: moeTextDark,
       accentColor: darkColor,
       componentBackground: moePanelDark,
+      toastSuccess: moeToastSuccessDark,
+      toastError: moeToastErrorDark,
+      toastWarning: moeToastWarningDark,
+      toastInfo: moeToastInfoDark,
     );
   }
 
@@ -316,6 +346,10 @@ class MoeColors extends ThemeExtension<MoeColors> {
     Color? headerContentColor,
     Color? accentColor,
     Color? componentBackground,
+    Color? toastSuccess,
+    Color? toastError,
+    Color? toastWarning,
+    Color? toastInfo,
   }) {
     return MoeColors(
       primary: primary ?? this.primary,
@@ -344,6 +378,10 @@ class MoeColors extends ThemeExtension<MoeColors> {
       headerContentColor: headerContentColor ?? this.headerContentColor,
       accentColor: accentColor ?? this.accentColor,
       componentBackground: componentBackground ?? this.componentBackground,
+      toastSuccess: toastSuccess ?? this.toastSuccess,
+      toastError: toastError ?? this.toastError,
+      toastWarning: toastWarning ?? this.toastWarning,
+      toastInfo: toastInfo ?? this.toastInfo,
     );
   }
 
@@ -382,6 +420,10 @@ class MoeColors extends ThemeExtension<MoeColors> {
       accentColor: Color.lerp(accentColor, other.accentColor, t)!,
       componentBackground:
           Color.lerp(componentBackground, other.componentBackground, t)!,
+      toastSuccess: Color.lerp(toastSuccess, other.toastSuccess, t)!,
+      toastError: Color.lerp(toastError, other.toastError, t)!,
+      toastWarning: Color.lerp(toastWarning, other.toastWarning, t)!,
+      toastInfo: Color.lerp(toastInfo, other.toastInfo, t)!,
     );
   }
 }

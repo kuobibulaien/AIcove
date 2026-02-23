@@ -5,14 +5,15 @@ import 'package:http/http.dart' as http;
 import '../config.dart';
 import '../api_logger.dart';
 import '../app_logger.dart';
+import '../utils/content_normalizer.dart';
 import 'providers/provider_adapter_factory.dart';
 import 'providers/provider_adapter.dart' show ToolCall;
 
 class SendMessageRichResult {
   final String text;
   final List<Map<String, dynamic>> toolResults;
-  final List<ToolCall> toolCalls; // AI 璇锋眰鎵ц鐨勫伐鍏疯皟鐢?
-  final Map<String, dynamic>? rawResponse; // 鍘熷鍝嶅簲锛堢敤浜庝袱鍥炲悎宸ュ叿璋冪敤锛?
+  final List<ToolCall> toolCalls; // AI 请求执行的工具调用
+  final Map<String, dynamic>? rawResponse; // 原始响应（用于两回合工具调用）
 
   const SendMessageRichResult({
     required this.text,
@@ -21,7 +22,7 @@ class SendMessageRichResult {
     this.rawResponse,
   });
 
-  /// 鏄惁鏈夊緟鎵ц鐨勫伐鍏疯皟鐢?
+  /// 是否有待执行的工具调用
   bool get hasToolCalls => toolCalls.isNotEmpty;
 
   String? firstTtsUrl() {
@@ -75,7 +76,7 @@ class AgentApiClient {
       : _client = client ?? http.Client(),
         timeout = timeout ?? const Duration(seconds: 30);
 
-  // 浜嬩欢鏃ュ織锛堟枃鏈椋庢牸锛涗笉寮曞叆鏂颁緷璧栵級
+  // 事件日志（文本风格；不引入新依赖）
   void _evt(String name, Map<String, Object?> data, {String level = 'INFO'}) {
     final now = DateTime.now();
     final ts =
@@ -358,6 +359,7 @@ class AgentApiClient {
     final endpoint = '$normalized/ai/generate-image';
     final samplerValue = sampler?.trim();
     final negativePromptValue = negativePrompt?.trim();
+    final isV4 = _isNovelAiV4Model(model);
     final params = <String, dynamic>{
       'params_version': 3,
       'width': width.clamp(256, 2048),
@@ -369,16 +371,23 @@ class AgentApiClient {
           ? samplerValue
           : 'k_euler_ancestral',
       'qualityToggle': true,
+      'ucPreset': 0,
       'legacy': false,
+      'legacy_v3_extend': false,
       'noise_schedule': 'karras',
-      'add_original_image': true,
+      'add_original_image': false,
+      'cfg_rescale': 0,
+      'sm': false,
+      'sm_dyn': false,
+      'dynamic_thresholding': false,
+      'prefer_brownian': true,
+      'deliberate_euler_ancestral_bug': false,
+      'autoSmea': false,
       if (seed != null) 'seed': seed,
       if (negativePromptValue != null && negativePromptValue.isNotEmpty)
         'negative_prompt': negativePromptValue,
-      if (negativePromptValue != null && negativePromptValue.isNotEmpty)
-        'uc': negativePromptValue,
     };
-    if (_isNovelAiV4Model(model)) {
+    if (isV4) {
       final v4Negative =
           (negativePromptValue == null || negativePromptValue.isEmpty)
               ? 'lowres'
@@ -516,7 +525,7 @@ class AgentApiClient {
         ? {'Authorization': 'Bearer ${token.trim()}'}
         : null;
 
-    // 1) 浼樺厛璧扮粺涓€ /v1/messages 绔偣
+    // 1) 优先走统一 /v1/messages 端点
     try {
       final data = await _postJson(
           '/v1/messages',
@@ -539,10 +548,10 @@ class AgentApiClient {
       }
       return (data['text'] as String?) ?? data.toString();
     } catch (e) {
-      // 422 鎴?404 绛夋儏鍐碉紝鑷姩鍥為€€鍒?/api/chat锛圷AGNI锛氬彧鍋氬繀瑕佸厹搴曪級
+      // 422 或 404 等情况，自动回退到 /api/chat（YAGNI：只做必要兜底）
     }
 
-    // 2) 鍥為€€鍒?/api/chat 绔偣
+    // 2) 回退到 /api/chat 端点
     String provider = 'openai';
     String model = modelFullId;
     final idx = modelFullId.indexOf(':');
@@ -551,27 +560,12 @@ class AgentApiClient {
       model = modelFullId.substring(idx + 1);
     }
 
-    // 灏嗗妯℃€?瀵硅薄鍖栫殑 messages 鍘嬪钩涓?{role, content(String)}
-    String coerceContent(dynamic content) {
-      if (content is String) return content;
-      if (content is List) {
-        final buf = StringBuffer();
-        for (final part in content) {
-          if (part is Map<String, dynamic>) {
-            final t = (part['text'] ?? part['input_text']) as String?;
-            if (t != null) buf.write(t);
-          }
-        }
-        return buf.toString();
-      }
-      return content?.toString() ?? '';
-    }
-
+    // 将多模态对象化的 messages 压平为 {role, content(String)}
     final history = <Map<String, String>>[
       for (final m in messages)
         {
           'role': (m['role'] as String? ?? 'user'),
-          'content': coerceContent(m['content']),
+          'content': ContentNormalizer.coerceToText(m['content']),
         }
     ];
 
@@ -604,22 +598,22 @@ class AgentApiClient {
     required List<Map<String, dynamic>> messages,
     required String userText,
     double? temperature,
-    double? topP, // 鏍搁噰鏍峰弬鏁?
+    double? topP, // 核采样参数
     String? token,
     Map<String, dynamic>? toolPrefs,
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
-    List<Map<String, dynamic>>? tools, // 鍘熺敓 Tool Calling 宸ュ叿瀹氫箟
-    TraceLogger? trace, // 鍙€夌殑杩借釜鏃ュ織鍣?
+    List<Map<String, dynamic>>? tools, // 原生 Tool Calling 工具定义
+    TraceLogger? trace, // 可选的追踪日志器
     String? turnId,
     int? roundIndex,
   }) async {
-    // 濡傛灉娌℃湁浼犲叆 trace锛屽垱寤轰竴涓畝鍗曠殑鏃ュ織璁板綍鍣?
+    // 如果没有传入 trace，创建一个简单的日志记录器
     final logger =
         trace ?? AppLogger.startTrace('API调用', source: 'AgentApiClient');
 
-    // 缁熶竴璧扮洿杩為摼璺紝閬垮厤鍓嶅悗绔弻閫氶亾鐨勯澶栧鏉傚害锛圞ISS/YAGNI锛?
+    // 统一走直连链路，避免前后端双通道的额外复杂度（KISS/YAGNI）
     final trimmedBase = providerApiBase?.trim();
     final trimmedKey = providerApiKey?.trim();
     if (trimmedKey == null || trimmedKey.isEmpty) {
@@ -630,7 +624,7 @@ class AgentApiClient {
       throw StateError('Missing providerApiKey for direct call');
     }
 
-    // 瑙ｆ瀽 provider 鍜?model
+    // 解析 provider 和 model
     String provider = 'openai';
     String model = modelFullId;
     final idx = modelFullId.indexOf(':');
@@ -639,14 +633,14 @@ class AgentApiClient {
       model = modelFullId.substring(idx + 1);
     }
 
-    // 鑾峰彇瀵瑰簲鐨勯€傞厤鍣?
+    // 获取对应的适配器
     final adapter = ProviderAdapterFactory.getAdapter(provider);
 
     final base = (trimmedBase == null || trimmedBase.isEmpty)
         ? 'https://api.openai.com/v1'
         : trimmedBase;
-
-    // 浣跨敤閫傞厤鍣ㄦ瀯寤虹鐐癸紙榛樿 chat 绫诲瀷锛?
+    // 解析 provider 和 model
+    // 使用适配器构建端点（默认 chat 类型）
     final endpoint = adapter.buildEndpoint(base, modelType: 'chat');
 
     final directTrace = logger.startChild('直连请求');
@@ -656,44 +650,8 @@ class AgentApiClient {
       'hasCustomConfig': customConfig != null,
     });
 
-    String coerceContent(dynamic content) {
-      if (content == null) return '';
-      if (content is String) return content;
-      if (content is List) {
-        final buf = StringBuffer();
-        for (final part in content) {
-          if (part is Map<String, dynamic>) {
-            final t = (part['text'] ?? part['input_text']) as String?;
-            if (t != null) buf.write(t);
-          }
-        }
-        return buf.toString();
-      }
-      if (content is Map<String, dynamic>) {
-        final parts = content['parts'];
-        if (parts is List) {
-          final buf = StringBuffer();
-          for (final part in parts) {
-            if (part is Map<String, dynamic>) {
-              final text = (part['text'] ?? part['input_text']) as String?;
-              if (text != null) buf.write(text);
-            }
-          }
-          return buf.toString();
-        }
-      }
-      return content.toString();
-    }
-
-    bool isContentEmpty(dynamic content) {
-      if (content == null) return true;
-      if (content is String) return content.trim().isEmpty;
-      if (content is List) return content.isEmpty;
-      return false;
-    }
-
-    // 杞崲鍘嗗彶涓?OpenAI Chat 鏍煎紡锛堟敮鎸?content 涓?String 鎴栧妯℃€?List锛?
-    // 鏀寔 role=tool 閫忎紶锛堜袱鍥炲悎宸ュ叿璋冪敤鍦烘櫙锛?
+    // 转换历史为 OpenAI Chat 格式（支持 content 为 String 或多模态 List）
+    // 支持 role=tool 透传（两回合工具调用场景）
     final chatMessages = <Map<String, dynamic>>[];
     for (final m in messages) {
       final role = (m['role'] ?? '').toString();
@@ -731,7 +689,7 @@ class AgentApiClient {
         continue;
       }
 
-      if (isContentEmpty(content)) continue;
+      if (ContentNormalizer.isEmpty(content)) continue;
 
       String r;
       if (role == 'system') {
@@ -745,7 +703,7 @@ class AgentApiClient {
       chatMessages.add({'role': r, 'content': content});
     }
 
-    // 鍏煎鏃ч摼璺細褰撳巻鍙叉湯灏句笉鏄?user 鏃讹紝鎵嶆妸 userText 浣滀负鏈疆杈撳叆杩藉姞锛岄伩鍏嶉噸澶嶅彂閫?
+    // 兼容旧链路：当历史末尾不是 user 时，才把 userText 作为本轮输入追加，避免重复发送
     final trimmedUserText = userText.trim();
     final shouldAppendUserText = trimmedUserText.isNotEmpty &&
         (chatMessages.isEmpty || chatMessages.last['role'] != 'user');
@@ -753,13 +711,13 @@ class AgentApiClient {
       chatMessages.add({'role': 'user', 'content': trimmedUserText});
     }
 
-    // 璁＄畻鍘熷瀵硅瘽鏂囨湰闀垮害锛屽苟鐢熸垚棰勮鏃ュ織锛圞ISS锛氬彧鍋氱畝鍗曟嫾鎺ワ紱YAGNI锛氫笉鍋氬鏉傚垎鏋愶級
+    // 计算原始对话文本长度，并生成预览日志（KISS：只做简单拼接；YAGNI：不做复杂分析）
     int totalChars = 0;
-    const maxPreviewLength = 100; // 鏃ュ織棰勮鏈€澶ч暱搴︼紝瓒呰繃鍒欐埅鏂?
+    const maxPreviewLength = 100; // 日志预览最大长度，超过则截断
     final previewBuffer = StringBuffer();
     for (final m in chatMessages) {
       final role = (m['role'] ?? '').toString();
-      final contentText = coerceContent(
+      final contentText = ContentNormalizer.coerceToText(
         m.containsKey('content') ? m['content'] : {'parts': m['parts']},
       );
       totalChars += contentText.length;
@@ -777,7 +735,7 @@ class AgentApiClient {
       promptPreview = '${promptPreview.substring(0, maxPreviewLength)}...(已截断)';
     }
 
-    // 浣跨敤閫傞厤鍣ㄦ瀯寤鸿姹備綋
+    // 使用适配器构建请求体
     final payload = adapter.buildRequestBody(
       model: model,
       messages: chatMessages,
@@ -799,7 +757,7 @@ class AgentApiClient {
     });
 
     try {
-      // 浣跨敤閫傞厤鍣ㄦ瀯寤鸿姹傚ご
+      // 使用适配器构建请求头
       final headers = adapter.buildHeaders(trimmedKey);
 
       final sw = Stopwatch()..start();
@@ -817,10 +775,10 @@ class AgentApiClient {
       if (resp.statusCode >= 200 && resp.statusCode < 300) {
         final data = jsonDecode(responseBodyStr) as Map<String, dynamic>;
 
-        // 浣跨敤閫傞厤鍣ㄨВ鏋愬搷搴?
+        // 使用适配器解析响应
         final result = adapter.parseResponse(data);
 
-        // 璁板綍 AI 瀵硅瘽鏃ュ織锛堝寘鍚畬鏁村師濮嬫暟鎹級
+    // 记录 AI 对话日志（包含完整原始数据）
         ApiLogger.add(ApiLogEntry(
           time: DateTime.now(),
           method: 'POST',
@@ -830,7 +788,7 @@ class AgentApiClient {
           requestBody: ApiLogger.safeSnippet(requestBodyJson),
           responseBody: ApiLogger.safeSnippet(responseBodyStr),
           ok: true,
-          // 瀹屾暣鐨勫師濮嬪璇濇暟鎹?
+          // 完整的原始对话数据
           rawContext: jsonEncode(chatMessages),
           rawAiResponse: result.text,
           rawRequestBody: requestBodyJson,
@@ -852,7 +810,7 @@ class AgentApiClient {
         });
         directTrace.end(additionalMessage: '直连调用完成');
 
-        // 濡傛灉 logger 鏄嚜宸卞垱寤虹殑锛岄渶瑕佺粨鏉熷畠
+        // 如果 logger 是自己创建的，需要结束它
         if (trace == null) logger.end();
 
         return SendMessageRichResult(
@@ -863,7 +821,7 @@ class AgentApiClient {
         );
       }
 
-      // 璁板綍澶辫触鐨?API 鏃ュ織
+      // 记录失败的 API 日志
       ApiLogger.add(ApiLogEntry(
         time: DateTime.now(),
         method: 'POST',
@@ -882,7 +840,7 @@ class AgentApiClient {
         eventType: 'round',
       ));
 
-      // HTTP 閿欒鐩存帴鎶涘嚭锛岃涓婂眰鏄剧ず鐪熷疄鍘熷洜
+      // HTTP 错误直接抛出，让上层显示真实原因
       directTrace.error('直连请求失败', metadata: {
         'statusCode': resp.statusCode,
         'body': resp.body,
@@ -900,11 +858,11 @@ class AgentApiClient {
     }
   }
 
-  /// 娴佸紡鍙戦€佹秷鎭紙鏀寔鍒嗘锛? 杩斿洖娑堟伅鍧楁祦
+  /// 流式发送消息（支持分块），返回消息块流
   ///
-  /// 搴旂敤鍘熷垯锛?
-  /// - KISS: 绠€鍗曠殑 SSE 瑙ｆ瀽锛屽彧澶勭悊蹇呰鐨勫瓧娈?
-  /// - SOLID: 鑱岃矗鍗曚竴锛屽彧璐熻矗鎺ユ敹鍜岃В鏋?SSE 娴?
+  /// 应用原则：
+    /// - KISS: 简单的 SSE 解析，只处理必要的字段
+  /// - SOLID: 职责单一，只负责接收和解析 SSE 流
   Stream<Map<String, dynamic>> sendMessageStream({
     required String agentId,
     required String sessionId,
@@ -919,7 +877,7 @@ class AgentApiClient {
   }) async* {
     final uri = _uri('/api/chat/stream');
 
-    // 鏋勫缓璇锋眰浣擄紙涓?sendMessageRich 绫讳技锛?
+    // 构建请求体（与 sendMessageRich 类似）
     String provider = 'openai';
     String model = modelFullId;
     final idx = modelFullId.indexOf(':');
@@ -928,26 +886,11 @@ class AgentApiClient {
       model = modelFullId.substring(idx + 1);
     }
 
-    String coerceContent(dynamic content) {
-      if (content is String) return content;
-      if (content is List) {
-        final buf = StringBuffer();
-        for (final part in content) {
-          if (part is Map<String, dynamic>) {
-            final t = (part['text'] ?? part['input_text']) as String?;
-            if (t != null) buf.write(t);
-          }
-        }
-        return buf.toString();
-      }
-      return content?.toString() ?? '';
-    }
-
     final history = <Map<String, String>>[
       for (final m in messages)
         {
           'role': (m['role'] as String? ?? 'user'),
-          'content': coerceContent(m['content']),
+          'content': ContentNormalizer.coerceToText(m['content']),
         }
     ];
 
@@ -977,7 +920,7 @@ class AgentApiClient {
         'Authorization': 'Bearer ${token.trim()}',
     };
 
-    // 鍙戦€?SSE 璇锋眰
+    // 发送 SSE 请求
     final request = http.Request('POST', uri);
     request.headers.addAll(hdrs);
     request.body = jsonEncode(payload);
@@ -988,17 +931,17 @@ class AgentApiClient {
       throw Exception('HTTP ${response.statusCode}');
     }
 
-    // 瑙ｆ瀽 SSE 娴?
+    // 解析 SSE 流
     await for (final chunk in response.stream
         .transform(utf8.decoder)
         .transform(const LineSplitter())) {
       if (chunk.isEmpty) continue;
 
-      // SSE 鏍煎紡: data: {json}
+      // SSE 格式: data: {json}
       if (chunk.startsWith('data: ')) {
         final data = chunk.substring(6).trim();
 
-        // 缁撴潫鏍囪
+        // 结束标记
         if (data == '[DONE]') {
           _evt('sse:done', {'path': '/api/chat/stream'}, level: 'INFO');
           break;
@@ -1015,13 +958,13 @@ class AgentApiClient {
               level: 'DBUG');
           yield json;
         } catch (_) {
-          // 蹇界暐瑙ｆ瀽閿欒
+          // 忽略解析错误
         }
       }
     }
   }
 
-  /// 鍚屾瑙﹀彂鍣ㄥ績璺筹紙鐢ㄤ簬浜戠鎺ョ鍒ゅ畾锛?
+  /// 同步触发器心跳（用于云端接管判定）
   Future<void> syncTriggerHeartbeat(DateTime timestamp, {String? token}) async {
     try {
       final uri = _uri('/api/v1/sync/trigger_heartbeat');
@@ -1037,7 +980,7 @@ class AgentApiClient {
           )
           .timeout(const Duration(seconds: 5));
     } catch (e) {
-      // 蹇冭烦澶辫触涓嶅簲闃绘柇娴佺▼锛屼粎璁板綍鏃ュ織
+      // 心跳失败不应阻断流程，仅记录日志
       _evt('syncTriggerHeartbeat', {'error': e.toString()}, level: 'WARN');
     }
   }

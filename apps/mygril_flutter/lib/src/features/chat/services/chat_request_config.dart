@@ -1,50 +1,57 @@
-/// 聊天请求配置准备器
-///
-/// 负责准备 API 调用所需的配置（模型、Provider、工具偏好等）。
-///
-/// 从 chat_actions.dart 提取，遵循单一职责原则。
-///
-/// 更新记录：
-/// - 2025-12-31: 从 chat_actions.dart 提取
 library;
 
 import '../../settings/app_settings.dart';
-import '../../settings/mcp_api.dart';
 import '../../settings/direct_mode.dart' as direct;
+import '../../settings/mcp_api.dart';
 
-/// 请求配置结果
+/// Request-level config for one chat model attempt.
 class ChatRequestConfig {
-  /// 完整模型 ID（provider:model）
+  /// Raw model reference key used by AppSettings APIs.
+  final String modelRef;
+
+  /// Full model id in `provider:model` format.
   final String modelFullId;
 
-  /// Provider API Base URL
+  /// Provider API base URL.
   final String providerApiBase;
 
-  /// Provider API Key
+  /// Provider API key.
   final String? providerApiKey;
 
-  /// 工具偏好设置
+  /// Tool preference payload sent to backend.
   final Map<String, dynamic> toolPrefs;
 
-  /// 自定义配置
-  final Map<String, dynamic>? customConfig;
+  /// Provider custom config passed through to backend.
+  final Map<String, dynamic> customConfig;
+
+  /// Model-level temperature override.
+  final double? modelTemperature;
+
+  /// Model-level topP override.
+  final double? modelTopP;
+
+  /// Model-level context message limit override.
+  final int? modelContextMessageLimit;
 
   const ChatRequestConfig({
+    required this.modelRef,
     required this.modelFullId,
     required this.providerApiBase,
     this.providerApiKey,
     required this.toolPrefs,
-    this.customConfig,
+    this.customConfig = const <String, dynamic>{},
+    this.modelTemperature,
+    this.modelTopP,
+    this.modelContextMessageLimit,
   });
 }
 
-/// 聊天请求配置准备器
+/// Builds chat request config with MCP cache and direct-mode fallback.
 class ChatRequestConfigBuilder {
   final McpApi _mcpApi = McpApi();
   McpConfigDto? _cachedMcpConfig;
   DateTime? _cachedMcpFetchedAt;
 
-  /// 获取 MCP 配置（带缓存）
   Future<McpConfigDto?> getMcpConfig() async {
     final now = DateTime.now();
     if (_cachedMcpFetchedAt != null &&
@@ -58,13 +65,11 @@ class ChatRequestConfigBuilder {
       return _cachedMcpConfig;
     } catch (_) {
       _cachedMcpConfig = null;
-      // Negative cache to avoid repeated retries in weak mobile networks.
       _cachedMcpFetchedAt = DateTime.now();
       return null;
     }
   }
 
-  /// 构建工具偏好设置
   Map<String, dynamic> buildToolPrefs(
       AppSettings settings, McpConfigDto? config) {
     final prefs = <String, dynamic>{
@@ -98,17 +103,21 @@ class ChatRequestConfigBuilder {
     return prefs;
   }
 
-  /// 构建完整的请求配置
-  Future<ChatRequestConfig> buildRequestConfig(AppSettings settings) async {
+  Future<ChatRequestConfig> buildRequestConfig(
+    AppSettings settings, {
+    String? modelRef,
+  }) async {
     final mcpConfig = await getMcpConfig();
     final toolPrefs = buildToolPrefs(settings, mcpConfig);
 
-    final modelRef = settings.defaultModelName;
-    final model = settings.getRawModelId(modelRef);
-    final provider = settings.getModelProviderId(modelRef) ?? 'openai';
+    final resolvedModelRef = (modelRef != null && modelRef.trim().isNotEmpty)
+        ? modelRef.trim()
+        : settings.defaultModelName;
+
+    final model = settings.getRawModelId(resolvedModelRef);
+    final provider = settings.getModelProviderId(resolvedModelRef) ?? 'openai';
     var modelFull = '$provider:$model';
 
-    // 获取 Provider 认证信息
     final providerAuth = settings.providers.firstWhere(
       (p) => p.id == provider,
       orElse: () => ProviderAuth(
@@ -125,7 +134,6 @@ class ChatRequestConfigBuilder {
         ? providerAuth.apiKeys.first.trim()
         : null;
 
-    // 尝试直连配置兜底
     try {
       final cfg = await direct.loadDirectConfig();
       if (cfg.enabled) {
@@ -144,12 +152,18 @@ class ChatRequestConfigBuilder {
       }
     } catch (_) {}
 
+    final modelConfig = settings.getModelConfig(resolvedModelRef);
+
     return ChatRequestConfig(
+      modelRef: resolvedModelRef,
       modelFullId: modelFull,
       providerApiBase: providerApiBase,
       providerApiKey: providerApiKey?.isEmpty == true ? null : providerApiKey,
       toolPrefs: toolPrefs,
       customConfig: providerAuth.customConfig,
+      modelTemperature: modelConfig.temperature,
+      modelTopP: modelConfig.topP,
+      modelContextMessageLimit: modelConfig.contextMessageLimit,
     );
   }
 }

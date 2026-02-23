@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -15,16 +14,17 @@ import '../../../../features/chat/presentation/widgets/contact_edit_dialog.dart'
 import '../../../../features/chat/providers2.dart';
 import '../../../../features/plugins/plugin_providers.dart';
 import '../../../../features/plugins/tts/tts_config.dart';
-import '../../../../features/settings/app_settings.dart';
 import '../../../../ui/features/settings/pages/chat_plugin_settings_page.dart';
+import '../widgets/avatar_name_section.dart';
+import '../widgets/character_image_section.dart';
 import '../widgets/character_text_editor_sheet.dart';
-import '../../../../ui/shared/effects/frosted_glass_card.dart';
-import '../../../../ui/shared/effects/smooth_clip.dart';
+import '../widgets/chat_background_section.dart';
+import '../widgets/plugin_voice_section.dart';
+import '../widgets/prompt_section.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/theme/tokens.dart';
 
 /// 编辑模式枚举
-/// 注释已清理乱码
 /// - editTemplate: template/favorite role card edit mode
 enum EditMode {
   create,
@@ -38,14 +38,10 @@ enum _ExitAction {
   cancel,
 }
 
-/// 注释已清理乱码
-/// 注释已清理乱码
-/// 注释已清理乱码
 class ContactEditPage extends ConsumerStatefulWidget {
   final Conversation conversation;
   final EditMode editMode;
 
-  /// 注释已清理乱码
   const ContactEditPage({
     super.key,
     required this.conversation,
@@ -134,7 +130,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     }
     _lastAutoSavedSignature = _buildEditSignature(_buildEditResult());
 
-    // 注释已清理乱码
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final provider = _getImageProvider();
@@ -179,6 +174,8 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     return helper.getCharacterProvider();
   }
 
+  // ==================== build ====================
+
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
@@ -205,9 +202,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
                 physics: const BouncingScrollPhysics(),
                 child: Column(
                   children: [
-                    // 注释已清理乱码
-
-                    // 注释已清理乱码
                     SafeArea(
                       bottom: false,
                       child: Padding(
@@ -218,23 +212,36 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
 
                     const SizedBox(height: 24),
 
-                    // 头像 + 名称（一行显示）
+                    // 头像 + 名称
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: _buildAvatarNameRow(colors),
-                    ),
-                    const SizedBox(height: 16),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: _buildCharacterImageSection(colors),
+                      child: AvatarNameSection(
+                        nameCtrl: _nameCtrl,
+                        avatarCtrl: _avatarCtrl,
+                        refImageCtrl: _refImageCtrl,
+                        avatarBytes: _avatarBytes,
+                        onPickAvatar: _pickAvatarImage,
+                      ),
                     ),
                     const SizedBox(height: 16),
 
-                    // Description section (readonly + edit entry)
+                    // 角色立绘
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: _buildReadonlySection(
-                        colors,
+                      child: CharacterImageSection(
+                        avatarCtrl: _avatarCtrl,
+                        refImageCtrl: _refImageCtrl,
+                        nameCtrl: _nameCtrl,
+                        onPick: _pickCharacterImage,
+                        onClear: _clearCharacterImage,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // 角色描述
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: ReadonlyEditCard(
                         icon: Icons.notes,
                         title: '角色描述',
                         content: _descCtrl.text,
@@ -249,22 +256,52 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
 
                     const SizedBox(height: 16),
 
-                    // 提示词（主要展示区，放大 + 内部可滑动）
+                    // 提示词
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: _buildPromptSection(colors),
+                      child: PromptPreviewCard(
+                        personaCtrl: _personaCtrl,
+                        onEdit: () => _openFullScreenEditor(
+                          title: '编辑提示词',
+                          controller: _personaCtrl,
+                          hint: '详细描述角色的性格、说话方式、行为边界和世界观...',
+                        ),
+                      ),
                     ),
 
                     const SizedBox(height: 16),
 
-                    // 注释已清理乱码
+                    // 插件 + 音色 + 聊天背景
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 24),
                       child: Column(
                         children: [
-                          _buildBottomCard(colors, voicePresets),
+                          PluginVoiceSection(
+                            selectedPluginIds: _selectedPluginIds,
+                            boundVoiceId: _boundVoiceId,
+                            voicePresets: voicePresets,
+                            onPluginIdsChanged: (newIds) {
+                              setState(() => _selectedPluginIds = newIds);
+                              _scheduleAutoSave();
+                            },
+                            onVoiceChanged: (voiceId) {
+                              setState(() {
+                                _boundVoiceId = voiceId;
+                                // 绑定音色后自动启用 TTS 插件
+                                if (voiceId != null) {
+                                  _selectedPluginIds.add('tts');
+                                }
+                              });
+                              _scheduleAutoSave();
+                            },
+                          ),
                           const SizedBox(height: 16),
-                          _buildChatBackgroundSection(colors),
+                          ChatBackgroundSection(
+                            chatBackgroundCtrl: _chatBackgroundCtrl,
+                            chatBackgroundBytes: _chatBackgroundBytes,
+                            onPick: _pickChatBackgroundImage,
+                            onClear: _clearChatBackgroundImage,
+                          ),
                         ],
                       ),
                     ),
@@ -291,7 +328,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    // Try prebuilt blurred asset first
     final charImage =
         _refImageCtrl.text.trim().isEmpty ? null : _refImageCtrl.text.trim();
     final blurAsset = _deriveBlurAssetPath(charImage);
@@ -310,7 +346,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
           )
         else
           _buildGeneratedBlur(provider),
-        // 叠层提亮/压暗
         Container(
           color: isDark
               ? Colors.black.withValues(alpha: 0.25)
@@ -436,20 +471,18 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     }
   }
 
-  // 注释已清理乱码
+  // ==================== 导航栏 ====================
 
   Widget _buildNavBar(MoeColors colors) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Row(
         children: [
-          // 注释已清理乱码
           _buildCircleButton(
             icon: Icons.arrow_back,
             onTap: () => unawaited(_handleBack()),
           ),
           const Spacer(),
-          // 注释已清理乱码
           ..._buildNavActions(colors),
         ],
       ),
@@ -460,10 +493,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     switch (widget.editMode) {
       case EditMode.create:
         return [
-          _buildCircleButton(
-            icon: Icons.check,
-            onTap: _onSave,
-          ),
+          _buildCircleButton(icon: Icons.check, onTap: _onSave),
         ];
       case EditMode.editConversation:
         return [
@@ -472,10 +502,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
             onTap: () => _showMoreMenu(colors),
           ),
           const SizedBox(width: 8),
-          _buildCircleButton(
-            icon: Icons.check,
-            onTap: _onSave,
-          ),
+          _buildCircleButton(icon: Icons.check, onTap: _onSave),
         ];
       case EditMode.editTemplate:
         return [
@@ -485,10 +512,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
             tooltip: '另存为',
           ),
           const SizedBox(width: 8),
-          _buildCircleButton(
-            icon: Icons.check,
-            onTap: _onSaveTemplate,
-          ),
+          _buildCircleButton(icon: Icons.check, onTap: _onSaveTemplate),
         ];
     }
   }
@@ -505,6 +529,34 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
       ],
     );
   }
+
+  /// Circular translucent action button
+  Widget _buildCircleButton({
+    required IconData icon,
+    required VoidCallback onTap,
+    String? tooltip,
+  }) {
+    final button = Material(
+      color: Colors.black38,
+      shape: const CircleBorder(),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          width: 44,
+          height: 44,
+          alignment: Alignment.center,
+          child: Icon(icon, color: Colors.white, size: 22),
+        ),
+      ),
+    );
+    if (tooltip != null) {
+      return Tooltip(message: tooltip, child: button);
+    }
+    return button;
+  }
+
+  // ==================== 退出处理 ====================
 
   Future<void> _handleBack() async {
     final action = await _confirmExitAction();
@@ -561,466 +613,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     Navigator.of(context).pop<T>(result);
   }
 
-  /// Circular translucent action button
-  Widget _buildCircleButton({
-    required IconData icon,
-    required VoidCallback onTap,
-    String? tooltip,
-  }) {
-    final button = Material(
-      color: Colors.black38,
-      shape: const CircleBorder(),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Container(
-          width: 44,
-          height: 44,
-          alignment: Alignment.center,
-          child: Icon(icon, color: Colors.white, size: 22),
-        ),
-      ),
-    );
-    if (tooltip != null) {
-      return Tooltip(message: tooltip, child: button);
-    }
-    return button;
-  }
-
-  // 注释已清理乱码
-
-  Widget _buildAvatarNameRow(MoeColors colors) {
-    final helper = AvatarHelper(
-      avatarUrl:
-          _avatarCtrl.text.trim().isEmpty ? null : _avatarCtrl.text.trim(),
-      characterImage:
-          _refImageCtrl.text.trim().isEmpty ? null : _refImageCtrl.text.trim(),
-      displayName: _nameCtrl.text,
-    );
-
-    // Avatar + name in one row
-    return Row(
-      children: [
-        // 注释已清理乱码
-        GestureDetector(
-          onTap: _pickAvatarImage,
-          child: Container(
-            width: 72,
-            height: 72,
-            decoration: MoeG2Decoration(
-              radius: radiusBubble.x,
-              color: colors.surface,
-              border: Border.all(color: colors.borderLight, width: 0.5),
-            ),
-            child: MoeG2ClipRRect(
-              radius: radiusBubble.x,
-              child: _avatarBytes != null
-                  ? Image.memory(_avatarBytes!, fit: BoxFit.cover)
-                  : helper.buildAvatarWidget(
-                      fit: BoxFit.cover,
-                      fallback: Center(
-                        child: Icon(
-                          Icons.add_a_photo_outlined,
-                          color: colors.muted,
-                          size: 28,
-                        ),
-                      ),
-                    ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 16),
-        // Name field (left aligned, larger)
-        Expanded(
-          child: TextField(
-            controller: _nameCtrl,
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: MoeFontWeights.emphasis,
-              color: colors.text,
-            ),
-            decoration: InputDecoration(
-              hintText: '输入角色名称',
-              hintStyle: TextStyle(
-                fontSize: 20,
-                fontWeight: MoeFontWeights.normal,
-                color: colors.muted,
-              ),
-              border: InputBorder.none,
-              contentPadding: const EdgeInsets.symmetric(vertical: 12),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildCharacterImageSection(MoeColors colors) {
-    final helper = AvatarHelper(
-      avatarUrl:
-          _avatarCtrl.text.trim().isEmpty ? null : _avatarCtrl.text.trim(),
-      characterImage:
-          _refImageCtrl.text.trim().isEmpty ? null : _refImageCtrl.text.trim(),
-      displayName: _nameCtrl.text,
-    );
-    final hasCharacterImage = _refImageCtrl.text.trim().isNotEmpty;
-
-    return FrostedGlassContainer(
-      borderRadius: 16,
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildSectionTitle(
-            colors,
-            icon: Icons.portrait_outlined,
-            title: '角色立绘',
-            subtitle: '立绘用于角色卡和详情展示，不等同于头像',
-          ),
-          const SizedBox(height: 8),
-          MoeG2ClipRRect(
-            radius: 12,
-            child: Container(
-              width: double.infinity,
-              height: 180,
-              decoration: MoeG2Decoration(
-                radius: 12,
-                color: colors.surfaceAlt.withValues(alpha: 0.25),
-                border: Border.all(color: colors.borderLight, width: 0.5),
-              ),
-              child: Center(
-                child: AspectRatio(
-                  aspectRatio: 3 / 4,
-                  child: MoeG2ClipRRect(
-                    radius: 10,
-                    child: helper.buildCharacterWidget(
-                      fit: BoxFit.cover,
-                      fallback: Container(
-                        color: colors.surface,
-                        alignment: Alignment.center,
-                        child: Icon(
-                          Icons.image_outlined,
-                          color: colors.muted,
-                          size: 28,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _pickCharacterImage,
-                  icon: const Icon(Icons.photo_library_outlined),
-                  label: Text(hasCharacterImage ? '更换立绘' : '上传立绘'),
-                ),
-              ),
-              if (hasCharacterImage) ...[
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _clearCharacterImage,
-                    icon: const Icon(Icons.close),
-                    label: const Text('清空立绘'),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildChatBackgroundSection(MoeColors colors) {
-    final hasBackground = _chatBackgroundCtrl.text.trim().isNotEmpty;
-
-    return FrostedGlassContainer(
-      borderRadius: 16,
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildSectionTitle(
-            colors,
-            icon: Icons.image_outlined,
-            title: '聊天背景',
-            subtitle: '为当前会话设置单独背景图',
-          ),
-          const SizedBox(height: 8),
-          if (hasBackground) ...[
-            MoeG2ClipRRect(
-              radius: 12,
-              child: Container(
-                width: double.infinity,
-                height: 120,
-                decoration: MoeG2Decoration(
-                  radius: 12,
-                  color: colors.surfaceAlt.withValues(alpha: 0.25),
-                  border: Border.all(color: colors.borderLight, width: 0.5),
-                ),
-                child: _buildChatBackgroundPreview(colors),
-              ),
-            ),
-            const SizedBox(height: 8),
-          ],
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _pickChatBackgroundImage,
-                  icon: const Icon(Icons.photo_library_outlined),
-                  label: Text(hasBackground ? '更换背景' : '选择背景'),
-                ),
-              ),
-              if (hasBackground) ...[
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _clearChatBackgroundImage,
-                    icon: const Icon(Icons.close),
-                    label: const Text('清除'),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildChatBackgroundPreview(MoeColors colors) {
-    final raw = _chatBackgroundCtrl.text.trim();
-
-    if (_chatBackgroundBytes != null) {
-      return Image.memory(_chatBackgroundBytes!, fit: BoxFit.cover);
-    }
-
-    final bytes = decodeDataImage(raw);
-    if (bytes != null) {
-      return Image.memory(bytes, fit: BoxFit.cover);
-    }
-
-    if (raw.startsWith('http://') || raw.startsWith('https://')) {
-      return Image.network(
-        raw,
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => _buildChatBackgroundFallback(colors),
-      );
-    }
-
-    if (raw.startsWith('assets/') || raw.startsWith('packages/')) {
-      return Image.asset(
-        raw,
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => _buildChatBackgroundFallback(colors),
-      );
-    }
-
-    final file = File(raw);
-    return Image.file(
-      file,
-      fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) => _buildChatBackgroundFallback(colors),
-    );
-  }
-
-  Widget _buildChatBackgroundFallback(MoeColors colors) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.image_not_supported_outlined,
-              size: 24, color: colors.muted),
-          const SizedBox(height: 4),
-          Text(
-            '背景预览不可用',
-            style: TextStyle(fontSize: 12, color: colors.muted),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ==================== 只读区块 + 编辑入口 ====================
-
-  Widget _buildReadonlySection(
-    MoeColors colors, {
-    required IconData icon,
-    required String title,
-    required String content,
-    required String placeholder,
-    required VoidCallback onEdit,
-  }) {
-    final hasContent = content.trim().isNotEmpty;
-
-    return FrostedGlassContainer(
-      borderRadius: 16,
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 注释已清理乱码
-          Row(
-            children: [
-              Icon(icon, size: 18, color: colors.primary),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: MoeFontWeights.emphasis,
-                    color: colors.text,
-                  ),
-                ),
-              ),
-              // 注释已清理乱码
-              GestureDetector(
-                onTap: onEdit,
-                child: Container(
-                  width: 32,
-                  height: 32,
-                  decoration: MoeG2Decoration(
-                    radius: 8,
-                    color: colors.primary.withValues(alpha: 0.1),
-                  ),
-                  child: Icon(
-                    Icons.edit_outlined,
-                    size: 16,
-                    color: colors.primary,
-                  ),
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 10),
-
-          // 只读文本内容
-          GestureDetector(
-            onTap: onEdit,
-            child: SizedBox(
-              width: double.infinity,
-              child: Text(
-                hasContent ? content : placeholder,
-                style: TextStyle(
-                  fontSize: 14,
-                  height: 1.5,
-                  color: hasContent
-                      ? colors.text.withValues(alpha: 0.85)
-                      : colors.muted,
-                ),
-                maxLines: 6,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ==================== 提示词主展示区（放大 + 可滑动）====================
-
-  Widget _buildPromptSection(MoeColors colors) {
-    final hasContent = _personaCtrl.text.trim().isNotEmpty;
-
-    void openEditor() => _openFullScreenEditor(
-          title: '编辑提示词',
-          controller: _personaCtrl,
-          hint: '详细描述角色的性格、说话方式、行为边界和世界观...',
-        );
-
-    return FrostedGlassContainer(
-      borderRadius: 16,
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 注释已清理乱码
-          Row(
-            children: [
-              Icon(Icons.auto_awesome, size: 18, color: colors.primary),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  '提示词',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: MoeFontWeights.emphasis,
-                    color: colors.text,
-                  ),
-                ),
-              ),
-              GestureDetector(
-                onTap: openEditor,
-                child: Container(
-                  width: 32,
-                  height: 32,
-                  decoration: MoeG2Decoration(
-                    radius: 8,
-                    color: colors.primary.withValues(alpha: 0.1),
-                  ),
-                  child: Icon(
-                    Icons.edit_outlined,
-                    size: 16,
-                    color: colors.primary,
-                  ),
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 10),
-
-          // Scrollable prompt preview area
-          GestureDetector(
-            onTap: openEditor,
-            child: Container(
-              height: 320,
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: MoeG2Decoration(
-                radius: 10,
-                color: colors.surfaceAlt.withValues(alpha: 0.2),
-              ),
-              child: hasContent
-                  ? Scrollbar(
-                      child: SingleChildScrollView(
-                        physics: const BouncingScrollPhysics(),
-                        child: Text(
-                          _personaCtrl.text,
-                          style: TextStyle(
-                            fontSize: 14,
-                            height: 1.6,
-                            color: colors.text.withValues(alpha: 0.85),
-                          ),
-                        ),
-                      ),
-                    )
-                  : Center(
-                      child: Text(
-                        '暂无角色提示词',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: colors.muted,
-                        ),
-                      ),
-                    ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   // ==================== 全屏编辑弹窗 ====================
 
   Future<void> _openFullScreenEditor({
@@ -1038,261 +630,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     if (!mounted || result == null || result == controller.text) return;
     controller.text = result;
     setState(() {});
-  }
-
-  // 注释已清理乱码
-
-  Widget _buildBottomCard(MoeColors colors, List<VoicePreset> voicePresets) {
-    return FrostedGlassContainer(
-      borderRadius: 16,
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildSectionTitle(
-            colors,
-            icon: Icons.extension_outlined,
-            title: '插件',
-            subtitle: '默认全部开启，可按角色单独调整',
-          ),
-          const SizedBox(height: 8),
-          // 一行显示已选数量，点击弹出选择弹窗
-          MoeG2ClipRRect(
-            radius: 12,
-            child: Material(
-              color: colors.surfaceAlt.withValues(alpha: 0.35),
-              child: InkWell(
-                onTap: _showPluginPicker,
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                  child: Row(
-                    children: [
-                      Icon(Icons.extension_outlined,
-                          color: colors.primary, size: 20),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          _pluginSummaryText(),
-                          style: TextStyle(fontSize: 14, color: colors.text),
-                        ),
-                      ),
-                      Icon(Icons.chevron_right, color: colors.muted),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Divider(height: 1, color: colors.borderLight.withValues(alpha: 0.35)),
-          const SizedBox(height: 16),
-          _buildSectionTitle(
-            colors,
-            icon: Icons.record_voice_over_outlined,
-            title: '绑定音色',
-            subtitle: '可为当前角色绑定独立音色',
-          ),
-          const SizedBox(height: 8),
-          MoeG2ClipRRect(
-            radius: 12,
-            child: Material(
-              color: colors.surfaceAlt.withValues(alpha: 0.35),
-              child: InkWell(
-                onTap: () => _showVoicePicker(voicePresets),
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                  child: Row(
-                    children: [
-                      Icon(Icons.graphic_eq, color: colors.primary, size: 20),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          _voiceDisplayName(voicePresets),
-                          style: TextStyle(fontSize: 14, color: colors.text),
-                        ),
-                      ),
-                      if (_boundVoiceId != null)
-                        IconButton(
-                          icon:
-                              Icon(Icons.close, size: 18, color: colors.muted),
-                          onPressed: () {
-                            setState(() => _boundVoiceId = null);
-                            _scheduleAutoSave();
-                          },
-                          tooltip: '清除绑定',
-                        ),
-                      Icon(Icons.chevron_right, color: colors.muted),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ==================== 插件选择 ====================
-
-  String _pluginSummaryText() {
-    final total = chatPluginItems.length;
-    final selected = _selectedPluginIds
-        .where((id) => chatPluginItems.any((p) => p.id == id))
-        .length;
-    if (selected == total) return '已启用全部 $total 个插件';
-    if (selected == 0) return '未启用任何插件';
-    return '已启用 $selected / $total 个插件';
-  }
-
-  Future<void> _showPluginPicker() async {
-    await showMoeBottomSheet(
-      context: context,
-      title: '选择插件',
-      builder: (sheetContext) {
-        return StatefulBuilder(
-          builder: (ctx, setSheetState) {
-            final colors = ctx.moeColors;
-            return ListView.builder(
-              shrinkWrap: true,
-              itemCount: chatPluginItems.length,
-              itemBuilder: (_, index) {
-                final item = chatPluginItems[index];
-                final selected = _selectedPluginIds.contains(item.id);
-                final globallyEnabled = _isPluginGloballyEnabled(item.id);
-
-                return ListTile(
-                  leading: Icon(
-                    item.icon,
-                    size: 20,
-                    color: globallyEnabled ? colors.primary : colors.muted,
-                  ),
-                  title: Text(
-                    item.name,
-                    style: TextStyle(
-                      color: globallyEnabled ? colors.text : colors.muted,
-                    ),
-                  ),
-                  trailing: Switch.adaptive(
-                    value: selected,
-                    activeColor: colors.primary,
-                    onChanged: globallyEnabled
-                        ? (value) {
-                            setState(() {
-                              if (value) {
-                                _selectedPluginIds.add(item.id);
-                              } else {
-                                _selectedPluginIds.remove(item.id);
-                              }
-                            });
-                            setSheetState(() {});
-                          }
-                        : null,
-                  ),
-                  onTap: globallyEnabled
-                      ? () {
-                          setState(() {
-                            if (selected) {
-                              _selectedPluginIds.remove(item.id);
-                            } else {
-                              _selectedPluginIds.add(item.id);
-                            }
-                          });
-                          setSheetState(() {});
-                        }
-                      : null,
-                );
-              },
-            );
-          },
-        );
-      },
-    );
-  }
-
-  // ==================== 复用的小组件 ====================
-
-  Widget _buildPluginChip(MoeColors colors, ChatPluginItem item) {
-    final selected = _selectedPluginIds.contains(item.id);
-    final globallyEnabled = _isPluginGloballyEnabled(item.id);
-
-    return FilterChip(
-      selected: selected,
-      showCheckmark: false,
-      avatar: Icon(item.icon,
-          size: 15, color: globallyEnabled ? colors.text : colors.muted),
-      label: Text(item.name),
-      labelStyle:
-          TextStyle(color: globallyEnabled ? colors.text : colors.muted),
-      backgroundColor: colors.surfaceAlt.withValues(alpha: 0.25),
-      selectedColor: colors.primary.withValues(alpha: 0.18),
-      side: BorderSide(
-        color: selected
-            ? colors.primary.withValues(alpha: 0.45)
-            : colors.borderLight,
-      ),
-      onSelected: globallyEnabled
-          ? (value) {
-              setState(() {
-                if (value) {
-                  _selectedPluginIds.add(item.id);
-                } else {
-                  _selectedPluginIds.remove(item.id);
-                }
-              });
-              _scheduleAutoSave();
-            }
-          : null,
-    );
-  }
-
-  bool _isPluginGloballyEnabled(String pluginId) {
-    switch (pluginId) {
-      case 'memory':
-        return ref.watch(memoryPluginConfigProvider).enabled;
-      case 'tts':
-        return ref.watch(ttsPluginConfigProvider).enabled;
-      case 'trigger':
-        return ref.watch(triggerPluginConfigProvider).enabled;
-      case 'sticker':
-        return ref.watch(stickerPluginConfigProvider).enabled;
-      case 'image':
-        return ref.watch(appSettingsProvider).value?.imageGenerationEnabled ??
-            true;
-      default:
-        return true;
-    }
-  }
-
-  Widget _buildSectionTitle(
-    MoeColors colors, {
-    required IconData icon,
-    required String title,
-    required String subtitle,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(icon, size: 18, color: colors.primary),
-            const SizedBox(width: 8),
-            Text(
-              title,
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: MoeFontWeights.emphasis,
-                color: colors.text,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 2),
-        Text(subtitle, style: TextStyle(fontSize: 12, color: colors.muted)),
-      ],
-    );
   }
 
   // ==================== 图片选择 ====================
@@ -1326,7 +663,8 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
           transitionsBuilder: (context, animation, secondaryAnimation, child) {
             final fadeAnimation =
                 CurvedAnimation(parent: animation, curve: Curves.easeOut);
-            final scaleAnimation = Tween<double>(begin: 0.95, end: 1.0).animate(
+            final scaleAnimation =
+                Tween<double>(begin: 0.95, end: 1.0).animate(
               CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
             );
             return FadeTransition(
@@ -1344,14 +682,15 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     }
 
     final avatarDataUrl = buildDataImage(finalBytes, fileName: file.name);
-    final characterDataUrl = buildDataImage(originalBytes, fileName: file.name);
+    final characterDataUrl =
+        buildDataImage(originalBytes, fileName: file.name);
     final prevAvatar = _avatarCtrl.text.trim();
     final prevRefImage = _refImageCtrl.text.trim();
     setState(() {
       _avatarBytes = finalBytes;
       _avatarCtrl.text = avatarDataUrl;
       // 头像上传时，立绘应保存原图而不是裁剪图；
-      // 仅在“立绘未独立设置”时同步，避免覆盖用户单独配置的立绘。
+      // 仅在"立绘未独立设置"时同步，避免覆盖用户单独配置的立绘。
       if (prevRefImage.isEmpty || prevRefImage == prevAvatar) {
         _refImageCtrl.text = characterDataUrl;
       }
@@ -1411,82 +750,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     _scheduleAutoSave();
   }
 
-  // 注释已清理乱码
-
-  Future<void> _showVoicePicker(List<VoicePreset> voicePresets) async {
-    const followGlobalToken = '__follow_global__';
-
-    final selected = await showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) {
-        final colors = context.moeColors;
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: Icon(Icons.sync, color: colors.primary),
-                title: const Text('跟随全局音色'),
-                subtitle: const Text('使用当前聊天插件里选择的音色'),
-                trailing: _boundVoiceId == null
-                    ? Icon(Icons.check, color: colors.primary)
-                    : null,
-                onTap: () => Navigator.of(context).pop(followGlobalToken),
-              ),
-              const Divider(height: 1),
-              Flexible(
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: voicePresets.length,
-                  itemBuilder: (context, index) {
-                    final preset = voicePresets[index];
-                    final selected = _boundVoiceId == preset.id;
-                    return ListTile(
-                      leading: const Icon(Icons.graphic_eq),
-                      title: Text(preset.name),
-                      subtitle: Text(preset.providerDisplayName),
-                      trailing: selected
-                          ? Icon(Icons.check, color: colors.primary)
-                          : null,
-                      onTap: () => Navigator.of(context).pop(preset.id),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-
-    if (!mounted || selected == null) return;
-    setState(() {
-      if (selected == followGlobalToken) {
-        _boundVoiceId = null;
-      } else {
-        _boundVoiceId = selected;
-        // 绑定音色后自动启用 TTS 插件
-        _selectedPluginIds.add('tts');
-      }
-    });
-    _scheduleAutoSave();
-  }
-
-  String _voiceDisplayName(List<VoicePreset> voicePresets) {
-    final id = _boundVoiceId;
-    if (id == null || id.isEmpty) {
-      return '跟随全局音色';
-    }
-
-    for (final preset in voicePresets) {
-      if (preset.id == id) return preset.name;
-    }
-
-    return '已绑定自定义音色';
-  }
-
-  // ==================== 保存逻辑（保持不变）====================
+  // ==================== 保存逻辑 ====================
 
   ContactEditResult _buildEditResult() {
     final name = _nameCtrl.text.trim();

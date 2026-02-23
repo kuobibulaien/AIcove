@@ -1,8 +1,7 @@
-import 'dart:convert';
 import 'dart:math';
-import 'package:http/http.dart' as http;
 import '../../../core/app_logger.dart';
 import '../../../core/database/repositories/memory_repository.dart';
+import '../../../core/network/json_http_client.dart';
 import '../models/memory_entity.dart';
 import 'memory_service.dart';
 
@@ -67,36 +66,31 @@ $newFact
 ''';
 
     final url = Uri.parse('${model.baseUrl}/chat/completions');
-    final client = http.Client();
     try {
-      final response = await client.post(
-        url,
+      final response = await JsonHttpClient.postJson(
+        uri: url,
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer ${model.apiKey}',
         },
-        body: jsonEncode({
+        jsonBody: {
           'model': model.model,
           'messages': [
             {'role': 'user', 'content': prompt}
           ],
           'temperature': 0.2,
-        }),
+        },
       );
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final data = jsonDecode(utf8.decode(response.bodyBytes));
-        final content = data['choices']?[0]?['message']?['content'] as String?;
-        if (content != null && content.trim().isNotEmpty) {
-          return content.trim();
-        }
+      final content =
+          response.data['choices']?[0]?['message']?['content'] as String?;
+      if (content != null && content.trim().isNotEmpty) {
+        return content.trim();
       }
     } catch (e) {
       AppLogger.warning('MemoryMergerService', 'AI merge failed; fallback used',
           metadata: {
             'error': e.toString(),
           });
-    } finally {
-      client.close();
     }
 
     return _fallbackMerge(oldContent: oldContent, newFact: newFact);

@@ -1,11 +1,11 @@
 import 'dart:convert';
 import 'package:crypto/crypto.dart';
-import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 import '../../../core/app_logger.dart';
 import '../../../core/database/database.dart' as db;
 import '../../../core/database/repositories/memory_repository.dart';
 import '../../../core/database/repositories/message_repository.dart';
+import '../../../core/network/json_http_client.dart';
 import '../../chat/domain/message.dart' as chat;
 import '../models/memory_entity.dart';
 import '../utils/memory_time_formatter.dart';
@@ -542,29 +542,24 @@ class MemoryService {
     final model = config.summarizeModel;
     if (model == null || !model.isValid) return null;
     final url = Uri.parse('${model.baseUrl}/chat/completions');
-    final client = http.Client();
     try {
-      final response = await client.post(
-        url,
+      final response = await JsonHttpClient.postJson(
+        uri: url,
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer ${model.apiKey}',
         },
-        body: jsonEncode({
+        jsonBody: {
           'model': model.model,
           'messages': [
             {'role': 'user', 'content': prompt}
           ],
           'temperature': 0.2,
-        }),
+        },
       );
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final data = jsonDecode(utf8.decode(response.bodyBytes));
-        return data['choices']?[0]?['message']?['content'] as String?;
-      }
+      return response.data['choices']?[0]?['message']?['content'] as String?;
+    } on JsonHttpRequestException {
       return null;
-    } finally {
-      client.close();
     }
   }
 

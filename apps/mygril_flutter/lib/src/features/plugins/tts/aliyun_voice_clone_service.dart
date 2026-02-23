@@ -17,6 +17,8 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 import '../../../core/app_logger.dart';
+import '../../../core/network/json_http_client.dart';
+import '../../../core/utils/mime_utils.dart';
 
 /// 阿里云声音复刻服务
 class AliyunVoiceCloneService {
@@ -184,7 +186,7 @@ class AliyunVoiceCloneService {
   String _guessMimeTypeFromUrl(String audioUrl) {
     final uri = Uri.tryParse(audioUrl);
     final path = uri?.path ?? audioUrl;
-    return _getMimeTypeFromPath(path);
+    return MimeUtils.guessAudioMimeType(path);
   }
 
   // ========== Qwen-TTS 声音复刻 ==========
@@ -234,7 +236,7 @@ class AliyunVoiceCloneService {
     }
 
     final bytes = await file.readAsBytes();
-    final mimeType = _getMimeTypeFromPath(filePath);
+    final mimeType = MimeUtils.guessAudioMimeType(filePath);
 
     return createQwenVoiceFromBytes(
       audioBytes: bytes,
@@ -601,34 +603,34 @@ class AliyunVoiceCloneService {
     };
 
     try {
-      final response = await http
-          .post(
-            Uri.parse(_baseUrl),
-            headers: headers,
-            body: jsonEncode(payload),
-          )
-          .timeout(timeout);
-
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
-
-      if (response.statusCode != 200) {
-        final errorMsg = data['message'] ?? data['error'] ?? response.body;
-        if (response.statusCode == 500 &&
-            errorMsg.toString().toLowerCase().contains('response timeout')) {
-          throw VoiceCloneException(
-            '请求失败 (500): 阿里云服务端处理超时（Response timeout）。常见原因：阿里云侧无法访问你提供的音频 URL，建议把音频上传到 OSS（北京地域）并使用公网直链。原始错误: $errorMsg',
-          );
-        }
-        throw VoiceCloneException('请求失败 (${response.statusCode}): $errorMsg');
-      }
-
-      return data;
-    } on TimeoutException {
-      throw VoiceCloneException(
-        '请求超时（${timeout.inSeconds}s），请检查网络连接/音频链接是否可访问',
+      final response = await JsonHttpClient.postJson(
+        uri: Uri.parse(_baseUrl),
+        headers: headers,
+        jsonBody: payload,
+        timeout: timeout,
+        successStatusCodes: const {200},
       );
-    } on http.ClientException catch (e) {
-      throw VoiceCloneException('网络错误: $e');
+      return response.data;
+    } on JsonHttpRequestException catch (e) {
+      final errorMsg = e.responseJson?['message'] ??
+          e.responseJson?['error'] ??
+          e.responseBody ??
+          e.message;
+      if (e.statusCode == 500 &&
+          errorMsg.toString().toLowerCase().contains('response timeout')) {
+        throw VoiceCloneException(
+          '请求失败 (500): 阿里云服务端处理超时（Response timeout）。常见原因：阿里云侧无法访问你提供的音频 URL，建议把音频上传到 OSS（北京地域）并使用公网直链。原始错误: $errorMsg',
+        );
+      }
+      if (e.isTimeout) {
+        throw VoiceCloneException(
+          '请求超时（${timeout.inSeconds}s），请检查网络连接/音频链接是否可访问',
+        );
+      }
+      if (e.statusCode != null) {
+        throw VoiceCloneException('请求失败 (${e.statusCode}): $errorMsg');
+      }
+      throw VoiceCloneException('网络错误: ${e.cause ?? e}');
     }
   }
 
@@ -648,22 +650,6 @@ class AliyunVoiceCloneService {
     return sanitized;
   }
 
-  /// 根据文件路径获取 MIME 类型
-  String _getMimeTypeFromPath(String path) {
-    final ext = path.toLowerCase().split('.').last;
-    switch (ext) {
-      case 'wav':
-        return 'audio/wav';
-      case 'mp3':
-        return 'audio/mpeg';
-      case 'm4a':
-        return 'audio/mp4';
-      case 'ogg':
-        return 'audio/ogg';
-      default:
-        return 'audio/mpeg'; // 默认
-    }
-  }
 }
 
 // ========== 结果类 ==========

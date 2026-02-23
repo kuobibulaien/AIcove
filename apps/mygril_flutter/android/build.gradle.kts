@@ -1,59 +1,3 @@
-import java.io.File
-
-fun namespaceFromManifest(projectDir: File): String? {
-    val manifest = File(projectDir, "src/main/AndroidManifest.xml")
-    if (!manifest.exists()) return null
-    val packageRegex = Regex("""\bpackage\s*=\s*"([^"]+)"""")
-    val match = packageRegex.find(manifest.readText())
-    return match?.groupValues?.getOrNull(1)
-}
-
-fun parseCompileSdk(value: Any?): Int? {
-    return when (value) {
-        is Int -> value
-        is String -> Regex("""\d+""").find(value)?.value?.toIntOrNull()
-        else -> null
-    }
-}
-
-fun getCompileSdk(androidExtension: Any): Int? {
-    val getterNames = listOf("getCompileSdk", "getCompileSdkVersion")
-    for (name in getterNames) {
-        val getter =
-            androidExtension.javaClass.methods.firstOrNull {
-                it.name == name && it.parameterCount == 0
-            } ?: continue
-        val value = runCatching { getter.invoke(androidExtension) }.getOrNull()
-        val parsed = parseCompileSdk(value)
-        if (parsed != null) return parsed
-    }
-    return null
-}
-
-fun setCompileSdk(androidExtension: Any, compileSdk: Int): Boolean {
-    val setterNames = listOf("setCompileSdk", "setCompileSdkVersion", "compileSdkVersion")
-    for (name in setterNames) {
-        val candidates =
-            androidExtension.javaClass.methods.filter {
-                it.name == name && it.parameterCount == 1
-            }
-        for (method in candidates) {
-            val parameterType = method.parameterTypes.firstOrNull() ?: continue
-            val result =
-                runCatching {
-                    when (parameterType) {
-                        Int::class.javaPrimitiveType,
-                        Int::class.javaObjectType -> method.invoke(androidExtension, compileSdk)
-                        String::class.java -> method.invoke(androidExtension, compileSdk.toString())
-                        else -> method.invoke(androidExtension, compileSdk)
-                    }
-                }
-            if (result.isSuccess) return true
-        }
-    }
-    return false
-}
-
 allprojects {
     repositories {
         maven { url = uri("https://maven.aliyun.com/repository/google") }
@@ -78,34 +22,39 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
+// 统一所有子项目的 JVM target 为 17，防止老插件 Java/Kotlin target 不一致
+subprojects {
+    // Kotlin 编译统一到 17
+    pluginManager.withPlugin("org.jetbrains.kotlin.android") {
+        tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+            compilerOptions {
+                jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+            }
+        }
+    }
+}
+
+// 为缺少 namespace 的老插件自动补全（AGP 8+ 强制要求 namespace）
 subprojects {
     pluginManager.withPlugin("com.android.library") {
-        val androidExtension = extensions.findByName("android") ?: return@withPlugin
-        val appAndroidExtension = rootProject.project(":app").extensions.findByName("android")
-        val appCompileSdk = appAndroidExtension?.let { getCompileSdk(it) }
-        val targetCompileSdk = appCompileSdk ?: 35
+        val android = extensions.findByType(com.android.build.gradle.LibraryExtension::class.java)
+            ?: return@withPlugin
 
-        val currentCompileSdk = getCompileSdk(androidExtension)
-        if (currentCompileSdk == null || currentCompileSdk < targetCompileSdk) {
-            setCompileSdk(androidExtension, targetCompileSdk)
+        if (android.namespace.isNullOrBlank()) {
+            // 从 AndroidManifest.xml 的 package 属性读取
+            val manifest = file("${project.projectDir}/src/main/AndroidManifest.xml")
+            if (manifest.exists()) {
+                val pkg = Regex("""\bpackage\s*=\s*"([^"]+)"""")
+                    .find(manifest.readText())?.groupValues?.getOrNull(1)
+                if (!pkg.isNullOrBlank()) {
+                    android.namespace = pkg
+                }
+            }
+            // 兜底：用项目名生成
+            if (android.namespace.isNullOrBlank()) {
+                android.namespace = "com.generated.${project.name.replace('-', '_')}"
+            }
         }
-
-        val getNamespace =
-            androidExtension.javaClass.methods.firstOrNull {
-                it.name == "getNamespace" && it.parameterCount == 0
-            } ?: return@withPlugin
-        val setNamespace =
-            androidExtension.javaClass.methods.firstOrNull {
-                it.name == "setNamespace" && it.parameterCount == 1
-            } ?: return@withPlugin
-
-        val currentNamespace = getNamespace.invoke(androidExtension) as? String
-        if (!currentNamespace.isNullOrBlank()) return@withPlugin
-
-        val derived =
-            namespaceFromManifest(project.projectDir)
-                ?: "com.generated.${project.name.replace('-', '_')}"
-        setNamespace.invoke(androidExtension, derived)
     }
 }
 

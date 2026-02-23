@@ -11,9 +11,10 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:image_gallery_saver/image_gallery_saver.dart';
+import 'package:image_gallery_saver_plus/image_gallery_saver_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../../../features/chat/providers2.dart';
 import '../../../../features/chat/domain/message.dart';
@@ -23,8 +24,10 @@ import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/meotalk_dialog.dart';
 import '../../../../ui/shared/widgets/moe_toast.dart';
+import '../../../../ui/shared/widgets/media/moe_image_preview.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../../core/utils/message_formatter.dart';
+import '../../../../core/utils/data_image.dart';
 import '../../../../core/models/message_block.dart';
 import 'animated_message_item.dart';
 
@@ -36,6 +39,7 @@ class ChatMessageList extends ConsumerStatefulWidget {
   final String conversationId;
   final String? avatarUrl;
   final String displayName;
+  final double bottomOverlayHeight;
   final void Function(Message message)? onEditMessage;
   final void Function(Message message)? onRegenerateMessage;
 
@@ -57,6 +61,7 @@ class ChatMessageList extends ConsumerStatefulWidget {
     required this.conversationId,
     this.avatarUrl,
     required this.displayName,
+    this.bottomOverlayHeight = 0,
     this.onEditMessage,
     this.onRegenerateMessage,
     this.contextStartMessageId,
@@ -76,6 +81,9 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
 
   /// 缓存的消息格式化配置（用于检测配置变化）
   MessageFormatConfig? _cachedFormatConfig;
+
+  /// 缓存的聊天图片列表（画廊模式左右滑动切换）
+  List<ImagePreviewItem> _cachedChatImages = [];
 
   /// 用于监听滚动位置，触发分页加载
   late final ScrollController _scrollController;
@@ -133,6 +141,7 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     _cachedFormatConfig = config;
     _cachedListItems =
         _buildListItemsWithTimeDividers(config).reversed.toList();
+    _cachedChatImages = _collectChatImages();
   }
 
   @override
@@ -187,6 +196,11 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     final actions = ref.watch(chatActionsProvider);
     final settingsAsync = ref.watch(appSettingsProvider);
     final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
+    final fallbackBottomPadding =
+        MediaQuery.paddingOf(context).bottom + 70 + keyboardInset;
+    final listBottomPadding = widget.bottomOverlayHeight > 0
+        ? widget.bottomOverlayHeight + 8
+        : fallbackBottomPadding;
 
     // 获取消息格式化配置（用于分段显示）
     final formatConfig = settingsAsync.maybeWhen(
@@ -227,7 +241,7 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
         top: 10,
         // 保证输入框上方始终是消息列表底部：
         // 常态预留 Composer 高度，键盘弹出时再叠加键盘高度。
-        bottom: MediaQuery.paddingOf(context).bottom + 70 + keyboardInset,
+        bottom: listBottomPadding,
       ),
       itemCount: itemCount,
       itemBuilder: (context, index) {
@@ -264,6 +278,7 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
               showCorner: item.showCorner,
               showName: false,
               showAvatar: item.showAvatar,
+              chatImages: _cachedChatImages,
               onRetry: null, // 分段消息不支持重试
               onLongPress: (bubbleKey) =>
                   _handleMessageLongPress(context, m, isMe, bubbleKey),
@@ -298,6 +313,7 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
               showCorner: item.showCorner,
               showName: false, // 一对一聊天不显示名称，群聊功能上线后改为 true
               showAvatar: item.showAvatar,
+              chatImages: _cachedChatImages,
               onRetry: (isMe && m.status == 'failed')
                   ? () => actions.recallFailedMessage(m.id)
                   : null,
@@ -435,6 +451,56 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     }
 
     return items;
+  }
+
+  /// 从所有消息中收集图片/表情包，构建画廊预览列表
+  /// heroTag 与 message_bubble.dart 中保持一致：image_{id} / sticker_{id}
+  List<ImagePreviewItem> _collectChatImages() {
+    final result = <ImagePreviewItem>[];
+    for (final message in widget.messages) {
+      final blocks = message.blocks;
+      if (blocks == null) continue;
+      for (final block in blocks) {
+        final provider = _resolveImageProvider(block);
+        if (provider == null) continue;
+        final isSticker = block is EmojiBlock;
+        final heroTag = isSticker ? 'sticker_${block.id}' : 'image_${block.id}';
+        result.add(ImagePreviewItem(provider: provider, heroTag: heroTag));
+      }
+    }
+    return result;
+  }
+
+  /// 根据 block 类型解析 ImageProvider（与 message_bubble 保持一致）
+  static ImageProvider? _resolveImageProvider(MessageBlock block) {
+    if (block is EmojiBlock) {
+      final path = block.path.trim().replaceAll('\\', '/');
+      if (path.isEmpty) return null;
+      final isNetwork =
+          path.startsWith('http://') || path.startsWith('https://');
+      final isAsset =
+          path.startsWith('assets/') || path.startsWith('packages/');
+      if (isNetwork) return CachedNetworkImageProvider(path);
+      if (isAsset) return AssetImage(path);
+      final file = File(path);
+      if (file.existsSync()) return FileImage(file);
+      return null;
+    }
+    if (block is ImageBlock) {
+      if (block.localPath != null && block.localPath!.isNotEmpty) {
+        return FileImage(File(block.localPath!));
+      }
+      if (block.url != null && block.url!.isNotEmpty) {
+        return CachedNetworkImageProvider(block.url!);
+      }
+      if (block.base64 != null && block.base64!.isNotEmpty) {
+        final dataBytes =
+            decodeDataImage('data:image/jpeg;base64,${block.base64}');
+        if (dataBytes != null) return MemoryImage(dataBytes);
+      }
+      return null;
+    }
+    return null;
   }
 
   /// 构建加载中指示器（用于分页加载时在顶部显示）
@@ -672,7 +738,7 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
           return;
         }
 
-        final result = await ImageGallerySaver.saveFile(
+        final result = await ImageGallerySaverPlus.saveFile(
           sourceFile.path,
           name: defaultFileName,
         );

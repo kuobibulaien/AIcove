@@ -1,13 +1,97 @@
 /// 聊天辅助数据类型
-/// 
-/// 从 chat_actions.dart 提取的内部数据类，改为公开类型以便服务间共享。
-/// 
+///
+/// 从 chat_actions.dart 提取的内部数据类，改为公开类型以便服务间共享
+///
 /// 更新记录：
 /// - 2025-12-31: 从 chat_actions.dart 提取
 library;
 
 import 'dart:async';
+import '../domain/conversation.dart';
 import '../domain/message.dart';
+import '../../plugins/domain/plugin.dart';
+import '../../plugins/domain/plugin_content.dart';
+import '../../settings/app_settings.dart';
+
+/// 发送请求参数数据类
+class SendRequest {
+  final Conversation conversation;
+  final String? text;
+  final String? imagePath;
+  final Message userMessage;
+
+  const SendRequest({
+    required this.conversation,
+    this.text,
+    this.imagePath,
+    required this.userMessage,
+  });
+
+  String get convId => conversation.id;
+  String get displayText => text ?? (imagePath != null ? '[图片]' : '');
+}
+
+/// 工具音频结果
+class ToolAudioResult {
+  final String audioUrl;
+  final String text;
+
+  const ToolAudioResult({required this.audioUrl, required this.text});
+}
+
+/// API 调用结果
+class ApiCallResult {
+  final String replyText;
+  final String processedText;
+  final List<PluginEvent> pluginEvents;
+  final List<PluginContent> pluginContents;
+  final List<Map<String, dynamic>> toolResults;
+  final List<ToolAudioResult> toolAudioResults;
+
+  const ApiCallResult({
+    required this.replyText,
+    required this.processedText,
+    required this.pluginEvents,
+    this.pluginContents = const [],
+    required this.toolResults,
+    this.toolAudioResults = const [],
+  });
+
+  bool get hasToolAudio => toolAudioResults.isNotEmpty;
+}
+
+/// API 配置参数
+class ApiConfig {
+  final AppSettings settings;
+  final String modelFullId;
+  final String providerApiBase;
+  final String? providerApiKey;
+  final Map<String, dynamic> customConfig;
+  final Map<String, dynamic> toolPrefs;
+  final List<Map<String, dynamic>> messages;
+  final List<Map<String, dynamic>>? tools;
+  final Set<String>? enabledPluginIds;
+  final double? modelTemperature;
+  final double? modelTopP;
+  final int? modelContextMessageLimit;
+
+  const ApiConfig({
+    required this.settings,
+    required this.modelFullId,
+    required this.providerApiBase,
+    this.providerApiKey,
+    required this.customConfig,
+    required this.toolPrefs,
+    required this.messages,
+    this.tools,
+    this.enabledPluginIds,
+    this.modelTemperature,
+    this.modelTopP,
+    this.modelContextMessageLimit,
+  });
+
+  double get effectiveTemperature => modelTemperature ?? settings.temperature;
+}
 
 /// 待处理的 TTS 音频信息
 class PendingTtsAudio {

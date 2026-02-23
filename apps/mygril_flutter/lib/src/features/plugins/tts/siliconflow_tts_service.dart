@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
 import '../../../core/app_logger.dart';
+import '../../../core/utils/mime_utils.dart';
 
 /// 硅基流动 TTS 服务
 ///
@@ -107,7 +108,7 @@ class SiliconFlowTtsService {
     request.headers['Authorization'] = 'Bearer $apiKey';
 
     // 添加文件
-    final mimeType = _getMimeType(fileName);
+    final mimeType = MimeUtils.guessAudioMimeType(fileName);
     request.files.add(http.MultipartFile.fromBytes(
       'file',
       audioBytes,
@@ -307,23 +308,6 @@ class SiliconFlowTtsService {
   }
 
   /// 根据文件名获取 MIME 类型
-  String _getMimeType(String fileName) {
-    final ext = fileName.split('.').last.toLowerCase();
-    switch (ext) {
-      case 'mp3':
-        return 'audio/mpeg';
-      case 'wav':
-        return 'audio/wav';
-      case 'ogg':
-        return 'audio/ogg';
-      case 'opus':
-        return 'audio/opus';
-      case 'pcm':
-        return 'audio/pcm';
-      default:
-        return 'audio/mpeg';
-    }
-  }
 }
 
 /// 硅基流动预置音色

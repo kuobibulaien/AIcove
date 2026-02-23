@@ -4,6 +4,8 @@
 /// - 2026-01-27: 添加 buildToolResultMessages 支持两回合工具调用
 library;
 
+import 'dart:convert';
+
 import 'provider_adapter.dart';
 
 class ClaudeAdapter implements ProviderAdapter {
@@ -12,12 +14,12 @@ class ClaudeAdapter implements ProviderAdapter {
 
   @override
   String buildEndpoint(String baseUrl, {required String modelType}) {
-    final normalized = baseUrl.endsWith('/') 
-        ? baseUrl.substring(0, baseUrl.length - 1) 
+    final normalized = baseUrl.endsWith('/')
+        ? baseUrl.substring(0, baseUrl.length - 1)
         : baseUrl;
-    
+
     final base = normalized.endsWith('/v1') ? normalized : '$normalized/v1';
-    
+
     switch (modelType) {
       case 'chat':
       default:
@@ -55,9 +57,13 @@ class ClaudeAdapter implements ProviderAdapter {
           systemMessages.add(content);
         }
       } else {
+        final normalizedContent = _normalizeContent(content);
+        if (normalizedContent == null) {
+          continue;
+        }
         chatMessages.add({
           'role': role == 'assistant' ? 'assistant' : 'user',
-          'content': content,
+          'content': normalizedContent,
         });
       }
     }
@@ -92,7 +98,7 @@ class ClaudeAdapter implements ProviderAdapter {
     String text = '';
     final toolCalls = <ToolCall>[];
     final content = (response['content'] as List?) ?? const [];
-    
+
     for (final block in content) {
       if (block is Map<String, dynamic>) {
         final type = block['type'] as String?;
@@ -161,5 +167,118 @@ class ClaudeAdapter implements ProviderAdapter {
     });
 
     return messages;
+  }
+
+  dynamic _normalizeContent(dynamic content) {
+    if (content == null) return null;
+    if (content is String) return content;
+
+    if (content is List) {
+      final converted = _convertPartsToClaudeContent(content);
+      if (converted.isNotEmpty) {
+        return converted;
+      }
+      return null;
+    }
+
+    if (content is Map<String, dynamic>) {
+      final parts = content['parts'];
+      if (parts is List) {
+        final converted = _convertPartsToClaudeContent(parts);
+        if (converted.isNotEmpty) {
+          return converted;
+        }
+      }
+      return content;
+    }
+
+    return content.toString();
+  }
+
+  List<Map<String, dynamic>> _convertPartsToClaudeContent(List rawParts) {
+    final content = <Map<String, dynamic>>[];
+    for (final part in rawParts) {
+      if (part is String) {
+        if (part.trim().isEmpty) continue;
+        content.add({'type': 'text', 'text': part});
+        continue;
+      }
+      if (part is! Map) continue;
+      final converted = _convertPartToClaudeBlock(part);
+      if (converted != null) {
+        content.add(converted);
+      }
+    }
+    return content;
+  }
+
+  Map<String, dynamic>? _convertPartToClaudeBlock(Map rawPart) {
+    final part = <String, dynamic>{};
+    rawPart.forEach((key, value) {
+      part[key.toString()] = value;
+    });
+
+    final type = (part['type'] ?? '').toString();
+    if (type == 'text') {
+      final text = part['text']?.toString();
+      if (text == null || text.trim().isEmpty) return null;
+      return {'type': 'text', 'text': text};
+    }
+
+    if (type == 'image_url') {
+      final imageUrl = part['image_url'];
+      final url =
+          imageUrl is Map ? imageUrl['url']?.toString() : imageUrl?.toString();
+      if (url == null || url.trim().isEmpty) return null;
+      final trimmed = url.trim();
+
+      if (trimmed.startsWith('data:')) {
+        final parsed = _parseDataUri(trimmed);
+        if (parsed == null) return null;
+        return {
+          'type': 'image',
+          'source': {
+            'type': 'base64',
+            'media_type': parsed.$1,
+            'data': parsed.$2,
+          },
+        };
+      }
+
+      return {
+        'type': 'image',
+        'source': {
+          'type': 'url',
+          'url': trimmed,
+        },
+      };
+    }
+
+    if (part.containsKey('type')) {
+      return Map<String, dynamic>.from(part);
+    }
+    return null;
+  }
+
+  (String, String)? _parseDataUri(String uri) {
+    final commaIndex = uri.indexOf(',');
+    if (commaIndex <= 5) return null;
+
+    final header = uri.substring(5, commaIndex);
+    final body = uri.substring(commaIndex + 1);
+    if (body.trim().isEmpty) return null;
+
+    final headerParts = header.split(';');
+    final mimeType = headerParts.isNotEmpty && headerParts.first.isNotEmpty
+        ? headerParts.first
+        : 'image/jpeg';
+    final isBase64 = headerParts.any((p) => p.toLowerCase() == 'base64');
+
+    if (isBase64) {
+      return (mimeType, body);
+    }
+
+    final decoded = Uri.decodeComponent(body);
+    return (mimeType, base64Encode(utf8.encode(decoded)));
   }
 }

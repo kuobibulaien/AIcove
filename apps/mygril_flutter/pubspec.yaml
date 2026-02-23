@@ -19,27 +19,27 @@ dependencies:
   audio_session: ^0.1.21
   file_picker: ^8.0.3
   image_picker: ^1.0.7
-  image_gallery_saver: ^2.0.3
+  image_gallery_saver_plus: ^4.0.1
   permission_handler: ^11.3.1
   crop_your_image: ^2.0.0
   uuid: ^4.2.1  # 用于生成Block和Message的唯一ID
   flutter_slidable: ^3.1.0  # 用于联系人卡片的左滑操作
-  figma_squircle: ^0.6.3    # 注释已清理乱码
+  figma_squircle: ^0.6.3    # (注释已丢失)
   flutter_local_notifications: ^17.0.0 # 本地通知
   timezone: ^0.9.2 # 时区支持
-  # 注释已清理乱码
-  dio: ^5.4.0  # 注释已清理乱码
+  # (注释已丢失)
+  dio: ^5.4.0  # (注释已丢失)
   path_provider: ^2.1.2  # 文件路径
   crypto: ^3.0.3
   flutter_secure_storage: ^9.0.0  # 安全存储Token
-  workmanager: ^0.6.0-rc.1 # 注释已清理乱码
-  # 注释已清理乱码
+  workmanager: ^0.6.0-rc.1 # (注释已丢失)
+  # (注释已丢失)
   chat_bottom_container: ^0.4.0
-  # 注释已清理乱码
+  # (注释已丢失)
   photo_view: ^0.15.0
-  # 注释已清理乱码
+  # (注释已丢失)
   cached_network_image: ^3.3.1
-  # 注释已清理乱码
+  # (注释已丢失)
   drift: ^2.18.0
   sqlite3_flutter_libs: ^0.5.0  # Android/iOS/macOS/Windows SQLite
   path: ^1.9.0
@@ -47,11 +47,11 @@ dependencies:
   archive: ^3.6.0  # ZIP 压缩解压
   share_plus: ^9.0.0  # 分享文件
   package_info_plus: ^8.0.0  # 获取应用版本
-  lucide_icons: ^0.257.0  # 注释已清理乱码
-  pretty_qr_code: ^3.3.0  # 注释已清理乱码
-  flutter_colorpicker: ^1.1.0  # 注释已清理乱码
+  lucide_icons: ^0.257.0  # (注释已丢失)
+  pretty_qr_code: ^3.3.0  # (注释已丢失)
+  flutter_colorpicker: ^1.1.0  # (注释已丢失)
   flutter_svg: ^2.0.10  # SVG 图标支持
-  window_manager: ^0.4.3  # 注释已清理乱码
+  window_manager: ^0.4.3  # (注释已丢失)
 
   flutter_web_plugins:
     sdk: flutter

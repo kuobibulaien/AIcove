@@ -42,36 +42,37 @@ class ChatPage extends ConsumerStatefulWidget {
 }
 
 class _ChatPageState extends ConsumerState<ChatPage> {
-  /// 注释已清理乱码
+  /// (注释已丢失)
   bool _isLoadingMore = false;
 
   /// 是否还有更多历史消息
   bool _hasMoreMessages = true;
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   String? _preloadedConversationId;
   bool _didSchedulePrecache = false;
+  double _composerOverlayHeight = 0;
 
   @override
   void initState() {
     super.initState();
-    // 注释已清理乱码
+    // (注释已丢失)
     final targetId = widget.conversationId;
     if (targetId == null) return;
     final activeId = ref.read(activeConversationIdProvider);
     if (activeId != targetId) {
       ref.read(activeConversationIdProvider.notifier).state = targetId;
     }
-    // 注释已清理乱码
+    // (注释已丢失)
     ref.read(conversationsProvider.notifier).clearUnread(targetId);
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // 注释已清理乱码
-    // 注释已清理乱码
-    // 注释已清理乱码
+    // (注释已丢失)
+    // (注释已丢失)
+    // (注释已丢失)
     _scheduleImagePrecache();
   }
 
@@ -88,6 +89,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   /// 检查视觉兼容性，必要时弹窗确认
   ///
   /// 返回 true 表示可以继续发送，false 表示用户取消
+  void _handleComposerHeightChanged(double height) {
+    if (!mounted || !height.isFinite || height < 0) return;
+    if ((height - _composerOverlayHeight).abs() < 0.5) return;
+    setState(() => _composerOverlayHeight = height);
+  }
+
   Future<bool> _checkVisionCompat({
     required Conversation conv,
     bool currentMessageHasImage = false,
@@ -242,11 +249,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     );
   }
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   void _triggerImagePreload() {
     final targetId = widget.conversationId;
     if (targetId == null || targetId == _preloadedConversationId) {
-      // 注释已清理乱码
+      // (注释已丢失)
       return;
     }
 
@@ -270,17 +277,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
   }
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   Future<void> _preloadImages(Conversation conv) async {
     if (_preloadedConversationId == conv.id) return;
 
     try {
-      const maxMessagesToScan = 10; // 注释已清理乱码
-      const maxImagesToCache = 24; // 注释已清理乱码
+      const maxMessagesToScan = 10; // (注释已丢失)
+      const maxImagesToCache = 24; // (注释已丢失)
 
       final providers = <ImageProvider>[];
 
-      // 注释已清理乱码
+      // (注释已丢失)
       final avatarUrl = conv.avatarUrl ?? conv.characterImage;
       if (avatarUrl != null && avatarUrl.isNotEmpty) {
         final provider = _getImageProvider(avatarUrl);
@@ -289,7 +296,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         }
       }
 
-      // 注释已清理乱码
+      // (注释已丢失)
       final messages = conv.messages;
       final start = messages.length > maxMessagesToScan
           ? messages.length - maxMessagesToScan
@@ -317,16 +324,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
       _preloadedConversationId = conv.id;
     } catch (_) {
-      // 注释已清理乱码
+      // (注释已丢失)
     }
   }
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   ImageProvider? _getImageProvider(String url) {
     final trimmed = url.trim();
     if (trimmed.isEmpty) return null;
 
-    // 注释已清理乱码
+    // (注释已丢失)
     if (trimmed.startsWith('data:image')) return null;
 
     final isNetwork =
@@ -339,15 +346,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     } else if (isAsset) {
       return AssetImage(trimmed);
     } else {
-      // 注释已清理乱码
+      // (注释已丢失)
       return FileImage(File(trimmed));
     }
   }
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   ImageProvider? _getBlockImageProvider(MessageBlock block) {
     if (block is ImageBlock) {
-      // 注释已清理乱码
+      // (注释已丢失)
       if (block.base64 != null && block.base64!.isNotEmpty) return null;
 
       // 网络图片
@@ -450,22 +457,22 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   @override
   void didUpdateWidget(covariant ChatPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // 注释已清理乱码
+    // (注释已丢失)
     final targetId = widget.conversationId;
     if (targetId != oldWidget.conversationId && targetId != null) {
       ref.read(activeConversationIdProvider.notifier).state = targetId;
-      // 注释已清理乱码
+      // (注释已丢失)
       setState(() {
         _hasMoreMessages = true;
         _isLoadingMore = false;
       });
       _scheduleImagePrecache();
-      // 注释已清理乱码
+      // (注释已丢失)
       ref.read(conversationsProvider.notifier).clearUnread(targetId);
     }
   }
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   Future<void> _loadMoreMessages(Conversation conv) async {
     if (_isLoadingMore || !_hasMoreMessages) return;
     if (conv.messages.isEmpty) {
@@ -479,11 +486,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       final msgRepo = ref.read(messageRepositoryProvider);
       final blockRepo = ref.read(messageBlockRepositoryProvider);
 
-      // 注释已清理乱码
+      // (注释已丢失)
       final oldestMessage = conv.messages.first;
       final oldestTime = oldestMessage.createdAt.millisecondsSinceEpoch;
 
-      // 注释已清理乱码
+      // (注释已丢失)
       final dbMsgs = await msgRepo.getByConversation(
         conv.id,
         limit: 30,
@@ -502,7 +509,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       final messageIds = dbMsgs.map((m) => m.id).toList();
       final dbBlocks = await blockRepo.getByMessages(messageIds);
 
-      // 注释已清理乱码
+      // (注释已丢失)
       final blocksByMsgId = <String, List<MessageBlock>>{};
       for (final dbBlock in dbBlocks) {
         final block = MessageBlockConverter.fromDb(dbBlock);
@@ -511,7 +518,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         }
       }
 
-      // 注释已清理乱码
+      // (注释已丢失)
       final olderMessages = dbMsgs.reversed.map((dbMsg) {
         final blocks = blocksByMsgId[dbMsg.id];
         return MessageConverter.fromDb(dbMsg, blocks: blocks);
@@ -523,7 +530,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             (c) => c.copyWith(messages: [...olderMessages, ...c.messages]),
           );
 
-      // 注释已清理乱码
+      // (注释已丢失)
       if (dbMsgs.length < 30) {
         setState(() => _hasMoreMessages = false);
       }
@@ -553,9 +560,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               },
               orElse: () => initial,
             );
-    // 注释已清理乱码
-    // 注释已清理乱码
-    final actions = ref.read(chatActionsProvider); // 注释已清理乱码
+    // (注释已丢失)
+    // (注释已丢失)
+    final actions = ref.read(chatActionsProvider); // (注释已丢失)
     final sidebarVisible = ref.watch(sidebarVisibleProvider);
     final settingsAsync = ref.watch(appSettingsProvider);
     final colors = context.moeColors;
@@ -579,7 +586,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final chatBgColor = settingsAsync.maybeWhen(
       data: (settings) {
         if (isDark) return colors.bgMain;
-        // 注释已清理乱码
+        // (注释已丢失)
         return settings.chatBackgroundColor.color ?? colors.surface;
       },
       orElse: () => isDark ? colors.bgMain : colors.surface,
@@ -592,7 +599,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         : 0.0;
 
     return Scaffold(
-      // 注释已清理乱码
+      // (注释已丢失)
       resizeToAvoidBottomInset: false,
       extendBodyBehindAppBar: extendBehindAppBar,
       appBar: AppBar(
@@ -603,7 +610,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         scrolledUnderElevation: 0,
         surfaceTintColor: Colors.transparent,
         titleTextStyle: TextStyle(
-          fontSize: 22, // 注释已清理乱码
+          fontSize: 22, // (注释已丢失)
           fontWeight: MoeFontWeights.emphasis,
           color: colors.headerContentColor,
           letterSpacing: 0.8,
@@ -715,7 +722,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     );
                   },
                   onEditContact: () async {
-                    // 注释已清理乱码
+                    // (注释已丢失)
                     final result =
                         await Navigator.of(context).push<ContactEditResult>(
                       ParallaxSlidePageRoute(
@@ -840,13 +847,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         fallbackColor: chatBgColor,
         child: Stack(
           children: [
-            // 注释已清理乱码
+            // 消息列表（填满全屏，自带 bottom padding 避开 Composer 和键盘）
             Column(
               children: [
                 if (listTopSpacing > 0) SizedBox(height: listTopSpacing),
-                // 注释已清理乱码
-                // 注释已清理乱码
-                // 注释已清理乱码
                 Expanded(
                   child: conv == null
                       ? const Center(child: CircularProgressIndicator())
@@ -855,13 +859,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                           onTap: () {
                             final keyboardHeight =
                                 MediaQuery.viewInsetsOf(context).bottom;
-                            // 注释已清理乱码
                             if (keyboardHeight > 0) {
                               SystemChannels.textInput
                                   .invokeMethod('TextInput.hide');
                               return;
                             }
-                            // 注释已清理乱码
                             FocusManager.instance.primaryFocus?.unfocus();
                           },
                           child: ChatMessageList(
@@ -870,6 +872,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                             messages: conv.messages,
                             avatarUrl: conv.avatarUrl ?? conv.characterImage,
                             displayName: conv.displayName,
+                            bottomOverlayHeight: _composerOverlayHeight,
                             contextStartMessageId: conv.contextStartMessageId,
                             onLoadMore: () => _loadMoreMessages(conv),
                             isLoadingMore: _isLoadingMore,
@@ -897,15 +900,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 ),
               ],
             ),
-            // Composer floats at bottom for BackdropFilter blur
+            // Composer 固定贴底；键盘位移由 Composer 内部面板容器处理
             Positioned(
               left: 0,
               right: 0,
               bottom: 0,
               child: Composer(
-                disabled: false, // 注释已清理乱码
+                onHeightChanged: _handleComposerHeightChanged,
+                disabled: false,
                 onSend: (text) async {
-                  // 注释已清理乱码
                   if (ref.read(sendingProvider)) {
                     MoeToast.brief(
                       context,
@@ -922,7 +925,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   // 检查是否有引用消息
                   final quoted = ref.read(quotedMessageProvider);
                   if (quoted != null) {
-                    // 注释已清理乱码
                     final quotedText = quoted.content.length > 30
                         ? '${quoted.content.substring(0, 30)}...'
                         : quoted.content;
@@ -1014,7 +1016,7 @@ class _ChatMessageSearchContentState
     final keyword = _keyword.trim();
     final date = _selectedDate;
 
-    // 注释已清理乱码
+    // (注释已丢失)
     if (keyword.isEmpty && date == null) {
       if (!mounted || seq != _searchSeq) return;
       setState(() {
@@ -1112,7 +1114,7 @@ class _ChatMessageSearchContentState
 
     return Column(
       children: [
-        // 注释已清理乱码
+        // (注释已丢失)
         Padding(
           padding: const EdgeInsets.all(16),
           child: MoeTextField(
@@ -1137,7 +1139,7 @@ class _ChatMessageSearchContentState
           ),
         ),
 
-        // 注释已清理乱码
+        // (注释已丢失)
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: MoeG2ClipRRect(
@@ -1186,7 +1188,7 @@ class _ChatMessageSearchContentState
 
         const SizedBox(height: 12),
 
-        // 注释已清理乱码
+        // (注释已丢失)
         Expanded(
           child: _loading
               ? const Center(child: MoeLoadingIndicator())

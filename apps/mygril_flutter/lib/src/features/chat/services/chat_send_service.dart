@@ -1,11 +1,11 @@
-/// 注释已清理乱码
+/// (注释已丢失)
 ///
-/// 注释已清理乱码
-/// 注释已清理乱码
+/// (注释已丢失)
+/// (注释已丢失)
 ///
-/// 注释已清理乱码
-/// 注释已清理乱码
-/// 注释已清理乱码
+/// (注释已丢失)
+/// (注释已丢失)
+/// (注释已丢失)
 library;
 
 import 'dart:async';
@@ -18,9 +18,8 @@ import '../domain/conversation.dart';
 import '../domain/message.dart';
 import '../id_gen.dart';
 import '../conversation_providers.dart';
-import '../../settings/direct_mode.dart' as direct;
 import '../../settings/app_settings.dart';
-import '../../settings/mcp_api.dart';
+import 'chat_request_config.dart';
 import '../../plugins/plugin_providers.dart';
 import '../../plugins/plugin_manager.dart';
 import '../../plugins/domain/plugin.dart';
@@ -34,68 +33,21 @@ import '../../../core/api/providers/provider_adapter_factory.dart';
 import '../../../core/api_logger.dart';
 import '../../../core/models/message_block.dart';
 import '../../../core/app_logger.dart';
+import '../../../core/utils/mime_utils.dart';
 import '../../../core/utils/token_estimator.dart';
 import 'chat_message_processor.dart';
+import 'chat_tool_fallback_parser.dart';
 import 'chat_types.dart';
 
-/// 发送请求的输入参数
-class SendRequest {
-  final Conversation conversation;
-  final String? text;
-  final String? imagePath;
-  final Message userMessage;
+export 'chat_types.dart'
+    show SendRequest, ApiCallResult, ApiConfig, ToolAudioResult;
 
-  const SendRequest({
-    required this.conversation,
-    this.text,
-    this.imagePath,
-    required this.userMessage,
-  });
-
-  String get convId => conversation.id;
-  String get displayText => text ?? (imagePath != null ? '[图片]' : '');
-}
-
-/// API 调用结果
-class ApiCallResult {
-  final String replyText;
-  final String processedText;
-  final List<PluginEvent> pluginEvents;
-  final List<PluginContent> pluginContents;
-  final List<Map<String, dynamic>> toolResults;
-
-  /// 注释已清理乱码
-  final List<ToolAudioResult> toolAudioResults;
-
-  const ApiCallResult({
-    required this.replyText,
-    required this.processedText,
-    required this.pluginEvents,
-    this.pluginContents = const [],
-    required this.toolResults,
-    this.toolAudioResults = const [],
-  });
-
-  /// 注释已清理乱码
-  bool get hasToolAudio => toolAudioResults.isNotEmpty;
-}
-
-/// 注释已清理乱码
-class ToolAudioResult {
-  final String audioUrl;
-  final String text;
-
-  const ToolAudioResult({required this.audioUrl, required this.text});
-}
-
-/// 注释已清理乱码
-///
-/// 注释已清理乱码
+/// Chat sending service.
 class ChatSendService {
   final Ref _ref;
-  final McpApi _mcpApi = McpApi();
-  McpConfigDto? _cachedMcpConfig;
-  DateTime? _cachedMcpFetchedAt;
+  final ChatRequestConfigBuilder _requestConfigBuilder =
+      ChatRequestConfigBuilder();
+  final ChatToolFallbackParser _fallbackParser = const ChatToolFallbackParser();
 
   ChatSendService(this._ref);
 
@@ -157,7 +109,7 @@ class ChatSendService {
     );
   }
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   Future<Message> createUserFileMessage({required String filePath}) async {
     final trimmed = filePath.trim();
     if (trimmed.isEmpty) {
@@ -181,7 +133,7 @@ class ChatSendService {
           messageId: msgId,
           fileName: name,
           fileSize: size,
-          mimeType: _guessMimeType(trimmed),
+          mimeType: MimeUtils.guessGenericMimeType(trimmed),
           filePath: trimmed,
         ),
       ],
@@ -190,7 +142,7 @@ class ChatSendService {
     );
   }
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   Future<void> addUserMessage({
     required String convId,
     required Message userMsg,
@@ -208,7 +160,7 @@ class ChatSendService {
         );
   }
 
-  /// 准备 API 璋冪敤配置
+  /// 准备 API 调用配置
   Future<ApiConfig> prepareApiConfig({
     required Conversation conv,
     required List<Message> history,
@@ -216,11 +168,14 @@ class ChatSendService {
     TraceLogger? trace,
     String? overrideModel,
   }) async {
-    final configTrace = trace?.startChild('加载配置');
+    final configTrace = trace?.startChild('读取配置');
 
     final settings = await _ref.read(appSettingsProvider.future);
-    final mcpConfig = await _getMcpConfig();
-    final toolPrefs = _buildToolPrefs(settings, mcpConfig);
+    final requestConfig = await _requestConfigBuilder.buildRequestConfig(
+      settings,
+      modelRef: overrideModel,
+    );
+    final toolPrefs = requestConfig.toolPrefs;
 
     configTrace?.note('配置', metadata: {
       'ttsEnabled': settings.ttsEnabled,
@@ -230,47 +185,10 @@ class ChatSendService {
     });
     configTrace?.end();
 
-    // 注释已清理乱码
-    final modelRef = overrideModel ?? settings.defaultModelName;
+    final modelRef = requestConfig.modelRef;
     final model = settings.getRawModelId(modelRef);
-    final provider = settings.getModelProviderId(modelRef) ?? 'openai';
-    var modelFull = '$provider:$model';
+    final modelFull = requestConfig.modelFullId;
 
-    final providerAuth = settings.providers.firstWhere(
-      (p) => p.id == provider,
-      orElse: () => ProviderAuth(
-        id: provider,
-        apiKeys: const <String>[],
-        apiBaseUrl: settings.apiBaseUrl,
-      ),
-    );
-    var providerApiBase = providerAuth.apiBaseUrl.trim().isEmpty
-        ? settings.apiBaseUrl
-        : providerAuth.apiBaseUrl.trim();
-    var providerApiKey = providerAuth.apiKeys.isNotEmpty
-        ? providerAuth.apiKeys.first.trim()
-        : null;
-
-    // 注释已清理乱码
-    try {
-      final cfg = await direct.loadDirectConfig();
-      if (cfg.enabled) {
-        if ((providerApiBase.isEmpty ||
-                providerApiBase == settings.apiBaseUrl) &&
-            cfg.apiBase.isNotEmpty) {
-          providerApiBase = cfg.apiBase;
-        }
-        if ((providerApiKey == null || providerApiKey.isEmpty) &&
-            cfg.apiKey.isNotEmpty) {
-          providerApiKey = cfg.apiKey;
-        }
-        if (!modelFull.contains(':') && cfg.model.isNotEmpty) {
-          modelFull = 'openai:${cfg.model}';
-        }
-      }
-    } catch (_) {}
-
-    // 判断当前模型是否支持视觉，不支持则过滤掉历史中的 image_url
     final supportsVision = isVisionModel(model);
     final reqMessages = await _buildRequestMessages(
       history,
@@ -278,17 +196,10 @@ class ChatSendService {
       supportsVision: supportsVision,
     );
 
-    // 注释已清理乱码
     final systemParts = <String>[];
     if (conv.personaPrompt.isNotEmpty) {
       systemParts.add(conv.personaPrompt);
     }
-    if (conv.addressUser != null && conv.addressUser!.isNotEmpty) {
-      systemParts.add('你应该称呼用户为"${conv.addressUser}"。');
-    }
-
-    // 注释已清理乱码
-    // 注释已清理乱码
     final supportsToolCalling = !settings.isModelToolCallingDisabled(modelRef);
     final enabledPluginIds = conv.enabledPlugins?.toSet();
     final pluginManager = _ref.read(pluginManagerProvider);
@@ -303,13 +214,12 @@ class ChatSendService {
       systemParts.add(pluginPrompts);
     }
 
-    // 注释已清理乱码
     List<Map<String, dynamic>>? tools;
     if (supportsToolCalling) {
       final aiTools = _collectPluginTools(effectivePlugins);
       if (aiTools.isNotEmpty) {
         tools = aiTools.map((t) => t.toOpenAISchema()).toList();
-        AppLogger.debug('ChatSendService', '收集插件工具', metadata: {
+        AppLogger.debug('ChatSendService', '收集到工具定义', metadata: {
           'toolCount': tools.length,
           'toolNames': aiTools.map((t) => t.name).toList(),
         });
@@ -323,15 +233,13 @@ class ChatSendService {
       });
     }
 
-    // 注释已清理乱码
-    // 注释已清理乱码
     final modelName =
         modelFull.contains(':') ? modelFull.split(':').last : modelFull;
     final maxContextTokens = getModelContextLimit(modelName);
     final truncatedMessages = truncateMessagesToFit(
       messages: reqMessages,
       maxContextTokens: maxContextTokens,
-      reserveTokens: 2048, // reserve for completion
+      reserveTokens: 2048,
     );
 
     if (truncatedMessages.length < reqMessages.length) {
@@ -359,17 +267,16 @@ class ChatSendService {
     return ApiConfig(
       settings: settings,
       modelFullId: modelFull,
-      providerApiBase: providerApiBase,
-      providerApiKey: providerApiKey?.isEmpty == true ? null : providerApiKey,
-      customConfig: providerAuth.customConfig,
+      providerApiBase: requestConfig.providerApiBase,
+      providerApiKey: requestConfig.providerApiKey,
+      customConfig: requestConfig.customConfig,
       toolPrefs: toolPrefs,
       messages: truncatedMessages,
       tools: tools,
       enabledPluginIds: enabledPluginIds,
-      modelTemperature: settings.getModelConfig(modelRef).temperature,
-      modelTopP: settings.getModelConfig(modelRef).topP,
-      modelContextMessageLimit:
-          settings.getModelConfig(modelRef).contextMessageLimit,
+      modelTemperature: requestConfig.modelTemperature,
+      modelTopP: requestConfig.modelTopP,
+      modelContextMessageLimit: requestConfig.modelContextMessageLimit,
     );
   }
 
@@ -405,10 +312,11 @@ class ChatSendService {
           prompts.add(prompt);
         }
       } catch (e) {
-        AppLogger.warning('ChatSendService', '插件提示词构建失败', metadata: {
-          'pluginId': plugin.id,
-          'error': e.toString(),
-        });
+        AppLogger.warning('ChatSendService', 'Failed to build plugin prompt',
+            metadata: {
+              'pluginId': plugin.id,
+              'error': e.toString(),
+            });
       }
     }
     return prompts.join('\n\n');
@@ -520,7 +428,7 @@ class ChatSendService {
       }
 
       if (block is ImageBlock) {
-        // 模型不支持视觉时，仅保留图片占位，避免把生图提示词注入后续上下文。
+        // 模型不支持视觉时，仅保留图片占位，避免把生图提示词注入后续上下文
         if (!supportsVision) {
           parts.add({'type': 'text', 'text': '[图片]'});
           continue;
@@ -548,7 +456,7 @@ class ChatSendService {
         if (localPath != null && localPath.isNotEmpty) {
           final encoded = await readImageAsBase64(localPath);
           if (encoded != null && encoded.isNotEmpty) {
-            final mime = _guessImageMimeType(localPath);
+            final mime = MimeUtils.guessImageMimeType(localPath);
             parts.add({
               'type': 'image_url',
               'image_url': {'url': 'data:$mime;base64,$encoded'},
@@ -620,12 +528,12 @@ class ChatSendService {
 
     final maxBytes = settings.maxFileUploadMB * 1024 * 1024;
     if (maxBytes > 0 && block.fileSize > maxBytes) {
-      return '用户上传了文件：${block.fileName}（${block.fileSize}B），但文件超过大小限制，已拦截读取。';
+      return 'User uploaded file ${block.fileName} (${block.fileSize}B), but it exceeds size limit.';
     }
 
     final ext = p.extension(path).replaceFirst('.', '').toLowerCase();
     if (ext.isNotEmpty && !_supportedTextFileExts.contains(ext)) {
-      return '用户上传了文件：${block.fileName}（${block.mimeType}），但该格式暂不支持读取。';
+      return 'User uploaded file ${block.fileName} (${block.mimeType}), but this format is not supported for reading.';
     }
 
     try {
@@ -636,17 +544,17 @@ class ChatSendService {
       return '用户上传了文件：${block.fileName}（${block.fileSize}B）。\n\n```$lang\n$safeContent\n```';
     } catch (_) {
       try {
-        // 注释已清理乱码
+        // 首次解码失败，允许 malformed 再试一次
         final bytes = await File(path).readAsBytes();
         final content = utf8.decode(bytes, allowMalformed: true);
         if (content.contains('\u0000')) {
-          return '用户上传了文件：${block.fileName}（${block.mimeType}），但内容疑似二进制，无法读取。';
+          return 'User uploaded file ${block.fileName} (${block.mimeType}), but it appears to be binary and cannot be read as text.';
         }
         final safeContent = _truncateForPrompt(content);
         final lang = ext.isEmpty ? 'text' : ext;
         return '用户上传了文件：${block.fileName}（${block.fileSize}B）。\n\n```$lang\n$safeContent\n```';
       } catch (e) {
-        return '用户上传了文件：${block.fileName}，但读取失败：$e';
+        return 'User uploaded file ${block.fileName}, but reading failed: $e';
       }
     }
   }
@@ -657,47 +565,7 @@ class ChatSendService {
     return '${content.substring(0, maxChars)}\n...(内容过长，已截断，仅发送前 $maxChars 字符)';
   }
 
-  String _guessMimeType(String filePath) {
-    final ext = p.extension(filePath).replaceFirst('.', '').toLowerCase();
-    switch (ext) {
-      case 'txt':
-      case 'log':
-      case 'md':
-      case 'markdown':
-        return 'text/plain';
-      case 'json':
-        return 'application/json';
-      case 'yaml':
-      case 'yml':
-        return 'application/x-yaml';
-      case 'csv':
-        return 'text/csv';
-      case 'pdf':
-        return 'application/pdf';
-      default:
-        return 'application/octet-stream';
-    }
-  }
-
-  String _guessImageMimeType(String imagePath) {
-    final ext = p.extension(imagePath).replaceFirst('.', '').toLowerCase();
-    switch (ext) {
-      case 'png':
-        return 'image/png';
-      case 'webp':
-        return 'image/webp';
-      case 'gif':
-        return 'image/gif';
-      case 'bmp':
-        return 'image/bmp';
-      case 'jpg':
-      case 'jpeg':
-      default:
-        return 'image/jpeg';
-    }
-  }
-
-  /// 注释已清理乱码
+  /// (注释已丢失)
   Future<ApiConfig> getApiConfig({
     required Conversation conv,
     required List<Message> history,
@@ -707,15 +575,15 @@ class ChatSendService {
       prepareApiConfig(
           conv: conv, history: history, userText: userText, trace: trace);
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   ///
-  /// 注释已清理乱码
+  /// (注释已丢失)
   /// 1. 调用 AI API
-  /// 注释已清理乱码
-  /// 注释已清理乱码
-  /// 注释已清理乱码
+  /// (注释已丢失)
+  /// (注释已丢失)
+  /// (注释已丢失)
   ///
-  /// 注释已清理乱码
+  /// (注释已丢失)
   Future<ApiCallResult> executeApiCall({
     required ApiConfig config,
     required String sessionId,
@@ -736,7 +604,7 @@ class ChatSendService {
         ? turnId.trim()
         : 'turn_${DateTime.now().microsecondsSinceEpoch}';
 
-    // 有工具调用时加长超时到 120 秒（推理模型 + 工具执行可能较慢）
+    // 有工具调用时加长超时至 120 秒（推理模型 + 工具执行可能较慢）
     final hasTools = config.tools != null && config.tools!.isNotEmpty;
     final agent = AgentApiClient(
       timeout:
@@ -746,10 +614,10 @@ class ChatSendService {
     final effectivePlugins =
         _getEffectivePlugins(pluginManager, config.enabledPluginIds);
     final allToolEvents = <PluginEvent>[];
-    final allToolAudioResults = <ToolAudioResult>[]; // 注释已清理乱码
+    final allToolAudioResults = <ToolAudioResult>[]; // (注释已丢失)
     final allToolContents = <PluginContent>[]; // draw_image 工具生成的图片内容
 
-    // 注释已清理乱码
+    // (注释已丢失)
     String provider = 'openai';
     final idx = config.modelFullId.indexOf(':');
     if (idx > 0) {
@@ -757,10 +625,10 @@ class ChatSendService {
     }
     final adapter = ProviderAdapterFactory.getAdapter(provider);
     // 部分模型（尤其经由兼容层）不会返回标准 tool_calls，而是把工具调用写进文本。
-    // 这里对所有 provider 开启文本 fallback 兜底，避免因为 provider 类型差异漏掉工具执行。
+    // 这里对所有 provider 开启文本 fallback 兜底，避免因 provider 类型差异漏掉工具执行。
     const supportsTextToolFallback = true;
 
-    // 注释已清理乱码
+    // (注释已丢失)
     var currentMessages = List<Map<String, dynamic>>.from(config.messages);
     SendMessageRichResult? lastRich;
     final executedFallbackCallSignatures = <String>{};
@@ -769,7 +637,7 @@ class ChatSendService {
 
     for (var round = 1; round <= maxRounds; round++) {
       lastRoundIndex = round;
-      final roundTrace = apiCallTrace?.startChild('第$round轮 API 调用');
+      final roundTrace = apiCallTrace?.startChild('第 $round 轮 API 调用');
       roundTrace?.note('请求', metadata: {
         'round': round,
         'messagesCount': currentMessages.length,
@@ -782,7 +650,7 @@ class ChatSendService {
         messages: currentMessages,
         userText: round == 1 ? (userText ?? '') : '', // 只在第一轮传 userText
         temperature: config.effectiveTemperature,
-        topP: config.modelTopP, // 注释已清理乱码
+        topP: config.modelTopP, // (注释已丢失)
         token: config.settings.backendApiKey,
         toolPrefs: config.toolPrefs,
         providerApiBase: config.providerApiBase,
@@ -799,7 +667,7 @@ class ChatSendService {
         'toolCalls': lastRich.toolCalls.length,
       });
 
-      // 注释已清理乱码
+      // (注释已丢失)
       var currentToolCalls = List<ToolCall>.from(lastRich.toolCalls);
       var usesFallbackToolCalls = false;
       if (currentToolCalls.isEmpty && supportsTextToolFallback) {
@@ -861,7 +729,7 @@ class ChatSendService {
               'result': resultStr,
             });
 
-            // 注释已清理乱码
+            // (注释已丢失)
             if (tc.name == 'speak') {
               try {
                 final parsed = jsonDecode(resultStr) as Map<String, dynamic>;
@@ -882,8 +750,8 @@ class ChatSendService {
                     metadata: {'error': e.toString()});
               }
 
-              // 注释已清理乱码
-              // 注释已清理乱码
+              // (注释已丢失)
+              // (注释已丢失)
               // 参考：https://github.com/openai/codex/issues/6426 (tool output truncation)
               toolResults.add(ToolResult(
                 toolCallId: tc.id,
@@ -919,7 +787,7 @@ class ChatSendService {
               ));
             }
           } else {
-            AppLogger.warning('ChatSendService', '未找到工具',
+            AppLogger.warning('ChatSendService', 'Tool not found',
                 metadata: {'name': tc.name});
             toolResults.add(ToolResult(
               toolCallId: tc.id,
@@ -967,7 +835,7 @@ class ChatSendService {
       }
 
       // 构建工具结果消息，追加到 currentMessages
-      // 注释已清理乱码
+      // (注释已丢失)
       final assistantMessage = usesFallbackToolCalls
           ? _buildFallbackAssistantMessageForToolCalls(
               currentToolCalls,
@@ -984,20 +852,31 @@ class ChatSendService {
         'newMessagesCount': toolResultMessages.length,
         'totalMessages': currentMessages.length,
       });
-      roundTrace?.end(additionalMessage: '继续下一轮');
+      roundTrace?.end(additionalMessage: 'continue next round');
     }
 
     var finalAssistantText = lastRich?.text ?? '';
+    final generatedImageCount =
+        allToolContents.whereType<PluginImageContent>().length;
     if (executedAnyTool &&
         (finalAssistantText.trim().isEmpty ||
             _looksLikeToolInstructionText(finalAssistantText))) {
       finalAssistantText = _buildToolCompletionSummary(
-        generatedImageCount:
-            allToolContents.whereType<PluginImageContent>().length,
+        generatedImageCount: generatedImageCount,
         hasAudio: allToolAudioResults.isNotEmpty,
       );
     }
     finalAssistantText = _sanitizeAssistantText(finalAssistantText);
+    if (generatedImageCount > 0) {
+      finalAssistantText =
+          _stripStandaloneImagePlaceholders(finalAssistantText);
+    }
+    if (executedAnyTool && finalAssistantText.trim().isEmpty) {
+      finalAssistantText = _buildToolCompletionSummary(
+        generatedImageCount: generatedImageCount,
+        hasAudio: allToolAudioResults.isNotEmpty,
+      );
+    }
 
     apiCallTrace?.note('完成', metadata: {
       'textLength': finalAssistantText.length,
@@ -1005,7 +884,7 @@ class ChatSendService {
     });
     apiCallTrace?.end(additionalMessage: 'API调用成功');
 
-    // 注释已清理乱码
+    // (注释已丢失)
     final pluginTrace = trace?.startChild('运行插件');
     final pluginResult =
         await _processResponseWithPlugins(effectivePlugins, finalAssistantText);
@@ -1033,7 +912,7 @@ class ChatSendService {
       finalReply: pluginResult.processedText,
     ));
 
-    // 注释已清理乱码
+    // (注释已丢失)
     final allEvents = [...allToolEvents, ...pluginResult.events];
     final allContents = [...allToolContents, ...pluginResult.contents];
 
@@ -1047,7 +926,7 @@ class ChatSendService {
     );
   }
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   String? _encodeToolCallsForLog(List<ToolCall> calls) {
     if (calls.isEmpty) return null;
     return jsonEncode([
@@ -1146,616 +1025,14 @@ class ChatSendService {
     return contents;
   }
 
-  List<ToolCall> _extractFallbackToolCalls(String text) {
-    final trimmed = text.trim();
-    if (trimmed.isEmpty) return const <ToolCall>[];
+  List<ToolCall> _extractFallbackToolCalls(String text) =>
+      _fallbackParser.extractFallbackToolCalls(text);
 
-    final calls = <ToolCall>[];
-    var callIndex = 0;
+  Map<String, dynamic>? _tryParseJsonMap(String raw) =>
+      _fallbackParser.tryParseJsonMap(raw);
 
-    final executeRegex = RegExp(
-      r'<execute_tool>\s*([\s\S]*?)\s*</execute_tool>',
-      caseSensitive: false,
-    );
-    for (final match in executeRegex.allMatches(trimmed)) {
-      final raw = match.group(1)?.trim() ?? '';
-      final currentCallIndex = ++callIndex;
-      final parsedPayload =
-          _parseExecuteToolPayload(raw, callIndex: currentCallIndex);
-      if (parsedPayload != null) {
-        calls.add(parsedPayload);
-        continue;
-      }
-      final parsed =
-          _parseFallbackFunctionCall(raw, callIndex: currentCallIndex);
-      if (parsed != null) {
-        calls.add(parsed);
-      }
-    }
-
-    if (calls.isNotEmpty) {
-      return calls;
-    }
-
-    final actionPayloadCall =
-        _parseActionPayloadFallbackToolCall(trimmed, callIndex: ++callIndex);
-    if (actionPayloadCall != null) {
-      calls.add(actionPayloadCall);
-      return calls;
-    }
-
-    final promptBlockCall =
-        _parsePromptBlockFallbackToolCall(trimmed, callIndex: ++callIndex);
-    if (promptBlockCall != null) {
-      calls.add(promptBlockCall);
-    }
-
-    return calls;
-  }
-
-  ToolCall? _parseExecuteToolPayload(String raw, {required int callIndex}) {
-    final payload = _tryParseJsonMap(raw);
-    if (payload == null) return null;
-
-    final toolName = _readFirstNonEmptyString(payload, const [
-      'tool_name',
-      'toolName',
-      'tool',
-      'action',
-      'function_name',
-      'functionName',
-      'name',
-    ]);
-    final toolCode = _readFirstNonEmptyString(payload, const [
-      'tool_code',
-      'toolCode',
-      'code',
-      'call',
-      'function_call',
-    ]);
-    if (toolName.isEmpty && toolCode.isEmpty) return null;
-
-    if (toolCode.isNotEmpty) {
-      String? expression;
-      if (toolName.isNotEmpty) {
-        expression = _extractNamedFunctionCall(toolCode, toolName);
-      }
-      expression ??= _extractNamedFunctionCall(toolCode, 'draw_image');
-      expression ??= _extractAnyFunctionCall(toolCode);
-
-      if (expression != null) {
-        final parsed =
-            _parseFallbackFunctionCall(expression, callIndex: callIndex);
-        if (parsed != null) {
-          if (toolName.isNotEmpty && parsed.name != toolName) {
-            return ToolCall(
-              id: parsed.id,
-              name: toolName,
-              arguments: _normalizeToolArguments(toolName, parsed.arguments),
-            );
-          }
-          return parsed;
-        }
-      }
-    }
-
-    final fallbackName =
-        toolName.isNotEmpty ? toolName : _inferToolNameFromPayload(payload);
-    if (fallbackName.isNotEmpty) {
-      final args = _extractToolArgumentsFromPayload(payload, fallbackName);
-      if (args.isNotEmpty) {
-        return ToolCall(
-          id: 'fallback_execute_$callIndex',
-          name: fallbackName,
-          arguments: _normalizeToolArguments(fallbackName, args),
-        );
-      }
-    }
-
-    return null;
-  }
-
-  ToolCall? _parseActionPayloadFallbackToolCall(
-    String text, {
-    required int callIndex,
-  }) {
-    final payload = _tryParseJsonMap(text);
-    if (payload == null) return null;
-
-    final action = _readFirstNonEmptyString(payload, const [
-      'action',
-      'tool_name',
-      'toolName',
-      'tool',
-      'function_name',
-      'functionName',
-      'name',
-    ]);
-    if (action.isEmpty) return null;
-
-    final args = _extractToolArgumentsFromPayload(payload, action);
-    if (args.isEmpty) return null;
-
-    return ToolCall(
-      id: 'fallback_action_$callIndex',
-      name: action,
-      arguments: _normalizeToolArguments(action, args),
-    );
-  }
-
-  String _readFirstNonEmptyString(
-    Map<String, dynamic> payload,
-    List<String> keys,
-  ) {
-    for (final key in keys) {
-      final value = payload[key]?.toString().trim();
-      if (value != null && value.isNotEmpty) {
-        return value;
-      }
-    }
-    return '';
-  }
-
-  String _inferToolNameFromPayload(Map<String, dynamic> payload) {
-    final action = payload['action']?.toString().trim() ?? '';
-    if (action.isNotEmpty) return action;
-
-    final prompt = payload['prompt']?.toString().trim() ?? '';
-    if (prompt.isNotEmpty) return 'draw_image';
-
-    const keys = <String>[
-      'arguments',
-      'args',
-      'tool_args',
-      'toolArgs',
-      'params',
-      'parameters',
-    ];
-    for (final key in keys) {
-      final argMap =
-          _coerceToolArgumentsMap(payload[key], defaultToolName: 'draw_image');
-      final promptInArgs = argMap?['prompt']?.toString().trim() ?? '';
-      if (promptInArgs.isNotEmpty) return 'draw_image';
-    }
-
-    return '';
-  }
-
-  Map<String, dynamic> _extractToolArgumentsFromPayload(
-    Map<String, dynamic> payload,
-    String toolName,
-  ) {
-    final args = <String, dynamic>{};
-
-    const containerKeys = <String>[
-      'arguments',
-      'args',
-      'tool_args',
-      'toolArgs',
-      'action_input',
-      'actionInput',
-      'params',
-      'parameters',
-      'tool_input',
-      'toolInput',
-    ];
-    for (final key in containerKeys) {
-      final parsed = _coerceToolArgumentsMap(
-        payload[key],
-        defaultToolName: toolName,
-      );
-      if (parsed != null && parsed.isNotEmpty) {
-        args.addAll(parsed);
-      }
-    }
-
-    const knownRootKeys = <String>[
-      'prompt',
-      'negative_prompt',
-      'width',
-      'height',
-      'size',
-      'steps',
-      'guidance_scale',
-      'count',
-      'seed',
-      'sampler',
-    ];
-    for (final key in knownRootKeys) {
-      if (payload.containsKey(key)) {
-        args[key] = payload[key];
-      }
-    }
-
-    return args;
-  }
-
-  Map<String, dynamic>? _coerceToolArgumentsMap(
-    dynamic raw, {
-    required String defaultToolName,
-  }) {
-    if (raw == null) return null;
-
-    if (raw is Map) {
-      return _toStringDynamicMap(raw);
-    }
-
-    if (raw is! String) return null;
-    final trimmed = raw.trim();
-    if (trimmed.isEmpty) return null;
-
-    final jsonMap = _tryParseJsonMap(trimmed);
-    if (jsonMap != null) {
-      return jsonMap;
-    }
-
-    final directCall = _parseFallbackFunctionCall(trimmed, callIndex: 0);
-    if (directCall != null && directCall.arguments.isNotEmpty) {
-      return directCall.arguments;
-    }
-
-    final wrappedCall = _parseFallbackFunctionCall(
-      '$defaultToolName($trimmed)',
-      callIndex: 0,
-    );
-    if (wrappedCall != null && wrappedCall.arguments.isNotEmpty) {
-      return wrappedCall.arguments;
-    }
-
-    return null;
-  }
-
-  Map<String, dynamic>? _tryParseJsonMap(String raw) {
-    final candidates = <String>{};
-    final trimmed = raw.trim();
-    if (trimmed.isNotEmpty) {
-      candidates.add(trimmed);
-    }
-
-    final unfenced = _stripMarkdownCodeFence(trimmed);
-    if (unfenced.isNotEmpty) {
-      candidates.add(unfenced);
-    }
-
-    final wrapped = _extractFirstJsonObject(unfenced);
-    if (wrapped != null && wrapped.isNotEmpty) {
-      candidates.add(wrapped);
-    }
-
-    for (final candidate in candidates) {
-      try {
-        final decoded = jsonDecode(candidate);
-        if (decoded is Map) {
-          return _toStringDynamicMap(decoded);
-        }
-      } catch (_) {
-        continue;
-      }
-    }
-    return null;
-  }
-
-  String _stripMarkdownCodeFence(String raw) {
-    final match = RegExp(
-      r'^```(?:[a-zA-Z0-9_-]+)?\s*([\s\S]*?)\s*```$',
-      caseSensitive: false,
-    ).firstMatch(raw.trim());
-    if (match == null) return raw.trim();
-    return (match.group(1) ?? '').trim();
-  }
-
-  String? _extractFirstJsonObject(String raw) {
-    final start = raw.indexOf('{');
-    final end = raw.lastIndexOf('}');
-    if (start < 0 || end <= start) return null;
-    return raw.substring(start, end + 1).trim();
-  }
-
-  Map<String, dynamic> _toStringDynamicMap(Map raw) {
-    final map = <String, dynamic>{};
-    raw.forEach((key, value) {
-      map[key.toString()] = value;
-    });
-    return map;
-  }
-
-  String? _extractAnyFunctionCall(String text) {
-    final regex = RegExp(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\(');
-    String? firstExpression;
-    for (final match in regex.allMatches(text)) {
-      final openParenIndex = text.indexOf('(', match.start);
-      if (openParenIndex < 0) continue;
-      final closeParenIndex = _findMatchingParen(text, openParenIndex);
-      if (closeParenIndex < 0) continue;
-      final expression = text.substring(match.start, closeParenIndex + 1);
-      firstExpression ??= expression;
-      final parsed = _parseFallbackFunctionCall(expression, callIndex: 0);
-      if (parsed != null && parsed.arguments.isNotEmpty) {
-        return expression;
-      }
-    }
-    return firstExpression;
-  }
-
-  String? _extractNamedFunctionCall(String text, String functionName) {
-    final regex = RegExp('\\b${RegExp.escape(functionName)}\\s*\\(',
-        caseSensitive: false);
-    for (final match in regex.allMatches(text)) {
-      final openParenIndex = text.indexOf('(', match.start);
-      if (openParenIndex < 0) continue;
-      final closeParenIndex = _findMatchingParen(text, openParenIndex);
-      if (closeParenIndex < 0) continue;
-      return text.substring(match.start, closeParenIndex + 1);
-    }
-    return null;
-  }
-
-  int _findMatchingParen(String text, int openParenIndex) {
-    var depth = 0;
-    String? quote;
-    var escape = false;
-
-    for (var i = openParenIndex; i < text.length; i++) {
-      final ch = text[i];
-
-      if (escape) {
-        escape = false;
-        continue;
-      }
-
-      if (quote != null) {
-        if (ch == '\\') {
-          escape = true;
-          continue;
-        }
-        if (ch == quote) {
-          quote = null;
-        }
-        continue;
-      }
-
-      if (ch == '"' || ch == '\'') {
-        quote = ch;
-        continue;
-      }
-
-      if (ch == '(') {
-        depth++;
-        continue;
-      }
-      if (ch == ')') {
-        depth--;
-        if (depth == 0) {
-          return i;
-        }
-      }
-    }
-
-    return -1;
-  }
-
-  ToolCall? _parsePromptBlockFallbackToolCall(
-    String text, {
-    required int callIndex,
-  }) {
-    final lines = const LineSplitter().convert(text);
-    final buffers = <String, StringBuffer>{
-      'prompt': StringBuffer(),
-      'negative_prompt': StringBuffer(),
-      'size': StringBuffer(),
-    };
-
-    String? current;
-    final marker = RegExp(
-      r'^\s*\[(prompt|negative_prompt|size)\]\s*$',
-      caseSensitive: false,
-    );
-
-    for (final line in lines) {
-      final m = marker.firstMatch(line);
-      if (m != null) {
-        current = m.group(1)!.toLowerCase();
-        continue;
-      }
-      if (current == null) continue;
-      buffers[current]!.writeln(line);
-    }
-
-    final prompt = buffers['prompt']!.toString().trim();
-    if (prompt.isEmpty) return null;
-
-    final args = <String, dynamic>{'prompt': prompt};
-    final negative = buffers['negative_prompt']!.toString().trim();
-    if (negative.isNotEmpty) {
-      args['negative_prompt'] = negative;
-    }
-    final sizeRaw = buffers['size']!.toString().trim();
-    if (sizeRaw.isNotEmpty) {
-      args['size'] = sizeRaw;
-    }
-
-    return ToolCall(
-      id: 'fallback_prompt_$callIndex',
-      name: 'draw_image',
-      arguments: _normalizeToolArguments('draw_image', args),
-    );
-  }
-
-  ToolCall? _parseFallbackFunctionCall(String text, {required int callIndex}) {
-    final cleaned = text
-        .replaceAll(RegExp(r'^```[a-zA-Z0-9_-]*\s*'), '')
-        .replaceAll(RegExp(r'\s*```$'), '')
-        .trim();
-    final match = RegExp(
-      r'^([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([\s\S]*)\)$',
-    ).firstMatch(cleaned);
-    if (match == null) return null;
-
-    final name = match.group(1)!.trim();
-    final argsBody = match.group(2)?.trim() ?? '';
-    final arguments = <String, dynamic>{};
-
-    if (argsBody.isNotEmpty) {
-      final parts = _splitTopLevelArguments(argsBody);
-      for (final part in parts) {
-        final eqIndex = part.indexOf('=');
-        if (eqIndex <= 0) continue;
-        final key = part.substring(0, eqIndex).trim();
-        if (key.isEmpty) continue;
-        final rawValue = part.substring(eqIndex + 1).trim();
-        arguments[key] = _parseToolArgumentValue(rawValue);
-      }
-    }
-
-    return ToolCall(
-      id: 'fallback_call_$callIndex',
-      name: name,
-      arguments: _normalizeToolArguments(name, arguments),
-    );
-  }
-
-  List<String> _splitTopLevelArguments(String input) {
-    final parts = <String>[];
-    var current = StringBuffer();
-    String? quote;
-    var escape = false;
-    var depth = 0;
-
-    for (final rune in input.runes) {
-      final ch = String.fromCharCode(rune);
-
-      if (escape) {
-        current.write(ch);
-        escape = false;
-        continue;
-      }
-
-      if (quote != null) {
-        if (ch == '\\') {
-          current.write(ch);
-          escape = true;
-          continue;
-        }
-        current.write(ch);
-        if (ch == quote) {
-          quote = null;
-        }
-        continue;
-      }
-
-      if (ch == '"' || ch == '\'') {
-        quote = ch;
-        current.write(ch);
-        continue;
-      }
-
-      if (ch == '(' || ch == '[' || ch == '{') {
-        depth += 1;
-        current.write(ch);
-        continue;
-      }
-      if (ch == ')' || ch == ']' || ch == '}') {
-        if (depth > 0) depth -= 1;
-        current.write(ch);
-        continue;
-      }
-
-      if (ch == ',' && depth == 0) {
-        final segment = current.toString().trim();
-        if (segment.isNotEmpty) {
-          parts.add(segment);
-        }
-        current = StringBuffer();
-        continue;
-      }
-
-      current.write(ch);
-    }
-
-    final tail = current.toString().trim();
-    if (tail.isNotEmpty) {
-      parts.add(tail);
-    }
-    return parts;
-  }
-
-  dynamic _parseToolArgumentValue(String raw) {
-    final value = raw.trim();
-    if (value.isEmpty) return '';
-
-    if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) {
-      try {
-        return jsonDecode(value);
-      } catch (_) {
-        return value
-            .substring(1, value.length - 1)
-            .replaceAll(r'\"', '"')
-            .replaceAll(r'\\', '\\');
-      }
-    }
-
-    if (value.startsWith('\'') && value.endsWith('\'') && value.length >= 2) {
-      return value
-          .substring(1, value.length - 1)
-          .replaceAll(r"\'", "'")
-          .replaceAll(r'\\', '\\');
-    }
-
-    if (value == 'true') return true;
-    if (value == 'false') return false;
-
-    final intValue = int.tryParse(value);
-    if (intValue != null) return intValue;
-
-    final doubleValue = double.tryParse(value);
-    if (doubleValue != null) return doubleValue;
-
-    return value;
-  }
-
-  Map<String, dynamic> _normalizeToolArguments(
-    String toolName,
-    Map<String, dynamic> arguments,
-  ) {
-    final normalized = Map<String, dynamic>.from(arguments);
-    if (toolName != 'draw_image') {
-      return normalized;
-    }
-
-    final sizeRaw = normalized['size']?.toString().trim();
-    final widthMissing = normalized['width'] == null;
-    final heightMissing = normalized['height'] == null;
-    if ((widthMissing || heightMissing) &&
-        sizeRaw != null &&
-        sizeRaw.isNotEmpty) {
-      final parsed = _parseImageSize(sizeRaw);
-      if (parsed != null) {
-        normalized['width'] ??= parsed[0];
-        normalized['height'] ??= parsed[1];
-      }
-    }
-
-    final prompt = normalized['prompt']?.toString().trim() ?? '';
-    if (prompt.isNotEmpty) {
-      normalized['prompt'] = prompt;
-    }
-    final negative = normalized['negative_prompt']?.toString().trim() ?? '';
-    if (negative.isNotEmpty) {
-      normalized['negative_prompt'] = negative;
-    }
-
-    return normalized;
-  }
-
-  List<int>? _parseImageSize(String raw) {
-    final match =
-        RegExp(r'^\s*(\d{2,5})\s*[xX]\s*(\d{2,5})\s*$').firstMatch(raw);
-    if (match == null) return null;
-    final width = int.tryParse(match.group(1)!);
-    final height = int.tryParse(match.group(2)!);
-    if (width == null || height == null) return null;
-    return [width, height];
-  }
+  Map<String, dynamic> _toStringDynamicMap(Map raw) =>
+      _fallbackParser.toStringDynamicMap(raw);
 
   String _buildToolCallSignature(ToolCall call) {
     final keys = call.arguments.keys.toList()..sort();
@@ -1838,12 +1115,30 @@ class ChatSendService {
     cleaned =
         cleaned.replaceAll(RegExp(r'</?think>', caseSensitive: false), '');
 
-    // 将伪造的图片占位（携带 prompt）收敛为标准占位。
+    // 将伪造的图片占位（携带 prompt）收敛为标准占位符
     cleaned = cleaned.replaceAllMapped(
       RegExp(r'\[(图片|image)\s*:\s*[^\]]*?\]', caseSensitive: false),
       (_) => '[图片]',
     );
 
+    return cleaned.trim();
+  }
+
+  String _stripStandaloneImagePlaceholders(String text) {
+    var cleaned = text;
+    if (cleaned.trim().isEmpty) return cleaned.trim();
+
+    // 仅删除独立占一行的图片占位符，避免与已投递的图片消息重复展示。
+    cleaned = cleaned.replaceAll(
+      RegExp(
+        r'^[ \t]*\[(?:图片|image)(?:\s*:[^\]]*)?\][ \t]*(?:\r?\n)?',
+        caseSensitive: false,
+        multiLine: true,
+      ),
+      '',
+    );
+
+    cleaned = cleaned.replaceAll(RegExp(r'\n{3,}'), '\n\n');
     return cleaned.trim();
   }
 
@@ -1919,11 +1214,11 @@ class ChatSendService {
     switch (provider) {
       case 'claude':
       case 'anthropic':
-        // 注释已清理乱码
+        // (注释已丢失)
         return rich.rawResponse ?? {'content': []};
       case 'gemini':
       case 'google':
-        // 注释已清理乱码
+        // (注释已丢失)
         final candidates = (rich.rawResponse?['candidates'] as List?) ?? [];
         if (candidates.isNotEmpty) {
           final first = candidates.first as Map<String, dynamic>;
@@ -1933,7 +1228,7 @@ class ChatSendService {
           'content': {'parts': []}
         };
       default:
-        // 注释已清理乱码
+        // (注释已丢失)
         final choices = (rich.rawResponse?['choices'] as List?) ?? [];
         if (choices.isNotEmpty) {
           final first = choices.first as Map<String, dynamic>;
@@ -1950,10 +1245,10 @@ class ChatSendService {
     required ApiCallResult apiResult,
     required AppSettings settings,
   }) {
-    // 注释已清理乱码
-    // 注释已清理乱码
+    // (注释已丢失)
+    // (注释已丢失)
     if (apiResult.hasToolAudio) {
-      AppLogger.info('ChatSendService', '使用工具调用音频（路径A）', metadata: {
+      AppLogger.info('ChatSendService', 'Use tool audio output', metadata: {
         'audioCount': apiResult.toolAudioResults.length,
       });
       final audioMessages = <Message>[];
@@ -1970,7 +1265,7 @@ class ChatSendService {
           status: 'sent',
         ));
       }
-      // 注释已清理乱码
+      // (注释已丢失)
       final textContent = apiResult.processedText.trim();
       if (textContent.isNotEmpty) {
         audioMessages.add(Message(
@@ -1988,8 +1283,8 @@ class ChatSendService {
       );
     }
 
-    // 注释已清理乱码
-    // 注释已清理乱码
+    // (注释已丢失)
+    // (注释已丢失)
     return chatMessageProcessor.buildAssistantMessages(
       replyText: apiResult.replyText,
       processedText: apiResult.processedText,
@@ -1998,7 +1293,7 @@ class ChatSendService {
     );
   }
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   Future<void> deliverAssistantMessages({
     required String convId,
     required String userMsgId,
@@ -2006,7 +1301,7 @@ class ChatSendService {
     required String lastMessagePreview,
     TraceLogger? trace,
   }) async {
-    final forwardTrace = trace?.startChild('向用户转发消息');
+    final forwardTrace = trace?.startChild('deliver message to user');
     forwardTrace?.info('消息分段完成', metadata: {
       'chunksCount': messages.length,
       'firstChunk': messages.isNotEmpty ? messages.first.displayText : '',
@@ -2039,7 +1334,7 @@ class ChatSendService {
     forwardTrace?.end(additionalMessage: '转发成功');
   }
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   Future<void> markUserMessageFailed({
     required String convId,
     required String userMsgId,
@@ -2061,7 +1356,7 @@ class ChatSendService {
     );
   }
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   Future<String?> readImageAsBase64(String imagePath) async {
     try {
       final bytes = await File(imagePath).readAsBytes();
@@ -2096,100 +1391,6 @@ class ChatSendService {
     }
     return contextWindow.sublist(contextWindow.length - limit);
   }
-
-  /// 注释已清理乱码
-  Map<String, dynamic> _buildToolPrefs(
-      AppSettings settings, McpConfigDto? config) {
-    final prefs = <String, dynamic>{
-      'tts_enabled': settings.ttsEnabled,
-    };
-    if (config == null || !config.enabled || config.enabledTools.isEmpty) {
-      prefs['auto_tools_enabled'] = false;
-      return prefs;
-    }
-    prefs['auto_tools_enabled'] = true;
-    prefs['mcp_enabled_tools'] = config.enabledTools;
-    if (config.delegate.enabled) {
-      final delegate = config.delegate;
-      final delegateMap = <String, dynamic>{};
-      if (delegate.provider != null && delegate.provider!.isNotEmpty) {
-        delegateMap['provider'] = delegate.provider;
-      }
-      if (delegate.model != null && delegate.model!.isNotEmpty) {
-        delegateMap['model'] = delegate.model;
-      }
-      if (delegate.apiBase != null && delegate.apiBase!.isNotEmpty) {
-        delegateMap['api_base'] = delegate.apiBase;
-      }
-      if (delegate.prompt.isNotEmpty) {
-        delegateMap['prompt'] = delegate.prompt;
-      }
-      if (delegateMap.isNotEmpty) {
-        prefs['mcp_delegate'] = delegateMap;
-      }
-    }
-    return prefs;
-  }
-
-  /// 获取 MCP 配置
-  Future<McpConfigDto?> _getMcpConfig() async {
-    final now = DateTime.now();
-    if (_cachedMcpFetchedAt != null &&
-        now.difference(_cachedMcpFetchedAt!) < McpApi.mobileConfigCacheTtl) {
-      return _cachedMcpConfig;
-    }
-    try {
-      final res = await _mcpApi.fetchConfig();
-      _cachedMcpConfig = res.config;
-      _cachedMcpFetchedAt = DateTime.now();
-      return _cachedMcpConfig;
-    } catch (_) {
-      _cachedMcpConfig = null;
-      // Negative cache to avoid repeated retries in weak mobile networks.
-      _cachedMcpFetchedAt = DateTime.now();
-      return null;
-    }
-  }
-}
-
-/// 注释已清理乱码
-class ApiConfig {
-  final AppSettings settings;
-  final String modelFullId;
-  final String providerApiBase;
-  final String? providerApiKey;
-  final Map<String, dynamic> customConfig;
-  final Map<String, dynamic> toolPrefs;
-  final List<Map<String, dynamic>> messages;
-  final List<Map<String, dynamic>>? tools; // 原生 Tool Calling 工具定义
-  final Set<String>? enabledPluginIds; // 注释已清理乱码
-  /// 注释已清理乱码
-  final double? modelTemperature;
-
-  /// 模型级别 Top P 参数
-  final double? modelTopP;
-
-  /// 注释已清理乱码
-  final int? modelContextMessageLimit;
-
-  const ApiConfig({
-    required this.settings,
-    required this.modelFullId,
-    required this.providerApiBase,
-    this.providerApiKey,
-    required this.customConfig,
-    required this.toolPrefs,
-    required this.messages,
-    this.tools,
-    this.enabledPluginIds,
-    this.modelTemperature,
-    this.modelTopP,
-    this.modelContextMessageLimit,
-  });
-
-  /// 注释已清理乱码
-  /// 优先级：模型设置 > 全局设置
-  double get effectiveTemperature => modelTemperature ?? settings.temperature;
 }
 
 /// Provider

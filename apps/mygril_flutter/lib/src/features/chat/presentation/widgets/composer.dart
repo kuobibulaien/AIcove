@@ -1,10 +1,10 @@
-/// 消息输入组件（使用 chat_bottom_container 实现平滑键盘/面板切换）
+﻿/// 消息输入组件（使�?chat_bottom_container 实现平滑键盘/面板切换�?
 ///
-/// 更新记录：
+/// 更新记录�?
 /// - 2025-12-06: 接入皮肤系统
 /// - 2025-12-31: 拆分功能菜单和模型选择器到独立文件
 /// - 2025-01-xx: 使用 chat_bottom_container 重构键盘/面板切换逻辑
-/// - 2025-01-15: 拆分附件预览、更多面板、附件选择服务到独立文件
+/// - 2025-01-15: 拆分附件预览、更多面板、附件选择服务到独立文�?
 library;
 
 import 'dart:async';
@@ -29,7 +29,7 @@ import '../../../settings/app_settings.dart';
 import '../../chat_actions.dart';
 import 'composer_more_panel.dart';
 
-/// 自定义底部面板类型
+/// 自定义底部面板类�?
 enum ComposerPanelType { none, keyboard, more }
 
 /// 消息输入组件
@@ -38,12 +38,14 @@ class Composer extends ConsumerStatefulWidget {
   final ValueChanged<String> onSend;
   final void Function(String imagePath, {String? text})? onImageSelected;
   final ValueChanged<String>? onFileSelected;
+  final ValueChanged<double>? onHeightChanged;
   const Composer({
     super.key,
     required this.onSend,
     this.disabled = false,
     this.onImageSelected,
     this.onFileSelected,
+    this.onHeightChanged,
   });
 
   @override
@@ -53,10 +55,11 @@ class Composer extends ConsumerStatefulWidget {
 class _ComposerState extends ConsumerState<Composer> {
   static const Duration _kKeyboardInterruptGuard = Duration(milliseconds: 280);
 
+  final _rootKey = GlobalKey();
   final _ctrl = TextEditingController();
   final _inputFocus = FocusNode();
 
-  // chat_bottom_container 控制器
+  // chat_bottom_container 控制�?
   final _panelController =
       ChatBottomPanelContainerController<ComposerPanelType>();
   ComposerPanelType _currentPanelType = ComposerPanelType.none;
@@ -72,21 +75,34 @@ class _ComposerState extends ConsumerState<Composer> {
   bool _isProcessingPanelIntent = false;
   bool _isKeyboardGuardActive = false;
   Timer? _keyboardGuardTimer;
+  double _lastReportedHeight = -1;
 
-  // 选中的附件
+  // 选中的附�?
   SelectedAttachment? _selectedAttachment;
 
   @override
   void initState() {
     super.initState();
-    // 桌面端焦点粘性保护：输入法（如语音输入）可能短暂抢走焦点，自动恢复
+    // 桌面端焦点粘性保护：输入法（如语音输入）可能短暂抢走焦点，自动恢�?
     if (!_supportsSoftKeyboardPanel) {
       _inputFocus.addListener(_onDesktopFocusChange);
     }
     // 延迟检查是否有待编辑的文本
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkEditingText();
+      _reportHeightIfNeeded();
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant Composer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.onHeightChanged != oldWidget.onHeightChanged) {
+      _lastReportedHeight = -1;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _reportHeightIfNeeded();
+      });
+    }
   }
 
   /// 桌面端焦点变化监听：检测被动失焦并自动恢复
@@ -98,7 +114,7 @@ class _ComposerState extends ConsumerState<Composer> {
     }
     // 焦点丢失
     if (_intentionalUnfocus) {
-      // 是我们主动调用 unfocus() 的，不恢复
+      // 是我们主动调�?unfocus() 的，不恢�?
       _intentionalUnfocus = false;
       return;
     }
@@ -106,21 +122,21 @@ class _ComposerState extends ConsumerState<Composer> {
     Future.delayed(const Duration(milliseconds: 100), () {
       if (!mounted || widget.disabled) return;
       if (_inputFocus.hasFocus) return; // 已经自行恢复
-      if (_intentionalUnfocus) return; // 期间有主动失焦操作
+      if (_intentionalUnfocus) return; // 期间有主动失焦操�?
 
-      // 更多面板正在显示（或即将显示）时，不恢复焦点。
-      // 否则 chat_bottom_container 的内部焦点监听器会把 requestFocus 解读为
-      // "用户要打字了"，自动切到 keyboard 模式并关闭面板。
+      // 更多面板正在显示（或即将显示）时，不恢复焦点�?
+      // 否则 chat_bottom_container 的内部焦点监听器会把 requestFocus 解读�?
+      // "用户要打字了"，自动切�?keyboard 模式并关闭面板�?
       if (_desiredPanelType == ComposerPanelType.more ||
           _currentPanelType == ComposerPanelType.more) {
         return;
       }
 
-      // 如果当前路由不在最上层（有弹窗/底部弹窗/新页面盖在上面），不抢焦点
+      // 如果当前路由不在最上层（有弹窗/底部弹窗/新页面盖在上面），不抢焦�?
       final route = ModalRoute.of(context);
       if (route != null && !route.isCurrent) return;
 
-      // 如果焦点移到了另一个文本输入框，说明是用户主动点击，不抢焦点
+      // 如果焦点移到了另一个文本输入框，说明是用户主动点击，不抢焦�?
       final primaryFocus = FocusManager.instance.primaryFocus;
       if (primaryFocus != null && primaryFocus.context != null) {
         final editableState =
@@ -132,7 +148,7 @@ class _ComposerState extends ConsumerState<Composer> {
     });
   }
 
-  /// 检查是否有待编辑的文本，如果有则填充到输入框
+  /// 检查是否有待编辑的文本，如果有则填充到输入�?
   void _checkEditingText() {
     final editingText = ref.read(editingTextProvider);
     if (editingText != null && editingText.isNotEmpty) {
@@ -140,10 +156,25 @@ class _ComposerState extends ConsumerState<Composer> {
       _ctrl.selection = TextSelection.fromPosition(
         TextPosition(offset: editingText.length),
       );
-      // 清除编辑文本状态
+      // 清除编辑文本状�?
       ref.read(editingTextProvider.notifier).state = null;
       _showKeyboardWithPreAnimation();
     }
+  }
+
+  void _reportHeightIfNeeded() {
+    final onHeightChanged = widget.onHeightChanged;
+    if (!mounted || onHeightChanged == null) return;
+
+    final renderObject = _rootKey.currentContext?.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) return;
+
+    final height = renderObject.size.height;
+    if (!height.isFinite || height < 0) return;
+    if ((height - _lastReportedHeight).abs() < 0.5) return;
+
+    _lastReportedHeight = height;
+    onHeightChanged(height);
   }
 
   @override
@@ -156,8 +187,11 @@ class _ComposerState extends ConsumerState<Composer> {
   }
 
   double _resolvedKeyboardPanelHeight(BuildContext context) {
+    final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
     final nativeHeight = _panelController.keyboardHeight;
-    final resolved = nativeHeight > 0 ? nativeHeight : _keyboardHeight;
+    final resolved = keyboardInset > 0
+        ? keyboardInset
+        : (nativeHeight > 0 ? nativeHeight : _keyboardHeight);
     final safeAreaBottom = _panelController.safeAreaBottom;
     final minHeight = safeAreaBottom > 0 ? safeAreaBottom : 0.0;
     return resolved >= minHeight ? resolved : minHeight;
@@ -305,7 +339,7 @@ class _ComposerState extends ConsumerState<Composer> {
     }
 
     // 关键修复：从完全收起状态点击输入框时，不再执行 hide->show 预动画，
-    // 避免和系统因点按自动唤起产生 show/hide 竞争导致抖动。
+    // 避免和系统因点按自动唤起产生 show/hide 竞争导致抖动�?
     final shouldUsePreAnimation =
         preferPreAnimation && _currentPanelType != ComposerPanelType.none;
     if (!shouldUsePreAnimation) {
@@ -399,7 +433,6 @@ class _ComposerState extends ConsumerState<Composer> {
 
   @override
   Widget build(BuildContext context) {
-    // 监听编辑文本变化
     ref.listen<String?>(editingTextProvider, (previous, next) {
       if (next != null && next.isNotEmpty) {
         _ctrl.text = next;
@@ -411,28 +444,46 @@ class _ComposerState extends ConsumerState<Composer> {
       }
     });
 
-    return TextFieldTapRegion(
-      child: _buildComposerGlassLayer(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 引用消息预览
-            _buildQuotedMessagePreview(),
-            if (_selectedAttachment?.type == AttachmentType.image)
-              ImageAttachmentPreview(
-                imagePath: _selectedAttachment!.path,
-                onRemove: () => setState(() => _selectedAttachment = null),
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _reportHeightIfNeeded();
+    });
+
+    return NotificationListener<SizeChangedLayoutNotification>(
+      onNotification: (_) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _reportHeightIfNeeded();
+        });
+        return false;
+      },
+      child: SizeChangedLayoutNotifier(
+        child: Container(
+          key: _rootKey,
+          child: TextFieldTapRegion(
+            child: _buildComposerGlassLayer(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildQuotedMessagePreview(),
+                  if (_selectedAttachment?.type == AttachmentType.image)
+                    ImageAttachmentPreview(
+                      imagePath: _selectedAttachment!.path,
+                      onRemove: () =>
+                          setState(() => _selectedAttachment = null),
+                    ),
+                  if (_selectedAttachment?.type == AttachmentType.file)
+                    FileAttachmentPreview(
+                      filePath: _selectedAttachment!.path,
+                      fileName: _selectedAttachment!.name,
+                      fileSizeBytes: _selectedAttachment!.sizeBytes,
+                      onRemove: () =>
+                          setState(() => _selectedAttachment = null),
+                    ),
+                  _buildInputBar(),
+                  _buildPanelContainer(),
+                ],
               ),
-            if (_selectedAttachment?.type == AttachmentType.file)
-              FileAttachmentPreview(
-                filePath: _selectedAttachment!.path,
-                fileName: _selectedAttachment!.name,
-                fileSizeBytes: _selectedAttachment!.sizeBytes,
-                onRemove: () => setState(() => _selectedAttachment = null),
-              ),
-            _buildInputBar(),
-            _buildPanelContainer(),
-          ],
+            ),
+          ),
         ),
       ),
     );
@@ -555,14 +606,13 @@ class _ComposerState extends ConsumerState<Composer> {
     return ChatBottomPanelContainer<ComposerPanelType>(
       controller: _panelController,
       inputFocusNode: _inputFocus,
-      // 自定义面板容器动画：统一“键盘/更多面板”的展开回收节奏。
+      // 自定义面板容器动画：统一“键�?更多面板”的展开回收节奏�?
       customPanelContainer: (panelType, data) {
         final Widget panel;
         if (panelType == ChatBottomPanelType.keyboard) {
           if (_supportsSoftKeyboardPanel) {
-            final nativeHeight = _panelController.keyboardHeight;
-            if (nativeHeight > 0) _keyboardHeight = nativeHeight;
             final height = _resolvedKeyboardPanelHeight(context);
+            if (height > 0) _keyboardHeight = height;
             panel = SizedBox(width: double.infinity, height: height);
           } else {
             panel = const SizedBox.shrink();
@@ -648,19 +698,22 @@ class _ComposerState extends ConsumerState<Composer> {
       },
       changeKeyboardPanelHeight: (height) {
         // 某些机型/输入法：`MediaQuery.viewInsets.bottom` 在键盘收起时会“先归零再慢慢动画”，
-        // 导致输入栏先掉下去被键盘盖住。这里用插件回调的原生键盘高度兜底，保证输入栏始终贴着键盘。
+        // 导致输入栏先掉下去被键盘盖住。这里用插件回调的原生键盘高度兜底，保证输入栏始终贴着键盘�?
         final nativeHeight = _panelController.keyboardHeight;
-        final resolved = nativeHeight > 0 ? nativeHeight : height;
+        final resolved = height > 0
+            ? height
+            : (nativeHeight > 0 ? nativeHeight : _keyboardHeight);
         if (resolved > 0) _keyboardHeight = resolved;
-        return resolved;
+        final safeAreaBottom = _panelController.safeAreaBottom;
+        return resolved >= safeAreaBottom ? resolved : safeAreaBottom;
       },
       panelBgColor: Colors.transparent,
     );
   }
 
   void _handlePanelAction(ComposerAction action) {
-    // PC端（桌面端）：先收起面板，然后直接执行操作
-    // 移动端：模型选择器需要先收面板再弹窗，其余操作直接执行
+    // PC端（桌面端）：先收起面板，然后直接执行操�?
+    // 移动端：模型选择器需要先收面板再弹窗，其余操作直接执�?
     switch (action) {
       case ComposerAction.model:
         _openModelPickerFromMorePanel();
@@ -674,10 +727,10 @@ class _ComposerState extends ConsumerState<Composer> {
   }
 
   Future<void> _openModelPickerFromMorePanel() async {
-    // PC端（桌面端）：直接弹出模型选择器，不先收面板
+    // PC端（桌面端）：直接弹出模型选择器，不先收面�?
     // 原因：PC端的焦点恢复逻辑（_onDesktopFocusChange）和 chat_bottom_container
-    // 的 inputFocusNodeListener 在面板收起后会产生竞争，导致 showMoeBottomSheet
-    // 弹出后立即被关闭。在PC端直接弹窗可以避免这个问题。
+    // �?inputFocusNodeListener 在面板收起后会产生竞争，导致 showMoeBottomSheet
+    // 弹出后立即被关闭。在PC端直接弹窗可以避免这个问题�?
     if (!_supportsSoftKeyboardPanel) {
       _requestPanelIntent(ComposerPanelType.none);
       // 不等待动画，直接弹出（面板收起是瞬间的，因为 PC 端没有键盘面板高度过渡）
@@ -685,7 +738,7 @@ class _ComposerState extends ConsumerState<Composer> {
       await _openModelPicker();
       return;
     }
-    // 移动端：原有逻辑，先收面板等动画再弹窗
+    // 移动端：原有逻辑，先收面板等动画再弹�?
     _requestPanelIntent(ComposerPanelType.none);
     await Future<void>.delayed(kAnimFast);
     if (!mounted) return;
@@ -770,8 +823,17 @@ class _ComposerState extends ConsumerState<Composer> {
                   final modelId = loadedSettings.getRawModelId(model);
                   final displayName = loadedSettings.getModelDisplayName(model);
                   final providerId = loadedSettings.getModelProviderId(model);
+                  // 优先显示供应商的显示名称，而非技�?ID
+                  final providerLabel = providerId != null
+                      ? loadedSettings.providers
+                              .where((p) => p.id == providerId)
+                              .map((p) => p.displayName ?? p.id)
+                              .firstOrNull ??
+                          providerId
+                      : null;
                   final subtitleParts = <String>[
-                    if (providerId != null && providerId.isNotEmpty) providerId,
+                    if (providerLabel != null && providerLabel.isNotEmpty)
+                      providerLabel,
                     if (displayName != modelId) modelId,
                   ];
                   return MoeListTile(
@@ -851,7 +913,7 @@ class _ComposerState extends ConsumerState<Composer> {
         await showMeoTalkAlert(
           context: context,
           title: '暂不支持该文件',
-          message: '目前仅支持 txt/md/json/csv 等纯文本文件；该格式将无法让 AI 正确读取。',
+          message: '目前仅支持 txt/md/json/csv 等纯文本文件；该格式无法让 AI 正确读取。',
         );
       case AttachmentPickError(:final message):
         MoeToast.error(context, message);

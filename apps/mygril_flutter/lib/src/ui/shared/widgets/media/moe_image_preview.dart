@@ -5,17 +5,22 @@
 /// - 双指缩放、双击放大
 /// - 垂直滑动关闭
 /// - 透明背景淡入效果
+/// - 左右滑动切换上/下一张图片（画廊模式）
 ///
 /// 使用示例：
 /// ```dart
-/// // 缩略图
-/// GestureDetector(
-///   onTap: () => MoeImagePreview.show(context, imageProvider, heroTag: 'image_1'),
-///   child: Hero(
-///     tag: 'image_1',
-///     child: Image(...),
-///   ),
-/// )
+/// // 单张预览
+/// MoeImagePreview.show(context, imageProvider, heroTag: 'image_1');
+///
+/// // 画廊模式（左右滑动切换）
+/// MoeImagePreview.showGallery(
+///   context,
+///   images: [
+///     ImagePreviewItem(provider: img1, heroTag: 'image_1'),
+///     ImagePreviewItem(provider: img2, heroTag: 'image_2'),
+///   ],
+///   initialIndex: 0,
+/// );
 /// ```
 library;
 
@@ -24,13 +29,21 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:photo_view/photo_view.dart';
 
+/// 画廊模式中每张图片的数据
+class ImagePreviewItem {
+  final ImageProvider provider;
+  final String heroTag;
+
+  const ImagePreviewItem({required this.provider, required this.heroTag});
+}
+
 /// 图片全屏预览组件
 class MoeImagePreview extends StatefulWidget {
-  /// 图片提供者
-  final ImageProvider imageProvider;
+  /// 图片列表（画廊模式）
+  final List<ImagePreviewItem> images;
 
-  /// Hero 动画标签（需与缩略图的 Hero tag 一致）
-  final String heroTag;
+  /// 初始显示的图片索引
+  final int initialIndex;
 
   /// 背景颜色（null 时自动根据主题适配：浅色模式用深灰，深色模式用纯黑）
   final Color? backgroundColor;
@@ -46,8 +59,8 @@ class MoeImagePreview extends StatefulWidget {
 
   const MoeImagePreview({
     super.key,
-    required this.imageProvider,
-    required this.heroTag,
+    required this.images,
+    this.initialIndex = 0,
     this.backgroundColor,
     this.showCloseButton = true,
     this.minScale = 0.5,
@@ -55,20 +68,12 @@ class MoeImagePreview extends StatefulWidget {
   });
 
   /// 根据主题获取默认背景色
-  /// - 浅色模式：深灰色 (#1A1A1A)，避免过于刺眼的纯黑
-  /// - 深色模式：纯黑 (#000000)，与系统深色一致
   static Color getAdaptiveBackgroundColor(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return isDark ? Colors.black : const Color(0xFF1A1A1A);
   }
 
-  /// 显示图片预览（静态方法，方便调用）
-  ///
-  /// [context] 上下文
-  /// [imageProvider] 图片提供者
-  /// [heroTag] Hero 动画标签
-  /// [backgroundColor] 背景颜色（null 时自动适配主题）
-  /// [showCloseButton] 是否显示关闭按钮
+  /// 显示单张图片预览（保持向后兼容）
   static Future<void> show(
     BuildContext context,
     ImageProvider imageProvider, {
@@ -77,12 +82,33 @@ class MoeImagePreview extends StatefulWidget {
     bool showCloseButton = true,
     double minScale = 0.5,
     double maxScale = 4.0,
+  }) {
+    return showGallery(
+      context,
+      images: [ImagePreviewItem(provider: imageProvider, heroTag: heroTag)],
+      initialIndex: 0,
+      backgroundColor: backgroundColor,
+      showCloseButton: showCloseButton,
+      minScale: minScale,
+      maxScale: maxScale,
+    );
+  }
+
+  /// 显示画廊模式预览（支持左右滑动切换图片）
+  static Future<void> showGallery(
+    BuildContext context, {
+    required List<ImagePreviewItem> images,
+    int initialIndex = 0,
+    Color? backgroundColor,
+    bool showCloseButton = true,
+    double minScale = 0.5,
+    double maxScale = 4.0,
   }) async {
-    // 在 push 之前获取背景色（此时 context 还有效）
+    if (images.isEmpty) return;
+    final safeIndex = initialIndex.clamp(0, images.length - 1);
     final bgColor = backgroundColor ?? getAdaptiveBackgroundColor(context);
 
-    // 注意：系统输入法(IME)永远在应用之上，Flutter 不能把预览绘制到键盘上层。
-    // 为了保证“图片预览覆盖全屏”，这里会临时隐藏键盘，并在关闭预览后恢复（不改变用户输入内容）。
+    // 临时隐藏键盘
     final focus = FocusManager.instance.primaryFocus;
     final shouldRestoreKeyboard = MediaQuery.viewInsetsOf(context).bottom > 0;
     if (shouldRestoreKeyboard) {
@@ -91,8 +117,8 @@ class MoeImagePreview extends StatefulWidget {
 
     await Navigator.of(context, rootNavigator: true).push(
       _MoeImagePreviewRoute(
-        imageProvider: imageProvider,
-        heroTag: heroTag,
+        images: images,
+        initialIndex: safeIndex,
         backgroundColor: bgColor,
         showCloseButton: showCloseButton,
         minScale: minScale,
@@ -121,8 +147,12 @@ class _MoeImagePreviewState extends State<MoeImagePreview>
   bool _isDragging = false;
   PhotoViewScaleState _scaleState = PhotoViewScaleState.initial;
 
-  // 多指触控追踪：当有 >=2 个手指时禁用垂直拖动，让 PhotoView 处理缩放
+  // 多指触控追踪
   int _pointerCount = 0;
+
+  // 当前页码
+  late int _currentIndex;
+  late PageController _pageController;
 
   // 关闭按钮动画控制器
   late final AnimationController _closeButtonController;
@@ -130,11 +160,12 @@ class _MoeImagePreviewState extends State<MoeImagePreview>
   @override
   void initState() {
     super.initState();
+    _currentIndex = widget.initialIndex;
+    _pageController = PageController(initialPage: widget.initialIndex);
     _closeButtonController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 200),
     );
-    // 延迟显示关闭按钮
     Future.delayed(const Duration(milliseconds: 300), () {
       if (mounted) _closeButtonController.forward();
     });
@@ -142,6 +173,7 @@ class _MoeImagePreviewState extends State<MoeImagePreview>
 
   @override
   void dispose() {
+    _pageController.dispose();
     _closeButtonController.dispose();
     super.dispose();
   }
@@ -167,8 +199,11 @@ class _MoeImagePreviewState extends State<MoeImagePreview>
     return translation * scale;
   }
 
+  /// 是否允许 PageView 左右滑动（仅在未缩放、未拖动时允许）
+  bool get _canSwipePage =>
+      _scaleState == PhotoViewScaleState.initial && !_isDragging;
+
   void _onVerticalDragStart(DragStartDetails details) {
-    // 多指触控时不启用垂直拖动，让 PhotoView 处理双指缩放
     if (_scaleState != PhotoViewScaleState.initial || _pointerCount > 1) return;
     setState(() {
       _isDragging = true;
@@ -178,7 +213,6 @@ class _MoeImagePreviewState extends State<MoeImagePreview>
 
   void _onVerticalDragUpdate(DragUpdateDetails details) {
     if (!_isDragging) return;
-    // 拖动过程中出现多指时，取消拖动
     if (_pointerCount > 1) {
       _cancelDrag();
       return;
@@ -194,7 +228,6 @@ class _MoeImagePreviewState extends State<MoeImagePreview>
       _isDragging = false;
     });
 
-    // 超过阈值则关闭，否则弹回
     if (_dragOffset.distance > 100) {
       Navigator.of(context).pop();
     } else {
@@ -205,7 +238,6 @@ class _MoeImagePreviewState extends State<MoeImagePreview>
     }
   }
 
-  /// 取消拖动（多指介入时调用）
   void _cancelDrag() {
     setState(() {
       _isDragging = false;
@@ -216,112 +248,168 @@ class _MoeImagePreviewState extends State<MoeImagePreview>
 
   @override
   Widget build(BuildContext context) {
-    // 获取实际背景色（支持自动适配主题）
-    final bgColor = widget.backgroundColor ?? MoeImagePreview.getAdaptiveBackgroundColor(context);
+    final bgColor =
+        widget.backgroundColor ?? MoeImagePreview.getAdaptiveBackgroundColor(context);
+    final images = widget.images;
+    final isSingle = images.length == 1;
 
-    // 使用 FocusScope 隔离焦点，防止图片预览抢走输入框焦点导致键盘收起
     return FocusScope(
       canRequestFocus: false,
       child: Scaffold(
         backgroundColor: Colors.transparent,
-        // 禁用 Scaffold 的 resizeToAvoidBottomInset，保持键盘状态
         resizeToAvoidBottomInset: false,
         body: Listener(
-          // 追踪触摸点数量，多指时让 PhotoView 处理缩放
           onPointerDown: (_) => _pointerCount++,
           onPointerUp: (_) => _pointerCount = max(_pointerCount - 1, 0),
           onPointerCancel: (_) => _pointerCount = max(_pointerCount - 1, 0),
           child: GestureDetector(
-          // 仅在单指且未缩放时响应垂直拖动
-          onVerticalDragStart:
-              _scaleState == PhotoViewScaleState.initial ? _onVerticalDragStart : null,
-          onVerticalDragUpdate:
-              _scaleState == PhotoViewScaleState.initial ? _onVerticalDragUpdate : null,
-          onVerticalDragEnd:
-              _scaleState == PhotoViewScaleState.initial ? _onVerticalDragEnd : null,
-          onTap: () => Navigator.of(context).pop(),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              // 背景层（响应透明度变化）
-              AnimatedContainer(
-                duration: _isDragging ? Duration.zero : const Duration(milliseconds: 200),
-                color: bgColor.withOpacity(_backgroundOpacity),
-              ),
+            onVerticalDragStart:
+                _scaleState == PhotoViewScaleState.initial ? _onVerticalDragStart : null,
+            onVerticalDragUpdate:
+                _scaleState == PhotoViewScaleState.initial ? _onVerticalDragUpdate : null,
+            onVerticalDragEnd:
+                _scaleState == PhotoViewScaleState.initial ? _onVerticalDragEnd : null,
+            onTap: () => Navigator.of(context).pop(),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                // 背景层
+                AnimatedContainer(
+                  duration: _isDragging ? Duration.zero : const Duration(milliseconds: 200),
+                  color: bgColor.withOpacity(_backgroundOpacity),
+                ),
 
-              // 图片层（响应拖动变换）
-              AnimatedContainer(
-                duration: _isDragging ? Duration.zero : const Duration(milliseconds: 200),
-                transform: _photoTransform,
-                transformAlignment: Alignment.center,
-                child: PhotoView(
-                  imageProvider: widget.imageProvider,
-                  heroAttributes: PhotoViewHeroAttributes(tag: widget.heroTag),
-                  backgroundDecoration: const BoxDecoration(color: Colors.transparent),
-                  minScale: PhotoViewComputedScale.contained * widget.minScale,
-                  maxScale: PhotoViewComputedScale.covered * widget.maxScale,
-                  initialScale: PhotoViewComputedScale.contained,
-                  scaleStateChangedCallback: (state) {
-                    setState(() {
-                      _scaleState = state;
-                    });
-                  },
-                  loadingBuilder: (context, event) => Center(
-                    child: CircularProgressIndicator(
-                      value: event == null
-                          ? null
-                          : event.cumulativeBytesLoaded /
-                              (event.expectedTotalBytes ?? 1),
-                    color: Colors.white54,
-                    strokeWidth: 2,
+                // 图片层（单张或画廊 PageView）
+                AnimatedContainer(
+                  duration: _isDragging ? Duration.zero : const Duration(milliseconds: 200),
+                  transform: _photoTransform,
+                  transformAlignment: Alignment.center,
+                  child: isSingle
+                      ? _buildPhotoView(images.first)
+                      : _buildGalleryPageView(images),
+                ),
+
+                // 关闭按钮
+                if (widget.showCloseButton)
+                  Positioned(
+                    top: MediaQuery.of(context).padding.top + 16,
+                    right: 16,
+                    child: FadeTransition(
+                      opacity: _closeButtonController,
+                      child: SlideTransition(
+                        position: Tween<Offset>(
+                          begin: const Offset(0, -0.5),
+                          end: Offset.zero,
+                        ).animate(CurvedAnimation(
+                          parent: _closeButtonController,
+                          curve: Curves.easeOut,
+                        )),
+                        child: _CloseButton(onTap: () => Navigator.of(context).pop()),
+                      ),
+                    ),
                   ),
-                ),
-                errorBuilder: (context, error, stackTrace) => const Center(
-                  child: Icon(Icons.broken_image, color: Colors.white54, size: 64),
-                ),
-              ),
+              ],
             ),
-
-            // 关闭按钮
-            if (widget.showCloseButton)
-              Positioned(
-                top: MediaQuery.of(context).padding.top + 16,
-                right: 16,
-                child: FadeTransition(
-                  opacity: _closeButtonController,
-                  child: SlideTransition(
-                    position: Tween<Offset>(
-                      begin: const Offset(0, -0.5),
-                      end: Offset.zero,
-                    ).animate(CurvedAnimation(
-                      parent: _closeButtonController,
-                      curve: Curves.easeOut,
-                    )),
-                    child: _CloseButton(onTap: () => Navigator.of(context).pop()),
-                  ),
-                ),
-              ),
-          ],
+          ),
         ),
       ),
+    );
+  }
+
+  /// 构建单张 PhotoView
+  Widget _buildPhotoView(ImagePreviewItem item) {
+    return PhotoView(
+      imageProvider: item.provider,
+      heroAttributes: PhotoViewHeroAttributes(tag: item.heroTag),
+      backgroundDecoration: const BoxDecoration(color: Colors.transparent),
+      minScale: PhotoViewComputedScale.contained * widget.minScale,
+      maxScale: PhotoViewComputedScale.covered * widget.maxScale,
+      initialScale: PhotoViewComputedScale.contained,
+      scaleStateChangedCallback: (state) {
+        setState(() {
+          _scaleState = state;
+        });
+      },
+      loadingBuilder: (context, event) => Center(
+        child: CircularProgressIndicator(
+          value: event == null
+              ? null
+              : event.cumulativeBytesLoaded / (event.expectedTotalBytes ?? 1),
+          color: Colors.white54,
+          strokeWidth: 2,
+        ),
       ),
+      errorBuilder: (context, error, stackTrace) => const Center(
+        child: Icon(Icons.broken_image, color: Colors.white54, size: 64),
       ),
+    );
+  }
+
+  /// 构建画廊 PageView（左右滑动切换图片）
+  Widget _buildGalleryPageView(List<ImagePreviewItem> images) {
+    return PageView.builder(
+      controller: _pageController,
+      itemCount: images.length,
+      // 图片放大后禁用左右滑动，避免和 PhotoView 平移手势冲突
+      physics: _canSwipePage
+          ? const BouncingScrollPhysics()
+          : const NeverScrollableScrollPhysics(),
+      onPageChanged: (index) {
+        setState(() {
+          _currentIndex = index;
+          // 切换页面时重置缩放状态
+          _scaleState = PhotoViewScaleState.initial;
+        });
+      },
+      itemBuilder: (context, index) {
+        final item = images[index];
+        // 只给当前页加 Hero，避免多个 Hero 同 tag 冲突
+        return PhotoView(
+          imageProvider: item.provider,
+          heroAttributes: index == widget.initialIndex
+              ? PhotoViewHeroAttributes(tag: item.heroTag)
+              : null,
+          backgroundDecoration: const BoxDecoration(color: Colors.transparent),
+          minScale: PhotoViewComputedScale.contained * widget.minScale,
+          maxScale: PhotoViewComputedScale.covered * widget.maxScale,
+          initialScale: PhotoViewComputedScale.contained,
+          scaleStateChangedCallback: (state) {
+            if (index == _currentIndex) {
+              setState(() {
+                _scaleState = state;
+              });
+            }
+          },
+          loadingBuilder: (context, event) => Center(
+            child: CircularProgressIndicator(
+              value: event == null
+                  ? null
+                  : event.cumulativeBytesLoaded / (event.expectedTotalBytes ?? 1),
+              color: Colors.white54,
+              strokeWidth: 2,
+            ),
+          ),
+          errorBuilder: (context, error, stackTrace) => const Center(
+            child: Icon(Icons.broken_image, color: Colors.white54, size: 64),
+          ),
+        );
+      },
     );
   }
 }
 
 /// 透明路由（支持 Hero 动画 + 淡入效果）
 class _MoeImagePreviewRoute extends PageRoute<void> {
-  final ImageProvider imageProvider;
-  final String heroTag;
+  final List<ImagePreviewItem> images;
+  final int initialIndex;
   final Color backgroundColor;
   final bool showCloseButton;
   final double minScale;
   final double maxScale;
 
   _MoeImagePreviewRoute({
-    required this.imageProvider,
-    required this.heroTag,
+    required this.images,
+    required this.initialIndex,
     required this.backgroundColor,
     required this.showCloseButton,
     required this.minScale,
@@ -329,9 +417,8 @@ class _MoeImagePreviewRoute extends PageRoute<void> {
   });
 
   @override
-  bool get opaque => false; // 关键：让背景透明，Hero 动画更自然
+  bool get opaque => false;
 
-  // 阻止底层路由播放次要动画（左移/缩小），否则透明背景下会看到底层页面在移动
   @override
   bool canTransitionFrom(TransitionRoute<dynamic> previousRoute) => false;
 
@@ -363,8 +450,8 @@ class _MoeImagePreviewRoute extends PageRoute<void> {
     Animation<double> secondaryAnimation,
   ) {
     return MoeImagePreview(
-      imageProvider: imageProvider,
-      heroTag: heroTag,
+      images: images,
+      initialIndex: initialIndex,
       backgroundColor: backgroundColor,
       showCloseButton: showCloseButton,
       minScale: minScale,
@@ -379,7 +466,6 @@ class _MoeImagePreviewRoute extends PageRoute<void> {
     Animation<double> secondaryAnimation,
     Widget child,
   ) {
-    // 淡入淡出效果
     return FadeTransition(
       opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
       child: child,

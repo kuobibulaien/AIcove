@@ -1,15 +1,15 @@
 /// AddProviderSheet - 娣诲姞渚涘簲鍟嗗簳閮ㄥ脊绐?
 ///
-/// 璁捐鐗圭偣锛?
+/// 璁捐鐗圭偣锛?
 /// - 搴曢儴寮圭獥褰㈠紡
-/// - 绗竴姝ワ細閫夋嫨 API 鏍煎紡锛圤penAI/Claude/Gemini锛?
-/// - 绗簩姝ワ細濉啓鍩虹閰嶇疆锛堟樉绀哄悕绉般€丄PI Key銆丄PI 鍦板潃锛?
-/// - 绗笁姝ワ細閫夋嫨妯″瀷鐢ㄩ€旓紙瀵硅瘽/宓屽叆/鍥剧墖/璇煶锛屽崟閫夛級
+/// - 绗竴姝ワ細閫夋嫨 API 鏍煎紡锛圤penAI/Claude/Gemini锛?
+/// - 绗簩姝ワ細濉啓鍩虹閰嶇疆锛堟樉绀哄悕绉般€丄PI Key銆丄PI 鍦板潃锛?
+/// - 绗笁姝ワ細閫夋嫨妯″瀷鐢ㄩ€旓紙瀵硅瘽/宓屽叆/鍥剧墖/璇煶锛屽崟閫夛級
 ///
 /// 鏇存柊璁板綍锛?
-/// - 2026-02-21: NovelAI 绉诲叆鍐呯疆渚涘簲鍟嗗垪琛紝姝ゅ浠呬繚鐣?3 绉嶆爣鍑?API 鏍煎紡
+/// - 2026-02-21: NovelAI 绉诲叆鍐呯疆渚涘簲鍟嗗垪琛紝姝ゅ浠呬繚鐣?3 绉嶆爣鍑?API 鏍煎紡
 /// - 2026-01-31: 绉婚櫎TTS鐢ㄩ€旂殑浜岀骇API鏍煎紡閫夋嫨
-/// - 2026-01-25: 鐢ㄩ€旀敼涓哄閫夛紝涓€琛屼竴涓竷灞€
+/// - 2026-01-25: 鐢ㄩ€旀敼涓哄閫夛紝涓€琛屼竴涓竷灞€
 /// - 2026-01-22: 鐢ㄩ€旀敼涓哄崟閫夛紝API鏍煎紡鏀逛负涓夐€変竴鍒囨崲妗?
 /// - 2026-01-21: 鍒涘缓娣诲姞渚涘簲鍟嗗簳閮ㄥ脊绐?
 library;
@@ -177,7 +177,7 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
       top: SmoothRadius(cornerRadius: 24, cornerSmoothing: 0.6),
     );
 
-    // 涓嶆妸鏁翠釜 sheet 寰€涓婇《锛氬彧鍦ㄥ唴閮ㄥ唴瀹瑰尯缁欓敭鐩樿浣嶏紝瑙傛劅鏇村儚"杈撳叆鍖烘姮璧?銆?
+    // 涓嶆妸鏁翠釜 sheet 寰€涓婇《锛氬彧鍦ㄥ唴閮ㄥ唴瀹瑰尯缁欓敭鐩樿浣嶏紝瑙傛劅鏇村儚"杈撳叆鍖烘姮璧?銆?
     return MoeG2ClipRRect.borderRadius(
       borderRadius: sheetBorderRadius,
       child: Container(
@@ -205,7 +205,7 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                   ),
                 ),
 
-                // 鏍囬
+                // 鏍囬
                 Padding(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
@@ -258,7 +258,7 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
 
                         const SizedBox(height: 20),
 
-                        // 2. 鍩虹閰嶇疆
+                        // 2. 鍩虹閰嶇疆
                         _buildSectionTitle('\u57fa\u7840\u914d\u7f6e', colors),
                         const SizedBox(height: 8),
                         MoeSettingsGroup(
@@ -335,7 +335,7 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
 
                         const SizedBox(height: 20),
 
-                        // 3. 閫夋嫨鐢ㄩ€旓紙鍗曡4閫?锛屾斁鍦ㄥ簳閮級
+                        // 3. 閫夋嫨鐢ㄩ€旓紙鍗曡4閫?锛屾斁鍦ㄥ簳閮級
                         _buildSectionTitle('\u9009\u62e9\u7528\u9014', colors),
                         const SizedBox(height: 8),
                         _buildCapabilityRow(colors),
@@ -388,7 +388,7 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
     );
   }
 
-  /// 鍗曡4閫?鐨勭敤閫旈€夋嫨鍣?
+  /// 鍗曡4閫?鐨勭敤閫旈€夋嫨鍣?
   Widget _buildCapabilityRow(MoeColors colors) {
     final capabilities = [
       ModelCapability.chat,

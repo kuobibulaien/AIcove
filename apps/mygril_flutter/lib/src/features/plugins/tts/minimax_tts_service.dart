@@ -19,6 +19,7 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
 import '../../../core/app_logger.dart';
+import '../../../core/utils/mime_utils.dart';
 
 /// MiniMax TTS 服务
 class MinimaxTtsService {
@@ -57,7 +58,7 @@ class MinimaxTtsService {
     request.fields['purpose'] = 'voice_clone';
 
     // 添加文件
-    final mimeType = _getMimeType(fileName);
+    final mimeType = MimeUtils.guessAudioMimeType(fileName);
     request.files.add(http.MultipartFile.fromBytes(
       'file',
       audioBytes,
@@ -119,7 +120,7 @@ class MinimaxTtsService {
     // 示例音频使用不同的 purpose
     request.fields['purpose'] = 'voice_clone_prompt';
 
-    final mimeType = _getMimeType(fileName);
+    final mimeType = MimeUtils.guessAudioMimeType(fileName);
     request.files.add(http.MultipartFile.fromBytes(
       'file',
       audioBytes,
@@ -384,19 +385,6 @@ class MinimaxTtsService {
   }
 
   /// 根据文件名获取 MIME 类型
-  String _getMimeType(String fileName) {
-    final ext = fileName.split('.').last.toLowerCase();
-    switch (ext) {
-      case 'mp3':
-        return 'audio/mpeg';
-      case 'wav':
-        return 'audio/wav';
-      case 'm4a':
-        return 'audio/mp4';
-      default:
-        return 'audio/mpeg';
-    }
-  }
 }
 
 /// MiniMax 用户音色

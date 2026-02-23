@@ -53,7 +53,7 @@ class ConversationExporter {
 
       final conversations = <Map<String, dynamic>>[];
       final allMessages = <Map<String, dynamic>>[];
-      final fileMapping = <String, String>{}; // 注释已清理乱码
+      final fileMapping = <String, String>{}; // (注释已丢失)
       int totalFileCount = 0;
 
       for (var i = 0; i < conversationIds.length; i++) {
@@ -69,7 +69,7 @@ class ConversationExporter {
         final messageIds = dbMsgs.map((m) => m.id).toList();
         final dbBlocks = await _blockRepo.getByMessages(messageIds);
 
-        // 注释已清理乱码
+        // (注释已丢失)
         final blocksByMsgId = <String, List<Map<String, dynamic>>>{};
         for (final dbBlock in dbBlocks) {
           blocksByMsgId.putIfAbsent(dbBlock.messageId, () => []).add({
@@ -81,7 +81,7 @@ class ConversationExporter {
           });
         }
 
-        // 注释已清理乱码
+        // (注释已丢失)
         onProgress?.call(ExportProgress(
           ExportPhase.copyingFiles,
           progress,
@@ -132,7 +132,7 @@ class ConversationExporter {
         // 构建会话 JSON
         conversations.add(_buildConversationJson(dbConv, fileMapping));
 
-        // 注释已清理乱码
+        // (注释已丢失)
         for (final dbMsg in dbMsgs) {
           final blocks = blocksByMsgId[dbMsg.id] ?? [];
 
@@ -207,7 +207,7 @@ class ConversationExporter {
         'messages': allMessages,
       }));
 
-      // 注释已清理乱码
+      // (注释已丢失)
       onProgress?.call(const ExportProgress(
         ExportPhase.packaging,
         0.85,
@@ -222,7 +222,7 @@ class ConversationExporter {
         throw Exception('ZIP 压缩失败');
       }
 
-      // 注释已清理乱码
+      // (注释已丢失)
       final dateStr = _formatDate(DateTime.now());
       String fileName;
       if (conversations.length == 1) {
@@ -233,7 +233,7 @@ class ConversationExporter {
             'export_${conversations.length}个角色_$dateStr$kExportFileExtension';
       }
 
-      // 注释已清理乱码
+      // (注释已丢失)
       final downloadsDir = await _getDownloadsDirectory();
       final outputFile = File(p.join(downloadsDir.path, fileName));
       await outputFile.writeAsBytes(zipBytes);
@@ -264,7 +264,7 @@ class ConversationExporter {
     }
   }
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   Future<String?> _copyFileIfExists(
     String sourcePath,
     Directory targetDir,
@@ -389,11 +389,11 @@ class ConversationExporter {
       if (await dir.exists()) {
         return dir;
       }
-      // 注释已清理乱码
+      // (注释已丢失)
       final extDir = await getExternalStorageDirectory();
       return extDir ?? await getApplicationDocumentsDirectory();
     } else if (Platform.isWindows) {
-      // 注释已清理乱码
+      // (注释已丢失)
       final userProfile = Platform.environment['USERPROFILE'];
       if (userProfile != null) {
         final dir = Directory(p.join(userProfile, 'Downloads'));
@@ -402,11 +402,11 @@ class ConversationExporter {
         }
       }
     }
-    // 注释已清理乱码
+    // (注释已丢失)
     return await getApplicationDocumentsDirectory();
   }
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   String _formatDate(DateTime date) {
     return '${date.year}${date.month.toString().padLeft(2, '0')}${date.day.toString().padLeft(2, '0')}';
   }

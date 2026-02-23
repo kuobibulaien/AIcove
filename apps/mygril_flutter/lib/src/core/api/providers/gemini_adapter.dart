@@ -68,6 +68,16 @@ class GeminiAdapter implements ProviderAdapter {
       }
 
       final content = msg['content'];
+      if (content is List) {
+        final converted = _convertOpenAiPartsToGeminiParts(content);
+        if (converted.isNotEmpty) {
+          contents.add({
+            'role': normalizedRole,
+            'parts': converted,
+          });
+          continue;
+        }
+      }
       if (content == null) continue;
       contents.add({
         'role': normalizedRole,
@@ -205,6 +215,13 @@ class GeminiAdapter implements ProviderAdapter {
     }
 
     final content = msg['content'];
+    if (content is List) {
+      final converted = _convertOpenAiPartsToGeminiParts(content);
+      if (converted.isNotEmpty) {
+        return converted;
+      }
+    }
+
     if (content is Map<String, dynamic>) {
       final contentParts = content['parts'];
       if (contentParts is List) {
@@ -219,6 +236,84 @@ class GeminiAdapter implements ProviderAdapter {
     }
 
     return null;
+  }
+
+  List<Map<String, dynamic>> _convertOpenAiPartsToGeminiParts(List rawParts) {
+    final parts = <Map<String, dynamic>>[];
+    for (final part in rawParts) {
+      if (part is! Map) continue;
+      final converted = _convertOpenAiPartToGeminiPart(part);
+      if (converted != null) {
+        parts.add(converted);
+      }
+    }
+    return parts;
+  }
+
+  Map<String, dynamic>? _convertOpenAiPartToGeminiPart(Map rawPart) {
+    final part = <String, dynamic>{};
+    rawPart.forEach((key, value) {
+      part[key.toString()] = value;
+    });
+
+    final type = (part['type'] ?? '').toString();
+    if (type == 'text') {
+      final text = (part['text'] ?? part['input_text'])?.toString();
+      if (text == null || text.trim().isEmpty) return null;
+      return {'text': text};
+    }
+
+    if (type == 'image_url') {
+      final imageUrl = part['image_url'];
+      final url =
+          imageUrl is Map ? imageUrl['url']?.toString() : imageUrl?.toString();
+      if (url == null || url.trim().isEmpty) return null;
+      return _convertImageUrlToGeminiPart(url.trim());
+    }
+
+    return null;
+  }
+
+  Map<String, dynamic>? _convertImageUrlToGeminiPart(String url) {
+    if (url.startsWith('data:')) {
+      final parsed = _parseDataUri(url);
+      if (parsed == null) return null;
+      return {
+        'inlineData': {
+          'mimeType': parsed.$1,
+          'data': parsed.$2,
+        }
+      };
+    }
+
+    return {
+      'fileData': {
+        'mimeType': 'image/jpeg',
+        'fileUri': url,
+      }
+    };
+  }
+
+  (String, String)? _parseDataUri(String uri) {
+    final commaIndex = uri.indexOf(',');
+    if (commaIndex <= 5) return null;
+
+    final header = uri.substring(5, commaIndex);
+    final body = uri.substring(commaIndex + 1);
+    if (body.trim().isEmpty) return null;
+
+    final headerParts = header.split(';');
+    final mimeType = headerParts.isNotEmpty && headerParts.first.isNotEmpty
+        ? headerParts.first
+        : 'image/jpeg';
+    final isBase64 = headerParts.any((p) => p.toLowerCase() == 'base64');
+
+    if (isBase64) {
+      return (mimeType, body);
+    }
+
+    final decoded = Uri.decodeComponent(body);
+    return (mimeType, base64Encode(utf8.encode(decoded)));
   }
 
   Map<String, dynamic> _parseArguments(dynamic rawArgs) {

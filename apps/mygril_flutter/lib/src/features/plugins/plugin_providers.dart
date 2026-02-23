@@ -23,7 +23,7 @@ import 'time_awareness/time_awareness_config.dart';
 
 String? _lastTtsProviderDiag;
 
-/// 注释已清理乱码
+/// (注释已丢失)
 final pluginManagerProvider = Provider<PluginManager>((ref) {
   // 监听配置变化，并在变化时更新插件实例
   final ttsConfig = ref.watch(ttsPluginConfigProvider);
@@ -33,7 +33,7 @@ final pluginManagerProvider = Provider<PluginManager>((ref) {
   final imageConfig = ref.watch(imagePluginConfigProvider);
   final timeAwarenessConfig = ref.watch(timeAwarenessPluginConfigProvider);
 
-  // 注释已清理乱码
+  // (注释已丢失)
   String? ttsApiKey;
   String ttsRequestUrl = '';
   String ttsRequestFormat = 'openai_tts';
@@ -44,7 +44,7 @@ final pluginManagerProvider = Provider<PluginManager>((ref) {
     ProviderAuth? selectedProvider;
 
     if (ttsConfig.selectedProviderId != null) {
-      // 注释已清理乱码
+      // (注释已丢失)
       selectedProvider = settings.providers
           .where(
             (p) => p.id == ttsConfig.selectedProviderId,
@@ -67,7 +67,7 @@ final pluginManagerProvider = Provider<PluginManager>((ref) {
       }
     }
 
-    // 注释已清理乱码
+    // (注释已丢失)
     final diagKey =
         'enabled:${ttsConfig.enabled}|selected:${ttsConfig.selectedProviderId}|model:$ttsSelectedModel|found:${selectedProvider != null}|url:$ttsRequestUrl|fmt:$ttsRequestFormat';
     if (_lastTtsProviderDiag != diagKey) {
@@ -285,13 +285,13 @@ class TtsPluginConfigNotifier extends StateNotifier<TtsConfig> {
     await _saveConfig();
   }
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   Future<void> setSelectedProvider(String? providerId) async {
     state = state.copyWith(selectedProviderId: providerId);
     await _saveConfig();
   }
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   Future<void> setSelectedModel(String? modelId) async {
     state = state.copyWith(selectedModelId: modelId);
     await _saveConfig();
@@ -329,20 +329,20 @@ class TtsPluginConfigNotifier extends StateNotifier<TtsConfig> {
     await _saveConfig();
   }
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   Future<void> setVoiceFrequency(int frequency) async {
     state = state.copyWith(voiceFrequency: frequency.clamp(0, 100));
     await _saveConfig();
   }
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   Future<void> addVoicePreset(VoicePreset preset) async {
     final newPresets = [...state.voicePresets, preset];
     state = state.copyWith(voicePresets: newPresets);
     await _saveConfig();
   }
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   Future<void> updateVoicePreset(VoicePreset preset) async {
     AppLogger.info('TTS', '更新语音预设', metadata: {
       'presetId': preset.id,
@@ -375,11 +375,11 @@ class TtsPluginConfigNotifier extends StateNotifier<TtsConfig> {
     await _saveConfig();
   }
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   Future<void> deleteVoicePreset(String presetId) async {
     final newPresets =
         state.voicePresets.where((p) => p.id != presetId).toList();
-    // 注释已清理乱码
+    // (注释已丢失)
     String? newSelectedId = state.selectedVoicePresetId;
     if (newSelectedId == presetId) {
       newSelectedId = null;
@@ -391,13 +391,13 @@ class TtsPluginConfigNotifier extends StateNotifier<TtsConfig> {
     await _saveConfig();
   }
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   Future<void> selectVoicePreset(String? presetId) async {
     state = state.copyWith(selectedVoicePresetId: presetId);
     await _saveConfig();
   }
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   Future<void> addVoicePresets(List<VoicePreset> presets) async {
     // Filter out already existing presets by id.
     final existingIds = state.voicePresets.map((p) => p.id).toSet();
@@ -412,7 +412,7 @@ class TtsPluginConfigNotifier extends StateNotifier<TtsConfig> {
 }
 
 /// TTS 播放器管理器 Provider（单例）
-/// 注释已清理乱码
+/// (注释已丢失)
 final ttsPlayerManagerProvider = Provider<TtsPlayerManager?>((ref) {
   final pluginManager = ref.watch(pluginManagerProvider);
   final ttsPlugin = pluginManager.getPlugin('tts') as TtsPlugin?;
@@ -449,10 +449,10 @@ final ttsPlayerManagerProvider = Provider<TtsPlayerManager?>((ref) {
   return _ttsManagerSingleton!;
 });
 
-// 注释已清理乱码
+// (注释已丢失)
 TtsPlayerManager? _ttsManagerSingleton;
 
-/// 注释已清理乱码
+/// (注释已丢失)
 final ttsPlayStateProvider = StreamProvider<TtsPlayState>((ref) {
   final manager = ref.watch(ttsPlayerManagerProvider);
   if (manager == null) {

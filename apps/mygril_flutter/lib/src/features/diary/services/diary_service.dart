@@ -1,8 +1,7 @@
-import 'dart:convert';
 import 'package:uuid/uuid.dart';
-import 'package:http/http.dart' as http;
 import '../../../core/app_logger.dart';
 import '../../../core/database/repositories/diary_repository.dart';
+import '../../../core/network/json_http_client.dart';
 import '../../chat/domain/message.dart';
 import '../../chat/domain/conversation.dart';
 import '../../memory/services/memory_service.dart';
@@ -177,36 +176,38 @@ $conversationText
     }
 
     final url = Uri.parse('${modelConfig.baseUrl}/chat/completions');
-    final client = http.Client();
 
     try {
-      final response = await client.post(
-        url,
+      final response = await JsonHttpClient.postJson(
+        uri: url,
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer ${modelConfig.apiKey}',
         },
-        body: jsonEncode({
+        jsonBody: {
           'model': modelConfig.model,
           'messages': [
             {'role': 'user', 'content': prompt}
           ],
           'temperature': 0.7, // 稍高的温度让日记更有个性
-        }),
+        },
       );
 
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final data = jsonDecode(utf8.decode(response.bodyBytes));
-        if (data['choices'] != null && (data['choices'] as List).isNotEmpty) {
-          return data['choices'][0]['message']['content'] as String?;
+      final choices = response.data['choices'];
+      if (choices is List && choices.isNotEmpty) {
+        final first = choices.first;
+        if (first is Map<String, dynamic>) {
+          final message = first['message'];
+          if (message is Map<String, dynamic>) {
+            return message['content'] as String?;
+          }
         }
-      } else {
-        AppLogger.error('DiaryService', 'LLM Call Failed: ${response.statusCode}');
       }
+    } on JsonHttpRequestException catch (e) {
+      AppLogger.error('DiaryService', 'LLM Call Failed',
+          metadata: {'statusCode': e.statusCode, 'error': e.toString()});
     } catch (e) {
       AppLogger.error('DiaryService', 'LLM Call Failed', metadata: {'error': e.toString()});
-    } finally {
-      client.close();
     }
     return null;
   }

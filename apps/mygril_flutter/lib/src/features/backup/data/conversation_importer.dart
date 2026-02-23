@@ -25,7 +25,7 @@ class ConversationImporter {
         _msgRepo = msgRepo,
         _blockRepo = blockRepo;
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   Future<ImportPreview> preview(File file) async {
     final importDir = await _extractToTempDir(file);
 
@@ -39,7 +39,7 @@ class ConversationImporter {
       final manifestJson = jsonDecode(await manifestFile.readAsString());
       final manifest = ExportManifest.fromJson(manifestJson);
 
-      // 注释已清理乱码
+      // (注释已丢失)
       final isCompatible = manifest.formatVersion <= kExportFormatVersion;
       String? incompatibleReason;
       if (!isCompatible) {
@@ -72,7 +72,7 @@ class ConversationImporter {
           final convId = msg['conversation_id'] as String;
           messageCountByConv[convId] = (messageCountByConv[convId] ?? 0) + 1;
 
-          // 注释已清理乱码
+          // (注释已丢失)
           final createdAt = msg['created_at'] as int?;
           if (createdAt != null) {
             final current = lastMessageTimeByConv[convId];
@@ -96,7 +96,7 @@ class ConversationImporter {
         }
       }
 
-      // 注释已清理乱码
+      // (注释已丢失)
       final conversations = convList.map((conv) {
         final id = conv['id'] as String;
         final lastTime = lastMessageTimeByConv[id];
@@ -148,7 +148,7 @@ class ConversationImporter {
     final importDir = await _extractToTempDir(file);
 
     try {
-      // 注释已清理乱码
+      // (注释已丢失)
       onProgress?.call(const ImportProgress(
         ImportPhase.validating,
         0.1,
@@ -178,7 +178,7 @@ class ConversationImporter {
       final convList = conversationsJson['conversations'] as List<dynamic>;
       final msgList = messagesJson['messages'] as List<dynamic>;
 
-      // 注释已清理乱码
+      // (注释已丢失)
       final selectedConvs = convList
           .where((c) => selectedConversationIds.contains(c['id']))
           .toList();
@@ -188,7 +188,7 @@ class ConversationImporter {
       final filesDir = Directory(p.join(appDir.path, 'imported_files'));
       await filesDir.create(recursive: true);
 
-      // 注释已清理乱码
+      // (注释已丢失)
       onProgress?.call(const ImportProgress(
         ImportPhase.importing,
         0.2,
@@ -243,7 +243,7 @@ class ConversationImporter {
           message: '导入中 ${conv['display_name']}...',
         ));
 
-        // 注释已清理乱码
+        // (注释已丢失)
         String newConvId;
         final resolution = conflictResolutions[originalId];
 
@@ -259,7 +259,7 @@ class ConversationImporter {
             case ImportConflictResolution.replace:
               newConvId = originalId;
               if (resolution == ImportConflictResolution.replace) {
-                // 注释已清理乱码
+                // (注释已丢失)
                 await _msgRepo.deleteByConversation(originalId);
               }
               break;
@@ -397,7 +397,7 @@ class ConversationImporter {
     }
   }
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   Future<Directory> _extractToTempDir(File file) async {
     final bytes = await file.readAsBytes();
     final archive = ZipDecoder().decodeBytes(bytes);
@@ -422,7 +422,7 @@ class ConversationImporter {
     return importDir;
   }
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   Future<String?> _copyImportedFile(
     Directory importDir,
     String relativePath,

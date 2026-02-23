@@ -1,5 +1,5 @@
-import 'dart:convert';
 import 'package:http/http.dart' as http;
+import '../../../core/network/json_http_client.dart';
 import 'embedding_service.dart';
 
 class OpenAIEmbeddingService implements EmbeddingService {
@@ -27,33 +27,34 @@ class OpenAIEmbeddingService implements EmbeddingService {
   @override
   Future<List<List<double>>> getEmbeddings(List<String> texts) async {
     final url = Uri.parse('$baseUrl/embeddings');
-    
+
     try {
-      final response = await _client.post(
-        url,
+      final response = await JsonHttpClient.postJson(
+        uri: url,
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $apiKey',
         },
-        body: jsonEncode({
+        jsonBody: {
           'input': texts,
           'model': model,
-        }),
+        },
+        client: _client,
       );
+      final dataList = (response.data['data'] as List?) ?? const [];
 
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final data = jsonDecode(utf8.decode(response.bodyBytes));
-        final List<dynamic> dataList = data['data'];
-        
-        // Ensure the order matches input by sorting by index if necessary, 
-        // but OpenAI usually returns in order.
-        return dataList.map((item) {
-          final List<dynamic> embedding = item['embedding'];
-          return embedding.map((e) => (e as num).toDouble()).toList();
-        }).toList();
-      } else {
-        throw Exception('OpenAI API Error: ${response.statusCode} ${response.body}');
+      // Ensure the order matches input by sorting by index if necessary,
+      // but OpenAI usually returns in order.
+      return dataList.map((item) {
+        final map = item as Map<String, dynamic>;
+        final List<dynamic> embedding = map['embedding'] as List<dynamic>;
+        return embedding.map((e) => (e as num).toDouble()).toList();
+      }).toList();
+    } on JsonHttpRequestException catch (e) {
+      if (e.statusCode != null) {
+        throw Exception('OpenAI API Error: ${e.statusCode} ${e.responseBody}');
       }
+      throw Exception('Failed to connect to Embedding API: $e');
     } catch (e) {
       throw Exception('Failed to connect to Embedding API: $e');
     }

@@ -20,6 +20,21 @@ import '../effects/smooth_clip.dart';
 /// Toast 类型枚举
 enum ToastType { info, success, error, warning }
 
+/// 根据 Toast 类型从主题中获取背景色（统一入口，DRY）
+Color _toastBackgroundColor(BuildContext context, ToastType type) {
+  final colors = context.moeColors;
+  switch (type) {
+    case ToastType.success:
+      return colors.toastSuccess;
+    case ToastType.error:
+      return colors.toastError;
+    case ToastType.warning:
+      return colors.toastWarning;
+    case ToastType.info:
+      return colors.toastInfo;
+  }
+}
+
 /// 轻量级 Toast 提示工具
 class MoeToast {
   static OverlayEntry? _currentEntry;
@@ -168,24 +183,10 @@ class _ToastWidgetState extends State<_ToastWidget>
     super.dispose();
   }
 
-  Color _getBackgroundColor(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    switch (widget.type) {
-      case ToastType.success:
-        return isDark ? const Color(0xFF1B5E20) : const Color(0xFF4CAF50);
-      case ToastType.error:
-        return isDark ? const Color(0xFFB71C1C) : const Color(0xFFE53935);
-      case ToastType.warning:
-        return isDark ? const Color(0xFFE65100) : const Color(0xFFFF9800);
-      case ToastType.info:
-        return isDark ? const Color(0xFF37474F) : const Color(0xFF424242);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final skin = context.skin;
-    final bgColor = _getBackgroundColor(context);
+    final bgColor = _toastBackgroundColor(context, widget.type);
     final decoration = skin.toastDecoration(bgColor);
 
     return Positioned(
@@ -285,24 +286,10 @@ class _DismissibleToastWidgetState extends State<_DismissibleToastWidget>
     super.dispose();
   }
 
-  Color _getBackgroundColor(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    switch (widget.type) {
-      case ToastType.success:
-        return isDark ? const Color(0xFF1B5E20) : const Color(0xFF4CAF50);
-      case ToastType.error:
-        return isDark ? const Color(0xFFB71C1C) : const Color(0xFFE53935);
-      case ToastType.warning:
-        return isDark ? const Color(0xFFE65100) : const Color(0xFFFF9800);
-      case ToastType.info:
-        return isDark ? const Color(0xFF37474F) : const Color(0xFF424242);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final skin = context.skin;
-    final bgColor = _getBackgroundColor(context);
+    final bgColor = _toastBackgroundColor(context, widget.type);
     final decoration = skin.toastDecoration(bgColor);
 
     return Positioned(

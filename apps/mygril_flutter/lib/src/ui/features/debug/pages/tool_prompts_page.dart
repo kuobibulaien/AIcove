@@ -44,28 +44,88 @@ class _PluginPromptEntry {
 /// 工具提示词管理页面
 ///
 /// 展示所有插件注入到 AI 对话中的系统提示词，支持编辑保存。
-class ToolPromptsPage extends ConsumerWidget {
+class ToolPromptsPage extends ConsumerStatefulWidget {
   const ToolPromptsPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ToolPromptsPage> createState() => _ToolPromptsPageState();
+}
+
+class _ToolPromptsPageState extends ConsumerState<ToolPromptsPage> {
+  /// 全局 dirty 卡片集合，各卡片通过回调注册/注销
+  final Set<String> _dirtyPluginIds = {};
+
+  void _onDirtyChanged(String pluginId, bool dirty) {
+    setState(() {
+      if (dirty) {
+        _dirtyPluginIds.add(pluginId);
+      } else {
+        _dirtyPluginIds.remove(pluginId);
+      }
+    });
+  }
+
+  bool get _hasUnsaved => _dirtyPluginIds.isNotEmpty;
+
+  /// 弹窗询问用户是否放弃未保存修改
+  Future<bool> _confirmDiscardOrSave() async {
+    final colors = context.moeColors;
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: colors.panel,
+        title: Text('未保存的修改', style: TextStyle(color: colors.text)),
+        content: Text(
+          '你有未保存的提示词修改，离开后将丢失这些更改。',
+          style: TextStyle(color: colors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop('cancel'),
+            child: Text('取消', style: TextStyle(color: colors.muted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop('discard'),
+            child: Text('放弃修改', style: TextStyle(color: colors.dialogWarning)),
+          ),
+        ],
+      ),
+    );
+    return result == 'discard';
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final colors = context.moeColors;
     final entries = _buildEntries(ref);
 
-    return Scaffold(
-      backgroundColor: colors.surface,
-      appBar: const MoeAppBar(title: '工具提示词管理', showBackButton: true),
-      body: entries.isEmpty
-          ? Center(
-              child: Text('暂无插件', style: TextStyle(color: colors.muted)),
-            )
-          : ListView.separated(
-              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-              itemCount: entries.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 12),
-              itemBuilder: (context, index) =>
-                  _PluginPromptCard(entry: entries[index]),
-            ),
+    return PopScope(
+      canPop: !_hasUnsaved,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        final discard = await _confirmDiscardOrSave();
+        if (discard && mounted) {
+          Navigator.of(context).pop();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: colors.surface,
+        appBar: const MoeAppBar(title: '工具提示词管理', showBackButton: true),
+        body: entries.isEmpty
+            ? Center(
+                child: Text('暂无插件', style: TextStyle(color: colors.muted)),
+              )
+            : ListView.separated(
+                padding:
+                    const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                itemCount: entries.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 12),
+                itemBuilder: (context, index) => _PluginPromptCard(
+                  entry: entries[index],
+                  onDirtyChanged: _onDirtyChanged,
+                ),
+              ),
+      ),
     );
   }
 
@@ -175,7 +235,14 @@ class ToolPromptsPage extends ConsumerWidget {
 /// 单个插件的提示词卡片
 class _PluginPromptCard extends StatefulWidget {
   final _PluginPromptEntry entry;
-  const _PluginPromptCard({required this.entry});
+
+  /// 当 dirty 状态变化时通知父页面
+  final void Function(String pluginId, bool dirty) onDirtyChanged;
+
+  const _PluginPromptCard({
+    required this.entry,
+    required this.onDirtyChanged,
+  });
 
   @override
   State<_PluginPromptCard> createState() => _PluginPromptCardState();
@@ -208,17 +275,72 @@ class _PluginPromptCardState extends State<_PluginPromptCard> {
     super.dispose();
   }
 
+  void _setDirty(bool value) {
+    if (_dirty == value) return;
+    setState(() => _dirty = value);
+    widget.onDirtyChanged(widget.entry.pluginId, value);
+  }
+
   Future<void> _save() async {
     setState(() => _saving = true);
     try {
       await widget.entry.onSave(_controller.text);
-      setState(() => _dirty = false);
-      if (mounted) MoeToast.show(context, '${widget.entry.pluginName} 提示词已保存');
+      _setDirty(false);
+      if (mounted) {
+        MoeToast.show(context, '${widget.entry.pluginName} 提示词已保存');
+      }
     } catch (e) {
       if (mounted) MoeToast.warning(context, '保存失败: $e');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  /// 收起卡片时，如果有未保存修改则弹窗确认
+  Future<void> _handleCollapse() async {
+    if (!_dirty) {
+      setState(() => _expanded = false);
+      return;
+    }
+
+    final colors = context.moeColors;
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: colors.panel,
+        title: Text('未保存的修改', style: TextStyle(color: colors.text)),
+        content: Text(
+          '「${widget.entry.pluginName}」的提示词已修改但未保存，你要怎么做？',
+          style: TextStyle(color: colors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop('cancel'),
+            child: Text('继续编辑', style: TextStyle(color: colors.muted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop('discard'),
+            child: Text('放弃修改', style: TextStyle(color: colors.dialogWarning)),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop('save'),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted) return;
+
+    if (result == 'save') {
+      await _save();
+      if (mounted) setState(() => _expanded = false);
+    } else if (result == 'discard') {
+      _controller.text = widget.entry.promptText;
+      _setDirty(false);
+      setState(() => _expanded = false);
+    }
+    // 'cancel' or null: 保持展开
   }
 
   @override
@@ -239,7 +361,13 @@ class _PluginPromptCardState extends State<_PluginPromptCard> {
           children: [
             // ===== 头部：插件名 + 状态 + 展开箭头 =====
             InkWell(
-              onTap: () => setState(() => _expanded = !_expanded),
+              onTap: () {
+                if (_expanded) {
+                  _handleCollapse();
+                } else {
+                  setState(() => _expanded = true);
+                }
+              },
               child: Padding(
                 padding: const EdgeInsets.all(14),
                 child: Row(
@@ -280,6 +408,18 @@ class _PluginPromptCardState extends State<_PluginPromptCard> {
                                   ),
                                 ),
                               ),
+                              // dirty 指示器（头部也显示一个小圆点）
+                              if (_dirty) ...[
+                                const SizedBox(width: 6),
+                                Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: BoxDecoration(
+                                    color: colors.dialogWarning,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                              ],
                             ],
                           ),
                           const SizedBox(height: 2),
@@ -320,8 +460,7 @@ class _PluginPromptCardState extends State<_PluginPromptCard> {
 
             // ===== 展开内容 =====
             if (_expanded) ...[
-              Divider(
-                  height: 1, thickness: 1, color: colors.border),
+              Divider(height: 1, thickness: 1, color: colors.border),
 
               // 工具列表（如果有）
               if (entry.tools.isNotEmpty)
@@ -375,9 +514,7 @@ class _PluginPromptCardState extends State<_PluginPromptCard> {
                         ),
                       const SizedBox(height: 4),
                       Divider(
-                          height: 1,
-                          thickness: 1,
-                          color: colors.border),
+                          height: 1, thickness: 1, color: colors.border),
                     ],
                   ),
                 ),
@@ -422,7 +559,8 @@ class _PluginPromptCardState extends State<_PluginPromptCard> {
                     hintStyle: TextStyle(color: colors.muted, fontSize: 13),
                   ),
                   onChanged: (_) {
-                    if (!_dirty) setState(() => _dirty = true);
+                    final nowDirty = _controller.text != widget.entry.promptText;
+                    if (nowDirty != _dirty) _setDirty(nowDirty);
                   },
                 ),
               ),
@@ -454,9 +592,11 @@ class _PluginPromptCardState extends State<_PluginPromptCard> {
                                     strokeWidth: 2),
                               )
                             : const Icon(Icons.save_outlined, size: 16),
-                        label: const Text('保存', style: TextStyle(fontSize: 13)),
+                        label:
+                            const Text('保存', style: TextStyle(fontSize: 13)),
                         style: FilledButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          padding:
+                              const EdgeInsets.symmetric(horizontal: 12),
                         ),
                       ),
                     ),

@@ -16,7 +16,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
     final msgRepo = ref.read(messageRepositoryProvider);
     final blockRepo = ref.read(messageBlockRepositoryProvider);
 
-    // 注释已清理乱码
+    // (注释已丢失)
     final dbConvs = await convRepo.getAll();
     if (dbConvs.isEmpty) {
       final conv = await _createInitialConversation();
@@ -34,7 +34,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
       final messageIds = dbMsgs.map((m) => m.id).toList();
       final dbBlocks = await blockRepo.getByMessages(messageIds);
 
-      // 注释已清理乱码
+      // (注释已丢失)
       final blocksByMsgId = <String, List<MessageBlock>>{};
       final hasPlayableAudioByMsgId = <String, bool>{};
       final emptyAudioBlockIdsByMsgId = <String, List<String>>{};
@@ -72,13 +72,13 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
           }
           stalePendingAudioBlockIds.addAll(ids);
         } else {
-          // 注释已清理乱码
+          // (注释已丢失)
           final blocks = blocksByMsgId[msgId];
           if (blocks != null) {
             final audioBlock = blocks.whereType<AudioBlock>().firstOrNull;
             final fallbackText = audioBlock?.text ?? '';
             orphanPendingByMsgId[msgId] = fallbackText;
-            blocksByMsgId.remove(msgId); // 注释已清理乱码
+            blocksByMsgId.remove(msgId); // (注释已丢失)
             stalePendingAudioBlockIds.addAll(ids);
           }
         }
@@ -109,7 +109,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
       // Assemble messages (db desc -> ui asc)
       final messages = dbMsgs.reversed.map((dbMsg) {
         final blocks = blocksByMsgId[dbMsg.id];
-        // 注释已清理乱码
+        // (注释已丢失)
         final fallbackText = orphanPendingByMsgId[dbMsg.id];
         if (fallbackText != null) {
           return MessageConverter.fromDb(dbMsg, blocks: null).copyWith(
@@ -151,7 +151,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
     );
   }
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   Conversation _createConversation() {
     final now = DateTime.now();
     return Conversation(
@@ -165,7 +165,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
   }
 
   Future<void> _save(List<Conversation> list) async {
-    // 注释已清理乱码
+    // (注释已丢失)
     final convRepo = ref.read(conversationRepositoryProvider);
     final msgRepo = ref.read(messageRepositoryProvider);
     final blockRepo = ref.read(messageBlockRepositoryProvider);
@@ -204,8 +204,8 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
           );
         }
       } else {
-        // 注释已清理乱码
-        // 注释已清理乱码
+        // (注释已丢失)
+        // (注释已丢失)
         await blockRepo.deleteByMessage(msg.id);
       }
     }
@@ -316,7 +316,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
             ));
   }
 
-  // 注释已清理乱码
+  // (注释已丢失)
   Future<void> clearUnread(String id) async {
     final convRepo = ref.read(conversationRepositoryProvider);
 
@@ -332,9 +332,9 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
     final msgRepo = ref.read(messageRepositoryProvider);
 
     final now = DateTime.now().millisecondsSinceEpoch;
-    final purgeAt = now + 30 * 24 * 60 * 60 * 1000; // 注释已清理乱码
+    final purgeAt = now + 30 * 24 * 60 * 60 * 1000; // (注释已丢失)
 
-    // 注释已清理乱码
+    // (注释已丢失)
     await msgRepo.softDeleteByConversation(id, now, purgeAt);
 
     // update in-memory state
@@ -355,9 +355,9 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
     final msgRepo = ref.read(messageRepositoryProvider);
 
     final now = DateTime.now().millisecondsSinceEpoch;
-    final purgeAt = now + 30 * 24 * 60 * 60 * 1000; // 注释已清理乱码
+    final purgeAt = now + 30 * 24 * 60 * 60 * 1000; // (注释已丢失)
 
-    // 注释已清理乱码
+    // (注释已丢失)
     await convRepo.softDelete(id, now, purgeAt);
     await msgRepo.softDeleteByConversation(id, now, purgeAt);
 

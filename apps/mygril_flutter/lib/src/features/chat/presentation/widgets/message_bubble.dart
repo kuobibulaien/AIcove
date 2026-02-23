@@ -41,6 +41,9 @@ class MessageBubble extends ConsumerWidget {
   final void Function(GlobalKey mediaKey, MessageBlock block)? onMediaLongPress; // 媒体长按/右键回调
   final double fontSize; // 字体大小
 
+  /// 聊天中所有图片列表（用于画廊模式左右滑动切换），由父组件传入
+  final List<ImagePreviewItem>? chatImages;
+
   /// 是否显示直角（连续消息组的第一条且后面还有同发送者消息时为 true）
   /// false = 全圆角（单条消息或组的后续消息）
   final bool showCorner;
@@ -61,6 +64,7 @@ class MessageBubble extends ConsumerWidget {
     this.onLongPress,
     this.onMediaLongPress,
     this.fontSize = _kDefaultFontSize,
+    this.chatImages,
     this.showCorner = false,
     this.showName = false,
     this.showAvatar = true,
@@ -77,6 +81,7 @@ class MessageBubble extends ConsumerWidget {
     this.onLongPress,
     this.onMediaLongPress,
     this.fontSize = _kDefaultFontSize,
+    this.chatImages,
     this.showCorner = false,
     this.showName = false,
     this.showAvatar = true,
@@ -557,10 +562,23 @@ class MessageBubble extends ConsumerWidget {
     );
   }
 
-  /// 显示图片全屏预览
+  /// 显示图片全屏预览（支持画廊模式左右滑动切换）
   void _showImagePreview(
       BuildContext context, ImageProvider imageProvider, String heroTag) {
-    MoeImagePreview.show(context, imageProvider, heroTag: heroTag);
+    final images = chatImages;
+    if (images != null && images.length > 1) {
+      // 画廊模式：在列表中找到当前图片的索引
+      int index = images.indexWhere((item) => item.heroTag == heroTag);
+      if (index < 0) index = 0;
+      MoeImagePreview.showGallery(
+        context,
+        images: images,
+        initialIndex: index,
+      );
+    } else {
+      // 单张预览
+      MoeImagePreview.show(context, imageProvider, heroTag: heroTag);
+    }
   }
 
   /// 渲染音频块

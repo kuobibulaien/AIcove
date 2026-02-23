@@ -1,4 +1,4 @@
-/// 注释已清理乱码
+/// (注释已丢失)
 ///
 /// 运行代码生成: flutter pub run build_runner build
 library;
@@ -31,7 +31,7 @@ class Conversations extends Table {
   TextColumn get voiceFile => text().nullable()();
   TextColumn get personaPrompt => text().withDefault(const Constant(''))();
 
-  // 注释已清理乱码
+  // (注释已丢失)
   TextColumn get defaultProvider => text().nullable()();
   TextColumn get sessionProvider => text().nullable()();
   BoolColumn get isPinned => boolean().withDefault(const Constant(false))();
@@ -57,11 +57,11 @@ class Conversations extends Table {
   // 上下文截断：新话题起始消息ID，此ID之后的消息才纳入AI上下文
   TextColumn get contextStartMessageId => text().nullable()();
 
-  // 注释已清理乱码
+  // (注释已丢失)
   IntColumn get deletedAt => integer().nullable()();
   IntColumn get purgeAt => integer().nullable()();
 
-  // 注释已清理乱码
+  // (注释已丢失)
   IntColumn get createdAt => integer()();
   IntColumn get updatedAt => integer()();
 
@@ -69,7 +69,7 @@ class Conversations extends Table {
   Set<Column> get primaryKey => {id};
 }
 
-/// 注释已清理乱码
+/// (注释已丢失)
 class Messages extends Table {
   TextColumn get id => text()();
   TextColumn get conversationId => text().references(Conversations, #id)();
@@ -79,26 +79,26 @@ class Messages extends Table {
       .withDefault(const Constant('sent'))(); // 'sending' | 'sent' | 'failed'
   BoolColumn get summarized =>
       boolean().withDefault(const Constant(false))(); // 是否已被记忆总结
-  IntColumn get summarizedAt => integer().nullable()(); // 注释已清理乱码
+  IntColumn get summarizedAt => integer().nullable()(); // (注释已丢失)
 
-  // 注释已清理乱码
+  // (注释已丢失)
   TextColumn get replacedBy => text().nullable()();
 
   // 冲突字段
   TextColumn get conflictOf => text().nullable()();
 
-  // 注释已清理乱码
+  // (注释已丢失)
   IntColumn get deletedAt => integer().nullable()();
   IntColumn get purgeAt => integer().nullable()();
 
-  // 注释已清理乱码
+  // (注释已丢失)
   IntColumn get createdAt => integer()();
 
   @override
   Set<Column> get primaryKey => {id};
 }
 
-/// 注释已清理乱码
+/// (注释已丢失)
 class MessageBlocks extends Table {
   TextColumn get id => text()();
   TextColumn get messageId => text().references(Messages, #id)();
@@ -128,16 +128,16 @@ class Providers extends Table {
   TextColumn get visibleModels => text().withDefault(const Constant('[]'))();
   TextColumn get hiddenModels => text().withDefault(const Constant('[]'))();
   TextColumn get apiKeys =>
-      text().withDefault(const Constant('[]'))(); // 注释已清理乱码
+      text().withDefault(const Constant('[]'))(); // (注释已丢失)
 
   // 冲突字段
   TextColumn get conflictOf => text().nullable()();
 
-  // 注释已清理乱码
+  // (注释已丢失)
   IntColumn get deletedAt => integer().nullable()();
   IntColumn get purgeAt => integer().nullable()();
 
-  // 注释已清理乱码
+  // (注释已丢失)
   IntColumn get createdAt => integer()();
   IntColumn get updatedAt => integer()();
 
@@ -145,20 +145,20 @@ class Providers extends Table {
   Set<Column> get primaryKey => {id};
 }
 
-/// 注释已清理乱码
+/// (注释已丢失)
 class SyncScopes extends Table {
   TextColumn get enabledScopes => text()
       .withDefault(const Constant('["chat.history", "characters.cards"]'))();
   IntColumn get updatedAt => integer()();
 
-  // 注释已清理乱码
+  // (注释已丢失)
   IntColumn get id => integer().withDefault(const Constant(1))();
 
   @override
   Set<Column> get primaryKey => {id};
 }
 
-/// 注释已清理乱码
+/// (注释已丢失)
 class SyncCursors extends Table {
   TextColumn get deviceId => text()();
   IntColumn get conversationsCursor =>
@@ -171,7 +171,7 @@ class SyncCursors extends Table {
   Set<Column> get primaryKey => {deviceId};
 }
 
-/// 注释已清理乱码
+/// (注释已丢失)
 class PendingOperations extends Table {
   TextColumn get opId => text()();
   TextColumn get opType => text()();
@@ -185,46 +185,46 @@ class PendingOperations extends Table {
 
 /// 记忆表（有效记忆 + 回收站记忆）
 ///
-/// 注释已清理乱码
-/// 注释已清理乱码
+/// (注释已丢失)
+/// (注释已丢失)
 class Memories extends Table {
   TextColumn get id => text()();
-  TextColumn get content => text()(); // 注释已清理乱码
+  TextColumn get content => text()(); // (注释已丢失)
   TextColumn get embedding => text().nullable()(); // 向量，JSON格式存储
   TextColumn get layer =>
       text().withDefault(const Constant('L3'))(); // L1/L2/L3/L4
   TextColumn get category =>
       text().withDefault(const Constant('daily_chatter'))(); // AI分类
   TextColumn get conversationId =>
-      text().references(Conversations, #id).nullable()(); // 注释已清理乱码
+      text().references(Conversations, #id).nullable()(); // (注释已丢失)
   TextColumn get contentHash => text().nullable()(); // 去重哈希
   BoolColumn get needsEnrichment =>
       boolean().withDefault(const Constant(false))(); // 被召回后待重丰富
 
-  // 注释已清理乱码
+  // (注释已丢失)
   RealColumn get persistenceP =>
-      real().withDefault(const Constant(0.5))(); // 注释已清理乱码
+      real().withDefault(const Constant(0.5))(); // (注释已丢失)
   RealColumn get emotionE =>
-      real().withDefault(const Constant(0.0))(); // 注释已清理乱码
-  RealColumn get infoI => real().withDefault(const Constant(0.5))(); // 注释已清理乱码
+      real().withDefault(const Constant(0.0))(); // (注释已丢失)
+  RealColumn get infoI => real().withDefault(const Constant(0.5))(); // (注释已丢失)
   RealColumn get judgeJ =>
       real().withDefault(const Constant(0.5))(); // J 综合判断
 
-  // 注释已清理乱码
+  // (注释已丢失)
   RealColumn get infoImportance =>
-      real().withDefault(const Constant(0.5))(); // 注释已清理乱码
+      real().withDefault(const Constant(0.5))(); // (注释已丢失)
   RealColumn get timeCoef =>
-      real().withDefault(const Constant(1.0))(); // 注释已清理乱码
+      real().withDefault(const Constant(1.0))(); // (注释已丢失)
   RealColumn get importance =>
-      real().withDefault(const Constant(0.5))(); // 注释已清理乱码
+      real().withDefault(const Constant(0.5))(); // (注释已丢失)
 
   // 系统维护字段
   IntColumn get useCount =>
-      integer().withDefault(const Constant(0))(); // 注释已清理乱码
+      integer().withDefault(const Constant(0))(); // (注释已丢失)
   IntColumn get lastActiveAt =>
-      integer().nullable()(); // 注释已清理乱码
+      integer().nullable()(); // (注释已丢失)
 
-  // 注释已清理乱码
+  // (注释已丢失)
   IntColumn get deletedAt => integer().nullable()();
   IntColumn get purgeAt => integer().nullable()();
 
@@ -233,7 +233,7 @@ class Memories extends Table {
   TextColumn get syncState =>
       text().withDefault(const Constant('local'))(); // local/synced/modified
 
-  // 注释已清理乱码
+  // (注释已丢失)
   IntColumn get createdAt => integer()();
   IntColumn get updatedAt => integer()();
 
@@ -241,12 +241,12 @@ class Memories extends Table {
   Set<Column> get primaryKey => {id};
 }
 
-/// 注释已清理乱码
+/// (注释已丢失)
 class SummarizationRecords extends Table {
   TextColumn get id => text()();
   TextColumn get conversationId => text().references(Conversations, #id)();
   TextColumn get dateKey => text()(); // yyyy-MM-dd（归属日期）
-  TextColumn get roundKey => text()(); // 注释已清理乱码
+  TextColumn get roundKey => text()(); // (注释已丢失)
   IntColumn get roundIndex => integer().withDefault(const Constant(0))();
   IntColumn get firstMsgTime => integer()();
   IntColumn get lastMsgTime => integer()();
@@ -265,44 +265,44 @@ class SummarizationRecords extends Table {
       ];
 }
 
-/// 注释已清理乱码
+/// (注释已丢失)
 class MemoryTombstones extends Table {
   TextColumn get tombstoneId => text()();
-  TextColumn get memoryId => text()(); // 注释已清理乱码
+  TextColumn get memoryId => text()(); // (注释已丢失)
   TextColumn get reason =>
       text()(); // evicted / replaced / user_delete / conflict_patch
-  TextColumn get payloadHash => text().nullable()(); // 注释已清理乱码
+  TextColumn get payloadHash => text().nullable()(); // (注释已丢失)
 
-  // 注释已清理乱码
+  // (注释已丢失)
   IntColumn get deletedAt => integer()();
   IntColumn get purgeAt => integer()();
-  IntColumn get cloudSyncedAt => integer().nullable()(); // 注释已清理乱码
+  IntColumn get cloudSyncedAt => integer().nullable()(); // (注释已丢失)
 
   @override
   Set<Column> get primaryKey => {tombstoneId};
 }
 
-/// 注释已清理乱码
+/// (注释已丢失)
 ///
-/// 注释已清理乱码
-/// 注释已清理乱码
+/// (注释已丢失)
+/// (注释已丢失)
 class Diaries extends Table {
   TextColumn get id => text()();
   TextColumn get conversationId =>
       text().references(Conversations, #id)(); // 关联角色
-  IntColumn get date => integer()(); // 注释已清理乱码
-  TextColumn get content => text()(); // 注释已清理乱码
+  IntColumn get date => integer()(); // (注释已丢失)
+  TextColumn get content => text()(); // (注释已丢失)
   TextColumn get embedding => text().nullable()(); // 向量，JSON格式存储
 
-  // 注释已清理乱码
+  // (注释已丢失)
   TextColumn get mood => text().nullable()(); // 当天心情
-  TextColumn get keywords => text().nullable()(); // 注释已清理乱码
+  TextColumn get keywords => text().nullable()(); // (注释已丢失)
 
   // 同步字段
   BoolColumn get isSynced => boolean().withDefault(const Constant(false))();
   TextColumn get syncState => text().withDefault(const Constant('local'))();
 
-  // 注释已清理乱码
+  // (注释已丢失)
   IntColumn get createdAt => integer()();
   IntColumn get updatedAt => integer()();
 
@@ -337,26 +337,26 @@ class AppDatabase extends _$AppDatabase {
         await _ensureMemoryFts();
       },
       onUpgrade: (Migrator m, int from, int to) async {
-        // 注释已清理乱码
+        // (注释已丢失)
         if (from < 2) {
           await m.createTable(memories);
           await m.createTable(memoryTombstones);
         }
-        // 注释已清理乱码
+        // (注释已丢失)
         if (from < 3) {
           await customStatement(
               'ALTER TABLE conversations ADD COLUMN blurred_background TEXT');
         }
-        // 注释已清理乱码
+        // (注释已丢失)
         if (from < 4) {
           await customStatement(
               'ALTER TABLE conversations ADD COLUMN enabled_plugins TEXT');
         }
-        // 注释已清理乱码
+        // (注释已丢失)
         if (from < 5) {
           await m.createTable(diaries);
         }
-        // 注释已清理乱码
+        // (注释已丢失)
         if (from < 6) {
           await _safeAddColumn(
               'messages', 'summarized INTEGER NOT NULL DEFAULT 0');
@@ -401,7 +401,7 @@ class AppDatabase extends _$AppDatabase {
     try {
       await customStatement('ALTER TABLE $table ADD COLUMN $columnDef');
     } catch (_) {
-      // 注释已清理乱码
+      // (注释已丢失)
     }
   }
 
@@ -413,7 +413,7 @@ USING fts5(memory_id, conversation_id, tokenized_content)
   }
 
   Future<void> _backfillMemoryFts() async {
-    // 注释已清理乱码
+    // (注释已丢失)
     await customStatement('DELETE FROM memory_fts');
     final rows = await customSelect('''
 SELECT id, COALESCE(conversation_id, '') AS conversation_id, content

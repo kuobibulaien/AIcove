@@ -7,8 +7,8 @@ import '../../plugins/trigger/trigger_plugin.dart';
 import '../../plugins/memory/memory_plugin.dart';
 import '../providers2.dart';
 
-/// 注释已清理乱码
-/// 注释已清理乱码
+/// (注释已丢失)
+/// (注释已丢失)
 final sessionManagerProvider = Provider<SessionManager>((ref) {
   final manager = SessionManager(ref);
   ref.onDispose(() => manager.dispose());
@@ -20,7 +20,7 @@ class SessionManager {
   Timer? _inactivityTimer;
   AppLifecycleListener? _lifecycleListener;
 
-  // 注释已清理乱码
+  // (注释已丢失)
   static const Duration _inactivityTimeout = Duration(minutes: 5);
 
   SessionManager(this._ref) {
@@ -62,7 +62,7 @@ class SessionManager {
     _lifecycleListener?.dispose();
   }
 
-  /// 注释已清理乱码
+  /// (注释已丢失)
   void _resetInactivityTimer() {
     _inactivityTimer?.cancel();
     AppLogger.debug('SessionManager', 'User active. Timer reset.');
@@ -91,24 +91,24 @@ class SessionManager {
   /// 处理会话结束逻辑 (核心)
   ///
   /// 会话结束时执行：
-  /// 注释已清理乱码
-  /// 注释已清理乱码
-  /// 注释已清理乱码
+  /// (注释已丢失)
+  /// (注释已丢失)
+  /// (注释已丢失)
   Future<void> _handleSessionEnd({required bool isForegroundTimeout}) async {
     final pluginManager = _ref.read(pluginManagerProvider);
-    // 注释已清理乱码
+    // (注释已丢失)
     final memoryPlugin = pluginManager.getPlugin('memory') as MemoryPlugin?;
     if (memoryPlugin != null && memoryPlugin.enabled) {
       AppLogger.debug('SessionManager',
           'Memory summarization is handled by next-day trigger.');
     }
 
-    // 注释已清理乱码
+    // (注释已丢失)
     final triggerPlugin = pluginManager.getPlugin('trigger') as TriggerPlugin?;
 
     if (triggerPlugin != null && triggerPlugin.enabled) {
       AppLogger.info('SessionManager', 'Starting Logic Track analysis...');
-      // 注释已清理乱码
+      // (注释已丢失)
       // await triggerPlugin.analyzeSession();
     } else {
       AppLogger.debug('SessionManager', 'TriggerPlugin not found or disabled.');
@@ -117,7 +117,7 @@ class SessionManager {
     // === 3. 主动消息 (Chat Track) ===
     if (isForegroundTimeout) {
       AppLogger.info('SessionManager', 'Starting Chat Track proactive poke...');
-      // 注释已清理乱码
+      // (注释已丢失)
       // _ref.read(chatActionsProvider).sendProactivePoke();
     }
   }

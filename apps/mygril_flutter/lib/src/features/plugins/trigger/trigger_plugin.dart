@@ -12,9 +12,9 @@ import '../../chat/data/auto_reply_trigger_controller.dart';
 import '../../chat/conversation_providers.dart';
 import '../../settings/app_settings.dart';
 
-/// 注释已清理乱码
+/// (注释已丢失)
 class TriggerPlugin extends BasePlugin {
-  // 注释已清理乱码
+  // (注释已丢失)
   static final _metadata = PluginMetadata(
     id: 'trigger',
     name: '智能触发器',
@@ -31,11 +31,11 @@ class TriggerPlugin extends BasePlugin {
     },
   );
 
-  // 注释已清理乱码
+  // (注释已丢失)
   TriggerConfig _triggerConfig;
   final Ref _ref;
 
-  // 注释已清理乱码
+  // (注释已丢失)
   TriggerPlugin(this._triggerConfig, this._ref) : super(metadata: _metadata);
 
   // ========== 重写 enabled getter ==========
@@ -93,7 +93,7 @@ Use these tools for reminder management:
 ''';
   }
 
-  // 注释已清理乱码
+  // (注释已丢失)
 
   @override
   List<AITool> getTools() {
@@ -226,7 +226,7 @@ Use these tools for reminder management:
       return jsonEncode({'ok': false, 'error': '缺少必要参数 title 或 time'});
     }
 
-    // 注释已清理乱码
+    // (注释已丢失)
     final scheduledTime = _parseTime(timeStr);
     if (scheduledTime == null) {
       return jsonEncode({'ok': false, 'error': '无法解析时间格式：$timeStr'});
@@ -238,7 +238,7 @@ Use these tools for reminder management:
       return jsonEncode({'ok': false, 'error': '当前没有活跃的会话'});
     }
 
-    // 注释已清理乱码
+    // (注释已丢失)
     final conversations = _ref.read(conversationsProvider).valueOrNull ?? [];
     final conv = conversations.where((c) => c.id == convId).firstOrNull;
 
@@ -254,7 +254,7 @@ Use these tools for reminder management:
       }
     }
 
-    // 注释已清理乱码
+    // (注释已丢失)
     final trigger = await _ref.read(autoReplyTriggersProvider.notifier).createTrigger(
       title: title,
       type: AutoReplyTriggerType.fixed,
@@ -263,7 +263,7 @@ Use these tools for reminder management:
       requireExact: false,
       delayMinutes: 0,
       prompt: prompt,
-      priority: AutoReplyTriggerPriority.high, // 注释已清理乱码
+      priority: AutoReplyTriggerPriority.high, // (注释已丢失)
       source: TriggerSource.userRequest,
       conversationId: convId,
       contextLastUserMessageId: lastUserMsgId,
@@ -293,7 +293,7 @@ Use these tools for reminder management:
 
     final convId = _ref.read(activeConversationIdProvider);
 
-    // 注释已清理乱码
+    // (注释已丢失)
     if (id != null && id.isNotEmpty) {
       final allTriggers =
           _ref.read(autoReplyTriggersProvider).valueOrNull ?? const <AutoReplyTrigger>[];
@@ -312,7 +312,7 @@ Use these tools for reminder management:
       });
     }
 
-    // 注释已清理乱码
+    // (注释已丢失)
     if (query == null || query.isEmpty) {
       return jsonEncode({'ok': false, 'error': '请告诉我要取消哪个提醒（例如"起床闹钟"）'});
     }
@@ -424,7 +424,7 @@ Use these tools for reminder management:
       return PluginProcessResult(processedText: text, events: []);
     }
 
-    // 注释已清理乱码
+    // (注释已丢失)
     if (text.contains('<create_trigger') || text.contains('<delete_trigger')) {
       AppLogger.warning('TriggerPlugin', 'AI 使用了废弃的 XML 标签格式，应使用原生工具调用');
     }

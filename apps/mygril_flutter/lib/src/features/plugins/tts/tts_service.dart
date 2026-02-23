@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../../../core/app_logger.dart';
+import '../../../core/utils/mime_utils.dart';
 import 'aliyun_qwen_tts_websocket.dart';
 import 'aliyun_voice_clone_service.dart';
 import 'tts_config.dart';
@@ -150,7 +151,7 @@ class TtsService {
           throw TtsException('TTS 返回的音频数据为空');
         }
 
-        final mimeType = _resolveAudioMimeType(contentType, audioBytes);
+        final mimeType = MimeUtils.resolveAudioMimeType(contentType, audioBytes);
 
         // 转换为 Data URL
         final base64Audio = base64Encode(audioBytes);
@@ -498,49 +499,6 @@ class TtsService {
       }
     }
     return sanitized;
-  }
-
-  String _resolveAudioMimeType(String rawContentType, List<int> bytes) {
-    bool startsWithAscii(String s) {
-      if (bytes.length < s.length) return false;
-      for (var i = 0; i < s.length; i++) {
-        if (bytes[i] != s.codeUnitAt(i)) return false;
-      }
-      return true;
-    }
-
-    bool looksLikeWav() {
-      return startsWithAscii('RIFF') &&
-          bytes.length >= 12 &&
-          String.fromCharCodes(bytes.sublist(8, 12)) == 'WAVE';
-    }
-
-    bool looksLikeOgg() => startsWithAscii('OggS');
-
-    bool looksLikeMp3() {
-      if (startsWithAscii('ID3')) return true;
-      if (bytes.length < 2) return false;
-      return bytes[0] == 0xFF && (bytes[1] & 0xE0) == 0xE0;
-    }
-
-    final contentType = rawContentType.toLowerCase();
-
-    if (contentType.contains('audio/wav') || contentType.contains('audio/x-wav')) {
-      return 'audio/wav';
-    }
-    if (contentType.contains('audio/ogg')) return 'audio/ogg';
-    if (contentType.contains('audio/mpeg') || contentType.contains('audio/mp3')) {
-      return 'audio/mpeg';
-    }
-    if (contentType.contains('audio/')) {
-      return contentType.split(';').first.trim();
-    }
-
-    if (looksLikeWav()) return 'audio/wav';
-    if (looksLikeOgg()) return 'audio/ogg';
-    if (looksLikeMp3()) return 'audio/mpeg';
-
-    return 'application/octet-stream';
   }
 
   /// 构建请求体（根据 requestFormat 选择不同格式）

@@ -24,6 +24,7 @@
 /// - 2025-12-08: 修复返回动画闪烁问题（背景层透明度随 progress 变化）
 /// - 2025-12-08: 禁止底层页面左移动画（覆写 canTransitionFrom）
 /// - 2025-12-08: 添加目标圆角参数，适配现代手机屏幕圆角
+/// - 2026-02-23: 修复动画完成后详情页不覆盖全屏的问题（改用 LayoutBuilder 取真实约束）
 library;
 
 import 'package:flutter/material.dart';
@@ -106,8 +107,6 @@ class ExpandingPageRoute<T> extends PageRoute<T> {
   @override
   Widget buildTransitions(BuildContext context, Animation<double> animation,
       Animation<double> secondaryAnimation, Widget child) {
-    final screenSize = MediaQuery.sizeOf(context);
-
     // 使用平滑曲线
     final curvedAnimation = CurvedAnimation(
       parent: animation,
@@ -118,34 +117,48 @@ class ExpandingPageRoute<T> extends PageRoute<T> {
     return AnimatedBuilder(
       animation: curvedAnimation,
       builder: (context, _) {
+        // 动画完成后，直接返回 child，让页面自然填满 Navigator 给的约束。
+        // 这样无论系统导航栏、UI 缩放如何设置，页面都能正确覆盖全部可用区域。
+        if (animation.status == AnimationStatus.completed) {
+          return child;
+        }
+
         final progress = curvedAnimation.value;
 
-        // 计算当前矩形：从源位置插值到全屏
-        final currentRect = Rect.lerp(
-          sourceRect,
-          Rect.fromLTWH(0, 0, screenSize.width, screenSize.height),
-          progress,
-        )!;
+        // 使用 LayoutBuilder 获取 Navigator 给的真实约束，
+        // 而非 MediaQuery.sizeOf（后者可能与实际布局约束不一致）。
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final targetRect = Rect.fromLTWH(
+                0, 0, constraints.maxWidth, constraints.maxHeight);
 
-        // 计算当前圆角：从卡片圆角渐变到目标圆角
-        final currentRadius =
-            sourceRadius + (targetRadius - sourceRadius) * progress;
+            // 计算当前矩形：从源位置插值到实际可用区域
+            final currentRect = Rect.lerp(
+              sourceRect,
+              targetRect,
+              progress,
+            )!;
 
-        // 展开的容器（无遮罩、无阴影、无淡入淡出）
-        // Positioned 必须在 Stack 内部使用
-        return Stack(
-          children: [
-            Positioned(
-              left: currentRect.left,
-              top: currentRect.top,
-              width: currentRect.width,
-              height: currentRect.height,
-              child: MoeG2ClipRRect(
-                radius: currentRadius,
-                child: child,
-              ),
-            ),
-          ],
+            // 计算当前圆角：从卡片圆角渐变到目标圆角
+            final currentRadius =
+                sourceRadius + (targetRadius - sourceRadius) * progress;
+
+            // 展开的容器（无遮罩、无阴影、无淡入淡出）
+            return Stack(
+              children: [
+                Positioned(
+                  left: currentRect.left,
+                  top: currentRect.top,
+                  width: currentRect.width,
+                  height: currentRect.height,
+                  child: MoeG2ClipRRect(
+                    radius: currentRadius,
+                    child: child,
+                  ),
+                ),
+              ],
+            );
+          },
         );
       },
     );
