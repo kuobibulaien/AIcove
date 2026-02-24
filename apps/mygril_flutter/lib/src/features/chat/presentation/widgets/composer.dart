@@ -66,6 +66,9 @@ class _ComposerState extends ConsumerState<Composer> {
 
   // 记录键盘高度，用于更多面板的高度
   double _keyboardHeight = 270;
+  // 输入态锚点高度：用于“键盘 <-> 更多面板”切换时保持输入框不跳动
+  double _anchorPanelHeight = 0;
+  bool _holdPanelHeight = false;
   bool _suppressKeyboard = false;
 
   /// 桌面端焦点粘性保护：区分主动失焦和被动失焦（如输入法抢焦点）
@@ -186,15 +189,101 @@ class _ComposerState extends ConsumerState<Composer> {
     super.dispose();
   }
 
-  double _resolvedKeyboardPanelHeight(BuildContext context) {
-    final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
-    final nativeHeight = _panelController.keyboardHeight;
-    final resolved = keyboardInset > 0
-        ? keyboardInset
+  double _uiScaleFactor() {
+    final settingsAsync = ref.read(appSettingsProvider);
+    final rawScale = settingsAsync.maybeWhen(
+      data: (settings) => settings.uiScaleFactor,
+      orElse: () => 1.0,
+    );
+    return rawScale.clamp(kMinUiScaleFactor, kMaxUiScaleFactor).toDouble();
+  }
+
+  double _toLayoutHeight(double rawHeight) {
+    if (rawHeight <= 0) return 0;
+    final scale = _uiScaleFactor();
+    if ((scale - 1.0).abs() < 0.001) return rawHeight;
+    return rawHeight / scale;
+  }
+
+  double _liveKeyboardInsetLayout(BuildContext context) {
+    return _toLayoutHeight(MediaQuery.viewInsetsOf(context).bottom);
+  }
+
+  double _nativeKeyboardHeightLayout() {
+    return _toLayoutHeight(_panelController.keyboardHeight);
+  }
+
+  double _safeAreaBottomLayout() {
+    return _toLayoutHeight(_panelController.safeAreaBottom);
+  }
+
+  double _clampToSafeArea(double height) {
+    final safeAreaBottom = _safeAreaBottomLayout();
+    return height >= safeAreaBottom ? height : safeAreaBottom;
+  }
+
+  void _capturePanelAnchor(BuildContext context) {
+    final liveInset = _liveKeyboardInsetLayout(context);
+    if (liveInset > 0) {
+      _anchorPanelHeight = liveInset;
+      _keyboardHeight = liveInset;
+      return;
+    }
+    final nativeHeight = _nativeKeyboardHeightLayout();
+    if (nativeHeight > 0) {
+      _anchorPanelHeight = nativeHeight;
+      _keyboardHeight = nativeHeight;
+      return;
+    }
+    if (_keyboardHeight > 0) {
+      _anchorPanelHeight = _keyboardHeight;
+    }
+  }
+
+  double _keyboardPanelHeight(BuildContext context) {
+    final liveInset = _liveKeyboardInsetLayout(context);
+
+    // 从“更多面板”切回键盘时，先固定在锚点高度，等系统键盘高度追平后再释放。
+    if (_holdPanelHeight && _anchorPanelHeight > 0) {
+      final fixedHeight =
+          liveInset > _anchorPanelHeight ? liveInset : _anchorPanelHeight;
+      if (liveInset >= _anchorPanelHeight - 1) {
+        _holdPanelHeight = false;
+      }
+      return _clampToSafeArea(fixedHeight);
+    }
+
+    if (liveInset > 0) {
+      _keyboardHeight = liveInset;
+      _anchorPanelHeight = liveInset;
+      return _clampToSafeArea(liveInset);
+    }
+
+    // 键盘隐藏且输入框失焦时，回到底部待机态，避免卡在“中部”。
+    if (!_inputFocus.hasFocus) {
+      return _clampToSafeArea(0);
+    }
+
+    if (_holdPanelHeight && _anchorPanelHeight > 0) {
+      return _clampToSafeArea(_anchorPanelHeight);
+    }
+    return _clampToSafeArea(0);
+  }
+
+  double _morePanelHeight(BuildContext context) {
+    final liveInset = _liveKeyboardInsetLayout(context);
+    // 当处于 hold 状态时（如键盘收起、切换到更多面板的过程中），
+    // 不要让动画过程中逐渐减小的 liveInset 覆盖我们的目标高度锚点。
+    if (liveInset > 0 && !_holdPanelHeight) {
+      _keyboardHeight = liveInset;
+      _anchorPanelHeight = liveInset;
+    }
+    final nativeHeight = _nativeKeyboardHeightLayout();
+    final resolved = _anchorPanelHeight > 0
+        ? _anchorPanelHeight
         : (nativeHeight > 0 ? nativeHeight : _keyboardHeight);
-    final safeAreaBottom = _panelController.safeAreaBottom;
-    final minHeight = safeAreaBottom > 0 ? safeAreaBottom : 0.0;
-    return resolved >= minHeight ? resolved : minHeight;
+    if (resolved > 0) _keyboardHeight = resolved;
+    return _clampToSafeArea(resolved);
   }
 
   bool get _supportsSoftKeyboardPanel {
@@ -285,6 +374,7 @@ class _ComposerState extends ConsumerState<Composer> {
 
     switch (target) {
       case ComposerPanelType.none:
+        _holdPanelHeight = false;
         _intentionalUnfocus = true;
         _inputFocus.unfocus();
         if (_currentPanelType != ComposerPanelType.none) {
@@ -294,6 +384,12 @@ class _ComposerState extends ConsumerState<Composer> {
           setState(() => _suppressKeyboard = false);
         }
       case ComposerPanelType.more:
+        _capturePanelAnchor(context);
+        _holdPanelHeight = true;
+        // 先设 readOnly 抑制键盘，再**立刻同步**切面板类型。
+        // 两步在同一个同步调用链里完成，下一帧才真正重建，
+        // 这样包的 onKeyboardHeightChange(0) 触发时 panelType 已经是 other，
+        // 不会抢先把面板切成 none（消除竞争窗口）。
         if (!_suppressKeyboard) {
           setState(() => _suppressKeyboard = true);
         }
@@ -302,19 +398,17 @@ class _ComposerState extends ConsumerState<Composer> {
           data: ComposerPanelType.more,
           forceHandleFocus: ChatBottomHandleFocus.requestFocus,
         );
-        if (!_supportsSoftKeyboardPanel) return;
-        await SystemChannels.textInput.invokeMethod('TextInput.hide');
-        _armKeyboardGuard();
+        if (_supportsSoftKeyboardPanel) {
+          _armKeyboardGuard();
+        }
       case ComposerPanelType.keyboard:
         await _performKeyboardTransition(
-          preferPreAnimation: intent.preferPreAnimation,
           explicitShow: intent.explicitShow,
         );
     }
   }
 
   Future<void> _performKeyboardTransition({
-    required bool preferPreAnimation,
     required bool explicitShow,
   }) async {
     if (!mounted || widget.disabled) return;
@@ -326,6 +420,7 @@ class _ComposerState extends ConsumerState<Composer> {
       if (_currentPanelType != ComposerPanelType.none) {
         _panelController.updatePanelType(ChatBottomPanelType.none);
       }
+      _holdPanelHeight = false;
       _desiredPanelType = ComposerPanelType.none;
       _inputFocus.requestFocus();
       return;
@@ -338,54 +433,24 @@ class _ComposerState extends ConsumerState<Composer> {
       return;
     }
 
-    // 关键修复：从完全收起状态点击输入框时，不再执行 hide->show 预动画，
-    // 避免和系统因点按自动唤起产生 show/hide 竞争导致抖动�?
-    final shouldUsePreAnimation =
-        preferPreAnimation && _currentPanelType != ComposerPanelType.none;
-    if (!shouldUsePreAnimation) {
-      if (_suppressKeyboard) {
-        setState(() => _suppressKeyboard = false);
-      }
-      _panelController.updatePanelType(ChatBottomPanelType.keyboard);
-      _inputFocus.requestFocus();
-      if (explicitShow) {
-        await SystemChannels.textInput.invokeMethod('TextInput.show');
-      }
-      _armKeyboardGuard();
-      return;
+    final fromMorePanel = _currentPanelType == ComposerPanelType.more;
+    if (fromMorePanel) {
+      _capturePanelAnchor(context);
+      _holdPanelHeight = true;
+    } else {
+      _holdPanelHeight = false;
     }
-
-    if (_currentPanelType == ComposerPanelType.more) {
-      if (_suppressKeyboard) {
-        setState(() => _suppressKeyboard = false);
-      }
-      _panelController.updatePanelType(ChatBottomPanelType.keyboard);
-      _inputFocus.requestFocus();
-      if (explicitShow) {
-        await SystemChannels.textInput.invokeMethod('TextInput.show');
-      }
-      _armKeyboardGuard();
-      return;
+    final shouldSyncReadOnly = _suppressKeyboard;
+    if (shouldSyncReadOnly) {
+      setState(() => _suppressKeyboard = false);
     }
-
-    if (!_suppressKeyboard) {
-      setState(() => _suppressKeyboard = true);
+    if (shouldSyncReadOnly) {
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted || _desiredPanelType != ComposerPanelType.keyboard) return;
     }
-    _panelController.updatePanelType(
-      ChatBottomPanelType.other,
-      data: ComposerPanelType.keyboard,
-      forceHandleFocus: ChatBottomHandleFocus.requestFocus,
-    );
-    await SystemChannels.textInput.invokeMethod('TextInput.hide');
-    _armKeyboardGuard(kAnimXFast);
-
-    await Future.delayed(kAnimXFast);
-    if (!mounted || _desiredPanelType != ComposerPanelType.keyboard) return;
-
-    setState(() => _suppressKeyboard = false);
     _panelController.updatePanelType(ChatBottomPanelType.keyboard);
     _inputFocus.requestFocus();
-    if (explicitShow) {
+    if (explicitShow || fromMorePanel) {
       await SystemChannels.textInput.invokeMethod('TextInput.show');
     }
     _armKeyboardGuard();
@@ -500,7 +565,7 @@ class _ComposerState extends ConsumerState<Composer> {
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           _buildMoreButton(
-              isActive: _currentPanelType != ComposerPanelType.none),
+              isActive: _currentPanelType == ComposerPanelType.more),
           const SizedBox(width: 8),
           Expanded(
             child: Container(
@@ -611,8 +676,7 @@ class _ComposerState extends ConsumerState<Composer> {
         final Widget panel;
         if (panelType == ChatBottomPanelType.keyboard) {
           if (_supportsSoftKeyboardPanel) {
-            final height = _resolvedKeyboardPanelHeight(context);
-            if (height > 0) _keyboardHeight = height;
+            final height = _keyboardPanelHeight(context);
             panel = SizedBox(width: double.infinity, height: height);
           } else {
             panel = const SizedBox.shrink();
@@ -659,7 +723,7 @@ class _ComposerState extends ConsumerState<Composer> {
       },
       otherPanelWidget: (type) {
         if (type == null) return const SizedBox.shrink();
-        final height = _resolvedKeyboardPanelHeight(context);
+        final height = _morePanelHeight(context);
         if (type == ComposerPanelType.keyboard) {
           if (!_supportsSoftKeyboardPanel) return const SizedBox.shrink();
           return SizedBox(height: height);
@@ -674,7 +738,13 @@ class _ComposerState extends ConsumerState<Composer> {
           switch (panelType) {
             case ChatBottomPanelType.none:
               _currentPanelType = ComposerPanelType.none;
-              _suppressKeyboard = false;
+              final switchingToMore =
+                  _desiredPanelType == ComposerPanelType.more ||
+                      _pendingPanelIntent?.target == ComposerPanelType.more;
+              if (!switchingToMore) {
+                _suppressKeyboard = false;
+                _holdPanelHeight = false;
+              }
             case ChatBottomPanelType.keyboard:
               _currentPanelType = ComposerPanelType.keyboard;
               _suppressKeyboard = false;
@@ -682,12 +752,15 @@ class _ComposerState extends ConsumerState<Composer> {
               if (data == ComposerPanelType.more) {
                 _currentPanelType = ComposerPanelType.more;
                 _suppressKeyboard = true;
+                _holdPanelHeight = true;
               } else if (data == ComposerPanelType.keyboard) {
                 _currentPanelType = ComposerPanelType.keyboard;
                 _suppressKeyboard = true;
+                _holdPanelHeight = true;
               } else {
                 _currentPanelType = ComposerPanelType.none;
                 _suppressKeyboard = false;
+                _holdPanelHeight = false;
               }
           }
 
@@ -697,15 +770,23 @@ class _ComposerState extends ConsumerState<Composer> {
         });
       },
       changeKeyboardPanelHeight: (height) {
-        // 某些机型/输入法：`MediaQuery.viewInsets.bottom` 在键盘收起时会“先归零再慢慢动画”，
-        // 导致输入栏先掉下去被键盘盖住。这里用插件回调的原生键盘高度兜底，保证输入栏始终贴着键盘�?
-        final nativeHeight = _panelController.keyboardHeight;
-        final resolved = height > 0
-            ? height
-            : (nativeHeight > 0 ? nativeHeight : _keyboardHeight);
-        if (resolved > 0) _keyboardHeight = resolved;
-        final safeAreaBottom = _panelController.safeAreaBottom;
-        return resolved >= safeAreaBottom ? resolved : safeAreaBottom;
+        final liveHeight = _toLayoutHeight(height);
+        if (liveHeight > 0) {
+          _keyboardHeight = liveHeight;
+          if (!_holdPanelHeight || liveHeight >= _anchorPanelHeight) {
+            _anchorPanelHeight = liveHeight;
+          }
+          final effectiveHeight = _holdPanelHeight && _anchorPanelHeight > 0
+              ? (liveHeight > _anchorPanelHeight
+                  ? liveHeight
+                  : _anchorPanelHeight)
+              : liveHeight;
+          return _clampToSafeArea(effectiveHeight);
+        }
+        if (_holdPanelHeight && _anchorPanelHeight > 0) {
+          return _clampToSafeArea(_anchorPanelHeight);
+        }
+        return _clampToSafeArea(0);
       },
       panelBgColor: Colors.transparent,
     );

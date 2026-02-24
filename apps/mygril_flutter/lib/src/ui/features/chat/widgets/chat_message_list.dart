@@ -195,9 +195,16 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   Widget build(BuildContext context) {
     final actions = ref.watch(chatActionsProvider);
     final settingsAsync = ref.watch(appSettingsProvider);
-    final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
-    final fallbackBottomPadding =
-        MediaQuery.paddingOf(context).bottom + 70 + keyboardInset;
+    final uiScale = settingsAsync
+        .maybeWhen(
+          data: (settings) => settings.uiScaleFactor
+              .clamp(kMinUiScaleFactor, kMaxUiScaleFactor),
+          orElse: () => 1.0,
+        )
+        .toDouble();
+    final keyboardInset = MediaQuery.viewInsetsOf(context).bottom / uiScale;
+    final safeBottom = MediaQuery.paddingOf(context).bottom / uiScale;
+    final fallbackBottomPadding = safeBottom + 70 + keyboardInset;
     final listBottomPadding = widget.bottomOverlayHeight > 0
         ? widget.bottomOverlayHeight + 8
         : fallbackBottomPadding;
