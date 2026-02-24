@@ -10,12 +10,14 @@
 /// - 2026-02-21: 统一多模态拆分机制，表情包也按原始位置拆分保证语序
 library;
 
+import 'dart:convert';
 import '../domain/message.dart';
 import '../id_gen.dart';
 import '../../plugins/domain/plugin.dart';
 import '../../plugins/domain/plugin_content.dart';
 import '../../plugins/tts/tts_parser.dart';
 import '../../../core/models/message_block.dart';
+import '../../../core/api/providers/provider_adapter.dart' show ToolCall, ToolResult;
 import 'chat_types.dart';
 
 /// 多模态片段类型（供 ChatTtsHandler 使用）
@@ -80,7 +82,10 @@ class ChatMessageProcessor {
     required String processedText,
     required List<PluginEvent> pluginEvents,
     List<PluginContent>? contents,
+    List<ToolCall> toolCalls = const [],
+    List<ToolResult> rawToolResults = const [],
   }) {
+
     final aiMessages = <Message>[];
 
     // 1. 处理 PluginContent（如果有的话）
@@ -176,8 +181,57 @@ class ChatMessageProcessor {
 
     // 注意：表情包已在上面的多模态拆分中按位置处理，不再单独追加
 
+    // 附加 ToolBlocks，将 AI 调用的工具和结果记录入库
+    if (toolCalls.isNotEmpty) {
+      final toolBlocks = <ToolBlock>[];
+      for (final call in toolCalls) {
+        final result = rawToolResults.firstWhere((r) => r.toolCallId == call.id, 
+           orElse: () => ToolResult(toolCallId: call.id, name: call.name, result: '{"error": "no result"}'));
+        toolBlocks.add(ToolBlock(
+          messageId: 'tmp', 
+          toolCallId: call.id,
+          toolName: call.name,
+          arguments: call.arguments,
+          result: {'content': result.result},
+        ));
+      }
+
+      if (aiMessages.isNotEmpty) {
+        final lastMsg = aiMessages.last;
+        final newBlocks = List<MessageBlock>.from(lastMsg.blocks ?? []);
+        if (lastMsg.content.isNotEmpty && newBlocks.isEmpty) {
+          newBlocks.add(TextBlock(messageId: lastMsg.id, content: lastMsg.content));
+        }
+        for (final tb in toolBlocks) {
+          newBlocks.add(ToolBlock(
+             messageId: lastMsg.id, 
+             toolCallId: tb.toolCallId,
+             toolName: tb.toolName, 
+             arguments: tb.arguments, 
+             result: tb.result
+          ));
+        }
+        aiMessages[aiMessages.length - 1] = lastMsg.copyWith(
+          content: '',
+          blocks: newBlocks,
+        );
+      } else {
+         final msgId = genId('msg');
+         aiMessages.add(Message.fromBlocks(
+           id: msgId,
+           role: 'assistant',
+           blocks: toolBlocks.map((b) => ToolBlock(
+               messageId: msgId, toolCallId: b.toolCallId, toolName: b.toolName, arguments: b.arguments, result: b.result)
+           ).toList(),
+           createdAt: DateTime.now(),
+           status: 'sent',
+         ));
+      }
+    }
+
     // 计算最后一条消息预览
     final lastMessageText =
+
         aiMessages.isNotEmpty ? aiMessages.last.displayText : '';
 
     return AssistantMessageBuildResult(

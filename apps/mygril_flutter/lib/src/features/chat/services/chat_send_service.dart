@@ -395,18 +395,17 @@ class ChatSendService {
   }) async {
     final reqMessages = <Map<String, dynamic>>[];
     for (final m in history) {
-      final converted = await _toRequestMessage(
+      final convertedMessages = await _toRequestMessages(
         m,
         settings: settings,
         supportsVision: supportsVision,
       );
-      if (converted == null) continue;
-      reqMessages.add(converted);
+      reqMessages.addAll(convertedMessages);
     }
     return reqMessages;
   }
 
-  Future<Map<String, dynamic>?> _toRequestMessage(
+  Future<List<Map<String, dynamic>>> _toRequestMessages(
     Message message, {
     required AppSettings settings,
     bool supportsVision = true,
@@ -414,11 +413,13 @@ class ChatSendService {
     final blocks = message.blocks;
     if (blocks == null || blocks.isEmpty) {
       final content = message.content;
-      if (content.trim().isEmpty) return null;
-      return {'role': message.role, 'content': content};
+      if (content.trim().isEmpty) return [];
+      return [{'role': message.role, 'content': content}];
     }
 
     final parts = <Map<String, dynamic>>[];
+    final toolCalls = <Map<String, dynamic>>[];
+    final toolResultMessages = <Map<String, dynamic>>[];
 
     for (final block in blocks) {
       if (block is TextBlock) {
@@ -428,9 +429,14 @@ class ChatSendService {
       }
 
       if (block is ImageBlock) {
-        // 模型不支持视觉时，仅保留图片占位，避免把生图提示词注入后续上下文
+        // 模型不支持视觉时，尝试使用视觉辅助模型进行翻译，填充为文本描述
         if (!supportsVision) {
-          parts.add({'type': 'text', 'text': '[图片]'});
+          final translated = await _translateImageWithVisionModel(block, settings);
+          if (translated != null && translated.isNotEmpty) {
+            parts.add({'type': 'text', 'text': '[图片已转换为文本描述：\n$translated]'});
+          } else {
+            parts.add({'type': 'text', 'text': '[图片]'});
+          }
           continue;
         }
 
@@ -474,20 +480,132 @@ class ChatSendService {
         parts.add({'type': 'text', 'text': fileText});
         continue;
       }
+
+      if (block is ToolBlock) {
+        if (block.toolCallId != null && block.toolCallId!.isNotEmpty) {
+          toolCalls.add({
+            'id': block.toolCallId,
+            'type': 'function',
+            'function': {
+              'name': block.toolName,
+              'arguments': block.arguments != null ? jsonEncode(block.arguments) : '{}',
+            }
+          });
+          toolResultMessages.add({
+            'role': 'tool',
+            'tool_call_id': block.toolCallId,
+            'name': block.toolName,
+            'content': block.result != null ? jsonEncode(block.result) : '{"success": true}',
+          });
+        }
+      }
     }
 
-    if (parts.isEmpty) {
-      final content = message.content;
-      if (content.trim().isEmpty) return null;
-      return {'role': message.role, 'content': content};
+    final assistantMessage = <String, dynamic>{
+      'role': message.role,
+    };
+
+    if (parts.isNotEmpty) {
+      if (parts.length == 1 && parts.first['type'] == 'text') {
+        assistantMessage['content'] = parts.first['text'];
+      } else {
+        assistantMessage['content'] = parts;
+      }
+    } else {
+      assistantMessage['content'] = '';
     }
 
-    // 只有 1 段文本时，退化为纯文本，兼容更多 OpenAI 兼容实现
-    if (parts.length == 1 && parts.first['type'] == 'text') {
-      return {'role': message.role, 'content': parts.first['text']};
+    if (toolCalls.isNotEmpty) {
+      assistantMessage['tool_calls'] = toolCalls;
     }
 
-    return {'role': message.role, 'content': parts};
+    return [
+      if (parts.isNotEmpty || toolCalls.isNotEmpty) assistantMessage,
+      ...toolResultMessages
+    ];
+  }
+
+  Future<String?> _translateImageWithVisionModel(
+      ImageBlock block, AppSettings settings) async {
+    final visionModelRef = settings.defaultVisionModel;
+    if (visionModelRef == null || visionModelRef.trim().isEmpty) return null;
+
+    final providerId = settings.getModelProviderId(visionModelRef);
+    final rawModelId = settings.getRawModelId(visionModelRef);
+    if (providerId == null || rawModelId.isEmpty) return null;
+
+    final provider = settings.providers.firstWhere(
+      (p) => p.id == providerId,
+      orElse: () => const ProviderAuth(id: '', apiKeys: <String>[], apiBaseUrl: ''),
+    );
+    if (provider.id.isEmpty || provider.apiKeys.isEmpty) return null;
+
+    final apiKey = provider.apiKeys.first.trim();
+    if (apiKey.isEmpty) return null;
+
+    final apiBaseUrl = provider.apiBaseUrl.trim();
+
+    final imageParts = <Map<String, dynamic>>[];
+
+    final url = block.url?.trim();
+    if (url != null && url.isNotEmpty) {
+      imageParts.add({
+        'type': 'image_url',
+        'image_url': {'url': url}
+      });
+    } else {
+      final base64 = block.base64?.trim();
+      if (base64 != null && base64.isNotEmpty) {
+        imageParts.add({
+          'type': 'image_url',
+          'image_url': {'url': 'data:image/jpeg;base64,$base64'},
+        });
+      } else {
+        final localPath = block.localPath?.trim();
+        if (localPath != null && localPath.isNotEmpty) {
+          final encoded = await readImageAsBase64(localPath);
+          if (encoded != null && encoded.isNotEmpty) {
+            final mime = MimeUtils.guessImageMimeType(localPath);
+            imageParts.add({
+              'type': 'image_url',
+              'image_url': {'url': 'data:$mime;base64,$encoded'},
+            });
+          }
+        }
+      }
+    }
+
+    if (imageParts.isEmpty) return null;
+
+    final promptPart = {'type': 'text', 'text': '请详细描述这张图片的内容，不要遗漏任何重要细节'};
+
+    final messages = <Map<String, dynamic>>[
+      {
+        'role': 'user',
+        'content': [promptPart, ...imageParts],
+      }
+    ];
+
+    try {
+      final agent = AgentApiClient(timeout: const Duration(seconds: 30));
+      final result = await agent.sendMessageRich(
+        agentId: 'system_vision',
+        sessionId: 'vision_translate_${DateTime.now().millisecondsSinceEpoch}',
+        modelFullId: visionModelRef,
+        messages: messages,
+        userText: '',
+        providerApiBase: apiBaseUrl,
+        providerApiKey: apiKey,
+        customConfig: provider.customConfig,
+      );
+      final text = result.text.trim();
+      if (text.isEmpty) return null;
+      return text;
+    } catch (e) {
+      AppLogger.warning('ChatSendService', 'Vision translation failed',
+          metadata: {'error': e.toString()});
+      return null;
+    }
   }
 
   static const _supportedTextFileExts = <String>{
@@ -634,6 +752,9 @@ class ChatSendService {
     final executedFallbackCallSignatures = <String>{};
     var executedAnyTool = false;
     var lastRoundIndex = 1;
+
+    final allToolCalls = <ToolCall>[];
+    final allRawToolResults = <ToolResult>[];
 
     for (var round = 1; round <= maxRounds; round++) {
       lastRoundIndex = round;
@@ -809,6 +930,8 @@ class ChatSendService {
       }
       toolTrace?.end();
       executedAnyTool = true;
+      allToolCalls.addAll(currentToolCalls);
+      allRawToolResults.addAll(toolResults);
       ApiLogger.add(ApiLogEntry(
         time: DateTime.now(),
         method: 'TOOL',
@@ -923,6 +1046,8 @@ class ChatSendService {
       pluginContents: allContents,
       toolResults: lastRich?.toolResults ?? [],
       toolAudioResults: allToolAudioResults,
+      toolCalls: allToolCalls,
+      rawToolResults: allRawToolResults,
     );
   }
 
@@ -1290,6 +1415,8 @@ class ChatSendService {
       processedText: apiResult.processedText,
       pluginEvents: apiResult.pluginEvents,
       contents: apiResult.pluginContents,
+      toolCalls: apiResult.toolCalls,
+      rawToolResults: apiResult.rawToolResults,
     );
   }
 

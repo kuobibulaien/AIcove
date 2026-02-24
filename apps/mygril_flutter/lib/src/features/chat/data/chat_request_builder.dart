@@ -225,7 +225,7 @@ class ChatRequestBuilder {
     final includeTimestamp =
         timeAwarenessPlugin?.shouldIncludeTimestamp ?? false;
     final reqMessages = history
-        .map((m) => m.toHistoryJson(includeTimestamp: includeTimestamp))
+        .expand((m) => m.toHistoryJsonList(includeTimestamp: includeTimestamp))
         .toList();
 
     // 将最后一条消息的时间传给时间感知插件，用于计算对话间隔

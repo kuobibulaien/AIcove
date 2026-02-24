@@ -323,6 +323,9 @@ class ToolBlock extends MessageBlock {
   /// 工具名称（如"tts", "web_search"）
   final String toolName;
 
+  /// 工具调用ID（如 OpenAI 的 "call_123"）
+  final String? toolCallId;
+
   /// 工具调用参数
   final Map<String, dynamic>? arguments;
 
@@ -333,6 +336,7 @@ class ToolBlock extends MessageBlock {
     super.id,
     required super.messageId,
     required this.toolName,
+    this.toolCallId,
     this.arguments,
     this.result,
     super.status,
@@ -345,6 +349,7 @@ class ToolBlock extends MessageBlock {
       id: json['id'] as String,
       messageId: json['messageId'] as String,
       toolName: json['toolName'] as String,
+      toolCallId: json['toolCallId'] as String?,
       arguments: json['arguments'] as Map<String, dynamic>?,
       result: json['result'] as Map<String, dynamic>?,
       status: BlockStatus.values.firstWhere(
@@ -361,6 +366,7 @@ class ToolBlock extends MessageBlock {
         'type': type.name,
         'status': status.name,
         'toolName': toolName,
+        'toolCallId': toolCallId,
         'arguments': arguments,
         'result': result,
         'createdAt': createdAt.toIso8601String(),

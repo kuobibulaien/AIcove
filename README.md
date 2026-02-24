@@ -1,11 +1,127 @@
-# AIcove - AI Girlfriend App
+# AIcove - AI 心理陪伴助手
+
+> 面向医院场景的心理医疗辅助 App，让 AI 像真实伴侣一样陪伴抑郁症患者。
+
+## 项目简介
+
+AIcove 是一个跨平台（Android / iOS / Windows / Web）AI 对话客户端，核心思路是让 AI 通过工具调用生成多模态消息（文本、语音、图片、表情包），并能主动触发关怀消息，模拟真实异地伴侣的沟通体验。
+
+**架构特点：** 所有 AI 对话逻辑在 Flutter 客户端完成；后端以认证、数据同步为主，提供备份、云触发器、云记忆、额度管理等云端能力。
+
+## 核心功能
+
+| 功能 | 说明 |
+|------|------|
+| AI 对话 | 多轮对话，支持流式输出，角色人设可自定义 |
+| 多模态消息 | 文本、TTS 语音、AI 绘图、表情包，拆分顺序交付 |
+| 插件系统 | 语音（硅基流动/阿里云/MiniMax）、绘图、表情包等可插拔插件 |
+| 主动关怀 | 云触发器驱动，AI 能像真人一样主动发消息 |
+| 记忆系统 | 本地 + 云端记忆存储与召回，让 AI 记住用户 |
+| 云同步 | 增量同步 v2（Scope/回收站），多设备数据一致 |
+| 数据备份 | 云端备份/恢复，离线导入导出 |
+| 皮肤主题 | 可切换的 UI 皮肤系统 |
+| 角色卡 | 多角色管理，自定义 AI 人设 |
+
+## 技术栈
+
+**前端（Flutter）**
+- Flutter 3.3+ / Dart
+- Riverpod（状态管理）
+- GoRouter（路由）
+- Drift（本地 SQLite ORM）
+
+**后端（Python）**
+- FastAPI + Uvicorn
+- SQLAlchemy ORM
+- JWT 认证
+- Docker 容器化部署
+
+## 目录结构
+
+```
+AIcove/
+├── apps/
+│   └── aicove_flutter/              # Flutter 客户端（主开发目录）
+│       ├── lib/src/
+│       │   ├── core/                # 核心层：API客户端、数据库、网络、工具
+│       │   ├── features/            # 业务层：chat、memory、plugins、diary 等
+│       │   └── ui/                  # UI层
+│       │       ├── features/        #   页面：chat、home、settings、plugins 等
+│       │       ├── shared/          #   公共组件：widgets、animations、effects
+│       │       └── theme/           #   主题：tokens、skins
+│       ├── assets/                  # 静态资源（角色、表情、图标）
+│       ├── docs/                    # 项目文档库（索引见 docs/README.md）
+│       └── test/                    # 测试
+│
+├── cloud_backend/                   # Python 后端（认证/同步/云服务）
+│   ├── main.py                      # 入口（路由挂载 + Web 静态站点）
+│   ├── auth.py                      # JWT 认证
+│   ├── sync_api_v2.py               # 增量同步 v2
+│   ├── backup_api.py                # 备份/恢复
+│   ├── trigger_api.py               # 云触发器
+│   ├── memory_api.py                # 云记忆库
+│   ├── key_distribution.py          # Key 分发与额度
+│   └── ...                          # 详见 cloud_backend/README.md
+│
+├── start.ps1                        # 一键启动脚本（Windows）
+├── CLAUDE.md                        # AI 协作规范
+└── README.md                        # 本文件
+```
+
+## 快速开始（Windows）
+
+### 1. 一键启动后端 + Web
+
+```powershell
+.\start.ps1                  # 自动安装依赖、构建 Web、启动后端
+.\start.ps1 -SkipFlutter     # 跳过 Flutter Web 构建，只启动后端
+.\start.ps1 -Clean           # 清理缓存后重新构建
+```
+
+启动后：
+- 后端 API：`http://localhost:8000`
+- Web UI：`http://localhost:8000/app/#/`
+- API 文档：`http://localhost:8000/docs`
+
+### 2. 移动端开发调试
+
+```powershell
+cd apps/aicove_flutter
+flutter pub get
+flutter run                  # 连接手机/模拟器运行
+```
+
+> 需要后端接口时，保持第 1 步的服务在跑。
+
+### 3. 首次部署后端
+
+```powershell
+cd cloud_backend
+cp .env.example .env         # 编辑 .env 设置 SECRET_KEY
+python main.py               # 或用 Docker：docker-compose up -d
+```
+
+详细后端文档见 [cloud_backend/README.md](cloud_backend/README.md)。
+
+## 资源文档
+
+| 文档 | 说明 |
+|------|------|
+| [docs/README.md](apps/aicove_flutter/docs/README.md) | 文档库索引（入口） |
+| [docs/公共组件总览.md](apps/aicove_flutter/docs/公共组件总览.md) | 前端公共组件速查（新手推荐） |
+| [docs/API架构说明.md](apps/aicove_flutter/docs/API架构说明.md) | API 架构与聊天流程 |
+| [docs/界面布局说明.md](apps/aicove_flutter/docs/界面布局说明.md) | 响应式布局设计 |
+| [cloud_backend/README.md](cloud_backend/README.md) | 后端完整文档（API 端点、部署、配置） |
+
+---
 
 # 项目宪法（每次写代码都必须遵守；如做不到先停下来问）
+
 ## 0) 只动允许的目录
 - 允许修改：`apps/aicove_flutter/`（前端）、`cloud_backend/`（后端）
-- 根目录其他文件夹多为参考资料：默认不改（见 `readme.md`）
+- 根目录其他文件夹多为参考资料：默认不改
 
-## 1) 目录地图（像“零件箱 vs 房间”）
+## 1) 目录地图（像"零件箱 vs 房间"）
 - 前端 UI 层：`apps/aicove_flutter/lib/src/ui/`
   - 主题/颜色：`apps/aicove_flutter/lib/src/ui/theme/`（优先用 tokens，不要页面里手写颜色）
   - 公共组件：`apps/aicove_flutter/lib/src/ui/shared/`（含 widgets, effects, animations）
@@ -37,7 +153,7 @@
 - 错误提示/重试逻辑要统一，别每个页面各写一套
 
 ## 6) 复用规则（防止越写越散）
-- 发现"重复代码 ≥ 2 处"：先抽到 `apps/aicove_flutter/lib/src/ui/shared/widgets/` 或 `apps/aicove_flutter/lib/src/core/utils/`，再实现需求
+- 发现"重复代码 >= 2 处"：先抽到 `apps/aicove_flutter/lib/src/ui/shared/widgets/` 或 `apps/aicove_flutter/lib/src/core/utils/`，再实现需求
 - **主动抽象**：写新功能时，如果某段逻辑/组件明显可复用（如通用按钮、格式化工具、数据转换），应直接写成公共类，而非等重复后再抽取
 - **入库登记**：新建的公共组件/工具类必须登记到 `apps/aicove_flutter/docs/公共组件总览.md`，格式参照已有条目（名称、文件路径、用途说明）
 
@@ -45,24 +161,3 @@
 - 依赖是否安装：`flutter pub get`
 - 后端是否启动（需要接口时）
 - 本次改动后至少编译/运行一次；并说明怎么验证（窄/宽屏各看一眼）
-
-# 项目背景信息
-项目目标：开发一个ai对话app（安卓端优先），使ai像真实恋人一样发消息陪伴用户。
-项目进度：项目需要多平台部署，部署后独立运行，所有 AI 调用在 Flutter 端完成；后端以认证/数据同步为主，并提供备份、云触发器、云记忆、额度等云端数据能力。
-项目实现思路：暂定技术栈为前端flutter跨平台部署。核心思路是调用工具生成多模态信息，同时能自主调用工具实现主动消息触发，使得ai能像一个真实的异地伴侣一样发送消息，解决传统单个大模型只能生成文本和不稳定多模态信息的痛点。
-
-资源文档库：`apps/aicove_flutter/docs/`（含索引文件 `apps/aicove_flutter/docs/README.md`）
-- 文档索引：`apps/aicove_flutter/docs/README.md`
-- 施工进度：`apps/aicove_flutter/docs/施工进度/项目推进中.md` - 日期+事件的简要记录
-- 公共组件：`apps/aicove_flutter/docs/公共组件总览.md`（小白版）、`apps/aicove_flutter/docs/前端公共组件库.md`（完整版）
-在动手之前必须先了解本项目相应的公共组件！！！
-- 后端服务：`apps/aicove_flutter/docs/后端公共服务库.md`
-## 目录结构
-- `apps/aicove_flutter`: Flutter 客户端代码
-- `cloud_backend`: Python 后端代码（以认证/云同步为主，也包含备份/触发器/云记忆/额度等云端数据能力）
-
-## 快速开始 (Windows)
-1. 运行 `start.ps1`（会自动安装后端依赖、可选构建 Web，并启动后端服务）。
-2. 开发调试：进入 `apps/aicove_flutter` 运行 `flutter run`（需要后端接口时，保持第 1 步的服务在跑）。
-
-

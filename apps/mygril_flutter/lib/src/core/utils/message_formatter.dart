@@ -124,7 +124,9 @@ class MessageFormatter {
     }
 
     // 处理转义的换行符
-    final processedText = text.replaceAll('\\n', '\n');
+    var processedText = text.replaceAll('\\n', '\n');
+    // 把连续3个及以上的空格也当作段落分隔符（部分AI用空格代替换行）
+    processedText = processedText.replaceAll(RegExp(r' {3,}'), '\n');
     final segments = processedText.split('\n');
     final rawChunks = <String>[];
 

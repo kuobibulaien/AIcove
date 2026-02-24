@@ -35,7 +35,7 @@ class ContextAnalyzer {
     final includeTimestamp =
         timeAwarenessPlugin?.shouldIncludeTimestamp ?? false;
     final messagesJson = recent
-        .map((m) => m.toHistoryJson(includeTimestamp: includeTimestamp))
+        .expand((m) => m.toHistoryJsonList(includeTimestamp: includeTimestamp))
         .toList();
 
     // 获取当前未完成的触发器列表
@@ -197,7 +197,7 @@ Do not output markdown. Just JSON.
           ? conversation.messages.sublist(conversation.messages.length - 10)
           : conversation.messages;
       final contextSnapshot = jsonEncode(
-        snapshotSource.map((m) => m.toHistoryJson()).toList(),
+        snapshotSource.expand((m) => m.toHistoryJsonList()).toList(),
       );
 
       for (final item in aiTriggers) {

@@ -12,7 +12,7 @@ import '../domain/message.dart';
 import '../../plugins/domain/plugin.dart';
 import '../../plugins/domain/plugin_content.dart';
 import '../../settings/app_settings.dart';
-
+import '../../../core/api/providers/provider_adapter.dart' show ToolCall, ToolResult;
 /// 发送请求参数数据类
 class SendRequest {
   final Conversation conversation;
@@ -38,7 +38,6 @@ class ToolAudioResult {
 
   const ToolAudioResult({required this.audioUrl, required this.text});
 }
-
 /// API 调用结果
 class ApiCallResult {
   final String replyText;
@@ -47,6 +46,8 @@ class ApiCallResult {
   final List<PluginContent> pluginContents;
   final List<Map<String, dynamic>> toolResults;
   final List<ToolAudioResult> toolAudioResults;
+  final List<ToolCall> toolCalls;
+  final List<ToolResult> rawToolResults;
 
   const ApiCallResult({
     required this.replyText,
@@ -55,6 +56,8 @@ class ApiCallResult {
     this.pluginContents = const [],
     required this.toolResults,
     this.toolAudioResults = const [],
+    this.toolCalls = const [],
+    this.rawToolResults = const [],
   });
 
   bool get hasToolAudio => toolAudioResults.isNotEmpty;

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import '../../../core/models/message_block.dart';
 
 /// Message模型（支持多模态Blocks）
@@ -70,7 +71,11 @@ class Message {
   /// 
   /// [includeTimestamp] 为 true 时，在消息内容前添加时间戳前缀 [YYYY-MM-DD HH:mm]
   /// 用于让 AI 感知消息的时间顺序
-  Map<String, dynamic> toHistoryJson({bool includeTimestamp = false}) {
+  /// 转换为API历史格式（向后兼容）
+  /// 
+  /// [includeTimestamp] 为 true 时，在消息内容前添加时间戳前缀 [YYYY-MM-DD HH:mm]
+  /// 用于让 AI 感知消息的时间顺序
+  List<Map<String, dynamic>> toHistoryJsonList({bool includeTimestamp = false}) {
     // 格式化时间戳前缀
     String addTimestampPrefix(String text) {
       if (!includeTimestamp) return text;
@@ -84,14 +89,17 @@ class Message {
 
     // 如果没有blocks，使用简单格式（向后兼容）
     if (blocks == null || blocks!.isEmpty) {
-      return {
+      return [{
         'role': role,
         'content': addTimestampPrefix(content),
-      };
+      }];
     }
 
     // 有blocks时，转换为多模态格式
     final contentParts = <Map<String, dynamic>>[];
+    final toolCalls = <Map<String, dynamic>>[];
+    final toolResultMessages = <Map<String, dynamic>>[];
+
     for (final block in blocks!) {
       if (block is TextBlock) {
         contentParts.add({
@@ -110,23 +118,46 @@ class Message {
             'image_url': {'url': 'data:image/jpeg;base64,${block.base64}'},
           });
         }
+      } else if (block is ToolBlock) {
+        if (block.toolCallId != null && block.toolCallId!.isNotEmpty) {
+          toolCalls.add({
+            'id': block.toolCallId,
+            'type': 'function',
+            'function': {
+              'name': block.toolName,
+              'arguments': block.arguments ?? {},
+            }
+          });
+          toolResultMessages.add({
+            'role': 'tool',
+            'tool_call_id': block.toolCallId,
+            'name': block.toolName,
+            'content': block.result != null ? jsonEncode(block.result) : '{"success": true}',
+          });
+        }
       }
       // 其他类型的block可以根据需要添加
     }
 
-    // 如果只有一个文本part，使用简单格式
-    if (contentParts.length == 1 && contentParts[0]['type'] == 'text') {
-      return {
-        'role': role,
-        'content': contentParts[0]['text'],
-      };
+    final assistantMessage = <String, dynamic>{
+      'role': role,
+    };
+
+    if (contentParts.isNotEmpty) {
+      if (contentParts.length == 1 && contentParts[0]['type'] == 'text') {
+         assistantMessage['content'] = contentParts[0]['text'];
+      } else {
+         assistantMessage['content'] = contentParts;
+      }
+    } else {
+      assistantMessage['content'] = '';
     }
 
-    // 多模态格式
-    return {
-      'role': role,
-      'content': contentParts,
-    };
+    if (toolCalls.isNotEmpty) {
+      assistantMessage['tool_calls'] = toolCalls;
+    }
+
+    return [assistantMessage, ...toolResultMessages];
   }
 
   /// 从文本创建消息（便捷构造函数）
