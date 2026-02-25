@@ -1,36 +1,52 @@
-import 'kaomoji_parser.dart';
+﻿import 'kaomoji_parser.dart';
 
-/// 消息格式化配置
+/// 娑堟伅鏍煎紡鍖栭厤缃?
 ///
-/// 注意：分段功能是纯前端展示逻辑，不影响消息存储。
-/// 消息在数据库中保持完整，分段仅在 UI 渲染时处理。
+/// 娉ㄦ剰锛氬垎娈靛姛鑳芥槸绾墠绔睍绀洪€昏緫锛屼笉褰卞搷娑堟伅瀛樺偍銆?
+/// 娑堟伅鍦ㄦ暟鎹簱涓繚鎸佸畬鏁达紝鍒嗘浠呭湪 UI 娓叉煋鏃跺鐞嗐€?
 class MessageFormatConfig {
-  /// 是否启用分段显示
+  /// 鏄惁鍚敤鍒嗘鏄剧ず
   final bool enableChunking;
 
-  /// 是否过滤标点
+  /// 鏄惁杩囨护鏍囩偣
   final bool filterPunctuation;
 
-  /// 分段标点列表（用空格分隔便于编辑）
+  /// 鍒嗘鏍囩偣鍒楄〃锛堢敤绌烘牸鍒嗛殧渚夸簬缂栬緫锛?
   final List<String> chunkPunctuations;
 
-  /// 过滤标点列表
+  /// 杩囨护鏍囩偣鍒楄〃
   final List<String> filterPunctuations;
 
-  /// 表情包发送概率 (0.0 - 1.0，0表示关闭)
+  /// 琛ㄦ儏鍖呭彂閫佹鐜?(0.0 - 1.0锛?琛ㄧず鍏抽棴)
   final double stickerProbability;
 
-  /// 最小分段长度（短于此长度的段会被合并）
+  /// 鏈€灏忓垎娈甸暱搴︼紙鐭簬姝ら暱搴︾殑娈典細琚悎骞讹級
   final int minSegmentLength;
 
-  /// 是否保护引号内容不被拆分
+  /// 鏄惁淇濇姢寮曞彿鍐呭涓嶈鎷嗗垎
   final bool protectQuotes;
 
   const MessageFormatConfig({
-    this.enableChunking = true, // 默认开启分段
+    this.enableChunking = true, // 榛樿寮€鍚垎娈?
     this.filterPunctuation = false,
-    this.chunkPunctuations = const ['。', '！', '？', '，', '、', '；', '…'],
-    this.filterPunctuations = const ['。', '，', '、', '；', '…', ',', ';'],
+    this.chunkPunctuations = const [
+      '\u3002',
+      '\uff01',
+      '\uff1f',
+      '\uff0c',
+      '\u3001',
+      '\uff1b',
+      '\u2026',
+    ],
+    this.filterPunctuations = const [
+      '\u3002',
+      '\uff0c',
+      '\u3001',
+      '\uff1b',
+      '\u2026',
+      ',',
+      ';',
+    ],
     this.stickerProbability = 0.3,
     this.minSegmentLength = 5,
     this.protectQuotes = true,
@@ -70,14 +86,30 @@ class MessageFormatConfig {
 
   factory MessageFormatConfig.fromJson(Map<String, dynamic> json) {
     return MessageFormatConfig(
-      enableChunking: json['enableChunking'] as bool? ?? true, // 默认开启
+      enableChunking: json['enableChunking'] as bool? ?? true, // 榛樿寮€鍚?
       filterPunctuation: json['filterPunctuation'] as bool? ?? false,
       chunkPunctuations:
           (json['chunkPunctuations'] as List<dynamic>?)?.cast<String>() ??
-              const ['。', '！', '？', '，', '、', '；', '…'],
+              const [
+                '\u3002',
+                '\uff01',
+                '\uff1f',
+                '\uff0c',
+                '\u3001',
+                '\uff1b',
+                '\u2026',
+              ],
       filterPunctuations:
           (json['filterPunctuations'] as List<dynamic>?)?.cast<String>() ??
-              const ['。', '，', '、', '；', '…', ',', ';'],
+              const [
+                '\u3002',
+                '\uff0c',
+                '\u3001',
+                '\uff1b',
+                '\u2026',
+                ',',
+                ';',
+              ],
       stickerProbability:
           (json['stickerProbability'] as num?)?.toDouble() ?? 0.3,
       minSegmentLength: json['minSegmentLength'] as int? ?? 5,
@@ -86,47 +118,47 @@ class MessageFormatConfig {
   }
 }
 
-/// 消息格式化器
+/// 娑堟伅鏍煎紡鍖栧櫒
 ///
-/// 负责消息的格式化处理,包括:
-/// - 消息分段和智能分割
-/// - 颜文字保护
-/// - 引号内容保护
-/// - 短句智能合并
-/// - 标点符号过滤
+/// 璐熻矗娑堟伅鐨勬牸寮忓寲澶勭悊,鍖呮嫭:
+/// - 娑堟伅鍒嗘鍜屾櫤鑳藉垎鍓?
+/// - 棰滄枃瀛椾繚鎶?
+/// - 寮曞彿鍐呭淇濇姢
+/// - 鐭彞鏅鸿兘鍚堝苟
+/// - 鏍囩偣绗﹀彿杩囨护
 class MessageFormatter {
-  // 引号对匹配正则：成对的中英日引号、书名号、方括号
+  // 寮曞彿瀵瑰尮閰嶆鍒欙細鎴愬鐨勪腑鑻辨棩寮曞彿銆佷功鍚嶅彿銆佹柟鎷彿
   static final _quotePattern = RegExp(
-    r'([「].*?[」]|[『].*?[』]|["].*?["]|[''].*?['']|[《].*?[》]|[【].*?[】]|"[^"]*")',
+    r'''(「.*?」|『.*?』|".*?"|'.*?'|《.*?》|【.*?】)''',
   );
 
-  // 逗号类标点（句意未完成，应向后合并）
-  static const _commaPuncts = {'，', ',', '、', '；', ';'};
+  // 閫楀彿绫绘爣鐐癸紙鍙ユ剰鏈畬鎴愶紝搴斿悜鍚庡悎骞讹級
+  static const _commaPuncts = {'\uff0c', ',', '\u3001', '\uff1b', ';'};
 
-  // 句号类标点（句意完整）
-  static const _periodPuncts = {'。', '！', '？', '!', '?', '…'};
+  // 鍙ュ彿绫绘爣鐐癸紙鍙ユ剰瀹屾暣锛?
+  static const _periodPuncts = {'\u3002', '\uff01', '\uff1f', '!', '?', '\u2026'};
 
-  /// 格式化并分段文本
+  /// 鏍煎紡鍖栧苟鍒嗘鏂囨湰
   ///
   /// Args:
-  ///   text: 原始文本
-  ///   config: 格式化配置
+  ///   text: 鍘熷鏂囨湰
+  ///   config: 鏍煎紡鍖栭厤缃?
   ///
   /// Returns:
-  ///   分段后的文本列表
+  ///   鍒嗘鍚庣殑鏂囨湰鍒楄〃
   static List<String> formatAndChunkText(
     String text,
     MessageFormatConfig config,
   ) {
-    // 如果未启用分段，直接返回原文本
+    // 濡傛灉鏈惎鐢ㄥ垎娈碉紝鐩存帴杩斿洖鍘熸枃鏈?
     if (!config.enableChunking) {
       return [text];
     }
 
-    // 处理转义的换行符
+    // 澶勭悊杞箟鐨勬崲琛岀
     var processedText = text.replaceAll('\\n', '\n');
-    // 把连续3个及以上的空格也当作段落分隔符（部分AI用空格代替换行）
-    processedText = processedText.replaceAll(RegExp(r' {3,}'), '\n');
+    // 鎶婅繛缁?涓強浠ヤ笂鐨勭┖鏍间篃褰撲綔娈佃惤鍒嗛殧绗︼紙閮ㄥ垎AI鐢ㄧ┖鏍间唬鏇挎崲琛岋級
+    processedText = processedText.replaceAll(RegExp(r'[^\S\r\n]{3,}'), '\n');
     final segments = processedText.split('\n');
     final rawChunks = <String>[];
 
@@ -139,13 +171,13 @@ class MessageFormatter {
       rawChunks.addAll(_splitSegment(segment, config));
     }
 
-    // ── 短句合并 ──
+    // 鈹€鈹€ 鐭彞鍚堝苟 鈹€鈹€
     final merged = _mergeShortSentences(rawChunks, config.minSegmentLength);
 
-    // ── 跨段落二次合并 ──
+    // 鈹€鈹€ 璺ㄦ钀戒簩娆″悎骞?鈹€鈹€
     final finalChunks = _mergeShortSentences(merged, config.minSegmentLength);
 
-    // ── 标点过滤 ──
+    // 鈹€鈹€ 鏍囩偣杩囨护 鈹€鈹€
     if (config.filterPunctuation) {
       return _filterTrailingPunctuation(finalChunks, config);
     }
@@ -153,9 +185,9 @@ class MessageFormatter {
     return finalChunks.where((chunk) => chunk.trim().isNotEmpty).toList();
   }
 
-  /// 对单个段落（一行文本）执行分段
+  /// 瀵瑰崟涓钀斤紙涓€琛屾枃鏈級鎵ц鍒嗘
   static List<String> _splitSegment(String segment, MessageFormatConfig config) {
-    // 1) 颜文字保护：提取并替换为占位符
+    // 1) 棰滄枃瀛椾繚鎶わ細鎻愬彇骞舵浛鎹负鍗犱綅绗?
     final kaomojis = KaomojiParser.extractKaomojis(segment);
     const kaomojiPlaceholder = '\x00KMJ';
     var protected = segment;
@@ -163,7 +195,7 @@ class MessageFormatter {
       protected = protected.replaceFirst(kaomojis[i], '$kaomojiPlaceholder$i\x00');
     }
 
-    // 2) 引号保护：提取并替换为占位符
+    // 2) 寮曞彿淇濇姢锛氭彁鍙栧苟鏇挎崲涓哄崰浣嶇
     final quotedContents = <String>[];
     const quotePlaceholder = '\x00QTE';
     if (config.protectQuotes) {
@@ -178,15 +210,27 @@ class MessageFormatter {
       }
     }
 
-    // 3) 按标点分句（带 lookahead：只在标点后面紧跟中英文字符时才切）
-    final punctuationPattern =
-        config.chunkPunctuations.map((p) => RegExp.escape(p)).join('|');
-    // lookbehind: 前面是标点 + lookahead: 后面是中文或英文字母
-    final splitPattern =
-        RegExp('(?<=[$punctuationPattern])(?=[\u4e00-\u9fffa-zA-Z])');
-    final sentences = protected.split(splitPattern);
+    // 3) 鎸夋爣鐐瑰垎鍙ワ紙甯?lookahead锛氬彧鍦ㄦ爣鐐瑰悗闈㈢揣璺熶腑鑻辨枃瀛楃鏃舵墠鍒囷級
+    final punctuationTokens = config.chunkPunctuations
+        .where((p) => p.isNotEmpty)
+        .toList()
+      ..sort((a, b) => b.length.compareTo(a.length));
 
-    // 4) 恢复引号 → 恢复颜文字
+    late final List<String> sentences;
+    if (punctuationTokens.isEmpty) {
+      sentences = [protected];
+    } else {
+      final punctuationPattern =
+          punctuationTokens.map((p) => RegExp.escape(p)).join('|');
+      final splitPattern = RegExp(
+        '((?:$punctuationPattern)+)(?:[^\\S\\r\\n]+)?(?=[\\u4e00-\\u9fffa-zA-Z])',
+      );
+      sentences = protected
+          .replaceAllMapped(splitPattern, (m) => '${m.group(1)}\n')
+          .split('\n');
+    }
+
+    // 4) 鎭㈠寮曞彿 鈫?鎭㈠棰滄枃瀛?
     final restored = <String>[];
     for (var sentence in sentences) {
       for (var i = 0; i < quotedContents.length; i++) {
@@ -203,12 +247,12 @@ class MessageFormatter {
     return restored;
   }
 
-  /// 合并过短的句子
+  /// 鍚堝苟杩囩煭鐨勫彞瀛?
   ///
-  /// 规则（参考 astrbot_plugin_smart_segment）：
-  /// - 逗号类结尾的短句 → 向后合并（句意未完成）
-  /// - 句号类结尾的短句，且前一句是逗号结尾 → 向前合并（补完前句）
-  /// - 其他 → 保持独立
+  /// 瑙勫垯锛堝弬鑰?astrbot_plugin_smart_segment锛夛細
+  /// - 閫楀彿绫荤粨灏剧殑鐭彞 鈫?鍚戝悗鍚堝苟锛堝彞鎰忔湭瀹屾垚锛?
+  /// - 鍙ュ彿绫荤粨灏剧殑鐭彞锛屼笖鍓嶄竴鍙ユ槸閫楀彿缁撳熬 鈫?鍚戝墠鍚堝苟锛堣ˉ瀹屽墠鍙ワ級
+  /// - 鍏朵粬 鈫?淇濇寔鐙珛
   static List<String> _mergeShortSentences(
     List<String> sentences,
     int minLength,
@@ -216,12 +260,12 @@ class MessageFormatter {
     if (sentences.isEmpty) return [];
 
     final merged = <String>[];
-    var pending = ''; // 待向后合并的短句
+    var pending = ''; // 寰呭悜鍚庡悎骞剁殑鐭彞
 
     for (var sentence in sentences) {
       if (sentence.trim().isEmpty) continue;
 
-      // 有待合并内容，拼到当前句前面
+      // 鏈夊緟鍚堝苟鍐呭锛屾嫾鍒板綋鍓嶅彞鍓嶉潰
       if (pending.isNotEmpty) {
         sentence = pending + sentence;
         pending = '';
@@ -229,12 +273,12 @@ class MessageFormatter {
 
       if (sentence.length <= minLength) {
         if (_endsWithComma(sentence)) {
-          // 逗号结尾 → 向后合并
+          // 閫楀彿缁撳熬 鈫?鍚戝悗鍚堝苟
           pending = sentence;
         } else if (_endsWithPeriod(sentence) &&
             merged.isNotEmpty &&
             _endsWithComma(merged.last)) {
-          // 句号结尾，前一句是逗号 → 向前合并
+          // 鍙ュ彿缁撳熬锛屽墠涓€鍙ユ槸閫楀彿 鈫?鍚戝墠鍚堝苟
           merged.last = merged.last + sentence;
         } else {
           merged.add(sentence);
@@ -244,7 +288,7 @@ class MessageFormatter {
       }
     }
 
-    // 处理末尾残留
+    // 澶勭悊鏈熬娈嬬暀
     if (pending.isNotEmpty) {
       if (merged.isNotEmpty) {
         merged.last = merged.last + pending;
@@ -256,7 +300,7 @@ class MessageFormatter {
     return merged;
   }
 
-  /// 过滤段末标点（保护颜文字）
+  /// 杩囨护娈垫湯鏍囩偣锛堜繚鎶ら鏂囧瓧锛?
   static List<String> _filterTrailingPunctuation(
     List<String> chunks,
     MessageFormatConfig config,
@@ -265,7 +309,7 @@ class MessageFormatter {
     for (final chunk in chunks) {
       if (chunk.trim().isEmpty) continue;
 
-      // 含颜文字的段不过滤标点
+      // 鍚鏂囧瓧鐨勬涓嶈繃婊ゆ爣鐐?
       if (KaomojiParser.containsKaomoji(chunk)) {
         result.add(chunk);
         continue;
@@ -291,3 +335,4 @@ class MessageFormatter {
   static bool _endsWithPeriod(String s) =>
       s.isNotEmpty && _periodPuncts.contains(s[s.length - 1]);
 }
+

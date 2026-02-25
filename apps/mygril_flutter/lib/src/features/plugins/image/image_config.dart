@@ -22,6 +22,7 @@ class ImageConfig {
   final int defaultSteps;
   final double defaultGuidanceScale;
   final int defaultCount;
+  final int timeoutSeconds;
   final String drawingSystemPrompt;
   final List<ArtistPreset> artistPresets;
   final String? selectedArtistPresetName;
@@ -81,6 +82,7 @@ lowres, bad anatomy, bad hands, missing fingers, extra digits, fewer digits, cro
     this.defaultSteps = 28,
     this.defaultGuidanceScale = 5.0,
     this.defaultCount = 1,
+    this.timeoutSeconds = 30,
     this.drawingSystemPrompt = defaultDrawingSystemPrompt,
     this.artistPresets = defaultArtistPresets,
     this.selectedArtistPresetName,
@@ -97,6 +99,7 @@ lowres, bad anatomy, bad hands, missing fingers, extra digits, fewer digits, cro
     int? defaultSteps,
     double? defaultGuidanceScale,
     int? defaultCount,
+    int? timeoutSeconds,
     String? drawingSystemPrompt,
     List<ArtistPreset>? artistPresets,
     String? selectedArtistPresetName,
@@ -115,6 +118,7 @@ lowres, bad anatomy, bad hands, missing fingers, extra digits, fewer digits, cro
       defaultSteps: defaultSteps ?? this.defaultSteps,
       defaultGuidanceScale: defaultGuidanceScale ?? this.defaultGuidanceScale,
       defaultCount: defaultCount ?? this.defaultCount,
+      timeoutSeconds: timeoutSeconds ?? this.timeoutSeconds,
       drawingSystemPrompt: drawingSystemPrompt ?? this.drawingSystemPrompt,
       artistPresets: artistPresets ?? this.artistPresets,
       selectedArtistPresetName: clearSelectedArtistPreset
@@ -133,6 +137,7 @@ lowres, bad anatomy, bad hands, missing fingers, extra digits, fewer digits, cro
       'defaultSteps': defaultSteps,
       'defaultGuidanceScale': defaultGuidanceScale,
       'defaultCount': defaultCount,
+      'timeoutSeconds': timeoutSeconds,
       'drawingSystemPrompt': drawingSystemPrompt,
       'artistPresets': artistPresets.map((e) => e.toJson()).toList(),
       'selectedArtistPresetName': selectedArtistPresetName,
@@ -150,6 +155,7 @@ lowres, bad anatomy, bad hands, missing fingers, extra digits, fewer digits, cro
       defaultGuidanceScale:
           (json['defaultGuidanceScale'] as num?)?.toDouble() ?? 5.0,
       defaultCount: (json['defaultCount'] as num?)?.toInt() ?? 1,
+      timeoutSeconds: (json['timeoutSeconds'] as num?)?.toInt() ?? 30,
       drawingSystemPrompt:
           json['drawingSystemPrompt'] as String? ?? defaultDrawingSystemPrompt,
       artistPresets: (json['artistPresets'] as List<dynamic>?)

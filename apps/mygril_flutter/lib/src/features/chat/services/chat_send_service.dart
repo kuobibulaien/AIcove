@@ -52,27 +52,8 @@ class ChatSendService {
   ChatSendService(this._ref);
 
   static bool isVisionModel(String modelId) {
-    final m = modelId.toLowerCase();
-    const keywords = <String>[
-      'gpt-4o',
-      'vision',
-      'vl',
-      'gemini',
-      'claude-3',
-      'claude-sonnet-4',
-      'qwen-vl',
-      'glm-4v',
-      'doubao-vision',
-      'yi-vision',
-      'llava',
-      'pixtral',
-      'minicpm-v',
-      'internvl',
-    ];
-    for (final k in keywords) {
-      if (m.contains(k)) return true;
-    }
-    return false;
+    return inferChatModelCapabilities(modelId)
+        .contains(ChatModelCapability.vision);
   }
 
   /// 在聊天模型不支持视觉时，为图片解析可发送给模型的文字描述。
@@ -276,10 +257,12 @@ class ChatSendService {
     configTrace?.end();
 
     final modelRef = requestConfig.modelRef;
-    final model = settings.getRawModelId(modelRef);
     final modelFull = requestConfig.modelFullId;
 
-    final supportsVision = isVisionModel(model);
+    final supportsVision = settings.hasChatModelCapability(
+      modelRef,
+      ChatModelCapability.vision,
+    );
     final reqMessages = await _buildRequestMessages(
       history,
       settings: settings,
@@ -290,7 +273,9 @@ class ChatSendService {
     if (conv.personaPrompt.isNotEmpty) {
       systemParts.add(conv.personaPrompt);
     }
-    final supportsToolCalling = !settings.isModelToolCallingDisabled(modelRef);
+    final supportsToolCalling =
+        settings.hasChatModelCapability(modelRef, ChatModelCapability.tools) &&
+            !settings.isModelToolCallingDisabled(modelRef);
     final enabledPluginIds = conv.enabledPlugins?.toSet();
     final pluginManager = _ref.read(pluginManagerProvider);
     final effectivePlugins =

@@ -1,5 +1,5 @@
 /// 消息长按操作菜单
-/// 
+///
 /// 功能：
 /// - 复制：复制消息文本到剪贴板
 /// - 编辑：仅用户消息，撤回到输入框重新编辑
@@ -12,15 +12,16 @@ import '../../../../ui/shared/widgets/menus/moe_popup_menu.dart';
 
 /// 消息操作类型
 enum MessageAction {
-  copy,       // 复制
-  edit,       // 编辑（用户消息）
+  copy, // 复制
+  edit, // 编辑（用户消息）
   regenerate, // 重新生成（AI消息）
-  quote,      // 引用回复
-  save,       // 保存（图片/音频）
+  enhanceRegenerate, // 增强生成（AI消息）
+  quote, // 引用回复
+  save, // 保存（图片/音频）
 }
 
 /// 显示消息操作悬浮菜单（在消息上方显示气泡菜单）
-/// 
+///
 /// [targetKey] 消息气泡的 GlobalKey，用于定位菜单位置
 /// [isUserMessage] 是否是用户消息，决定显示哪些操作
 /// [messageText] 消息文本内容，用于复制
@@ -30,6 +31,7 @@ Future<void> showMessageActionMenu(
   required GlobalKey targetKey,
   required bool isUserMessage,
   required String messageText,
+  bool showEnhanceRegenerate = false,
   required void Function(MessageAction action) onAction,
 }) async {
   final items = <MoePopupMenuItem>[
@@ -52,12 +54,19 @@ Future<void> showMessageActionMenu(
         label: '编辑',
         onTap: () => onAction(MessageAction.edit),
       )
-    else
+    else ...[
       MoePopupMenuItem(
         icon: Icons.refresh_rounded,
         label: '重新生成',
         onTap: () => onAction(MessageAction.regenerate),
       ),
+      if (showEnhanceRegenerate)
+        MoePopupMenuItem(
+          icon: Icons.auto_awesome_rounded,
+          label: '增强生成',
+          onTap: () => onAction(MessageAction.enhanceRegenerate),
+        ),
+    ],
   ];
 
   await MoePopupMenu.show(

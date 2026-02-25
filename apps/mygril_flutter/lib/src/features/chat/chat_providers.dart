@@ -1,20 +1,56 @@
 /// 聊天相关的全局 Provider
-/// 
+///
 /// 从 chat_actions.dart 提取的全局状态 Provider。
-/// 
+///
 /// 更新记录：
 /// - 2025-12-31: 从 chat_actions.dart 提取
 library;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'presentation/widgets/momotalk_sort_dialog.dart' show SortMode;
+import 'conversation_providers.dart' show activeConversationProvider;
 
 // ===== 发送状态 =====
 
-/// 是否正在发送消息
-final sendingProvider = StateProvider<bool>((ref) => false);
+/// 每个会话各自的发送状态（会话A和会话B互不影响）
+final conversationSendingProvider =
+    StateProvider.family<bool, String>((ref, conversationId) => false);
 
-/// 错误信息
+/// 当前激活会话的发送状态（兼容现有 UI：ref.watch(sendingProvider)）
+final sendingProvider = Provider<bool>((ref) {
+  final activeConversation = ref.watch(activeConversationProvider);
+  if (activeConversation == null) return false;
+  return ref.watch(conversationSendingProvider(activeConversation.id));
+});
+
+/// 聊天进度状态（用于 AppBar 标题显示详细阶段）
+enum ChatStatus {
+  /// 空闲，显示对话名称
+  idle(''),
+
+  /// AI 正在思考（等待 API 响应）
+  thinking('对方思考中...'),
+
+  /// 正在执行工具调用（通用）
+  toolCalling('工具调用中...'),
+
+  /// 正在生成图片（draw_image 工具）
+  generatingImage('图片生成中...'),
+
+  /// 正在生成语音（speak 工具或 TTS 合成）
+  generatingVoice('语音生成中...'),
+
+  /// 正在整理消息（构建 + 交付阶段）
+  processingResponse('消息整理中...');
+
+  final String label;
+  const ChatStatus(this.label);
+}
+
+/// 聊天进度状态 Provider（保持全局）
+final chatStatusProvider = StateProvider<ChatStatus>((ref) => ChatStatus.idle);
+
+/// 错误信息（保持全局）
 final errorProvider = StateProvider<String?>((ref) => null);
 
 // ===== 侧边栏状态 =====

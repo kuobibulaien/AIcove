@@ -22,12 +22,14 @@ class _ModelMeta {
   final List<String> allKnown;
   final String defaultModel;
   final Map<String, String> providerMap;
+  final Set<String> providerIds;
 
   const _ModelMeta({
     required this.visible,
     required this.allKnown,
     required this.defaultModel,
     required this.providerMap,
+    required this.providerIds,
   });
 }
 
@@ -74,6 +76,7 @@ String _migrateAccentColor(String value) {
 
 _ModelMeta _calculateModelMeta(
   List<ProviderAuth> providers, {
+  required Map<String, String> modelTypes,
   List<String>? fallbackVisible,
   String? serverDefault,
 }) {
@@ -82,14 +85,29 @@ _ModelMeta _calculateModelMeta(
   final providerMap = <String, String>{};
   final providerIds = <String>{};
 
+  ModelType resolveModelType({
+    required String providerId,
+    required String modelId,
+  }) {
+    final modelRef = _buildProviderModelRef(providerId, modelId);
+    final stored = modelTypes[modelRef] ?? modelTypes[modelId];
+    if (stored != null && stored.isNotEmpty) {
+      return ModelType.fromValue(stored);
+    }
+    return ModelType.inferFromModelId(modelId);
+  }
+
   for (final provider in providers) {
-    // 只收集 chat 类型的 provider 的模型到对话模型列表
-    if (provider.modelType != 'chat') continue;
-    providerIds.add(provider.id);
+    // 按模型标签筛选 chat，避免把同渠道中的文本模型误过滤。
     for (final model in provider.models) {
       final id = _normalizeModelId(model);
       if (id.isEmpty) continue;
+      if (resolveModelType(providerId: provider.id, modelId: id) !=
+          ModelType.chat) {
+        continue;
+      }
       final modelRef = _buildProviderModelRef(provider.id, id);
+      providerIds.add(provider.id);
       if (!allKnown.contains(modelRef)) {
         allKnown.add(modelRef);
       }
@@ -99,7 +117,12 @@ _ModelMeta _calculateModelMeta(
     for (final model in provider.visibleModels) {
       final id = _normalizeModelId(model);
       if (id.isEmpty) continue;
+      if (resolveModelType(providerId: provider.id, modelId: id) !=
+          ModelType.chat) {
+        continue;
+      }
       final modelRef = _buildProviderModelRef(provider.id, id);
+      providerIds.add(provider.id);
       if (!visible.contains(modelRef)) {
         visible.add(modelRef);
       }
@@ -153,6 +176,7 @@ _ModelMeta _calculateModelMeta(
     allKnown: allKnown,
     defaultModel: defaultModel,
     providerMap: providerMap,
+    providerIds: providerIds,
   );
 }
 
@@ -207,6 +231,7 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
   }
   final meta = _calculateModelMeta(
     providers,
+    modelTypes: modelTypes,
     fallbackVisible: fallbackVisible,
     serverDefault: data['default_model'] as String?,
   );
@@ -258,8 +283,7 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
   final accentColor = _migrateAccentColor(rawAccent);
 
   // 解析默认聊天模型列表和图片识别模型
-  final chatProviderIds =
-      providers.where((p) => p.modelType == 'chat').map((p) => p.id).toSet();
+  final chatProviderIds = meta.providerIds;
   final defaultChatModels = <String>[];
   for (final model in _cleanStrings(data['default_chat_models'])) {
     final modelRef = _normalizeStoredModelRef(
@@ -367,6 +391,7 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     required String modelId,
     required String? displayName,
   }) async {
+    final normalizedModelId = _normalizeModelRefForPersist(modelId);
     await _commit(() async {
       final data = await _api.fetchAll();
       final names =
@@ -375,8 +400,9 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
                   MapEntry(key.toString(), value?.toString() ?? ''));
       if (displayName == null || displayName.trim().isEmpty) {
         names.remove(modelId);
+        names.remove(normalizedModelId);
       } else {
-        names[modelId] = displayName.trim();
+        names[normalizedModelId] = displayName.trim();
       }
       return _api.updatePartial({'model_display_names': names});
     });
@@ -387,6 +413,7 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     required String modelId,
     required ModelType type,
   }) async {
+    final normalizedModelId = _normalizeModelRefForPersist(modelId);
     await _commit(() async {
       final data = await _api.fetchAll();
       final types = (data['model_types'] as Map? ?? const <String, dynamic>{})
@@ -395,8 +422,9 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
       if (type == ModelType.chat) {
         // chat 是默认值，不需要存储
         types.remove(modelId);
+        types.remove(normalizedModelId);
       } else {
-        types[modelId] = type.value;
+        types[normalizedModelId] = type.value;
       }
       return _api.updatePartial({'model_types': types});
     });
@@ -533,7 +561,10 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     bool clearTopP = false,
     int? contextMessageLimit,
     bool clearContextMessageLimit = false,
+    List<String>? chatCapabilities,
+    bool clearChatCapabilities = false,
   }) async {
+    final normalizedModelId = _normalizeModelRefForPersist(modelId);
     await _commit(() async {
       final data = await _api.fetchAll();
       final configs =
@@ -541,9 +572,9 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
               .map((key, value) => MapEntry(key.toString(), value));
 
       // 获取现有配置或创建新配置
-      final existing = configs[modelId] is Map
-          ? ModelConfig.fromJson(
-              (configs[modelId] as Map).cast<String, dynamic>())
+      final existingSource = configs[normalizedModelId] ?? configs[modelId];
+      final existing = existingSource is Map
+          ? ModelConfig.fromJson(existingSource.cast<String, dynamic>())
           : const ModelConfig();
 
       final updated = existing.copyWith(
@@ -554,13 +585,16 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
         clearTopP: clearTopP,
         contextMessageLimit: contextMessageLimit,
         clearContextMessageLimit: clearContextMessageLimit,
+        chatCapabilities: chatCapabilities,
+        clearChatCapabilities: clearChatCapabilities,
       );
 
       if (updated.isDefault) {
         // 全部为默认值时，移除配置以节省空间
         configs.remove(modelId);
+        configs.remove(normalizedModelId);
       } else {
-        configs[modelId] = updated.toJson();
+        configs[normalizedModelId] = updated.toJson();
       }
       return _api.updatePartial({'model_configs': configs});
     });

@@ -1,4 +1,4 @@
-﻿/// 消息输入组件（使�?chat_bottom_container 实现平滑键盘/面板切换�?
+/// 消息输入组件（使�?chat_bottom_container 实现平滑键盘/面板切换�?
 ///
 /// 更新记录�?
 /// - 2025-12-06: 接入皮肤系统
@@ -456,6 +456,34 @@ class _ComposerState extends ConsumerState<Composer> {
     _armKeyboardGuard();
   }
 
+  Future<void> _onSendButtonPressed() async {
+    if (widget.disabled) return;
+
+    final isGenerating = ref.read(sendingProvider);
+    if (isGenerating) {
+      final shouldStop = await showMeoTalkConfirm(
+        context: context,
+        title: '停止生成',
+        message: '当前消息还在生成中，确认停止吗？',
+        hint: '停止后，本次尚未完成的回复不会继续显示。',
+        cancelText: '继续生成',
+        confirmText: '停止',
+        isDanger: true,
+      );
+      if (!mounted || shouldStop != true) return;
+
+      final stopped =
+          await ref.read(chatActionsProvider).interruptCurrentGeneration();
+      if (!mounted) return;
+      if (stopped) {
+        MoeToast.brief(context, '已停止生成');
+      }
+      return;
+    }
+
+    _submit();
+  }
+
   void _submit() {
     final attachment = _selectedAttachment;
     final text = _ctrl.text.trim();
@@ -596,7 +624,7 @@ class _ComposerState extends ConsumerState<Composer> {
                       _currentPanelType == ComposerPanelType.more;
                   _showKeyboardDirect(explicitShow: shouldExplicitShow);
                 },
-                onSubmitted: (_) => _submit(),
+                onSubmitted: (_) => _onSendButtonPressed(),
               ),
             ),
           ),
@@ -848,17 +876,19 @@ class _ComposerState extends ConsumerState<Composer> {
 
   Widget _buildSendButton() {
     final colors = context.moeColors;
+    final isGenerating = ref.watch(sendingProvider);
     return SizedBox(
       width: 42,
       height: 42,
       child: IconButton(
-        onPressed: widget.disabled ? null : _submit,
+        onPressed: widget.disabled ? null : _onSendButtonPressed,
+        tooltip: isGenerating ? '停止生成' : '发送',
         style: IconButton.styleFrom(
           padding: EdgeInsets.zero,
           shape: const CircleBorder(),
         ),
         icon: Icon(
-          Icons.arrow_upward_rounded,
+          isGenerating ? Icons.pause_rounded : Icons.arrow_upward_rounded,
           color: widget.disabled ? colors.muted : colors.accentColor,
           size: 24,
         ),

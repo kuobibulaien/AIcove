@@ -307,12 +307,6 @@ class ChatSettingsPage extends ConsumerWidget {
     );
   }
 
-  String _getPluginSummary() {
-    final enabledPlugins = conversation.enabledPlugins;
-    if (enabledPlugins == null) return '允许全部 (${chatPluginItems.length})';
-    return '已允许 ${enabledPlugins.length}/${chatPluginItems.length}';
-  }
-
   void _openDiaryPage(BuildContext context) {
     Navigator.of(context).push(
       ParallaxSlidePageRoute(

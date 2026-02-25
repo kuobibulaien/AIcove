@@ -1,32 +1,53 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/services.dart';
 
 import '../app_logger.dart';
 
-/// On Windows, route network requests through user proxy settings by default.
-/// Priority: direct/bypass first, then environment variables, finally system proxy.
-Future<void> installWindowsProxyHttpOverrides() async {
-  if (kIsWeb || !Platform.isWindows) return;
+const MethodChannel _systemProxyChannel =
+    MethodChannel('com.example.aicove_flutter/system_proxy');
+
+/// Install platform-aware proxy override before any network client is created.
+///
+/// Coverage:
+///   - Windows  → read from registry (Internet Settings)
+///   - Android  → MethodChannel + system properties + local port probe
+///   - iOS/macOS/Linux → environment variables (Dart built-in)
+///
+/// Priority when resolving each request:
+///   1. bypass (loopback / private-link)
+///   2. system proxy (per platform)
+///   3. environment variables (http_proxy / https_proxy / no_proxy)
+///   4. DIRECT
+Future<void> installProxyHttpOverrides() async {
+  if (kIsWeb) return;
 
   final env = Platform.environment;
-  final systemProxy = await _WindowsSystemProxyConfig.load();
-  HttpOverrides.global = _WindowsProxyHttpOverrides(
+  _SystemProxyConfig? systemProxy;
+  try {
+    systemProxy = await _SystemProxyConfig.load();
+  } catch (e) {
+    AppLogger.warning('Network', 'Failed to load system proxy: $e');
+  }
+
+  HttpOverrides.global = _ProxyHttpOverrides(
     environment: env,
     systemProxy: systemProxy,
   );
 
+  final platform = _currentPlatformName();
   if (systemProxy == null) {
     AppLogger.info(
       'Network',
-      'Windows proxy override enabled (env proxy or direct when no system proxy)',
+      '$platform proxy override installed (no system proxy detected → env / direct)',
     );
     return;
   }
 
   AppLogger.info(
     'Network',
-    'Windows proxy override enabled (system proxy active)',
+    '$platform proxy override installed (system proxy active)',
     metadata: <String, dynamic>{
       'http': systemProxy.httpProxy,
       'https': systemProxy.httpsProxy,
@@ -36,14 +57,32 @@ Future<void> installWindowsProxyHttpOverrides() async {
   );
 }
 
-class _WindowsProxyHttpOverrides extends HttpOverrides {
-  _WindowsProxyHttpOverrides({
+@Deprecated('Use installProxyHttpOverrides instead.')
+Future<void> installWindowsProxyHttpOverrides() async {
+  await installProxyHttpOverrides();
+}
+
+String _currentPlatformName() {
+  if (Platform.isWindows) return 'Windows';
+  if (Platform.isAndroid) return 'Android';
+  if (Platform.isIOS) return 'iOS';
+  if (Platform.isMacOS) return 'macOS';
+  if (Platform.isLinux) return 'Linux';
+  return 'Unknown';
+}
+
+// ---------------------------------------------------------------------------
+// HttpOverrides — unified for all platforms
+// ---------------------------------------------------------------------------
+
+class _ProxyHttpOverrides extends HttpOverrides {
+  _ProxyHttpOverrides({
     required this.environment,
     required this.systemProxy,
   });
 
   final Map<String, String> environment;
-  final _WindowsSystemProxyConfig? systemProxy;
+  final _SystemProxyConfig? systemProxy;
 
   @override
   HttpClient createHttpClient(SecurityContext? context) {
@@ -53,11 +92,13 @@ class _WindowsProxyHttpOverrides extends HttpOverrides {
         return 'DIRECT';
       }
 
+      // 优先级 1：系统代理
       final systemDecision = systemProxy?.findProxy(uri);
       if (systemDecision != null && systemDecision.toUpperCase() == 'DIRECT') {
         return 'DIRECT';
       }
 
+      // 优先级 2：环境变量代理
       final envProxy = _findProxyFromEnvironment(uri, environment);
       if (envProxy.toUpperCase() != 'DIRECT') {
         return envProxy;
@@ -71,7 +112,6 @@ class _WindowsProxyHttpOverrides extends HttpOverrides {
     final host = uri.host.toLowerCase();
     if (host.isEmpty) return false;
 
-    // Always bypass proxy for loopback and private-link targets.
     if (host == 'localhost' ||
         host == '::1' ||
         host == '0:0:0:0:0:0:0:1' ||
@@ -108,8 +148,22 @@ class _WindowsProxyHttpOverrides extends HttpOverrides {
   }
 }
 
-class _WindowsSystemProxyConfig {
-  const _WindowsSystemProxyConfig({
+// ---------------------------------------------------------------------------
+// _SystemProxyConfig — platform-specific proxy detection
+// ---------------------------------------------------------------------------
+
+class _SystemProxyConfig {
+  // 常见 Android 本地代理端口（Clash / V2Ray / Shadowsocks 等）。
+  static const List<int> _androidLocalProxyPorts = <int>[
+    7890,
+    7897,
+    1080,
+    10808,
+    10809,
+    20171,
+  ];
+
+  const _SystemProxyConfig({
     this.httpProxy,
     this.httpsProxy,
     this.allProxy,
@@ -123,7 +177,141 @@ class _WindowsSystemProxyConfig {
   final String? socksProxy;
   final List<String> bypassPatterns;
 
-  static Future<_WindowsSystemProxyConfig?> load() async {
+  /// Load system proxy config using the best available method per platform.
+  static Future<_SystemProxyConfig?> load() async {
+    try {
+      if (Platform.isWindows) {
+        return await _loadFromWindowsRegistry();
+      }
+      if (Platform.isAndroid) {
+        return await _loadFromMobile(useMethodChannel: true);
+      }
+      if (Platform.isIOS) {
+        return await _loadFromMobile(useMethodChannel: false);
+      }
+      // macOS / Linux → Dart's built-in env proxy (http_proxy/https_proxy) is
+      // sufficient; no extra detection needed.
+    } catch (e) {
+      AppLogger.warning('Network', 'Failed to load system proxy config: $e');
+    }
+    return null;
+  }
+
+  // -------------------------------------------------------------------------
+  // Mobile (Android / iOS) — dual detection for maximum reliability
+  // -------------------------------------------------------------------------
+
+  static Future<_SystemProxyConfig?> _loadFromMobile({
+    required bool useMethodChannel,
+  }) async {
+    // Method 1: MethodChannel (Android only, reads ConnectivityManager + sysprops)
+    if (useMethodChannel) {
+      try {
+        final config = await _loadFromAndroidMethodChannel();
+        if (config != null) {
+          AppLogger.info('Network', 'Proxy detected via MethodChannel',
+              metadata: {'all': config.allProxy});
+          return config;
+        }
+      } catch (e) {
+        AppLogger.warning(
+            'Network', 'MethodChannel proxy detection failed: $e');
+      }
+
+      // Method 2: 本地端口探测（用于未开启系统代理但本地代理服务已启动的场景）
+      final localConfig = await _loadFromAndroidLocalProxyProbe();
+      if (localConfig != null) {
+        AppLogger.info(
+          'Network',
+          'Proxy detected via localhost probe',
+          metadata: {'all': localConfig.allProxy},
+        );
+        return localConfig;
+      }
+    }
+
+    AppLogger.info('Network',
+        '${Platform.isAndroid ? "Android" : "iOS"}: no system proxy detected');
+    return null;
+  }
+
+  /// Read proxy via the custom MethodChannel on Android.
+  static Future<_SystemProxyConfig?> _loadFromAndroidMethodChannel() async {
+    try {
+      final settings = await _systemProxyChannel
+          .invokeMapMethod<String, dynamic>('getSystemProxy');
+      if (settings == null || settings.isEmpty) return null;
+
+      final host = settings['host']?.toString().trim() ?? '';
+      final port = _parseInt(settings['port']);
+      final exclusionRaw = settings['exclusionList']?.toString() ?? '';
+      final pacUrl = settings['pacUrl']?.toString().trim() ?? '';
+
+      if (host.isEmpty || port == null || port <= 0) {
+        if (pacUrl.isNotEmpty) {
+          AppLogger.warning(
+            'Network',
+            'Android system proxy uses PAC; PAC evaluation not implemented',
+            metadata: <String, dynamic>{'pacUrl': pacUrl},
+          );
+        }
+        return null;
+      }
+
+      final endpoint = _normalizeProxyEndpoint('$host:$port');
+      if (endpoint == null) return null;
+
+      return _SystemProxyConfig(
+        allProxy: endpoint,
+        bypassPatterns: _parseBypassPatterns(exclusionRaw),
+      );
+    } on MissingPluginException {
+      return null;
+    } on PlatformException catch (e) {
+      AppLogger.warning(
+        'Network',
+        'Android MethodChannel proxy read failed: ${e.message}',
+      );
+      return null;
+    }
+  }
+
+  static Future<_SystemProxyConfig?> _loadFromAndroidLocalProxyProbe() async {
+    for (final port in _androidLocalProxyPorts) {
+      final reachable = await _canConnectLocalPort(port);
+      if (!reachable) continue;
+
+      final endpoint = _normalizeProxyEndpoint('127.0.0.1:$port');
+      if (endpoint == null) continue;
+
+      return _SystemProxyConfig(allProxy: endpoint);
+    }
+    return null;
+  }
+
+  static Future<bool> _canConnectLocalPort(int port) async {
+    Socket? socket;
+    try {
+      socket = await Socket.connect(
+        InternetAddress.loopbackIPv4,
+        port,
+        timeout: const Duration(milliseconds: 250),
+      );
+      return true;
+    } catch (_) {
+      return false;
+    } finally {
+      try {
+        await socket?.close();
+      } catch (_) {}
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Windows — read from registry
+  // -------------------------------------------------------------------------
+
+  static Future<_SystemProxyConfig?> _loadFromWindowsRegistry() async {
     final settings = await _queryInternetSettings();
     if (settings.isEmpty) return null;
 
@@ -137,7 +325,7 @@ class _WindowsSystemProxyConfig {
     if (parsedServer.isEmpty) return null;
 
     final bypassRaw = (settings['ProxyOverride'] ?? '').trim();
-    return _WindowsSystemProxyConfig(
+    return _SystemProxyConfig(
       httpProxy: parsedServer['http'],
       httpsProxy: parsedServer['https'],
       allProxy: parsedServer['all'],
@@ -178,6 +366,71 @@ class _WindowsSystemProxyConfig {
     }
   }
 
+  // -------------------------------------------------------------------------
+  // Proxy resolution for each request
+  // -------------------------------------------------------------------------
+
+  String findProxy(Uri uri) {
+    final host = uri.host.toLowerCase();
+    if (_isLoopbackHost(host) || _shouldBypass(host)) {
+      return 'DIRECT';
+    }
+
+    final scheme = uri.scheme.toLowerCase();
+    final endpoint = switch (scheme) {
+      'https' => httpsProxy ?? allProxy ?? httpProxy ?? socksProxy,
+      'http' => httpProxy ?? allProxy ?? httpsProxy ?? socksProxy,
+      _ => allProxy ?? httpsProxy ?? httpProxy ?? socksProxy,
+    };
+
+    if (endpoint == null || endpoint.isEmpty) return 'DIRECT';
+    return '$endpoint; DIRECT';
+  }
+
+  bool _isLoopbackHost(String host) {
+    return host == 'localhost' ||
+        host == '127.0.0.1' ||
+        host == '::1' ||
+        host.startsWith('127.');
+  }
+
+  bool _shouldBypass(String host) {
+    for (final rawPattern in bypassPatterns) {
+      final pattern = rawPattern.trim();
+      if (pattern.isEmpty) continue;
+
+      if (pattern == '<local>' && !host.contains('.')) {
+        return true;
+      }
+
+      if (pattern.startsWith('<') && pattern.endsWith('>')) {
+        continue;
+      }
+
+      if (_wildcardMatch(host, pattern)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool _wildcardMatch(String host, String pattern) {
+    if (!pattern.contains('*') && !pattern.contains('?')) {
+      if (host == pattern) return true;
+      if (pattern.startsWith('.')) return host.endsWith(pattern);
+      return host.endsWith('.$pattern');
+    }
+
+    final escaped =
+        RegExp.escape(pattern).replaceAll(r'\*', '.*').replaceAll(r'\?', '.');
+    final reg = RegExp('^$escaped\$');
+    return reg.hasMatch(host);
+  }
+
+  // -------------------------------------------------------------------------
+  // Parsing helpers
+  // -------------------------------------------------------------------------
+
   static bool _parseDword(String? value) {
     if (value == null) return false;
     final trimmed = value.trim().toLowerCase();
@@ -187,6 +440,12 @@ class _WindowsSystemProxyConfig {
       return parsed == 1;
     }
     return false;
+  }
+
+  static int? _parseInt(Object? value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    return int.tryParse(value.toString());
   }
 
   static Map<String, String> _parseProxyServer(String raw) {
@@ -261,64 +520,9 @@ class _WindowsSystemProxyConfig {
   static List<String> _parseBypassPatterns(String raw) {
     if (raw.trim().isEmpty) return const <String>[];
     return raw
-        .split(';')
+        .split(RegExp(r'[;,|]'))
         .map((e) => e.trim().toLowerCase())
         .where((e) => e.isNotEmpty)
         .toList(growable: false);
-  }
-
-  String findProxy(Uri uri) {
-    final host = uri.host.toLowerCase();
-    if (_isLoopbackHost(host) || _shouldBypass(host)) {
-      return 'DIRECT';
-    }
-
-    final scheme = uri.scheme.toLowerCase();
-    final endpoint = switch (scheme) {
-      'https' => httpsProxy ?? allProxy ?? httpProxy ?? socksProxy,
-      'http' => httpProxy ?? allProxy ?? httpsProxy ?? socksProxy,
-      _ => allProxy ?? httpsProxy ?? httpProxy ?? socksProxy,
-    };
-
-    if (endpoint == null || endpoint.isEmpty) return 'DIRECT';
-    return '$endpoint; DIRECT';
-  }
-
-  bool _isLoopbackHost(String host) {
-    return host == 'localhost' ||
-        host == '127.0.0.1' ||
-        host == '::1' ||
-        host.startsWith('127.');
-  }
-
-  bool _shouldBypass(String host) {
-    for (final rawPattern in bypassPatterns) {
-      final pattern = rawPattern.trim();
-      if (pattern.isEmpty) continue;
-
-      if (pattern == '<local>' && !host.contains('.')) {
-        return true;
-      }
-
-      if (pattern.startsWith('<') && pattern.endsWith('>')) {
-        continue;
-      }
-
-      if (_wildcardMatch(host, pattern)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  bool _wildcardMatch(String host, String pattern) {
-    if (!pattern.contains('*') && !pattern.contains('?')) {
-      return host == pattern || host.endsWith('.$pattern');
-    }
-
-    final escaped =
-        RegExp.escape(pattern).replaceAll(r'\*', '.*').replaceAll(r'\?', '.');
-    final reg = RegExp('^$escaped\$');
-    return reg.hasMatch(host);
   }
 }

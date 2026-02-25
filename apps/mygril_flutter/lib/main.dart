@@ -14,10 +14,13 @@ import 'src/features/chat/data/background_service.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Enable Windows proxy override before any network client is created.
-  await installWindowsProxyHttpOverrides();
+  // Install platform-aware proxy overrides for all non-web platforms.
+  // On Android this auto-detects system proxy & local proxy apps (Clash/V2Ray).
+  if (!kIsWeb) {
+    await installProxyHttpOverrides();
+  }
 
-  // Windows/macOS/Linux 桌面端窗口配置。
+  // Window setup for desktop platforms.
   if (!kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux)) {
     await windowManager.ensureInitialized();
 
@@ -36,31 +39,31 @@ void main() async {
       await windowManager.focus();
     });
 
-    AppLogger.info('App', 'Windows 无边框窗口初始化完成');
+    AppLogger.info('App', 'Desktop window initialization completed');
   }
 
-  // WorkManager 仅在移动端初始化，桌面端/网页端跳过。
+  // WorkManager is initialized only on mobile.
   if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
     BackgroundService.initialize().then((_) {
-      AppLogger.info('App', '后台服务初始化完成');
+      AppLogger.info('App', 'Background service initialization completed');
     }).catchError((e) {
-      AppLogger.error('App', '后台服务初始化失败: $e');
+      AppLogger.error('App', 'Background service initialization failed: $e');
     });
   } else if (kIsWeb) {
-    AppLogger.info('App', 'Web 平台跳过后台服务初始化');
+    AppLogger.info('App', 'Background service skipped on web');
   } else {
-    AppLogger.info('App', '桌面平台跳过后台服务初始化');
+    AppLogger.info('App', 'Background service skipped on desktop');
   }
 
-  AppLogger.info('App', '应用启动中...');
+  AppLogger.info('App', 'App is starting');
 
-  // Web 使用 Hash 路由，避免服务端回退处理。
+  // Use hash URL strategy on web.
   if (kIsWeb) {
     setUrlStrategy(const HashUrlStrategy());
-    AppLogger.debug('App', '使用 Hash URL 策略 (Web 平台)');
+    AppLogger.debug('App', 'Using Hash URL strategy for web');
   }
 
-  AppLogger.info('App', '应用启动完成');
+  AppLogger.info('App', 'App startup completed');
 
   runApp(const ProviderScope(child: MyApp()));
 }

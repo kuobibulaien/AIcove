@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:aicove_flutter/src/core/models/message_block.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_send_service.dart';
@@ -105,5 +106,98 @@ void main() {
     );
 
     expect(history.map((m) => m.id).toList(), ['m2', 'm3', 'm4']);
+  });
+
+  test('non-vision description reuses image prompt before vision fallback',
+      () async {
+    var visionCalled = false;
+    final block = ImageBlock(
+      messageId: 'msg_1',
+      localPath: '/tmp/demo.png',
+      prompt: '1girl, blue hair, smile',
+    );
+
+    final description =
+        await ChatSendService.resolveImageDescriptionForNonVision(
+      imageBlock: block,
+      translateWithVision: () async {
+        visionCalled = true;
+        return 'vision generated description';
+      },
+    );
+
+    expect(description, '1girl, blue hair, smile');
+    expect(visionCalled, isFalse);
+  });
+
+  test('non-vision description calls vision fallback when prompt is missing',
+      () async {
+    var visionCalled = false;
+    final block = ImageBlock(
+      messageId: 'msg_2',
+      localPath: '/tmp/demo2.png',
+    );
+
+    final description =
+        await ChatSendService.resolveImageDescriptionForNonVision(
+      imageBlock: block,
+      translateWithVision: () async {
+        visionCalled = true;
+        return 'vision generated description';
+      },
+    );
+
+    expect(description, 'vision generated description');
+    expect(visionCalled, isTrue);
+  });
+
+  test('non-vision assistant image should not inject placeholder text', () {
+    final text = ChatSendService.buildNonVisionImageMessageText(
+      role: 'assistant',
+      description: '一只猫在草地上',
+    );
+
+    expect(text, isNull);
+  });
+
+  test('non-vision user image uses neutral description text', () {
+    final text = ChatSendService.buildNonVisionImageMessageText(
+      role: 'user',
+      description: '一只猫在草地上',
+    );
+
+    expect(text, isNotNull);
+    expect(text, contains('用户刚刚发送了一张图片'));
+    expect(text, isNot(contains('[图片]')));
+    expect(text, isNot(contains('图片已转换为文本描述')));
+  });
+
+  test('buildAssistantImageEventPrompt exports internal media events', () {
+    final now = DateTime.now();
+    final history = <Message>[
+      Message(
+        id: 'u1',
+        role: 'user',
+        content: '你好',
+        createdAt: now.subtract(const Duration(minutes: 2)),
+      ),
+      Message.fromBlocks(
+        id: 'a1',
+        role: 'assistant',
+        blocks: [
+          ImageBlock(
+            messageId: 'a1',
+            localPath: '/tmp/image.png',
+            prompt: '1girl, smiling, outdoor',
+          ),
+        ],
+        createdAt: now.subtract(const Duration(minutes: 1)),
+      ),
+    ];
+
+    final prompt = ChatSendService.buildAssistantImageEventPrompt(history);
+    expect(prompt, contains('<internal_media_events>'));
+    expect(prompt, contains('assistant_image_sent'));
+    expect(prompt, contains("prompt=\"1girl, smiling, outdoor\""));
   });
 }

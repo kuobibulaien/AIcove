@@ -136,9 +136,13 @@ class _SettingsContentState extends ConsumerState<SettingsContent> {
       minLeadingWidth: 24,
       horizontalTitleGap: 12,
       leading: Icon(icon, color: colors.text, size: 24),
-      title: Text(title, style: TextStyle(fontSize: 15, fontWeight: MoeFontWeights.emphasis, color: colors.text)),
-      subtitle: subtitle != null 
-          ? Text(subtitle, style: TextStyle(fontSize: 13, color: colors.muted)) 
+      title: Text(title,
+          style: TextStyle(
+              fontSize: 15,
+              fontWeight: MoeFontWeights.emphasis,
+              color: colors.text)),
+      subtitle: subtitle != null
+          ? Text(subtitle, style: TextStyle(fontSize: 13, color: colors.muted))
           : null,
       trailing: Icon(Icons.chevron_right, color: colors.muted),
       onTap: onTap,

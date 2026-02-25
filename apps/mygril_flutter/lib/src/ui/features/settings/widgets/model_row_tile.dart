@@ -20,10 +20,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../features/settings/app_settings.dart';
-import '../../../../features/settings/settings_models.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/index.dart';
-import '../../../../ui/shared/widgets/provider/capability_chips.dart';
 
 /// 模型行组件（用于已显示模型列表）
 class ModelRowTile extends ConsumerWidget {
@@ -42,18 +40,28 @@ class ModelRowTile extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final colors = context.moeColors;
     final cs = Theme.of(context).colorScheme;
-    final features = inferModelFeatures(model);
     final hasDisplayName = displayName != null && displayName!.isNotEmpty;
 
     // 获取模型类型和配置
     final settings = ref.watch(appSettingsProvider).valueOrNull;
-    final modelType = settings?.getModelType(model) ?? ModelType.chat;
-    final modelConfig = settings?.getModelConfig(model) ?? const ModelConfig();
+    final modelRef = settings?.buildModelRef(providerId, model) ?? model;
+    final modelType = settings?.getModelType(modelRef) ?? ModelType.chat;
+    final modelConfig =
+        settings?.getModelConfig(modelRef) ?? const ModelConfig();
+    final features = modelType == ModelType.chat
+        ? (settings
+                ?.getChatModelCapabilities(modelRef)
+                .map((cap) => ModelFeature.fromValue(cap.value))
+                .whereType<ModelFeature>()
+                .toList() ??
+            inferModelFeatures(model))
+        : const <ModelFeature>[];
 
     return MoeSettingsRow(
       label: hasDisplayName ? displayName! : model,
       labelMaxLines: 1,
-      subtitleWidget: _buildSubtitle(colors, hasDisplayName, features.isNotEmpty, modelType),
+      subtitleWidget:
+          _buildSubtitle(colors, hasDisplayName, modelType, features),
       trailingType: MoeSettingsRowTrailing.custom,
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
@@ -78,6 +86,7 @@ class ModelRowTile extends ConsumerWidget {
               context: context,
               ref: ref,
               modelId: model,
+              modelRef: modelRef,
               currentDisplayName: displayName,
               currentType: modelType,
               currentConfig: modelConfig,
@@ -104,6 +113,7 @@ class ModelRowTile extends ConsumerWidget {
         context: context,
         ref: ref,
         modelId: model,
+        modelRef: modelRef,
         currentDisplayName: displayName,
         currentType: modelType,
         currentConfig: modelConfig,
@@ -120,9 +130,15 @@ class ModelRowTile extends ConsumerWidget {
   }
 
   /// 构建副标题区域（模型ID + 类型标签 + 特性标签）
-  Widget? _buildSubtitle(MoeColors colors, bool hasDisplayName, bool hasFeatures, ModelType modelType) {
+  Widget? _buildSubtitle(
+    MoeColors colors,
+    bool hasDisplayName,
+    ModelType modelType,
+    List<ModelFeature> features,
+  ) {
     // chat 类型不显示标签（默认类型）
     final showTypeTag = modelType != ModelType.chat;
+    final hasFeatures = features.isNotEmpty;
 
     if (!hasDisplayName && !hasFeatures && !showTypeTag) return null;
 
@@ -151,7 +167,11 @@ class ModelRowTile extends ConsumerWidget {
                 ],
                 // 模型特性标签
                 if (hasFeatures)
-                  ModelFeatureChips(modelId: model, maxShow: 2),
+                  ModelFeatureChips(
+                    modelId: model,
+                    maxShow: 2,
+                    features: features,
+                  ),
               ],
             ),
           ),
@@ -198,6 +218,7 @@ class ModelRowTile extends ConsumerWidget {
     required BuildContext context,
     required WidgetRef ref,
     required String modelId,
+    required String modelRef,
     String? currentDisplayName,
     required ModelType currentType,
     required ModelConfig currentConfig,
@@ -214,6 +235,11 @@ class ModelRowTile extends ConsumerWidget {
     );
     var selectedType = currentType;
     var disableToolCalling = currentConfig.disableToolCalling;
+    var useAutoCapabilities = currentConfig.chatCapabilities == null;
+    var selectedCapabilities = <String>{
+      ...(currentConfig.chatCapabilities ??
+          inferChatModelCapabilities(modelId).map((cap) => cap.value)),
+    };
 
     final confirmed = await showMoeBottomSheet<bool>(
       context: context,
@@ -295,14 +321,17 @@ class ModelRowTile extends ConsumerWidget {
                         HapticFeedback.selectionClick();
                       },
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
                         decoration: BoxDecoration(
                           color: isSelected
                               ? type.color.withValues(alpha: 0.15)
                               : context.moeColors.componentBackground,
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(
-                            color: isSelected ? type.color : context.moeColors.border,
+                            color: isSelected
+                                ? type.color
+                                : context.moeColors.border,
                             width: isSelected ? 1.5 : 1,
                           ),
                         ),
@@ -312,15 +341,21 @@ class ModelRowTile extends ConsumerWidget {
                             Icon(
                               type.icon,
                               size: 16,
-                              color: isSelected ? type.color : context.moeColors.muted,
+                              color: isSelected
+                                  ? type.color
+                                  : context.moeColors.muted,
                             ),
                             const SizedBox(width: 6),
                             Text(
                               type.label,
                               style: TextStyle(
                                 fontSize: 13,
-                                color: isSelected ? type.color : context.moeColors.text,
-                                fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
+                                color: isSelected
+                                    ? type.color
+                                    : context.moeColors.text,
+                                fontWeight: isSelected
+                                    ? MoeFontWeights.emphasis
+                                    : MoeFontWeights.normal,
                               ),
                             ),
                           ],
@@ -329,6 +364,165 @@ class ModelRowTile extends ConsumerWidget {
                     );
                   }).toList(),
                 ),
+
+                if (selectedType == ModelType.chat) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    '对话能力标签',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: MoeFontWeights.emphasis,
+                      color: context.moeColors.text,
+                    ),
+                  ),
+                  Text(
+                    '仅用于 chat 模型，可自动识别或手动指定。',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: context.moeColors.muted,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: context.moeColors.componentBackground,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: context.moeColors.border),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.auto_awesome_outlined,
+                          size: 18,
+                          color: context.moeColors.muted,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '自动识别能力',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: context.moeColors.text,
+                                ),
+                              ),
+                              Text(
+                                '关闭后可手动选择：视觉 / 工具 / 推理 / 联网',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: context.moeColors.muted,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Switch(
+                          value: useAutoCapabilities,
+                          onChanged: (value) {
+                            setSheetState(() => useAutoCapabilities = value);
+                            HapticFeedback.selectionClick();
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (useAutoCapabilities)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '自动模式将按模型名推断能力标签。',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: context.moeColors.muted,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          ModelFeatureChips(
+                            modelId: modelId,
+                            showIcon: true,
+                            maxShow: 4,
+                          ),
+                        ],
+                      ),
+                    )
+                  else
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: ChatModelCapability.values.map((capability) {
+                          final feature =
+                              ModelFeature.fromValue(capability.value);
+                          if (feature == null) return const SizedBox.shrink();
+                          final isSelected =
+                              selectedCapabilities.contains(capability.value);
+                          return GestureDetector(
+                            onTap: () {
+                              setSheetState(() {
+                                if (isSelected) {
+                                  selectedCapabilities.remove(capability.value);
+                                } else {
+                                  selectedCapabilities.add(capability.value);
+                                }
+                              });
+                              HapticFeedback.selectionClick();
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color: isSelected
+                                    ? feature.color.withValues(alpha: 0.15)
+                                    : context.moeColors.componentBackground,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: isSelected
+                                      ? feature.color
+                                      : context.moeColors.border,
+                                  width: isSelected ? 1.5 : 1,
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    feature.icon,
+                                    size: 16,
+                                    color: isSelected
+                                        ? feature.color
+                                        : context.moeColors.muted,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    feature.label,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: isSelected
+                                          ? feature.color
+                                          : context.moeColors.text,
+                                      fontWeight: isSelected
+                                          ? MoeFontWeights.emphasis
+                                          : MoeFontWeights.normal,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                ],
 
                 // 模型参数
                 const SizedBox(height: 16),
@@ -353,14 +547,16 @@ class ModelRowTile extends ConsumerWidget {
                     Expanded(
                       child: TextFormField(
                         controller: tempCtrl,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
                         decoration: InputDecoration(
                           labelText: '温度',
                           hintText: '默认',
                           hintStyle: TextStyle(color: context.moeColors.muted),
                           border: const OutlineInputBorder(),
                           helperText: '0~2',
-                          helperStyle: TextStyle(fontSize: 10, color: context.moeColors.muted),
+                          helperStyle: TextStyle(
+                              fontSize: 10, color: context.moeColors.muted),
                         ),
                       ),
                     ),
@@ -368,14 +564,16 @@ class ModelRowTile extends ConsumerWidget {
                     Expanded(
                       child: TextFormField(
                         controller: topPCtrl,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
                         decoration: InputDecoration(
                           labelText: 'Top P',
                           hintText: '关闭',
                           hintStyle: TextStyle(color: context.moeColors.muted),
                           border: const OutlineInputBorder(),
                           helperText: '0~1',
-                          helperStyle: TextStyle(fontSize: 10, color: context.moeColors.muted),
+                          helperStyle: TextStyle(
+                              fontSize: 10, color: context.moeColors.muted),
                         ),
                       ),
                     ),
@@ -390,7 +588,8 @@ class ModelRowTile extends ConsumerWidget {
                           hintStyle: TextStyle(color: context.moeColors.muted),
                           border: const OutlineInputBorder(),
                           helperText: '消息条数',
-                          helperStyle: TextStyle(fontSize: 10, color: context.moeColors.muted),
+                          helperStyle: TextStyle(
+                              fontSize: 10, color: context.moeColors.muted),
                         ),
                       ),
                     ),
@@ -400,7 +599,8 @@ class ModelRowTile extends ConsumerWidget {
                 // 禁用工具调用开关
                 const SizedBox(height: 16),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
                     color: context.moeColors.componentBackground,
                     borderRadius: BorderRadius.circular(8),
@@ -474,13 +674,13 @@ class ModelRowTile extends ConsumerWidget {
 
         // 保存显示名称
         await notifier.setModelDisplayName(
-          modelId: modelId,
+          modelId: modelRef,
           displayName: ctrl.text.trim().isEmpty ? null : ctrl.text.trim(),
         );
 
         // 保存模型类型
         await notifier.setModelType(
-          modelId: modelId,
+          modelId: modelRef,
           type: selectedType,
         );
 
@@ -488,17 +688,29 @@ class ModelRowTile extends ConsumerWidget {
         final tempText = tempCtrl.text.trim();
         final topPText = topPCtrl.text.trim();
         final ctxText = ctxLimitCtrl.text.trim();
+        final manualChatCapabilities = ChatModelCapability.values
+            .where(
+                (capability) => selectedCapabilities.contains(capability.value))
+            .map((capability) => capability.value)
+            .toList();
 
         // 保存模型配置（包括工具调用、温度、TopP、上下文数）
         await notifier.updateModelConfig(
-          modelId: modelId,
+          modelId: modelRef,
           disableToolCalling: disableToolCalling,
           temperature: tempText.isNotEmpty ? double.tryParse(tempText) : null,
           clearTemperature: tempText.isEmpty,
           topP: topPText.isNotEmpty ? double.tryParse(topPText) : null,
           clearTopP: topPText.isEmpty,
-          contextMessageLimit: ctxText.isNotEmpty ? int.tryParse(ctxText) : null,
+          contextMessageLimit:
+              ctxText.isNotEmpty ? int.tryParse(ctxText) : null,
           clearContextMessageLimit: ctxText.isEmpty,
+          chatCapabilities:
+              selectedType == ModelType.chat && !useAutoCapabilities
+                  ? manualChatCapabilities
+                  : null,
+          clearChatCapabilities:
+              selectedType != ModelType.chat || useAutoCapabilities,
         );
 
         if (!context.mounted) return;

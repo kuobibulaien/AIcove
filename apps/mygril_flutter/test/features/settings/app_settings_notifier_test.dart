@@ -107,6 +107,56 @@ void main() {
     expect(second.visibleModels, contains('gpt-4o-mini'));
   });
 
+  test('model chat capabilities can be set and cleared per model', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    await container.read(appSettingsProvider.future);
+    final notifier = container.read(appSettingsProvider.notifier);
+
+    await notifier.importCustomModel(
+      name: null,
+      apiKey: 'key-cap',
+      apiBaseUrl: 'https://api.cap.example/v1',
+      provider: 'openai',
+      capabilities: const <String>['chat'],
+      modelType: 'chat',
+      customConfig: const <String, dynamic>{'requestFormat': 'openai'},
+      allModels: const <String>['gpt-4o'],
+      visibleModels: const <String>['gpt-4o'],
+    );
+
+    const modelRef = 'openai:gpt-4o';
+    await notifier.updateModelConfig(
+      modelId: modelRef,
+      chatCapabilities: const <String>['tools'],
+    );
+
+    var settings = container.read(appSettingsProvider).requireValue;
+    expect(settings.getModelConfig(modelRef).chatCapabilities, ['tools']);
+    expect(
+      settings.hasChatModelCapability(modelRef, ChatModelCapability.tools),
+      isTrue,
+    );
+    expect(
+      settings.hasChatModelCapability(modelRef, ChatModelCapability.vision),
+      isFalse,
+    );
+
+    await notifier.updateModelConfig(
+      modelId: modelRef,
+      clearChatCapabilities: true,
+    );
+
+    settings = container.read(appSettingsProvider).requireValue;
+    expect(settings.getModelConfig(modelRef).chatCapabilities, isNull);
+    expect(
+      settings.hasChatModelCapability(modelRef, ChatModelCapability.vision),
+      isTrue,
+    );
+  });
+
   test('updateEnhancedDialogueSettings persists values', () async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     final container = ProviderContainer();

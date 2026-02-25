@@ -51,8 +51,9 @@ class ImagePluginDetailPage extends ConsumerWidget {
         _resolveSelectedProvider(config: config, providers: imageProviders);
     final availableModels = selectedProvider == null
         ? const <String>[]
-        : _modelsOf(selectedProvider);
+        : _modelsOf(settings, selectedProvider);
     final selectedModel = _resolveSelectedModel(
+      settings: settings,
       config: config,
       provider: selectedProvider,
     );
@@ -108,6 +109,7 @@ class ImagePluginDetailPage extends ConsumerWidget {
                   : () => _showModelPicker(
                         context: context,
                         ref: ref,
+                        settings: settings,
                         provider: selectedProvider,
                         config: config,
                       ),
@@ -212,9 +214,7 @@ class ImagePluginDetailPage extends ConsumerWidget {
   List<ProviderAuth> _imageProviders(AppSettings settings) {
     return settings.providers.where((p) {
       if (!p.enabled) return false;
-      final isImageType = p.modelType == 'image';
-      final hasImageCapability = p.capabilities.contains('image');
-      return isImageType || hasImageCapability;
+      return _modelsOf(settings, p).isNotEmpty;
     }).toList();
   }
 
@@ -232,18 +232,25 @@ class ImagePluginDetailPage extends ConsumerWidget {
     return providers.first;
   }
 
-  List<String> _modelsOf(ProviderAuth provider) {
-    return provider.visibleModels.isNotEmpty
+  List<String> _modelsOf(AppSettings settings, ProviderAuth provider) {
+    final models = provider.visibleModels.isNotEmpty
         ? provider.visibleModels
         : provider.models;
+    return models
+        .where((modelId) =>
+            settings
+                .getModelType(settings.buildModelRef(provider.id, modelId)) ==
+            ModelType.image)
+        .toList();
   }
 
   String? _resolveSelectedModel({
+    required AppSettings settings,
     required ImageConfig config,
     required ProviderAuth? provider,
   }) {
     if (provider == null) return null;
-    final models = _modelsOf(provider);
+    final models = _modelsOf(settings, provider);
     final selected = config.selectedModelId?.trim();
     if (selected != null && selected.isNotEmpty) {
       if (models.isEmpty || models.contains(selected)) return selected;
@@ -292,11 +299,12 @@ class ImagePluginDetailPage extends ConsumerWidget {
   Future<void> _showModelPicker({
     required BuildContext context,
     required WidgetRef ref,
+    required AppSettings settings,
     required ProviderAuth provider,
     required ImageConfig config,
   }) async {
     final notifier = ref.read(imagePluginConfigProvider.notifier);
-    final models = _modelsOf(provider);
+    final models = _modelsOf(settings, provider);
     if (models.isEmpty) {
       MoeToast.show(context, '当前渠道暂无模型，请先在渠道商管理添加');
       return;
@@ -536,5 +544,4 @@ class ImagePluginDetailPage extends ConsumerWidget {
     }
     controller.dispose();
   }
-
 }

@@ -97,8 +97,6 @@ class _SplitChatPageState extends ConsumerState<SplitChatPage>
     // 首次 build 时按窗口宽度 40% 初始化侧边栏宽度（四六开）
     _sidebarWidth ??= MediaQuery.sizeOf(context).width * 0.4;
 
-    // 侧边导航栏宽度
-    const sideNavWidth = 64.0;
     // 内容面板实际宽度（包含侧边导航）
     final contentPanelWidth = sidebarVisible ? _sidebarWidth! : 0.0;
 

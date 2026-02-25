@@ -135,6 +135,137 @@ final _imagePatterns = RegExp(
   caseSensitive: false,
 );
 
+/// 对话模型能力（仅适用于 chat 模型）
+enum ChatModelCapability {
+  vision('vision'),
+  tools('tools'),
+  reasoning('reasoning'),
+  web('web');
+
+  const ChatModelCapability(this.value);
+  final String value;
+
+  static ChatModelCapability? fromValue(String value) {
+    final normalized = value.trim().toLowerCase();
+    for (final capability in ChatModelCapability.values) {
+      if (capability.value == normalized) return capability;
+    }
+    return null;
+  }
+
+  static List<ChatModelCapability> fromValues(Iterable<dynamic>? values) {
+    if (values == null) return const <ChatModelCapability>[];
+    final result = <ChatModelCapability>[];
+    for (final raw in values) {
+      final capability = fromValue(raw?.toString() ?? '');
+      if (capability != null && !result.contains(capability)) {
+        result.add(capability);
+      }
+    }
+    return result;
+  }
+
+  static List<String> normalizeValues(Iterable<dynamic>? values) {
+    return fromValues(values).map((e) => e.value).toList();
+  }
+}
+
+// Chat 能力识别规则（自动推断）
+final _chatVisionPatterns = RegExp(
+  r'\b('
+  r'vision|'
+  r'vl\b|'
+  r'4o|'
+  r'gpt-4-turbo|'
+  r'gpt-4\.1|'
+  r'gpt-5|'
+  r'claude-3|'
+  r'claude-.*-4|'
+  r'gemini|'
+  r'gemma-3|'
+  r'glm-4v|'
+  r'qvq|'
+  r'o1(?!-mini)|'
+  r'o3(?!-mini)|'
+  r'o4|'
+  r'grok-vision|'
+  r'grok-4|'
+  r'pixtral|'
+  r'llava|'
+  r'moondream|'
+  r'minicpm|'
+  r'internvl'
+  r')\b',
+  caseSensitive: false,
+);
+
+final _chatToolsPatterns = RegExp(
+  r'\b('
+  r'gpt-4|'
+  r'gpt-3\.5-turbo|'
+  r'gpt-5|'
+  r'o1|o3|o4|'
+  r'claude|'
+  r'qwen|'
+  r'deepseek(?!-vl)|'
+  r'glm-4|'
+  r'gemini|'
+  r'grok|'
+  r'hunyuan|'
+  r'doubao|'
+  r'minimax|'
+  r'kimi'
+  r')\b',
+  caseSensitive: false,
+);
+
+final _chatReasoningPatterns = RegExp(
+  r'\b('
+  r'o1|o3|o4|'
+  r'qwq|'
+  r'reasoner|'
+  r'reasoning|'
+  r'thinking|'
+  r'think\b|'
+  r'r1\b|'
+  r'hunyuan-t1|'
+  r'glm-zero|'
+  r'deepseek-r|'
+  r'marco-o1'
+  r')\b',
+  caseSensitive: false,
+);
+
+final _chatWebPatterns = RegExp(
+  r'\b('
+  r'search|'
+  r'online|'
+  r'web|'
+  r'sonar|'
+  r'realtime|'
+  r'perplexity'
+  r')\b',
+  caseSensitive: false,
+);
+
+List<ChatModelCapability> inferChatModelCapabilities(String modelId) {
+  final id = modelId.toLowerCase();
+  final result = <ChatModelCapability>[];
+  if (_chatVisionPatterns.hasMatch(id)) {
+    result.add(ChatModelCapability.vision);
+  }
+  if (_chatToolsPatterns.hasMatch(id)) {
+    result.add(ChatModelCapability.tools);
+  }
+  if (_chatReasoningPatterns.hasMatch(id)) {
+    result.add(ChatModelCapability.reasoning);
+  }
+  if (_chatWebPatterns.hasMatch(id)) {
+    result.add(ChatModelCapability.web);
+  }
+  return result;
+}
+
 /// 全局背景色选项（影响整个 App 的 Scaffold 底色）
 enum GlobalBackgroundColor {
   white('white', '纯白', Color(0xFFFFFFFF)),
@@ -694,12 +825,14 @@ class ModelConfig {
 
   /// 上下文消息数量限制，null 表示不限制，超过时自动截断
   final int? contextMessageLimit;
+  final List<String>? chatCapabilities;
 
   const ModelConfig({
     this.disableToolCalling = false,
     this.temperature,
     this.topP,
     this.contextMessageLimit,
+    this.chatCapabilities,
   });
 
   /// 是否为默认配置（全部为默认值时可删除以节省空间）
@@ -707,7 +840,8 @@ class ModelConfig {
       !disableToolCalling &&
       temperature == null &&
       topP == null &&
-      contextMessageLimit == null;
+      contextMessageLimit == null &&
+      chatCapabilities == null;
 
   ModelConfig copyWith({
     bool? disableToolCalling,
@@ -717,6 +851,8 @@ class ModelConfig {
     bool clearTopP = false,
     int? contextMessageLimit,
     bool clearContextMessageLimit = false,
+    List<String>? chatCapabilities,
+    bool clearChatCapabilities = false,
   }) =>
       ModelConfig(
         disableToolCalling: disableToolCalling ?? this.disableToolCalling,
@@ -726,6 +862,11 @@ class ModelConfig {
         contextMessageLimit: clearContextMessageLimit
             ? null
             : (contextMessageLimit ?? this.contextMessageLimit),
+        chatCapabilities: clearChatCapabilities
+            ? null
+            : (chatCapabilities != null
+                ? ChatModelCapability.normalizeValues(chatCapabilities)
+                : this.chatCapabilities),
       );
 
   Map<String, dynamic> toJson() => {
@@ -734,6 +875,7 @@ class ModelConfig {
         if (topP != null) 'top_p': topP,
         if (contextMessageLimit != null)
           'context_message_limit': contextMessageLimit,
+        if (chatCapabilities != null) 'chat_capabilities': chatCapabilities,
       };
 
   factory ModelConfig.fromJson(Map<String, dynamic> json) => ModelConfig(
@@ -741,6 +883,11 @@ class ModelConfig {
         temperature: (json['temperature'] as num?)?.toDouble(),
         topP: (json['top_p'] as num?)?.toDouble(),
         contextMessageLimit: json['context_message_limit'] as int?,
+        chatCapabilities: json.containsKey('chat_capabilities')
+            ? ChatModelCapability.normalizeValues(
+                (json['chat_capabilities'] as List? ?? const <dynamic>[]),
+              )
+            : null,
       );
 }
 
@@ -1034,6 +1181,26 @@ class AppSettings {
     final ref = modelId.trim();
     final rawId = getRawModelId(ref);
     return modelConfigs[ref] ?? modelConfigs[rawId] ?? const ModelConfig();
+  }
+
+  /// 检查模型是否禁用工具调用
+  /// 获取对话模型能力（支持手动覆盖）
+  List<ChatModelCapability> getChatModelCapabilities(String modelId) {
+    if (getModelType(modelId) != ModelType.chat) {
+      return const <ChatModelCapability>[];
+    }
+
+    final config = getModelConfig(modelId);
+    if (config.chatCapabilities != null) {
+      return ChatModelCapability.fromValues(config.chatCapabilities);
+    }
+
+    final rawId = getRawModelId(modelId);
+    return inferChatModelCapabilities(rawId);
+  }
+
+  bool hasChatModelCapability(String modelId, ChatModelCapability capability) {
+    return getChatModelCapabilities(modelId).contains(capability);
   }
 
   /// 检查模型是否禁用工具调用

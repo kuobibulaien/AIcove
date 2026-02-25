@@ -42,6 +42,7 @@ class ChatMessageList extends ConsumerStatefulWidget {
   final double bottomOverlayHeight;
   final void Function(Message message)? onEditMessage;
   final void Function(Message message)? onRegenerateMessage;
+  final void Function(Message message)? onEnhanceRegenerateMessage;
 
   /// 上下文截断点消息ID（此消息之后为新话题）
   final String? contextStartMessageId;
@@ -64,6 +65,7 @@ class ChatMessageList extends ConsumerStatefulWidget {
     this.bottomOverlayHeight = 0,
     this.onEditMessage,
     this.onRegenerateMessage,
+    this.onEnhanceRegenerateMessage,
     this.contextStartMessageId,
     this.onLoadMore,
     this.isLoadingMore = false,
@@ -612,11 +614,18 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   /// 处理消息长按事件
   Future<void> _handleMessageLongPress(BuildContext context, Message message,
       bool isMe, GlobalKey bubbleKey) async {
+    final enableEnhancedRegenerate = ref
+            .read(appSettingsProvider)
+            .valueOrNull
+            ?.enhancedDialogueSettings
+            .enabled ==
+        true;
     await showMessageActionMenu(
       context,
       targetKey: bubbleKey,
       isUserMessage: isMe,
       messageText: message.displayText,
+      showEnhanceRegenerate: enableEnhancedRegenerate,
       onAction: (action) {
         if (!context.mounted) return;
         switch (action) {
@@ -628,6 +637,9 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
             break;
           case MessageAction.regenerate:
             widget.onRegenerateMessage?.call(message);
+            break;
+          case MessageAction.enhanceRegenerate:
+            widget.onEnhanceRegenerateMessage?.call(message);
             break;
           case MessageAction.quote:
             // 设置引用消息

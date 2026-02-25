@@ -10,7 +10,6 @@
 /// - 2026-02-21: 统一多模态拆分机制，表情包也按原始位置拆分保证语序
 library;
 
-import 'dart:convert';
 import '../domain/message.dart';
 import '../id_gen.dart';
 import '../../plugins/domain/plugin.dart';

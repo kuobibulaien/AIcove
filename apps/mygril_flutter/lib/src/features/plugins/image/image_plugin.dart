@@ -59,6 +59,11 @@ class ImagePlugin extends BasePlugin {
         label: '默认张数',
         defaultValue: 1,
       ),
+      'timeoutSeconds': ConfigField(
+        type: ConfigFieldType.integer,
+        label: '超时时间 (秒)',
+        defaultValue: 30,
+      ),
     },
   );
 
@@ -200,7 +205,9 @@ class ImagePlugin extends BasePlugin {
         (args['negative_prompt'] as String?)?.trim(),
       );
 
-      final client = AgentApiClient();
+      final client = AgentApiClient(
+        timeout: Duration(seconds: _config.timeoutSeconds),
+      );
       final requestProvider = _resolveRequestProvider(resolvedTarget.provider);
       final result = await client.generateImage(
         provider: requestProvider,
@@ -286,26 +293,24 @@ class ImagePlugin extends BasePlugin {
     }
 
     provider ??= settings.providers.firstWhere(
-      (p) =>
-          _isProviderUsable(p) &&
-          (p.modelType == 'image' || p.capabilities.contains('image')),
+      (p) => _isProviderUsable(p) && _imageModelsOf(settings, p).isNotEmpty,
       orElse: () => const ProviderAuth(id: '', apiBaseUrl: '', apiKeys: []),
     );
     if (provider.id.isEmpty) return null;
 
-    final allModels = provider.visibleModels.isNotEmpty
-        ? provider.visibleModels
-        : provider.models;
+    final allModels = _imageModelsOf(settings, provider);
     final selectedModel = _config.selectedModelId?.trim();
     final configuredModel =
         provider.customConfig['defaultImageModel']?.toString().trim();
     final modelId = () {
-      if (selectedModel != null && selectedModel.isNotEmpty) {
-        if (allModels.isEmpty || allModels.contains(selectedModel)) {
-          return selectedModel;
-        }
+      if (selectedModel != null &&
+          selectedModel.isNotEmpty &&
+          allModels.contains(selectedModel)) {
+        return selectedModel;
       }
-      if (configuredModel != null && configuredModel.isNotEmpty) {
+      if (configuredModel != null &&
+          configuredModel.isNotEmpty &&
+          allModels.contains(configuredModel)) {
         return configuredModel;
       }
       if (allModels.isNotEmpty) return allModels.first;
@@ -328,6 +333,18 @@ class ImagePlugin extends BasePlugin {
       return false;
     }
     return true;
+  }
+
+  List<String> _imageModelsOf(AppSettings settings, ProviderAuth provider) {
+    final models = provider.visibleModels.isNotEmpty
+        ? provider.visibleModels
+        : provider.models;
+    return models
+        .where((modelId) =>
+            settings
+                .getModelType(settings.buildModelRef(provider.id, modelId)) ==
+            ModelType.image)
+        .toList();
   }
 
   String _resolveRequestProvider(ProviderAuth provider) {

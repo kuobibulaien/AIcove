@@ -19,8 +19,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'data/auto_reply_trigger.dart';
 import 'data/analyzer_scheduler.dart';
+import 'data/enhanced_dialogue_service.dart';
 import 'services/chat_send_service.dart';
 import 'services/chat_tts_handler.dart';
+import 'domain/conversation.dart';
 import 'domain/message.dart';
 import '../settings/app_settings.dart';
 import 'conversation_providers.dart';
@@ -64,8 +66,112 @@ class ChatActions {
   final Ref _ref;
   final ChatSendService _sendService;
   final ChatTtsHandler _ttsHandler;
+  final EnhancedDialogueService _enhancedDialogueService =
+      const EnhancedDialogueService();
+  int _generationSerial = 0;
+  final Map<String, _GenerationTask> _activeGenerations = {};
+
+  void _setConversationSending(String convId, bool isSending) {
+    _ref.read(conversationSendingProvider(convId).notifier).state = isSending;
+  }
+
+  void _setConversationStatus(String convId, ChatStatus status) {
+    _ref.read(chatStatusProvider.notifier).state = status;
+  }
+
+  void _setConversationError(String convId, String? error) {
+    _ref.read(errorProvider.notifier).state = error;
+  }
+
+  void _setConversationFailoverInfo(String convId, String? modelName) {
+    _ref.read(modelFailoverInfoProvider.notifier).state = modelName;
+  }
+
+  int _startGeneration({
+    required String convId,
+    String? userMsgId,
+  }) {
+    final runId = ++_generationSerial;
+    _activeGenerations[convId] = _GenerationTask(
+      id: runId,
+      convId: convId,
+      userMsgId: userMsgId,
+    );
+    _setConversationSending(convId, true);
+    _setConversationStatus(convId, ChatStatus.thinking);
+    _setConversationError(convId, null);
+    return runId;
+  }
+
+  bool _isGenerationCurrent(String convId, int runId) =>
+      _activeGenerations[convId]?.id == runId;
+
+  void _finishGeneration(
+    String convId,
+    int runId, {
+    bool clearFailoverInfo = false,
+    bool scheduleAnalysis = false,
+  }) {
+    if (!_isGenerationCurrent(convId, runId)) return;
+    _activeGenerations.remove(convId);
+    _setConversationSending(convId, false);
+    _setConversationStatus(convId, ChatStatus.idle);
+    if (clearFailoverInfo) {
+      _setConversationFailoverInfo(convId, null);
+    }
+    if (scheduleAnalysis) {
+      _ref.read(analyzerSchedulerProvider).scheduleAnalysis();
+    }
+  }
+
+  Future<void> _markUserMessageAsSent(_GenerationTask task) async {
+    final userMsgId = task.userMsgId;
+    if (userMsgId == null || userMsgId.trim().isEmpty) return;
+
+    await _ref.read(conversationsProvider.notifier).updateOne(
+          task.convId,
+          (c) => c.copyWith(
+            messages: c.messages
+                .map((m) => (m.id == userMsgId && m.status == 'sending')
+                    ? m.copyWith(status: 'sent')
+                    : m)
+                .toList(),
+          ),
+        );
+  }
+
+  /// 中断当前正在生成的消息（软中断：后续结果会被丢弃，不再落库到会话）。
+  /// 默认中断当前激活会话；也可显式传入 [convId]。
+  Future<bool> interruptCurrentGeneration({String? convId}) async {
+    final targetConvId = convId ?? _ref.read(activeConversationProvider)?.id;
+    if (targetConvId == null || targetConvId.trim().isEmpty) return false;
+    final task = _activeGenerations[targetConvId];
+    if (task == null) return false;
+
+    _activeGenerations.remove(targetConvId);
+    _setConversationSending(targetConvId, false);
+    _setConversationStatus(targetConvId, ChatStatus.idle);
+    _setConversationError(targetConvId, null);
+    _setConversationFailoverInfo(targetConvId, null);
+
+    await _markUserMessageAsSent(task);
+    _ref.read(analyzerSchedulerProvider).scheduleAnalysis();
+    return true;
+  }
 
   // ===== 公开 API =====
+
+  /// 根据工具名称更新聊天进度状态
+  void _updateStatusForTool(String convId, String toolName) {
+    switch (toolName) {
+      case 'draw_image':
+        _setConversationStatus(convId, ChatStatus.generatingImage);
+      case 'speak':
+        _setConversationStatus(convId, ChatStatus.generatingVoice);
+      default:
+        _setConversationStatus(convId, ChatStatus.toolCalling);
+    }
+  }
 
   /// 发送文本消息（支持自动轮询多个默认聊天模型）
   Future<void> send(String text) async {
@@ -74,15 +180,15 @@ class ChatActions {
     final convId = conv.id;
 
     final trace = AppLogger.startTrace('AI消息发送', source: 'ChatActions');
-    _ref.read(sendingProvider.notifier).state = true;
-    _ref.read(errorProvider.notifier).state = null;
-
     final userMsg = _sendService.createUserMessage(text: text, imagePath: null);
+    final runId = _startGeneration(convId: convId, userMsgId: userMsg.id);
     await _sendService.addUserMessage(
         convId: convId, userMsg: userMsg, displayText: text);
+    if (!_isGenerationCurrent(convId, runId)) return;
 
     try {
       final settings = await _ref.read(appSettingsProvider.future);
+      if (!_isGenerationCurrent(convId, runId)) return;
       final history = _sendService.prepareHistory(
           conv: conv, userMsg: userMsg, limit: settings.historyMessageLimit);
 
@@ -92,6 +198,7 @@ class ChatActions {
           : [settings.defaultModelName];
 
       final (result, usedSettings) = await _executeWithFailover(
+        convId: convId,
         modelsToTry: modelsToTry,
         buildConfig: (model) => _sendService.prepareApiConfig(
           conv: conv,
@@ -106,12 +213,16 @@ class ChatActions {
           userText: text,
           turnId: userMsg.id,
           trace: trace,
+          onToolExecuting: (toolName) => _updateStatusForTool(convId, toolName),
         ),
         settings: settings,
       );
+      if (!_isGenerationCurrent(convId, runId)) return;
 
+      _setConversationStatus(convId, ChatStatus.processingResponse);
       final buildResult = _sendService.buildAssistantMessages(
           apiResult: result, settings: usedSettings);
+      if (!_isGenerationCurrent(convId, runId)) return;
 
       // 统一的消息交付入口：自动处理 TTS 分段发送
       await _ttsHandler.deliverSegmentedMessages(
@@ -123,19 +234,23 @@ class ChatActions {
         ttsEnabled: usedSettings.ttsEnabled,
         trace: trace,
       );
+      if (!_isGenerationCurrent(convId, runId)) return;
 
       trace.end(additionalMessage: '完成');
     } catch (e) {
+      if (!_isGenerationCurrent(convId, runId)) return;
       trace.error('失败', metadata: {'error': e.toString()});
       trace.end(additionalMessage: '失败');
       await _sendService.markUserMessageFailed(
           convId: convId, userMsgId: userMsg.id);
-      _ref.read(errorProvider.notifier).state = e.toString();
+      _setConversationError(convId, e.toString());
     } finally {
-      _ref.read(sendingProvider.notifier).state = false;
-      _ref.read(modelFailoverInfoProvider.notifier).state = null;
-      // 委托给 AnalyzerScheduler：5分钟无新消息后触发 AI 管家分析
-      _ref.read(analyzerSchedulerProvider).scheduleAnalysis();
+      _finishGeneration(
+        convId,
+        runId,
+        clearFailoverInfo: true,
+        scheduleAnalysis: true,
+      );
     }
   }
 
@@ -145,21 +260,21 @@ class ChatActions {
     if (conv == null || imagePath.trim().isEmpty) return;
     final convId = conv.id;
 
-    _ref.read(sendingProvider.notifier).state = true;
-    _ref.read(errorProvider.notifier).state = null;
-
     final userText = text?.trim();
     final hasText = userText != null && userText.isNotEmpty;
     final userMsg = _sendService.createUserMessage(
       text: hasText ? userText : null,
       imagePath: imagePath,
     );
+    final runId = _startGeneration(convId: convId, userMsgId: userMsg.id);
     final displayText = hasText ? userText : '[图片]';
     await _sendService.addUserMessage(
         convId: convId, userMsg: userMsg, displayText: displayText);
+    if (!_isGenerationCurrent(convId, runId)) return;
 
     try {
       final settings = await _ref.read(appSettingsProvider.future);
+      if (!_isGenerationCurrent(convId, runId)) return;
       final history = _sendService.prepareHistory(
           conv: conv, userMsg: userMsg, limit: settings.historyMessageLimit);
       final apiText = hasText ? userText : '[image]';
@@ -180,6 +295,7 @@ class ChatActions {
       }
 
       final (result, usedSettings) = await _executeWithFailover(
+        convId: convId,
         modelsToTry: modelsToTry,
         buildConfig: (model) => _sendService.prepareApiConfig(
           conv: conv,
@@ -192,12 +308,16 @@ class ChatActions {
           sessionId: convId,
           userText: apiText,
           turnId: userMsg.id,
+          onToolExecuting: (toolName) => _updateStatusForTool(convId, toolName),
         ),
         settings: settings,
       );
+      if (!_isGenerationCurrent(convId, runId)) return;
 
+      _setConversationStatus(convId, ChatStatus.processingResponse);
       final buildResult = _sendService.buildAssistantMessages(
           apiResult: result, settings: usedSettings);
+      if (!_isGenerationCurrent(convId, runId)) return;
 
       await _ttsHandler.deliverSegmentedMessages(
         convId: convId,
@@ -207,14 +327,19 @@ class ChatActions {
         pluginEvents: result.pluginEvents,
         ttsEnabled: usedSettings.ttsEnabled,
       );
+      if (!_isGenerationCurrent(convId, runId)) return;
     } catch (e) {
+      if (!_isGenerationCurrent(convId, runId)) return;
       await _sendService.markUserMessageFailed(
           convId: convId, userMsgId: userMsg.id);
-      _ref.read(errorProvider.notifier).state = e.toString();
+      _setConversationError(convId, e.toString());
     } finally {
-      _ref.read(sendingProvider.notifier).state = false;
-      _ref.read(modelFailoverInfoProvider.notifier).state = null;
-      _ref.read(analyzerSchedulerProvider).scheduleAnalysis();
+      _finishGeneration(
+        convId,
+        runId,
+        clearFailoverInfo: true,
+        scheduleAnalysis: true,
+      );
     }
   }
 
@@ -224,27 +349,33 @@ class ChatActions {
     if (conv == null || filePath.trim().isEmpty) return;
     final convId = conv.id;
 
-    _ref.read(sendingProvider.notifier).state = true;
-    _ref.read(errorProvider.notifier).state = null;
-
     final userMsg =
         await _sendService.createUserFileMessage(filePath: filePath);
+    final runId = _startGeneration(convId: convId, userMsgId: userMsg.id);
     await _sendService.addUserMessage(
         convId: convId, userMsg: userMsg, displayText: '[文件]');
+    if (!_isGenerationCurrent(convId, runId)) return;
 
     try {
       final settings = await _ref.read(appSettingsProvider.future);
+      if (!_isGenerationCurrent(convId, runId)) return;
       final history = _sendService.prepareHistory(
           conv: conv, userMsg: userMsg, limit: settings.historyMessageLimit);
       final config = await _sendService.prepareApiConfig(
           conv: conv, history: history, userText: '[file]');
+      if (!_isGenerationCurrent(convId, runId)) return;
       final result = await _sendService.executeApiCall(
           config: config,
           sessionId: convId,
           userText: '[file]',
-          turnId: userMsg.id);
+          turnId: userMsg.id,
+          onToolExecuting: (toolName) =>
+              _updateStatusForTool(convId, toolName));
+      if (!_isGenerationCurrent(convId, runId)) return;
+      _setConversationStatus(convId, ChatStatus.processingResponse);
       final buildResult = _sendService.buildAssistantMessages(
           apiResult: result, settings: settings);
+      if (!_isGenerationCurrent(convId, runId)) return;
 
       await _ttsHandler.deliverSegmentedMessages(
         convId: convId,
@@ -254,13 +385,19 @@ class ChatActions {
         pluginEvents: result.pluginEvents,
         ttsEnabled: settings.ttsEnabled,
       );
+      if (!_isGenerationCurrent(convId, runId)) return;
     } catch (e) {
+      if (!_isGenerationCurrent(convId, runId)) return;
       await _sendService.markUserMessageFailed(
           convId: convId, userMsgId: userMsg.id);
-      _ref.read(errorProvider.notifier).state = e.toString();
+      _setConversationError(convId, e.toString());
     } finally {
-      _ref.read(sendingProvider.notifier).state = false;
-      _ref.read(analyzerSchedulerProvider).scheduleAnalysis();
+      _finishGeneration(
+        convId,
+        runId,
+        clearFailoverInfo: true,
+        scheduleAnalysis: true,
+      );
     }
   }
 
@@ -430,8 +567,7 @@ class ChatActions {
       orElse: () => throw Exception('消息不存在或状态不正确'),
     );
 
-    _ref.read(sendingProvider.notifier).state = true;
-    _ref.read(errorProvider.notifier).state = null;
+    final runId = _startGeneration(convId: convId, userMsgId: messageId);
 
     await _ref.read(conversationsProvider.notifier).updateOne(
         convId,
@@ -441,9 +577,11 @@ class ChatActions {
                       m.id == messageId ? m.copyWith(status: 'sending') : m)
                   .toList(),
             ));
+    if (!_isGenerationCurrent(convId, runId)) return;
 
     try {
       final settings = await _ref.read(appSettingsProvider.future);
+      if (!_isGenerationCurrent(convId, runId)) return;
       final msgIndex = conv.messages.indexWhere((m) => m.id == messageId);
       // 取重试消息及之前的历史，并过滤掉其他失败消息
       final rawHistory =
@@ -454,13 +592,19 @@ class ChatActions {
 
       final config = await _sendService.prepareApiConfig(
           conv: conv, history: history, userText: failedMsg.displayText);
+      if (!_isGenerationCurrent(convId, runId)) return;
       final result = await _sendService.executeApiCall(
           config: config,
           sessionId: convId,
           userText: failedMsg.displayText,
-          turnId: messageId);
+          turnId: messageId,
+          onToolExecuting: (toolName) =>
+              _updateStatusForTool(convId, toolName));
+      if (!_isGenerationCurrent(convId, runId)) return;
+      _setConversationStatus(convId, ChatStatus.processingResponse);
       final buildResult = _sendService.buildAssistantMessages(
           apiResult: result, settings: settings);
+      if (!_isGenerationCurrent(convId, runId)) return;
 
       // 先标记原消息为成功
       await _ref.read(conversationsProvider.notifier).updateOne(
@@ -471,6 +615,7 @@ class ChatActions {
                         m.id == messageId ? m.copyWith(status: 'sent') : m)
                     .toList(),
               ));
+      if (!_isGenerationCurrent(convId, runId)) return;
 
       await _ttsHandler.deliverSegmentedMessages(
         convId: convId,
@@ -480,7 +625,9 @@ class ChatActions {
         pluginEvents: result.pluginEvents,
         ttsEnabled: settings.ttsEnabled,
       );
+      if (!_isGenerationCurrent(convId, runId)) return;
     } catch (e) {
+      if (!_isGenerationCurrent(convId, runId)) return;
       await _ref.read(conversationsProvider.notifier).updateOne(
           convId,
           (c) => c.copyWith(
@@ -489,14 +636,26 @@ class ChatActions {
                         m.id == messageId ? m.copyWith(status: 'failed') : m)
                     .toList(),
               ));
-      _ref.read(errorProvider.notifier).state = e.toString();
+      _setConversationError(convId, e.toString());
     } finally {
-      _ref.read(sendingProvider.notifier).state = false;
+      _finishGeneration(convId, runId);
     }
   }
 
   /// 重新生成AI回复（删除指定AI消息及其后的所有消息，重新生成）
   Future<void> regenerate(String aiMessageId) async {
+    await _regenerateInternal(aiMessageId, useEnhancement: false);
+  }
+
+  /// 增强重新生成（使用增强上下文拼接）
+  Future<void> regenerateWithEnhancement(String aiMessageId) async {
+    await _regenerateInternal(aiMessageId, useEnhancement: true);
+  }
+
+  Future<void> _regenerateInternal(
+    String aiMessageId, {
+    required bool useEnhancement,
+  }) async {
     final conv = _ref.read(activeConversationProvider);
     if (conv == null) return;
     final convId = conv.id;
@@ -515,8 +674,7 @@ class ChatActions {
     final userMsg = conv.messages[userMsgIndex];
     final userText = userMsg.displayText;
 
-    _ref.read(sendingProvider.notifier).state = true;
-    _ref.read(errorProvider.notifier).state = null;
+    final runId = _startGeneration(convId: convId, userMsgId: userMsg.id);
 
     // 收集被移除的消息 ID，用于数据库软删除
     final removedMessages = conv.messages.sublist(userMsgIndex + 1);
@@ -527,26 +685,81 @@ class ChatActions {
         (c) => c.copyWith(
               messages: c.messages.sublist(0, userMsgIndex + 1),
             ));
+    if (!_isGenerationCurrent(convId, runId)) return;
 
     // 在数据库中软删除被移除的消息
     await _softDeleteMessages(removedMessages.map((m) => m.id).toList());
+    if (!_isGenerationCurrent(convId, runId)) return;
 
     try {
       final settings = await _ref.read(appSettingsProvider.future);
+      if (!_isGenerationCurrent(convId, runId)) return;
       final updatedConv = _ref.read(activeConversationProvider)!;
-      final history = _sendService.prepareHistory(
+      final bool canUseEnhancement =
+          useEnhancement && settings.enhancedDialogueSettings.enabled;
+
+      late final List<Message> history;
+      late final String sessionId;
+      late final Conversation requestConv;
+      if (canUseEnhancement) {
+        final enhancedContext = _enhancedDialogueService.buildContext(
+          conversation: updatedConv,
+          targetUserMessage: userMsg,
+          enhancerSystemPrompt: settings.enhancedDialogueSettings.systemPrompt,
+          bootstrapUserMessage:
+              settings.enhancedDialogueSettings.bootstrapUserMessage,
+          recentRounds: settings.enhancedDialogueSettings.recentRounds,
+        );
+        history = enhancedContext.history;
+        sessionId = enhancedContext.sessionId;
+        requestConv = enhancedContext.conversation;
+      } else {
+        history = _sendService.prepareHistory(
           conv: updatedConv,
           userMsg: userMsg,
-          limit: settings.historyMessageLimit);
+          limit: settings.historyMessageLimit,
+        );
+        sessionId = convId;
+        requestConv = updatedConv;
+      }
+
       final config = await _sendService.prepareApiConfig(
-          conv: updatedConv, history: history, userText: userText);
-      final result = await _sendService.executeApiCall(
+        conv: requestConv,
+        history: history,
+        userText: userText,
+      );
+      if (!_isGenerationCurrent(convId, runId)) return;
+      final rawResult = await _sendService.executeApiCall(
           config: config,
-          sessionId: convId,
+          sessionId: sessionId,
           userText: userText,
-          turnId: userMsg.id);
+          turnId: userMsg.id,
+          onToolExecuting: (toolName) =>
+              _updateStatusForTool(convId, toolName));
+      if (!_isGenerationCurrent(convId, runId)) return;
+
+      final result = (() {
+        if (!canUseEnhancement) return rawResult;
+        final enhancedText = _enhancedDialogueService.extractEnhancedText(
+          processedText: rawResult.processedText,
+          rawReplyText: rawResult.replyText,
+        );
+        return ApiCallResult(
+          replyText: enhancedText,
+          processedText: enhancedText,
+          pluginEvents: rawResult.pluginEvents,
+          pluginContents: rawResult.pluginContents,
+          toolResults: rawResult.toolResults,
+          toolAudioResults: rawResult.toolAudioResults,
+          toolCalls: rawResult.toolCalls,
+          rawToolResults: rawResult.rawToolResults,
+        );
+      })();
+
+      _setConversationStatus(convId, ChatStatus.processingResponse);
       final buildResult = _sendService.buildAssistantMessages(
           apiResult: result, settings: settings);
+      if (!_isGenerationCurrent(convId, runId)) return;
 
       await _ttsHandler.deliverSegmentedMessages(
         convId: convId,
@@ -556,12 +769,12 @@ class ChatActions {
         pluginEvents: result.pluginEvents,
         ttsEnabled: settings.ttsEnabled,
       );
+      if (!_isGenerationCurrent(convId, runId)) return;
     } catch (e) {
-      _ref.read(errorProvider.notifier).state = e.toString();
+      if (!_isGenerationCurrent(convId, runId)) return;
+      _setConversationError(convId, e.toString());
     } finally {
-      _ref.read(sendingProvider.notifier).state = false;
-      // 委托给 AnalyzerScheduler：5分钟无新消息后触发 AI 管家分析
-      _ref.read(analyzerSchedulerProvider).scheduleAnalysis();
+      _finishGeneration(convId, runId, scheduleAnalysis: true);
     }
   }
 
@@ -636,6 +849,7 @@ class ChatActions {
   /// 按模型列表顺序尝试发送，失败后自动切换下一个模型
   /// 返回 (API调用结果, 使用的设置)
   Future<(ApiCallResult, AppSettings)> _executeWithFailover({
+    required String convId,
     required List<String> modelsToTry,
     required Future<ApiConfig> Function(String model) buildConfig,
     required Future<ApiCallResult> Function(ApiConfig config) execute,
@@ -658,7 +872,7 @@ class ChatActions {
         final config = await buildConfig(model);
         final result = await execute(config);
         // 成功，清除轮询通知
-        _ref.read(modelFailoverInfoProvider.notifier).state = null;
+        _setConversationFailoverInfo(convId, null);
         return (result, settings);
       } catch (e) {
         lastError = e;
@@ -673,7 +887,7 @@ class ChatActions {
         if (i < modelsToTry.length - 1) {
           final nextModel = modelsToTry[i + 1];
           final displayName = settings.getModelDisplayName(nextModel);
-          _ref.read(modelFailoverInfoProvider.notifier).state = displayName;
+          _setConversationFailoverInfo(convId, displayName);
         }
       }
     }
@@ -692,6 +906,18 @@ class ChatActions {
       await msgRepo.softDelete(id, now, purgeAt);
     }
   }
+}
+
+class _GenerationTask {
+  final int id;
+  final String convId;
+  final String? userMsgId;
+
+  const _GenerationTask({
+    required this.id,
+    required this.convId,
+    required this.userMsgId,
+  });
 }
 
 final chatActionsProvider = Provider((ref) => ChatActions(ref));

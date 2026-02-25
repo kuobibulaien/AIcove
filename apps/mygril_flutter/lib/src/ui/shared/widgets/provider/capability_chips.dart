@@ -1,24 +1,25 @@
 /// CapabilityChips - 能力标签组件
-/// 
+///
 /// 显示供应商支持的模型用途标签。
-/// 
+///
 /// 设计特点：
 /// - 小圆角 Chip 水平排列
 /// - 每种用途有独特的图标和颜色
 /// - 支持亮/暗色模式
-/// 
+///
 /// 使用示例：
 /// ```dart
 /// CapabilityChips(
 ///   capabilities: ['chat', 'embedding'],
 /// )
 /// ```
-/// 
+///
 /// 更新记录：
 /// - 2026-01-21: 创建能力标签组件
 library;
 
 import 'package:flutter/material.dart';
+import '../../../../features/settings/settings_models.dart';
 import '../../../theme/tokens.dart';
 import '../../effects/smooth_clip.dart';
 
@@ -31,13 +32,16 @@ enum ModelCapability {
   tools('tools', '工具调用', Icons.build_outlined, Color(0xFF8B5CF6));
 
   const ModelCapability(this.value, this.label, this.icon, this.color);
-  
+
   /// API 值
   final String value;
+
   /// 显示标签
   final String label;
+
   /// 图标
   final IconData icon;
+
   /// 主题色
   final Color color;
 
@@ -62,6 +66,7 @@ enum ModelCapability {
 enum CapabilityChipSize {
   /// 小尺寸 - 列表项
   sm(16, 10, 4, 6, 2),
+
   /// 中尺寸 - 默认
   md(20, 12, 6, 8, 4);
 
@@ -72,7 +77,7 @@ enum CapabilityChipSize {
     this.paddingH,
     this.spacing,
   );
-  
+
   final double height;
   final double fontSize;
   final double iconSize;
@@ -106,7 +111,7 @@ class CapabilityChips extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final caps = ModelCapability.fromValues(capabilities);
-    
+
     if (caps.isEmpty) return const SizedBox.shrink();
 
     final displayCaps = maxShow != null && caps.length > maxShow!
@@ -158,7 +163,7 @@ class CapabilityChips extends StatelessWidget {
 
   Widget _buildExtraChip(BuildContext context, int count, bool isDark) {
     final colors = context.moeColors;
-    
+
     return Container(
       height: size.height,
       padding: EdgeInsets.symmetric(horizontal: size.paddingH),
@@ -201,7 +206,8 @@ class CapabilityChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bgColor = capability.color.withValues(alpha: isDark ? 0.2 : 0.12);
-    final fgColor = isDark ? capability.color.withValues(alpha: 0.9) : capability.color;
+    final fgColor =
+        isDark ? capability.color.withValues(alpha: 0.9) : capability.color;
 
     return Container(
       height: size.height,
@@ -244,120 +250,46 @@ enum ModelFeature {
   web('web', '联网', Icons.language_outlined, Color(0xFF3B82F6));
 
   const ModelFeature(this.value, this.label, this.icon, this.color);
-  
+
   final String value;
   final String label;
   final IconData icon;
   final Color color;
+
+  static ModelFeature? fromValue(String value) {
+    final normalized = value.trim().toLowerCase();
+    for (final feature in ModelFeature.values) {
+      if (feature.value == normalized) return feature;
+    }
+    return null;
+  }
+
+  static List<ModelFeature> fromValues(Iterable<String> values) {
+    final result = <ModelFeature>[];
+    for (final value in values) {
+      final feature = fromValue(value);
+      if (feature != null && !result.contains(feature)) {
+        result.add(feature);
+      }
+    }
+    return result;
+  }
 }
 
 // 视觉模型匹配规则（参考 Cherry Studio）
-final _visionPatterns = RegExp(
-  r'\b('
-  r'vision|'
-  r'vl\b|'              // qwen-vl, deepseek-vl
-  r'4o|'                // gpt-4o 系列
-  r'gpt-4-turbo|'
-  r'gpt-4\.1|'
-  r'gpt-5|'
-  r'claude-3|'
-  r'claude-.*-4|'       // claude-sonnet-4 等
-  r'gemini|'
-  r'gemma-3|'
-  r'glm-4v|'
-  r'qvq|'
-  r'o1(?!-mini)|'       // o1 但不是 o1-mini
-  r'o3(?!-mini)|'       // o3 但不是 o3-mini
-  r'o4|'
-  r'grok-vision|'
-  r'grok-4|'
-  r'pixtral|'
-  r'llava|'
-  r'moondream|'
-  r'minicpm|'
-  r'internvl'
-  r')\b',
-  caseSensitive: false,
-);
-
-// 工具调用模型匹配规则
-final _toolsPatterns = RegExp(
-  r'\b('
-  r'gpt-4|'
-  r'gpt-3\.5-turbo|'
-  r'gpt-5|'
-  r'o1|o3|o4|'
-  r'claude|'
-  r'qwen|'
-  r'deepseek(?!-vl)|'   // deepseek 但不是 deepseek-vl（纯视觉）
-  r'glm-4|'
-  r'gemini|'
-  r'grok|'
-  r'hunyuan|'
-  r'doubao|'
-  r'minimax|'
-  r'kimi'
-  r')\b',
-  caseSensitive: false,
-);
-
-// 思考/推理模型匹配规则
-final _reasoningPatterns = RegExp(
-  r'\b('
-  r'o1|o3|o4|'
-  r'qwq|'
-  r'reasoner|'
-  r'reasoning|'
-  r'thinking|'
-  r'think\b|'
-  r'r1\b|'
-  r'hunyuan-t1|'
-  r'glm-zero|'
-  r'deepseek-r|'
-  r'marco-o1'
-  r')\b',
-  caseSensitive: false,
-);
-
-// 联网搜索模型匹配规则
-final _webPatterns = RegExp(
-  r'\b('
-  r'search|'
-  r'online|'
-  r'web|'
-  r'sonar|'
-  r'realtime|'
-  r'perplexity'
-  r')\b',
-  caseSensitive: false,
-);
-
-/// 根据模型ID推断其特性
 List<ModelFeature> inferModelFeatures(String modelId) {
-  final features = <ModelFeature>[];
-  final id = modelId.toLowerCase();
-  
-  if (_visionPatterns.hasMatch(id)) {
-    features.add(ModelFeature.vision);
-  }
-  if (_toolsPatterns.hasMatch(id)) {
-    features.add(ModelFeature.tools);
-  }
-  if (_reasoningPatterns.hasMatch(id)) {
-    features.add(ModelFeature.reasoning);
-  }
-  if (_webPatterns.hasMatch(id)) {
-    features.add(ModelFeature.web);
-  }
-  
-  return features;
+  final capabilities = inferChatModelCapabilities(modelId);
+  return capabilities
+      .map((cap) => ModelFeature.fromValue(cap.value))
+      .whereType<ModelFeature>()
+      .toList();
 }
 
-/// 模型特性标签组件
 class ModelFeatureChips extends StatelessWidget {
   const ModelFeatureChips({
     super.key,
     required this.modelId,
+    this.features,
     this.size = CapabilityChipSize.sm,
     this.showIcon = false,
     this.maxShow,
@@ -365,6 +297,7 @@ class ModelFeatureChips extends StatelessWidget {
 
   /// 模型ID（用于推断特性）
   final String modelId;
+  final List<ModelFeature>? features;
 
   /// 标签尺寸
   final CapabilityChipSize size;
@@ -378,14 +311,15 @@ class ModelFeatureChips extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final features = inferModelFeatures(modelId);
-    
-    if (features.isEmpty) return const SizedBox.shrink();
+    final resolvedFeatures = features ?? inferModelFeatures(modelId);
 
-    final displayFeatures = maxShow != null && features.length > maxShow!
-        ? features.take(maxShow!).toList()
-        : features;
-    final extraCount = maxShow != null ? features.length - maxShow! : 0;
+    if (resolvedFeatures.isEmpty) return const SizedBox.shrink();
+
+    final displayFeatures =
+        maxShow != null && resolvedFeatures.length > maxShow!
+            ? resolvedFeatures.take(maxShow!).toList()
+            : resolvedFeatures;
+    final extraCount = maxShow != null ? resolvedFeatures.length - maxShow! : 0;
 
     return Wrap(
       spacing: size.spacing,
@@ -399,7 +333,8 @@ class ModelFeatureChips extends StatelessWidget {
 
   Widget _buildChip(BuildContext context, ModelFeature feature, bool isDark) {
     final bgColor = feature.color.withValues(alpha: isDark ? 0.2 : 0.12);
-    final fgColor = isDark ? feature.color.withValues(alpha: 0.9) : feature.color;
+    final fgColor =
+        isDark ? feature.color.withValues(alpha: 0.9) : feature.color;
 
     return Container(
       height: size.height,
@@ -431,7 +366,7 @@ class ModelFeatureChips extends StatelessWidget {
 
   Widget _buildExtraChip(BuildContext context, int count, bool isDark) {
     final colors = context.moeColors;
-    
+
     return Container(
       height: size.height,
       padding: EdgeInsets.symmetric(horizontal: size.paddingH),

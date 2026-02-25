@@ -24,6 +24,7 @@ import '../../plugins/plugin_providers.dart';
 import '../../plugins/tts/tts_player_manager.dart';
 import '../../../core/models/message_block.dart';
 import '../../../core/app_logger.dart';
+import '../chat_providers.dart' show chatStatusProvider, ChatStatus;
 import 'chat_message_processor.dart';
 import 'chat_send_service.dart';
 import 'chat_types.dart';
@@ -222,6 +223,7 @@ class ChatTtsHandler {
       } else {
         // TTS 段：生成语音后发送
         final ttsText = segment.content.trim();
+        _ref.read(chatStatusProvider.notifier).state = ChatStatus.generatingVoice;
 
         try {
           final audioUrl = await _convertTtsText(ttsText);

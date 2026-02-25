@@ -12,13 +12,11 @@ import '../../../../features/chat/presentation/widgets/composer.dart';
 import '../../../../features/chat/presentation/widgets/contact_edit_dialog.dart';
 import '../../../../ui/features/character/pages/contact_edit_page.dart';
 import '../../../../features/chat/presentation/widgets/chat_settings_dialog.dart';
-import 'chat_background_settings_page.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../features/settings/app_settings.dart';
-import '../../../../features/chat/services/chat_send_service.dart';
 import '../../../../core/database/database.dart' as db;
 import '../../../../core/database/database_provider.dart';
 import '../../../../core/database/converters/database_converters.dart';
@@ -109,7 +107,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         ? settings.defaultChatModels
         : [settings.defaultModelName];
     final primaryModel = chatModels.first;
-    if (ChatSendService.isVisionModel(settings.getRawModelId(primaryModel))) {
+    if (settings.hasChatModelCapability(
+      primaryModel,
+      ChatModelCapability.vision,
+    )) {
       return true;
     }
 
@@ -635,8 +636,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               ),
         title: Consumer(
           builder: (context, ref, _) {
-            final sending = ref.watch(sendingProvider);
-            return Text(sending ? '对方输入中...' : (conv?.displayName ?? '聊天'));
+            final status = ref.watch(chatStatusProvider);
+            final displayName = conv?.displayName ?? '聊天';
+            return Text(
+              status == ChatStatus.idle ? displayName : status.label,
+            );
           },
         ),
         centerTitle: false,
@@ -894,6 +898,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                                 return;
                               }
                               actions.regenerate(message.id);
+                            },
+                            onEnhanceRegenerateMessage: (message) {
+                              if (ref.read(sendingProvider)) {
+                                MoeToast.brief(
+                                  context,
+                                  'Please wait for current message to finish',
+                                );
+                                return;
+                              }
+                              actions.regenerateWithEnhancement(message.id);
                             },
                           ),
                         ),

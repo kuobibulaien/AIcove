@@ -449,7 +449,7 @@ class MessageBubble extends ConsumerWidget {
 
     // 根据 block 类型提取 ImageProvider 并构建 imageWidget
     if (isSticker) {
-      final path = (block as EmojiBlock).path.trim().replaceAll('\\', '/');
+      final path = block.path.trim().replaceAll('\\', '/');
       if (path.isNotEmpty) {
         final isNetwork =
             path.startsWith('http://') || path.startsWith('https://');
