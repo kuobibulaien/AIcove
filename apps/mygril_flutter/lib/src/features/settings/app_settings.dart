@@ -235,6 +235,16 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
           (data['auto_reply_settings'] as Map).cast<String, dynamic>(),
         )
       : const AutoReplySettings();
+  final enhancedDialogueSettings = data['enhanced_dialogue_settings'] is Map
+      ? EnhancedDialogueSettings.fromJson(
+          (data['enhanced_dialogue_settings'] as Map).cast<String, dynamic>(),
+        )
+      : const EnhancedDialogueSettings();
+  final callFlowSettings = data['call_flow_settings'] is Map
+      ? CallFlowSettings.fromJson(
+          (data['call_flow_settings'] as Map).cast<String, dynamic>(),
+        )
+      : const CallFlowSettings();
   final chatBackgroundColor = ChatBackgroundColor.fromValue(
     data['chat_background_color'] as String?,
   );
@@ -308,6 +318,8 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     defaultChatModels: defaultChatModels,
     defaultVisionModel: defaultVisionModel,
     skipVisionCompatDialog: skipVisionCompatDialog,
+    enhancedDialogueSettings: enhancedDialogueSettings,
+    callFlowSettings: callFlowSettings,
   );
 }
 
@@ -619,6 +631,29 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     );
   }
 
+  /// 为 OpenAI 渠道分配唯一 ID，避免新建渠道覆盖旧渠道。
+  /// 规则：
+  /// - 第一个保持 `openai`
+  /// - 后续依次为 `openai__2`、`openai__3`...
+  String _resolveImportProviderId(String providerId) {
+    final base = providerId.trim();
+    if (base.isEmpty) return base;
+    if (base.toLowerCase() != 'openai') return base;
+
+    final current = state.value;
+    if (current == null) return base;
+
+    final usedIds =
+        current.providers.map((p) => p.id.trim().toLowerCase()).toSet();
+    if (!usedIds.contains('openai')) return 'openai';
+
+    var index = 2;
+    while (usedIds.contains('openai__$index')) {
+      index++;
+    }
+    return 'openai__$index';
+  }
+
   Future<void> importCustomModel({
     required String? name,
     required String apiKey,
@@ -632,8 +667,9 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     Map<String, dynamic>? customConfig,
     String? modelType,
   }) async {
+    final resolvedProviderId = _resolveImportProviderId(provider);
     await _commit(() => _api.importProvider(
-          providerId: provider,
+          providerId: resolvedProviderId,
           model: name,
           apiKey: apiKey,
           apiBaseUrl: apiBaseUrl,
@@ -754,6 +790,17 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
   Future<void> updateAutoReplySettings(AutoReplySettings settings) async {
     await _commit(
         () => _api.updatePartial({'auto_reply_settings': settings.toJson()}));
+  }
+
+  Future<void> updateEnhancedDialogueSettings(
+      EnhancedDialogueSettings settings) async {
+    await _commit(() =>
+        _api.updatePartial({'enhanced_dialogue_settings': settings.toJson()}));
+  }
+
+  Future<void> updateCallFlowSettings(CallFlowSettings settings) async {
+    await _commit(
+        () => _api.updatePartial({'call_flow_settings': settings.toJson()}));
   }
 
   Future<void> setGlobalBackgroundColor(GlobalBackgroundColor color) async {

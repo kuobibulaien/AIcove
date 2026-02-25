@@ -341,6 +341,163 @@ Do not output markdown. Just JSON.''';
   }
 }
 
+/// 增强对话设置（调试工具）
+class EnhancedDialogueSettings {
+  final bool enabled;
+  final String systemPrompt;
+  final String bootstrapUserMessage;
+  final int recentRounds;
+
+  static const String defaultSystemPrompt =
+      '''你是“增强对话助手”。你的任务是基于给定的人设与最近对话，生成一条可以直接回复用户的消息，帮助当前会话回到原始人设。
+
+要求：
+1. 只输出可直接发送给用户的一段回复，不解释你的推理过程
+2. 保持口吻与原人设一致
+3. 如需调用工具（如绘图/语音），可正常调用''';
+
+  static const String defaultBootstrapUserMessage =
+      '请输出本轮最终回复，并使用 <enhance>...</enhance> 包裹最终文本。';
+
+  const EnhancedDialogueSettings({
+    this.enabled = false,
+    this.systemPrompt = defaultSystemPrompt,
+    this.bootstrapUserMessage = defaultBootstrapUserMessage,
+    this.recentRounds = 3,
+  });
+
+  EnhancedDialogueSettings copyWith({
+    bool? enabled,
+    String? systemPrompt,
+    String? bootstrapUserMessage,
+    int? recentRounds,
+  }) {
+    return EnhancedDialogueSettings(
+      enabled: enabled ?? this.enabled,
+      systemPrompt: systemPrompt ?? this.systemPrompt,
+      bootstrapUserMessage: bootstrapUserMessage ?? this.bootstrapUserMessage,
+      recentRounds: recentRounds ?? this.recentRounds,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'enabled': enabled,
+        'system_prompt': systemPrompt,
+        'bootstrap_user_message': bootstrapUserMessage,
+        'recent_rounds': recentRounds,
+      };
+
+  factory EnhancedDialogueSettings.fromJson(Map<String, dynamic> json) {
+    int normalizeRounds(num? value) {
+      final v = value?.toInt() ?? 3;
+      if (v < 1) return 1;
+      if (v > 20) return 20;
+      return v;
+    }
+
+    final systemPrompt = (json['system_prompt'] as String?)?.trim();
+    final bootstrap = (json['bootstrap_user_message'] as String?)?.trim();
+
+    return EnhancedDialogueSettings(
+      enabled: json['enabled'] == true,
+      systemPrompt: systemPrompt?.isNotEmpty == true
+          ? systemPrompt!
+          : defaultSystemPrompt,
+      bootstrapUserMessage: bootstrap?.isNotEmpty == true
+          ? bootstrap!
+          : defaultBootstrapUserMessage,
+      recentRounds: normalizeRounds(json['recent_rounds'] as num?),
+    );
+  }
+}
+
+/// 调用流程模式
+enum CallFlowMode {
+  stable('stable', '稳定模式'),
+  fast('fast', '快速模式');
+
+  const CallFlowMode(this.value, this.label);
+  final String value;
+  final String label;
+
+  static CallFlowMode fromValue(String? value) {
+    for (final mode in CallFlowMode.values) {
+      if (mode.value == value) return mode;
+    }
+    return CallFlowMode.stable;
+  }
+}
+
+/// 调用流程设置（调试工具）
+class CallFlowSettings {
+  static const int minModelTimeoutSeconds = 10;
+  static const int maxModelTimeoutSeconds = 300;
+  static const int minToolTimeoutSeconds = 1;
+  static const int maxToolTimeoutSeconds = 120;
+
+  final CallFlowMode mode;
+  final int modelTimeoutSeconds;
+  final int toolTimeoutSeconds;
+
+  const CallFlowSettings({
+    this.mode = CallFlowMode.stable,
+    this.modelTimeoutSeconds = 120,
+    this.toolTimeoutSeconds = 30,
+  });
+
+  CallFlowSettings copyWith({
+    CallFlowMode? mode,
+    int? modelTimeoutSeconds,
+    int? toolTimeoutSeconds,
+  }) {
+    return CallFlowSettings(
+      mode: mode ?? this.mode,
+      modelTimeoutSeconds:
+          (modelTimeoutSeconds ?? this.modelTimeoutSeconds).clamp(
+        minModelTimeoutSeconds,
+        maxModelTimeoutSeconds,
+      ),
+      toolTimeoutSeconds: (toolTimeoutSeconds ?? this.toolTimeoutSeconds).clamp(
+        minToolTimeoutSeconds,
+        maxToolTimeoutSeconds,
+      ),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'mode': mode.value,
+        'model_timeout_seconds': modelTimeoutSeconds,
+        'tool_timeout_seconds': toolTimeoutSeconds,
+      };
+
+  factory CallFlowSettings.fromJson(Map<String, dynamic> json) {
+    int clampInt(num? value, int min, int max, int fallback) {
+      if (value == null) return fallback;
+      final v = value.toInt();
+      if (v < min) return min;
+      if (v > max) return max;
+      return v;
+    }
+
+    const defaults = CallFlowSettings();
+    return CallFlowSettings(
+      mode: CallFlowMode.fromValue(json['mode'] as String?),
+      modelTimeoutSeconds: clampInt(
+        json['model_timeout_seconds'] as num?,
+        minModelTimeoutSeconds,
+        maxModelTimeoutSeconds,
+        defaults.modelTimeoutSeconds,
+      ),
+      toolTimeoutSeconds: clampInt(
+        json['tool_timeout_seconds'] as num?,
+        minToolTimeoutSeconds,
+        maxToolTimeoutSeconds,
+        defaults.toolTimeoutSeconds,
+      ),
+    );
+  }
+}
+
 /// 自定义模型配置
 class CustomModel {
   final String name;
@@ -656,6 +813,8 @@ class AppSettings {
 
   /// 是否跳过视觉兼容性提示弹窗（用户勾选"不再提醒"后为 true）
   final bool skipVisionCompatDialog;
+  final EnhancedDialogueSettings enhancedDialogueSettings;
+  final CallFlowSettings callFlowSettings;
 
   const AppSettings({
     required this.ttsEnabled,
@@ -691,6 +850,8 @@ class AppSettings {
     this.defaultChatModels = const <String>[],
     this.defaultVisionModel,
     this.skipVisionCompatDialog = false,
+    this.enhancedDialogueSettings = const EnhancedDialogueSettings(),
+    this.callFlowSettings = const CallFlowSettings(),
     this.userAvatar,
     this.userName,
   });
@@ -729,6 +890,8 @@ class AppSettings {
     List<String>? defaultChatModels,
     String? defaultVisionModel,
     bool? skipVisionCompatDialog,
+    EnhancedDialogueSettings? enhancedDialogueSettings,
+    CallFlowSettings? callFlowSettings,
     String? userAvatar,
     String? userName,
   }) =>
@@ -770,6 +933,9 @@ class AppSettings {
         defaultVisionModel: defaultVisionModel ?? this.defaultVisionModel,
         skipVisionCompatDialog:
             skipVisionCompatDialog ?? this.skipVisionCompatDialog,
+        enhancedDialogueSettings:
+            enhancedDialogueSettings ?? this.enhancedDialogueSettings,
+        callFlowSettings: callFlowSettings ?? this.callFlowSettings,
         userAvatar: userAvatar ?? this.userAvatar,
         userName: userName ?? this.userName,
       );

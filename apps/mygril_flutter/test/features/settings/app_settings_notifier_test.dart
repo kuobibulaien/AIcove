@@ -62,4 +62,97 @@ void main() {
     expect(provider.models, isEmpty);
     expect(provider.visibleModels, isEmpty);
   });
+
+  test('importing openai provider twice should not overwrite old provider',
+      () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    await container.read(appSettingsProvider.future);
+    final notifier = container.read(appSettingsProvider.notifier);
+
+    await notifier.importCustomModel(
+      name: null,
+      apiKey: 'key-1',
+      apiBaseUrl: 'https://api.first.example/v1',
+      provider: 'openai',
+      displayName: '渠道A',
+      capabilities: const <String>['chat'],
+      modelType: 'chat',
+      customConfig: const <String, dynamic>{'requestFormat': 'openai'},
+      allModels: const <String>['gpt-4o-mini'],
+      visibleModels: const <String>['gpt-4o-mini'],
+    );
+
+    await notifier.importCustomModel(
+      name: null,
+      apiKey: 'key-2',
+      apiBaseUrl: 'https://api.second.example/v1',
+      provider: 'openai',
+      displayName: '渠道B',
+      capabilities: const <String>['chat'],
+      modelType: 'chat',
+      customConfig: const <String, dynamic>{'requestFormat': 'openai'},
+      allModels: const <String>['gpt-4o-mini'],
+      visibleModels: const <String>['gpt-4o-mini'],
+    );
+
+    final settings = container.read(appSettingsProvider).requireValue;
+    final first = settings.providers.firstWhere((p) => p.id == 'openai');
+    final second = settings.providers.firstWhere((p) => p.id == 'openai__2');
+
+    expect(first.apiBaseUrl, 'https://api.first.example/v1');
+    expect(second.apiBaseUrl, 'https://api.second.example/v1');
+    expect(second.visibleModels, contains('gpt-4o-mini'));
+  });
+
+  test('updateEnhancedDialogueSettings persists values', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    await container.read(appSettingsProvider.future);
+    final notifier = container.read(appSettingsProvider.notifier);
+
+    await notifier.updateEnhancedDialogueSettings(
+      const EnhancedDialogueSettings(
+        enabled: true,
+        systemPrompt: '增强系统提示词',
+        bootstrapUserMessage: '增强任务消息',
+        recentRounds: 5,
+      ),
+    );
+
+    final settings = container.read(appSettingsProvider).requireValue;
+    expect(settings.enhancedDialogueSettings.enabled, isTrue);
+    expect(settings.enhancedDialogueSettings.systemPrompt, '增强系统提示词');
+    expect(
+      settings.enhancedDialogueSettings.bootstrapUserMessage,
+      '增强任务消息',
+    );
+    expect(settings.enhancedDialogueSettings.recentRounds, 5);
+  });
+
+  test('updateCallFlowSettings persists values', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    await container.read(appSettingsProvider.future);
+    final notifier = container.read(appSettingsProvider.notifier);
+
+    await notifier.updateCallFlowSettings(
+      const CallFlowSettings(
+        mode: CallFlowMode.fast,
+        modelTimeoutSeconds: 180,
+        toolTimeoutSeconds: 20,
+      ),
+    );
+
+    final settings = container.read(appSettingsProvider).requireValue;
+    expect(settings.callFlowSettings.mode, CallFlowMode.fast);
+    expect(settings.callFlowSettings.modelTimeoutSeconds, 180);
+    expect(settings.callFlowSettings.toolTimeoutSeconds, 20);
+  });
 }

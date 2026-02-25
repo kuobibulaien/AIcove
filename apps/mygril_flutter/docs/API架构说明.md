@@ -28,6 +28,7 @@
 | `plugins/plugin_manager.dart` | 插件系统（生成 system prompt、处理回复得到事件/多媒体内容） |
 | `core/models/message_block.dart` | 多模态 Block 定义（`TextBlock`/`ImageBlock`/`AudioBlock`/`FileBlock` 等） |
 | `domain/message.dart` | 消息模型与 `toHistoryJson()`（用于拼请求历史） |
+| `ui/features/debug/pages/call_flow_management_page.dart` | 调试页：切换稳定/快速模式，配置模型/工具默认超时 |
 
 ### 一次发送的完整流程
 
@@ -42,6 +43,10 @@
    - 把历史消息转换成 API 所需的 `messages`（支持图片/文件等）
    - 超出上下文限制时触发 memory 插件预刷新（保存即将丢弃的历史）
 6. `ChatSendService.executeApiCall(...)` 发起请求并处理插件：
+   - 根据 `call_flow_settings` 决定流程模式：
+     - `stable`：多轮循环（模型请求 -> 工具执行 -> 再次请求模型）
+     - `fast`：仅首轮模型请求，工具并发执行，不再进入下一轮模型请求
+   - 模型请求超时与工具超时都来自 `call_flow_settings`
    - `AgentApiClient.sendMessageRich(...)` 发起请求（通过 `ProviderAdapterFactory` 适配不同 provider）
    - 若模型不支持原生 tool call，`ChatToolFallbackParser` 从回复文本中提取工具调用
    - `pluginManager.processResponse(...)` 处理插件（产出 `pluginEvents/pluginContents`）

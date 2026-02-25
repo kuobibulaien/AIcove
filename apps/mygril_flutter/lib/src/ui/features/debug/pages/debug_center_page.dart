@@ -8,6 +8,9 @@ import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../settings/pages/log_viewer_page.dart';
 import 'ui_gallery_page.dart';
 import 'tool_prompts_page.dart';
+import 'enhanced_dialogue_page.dart';
+import 'network_diagnostic_page.dart';
+import 'call_flow_management_page.dart';
 
 /// 调试中心 - 整合日志、组件库、工具提示词管理
 class DebugCenterPage extends StatelessWidget {
@@ -51,6 +54,33 @@ class DebugCenterPage extends StatelessWidget {
                 trailingType: MoeSettingsRowTrailing.chevron,
                 onTap: () => Navigator.of(context).push(
                   ParallaxSlidePageRoute(page: const ToolPromptsPage()),
+                ),
+              ),
+              MoeSettingsRow(
+                icon: Icons.auto_awesome_outlined,
+                label: '增强对话',
+                subtitle: '配置增强生成（系统提示词 / 第一条用户消息 / 最近轮数）',
+                trailingType: MoeSettingsRowTrailing.chevron,
+                onTap: () => Navigator.of(context).push(
+                  ParallaxSlidePageRoute(page: const EnhancedDialoguePage()),
+                ),
+              ),
+              MoeSettingsRow(
+                icon: Icons.route_outlined,
+                label: '调用流程管理',
+                subtitle: '切换稳定/快速模式，配置模型与工具超时',
+                trailingType: MoeSettingsRowTrailing.chevron,
+                onTap: () => Navigator.of(context).push(
+                  ParallaxSlidePageRoute(page: const CallFlowManagementPage()),
+                ),
+              ),
+              MoeSettingsRow(
+                icon: Icons.network_check_outlined,
+                label: '网络诊断',
+                subtitle: '测试 URL 连通性（内置简易 curl）',
+                trailingType: MoeSettingsRowTrailing.chevron,
+                onTap: () => Navigator.of(context).push(
+                  ParallaxSlidePageRoute(page: const NetworkDiagnosticPage()),
                 ),
                 showDivider: false,
               ),

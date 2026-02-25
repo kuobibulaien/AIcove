@@ -75,6 +75,96 @@ class ChatSendService {
     return false;
   }
 
+  /// 在聊天模型不支持视觉时，为图片解析可发送给模型的文字描述。
+  ///
+  /// 优先复用图片块里已有的生图提示词；
+  /// 若不存在，再调用视觉辅助模型回退。
+  static Future<String?> resolveImageDescriptionForNonVision({
+    required ImageBlock imageBlock,
+    required Future<String?> Function() translateWithVision,
+  }) async {
+    final existingPrompt = imageBlock.prompt?.trim();
+    if (existingPrompt != null && existingPrompt.isNotEmpty) {
+      return existingPrompt;
+    }
+
+    final translated = (await translateWithVision())?.trim();
+    if (translated == null || translated.isEmpty) return null;
+    return translated;
+  }
+
+  /// 构造非视觉模型下的图片上下文文本。
+  ///
+  /// 设计约束：
+  /// - assistant 图片不注入普通消息正文（避免模型模仿固定壳子文本）
+  /// - user 图片转成中性说明，供模型理解用户刚发送了图片
+  static String? buildNonVisionImageMessageText({
+    required String role,
+    required String? description,
+  }) {
+    if (role == 'assistant') return null;
+
+    final normalized = description?.trim();
+    if (normalized != null && normalized.isNotEmpty) {
+      return '用户刚刚发送了一张图片，内容摘要：$normalized';
+    }
+    return '用户刚刚发送了一张图片（当前模型不支持视觉，无法解析细节）。';
+  }
+
+  /// 构建“assistant 最近发图”的内部媒体事件，注入 system prompt。
+  ///
+  /// 注意：这是内部状态提示，不应被模型原样回复给用户。
+  static String buildAssistantImageEventPrompt(
+    List<Message> history, {
+    int maxEvents = 3,
+  }) {
+    if (maxEvents <= 0 || history.isEmpty) return '';
+
+    final events = <String>[];
+    for (final msg in history.reversed) {
+      if (msg.role != 'assistant') continue;
+      final blocks = msg.blocks;
+      if (blocks == null || blocks.isEmpty) continue;
+
+      final images = blocks.whereType<ImageBlock>().toList();
+      if (images.isEmpty) continue;
+
+      String? prompt;
+      for (final image in images) {
+        final currentPrompt = image.prompt?.trim();
+        if (currentPrompt != null && currentPrompt.isNotEmpty) {
+          prompt = currentPrompt;
+          break;
+        }
+      }
+
+      final countPart = 'count=${images.length}';
+      final promptPart = (prompt == null || prompt.isEmpty)
+          ? ''
+          : ' prompt="${_sanitizePromptForEvent(prompt)}"';
+      events.add('- assistant_image_sent $countPart$promptPart');
+      if (events.length >= maxEvents) break;
+    }
+
+    if (events.isEmpty) return '';
+
+    final ordered = events.reversed.toList();
+    return [
+      '以下是最近媒体状态（仅供内部上下文理解，禁止逐字输出给用户）：',
+      '<internal_media_events>',
+      ...ordered,
+      '</internal_media_events>',
+    ].join('\n');
+  }
+
+  static String _sanitizePromptForEvent(String prompt) {
+    var normalized = prompt.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (normalized.length > 160) {
+      normalized = '${normalized.substring(0, 160)}...';
+    }
+    return normalized.replaceAll('"', "'");
+  }
+
   /// 创建用户消息
   Message createUserMessage({
     required String? text,
@@ -212,6 +302,13 @@ class ChatSendService {
     );
     if (pluginPrompts.isNotEmpty) {
       systemParts.add(pluginPrompts);
+    }
+
+    if (!supportsVision) {
+      final mediaContext = buildAssistantImageEventPrompt(history);
+      if (mediaContext.isNotEmpty) {
+        systemParts.add(mediaContext);
+      }
     }
 
     List<Map<String, dynamic>>? tools;
@@ -414,7 +511,9 @@ class ChatSendService {
     if (blocks == null || blocks.isEmpty) {
       final content = message.content;
       if (content.trim().isEmpty) return [];
-      return [{'role': message.role, 'content': content}];
+      return [
+        {'role': message.role, 'content': content}
+      ];
     }
 
     final parts = <Map<String, dynamic>>[];
@@ -431,11 +530,17 @@ class ChatSendService {
       if (block is ImageBlock) {
         // 模型不支持视觉时，尝试使用视觉辅助模型进行翻译，填充为文本描述
         if (!supportsVision) {
-          final translated = await _translateImageWithVisionModel(block, settings);
-          if (translated != null && translated.isNotEmpty) {
-            parts.add({'type': 'text', 'text': '[图片已转换为文本描述：\n$translated]'});
-          } else {
-            parts.add({'type': 'text', 'text': '[图片]'});
+          final description = await resolveImageDescriptionForNonVision(
+            imageBlock: block,
+            translateWithVision: () =>
+                _translateImageWithVisionModel(block, settings),
+          );
+          final fallbackText = buildNonVisionImageMessageText(
+            role: message.role,
+            description: description,
+          );
+          if (fallbackText != null && fallbackText.isNotEmpty) {
+            parts.add({'type': 'text', 'text': fallbackText});
           }
           continue;
         }
@@ -488,14 +593,17 @@ class ChatSendService {
             'type': 'function',
             'function': {
               'name': block.toolName,
-              'arguments': block.arguments != null ? jsonEncode(block.arguments) : '{}',
+              'arguments':
+                  block.arguments != null ? jsonEncode(block.arguments) : '{}',
             }
           });
           toolResultMessages.add({
             'role': 'tool',
             'tool_call_id': block.toolCallId,
             'name': block.toolName,
-            'content': block.result != null ? jsonEncode(block.result) : '{"success": true}',
+            'content': block.result != null
+                ? jsonEncode(block.result)
+                : '{"success": true}',
           });
         }
       }
@@ -536,7 +644,8 @@ class ChatSendService {
 
     final provider = settings.providers.firstWhere(
       (p) => p.id == providerId,
-      orElse: () => const ProviderAuth(id: '', apiKeys: <String>[], apiBaseUrl: ''),
+      orElse: () =>
+          const ProviderAuth(id: '', apiKeys: <String>[], apiBaseUrl: ''),
     );
     if (provider.id.isEmpty || provider.apiKeys.isEmpty) return null;
 
@@ -709,24 +818,31 @@ class ChatSendService {
     String? turnId,
     TraceLogger? trace,
     int maxRounds = 5,
+    void Function(String toolName)? onToolExecuting,
   }) async {
+    final flowSettings = config.settings.callFlowSettings;
+    final isFastMode = flowSettings.mode == CallFlowMode.fast;
+    final effectiveMaxRounds = isFastMode ? 1 : maxRounds;
+    final modelTimeout = Duration(seconds: flowSettings.modelTimeoutSeconds);
+    final toolTimeout = Duration(seconds: flowSettings.toolTimeoutSeconds);
+
     final apiCallTrace = trace?.startChild('调用AI API');
     apiCallTrace?.note('连接', metadata: {
       'endpoint':
           config.providerApiBase.isNotEmpty ? config.providerApiBase : '后端网关',
       'model': config.modelFullId,
       'history': config.messages.length,
-      'maxRounds': maxRounds,
+      'mode': flowSettings.mode.value,
+      'maxRounds': effectiveMaxRounds,
+      'modelTimeoutSec': flowSettings.modelTimeoutSeconds,
+      'toolTimeoutSec': flowSettings.toolTimeoutSeconds,
     });
     final effectiveTurnId = (turnId != null && turnId.trim().isNotEmpty)
         ? turnId.trim()
         : 'turn_${DateTime.now().microsecondsSinceEpoch}';
 
-    // 有工具调用时加长超时至 120 秒（推理模型 + 工具执行可能较慢）
-    final hasTools = config.tools != null && config.tools!.isNotEmpty;
     final agent = AgentApiClient(
-      timeout:
-          hasTools ? const Duration(seconds: 120) : const Duration(seconds: 30),
+      timeout: modelTimeout,
     );
     final pluginManager = _ref.read(pluginManagerProvider);
     final effectivePlugins =
@@ -756,11 +872,150 @@ class ChatSendService {
     final allToolCalls = <ToolCall>[];
     final allRawToolResults = <ToolResult>[];
 
-    for (var round = 1; round <= maxRounds; round++) {
+    Future<_ToolExecutionOutcome> executeToolCall(
+      ToolCall tc, {
+      required int round,
+    }) async {
+      try {
+        final tool = _findToolByName(effectivePlugins, tc.name);
+        if (tool == null) {
+          AppLogger.warning('ChatSendService', 'Tool not found',
+              metadata: {'name': tc.name});
+          return _ToolExecutionOutcome(
+            toolResult: ToolResult(
+              toolCallId: tc.id,
+              name: tc.name,
+              result: jsonEncode({'error': 'Tool not found: ${tc.name}'}),
+            ),
+          );
+        }
+
+        // 通知调用方当前正在执行的工具名称（用于更新 UI 状态）
+        onToolExecuting?.call(tc.name);
+        AppLogger.info('ChatSendService', '执行工具调用', metadata: {
+          'round': round,
+          'name': tc.name,
+          'args': tc.arguments,
+        });
+
+        final result = await tool.handler(tc.arguments).timeout(toolTimeout);
+        final resultStr = result ?? '';
+        AppLogger.info('ChatSendService', '工具调用完成', metadata: {
+          'name': tc.name,
+          'result': resultStr,
+        });
+
+        if (tc.name == 'speak') {
+          ToolAudioResult? audioResult;
+          try {
+            final parsed = jsonDecode(resultStr) as Map<String, dynamic>;
+            final success = parsed['success'] == true;
+            final audioUrl = parsed['audioUrl'] as String?;
+            final text = parsed['text'] as String? ?? '';
+            if (success && audioUrl != null && audioUrl.isNotEmpty) {
+              audioResult = ToolAudioResult(audioUrl: audioUrl, text: text);
+              AppLogger.info('ChatSendService', '收集到 speak 工具音频', metadata: {
+                'audioUrlLength': audioUrl.length,
+                'text': text,
+              });
+            }
+          } catch (e) {
+            AppLogger.warning('ChatSendService', '解析 speak 结果失败',
+                metadata: {'error': e.toString()});
+          }
+
+          return _ToolExecutionOutcome(
+            toolResult: ToolResult(
+              toolCallId: tc.id,
+              name: tc.name,
+              // 参考：https://github.com/openai/codex/issues/6426 (tool output truncation)
+              result: '{"success": true, "message": "语音已播放给用户"}',
+            ),
+            audioResult: audioResult,
+          );
+        }
+
+        if (tc.name == 'draw_image') {
+          final imageContents = _extractToolImageContents(resultStr);
+          if (imageContents.isNotEmpty) {
+            AppLogger.info(
+                'ChatSendService', 'Collected draw_image tool images',
+                metadata: {
+                  'count': imageContents.length,
+                });
+          }
+          return _ToolExecutionOutcome(
+            toolResult: ToolResult(
+              toolCallId: tc.id,
+              name: tc.name,
+              result: _buildToolResultForModel(
+                toolName: tc.name,
+                rawResult: resultStr,
+              ),
+            ),
+            imageContents: imageContents,
+          );
+        }
+
+        return _ToolExecutionOutcome(
+          toolResult: ToolResult(
+            toolCallId: tc.id,
+            name: tc.name,
+            result: _buildToolResultForModel(
+              toolName: tc.name,
+              rawResult: resultStr,
+            ),
+          ),
+        );
+      } on TimeoutException {
+        AppLogger.warning('ChatSendService', '工具调用超时', metadata: {
+          'name': tc.name,
+          'timeoutSec': flowSettings.toolTimeoutSeconds,
+        });
+        return _ToolExecutionOutcome(
+          toolResult: ToolResult(
+            toolCallId: tc.id,
+            name: tc.name,
+            result: jsonEncode(
+              {
+                'error':
+                    'Tool timeout after ${flowSettings.toolTimeoutSeconds}s'
+              },
+            ),
+          ),
+        );
+      } catch (e) {
+        AppLogger.error('ChatSendService', '工具调用失败', metadata: {
+          'name': tc.name,
+          'error': e.toString(),
+        });
+        return _ToolExecutionOutcome(
+          toolResult: ToolResult(
+            toolCallId: tc.id,
+            name: tc.name,
+            result: jsonEncode({'error': e.toString()}),
+          ),
+        );
+      }
+    }
+
+    void collectToolOutcome(
+        _ToolExecutionOutcome outcome, List<ToolResult> to) {
+      to.add(outcome.toolResult);
+      if (outcome.audioResult != null) {
+        allToolAudioResults.add(outcome.audioResult!);
+      }
+      if (outcome.imageContents.isNotEmpty) {
+        allToolContents.addAll(outcome.imageContents);
+      }
+    }
+
+    for (var round = 1; round <= effectiveMaxRounds; round++) {
       lastRoundIndex = round;
       final roundTrace = apiCallTrace?.startChild('第 $round 轮 API 调用');
       roundTrace?.note('请求', metadata: {
         'round': round,
+        'mode': flowSettings.mode.value,
         'messagesCount': currentMessages.length,
       });
 
@@ -831,101 +1086,21 @@ class ChatSendService {
       toolTrace?.note('工具', metadata: {
         'count': currentToolCalls.length,
         'names': currentToolCalls.map((t) => t.name).toList(),
+        'parallel': isFastMode,
       });
 
       final toolResults = <ToolResult>[];
-      for (final tc in currentToolCalls) {
-        try {
-          final tool = _findToolByName(effectivePlugins, tc.name);
-          if (tool != null) {
-            AppLogger.info('ChatSendService', '执行工具调用', metadata: {
-              'round': round,
-              'name': tc.name,
-              'args': tc.arguments,
-            });
-            final result = await tool.handler(tc.arguments);
-            final resultStr = result ?? '';
-            AppLogger.info('ChatSendService', '工具调用完成', metadata: {
-              'name': tc.name,
-              'result': resultStr,
-            });
-
-            // (注释已丢失)
-            if (tc.name == 'speak') {
-              try {
-                final parsed = jsonDecode(resultStr) as Map<String, dynamic>;
-                final success = parsed['success'] == true;
-                final audioUrl = parsed['audioUrl'] as String?;
-                final text = parsed['text'] as String? ?? '';
-                if (success && audioUrl != null && audioUrl.isNotEmpty) {
-                  allToolAudioResults
-                      .add(ToolAudioResult(audioUrl: audioUrl, text: text));
-                  AppLogger.info('ChatSendService', '收集到 speak 工具音频',
-                      metadata: {
-                        'audioUrlLength': audioUrl.length,
-                        'text': text,
-                      });
-                }
-              } catch (e) {
-                AppLogger.warning('ChatSendService', '解析 speak 结果失败',
-                    metadata: {'error': e.toString()});
-              }
-
-              // (注释已丢失)
-              // (注释已丢失)
-              // 参考：https://github.com/openai/codex/issues/6426 (tool output truncation)
-              toolResults.add(ToolResult(
-                toolCallId: tc.id,
-                name: tc.name,
-                result: '{"success": true, "message": "语音已播放给用户"}',
-              ));
-            } else if (tc.name == 'draw_image') {
-              final imageContents = _extractToolImageContents(resultStr);
-              if (imageContents.isNotEmpty) {
-                allToolContents.addAll(imageContents);
-                AppLogger.info(
-                    'ChatSendService', 'Collected draw_image tool images',
-                    metadata: {
-                      'count': imageContents.length,
-                    });
-              }
-              toolResults.add(ToolResult(
-                toolCallId: tc.id,
-                name: tc.name,
-                result: _buildToolResultForModel(
-                  toolName: tc.name,
-                  rawResult: resultStr,
-                ),
-              ));
-            } else {
-              toolResults.add(ToolResult(
-                toolCallId: tc.id,
-                name: tc.name,
-                result: _buildToolResultForModel(
-                  toolName: tc.name,
-                  rawResult: resultStr,
-                ),
-              ));
-            }
-          } else {
-            AppLogger.warning('ChatSendService', 'Tool not found',
-                metadata: {'name': tc.name});
-            toolResults.add(ToolResult(
-              toolCallId: tc.id,
-              name: tc.name,
-              result: '{"error": "Tool not found: ${tc.name}"}',
-            ));
-          }
-        } catch (e) {
-          AppLogger.error('ChatSendService', '工具调用失败', metadata: {
-            'name': tc.name,
-            'error': e.toString(),
-          });
-          toolResults.add(ToolResult(
-            toolCallId: tc.id,
-            name: tc.name,
-            result: '{"error": "${e.toString()}"}',
-          ));
+      if (isFastMode) {
+        final outcomes = await Future.wait([
+          for (final tc in currentToolCalls) executeToolCall(tc, round: round),
+        ]);
+        for (final outcome in outcomes) {
+          collectToolOutcome(outcome, toolResults);
+        }
+      } else {
+        for (final tc in currentToolCalls) {
+          final outcome = await executeToolCall(tc, round: round);
+          collectToolOutcome(outcome, toolResults);
         }
       }
       toolTrace?.end();
@@ -950,10 +1125,17 @@ class ChatSendService {
       ));
 
       // 如果是最后一轮，不再追加消息
-      if (round == maxRounds) {
-        AppLogger.warning('ChatSendService', '达到最大回合数',
-            metadata: {'maxRounds': maxRounds});
-        roundTrace?.end(additionalMessage: '达到最大回合数');
+      if (round == effectiveMaxRounds) {
+        if (isFastMode) {
+          AppLogger.info('ChatSendService', '快速模式停止后续模型轮次', metadata: {
+            'round': round,
+          });
+          roundTrace?.end(additionalMessage: 'fast mode stop');
+        } else {
+          AppLogger.warning('ChatSendService', '达到最大回合数',
+              metadata: {'maxRounds': effectiveMaxRounds});
+          roundTrace?.end(additionalMessage: '达到最大回合数');
+        }
         break;
       }
 
@@ -1518,6 +1700,18 @@ class ChatSendService {
     }
     return contextWindow.sublist(contextWindow.length - limit);
   }
+}
+
+class _ToolExecutionOutcome {
+  final ToolResult toolResult;
+  final ToolAudioResult? audioResult;
+  final List<PluginImageContent> imageContents;
+
+  const _ToolExecutionOutcome({
+    required this.toolResult,
+    this.audioResult,
+    this.imageContents = const <PluginImageContent>[],
+  });
 }
 
 /// Provider

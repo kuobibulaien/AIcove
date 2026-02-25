@@ -173,6 +173,8 @@ Map<String, dynamic> _defaultStoreData() => <String, dynamic>{
       'text_scale_factor': 1.0, // 全局字体缩放因子（默认 1.0）
       'ui_scale_factor': 1.0, // 全局界面缩放因子（默认 1.0）
       'auto_reply_settings': _defaultAutoReplySettings(),
+      'enhanced_dialogue_settings': _defaultEnhancedDialogueSettings(),
+      'call_flow_settings': _defaultCallFlowSettings(),
       // 主题与界面设置相关字段（后续可按需扩展）
       'chat_background_color': 'default', // 默认跟随全局背景色
       'is_dark_mode': false,
@@ -191,6 +193,25 @@ Map<String, dynamic> _defaultAutoReplySettings() => <String, dynamic>{
       'quiet_hours_start': '22:00',
       'quiet_hours_end': '08:00',
       'allow_exact_alarm': false,
+    };
+
+Map<String, dynamic> _defaultEnhancedDialogueSettings() => <String, dynamic>{
+      'enabled': false,
+      'system_prompt':
+          '''你是“增强对话助手”。你的任务是基于给定的人设与最近对话，生成一条可以直接回复用户的消息，帮助当前会话回到原始人设。
+
+要求：
+1. 只输出可直接发送给用户的一段回复，不解释你的推理过程
+2. 保持口吻与原人设一致
+3. 如需调用工具（如绘图/语音），可正常调用''',
+      'bootstrap_user_message': '请输出本轮最终回复，并使用 <enhance>...</enhance> 包裹最终文本。',
+      'recent_rounds': 3,
+    };
+
+Map<String, dynamic> _defaultCallFlowSettings() => <String, dynamic>{
+      'mode': 'stable',
+      'model_timeout_seconds': 120,
+      'tool_timeout_seconds': 30,
     };
 
 const _novelAiDefaultModels = <String>[
@@ -285,6 +306,69 @@ Map<String, dynamic> _normalizeAutoReplySettings(dynamic source) {
     'quiet_hours_end': normalizeTime(source['quiet_hours_end'] as String?,
         defaults['quiet_hours_end'] as String),
     'allow_exact_alarm': source['allow_exact_alarm'] == true,
+  };
+}
+
+Map<String, dynamic> _normalizeEnhancedDialogueSettings(dynamic source) {
+  final defaults = _defaultEnhancedDialogueSettings();
+  if (source is! Map) {
+    return Map<String, dynamic>.from(defaults);
+  }
+
+  int clampRounds(num? value) {
+    if (value == null) return defaults['recent_rounds'] as int;
+    final v = value.toInt();
+    if (v < 1) return 1;
+    if (v > 20) return 20;
+    return v;
+  }
+
+  final systemPrompt = (source['system_prompt'] as String?)?.trim();
+  final bootstrap = (source['bootstrap_user_message'] as String?)?.trim();
+
+  return <String, dynamic>{
+    'enabled': source['enabled'] == true,
+    'system_prompt': systemPrompt?.isNotEmpty == true
+        ? systemPrompt
+        : defaults['system_prompt'],
+    'bootstrap_user_message': bootstrap?.isNotEmpty == true
+        ? bootstrap
+        : defaults['bootstrap_user_message'],
+    'recent_rounds': clampRounds(source['recent_rounds'] as num?),
+  };
+}
+
+Map<String, dynamic> _normalizeCallFlowSettings(dynamic source) {
+  final defaults = _defaultCallFlowSettings();
+  if (source is! Map) {
+    return Map<String, dynamic>.from(defaults);
+  }
+
+  int clampInt(num? value, int min, int max, int fallback) {
+    if (value == null) return fallback;
+    final v = value.toInt();
+    if (v < min) return min;
+    if (v > max) return max;
+    return v;
+  }
+
+  final mode = (source['mode'] as String?)?.trim();
+  final normalizedMode = mode == 'fast' ? 'fast' : 'stable';
+
+  return <String, dynamic>{
+    'mode': normalizedMode,
+    'model_timeout_seconds': clampInt(
+      source['model_timeout_seconds'] as num?,
+      10,
+      300,
+      defaults['model_timeout_seconds'] as int,
+    ),
+    'tool_timeout_seconds': clampInt(
+      source['tool_timeout_seconds'] as num?,
+      1,
+      120,
+      defaults['tool_timeout_seconds'] as int,
+    ),
   };
 }
 
@@ -451,6 +535,10 @@ Map<String, dynamic> _normalizeData(Map<String, dynamic> raw) {
   data['visible_models'] = visibleUnion..sort(_caseSort);
   data['auto_reply_settings'] =
       _normalizeAutoReplySettings(data['auto_reply_settings']);
+  data['enhanced_dialogue_settings'] =
+      _normalizeEnhancedDialogueSettings(data['enhanced_dialogue_settings']);
+  data['call_flow_settings'] =
+      _normalizeCallFlowSettings(data['call_flow_settings']);
   return data;
 }
 
