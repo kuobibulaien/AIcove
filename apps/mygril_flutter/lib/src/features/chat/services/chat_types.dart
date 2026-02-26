@@ -93,7 +93,7 @@ class ApiConfig {
     this.modelContextMessageLimit,
   });
 
-  double get effectiveTemperature => modelTemperature ?? settings.temperature;
+  double? get effectiveTemperature => modelTemperature ?? settings.temperature;
 }
 
 /// 待处理的 TTS 音频信息

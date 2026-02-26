@@ -93,6 +93,7 @@ class _ComposerState extends ConsumerState<Composer> {
     // 延迟检查是否有待编辑的文本
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkEditingText();
+      _checkRecalledAttachment();
       _reportHeightIfNeeded();
     });
   }
@@ -161,6 +162,15 @@ class _ComposerState extends ConsumerState<Composer> {
       );
       // 清除编辑文本状�?
       ref.read(editingTextProvider.notifier).state = null;
+      _showKeyboardWithPreAnimation();
+    }
+  }
+
+  void _checkRecalledAttachment() {
+    final recalledAttachment = ref.read(recalledAttachmentProvider);
+    if (recalledAttachment != null) {
+      setState(() => _selectedAttachment = recalledAttachment);
+      ref.read(recalledAttachmentProvider.notifier).state = null;
       _showKeyboardWithPreAnimation();
     }
   }
@@ -533,6 +543,14 @@ class _ComposerState extends ConsumerState<Composer> {
           TextPosition(offset: next.length),
         );
         ref.read(editingTextProvider.notifier).state = null;
+        _showKeyboardWithPreAnimation();
+      }
+    });
+    ref.listen<SelectedAttachment?>(recalledAttachmentProvider,
+        (previous, next) {
+      if (next != null) {
+        setState(() => _selectedAttachment = next);
+        ref.read(recalledAttachmentProvider.notifier).state = null;
         _showKeyboardWithPreAnimation();
       }
     });

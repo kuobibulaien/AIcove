@@ -29,6 +29,8 @@ import 'conversation_providers.dart';
 import 'chat_providers.dart';
 import '../../core/app_logger.dart';
 import '../../core/database/database_provider.dart';
+import '../../core/models/message_block.dart';
+import '../../core/services/attachment_picker_service.dart';
 
 // 重新导出公共类型，保持向后兼容
 export 'chat_providers.dart';
@@ -59,13 +61,11 @@ class ProactiveSendResult {
 }
 
 class ChatActions {
-  ChatActions(this._ref)
-      : _sendService = _ref.read(chatSendServiceProvider),
-        _ttsHandler = _ref.read(chatTtsHandlerProvider);
+  ChatActions(this._ref);
 
   final Ref _ref;
-  final ChatSendService _sendService;
-  final ChatTtsHandler _ttsHandler;
+  ChatSendService get _sendService => _ref.read(chatSendServiceProvider);
+  ChatTtsHandler get _ttsHandler => _ref.read(chatTtsHandlerProvider);
   final EnhancedDialogueService _enhancedDialogueService =
       const EnhancedDialogueService();
   int _generationSerial = 0;
@@ -279,20 +279,9 @@ class ChatActions {
           conv: conv, userMsg: userMsg, limit: settings.historyMessageLimit);
       final apiText = hasText ? userText : '[image]';
 
-      // 图片识别模型优先，然后 fallback 到聊天模型列表
-      final modelsToTry = <String>[];
-      if (settings.defaultVisionModel != null &&
-          settings.defaultVisionModel!.isNotEmpty) {
-        modelsToTry.add(settings.defaultVisionModel!);
-      }
-      if (settings.defaultChatModels.isNotEmpty) {
-        for (final m in settings.defaultChatModels) {
-          if (!modelsToTry.contains(m)) modelsToTry.add(m);
-        }
-      }
-      if (modelsToTry.isEmpty) {
-        modelsToTry.add(settings.defaultModelName);
-      }
+      // 若聊天模型链中已含视觉能力，则不插入视觉辅助模型；
+      // 仅当聊天模型链全部无视觉能力时，才把视觉辅助模型置于首位。
+      final modelsToTry = _sendService.buildImageSendModelRefs(settings);
 
       final (result, usedSettings) = await _executeWithFailover(
         convId: convId,
@@ -779,10 +768,9 @@ class ChatActions {
   }
 
   /// 撤回失败消息：将失败消息的文本回填到输入框，并从会话中删除该消息
-  void recallFailedMessage(String messageId) {
+  Future<void> recallFailedMessage(String messageId) async {
     final conv = _ref.read(activeConversationProvider);
     if (conv == null) return;
-    final convId = conv.id;
 
     final idx = conv.messages.indexWhere(
       (m) => m.id == messageId && m.status == 'failed',
@@ -791,21 +779,98 @@ class ChatActions {
     final failedMsg = conv.messages[idx];
 
     // 将失败消息文本填入输入框
-    final text = failedMsg.displayText;
+    final text = _extractEditableTextForRecall(failedMsg);
     if (text.isNotEmpty) {
       _ref.read(editingTextProvider.notifier).state = text;
     }
+    _ref.read(recalledAttachmentProvider.notifier).state =
+        _extractAttachmentForRecall(failedMsg);
 
-    // 从会话中删除该失败消息
-    _ref.read(conversationsProvider.notifier).updateOne(convId, (c) {
+    await deleteMessage(messageId);
+  }
+
+  String _extractEditableTextForRecall(Message msg) {
+    final blocks = msg.blocks;
+    if (blocks != null && blocks.isNotEmpty) {
+      final text = blocks
+          .whereType<TextBlock>()
+          .map((b) => b.content.trim())
+          .where((v) => v.isNotEmpty)
+          .join('\n\n')
+          .trim();
+      return text;
+    }
+    final raw = msg.content.trim();
+    if (raw == '[图片]' ||
+        raw == '[文件]' ||
+        raw == '[语音]' ||
+        raw == '[表情]' ||
+        raw == '[工具调用]' ||
+        raw == '[思考中...]') {
+      return '';
+    }
+    return raw;
+  }
+
+  SelectedAttachment? _extractAttachmentForRecall(Message msg) {
+    final blocks = msg.blocks;
+    if (blocks == null || blocks.isEmpty) return null;
+
+    for (final block in blocks) {
+      if (block is ImageBlock) {
+        final localPath = block.localPath?.trim();
+        if (localPath != null && localPath.isNotEmpty) {
+          return SelectedAttachment(
+            path: localPath,
+            type: AttachmentType.image,
+          );
+        }
+      }
+      if (block is FileBlock) {
+        final filePath = block.filePath.trim();
+        if (filePath.isNotEmpty) {
+          return SelectedAttachment(
+            path: filePath,
+            name: block.fileName,
+            sizeBytes: block.fileSize,
+            type: AttachmentType.file,
+          );
+        }
+      }
+    }
+    return null;
+  }
+
+  /// 删除单条消息（仅删除本地显示，同时在数据库做软删除）
+  Future<void> deleteMessage(String messageId) async {
+    final conv = _ref.read(activeConversationProvider);
+    if (conv == null) return;
+    final convId = conv.id;
+
+    final idx = conv.messages.indexWhere((m) => m.id == messageId);
+    if (idx < 0) return;
+
+    await _ref.read(conversationsProvider.notifier).updateOne(convId, (c) {
       final newMessages = c.messages.where((m) => m.id != messageId).toList();
       final lastMsg = newMessages.isNotEmpty ? newMessages.last : null;
       return c.copyWith(
         messages: newMessages,
-        lastMessage: lastMsg?.displayText ?? '',
-        lastMessageTime: lastMsg?.createdAt ?? c.createdAt,
+        lastMessage: lastMsg?.displayText,
+        lastMessageTime: lastMsg?.createdAt,
+        contextStartMessageId: c.contextStartMessageId == messageId
+            ? null
+            : c.contextStartMessageId,
+        updatedAt: DateTime.now(),
       );
     });
+
+    // 如果当前引用的是被删除消息，一并清空引用态
+    final quoted = _ref.read(quotedMessageProvider);
+    if (quoted?.id == messageId) {
+      _ref.read(quotedMessageProvider.notifier).state = null;
+    }
+
+    await _softDeleteMessages([messageId]);
   }
 
   /// 编辑消息：删除指定消息及其后的所有消息，返回被删除消息的文本用于填充输入框
@@ -900,8 +965,15 @@ class ChatActions {
   Future<void> _softDeleteMessages(List<String> messageIds) async {
     if (messageIds.isEmpty) return;
     final msgRepo = _ref.read(messageRepositoryProvider);
+    final blockRepo = _ref.read(messageBlockRepositoryProvider);
     final now = DateTime.now().millisecondsSinceEpoch;
     final purgeAt = now + 30 * 24 * 60 * 60 * 1000; // 30天后物理清除
+
+    final blocks = await blockRepo.getByMessages(messageIds);
+    for (final block in blocks) {
+      await blockRepo.softDelete(block.id, now);
+    }
+
     for (final id in messageIds) {
       await msgRepo.softDelete(id, now, purgeAt);
     }
@@ -924,6 +996,10 @@ final chatActionsProvider = Provider((ref) => ChatActions(ref));
 
 /// 编辑消息时需要填充到输入框的文本（用于 Composer 监听）
 final editingTextProvider = StateProvider<String?>((ref) => null);
+
+/// 失败消息撤回时需要恢复到 Composer 的附件（用于附件预览回填）
+final recalledAttachmentProvider =
+    StateProvider<SelectedAttachment?>((ref) => null);
 
 /// 引用消息数据
 class QuotedMessage {

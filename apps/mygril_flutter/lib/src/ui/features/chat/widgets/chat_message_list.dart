@@ -155,14 +155,14 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
       _pendingAnimationIds.clear();
       _latestAnimatedAt =
           widget.messages.isNotEmpty ? widget.messages.last.createdAt : null;
-      _updateListItems();
+      _updateListItems(_cachedFormatConfig);
       return;
     }
 
     // 缓存优化：仅当消息列表引用变化时才重构列表项
     // 避免键盘弹出/收起导致 MediaQuery 变化进而触发全量重建 (Layout Thrashing)
     if (widget.messages != oldWidget.messages) {
-      _updateListItems();
+      _updateListItems(_cachedFormatConfig);
     }
 
     if (widget.messages.isEmpty) {
@@ -614,6 +614,7 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   /// 处理消息长按事件
   Future<void> _handleMessageLongPress(BuildContext context, Message message,
       bool isMe, GlobalKey bubbleKey) async {
+    final actions = ref.read(chatActionsProvider);
     final enableEnhancedRegenerate = ref
             .read(appSettingsProvider)
             .valueOrNull
@@ -626,7 +627,7 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
       isUserMessage: isMe,
       messageText: message.displayText,
       showEnhanceRegenerate: enableEnhancedRegenerate,
-      onAction: (action) {
+      onAction: (action) async {
         if (!context.mounted) return;
         switch (action) {
           case MessageAction.copy:
@@ -649,6 +650,26 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
               isUser: isMe,
             );
             break;
+          case MessageAction.delete:
+            if (message.status == 'sending') {
+              MoeToast.show(context, '发送中的消息暂不可删除');
+              break;
+            }
+            final ok = await showMeoTalkConfirm(
+              context: context,
+              title: '删除消息',
+              message: '确定删除这条消息吗？',
+              hint: '会从当前会话上下文和本地数据库中移除这条消息。',
+              confirmText: '删除',
+              isDanger: true,
+            );
+            if (ok == true && context.mounted) {
+              await actions.deleteMessage(message.id);
+              if (context.mounted) {
+                MoeToast.show(context, '已删除消息');
+              }
+            }
+            break;
           case MessageAction.save:
             break; // 文本消息不支持保存
         }
@@ -659,12 +680,14 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   /// 处理媒体（图片/音频）长按或右键事件
   Future<void> _handleMediaLongPress(BuildContext context, Message message,
       bool isMe, GlobalKey mediaKey, MessageBlock block) async {
+    final actions = ref.read(chatActionsProvider);
     final mediaType = block is AudioBlock ? MediaType.audio : MediaType.image;
     await showMediaActionMenu(
       context,
       targetKey: mediaKey,
       mediaType: mediaType,
-      onAction: (action) {
+      allowDelete: true,
+      onAction: (action) async {
         if (!context.mounted) return;
         switch (action) {
           case MessageAction.save:
@@ -681,6 +704,26 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
               content: quoteText,
               isUser: isMe,
             );
+            break;
+          case MessageAction.delete:
+            if (message.status == 'sending') {
+              MoeToast.show(context, '发送中的消息暂不可删除');
+              break;
+            }
+            final ok = await showMeoTalkConfirm(
+              context: context,
+              title: '删除消息',
+              message: '确定删除这条消息吗？',
+              hint: '会从当前会话上下文和本地数据库中移除这条消息。',
+              confirmText: '删除',
+              isDanger: true,
+            );
+            if (ok == true && context.mounted) {
+              await actions.deleteMessage(message.id);
+              if (context.mounted) {
+                MoeToast.show(context, '已删除消息');
+              }
+            }
             break;
           default:
             break;

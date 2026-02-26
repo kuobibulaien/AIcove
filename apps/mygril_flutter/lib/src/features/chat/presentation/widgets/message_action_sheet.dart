@@ -4,6 +4,7 @@
 /// - 复制：复制消息文本到剪贴板
 /// - 编辑：仅用户消息，撤回到输入框重新编辑
 /// - 重新生成：仅AI消息，删除当前回复并重新生成
+/// - 删除：删除单条消息显示（本地软删除）
 library;
 
 import 'package:flutter/material.dart';
@@ -16,6 +17,7 @@ enum MessageAction {
   edit, // 编辑（用户消息）
   regenerate, // 重新生成（AI消息）
   enhanceRegenerate, // 增强生成（AI消息）
+  delete, // 删除单条消息
   quote, // 引用回复
   save, // 保存（图片/音频）
 }
@@ -67,6 +69,12 @@ Future<void> showMessageActionMenu(
           onTap: () => onAction(MessageAction.enhanceRegenerate),
         ),
     ],
+    MoePopupMenuItem(
+      icon: Icons.delete_outline_rounded,
+      label: '删除',
+      danger: true,
+      onTap: () => onAction(MessageAction.delete),
+    ),
   ];
 
   await MoePopupMenu.show(
@@ -88,6 +96,7 @@ Future<void> showMediaActionMenu(
   BuildContext context, {
   required GlobalKey targetKey,
   required MediaType mediaType,
+  bool allowDelete = false,
   required void Function(MessageAction action) onAction,
 }) async {
   final items = <MoePopupMenuItem>[
@@ -101,6 +110,13 @@ Future<void> showMediaActionMenu(
       label: '引用',
       onTap: () => onAction(MessageAction.quote),
     ),
+    if (allowDelete)
+      MoePopupMenuItem(
+        icon: Icons.delete_outline_rounded,
+        label: '删除',
+        danger: true,
+        onTap: () => onAction(MessageAction.delete),
+      ),
   ];
 
   await MoePopupMenu.show(

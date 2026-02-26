@@ -308,7 +308,7 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
   return AppSettings(
     ttsEnabled: true,
     defaultModelName: meta.defaultModel,
-    temperature: 0.7,
+    // temperature 不设置，默认 null → 不发送，由云端使用默认值
     defaultPersonaPrompt: '',
     modelList: meta.visible.isEmpty ? <String>['deepseek-chat'] : meta.visible,
     allKnownModels:

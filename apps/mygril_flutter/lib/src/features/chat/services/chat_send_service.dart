@@ -48,12 +48,60 @@ class ChatSendService {
   final ChatRequestConfigBuilder _requestConfigBuilder =
       ChatRequestConfigBuilder();
   final ChatToolFallbackParser _fallbackParser = const ChatToolFallbackParser();
+  final Map<String, String> _imageDescriptionCache = <String, String>{};
+  static const int _maxImageDescriptionCacheSize = 128;
+  static const String visionDescriptionSystemPrompt = '你是图片解释助手。只输出客观、简洁的图片描述。';
 
   ChatSendService(this._ref);
 
   static bool isVisionModel(String modelId) {
     return inferChatModelCapabilities(modelId)
         .contains(ChatModelCapability.vision);
+  }
+
+  /// 构建图片消息发送时的模型调用链。
+  ///
+  /// 规则：
+  /// - 只要聊天模型链中有视觉能力（自动识别或手动标签），就不插入视觉辅助模型
+  /// - 仅在聊天模型链全部无视觉能力时，才把视觉辅助模型放在最前
+  List<String> buildImageSendModelRefs(AppSettings settings) {
+    final chatModels = settings.defaultChatModels.isNotEmpty
+        ? settings.defaultChatModels
+        : [settings.defaultModelName];
+    final normalizedChatModels = <String>[];
+    for (final model in chatModels) {
+      final ref = model.trim();
+      if (ref.isEmpty || normalizedChatModels.contains(ref)) continue;
+      normalizedChatModels.add(ref);
+    }
+    if (normalizedChatModels.isEmpty) {
+      final fallback = settings.defaultModelName.trim();
+      if (fallback.isNotEmpty) normalizedChatModels.add(fallback);
+    }
+
+    final hasVisionCapableChatModel = normalizedChatModels.any(
+      (modelRef) => settings.hasChatModelCapability(
+        modelRef,
+        ChatModelCapability.vision,
+      ),
+    );
+    if (hasVisionCapableChatModel) return normalizedChatModels;
+
+    final modelsToTry = <String>[];
+    final visionModelRef = settings.defaultVisionModel?.trim();
+    if (visionModelRef != null && visionModelRef.isNotEmpty) {
+      modelsToTry.add(visionModelRef);
+    }
+    for (final modelRef in normalizedChatModels) {
+      if (!modelsToTry.contains(modelRef)) {
+        modelsToTry.add(modelRef);
+      }
+    }
+    if (modelsToTry.isEmpty) {
+      final fallback = settings.defaultModelName.trim();
+      if (fallback.isNotEmpty) modelsToTry.add(fallback);
+    }
+    return modelsToTry;
   }
 
   /// 在聊天模型不支持视觉时，为图片解析可发送给模型的文字描述。
@@ -63,15 +111,38 @@ class ChatSendService {
   static Future<String?> resolveImageDescriptionForNonVision({
     required ImageBlock imageBlock,
     required Future<String?> Function() translateWithVision,
+    String? cachedDescription,
+    void Function(String description)? onDescriptionResolved,
   }) async {
     final existingPrompt = imageBlock.prompt?.trim();
     if (existingPrompt != null && existingPrompt.isNotEmpty) {
       return existingPrompt;
     }
 
+    final cached = cachedDescription?.trim();
+    if (cached != null && cached.isNotEmpty) {
+      return cached;
+    }
+
     final translated = (await translateWithVision())?.trim();
     if (translated == null || translated.isEmpty) return null;
+    onDescriptionResolved?.call(translated);
     return translated;
+  }
+
+  static List<Map<String, dynamic>> buildVisionTranslationMessages({
+    required Map<String, dynamic> imagePart,
+  }) {
+    return <Map<String, dynamic>>[
+      {
+        'role': 'system',
+        'content': visionDescriptionSystemPrompt,
+      },
+      {
+        'role': 'user',
+        'content': [imagePart],
+      }
+    ];
   }
 
   /// 构造非视觉模型下的图片上下文文本。
@@ -146,6 +217,36 @@ class ChatSendService {
     return normalized.replaceAll('"', "'");
   }
 
+  String? _buildImageDescriptionCacheKey(ImageBlock block) {
+    final url = block.url?.trim();
+    if (url != null && url.isNotEmpty) return 'url:$url';
+
+    final localPath = block.localPath?.trim();
+    if (localPath != null && localPath.isNotEmpty) return 'local:$localPath';
+
+    final base64 = block.base64?.trim();
+    if (base64 != null && base64.isNotEmpty) {
+      if (base64.length <= 160) return 'b64:$base64';
+      final head = base64.substring(0, 80);
+      final tail = base64.substring(base64.length - 80);
+      return 'b64:${base64.length}:$head:$tail';
+    }
+    return null;
+  }
+
+  void _cacheImageDescription(String cacheKey, String description) {
+    final trimmed = description.trim();
+    if (trimmed.isEmpty) return;
+
+    if (_imageDescriptionCache.containsKey(cacheKey)) {
+      _imageDescriptionCache.remove(cacheKey);
+    }
+    _imageDescriptionCache[cacheKey] = trimmed;
+    while (_imageDescriptionCache.length > _maxImageDescriptionCacheSize) {
+      _imageDescriptionCache.remove(_imageDescriptionCache.keys.first);
+    }
+  }
+
   /// 创建用户消息
   Message createUserMessage({
     required String? text,
@@ -154,17 +255,26 @@ class ChatSendService {
     final now = DateTime.now();
 
     if (imagePath != null && imagePath.isNotEmpty) {
-      // 图片消息
       final msgId = genId('msg');
+      final blocks = <MessageBlock>[
+        ImageBlock(
+          messageId: msgId,
+          localPath: imagePath,
+        ),
+      ];
+      final normalizedText = text?.trim();
+      if (normalizedText != null && normalizedText.isNotEmpty) {
+        blocks.add(
+          TextBlock(
+            messageId: msgId,
+            content: normalizedText,
+          ),
+        );
+      }
       return Message.fromBlocks(
         id: msgId,
         role: 'user',
-        blocks: [
-          ImageBlock(
-            messageId: msgId,
-            localPath: imagePath,
-          ),
-        ],
+        blocks: blocks,
         createdAt: now,
         status: 'sending',
       );
@@ -515,8 +625,20 @@ class ChatSendService {
       if (block is ImageBlock) {
         // 模型不支持视觉时，尝试使用视觉辅助模型进行翻译，填充为文本描述
         if (!supportsVision) {
+          // assistant 图片仅通过 internal_media_events 提示，不转普通文本
+          if (message.role == 'assistant') continue;
+
+          final cacheKey = _buildImageDescriptionCacheKey(block);
+          final cachedDescription =
+              cacheKey == null ? null : _imageDescriptionCache[cacheKey];
           final description = await resolveImageDescriptionForNonVision(
             imageBlock: block,
+            cachedDescription: cachedDescription,
+            onDescriptionResolved: (resolved) {
+              if (cacheKey != null) {
+                _cacheImageDescription(cacheKey, resolved);
+              }
+            },
             translateWithVision: () =>
                 _translateImageWithVisionModel(block, settings),
           );
@@ -639,46 +761,39 @@ class ChatSendService {
 
     final apiBaseUrl = provider.apiBaseUrl.trim();
 
-    final imageParts = <Map<String, dynamic>>[];
+    Map<String, dynamic>? imagePart;
 
     final url = block.url?.trim();
     if (url != null && url.isNotEmpty) {
-      imageParts.add({
+      imagePart = {
         'type': 'image_url',
         'image_url': {'url': url}
-      });
+      };
     } else {
       final base64 = block.base64?.trim();
       if (base64 != null && base64.isNotEmpty) {
-        imageParts.add({
+        imagePart = {
           'type': 'image_url',
           'image_url': {'url': 'data:image/jpeg;base64,$base64'},
-        });
+        };
       } else {
         final localPath = block.localPath?.trim();
         if (localPath != null && localPath.isNotEmpty) {
           final encoded = await readImageAsBase64(localPath);
           if (encoded != null && encoded.isNotEmpty) {
             final mime = MimeUtils.guessImageMimeType(localPath);
-            imageParts.add({
+            imagePart = {
               'type': 'image_url',
               'image_url': {'url': 'data:$mime;base64,$encoded'},
-            });
+            };
           }
         }
       }
     }
 
-    if (imageParts.isEmpty) return null;
+    if (imagePart == null) return null;
 
-    final promptPart = {'type': 'text', 'text': '请详细描述这张图片的内容，不要遗漏任何重要细节'};
-
-    final messages = <Map<String, dynamic>>[
-      {
-        'role': 'user',
-        'content': [promptPart, ...imageParts],
-      }
-    ];
+    final messages = buildVisionTranslationMessages(imagePart: imagePart);
 
     try {
       final agent = AgentApiClient(timeout: const Duration(seconds: 30));

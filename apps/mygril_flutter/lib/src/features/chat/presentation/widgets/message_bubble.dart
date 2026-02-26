@@ -38,7 +38,8 @@ class MessageBubble extends ConsumerWidget {
   final String? displayName; // 对方名字（仅用于群聊模式）
   final VoidCallback? onRetry; // 重新发送回调
   final void Function(GlobalKey bubbleKey)? onLongPress; // 长按回调（传递气泡Key用于定位菜单）
-  final void Function(GlobalKey mediaKey, MessageBlock block)? onMediaLongPress; // 媒体长按/右键回调
+  final void Function(GlobalKey mediaKey, MessageBlock block)?
+      onMediaLongPress; // 媒体长按/右键回调
   final double fontSize; // 字体大小
 
   /// 聊天中所有图片列表（用于画廊模式左右滑动切换），由父组件传入
@@ -122,136 +123,134 @@ class MessageBubble extends ConsumerWidget {
     final userAvatar = isMe ? settings?.userAvatar : null;
     final hideUserAvatar = settings?.hideUserAvatar ?? true;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      child: Row(
-        mainAxisAlignment:
-            isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (!isMe) ...[
-            if (showAvatar)
-              _Avatar(avatarUrl: avatarUrl)
-            else
-              const SizedBox(width: 42),
-            const SizedBox(width: 8),
-          ],
-          // 用户消息发送失败时显示红色感叹号（可点击重发）
-          if (isFailed) ...[
-            GestureDetector(
-              onTap: onRetry,
-              child: Container(
-                width: 20,
-                height: 20,
-                margin: const EdgeInsets.only(top: 9, right: 4),
-                decoration: const BoxDecoration(
-                  color: Colors.red,
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.priority_high,
-                  color: Colors.white,
-                  size: 14,
-                ),
+    final failedIndicator = isFailed
+        ? GestureDetector(
+            onTap: onRetry,
+            child: Container(
+              width: 20,
+              height: 20,
+              margin: const EdgeInsets.only(top: 9, right: 4),
+              decoration: const BoxDecoration(
+                color: Colors.red,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.priority_high,
+                color: Colors.white,
+                size: 14,
               ),
             ),
-          ],
-          Flexible(
-            child: Column(
-              crossAxisAlignment: align,
-              children: [
-                // 群聊模式下，AI 消息上方显示名字
-                if (showName && !isMe && displayName != null)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 4, left: 0),
-                    child: Text(
-                      displayName!,
-                      style: TextStyle(
-                        color: isDark ? Colors.grey[400] : Colors.grey[800],
-                        fontSize: 13,
-                        fontWeight: MoeFontWeights.emphasis,
-                      ),
-                    ),
-                  ),
+          )
+        : null;
 
-                // Render image/sticker blocks separately without bubble
-                ..._buildMediaBlocksOnly(context, blocks,
-                    imagePreviewScale: settings?.imagePreviewScale ?? 1.0),
-                // Render non-image blocks in bubble (text, audio, etc.)
-                if (_shouldShowBubble(blocks))
-                  Builder(
-                    builder: (context) {
-                      final bubbleKey =
-                          GlobalKey(debugLabel: 'bubble_${message.id}');
-                      return Listener(
-                        onPointerDown: (_useDesktopContextMenu &&
-                                onLongPress != null)
-                            ? (event) {
-                                if ((event.buttons & kSecondaryMouseButton) !=
-                                    0) {
-                                  onLongPress!(bubbleKey);
-                                }
-                              }
-                            : null,
-                        child: GestureDetector(
-                          key: bubbleKey,
-                          onLongPress: (!_useDesktopContextMenu &&
-                                  onLongPress != null)
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: _AvatarAwareBubbleRow(
+        debugId: message.id,
+        isMe: isMe,
+        hideUserAvatar: hideUserAvatar,
+        showLeftSlot: !isMe,
+        showRightSlot: isMe && !hideUserAvatar,
+        hasFailedIndicator: isFailed,
+        failedIndicator: failedIndicator,
+        leftSlot: _AvatarSlot(
+          showAvatar: showAvatar,
+          isUser: false,
+          avatar: _Avatar(avatarUrl: avatarUrl),
+          gapOnLeft: false,
+        ),
+        rightSlot: _AvatarSlot(
+          showAvatar: showAvatar,
+          isUser: true,
+          avatar: _Avatar(avatarUrl: userAvatar, isUser: true),
+          gapOnLeft: true,
+        ),
+        bubbleChild: Column(
+          crossAxisAlignment: align,
+          children: [
+            // 群聊模式下，AI 消息上方显示名字
+            if (showName && !isMe && displayName != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4, left: 0),
+                child: Text(
+                  displayName!,
+                  style: TextStyle(
+                    color: isDark ? Colors.grey[400] : Colors.grey[800],
+                    fontSize: 13,
+                    fontWeight: MoeFontWeights.emphasis,
+                  ),
+                ),
+              ),
+
+            // Render image/sticker blocks separately without bubble
+            ..._buildMediaBlocksOnly(context, blocks,
+                imagePreviewScale: settings?.imagePreviewScale ?? 1.0),
+            // Render non-image blocks in bubble (text, audio, etc.)
+            if (_shouldShowBubble(blocks))
+              Builder(
+                builder: (context) {
+                  final bubbleKey =
+                      GlobalKey(debugLabel: 'bubble_${message.id}');
+                  return Listener(
+                    onPointerDown: (_useDesktopContextMenu &&
+                            onLongPress != null)
+                        ? (event) {
+                            if ((event.buttons & kSecondaryMouseButton) != 0) {
+                              onLongPress!(bubbleKey);
+                            }
+                          }
+                        : null,
+                    child: GestureDetector(
+                      key: bubbleKey,
+                      onLongPress:
+                          (!_useDesktopContextMenu && onLongPress != null)
                               ? () => onLongPress!(bubbleKey)
                               : null,
-                          child: Container(
-                            margin: const EdgeInsets.symmetric(vertical: 0),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: _kBubbleHorizontalPadding,
-                                vertical: _kBubbleVerticalPadding),
-                            decoration: MoeG2Decoration(
-                              radius: bubbleRadius,
-                              color: bubbleColor,
-                            ),
-                            // Non-image content (text, audio, etc.)
-                            child: hasBlocks
-                                ? _buildNonImageBlocksContent(context, blocks, fg)
-                                : Builder(
-                                    builder: (context) {
-                                      final text = message.displayText;
-                                      if (text.trim().isEmpty) {
-                                        // 空消息占位符（用于调试，避免完全不显示）
-                                        return Text(
-                                          '[空消息]',
-                                          style: TextStyle(
-                                            color: fg.withValues(alpha: 0.5),
-                                            height: 1.42,
-                                            fontSize: fontSize - 1,
-                                            fontStyle: FontStyle.italic,
-                                          ),
-                                        );
-                                      }
-                                      return _buildMessageText(
-                                        text,
-                                        TextStyle(
-                                          color: fg,
-                                          height: 1.42,
-                                          fontSize: fontSize,
-                                        ),
-                                      );
-                                    },
-                                  ),
-                          ),
+                      child: Container(
+                        key: ValueKey<String>('message_bubble_${message.id}'),
+                        margin: const EdgeInsets.symmetric(vertical: 0),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: _kBubbleHorizontalPadding,
+                            vertical: _kBubbleVerticalPadding),
+                        decoration: MoeG2Decoration(
+                          radius: bubbleRadius,
+                          color: bubbleColor,
                         ),
-                      );
-                    },
-                  ),
-              ],
-            ),
-          ),
-          if (isMe && !hideUserAvatar) ...[
-            const SizedBox(width: 8),
-            if (showAvatar)
-              _Avatar(avatarUrl: userAvatar, isUser: true)
-            else
-              const SizedBox(width: 42),
+                        // Non-image content (text, audio, etc.)
+                        child: hasBlocks
+                            ? _buildNonImageBlocksContent(context, blocks, fg)
+                            : Builder(
+                                builder: (context) {
+                                  final text = message.displayText;
+                                  if (text.trim().isEmpty) {
+                                    // 空消息占位符（用于调试，避免完全不显示）
+                                    return Text(
+                                      '[空消息]',
+                                      style: TextStyle(
+                                        color: fg.withValues(alpha: 0.5),
+                                        height: 1.42,
+                                        fontSize: fontSize - 1,
+                                        fontStyle: FontStyle.italic,
+                                      ),
+                                    );
+                                  }
+                                  return _buildMessageText(
+                                    text,
+                                    TextStyle(
+                                      color: fg,
+                                      height: 1.42,
+                                      fontSize: fontSize,
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+                    ),
+                  );
+                },
+              ),
           ],
-        ],
+        ),
       ),
     );
   }
@@ -524,8 +523,7 @@ class MessageBubble extends ConsumerWidget {
       }
     }
 
-    final heroTag =
-        isSticker ? 'sticker_${block.id}' : 'image_${block.id}';
+    final heroTag = isSticker ? 'sticker_${block.id}' : 'image_${block.id}';
 
     return Padding(
       padding:
@@ -534,8 +532,7 @@ class MessageBubble extends ConsumerWidget {
         builder: (context) {
           final mediaKey = GlobalKey(debugLabel: 'media_${block.id}');
           return Listener(
-            onPointerDown: (_useDesktopContextMenu &&
-                    onMediaLongPress != null)
+            onPointerDown: (_useDesktopContextMenu && onMediaLongPress != null)
                 ? (event) {
                     if ((event.buttons & kSecondaryMouseButton) != 0) {
                       onMediaLongPress!(mediaKey, block);
@@ -547,8 +544,7 @@ class MessageBubble extends ConsumerWidget {
               onTap: imageProvider != null
                   ? () => _showImagePreview(context, imageProvider!, heroTag)
                   : null,
-              onLongPress: (!_useDesktopContextMenu &&
-                      onMediaLongPress != null)
+              onLongPress: (!_useDesktopContextMenu && onMediaLongPress != null)
                   ? () => onMediaLongPress!(mediaKey, block)
                   : null,
               child: Hero(
@@ -677,7 +673,224 @@ class MessageBubble extends ConsumerWidget {
   }
 }
 
+/// 头像列（头像 + 与气泡的间隔）
+///
+/// showAvatar=false 时仍保留同宽占位，确保连续消息对齐不抖动。
+class _AvatarSlot extends StatelessWidget {
+  static const double _kAvatarGap = 8.0;
+  static const double fallbackWidth = _Avatar.kSize + _kAvatarGap;
+
+  final bool showAvatar;
+  final bool isUser;
+  final Widget avatar;
+  final bool gapOnLeft;
+
+  const _AvatarSlot({
+    required this.showAvatar,
+    required this.isUser,
+    required this.avatar,
+    required this.gapOnLeft,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final placeholder = IgnorePointer(
+      child: Opacity(
+        opacity: 0,
+        child: _Avatar(avatarUrl: null, isUser: isUser),
+      ),
+    );
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (gapOnLeft) const SizedBox(width: _kAvatarGap),
+        showAvatar ? avatar : placeholder,
+        if (!gapOnLeft) const SizedBox(width: _kAvatarGap),
+      ],
+    );
+  }
+}
+
+/// 根据头像列实际渲染宽度，限制气泡最大宽度。
+///
+/// 规则：
+/// - 默认双头像：左右都预留头像列宽度
+/// - 隐藏用户头像：仅预留左侧头像列
+class _AvatarAwareBubbleRow extends StatefulWidget {
+  static const double _kMinBubbleMaxWidth = 120.0;
+  static const double _kFailedIndicatorWidth = 24.0; // 20 + 右侧间距 4
+
+  final String debugId;
+  final bool isMe;
+  final bool hideUserAvatar;
+  final bool showLeftSlot;
+  final bool showRightSlot;
+  final bool hasFailedIndicator;
+  final Widget? failedIndicator;
+  final Widget leftSlot;
+  final Widget rightSlot;
+  final Widget bubbleChild;
+
+  const _AvatarAwareBubbleRow({
+    required this.debugId,
+    required this.isMe,
+    required this.hideUserAvatar,
+    required this.showLeftSlot,
+    required this.showRightSlot,
+    required this.hasFailedIndicator,
+    required this.failedIndicator,
+    required this.leftSlot,
+    required this.rightSlot,
+    required this.bubbleChild,
+  });
+
+  @override
+  State<_AvatarAwareBubbleRow> createState() => _AvatarAwareBubbleRowState();
+}
+
+class _AvatarAwareBubbleRowState extends State<_AvatarAwareBubbleRow> {
+  final GlobalKey _leftSlotKey = GlobalKey(debugLabel: 'left_avatar_slot');
+  final GlobalKey _rightSlotKey = GlobalKey(debugLabel: 'right_avatar_slot');
+
+  double? _leftSlotWidth;
+  double? _rightSlotWidth;
+  bool _measureScheduled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleSlotMeasure();
+  }
+
+  @override
+  void didUpdateWidget(covariant _AvatarAwareBubbleRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.showLeftSlot != widget.showLeftSlot ||
+        oldWidget.showRightSlot != widget.showRightSlot ||
+        oldWidget.hideUserAvatar != widget.hideUserAvatar) {
+      _scheduleSlotMeasure();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    _scheduleSlotMeasure();
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final leftReserve = _resolvedLeftSlotWidth;
+        final rightReserve =
+            widget.hideUserAvatar ? 0.0 : _resolvedRightSlotWidth;
+        final failedReserve = (widget.isMe && widget.hasFailedIndicator)
+            ? _AvatarAwareBubbleRow._kFailedIndicatorWidth
+            : 0.0;
+        final maxBubbleWidth =
+            (constraints.maxWidth - leftReserve - rightReserve - failedReserve)
+                .clamp(
+                  _AvatarAwareBubbleRow._kMinBubbleMaxWidth,
+                  constraints.maxWidth,
+                )
+                .toDouble();
+
+        Widget bubbleArea = ConstrainedBox(
+          key: ValueKey<String>(
+            'message_bubble_constraints_${widget.debugId}',
+          ),
+          constraints: BoxConstraints(maxWidth: maxBubbleWidth),
+          child: widget.bubbleChild,
+        );
+
+        if (widget.isMe &&
+            widget.hasFailedIndicator &&
+            widget.failedIndicator != null) {
+          bubbleArea = Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              widget.failedIndicator!,
+              bubbleArea,
+            ],
+          );
+        }
+
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (widget.showLeftSlot)
+              KeyedSubtree(
+                key: _leftSlotKey,
+                child: widget.leftSlot,
+              ),
+            Flexible(
+              child: Align(
+                alignment: widget.isMe ? Alignment.topRight : Alignment.topLeft,
+                child: bubbleArea,
+              ),
+            ),
+            if (widget.showRightSlot)
+              KeyedSubtree(
+                key: _rightSlotKey,
+                child: widget.rightSlot,
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  double get _resolvedLeftSlotWidth =>
+      _leftSlotWidth ?? _rightSlotWidth ?? _AvatarSlot.fallbackWidth;
+
+  double get _resolvedRightSlotWidth =>
+      _rightSlotWidth ?? _leftSlotWidth ?? _AvatarSlot.fallbackWidth;
+
+  void _scheduleSlotMeasure() {
+    if (_measureScheduled) return;
+    _measureScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _measureScheduled = false;
+      if (!mounted) return;
+      _syncSlotWidth();
+    });
+  }
+
+  void _syncSlotWidth() {
+    final measuredLeft = _measureWidth(_leftSlotKey);
+    final measuredRight = _measureWidth(_rightSlotKey);
+
+    final nextLeft = measuredLeft ?? _leftSlotWidth;
+    final nextRight = measuredRight ?? _rightSlotWidth;
+
+    if (_near(nextLeft, _leftSlotWidth) && _near(nextRight, _rightSlotWidth)) {
+      return;
+    }
+
+    setState(() {
+      _leftSlotWidth = nextLeft;
+      _rightSlotWidth = nextRight;
+    });
+  }
+
+  double? _measureWidth(GlobalKey key) {
+    final context = key.currentContext;
+    if (context == null) return null;
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) return null;
+    return renderObject.size.width;
+  }
+
+  bool _near(double? a, double? b) {
+    if (a == null && b == null) return true;
+    if (a == null || b == null) return false;
+    return (a - b).abs() < 0.1;
+  }
+}
+
 class _Avatar extends StatelessWidget {
+  static const double kSize = 42.0;
+
   final String? avatarUrl;
   final bool isUser;
   const _Avatar({required this.avatarUrl, this.isUser = false});
@@ -685,7 +898,7 @@ class _Avatar extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
 
-    // 头像大小：42px
+    // 头像大小
     Widget buildFallback() => Center(
         child: Icon(isUser ? Icons.person : Icons.face,
             color: colors.muted, size: 22));
@@ -745,8 +958,8 @@ class _Avatar extends StatelessWidget {
 
     final trimmedUrl = avatarUrl?.trim();
     return Container(
-      width: 42,
-      height: 42,
+      width: kSize,
+      height: kSize,
       margin: const EdgeInsets.only(right: 0, top: 0),
       child: MoeG2ClipRRect(
         radius: context.skin.bubbleRadius,

@@ -30,7 +30,7 @@ class ChatRequestParams {
   final Map<String, dynamic>? customConfig;
   final List<Map<String, dynamic>> messages;
   final Map<String, dynamic> toolPrefs;
-  final double temperature;
+  final double? temperature;
   final String backendApiKey;
 
   const ChatRequestParams({
@@ -40,7 +40,7 @@ class ChatRequestParams {
     this.customConfig,
     required this.messages,
     required this.toolPrefs,
-    required this.temperature,
+    this.temperature,
     required this.backendApiKey,
   });
 }

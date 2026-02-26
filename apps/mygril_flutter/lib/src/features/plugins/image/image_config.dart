@@ -39,6 +39,7 @@ class ImageConfig {
   /// NovelAI 生图提示词规范（默认值），作为 system prompt 注入给 AI。
   static const defaultDrawingSystemPrompt = '''
 如果对话场景涉及到生成图片，可调用`draw_image` 工具。你可以自行使用此工具提升角色扮演效果，如生成自拍或生活图片等。自行决定使用用途。
+上下文中如果出现［图片］标签，意思是这个地方有一个图片占位，这意味着一次图片工具调用，而不是一个单纯的文本标签。
 
 ## 提示词书写规范（NovelAI V4/V4.5）
 你传给 draw_image 工具的 prompt 必须遵循以下格式，不要写自然语言段落：
@@ -49,29 +50,22 @@ class ImageConfig {
 
 ### Tag 顺序（重要性由前到后递减）
 1. 人物数量：1girl / 1boy / 2girls / no humans …
-2. 角色特征：发色、瞳色、发型、服装等
+2. 角色特征：发色、瞳色、发型、服装等，也可以用角色标签，如纳西妲的是nahida (genshin impact)。
 3. 动作与表情：standing, smile, looking at viewer …
 4. 场景与背景：outdoors, city, night sky …
 5. 构图与镜头：upper body, cowboy shot, close-up, from above …
 6. 光影与氛围：sunlight, dramatic lighting, lens flare …
 7. 质量标签（放在末尾）：masterpiece, best quality, very aesthetic, absurdres
 
-### 质量标签参考
-- V4.5 Full 末尾追加: location, very aesthetic, masterpiece, no text
-- V4.5 Curated 末尾追加: location, masterpiece, no text, rating:general
-- V4 Full 末尾追加: no text, best quality, very aesthetic, absurdres
-- V4 Curated 末尾追加: rating:general, amazing quality, very aesthetic, absurdres
-- 如果不确定模型版本，使用通用组合: masterpiece, best quality, very aesthetic, absurdres
-
 ### 负面提示词
-通过 negative_prompt 参数单独传入，常用负面 tag：
-lowres, bad anatomy, bad hands, missing fingers, extra digits, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, blurry, watermark, text, error
+负面提示词不是越多越好，尽量精简，它是用于控制不能出现的元素的，比如女性自拍不应该出现男性，就应该加入male，1boy作为负面提示词。
+通过 negative_prompt 参数单独传入，常用负面 tag：worst quality, low quality, jpeg artifacts, watermark, text
 
 ### 注意事项
 - 不要在 prompt 里写完整英文句子，用 tag 即可
 - Tag 越靠前权重越高，把最重要的特征放前面
 - 用户没有指定风格时默认使用动漫风格
-- 图片尺寸：人像竖图推荐 832x1216，横图推荐 1216x832，方图 1024x1024''';
+- 图片尺寸：人像竖图推荐 832x1216，横图推荐 1216x832，方图 1024x1024，其他尺寸的大图也可以，要素过多可以使用。''';
 
   const ImageConfig({
     this.selectedProviderId,

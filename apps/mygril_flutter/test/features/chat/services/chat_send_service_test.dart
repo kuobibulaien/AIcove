@@ -2,9 +2,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aicove_flutter/src/core/models/message_block.dart';
+import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_send_service.dart';
+import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -15,6 +17,62 @@ void main() {
         content: text,
         createdAt: t,
       );
+
+  AppSettings fakeSettings({
+    required String defaultModelName,
+    List<String>? defaultChatModels,
+    String? defaultVisionModel,
+    Map<String, ModelConfig>? modelConfigs,
+  }) {
+    return AppSettings(
+      ttsEnabled: true,
+      defaultModelName: defaultModelName,
+      defaultPersonaPrompt: '',
+      modelList: const <String>[],
+      allKnownModels: const <String>[],
+      modelDisplayNames: const <String, String>{},
+      modelTypes: const <String, String>{},
+      modelConfigs: modelConfigs ?? const <String, ModelConfig>{},
+      apiKey: '',
+      apiBaseUrl: 'https://api.openai.com/v1',
+      imageGenerationEnabled: false,
+      maxFileUploadMB: 10,
+      historyMessageLimit: 100,
+      customModels: const <CustomModel>[],
+      providers: const <ProviderAuth>[
+        ProviderAuth(
+          id: 'openai',
+          apiKeys: <String>['test-key'],
+          apiBaseUrl: 'https://api.openai.com/v1',
+        ),
+      ],
+      modelProviderMap: const <String, String>{
+        'openai:gpt-4o': 'openai',
+        'openai:gpt-4o-mini': 'openai',
+        'openai:gpt-4.1-mini': 'openai',
+        'openai:gpt-3.5-turbo': 'openai',
+        'gpt-4o': 'openai',
+        'gpt-4o-mini': 'openai',
+        'gpt-4.1-mini': 'openai',
+        'gpt-3.5-turbo': 'openai',
+      },
+      backendApiKey: '',
+      messageChunkingEnabled: false,
+      messageFormatConfig: const MessageFormatConfig(),
+      textScaleFactor: 1.0,
+      uiScaleFactor: 1.0,
+      imagePreviewScale: 1.0,
+      autoReplySettings: const AutoReplySettings(),
+      globalBackgroundColor: GlobalBackgroundColor.white,
+      chatBackgroundColor: ChatBackgroundColor.defaultColor,
+      isDarkMode: false,
+      useSystemTheme: true,
+      accentColor: 'FC96AA',
+      hideUserAvatar: true,
+      defaultChatModels: defaultChatModels ?? <String>[defaultModelName],
+      defaultVisionModel: defaultVisionModel,
+    );
+  }
 
   test('prepareHistory keeps only messages after contextStartMessageId', () {
     final now = DateTime.now();
@@ -108,6 +166,23 @@ void main() {
     expect(history.map((m) => m.id).toList(), ['m2', 'm3', 'm4']);
   });
 
+  test('createUserMessage keeps both image and text when sent together', () {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final service = container.read(chatSendServiceProvider);
+
+    final msg = service.createUserMessage(
+      text: '这是图片说明文字',
+      imagePath: '/tmp/demo.png',
+    );
+
+    final blocks = msg.blocks;
+    expect(blocks, isNotNull);
+    expect(blocks!.whereType<ImageBlock>().length, 1);
+    expect(blocks.whereType<TextBlock>().length, 1);
+    expect(blocks.whereType<TextBlock>().first.content, '这是图片说明文字');
+  });
+
   test('non-vision description reuses image prompt before vision fallback',
       () async {
     var visionCalled = false;
@@ -149,6 +224,27 @@ void main() {
 
     expect(description, 'vision generated description');
     expect(visionCalled, isTrue);
+  });
+
+  test('non-vision description reuses cached description', () async {
+    var visionCalled = false;
+    final block = ImageBlock(
+      messageId: 'msg_2_cache',
+      localPath: '/tmp/demo2.png',
+    );
+
+    final description =
+        await ChatSendService.resolveImageDescriptionForNonVision(
+      imageBlock: block,
+      cachedDescription: '缓存描述',
+      translateWithVision: () async {
+        visionCalled = true;
+        return 'vision generated description';
+      },
+    );
+
+    expect(description, '缓存描述');
+    expect(visionCalled, isFalse);
   });
 
   test('non-vision assistant image should not inject placeholder text', () {
@@ -199,5 +295,83 @@ void main() {
     expect(prompt, contains('<internal_media_events>'));
     expect(prompt, contains('assistant_image_sent'));
     expect(prompt, contains("prompt=\"1girl, smiling, outdoor\""));
+  });
+
+  test('vision translation request uses system prompt + single image only', () {
+    final messages = ChatSendService.buildVisionTranslationMessages(
+      imagePart: const <String, dynamic>{
+        'type': 'image_url',
+        'image_url': <String, dynamic>{'url': 'https://example.com/cat.jpg'},
+      },
+    );
+
+    expect(messages.length, 2);
+    expect(messages.first['role'], 'system');
+    expect(
+      messages.first['content'],
+      ChatSendService.visionDescriptionSystemPrompt,
+    );
+    expect(messages[1]['role'], 'user');
+    final content = messages[1]['content'] as List<dynamic>;
+    expect(content.length, 1);
+    expect((content.first as Map<String, dynamic>)['type'], 'image_url');
+  });
+
+  test('image send chain skips vision assistant when chat model has vision',
+      () {
+    final settings = fakeSettings(
+      defaultModelName: 'openai:gpt-4.1-mini',
+      defaultChatModels: const <String>['openai:gpt-4.1-mini'],
+      defaultVisionModel: 'openai:gpt-4o-mini',
+      modelConfigs: const <String, ModelConfig>{
+        'openai:gpt-4.1-mini': ModelConfig(
+          chatCapabilities: <String>['vision'],
+        ),
+      },
+    );
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final service = container.read(chatSendServiceProvider);
+
+    final chain = service.buildImageSendModelRefs(settings);
+
+    expect(chain, <String>['openai:gpt-4.1-mini']);
+    expect(chain, isNot(contains('openai:gpt-4o-mini')));
+  });
+
+  test(
+      'image send chain prepends vision assistant when chat model has no vision',
+      () {
+    final settings = fakeSettings(
+      defaultModelName: 'openai:gpt-3.5-turbo',
+      defaultChatModels: const <String>['openai:gpt-3.5-turbo'],
+      defaultVisionModel: 'openai:gpt-4o-mini',
+    );
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final service = container.read(chatSendServiceProvider);
+
+    final chain = service.buildImageSendModelRefs(settings);
+
+    expect(chain.first, 'openai:gpt-4o-mini');
+    expect(chain, contains('openai:gpt-3.5-turbo'));
+  });
+
+  test(
+      'image send chain skips vision assistant when capability is auto-detected',
+      () {
+    final settings = fakeSettings(
+      defaultModelName: 'openai:gpt-4o',
+      defaultChatModels: const <String>['openai:gpt-4o'],
+      defaultVisionModel: 'openai:gpt-4o-mini',
+    );
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final service = container.read(chatSendServiceProvider);
+
+    final chain = service.buildImageSendModelRefs(settings);
+
+    expect(chain, <String>['openai:gpt-4o']);
+    expect(chain, isNot(contains('openai:gpt-4o-mini')));
   });
 }

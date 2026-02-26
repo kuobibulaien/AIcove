@@ -9,7 +9,7 @@ import 'package:path/path.dart' as p;
 import '../../../theme/tokens.dart';
 import '../../effects/smooth_clip.dart';
 
-/// 图片附件预览
+/// 图片附件预览（紧凑悬浮缩略图）
 class ImageAttachmentPreview extends StatelessWidget {
   final String imagePath;
   final VoidCallback onRemove;
@@ -22,79 +22,45 @@ class ImageAttachmentPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.moeColors;
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: colors.surface,
-        border: Border(top: BorderSide(color: colors.border, width: 1)),
-      ),
-      child: Row(
-        children: [
-          _buildThumbnail(colors),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '图片附件',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: MoeFontWeights.emphasis,
-                    color: colors.text,
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.only(left: 16, top: 8, right: 16),
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            MoeG2ClipRRect(
+              radius: 8,
+              child: Image.file(
+                File(imagePath),
+                width: 56,
+                height: 56,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Container(
+                  width: 56,
+                  height: 56,
+                  decoration: MoeG2Decoration(
+                    radius: 8,
+                    color: Colors.grey.shade300,
                   ),
+                  child: const Icon(Icons.broken_image,
+                      color: Colors.grey, size: 20),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  '点击发送按钮发送图片',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: colors.text.withValues(alpha: 0.6),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildThumbnail(MoeColors colors) {
-    return Stack(
-      children: [
-        MoeG2ClipRRect(
-          radius: 8,
-          child: Image.file(
-            File(imagePath),
-            width: 80,
-            height: 80,
-            fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => Container(
-              width: 80,
-              height: 80,
-              decoration: MoeG2Decoration(
-                radius: 8,
-                color: Colors.grey.shade300,
               ),
-              child: const Icon(Icons.broken_image, color: Colors.grey),
             ),
-          ),
+            Positioned(
+              top: -6,
+              right: -6,
+              child: _RemoveButton(onTap: onRemove),
+            ),
+          ],
         ),
-        Positioned(
-          top: -4,
-          right: -4,
-          child: _RemoveButton(onTap: onRemove),
-        ),
-      ],
+      ),
     );
   }
 }
 
-/// 文件附件预览
+/// 文件附件预览（紧凑悬浮 chip）
 class FileAttachmentPreview extends StatelessWidget {
   final String filePath;
   final String? fileName;
@@ -113,68 +79,67 @@ class FileAttachmentPreview extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
     final displayName = fileName ?? p.basename(filePath);
-    final sizeText = fileSizeBytes != null ? _formatFileSize(fileSizeBytes!) : '未知大小';
+    final sizeText =
+        fileSizeBytes != null ? _formatFileSize(fileSizeBytes!) : null;
 
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: colors.surface,
-        border: Border(top: BorderSide(color: colors.border, width: 1)),
-      ),
-      child: Row(
-        children: [
-          _buildIcon(colors),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  displayName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: MoeFontWeights.emphasis,
-                    color: colors.text,
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.only(left: 16, top: 8, right: 16),
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Container(
+              constraints: const BoxConstraints(maxWidth: 200),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: MoeG2Decoration(
+                radius: 10,
+                color: colors.surfaceAlt,
+                border: Border.all(color: colors.borderLight, width: 0.5),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.insert_drive_file_outlined,
+                      color: colors.muted, size: 20),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          displayName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: MoeFontWeights.emphasis,
+                            color: colors.text,
+                          ),
+                        ),
+                        if (sizeText != null)
+                          Text(
+                            sizeText,
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: colors.muted,
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '附件文件 · $sizeText',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: colors.text.withValues(alpha: 0.6),
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+            Positioned(
+              top: -6,
+              right: -6,
+              child: _RemoveButton(onTap: onRemove),
+            ),
+          ],
+        ),
       ),
-    );
-  }
-
-  Widget _buildIcon(MoeColors colors) {
-    return Stack(
-      children: [
-        Container(
-          width: 80,
-          height: 80,
-          decoration: MoeG2Decoration(
-            radius: 8,
-            color: colors.surfaceAlt,
-            border: Border.all(color: colors.borderLight, width: 0.5),
-          ),
-          child: Icon(Icons.insert_drive_file_outlined, color: colors.muted, size: 34),
-        ),
-        Positioned(
-          top: -4,
-          right: -4,
-          child: _RemoveButton(onTap: onRemove),
-        ),
-      ],
     );
   }
 
@@ -202,13 +167,13 @@ class _RemoveButton extends StatelessWidget {
         onTap: onTap,
         customBorder: const CircleBorder(),
         child: Container(
-          width: 24,
-          height: 24,
+          width: 20,
+          height: 20,
           decoration: BoxDecoration(
             color: Colors.black.withValues(alpha: 0.6),
             shape: BoxShape.circle,
           ),
-          child: const Icon(Icons.close, size: 16, color: Colors.white),
+          child: const Icon(Icons.close, size: 12, color: Colors.white),
         ),
       ),
     );

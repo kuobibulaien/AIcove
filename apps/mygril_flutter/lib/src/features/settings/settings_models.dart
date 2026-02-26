@@ -907,7 +907,7 @@ const double kMaxImagePreviewScale = 1.5;
 class AppSettings {
   final bool ttsEnabled;
   final String defaultModelName;
-  final double temperature;
+  final double? temperature;
   final String defaultPersonaPrompt;
   final List<String> modelList;
   final List<String> allKnownModels;
@@ -966,7 +966,7 @@ class AppSettings {
   const AppSettings({
     required this.ttsEnabled,
     required this.defaultModelName,
-    required this.temperature,
+    this.temperature,
     required this.defaultPersonaPrompt,
     required this.modelList,
     required this.allKnownModels,
