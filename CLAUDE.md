@@ -48,5 +48,5 @@
 # 项目背景信息
 开始工作前必须要先大致搞明白项目基础状况。
 本目录下的readme.md，工作前必须阅读！Please always refer to the root README.md file to understand the project structure, installation steps, and goals. Treat the content of README.md as part of this context.
-apps\aicove_flutter\docs\公共组件总览.md，在涉及修改前端界面时也是必读。
+公共组件总览.md，在涉及修改前端界面时也是必读。
 

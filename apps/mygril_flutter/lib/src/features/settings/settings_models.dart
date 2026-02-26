@@ -963,6 +963,10 @@ class AppSettings {
   final EnhancedDialogueSettings enhancedDialogueSettings;
   final CallFlowSettings callFlowSettings;
 
+  /// 调试用：流式分段逐条投递延迟（秒）
+  /// 0 表示关闭延迟。
+  final double streamSegmentDelaySeconds;
+
   const AppSettings({
     required this.ttsEnabled,
     required this.defaultModelName,
@@ -999,6 +1003,7 @@ class AppSettings {
     this.skipVisionCompatDialog = false,
     this.enhancedDialogueSettings = const EnhancedDialogueSettings(),
     this.callFlowSettings = const CallFlowSettings(),
+    this.streamSegmentDelaySeconds = 0,
     this.userAvatar,
     this.userName,
   });
@@ -1039,6 +1044,7 @@ class AppSettings {
     bool? skipVisionCompatDialog,
     EnhancedDialogueSettings? enhancedDialogueSettings,
     CallFlowSettings? callFlowSettings,
+    double? streamSegmentDelaySeconds,
     String? userAvatar,
     String? userName,
   }) =>
@@ -1083,6 +1089,8 @@ class AppSettings {
         enhancedDialogueSettings:
             enhancedDialogueSettings ?? this.enhancedDialogueSettings,
         callFlowSettings: callFlowSettings ?? this.callFlowSettings,
+        streamSegmentDelaySeconds:
+            streamSegmentDelaySeconds ?? this.streamSegmentDelaySeconds,
         userAvatar: userAvatar ?? this.userAvatar,
         userName: userName ?? this.userName,
       );

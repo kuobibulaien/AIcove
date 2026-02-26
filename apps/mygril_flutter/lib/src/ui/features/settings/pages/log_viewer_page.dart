@@ -204,8 +204,7 @@ class _LogViewerPageState extends State<LogViewerPage> {
 
     if (turns.isEmpty) {
       return Center(
-        child:
-            Text('暂无对话日志', style: TextStyle(color: colors.textSecondary)),
+        child: Text('暂无对话日志', style: TextStyle(color: colors.textSecondary)),
       );
     }
 
@@ -288,12 +287,11 @@ class _LogViewerPageState extends State<LogViewerPage> {
                     _saveTypeFilter(filter);
                   },
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 6),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
-                      color: isSelected
-                          ? chipColor
-                          : colors.componentBackground,
+                      color:
+                          isSelected ? chipColor : colors.componentBackground,
                       borderRadius: BorderRadius.circular(16),
                       border: Border.all(
                         color: isSelected ? chipColor : colors.borderLight,
@@ -304,8 +302,7 @@ class _LogViewerPageState extends State<LogViewerPage> {
                       filter.label,
                       style: TextStyle(
                         fontSize: 12,
-                        color:
-                            isSelected ? Colors.white : colors.textSecondary,
+                        color: isSelected ? Colors.white : colors.textSecondary,
                         fontWeight: isSelected
                             ? MoeFontWeights.emphasis
                             : MoeFontWeights.normal,
@@ -336,16 +333,15 @@ class _LogViewerPageState extends State<LogViewerPage> {
                     _saveLevelFilter(filter);
                   },
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 6),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
                       color: isSelected
                           ? colors.primary
                           : colors.componentBackground,
                       borderRadius: BorderRadius.circular(16),
                       border: Border.all(
-                        color:
-                            isSelected ? colors.primary : colors.borderLight,
+                        color: isSelected ? colors.primary : colors.borderLight,
                         width: 1,
                       ),
                     ),
@@ -353,8 +349,7 @@ class _LogViewerPageState extends State<LogViewerPage> {
                       filter.label,
                       style: TextStyle(
                         fontSize: 12,
-                        color:
-                            isSelected ? Colors.white : colors.textSecondary,
+                        color: isSelected ? Colors.white : colors.textSecondary,
                         fontWeight: isSelected
                             ? MoeFontWeights.emphasis
                             : MoeFontWeights.normal,
@@ -445,11 +440,13 @@ class _LogViewerPageState extends State<LogViewerPage> {
     final requestLog = round.requestLog;
     final toolLog = round.toolLog;
     final rawContext = requestLog?.rawContext;
+    final rawResponseBody = requestLog?.rawResponseBody;
     final rawToolCalls = toolLog?.rawToolCalls ?? requestLog?.rawToolCalls;
     final rawToolResults = toolLog?.rawToolResults;
 
     // prettyJson 内部会自动截断 base64 图片数据，不再卡死
     final contextText = prettyJson(rawContext) ?? '(空)';
+    final rawResponseJson = prettyJson(rawResponseBody);
     final toolCallsText = prettyJson(rawToolCalls) ?? '(无)';
     final toolResultsText = prettyJson(rawToolResults) ?? '(无)';
     final aiReply = requestLog?.rawAiResponse?.trim().isNotEmpty == true
@@ -488,8 +485,7 @@ class _LogViewerPageState extends State<LogViewerPage> {
               ),
               const Spacer(),
               Text(
-                formatTime(
-                    (requestLog ?? toolLog)?.time ?? DateTime.now()),
+                formatTime((requestLog ?? toolLog)?.time ?? DateTime.now()),
                 style: TextStyle(
                   color: colors.muted,
                   fontSize: 10,
@@ -512,6 +508,13 @@ class _LogViewerPageState extends State<LogViewerPage> {
             title: '发送给 AI 的上下文（完整消息列表）',
             content: contextText,
           ),
+          if (rawResponseJson != null && rawResponseJson.trim().isNotEmpty) ...[
+            const SizedBox(height: 6),
+            _buildConversationSection(
+              title: 'AI 原始 JSON 响应（模型回包）',
+              content: rawResponseJson,
+            ),
+          ],
           if (toolCallCount > 0) ...[
             const SizedBox(height: 6),
             _buildConversationSection(
@@ -652,18 +655,18 @@ class _LogViewerPageState extends State<LogViewerPage> {
           ),
           const SizedBox(height: 4),
           ...steps.asMap().entries.map(
-            (e) => Padding(
-              padding: const EdgeInsets.only(bottom: 2),
-              child: Text(
-                '${e.key + 1}. ${e.value}',
-                style: TextStyle(
-                  color: colors.textSecondary,
-                  fontSize: 10,
-                  height: 1.35,
+                (e) => Padding(
+                  padding: const EdgeInsets.only(bottom: 2),
+                  child: Text(
+                    '${e.key + 1}. ${e.value}',
+                    style: TextStyle(
+                      color: colors.textSecondary,
+                      fontSize: 10,
+                      height: 1.35,
+                    ),
+                  ),
                 ),
               ),
-            ),
-          ),
         ],
       ),
     );
@@ -748,12 +751,8 @@ class _LogViewerPageState extends State<LogViewerPage> {
                   Padding(
                     padding: const EdgeInsets.only(top: 2),
                     child: Icon(
-                      isSelected
-                          ? Icons.check_circle
-                          : Icons.circle_outlined,
-                      color: isSelected
-                          ? colors.primary
-                          : colors.textSecondary,
+                      isSelected ? Icons.check_circle : Icons.circle_outlined,
+                      color: isSelected ? colors.primary : colors.textSecondary,
                       size: 18,
                     ),
                   ),

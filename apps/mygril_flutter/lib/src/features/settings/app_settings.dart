@@ -168,7 +168,7 @@ _ModelMeta _calculateModelMeta(
     }
     if (visible.isNotEmpty) return visible.first;
     if (allKnown.isNotEmpty) return allKnown.first;
-    return 'deepseek-chat';
+    return 'deepseek-reasoner';
   }();
 
   return _ModelMeta(
@@ -270,6 +270,10 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
           (data['call_flow_settings'] as Map).cast<String, dynamic>(),
         )
       : const CallFlowSettings();
+  final streamSegmentDelaySeconds =
+      ((data['stream_segment_delay_seconds'] as num?)?.toDouble() ?? 0.0)
+          .clamp(0.0, 5.0)
+          .toDouble();
   final chatBackgroundColor = ChatBackgroundColor.fromValue(
     data['chat_background_color'] as String?,
   );
@@ -310,9 +314,10 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     defaultModelName: meta.defaultModel,
     // temperature 不设置，默认 null → 不发送，由云端使用默认值
     defaultPersonaPrompt: '',
-    modelList: meta.visible.isEmpty ? <String>['deepseek-chat'] : meta.visible,
+    modelList:
+        meta.visible.isEmpty ? <String>['deepseek-reasoner'] : meta.visible,
     allKnownModels:
-        meta.allKnown.isEmpty ? <String>['deepseek-chat'] : meta.allKnown,
+        meta.allKnown.isEmpty ? <String>['deepseek-reasoner'] : meta.allKnown,
     modelDisplayNames: displayNames,
     modelTypes: modelTypes,
     modelConfigs: modelConfigs,
@@ -344,6 +349,7 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     skipVisionCompatDialog: skipVisionCompatDialog,
     enhancedDialogueSettings: enhancedDialogueSettings,
     callFlowSettings: callFlowSettings,
+    streamSegmentDelaySeconds: streamSegmentDelaySeconds,
   );
 }
 
@@ -835,6 +841,13 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
   Future<void> updateCallFlowSettings(CallFlowSettings settings) async {
     await _commit(
         () => _api.updatePartial({'call_flow_settings': settings.toJson()}));
+  }
+
+  Future<void> setStreamSegmentDelaySeconds(double seconds) async {
+    final value = seconds.clamp(0.0, 5.0);
+    await _commit(
+      () => _api.updatePartial({'stream_segment_delay_seconds': value}),
+    );
   }
 
   Future<void> setGlobalBackgroundColor(GlobalBackgroundColor color) async {

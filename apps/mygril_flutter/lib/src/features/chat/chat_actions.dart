@@ -14,13 +14,17 @@
 library;
 
 import 'dart:convert';
+import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'data/auto_reply_trigger.dart';
 import 'data/analyzer_scheduler.dart';
 import 'data/enhanced_dialogue_service.dart';
+import 'id_gen.dart' show genId;
 import 'services/chat_send_service.dart';
+import 'services/chat_types.dart'
+    show ApiCallResult, AssistantMessageBuildResult;
 import 'services/chat_tts_handler.dart';
 import 'domain/conversation.dart';
 import 'domain/message.dart';
@@ -30,7 +34,9 @@ import 'chat_providers.dart';
 import '../../core/app_logger.dart';
 import '../../core/database/database_provider.dart';
 import '../../core/models/message_block.dart';
+import '../../core/models/block_status.dart';
 import '../../core/services/attachment_picker_service.dart';
+import '../../core/utils/message_formatter.dart';
 
 // 重新导出公共类型，保持向后兼容
 export 'chat_providers.dart';
@@ -186,11 +192,23 @@ class ChatActions {
         convId: convId, userMsg: userMsg, displayText: text);
     if (!_isGenerationCurrent(convId, runId)) return;
 
+    _StreamPlaceholderDelivery? streamDelivery;
+    var streamCommitted = false;
     try {
       final settings = await _ref.read(appSettingsProvider.future);
       if (!_isGenerationCurrent(convId, runId)) return;
       final history = _sendService.prepareHistory(
           conv: conv, userMsg: userMsg, limit: settings.historyMessageLimit);
+      streamDelivery = _StreamPlaceholderDelivery(
+        _ref,
+        convId: convId,
+        userMsgId: userMsg.id,
+        formatConfig: settings.messageFormatConfig,
+        segmentDelay: Duration(
+          milliseconds: (settings.streamSegmentDelaySeconds * 1000).round(),
+        ),
+      );
+      await streamDelivery.start();
 
       // 构建轮询模型列表：defaultChatModels > defaultModelName
       final modelsToTry = settings.defaultChatModels.isNotEmpty
@@ -214,6 +232,23 @@ class ChatActions {
           turnId: userMsg.id,
           trace: trace,
           onToolExecuting: (toolName) => _updateStatusForTool(convId, toolName),
+          enableStreaming: true,
+          onStreamTextDelta: (delta) {
+            if (!_isGenerationCurrent(convId, runId)) return;
+            streamDelivery?.onDelta(delta);
+          },
+          onStreamTextReset: () {
+            if (!_isGenerationCurrent(convId, runId)) return;
+            streamDelivery?.onStreamReset();
+          },
+          onStreamToolCallObserved: () {
+            if (!_isGenerationCurrent(convId, runId)) return;
+            streamDelivery?.onToolCallObserved();
+          },
+          onStreamingFallback: () {
+            if (!_isGenerationCurrent(convId, runId)) return;
+            streamDelivery?.onStreamingFallback();
+          },
         ),
         settings: settings,
       );
@@ -224,20 +259,50 @@ class ChatActions {
           apiResult: result, settings: usedSettings);
       if (!_isGenerationCurrent(convId, runId)) return;
 
-      // 统一的消息交付入口：自动处理 TTS 分段发送
-      await _ttsHandler.deliverSegmentedMessages(
-        convId: convId,
-        userMsgId: userMsg.id,
-        buildResult: buildResult,
-        replyText: result.replyText,
-        pluginEvents: result.pluginEvents,
-        ttsEnabled: usedSettings.ttsEnabled,
-        trace: trace,
+      final streamFinalText = _resolveFinalStreamText(
+        result,
+        buildResult,
       );
+      final shouldCommitStream = streamDelivery.canFinalizeWith(
+        buildResult,
+        finalText: streamFinalText,
+      );
+
+      if (shouldCommitStream) {
+        await streamDelivery.finalize(
+          finalText: streamFinalText,
+        );
+        final streamTextMessageIds = streamDelivery.snapshotPlaceholderIds();
+        await _ttsHandler.deliverSegmentedMessages(
+          convId: convId,
+          userMsgId: userMsg.id,
+          buildResult: buildResult,
+          replyText: result.replyText,
+          pluginEvents: result.pluginEvents,
+          ttsEnabled: usedSettings.ttsEnabled,
+          appendAfterStreamText: true,
+          streamTextMessageIds: streamTextMessageIds,
+          trace: trace,
+        );
+        streamCommitted = true;
+      } else {
+        await streamDelivery.removePlaceholders();
+        // 统一的消息交付入口：自动处理 TTS 分段发送
+        await _ttsHandler.deliverSegmentedMessages(
+          convId: convId,
+          userMsgId: userMsg.id,
+          buildResult: buildResult,
+          replyText: result.replyText,
+          pluginEvents: result.pluginEvents,
+          ttsEnabled: usedSettings.ttsEnabled,
+          trace: trace,
+        );
+      }
       if (!_isGenerationCurrent(convId, runId)) return;
 
       trace.end(additionalMessage: '完成');
     } catch (e) {
+      await streamDelivery?.removePlaceholders();
       if (!_isGenerationCurrent(convId, runId)) return;
       trace.error('失败', metadata: {'error': e.toString()});
       trace.end(additionalMessage: '失败');
@@ -245,6 +310,10 @@ class ChatActions {
           convId: convId, userMsgId: userMsg.id);
       _setConversationError(convId, e.toString());
     } finally {
+      if (!streamCommitted) {
+        await streamDelivery?.removePlaceholders();
+      }
+      streamDelivery?.dispose();
       _finishGeneration(
         convId,
         runId,
@@ -252,6 +321,40 @@ class ChatActions {
         scheduleAnalysis: true,
       );
     }
+  }
+
+  String _resolveFinalStreamText(
+    ApiCallResult apiResult,
+    AssistantMessageBuildResult buildResult,
+  ) {
+    final processedText = apiResult.processedText.trim();
+    if (processedText.isNotEmpty) {
+      return processedText;
+    }
+    return _extractAssistantTextForStream(buildResult);
+  }
+
+  String _extractAssistantTextForStream(
+      AssistantMessageBuildResult buildResult) {
+    final parts = <String>[];
+    for (final message in buildResult.messages) {
+      if (message.role != 'assistant') continue;
+      final blocks = message.blocks;
+      if (blocks != null && blocks.isNotEmpty) {
+        for (final block in blocks.whereType<TextBlock>()) {
+          final text = block.content.trim();
+          if (text.isNotEmpty) {
+            parts.add(text);
+          }
+        }
+        continue;
+      }
+      final text = message.content.trim();
+      if (text.isNotEmpty) {
+        parts.add(text);
+      }
+    }
+    return parts.join('\n');
   }
 
   /// 发送图片消息（可附带文字说明，支持图片识别模型 + 轮询）
@@ -978,6 +1081,431 @@ class ChatActions {
       await msgRepo.softDelete(id, now, purgeAt);
     }
   }
+}
+
+class _StreamPlaceholderDelivery {
+  _StreamPlaceholderDelivery(
+    this._ref, {
+    required this.convId,
+    required this.userMsgId,
+    required this.formatConfig,
+    this.segmentDelay = Duration.zero,
+  });
+
+  static const String _kGeneratingText = '生成中...';
+  static const Duration _kFlushInterval = Duration(milliseconds: 180);
+
+  final Ref _ref;
+  final String convId;
+  final String userMsgId;
+  final MessageFormatConfig formatConfig;
+  final Duration segmentDelay;
+
+  final List<String> _activePlaceholderIds = <String>[];
+  final Set<String> _allPlaceholderIds = <String>{};
+  final List<String> _sealedChunks = <String>[];
+  final List<String> _pendingSealedChunks = <String>[];
+  final StringBuffer _activeChunkText = StringBuffer();
+  final StringBuffer _rawStreamText = StringBuffer();
+
+  Future<void> _queue = Future<void>.value();
+  Timer? _flushTimer;
+  Timer? _segmentDelayTimer;
+  bool _dirty = false;
+  bool _disposed = false;
+  bool _receivedDelta = false;
+  bool _fallbackTriggered = false;
+
+  Future<void> start() async {
+    if (_disposed || _activePlaceholderIds.isNotEmpty) return;
+    final id = genId('msg');
+    _activePlaceholderIds.add(id);
+    _allPlaceholderIds.add(id);
+    await _applyState(finalize: false);
+  }
+
+  void onDelta(String delta) {
+    if (_disposed) return;
+    final value = delta;
+    if (value.isEmpty) return;
+    _rawStreamText.write(value);
+    if (formatConfig.enableChunking) {
+      _activeChunkText.write(value);
+      _sealCompletedChunks();
+    } else {
+      _activeChunkText
+        ..clear()
+        ..write(_rawStreamText.toString());
+    }
+    _receivedDelta = true;
+    _dirty = true;
+    _scheduleFlush();
+  }
+
+  void onStreamReset() {
+    if (_disposed) return;
+    _resetStreamState();
+    _dirty = true;
+    _scheduleFlush(forceNow: true);
+  }
+
+  void onToolCallObserved() {
+    if (_disposed) return;
+    onStreamReset();
+  }
+
+  void onStreamingFallback() {
+    if (_disposed) return;
+    _fallbackTriggered = true;
+  }
+
+  bool canFinalizeWith(
+    AssistantMessageBuildResult buildResult, {
+    required String finalText,
+  }) {
+    return !_disposed &&
+        _receivedDelta &&
+        !_fallbackTriggered &&
+        buildResult.messages.isNotEmpty &&
+        finalText.trim().isNotEmpty;
+  }
+
+  Future<void> finalize({required String finalText}) async {
+    if (_disposed) return;
+    _fallbackTriggered = false;
+    _flushTimer?.cancel();
+    _flushTimer = null;
+    if (_hasSegmentDelay && formatConfig.enableChunking) {
+      await _finalizeWithDelayedChunks(finalText);
+      return;
+    }
+    _setFromFinalText(finalText);
+    _dirty = false;
+    await _applyState(finalize: true);
+  }
+
+  Future<void> removePlaceholders() async {
+    if (_allPlaceholderIds.isEmpty) return;
+    _flushTimer?.cancel();
+    _flushTimer = null;
+    _dirty = false;
+    await _enqueue(() async {
+      await _ref.read(conversationsProvider.notifier).updateOne(
+        convId,
+        (c) {
+          final remaining = [
+            for (final m in c.messages)
+              if (!_allPlaceholderIds.contains(m.id)) m,
+          ];
+          final last = remaining.isNotEmpty ? remaining.last : null;
+          return c.copyWith(
+            messages: remaining,
+            updatedAt: DateTime.now(),
+            lastMessage: last?.displayText,
+            lastMessageTime: last?.createdAt,
+          );
+        },
+        persist: false,
+      );
+    });
+    _activePlaceholderIds.clear();
+    _allPlaceholderIds.clear();
+    _resetTextBuffers();
+    _receivedDelta = false;
+  }
+
+  void dispose() {
+    _disposed = true;
+    _flushTimer?.cancel();
+    _flushTimer = null;
+    _segmentDelayTimer?.cancel();
+    _segmentDelayTimer = null;
+  }
+
+  void _scheduleFlush({bool forceNow = false}) {
+    if (_disposed) return;
+    if (forceNow) {
+      _flushTimer?.cancel();
+      _flushTimer = null;
+      _flushNow();
+      return;
+    }
+    _flushTimer ??= Timer(_kFlushInterval, _flushNow);
+  }
+
+  void _flushNow() {
+    if (_disposed) return;
+    _flushTimer = null;
+    if (!_dirty) return;
+    _dirty = false;
+    // _applyState 内部已经串行入队，这里再包一层 _enqueue 会造成队列自等待死锁。
+    unawaited(_applyState(finalize: false));
+  }
+
+  Future<void> _applyState({required bool finalize}) async {
+    if (_disposed || _activePlaceholderIds.isEmpty) return;
+    final chunks = _buildChunks(finalize: finalize);
+    _ensurePlaceholderCount(chunks.length);
+    final snapshotIds = List<String>.from(_activePlaceholderIds);
+    await _enqueue(() async {
+      await _ref.read(conversationsProvider.notifier).updateOne(
+        convId,
+        (c) {
+          final existingById = <String, Message>{
+            for (final m in c.messages) m.id: m,
+          };
+          final kept = <Message>[
+            for (final m in c.messages)
+              if (!_allPlaceholderIds.contains(m.id))
+                if (m.id == userMsgId && finalize && m.status == 'sending')
+                  m.copyWith(status: 'sent')
+                else
+                  m,
+          ];
+          final now = DateTime.now();
+          final placeholders = <Message>[];
+          for (var i = 0; i < snapshotIds.length; i++) {
+            final id = snapshotIds[i];
+            final rawChunk = chunks[i];
+            final content =
+                rawChunk.trim().isEmpty ? _kGeneratingText : rawChunk;
+            final isLast = i == snapshotIds.length - 1;
+            final status = finalize ? 'sent' : (isLast ? 'sending' : 'sent');
+            final blockStatus = finalize
+                ? BlockStatus.success
+                : (isLast ? BlockStatus.streaming : BlockStatus.success);
+            final createdAt = existingById[id]?.createdAt ?? now;
+            placeholders.add(
+              Message.fromBlocks(
+                id: id,
+                role: 'assistant',
+                blocks: [
+                  TextBlock(
+                    messageId: id,
+                    content: content,
+                    status: blockStatus,
+                  ),
+                ],
+                createdAt: createdAt,
+                status: status,
+              ),
+            );
+          }
+
+          final preview = placeholders.isNotEmpty
+              ? placeholders.last.displayText
+              : c.lastMessage;
+
+          return c.copyWith(
+            messages: [...kept, ...placeholders],
+            updatedAt: now,
+            lastMessage: preview,
+            lastMessageTime: now,
+          );
+        },
+        persist: finalize,
+      );
+    });
+  }
+
+  List<String> _buildChunks({required bool finalize}) {
+    if (!formatConfig.enableChunking) {
+      final rawText = _rawStreamText.toString();
+      if (rawText.trim().isEmpty) {
+        return <String>[_kGeneratingText];
+      }
+      return <String>[rawText];
+    }
+
+    final chunks = <String>[
+      ..._sealedChunks,
+    ];
+    final active = _activeChunkText.toString();
+    if (active.trim().isNotEmpty) {
+      chunks.add(active);
+    } else if (!finalize && chunks.isNotEmpty) {
+      // 当前段已封口，立即展示下一条“生成中...”占位，形成分段式逐条发送体验。
+      chunks.add(_kGeneratingText);
+    }
+    if (chunks.isEmpty) {
+      return <String>[_kGeneratingText];
+    }
+    return chunks;
+  }
+
+  void _sealCompletedChunks() {
+    if (!formatConfig.enableChunking) return;
+    final active = _activeChunkText.toString();
+    if (active.trim().isEmpty) return;
+
+    final chunks = MessageFormatter.formatAndChunkText(active, formatConfig);
+    if (chunks.isEmpty) return;
+    if (chunks.length == 1) {
+      if (streamTextEndsWithChunkBoundary(chunks.first, formatConfig)) {
+        _enqueueSealedChunk(chunks.first);
+        _activeChunkText.clear();
+      }
+      return;
+    }
+
+    final completed = chunks.sublist(0, chunks.length - 1);
+    for (final chunk in completed) {
+      _enqueueSealedChunk(chunk);
+    }
+    _activeChunkText
+      ..clear()
+      ..write(chunks.last);
+    if (streamTextEndsWithChunkBoundary(chunks.last, formatConfig)) {
+      _enqueueSealedChunk(chunks.last);
+      _activeChunkText.clear();
+    }
+  }
+
+  void _setFromFinalText(String finalText) {
+    _resetTextBuffers();
+    _rawStreamText.write(finalText);
+
+    if (!formatConfig.enableChunking) {
+      _activeChunkText.write(finalText);
+      return;
+    }
+
+    final chunks = MessageFormatter.formatAndChunkText(finalText, formatConfig);
+    if (chunks.isEmpty) {
+      _activeChunkText.write(finalText);
+      return;
+    }
+    if (chunks.length == 1) {
+      _activeChunkText.write(chunks.first);
+      return;
+    }
+
+    _sealedChunks.addAll(chunks.sublist(0, chunks.length - 1));
+    _activeChunkText.write(chunks.last);
+  }
+
+  Future<void> _finalizeWithDelayedChunks(String finalText) async {
+    _resetTextBuffers();
+    _rawStreamText.write(finalText);
+
+    final chunks = MessageFormatter.formatAndChunkText(finalText, formatConfig)
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
+    if (chunks.isEmpty) {
+      _activeChunkText.write(finalText);
+      await _applyState(finalize: true);
+      return;
+    }
+
+    for (var i = 0; i < chunks.length; i++) {
+      if (_disposed) return;
+      final isLast = i == chunks.length - 1;
+      if (isLast) {
+        _activeChunkText
+          ..clear()
+          ..write(chunks[i]);
+        await _applyState(finalize: true);
+        return;
+      }
+
+      _sealedChunks.add(chunks[i]);
+      _activeChunkText.clear();
+      await _applyState(finalize: false);
+      await Future.delayed(segmentDelay);
+    }
+  }
+
+  void _resetStreamState() {
+    _fallbackTriggered = false;
+    _receivedDelta = false;
+    _resetTextBuffers();
+  }
+
+  void _resetTextBuffers() {
+    _segmentDelayTimer?.cancel();
+    _segmentDelayTimer = null;
+    _sealedChunks.clear();
+    _pendingSealedChunks.clear();
+    _activeChunkText.clear();
+    _rawStreamText.clear();
+  }
+
+  bool get _hasSegmentDelay => segmentDelay.inMilliseconds > 0;
+
+  void _enqueueSealedChunk(String chunk) {
+    final value = chunk.trim();
+    if (value.isEmpty) return;
+    if (!_hasSegmentDelay) {
+      _sealedChunks.add(value);
+      return;
+    }
+    _pendingSealedChunks.add(value);
+    _scheduleSegmentDelayDrain();
+  }
+
+  void _scheduleSegmentDelayDrain() {
+    if (_disposed || !_hasSegmentDelay || _pendingSealedChunks.isEmpty) return;
+    if (_segmentDelayTimer != null) return;
+    _segmentDelayTimer = Timer(segmentDelay, _drainOnePendingChunk);
+  }
+
+  void _drainOnePendingChunk() {
+    _segmentDelayTimer = null;
+    if (_disposed || _pendingSealedChunks.isEmpty) return;
+    final chunk = _pendingSealedChunks.removeAt(0);
+    _sealedChunks.add(chunk);
+    _dirty = true;
+    _scheduleFlush(forceNow: true);
+    if (_pendingSealedChunks.isNotEmpty) {
+      _scheduleSegmentDelayDrain();
+    }
+  }
+
+  void _ensurePlaceholderCount(int targetCount) {
+    var target = targetCount;
+    if (target <= 0) target = 1;
+    while (_activePlaceholderIds.length < target) {
+      final id = genId('msg');
+      _activePlaceholderIds.add(id);
+      _allPlaceholderIds.add(id);
+    }
+    if (_activePlaceholderIds.length > target) {
+      _activePlaceholderIds.removeRange(target, _activePlaceholderIds.length);
+    }
+  }
+
+  Future<void> _enqueue(Future<void> Function() task) {
+    _queue = _queue.catchError((_) {}).then((_) async {
+      if (_disposed) return;
+      await task();
+    });
+    return _queue;
+  }
+
+  List<String> snapshotPlaceholderIds() =>
+      List<String>.unmodifiable(_activePlaceholderIds);
+}
+
+bool streamTextEndsWithChunkBoundary(
+  String text,
+  MessageFormatConfig config,
+) {
+  if (!config.enableChunking) return false;
+  final value = text.trimRight();
+  if (value.isEmpty) return false;
+  if (value.length < config.minSegmentLength) return false;
+
+  final punctuations = config.chunkPunctuations
+      .where((item) => item.isNotEmpty)
+      .toList(growable: false)
+    ..sort((a, b) => b.length.compareTo(a.length));
+  for (final punctuation in punctuations) {
+    if (value.endsWith(punctuation)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 class _GenerationTask {

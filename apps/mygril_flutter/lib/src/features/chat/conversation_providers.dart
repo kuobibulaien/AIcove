@@ -211,19 +211,28 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
     }
   }
 
-  Future<void> setAll(List<Conversation> list) async {
+  Future<void> setAll(
+    List<Conversation> list, {
+    bool persist = true,
+  }) async {
     state = AsyncValue.data(list);
+    if (!persist) {
+      return;
+    }
     await _save(list);
   }
 
   Future<void> updateOne(
-      String id, Conversation Function(Conversation) fn) async {
+    String id,
+    Conversation Function(Conversation) fn, {
+    bool persist = true,
+  }) async {
     final current = state.value ?? <Conversation>[];
     final next = [
       for (final c in current)
         if (c.id == id) fn(c) else c
     ];
-    await setAll(next);
+    await setAll(next, persist: persist);
   }
 
   Future<String> createNew() async {

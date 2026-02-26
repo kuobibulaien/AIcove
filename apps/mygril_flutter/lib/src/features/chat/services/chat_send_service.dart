@@ -38,6 +38,7 @@ import '../../../core/utils/token_estimator.dart';
 import 'chat_message_processor.dart';
 import 'chat_tool_fallback_parser.dart';
 import 'chat_types.dart';
+import 'stream_monitor_service.dart';
 
 export 'chat_types.dart'
     show SendRequest, ApiCallResult, ApiConfig, ToolAudioResult;
@@ -919,6 +920,11 @@ class ChatSendService {
     TraceLogger? trace,
     int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
+    bool enableStreaming = false,
+    void Function(String delta)? onStreamTextDelta,
+    void Function()? onStreamTextReset,
+    void Function()? onStreamToolCallObserved,
+    void Function()? onStreamingFallback,
   }) async {
     final flowSettings = config.settings.callFlowSettings;
     final isFastMode = flowSettings.mode == CallFlowMode.fast;
@@ -965,6 +971,7 @@ class ChatSendService {
     // (注释已丢失)
     var currentMessages = List<Map<String, dynamic>>.from(config.messages);
     SendMessageRichResult? lastRich;
+    var shouldAttemptStreaming = enableStreaming;
     final executedFallbackCallSignatures = <String>{};
     var executedAnyTool = false;
     var lastRoundIndex = 1;
@@ -1119,24 +1126,77 @@ class ChatSendService {
         'messagesCount': currentMessages.length,
       });
 
-      lastRich = await agent.sendMessageRich(
-        agentId: 'default',
-        sessionId: sessionId,
-        modelFullId: config.modelFullId,
-        messages: currentMessages,
-        userText: round == 1 ? (userText ?? '') : '', // 只在第一轮传 userText
-        temperature: config.effectiveTemperature,
-        topP: config.modelTopP, // (注释已丢失)
-        token: config.settings.backendApiKey,
-        toolPrefs: config.toolPrefs,
-        providerApiBase: config.providerApiBase,
-        providerApiKey: config.providerApiKey,
-        customConfig: config.customConfig,
-        tools: config.tools,
-        trace: roundTrace,
-        turnId: effectiveTurnId,
-        roundIndex: round,
-      );
+      Future<SendMessageRichResult> sendRichNonStream() =>
+          agent.sendMessageRich(
+            agentId: 'default',
+            sessionId: sessionId,
+            modelFullId: config.modelFullId,
+            messages: currentMessages,
+            userText: round == 1 ? (userText ?? '') : '', // 只在第一轮传 userText
+            temperature: config.effectiveTemperature,
+            topP: config.modelTopP, // (注释已丢失)
+            token: config.settings.backendApiKey,
+            toolPrefs: config.toolPrefs,
+            providerApiBase: config.providerApiBase,
+            providerApiKey: config.providerApiKey,
+            customConfig: config.customConfig,
+            tools: config.tools,
+            trace: roundTrace,
+            turnId: effectiveTurnId,
+            roundIndex: round,
+          );
+
+      if (shouldAttemptStreaming) {
+        unawaited(StreamMonitorService.recordAttempt(
+          modelFullId: config.modelFullId,
+          round: round,
+        ));
+        try {
+          lastRich = await agent.sendMessageRichStream(
+            agentId: 'default',
+            sessionId: sessionId,
+            modelFullId: config.modelFullId,
+            messages: currentMessages,
+            userText: round == 1 ? (userText ?? '') : '',
+            temperature: config.effectiveTemperature,
+            topP: config.modelTopP,
+            token: config.settings.backendApiKey,
+            toolPrefs: config.toolPrefs,
+            providerApiBase: config.providerApiBase,
+            providerApiKey: config.providerApiKey,
+            customConfig: config.customConfig,
+            tools: config.tools,
+            onTextDelta: onStreamTextDelta,
+            onToolCallsDetected: onStreamToolCallObserved,
+            trace: roundTrace,
+            turnId: effectiveTurnId,
+            roundIndex: round,
+          );
+          unawaited(StreamMonitorService.recordSuccess(
+            modelFullId: config.modelFullId,
+            round: round,
+          ));
+        } catch (e) {
+          shouldAttemptStreaming = false;
+          onStreamingFallback?.call();
+          final failureReason = StreamMonitorService.classifyError(e);
+          unawaited(StreamMonitorService.recordFallback(
+            modelFullId: config.modelFullId,
+            error: e,
+            reason: failureReason,
+            round: round,
+          ));
+          AppLogger.warning('ChatSendService', '流式调用失败，回退整段响应', metadata: {
+            'round': round,
+            'model': config.modelFullId,
+            'reason': failureReason.value,
+            'error': e.toString(),
+          });
+          lastRich = await sendRichNonStream();
+        }
+      } else {
+        lastRich = await sendRichNonStream();
+      }
 
       roundTrace?.note('响应', metadata: {
         'textLength': lastRich.text.length,
@@ -1180,6 +1240,11 @@ class ChatSendService {
         roundTrace?.end(additionalMessage: 'no tool call, stop');
         break;
       }
+
+      onStreamToolCallObserved?.call();
+
+      // 本轮进入工具调用分支，已输出的流式文本不应直接呈现给用户。
+      onStreamTextReset?.call();
 
       // 执行工具调用
       final toolTrace = roundTrace?.startChild('执行工具调用');

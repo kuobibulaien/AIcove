@@ -8,6 +8,7 @@
 /// - 2026-01-28: 移除分段逻辑，分段改为纯前端展示
 /// - 2026-01-28: TTS 标签必须拆分，文本和语音交替出现
 /// - 2026-02-21: 统一多模态拆分机制，表情包也按原始位置拆分保证语序
+/// - 2026-02-26: draw_image 图片按 [图片]/[image] 占位回插，避免总在首尾
 library;
 
 import '../domain/message.dart';
@@ -16,7 +17,8 @@ import '../../plugins/domain/plugin.dart';
 import '../../plugins/domain/plugin_content.dart';
 import '../../plugins/tts/tts_parser.dart';
 import '../../../core/models/message_block.dart';
-import '../../../core/api/providers/provider_adapter.dart' show ToolCall, ToolResult;
+import '../../../core/api/providers/provider_adapter.dart'
+    show ToolCall, ToolResult;
 import 'chat_types.dart';
 
 /// 多模态片段类型（供 ChatTtsHandler 使用）
@@ -70,6 +72,10 @@ class _Marker {
 /// 注意：普通分段逻辑已移至 UI 层，但多模态标签（TTS、表情包）必须在存储时拆分
 class ChatMessageProcessor {
   const ChatMessageProcessor();
+  static final RegExp _imagePlaceholderRegex = RegExp(
+    r'\[(?:图片|image)(?:\s*:[^\]]*)?\]',
+    caseSensitive: false,
+  );
 
   /// 构建助手消息列表
   ///
@@ -84,17 +90,22 @@ class ChatMessageProcessor {
     List<ToolCall> toolCalls = const [],
     List<ToolResult> rawToolResults = const [],
   }) {
-
     final aiMessages = <Message>[];
+    final normalizedContents = contents ?? const <PluginContent>[];
+    final imageContents = normalizedContents
+        .whereType<PluginImageContent>()
+        .toList(growable: false);
+    final nonImageContents = normalizedContents
+        .where((content) => content is! PluginImageContent)
+        .toList(growable: false);
 
-    // 1. 处理 PluginContent（如果有的话）
-    if (contents != null && contents.isNotEmpty) {
-      aiMessages.addAll(_processPluginContents(contents));
+    // 1. 先处理非图片内容（文本/音频等）
+    if (nonImageContents.isNotEmpty) {
+      aiMessages.addAll(_processPluginContents(nonImageContents));
     }
 
-    // 2. 处理传统文本（如果 contents 中没有文本，或者 contents 为空）
-    final hasTextContent =
-        contents?.any((c) => c is PluginTextContent) ?? false;
+    // 2. 如果非图片内容中没有文本，则从回复文本中构建文本消息
+    final hasTextContent = nonImageContents.any((c) => c is PluginTextContent);
     if (!hasTextContent) {
       // 检查是否有多模态事件（TTS 语音或表情包）
       final hasMultimodal = pluginEvents.any(
@@ -110,21 +121,13 @@ class ChatMessageProcessor {
 
           switch (segment.type) {
             case _SegType.text:
-              aiMessages.add(Message(
-                id: genId('msg'),
-                role: 'assistant',
-                content: segment.content.trim(),
-                createdAt: DateTime.now(),
-                status: 'sent',
-              ));
+              aiMessages.add(_buildTextMessage(segment.content.trim()));
             case _SegType.tts:
               // TTS 段不在这里处理，交给 ChatTtsHandler
               break;
             case _SegType.sticker:
-              final assetPath =
-                  segment.stickerData?['assetPath'] as String?;
-              final stickerId =
-                  segment.stickerData?['stickerId'] as String?;
+              final assetPath = segment.stickerData?['assetPath'] as String?;
+              final stickerId = segment.stickerData?['stickerId'] as String?;
               final tag = segment.stickerData?['tag'] as String?;
               if (assetPath != null && assetPath.isNotEmpty) {
                 aiMessages.add(Message.fromBlocks(
@@ -144,6 +147,9 @@ class ChatMessageProcessor {
               }
           }
         }
+        if (imageContents.isNotEmpty) {
+          aiMessages.addAll(_processPluginContents(imageContents));
+        }
       } else {
         // 无多模态标签：保持消息完整
         var sourceText =
@@ -151,9 +157,8 @@ class ChatMessageProcessor {
 
         // 如果文本为空但有 trigger 事件，生成确认消息
         if (sourceText.isEmpty) {
-          final triggerEvents = pluginEvents
-              .where((e) => e.type == 'trigger_created')
-              .toList();
+          final triggerEvents =
+              pluginEvents.where((e) => e.type == 'trigger_created').toList();
           if (triggerEvents.isNotEmpty) {
             final titles = triggerEvents
                 .map((e) => e.data['title'] as String?)
@@ -165,17 +170,20 @@ class ChatMessageProcessor {
           }
         }
 
-        // 保持消息完整，不分段
-        if (sourceText.isNotEmpty) {
-          aiMessages.add(Message(
-            id: genId('msg'),
-            role: 'assistant',
-            content: sourceText,
-            createdAt: DateTime.now(),
-            status: 'sent',
-          ));
+        // draw_image 内容优先按 [图片] 占位插回原文；没有占位时追加到文本后
+        if (imageContents.isNotEmpty) {
+          aiMessages.addAll(
+            _interleaveTextAndImages(sourceText, imageContents),
+          );
+        } else if (sourceText.isNotEmpty) {
+          aiMessages.add(_buildTextMessage(sourceText));
         }
       }
+    }
+
+    // 如果存在 PluginTextContent，则图片无法从正文推断插入位点，按顺序追加
+    if (hasTextContent && imageContents.isNotEmpty) {
+      aiMessages.addAll(_processPluginContents(imageContents));
     }
 
     // 注意：表情包已在上面的多模态拆分中按位置处理，不再单独追加
@@ -184,10 +192,13 @@ class ChatMessageProcessor {
     if (toolCalls.isNotEmpty) {
       final toolBlocks = <ToolBlock>[];
       for (final call in toolCalls) {
-        final result = rawToolResults.firstWhere((r) => r.toolCallId == call.id, 
-           orElse: () => ToolResult(toolCallId: call.id, name: call.name, result: '{"error": "no result"}'));
+        final result = rawToolResults.firstWhere((r) => r.toolCallId == call.id,
+            orElse: () => ToolResult(
+                toolCallId: call.id,
+                name: call.name,
+                result: '{"error": "no result"}'));
         toolBlocks.add(ToolBlock(
-          messageId: 'tmp', 
+          messageId: 'tmp',
           toolCallId: call.id,
           toolName: call.name,
           arguments: call.arguments,
@@ -199,38 +210,42 @@ class ChatMessageProcessor {
         final lastMsg = aiMessages.last;
         final newBlocks = List<MessageBlock>.from(lastMsg.blocks ?? []);
         if (lastMsg.content.isNotEmpty && newBlocks.isEmpty) {
-          newBlocks.add(TextBlock(messageId: lastMsg.id, content: lastMsg.content));
+          newBlocks
+              .add(TextBlock(messageId: lastMsg.id, content: lastMsg.content));
         }
         for (final tb in toolBlocks) {
           newBlocks.add(ToolBlock(
-             messageId: lastMsg.id, 
-             toolCallId: tb.toolCallId,
-             toolName: tb.toolName, 
-             arguments: tb.arguments, 
-             result: tb.result
-          ));
+              messageId: lastMsg.id,
+              toolCallId: tb.toolCallId,
+              toolName: tb.toolName,
+              arguments: tb.arguments,
+              result: tb.result));
         }
         aiMessages[aiMessages.length - 1] = lastMsg.copyWith(
           content: '',
           blocks: newBlocks,
         );
       } else {
-         final msgId = genId('msg');
-         aiMessages.add(Message.fromBlocks(
-           id: msgId,
-           role: 'assistant',
-           blocks: toolBlocks.map((b) => ToolBlock(
-               messageId: msgId, toolCallId: b.toolCallId, toolName: b.toolName, arguments: b.arguments, result: b.result)
-           ).toList(),
-           createdAt: DateTime.now(),
-           status: 'sent',
-         ));
+        final msgId = genId('msg');
+        aiMessages.add(Message.fromBlocks(
+          id: msgId,
+          role: 'assistant',
+          blocks: toolBlocks
+              .map((b) => ToolBlock(
+                  messageId: msgId,
+                  toolCallId: b.toolCallId,
+                  toolName: b.toolName,
+                  arguments: b.arguments,
+                  result: b.result))
+              .toList(),
+          createdAt: DateTime.now(),
+          status: 'sent',
+        ));
       }
     }
 
     // 计算最后一条消息预览
     final lastMessageText =
-
         aiMessages.isNotEmpty ? aiMessages.last.displayText : '';
 
     return AssistantMessageBuildResult(
@@ -335,8 +350,7 @@ class ChatMessageProcessor {
     for (final marker in markers) {
       // 标记前的文本
       if (marker.start > lastEnd) {
-        final beforeText =
-            cleanedText.substring(lastEnd, marker.start).trim();
+        final beforeText = cleanedText.substring(lastEnd, marker.start).trim();
         if (beforeText.isNotEmpty) {
           segments.add(_Seg(_SegType.text, beforeText));
         }
@@ -395,36 +409,20 @@ class ChatMessageProcessor {
       switch (content) {
         case PluginTextContent(:final text):
           if (text.isNotEmpty) {
-            messages.add(Message(
-              id: genId('msg'),
-              role: 'assistant',
-              content: text,
-              createdAt: DateTime.now(),
-              status: 'sent',
-            ));
+            messages.add(_buildTextMessage(text));
           }
 
         case PluginImageContent(:final localPath, :final caption):
-          final msgId = genId('img');
-          messages.add(Message.fromBlocks(
-            id: msgId,
-            role: 'assistant',
-            blocks: [
-              ImageBlock(
-                messageId: msgId,
-                localPath: localPath,
-                prompt: caption,
-              ),
-            ],
-            createdAt: DateTime.now(),
-            status: 'sent',
-          ));
+          messages.add(
+            _buildImageMessage(
+              PluginImageContent(localPath, caption: caption),
+            ),
+          );
 
         case PluginAudioContent(:final localPath, :final duration):
           final msgId = genId('audio');
-          final audioUrl = localPath.startsWith('file://')
-              ? localPath
-              : 'file://$localPath';
+          final audioUrl =
+              localPath.startsWith('file://') ? localPath : 'file://$localPath';
           messages.add(Message.fromBlocks(
             id: msgId,
             role: 'assistant',
@@ -445,6 +443,86 @@ class ChatMessageProcessor {
     }
 
     return messages;
+  }
+
+  List<Message> _interleaveTextAndImages(
+    String text,
+    List<PluginImageContent> images,
+  ) {
+    final messages = <Message>[];
+    if (images.isEmpty) {
+      final normalized = text.trim();
+      if (normalized.isNotEmpty) {
+        messages.add(_buildTextMessage(normalized));
+      }
+      return messages;
+    }
+
+    final normalizedText = text.trim();
+    if (normalizedText.isEmpty) {
+      for (final image in images) {
+        messages.add(_buildImageMessage(image));
+      }
+      return messages;
+    }
+
+    var cursor = 0;
+    var imageIndex = 0;
+    final matches = _imagePlaceholderRegex.allMatches(normalizedText);
+    for (final match in matches) {
+      if (imageIndex >= images.length) {
+        break;
+      }
+
+      if (match.start > cursor) {
+        final before = normalizedText.substring(cursor, match.start).trim();
+        if (before.isNotEmpty) {
+          messages.add(_buildTextMessage(before));
+        }
+      }
+
+      messages.add(_buildImageMessage(images[imageIndex]));
+      imageIndex += 1;
+      cursor = match.end;
+    }
+
+    if (cursor < normalizedText.length) {
+      final tail = normalizedText.substring(cursor).trim();
+      if (tail.isNotEmpty) {
+        messages.add(_buildTextMessage(tail));
+      }
+    }
+
+    for (; imageIndex < images.length; imageIndex++) {
+      messages.add(_buildImageMessage(images[imageIndex]));
+    }
+
+    return messages;
+  }
+
+  Message _buildTextMessage(String text) => Message(
+        id: genId('msg'),
+        role: 'assistant',
+        content: text,
+        createdAt: DateTime.now(),
+        status: 'sent',
+      );
+
+  Message _buildImageMessage(PluginImageContent content) {
+    final msgId = genId('img');
+    return Message.fromBlocks(
+      id: msgId,
+      role: 'assistant',
+      blocks: [
+        ImageBlock(
+          messageId: msgId,
+          localPath: content.localPath,
+          prompt: content.caption,
+        ),
+      ],
+      createdAt: DateTime.now(),
+      status: 'sent',
+    );
   }
 
   /// 选择用于显示的助手文本
@@ -476,11 +554,15 @@ class ChatMessageProcessor {
 
     // 移除 <tts>...</tts> 标签，但保留内容（清理 MiniMax 专有标签后）
     final ttsRegex = RegExp(r'<tts>(.*?)</tts>', dotAll: true);
-    final ttsMatches = ttsRegex.allMatches(result).map((m) {
-      final content = m.group(1)?.trim();
-      if (content == null || content.isEmpty) return null;
-      return TtsParser.stripMinimaxTags(content);
-    }).where((v) => v != null && v.isNotEmpty).toList();
+    final ttsMatches = ttsRegex
+        .allMatches(result)
+        .map((m) {
+          final content = m.group(1)?.trim();
+          if (content == null || content.isEmpty) return null;
+          return TtsParser.stripMinimaxTags(content);
+        })
+        .where((v) => v != null && v.isNotEmpty)
+        .toList();
     result = result.replaceAll(ttsRegex, '');
 
     // 移除 <create_trigger ... /> 标签

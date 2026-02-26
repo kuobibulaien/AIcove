@@ -185,8 +185,7 @@ class _LogHistoryDetailPageState extends State<LogHistoryDetailPage> {
   String _formatApiFull(Map<String, dynamic> log) {
     final buffer = StringBuffer();
     buffer.writeln('[API] ${log['method']} ${log['url']}');
-    buffer.writeln(
-        '状态: ${log['status'] ?? '--'} | 耗时: ${log['durationMs']}ms');
+    buffer.writeln('状态: ${log['status'] ?? '--'} | 耗时: ${log['durationMs']}ms');
     final reqBody = (log['requestBody'] ?? '').toString();
     if (reqBody.isNotEmpty) {
       buffer.writeln('--- 请求体 ---');
@@ -246,6 +245,7 @@ class _LogHistoryDetailPageState extends State<LogHistoryDetailPage> {
         '状态: ${log['status'] ?? '--'} | 耗时: ${historyDurationLabel(log)}');
 
     final ctx = historyString(log['rawContext']);
+    final rawResponseBody = historyString(log['rawResponseBody']);
     final toolCalls = historyString(log['rawToolCalls']);
     final toolResults = historyString(log['rawToolResults']);
     final rawAi = historyString(log['rawAiResponse']);
@@ -254,6 +254,10 @@ class _LogHistoryDetailPageState extends State<LogHistoryDetailPage> {
     if (ctx != null) {
       buffer.writeln('\n--- AI 实际收到的完整上下文 ---');
       buffer.writeln(tryFormatJson(ctx));
+    }
+    if (rawResponseBody != null) {
+      buffer.writeln('\n--- AI 原始 JSON 响应（模型回包） ---');
+      buffer.writeln(tryFormatJson(rawResponseBody));
     }
     if (toolCalls != null) {
       buffer.writeln('\n--- AI -> 工具调用 ---');
@@ -389,8 +393,8 @@ class _LogHistoryDetailPageState extends State<LogHistoryDetailPage> {
                     Border.all(color: colors.borderLight, width: borderWidth),
               ),
               child: CollapsibleSelectableText(
-                key: ValueKey(
-                    'history_${index}_${entry.extraContent.hashCode}'),
+                key:
+                    ValueKey('history_${index}_${entry.extraContent.hashCode}'),
                 content: entry.extraContent!,
                 collapsedLines: 10,
                 toggleColor: colors.primary,

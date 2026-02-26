@@ -778,7 +778,7 @@ class AgentApiClient {
         // 使用适配器解析响应
         final result = adapter.parseResponse(data);
 
-    // 记录 AI 对话日志（包含完整原始数据）
+        // 记录 AI 对话日志（包含完整原始数据）
         ApiLogger.add(ApiLogEntry(
           time: DateTime.now(),
           method: 'POST',
@@ -858,10 +858,374 @@ class AgentApiClient {
     }
   }
 
+  /// 直连 Provider 的流式调用（OpenAI 兼容 SSE）
+  ///
+  /// 说明：
+  /// - 仅将 `delta.content` 通过 [onTextDelta] 输出给 UI；
+  /// - `tool_calls` 增量只在内部聚合，最终写入返回值，不进入用户可见文本。
+  Future<SendMessageRichResult> sendMessageRichStream({
+    required String agentId,
+    required String sessionId,
+    required String modelFullId,
+    required List<Map<String, dynamic>> messages,
+    required String userText,
+    double? temperature,
+    double? topP,
+    String? token,
+    Map<String, dynamic>? toolPrefs,
+    String? providerApiBase,
+    String? providerApiKey,
+    Map<String, dynamic>? customConfig,
+    List<Map<String, dynamic>>? tools,
+    void Function(String delta)? onTextDelta,
+    void Function()? onToolCallsDetected,
+    TraceLogger? trace,
+    String? turnId,
+    int? roundIndex,
+  }) async {
+    final logger =
+        trace ?? AppLogger.startTrace('API流式调用', source: 'AgentApiClient');
+    final directTrace = logger.startChild('直连流式请求');
+
+    final trimmedBase = providerApiBase?.trim();
+    final trimmedKey = providerApiKey?.trim();
+    if (trimmedKey == null || trimmedKey.isEmpty) {
+      directTrace.error('Missing providerApiKey for direct stream');
+      directTrace.end(additionalMessage: '直连流式失败');
+      if (trace == null) {
+        logger.end(additionalMessage: '直连流式调用失败');
+      }
+      throw StateError('Missing providerApiKey for direct stream');
+    }
+
+    String provider = 'openai';
+    String model = modelFullId;
+    final idx = modelFullId.indexOf(':');
+    if (idx > 0) {
+      provider = modelFullId.substring(0, idx);
+      model = modelFullId.substring(idx + 1);
+    }
+
+    final adapter = ProviderAdapterFactory.getAdapter(provider);
+    if (adapter.name != 'openai') {
+      directTrace.error('provider stream unsupported', metadata: {
+        'provider': provider,
+        'adapter': adapter.name,
+      });
+      directTrace.end(additionalMessage: '直连流式失败');
+      if (trace == null) {
+        logger.end(additionalMessage: '直连流式调用失败');
+      }
+      throw UnsupportedError(
+          'Streaming is only supported for OpenAI-compatible providers');
+    }
+
+    final base = (trimmedBase == null || trimmedBase.isEmpty)
+        ? 'https://api.openai.com/v1'
+        : trimmedBase;
+    final endpoint = adapter.buildEndpoint(base, modelType: 'chat');
+
+    final chatMessages = <Map<String, dynamic>>[];
+    for (final m in messages) {
+      final role = (m['role'] ?? '').toString();
+      final content = m['content'];
+
+      if (role == 'tool' || role == 'function') {
+        chatMessages.add(Map<String, dynamic>.from(m));
+        continue;
+      }
+
+      final parts = m['parts'];
+      if (parts is List && parts.isNotEmpty) {
+        final normalizedRole =
+            (role == 'assistant' || role == 'ai' || role == 'model')
+                ? 'model'
+                : 'user';
+        chatMessages.add({
+          'role': normalizedRole,
+          'parts': parts,
+        });
+        continue;
+      }
+
+      if ((role == 'assistant' || role == 'ai') &&
+          (m.containsKey('tool_calls') || m.containsKey('function_call'))) {
+        chatMessages.add({
+          'role': 'assistant',
+          ...Map<String, dynamic>.from(m),
+        });
+        continue;
+      }
+
+      if (ContentNormalizer.isEmpty(content)) continue;
+
+      final normalizedRole = switch (role) {
+        'system' => 'system',
+        'assistant' || 'ai' || 'model' => 'assistant',
+        _ => 'user',
+      };
+      chatMessages.add({'role': normalizedRole, 'content': content});
+    }
+
+    final trimmedUserText = userText.trim();
+    final shouldAppendUserText = trimmedUserText.isNotEmpty &&
+        (chatMessages.isEmpty || chatMessages.last['role'] != 'user');
+    if (shouldAppendUserText) {
+      chatMessages.add({'role': 'user', 'content': trimmedUserText});
+    }
+
+    final payload = adapter.buildRequestBody(
+      model: model,
+      messages: chatMessages,
+      temperature: temperature,
+      topP: topP,
+      customConfig: customConfig,
+      tools: tools,
+    );
+    payload['stream'] = true;
+    final requestBodyJson = jsonEncode(payload);
+
+    final headers = <String, String>{
+      ...adapter.buildHeaders(trimmedKey),
+      'Accept': 'text/event-stream',
+    };
+    // 直连流式优先使用 provider 自身鉴权；仅在未提供 Authorization 时回退到 token。
+    if (token != null &&
+        token.trim().isNotEmpty &&
+        !headers.containsKey('Authorization')) {
+      headers['Authorization'] = 'Bearer ${token.trim()}';
+    }
+
+    directTrace.info('发送直连流式请求', metadata: {
+      'endpoint': endpoint,
+      'model': modelFullId,
+      'messagesCount': chatMessages.length,
+      'hasTools': tools != null && tools.isNotEmpty,
+      'toolsCount': tools?.length ?? 0,
+    });
+
+    final sw = Stopwatch()..start();
+    final request = http.Request('POST', Uri.parse(endpoint));
+    request.headers.addAll(headers);
+    request.body = requestBodyJson;
+
+    try {
+      final response = await _client.send(request).timeout(timeout);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        final errBody = utf8.decode(await response.stream.toBytes());
+        sw.stop();
+        ApiLogger.add(ApiLogEntry(
+          time: DateTime.now(),
+          method: 'POST',
+          url: endpoint,
+          status: response.statusCode,
+          durationMs: sw.elapsedMilliseconds,
+          requestBody: ApiLogger.safeSnippet(requestBodyJson),
+          responseBody: ApiLogger.safeSnippet(errBody),
+          ok: false,
+          rawContext: jsonEncode(chatMessages),
+          rawRequestBody: requestBodyJson,
+          rawResponseBody: errBody,
+          sessionId: sessionId,
+          turnId: turnId,
+          roundIndex: roundIndex,
+          eventType: 'round_stream',
+        ));
+        throw Exception('HTTP ${response.statusCode}: $errBody');
+      }
+
+      final text = StringBuffer();
+      final toolAggregator = _StreamingToolCallAggregator();
+      var done = false;
+      var toolCallsObserved = false;
+      final dataLines = <String>[];
+
+      void emitTextDelta(String delta) {
+        if (delta.isEmpty) return;
+        text.write(delta);
+        onTextDelta?.call(delta);
+      }
+
+      void markToolCallsObserved() {
+        if (toolCallsObserved) return;
+        toolCallsObserved = true;
+        onToolCallsDetected?.call();
+      }
+
+      void consumeToolCalls(dynamic rawCalls) {
+        if (rawCalls is List) {
+          if (rawCalls.isEmpty) return;
+          toolAggregator.consumeToolCalls(rawCalls);
+          markToolCallsObserved();
+        }
+      }
+
+      void consumeLegacyFunctionCall(dynamic rawCall) {
+        if (rawCall is Map) {
+          toolAggregator.consumeLegacyFunctionCall(rawCall);
+          markToolCallsObserved();
+        }
+      }
+
+      void handleEventPayload(String payload) {
+        final trimmed = payload.trim();
+        if (trimmed.isEmpty) return;
+        if (trimmed == '[DONE]') {
+          done = true;
+          return;
+        }
+
+        Map<String, dynamic> evt;
+        try {
+          evt = jsonDecode(trimmed) as Map<String, dynamic>;
+        } catch (_) {
+          return;
+        }
+
+        var handledChoice = false;
+        final choices = evt['choices'];
+        if (choices is List && choices.isNotEmpty) {
+          final first = choices.first;
+          if (first is Map) {
+            handledChoice = true;
+            final choice =
+                Map<String, dynamic>.from(first.cast<String, dynamic>());
+            final delta = choice['delta'];
+            final message = choice['message'];
+
+            var emittedFromDelta = false;
+            if (delta is Map) {
+              final deltaMap =
+                  Map<String, dynamic>.from(delta.cast<String, dynamic>());
+              final textDelta = _extractStreamingText(deltaMap['content']);
+              if (textDelta.isNotEmpty) {
+                emitTextDelta(textDelta);
+                emittedFromDelta = true;
+              }
+              consumeToolCalls(deltaMap['tool_calls']);
+              consumeLegacyFunctionCall(deltaMap['function_call']);
+            }
+
+            if (!emittedFromDelta && message is Map) {
+              final messageMap =
+                  Map<String, dynamic>.from(message.cast<String, dynamic>());
+              final fallbackText = _extractStreamingText(messageMap['content']);
+              if (fallbackText.isNotEmpty) {
+                emitTextDelta(fallbackText);
+              }
+              consumeToolCalls(messageMap['tool_calls']);
+              consumeLegacyFunctionCall(messageMap['function_call']);
+            } else if (message is Map) {
+              final messageMap =
+                  Map<String, dynamic>.from(message.cast<String, dynamic>());
+              consumeToolCalls(messageMap['tool_calls']);
+              consumeLegacyFunctionCall(messageMap['function_call']);
+            }
+          }
+        }
+
+        // 兜底兼容：部分服务商会把字段放在根层
+        consumeToolCalls(evt['tool_calls']);
+        consumeLegacyFunctionCall(evt['function_call']);
+
+        // Responses API 风格增量事件（兼容中转层）
+        final eventType = evt['type']?.toString() ?? '';
+        if (eventType == 'response.output_text.delta') {
+          final rootDelta = _extractStreamingText(evt['delta']);
+          if (rootDelta.isNotEmpty) {
+            emitTextDelta(rootDelta);
+          }
+        } else if (!handledChoice) {
+          final rootDelta = _extractStreamingText(evt['delta']);
+          if (rootDelta.isNotEmpty) {
+            emitTextDelta(rootDelta);
+          } else {
+            final rootContent = _extractStreamingText(evt['content']);
+            if (rootContent.isNotEmpty) {
+              emitTextDelta(rootContent);
+            }
+          }
+        }
+      }
+
+      void flushEvent() {
+        if (dataLines.isEmpty || done) {
+          dataLines.clear();
+          return;
+        }
+        final payload = dataLines.join('\n');
+        dataLines.clear();
+        handleEventPayload(payload);
+      }
+
+      await for (final line in response.stream
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())) {
+        if (done) break;
+        if (line.isEmpty) {
+          flushEvent();
+          continue;
+        }
+        if (line.startsWith(':')) continue;
+        if (line.startsWith('data:')) {
+          dataLines.add(line.substring(5).trimLeft());
+          continue;
+        }
+      }
+      flushEvent();
+
+      sw.stop();
+      final builtToolCalls = toolAggregator.build();
+      final finalText = text.toString();
+
+      ApiLogger.add(ApiLogEntry(
+        time: DateTime.now(),
+        method: 'POST',
+        url: endpoint,
+        status: response.statusCode,
+        durationMs: sw.elapsedMilliseconds,
+        requestBody: ApiLogger.safeSnippet(requestBodyJson),
+        responseBody: '[stream]',
+        ok: true,
+        rawContext: jsonEncode(chatMessages),
+        rawAiResponse: finalText,
+        rawRequestBody: requestBodyJson,
+        rawToolCalls: _encodeToolCalls(builtToolCalls),
+        sessionId: sessionId,
+        turnId: turnId,
+        roundIndex: roundIndex,
+        eventType: 'round_stream',
+      ));
+
+      directTrace.info('直连流式响应成功', metadata: {
+        'textLength': finalText.length,
+        'toolCalls': builtToolCalls.length,
+      });
+      directTrace.end(additionalMessage: '直连流式调用完成');
+      if (trace == null) logger.end();
+
+      return SendMessageRichResult(
+        text: finalText,
+        toolResults: const <Map<String, dynamic>>[],
+        toolCalls: builtToolCalls,
+      );
+    } catch (e) {
+      sw.stop();
+      directTrace.error('直连流式请求失败', metadata: {
+        'error': e.toString(),
+      });
+      directTrace.end(additionalMessage: '直连流式失败');
+      if (trace == null) {
+        logger.end(additionalMessage: '直连流式调用失败');
+      }
+      rethrow;
+    }
+  }
+
   /// 流式发送消息（支持分块），返回消息块流
   ///
   /// 应用原则：
-    /// - KISS: 简单的 SSE 解析，只处理必要的字段
+  /// - KISS: 简单的 SSE 解析，只处理必要的字段
   /// - SOLID: 职责单一，只负责接收和解析 SSE 流
   Stream<Map<String, dynamic>> sendMessageStream({
     required String agentId,
@@ -984,4 +1348,162 @@ class AgentApiClient {
       _evt('syncTriggerHeartbeat', {'error': e.toString()}, level: 'WARN');
     }
   }
+}
+
+class _StreamingToolCallAggregator {
+  final Map<int, _StreamingToolCallState> _toolCallsByIndex = {};
+  final Map<String, int> _toolCallIndexById = {};
+  int _nextImplicitIndex = 0;
+  _StreamingToolCallState? _legacyFunctionCall;
+
+  void consumeToolCalls(List<dynamic> rawCalls) {
+    for (var position = 0; position < rawCalls.length; position++) {
+      final item = rawCalls[position];
+      if (item is! Map) continue;
+      final map = Map<String, dynamic>.from(item.cast<String, dynamic>());
+      final index = _resolveIndex(map, fallbackPosition: position);
+      final state =
+          _toolCallsByIndex.putIfAbsent(index, () => _StreamingToolCallState());
+      state.consume(map);
+      final id = map['id']?.toString().trim() ?? '';
+      if (id.isNotEmpty) {
+        _toolCallIndexById[id] = index;
+      }
+      if (index >= _nextImplicitIndex) {
+        _nextImplicitIndex = index + 1;
+      }
+    }
+  }
+
+  void consumeLegacyFunctionCall(Map<dynamic, dynamic> rawCall) {
+    final map = Map<String, dynamic>.from(rawCall.cast<String, dynamic>());
+    final state = _legacyFunctionCall ??= _StreamingToolCallState();
+    state.consumeLegacy(map);
+  }
+
+  List<ToolCall> build() {
+    final calls = <ToolCall>[
+      for (final entry
+          in _toolCallsByIndex.entries.toList()
+            ..sort((a, b) => a.key.compareTo(b.key)))
+        entry.value.buildToolCall(fallbackIndex: entry.key + 1),
+    ];
+    if (calls.isNotEmpty) return calls;
+    if (_legacyFunctionCall == null) return const <ToolCall>[];
+    return <ToolCall>[
+      _legacyFunctionCall!.buildToolCall(fallbackIndex: 1),
+    ];
+  }
+
+  int _resolveIndex(
+    Map<String, dynamic> rawCall, {
+    required int fallbackPosition,
+  }) {
+    final explicit = rawCall['index'];
+    if (explicit is num) return explicit.toInt();
+
+    final id = rawCall['id']?.toString().trim() ?? '';
+    if (id.isNotEmpty) {
+      final existing = _toolCallIndexById[id];
+      if (existing != null) return existing;
+      final assigned = _nextImplicitIndex++;
+      _toolCallIndexById[id] = assigned;
+      return assigned;
+    }
+
+    return fallbackPosition;
+  }
+}
+
+class _StreamingToolCallState {
+  String _id = '';
+  String _name = '';
+  final StringBuffer _arguments = StringBuffer();
+
+  void consume(Map<String, dynamic> rawCall) {
+    final id = rawCall['id']?.toString().trim() ?? '';
+    if (id.isNotEmpty) _id = id;
+
+    final function = rawCall['function'];
+    if (function is Map) {
+      final map = Map<String, dynamic>.from(function.cast<String, dynamic>());
+      final namePart = map['name']?.toString() ?? '';
+      if (namePart.isNotEmpty) {
+        _name = _name.isEmpty ? namePart : '$_name$namePart';
+      }
+      final argsPart = map['arguments']?.toString() ?? '';
+      if (argsPart.isNotEmpty) {
+        _arguments.write(argsPart);
+      }
+      return;
+    }
+
+    // 兼容非 OpenAI 标准结构（根层直接给 name/arguments）
+    final namePart =
+        rawCall['name']?.toString() ?? rawCall['tool_name']?.toString() ?? '';
+    if (namePart.isNotEmpty) {
+      _name = _name.isEmpty ? namePart : '$_name$namePart';
+    }
+    final argsPart =
+        rawCall['arguments']?.toString() ?? rawCall['args']?.toString() ?? '';
+    if (argsPart.isNotEmpty) {
+      _arguments.write(argsPart);
+    }
+  }
+
+  void consumeLegacy(Map<String, dynamic> rawCall) {
+    final namePart = rawCall['name']?.toString() ?? '';
+    if (namePart.isNotEmpty) {
+      _name = _name.isEmpty ? namePart : '$_name$namePart';
+    }
+    final argsPart = rawCall['arguments']?.toString() ?? '';
+    if (argsPart.isNotEmpty) {
+      _arguments.write(argsPart);
+    }
+  }
+
+  ToolCall buildToolCall({required int fallbackIndex}) {
+    return ToolCall(
+      id: _id.isNotEmpty ? _id : 'stream_tool_call_$fallbackIndex',
+      name: _name,
+      arguments: _parseArguments(_arguments.toString()),
+    );
+  }
+
+  Map<String, dynamic> _parseArguments(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return const <String, dynamic>{};
+    try {
+      final decoded = jsonDecode(trimmed);
+      if (decoded is Map<String, dynamic>) {
+        return decoded;
+      }
+    } catch (_) {}
+    return <String, dynamic>{'_raw': trimmed};
+  }
+}
+
+String _extractStreamingText(dynamic value) {
+  if (value == null) return '';
+  if (value is String) return value;
+
+  if (value is Map) {
+    final map = Map<String, dynamic>.from(value.cast<String, dynamic>());
+    return _extractStreamingText(
+      map['text'] ?? map['delta'] ?? map['content'],
+    );
+  }
+
+  if (value is List) {
+    final buffer = StringBuffer();
+    for (final item in value) {
+      final chunk = _extractStreamingText(item);
+      if (chunk.isNotEmpty) {
+        buffer.write(chunk);
+      }
+    }
+    return buffer.toString();
+  }
+
+  return '';
 }

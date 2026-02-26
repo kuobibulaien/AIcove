@@ -8,6 +8,7 @@
 library;
 
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/gestures.dart' show kSecondaryMouseButton;
 import 'package:flutter/material.dart';
@@ -18,6 +19,7 @@ import '../../../../ui/theme/skin_provider.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../core/models/message_block.dart';
+import '../../../../core/models/block_status.dart';
 import '../../../../ui/shared/widgets/media/moe_image_preview.dart';
 import '../../domain/message.dart';
 import '../../../settings/app_settings.dart';
@@ -313,6 +315,17 @@ class MessageBubble extends ConsumerWidget {
   Widget _buildBlock(BuildContext context, MessageBlock block, Color textColor,
       {required bool isLast}) {
     if (block is TextBlock) {
+      // 占位消息"生成中..."：显示三点闪动动画（momotalk 风格）
+      if (block.content == '生成中...' && block.status == BlockStatus.streaming) {
+        return Padding(
+          padding: EdgeInsets.only(bottom: isLast ? 0 : 3),
+          child: TypingDotsIndicator(
+            color: textColor,
+            dotSize: fontSize * 0.4,
+            height: fontSize * 1.42, // 与文字行高一致
+          ),
+        );
+      }
       return Padding(
         padding: EdgeInsets.only(bottom: isLast ? 0 : 3),
         child: _buildMessageText(
@@ -969,6 +982,106 @@ class _Avatar extends StatelessWidget {
               ? buildImage(trimmedUrl)
               : buildFallback(),
         ),
+      ),
+    );
+  }
+}
+
+/// Momotalk 风格三点闪动输入指示器
+///
+/// 三个圆点从左到右依次缩放+透明度变化，模拟"对方正在输入"效果。
+/// 用于 AI 生成中的占位消息气泡内。
+class TypingDotsIndicator extends StatefulWidget {
+  /// 圆点颜色
+  final Color color;
+
+  /// 单个圆点直径
+  final double dotSize;
+
+  /// 圆点间距
+  final double spacing;
+
+  /// 组件高度（与文字行高一致，确保气泡大小正常）
+  final double? height;
+
+  const TypingDotsIndicator({
+    super.key,
+    required this.color,
+    this.dotSize = 6.0,
+    this.spacing = 4.0,
+    this.height,
+  });
+
+  @override
+  State<TypingDotsIndicator> createState() => _TypingDotsIndicatorState();
+}
+
+class _TypingDotsIndicatorState extends State<TypingDotsIndicator>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final effectiveHeight = widget.height ?? widget.dotSize * 1.6;
+    return SizedBox(
+      height: effectiveHeight,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: List.generate(3, (index) {
+          return Padding(
+            padding: EdgeInsets.only(
+              right: index < 2 ? widget.spacing : 0,
+            ),
+            child: AnimatedBuilder(
+              animation: _controller,
+              builder: (context, child) {
+                // 每个点在周期中有不同的相位偏移（0.0, 0.2, 0.4）
+                final offset = index * 0.2;
+                final t = (_controller.value - offset) % 1.0;
+                // 活跃区间 [0, 0.4]，其余时间静止
+                final active = t < 0.4;
+                // 使用正弦曲线平滑缩放：0→1→0
+                final scale = active
+                    ? 0.5 + 0.5 * math.sin(t / 0.4 * math.pi)
+                    : 0.5;
+                final opacity = active
+                    ? 0.4 + 0.6 * math.sin(t / 0.4 * math.pi)
+                    : 0.4;
+                return Opacity(
+                  opacity: opacity,
+                  child: Transform.scale(
+                    scale: scale / 0.5, // 归一化：静态时 scale=1，最大 scale=2
+                    child: child,
+                  ),
+                );
+              },
+              child: Container(
+                width: widget.dotSize,
+                height: widget.dotSize,
+                decoration: BoxDecoration(
+                  color: widget.color,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+          );
+        }),
       ),
     );
   }

@@ -41,12 +41,12 @@ Map<String, dynamic> _defaultStoreData() => <String, dynamic>{
         // === 英文供应商 ===
         {
           'id': 'deepseek',
-          'displayName': 'DeepSeek（测试）',
+          'displayName': 'DeepSeek',
           'apiKeys': <String>[], // 从 local_keys.json 加载
           'apiBaseUrl': 'https://api.deepseek.com/v1',
           'enabled': true,
-          'models': <String>['deepseek-chat'],
-          'visible_models': <String>['deepseek-chat'],
+          'models': <String>['deepseek-reasoner', 'deepseek-chat'],
+          'visible_models': <String>['deepseek-reasoner', 'deepseek-chat'],
           'hidden_models': <String>[],
           'capabilities': <String>['chat'],
           'model_type': 'chat',
@@ -163,13 +163,17 @@ Map<String, dynamic> _defaultStoreData() => <String, dynamic>{
           'model_type': 'chat',
         },
       ],
-      'visible_models': <String>['deepseek-chat'],
-      'default_model': 'deepseek-chat',
-      'model_display_names': <String, String>{'deepseek-chat': 'DeepSeek Chat'},
+      'visible_models': <String>['deepseek-reasoner', 'deepseek-chat'],
+      'default_model': 'deepseek-reasoner',
+      'model_display_names': <String, String>{
+        'deepseek-chat': 'DeepSeek Chat',
+        'deepseek-reasoner': 'DeepSeek Reasoner',
+      },
       'backend_api_key': '',
       'image_generation_enabled': false,
       'message_chunking_enabled': false,
       'message_format_config': null, // 默认为 null，由前端使用默认配置
+      'stream_segment_delay_seconds': 0.0, // 流式分段逐条延迟（调试）
       'text_scale_factor': 1.0, // 全局字体缩放因子（默认 1.0）
       'ui_scale_factor': 1.0, // 全局界面缩放因子（默认 1.0）
       'auto_reply_settings': _defaultAutoReplySettings(),
@@ -539,6 +543,10 @@ Map<String, dynamic> _normalizeData(Map<String, dynamic> raw) {
       _normalizeEnhancedDialogueSettings(data['enhanced_dialogue_settings']);
   data['call_flow_settings'] =
       _normalizeCallFlowSettings(data['call_flow_settings']);
+  data['stream_segment_delay_seconds'] =
+      ((data['stream_segment_delay_seconds'] as num?)?.toDouble() ?? 0.0)
+          .clamp(0.0, 5.0)
+          .toDouble();
   return data;
 }
 

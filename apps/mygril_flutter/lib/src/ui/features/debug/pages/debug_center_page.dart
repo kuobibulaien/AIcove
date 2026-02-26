@@ -11,6 +11,7 @@ import 'tool_prompts_page.dart';
 import 'enhanced_dialogue_page.dart';
 import 'network_diagnostic_page.dart';
 import 'call_flow_management_page.dart';
+import 'message_segmentation_debug_page.dart';
 
 /// 调试中心 - 整合日志、组件库、工具提示词管理
 class DebugCenterPage extends StatelessWidget {
@@ -72,6 +73,16 @@ class DebugCenterPage extends StatelessWidget {
                 trailingType: MoeSettingsRowTrailing.chevron,
                 onTap: () => Navigator.of(context).push(
                   ParallaxSlidePageRoute(page: const CallFlowManagementPage()),
+                ),
+              ),
+              MoeSettingsRow(
+                icon: Icons.segment_outlined,
+                label: '消息分段',
+                subtitle: '配置流式分段逐条展示延迟',
+                trailingType: MoeSettingsRowTrailing.chevron,
+                onTap: () => Navigator.of(context).push(
+                  ParallaxSlidePageRoute(
+                      page: const MessageSegmentationDebugPage()),
                 ),
               ),
               MoeSettingsRow(
