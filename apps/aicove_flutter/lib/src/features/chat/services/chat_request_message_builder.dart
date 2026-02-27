@@ -1,0 +1,475 @@
+library;
+
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:path/path.dart' as p;
+
+import '../../settings/app_settings.dart';
+import '../domain/message.dart';
+import '../../../core/api/agent_api.dart';
+import '../../../core/models/message_block.dart';
+import '../../../core/app_logger.dart';
+import '../../../core/utils/mime_utils.dart';
+
+/// 负责将会话消息转换为模型请求消息。
+///
+/// 聚合了图片/文件消息转换、非视觉模型回退描述、视觉辅助模型翻译等逻辑。
+class ChatRequestMessageBuilder {
+  ChatRequestMessageBuilder({
+    required this.readImageAsBase64,
+  });
+
+  final Future<String?> Function(String imagePath) readImageAsBase64;
+  final Map<String, String> _imageDescriptionCache = <String, String>{};
+
+  static const int _maxImageDescriptionCacheSize = 128;
+  static const String visionDescriptionSystemPrompt = '你是图片解释助手。只输出客观、简洁的图片描述。';
+
+  Future<List<Map<String, dynamic>>> buildRequestMessages(
+    List<Message> history, {
+    required AppSettings settings,
+    bool supportsVision = true,
+  }) async {
+    final reqMessages = <Map<String, dynamic>>[];
+    for (final message in history) {
+      final convertedMessages = await _toRequestMessages(
+        message,
+        settings: settings,
+        supportsVision: supportsVision,
+      );
+      reqMessages.addAll(convertedMessages);
+    }
+    return reqMessages;
+  }
+
+  Future<List<Map<String, dynamic>>> _toRequestMessages(
+    Message message, {
+    required AppSettings settings,
+    bool supportsVision = true,
+  }) async {
+    final blocks = message.blocks;
+    if (blocks == null || blocks.isEmpty) {
+      final content = message.content;
+      if (content.trim().isEmpty) return [];
+      return [
+        {'role': message.role, 'content': content}
+      ];
+    }
+
+    final parts = <Map<String, dynamic>>[];
+    final toolCalls = <Map<String, dynamic>>[];
+    final toolResultMessages = <Map<String, dynamic>>[];
+
+    for (final block in blocks) {
+      if (block is TextBlock) {
+        if (block.content.trim().isEmpty) continue;
+        parts.add({'type': 'text', 'text': block.content});
+        continue;
+      }
+
+      if (block is ImageBlock) {
+        if (!supportsVision) {
+          if (message.role == 'assistant') continue;
+
+          final cacheKey = _buildImageDescriptionCacheKey(block);
+          final cachedDescription =
+              cacheKey == null ? null : _imageDescriptionCache[cacheKey];
+          final description = await resolveImageDescriptionForNonVision(
+            imageBlock: block,
+            cachedDescription: cachedDescription,
+            onDescriptionResolved: (resolved) {
+              if (cacheKey != null) {
+                _cacheImageDescription(cacheKey, resolved);
+              }
+            },
+            translateWithVision: () =>
+                _translateImageWithVisionModel(block, settings),
+          );
+          final fallbackText = buildNonVisionImageMessageText(
+            role: message.role,
+            description: description,
+          );
+          if (fallbackText != null && fallbackText.isNotEmpty) {
+            parts.add({'type': 'text', 'text': fallbackText});
+          }
+          continue;
+        }
+
+        final url = block.url?.trim();
+        if (url != null && url.isNotEmpty) {
+          parts.add({
+            'type': 'image_url',
+            'image_url': {'url': url}
+          });
+          continue;
+        }
+
+        final base64 = block.base64?.trim();
+        if (base64 != null && base64.isNotEmpty) {
+          parts.add({
+            'type': 'image_url',
+            'image_url': {'url': 'data:image/jpeg;base64,$base64'},
+          });
+          continue;
+        }
+
+        final localPath = block.localPath?.trim();
+        if (localPath != null && localPath.isNotEmpty) {
+          final encoded = await readImageAsBase64(localPath);
+          if (encoded != null && encoded.isNotEmpty) {
+            final mime = MimeUtils.guessImageMimeType(localPath);
+            parts.add({
+              'type': 'image_url',
+              'image_url': {'url': 'data:$mime;base64,$encoded'},
+            });
+          } else {
+            parts.add({'type': 'text', 'text': '[图片读取失败]'});
+          }
+        }
+        continue;
+      }
+
+      if (block is FileBlock) {
+        final fileText = await _readTextFileForAi(block, settings: settings);
+        if (fileText.trim().isEmpty) continue;
+        parts.add({'type': 'text', 'text': fileText});
+        continue;
+      }
+
+      if (block is ToolBlock) {
+        if (block.toolCallId != null && block.toolCallId!.isNotEmpty) {
+          toolCalls.add({
+            'id': block.toolCallId,
+            'type': 'function',
+            'function': {
+              'name': block.toolName,
+              'arguments':
+                  block.arguments != null ? jsonEncode(block.arguments) : '{}',
+            }
+          });
+          toolResultMessages.add({
+            'role': 'tool',
+            'tool_call_id': block.toolCallId,
+            'name': block.toolName,
+            'content': block.result != null
+                ? jsonEncode(block.result)
+                : '{"success": true}',
+          });
+        }
+      }
+    }
+
+    final assistantMessage = <String, dynamic>{
+      'role': message.role,
+    };
+
+    if (parts.isNotEmpty) {
+      if (parts.length == 1 && parts.first['type'] == 'text') {
+        assistantMessage['content'] = parts.first['text'];
+      } else {
+        assistantMessage['content'] = parts;
+      }
+    } else {
+      assistantMessage['content'] = '';
+    }
+
+    if (toolCalls.isNotEmpty) {
+      assistantMessage['tool_calls'] = toolCalls;
+    }
+
+    return [
+      if (parts.isNotEmpty || toolCalls.isNotEmpty) assistantMessage,
+      ...toolResultMessages
+    ];
+  }
+
+  static Future<String?> resolveImageDescriptionForNonVision({
+    required ImageBlock imageBlock,
+    required Future<String?> Function() translateWithVision,
+    String? cachedDescription,
+    void Function(String description)? onDescriptionResolved,
+  }) async {
+    final existingPrompt = imageBlock.prompt?.trim();
+    if (existingPrompt != null && existingPrompt.isNotEmpty) {
+      return existingPrompt;
+    }
+
+    final cached = cachedDescription?.trim();
+    if (cached != null && cached.isNotEmpty) {
+      return cached;
+    }
+
+    final translated = (await translateWithVision())?.trim();
+    if (translated == null || translated.isEmpty) return null;
+    onDescriptionResolved?.call(translated);
+    return translated;
+  }
+
+  static List<Map<String, dynamic>> buildVisionTranslationMessages({
+    required Map<String, dynamic> imagePart,
+  }) {
+    return <Map<String, dynamic>>[
+      {
+        'role': 'system',
+        'content': visionDescriptionSystemPrompt,
+      },
+      {
+        'role': 'user',
+        'content': [imagePart],
+      }
+    ];
+  }
+
+  static String? buildNonVisionImageMessageText({
+    required String role,
+    required String? description,
+  }) {
+    if (role == 'assistant') return null;
+
+    final normalized = description?.trim();
+    if (normalized != null && normalized.isNotEmpty) {
+      return '用户刚刚发送了一张图片，内容摘要：$normalized';
+    }
+    return '用户刚刚发送了一张图片（当前模型不支持视觉，无法解析细节）。';
+  }
+
+  static String buildAssistantImageEventPrompt(
+    List<Message> history, {
+    int maxEvents = 3,
+  }) {
+    if (maxEvents <= 0 || history.isEmpty) return '';
+
+    final events = <String>[];
+    for (final msg in history.reversed) {
+      if (msg.role != 'assistant') continue;
+      final blocks = msg.blocks;
+      if (blocks == null || blocks.isEmpty) continue;
+
+      final images = blocks.whereType<ImageBlock>().toList();
+      if (images.isEmpty) continue;
+
+      String? prompt;
+      for (final image in images) {
+        final currentPrompt = image.prompt?.trim();
+        if (currentPrompt != null && currentPrompt.isNotEmpty) {
+          prompt = currentPrompt;
+          break;
+        }
+      }
+
+      final countPart = 'count=${images.length}';
+      final promptPart = (prompt == null || prompt.isEmpty)
+          ? ''
+          : ' prompt="${_sanitizePromptForEvent(prompt)}"';
+      events.add('- assistant_image_sent $countPart$promptPart');
+      if (events.length >= maxEvents) break;
+    }
+
+    if (events.isEmpty) return '';
+
+    final ordered = events.reversed.toList();
+    return [
+      '以下是最近媒体状态（仅供内部上下文理解，禁止逐字输出给用户）：',
+      '<internal_media_events>',
+      ...ordered,
+      '</internal_media_events>',
+    ].join('\n');
+  }
+
+  static String _sanitizePromptForEvent(String prompt) {
+    var normalized = prompt.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (normalized.length > 160) {
+      normalized = '${normalized.substring(0, 160)}...';
+    }
+    return normalized.replaceAll('"', "'");
+  }
+
+  String? _buildImageDescriptionCacheKey(ImageBlock block) {
+    final url = block.url?.trim();
+    if (url != null && url.isNotEmpty) return 'url:$url';
+
+    final localPath = block.localPath?.trim();
+    if (localPath != null && localPath.isNotEmpty) return 'local:$localPath';
+
+    final base64 = block.base64?.trim();
+    if (base64 != null && base64.isNotEmpty) {
+      if (base64.length <= 160) return 'b64:$base64';
+      final head = base64.substring(0, 80);
+      final tail = base64.substring(base64.length - 80);
+      return 'b64:${base64.length}:$head:$tail';
+    }
+    return null;
+  }
+
+  void _cacheImageDescription(String cacheKey, String description) {
+    final trimmed = description.trim();
+    if (trimmed.isEmpty) return;
+
+    if (_imageDescriptionCache.containsKey(cacheKey)) {
+      _imageDescriptionCache.remove(cacheKey);
+    }
+    _imageDescriptionCache[cacheKey] = trimmed;
+    while (_imageDescriptionCache.length > _maxImageDescriptionCacheSize) {
+      _imageDescriptionCache.remove(_imageDescriptionCache.keys.first);
+    }
+  }
+
+  Future<String?> _translateImageWithVisionModel(
+    ImageBlock block,
+    AppSettings settings,
+  ) async {
+    final visionModelRef = settings.defaultVisionModel;
+    if (visionModelRef == null || visionModelRef.trim().isEmpty) return null;
+
+    final providerId = settings.getModelProviderId(visionModelRef);
+    final rawModelId = settings.getRawModelId(visionModelRef);
+    if (providerId == null || rawModelId.isEmpty) return null;
+
+    final provider = settings.providers.firstWhere(
+      (p) => p.id == providerId,
+      orElse: () =>
+          const ProviderAuth(id: '', apiKeys: <String>[], apiBaseUrl: ''),
+    );
+    if (provider.id.isEmpty || provider.apiKeys.isEmpty) return null;
+
+    final apiKey = provider.apiKeys.first.trim();
+    if (apiKey.isEmpty) return null;
+
+    final apiBaseUrl = provider.apiBaseUrl.trim();
+
+    Map<String, dynamic>? imagePart;
+
+    final url = block.url?.trim();
+    if (url != null && url.isNotEmpty) {
+      imagePart = {
+        'type': 'image_url',
+        'image_url': {'url': url}
+      };
+    } else {
+      final base64 = block.base64?.trim();
+      if (base64 != null && base64.isNotEmpty) {
+        imagePart = {
+          'type': 'image_url',
+          'image_url': {'url': 'data:image/jpeg;base64,$base64'},
+        };
+      } else {
+        final localPath = block.localPath?.trim();
+        if (localPath != null && localPath.isNotEmpty) {
+          final encoded = await readImageAsBase64(localPath);
+          if (encoded != null && encoded.isNotEmpty) {
+            final mime = MimeUtils.guessImageMimeType(localPath);
+            imagePart = {
+              'type': 'image_url',
+              'image_url': {'url': 'data:$mime;base64,$encoded'},
+            };
+          }
+        }
+      }
+    }
+
+    if (imagePart == null) return null;
+
+    final messages = buildVisionTranslationMessages(imagePart: imagePart);
+
+    try {
+      final agent = AgentApiClient(timeout: const Duration(seconds: 30));
+      final result = await agent.sendMessageRich(
+        agentId: 'system_vision',
+        sessionId: 'vision_translate_${DateTime.now().millisecondsSinceEpoch}',
+        modelFullId: visionModelRef,
+        messages: messages,
+        userText: '',
+        providerApiBase: apiBaseUrl,
+        providerApiKey: apiKey,
+        customConfig: provider.customConfig,
+      );
+      final text = result.text.trim();
+      if (text.isEmpty) return null;
+      return text;
+    } catch (e) {
+      AppLogger.warning(
+        'ChatSendService',
+        'Vision translation failed',
+        metadata: {'error': e.toString()},
+      );
+      return null;
+    }
+  }
+
+  static const _supportedTextFileExts = <String>{
+    'txt',
+    'md',
+    'markdown',
+    'json',
+    'yaml',
+    'yml',
+    'csv',
+    'log',
+    'xml',
+    'ini',
+    'conf',
+    'toml',
+    'dart',
+    'py',
+    'js',
+    'ts',
+    'java',
+    'kt',
+    'swift',
+    'go',
+    'rs',
+    'c',
+    'cpp',
+    'h',
+    'hpp',
+    'html',
+    'css',
+    'sh',
+  };
+
+  Future<String> _readTextFileForAi(
+    FileBlock block, {
+    required AppSettings settings,
+  }) async {
+    final path = block.filePath.trim();
+    if (path.isEmpty) return '';
+
+    final maxBytes = settings.maxFileUploadMB * 1024 * 1024;
+    if (maxBytes > 0 && block.fileSize > maxBytes) {
+      return 'User uploaded file ${block.fileName} (${block.fileSize}B), but it exceeds size limit.';
+    }
+
+    final ext = p.extension(path).replaceFirst('.', '').toLowerCase();
+    if (ext.isNotEmpty && !_supportedTextFileExts.contains(ext)) {
+      return 'User uploaded file ${block.fileName} (${block.mimeType}), but this format is not supported for reading.';
+    }
+
+    try {
+      final bytes = await File(path).readAsBytes();
+      final content = utf8.decode(bytes, allowMalformed: false);
+      final safeContent = _truncateForPrompt(content);
+      final lang = ext.isEmpty ? 'text' : ext;
+      return '用户上传了文件：${block.fileName}（${block.fileSize}B）。\n\n```$lang\n$safeContent\n```';
+    } catch (_) {
+      try {
+        final bytes = await File(path).readAsBytes();
+        final content = utf8.decode(bytes, allowMalformed: true);
+        if (content.contains('\u0000')) {
+          return 'User uploaded file ${block.fileName} (${block.mimeType}), but it appears to be binary and cannot be read as text.';
+        }
+        final safeContent = _truncateForPrompt(content);
+        final lang = ext.isEmpty ? 'text' : ext;
+        return '用户上传了文件：${block.fileName}（${block.fileSize}B）。\n\n```$lang\n$safeContent\n```';
+      } catch (e) {
+        return 'User uploaded file ${block.fileName}, but reading failed: $e';
+      }
+    }
+  }
+
+  String _truncateForPrompt(String content) {
+    const maxChars = 40000;
+    if (content.length <= maxChars) return content;
+    return '${content.substring(0, maxChars)}\n...(内容过长，已截断，仅发送前 $maxChars 字符)';
+  }
+}

@@ -1,0 +1,258 @@
+﻿Resolving dependencies...
+Downloading packages...
+  _fe_analyzer_shared 67.0.0 (96.0.0 available)
+  analyzer 6.4.1 (10.2.0 available)
+  analyzer_plugin 0.11.3 (0.14.4 available)
+  archive 3.6.1 (4.0.9 available)
+  audio_session 0.1.25 (0.2.2 available)
+  build 2.4.1 (4.0.4 available)
+  build_config 1.1.2 (1.2.0 available)
+  build_resolvers 2.4.2 (3.0.4 available)
+  build_runner 2.4.13 (2.11.1 available)
+  build_runner_core 7.3.2 (9.3.2 available)
+  built_value 8.12.1 (8.12.4 available)
+  cached_network_image 3.4.0 (3.4.1 available)
+  cached_network_image_web 1.3.0 (1.3.1 available)
+  characters 1.4.0 (1.4.1 available)
+  code_builder 4.11.0 (4.11.1 available)
+  cross_file 0.3.4+2 (0.3.5+2 available)
+  crypto 3.0.6 (3.0.7 available)
+  dart_style 2.3.6 (3.1.5 available)
+  dbus 0.7.11 (0.7.12 available)
+  dio 5.9.0 (5.9.1 available)
+  drift 2.19.1+1 (2.31.0 available)
+  drift_dev 2.19.1 (2.31.0 available)
+  ffi 2.1.4 (2.2.0 available)
+  file_picker 8.0.7 (10.3.10 available)
+  file_selector_linux 0.9.3+2 (0.9.4 available)
+  file_selector_macos 0.9.4+5 (0.9.5 available)
+  file_selector_platform_interface 2.6.2 (2.7.0 available)
+  file_selector_windows 0.9.3+4 (0.9.3+5 available)
+  flutter_lints 4.0.0 (6.0.0 available)
+  flutter_local_notifications 17.2.4 (20.1.0 available)
+  flutter_local_notifications_linux 4.0.1 (7.0.0 available)
+  flutter_local_notifications_platform_interface 7.2.0 (10.0.0 available)
+  flutter_plugin_android_lifecycle 2.0.32 (2.0.33 available)
+  flutter_riverpod 2.6.1 (3.2.1 available)
+  flutter_secure_storage 9.2.4 (10.0.0 available)
+  flutter_secure_storage_linux 1.2.3 (3.0.0 available)
+  flutter_secure_storage_macos 3.1.3 (4.0.0 available)
+  flutter_secure_storage_platform_interface 1.1.2 (2.0.1 available)
+  flutter_secure_storage_web 1.2.1 (2.1.0 available)
+  flutter_secure_storage_windows 3.1.2 (4.1.0 available)
+  flutter_slidable 3.1.2 (4.0.3 available)
+  go_router 14.8.1 (17.1.0 available)
+  http 1.5.0 (1.6.0 available)
+  image 4.3.0 (4.8.0 available)
+  image_picker 1.2.0 (1.2.1 available)
+  image_picker_android 0.8.13+7 (0.8.13+14 available)
+  image_picker_for_web 3.1.0 (3.1.1 available)
+  image_picker_ios 0.8.13+1 (0.8.13+6 available)
+  js 0.6.7 (0.7.2 available)
+  json_annotation 4.9.0 (4.11.0 available)
+  just_audio 0.9.44 (0.10.5 available)
+  just_audio_web 0.4.13 (0.4.16 available)
+  lints 4.0.0 (6.1.0 available)
+  matcher 0.12.17 (0.12.18 available)
+  material_color_utilities 0.11.1 (0.13.0 available)
+  meta 1.16.0 (1.18.1 available)
+  mime 1.0.6 (2.0.0 available)
+  package_info_plus 8.3.1 (9.0.0 available)
+  path_provider_android 2.2.20 (2.2.22 available)
+  path_provider_foundation 2.4.3 (2.6.0 available)
+  permission_handler 11.4.0 (12.0.1 available)
+  permission_handler_android 12.1.0 (13.0.1 available)
+  petitparser 7.0.1 (7.0.2 available)
+  pretty_qr_code 3.5.0 (3.6.0 available)
+  riverpod 2.6.1 (3.2.1 available)
+  share_plus 9.0.0 (12.0.1 available)
+  share_plus_platform_interface 4.0.0 (6.1.0 available)
+  shared_preferences 2.5.3 (2.5.4 available)
+  shared_preferences_android 2.4.15 (2.4.20 available)
+  shared_preferences_foundation 2.5.5 (2.5.6 available)
+  shelf_web_socket 2.0.1 (3.0.0 available)
+  source_gen 1.5.0 (4.2.0 available)
+  source_span 1.10.1 (1.10.2 available)
+  sqlite3 2.4.5 (3.1.6 available)
+  sqlite3_flutter_libs 0.5.41 (0.6.0+eol available)
+  sqlparser 0.37.1 (0.43.1 available)
+  test_api 0.7.6 (0.7.9 available)
+  timezone 0.9.4 (0.11.0 available)
+  url_launcher_web 2.4.1 (2.4.2 available)
+  uuid 4.5.1 (4.5.3 available)
+  vector_graphics_compiler 1.1.20 (1.2.0 available)
+  watcher 1.2.0 (1.2.1 available)
+  web 0.5.1 (1.1.1 available)
+  web_socket_channel 2.4.0 (3.0.3 available)
+  win32 5.15.0 (6.0.0 available)
+  window_manager 0.4.3 (0.5.1 available)
+  workmanager 0.6.0 (0.9.0+3 available)
+Got dependencies!
+87 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+Analyzing mygril_flutter...                                     
+
+warning - Unused import: 'api_logger.dart' - lib\src\core\log_history_service.dart:4:8 - unused_import
+warning - Unused import: 'app_logger.dart' - lib\src\core\log_history_service.dart:5:8 - unused_import
+   info - Don't invoke 'print' in production code - lib\src\core\utils\blurred_background_generator.dart:92:7 - avoid_print
+warning - Unused import: 'dart:convert' - lib\src\core\utils\blurred_background_manager.dart:8:8 - unused_import
+   info - Don't invoke 'print' in production code - lib\src\core\utils\blurred_background_manager.dart:73:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\src\core\utils\blurred_background_manager.dart:146:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\src\core\utils\blurred_background_manager.dart:184:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\src\features\ai_tools\llm_hook_manager.dart:20:9 - avoid_print
+   info - Don't invoke 'print' in production code - lib\src\features\ai_tools\llm_hook_manager.dart:37:9 - avoid_print
+   info - Dangling library doc comment - lib\src\features\backup\models\export_format.dart:2:1 - dangling_library_doc_comments
+   info - Don't invoke 'print' in production code - lib\src\features\chat\data\preset_characters_loader.dart:29:13 - avoid_print
+   info - Don't invoke 'print' in production code - lib\src\features\chat\data\preset_characters_loader.dart:50:7 - avoid_print
+   info - Use 'const' with the constructor to improve performance - lib\src\features\chat\presentation\widgets\character_list_item.dart:185:32 - prefer_const_constructors
+warning - The declaration '_getPluginSummary' isn't referenced - lib\src\features\chat\presentation\widgets\chat_settings_dialog.dart:310:10 - unused_element
+warning - Unnecessary cast - lib\src\features\chat\presentation\widgets\message_bubble.dart:452:21 - unnecessary_cast
+   info - The import of '../../../../ui/shared/widgets/image_crop_dialog.dart' is unnecessary because all of the used elements are also provided by the import of '../../../../ui/shared/widgets/index.dart' - lib\src\features\chat\presentation\widgets\profile_content.dart:11:8 - unnecessary_import
+warning - Unused import: 'dart:convert' - lib\src\features\chat\services\chat_message_processor.dart:13:8 - unused_import
+warning - The '!' will have no effect because the receiver can't be null - lib\src\features\chat\services\chat_tts_handler.dart:302:22 - unnecessary_non_null_assertion
+warning - The '!' will have no effect because the receiver can't be null - lib\src\features\chat\services\chat_tts_handler.dart:328:22 - unnecessary_non_null_assertion
+warning - The value of the local variable 'colors' isn't used - lib\src\features\diary\presentation\diary_list_page.dart:76:11 - unused_local_variable
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\src\features\diary\presentation\diary_list_page.dart:163:44 - deprecated_member_use
+   info - Statements in an if should be enclosed in a block - lib\src\features\memory\services\memory_service.dart:378:39 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\src\features\memory\services\memory_service.dart:471:7 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\src\features\memory\services\memory_service.dart:662:7 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\src\features\memory\services\memory_service.dart:668:7 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\src\features\memory\services\memory_service.dart:670:7 - curly_braces_in_flow_control_structures
+   info - The import of 'package:flutter/foundation.dart' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/material.dart' - lib\src\features\plugins\domain\base_plugin.dart:1:8 - unnecessary_import
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\image\image_plugin.dart:17:28 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\image\image_plugin.dart:25:29 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\image\image_plugin.dart:29:26 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\image\image_plugin.dart:33:32 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\image\image_plugin.dart:37:23 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\image\image_plugin.dart:42:24 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\image\image_plugin.dart:47:23 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\image\image_plugin.dart:52:31 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\image\image_plugin.dart:57:23 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\image\image_plugin.dart:119:21 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\image\image_plugin.dart:124:30 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\image\image_plugin.dart:129:20 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\image\image_plugin.dart:134:21 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\image\image_plugin.dart:139:20 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\image\image_plugin.dart:144:29 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\image\image_plugin.dart:149:20 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\image\image_plugin.dart:154:19 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\image\image_plugin.dart:159:22 - prefer_const_constructors
+   info - 'triggerInterval' is deprecated and shouldn't be used. Use roundSplitThreshold + next-day trigger instead - lib\src\features\plugins\memory\memory_config.dart:111:48 - deprecated_member_use_from_same_package
+   info - 'triggerInterval' is deprecated and shouldn't be used. Use roundSplitThreshold + next-day trigger instead - lib\src\features\plugins\memory\memory_config.dart:137:28 - deprecated_member_use_from_same_package
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\memory\memory_plugin.dart:14:28 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\memory\memory_plugin.dart:22:18 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\memory\memory_plugin.dart:27:30 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\memory\memory_plugin.dart:33:30 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\memory\memory_plugin.dart:37:29 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\memory\memory_plugin.dart:41:30 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\memory\memory_plugin.dart:45:29 - prefer_const_constructors
+   info - Statements in an if should be enclosed in a block - lib\src\features\plugins\memory\memory_plugin.dart:105:28 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\src\features\plugins\memory\memory_plugin.dart:143:37 - curly_braces_in_flow_control_structures
+   info - Statements in an if should be enclosed in a block - lib\src\features\plugins\memory\memory_plugin.dart:237:34 - curly_braces_in_flow_control_structures
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\sticker\sticker_plugin.dart:16:28 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\sticker\sticker_plugin.dart:24:18 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\time_awareness\time_awareness_plugin.dart:16:28 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\time_awareness\time_awareness_plugin.dart:24:18 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\time_awareness\time_awareness_plugin.dart:29:34 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\time_awareness\time_awareness_plugin.dart:35:29 - prefer_const_constructors
+   info - Unnecessary braces in a string interpolation - lib\src\features\plugins\time_awareness\time_awareness_plugin.dart:105:23 - unnecessary_brace_in_string_interps
+   info - Unnecessary braces in a string interpolation - lib\src\features\plugins\time_awareness\time_awareness_plugin.dart:113:25 - unnecessary_brace_in_string_interps
+   info - The import of '../domain/handlers/ai_tool.dart' is unnecessary because all of the used elements are also provided by the import of '../domain/index.dart' - lib\src\features\plugins\trigger\trigger_plugin.dart:7:8 - unnecessary_import
+   info - The import of '../domain/handlers/tool_parameter.dart' is unnecessary because all of the used elements are also provided by the import of '../domain/index.dart' - lib\src\features\plugins\trigger\trigger_plugin.dart:8:8 - unnecessary_import
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\trigger\trigger_plugin.dart:18:28 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\trigger\trigger_plugin.dart:26:18 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\trigger\trigger_plugin.dart:121:16 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\trigger\trigger_plugin.dart:126:15 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\trigger\trigger_plugin.dart:131:17 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\trigger\trigger_plugin.dart:154:13 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\trigger\trigger_plugin.dart:159:16 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\trigger\trigger_plugin.dart:174:28 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\trigger\trigger_plugin.dart:179:16 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\trigger\trigger_plugin.dart:194:16 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\trigger\trigger_plugin.dart:199:28 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\trigger\trigger_plugin.dart:204:16 - prefer_const_constructors
+warning - The '!' will have no effect because the receiver can't be null - lib\src\features\plugins\tts\aliyun_qwen_tts_websocket.dart:109:35 - unnecessary_non_null_assertion
+   info - The imported package 'http_parser' isn't a dependency of the importing package - lib\src\features\plugins\tts\minimax_tts_service.dart:19:8 - depend_on_referenced_packages
+   info - Unnecessary use of string interpolation - lib\src\features\plugins\tts\providers\minimax_voice_provider.dart:54:19 - unnecessary_string_interpolations
+   info - The imported package 'http_parser' isn't a dependency of the importing package - lib\src\features\plugins\tts\siliconflow_tts_service.dart:5:8 - depend_on_referenced_packages
+   info - Statements in an if should be enclosed in a block - lib\src\features\plugins\tts\tts_config.dart:199:11 - curly_braces_in_flow_control_structures
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\tts\tts_plugin.dart:15:28 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\tts\tts_plugin.dart:23:18 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\tts\tts_plugin.dart:28:29 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\tts\tts_plugin.dart:33:25 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\tts\tts_plugin.dart:38:21 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\tts\tts_plugin.dart:43:16 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\features\plugins\tts\tts_plugin.dart:49:27 - prefer_const_constructors
+   info - The private field _apiKey could be 'final' - lib\src\features\plugins\tts\tts_plugin.dart:60:11 - prefer_final_fields
+   info - The private field _requestUrl could be 'final' - lib\src\features\plugins\tts\tts_plugin.dart:61:10 - prefer_final_fields
+   info - The private field _requestFormat could be 'final' - lib\src\features\plugins\tts\tts_plugin.dart:62:10 - prefer_final_fields
+   info - The private field _selectedModel could be 'final' - lib\src\features\plugins\tts\tts_plugin.dart:63:11 - prefer_final_fields
+   info - The private field _onVoiceCreated could be 'final' - lib\src\features\plugins\tts\tts_plugin.dart:67:53 - prefer_final_fields
+warning - The declaration '_escapeJson' isn't referenced - lib\src\features\plugins\tts\tts_plugin.dart:387:17 - unused_element
+warning - The operand can't be 'null', so the condition is always 'true' - lib\src\features\plugins\tts\tts_service.dart:137:31 - unnecessary_null_comparison
+warning - The declaration '_sanitizeRequestBodyForLogs' isn't referenced - lib\src\features\plugins\tts\tts_service.dart:478:24 - unused_element
+   info - Use 'const' with the constructor to improve performance - lib\src\ui\features\auto_reply\pages\auto_reply_trigger_list_page.dart:249:12 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\ui\features\auto_reply\pages\auto_reply_trigger_list_page.dart:250:14 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\ui\features\backup\pages\data_management_page.dart:24:15 - prefer_const_constructors
+warning - The value of the local variable 'theme' isn't used - lib\src\ui\features\backup\pages\export_character_page.dart:34:11 - unused_local_variable
+   info - Use 'const' with the constructor to improve performance - lib\src\ui\features\backup\pages\export_character_page.dart:37:15 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\ui\features\backup\pages\export_scope_page.dart:23:15 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\ui\features\backup\pages\import_file_page.dart:32:15 - prefer_const_constructors
+warning - The value of the local variable 'theme' isn't used - lib\src\ui\features\backup\pages\import_preview_page.dart:45:11 - unused_local_variable
+   info - Use 'const' with the constructor to improve performance - lib\src\ui\features\backup\pages\import_preview_page.dart:51:15 - prefer_const_constructors
+warning - The value of the local variable 'theme' isn't used - lib\src\ui\features\backup\pages\import_preview_page.dart:661:11 - unused_local_variable
+   info - Use 'const' with the constructor to improve performance - lib\src\ui\features\backup\pages\memory_trash_page.dart:28:15 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\ui\features\backup\pages\memory_trash_page.dart:43:20 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\ui\features\backup\pages\memory_trash_page.dart:44:22 - prefer_const_constructors
+warning - Unused import: '../../../../features/plugins/tts/tts_config.dart' - lib\src\ui\features\character\pages\contact_edit_page.dart:16:8 - unused_import
+   info - Use 'const' with the constructor to improve performance - lib\src\ui\features\character\widgets\character_image_section.dart:48:11 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\ui\features\character\widgets\chat_background_section.dart:41:11 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\ui\features\character\widgets\plugin_voice_section.dart:46:11 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\ui\features\character\widgets\plugin_voice_section.dart:85:11 - prefer_const_constructors
+   info - 'activeColor' is deprecated and shouldn't be used. Use activeThumbColor or activeTrackColor instead. This feature was deprecated after v3.31.0-2.0.pre - lib\src\ui\features\character\widgets\plugin_voice_section.dart:174:21 - deprecated_member_use
+warning - Unused import: 'chat_background_settings_page.dart' - lib\src\ui\features\chat\pages\chat_page.dart:15:8 - unused_import
+   info - The import of '../../../../features/chat/services/chat_send_service.dart' is unnecessary because all of the used elements are also provided by the import of '../../../../features/chat/providers2.dart' - lib\src\ui\features\chat\pages\chat_page.dart:21:8 - unnecessary_import
+warning - The value of the local variable 'sideNavWidth' isn't used - lib\src\ui\features\chat\pages\split_chat_page.dart:101:11 - unused_local_variable
+warning - Unused import: '../../../../features/plugins/plugin_manager.dart' - lib\src\ui\features\debug\pages\tool_prompts_page.dart:9:8 - unused_import
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\src\ui\features\debug\pages\tool_prompts_page.dart:108:24 - use_build_context_synchronously
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\src\ui\features\debug\pages\tool_prompts_page.dart:398:56 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\src\ui\features\debug\pages\tool_prompts_page.dart:399:54 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\src\ui\features\debug\pages\tool_prompts_page.dart:442:49 - deprecated_member_use
+warning - The left operand can't be null, so the right operand is never executed - lib\src\ui\features\debug\pages\ui_gallery_page.dart:97:84 - dead_null_aware_expression
+warning - The left operand can't be null, so the right operand is never executed - lib\src\ui\features\debug\pages\ui_gallery_page.dart:149:76 - dead_null_aware_expression
+   info - 'value' is deprecated and shouldn't be used. Use component accessors like .r or .g, or toARGB32 for an explicit conversion - lib\src\ui\features\debug\pages\ui_gallery_page.dart:581:27 - deprecated_member_use
+   info - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check - lib\src\ui\features\plugins\pages\drawing_prompt_page.dart:227:49 - use_build_context_synchronously
+   info - 'debugState' is deprecated and shouldn't be used. Use state instead - lib\src\ui\features\plugins\pages\image_plugin_detail_page.dart:374:35 - deprecated_member_use
+   info - Use 'const' with the constructor to improve performance - lib\src\ui\features\plugins\pages\sticker_settings_page.dart:46:15 - prefer_const_constructors
+warning - Unused import: 'dart:convert' - lib\src\ui\features\plugins\widgets\tts_settings_form.dart:12:8 - unused_import
+warning - Unused import: '../../../../features/plugins/tts/siliconflow_tts_service.dart' - lib\src\ui\features\plugins\widgets\tts_settings_form.dart:25:8 - unused_import
+   info - The import of '../../../../features/settings/settings_models.dart' is unnecessary because all of the used elements are also provided by the import of '../../../../features/settings/app_settings.dart' - lib\src\ui\features\plugins\widgets\tts_settings_form.dart:27:8 - unnecessary_import
+   info - Don't use 'BuildContext's across async gaps - lib\src\ui\features\plugins\widgets\tts_settings_form.dart:384:28 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps - lib\src\ui\features\plugins\widgets\tts_settings_form.dart:426:28 - use_build_context_synchronously
+warning - The value of the local variable 'isQwenTts' isn't used - lib\src\ui\features\plugins\widgets\tts_settings_form.dart:445:11 - unused_local_variable
+   info - Use 'const' with the constructor to improve performance - lib\src\ui\features\plugins\widgets\tts_settings_form.dart:466:19 - prefer_const_constructors
+warning - The operand can't be 'null', so the condition is always 'false' - lib\src\ui\features\plugins\widgets\tts_settings_form.dart:525:49 - unnecessary_null_comparison
+   info - Don't use 'BuildContext's across async gaps - lib\src\ui\features\plugins\widgets\tts_settings_form.dart:740:26 - use_build_context_synchronously
+warning - A value for optional parameter 'sourceType' isn't ever given - lib\src\ui\features\plugins\widgets\tts_settings_form.dart:756:21 - unused_element_parameter
+   info - Don't use 'BuildContext's across async gaps - lib\src\ui\features\plugins\widgets\tts_settings_form.dart:855:44 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps - lib\src\ui\features\plugins\widgets\tts_settings_form.dart:879:40 - use_build_context_synchronously
+   info - Don't use 'BuildContext's across async gaps - lib\src\ui\features\plugins\widgets\tts_settings_form.dart:1236:36 - use_build_context_synchronously
+warning - The declaration '_showCreateAliyunVoiceDialog' isn't referenced - lib\src\ui\features\plugins\widgets\tts_settings_form.dart:1246:8 - unused_element
+   info - Don't use 'BuildContext's across async gaps - lib\src\ui\features\plugins\widgets\tts_settings_form.dart:1788:19 - use_build_context_synchronously
+   info - Dangling library doc comment - lib\src\ui\features\settings\pages\chat_plugin_settings_page.dart:1:1 - dangling_library_doc_comments
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\src\ui\features\settings\pages\chat_plugin_settings_page.dart:105:57 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\src\ui\features\settings\pages\chat_plugin_settings_page.dart:105:89 - deprecated_member_use
+   info - The import of '../../../shared/widgets/provider/capability_selector.dart' is unnecessary because all of the used elements are also provided by the import of '../../../shared/widgets/index.dart' - lib\src\ui\features\settings\pages\provider_detail_page.dart:27:8 - unnecessary_import
+   info - The import of '../../../shared/widgets/provider/capability_chips.dart' is unnecessary because all of the used elements are also provided by the import of '../../../shared/widgets/index.dart' - lib\src\ui\features\settings\pages\provider_detail_page.dart:28:8 - unnecessary_import
+warning - The declaration '_refreshModels' isn't referenced - lib\src\ui\features\settings\pages\provider_detail_page.dart:393:16 - unused_element
+warning - The declaration '_extractDomain' isn't referenced - lib\src\ui\features\settings\pages\provider_detail_page.dart:886:10 - unused_element
+warning - The declaration '_maskKey' isn't referenced - lib\src\ui\features\settings\pages\provider_detail_page.dart:895:10 - unused_element
+   info - Use 'const' with the constructor to improve performance - lib\src\ui\features\settings\pages\provider_selector_page.dart:53:20 - prefer_const_constructors
+   info - Use 'const' with the constructor to improve performance - lib\src\ui\features\settings\pages\provider_selector_page.dart:54:22 - prefer_const_constructors
+   info - 'value' is deprecated and shouldn't be used. Use component accessors like .r or .g, or toARGB32 for an explicit conversion - lib\src\ui\features\settings\pages\ui_settings_page.dart:237:35 - deprecated_member_use
+   info - 'value' is deprecated and shouldn't be used. Use component accessors like .r or .g, or toARGB32 for an explicit conversion - lib\src\ui\features\settings\pages\ui_settings_page.dart:237:63 - deprecated_member_use
+   info - Use 'const' with the constructor to improve performance - lib\src\ui\features\settings\widgets\model_picker_sheet.dart:362:29 - prefer_const_constructors
+   info - The import of '../../../../features/settings/settings_models.dart' is unnecessary because all of the used elements are also provided by the import of '../../../../features/settings/app_settings.dart' - lib\src\ui\features\settings\widgets\model_row_tile.dart:23:8 - unnecessary_import
+   info - The import of '../../../../ui/shared/widgets/provider/capability_chips.dart' is unnecessary because all of the used elements are also provided by the import of '../../../../ui/shared/widgets/index.dart' - lib\src\ui\features\settings\widgets\model_row_tile.dart:26:8 - unnecessary_import
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\src\ui\shared\widgets\media\moe_image_preview.dart:279:34 - deprecated_member_use
+

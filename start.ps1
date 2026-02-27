@@ -523,7 +523,7 @@ try {
     Write-Host ""
     Write-Host "========================================" -ForegroundColor Green
     Write-Host ""
-    Write-Host "  �'� Tips:" -ForegroundColor Yellow
+    Write-Host "  Tips:" -ForegroundColor Yellow
     Write-Host "     - Press Ctrl+C to stop the server" -ForegroundColor Gray
     Write-Host "     - Logs will appear below" -ForegroundColor Gray
     Write-Host ""

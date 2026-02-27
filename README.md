@@ -5,7 +5,7 @@
 ## 项目简介
 
 AIcove 是一个跨平台（Android / iOS / Windows / Web）AI 对话客户端，核心思路是让 AI 通过工具调用生成多模态消息（文本、语音、图片、表情包），并能主动触发关怀消息，模拟真实异地伴侣的沟通体验。
-
+曾用名mygril，可能有部分路径残留。
 **架构特点：** 所有 AI 对话逻辑在 Flutter 客户端完成；后端以认证、数据同步为主，提供备份、云触发器、云记忆、额度管理等云端能力。
 
 ## 核心功能
@@ -25,7 +25,7 @@ AIcove 是一个跨平台（Android / iOS / Windows / Web）AI 对话客户端�
 ## 技术栈
 
 **前端（Flutter）**
-- Flutter 3.3+ / Dart
+- Flutter（建议 3.22+）/ Dart >= 3.3.0
 - Riverpod（状态管理）
 - GoRouter（路由）
 - Drift（本地 SQLite ORM）
@@ -140,7 +140,7 @@ python main.py               # 或用 Docker：docker-compose up -d
 - 提示统一用 MoeToast（不要到处自己写 SnackBar/Toast）
 
 ## 3) 宽屏/窄屏必须同步
-- 断点与页面骨架以 `apps/aicove_flutter/界面布局图.md` 为准（900px）
+- 断点与页面骨架以 `apps/aicove_flutter/docs/界面布局说明.md` 为准（900px）
 - 改页面时要说明：窄屏/宽屏是否都适配，哪里需要联动修改
 
 ## 4) 数据流/状态管理
@@ -149,7 +149,7 @@ python main.py               # 或用 Docker：docker-compose up -d
 
 ## 5) API 调用与错误处理
 - 后端 REST：优先走 `apps/aicove_flutter/lib/src/core/api_client.dart`
-- AI/消息相关：优先看聊天入口 `apps/aicove_flutter/lib/src/features/chat/chat_actions.dart`；架构说明见 `apps/aicove_flutter/API_ARCHITECTURE.md`（以当前实现为准）
+- AI/消息相关：优先看聊天入口 `apps/aicove_flutter/lib/src/features/chat/chat_actions.dart`；架构说明见 `apps/aicove_flutter/docs/API架构说明.md`（以当前实现为准）
 - 错误提示/重试逻辑要统一，别每个页面各写一套
 
 ## 6) 复用规则（防止越写越散）
