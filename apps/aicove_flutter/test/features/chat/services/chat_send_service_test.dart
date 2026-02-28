@@ -1,8 +1,12 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:drift/native.dart';
 
 import 'package:aicove_flutter/src/core/models/message_block.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
+import 'package:aicove_flutter/src/core/database/database.dart' as db;
+import 'package:aicove_flutter/src/core/database/database_provider.dart';
+import 'package:aicove_flutter/src/core/database/converters/database_converters.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_send_service.dart';
@@ -164,6 +168,105 @@ void main() {
     );
 
     expect(history.map((m) => m.id).toList(), ['m2', 'm3', 'm4']);
+  });
+
+  test('prepareHistoryFromStore uses full persisted history, not UI page',
+      () async {
+    final appDb = db.AppDatabase.forTesting(NativeDatabase.memory());
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(appDb),
+      ],
+    );
+    addTearDown(() async {
+      container.dispose();
+      await appDb.close();
+    });
+
+    final convRepo = container.read(conversationRepositoryProvider);
+    final msgRepo = container.read(messageRepositoryProvider);
+    final service = container.read(chatSendServiceProvider);
+
+    final base = DateTime(2026, 1, 1, 12, 0, 0);
+    final conv = Conversation(
+      id: 'conv_db_full',
+      title: 'Chat',
+      displayName: 'Chat',
+      createdAt: base,
+      updatedAt: base,
+      messages: [
+        msg('m4', 'ui only 4', base.add(const Duration(minutes: 4))),
+        msg('m5', 'ui only 5', base.add(const Duration(minutes: 5))),
+      ],
+    );
+    await convRepo.upsert(ConversationConverter.toCompanion(conv));
+
+    for (var i = 1; i <= 5; i++) {
+      final m = msg('m$i', 'db $i', base.add(Duration(minutes: i)));
+      await msgRepo.upsert(MessageConverter.toCompanion(m, conv.id));
+    }
+
+    final userMsg =
+        msg('m6', 'current input', base.add(const Duration(minutes: 6)));
+    final history = await service.prepareHistoryFromStore(
+      conv: conv,
+      userMsg: userMsg,
+      limit: 20,
+    );
+
+    expect(history.map((m) => m.id).toList(),
+        ['m1', 'm2', 'm3', 'm4', 'm5', 'm6']);
+  });
+
+  test('prepareHistoryFromStore excludes manually deleted messages', () async {
+    final appDb = db.AppDatabase.forTesting(NativeDatabase.memory());
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(appDb),
+      ],
+    );
+    addTearDown(() async {
+      container.dispose();
+      await appDb.close();
+    });
+
+    final convRepo = container.read(conversationRepositoryProvider);
+    final msgRepo = container.read(messageRepositoryProvider);
+    final service = container.read(chatSendServiceProvider);
+
+    final base = DateTime(2026, 1, 1, 12, 0, 0);
+    final conv = Conversation(
+      id: 'conv_db_deleted',
+      title: 'Chat',
+      displayName: 'Chat',
+      createdAt: base,
+      updatedAt: base,
+      contextStartMessageId: 'm1',
+      messages: [
+        msg('m4', 'ui latest', base.add(const Duration(minutes: 4))),
+      ],
+    );
+    await convRepo.upsert(ConversationConverter.toCompanion(conv));
+
+    for (var i = 1; i <= 4; i++) {
+      final m = msg('m$i', 'db $i', base.add(Duration(minutes: i)));
+      await msgRepo.upsert(MessageConverter.toCompanion(m, conv.id));
+    }
+
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final purgeAt = nowMs + 30 * 24 * 60 * 60 * 1000;
+    await msgRepo.softDelete('m2', nowMs, purgeAt); // 手动删除的消息
+    await msgRepo.markReplaced('m3', 'm4', nowMs, purgeAt); // 被重生成覆盖
+
+    final userMsg =
+        msg('m5', 'current input', base.add(const Duration(minutes: 5)));
+    final history = await service.prepareHistoryFromStore(
+      conv: conv,
+      userMsg: userMsg,
+      limit: 20,
+    );
+
+    expect(history.map((m) => m.id).toList(), ['m4', 'm5']);
   });
 
   test('createUserMessage keeps both image and text when sent together', () {

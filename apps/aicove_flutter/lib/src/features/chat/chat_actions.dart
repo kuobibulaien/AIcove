@@ -197,8 +197,11 @@ class ChatActions {
     try {
       final settings = await _ref.read(appSettingsProvider.future);
       if (!_isGenerationCurrent(convId, runId)) return;
-      final history = _sendService.prepareHistory(
-          conv: conv, userMsg: userMsg, limit: settings.historyMessageLimit);
+      final history = await _sendService.prepareHistoryFromStore(
+        conv: conv,
+        userMsg: userMsg,
+        limit: settings.historyMessageLimit,
+      );
       streamDelivery = _StreamPlaceholderDelivery(
         _ref,
         convId: convId,
@@ -378,8 +381,11 @@ class ChatActions {
     try {
       final settings = await _ref.read(appSettingsProvider.future);
       if (!_isGenerationCurrent(convId, runId)) return;
-      final history = _sendService.prepareHistory(
-          conv: conv, userMsg: userMsg, limit: settings.historyMessageLimit);
+      final history = await _sendService.prepareHistoryFromStore(
+        conv: conv,
+        userMsg: userMsg,
+        limit: settings.historyMessageLimit,
+      );
       final apiText = hasText ? userText : '[image]';
 
       // 若聊天模型链中已含视觉能力，则不插入视觉辅助模型；
@@ -451,8 +457,11 @@ class ChatActions {
     try {
       final settings = await _ref.read(appSettingsProvider.future);
       if (!_isGenerationCurrent(convId, runId)) return;
-      final history = _sendService.prepareHistory(
-          conv: conv, userMsg: userMsg, limit: settings.historyMessageLimit);
+      final history = await _sendService.prepareHistoryFromStore(
+        conv: conv,
+        userMsg: userMsg,
+        limit: settings.historyMessageLimit,
+      );
       final config = await _sendService.prepareApiConfig(
           conv: conv, history: history, userText: '[file]');
       if (!_isGenerationCurrent(convId, runId)) return;
@@ -855,8 +864,14 @@ class ChatActions {
       late final String sessionId;
       late final Conversation requestConv;
       if (canUseEnhancement) {
+        final persistedMessages =
+            await _sendService.loadConversationMessagesFromStore(
+          conv: updatedConv,
+          ensureTailMessage: userMsg,
+        );
+        final persistedConv = updatedConv.copyWith(messages: persistedMessages);
         final enhancedContext = _enhancedDialogueService.buildContext(
-          conversation: updatedConv,
+          conversation: persistedConv,
           targetUserMessage: userMsg,
           enhancerSystemPrompt: settings.enhancedDialogueSettings.systemPrompt,
           bootstrapUserMessage:
@@ -867,7 +882,7 @@ class ChatActions {
         sessionId = enhancedContext.sessionId;
         requestConv = enhancedContext.conversation;
       } else {
-        history = _sendService.prepareHistory(
+        history = await _sendService.prepareHistoryFromStore(
           conv: updatedConv,
           userMsg: userMsg,
           limit: settings.historyMessageLimit,
@@ -1407,9 +1422,15 @@ class _StreamPlaceholderDelivery {
                 rawChunk.trim().isEmpty ? _kGeneratingText : rawChunk;
             final isLast = i == snapshotIds.length - 1;
             final status = finalize ? 'sent' : (isLast ? 'sending' : 'sent');
+            final showRawTextWhileStreaming = !finalize &&
+                !formatConfig.enableChunking &&
+                _receivedDelta &&
+                content != _kGeneratingText;
             final blockStatus = finalize
                 ? BlockStatus.success
-                : (isLast ? BlockStatus.streaming : BlockStatus.success);
+                : (showRawTextWhileStreaming
+                    ? BlockStatus.success
+                    : (isLast ? BlockStatus.streaming : BlockStatus.success));
             final createdAt = existingById[id]?.createdAt ?? now;
             placeholders.add(
               Message.fromBlocks(

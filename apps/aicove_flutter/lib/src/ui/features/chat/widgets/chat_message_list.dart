@@ -57,8 +57,11 @@ class ChatMessageList extends ConsumerStatefulWidget {
   /// 是否还有更多历史消息可加载
   final bool hasMoreMessages;
 
-  /// 用户发送消息后递增，用于恢复自动回底
-  final int resumeAutoScrollToken;
+  /// 是否启用自动回底（由上层显式控制）
+  final bool autoScrollToBottomEnabled;
+
+  /// 当用户手势接管滚动时回调（用于通知上层关闭自动回底）
+  final VoidCallback? onAutoScrollDisabled;
 
   const ChatMessageList({
     super.key,
@@ -74,7 +77,8 @@ class ChatMessageList extends ConsumerStatefulWidget {
     this.onLoadMore,
     this.isLoadingMore = false,
     this.hasMoreMessages = true,
-    this.resumeAutoScrollToken = 0,
+    this.autoScrollToBottomEnabled = true,
+    this.onAutoScrollDisabled,
   });
 
   @override
@@ -104,13 +108,13 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   /// 标记是否由代码触发滚动，避免把程序滚动误判为用户手势
   bool _isProgrammaticScroll = false;
 
-  /// 自动滚动关闭时，缓存更新前的滚动快照，用于保持阅读位置
-  double? _retainScrollOldPixels;
-  double? _retainScrollOldMaxExtent;
+  /// 首次进入会话时，确保列表定位到最新消息
+  bool _didInitialBottomPosition = false;
 
   @override
   void initState() {
     super.initState();
+    _autoScrollEnabled = widget.autoScrollToBottomEnabled;
     if (widget.messages.isNotEmpty) {
       _latestAnimatedAt = widget.messages.last.createdAt;
     }
@@ -119,6 +123,9 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     // 初始化 ScrollController 并添加监听
     _scrollController = ScrollController();
     _scrollController.addListener(_onScroll);
+    if (_autoScrollEnabled && widget.messages.isNotEmpty) {
+      _scheduleScrollToBottom();
+    }
   }
 
   @override
@@ -130,17 +137,16 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
 
   /// 滚动监听：当接近列表顶部（历史消息方向）时触发加载更多
   void _onScroll() {
-    // reverse=true 时，maxScrollExtent 是列表顶部（历史消息方向）
+    // 非反转列表：minScrollExtent(通常为0) 是历史消息方向的顶部
     if (!_scrollController.hasClients) return;
 
     final position = _scrollController.position;
-    final maxScroll = position.maxScrollExtent;
     final currentScroll = position.pixels;
 
     // 距离顶部 200 像素时触发加载
     const threshold = 200.0;
 
-    if (maxScroll - currentScroll <= threshold &&
+    if (currentScroll <= threshold &&
         !_isLoadingTriggered &&
         !widget.isLoadingMore &&
         widget.hasMoreMessages &&
@@ -154,48 +160,38 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     }
   }
 
-  bool _hasAppendedTailMessageByRole({
-    required ChatMessageList oldWidget,
-    required String role,
-  }) {
-    final oldMessages = oldWidget.messages;
-    final newMessages = widget.messages;
-    if (newMessages.length <= oldMessages.length) return false;
-    if (newMessages.isEmpty) return false;
-    final latest = newMessages.last;
-    return latest.role == role;
-  }
-
-  void _captureRetainSnapshot() {
-    if (!_scrollController.hasClients) return;
-    final position = _scrollController.position;
-    _retainScrollOldPixels = position.pixels;
-    _retainScrollOldMaxExtent = position.maxScrollExtent;
-  }
-
-  void _restoreRetainedPositionAfterFrame() {
-    final oldPixels = _retainScrollOldPixels;
-    final oldMaxExtent = _retainScrollOldMaxExtent;
-    _retainScrollOldPixels = null;
-    _retainScrollOldMaxExtent = null;
-    if (oldPixels == null || oldMaxExtent == null) return;
-
+  void _scheduleScrollToBottom({int retryFrames = 6}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scrollController.hasClients) return;
+      if (!mounted) return;
+      if (!_autoScrollEnabled) return;
+      if (!_scrollController.hasClients) {
+        if (retryFrames > 0) {
+          _scheduleScrollToBottom(retryFrames: retryFrames - 1);
+        }
+        return;
+      }
       final position = _scrollController.position;
-      final deltaExtent = position.maxScrollExtent - oldMaxExtent;
-      if (deltaExtent <= 0) return;
-      final target = (oldPixels + deltaExtent)
-          .clamp(position.minScrollExtent, position.maxScrollExtent)
-          .toDouble();
-      _jumpToOffset(target);
+      if (!position.hasContentDimensions) {
+        if (retryFrames > 0) {
+          _scheduleScrollToBottom(retryFrames: retryFrames - 1);
+        }
+        return;
+      }
+      _jumpToOffset(position.maxScrollExtent);
     });
   }
 
-  void _scheduleScrollToBottom() {
+  void _ensureInitialBottomPosition() {
+    if (_didInitialBottomPosition) return;
+    if (!_autoScrollEnabled || widget.messages.isEmpty) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scrollController.hasClients) return;
-      _jumpToOffset(0);
+      if (!mounted || _didInitialBottomPosition) return;
+      if (!_autoScrollEnabled || widget.messages.isEmpty) return;
+      if (!_scrollController.hasClients) return;
+      final position = _scrollController.position;
+      if (!position.hasContentDimensions) return;
+      _jumpToOffset(position.maxScrollExtent);
+      _didInitialBottomPosition = true;
     });
   }
 
@@ -215,23 +211,33 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   }
 
   bool _handleScrollNotification(ScrollNotification notification) {
-    if (_isProgrammaticScroll || !_autoScrollEnabled) return false;
+    if (_isProgrammaticScroll) return false;
 
-    final userDragging = notification is ScrollUpdateNotification &&
-        notification.dragDetails != null;
-    final userScrolling = notification is UserScrollNotification &&
-        notification.direction != ScrollDirection.idle;
+    // 触摸拖拽开始：用户明确接管滚动，切静止态
+    if (notification is ScrollStartNotification &&
+        notification.dragDetails != null) {
+      if (_autoScrollEnabled) {
+        _autoScrollEnabled = false;
+        widget.onAutoScrollDisabled?.call();
+      }
+      return false;
+    }
 
-    if (userDragging || userScrolling) {
-      _autoScrollEnabled = false;
+    // 非触摸接管（鼠标滚轮 / 触控板 / 惯性阶段）也应切静止态
+    if (notification is UserScrollNotification) {
+      if (notification.direction != ScrollDirection.idle &&
+          _autoScrollEnabled) {
+        _autoScrollEnabled = false;
+        widget.onAutoScrollDisabled?.call();
+      }
+      return false;
     }
     return false;
   }
 
   void _updateListItems([MessageFormatConfig? config]) {
     _cachedFormatConfig = config;
-    _cachedListItems =
-        _buildListItemsWithTimeDividers(config).reversed.toList();
+    _cachedListItems = _buildListItemsWithTimeDividers(config);
     _cachedChatImages = _collectChatImages();
   }
 
@@ -239,10 +245,11 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   void didUpdateWidget(covariant ChatMessageList oldWidget) {
     super.didUpdateWidget(oldWidget);
 
-    final resumeAutoScroll =
-        oldWidget.resumeAutoScrollToken != widget.resumeAutoScrollToken;
-    if (resumeAutoScroll) {
-      _autoScrollEnabled = true;
+    final resumeAutoScroll = !oldWidget.autoScrollToBottomEnabled &&
+        widget.autoScrollToBottomEnabled;
+    if (oldWidget.autoScrollToBottomEnabled !=
+        widget.autoScrollToBottomEnabled) {
+      _autoScrollEnabled = widget.autoScrollToBottomEnabled;
     }
 
     // 会话切换：重置状态并更新列表项
@@ -250,21 +257,14 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
       _pendingAnimationIds.clear();
       _latestAnimatedAt =
           widget.messages.isNotEmpty ? widget.messages.last.createdAt : null;
-      _autoScrollEnabled = true;
-      _retainScrollOldPixels = null;
-      _retainScrollOldMaxExtent = null;
+      _autoScrollEnabled = widget.autoScrollToBottomEnabled;
+      _didInitialBottomPosition = false;
       _updateListItems(_cachedFormatConfig);
       _scheduleScrollToBottom();
       return;
     }
 
     final messagesChanged = widget.messages != oldWidget.messages;
-    final shouldRetainPositionForAssistant = messagesChanged &&
-        !_autoScrollEnabled &&
-        _hasAppendedTailMessageByRole(oldWidget: oldWidget, role: 'assistant');
-    if (shouldRetainPositionForAssistant) {
-      _captureRetainSnapshot();
-    }
 
     // 缓存优化：仅当消息列表引用变化时才重构列表项
     // 避免键盘弹出/收起导致 MediaQuery 变化进而触发全量重建 (Layout Thrashing)
@@ -288,18 +288,21 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     }
 
     if (newMessages.isNotEmpty) {
-      setState(() {
-        _pendingAnimationIds.addAll(newMessages.map((m) => m.id));
-        final newestTime = newMessages
-            .map((m) => m.createdAt)
-            .reduce((a, b) => a.isAfter(b) ? a : b);
-        _latestAnimatedAt = newestTime;
-      });
+      final newestTime = newMessages
+          .map((m) => m.createdAt)
+          .reduce((a, b) => a.isAfter(b) ? a : b);
+      _latestAnimatedAt = newestTime;
+      if (_autoScrollEnabled) {
+        setState(() {
+          _pendingAnimationIds.addAll(newMessages.map((m) => m.id));
+        });
+      } else {
+        // 用户在翻看历史时，不做新消息入场动画，避免与手势抢滚动焦点。
+        _pendingAnimationIds.removeAll(newMessages.map((m) => m.id));
+      }
     }
 
-    if (shouldRetainPositionForAssistant) {
-      _restoreRetainedPositionAfterFrame();
-    } else if (resumeAutoScroll || (messagesChanged && _autoScrollEnabled)) {
+    if (resumeAutoScroll || (messagesChanged && _autoScrollEnabled)) {
       _scheduleScrollToBottom();
     }
   }
@@ -339,18 +342,19 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
       });
     }
 
-    // 构建包含时间分隔器的列表项（因为 ListView reverse=true，需要反转列表顺序）
+    // 构建包含时间分隔器的列表项（非反转列表，时间顺序与数据一致）
     // 使用缓存的列表项，避免每次 build 重复计算
     final listItems = _cachedListItems;
 
     // 计算实际 itemCount：如果正在加载更多，顶部多显示一个加载指示器
     final itemCount = listItems.length + (widget.isLoadingMore ? 1 : 0);
+    _ensureInitialBottomPosition();
 
     return NotificationListener<ScrollNotification>(
       onNotification: _handleScrollNotification,
       child: ListView.builder(
         controller: _scrollController, // 添加 ScrollController 用于分页触发
-        reverse: true, // 从底部开始显示，新消息在下方
+        reverse: false, // 非反转列表：上旧下新
         // 性能优化：增加缓存范围，减少滚动时的重建
         cacheExtent: 500,
         // 性能优化：禁用自动 keep alive，由我们自己控制
@@ -367,12 +371,13 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
         ),
         itemCount: itemCount,
         itemBuilder: (context, index) {
-          // 如果正在加载更多，最后一项显示加载指示器
-          if (widget.isLoadingMore && index == listItems.length) {
+          // 如果正在加载更多，第一项显示加载指示器（顶部）
+          if (widget.isLoadingMore && index == 0) {
             return _buildLoadingIndicator();
           }
 
-          final item = listItems[index];
+          final dataIndex = widget.isLoadingMore ? index - 1 : index;
+          final item = listItems[dataIndex];
 
           if (item is _TimeDivider) {
             return _buildTimeDivider(context, item.time);

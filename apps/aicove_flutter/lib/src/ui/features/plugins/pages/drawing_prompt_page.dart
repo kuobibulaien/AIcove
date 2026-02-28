@@ -137,7 +137,8 @@ class _DrawingPromptPageState extends ConsumerState<DrawingPromptPage> {
           child: MoeSecondaryButton(
             label: '添加系统提示词预设',
             icon: Icons.add,
-            onPressed: () => _showAddSystemPromptPresetSheet(context, notifier),
+            onPressed: () =>
+                _navigateToAddSystemPromptPresetPage(context, notifier),
           ),
         ),
       ],
@@ -162,7 +163,7 @@ class _DrawingPromptPageState extends ConsumerState<DrawingPromptPage> {
       trailing: IconButton(
         icon: Icon(Icons.more_horiz, color: context.moeColors.muted),
         onPressed: () =>
-            _showSystemPromptPresetActions(context, notifier, config, preset),
+            _showSystemPromptPresetActions(context, notifier, preset),
       ),
       onTap: () => _selectSystemPromptPreset(
         notifier: notifier,
@@ -314,7 +315,7 @@ class _DrawingPromptPageState extends ConsumerState<DrawingPromptPage> {
           child: MoeSecondaryButton(
             label: '添加画师串预设',
             icon: Icons.add,
-            onPressed: () => _showAddArtistPresetSheet(context, notifier),
+            onPressed: () => _navigateToAddArtistPresetPage(context, notifier),
           ),
         ),
       ],
@@ -408,81 +409,75 @@ class _DrawingPromptPageState extends ConsumerState<DrawingPromptPage> {
     );
   }
 
-  Future<void> _showAddSystemPromptPresetSheet(
+  Future<void> _navigateToAddSystemPromptPresetPage(
     BuildContext context,
     ImagePluginConfigNotifier notifier,
   ) async {
-    final nameController = TextEditingController();
-    final contentController = TextEditingController();
-
-    await showMoeBottomSheet(
+    final draft = await _openPresetEditorPage(
       context: context,
-      title: '添加系统提示词预设',
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(
-                labelText: '预设名称',
-                hintText: '例如：SDXL 通用',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: contentController,
-              maxLines: 8,
-              decoration: const InputDecoration(
-                labelText: '系统提示词内容',
-                hintText: '输入这套模型专用的提示词规范...',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-            MoePrimaryButton(
-              label: '保存',
-              onPressed: () async {
-                final name = nameController.text.trim();
-                final content = contentController.text.trim();
-                if (name.isEmpty || content.isEmpty) {
-                  MoeToast.warning(ctx, '名称和内容不能为空');
-                  return;
-                }
+      pageTitle: '添加系统提示词预设',
+      nameLabel: '预设名称',
+      nameHint: '例如：SDXL 通用',
+      contentLabel: '系统提示词内容',
+      contentHint: '输入这套模型专用的提示词规范...',
+      saveLabel: '保存',
+      validator: (name, _) {
+        final currentConfig = ref.read(imagePluginConfigProvider);
+        if (currentConfig.systemPromptPresets.any((p) => p.name == name)) {
+          return '已存在同名预设';
+        }
+        return null;
+      },
+    );
 
-                final currentConfig = ref.read(imagePluginConfigProvider);
-                if (currentConfig.systemPromptPresets
-                    .any((p) => p.name == name)) {
-                  MoeToast.warning(ctx, '已存在同名预设');
-                  return;
-                }
+    if (draft == null) return;
 
-                final updated = [
-                  ...currentConfig.systemPromptPresets,
-                  DrawingPromptPreset(name: name, content: content),
-                ];
+    final currentConfig = ref.read(imagePluginConfigProvider);
+    final updated = [
+      ...currentConfig.systemPromptPresets,
+      DrawingPromptPreset(name: draft.name, content: draft.content),
+    ];
 
-                await notifier.updateConfig(
-                  currentConfig.copyWith(systemPromptPresets: updated),
-                );
-                if (ctx.mounted) Navigator.of(ctx).pop();
-              },
-            ),
-          ],
+    await notifier.updateConfig(
+      currentConfig.copyWith(systemPromptPresets: updated),
+    );
+
+    if (!mounted) return;
+    MoeToast.success(context, '已保存');
+  }
+
+  Future<_PresetDraft?> _openPresetEditorPage({
+    required BuildContext context,
+    required String pageTitle,
+    required String nameLabel,
+    required String nameHint,
+    required String contentLabel,
+    required String contentHint,
+    required String saveLabel,
+    String initialName = '',
+    String initialContent = '',
+    _PresetValidator? validator,
+  }) {
+    return Navigator.of(context).push<_PresetDraft>(
+      MaterialPageRoute(
+        builder: (_) => _PresetEditorPage(
+          pageTitle: pageTitle,
+          nameLabel: nameLabel,
+          nameHint: nameHint,
+          contentLabel: contentLabel,
+          contentHint: contentHint,
+          saveLabel: saveLabel,
+          initialName: initialName,
+          initialContent: initialContent,
+          validator: validator,
         ),
       ),
     );
-
-    nameController.dispose();
-    contentController.dispose();
   }
 
   Future<void> _showSystemPromptPresetActions(
     BuildContext context,
     ImagePluginConfigNotifier notifier,
-    ImageConfig config,
     DrawingPromptPreset preset,
   ) async {
     await showMoeActionSheet(
@@ -493,8 +488,8 @@ class _DrawingPromptPageState extends ConsumerState<DrawingPromptPage> {
         MoeSheetAction(
           icon: Icons.edit_outlined,
           label: '编辑',
-          onTap: () => _showEditSystemPromptPresetSheet(
-              context, notifier, config, preset),
+          onTap: () =>
+              _navigateToEditSystemPromptPresetPage(context, notifier, preset),
         ),
         MoeSheetAction(
           icon: Icons.delete_outline,
@@ -519,148 +514,86 @@ class _DrawingPromptPageState extends ConsumerState<DrawingPromptPage> {
     );
   }
 
-  Future<void> _showEditSystemPromptPresetSheet(
+  Future<void> _navigateToEditSystemPromptPresetPage(
     BuildContext context,
     ImagePluginConfigNotifier notifier,
-    ImageConfig config,
     DrawingPromptPreset preset,
   ) async {
-    final nameController = TextEditingController(text: preset.name);
-    final contentController = TextEditingController(text: preset.content);
-
-    await showMoeBottomSheet(
+    final draft = await _openPresetEditorPage(
       context: context,
-      title: '编辑系统提示词预设',
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(
-                labelText: '预设名称',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: contentController,
-              maxLines: 8,
-              decoration: const InputDecoration(
-                labelText: '系统提示词内容',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-            MoePrimaryButton(
-              label: '保存修改',
-              onPressed: () async {
-                final name = nameController.text.trim();
-                final content = contentController.text.trim();
-                if (name.isEmpty || content.isEmpty) {
-                  MoeToast.warning(ctx, '名称和内容不能为空');
-                  return;
-                }
+      pageTitle: '编辑系统提示词预设',
+      nameLabel: '预设名称',
+      nameHint: '',
+      contentLabel: '系统提示词内容',
+      contentHint: '',
+      saveLabel: '保存修改',
+      initialName: preset.name,
+      initialContent: preset.content,
+      validator: (name, _) {
+        final currentConfig = ref.read(imagePluginConfigProvider);
+        if (currentConfig.systemPromptPresets
+            .any((p) => p.name == name && p.name != preset.name)) {
+          return '已存在同名预设';
+        }
+        return null;
+      },
+    );
 
-                final currentConfig = ref.read(imagePluginConfigProvider);
-                if (currentConfig.systemPromptPresets
-                    .any((p) => p.name == name && p.name != preset.name)) {
-                  MoeToast.warning(ctx, '已存在同名预设');
-                  return;
-                }
+    if (draft == null) return;
 
-                final updated = currentConfig.systemPromptPresets
-                    .map(
-                      (p) => p.name == preset.name
-                          ? DrawingPromptPreset(name: name, content: content)
-                          : p,
-                    )
-                    .toList();
-                final shouldUpdateSelection =
-                    currentConfig.selectedSystemPromptPresetName == preset.name;
+    final currentConfig = ref.read(imagePluginConfigProvider);
+    final updated = currentConfig.systemPromptPresets
+        .map(
+          (p) => p.name == preset.name
+              ? DrawingPromptPreset(name: draft.name, content: draft.content)
+              : p,
+        )
+        .toList();
+    final shouldUpdateSelection =
+        currentConfig.selectedSystemPromptPresetName == preset.name;
 
-                await notifier.updateConfig(
-                  currentConfig.copyWith(
-                    systemPromptPresets: updated,
-                    selectedSystemPromptPresetName: shouldUpdateSelection
-                        ? name
-                        : currentConfig.selectedSystemPromptPresetName,
-                  ),
-                );
-                if (ctx.mounted) Navigator.of(ctx).pop();
-              },
-            ),
-          ],
-        ),
+    await notifier.updateConfig(
+      currentConfig.copyWith(
+        systemPromptPresets: updated,
+        selectedSystemPromptPresetName: shouldUpdateSelection
+            ? draft.name
+            : currentConfig.selectedSystemPromptPresetName,
       ),
     );
 
-    nameController.dispose();
-    contentController.dispose();
+    if (!mounted) return;
+    MoeToast.success(context, '已保存');
   }
 
-  Future<void> _showAddArtistPresetSheet(
+  Future<void> _navigateToAddArtistPresetPage(
     BuildContext context,
     ImagePluginConfigNotifier notifier,
   ) async {
-    final nameController = TextEditingController();
-    final contentController = TextEditingController();
-
-    await showMoeBottomSheet(
+    final draft = await _openPresetEditorPage(
       context: context,
-      title: '添加画师串预设',
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(
-                labelText: '预设名称',
-                hintText: '例如：防冻液',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: contentController,
-              maxLines: 6,
-              decoration: const InputDecoration(
-                labelText: '画师串内容',
-                hintText: '例如：[[omochi monaka]] ,{{kele mimi}} ,[ruriri], ...',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-            MoePrimaryButton(
-              label: '保存',
-              onPressed: () async {
-                final name = nameController.text.trim();
-                final content = contentController.text.trim();
-                if (name.isEmpty || content.isEmpty) {
-                  MoeToast.warning(ctx, '名称和内容不能为空');
-                  return;
-                }
-                final currentConfig = ref.read(imagePluginConfigProvider);
-                if (currentConfig.artistPresets.any((p) => p.name == name)) {
-                  MoeToast.warning(ctx, '已存在同名预设');
-                  return;
-                }
-                await notifier.addArtistPreset(
-                  ArtistPreset(name: name, content: content),
-                );
-                if (ctx.mounted) Navigator.of(ctx).pop();
-              },
-            ),
-          ],
-        ),
-      ),
+      pageTitle: '添加画师串预设',
+      nameLabel: '预设名称',
+      nameHint: '例如：防冻液',
+      contentLabel: '画师串内容',
+      contentHint: '例如：[[omochi monaka]] ,{{kele mimi}} ,[ruriri], ...',
+      saveLabel: '保存',
+      validator: (name, _) {
+        final currentConfig = ref.read(imagePluginConfigProvider);
+        if (currentConfig.artistPresets.any((p) => p.name == name)) {
+          return '已存在同名预设';
+        }
+        return null;
+      },
     );
 
-    nameController.dispose();
-    contentController.dispose();
+    if (draft == null) return;
+
+    await notifier.addArtistPreset(
+      ArtistPreset(name: draft.name, content: draft.content),
+    );
+
+    if (!mounted) return;
+    MoeToast.success(context, '已保存');
   }
 
   Future<void> _showArtistPresetActions(
@@ -676,7 +609,8 @@ class _DrawingPromptPageState extends ConsumerState<DrawingPromptPage> {
         MoeSheetAction(
           icon: Icons.edit_outlined,
           label: '编辑',
-          onTap: () => _showEditArtistPresetSheet(context, notifier, preset),
+          onTap: () =>
+              _navigateToEditArtistPresetPage(context, notifier, preset),
         ),
         MoeSheetAction(
           icon: Icons.delete_outline,
@@ -691,74 +625,182 @@ class _DrawingPromptPageState extends ConsumerState<DrawingPromptPage> {
     );
   }
 
-  Future<void> _showEditArtistPresetSheet(
+  Future<void> _navigateToEditArtistPresetPage(
     BuildContext context,
     ImagePluginConfigNotifier notifier,
     ArtistPreset preset,
   ) async {
-    final nameController = TextEditingController(text: preset.name);
-    final contentController = TextEditingController(text: preset.content);
-
-    await showMoeBottomSheet(
+    final draft = await _openPresetEditorPage(
       context: context,
-      title: '编辑画师串预设',
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(
-                labelText: '预设名称',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: contentController,
-              maxLines: 6,
-              decoration: const InputDecoration(
-                labelText: '画师串内容',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-            MoePrimaryButton(
-              label: '保存修改',
-              onPressed: () async {
-                final name = nameController.text.trim();
-                final content = contentController.text.trim();
-                if (name.isEmpty || content.isEmpty) {
-                  MoeToast.warning(ctx, '名称和内容不能为空');
-                  return;
-                }
-
-                final currentConfig = ref.read(imagePluginConfigProvider);
-                if (currentConfig.artistPresets
-                    .any((p) => p.name == name && p.name != preset.name)) {
-                  MoeToast.warning(ctx, '已存在同名预设');
-                  return;
-                }
-
-                await notifier.updateArtistPreset(
-                  preset.name,
-                  ArtistPreset(name: name, content: content),
-                );
-                if (ctx.mounted) Navigator.of(ctx).pop();
-              },
-            ),
-          ],
-        ),
-      ),
+      pageTitle: '编辑画师串预设',
+      nameLabel: '预设名称',
+      nameHint: '',
+      contentLabel: '画师串内容',
+      contentHint: '',
+      saveLabel: '保存修改',
+      initialName: preset.name,
+      initialContent: preset.content,
+      validator: (name, _) {
+        final currentConfig = ref.read(imagePluginConfigProvider);
+        if (currentConfig.artistPresets
+            .any((p) => p.name == name && p.name != preset.name)) {
+          return '已存在同名预设';
+        }
+        return null;
+      },
     );
 
-    nameController.dispose();
-    contentController.dispose();
+    if (draft == null) return;
+
+    await notifier.updateArtistPreset(
+      preset.name,
+      ArtistPreset(name: draft.name, content: draft.content),
+    );
+
+    if (!mounted) return;
+    MoeToast.success(context, '已保存');
   }
 
   String _shortenText(String text, int maxLength) {
     if (text.length <= maxLength) return text;
     return '${text.substring(0, maxLength)}...';
+  }
+}
+
+typedef _PresetValidator = String? Function(String name, String content);
+
+class _PresetDraft {
+  const _PresetDraft({
+    required this.name,
+    required this.content,
+  });
+
+  final String name;
+  final String content;
+}
+
+class _PresetEditorPage extends StatefulWidget {
+  const _PresetEditorPage({
+    required this.pageTitle,
+    required this.nameLabel,
+    required this.nameHint,
+    required this.contentLabel,
+    required this.contentHint,
+    required this.saveLabel,
+    required this.initialName,
+    required this.initialContent,
+    this.validator,
+  });
+
+  final String pageTitle;
+  final String nameLabel;
+  final String nameHint;
+  final String contentLabel;
+  final String contentHint;
+  final String saveLabel;
+  final String initialName;
+  final String initialContent;
+  final _PresetValidator? validator;
+
+  @override
+  State<_PresetEditorPage> createState() => _PresetEditorPageState();
+}
+
+class _PresetEditorPageState extends State<_PresetEditorPage> {
+  late final TextEditingController _nameController;
+  late final TextEditingController _contentController;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController(text: widget.initialName);
+    _contentController = TextEditingController(text: widget.initialContent);
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _contentController.dispose();
+    super.dispose();
+  }
+
+  void _handleSave() {
+    final name = _nameController.text.trim();
+    final content = _contentController.text.trim();
+
+    if (name.isEmpty || content.isEmpty) {
+      MoeToast.warning(context, '名称和内容不能为空');
+      return;
+    }
+
+    final validation = widget.validator?.call(name, content);
+    if (validation != null) {
+      MoeToast.warning(context, validation);
+      return;
+    }
+
+    FocusScope.of(context).unfocus();
+    Navigator.of(context).pop(_PresetDraft(name: name, content: content));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.moeColors;
+
+    return Scaffold(
+      backgroundColor: colors.surface,
+      appBar: MoeAppBar(
+        title: widget.pageTitle,
+        showBackButton: true,
+      ),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TextField(
+                        controller: _nameController,
+                        decoration: InputDecoration(
+                          labelText: widget.nameLabel,
+                          hintText:
+                              widget.nameHint.isEmpty ? null : widget.nameHint,
+                          border: const OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _contentController,
+                        minLines: 8,
+                        maxLines: 14,
+                        decoration: InputDecoration(
+                          labelText: widget.contentLabel,
+                          hintText: widget.contentHint.isEmpty
+                              ? null
+                              : widget.contentHint,
+                          border: const OutlineInputBorder(),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              MoePrimaryButton(
+                label: widget.saveLabel,
+                onPressed: _handleSave,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

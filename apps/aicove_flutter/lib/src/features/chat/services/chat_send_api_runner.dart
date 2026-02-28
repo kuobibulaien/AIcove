@@ -97,6 +97,7 @@ class ChatSendApiRunner {
     final executedFallbackCallSignatures = <String>{};
     var executedAnyTool = false;
     var lastRoundIndex = 1;
+    final preToolNarrativeTexts = <String>[];
 
     final allToolCalls = <ToolCall>[];
     final allRawToolResults = <ToolResult>[];
@@ -363,6 +364,12 @@ class ChatSendApiRunner {
         break;
       }
 
+      final roundNarrativeText = _normalizeRoundNarrativeText(lastRich.text);
+      if (roundNarrativeText.isNotEmpty &&
+          !_looksLikeToolInstructionText(roundNarrativeText)) {
+        preToolNarrativeTexts.add(roundNarrativeText);
+      }
+
       onStreamToolCallObserved?.call();
 
       final toolTrace = roundTrace?.startChild('执行工具调用');
@@ -407,12 +414,23 @@ class ChatSendApiRunner {
         rawToolResults: _encodeToolResultsForLog(toolResults),
       ));
 
-      if (round == effectiveMaxRounds) {
+      if (isFastMode) {
         if (isFastMode) {
           AppLogger.info(_logTag, '快速模式停止后续模型轮次', metadata: {
             'round': round,
           });
           roundTrace?.end(additionalMessage: 'fast mode stop');
+        }
+        break;
+      }
+
+      if (round == effectiveMaxRounds) {
+        if (isFastMode) {
+          AppLogger.info(_logTag, '快速模式达到补充轮次上限', metadata: {
+            'round': round,
+            'maxRounds': effectiveMaxRounds,
+          });
+          roundTrace?.end(additionalMessage: 'fast follow-up max round');
         } else {
           AppLogger.warning(_logTag, '达到最大回合数',
               metadata: {'maxRounds': effectiveMaxRounds});
@@ -444,6 +462,18 @@ class ChatSendApiRunner {
     }
 
     var finalAssistantText = lastRich?.text ?? '';
+    final normalizedFinalText =
+        _normalizeRoundNarrativeText(finalAssistantText);
+    if (preToolNarrativeTexts.isNotEmpty) {
+      final mergedTexts = <String>[...preToolNarrativeTexts];
+      if (normalizedFinalText.isNotEmpty &&
+          !_looksLikeToolInstructionText(normalizedFinalText)) {
+        mergedTexts.add(normalizedFinalText);
+      }
+      finalAssistantText = _mergeNarrativeTexts(mergedTexts);
+    } else {
+      finalAssistantText = normalizedFinalText;
+    }
     final generatedImageCount =
         allToolContents.whereType<PluginImageContent>().length;
     if (executedAnyTool &&
@@ -719,6 +749,21 @@ class ChatSendApiRunner {
       summary['model'] = model;
     }
 
+    final accepted = payload['accepted'];
+    if (accepted is bool) {
+      summary['accepted'] = accepted;
+    }
+    final status = payload['status']?.toString().trim();
+    if (status != null && status.isNotEmpty) {
+      summary['status'] = status;
+    }
+    final jobId = (payload['job_id'] ?? payload['jobId'] ?? payload['id'])
+        ?.toString()
+        .trim();
+    if (jobId != null && jobId.isNotEmpty) {
+      summary['job_id'] = jobId;
+    }
+
     var imageCount = 0;
     final images = payload['images'];
     if (images is List) {
@@ -804,6 +849,25 @@ class ChatSendApiRunner {
       return true;
     }
     return false;
+  }
+
+  String _normalizeRoundNarrativeText(String text) {
+    final sanitized = _sanitizeAssistantText(text);
+    if (sanitized.isEmpty) return '';
+    return _stripStandaloneImagePlaceholders(sanitized);
+  }
+
+  String _mergeNarrativeTexts(List<String> texts) {
+    final normalized = <String>[];
+    final seen = <String>{};
+    for (final text in texts) {
+      final trimmed = text.trim();
+      if (trimmed.isEmpty) continue;
+      if (seen.add(trimmed)) {
+        normalized.add(trimmed);
+      }
+    }
+    return normalized.join('\n');
   }
 
   bool _shouldSuppressToolStatusText({

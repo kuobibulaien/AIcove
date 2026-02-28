@@ -209,6 +209,46 @@ void main() {
     expect(settings.defaultChatModels, ['enabled:model-on']);
   });
 
+  test('setDefaultModelName should also update defaultChatModels priority',
+      () async {
+    final store = <String, dynamic>{
+      'providers': [
+        {
+          'id': 'enabled',
+          'displayName': '启用渠道',
+          'apiKeys': <String>[],
+          'apiBaseUrl': 'https://enabled.example/v1',
+          'enabled': true,
+          'models': <String>['model-a', 'model-b'],
+          'visible_models': <String>['model-a', 'model-b'],
+          'hidden_models': <String>[],
+          'capabilities': <String>['chat'],
+          'model_type': 'chat',
+        },
+      ],
+      'default_model': 'enabled:model-a',
+      'default_chat_models': <String>['enabled:model-a', 'enabled:model-b'],
+      'visible_models': <String>['model-a', 'model-b'],
+    };
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'aicove.ui_models.v1': jsonEncode(store),
+    });
+
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    await container.read(appSettingsProvider.future);
+    final notifier = container.read(appSettingsProvider.notifier);
+    await notifier.setDefaultModelName('enabled:model-b');
+
+    final settings = container.read(appSettingsProvider).requireValue;
+    expect(settings.defaultModelName, 'enabled:model-b');
+    expect(
+      settings.defaultChatModels,
+      <String>['enabled:model-b', 'enabled:model-a'],
+    );
+  });
+
   test('updateEnhancedDialogueSettings persists values', () async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     final container = ProviderContainer();

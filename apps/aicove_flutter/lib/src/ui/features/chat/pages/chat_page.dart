@@ -50,7 +50,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   String? _preloadedConversationId;
   bool _didSchedulePrecache = false;
   double _composerOverlayHeight = 0;
-  int _chatListResumeAutoScrollToken = 0;
+  bool _autoScrollToBottomEnabled = true;
 
   @override
   void initState() {
@@ -96,7 +96,14 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   void _resumeChatListAutoScroll() {
     if (!mounted) return;
-    setState(() => _chatListResumeAutoScrollToken++);
+    if (_autoScrollToBottomEnabled) return;
+    setState(() => _autoScrollToBottomEnabled = true);
+  }
+
+  void _disableChatListAutoScroll() {
+    if (!mounted) return;
+    if (!_autoScrollToBottomEnabled) return;
+    setState(() => _autoScrollToBottomEnabled = false);
   }
 
   Future<bool> _checkVisionCompat({
@@ -472,6 +479,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       setState(() {
         _hasMoreMessages = true;
         _isLoadingMore = false;
+        _autoScrollToBottomEnabled = true;
       });
       _scheduleImagePrecache();
       // (注释已丢失)
@@ -883,8 +891,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                             avatarUrl: conv.avatarUrl ?? conv.characterImage,
                             displayName: conv.displayName,
                             bottomOverlayHeight: _composerOverlayHeight,
-                            resumeAutoScrollToken:
-                                _chatListResumeAutoScrollToken,
+                            autoScrollToBottomEnabled:
+                                _autoScrollToBottomEnabled,
+                            onAutoScrollDisabled: _disableChatListAutoScroll,
                             contextStartMessageId: conv.contextStartMessageId,
                             onLoadMore: () => _loadMoreMessages(conv),
                             isLoadingMore: _isLoadingMore,
@@ -930,6 +939,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               child: Composer(
                 onHeightChanged: _handleComposerHeightChanged,
                 disabled: false,
+                onInputTap: _resumeChatListAutoScroll,
                 onSend: (text) async {
                   if (ref.read(sendingProvider)) {
                     MoeToast.brief(

@@ -326,6 +326,8 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
   if (defaultChatModels.isEmpty && meta.visible.isNotEmpty) {
     defaultChatModels.add(meta.visible.first);
   }
+  final primaryChatModelRef =
+      defaultChatModels.isNotEmpty ? defaultChatModels.first : meta.defaultModel;
   final rawDefaultVisionModel = data['default_vision_model'] as String?;
   final defaultVisionModel = rawDefaultVisionModel == null
       ? null
@@ -338,7 +340,7 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
 
   return AppSettings(
     ttsEnabled: true,
-    defaultModelName: meta.defaultModel,
+    defaultModelName: primaryChatModelRef,
     // temperature 不设置，默认 null → 不发送，由云端使用默认值
     defaultPersonaPrompt: '',
     modelList:
@@ -417,7 +419,22 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
 
   Future<void> setDefaultModelName(String modelId) async {
     final modelRef = _normalizeModelRefForPersist(modelId);
-    await _commit(() => _api.updatePartial({'default_model': modelRef}));
+    await _commit(() async {
+      final data = await _api.fetchAll();
+      final settings = _mapToSettings(data);
+      final normalized = <String>[];
+      if (modelRef.isNotEmpty) {
+        normalized.add(modelRef);
+      }
+      for (final model in settings.defaultChatModels) {
+        if (model.isEmpty || normalized.contains(model)) continue;
+        normalized.add(model);
+      }
+      return _api.updatePartial({
+        'default_model': modelRef,
+        'default_chat_models': normalized,
+      });
+    });
   }
 
   Future<void> setModelDisplayName({
@@ -917,8 +934,14 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
         normalized.add(modelRef);
       }
     }
+    final payload = <String, dynamic>{
+      'default_chat_models': normalized,
+    };
+    if (normalized.isNotEmpty) {
+      payload['default_model'] = normalized.first;
+    }
     await _commit(
-      () => _api.updatePartial({'default_chat_models': normalized}),
+      () => _api.updatePartial(payload),
     );
   }
 

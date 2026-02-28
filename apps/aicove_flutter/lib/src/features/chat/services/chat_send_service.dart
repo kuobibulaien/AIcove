@@ -18,6 +18,8 @@ import '../domain/message.dart';
 import '../id_gen.dart';
 import '../conversation_providers.dart';
 import '../../settings/app_settings.dart';
+import '../../../core/database/database_provider.dart';
+import '../../../core/database/converters/database_converters.dart';
 import 'chat_request_config.dart';
 import '../../plugins/plugin_providers.dart';
 import '../../plugins/memory/memory_plugin.dart';
@@ -596,15 +598,82 @@ class ChatSendService {
     required int limit,
   }) {
     final all = [...conv.messages, userMsg];
+    return _sliceContextWindow(
+      allMessages: all,
+      contextStartId: conv.contextStartMessageId,
+      limit: limit,
+    );
+  }
 
+  /// 从数据库加载会话有效消息（排除 deleted/replaced），并按需补上当前用户消息。
+  ///
+  /// 这个方法用于“发送上下文”构建，避免受 UI 分页加载数量影响。
+  Future<List<Message>> loadConversationMessagesFromStore({
+    required Conversation conv,
+    Message? ensureTailMessage,
+  }) async {
+    final msgRepo = _ref.read(messageRepositoryProvider);
+    final blockRepo = _ref.read(messageBlockRepositoryProvider);
+
+    final dbMessages = await msgRepo.getAllByConversationOrdered(conv.id);
+    final messageIds = dbMessages.map((m) => m.id).toList(growable: false);
+    final dbBlocks = await blockRepo.getByMessages(messageIds);
+
+    final blocksByMessageId = <String, List<MessageBlock>>{};
+    for (final dbBlock in dbBlocks) {
+      final block = MessageBlockConverter.fromDb(dbBlock);
+      if (block == null) continue;
+      blocksByMessageId.putIfAbsent(dbBlock.messageId, () => []).add(block);
+    }
+
+    final all = <Message>[
+      for (final dbMessage in dbMessages)
+        MessageConverter.fromDb(
+          dbMessage,
+          blocks: blocksByMessageId[dbMessage.id],
+        ),
+    ];
+
+    if (ensureTailMessage != null &&
+        all.every((m) => m.id != ensureTailMessage.id)) {
+      all.add(ensureTailMessage);
+    }
+    return all;
+  }
+
+  /// 从数据库准备发送上下文。
+  ///
+  /// 与 [prepareHistory] 的切片规则保持一致，但数据源改为数据库，
+  /// 确保手动删除消息不会进入上下文，且不受 UI 首屏分页数量影响。
+  Future<List<Message>> prepareHistoryFromStore({
+    required Conversation conv,
+    required Message userMsg,
+    required int limit,
+  }) async {
+    final all = await loadConversationMessagesFromStore(
+      conv: conv,
+      ensureTailMessage: userMsg,
+    );
+    return _sliceContextWindow(
+      allMessages: all,
+      contextStartId: conv.contextStartMessageId,
+      limit: limit,
+    );
+  }
+
+  List<Message> _sliceContextWindow({
+    required List<Message> allMessages,
+    required String? contextStartId,
+    required int limit,
+  }) {
     // Respect the "new topic" marker: only messages after the marker are
     // eligible for model context.
-    var contextWindow = all;
-    final contextStartId = conv.contextStartMessageId;
+    var contextWindow = allMessages;
     if (contextStartId != null && contextStartId.isNotEmpty) {
-      final markerIndex = all.lastIndexWhere((m) => m.id == contextStartId);
-      if (markerIndex >= 0 && markerIndex + 1 < all.length) {
-        contextWindow = all.sublist(markerIndex + 1);
+      final markerIndex =
+          allMessages.lastIndexWhere((m) => m.id == contextStartId);
+      if (markerIndex >= 0 && markerIndex + 1 < allMessages.length) {
+        contextWindow = allMessages.sublist(markerIndex + 1);
       }
     }
 

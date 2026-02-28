@@ -1,6 +1,7 @@
 /// 消息输入组件（使用 chat_bottom_container 实现平滑键盘/面板切换）
 ///
 /// 更新记录：
+/// - 2026-02-27: 停止生成前增加二次确认弹窗，避免误触中断
 /// - 2025-12-06: 接入皮肤系统
 /// - 2025-12-31: 拆分功能菜单和模型选择器到独立文件
 /// - 2025-01-xx: 使用 chat_bottom_container 重构键盘/面板切换逻辑
@@ -40,6 +41,7 @@ class Composer extends ConsumerStatefulWidget {
   final void Function(String imagePath, {String? text})? onImageSelected;
   final ValueChanged<String>? onFileSelected;
   final ValueChanged<double>? onHeightChanged;
+  final VoidCallback? onInputTap;
   const Composer({
     super.key,
     required this.onSend,
@@ -47,6 +49,7 @@ class Composer extends ConsumerStatefulWidget {
     this.onImageSelected,
     this.onFileSelected,
     this.onHeightChanged,
+    this.onInputTap,
   });
 
   @override
@@ -522,6 +525,17 @@ class _ComposerState extends ConsumerState<Composer> {
     final isGenerating = ref.read(sendingProvider);
     if (isGenerating) {
       if (_isInterruptingGeneration) return;
+      final confirmed = await showMeoTalkConfirm(
+        context: context,
+        title: '停止生成？',
+        message: '当前回复还在生成中，确认后将立即停止本次生成。',
+        hint: '已生成的内容会保留，未生成部分不会继续输出。',
+        cancelText: '继续生成',
+        confirmText: '停止',
+        isDanger: true,
+      );
+      if (!mounted || confirmed != true) return;
+      if (!ref.read(sendingProvider)) return;
       setState(() => _isInterruptingGeneration = true);
       try {
         final stopped =
@@ -687,6 +701,7 @@ class _ComposerState extends ConsumerState<Composer> {
                 enabled: !widget.disabled,
                 onTap: () {
                   if (widget.disabled) return;
+                  widget.onInputTap?.call();
                   final shouldExplicitShow = _suppressKeyboard ||
                       _currentPanelType == ComposerPanelType.more;
                   _showKeyboardDirect(explicitShow: shouldExplicitShow);

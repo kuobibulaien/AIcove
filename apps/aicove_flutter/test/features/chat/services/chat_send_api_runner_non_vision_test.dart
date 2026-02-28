@@ -260,6 +260,135 @@ class _SequencedChatClient extends http.BaseClient {
   }
 }
 
+class _FakeLookupPlugin extends BasePlugin {
+  _FakeLookupPlugin()
+      : super(
+          metadata: const PluginMetadata(
+            id: 'lookup',
+            name: 'Lookup',
+            description: 'fake lookup tool',
+            version: '1.0.0',
+            author: 'test',
+            icon: Icons.search,
+          ),
+        );
+
+  @override
+  bool get enabled => true;
+
+  @override
+  Future<String?> getSystemPrompt({
+    String? userMessage,
+    bool supportsToolCalling = false,
+  }) async {
+    return null;
+  }
+
+  @override
+  Future<PluginProcessResult> processResponse(String text) async {
+    return PluginProcessResult(
+      processedText: text,
+      events: const <PluginEvent>[],
+      contents: const [],
+    );
+  }
+
+  @override
+  List<AITool> getTools() {
+    return <AITool>[
+      AITool(
+        name: 'lookup_schedule',
+        description: 'lookup schedule for test',
+        parameters: const {},
+        handler: (args) async {
+          return jsonEncode(<String, dynamic>{
+            'success': true,
+            'result': '今晚八点有空',
+          });
+        },
+      ),
+    ];
+  }
+}
+
+class _TwoRoundNarrativeClient extends http.BaseClient {
+  _TwoRoundNarrativeClient({
+    required this.firstRoundContent,
+    required this.secondRoundContent,
+  });
+
+  final String firstRoundContent;
+  final String secondRoundContent;
+  int callCount = 0;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    if (request is! http.Request) {
+      return _json(500, <String, dynamic>{'error': 'request type unsupported'});
+    }
+
+    callCount += 1;
+
+    if (callCount == 1) {
+      return _json(
+        200,
+        <String, dynamic>{
+          'choices': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'message': <String, dynamic>{
+                'role': 'assistant',
+                'content': firstRoundContent,
+                'tool_calls': <Map<String, dynamic>>[
+                  <String, dynamic>{
+                    'id': 'call_lookup_1',
+                    'type': 'function',
+                    'function': <String, dynamic>{
+                      'name': 'lookup_schedule',
+                      'arguments': '{"topic":"今晚安排"}',
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      );
+    }
+
+    if (callCount == 2) {
+      return _json(
+        200,
+        <String, dynamic>{
+          'choices': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'message': <String, dynamic>{
+                'role': 'assistant',
+                'content': secondRoundContent,
+              },
+            },
+          ],
+        },
+      );
+    }
+
+    return _json(
+      500,
+      <String, dynamic>{'error': 'unexpected extra round'},
+    );
+  }
+
+  Future<http.StreamedResponse> _json(int statusCode, Object body) async {
+    final bytes = utf8.encode(jsonEncode(body));
+    return http.StreamedResponse(
+      Stream<List<int>>.value(bytes),
+      statusCode,
+      headers: const <String, String>{
+        'content-type': 'application/json',
+      },
+    );
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -318,7 +447,107 @@ void main() {
     expect(fakeHttpClient.payloads.length, 2);
     expect(
         _containsImageInput(fakeHttpClient.payloads[1]['messages']), isFalse);
-    expect(result.processedText, '');
+    expect(result.processedText, contains('收到，我去生成图片'));
+    expect(result.processedText, isNot(contains('[图片]')));
     expect(result.pluginContents.length, 1);
+  });
+
+  test('stable mode should keep round1 narrative text when tool calls continue',
+      () async {
+    final fakeHttpClient = _TwoRoundNarrativeClient(
+      firstRoundContent: '我先帮你查一下日程。',
+      secondRoundContent: '查好了，你今晚八点有空。',
+    );
+    final settings = _buildTestSettings();
+    final config = ApiConfig(
+      settings: settings,
+      modelFullId: 'openai:gpt-3.5-turbo',
+      providerApiBase: 'https://api.openai.com/v1',
+      providerApiKey: 'test-key',
+      customConfig: const <String, dynamic>{},
+      toolPrefs: const <String, dynamic>{},
+      messages: const <Map<String, dynamic>>[
+        <String, dynamic>{'role': 'user', 'content': '今晚几点有空？'},
+      ],
+      tools: const <Map<String, dynamic>>[
+        <String, dynamic>{
+          'type': 'function',
+          'function': <String, dynamic>{
+            'name': 'lookup_schedule',
+            'description': 'lookup schedule',
+            'parameters': <String, dynamic>{'type': 'object'},
+          },
+        },
+      ],
+    );
+
+    final runner = ChatSendApiRunner.withAgentClientFactory(
+      agentClientFactory: (timeout) => AgentApiClient(
+        client: fakeHttpClient,
+        timeout: timeout,
+      ),
+    );
+    final result = await runner.executeApiCall(
+      config: config,
+      sessionId: 'conv_keep_round1_narrative',
+      userText: '今晚几点有空？',
+      effectivePlugins: <Plugin>[_FakeLookupPlugin()],
+      maxRounds: 3,
+    );
+
+    expect(fakeHttpClient.callCount, 2);
+    expect(result.processedText, contains('我先帮你查一下日程。'));
+    expect(result.processedText, contains('查好了，你今晚八点有空。'));
+  });
+
+  test(
+      'stable mode should ignore round1 tool instruction text when composing final narrative',
+      () async {
+    final fakeHttpClient = _TwoRoundNarrativeClient(
+      firstRoundContent:
+          '<execute_tool>{"action":"lookup_schedule","action_input":{"topic":"今晚安排"}}</execute_tool>',
+      secondRoundContent: '查好了，你今晚八点有空。',
+    );
+    final settings = _buildTestSettings();
+    final config = ApiConfig(
+      settings: settings,
+      modelFullId: 'openai:gpt-3.5-turbo',
+      providerApiBase: 'https://api.openai.com/v1',
+      providerApiKey: 'test-key',
+      customConfig: const <String, dynamic>{},
+      toolPrefs: const <String, dynamic>{},
+      messages: const <Map<String, dynamic>>[
+        <String, dynamic>{'role': 'user', 'content': '今晚几点有空？'},
+      ],
+      tools: const <Map<String, dynamic>>[
+        <String, dynamic>{
+          'type': 'function',
+          'function': <String, dynamic>{
+            'name': 'lookup_schedule',
+            'description': 'lookup schedule',
+            'parameters': <String, dynamic>{'type': 'object'},
+          },
+        },
+      ],
+    );
+
+    final runner = ChatSendApiRunner.withAgentClientFactory(
+      agentClientFactory: (timeout) => AgentApiClient(
+        client: fakeHttpClient,
+        timeout: timeout,
+      ),
+    );
+    final result = await runner.executeApiCall(
+      config: config,
+      sessionId: 'conv_filter_round1_instruction',
+      userText: '今晚几点有空？',
+      effectivePlugins: <Plugin>[_FakeLookupPlugin()],
+      maxRounds: 3,
+    );
+
+    expect(fakeHttpClient.callCount, 2);
+    expect(result.processedText, isNot(contains('<execute_tool>')));
+    expect(result.processedText, isNot(contains('"action":"lookup_schedule"')));
+    expect(result.processedText.trim(), '查好了，你今晚八点有空。');
   });
 }

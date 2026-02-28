@@ -279,13 +279,6 @@ class _DefaultModelSettingsPageState
     ref
         .read(appSettingsProvider.notifier)
         .setDefaultChatModels(_localChatModels!);
-
-    // 同时更新 defaultModelName 为列表第一个（保持兼容）
-    if (_localChatModels!.isNotEmpty) {
-      ref
-          .read(appSettingsProvider.notifier)
-          .setDefaultModelName(_localChatModels!.first);
-    }
   }
 
   void _selectVisionModel(String? modelId) {

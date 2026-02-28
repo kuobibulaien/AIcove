@@ -10,6 +10,7 @@ import 'package:aicove_flutter/src/core/database/database.dart'
 import 'package:aicove_flutter/src/core/database/database_provider.dart';
 import 'package:aicove_flutter/src/core/app_logger.dart';
 import 'package:aicove_flutter/src/core/models/message_block.dart';
+import 'package:aicove_flutter/src/core/models/block_status.dart';
 import 'package:aicove_flutter/src/core/services/attachment_picker_service.dart';
 import 'package:aicove_flutter/src/features/chat/chat_actions.dart';
 import 'package:aicove_flutter/src/features/chat/conversation_providers.dart';
@@ -158,7 +159,37 @@ class _FakeAppSettingsNotifier extends AppSettingsNotifier {
   Future<AppSettings> build() async => _settings;
 }
 
-class _SpyStreamingSendService extends ChatSendService {
+abstract class _InMemoryHistorySendService extends ChatSendService {
+  _InMemoryHistorySendService(super.ref);
+
+  @override
+  Future<List<Message>> loadConversationMessagesFromStore({
+    required Conversation conv,
+    Message? ensureTailMessage,
+  }) async {
+    final all = List<Message>.from(conv.messages);
+    if (ensureTailMessage != null &&
+        all.every((m) => m.id != ensureTailMessage.id)) {
+      all.add(ensureTailMessage);
+    }
+    return all;
+  }
+
+  @override
+  Future<List<Message>> prepareHistoryFromStore({
+    required Conversation conv,
+    required Message userMsg,
+    required int limit,
+  }) async {
+    return prepareHistory(
+      conv: conv,
+      userMsg: userMsg,
+      limit: limit,
+    );
+  }
+}
+
+class _SpyStreamingSendService extends _InMemoryHistorySendService {
   _SpyStreamingSendService(super.ref, this._settings);
 
   final AppSettings _settings;
@@ -244,7 +275,7 @@ class _SpyStreamingSendService extends ChatSendService {
   }
 }
 
-class _FallbackAfterDeltaSendService extends ChatSendService {
+class _FallbackAfterDeltaSendService extends _InMemoryHistorySendService {
   _FallbackAfterDeltaSendService(super.ref, this._settings);
 
   final AppSettings _settings;
@@ -332,7 +363,7 @@ class _FallbackAfterDeltaSendService extends ChatSendService {
   }
 }
 
-class _MultiDeltaStreamingSendService extends ChatSendService {
+class _MultiDeltaStreamingSendService extends _InMemoryHistorySendService {
   _MultiDeltaStreamingSendService(super.ref, this._settings);
 
   final AppSettings _settings;
@@ -385,6 +416,81 @@ class _MultiDeltaStreamingSendService extends ChatSendService {
     return const ApiCallResult(
       replyText: '第一段。第二段。第三段。',
       processedText: '第一段。第二段。第三段。',
+      pluginEvents: [],
+      toolResults: <Map<String, dynamic>>[],
+    );
+  }
+
+  @override
+  AssistantMessageBuildResult buildAssistantMessages({
+    required ApiCallResult apiResult,
+    required AppSettings settings,
+  }) {
+    return AssistantMessageBuildResult(
+      messages: <Message>[
+        Message(
+          id: 'assistant_result',
+          role: 'assistant',
+          content: apiResult.processedText,
+          createdAt: DateTime.now(),
+          status: 'sent',
+        ),
+      ],
+      lastMessageText: apiResult.processedText,
+    );
+  }
+}
+
+class _SingleDeltaSlowFinalizeSendService extends _InMemoryHistorySendService {
+  _SingleDeltaSlowFinalizeSendService(super.ref, this._settings);
+
+  final AppSettings _settings;
+
+  @override
+  Future<ApiConfig> prepareApiConfig({
+    required Conversation conv,
+    required List<Message> history,
+    required String? userText,
+    TraceLogger? trace,
+    String? overrideModel,
+  }) async {
+    return ApiConfig(
+      settings: _settings,
+      modelFullId: overrideModel ?? _settings.defaultModelName,
+      providerApiBase: _settings.apiBaseUrl,
+      providerApiKey: null,
+      customConfig: const <String, dynamic>{},
+      toolPrefs: const <String, dynamic>{},
+      messages: const <Map<String, dynamic>>[],
+      tools: null,
+      enabledPluginIds: null,
+      modelTemperature: null,
+      modelTopP: null,
+      modelContextMessageLimit: null,
+    );
+  }
+
+  @override
+  Future<ApiCallResult> executeApiCall({
+    required ApiConfig config,
+    required String sessionId,
+    required String? userText,
+    String? turnId,
+    TraceLogger? trace,
+    int maxRounds = 5,
+    void Function(String toolName)? onToolExecuting,
+    bool enableStreaming = false,
+    void Function(String delta)? onStreamTextDelta,
+    void Function()? onStreamTextReset,
+    void Function()? onStreamToolCallObserved,
+    void Function()? onStreamingFallback,
+  }) async {
+    onStreamTextDelta?.call('慢速流式片段');
+    // 等待超过 flush 间隔，确保能观察到一次“流式中间态”快照。
+    await Future<void>.delayed(const Duration(milliseconds: 260));
+    return const ApiCallResult(
+      replyText: '慢速流式片段',
+      processedText: '慢速流式片段',
       pluginEvents: [],
       toolResults: <Map<String, dynamic>>[],
     );
@@ -804,6 +910,78 @@ void main() {
       assistantMessages
           .any((m) => m.blocks?.any((b) => b is ImageBlock) ?? false),
       isTrue,
+    );
+  });
+
+  test('send 在关闭分段时，流式中途文本块应为 success 以显示实时文本', () async {
+    final now = DateTime.now();
+    final conv = Conversation(
+      id: 'conv_stream_no_chunk',
+      title: 'StreamNoChunk',
+      displayName: 'StreamNoChunk',
+      createdAt: now,
+      updatedAt: now,
+      messages: const [],
+      lastMessage: '',
+      lastMessageTime: now,
+    );
+    final settings = _buildTestSettings().copyWith(
+      messageFormatConfig: const MessageFormatConfig(enableChunking: false),
+    );
+
+    late _RecordingConversationsNotifier recordingNotifier;
+    final container = ProviderContainer(
+      overrides: [
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(settings),
+        ),
+        chatSendServiceProvider.overrideWith(
+          (ref) => _SingleDeltaSlowFinalizeSendService(ref, settings),
+        ),
+        conversationsProvider.overrideWith(() {
+          recordingNotifier = _RecordingConversationsNotifier([conv]);
+          return recordingNotifier;
+        }),
+        activeConversationProvider.overrideWith((ref) {
+          final list = ref.watch(conversationsProvider).valueOrNull;
+          if (list == null || list.isEmpty) return null;
+          return list.first;
+        }),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await container.read(conversationsProvider.future);
+    await container.read(appSettingsProvider.future);
+    final actions = container.read(chatActionsProvider);
+
+    await actions.send('测试关闭分段时也要看到流式文本');
+
+    var sawInProgressSuccessText = false;
+    for (final snapshot in recordingNotifier.snapshots) {
+      final current = snapshot.first;
+      final assistantSendingMessages = current.messages.where((m) {
+        return m.role == 'assistant' && m.status == 'sending';
+      });
+
+      for (final message in assistantSendingMessages) {
+        final blocks = message.blocks ?? const [];
+        final textBlocks = blocks.whereType<TextBlock>().toList();
+        if (textBlocks.isEmpty) continue;
+        final text = textBlocks.first.content.trim();
+        if (text.isEmpty || text == '生成中...') continue;
+        if (textBlocks.first.status == BlockStatus.success) {
+          sawInProgressSuccessText = true;
+          break;
+        }
+      }
+      if (sawInProgressSuccessText) break;
+    }
+
+    expect(
+      sawInProgressSuccessText,
+      isTrue,
+      reason: '关闭分段后，流式中途应显示文本本身而不是始终保持 streaming 三点',
     );
   });
 

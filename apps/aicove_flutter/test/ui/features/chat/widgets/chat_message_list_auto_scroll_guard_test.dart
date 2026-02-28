@@ -5,7 +5,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
-import 'package:aicove_flutter/src/features/settings/settings_models.dart';
 import 'package:aicove_flutter/src/ui/features/chat/widgets/chat_message_list.dart';
 import 'package:aicove_flutter/src/ui/theme/skin_provider.dart';
 import 'package:aicove_flutter/src/ui/theme/skins/moetalk_skin.dart';
@@ -77,7 +76,8 @@ class _ChatListHarness extends StatefulWidget {
 
 class _ChatListHarnessState extends State<_ChatListHarness> {
   late List<Message> _messages;
-  int _resumeAutoScrollToken = 0;
+  bool _autoScrollToBottomEnabled = true;
+  String? _streamingAssistantId;
 
   @override
   void initState() {
@@ -103,22 +103,39 @@ class _ChatListHarnessState extends State<_ChatListHarness> {
     });
   }
 
-  void appendUserMessageAndResumeAutoScroll() {
+  void appendAssistantStreamingMessage() {
     final nextIndex = _messages.length;
     final lastTime = _messages.last.createdAt;
-    final longText = List.filled(8, '用户新消息').join('，');
+    final id = 'm_$nextIndex';
+    _streamingAssistantId = id;
     setState(() {
-      _resumeAutoScrollToken++;
       _messages = [
         ..._messages,
         Message.text(
-          id: 'm_$nextIndex',
-          role: 'user',
-          content: '用户发送：$longText',
+          id: id,
+          role: 'assistant',
+          content: '流式开始',
           createdAt: lastTime.add(const Duration(minutes: 1)),
-          status: 'sent',
+          status: 'sending',
         ),
       ];
+    });
+  }
+
+  void growAssistantStreamingChunk() {
+    final streamId = _streamingAssistantId;
+    if (streamId == null) return;
+    setState(() {
+      _messages = _messages
+          .map((m) =>
+              m.id == streamId ? m.copyWith(content: '${m.content} · 继续生成') : m)
+          .toList();
+    });
+  }
+
+  void resumeAutoScrollFromInputTap() {
+    setState(() {
+      _autoScrollToBottomEnabled = true;
     });
   }
 
@@ -129,7 +146,11 @@ class _ChatListHarnessState extends State<_ChatListHarness> {
       messages: _messages,
       displayName: '测试AI',
       avatarUrl: null,
-      resumeAutoScrollToken: _resumeAutoScrollToken,
+      autoScrollToBottomEnabled: _autoScrollToBottomEnabled,
+      onAutoScrollDisabled: () {
+        if (!_autoScrollToBottomEnabled) return;
+        setState(() => _autoScrollToBottomEnabled = false);
+      },
     );
   }
 }
@@ -158,6 +179,10 @@ Widget _buildHost(GlobalKey<_ChatListHarnessState> harnessKey) {
   );
 }
 
+double _distanceToBottom(ScrollController controller) {
+  return controller.position.maxScrollExtent - controller.offset;
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -174,17 +199,24 @@ void main() {
     await tester.pumpAndSettle();
 
     var controller = tester.widget<ListView>(listFinder).controller!;
-    expect(controller.offset, greaterThan(40));
+    var gapAfterManual = _distanceToBottom(controller);
+    if (gapAfterManual <= 40) {
+      await tester.drag(listFinder, const Offset(0, -320));
+      await tester.pumpAndSettle();
+      controller = tester.widget<ListView>(listFinder).controller!;
+      gapAfterManual = _distanceToBottom(controller);
+    }
+    expect(gapAfterManual, greaterThan(40));
 
     harnessKey.currentState!.appendAssistantMessage();
     await tester.pump();
     await tester.pumpAndSettle();
 
     controller = tester.widget<ListView>(listFinder).controller!;
-    expect(controller.offset, greaterThan(40));
+    expect(_distanceToBottom(controller), greaterThan(40));
   });
 
-  testWidgets('用户再次发送消息后，应恢复自动回到底部', (tester) async {
+  testWidgets('用户点击输入框后，应恢复自动回到底部', (tester) async {
     final harnessKey = GlobalKey<_ChatListHarnessState>();
 
     await tester.pumpWidget(_buildHost(harnessKey));
@@ -197,20 +229,73 @@ void main() {
     await tester.pumpAndSettle();
 
     var controller = tester.widget<ListView>(listFinder).controller!;
-    expect(controller.offset, greaterThan(40));
+    var gapAfterManual = _distanceToBottom(controller);
+    if (gapAfterManual <= 40) {
+      await tester.drag(listFinder, const Offset(0, -320));
+      await tester.pumpAndSettle();
+      controller = tester.widget<ListView>(listFinder).controller!;
+      gapAfterManual = _distanceToBottom(controller);
+    }
+    expect(gapAfterManual, greaterThan(40));
 
     harnessKey.currentState!.appendAssistantMessage();
     await tester.pump();
     await tester.pumpAndSettle();
 
     controller = tester.widget<ListView>(listFinder).controller!;
-    expect(controller.offset, greaterThan(40));
+    expect(_distanceToBottom(controller), greaterThan(40));
 
-    harnessKey.currentState!.appendUserMessageAndResumeAutoScroll();
+    harnessKey.currentState!.resumeAutoScrollFromInputTap();
     await tester.pump();
     await tester.pumpAndSettle();
 
     controller = tester.widget<ListView>(listFinder).controller!;
-    expect(controller.offset, lessThanOrEqualTo(1));
+    expect(_distanceToBottom(controller), lessThanOrEqualTo(1.0));
+  });
+
+  testWidgets('静止态下流式生成时，列表锚点应保持稳定', (tester) async {
+    final harnessKey = GlobalKey<_ChatListHarnessState>();
+
+    await tester.pumpWidget(_buildHost(harnessKey));
+    await tester.pumpAndSettle();
+
+    final listFinder = find.byType(ListView);
+    expect(listFinder, findsOneWidget);
+
+    await tester.drag(listFinder, const Offset(0, 320));
+    await tester.pumpAndSettle();
+
+    var controller = tester.widget<ListView>(listFinder).controller!;
+    var gapAfterManual = _distanceToBottom(controller);
+    if (gapAfterManual <= 40) {
+      await tester.drag(listFinder, const Offset(0, -320));
+      await tester.pumpAndSettle();
+      controller = tester.widget<ListView>(listFinder).controller!;
+      gapAfterManual = _distanceToBottom(controller);
+    }
+    expect(gapAfterManual, greaterThan(40));
+
+    harnessKey.currentState!.appendAssistantStreamingMessage();
+    await tester.pumpAndSettle();
+
+    final gaps = <double>[];
+    for (var i = 0; i < 12; i++) {
+      harnessKey.currentState!.growAssistantStreamingChunk();
+      await tester.pump(const Duration(milliseconds: 16));
+      final controller = tester.widget<ListView>(listFinder).controller!;
+      gaps.add(_distanceToBottom(controller));
+    }
+    await tester.pumpAndSettle();
+
+    for (var i = 1; i < gaps.length; i++) {
+      // 静止态流式更新过程中不应出现明显“反向回弹”抖动。
+      expect(gaps[i], greaterThanOrEqualTo(gaps[i - 1] - 0.5));
+    }
+    var maxStep = 0.0;
+    for (var i = 1; i < gaps.length; i++) {
+      final step = (gaps[i] - gaps[i - 1]).abs();
+      if (step > maxStep) maxStep = step;
+    }
+    expect(maxStep, lessThan(32.0));
   });
 }

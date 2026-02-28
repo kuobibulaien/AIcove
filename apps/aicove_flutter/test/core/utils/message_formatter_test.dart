@@ -30,4 +30,16 @@ void main() {
       expect(chunks, ['等等......', '然后继续']);
     });
   });
+
+  group('MessageFormatter quote protection', () {
+    test('should not split inside Chinese double quotes', () {
+      final chunks = MessageFormatter.formatAndChunkText('“你好。世界。”', cfg);
+      expect(chunks, ['“你好。世界。”']);
+    });
+
+    test('should not split inside Chinese single quotes', () {
+      final chunks = MessageFormatter.formatAndChunkText('‘甲。乙。’', cfg);
+      expect(chunks, ['‘甲。乙。’']);
+    });
+  });
 }
