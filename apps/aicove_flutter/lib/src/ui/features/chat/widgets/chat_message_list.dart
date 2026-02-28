@@ -210,6 +210,34 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     });
   }
 
+  double _distanceToBottom() {
+    if (!_scrollController.hasClients) return double.infinity;
+    final position = _scrollController.position;
+    if (!position.hasContentDimensions) return double.infinity;
+    return position.maxScrollExtent - position.pixels;
+  }
+
+  bool _isNearBottom([double threshold = 56.0]) {
+    return _distanceToBottom() <= threshold;
+  }
+
+  void _shiftViewportByOverlayDelta(double delta) {
+    if (delta.abs() <= 0.5) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final position = _scrollController.position;
+      if (!position.hasContentDimensions) return;
+      _jumpToOffset(position.pixels + delta);
+    });
+  }
+
+  void _notifyAutoScrollDisabledDeferred() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      widget.onAutoScrollDisabled?.call();
+    });
+  }
+
   bool _handleScrollNotification(ScrollNotification notification) {
     if (_isProgrammaticScroll) return false;
 
@@ -247,9 +275,20 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
 
     final resumeAutoScroll = !oldWidget.autoScrollToBottomEnabled &&
         widget.autoScrollToBottomEnabled;
+    final overlayHeightDelta =
+        widget.bottomOverlayHeight - oldWidget.bottomOverlayHeight;
+    final overlayHeightChanged = overlayHeightDelta.abs() > 0.5;
+    var shouldResumeAutoScroll = resumeAutoScroll;
     if (oldWidget.autoScrollToBottomEnabled !=
         widget.autoScrollToBottomEnabled) {
       _autoScrollEnabled = widget.autoScrollToBottomEnabled;
+    }
+
+    // 点击输入框时：若用户仍在历史中段，不应强制跳底。
+    if (resumeAutoScroll && !_isNearBottom()) {
+      _autoScrollEnabled = false;
+      shouldResumeAutoScroll = false;
+      _notifyAutoScrollDisabledDeferred();
     }
 
     // 会话切换：重置状态并更新列表项
@@ -302,8 +341,16 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
       }
     }
 
-    if (resumeAutoScroll || (messagesChanged && _autoScrollEnabled)) {
+    if (shouldResumeAutoScroll ||
+        (messagesChanged && _autoScrollEnabled) ||
+        (overlayHeightChanged && _autoScrollEnabled)) {
       _scheduleScrollToBottom();
+      return;
+    }
+
+    if (overlayHeightChanged && !_autoScrollEnabled) {
+      // 阅读中段时，输入框升高应“顶走”当前窗口，而不是跳到底部。
+      _shiftViewportByOverlayDelta(overlayHeightDelta);
     }
   }
 
@@ -322,7 +369,7 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     final safeBottom = MediaQuery.paddingOf(context).bottom / uiScale;
     final fallbackBottomPadding = safeBottom + 70 + keyboardInset;
     final listBottomPadding = widget.bottomOverlayHeight > 0
-        ? widget.bottomOverlayHeight + 8
+        ? widget.bottomOverlayHeight
         : fallbackBottomPadding;
 
     // 获取消息格式化配置（用于分段显示）

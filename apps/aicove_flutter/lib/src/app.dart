@@ -189,6 +189,12 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     }
   }
 
+  String _stripPathFragment(String path) {
+    final hashIndex = path.indexOf('#');
+    if (hashIndex < 0) return path;
+    return path.substring(0, hashIndex);
+  }
+
   List<ImageProvider> _collectConversationPreviewProviders(
     Conversation conv, {
     required int maxMessagesToScan,
@@ -221,16 +227,21 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
             images.add(FileImage(File(localPath)));
           }
         } else if (block is EmojiBlock) {
-          final path = block.path.trim();
-          if (path.isEmpty) continue;
+          final rawPath = block.path.trim();
+          if (rawPath.isEmpty) continue;
 
           final isNetwork =
-              path.startsWith('http://') || path.startsWith('https://');
+              rawPath.startsWith('http://') || rawPath.startsWith('https://');
+          if (isNetwork) {
+            images.add(CachedNetworkImageProvider(rawPath));
+            continue;
+          }
+
+          final path = _stripPathFragment(rawPath);
+          if (path.isEmpty) continue;
           final isAsset =
               path.startsWith('assets/') || path.startsWith('packages/');
-          if (isNetwork) {
-            images.add(CachedNetworkImageProvider(path));
-          } else if (isAsset) {
+          if (isAsset) {
             images.add(AssetImage(path));
           } else {
             images.add(FileImage(File(path)));
@@ -246,14 +257,20 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     final images = <ImageProvider>[];
 
     void addAvatar(String? raw) {
-      final url = raw?.trim();
-      if (url == null || url.isEmpty) return;
+      final rawUrl = raw?.trim();
+      if (rawUrl == null || rawUrl.isEmpty) return;
 
-      final isNetwork = url.startsWith('http://') || url.startsWith('https://');
-      final isAsset = url.startsWith('assets/') || url.startsWith('packages/');
+      final isNetwork =
+          rawUrl.startsWith('http://') || rawUrl.startsWith('https://');
       if (isNetwork) {
-        images.add(CachedNetworkImageProvider(url));
-      } else if (isAsset) {
+        images.add(CachedNetworkImageProvider(rawUrl));
+        return;
+      }
+
+      final url = _stripPathFragment(rawUrl);
+      if (url.isEmpty) return;
+      final isAsset = url.startsWith('assets/') || url.startsWith('packages/');
+      if (isAsset) {
         images.add(AssetImage(url));
       }
     }

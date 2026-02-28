@@ -78,6 +78,7 @@ class _ChatListHarnessState extends State<_ChatListHarness> {
   late List<Message> _messages;
   bool _autoScrollToBottomEnabled = true;
   String? _streamingAssistantId;
+  double _bottomOverlayHeight = 0;
 
   @override
   void initState() {
@@ -139,6 +140,12 @@ class _ChatListHarnessState extends State<_ChatListHarness> {
     });
   }
 
+  void setBottomOverlayHeight(double height) {
+    setState(() {
+      _bottomOverlayHeight = height;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return ChatMessageList(
@@ -146,6 +153,7 @@ class _ChatListHarnessState extends State<_ChatListHarness> {
       messages: _messages,
       displayName: '测试AI',
       avatarUrl: null,
+      bottomOverlayHeight: _bottomOverlayHeight,
       autoScrollToBottomEnabled: _autoScrollToBottomEnabled,
       onAutoScrollDisabled: () {
         if (!_autoScrollToBottomEnabled) return;
@@ -183,6 +191,27 @@ double _distanceToBottom(ScrollController controller) {
   return controller.position.maxScrollExtent - controller.offset;
 }
 
+GlobalKey _extractBubbleGestureKey(WidgetTester tester, String messageId) {
+  final bubbleFinder =
+      find.byKey(ValueKey<String>('message_bubble_$messageId'));
+  expect(bubbleFinder, findsOneWidget);
+
+  final gestureCandidates = find.ancestor(
+    of: bubbleFinder,
+    matching: find.byType(GestureDetector),
+  );
+  final keys = gestureCandidates
+      .evaluate()
+      .map((e) => e.widget)
+      .whereType<GestureDetector>()
+      .map((w) => w.key)
+      .whereType<GlobalKey>()
+      .toList(growable: false);
+
+  expect(keys, isNotEmpty);
+  return keys.first;
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -216,7 +245,7 @@ void main() {
     expect(_distanceToBottom(controller), greaterThan(40));
   });
 
-  testWidgets('用户点击输入框后，应恢复自动回到底部', (tester) async {
+  testWidgets('用户点击输入框时，若不在底部不应强制回到底部', (tester) async {
     final harnessKey = GlobalKey<_ChatListHarnessState>();
 
     await tester.pumpWidget(_buildHost(harnessKey));
@@ -250,7 +279,7 @@ void main() {
     await tester.pumpAndSettle();
 
     controller = tester.widget<ListView>(listFinder).controller!;
-    expect(_distanceToBottom(controller), lessThanOrEqualTo(1.0));
+    expect(_distanceToBottom(controller), greaterThan(40));
   });
 
   testWidgets('静止态下流式生成时，列表锚点应保持稳定', (tester) async {
@@ -297,5 +326,64 @@ void main() {
       if (step > maxStep) maxStep = step;
     }
     expect(maxStep, lessThan(32.0));
+  });
+
+  testWidgets('同一条流式消息更新时，气泡锚点Key不应变化', (tester) async {
+    final harnessKey = GlobalKey<_ChatListHarnessState>();
+
+    await tester.pumpWidget(_buildHost(harnessKey));
+    await tester.pumpAndSettle();
+
+    harnessKey.currentState!.appendAssistantStreamingMessage();
+    await tester.pumpAndSettle();
+
+    final streamId = harnessKey.currentState!._streamingAssistantId;
+    expect(streamId, isNotNull);
+
+    final keyBefore = _extractBubbleGestureKey(tester, streamId!);
+
+    harnessKey.currentState!.growAssistantStreamingChunk();
+    await tester.pump(const Duration(milliseconds: 16));
+
+    final keyAfter = _extractBubbleGestureKey(tester, streamId);
+    expect(
+      identical(keyBefore, keyAfter),
+      isTrue,
+      reason: '同一消息流式更新时若锚点Key变化，会导致气泡节点反复重建，出现视觉闪烁',
+    );
+  });
+
+  testWidgets('阅读中点击输入框后，输入框升高应在当前位置上顶', (tester) async {
+    final harnessKey = GlobalKey<_ChatListHarnessState>();
+
+    await tester.pumpWidget(_buildHost(harnessKey));
+    await tester.pumpAndSettle();
+
+    final listFinder = find.byType(ListView);
+    expect(listFinder, findsOneWidget);
+
+    await tester.drag(listFinder, const Offset(0, 320));
+    await tester.pumpAndSettle();
+
+    var controller = tester.widget<ListView>(listFinder).controller!;
+    expect(_distanceToBottom(controller), greaterThan(40));
+
+    harnessKey.currentState!.resumeAutoScrollFromInputTap();
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    controller = tester.widget<ListView>(listFinder).controller!;
+    var gapBeforeOverlay = _distanceToBottom(controller);
+    expect(gapBeforeOverlay, greaterThan(40));
+    final offsetBeforeOverlay = controller.offset;
+
+    harnessKey.currentState!.setBottomOverlayHeight(260);
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    controller = tester.widget<ListView>(listFinder).controller!;
+    final gapAfterOverlay = _distanceToBottom(controller);
+    expect(gapAfterOverlay, greaterThan(40));
+    expect(controller.offset, greaterThan(offsetBeforeOverlay + 100));
   });
 }
