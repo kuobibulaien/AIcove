@@ -42,6 +42,7 @@ class MessageBubble extends ConsumerWidget {
   final void Function(GlobalKey bubbleKey)? onLongPress; // 长按回调（传递气泡Key用于定位菜单）
   final void Function(GlobalKey mediaKey, MessageBlock block)?
       onMediaLongPress; // 媒体长按/右键回调
+  final GlobalKey? bubbleAnchorKey; // 外部传入稳定锚点，避免流式更新时重复创建 GlobalKey
   final double fontSize; // 字体大小
 
   /// 聊天中所有图片列表（用于画廊模式左右滑动切换），由父组件传入
@@ -66,6 +67,7 @@ class MessageBubble extends ConsumerWidget {
     this.onRetry,
     this.onLongPress,
     this.onMediaLongPress,
+    this.bubbleAnchorKey,
     this.fontSize = _kDefaultFontSize,
     this.chatImages,
     this.showCorner = false,
@@ -83,6 +85,7 @@ class MessageBubble extends ConsumerWidget {
     this.onRetry,
     this.onLongPress,
     this.onMediaLongPress,
+    this.bubbleAnchorKey,
     this.fontSize = _kDefaultFontSize,
     this.chatImages,
     this.showCorner = false,
@@ -115,6 +118,8 @@ class MessageBubble extends ConsumerWidget {
     // 获取要渲染的blocks
     final blocks = message.blocks ?? [];
     final hasBlocks = blocks.isNotEmpty;
+    // 仅“当前正在发送”的消息显示 streaming 三点，历史消息一律按正文渲染。
+    final allowStreamingPlaceholder = message.status == 'sending';
 
     // 检测消息是否发送失败
     final isFailed = isMe && message.status == 'failed';
@@ -188,10 +193,13 @@ class MessageBubble extends ConsumerWidget {
             ..._buildMediaBlocksOnly(context, blocks,
                 imagePreviewScale: settings?.imagePreviewScale ?? 1.0),
             // Render non-image blocks in bubble (text, audio, etc.)
-            if (_shouldShowBubble(blocks))
+            if (_shouldShowBubble(
+              blocks,
+              allowStreamingPlaceholder: allowStreamingPlaceholder,
+            ))
               Builder(
                 builder: (context) {
-                  final bubbleKey =
+                  final bubbleKey = bubbleAnchorKey ??
                       GlobalKey(debugLabel: 'bubble_${message.id}');
                   return Listener(
                     onPointerDown: (_useDesktopContextMenu &&
@@ -220,7 +228,13 @@ class MessageBubble extends ConsumerWidget {
                         ),
                         // Non-image content (text, audio, etc.)
                         child: hasBlocks
-                            ? _buildNonImageBlocksContent(context, blocks, fg)
+                            ? _buildNonImageBlocksContent(
+                                context,
+                                blocks,
+                                fg,
+                                allowStreamingPlaceholder:
+                                    allowStreamingPlaceholder,
+                              )
                             : Builder(
                                 builder: (context) {
                                   final text = message.displayText;
@@ -258,13 +272,19 @@ class MessageBubble extends ConsumerWidget {
   }
 
   /// Check if bubble should be shown (for text, audio, etc., but not for images/stickers only)
-  bool _shouldShowBubble(List<MessageBlock> blocks) {
+  bool _shouldShowBubble(
+    List<MessageBlock> blocks, {
+    required bool allowStreamingPlaceholder,
+  }) {
     // If no blocks, show bubble for displayText (even if empty, will show placeholder)
     if (blocks.isEmpty) {
       return true;
     }
     // 只要存在可视化内容块才显示气泡，避免 ToolBlock 等内部块形成空壳气泡。
-    return blocks.any(_isBubbleRenderableBlock);
+    return blocks.any((block) => _isBubbleRenderableBlock(
+          block,
+          allowStreamingPlaceholder: allowStreamingPlaceholder,
+        ));
   }
 
   /// Build only image and sticker blocks without bubble wrapper
@@ -283,13 +303,21 @@ class MessageBubble extends ConsumerWidget {
 
   /// Build only non-image/non-sticker blocks content for bubble (text, audio, code, etc.)
   Widget _buildNonImageBlocksContent(
-      BuildContext context, List<MessageBlock> blocks, Color textColor) {
+    BuildContext context,
+    List<MessageBlock> blocks,
+    Color textColor, {
+    required bool allowStreamingPlaceholder,
+  }) {
     // Filter to only non-image and non-sticker blocks
     final nonMediaBlocks = blocks
         .where((block) => block is! ImageBlock && block is! EmojiBlock)
         .toList();
-    final filteredBlocks =
-        nonMediaBlocks.where(_isBubbleRenderableBlock).toList();
+    final filteredBlocks = nonMediaBlocks
+        .where((block) => _isBubbleRenderableBlock(
+              block,
+              allowStreamingPlaceholder: allowStreamingPlaceholder,
+            ))
+        .toList();
 
     if (filteredBlocks.isEmpty) {
       return const SizedBox.shrink();
@@ -300,15 +328,24 @@ class MessageBubble extends ConsumerWidget {
       children: List<Widget>.generate(filteredBlocks.length, (index) {
         final block = filteredBlocks[index];
         final isLast = index == filteredBlocks.length - 1;
-        return _buildBlock(context, block, textColor, isLast: isLast);
+        return _buildBlock(
+          context,
+          block,
+          textColor,
+          isLast: isLast,
+          allowStreamingPlaceholder: allowStreamingPlaceholder,
+        );
       }),
     );
   }
 
-  bool _isBubbleRenderableBlock(MessageBlock block) {
+  bool _isBubbleRenderableBlock(
+    MessageBlock block, {
+    required bool allowStreamingPlaceholder,
+  }) {
     if (block is TextBlock) {
       return block.content.trim().isNotEmpty ||
-          block.status == BlockStatus.streaming;
+          (allowStreamingPlaceholder && block.status == BlockStatus.streaming);
     }
     return block is FileBlock ||
         block is AudioBlock ||
@@ -318,11 +355,16 @@ class MessageBubble extends ConsumerWidget {
   }
 
   /// 根据Block类型渲染不同的组件
-  Widget _buildBlock(BuildContext context, MessageBlock block, Color textColor,
-      {required bool isLast}) {
+  Widget _buildBlock(
+    BuildContext context,
+    MessageBlock block,
+    Color textColor, {
+    required bool isLast,
+    required bool allowStreamingPlaceholder,
+  }) {
     if (block is TextBlock) {
       // streaming 状态统一显示三点闪动，避免模型首段返回过快时看不到“加载中”反馈。
-      if (block.status == BlockStatus.streaming) {
+      if (allowStreamingPlaceholder && block.status == BlockStatus.streaming) {
         return Padding(
           padding: EdgeInsets.only(bottom: isLast ? 0 : 3),
           child: TypingDotsIndicator(

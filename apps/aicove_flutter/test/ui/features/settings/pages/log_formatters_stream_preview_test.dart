@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:aicove_flutter/src/core/api_logger.dart';
 import 'package:aicove_flutter/src/ui/features/settings/pages/log_formatters.dart';
 
 void main() {
@@ -145,6 +146,77 @@ void main() {
       expect(trace, contains('call_2'));
       expect(trace, contains('今天天气'));
       expect(trace, contains('状态: 未返回结果'));
+    });
+  });
+
+  group('formatApiLogFull', () {
+    test('conversation log includes full request/response/tool sections', () {
+      final longSystemPrompt = List.filled(130, 'S').join();
+      final log = ApiLogEntry(
+        time: DateTime(2026, 3, 2, 12, 30, 45),
+        method: 'POST',
+        url: 'https://example.test/v1/chat/completions',
+        status: 200,
+        durationMs: 1234,
+        requestBody: '{}',
+        responseBody: '{}',
+        ok: true,
+        rawContext: jsonEncode([
+          {'role': 'system', 'content': longSystemPrompt},
+          {'role': 'user', 'content': '你好'},
+        ]),
+        rawRequestBody: jsonEncode({
+          'model': 'openai:gpt-4o-mini',
+          'stream': true,
+          'messages': [
+            {'role': 'system', 'content': longSystemPrompt},
+            {'role': 'user', 'content': '你好'},
+          ],
+        }),
+        rawResponseBody: jsonEncode({
+          'streamEvents': [
+            {
+              'choices': [
+                {
+                  'delta': {'content': '你'}
+                }
+              ]
+            },
+            '[DONE]',
+          ],
+        }),
+        rawToolCalls: jsonEncode([
+          {
+            'id': 'call_1',
+            'name': 'search_web',
+            'arguments': {'q': '天气'},
+          }
+        ]),
+        rawToolResults: jsonEncode([
+          {
+            'toolCallId': 'call_1',
+            'name': 'search_web',
+            'result': jsonEncode({'success': true}),
+          }
+        ]),
+        rawAiResponse: '你好呀',
+        finalReply: '你好呀（用户可见）',
+        sessionId: 'session_1',
+        turnId: 'turn_1',
+        roundIndex: 1,
+        eventType: 'round_stream',
+      );
+
+      final full = formatApiLogFull(log);
+
+      expect(full, contains('AI 实际收到的完整上下文（messages）'));
+      expect(full, contains('AI 实际发送的完整请求体（rawRequestBody）'));
+      expect(full, contains('"model": "openai:gpt-4o-mini"'));
+      expect(full, contains(longSystemPrompt));
+      expect(full, contains('AI 原始 JSON 响应（模型回包）'));
+      expect(full, contains('AI -> 工具调用'));
+      expect(full, contains('工具 -> AI 返回'));
+      expect(full, contains('最终展示给用户的回复'));
     });
   });
 }

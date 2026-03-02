@@ -70,4 +70,56 @@ class ChatPluginContextBuilder {
     }
     return tools;
   }
+
+  /// 收集插件工具（带一次短延迟重试）。
+  ///
+  /// 仅对 Riverpod 在依赖切换窗口抛出的时机错误进行重试，
+  /// 其他错误保持原行为（记录告警并跳过该插件）。
+  Future<List<AITool>> collectPluginToolsWithRetry(
+    List<Plugin> plugins, {
+    Duration retryDelay = const Duration(milliseconds: 120),
+    int maxRetryAttempts = 1,
+  }) async {
+    final tools = <AITool>[];
+    for (final plugin in plugins) {
+      var attempt = 0;
+      while (true) {
+        try {
+          tools.addAll(plugin.getTools());
+          break;
+        } catch (e) {
+          final retryable = _isProviderRefreshTimingError(e);
+          final shouldRetry = retryable && attempt < maxRetryAttempts;
+          if (shouldRetry) {
+            AppLogger.info('ChatSendService', '插件工具收集命中刷新窗口，准备重试', metadata: {
+              'pluginId': plugin.id,
+              'attempt': attempt + 1,
+              'retryDelayMs': retryDelay.inMilliseconds,
+            });
+          } else {
+            AppLogger.warning('ChatSendService', '插件工具收集失败', metadata: {
+              'pluginId': plugin.id,
+              'error': e.toString(),
+              'attempt': attempt + 1,
+              'retryable': retryable,
+            });
+          }
+          if (!shouldRetry) {
+            break;
+          }
+          attempt += 1;
+          await Future<void>.delayed(retryDelay);
+        }
+      }
+    }
+    return tools;
+  }
+
+  bool _isProviderRefreshTimingError(Object error) {
+    final message = error.toString();
+    return message.contains(
+          'Cannot use ref functions after the dependency of a provider changed but before the provider rebuilt',
+        ) ||
+        message.contains('!_didChangeDependency');
+  }
 }

@@ -297,4 +297,21 @@ void main() {
     expect(settings.callFlowSettings.modelTimeoutSeconds, 180);
     expect(settings.callFlowSettings.toolTimeoutSeconds, 20);
   });
+
+  test('setPreferVisionAssistant persists values', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    await container.read(appSettingsProvider.future);
+    final notifier = container.read(appSettingsProvider.notifier);
+
+    await notifier.setPreferVisionAssistant(true);
+    var settings = container.read(appSettingsProvider).requireValue;
+    expect(settings.preferVisionAssistant, isTrue);
+
+    await notifier.setPreferVisionAssistant(false);
+    settings = container.read(appSettingsProvider).requireValue;
+    expect(settings.preferVisionAssistant, isFalse);
+  });
 }

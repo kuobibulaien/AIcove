@@ -31,6 +31,8 @@ class _DefaultModelSettingsPageState
   /// 本地状态：选中的图片识别模型
   String? _localVisionModel;
   bool _visionInitialized = false;
+  bool? _localPreferVisionAssistant;
+  bool _preferVisionInitialized = false;
 
   @override
   Widget build(BuildContext context) {
@@ -74,6 +76,12 @@ class _DefaultModelSettingsPageState
       _localVisionModel = settings.defaultVisionModel;
       _visionInitialized = true;
     }
+    if (!_preferVisionInitialized) {
+      _localPreferVisionAssistant = settings.preferVisionAssistant;
+      _preferVisionInitialized = true;
+    }
+    final preferVisionAssistant =
+        _localPreferVisionAssistant ?? settings.preferVisionAssistant;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
@@ -125,6 +133,16 @@ class _DefaultModelSettingsPageState
           margin: EdgeInsets.zero,
           padding: EdgeInsets.zero,
           children: [
+            MoeSettingsRow(
+              icon: Icons.swap_horiz_outlined,
+              label: '优先使用视觉辅助模型',
+              subtitle: '开启后发送图片会先尝试图片识别模型，再回退聊天模型',
+              trailingType: MoeSettingsRowTrailing.switchControl,
+              switchValue: preferVisionAssistant,
+              onSwitchChanged: (value) =>
+                  _togglePreferVisionAssistant(value, settings),
+              showDivider: true,
+            ),
             if (chatModels.isEmpty)
               Padding(
                 padding: const EdgeInsets.all(16),
@@ -282,10 +300,40 @@ class _DefaultModelSettingsPageState
   }
 
   void _selectVisionModel(String? modelId) {
+    final shouldDisablePreferVisionAssistant =
+        (modelId == null || modelId.trim().isEmpty) &&
+            (_localPreferVisionAssistant == true);
     setState(() {
       _localVisionModel = modelId;
+      if (shouldDisablePreferVisionAssistant) {
+        _localPreferVisionAssistant = false;
+      }
     });
-    ref.read(appSettingsProvider.notifier).setDefaultVisionModel(modelId);
+    final notifier = ref.read(appSettingsProvider.notifier);
+    notifier.setDefaultVisionModel(modelId);
+    if (shouldDisablePreferVisionAssistant) {
+      notifier.setPreferVisionAssistant(false);
+      MoeToast.info(context, '已关闭“优先使用视觉辅助模型”');
+    }
+  }
+
+  void _togglePreferVisionAssistant(bool value, AppSettings settings) {
+    if (value) {
+      final selectedVisionModel =
+          (_localVisionModel ?? settings.defaultVisionModel)?.trim();
+      if (selectedVisionModel == null || selectedVisionModel.isEmpty) {
+        MoeToast.warning(context, '请先选择图片识别模型');
+        setState(() {
+          _localPreferVisionAssistant = false;
+        });
+        return;
+      }
+    }
+
+    setState(() {
+      _localPreferVisionAssistant = value;
+    });
+    ref.read(appSettingsProvider.notifier).setPreferVisionAssistant(value);
   }
 }
 

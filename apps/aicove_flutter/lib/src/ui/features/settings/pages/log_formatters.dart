@@ -744,44 +744,64 @@ String formatApiLogFull(ApiLogEntry log) {
   final time = formatTime(log.time);
 
   if (log.isConversation) {
-    buffer.writeln('[$time] [对话] ${log.url}');
-    buffer.writeln(
-        '状态: ${log.status ?? '--'} | 耗时: ${log.durationMs}ms | 结果: ${log.ok ? '成功' : '失败'}');
+    bool hasText(String? value) => value != null && value.trim().isNotEmpty;
 
-    if (log.rawContext != null && log.rawContext!.isNotEmpty) {
-      buffer.writeln('\n========== 发送给AI的上下文 ==========');
-      try {
-        final messages = jsonDecode(log.rawContext!) as List;
-        for (var i = 0; i < messages.length; i++) {
-          final msg = messages[i] as Map<String, dynamic>;
-          final role = msg['role'] ?? 'unknown';
-          final content = msg['content'];
-          buffer.writeln('\n--- [$role] (第${i + 1}条) ---');
-          if (content is String) {
-            buffer.writeln(content);
-          } else if (content is List) {
-            for (final part in content) {
-              if (part is Map<String, dynamic>) {
-                if (part['type'] == 'text') {
-                  buffer.writeln(part['text'] ?? '');
-                } else {
-                  buffer.writeln('[${part['type']}]');
-                }
-              }
-            }
-          } else {
-            buffer.writeln(content?.toString() ?? '');
-          }
-        }
-      } catch (e) {
-        buffer.writeln('(解析失败: $e)');
-        buffer.writeln(sanitizeBase64InJson(log.rawContext!));
-      }
+    buffer.writeln('[$time] [对话] ${log.url}');
+    final summaryParts = <String>[
+      '状态: ${log.status ?? '--'}',
+      '耗时: ${log.durationMs}ms',
+      '结果: ${log.ok ? '成功' : '失败'}',
+      if (log.roundIndex != null) '轮次: 第${log.roundIndex}轮',
+      if (hasText(log.eventType)) '事件: ${log.eventType}',
+    ];
+    buffer.writeln(summaryParts.join(' | '));
+
+    final traceParts = <String>[
+      if (hasText(log.sessionId)) 'session=${log.sessionId}',
+      if (hasText(log.turnId)) 'turn=${log.turnId}',
+    ];
+    if (traceParts.isNotEmpty) {
+      buffer.writeln(traceParts.join(' | '));
     }
 
-    if (log.rawAiResponse != null && log.rawAiResponse!.isNotEmpty) {
-      buffer.writeln('\n========== AI原始回复 ==========');
-      buffer.writeln(log.rawAiResponse);
+    void writeJsonSection(String title, String? value) {
+      if (!hasText(value)) return;
+      buffer.writeln('\n========== $title ==========');
+      buffer.writeln(tryFormatJson(value!.trim()));
+    }
+
+    void writeTextSection(String title, String? value) {
+      if (!hasText(value)) return;
+      buffer.writeln('\n========== $title ==========');
+      buffer.writeln(value!.trim());
+    }
+
+    writeJsonSection('AI 实际收到的完整上下文（messages）', log.rawContext);
+    writeJsonSection('AI 实际发送的完整请求体（rawRequestBody）', log.rawRequestBody);
+    writeJsonSection('AI 原始 JSON 响应（模型回包）', log.rawResponseBody);
+    writeJsonSection('AI -> 工具调用', log.rawToolCalls);
+    writeJsonSection('工具 -> AI 返回', log.rawToolResults);
+    writeTextSection('AI 原始回复', log.rawAiResponse);
+    writeTextSection('最终展示给用户的回复', log.finalReply);
+
+    final hasDetailedSections = hasText(log.rawContext) ||
+        hasText(log.rawRequestBody) ||
+        hasText(log.rawResponseBody) ||
+        hasText(log.rawToolCalls) ||
+        hasText(log.rawToolResults) ||
+        hasText(log.rawAiResponse) ||
+        hasText(log.finalReply);
+
+    // 兼容旧日志：若没有详细字段，至少保留请求/响应摘要，避免导出为空壳。
+    if (!hasDetailedSections) {
+      if (log.requestBody.isNotEmpty) {
+        buffer.writeln('\n--- 请求体（摘要） ---');
+        buffer.writeln(tryFormatJson(log.requestBody));
+      }
+      if (log.responseBody.isNotEmpty) {
+        buffer.writeln('\n--- 响应体（摘要） ---');
+        buffer.writeln(tryFormatJson(log.responseBody));
+      }
     }
 
     return buffer.toString().trim();

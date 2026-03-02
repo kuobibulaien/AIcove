@@ -234,57 +234,6 @@ class ChatRequestMessageBuilder {
     return '用户刚刚发送了一张图片（当前模型不支持视觉，无法解析细节）。';
   }
 
-  static String buildAssistantImageEventPrompt(
-    List<Message> history, {
-    int maxEvents = 3,
-  }) {
-    if (maxEvents <= 0 || history.isEmpty) return '';
-
-    final events = <String>[];
-    for (final msg in history.reversed) {
-      if (msg.role != 'assistant') continue;
-      final blocks = msg.blocks;
-      if (blocks == null || blocks.isEmpty) continue;
-
-      final images = blocks.whereType<ImageBlock>().toList();
-      if (images.isEmpty) continue;
-
-      String? prompt;
-      for (final image in images) {
-        final currentPrompt = image.prompt?.trim();
-        if (currentPrompt != null && currentPrompt.isNotEmpty) {
-          prompt = currentPrompt;
-          break;
-        }
-      }
-
-      final countPart = 'count=${images.length}';
-      final promptPart = (prompt == null || prompt.isEmpty)
-          ? ''
-          : ' prompt="${_sanitizePromptForEvent(prompt)}"';
-      events.add('- assistant_image_sent $countPart$promptPart');
-      if (events.length >= maxEvents) break;
-    }
-
-    if (events.isEmpty) return '';
-
-    final ordered = events.reversed.toList();
-    return [
-      '以下是最近媒体状态（仅供内部上下文理解，禁止逐字输出给用户）：',
-      '<internal_media_events>',
-      ...ordered,
-      '</internal_media_events>',
-    ].join('\n');
-  }
-
-  static String _sanitizePromptForEvent(String prompt) {
-    var normalized = prompt.replaceAll(RegExp(r'\s+'), ' ').trim();
-    if (normalized.length > 160) {
-      normalized = '${normalized.substring(0, 160)}...';
-    }
-    return normalized.replaceAll('"', "'");
-  }
-
   String? _buildImageDescriptionCacheKey(ImageBlock block) {
     final url = block.url?.trim();
     if (url != null && url.isNotEmpty) return 'url:$url';

@@ -213,7 +213,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
-      'fast mode should stop after first model round even when draw_image returns async-like payload',
+      'fast mode should continue follow-up round when draw_image accepted asynchronously',
       () async {
     final fakeHttpClient = _FastFollowupClient();
     final settings = _buildFastModeSettings();
@@ -266,16 +266,16 @@ void main() {
       },
     );
 
-    expect(fakeHttpClient.callCount, 1);
-    expect(streamResetCount, 0);
-    expect(result.replyText, contains('我先去生成图片'));
-    expect(result.processedText, contains('我先去生成图片'));
+    expect(fakeHttpClient.callCount, 2);
+    expect(streamResetCount, 1);
+    expect(result.replyText, contains('"ok":true'));
+    expect(result.processedText, contains('"ok":true'));
     expect(result.toolCalls, isNotEmpty);
     expect(
         result.rawToolResults.where((r) => r.name == 'draw_image').length, 1);
     final drawToolResult =
         result.rawToolResults.firstWhere((r) => r.name == 'draw_image').result;
-    expect(drawToolResult, contains('"accepted":false'));
-    expect(drawToolResult, contains('"error":"missing async metadata"'));
+    expect(drawToolResult, contains('"accepted":true'));
+    expect(drawToolResult, contains('"job_id":"job_fast_1"'));
   });
 }

@@ -294,3 +294,15 @@ trace.end(additionalMessage: '查询到 ${results.length} 条记录');
   - `requestBodyBytes / requestBodyPreview`（脱敏+截断）
 - 历史日志详情页新增区块：`AI 实际发送的完整请求体`（来自 `rawRequestBody`）。
 - 排查 `HTTP 400 Improperly formed request` 时，优先对照以上字段定位是“消息结构”还是“配置字段”导致。
+
+## 2026-03-02 更新
+
+- 日志中心“对话”视图按**每一轮**展示核心数据，不按流式碎片事件逐条刷屏。
+- 每轮新增区块：`发送给 AI 的完整请求体（rawRequestBody）`，可直接查看模型最终收到的完整 JSON 请求。
+- 流式返回默认展示“按轮聚合后的文本”；原始 `streamEvents` 仍可通过开关查看（用于深度排障）。
+- 导出/复制对话日志时，`fullContent` 现在包含：
+  - `AI 实际收到的完整上下文（messages）`
+  - `AI 实际发送的完整请求体（rawRequestBody）`
+  - `AI 原始 JSON 响应（模型回包）`
+  - `AI -> 工具调用 / 工具 -> AI 返回`
+  - `AI 原始回复 / 最终展示给用户的回复`

@@ -487,6 +487,7 @@ class _LogViewerPageState extends State<LogViewerPage> {
     final requestLog = round.requestLog;
     final toolLog = round.toolLog;
     final rawContext = requestLog?.rawContext;
+    final rawRequestBody = requestLog?.rawRequestBody;
     final rawResponseBody = requestLog?.rawResponseBody;
     final rawToolCalls = toolLog?.rawToolCalls ?? requestLog?.rawToolCalls;
     final rawToolResults = toolLog?.rawToolResults;
@@ -500,13 +501,17 @@ class _LogViewerPageState extends State<LogViewerPage> {
 
     // prettyJson 内部会自动截断 base64 图片数据，不再卡死
     final contextText = prettyJson(rawContext) ?? '(空)';
-    final rawResponseJson = prettyJson(rawResponseBody);
+    final requestBodyText = prettyJson(rawRequestBody);
+    final shouldShowRawResponseSection =
+        !isStreamEnvelope || _showRawStreamEvents;
+    final rawResponseJson =
+        shouldShowRawResponseSection ? prettyJson(rawResponseBody) : null;
     final mergedStreamText = streamPreview?.hasMergedText == true
         ? streamPreview!.mergedText
         : '(空)';
     final streamPreviewTitle = streamPreview == null
         ? null
-        : '流式回包（合并后文本，${streamPreview.eventCount}个事件'
+        : '流式回包（按轮聚合后的文本，${streamPreview.eventCount}个事件'
             '${streamPreview.hasDoneMarker ? '，含[DONE]' : ''}'
             '${streamPreview.parseErrorCount > 0 ? '，${streamPreview.parseErrorCount}条解析失败' : ''}）';
     final toolCallsText = prettyJson(rawToolCalls) ?? '(无)';
@@ -568,9 +573,16 @@ class _LogViewerPageState extends State<LogViewerPage> {
           ),
           const SizedBox(height: 8),
           _buildConversationSection(
-            title: '发送给 AI 的上下文（完整消息列表）',
+            title: '发送给 AI 的上下文消息（messages）',
             content: contextText,
           ),
+          if (requestBodyText != null && requestBodyText.trim().isNotEmpty) ...[
+            const SizedBox(height: 6),
+            _buildConversationSection(
+              title: '发送给 AI 的完整请求体（rawRequestBody）',
+              content: requestBodyText,
+            ),
+          ],
           if (isStreamEnvelope && streamPreviewTitle != null) ...[
             const SizedBox(height: 6),
             _buildConversationSection(
@@ -579,11 +591,12 @@ class _LogViewerPageState extends State<LogViewerPage> {
             ),
           ],
           if (rawResponseJson != null && rawResponseJson.trim().isNotEmpty) ...[
-            if (!isStreamEnvelope || _showRawStreamEvents) ...[
+            if (shouldShowRawResponseSection) ...[
               const SizedBox(height: 6),
               _buildConversationSection(
-                title:
-                    isStreamEnvelope ? '流式回包原始事件（JSON）' : 'AI 原始 JSON 响应（模型回包）',
+                title: isStreamEnvelope
+                    ? '流式回包原始事件（JSON，按轮汇总）'
+                    : 'AI 原始 JSON 响应（模型回包）',
                 content: rawResponseJson,
               ),
             ],

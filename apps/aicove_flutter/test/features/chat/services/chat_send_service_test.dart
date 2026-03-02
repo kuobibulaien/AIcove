@@ -26,6 +26,7 @@ void main() {
     required String defaultModelName,
     List<String>? defaultChatModels,
     String? defaultVisionModel,
+    bool preferVisionAssistant = false,
     Map<String, ModelConfig>? modelConfigs,
   }) {
     return AppSettings(
@@ -75,6 +76,7 @@ void main() {
       hideUserAvatar: true,
       defaultChatModels: defaultChatModels ?? <String>[defaultModelName],
       defaultVisionModel: defaultVisionModel,
+      preferVisionAssistant: preferVisionAssistant,
     );
   }
 
@@ -371,35 +373,6 @@ void main() {
     expect(text, isNot(contains('图片已转换为文本描述')));
   });
 
-  test('buildAssistantImageEventPrompt exports internal media events', () {
-    final now = DateTime.now();
-    final history = <Message>[
-      Message(
-        id: 'u1',
-        role: 'user',
-        content: '你好',
-        createdAt: now.subtract(const Duration(minutes: 2)),
-      ),
-      Message.fromBlocks(
-        id: 'a1',
-        role: 'assistant',
-        blocks: [
-          ImageBlock(
-            messageId: 'a1',
-            localPath: '/tmp/image.png',
-            prompt: '1girl, smiling, outdoor',
-          ),
-        ],
-        createdAt: now.subtract(const Duration(minutes: 1)),
-      ),
-    ];
-
-    final prompt = ChatSendService.buildAssistantImageEventPrompt(history);
-    expect(prompt, contains('<internal_media_events>'));
-    expect(prompt, contains('assistant_image_sent'));
-    expect(prompt, contains("prompt=\"1girl, smiling, outdoor\""));
-  });
-
   test('vision translation request uses system prompt + single image only', () {
     final messages = ChatSendService.buildVisionTranslationMessages(
       imagePart: const <String, dynamic>{
@@ -476,5 +449,41 @@ void main() {
 
     expect(chain, <String>['openai:gpt-4o']);
     expect(chain, isNot(contains('openai:gpt-4o-mini')));
+  });
+
+  test(
+      'image send chain prefers vision assistant when preference switch is enabled',
+      () {
+    final settings = fakeSettings(
+      defaultModelName: 'openai:gpt-4o',
+      defaultChatModels: const <String>['openai:gpt-4o'],
+      defaultVisionModel: 'openai:gpt-4o-mini',
+      preferVisionAssistant: true,
+    );
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final service = container.read(chatSendServiceProvider);
+
+    final chain = service.buildImageSendModelRefs(settings);
+
+    expect(chain, <String>['openai:gpt-4o-mini', 'openai:gpt-4o']);
+  });
+
+  test(
+      'image send chain falls back to chat models when preference switch is enabled but vision model is missing',
+      () {
+    final settings = fakeSettings(
+      defaultModelName: 'openai:gpt-4o',
+      defaultChatModels: const <String>['openai:gpt-4o'],
+      defaultVisionModel: null,
+      preferVisionAssistant: true,
+    );
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final service = container.read(chatSendServiceProvider);
+
+    final chain = service.buildImageSendModelRefs(settings);
+
+    expect(chain, <String>['openai:gpt-4o']);
   });
 }

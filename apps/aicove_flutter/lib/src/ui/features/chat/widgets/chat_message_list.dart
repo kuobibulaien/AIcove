@@ -87,6 +87,7 @@ class ChatMessageList extends ConsumerStatefulWidget {
 
 class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   final Set<String> _pendingAnimationIds = <String>{};
+  final Map<String, GlobalKey> _bubbleAnchorKeys = <String, GlobalKey>{};
   DateTime? _latestAnimatedAt;
   List<_ListItem> _cachedListItems = [];
 
@@ -267,6 +268,31 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     _cachedFormatConfig = config;
     _cachedListItems = _buildListItemsWithTimeDividers(config);
     _cachedChatImages = _collectChatImages();
+    _cleanupBubbleAnchorKeys();
+  }
+
+  GlobalKey _bubbleAnchorKeyFor(String messageId) {
+    return _bubbleAnchorKeys.putIfAbsent(
+      messageId,
+      () => GlobalKey(debugLabel: 'bubble_$messageId'),
+    );
+  }
+
+  String _chunkBubbleAnchorId(String messageId, int chunkIndex) =>
+      '${messageId}_chunk_anchor_$chunkIndex';
+
+  void _cleanupBubbleAnchorKeys() {
+    final aliveIds = <String>{};
+    for (final item in _cachedListItems) {
+      if (item is _MessageItem) {
+        aliveIds.add(item.message.id);
+      } else if (item is _ChunkedMessageItem) {
+        aliveIds.add(
+          _chunkBubbleAnchorId(item.originalMessage.id, item.chunkIndex),
+        );
+      }
+    }
+    _bubbleAnchorKeys.removeWhere((id, _) => !aliveIds.contains(id));
   }
 
   @override
@@ -449,6 +475,9 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
                 message: chunkMessage,
                 avatarUrl: isMe ? null : widget.avatarUrl,
                 displayName: isMe ? null : widget.displayName,
+                bubbleAnchorKey: _bubbleAnchorKeyFor(
+                  _chunkBubbleAnchorId(m.id, item.chunkIndex),
+                ),
                 showCorner: item.showCorner,
                 showName: false,
                 showAvatar: item.showAvatar,
@@ -483,6 +512,7 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
                 message: m,
                 avatarUrl: isMe ? null : widget.avatarUrl,
                 displayName: isMe ? null : widget.displayName,
+                bubbleAnchorKey: _bubbleAnchorKeyFor(m.id),
                 showCorner: item.showCorner,
                 showName: false, // 一对一聊天不显示名称，群聊功能上线后改为 true
                 showAvatar: item.showAvatar,

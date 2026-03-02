@@ -73,6 +73,15 @@
 - 这些“纯状态文案”不会再作为聊天正文返回给消息层，避免出现在用户聊天气泡中。
 - 图片、音频等 `PluginContent` 仍按原流程正常展示与入库。
 
+### Thinking 上下文续传策略（2026-02-28）
+
+- 在 OpenAI 兼容流式工具调用链中，`AgentApiClient.sendMessageRichStream(...)` 会同时聚合：
+  - `content`（用户可见回复文本）
+  - `tool_calls`（工具调用）
+  - `reasoning_content`（仅供模型续推理）
+- 聚合后的 `reasoning_content` 会写回 `rawResponse.choices[0].message`，用于下一轮 tool-call 请求续传上下文，避免 DeepSeek Thinking 模式在第二轮报 `Missing reasoning_content`。
+- `reasoning_content` 不进入聊天界面文案，不参与用户可见消息渲染。
+
 ### 关于后端与 AI 请求
 
 - `cloud_backend/` 主要负责登录/同步/云数据能力；**不提供** `/api/chat` 这类 AI 对话端点

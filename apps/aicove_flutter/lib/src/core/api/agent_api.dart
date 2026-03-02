@@ -1140,7 +1140,9 @@ class AgentApiClient {
       }
 
       final text = StringBuffer();
+      final reasoning = StringBuffer();
       final toolAggregator = _StreamingToolCallAggregator();
+      final textDeltaNormalizer = _StreamingTextDeltaNormalizer();
       var done = false;
       var toolCallsObserved = false;
       final dataLines = <String>[];
@@ -1148,8 +1150,15 @@ class AgentApiClient {
 
       void emitTextDelta(String delta) {
         if (delta.isEmpty) return;
-        text.write(delta);
-        onTextDelta?.call(delta);
+        final normalized = textDeltaNormalizer.normalize(delta);
+        if (normalized.isEmpty) return;
+        text.write(normalized);
+        onTextDelta?.call(normalized);
+      }
+
+      void emitReasoningDelta(String delta) {
+        if (delta.isEmpty) return;
+        reasoning.write(delta);
       }
 
       void markToolCallsObserved() {
@@ -1195,6 +1204,7 @@ class AgentApiClient {
         }
 
         var handledChoice = false;
+        var emittedTextFromChoices = false;
         final choices = evt['choices'];
         if (choices is List && choices.isNotEmpty) {
           final first = choices.first;
@@ -1205,31 +1215,54 @@ class AgentApiClient {
             final delta = choice['delta'];
             final message = choice['message'];
 
-            var emittedFromDelta = false;
+            var emittedTextFromDelta = false;
+            var emittedReasoningFromDelta = false;
             if (delta is Map) {
               final deltaMap =
                   Map<String, dynamic>.from(delta.cast<String, dynamic>());
               final textDelta = _extractStreamingText(deltaMap['content']);
               if (textDelta.isNotEmpty) {
                 emitTextDelta(textDelta);
-                emittedFromDelta = true;
+                emittedTextFromDelta = true;
+                emittedTextFromChoices = true;
+              }
+              final reasoningDelta =
+                  _extractStreamingText(deltaMap['reasoning_content']);
+              if (reasoningDelta.isNotEmpty) {
+                emitReasoningDelta(reasoningDelta);
+                emittedReasoningFromDelta = true;
               }
               consumeToolCalls(deltaMap['tool_calls']);
               consumeLegacyFunctionCall(deltaMap['function_call']);
             }
 
-            if (!emittedFromDelta && message is Map) {
+            if (!emittedTextFromDelta && message is Map) {
               final messageMap =
                   Map<String, dynamic>.from(message.cast<String, dynamic>());
               final fallbackText = _extractStreamingText(messageMap['content']);
               if (fallbackText.isNotEmpty) {
                 emitTextDelta(fallbackText);
+                emittedTextFromChoices = true;
+              }
+              if (!emittedReasoningFromDelta) {
+                final fallbackReasoning =
+                    _extractStreamingText(messageMap['reasoning_content']);
+                if (fallbackReasoning.isNotEmpty) {
+                  emitReasoningDelta(fallbackReasoning);
+                }
               }
               consumeToolCalls(messageMap['tool_calls']);
               consumeLegacyFunctionCall(messageMap['function_call']);
             } else if (message is Map) {
               final messageMap =
                   Map<String, dynamic>.from(message.cast<String, dynamic>());
+              if (!emittedReasoningFromDelta) {
+                final fallbackReasoning =
+                    _extractStreamingText(messageMap['reasoning_content']);
+                if (fallbackReasoning.isNotEmpty) {
+                  emitReasoningDelta(fallbackReasoning);
+                }
+              }
               consumeToolCalls(messageMap['tool_calls']);
               consumeLegacyFunctionCall(messageMap['function_call']);
             }
@@ -1239,15 +1272,31 @@ class AgentApiClient {
         // 兜底兼容：部分服务商会把字段放在根层
         consumeToolCalls(evt['tool_calls']);
         consumeLegacyFunctionCall(evt['function_call']);
+        final rootReasoningContent = _extractStreamingText(
+          evt['reasoning_content'],
+        );
+        if (rootReasoningContent.isNotEmpty) {
+          emitReasoningDelta(rootReasoningContent);
+        }
 
         // Responses API 风格增量事件（兼容中转层）
         final eventType = evt['type']?.toString() ?? '';
-        if (eventType == 'response.output_text.delta') {
-          final rootDelta = _extractStreamingText(evt['delta']);
-          if (rootDelta.isNotEmpty) {
-            emitTextDelta(rootDelta);
+        if (eventType == 'response.reasoning.delta' ||
+            eventType == 'response.reasoning_text.delta') {
+          final rootReasoningDelta = _extractStreamingText(evt['delta']);
+          if (rootReasoningDelta.isNotEmpty) {
+            emitReasoningDelta(rootReasoningDelta);
           }
-        } else if (!handledChoice) {
+        }
+
+        if (eventType == 'response.output_text.delta') {
+          if (!emittedTextFromChoices) {
+            final rootDelta = _extractStreamingText(evt['delta']);
+            if (rootDelta.isNotEmpty) {
+              emitTextDelta(rootDelta);
+            }
+          }
+        } else if (!handledChoice || !emittedTextFromChoices) {
           final rootDelta = _extractStreamingText(evt['delta']);
           if (rootDelta.isNotEmpty) {
             emitTextDelta(rootDelta);
@@ -1289,9 +1338,11 @@ class AgentApiClient {
       sw.stop();
       final builtToolCalls = toolAggregator.build();
       final finalText = text.toString();
+      final finalReasoning = reasoning.toString();
       final assistantMessage = <String, dynamic>{
         'role': 'assistant',
         'content': finalText.isEmpty ? null : finalText,
+        if (finalReasoning.isNotEmpty) 'reasoning_content': finalReasoning,
         if (builtToolCalls.isNotEmpty)
           'tool_calls': [
             for (final call in builtToolCalls) call.toOpenAIFormat(),
@@ -1328,6 +1379,7 @@ class AgentApiClient {
 
       directTrace.info('直连流式响应成功', metadata: {
         'textLength': finalText.length,
+        'reasoningLength': finalReasoning.length,
         'toolCalls': builtToolCalls.length,
       });
       directTrace.end(additionalMessage: '直连流式调用完成');
@@ -1611,6 +1663,39 @@ class _StreamingToolCallState {
       }
     } catch (_) {}
     return <String, dynamic>{'_raw': trimmed};
+  }
+}
+
+class _StreamingTextDeltaNormalizer {
+  String _fullText = '';
+
+  String normalize(String incoming) {
+    if (incoming.isEmpty) return '';
+
+    if (_fullText.isEmpty) {
+      _fullText = incoming;
+      return incoming;
+    }
+
+    if (incoming == _fullText) {
+      return '';
+    }
+
+    // Compatible providers may return cumulative text each event.
+    // Keep only the incremental suffix to avoid repeated content.
+    if (incoming.startsWith(_fullText)) {
+      final suffix = incoming.substring(_fullText.length);
+      _fullText = incoming;
+      return suffix;
+    }
+
+    // Ignore retransmitted tails.
+    if (_fullText.endsWith(incoming)) {
+      return '';
+    }
+
+    _fullText += incoming;
+    return incoming;
   }
 }
 

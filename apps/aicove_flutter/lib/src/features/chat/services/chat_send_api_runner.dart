@@ -55,7 +55,8 @@ class ChatSendApiRunner {
   }) async {
     final flowSettings = config.settings.callFlowSettings;
     final isFastMode = flowSettings.mode == CallFlowMode.fast;
-    final effectiveMaxRounds = isFastMode ? 1 : maxRounds;
+    // fast 模式下允许“工具接单后补一轮文本回复”。
+    final effectiveMaxRounds = isFastMode ? 2 : maxRounds;
     final modelTimeout = Duration(seconds: flowSettings.modelTimeoutSeconds);
     final toolTimeout = Duration(seconds: flowSettings.toolTimeoutSeconds);
     final supportsVision = config.settings.hasChatModelCapability(
@@ -121,13 +122,21 @@ class ChatSendApiRunner {
         }
 
         onToolExecuting?.call(tc.name);
+        final executionArgs = _buildToolArgumentsForExecution(
+          toolName: tc.name,
+          originalArguments: tc.arguments,
+          isFastMode: isFastMode,
+          flowMode: flowSettings.mode.value,
+          sessionId: sessionId,
+          turnId: effectiveTurnId,
+        );
         AppLogger.info(_logTag, '执行工具调用', metadata: {
           'round': round,
           'name': tc.name,
-          'args': tc.arguments,
+          'args': executionArgs,
         });
 
-        final result = await tool.handler(tc.arguments).timeout(toolTimeout);
+        final result = await tool.handler(executionArgs).timeout(toolTimeout);
         final resultStr = result ?? '';
         AppLogger.info(_logTag, '工具调用完成', metadata: {
           'name': tc.name,
@@ -165,6 +174,7 @@ class ChatSendApiRunner {
         }
 
         if (tc.name == 'draw_image') {
+          final asyncAccepted = _isAsyncDrawImageAccepted(resultStr);
           final imageContents = _extractToolImageContents(resultStr);
           if (imageContents.isNotEmpty) {
             AppLogger.info(_logTag, 'Collected draw_image tool images',
@@ -182,6 +192,7 @@ class ChatSendApiRunner {
               ),
             ),
             imageContents: imageContents,
+            isAsyncAcceptedDrawImage: asyncAccepted,
           );
         }
 
@@ -380,16 +391,19 @@ class ChatSendApiRunner {
       });
 
       final toolResults = <ToolResult>[];
+      final toolOutcomes = <_ToolExecutionOutcome>[];
       if (isFastMode) {
         final outcomes = await Future.wait([
           for (final tc in currentToolCalls) executeToolCall(tc, round: round),
         ]);
+        toolOutcomes.addAll(outcomes);
         for (final outcome in outcomes) {
           collectToolOutcome(outcome, toolResults);
         }
       } else {
         for (final tc in currentToolCalls) {
           final outcome = await executeToolCall(tc, round: round);
+          toolOutcomes.add(outcome);
           collectToolOutcome(outcome, toolResults);
         }
       }
@@ -414,13 +428,19 @@ class ChatSendApiRunner {
         rawToolResults: _encodeToolResultsForLog(toolResults),
       ));
 
-      if (isFastMode) {
-        if (isFastMode) {
-          AppLogger.info(_logTag, '快速模式停止后续模型轮次', metadata: {
-            'round': round,
-          });
-          roundTrace?.end(additionalMessage: 'fast mode stop');
-        }
+      final shouldContinueFastFollowup =
+          isFastMode && toolOutcomes.any((o) => o.isAsyncAcceptedDrawImage);
+      if (shouldContinueFastFollowup) {
+        // 第一轮里的“我去画图了”之类前置话术不保留，第二轮重新流式正文。
+        preToolNarrativeTexts.clear();
+        onStreamTextReset?.call();
+      }
+
+      if (isFastMode && !shouldContinueFastFollowup) {
+        AppLogger.info(_logTag, '快速模式停止后续模型轮次', metadata: {
+          'round': round,
+        });
+        roundTrace?.end(additionalMessage: 'fast mode stop');
         break;
       }
 
@@ -718,6 +738,47 @@ class ChatSendApiRunner {
       normalizedArgs[key] = call.arguments[key];
     }
     return '${call.name}:${jsonEncode(normalizedArgs)}';
+  }
+
+  Map<String, dynamic> _buildToolArgumentsForExecution({
+    required String toolName,
+    required Map<String, dynamic> originalArguments,
+    required bool isFastMode,
+    required String flowMode,
+    required String sessionId,
+    required String turnId,
+  }) {
+    if (toolName != 'draw_image') {
+      return originalArguments;
+    }
+    final args = Map<String, dynamic>.from(originalArguments);
+    args['_aicove_flow_mode'] = flowMode;
+    args['_aicove_session_id'] = sessionId;
+    args['_aicove_turn_id'] = turnId;
+    if (isFastMode) {
+      args['_aicove_async'] = true;
+    }
+    return args;
+  }
+
+  bool _isAsyncDrawImageAccepted(String rawResult) {
+    final payload = _tryParseJsonMap(rawResult.trim());
+    if (payload == null) return false;
+    final success = payload['success'];
+    final successOk = success is bool ? success : true;
+    if (!successOk) return false;
+
+    final accepted = payload['accepted'] == true;
+    final status = payload['status']?.toString().trim().toLowerCase() ?? '';
+    final hasJobId = [
+      payload['job_id'],
+      payload['jobId'],
+      payload['id'],
+    ].any((v) => v != null && v.toString().trim().isNotEmpty);
+    final isPendingStatus =
+        status == 'pending' || status == 'accepted' || status == 'queued';
+
+    return accepted || (hasJobId && isPendingStatus);
   }
 
   String _buildToolResultForModel({
@@ -1114,11 +1175,13 @@ class _ToolExecutionOutcome {
   final ToolResult toolResult;
   final ToolAudioResult? audioResult;
   final List<PluginImageContent> imageContents;
+  final bool isAsyncAcceptedDrawImage;
 
   const _ToolExecutionOutcome({
     required this.toolResult,
     this.audioResult,
     this.imageContents = const <PluginImageContent>[],
+    this.isAsyncAcceptedDrawImage = false,
   });
 }
 

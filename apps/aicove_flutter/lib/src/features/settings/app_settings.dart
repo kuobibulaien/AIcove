@@ -326,8 +326,9 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
   if (defaultChatModels.isEmpty && meta.visible.isNotEmpty) {
     defaultChatModels.add(meta.visible.first);
   }
-  final primaryChatModelRef =
-      defaultChatModels.isNotEmpty ? defaultChatModels.first : meta.defaultModel;
+  final primaryChatModelRef = defaultChatModels.isNotEmpty
+      ? defaultChatModels.first
+      : meta.defaultModel;
   final rawDefaultVisionModel = data['default_vision_model'] as String?;
   final defaultVisionModel = rawDefaultVisionModel == null
       ? null
@@ -336,6 +337,7 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
           providerMap: meta.providerMap,
           providerIds: chatProviderIds,
         );
+  final preferVisionAssistant = data['prefer_vision_assistant'] == true;
   final skipVisionCompatDialog = data['skip_vision_compat_dialog'] == true;
 
   return AppSettings(
@@ -375,6 +377,7 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     userName: userName,
     defaultChatModels: defaultChatModels,
     defaultVisionModel: defaultVisionModel,
+    preferVisionAssistant: preferVisionAssistant,
     skipVisionCompatDialog: skipVisionCompatDialog,
     enhancedDialogueSettings: enhancedDialogueSettings,
     callFlowSettings: callFlowSettings,
@@ -951,6 +954,13 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
         modelId == null ? null : _normalizeModelRefForPersist(modelId);
     await _commit(
       () => _api.updatePartial({'default_vision_model': normalized}),
+    );
+  }
+
+  /// 设置是否优先使用视觉辅助模型
+  Future<void> setPreferVisionAssistant(bool prefer) async {
+    await _commit(
+      () => _api.updatePartial({'prefer_vision_assistant': prefer}),
     );
   }
 

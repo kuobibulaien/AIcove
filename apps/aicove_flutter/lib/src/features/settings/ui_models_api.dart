@@ -186,6 +186,7 @@ Map<String, dynamic> _defaultStoreData() => <String, dynamic>{
       'hide_user_avatar': true,
       'user_avatar': null,
       'user_name': null,
+      'prefer_vision_assistant': false,
       'skip_vision_compat_dialog': false,
     };
 
@@ -547,6 +548,7 @@ Map<String, dynamic> _normalizeData(Map<String, dynamic> raw) {
       ((data['stream_segment_delay_seconds'] as num?)?.toDouble() ?? 0.0)
           .clamp(0.0, 5.0)
           .toDouble();
+  data['prefer_vision_assistant'] = data['prefer_vision_assistant'] == true;
   return data;
 }
 

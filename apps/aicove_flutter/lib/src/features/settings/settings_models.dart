@@ -960,6 +960,9 @@ class AppSettings {
   /// 默认图片识别模型（单选，用于 sendWithImage）
   final String? defaultVisionModel;
 
+  /// 图片发送时是否优先走视觉辅助模型
+  final bool preferVisionAssistant;
+
   /// 是否跳过视觉兼容性提示弹窗（用户勾选"不再提醒"后为 true）
   final bool skipVisionCompatDialog;
   final EnhancedDialogueSettings enhancedDialogueSettings;
@@ -1002,6 +1005,7 @@ class AppSettings {
     this.hideUserAvatar = true,
     this.defaultChatModels = const <String>[],
     this.defaultVisionModel,
+    this.preferVisionAssistant = false,
     this.skipVisionCompatDialog = false,
     this.enhancedDialogueSettings = const EnhancedDialogueSettings(),
     this.callFlowSettings = const CallFlowSettings(),
@@ -1043,6 +1047,7 @@ class AppSettings {
     bool? hideUserAvatar,
     List<String>? defaultChatModels,
     String? defaultVisionModel,
+    bool? preferVisionAssistant,
     bool? skipVisionCompatDialog,
     EnhancedDialogueSettings? enhancedDialogueSettings,
     CallFlowSettings? callFlowSettings,
@@ -1086,6 +1091,8 @@ class AppSettings {
         hideUserAvatar: hideUserAvatar ?? this.hideUserAvatar,
         defaultChatModels: defaultChatModels ?? this.defaultChatModels,
         defaultVisionModel: defaultVisionModel ?? this.defaultVisionModel,
+        preferVisionAssistant:
+            preferVisionAssistant ?? this.preferVisionAssistant,
         skipVisionCompatDialog:
             skipVisionCompatDialog ?? this.skipVisionCompatDialog,
         enhancedDialogueSettings:

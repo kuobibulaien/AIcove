@@ -51,6 +51,7 @@ class ChatSendService {
       ChatRequestConfigBuilder();
   static const String visionDescriptionSystemPrompt =
       ChatRequestMessageBuilder.visionDescriptionSystemPrompt;
+  static const String _logTag = 'ChatSendService';
 
   ChatSendService(this._ref);
 
@@ -62,6 +63,7 @@ class ChatSendService {
   /// 构建图片消息发送时的模型调用链。
   ///
   /// 规则：
+  /// - 开启“优先视觉辅助模型”后：若已配置视觉辅助模型，则无条件将其置于首位
   /// - 只要聊天模型链中有视觉能力（自动识别或手动标签），就不插入视觉辅助模型
   /// - 仅在聊天模型链全部无视觉能力时，才把视觉辅助模型放在最前
   List<String> buildImageSendModelRefs(AppSettings settings) {
@@ -79,6 +81,26 @@ class ChatSendService {
       if (fallback.isNotEmpty) normalizedChatModels.add(fallback);
     }
 
+    final visionModelRef = settings.defaultVisionModel?.trim();
+    final hasVisionAssistant =
+        visionModelRef != null && visionModelRef.isNotEmpty;
+
+    if (settings.preferVisionAssistant) {
+      if (hasVisionAssistant) {
+        final preferredChain = <String>[visionModelRef];
+        for (final modelRef in normalizedChatModels) {
+          if (!preferredChain.contains(modelRef)) {
+            preferredChain.add(modelRef);
+          }
+        }
+        return preferredChain;
+      }
+      AppLogger.warning(
+        _logTag,
+        'prefer_vision_assistant 已开启，但 defaultVisionModel 未配置，回退聊天模型链',
+      );
+    }
+
     final hasVisionCapableChatModel = normalizedChatModels.any(
       (modelRef) => settings.hasChatModelCapability(
         modelRef,
@@ -88,8 +110,7 @@ class ChatSendService {
     if (hasVisionCapableChatModel) return normalizedChatModels;
 
     final modelsToTry = <String>[];
-    final visionModelRef = settings.defaultVisionModel?.trim();
-    if (visionModelRef != null && visionModelRef.isNotEmpty) {
+    if (hasVisionAssistant) {
       modelsToTry.add(visionModelRef);
     }
     for (final modelRef in normalizedChatModels) {
@@ -140,18 +161,6 @@ class ChatSendService {
       ChatRequestMessageBuilder.buildNonVisionImageMessageText(
         role: role,
         description: description,
-      );
-
-  /// 构建“assistant 最近发图”的内部媒体事件，注入 system prompt。
-  ///
-  /// 注意：这是内部状态提示，不应被模型原样回复给用户。
-  static String buildAssistantImageEventPrompt(
-    List<Message> history, {
-    int maxEvents = 3,
-  }) =>
-      ChatRequestMessageBuilder.buildAssistantImageEventPrompt(
-        history,
-        maxEvents: maxEvents,
       );
 
   /// 创建用户消息
@@ -316,17 +325,11 @@ class ChatSendService {
       systemParts.add(pluginPrompts);
     }
 
-    if (!supportsVision) {
-      final mediaContext = buildAssistantImageEventPrompt(history);
-      if (mediaContext.isNotEmpty) {
-        systemParts.add(mediaContext);
-      }
-    }
-
     List<Map<String, dynamic>>? tools;
     if (supportsToolCalling) {
-      final aiTools =
-          _pluginContextBuilder.collectPluginTools(effectivePlugins);
+      final aiTools = await _pluginContextBuilder.collectPluginToolsWithRetry(
+        effectivePlugins,
+      );
       if (aiTools.isNotEmpty) {
         tools = aiTools.map((t) => t.toOpenAISchema()).toList();
         AppLogger.debug('ChatSendService', '收集到工具定义', metadata: {

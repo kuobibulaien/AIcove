@@ -87,5 +87,111 @@ void main() {
       expect(streamEvents, isA<List>());
       expect((streamEvents as List).isNotEmpty, isTrue);
     });
+
+    test('aggregates reasoning_content into rawResponse assistant message',
+        () async {
+      final client = AgentApiClient(
+        client: _FakeStreamingClient(
+          statusCode: 200,
+          responseLines: const <String>[
+            'data: {"choices":[{"delta":{"reasoning_content":"step_1","tool_calls":[{"index":0,"id":"call_reason","type":"function","function":{"name":"lookup_weather","arguments":"{\\"city\\":\\"Shanghai\\"}"}}]}}]}',
+            '',
+            'data: {"choices":[{"delta":{"reasoning_content":" + step_2"}}]}',
+            '',
+            'data: [DONE]',
+            '',
+          ],
+        ),
+      );
+
+      final result = await client.sendMessageRichStream(
+        agentId: 'agent_1',
+        sessionId: 'session_1',
+        modelFullId: 'openai:gpt-4o-mini',
+        messages: const <Map<String, dynamic>>[],
+        userText: 'help me check weather',
+        providerApiBase: 'https://api.openai.com/v1',
+        providerApiKey: 'test-key',
+      );
+
+      expect(result.toolCalls, hasLength(1));
+      expect(result.toolCalls.first.id, 'call_reason');
+      expect(result.rawResponse, isNotNull);
+
+      final choices = result.rawResponse?['choices'] as List?;
+      expect(choices, isNotNull);
+      expect(choices, isNotEmpty);
+
+      final firstChoice = choices!.first as Map<String, dynamic>;
+      final message = firstChoice['message'] as Map<String, dynamic>?;
+      expect(message, isNotNull);
+      expect(message?['reasoning_content'], 'step_1 + step_2');
+      expect(message?['tool_calls'], isA<List>());
+      expect(message?['content'], isNull);
+    });
+
+    test('normalizes cumulative text chunks into true deltas', () async {
+      final emitted = <String>[];
+      final client = AgentApiClient(
+        client: _FakeStreamingClient(
+          statusCode: 200,
+          responseLines: const <String>[
+            'data: {"choices":[{"delta":{"content":"纳西妲"}}]}',
+            '',
+            'data: {"choices":[{"delta":{"content":"纳西妲正在看书"}}]}',
+            '',
+            'data: {"choices":[{"delta":{"content":"纳西妲正在看书。"}}]}',
+            '',
+            'data: [DONE]',
+            '',
+          ],
+        ),
+      );
+
+      final result = await client.sendMessageRichStream(
+        agentId: 'agent_1',
+        sessionId: 'session_1',
+        modelFullId: 'openai:gpt-4o-mini',
+        messages: const <Map<String, dynamic>>[],
+        userText: '继续',
+        providerApiBase: 'https://api.openai.com/v1',
+        providerApiKey: 'test-key',
+        onTextDelta: emitted.add,
+      );
+
+      expect(result.text, '纳西妲正在看书。');
+      expect(emitted.join(), '纳西妲正在看书。');
+      expect(emitted, <String>['纳西妲', '正在看书', '。']);
+    });
+
+    test('avoids double-emitting when both choices and root delta exist',
+        () async {
+      final emitted = <String>[];
+      final client = AgentApiClient(
+        client: _FakeStreamingClient(
+          statusCode: 200,
+          responseLines: const <String>[
+            'data: {"type":"response.output_text.delta","delta":"你好","choices":[{"delta":{"content":"你好"}}]}',
+            '',
+            'data: [DONE]',
+            '',
+          ],
+        ),
+      );
+
+      final result = await client.sendMessageRichStream(
+        agentId: 'agent_1',
+        sessionId: 'session_1',
+        modelFullId: 'openai:gpt-4o-mini',
+        messages: const <Map<String, dynamic>>[],
+        userText: '继续',
+        providerApiBase: 'https://api.openai.com/v1',
+        providerApiKey: 'test-key',
+        onTextDelta: emitted.add,
+      );
+
+      expect(result.text, '你好');
+      expect(emitted, <String>['你好']);
+    });
   });
 }

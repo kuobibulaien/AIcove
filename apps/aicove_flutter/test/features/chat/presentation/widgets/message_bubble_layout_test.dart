@@ -3,11 +3,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:aicove_flutter/src/core/models/message_block.dart';
+import 'package:aicove_flutter/src/core/models/block_status.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/chat/presentation/widgets/message_bubble.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
-import 'package:aicove_flutter/src/features/settings/settings_models.dart';
 import 'package:aicove_flutter/src/ui/theme/skin_provider.dart';
 import 'package:aicove_flutter/src/ui/theme/skins/moetalk_skin.dart';
 
@@ -183,5 +183,94 @@ void main() {
       find.byKey(const ValueKey<String>('message_bubble_image_tool_case')),
       findsNothing,
     );
+  });
+
+  testWidgets('历史消息残留 streaming 文本块时，不应继续显示三点加载条', (tester) async {
+    const messageId = 'history_streaming_case';
+    final settings = _buildSettings(hideUserAvatar: false);
+    final message = Message.fromBlocks(
+      id: messageId,
+      role: 'assistant',
+      blocks: [
+        TextBlock(
+          messageId: messageId,
+          content: '',
+          status: BlockStatus.streaming,
+        ),
+        TextBlock(
+          messageId: messageId,
+          content: '这条消息其实已经生成完成',
+          status: BlockStatus.success,
+        ),
+      ],
+      status: 'sent',
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          appSettingsProvider
+              .overrideWith(() => _FakeAppSettingsNotifier(settings)),
+        ],
+        child: SkinScope(
+          skin: const MoeTalkSkin(),
+          child: MaterialApp(
+            home: Scaffold(
+              body: MessageBubble(
+                isMe: false,
+                message: message,
+                showAvatar: true,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TypingDotsIndicator), findsNothing);
+    expect(find.text('这条消息其实已经生成完成'), findsOneWidget);
+  });
+
+  testWidgets('正在发送中的 streaming 文本块应显示三点加载条', (tester) async {
+    const messageId = 'sending_streaming_case';
+    final settings = _buildSettings(hideUserAvatar: false);
+    final message = Message.fromBlocks(
+      id: messageId,
+      role: 'assistant',
+      blocks: [
+        TextBlock(
+          messageId: messageId,
+          content: '',
+          status: BlockStatus.streaming,
+        ),
+      ],
+      status: 'sending',
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          appSettingsProvider
+              .overrideWith(() => _FakeAppSettingsNotifier(settings)),
+        ],
+        child: SkinScope(
+          skin: const MoeTalkSkin(),
+          child: MaterialApp(
+            home: Scaffold(
+              body: MessageBubble(
+                isMe: false,
+                message: message,
+                showAvatar: true,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 120));
+
+    expect(find.byType(TypingDotsIndicator), findsOneWidget);
   });
 }
