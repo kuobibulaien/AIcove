@@ -12,7 +12,10 @@ import '../domain/message.dart';
 import '../../plugins/domain/plugin.dart';
 import '../../plugins/domain/plugin_content.dart';
 import '../../settings/app_settings.dart';
-import '../../../core/api/providers/provider_adapter.dart' show ToolCall, ToolResult;
+import '../../../core/api/providers/provider_adapter.dart'
+    show ToolCall, ToolResult;
+import '../../observability/trace_models.dart' show TraceContext;
+
 /// 发送请求参数数据类
 class SendRequest {
   final Conversation conversation;
@@ -38,6 +41,7 @@ class ToolAudioResult {
 
   const ToolAudioResult({required this.audioUrl, required this.text});
 }
+
 /// API 调用结果
 class ApiCallResult {
   final String replyText;
@@ -77,6 +81,9 @@ class ApiConfig {
   final double? modelTemperature;
   final double? modelTopP;
   final int? modelContextMessageLimit;
+  final TraceContext? traceContext;
+  final String? boundImageToolPresetName;
+  final String? boundImageArtistPresetName;
 
   const ApiConfig({
     required this.settings,
@@ -91,6 +98,9 @@ class ApiConfig {
     this.modelTemperature,
     this.modelTopP,
     this.modelContextMessageLimit,
+    this.traceContext,
+    this.boundImageToolPresetName,
+    this.boundImageArtistPresetName,
   });
 
   double? get effectiveTemperature => modelTemperature ?? settings.temperature;

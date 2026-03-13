@@ -1,13 +1,18 @@
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:archive/archive.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../config.dart';
 import '../api_logger.dart';
 import '../app_logger.dart';
 import '../utils/content_normalizer.dart';
+import 'image_providers/image_provider_adapter.dart';
+import 'image_providers/image_provider_adapter_factory.dart';
+import 'providers/google_api_mode.dart';
 import 'providers/provider_adapter_factory.dart';
-import 'providers/provider_adapter.dart' show ToolCall;
+import 'providers/provider_adapter.dart' show ProviderAdapter, ToolCall;
+import '../../features/observability/trace_models.dart';
+import '../../features/observability/trace_store.dart';
 
 class SendMessageRichResult {
   final String text;
@@ -68,6 +73,55 @@ class AgentApiClient {
     'nai-diffusion-4-5-full',
     'nai-diffusion-3',
   ];
+  static const Set<String> _novelAiV4ReservedParameterKeys = <String>{
+    'params_version',
+    'width',
+    'height',
+    'n_samples',
+    'steps',
+    'scale',
+    'sampler',
+    'seed',
+    'negative_prompt',
+    'qualityToggle',
+    'ucPreset',
+    'legacy',
+    'legacy_v3_extend',
+    'noise_schedule',
+    'sm',
+    'sm_dyn',
+    'dynamic_thresholding',
+    'add_original_image',
+    'cfg_rescale',
+    'prefer_brownian',
+    'deliberate_euler_ancestral_bug',
+    'autoSmea',
+    'use_coords',
+    'characterPrompts',
+    'v4_prompt',
+    'v4_negative_prompt',
+  };
+  static const Set<String> _novelAiV3ReservedParameterKeys = <String>{
+    'params_version',
+    'width',
+    'height',
+    'n_samples',
+    'steps',
+    'scale',
+    'sampler',
+    'seed',
+    'negative_prompt',
+    'qualityToggle',
+    'ucPreset',
+    'legacy',
+    'legacy_v3_extend',
+    'noise_schedule',
+    'sm',
+    'sm_dyn',
+    'dynamic_thresholding',
+  };
+  static const int _maxStoredStreamEventsDebug = 360;
+  static const int _maxStoredStreamEventsRelease = 120;
 
   final http.Client _client;
   final Duration timeout;
@@ -161,12 +215,15 @@ class AgentApiClient {
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
   }) async {
-    final normalizedProvider = provider.toLowerCase().trim();
     final trimmedBase = providerApiBase?.trim();
     final trimmedKey = providerApiKey?.trim();
     if (trimmedKey == null || trimmedKey.isEmpty) {
       throw StateError('Missing providerApiKey for image generation');
     }
+    final normalizedProvider = ImageProviderAdapterFactory.resolveProvider(
+      provider,
+      customConfig: customConfig,
+    );
     final isNovelAi =
         normalizedProvider == 'novelai' || normalizedProvider == 'nai';
     if (isNovelAi) {
@@ -213,20 +270,38 @@ class AgentApiClient {
       }
       if (lastError != null) throw lastError;
     }
-    final base = (trimmedBase == null || trimmedBase.isEmpty)
+    final baseUrl = (trimmedBase == null || trimmedBase.isEmpty)
         ? 'https://api.openai.com/v1'
         : trimmedBase;
-    return _generateImageWithOpenAICompatible(
+    final adapter = ImageProviderAdapterFactory.getAdapter(
+      normalizedProvider,
+      customConfig: customConfig,
+    );
+    final result = await adapter.generate(
+      client: _client,
+      timeout: timeout,
+      request: ImageProviderRequest(
+        provider: normalizedProvider,
+        model: model,
+        prompt: prompt,
+        negativePrompt: negativePrompt,
+        width: width,
+        height: height,
+        count: count,
+        steps: steps,
+        guidanceScale: guidanceScale,
+        seed: seed,
+        sampler: sampler,
+        baseUrl: baseUrl,
+        apiKey: trimmedKey,
+        customConfig: customConfig,
+      ),
+    );
+    return ImageGenerationResult(
+      images: result.images,
       provider: normalizedProvider,
       model: model,
-      prompt: prompt,
-      negativePrompt: negativePrompt,
-      width: width,
-      height: height,
-      count: count,
-      baseUrl: base,
-      apiKey: trimmedKey,
-      customConfig: customConfig,
+      rawResponse: result.rawResponse,
     );
   }
 
@@ -282,61 +357,6 @@ class AgentApiClient {
     return message.contains('model must be a valid enum value');
   }
 
-  Future<ImageGenerationResult> _generateImageWithOpenAICompatible({
-    required String provider,
-    required String model,
-    required String prompt,
-    required int width,
-    required int height,
-    required int count,
-    required String baseUrl,
-    required String apiKey,
-    String? negativePrompt,
-    Map<String, dynamic>? customConfig,
-  }) async {
-    final adapter = ProviderAdapterFactory.getAdapter(provider);
-    final endpoint = adapter.buildEndpoint(baseUrl, modelType: 'image');
-    final payload = <String, dynamic>{
-      'model': model,
-      'prompt': prompt,
-      'n': count.clamp(1, 4),
-      'size': '${width.clamp(256, 2048)}x${height.clamp(256, 2048)}',
-      // Force base64 to avoid optional external URL download hop.
-      'response_format': 'b64_json',
-      if (negativePrompt != null && negativePrompt.trim().isNotEmpty)
-        'negative_prompt': negativePrompt.trim(),
-      ...?customConfig,
-    };
-    final headers = adapter.buildHeaders(apiKey);
-    final resp = await _client
-        .post(
-          Uri.parse(endpoint),
-          headers: headers,
-          body: jsonEncode(payload),
-        )
-        .timeout(timeout);
-    final bodyString = utf8.decode(resp.bodyBytes);
-    if (resp.statusCode < 200 || resp.statusCode >= 300) {
-      throw Exception('HTTP ${resp.statusCode}: $bodyString');
-    }
-    final data = jsonDecode(bodyString) as Map<String, dynamic>;
-    final images = <Uint8List>[];
-    final items = (data['data'] as List?) ?? const [];
-    for (final item in items) {
-      if (item is! Map<String, dynamic>) continue;
-      final b64 = item['b64_json']?.toString();
-      if (b64 != null && b64.isNotEmpty) {
-        images.add(base64Decode(b64));
-      }
-    }
-    return ImageGenerationResult(
-      images: images,
-      provider: provider,
-      model: model,
-      rawResponse: data,
-    );
-  }
-
   Future<ImageGenerationResult> _generateImageWithNovelAI({
     required String provider,
     required String model,
@@ -360,63 +380,25 @@ class AgentApiClient {
     final samplerValue = sampler?.trim();
     final negativePromptValue = negativePrompt?.trim();
     final isV4 = _isNovelAiV4Model(model);
-    final params = <String, dynamic>{
-      'params_version': 3,
-      'width': width.clamp(256, 2048),
-      'height': height.clamp(256, 2048),
-      'n_samples': count.clamp(1, 4),
-      'steps': (steps ?? 23).clamp(1, 50),
-      'scale': guidanceScale ?? 5.0,
-      'sampler': (samplerValue != null && samplerValue.isNotEmpty)
-          ? samplerValue
-          : 'k_euler_ancestral',
-      'qualityToggle': true,
-      'ucPreset': 0,
-      'legacy': false,
-      'legacy_v3_extend': false,
-      'noise_schedule': 'karras',
-      'add_original_image': false,
-      'cfg_rescale': 0,
-      'sm': false,
-      'sm_dyn': false,
-      'dynamic_thresholding': false,
-      'prefer_brownian': true,
-      'deliberate_euler_ancestral_bug': false,
-      'autoSmea': false,
-      if (seed != null) 'seed': seed,
-      if (negativePromptValue != null && negativePromptValue.isNotEmpty)
-        'negative_prompt': negativePromptValue,
-    };
-    if (isV4) {
-      final v4Negative =
-          (negativePromptValue == null || negativePromptValue.isEmpty)
-              ? 'lowres'
-              : negativePromptValue;
-      params.addAll(<String, dynamic>{
-        'use_coords': false,
-        'legacy_uc': false,
-        'characterPrompts': const <dynamic>[],
-        'v4_prompt': <String, dynamic>{
-          'caption': <String, dynamic>{
-            'base_caption': prompt,
-            'char_captions': const <dynamic>[],
-          },
-          'use_coords': false,
-          'use_order': true,
-        },
-        'v4_negative_prompt': <String, dynamic>{
-          'caption': <String, dynamic>{
-            'base_caption': v4Negative,
-            'char_captions': const <dynamic>[],
-          },
-          'legacy_uc': false,
-        },
-      });
-    }
-    final configParams = customConfig?['image_parameters'];
-    if (configParams is Map<String, dynamic>) {
-      params.addAll(configParams);
-    }
+    final params = _buildNovelAiParameters(
+      model: model,
+      prompt: prompt,
+      negativePrompt: negativePromptValue,
+      width: width,
+      height: height,
+      count: count,
+      steps: steps,
+      guidanceScale: guidanceScale,
+      seed: seed,
+      sampler: samplerValue,
+    );
+    _mergeNovelAiExtraParameters(
+      params,
+      customConfig?['image_parameters'],
+      reservedKeys: isV4
+          ? _novelAiV4ReservedParameterKeys
+          : _novelAiV3ReservedParameterKeys,
+    );
     final payload = <String, dynamic>{
       'input': prompt,
       'model': model,
@@ -450,6 +432,84 @@ class AgentApiClient {
   bool _isNovelAiV4Model(String model) {
     final value = model.toLowerCase().trim();
     return value.startsWith('nai-diffusion-4');
+  }
+
+  Map<String, dynamic> _buildNovelAiParameters({
+    required String model,
+    required String prompt,
+    required int width,
+    required int height,
+    required int count,
+    String? negativePrompt,
+    int? steps,
+    double? guidanceScale,
+    int? seed,
+    String? sampler,
+  }) {
+    final params = <String, dynamic>{
+      'params_version': 3,
+      'width': width.clamp(256, 2048),
+      'height': height.clamp(256, 2048),
+      'n_samples': count.clamp(1, 4),
+      'steps': (steps ?? 23).clamp(1, 50),
+      'scale': guidanceScale ?? 5.0,
+      'sampler': (sampler != null && sampler.isNotEmpty)
+          ? sampler
+          : 'k_euler_ancestral',
+      if (seed != null) 'seed': seed,
+      if (negativePrompt != null && negativePrompt.isNotEmpty)
+        'negative_prompt': negativePrompt,
+    };
+    if (_isNovelAiV4Model(model)) {
+      final v4Negative = (negativePrompt == null || negativePrompt.isEmpty)
+          ? 'lowres'
+          : negativePrompt;
+      params.addAll(<String, dynamic>{
+        'use_coords': false,
+        'characterPrompts': const <dynamic>[],
+        'v4_prompt': <String, dynamic>{
+          'caption': <String, dynamic>{
+            'base_caption': prompt,
+            'char_captions': const <dynamic>[],
+          },
+          'use_coords': false,
+          'use_order': true,
+        },
+        'v4_negative_prompt': <String, dynamic>{
+          'caption': <String, dynamic>{
+            'base_caption': v4Negative,
+            'char_captions': const <dynamic>[],
+          },
+        },
+      });
+      return params;
+    }
+    params.addAll(<String, dynamic>{
+      'qualityToggle': true,
+      'ucPreset': 0,
+      'legacy': false,
+      'legacy_v3_extend': false,
+      'noise_schedule': 'karras',
+      'sm': false,
+      'sm_dyn': false,
+      'dynamic_thresholding': false,
+    });
+    return params;
+  }
+
+  void _mergeNovelAiExtraParameters(
+    Map<String, dynamic> params,
+    dynamic extra, {
+    required Set<String> reservedKeys,
+  }) {
+    if (extra is! Map) return;
+    for (final entry in extra.entries) {
+      final key = entry.key?.toString().trim() ?? '';
+      if (key.isEmpty || reservedKeys.contains(key)) {
+        continue;
+      }
+      params[key] = entry.value;
+    }
   }
 
   List<Uint8List> _extractImageBytesFromNovelAIResponse(
@@ -504,9 +564,64 @@ class AgentApiClient {
           'id': tc.id,
           'name': tc.name,
           'arguments': tc.arguments,
+          if (tc.thoughtSignature != null)
+            'thoughtSignature': tc.thoughtSignature,
         }
     ];
     return jsonEncode(jsonList);
+  }
+
+  String _resolveChatEndpoint({
+    required ProviderAdapter adapter,
+    required String baseUrl,
+    required String provider,
+    required String model,
+    Map<String, dynamic>? customConfig,
+    bool streaming = false,
+  }) {
+    if (adapter.name == 'gemini') {
+      final vertexExpress = isVertexExpressEnabled(customConfig);
+      var endpoint = buildGoogleGenerateContentEndpoint(
+        baseUrl: baseUrl,
+        model: model,
+        streaming: streaming,
+        vertexExpress: vertexExpress,
+      );
+      if (!vertexExpress && streaming) {
+        endpoint = _ensureGeminiSseAlt(endpoint);
+      }
+      return endpoint;
+    }
+    return adapter.buildEndpoint(baseUrl, modelType: 'chat');
+  }
+
+  String _ensureGeminiSseAlt(String endpoint) {
+    try {
+      final uri = Uri.parse(endpoint);
+      if (uri.queryParameters.containsKey('alt')) {
+        return endpoint;
+      }
+      final query = <String, String>{...uri.queryParameters, 'alt': 'sse'};
+      return uri.replace(queryParameters: query).toString();
+    } catch (_) {
+      return endpoint;
+    }
+  }
+
+  Uri _resolveRequestUri({
+    required ProviderAdapter adapter,
+    required String endpoint,
+    required String apiKey,
+    Map<String, dynamic>? customConfig,
+  }) {
+    if (adapter.name == 'gemini') {
+      return buildGoogleRequestUri(
+        endpoint: endpoint,
+        vertexExpress: isVertexExpressEnabled(customConfig),
+        apiKey: apiKey,
+      );
+    }
+    return Uri.parse(endpoint);
   }
 
   Map<String, dynamic> _buildRequestDiagnostics({
@@ -566,6 +681,142 @@ class AgentApiClient {
     return text.contains('/chat/completions') ||
         text.contains('/responses') ||
         text.contains('/v1/messages');
+  }
+
+  Map<String, dynamic>? _buildApiLogRef({
+    required String sessionId,
+    required String? turnId,
+    required int? roundIndex,
+    required String eventType,
+    required DateTime now,
+  }) {
+    final normalizedTurnId = turnId?.trim();
+    if (normalizedTurnId == null || normalizedTurnId.isEmpty) {
+      return null;
+    }
+    final dateTag =
+        '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    return {
+      'apiLog': {
+        'file': 'api_$dateTag.jsonl',
+        'sessionId': sessionId,
+        'turnId': normalizedTurnId,
+        if (roundIndex != null) 'roundIndex': roundIndex,
+        'eventType': eventType,
+      },
+      'rawFields': const [
+        'rawContext',
+        'rawRequestBody',
+        'rawResponseBody',
+        'rawToolCalls',
+        'rawToolResults',
+        'finalReply',
+      ],
+    };
+  }
+
+  Future<Map<String, dynamic>?> _buildApiPayloadRef({
+    required String sessionId,
+    required String? turnId,
+    required int? roundIndex,
+    required String eventType,
+    required DateTime now,
+    required String? traceId,
+    required String stage,
+    required Map<String, dynamic> payload,
+  }) async {
+    final apiLogRef = _buildApiLogRef(
+      sessionId: sessionId,
+      turnId: turnId,
+      roundIndex: roundIndex,
+      eventType: eventType,
+      now: now,
+    );
+
+    final normalizedTraceId = traceId?.trim() ?? '';
+    final normalizedTurnId = turnId?.trim() ?? '';
+    if (normalizedTraceId.isEmpty || normalizedTurnId.isEmpty) {
+      return apiLogRef;
+    }
+
+    final compactPayload = _compactPayload(payload);
+    if (compactPayload.isEmpty) {
+      return apiLogRef;
+    }
+    final tracePayloadRef = await TraceStore.instance.writePayload(
+      traceId: normalizedTraceId,
+      sessionId: sessionId,
+      turnId: normalizedTurnId,
+      roundIndex: roundIndex,
+      stage: stage,
+      source: 'AgentApiClient',
+      payload: compactPayload,
+      now: now,
+    );
+    return _mergePayloadRefs(apiLogRef, tracePayloadRef);
+  }
+
+  Map<String, dynamic>? _mergePayloadRefs(
+    Map<String, dynamic>? primary,
+    Map<String, dynamic>? secondary,
+  ) {
+    if (primary == null || primary.isEmpty) {
+      if (secondary == null || secondary.isEmpty) return null;
+      return Map<String, dynamic>.from(secondary);
+    }
+    if (secondary == null || secondary.isEmpty) {
+      return Map<String, dynamic>.from(primary);
+    }
+    final merged = <String, dynamic>{...primary};
+    merged.addAll(secondary);
+    return merged;
+  }
+
+  Map<String, dynamic> _compactPayload(Map<String, dynamic> payload) {
+    final compact = <String, dynamic>{};
+    for (final entry in payload.entries) {
+      final value = entry.value;
+      if (value == null) continue;
+      if (value is String && value.trim().isEmpty) continue;
+      compact[entry.key] = value;
+    }
+    return compact;
+  }
+
+  int _maxStoredStreamEvents() =>
+      kDebugMode ? _maxStoredStreamEventsDebug : _maxStoredStreamEventsRelease;
+
+  void _appendStreamEvent(
+    List<Object?> events,
+    Object? event, {
+    required Map<String, int> stats,
+    bool preserveOnOverflow = false,
+  }) {
+    stats['total'] = (stats['total'] ?? 0) + 1;
+    final maxEvents = _maxStoredStreamEvents();
+    if (events.length >= maxEvents) {
+      stats['dropped'] = (stats['dropped'] ?? 0) + 1;
+      if (preserveOnOverflow && events.isNotEmpty) {
+        events[events.length - 1] = event;
+      }
+      return;
+    }
+    events.add(event);
+  }
+
+  Map<String, dynamic>? _buildStreamEventStats(
+    List<Object?> events,
+    Map<String, int> stats,
+  ) {
+    final total = stats['total'] ?? events.length;
+    final dropped = stats['dropped'] ?? 0;
+    if (dropped <= 0 && total <= events.length) return null;
+    return <String, dynamic>{
+      'total': total,
+      'captured': events.length,
+      'dropped': dropped,
+      'maxCaptured': _maxStoredStreamEvents(),
+    };
   }
 
   Future<String> sendMessage({
@@ -667,6 +918,7 @@ class AgentApiClient {
     TraceLogger? trace, // 可选的追踪日志器
     String? turnId,
     int? roundIndex,
+    String? traceId,
   }) async {
     // 如果没有传入 trace，创建一个简单的日志记录器
     final logger =
@@ -693,18 +945,34 @@ class AgentApiClient {
     }
 
     // 获取对应的适配器
-    final adapter = ProviderAdapterFactory.getAdapter(provider);
+    final adapter = ProviderAdapterFactory.getAdapter(
+      provider,
+      customConfig: customConfig,
+    );
 
     final base = (trimmedBase == null || trimmedBase.isEmpty)
         ? 'https://api.openai.com/v1'
         : trimmedBase;
     // 解析 provider 和 model
     // 使用适配器构建端点（默认 chat 类型）
-    final endpoint = adapter.buildEndpoint(base, modelType: 'chat');
+    final endpoint = _resolveChatEndpoint(
+      adapter: adapter,
+      baseUrl: base,
+      provider: provider,
+      model: model,
+      customConfig: customConfig,
+    );
+    final requestUri = _resolveRequestUri(
+      adapter: adapter,
+      endpoint: endpoint,
+      apiKey: trimmedKey,
+      customConfig: customConfig,
+    );
+    final endpointForLogs = sanitizeGoogleRequestUrl(requestUri.toString());
 
     final directTrace = logger.startChild('直连请求');
     directTrace.info('直连目标地址', metadata: {
-      'endpoint': endpoint,
+      'endpoint': endpointForLogs,
       'model': modelFullId,
       'hasCustomConfig': customConfig != null,
     });
@@ -804,6 +1072,23 @@ class AgentApiClient {
       tools: tools,
     );
     final requestBodyJson = jsonEncode(payload);
+    final round = roundIndex ?? 0;
+
+    if (traceId != null) {
+      await TraceStore.instance.record(
+        traceId: traceId,
+        sessionId: sessionId,
+        turnId: turnId,
+        roundIndex: round,
+        stage: TraceStage.roundRequestBuilt,
+        source: 'AgentApiClient',
+        meta: {
+          'modelFullId': modelFullId,
+          'messagesCount': chatMessages.length,
+          'toolsCount': tools?.length ?? 0,
+        },
+      );
+    }
 
     directTrace.info('发送直连请求', metadata: {
       'messagesCount': chatMessages.length,
@@ -815,14 +1100,37 @@ class AgentApiClient {
       'promptPreview': promptPreview,
     });
 
+    var traceResponseRecorded = false;
+    var apiLogRecorded = false;
     try {
       // 使用适配器构建请求头
       final headers = adapter.buildHeaders(trimmedKey);
+      if (adapter.name == 'gemini' && isVertexExpressEnabled(customConfig)) {
+        headers.remove('x-goog-api-key');
+      }
+      final requestSentAt = DateTime.now();
+      if (traceId != null) {
+        await TraceStore.instance.record(
+          traceId: traceId,
+          sessionId: sessionId,
+          turnId: turnId,
+          roundIndex: round,
+          stage: TraceStage.modelRequestSent,
+          source: 'AgentApiClient',
+          startedAt: requestSentAt,
+          endedAt: requestSentAt,
+          durationMs: 0,
+          meta: {
+            'endpoint': endpointForLogs,
+            'provider': provider,
+          },
+        );
+      }
 
       final sw = Stopwatch()..start();
       final resp = await _client
           .post(
-            Uri.parse(endpoint),
+            requestUri,
             headers: headers,
             body: requestBodyJson,
           )
@@ -832,7 +1140,7 @@ class AgentApiClient {
       final responseBodyStr = utf8.decode(resp.bodyBytes);
 
       final requestDiagnostics = _buildRequestDiagnostics(
-        endpoint: endpoint,
+        endpoint: endpointForLogs,
         provider: provider,
         modelFullId: modelFullId,
         model: model,
@@ -850,6 +1158,43 @@ class AgentApiClient {
 
         // 使用适配器解析响应
         final result = adapter.parseResponse(data);
+        final payloadRef = await _buildApiPayloadRef(
+          sessionId: sessionId,
+          turnId: turnId,
+          roundIndex: roundIndex,
+          eventType: 'round',
+          now: DateTime.now(),
+          traceId: traceId,
+          stage: TraceStage.modelResponseReceived.value,
+          payload: {
+            'rawContext': jsonEncode(chatMessages),
+            'rawRequestBody': requestBodyJson,
+            'rawResponseBody': responseBodyStr,
+            'rawToolCalls': _encodeToolCalls(result.toolCalls),
+          },
+        );
+        int? traceEventSeq;
+        if (traceId != null) {
+          final traceEvent = await TraceStore.instance.record(
+            traceId: traceId,
+            sessionId: sessionId,
+            turnId: turnId,
+            roundIndex: round,
+            stage: TraceStage.modelResponseReceived,
+            source: 'AgentApiClient',
+            startedAt: requestSentAt,
+            endedAt: DateTime.now(),
+            durationMs: sw.elapsedMilliseconds,
+            payloadRef: payloadRef,
+            meta: {
+              'statusCode': resp.statusCode,
+              'toolCalls': result.toolCalls.length,
+              'textLength': result.text.length,
+            },
+          );
+          traceEventSeq = traceEvent.eventSeq;
+          traceResponseRecorded = true;
+        }
 
         // 记录 AI 对话日志（包含完整原始数据）
         ApiLogger.add(ApiLogEntry(
@@ -871,7 +1216,13 @@ class AgentApiClient {
           turnId: turnId,
           roundIndex: roundIndex,
           eventType: 'round',
+          stage: TraceStage.modelResponseReceived.value,
+          stageStatus: TraceEventStatus.success.value,
+          source: 'AgentApiClient',
+          eventSeq: traceEventSeq,
+          payloadRef: payloadRef,
         ));
+        apiLogRecorded = true;
 
         directTrace.info('直连响应成功', metadata: {
           'statusCode': resp.statusCode,
@@ -895,6 +1246,42 @@ class AgentApiClient {
       }
 
       // 记录失败的 API 日志
+      final payloadRef = await _buildApiPayloadRef(
+        sessionId: sessionId,
+        turnId: turnId,
+        roundIndex: roundIndex,
+        eventType: 'round',
+        now: DateTime.now(),
+        traceId: traceId,
+        stage: TraceStage.modelResponseReceived.value,
+        payload: {
+          'rawContext': jsonEncode(chatMessages),
+          'rawRequestBody': requestBodyJson,
+          'rawResponseBody': responseBodyStr,
+        },
+      );
+      int? traceEventSeq;
+      if (traceId != null) {
+        final traceEvent = await TraceStore.instance.record(
+          traceId: traceId,
+          sessionId: sessionId,
+          turnId: turnId,
+          roundIndex: round,
+          stage: TraceStage.modelResponseReceived,
+          status: TraceEventStatus.failed,
+          source: 'AgentApiClient',
+          startedAt: requestSentAt,
+          endedAt: DateTime.now(),
+          durationMs: sw.elapsedMilliseconds,
+          payloadRef: payloadRef,
+          meta: {
+            'statusCode': resp.statusCode,
+            'responseSnippet': ApiLogger.safeSnippet(responseBodyStr, max: 800),
+          },
+        );
+        traceEventSeq = traceEvent.eventSeq;
+        traceResponseRecorded = true;
+      }
       ApiLogger.add(ApiLogEntry(
         time: DateTime.now(),
         method: 'POST',
@@ -911,7 +1298,13 @@ class AgentApiClient {
         turnId: turnId,
         roundIndex: roundIndex,
         eventType: 'round',
+        stage: TraceStage.modelResponseReceived.value,
+        stageStatus: TraceEventStatus.failed.value,
+        source: 'AgentApiClient',
+        eventSeq: traceEventSeq,
+        payloadRef: payloadRef,
       ));
+      apiLogRecorded = true;
 
       // HTTP 错误直接抛出，让上层显示真实原因
       directTrace.error('直连请求失败', metadata: {
@@ -921,6 +1314,76 @@ class AgentApiClient {
       });
       throw Exception('HTTP ${resp.statusCode}: ${resp.body}');
     } catch (e) {
+      Map<String, dynamic>? catchPayloadRef;
+      int? catchTraceEventSeq;
+      if (traceId != null && !traceResponseRecorded) {
+        catchPayloadRef = await _buildApiPayloadRef(
+          sessionId: sessionId,
+          turnId: turnId,
+          roundIndex: roundIndex,
+          eventType: 'round',
+          now: DateTime.now(),
+          traceId: traceId,
+          stage: TraceStage.modelResponseReceived.value,
+          payload: {
+            'rawContext': jsonEncode(chatMessages),
+            'rawRequestBody': requestBodyJson,
+            'error': e.toString(),
+          },
+        );
+        final traceEvent = await TraceStore.instance.record(
+          traceId: traceId,
+          sessionId: sessionId,
+          turnId: turnId,
+          roundIndex: round,
+          stage: TraceStage.modelResponseReceived,
+          status: TraceEventStatus.failed,
+          source: 'AgentApiClient',
+          payloadRef: catchPayloadRef,
+          meta: {'error': e.toString()},
+        );
+        catchTraceEventSeq = traceEvent.eventSeq;
+        traceResponseRecorded = true;
+      }
+      if (!apiLogRecorded) {
+        catchPayloadRef ??= await _buildApiPayloadRef(
+          sessionId: sessionId,
+          turnId: turnId,
+          roundIndex: roundIndex,
+          eventType: 'round',
+          now: DateTime.now(),
+          traceId: traceId,
+          stage: TraceStage.modelResponseReceived.value,
+          payload: {
+            'rawContext': jsonEncode(chatMessages),
+            'rawRequestBody': requestBodyJson,
+            'error': e.toString(),
+          },
+        );
+        ApiLogger.add(ApiLogEntry(
+          time: DateTime.now(),
+          method: 'POST',
+          url: endpoint,
+          status: null,
+          durationMs: 0,
+          requestBody: ApiLogger.safeSnippet(requestBodyJson),
+          responseBody: ApiLogger.safeSnippet(e.toString()),
+          ok: false,
+          rawContext: jsonEncode(chatMessages),
+          rawRequestBody: requestBodyJson,
+          rawResponseBody: jsonEncode({'error': e.toString()}),
+          sessionId: sessionId,
+          turnId: turnId,
+          roundIndex: roundIndex,
+          eventType: 'round',
+          stage: TraceStage.modelResponseReceived.value,
+          stageStatus: TraceEventStatus.failed.value,
+          source: 'AgentApiClient',
+          eventSeq: catchTraceEventSeq,
+          payloadRef: catchPayloadRef,
+        ));
+        apiLogRecorded = true;
+      }
       final requestDiagnostics = _buildRequestDiagnostics(
         endpoint: endpoint,
         provider: provider,
@@ -969,6 +1432,7 @@ class AgentApiClient {
     TraceLogger? trace,
     String? turnId,
     int? roundIndex,
+    String? traceId,
   }) async {
     final logger =
         trace ?? AppLogger.startTrace('API流式调用', source: 'AgentApiClient');
@@ -993,24 +1457,46 @@ class AgentApiClient {
       model = modelFullId.substring(idx + 1);
     }
 
-    final adapter = ProviderAdapterFactory.getAdapter(provider);
-    if (adapter.name != 'openai') {
+    final adapter = ProviderAdapterFactory.getAdapter(
+      provider,
+      customConfig: customConfig,
+    );
+    final adapterName = adapter.name;
+    final isOpenAiStream = adapterName == 'openai';
+    final isGeminiStream = adapterName == 'gemini';
+    final isClaudeStream = adapterName == 'claude';
+    if (!isOpenAiStream && !isGeminiStream && !isClaudeStream) {
       directTrace.error('provider stream unsupported', metadata: {
         'provider': provider,
-        'adapter': adapter.name,
+        'adapter': adapterName,
       });
       directTrace.end(additionalMessage: '直连流式失败');
       if (trace == null) {
         logger.end(additionalMessage: '直连流式调用失败');
       }
       throw UnsupportedError(
-          'Streaming is only supported for OpenAI-compatible providers');
+        'Streaming is only supported for OpenAI-compatible, Gemini, and Claude providers',
+      );
     }
 
     final base = (trimmedBase == null || trimmedBase.isEmpty)
         ? 'https://api.openai.com/v1'
         : trimmedBase;
-    final endpoint = adapter.buildEndpoint(base, modelType: 'chat');
+    final endpoint = _resolveChatEndpoint(
+      adapter: adapter,
+      baseUrl: base,
+      provider: provider,
+      model: model,
+      customConfig: customConfig,
+      streaming: true,
+    );
+    final requestUri = _resolveRequestUri(
+      adapter: adapter,
+      endpoint: endpoint,
+      apiKey: trimmedKey,
+      customConfig: customConfig,
+    );
+    final endpointForLogs = sanitizeGoogleRequestUrl(requestUri.toString());
 
     final chatMessages = <Map<String, dynamic>>[];
     for (final m in messages) {
@@ -1069,13 +1555,36 @@ class AgentApiClient {
       customConfig: customConfig,
       tools: tools,
     );
-    payload['stream'] = true;
+    if (!isGeminiStream) {
+      payload['stream'] = true;
+    }
     final requestBodyJson = jsonEncode(payload);
+    final round = roundIndex ?? 0;
+
+    if (traceId != null) {
+      await TraceStore.instance.record(
+        traceId: traceId,
+        sessionId: sessionId,
+        turnId: turnId,
+        roundIndex: round,
+        stage: TraceStage.roundRequestBuilt,
+        source: 'AgentApiClient',
+        meta: {
+          'modelFullId': modelFullId,
+          'messagesCount': chatMessages.length,
+          'toolsCount': tools?.length ?? 0,
+          'stream': true,
+        },
+      );
+    }
 
     final headers = <String, String>{
       ...adapter.buildHeaders(trimmedKey),
       'Accept': 'text/event-stream',
     };
+    if (adapter.name == 'gemini' && isVertexExpressEnabled(customConfig)) {
+      headers.remove('x-goog-api-key');
+    }
     // 直连流式优先使用 provider 自身鉴权；仅在未提供 Authorization 时回退到 token。
     if (token != null &&
         token.trim().isNotEmpty &&
@@ -1084,7 +1593,7 @@ class AgentApiClient {
     }
 
     directTrace.info('发送直连流式请求', metadata: {
-      'endpoint': endpoint,
+      'endpoint': endpointForLogs,
       'model': modelFullId,
       'messagesCount': chatMessages.length,
       'hasTools': tools != null && tools.isNotEmpty,
@@ -1092,11 +1601,30 @@ class AgentApiClient {
     });
 
     final sw = Stopwatch()..start();
-    final request = http.Request('POST', Uri.parse(endpoint));
+    final request = http.Request('POST', requestUri);
     request.headers.addAll(headers);
     request.body = requestBodyJson;
+    final requestSentAt = DateTime.now();
+    if (traceId != null) {
+      await TraceStore.instance.record(
+        traceId: traceId,
+        sessionId: sessionId,
+        turnId: turnId,
+        roundIndex: round,
+        stage: TraceStage.modelRequestSent,
+        source: 'AgentApiClient',
+        startedAt: requestSentAt,
+        endedAt: requestSentAt,
+        durationMs: 0,
+        meta: {
+          'endpoint': endpointForLogs,
+          'provider': provider,
+          'stream': true,
+        },
+      );
+    }
     final requestDiagnostics = _buildRequestDiagnostics(
-      endpoint: endpoint,
+      endpoint: endpointForLogs,
       provider: provider,
       modelFullId: modelFullId,
       model: model,
@@ -1109,11 +1637,49 @@ class AgentApiClient {
       headers: headers,
     );
 
+    var traceResponseRecorded = false;
+    var apiLogRecorded = false;
     try {
       final response = await _client.send(request).timeout(timeout);
       if (response.statusCode < 200 || response.statusCode >= 300) {
         final errBody = utf8.decode(await response.stream.toBytes());
         sw.stop();
+        final payloadRef = await _buildApiPayloadRef(
+          sessionId: sessionId,
+          turnId: turnId,
+          roundIndex: roundIndex,
+          eventType: 'round_stream',
+          now: DateTime.now(),
+          traceId: traceId,
+          stage: TraceStage.modelStreamAggregated.value,
+          payload: {
+            'rawContext': jsonEncode(chatMessages),
+            'rawRequestBody': requestBodyJson,
+            'rawResponseBody': errBody,
+          },
+        );
+        int? traceEventSeq;
+        if (traceId != null) {
+          final traceEvent = await TraceStore.instance.record(
+            traceId: traceId,
+            sessionId: sessionId,
+            turnId: turnId,
+            roundIndex: round,
+            stage: TraceStage.modelStreamAggregated,
+            status: TraceEventStatus.failed,
+            source: 'AgentApiClient',
+            startedAt: requestSentAt,
+            endedAt: DateTime.now(),
+            durationMs: sw.elapsedMilliseconds,
+            payloadRef: payloadRef,
+            meta: {
+              'statusCode': response.statusCode,
+              'responseSnippet': ApiLogger.safeSnippet(errBody, max: 800),
+            },
+          );
+          traceEventSeq = traceEvent.eventSeq;
+          traceResponseRecorded = true;
+        }
         ApiLogger.add(ApiLogEntry(
           time: DateTime.now(),
           method: 'POST',
@@ -1130,7 +1696,13 @@ class AgentApiClient {
           turnId: turnId,
           roundIndex: roundIndex,
           eventType: 'round_stream',
+          stage: TraceStage.modelStreamAggregated.value,
+          stageStatus: TraceEventStatus.failed.value,
+          source: 'AgentApiClient',
+          eventSeq: traceEventSeq,
+          payloadRef: payloadRef,
         ));
+        apiLogRecorded = true;
         directTrace.error('直连流式请求失败(非2xx)', metadata: {
           'statusCode': response.statusCode,
           'responseBody': ApiLogger.safeSnippet(errBody, max: 2000),
@@ -1142,11 +1714,14 @@ class AgentApiClient {
       final text = StringBuffer();
       final reasoning = StringBuffer();
       final toolAggregator = _StreamingToolCallAggregator();
+      final anthropicToolAggregator = _AnthropicStreamingToolUseAggregator();
+      final geminiToolAggregator = _GeminiStreamingFunctionCallAggregator();
       final textDeltaNormalizer = _StreamingTextDeltaNormalizer();
       var done = false;
       var toolCallsObserved = false;
       final dataLines = <String>[];
       final rawStreamEvents = <Object?>[];
+      final streamEventStats = <String, int>{'total': 0, 'dropped': 0};
 
       void emitTextDelta(String delta) {
         if (delta.isEmpty) return;
@@ -1182,11 +1757,45 @@ class AgentApiClient {
         }
       }
 
+      void consumeGeminiCandidate(Map<String, dynamic> candidate) {
+        final rawContent = candidate['content'];
+        if (rawContent is! Map) return;
+        final content =
+            Map<String, dynamic>.from(rawContent.cast<String, dynamic>());
+        final rawParts = content['parts'];
+      if (rawParts is! List) return;
+      for (final rawPart in rawParts) {
+        if (rawPart is! Map) continue;
+        final part =
+            Map<String, dynamic>.from(rawPart.cast<String, dynamic>());
+          final textPart = _extractStreamingText(part['text']);
+          if (textPart.isNotEmpty) {
+            emitTextDelta(textPart);
+          }
+          final rawFunctionCall = part['functionCall'] ?? part['function_call'];
+          if (rawFunctionCall is Map) {
+            final functionCall = Map<String, dynamic>.from(
+                rawFunctionCall.cast<String, dynamic>());
+            geminiToolAggregator.consumeFunctionCall(
+              functionCall,
+              thoughtSignature: part['thoughtSignature']?.toString() ??
+                  part['thought_signature']?.toString(),
+            );
+            markToolCallsObserved();
+          }
+        }
+      }
+
       void handleEventPayload(String payload) {
         final trimmed = payload.trim();
         if (trimmed.isEmpty) return;
         if (trimmed == '[DONE]') {
-          rawStreamEvents.add('[DONE]');
+          _appendStreamEvent(
+            rawStreamEvents,
+            '[DONE]',
+            stats: streamEventStats,
+            preserveOnOverflow: true,
+          );
           done = true;
           return;
         }
@@ -1194,13 +1803,85 @@ class AgentApiClient {
         Map<String, dynamic> evt;
         try {
           evt = jsonDecode(trimmed) as Map<String, dynamic>;
-          rawStreamEvents.add(evt);
+          _appendStreamEvent(rawStreamEvents, evt, stats: streamEventStats);
         } catch (_) {
-          rawStreamEvents.add({
-            '_raw': trimmed,
-            '_parseError': true,
-          });
+          _appendStreamEvent(
+            rawStreamEvents,
+            {
+              '_raw': trimmed,
+              '_parseError': true,
+            },
+            stats: streamEventStats,
+          );
           return;
+        }
+
+        if (isClaudeStream) {
+          final eventType = evt['type']?.toString() ?? '';
+          anthropicToolAggregator.consumeEvent(evt);
+          if (anthropicToolAggregator.hasToolUse) {
+            markToolCallsObserved();
+          }
+
+          if (eventType == 'content_block_delta') {
+            final rawDelta = evt['delta'];
+            if (rawDelta is Map) {
+              final delta =
+                  Map<String, dynamic>.from(rawDelta.cast<String, dynamic>());
+              final deltaType = delta['type']?.toString() ?? '';
+              if (deltaType == 'text_delta') {
+                final textDelta = _extractStreamingText(delta['text']);
+                if (textDelta.isNotEmpty) {
+                  emitTextDelta(textDelta);
+                }
+              } else if (deltaType == 'thinking_delta') {
+                final reasoningDelta = _extractStreamingText(delta['thinking']);
+                if (reasoningDelta.isNotEmpty) {
+                  emitReasoningDelta(reasoningDelta);
+                }
+              }
+            }
+          } else if (eventType == 'error') {
+            final error = evt['error'];
+            final message = error is Map
+                ? error['message']?.toString() ?? 'unknown stream error'
+                : 'unknown stream error';
+            throw Exception('SSE error: $message');
+          } else if (eventType == 'message_stop') {
+            done = true;
+          }
+          return;
+        }
+
+        if (isGeminiStream) {
+          var geminiConsumed = false;
+          final candidates = evt['candidates'];
+          if (candidates is List && candidates.isNotEmpty) {
+            geminiConsumed = true;
+            for (final rawCandidate in candidates) {
+              if (rawCandidate is! Map) continue;
+              final candidate = Map<String, dynamic>.from(
+                  rawCandidate.cast<String, dynamic>());
+              consumeGeminiCandidate(candidate);
+            }
+          }
+
+          final rawFunctionCall = evt['functionCall'] ?? evt['function_call'];
+          if (rawFunctionCall is Map) {
+            geminiConsumed = true;
+            final functionCall = Map<String, dynamic>.from(
+                rawFunctionCall.cast<String, dynamic>());
+            geminiToolAggregator.consumeFunctionCall(
+              functionCall,
+              thoughtSignature: evt['thoughtSignature']?.toString() ??
+                  evt['thought_signature']?.toString(),
+            );
+            markToolCallsObserved();
+          }
+
+          if (geminiConsumed) {
+            return;
+          }
         }
 
         var handledChoice = false;
@@ -1328,35 +2009,87 @@ class AgentApiClient {
           continue;
         }
         if (line.startsWith(':')) continue;
+        if (line.startsWith('event:')) continue;
         if (line.startsWith('data:')) {
           dataLines.add(line.substring(5).trimLeft());
+          continue;
+        }
+        final trimmedLine = line.trimLeft();
+        if (trimmedLine.startsWith('{') || trimmedLine.startsWith('[')) {
+          dataLines.add(trimmedLine);
           continue;
         }
       }
       flushEvent();
 
       sw.stop();
-      final builtToolCalls = toolAggregator.build();
+      final builtToolCalls = switch (adapterName) {
+        'claude' => anthropicToolAggregator.build(),
+        'gemini' => geminiToolAggregator.build(),
+        _ => toolAggregator.build(),
+      };
       final finalText = text.toString();
       final finalReasoning = reasoning.toString();
-      final assistantMessage = <String, dynamic>{
-        'role': 'assistant',
-        'content': finalText.isEmpty ? null : finalText,
-        if (finalReasoning.isNotEmpty) 'reasoning_content': finalReasoning,
-        if (builtToolCalls.isNotEmpty)
-          'tool_calls': [
-            for (final call in builtToolCalls) call.toOpenAIFormat(),
-          ],
+      final synthesizedRawResponse = switch (adapterName) {
+        'claude' => _buildAnthropicStreamRawResponse(
+            text: finalText,
+            toolCalls: builtToolCalls,
+          ),
+        'gemini' => _buildGeminiStreamRawResponse(
+            text: finalText,
+            toolCalls: builtToolCalls,
+          ),
+        _ => _buildOpenAiStreamRawResponse(
+            text: finalText,
+            reasoning: finalReasoning,
+            toolCalls: builtToolCalls,
+          ),
       };
-      final synthesizedRawResponse = <String, dynamic>{
-        'choices': [
-          {'message': assistantMessage}
-        ],
-      };
+      final streamStats = _buildStreamEventStats(
+        rawStreamEvents,
+        streamEventStats,
+      );
       final rawResponseBodyForLog = jsonEncode({
         'streamEvents': rawStreamEvents,
+        if (streamStats != null) 'streamEventStats': streamStats,
       });
-
+      final payloadRef = await _buildApiPayloadRef(
+        sessionId: sessionId,
+        turnId: turnId,
+        roundIndex: roundIndex,
+        eventType: 'round_stream',
+        now: DateTime.now(),
+        traceId: traceId,
+        stage: TraceStage.modelStreamAggregated.value,
+        payload: {
+          'rawContext': jsonEncode(chatMessages),
+          'rawRequestBody': requestBodyJson,
+          'rawResponseBody': rawResponseBodyForLog,
+          'rawToolCalls': _encodeToolCalls(builtToolCalls),
+        },
+      );
+      int? traceEventSeq;
+      if (traceId != null) {
+        final traceEvent = await TraceStore.instance.record(
+          traceId: traceId,
+          sessionId: sessionId,
+          turnId: turnId,
+          roundIndex: round,
+          stage: TraceStage.modelStreamAggregated,
+          source: 'AgentApiClient',
+          startedAt: requestSentAt,
+          endedAt: DateTime.now(),
+          durationMs: sw.elapsedMilliseconds,
+          payloadRef: payloadRef,
+          meta: {
+            'statusCode': response.statusCode,
+            'toolCalls': builtToolCalls.length,
+            'textLength': finalText.length,
+          },
+        );
+        traceEventSeq = traceEvent.eventSeq;
+        traceResponseRecorded = true;
+      }
       ApiLogger.add(ApiLogEntry(
         time: DateTime.now(),
         method: 'POST',
@@ -1375,7 +2108,13 @@ class AgentApiClient {
         turnId: turnId,
         roundIndex: roundIndex,
         eventType: 'round_stream',
+        stage: TraceStage.modelStreamAggregated.value,
+        stageStatus: TraceEventStatus.success.value,
+        source: 'AgentApiClient',
+        eventSeq: traceEventSeq,
+        payloadRef: payloadRef,
       ));
+      apiLogRecorded = true;
 
       directTrace.info('直连流式响应成功', metadata: {
         'textLength': finalText.length,
@@ -1393,6 +2132,76 @@ class AgentApiClient {
       );
     } catch (e) {
       sw.stop();
+      Map<String, dynamic>? catchPayloadRef;
+      int? catchTraceEventSeq;
+      if (traceId != null && !traceResponseRecorded) {
+        catchPayloadRef = await _buildApiPayloadRef(
+          sessionId: sessionId,
+          turnId: turnId,
+          roundIndex: roundIndex,
+          eventType: 'round_stream',
+          now: DateTime.now(),
+          traceId: traceId,
+          stage: TraceStage.modelStreamAggregated.value,
+          payload: {
+            'rawContext': jsonEncode(chatMessages),
+            'rawRequestBody': requestBodyJson,
+            'error': e.toString(),
+          },
+        );
+        final traceEvent = await TraceStore.instance.record(
+          traceId: traceId,
+          sessionId: sessionId,
+          turnId: turnId,
+          roundIndex: round,
+          stage: TraceStage.modelStreamAggregated,
+          status: TraceEventStatus.failed,
+          source: 'AgentApiClient',
+          payloadRef: catchPayloadRef,
+          meta: {'error': e.toString()},
+        );
+        catchTraceEventSeq = traceEvent.eventSeq;
+        traceResponseRecorded = true;
+      }
+      if (!apiLogRecorded) {
+        catchPayloadRef ??= await _buildApiPayloadRef(
+          sessionId: sessionId,
+          turnId: turnId,
+          roundIndex: roundIndex,
+          eventType: 'round_stream',
+          now: DateTime.now(),
+          traceId: traceId,
+          stage: TraceStage.modelStreamAggregated.value,
+          payload: {
+            'rawContext': jsonEncode(chatMessages),
+            'rawRequestBody': requestBodyJson,
+            'error': e.toString(),
+          },
+        );
+        ApiLogger.add(ApiLogEntry(
+          time: DateTime.now(),
+          method: 'POST',
+          url: endpoint,
+          status: null,
+          durationMs: sw.elapsedMilliseconds,
+          requestBody: ApiLogger.safeSnippet(requestBodyJson),
+          responseBody: ApiLogger.safeSnippet(e.toString()),
+          ok: false,
+          rawContext: jsonEncode(chatMessages),
+          rawRequestBody: requestBodyJson,
+          rawResponseBody: jsonEncode({'error': e.toString()}),
+          sessionId: sessionId,
+          turnId: turnId,
+          roundIndex: roundIndex,
+          eventType: 'round_stream',
+          stage: TraceStage.modelStreamAggregated.value,
+          stageStatus: TraceEventStatus.failed.value,
+          source: 'AgentApiClient',
+          eventSeq: catchTraceEventSeq,
+          payloadRef: catchPayloadRef,
+        ));
+        apiLogRecorded = true;
+      }
       directTrace.error('直连流式请求失败', metadata: {
         'error': e.toString(),
         ...requestDiagnostics,
@@ -1403,6 +2212,89 @@ class AgentApiClient {
       }
       rethrow;
     }
+  }
+
+  Map<String, dynamic> _buildOpenAiStreamRawResponse({
+    required String text,
+    required String reasoning,
+    required List<ToolCall> toolCalls,
+  }) {
+    final assistantMessage = <String, dynamic>{
+      'role': 'assistant',
+      'content': text.isEmpty ? null : text,
+      if (reasoning.isNotEmpty) 'reasoning_content': reasoning,
+      if (toolCalls.isNotEmpty)
+        'tool_calls': [
+          for (final call in toolCalls) call.toOpenAIFormat(),
+        ],
+    };
+    return <String, dynamic>{
+      'choices': [
+        {'message': assistantMessage}
+      ],
+    };
+  }
+
+  Map<String, dynamic> _buildGeminiStreamRawResponse({
+    required String text,
+    required List<ToolCall> toolCalls,
+  }) {
+    final parts = <Map<String, dynamic>>[];
+    if (text.isNotEmpty) {
+      parts.add({'text': text});
+    }
+    for (final call in toolCalls) {
+      final functionCall = <String, dynamic>{
+        'name': call.name,
+        'args': call.arguments,
+      };
+      final id = call.id.trim();
+      if (id.isNotEmpty) {
+        functionCall['id'] = id;
+      }
+      parts.add({
+        'functionCall': functionCall,
+        if (call.thoughtSignature != null)
+          'thoughtSignature': call.thoughtSignature,
+      });
+    }
+    return <String, dynamic>{
+      'candidates': [
+        {
+          'content': {
+            'role': 'model',
+            'parts': parts,
+          },
+        }
+      ],
+    };
+  }
+
+  Map<String, dynamic> _buildAnthropicStreamRawResponse({
+    required String text,
+    required List<ToolCall> toolCalls,
+  }) {
+    final content = <Map<String, dynamic>>[];
+    if (text.isNotEmpty) {
+      content.add({
+        'type': 'text',
+        'text': text,
+      });
+    }
+    for (var i = 0; i < toolCalls.length; i++) {
+      final call = toolCalls[i];
+      final id = call.id.trim().isEmpty ? 'toolu_stream_${i + 1}' : call.id;
+      content.add({
+        'type': 'tool_use',
+        'id': id,
+        'name': call.name,
+        'input': call.arguments,
+      });
+    }
+    return <String, dynamic>{
+      'role': 'assistant',
+      'content': content,
+    };
   }
 
   /// 流式发送消息（支持分块），返回消息块流
@@ -1663,6 +2555,178 @@ class _StreamingToolCallState {
       }
     } catch (_) {}
     return <String, dynamic>{'_raw': trimmed};
+  }
+}
+
+class _AnthropicStreamingToolUseAggregator {
+  final Map<int, _AnthropicStreamingToolUseState> _statesByIndex = {};
+
+  bool get hasToolUse => _statesByIndex.isNotEmpty;
+
+  void consumeEvent(Map<String, dynamic> event) {
+    final type = event['type']?.toString() ?? '';
+    if (type == 'content_block_start') {
+      final index = (event['index'] as num?)?.toInt();
+      final rawBlock = event['content_block'];
+      if (index == null || rawBlock is! Map) return;
+      final block = Map<String, dynamic>.from(rawBlock.cast<String, dynamic>());
+      if (block['type']?.toString() != 'tool_use') return;
+      final state = _statesByIndex.putIfAbsent(
+          index, _AnthropicStreamingToolUseState.new);
+      state.consumeStart(block);
+      return;
+    }
+
+    if (type == 'content_block_delta') {
+      final index = (event['index'] as num?)?.toInt();
+      final rawDelta = event['delta'];
+      if (index == null || rawDelta is! Map) return;
+      final delta = Map<String, dynamic>.from(rawDelta.cast<String, dynamic>());
+      if (delta['type']?.toString() != 'input_json_delta') return;
+      final state = _statesByIndex.putIfAbsent(
+          index, _AnthropicStreamingToolUseState.new);
+      final partial = delta['partial_json']?.toString() ?? '';
+      state.appendPartialJson(partial);
+    }
+  }
+
+  List<ToolCall> build() {
+    final results = <ToolCall>[];
+    final indices = _statesByIndex.keys.toList()..sort();
+    for (final index in indices) {
+      final state = _statesByIndex[index];
+      if (state == null || !state.hasToolName) continue;
+      results.add(state.toToolCall(index));
+    }
+    return results;
+  }
+}
+
+class _AnthropicStreamingToolUseState {
+  String _id = '';
+  String _name = '';
+  Map<String, dynamic>? _seedInput;
+  final StringBuffer _partialJson = StringBuffer();
+
+  bool get hasToolName => _name.trim().isNotEmpty;
+
+  void consumeStart(Map<String, dynamic> block) {
+    final id = block['id']?.toString().trim() ?? '';
+    if (id.isNotEmpty) {
+      _id = id;
+    }
+    final name = block['name']?.toString().trim() ?? '';
+    if (name.isNotEmpty) {
+      _name = name;
+    }
+    final rawInput = block['input'];
+    if (rawInput is Map) {
+      _seedInput = Map<String, dynamic>.from(rawInput.cast<String, dynamic>());
+    }
+  }
+
+  void appendPartialJson(String partial) {
+    if (partial.isEmpty) return;
+    _partialJson.write(partial);
+  }
+
+  ToolCall toToolCall(int index) {
+    final rawPartial = _partialJson.toString().trim();
+    final parsedArgs =
+        _parseJsonObject(rawPartial) ?? _seedInput ?? <String, dynamic>{};
+    final id = _id.trim().isNotEmpty ? _id : 'toolu_stream_${index + 1}';
+    return ToolCall(
+      id: id,
+      name: _name,
+      arguments: parsedArgs,
+    );
+  }
+
+  Map<String, dynamic>? _parseJsonObject(String raw) {
+    if (raw.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) {
+        return decoded;
+      }
+      if (decoded is Map) {
+        return decoded.map(
+          (key, value) => MapEntry(key.toString(), value),
+        );
+      }
+    } catch (_) {
+      return <String, dynamic>{'_raw': raw};
+    }
+    return null;
+  }
+}
+
+class _GeminiStreamingFunctionCallAggregator {
+  final List<ToolCall> _calls = <ToolCall>[];
+  final Map<String, int> _callIndexBySignature = <String, int>{};
+
+  void consumeFunctionCall(
+    Map<String, dynamic> rawCall, {
+    String? thoughtSignature,
+  }) {
+    final name = rawCall['name']?.toString().trim() ??
+        rawCall['functionName']?.toString().trim() ??
+        '';
+    if (name.isEmpty) return;
+
+    final arguments = _parseArguments(rawCall['args'] ?? rawCall['arguments']);
+    final id = rawCall['id']?.toString().trim() ?? '';
+    final callKey = '$name:${jsonEncode(arguments)}';
+    final existingIndex = _callIndexBySignature[callKey];
+    if (existingIndex != null) {
+      final existing = _calls[existingIndex];
+      _calls[existingIndex] = ToolCall(
+        id: existing.id.isNotEmpty ? existing.id : id,
+        name: existing.name,
+        arguments: existing.arguments,
+        thoughtSignature: existing.thoughtSignature ?? thoughtSignature,
+      );
+      return;
+    }
+
+    _callIndexBySignature[callKey] = _calls.length;
+    _calls.add(
+      ToolCall(
+        id: id.isNotEmpty ? id : 'gemini_tool_call_${_calls.length + 1}',
+        name: name,
+        arguments: arguments,
+        thoughtSignature: thoughtSignature,
+      ),
+    );
+  }
+
+  List<ToolCall> build() => List<ToolCall>.from(_calls);
+
+  Map<String, dynamic> _parseArguments(dynamic rawArgs) {
+    if (rawArgs is Map<String, dynamic>) {
+      return Map<String, dynamic>.from(rawArgs);
+    }
+    if (rawArgs is Map) {
+      return rawArgs.map(
+        (key, value) => MapEntry(key.toString(), value),
+      );
+    }
+    if (rawArgs is String && rawArgs.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(rawArgs);
+        if (decoded is Map<String, dynamic>) {
+          return decoded;
+        }
+        if (decoded is Map) {
+          return decoded.map(
+            (key, value) => MapEntry(key.toString(), value),
+          );
+        }
+      } catch (_) {
+        return <String, dynamic>{'_raw': rawArgs};
+      }
+    }
+    return <String, dynamic>{};
   }
 }
 

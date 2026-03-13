@@ -17,7 +17,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/message.dart';
 import '../id_gen.dart';
-import '../conversation_providers.dart';
+import '../services/chat_history_store.dart';
 import '../../plugins/domain/plugin.dart';
 import '../../plugins/tts/tts_player_manager.dart';
 import '../../plugins/plugin_providers.dart';
@@ -125,36 +125,36 @@ class TtsPendingManager {
 
     // TTS 成功，就地替换占位语音条
     try {
-      await _ref.read(conversationsProvider.notifier).updateOne(
-        pending.convId,
-        (c) {
-          final updated = c.messages.map((m) {
-            if (m.id != pending.placeholderId) return m;
-            final audioBlock = AudioBlock(
-              messageId: m.id,
-              url: audioUrl,
-              text: text.isNotEmpty ? text : null,
-              status: BlockStatus.success,
-            );
-            return Message.fromBlocks(
-              id: m.id,
-              role: m.role,
-              blocks: [audioBlock],
-              createdAt: m.createdAt,
-              status: 'sent',
-            );
-          }).toList();
-          return c.copyWith(
-            messages: updated,
-            updatedAt: DateTime.now(),
-            lastMessage: '[语音]',
-            lastMessageTime: DateTime.now(),
-          );
-        },
-      );
+      final placeholder = await _ref
+          .read(chatHistoryStoreProvider)
+          .loadMessageById(pending.placeholderId);
+      if (placeholder != null) {
+        final audioBlock = AudioBlock(
+          messageId: placeholder.id,
+          url: audioUrl,
+          text: text.isNotEmpty ? text : null,
+          status: BlockStatus.success,
+        );
+        await _ref.read(chatHistoryStoreProvider).updateMessage(
+          conversationId: pending.convId,
+          message: Message.fromBlocks(
+            id: placeholder.id,
+            role: placeholder.role,
+            blocks: [audioBlock],
+            createdAt: placeholder.createdAt,
+            status: 'sent',
+          ),
+          lastMessagePreview: '[语音]',
+        );
+      }
     } catch (_) {}
 
     pending.completer.complete(const TtsAudioResult.success(null));
+  }
+
+  String _buildFallbackPreview(String text) {
+    if (text.length <= 20) return text;
+    return '${text.substring(0, 20)}...';
   }
 
   /// 回退到文本消息
@@ -173,29 +173,25 @@ class TtsPendingManager {
     }
 
     try {
-      await _ref.read(conversationsProvider.notifier).updateOne(
-        convId,
-        (c) {
-          final updated = c.messages.map((m) {
-            if (m.id != placeholderId) return m;
-            // 替换为文本消息
-            return Message(
-              id: m.id,
-              role: m.role,
-              content: text,
-              createdAt: m.createdAt,
-              status: 'sent',
-            );
-          }).toList();
-          return c.copyWith(
-            messages: updated,
-            updatedAt: DateTime.now(),
-            lastMessage: text.length > 20 ? '${text.substring(0, 20)}...' : text,
-            lastMessageTime: DateTime.now(),
-          );
-        },
+      final placeholder =
+          await _ref.read(chatHistoryStoreProvider).loadMessageById(placeholderId);
+      if (placeholder == null) {
+        await removePlaceholder(convId, placeholderId);
+        return;
+      }
+
+      await _ref.read(chatHistoryStoreProvider).updateMessage(
+        conversationId: convId,
+        message: Message(
+          id: placeholder.id,
+          role: placeholder.role,
+          content: text,
+          createdAt: placeholder.createdAt,
+          status: 'sent',
+        ),
+        lastMessagePreview: _buildFallbackPreview(text),
       );
-      
+
       // 触发通知回调
       onTtsFallback?.call(reason);
     } catch (e) {
@@ -291,14 +287,9 @@ class TtsPendingManager {
 
   /// 移除占位消息
   Future<void> removePlaceholder(String convId, String placeholderId) async {
-    await _ref.read(conversationsProvider.notifier).updateOne(
+    await _ref.read(chatHistoryStoreProvider).softDeleteMessages(
       convId,
-      (c) => c.copyWith(
-        messages: [
-          for (final m in c.messages)
-            if (m.id != placeholderId) m,
-        ],
-      ),
+      [placeholderId],
     );
   }
 

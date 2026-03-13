@@ -25,6 +25,7 @@ class ChatRequestMessageBuilder {
 
   static const int _maxImageDescriptionCacheSize = 128;
   static const String visionDescriptionSystemPrompt = '你是图片解释助手。只输出客观、简洁的图片描述。';
+  static const String nonVisionImageContextPrefix = '__AICOVE_IMAGE_CONTEXT__';
 
   Future<List<Map<String, dynamic>>> buildRequestMessages(
     List<Message> history, {
@@ -40,7 +41,42 @@ class ChatRequestMessageBuilder {
       );
       reqMessages.addAll(convertedMessages);
     }
-    return reqMessages;
+    return _mergeAdjacentAssistantTextMessages(reqMessages);
+  }
+
+  List<Map<String, dynamic>> _mergeAdjacentAssistantTextMessages(
+    List<Map<String, dynamic>> messages,
+  ) {
+    if (messages.isEmpty) return const <Map<String, dynamic>>[];
+
+    final merged = <Map<String, dynamic>>[];
+    for (final raw in messages) {
+      final current = Map<String, dynamic>.from(raw);
+      if (merged.isNotEmpty &&
+          _isMergeableAssistantText(merged.last) &&
+          _isMergeableAssistantText(current)) {
+        final previousText = (merged.last['content'] as String?)?.trim() ?? '';
+        final currentText = (current['content'] as String?)?.trim() ?? '';
+        if (currentText.isEmpty) continue;
+        merged.last['content'] =
+            previousText.isEmpty ? currentText : '$previousText\n$currentText';
+        continue;
+      }
+      merged.add(current);
+    }
+    return merged;
+  }
+
+  bool _isMergeableAssistantText(Map<String, dynamic> message) {
+    final role = (message['role'] ?? '').toString();
+    if (role != 'assistant') return false;
+    if (message.containsKey('tool_calls') ||
+        message.containsKey('function_call')) {
+      return false;
+    }
+    final content = message['content'];
+    if (content is! String) return false;
+    return content.trim().isNotEmpty;
   }
 
   Future<List<Map<String, dynamic>>> _toRequestMessages(
@@ -70,8 +106,6 @@ class ChatRequestMessageBuilder {
 
       if (block is ImageBlock) {
         if (!supportsVision) {
-          if (message.role == 'assistant') continue;
-
           final cacheKey = _buildImageDescriptionCacheKey(block);
           final cachedDescription =
               cacheKey == null ? null : _imageDescriptionCache[cacheKey];
@@ -225,13 +259,26 @@ class ChatRequestMessageBuilder {
     required String role,
     required String? description,
   }) {
-    if (role == 'assistant') return null;
-
     final normalized = description?.trim();
-    if (normalized != null && normalized.isNotEmpty) {
-      return '用户刚刚发送了一张图片，内容摘要：$normalized';
+    final payload = <String, dynamic>{
+      'type': 'image_context',
+      'role': role,
+      'image_present': true,
+    };
+
+    if (role == 'assistant') {
+      payload['delivered_to_chat'] = true;
+      if (normalized != null && normalized.isNotEmpty) {
+        payload['prompt'] = normalized;
+      }
+    } else {
+      payload['uploaded_to_chat'] = true;
+      if (normalized != null && normalized.isNotEmpty) {
+        payload['description'] = normalized;
+      }
     }
-    return '用户刚刚发送了一张图片（当前模型不支持视觉，无法解析细节）。';
+
+    return '$nonVisionImageContextPrefix${jsonEncode(payload)}';
   }
 
   String? _buildImageDescriptionCacheKey(ImageBlock block) {

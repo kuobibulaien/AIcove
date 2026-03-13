@@ -6,6 +6,8 @@ import 'dart:convert';
 import 'provider_adapter.dart';
 
 class OpenAIAdapter implements ProviderAdapter {
+  static const int _kimiThinkingSafeMaxTokens = 16384;
+
   @override
   String get name => 'openai';
 
@@ -49,7 +51,8 @@ class OpenAIAdapter implements ProviderAdapter {
     List<Map<String, dynamic>>? tools,
   }) {
     final hasTools = tools != null && tools.isNotEmpty;
-    return {
+    final hasCustomMaxTokens = _hasCustomMaxTokens(customConfig);
+    final body = <String, dynamic>{
       'model': model,
       'messages': messages,
       if (temperature != null) 'temperature': temperature,
@@ -57,8 +60,18 @@ class OpenAIAdapter implements ProviderAdapter {
       'stream': false,
       if (hasTools) 'tools': tools,
       if (hasTools) 'tool_choice': 'auto',
-      ...?customConfig,
     };
+    if (!hasCustomMaxTokens &&
+        _shouldApplyKimiThinkingSafeMaxTokens(
+          model: model,
+          customConfig: customConfig,
+        )) {
+      body['max_tokens'] = _kimiThinkingSafeMaxTokens;
+    }
+    if (customConfig != null && customConfig.isNotEmpty) {
+      body.addAll(customConfig);
+    }
+    return body;
   }
 
   @override
@@ -174,5 +187,34 @@ class OpenAIAdapter implements ProviderAdapter {
       return buffer.toString();
     }
     return content.toString();
+  }
+
+  bool _hasCustomMaxTokens(Map<String, dynamic>? customConfig) {
+    if (customConfig == null) return false;
+    final raw = customConfig['max_tokens'];
+    if (raw is num) return true;
+    if (raw is String) return raw.trim().isNotEmpty;
+    return false;
+  }
+
+  bool _shouldApplyKimiThinkingSafeMaxTokens({
+    required String model,
+    required Map<String, dynamic>? customConfig,
+  }) {
+    if (_isThinkingDisabled(customConfig)) {
+      return false;
+    }
+
+    final normalized = model.trim().toLowerCase();
+    return normalized.contains('kimi-k2.5') ||
+        normalized.contains('kimi-k2-thinking');
+  }
+
+  bool _isThinkingDisabled(Map<String, dynamic>? customConfig) {
+    if (customConfig == null) return false;
+    final thinking = customConfig['thinking'];
+    if (thinking is! Map) return false;
+    final type = thinking['type']?.toString().trim().toLowerCase();
+    return type == 'disabled';
   }
 }

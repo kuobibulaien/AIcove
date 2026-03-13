@@ -9,11 +9,17 @@ import '../../../../features/backup/models/export_format.dart';
 import '../../../../features/backup/backup_providers.dart';
 import '../../../../features/chat/conversation_providers.dart';
 import '../../../../features/chat/domain/conversation.dart';
+import '../../../../features/chat/services/chat_history_store.dart';
 import '../../../shared/animations/parallax_slide_page_route.dart';
 import '../../../shared/effects/smooth_clip.dart';
 import '../../../shared/widgets/index.dart';
 import '../../../theme/tokens.dart';
 import 'chat_preview_page.dart';
+
+final _exportConversationMessageCountProvider =
+    FutureProvider.family<int, String>((ref, conversationId) {
+  return ref.read(chatHistoryStoreProvider).loadMessageCount(conversationId);
+});
 
 /// 导出角色选择页面
 class ExportCharacterPage extends ConsumerStatefulWidget {
@@ -129,7 +135,8 @@ class _ExportCharacterPageState extends ConsumerState<ExportCharacterPage> {
 
   Widget _buildCharacterItem(BuildContext context, Conversation conv, bool isSelected) {
     final theme = Theme.of(context);
-    final messageCount = conv.messages.length;
+    final messageCountAsync =
+        ref.watch(_exportConversationMessageCountProvider(conv.id));
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -181,7 +188,11 @@ class _ExportCharacterPageState extends ConsumerState<ExportCharacterPage> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '$messageCount 条消息',
+                          messageCountAsync.when(
+                            data: (count) => '$count 条消息',
+                            loading: () => '统计消息中...',
+                            error: (_, __) => '消息数加载失败',
+                          ),
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: theme.colorScheme.onSurfaceVariant,
                           ),

@@ -677,7 +677,6 @@ class ProviderAuth {
   final List<String> hiddenModels;
   final List<String> capabilities;
   final Map<String, dynamic> customConfig;
-  final String modelType;
 
   /// 是否禁用工具调用，默认 false（即默认启用工具调用）
   final bool disableToolCalling;
@@ -702,7 +701,6 @@ class ProviderAuth {
     this.hiddenModels = const <String>[],
     this.capabilities = const <String>['chat'],
     this.customConfig = const <String, dynamic>{},
-    this.modelType = 'chat',
     this.disableToolCalling = false,
     this.temperature,
     this.topP,
@@ -720,7 +718,6 @@ class ProviderAuth {
     List<String>? hiddenModels,
     List<String>? capabilities,
     Map<String, dynamic>? customConfig,
-    String? modelType,
     bool? disableToolCalling,
     double? temperature,
     double? topP,
@@ -740,7 +737,6 @@ class ProviderAuth {
         hiddenModels: hiddenModels ?? this.hiddenModels,
         capabilities: capabilities ?? this.capabilities,
         customConfig: customConfig ?? this.customConfig,
-        modelType: modelType ?? this.modelType,
         disableToolCalling: disableToolCalling ?? this.disableToolCalling,
         temperature:
             clearTemperature ? null : (temperature ?? this.temperature),
@@ -761,7 +757,6 @@ class ProviderAuth {
         'hidden_models': hiddenModels,
         'capabilities': capabilities,
         'custom_config': customConfig,
-        'model_type': modelType,
         'disable_tool_calling': disableToolCalling,
         if (temperature != null) 'temperature': temperature,
         if (topP != null) 'top_p': topP,
@@ -804,7 +799,6 @@ class ProviderAuth {
       hiddenModels: hidden.where((e) => !visible.contains(e)).toList(),
       capabilities: capabilities.isEmpty ? ['chat'] : capabilities,
       customConfig: customConfig,
-      modelType: (json['model_type'] as String?) ?? 'chat',
       disableToolCalling: (json['disable_tool_calling'] as bool?) ?? false,
       temperature: (json['temperature'] as num?)?.toDouble(),
       topP: (json['top_p'] as num?)?.toDouble(),
@@ -1180,6 +1174,63 @@ class AppSettings {
     }
 
     return rawId;
+  }
+
+  ProviderAuth? getProvider(String providerId) {
+    final normalized = providerId.trim();
+    if (normalized.isEmpty) return null;
+    for (final provider in providers) {
+      if (provider.id == normalized) return provider;
+    }
+    return null;
+  }
+
+  List<String> getProviderModelsByType(
+    String providerId, {
+    ModelType? type,
+  }) {
+    final provider = getProvider(providerId);
+    if (provider == null || !provider.enabled) {
+      return const <String>[];
+    }
+
+    final result = <String>[];
+    for (final model in provider.models) {
+      final modelRef = buildModelRef(provider.id, model);
+      if (type != null && getModelType(modelRef) != type) {
+        continue;
+      }
+      if (!result.contains(model)) {
+        result.add(model);
+      }
+    }
+    return result;
+  }
+
+  List<String> getProviderVisibleModelsByType(
+    String providerId, {
+    ModelType? type,
+  }) {
+    final provider = getProvider(providerId);
+    if (provider == null || !provider.enabled) {
+      return const <String>[];
+    }
+
+    final result = <String>[];
+    for (final model in provider.visibleModels) {
+      final modelRef = buildModelRef(provider.id, model);
+      if (type != null && getModelType(modelRef) != type) {
+        continue;
+      }
+      if (!result.contains(model)) {
+        result.add(model);
+      }
+    }
+    return result;
+  }
+
+  bool providerHasModelType(String providerId, ModelType type) {
+    return getProviderModelsByType(providerId, type: type).isNotEmpty;
   }
 
   /// 获取模型类型（优先使用用户设置，否则自动推断）

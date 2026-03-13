@@ -40,11 +40,13 @@ class _MemoryPluginDetailPageState
   Widget _buildBody(MemoryConfig config, MemoryPluginConfigNotifier notifier,
       AppSettings appSettings) {
     final chatProviders = appSettings.providers
-        .where(
-            (p) => p.enabled && (p.modelType == 'chat' || p.modelType.isEmpty))
+        .where((p) =>
+            p.enabled && appSettings.providerHasModelType(p.id, ModelType.chat))
         .toList();
     final embeddingProviders = appSettings.providers
-        .where((p) => p.enabled && p.modelType == 'embedding')
+        .where((p) =>
+            p.enabled &&
+            appSettings.providerHasModelType(p.id, ModelType.embedding))
         .toList();
 
     return ListView(
@@ -63,6 +65,8 @@ class _MemoryPluginDetailPageState
             emptyHint: '请先导入聊天模型渠道',
             onChanged: (providerId, modelName) =>
                 notifier.setSummarizeModel(providerId, modelName),
+            modelType: ModelType.chat,
+            appSettings: appSettings,
           ),
           const SizedBox(height: 16),
           _buildModelSection(
@@ -75,9 +79,12 @@ class _MemoryPluginDetailPageState
             emptyHint: '请先导入 embedding 模型渠道',
             onChanged: (providerId, modelName) =>
                 notifier.setEmbeddingModel(providerId, modelName),
+            modelType: ModelType.embedding,
+            appSettings: appSettings,
           ),
           const SizedBox(height: 16),
-          _buildFallbackSection(config, notifier, embeddingProviders),
+          _buildFallbackSection(
+              config, notifier, embeddingProviders, appSettings),
           const SizedBox(height: 16),
           _buildRoundSplitSection(config, notifier),
           const SizedBox(height: 16),
@@ -111,6 +118,8 @@ class _MemoryPluginDetailPageState
     required String title,
     required IconData icon,
     required List<ProviderAuth> providers,
+    required AppSettings appSettings,
+    required ModelType modelType,
     required String? selectedProviderId,
     required String? selectedModelName,
     required String hint,
@@ -146,6 +155,8 @@ class _MemoryPluginDetailPageState
             onTap: () => _showModelPicker(
               title: title,
               providers: providers,
+              appSettings: appSettings,
+              modelType: modelType,
               selectedProviderId: selectedProviderId,
               selectedModelName: selectedModelName,
               onChanged: onChanged,
@@ -178,6 +189,7 @@ class _MemoryPluginDetailPageState
     MemoryConfig config,
     MemoryPluginConfigNotifier notifier,
     List<ProviderAuth> embeddingProviders,
+    AppSettings appSettings,
   ) {
     final colors = context.moeColors;
     String? displayText;
@@ -220,6 +232,8 @@ class _MemoryPluginDetailPageState
             onTap: () => _showModelPicker(
               title: '备用 Embedding',
               providers: embeddingProviders,
+              appSettings: appSettings,
+              modelType: ModelType.embedding,
               selectedProviderId: config.fallbackEmbeddingProviderId,
               selectedModelName: config.fallbackEmbeddingModelName,
               onChanged: (providerId, modelName) {
@@ -282,6 +296,8 @@ class _MemoryPluginDetailPageState
   void _showModelPicker({
     required String title,
     required List<ProviderAuth> providers,
+    required AppSettings appSettings,
+    required ModelType modelType,
     required String? selectedProviderId,
     required String? selectedModelName,
     required void Function(String? providerId, String? modelName) onChanged,
@@ -297,9 +313,10 @@ class _MemoryPluginDetailPageState
     ];
 
     for (final provider in providers) {
-      final models = provider.visibleModels.isNotEmpty
-          ? provider.visibleModels
-          : provider.models;
+      final models = appSettings.getProviderModelsByType(
+        provider.id,
+        type: modelType,
+      );
       final providerName = provider.displayName ?? provider.id;
       for (final model in models) {
         final selected =

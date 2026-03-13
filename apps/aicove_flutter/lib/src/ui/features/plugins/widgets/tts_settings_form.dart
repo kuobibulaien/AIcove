@@ -98,21 +98,22 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
     AppSettings? settings,
     MoeColors colors,
   ) {
-    // 收集所有 tts 类型的模型（通过 modelTypes 标签筛选）
+    // 只读取渠道管理里当前可见且带语音标签的模型。
     final ttsModels = <_TtsModelEntry>[];
     if (settings != null) {
       for (final provider in settings.providers) {
         if (!provider.enabled) continue;
-        for (final modelId in provider.visibleModels) {
-          final type = settings.getModelType(modelId);
-          if (type == ModelType.tts) {
-            ttsModels.add(_TtsModelEntry(
-              modelId: modelId,
-              providerId: provider.id,
-              providerName: provider.displayName ?? provider.id,
-              displayName: settings.getModelDisplayName(modelId),
-            ));
-          }
+        for (final modelId in settings.getProviderVisibleModelsByType(
+          provider.id,
+          type: ModelType.tts,
+        )) {
+          final modelRef = settings.buildModelRef(provider.id, modelId);
+          ttsModels.add(_TtsModelEntry(
+            modelId: modelId,
+            providerId: provider.id,
+            providerName: provider.displayName ?? provider.id,
+            displayName: settings.getModelDisplayName(modelRef),
+          ));
         }
       }
     }
@@ -120,6 +121,8 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
     // 当前选中的模型
     final selectedModelId = config.selectedModelId;
     final selectedProviderId = config.selectedProviderId;
+    final hasStoredSelection =
+        selectedModelId != null && selectedModelId.isNotEmpty;
     final selectedEntry = ttsModels
             .where((e) =>
                 e.modelId == selectedModelId &&
@@ -139,10 +142,15 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
           trailingType: MoeSettingsRowTrailing.text,
           detailText: selectedEntry != null
               ? selectedEntry.displayName
-              : (ttsModels.isEmpty ? '无可用模型' : '未选择'),
+              : (ttsModels.isEmpty
+                  ? '无可用模型'
+                  : (hasStoredSelection ? '当前模型已不可用' : '未选择')),
           onTap: ttsModels.isEmpty
               ? () {
-                  MoeToast.warning(context, '暂无语音合成模型，请先在「模型管理」中添加并标记为语音合成类型');
+                  MoeToast.warning(
+                    context,
+                    '暂无语音模型，请先在渠道管理里显示并标记语音标签',
+                  );
                 }
               : () => _showTtsModelSelector(ttsModels, config, notifier),
           showDivider: selectedEntry != null,
@@ -1236,7 +1244,6 @@ class _TtsSettingsFormState extends ConsumerState<TtsSettingsForm> {
       ],
     );
   }
-
 }
 
 /// TTS 模型列表条目（模型 ID + 所属渠道信息）

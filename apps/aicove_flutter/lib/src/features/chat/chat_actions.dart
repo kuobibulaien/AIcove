@@ -30,6 +30,7 @@ import 'domain/conversation.dart';
 import 'domain/message.dart';
 import '../settings/app_settings.dart';
 import 'conversation_providers.dart';
+import 'conversation_timeline_providers.dart';
 import 'chat_providers.dart';
 import '../../core/app_logger.dart';
 import '../../core/database/database_provider.dart';
@@ -37,6 +38,9 @@ import '../../core/models/message_block.dart';
 import '../../core/models/block_status.dart';
 import '../../core/services/attachment_picker_service.dart';
 import '../../core/utils/message_formatter.dart';
+import '../observability/trace_models.dart';
+import '../observability/trace_store.dart';
+import 'services/chat_history_store.dart';
 
 // 重新导出公共类型，保持向后兼容
 export 'chat_providers.dart';
@@ -72,10 +76,65 @@ class ChatActions {
   final Ref _ref;
   ChatSendService get _sendService => _ref.read(chatSendServiceProvider);
   ChatTtsHandler get _ttsHandler => _ref.read(chatTtsHandlerProvider);
+  ChatHistoryStore get _historyStore => _ref.read(chatHistoryStoreProvider);
   final EnhancedDialogueService _enhancedDialogueService =
       const EnhancedDialogueService();
   int _generationSerial = 0;
   final Map<String, _GenerationTask> _activeGenerations = {};
+
+  Future<TraceContext?> _startTurnTrace({
+    required String convId,
+    required String turnId,
+    required String entry,
+    Map<String, dynamic>? meta,
+  }) async {
+    try {
+      return await TraceStore.instance.startTurn(
+        sessionId: convId,
+        turnId: turnId,
+        source: 'ChatActions',
+        meta: <String, dynamic>{
+          'entry': entry,
+          ...?meta,
+        },
+      );
+    } catch (e) {
+      AppLogger.warning(
+        'ChatActions',
+        'start turn trace failed',
+        metadata: {'error': e.toString(), 'entry': entry},
+      );
+      return null;
+    }
+  }
+
+  Future<List<Message>> _loadConversationMessages(String convId) {
+    return _historyStore.loadAllMessages(convId);
+  }
+
+  void _recordTurnTrace(
+    TraceContext? context,
+    TraceStage stage, {
+    TraceEventStatus status = TraceEventStatus.success,
+    int roundIndex = 0,
+    Map<String, dynamic>? meta,
+    Map<String, dynamic>? payloadRef,
+  }) {
+    if (context == null) return;
+    unawaited(
+      TraceStore.instance.record(
+        traceId: context.traceId,
+        sessionId: context.sessionId,
+        turnId: context.turnId,
+        stage: stage,
+        status: status,
+        source: 'ChatActions',
+        roundIndex: roundIndex,
+        meta: meta,
+        payloadRef: payloadRef,
+      ),
+    );
+  }
 
   void _setConversationSending(String convId, bool isSending) {
     _ref.read(conversationSendingProvider(convId).notifier).state = isSending;
@@ -134,16 +193,11 @@ class ChatActions {
     final userMsgId = task.userMsgId;
     if (userMsgId == null || userMsgId.trim().isEmpty) return;
 
-    await _ref.read(conversationsProvider.notifier).updateOne(
-          task.convId,
-          (c) => c.copyWith(
-            messages: c.messages
-                .map((m) => (m.id == userMsgId && m.status == 'sending')
-                    ? m.copyWith(status: 'sent')
-                    : m)
-                .toList(),
-          ),
-        );
+    await _historyStore.markMessageStatus(
+      conversationId: task.convId,
+      messageId: userMsgId,
+      status: 'sent',
+    );
   }
 
   /// 中断当前正在生成的消息（软中断：后续结果会被丢弃，不再落库到会话）。
@@ -187,13 +241,25 @@ class ChatActions {
 
     final trace = AppLogger.startTrace('AI消息发送', source: 'ChatActions');
     final userMsg = _sendService.createUserMessage(text: text, imagePath: null);
+    final traceContext = await _startTurnTrace(
+      convId: convId,
+      turnId: userMsg.id,
+      entry: 'send_text',
+      meta: {'inputLength': text.length},
+    );
     final runId = _startGeneration(convId: convId, userMsgId: userMsg.id);
     await _sendService.addUserMessage(
         convId: convId, userMsg: userMsg, displayText: text);
+    _recordTurnTrace(
+      traceContext,
+      TraceStage.userMessagePersisted,
+      meta: {'hasImage': false},
+    );
     if (!_isGenerationCurrent(convId, runId)) return;
 
     _StreamPlaceholderDelivery? streamDelivery;
     var streamCommitted = false;
+    var turnSucceeded = false;
     try {
       final settings = await _ref.read(appSettingsProvider.future);
       if (!_isGenerationCurrent(convId, runId)) return;
@@ -227,6 +293,7 @@ class ChatActions {
           userText: text,
           trace: trace,
           overrideModel: model,
+          traceContext: traceContext,
         ),
         execute: (config) => _sendService.executeApiCall(
           config: config,
@@ -275,7 +342,10 @@ class ChatActions {
         await streamDelivery.finalize(
           finalText: streamFinalText,
         );
-        final streamTextMessageIds = streamDelivery.snapshotPlaceholderIds();
+        final streamTextMessageIds =
+            await streamDelivery.commitFinalTextAsSingleMessage(
+          finalText: streamFinalText,
+        );
         await _ttsHandler.deliverSegmentedMessages(
           convId: convId,
           userMsgId: userMsg.id,
@@ -302,13 +372,29 @@ class ChatActions {
         );
       }
       if (!_isGenerationCurrent(convId, runId)) return;
+      _recordTurnTrace(
+        traceContext,
+        TraceStage.messageDelivered,
+        meta: {
+          'assistantMessageCount': buildResult.messages.length,
+          'streamCommitted': shouldCommitStream,
+        },
+      );
+      turnSucceeded = true;
 
       trace.end(additionalMessage: '完成');
+      _recordTurnTrace(traceContext, TraceStage.turnCompleted);
     } catch (e) {
       await streamDelivery?.removePlaceholders();
       if (!_isGenerationCurrent(convId, runId)) return;
       trace.error('失败', metadata: {'error': e.toString()});
       trace.end(additionalMessage: '失败');
+      _recordTurnTrace(
+        traceContext,
+        TraceStage.turnFailed,
+        status: TraceEventStatus.failed,
+        meta: {'error': e.toString()},
+      );
       await _sendService.markUserMessageFailed(
           convId: convId, userMsgId: userMsg.id);
       _setConversationError(convId, e.toString());
@@ -323,6 +409,9 @@ class ChatActions {
         clearFailoverInfo: true,
         scheduleAnalysis: true,
       );
+      if (!turnSucceeded) {
+        // 失败分支会记录 TURN_FAILED，这里避免重复写 TURN_COMPLETED。
+      }
     }
   }
 
@@ -372,12 +461,24 @@ class ChatActions {
       text: hasText ? userText : null,
       imagePath: imagePath,
     );
+    final traceContext = await _startTurnTrace(
+      convId: convId,
+      turnId: userMsg.id,
+      entry: 'send_image',
+      meta: {'hasText': hasText},
+    );
     final runId = _startGeneration(convId: convId, userMsgId: userMsg.id);
     final displayText = hasText ? userText : '[图片]';
     await _sendService.addUserMessage(
         convId: convId, userMsg: userMsg, displayText: displayText);
+    _recordTurnTrace(
+      traceContext,
+      TraceStage.userMessagePersisted,
+      meta: {'hasImage': true},
+    );
     if (!_isGenerationCurrent(convId, runId)) return;
 
+    var turnSucceeded = false;
     try {
       final settings = await _ref.read(appSettingsProvider.future);
       if (!_isGenerationCurrent(convId, runId)) return;
@@ -388,8 +489,6 @@ class ChatActions {
       );
       final apiText = hasText ? userText : '[image]';
 
-      // 若聊天模型链中已含视觉能力，则不插入视觉辅助模型；
-      // 仅当聊天模型链全部无视觉能力时，才把视觉辅助模型置于首位。
       final modelsToTry = _sendService.buildImageSendModelRefs(settings);
 
       final (result, usedSettings) = await _executeWithFailover(
@@ -400,6 +499,7 @@ class ChatActions {
           history: history,
           userText: apiText,
           overrideModel: model,
+          traceContext: traceContext,
         ),
         execute: (config) => _sendService.executeApiCall(
           config: config,
@@ -426,8 +526,21 @@ class ChatActions {
         ttsEnabled: usedSettings.ttsEnabled,
       );
       if (!_isGenerationCurrent(convId, runId)) return;
+      _recordTurnTrace(
+        traceContext,
+        TraceStage.messageDelivered,
+        meta: {'assistantMessageCount': buildResult.messages.length},
+      );
+      _recordTurnTrace(traceContext, TraceStage.turnCompleted);
+      turnSucceeded = true;
     } catch (e) {
       if (!_isGenerationCurrent(convId, runId)) return;
+      _recordTurnTrace(
+        traceContext,
+        TraceStage.turnFailed,
+        status: TraceEventStatus.failed,
+        meta: {'error': e.toString()},
+      );
       await _sendService.markUserMessageFailed(
           convId: convId, userMsgId: userMsg.id);
       _setConversationError(convId, e.toString());
@@ -438,6 +551,9 @@ class ChatActions {
         clearFailoverInfo: true,
         scheduleAnalysis: true,
       );
+      if (!turnSucceeded) {
+        // 已在 catch 记录 TURN_FAILED。
+      }
     }
   }
 
@@ -449,11 +565,22 @@ class ChatActions {
 
     final userMsg =
         await _sendService.createUserFileMessage(filePath: filePath);
+    final traceContext = await _startTurnTrace(
+      convId: convId,
+      turnId: userMsg.id,
+      entry: 'send_file',
+    );
     final runId = _startGeneration(convId: convId, userMsgId: userMsg.id);
     await _sendService.addUserMessage(
         convId: convId, userMsg: userMsg, displayText: '[文件]');
+    _recordTurnTrace(
+      traceContext,
+      TraceStage.userMessagePersisted,
+      meta: {'hasFile': true},
+    );
     if (!_isGenerationCurrent(convId, runId)) return;
 
+    var turnSucceeded = false;
     try {
       final settings = await _ref.read(appSettingsProvider.future);
       if (!_isGenerationCurrent(convId, runId)) return;
@@ -463,7 +590,10 @@ class ChatActions {
         limit: settings.historyMessageLimit,
       );
       final config = await _sendService.prepareApiConfig(
-          conv: conv, history: history, userText: '[file]');
+          conv: conv,
+          history: history,
+          userText: '[file]',
+          traceContext: traceContext);
       if (!_isGenerationCurrent(convId, runId)) return;
       final result = await _sendService.executeApiCall(
           config: config,
@@ -487,8 +617,21 @@ class ChatActions {
         ttsEnabled: settings.ttsEnabled,
       );
       if (!_isGenerationCurrent(convId, runId)) return;
+      _recordTurnTrace(
+        traceContext,
+        TraceStage.messageDelivered,
+        meta: {'assistantMessageCount': buildResult.messages.length},
+      );
+      _recordTurnTrace(traceContext, TraceStage.turnCompleted);
+      turnSucceeded = true;
     } catch (e) {
       if (!_isGenerationCurrent(convId, runId)) return;
+      _recordTurnTrace(
+        traceContext,
+        TraceStage.turnFailed,
+        status: TraceEventStatus.failed,
+        meta: {'error': e.toString()},
+      );
       await _sendService.markUserMessageFailed(
           convId: convId, userMsgId: userMsg.id);
       _setConversationError(convId, e.toString());
@@ -499,6 +642,9 @@ class ChatActions {
         clearFailoverInfo: true,
         scheduleAnalysis: true,
       );
+      if (!turnSucceeded) {
+        // 已在 catch 记录 TURN_FAILED。
+      }
     }
   }
 
@@ -537,6 +683,13 @@ class ChatActions {
       return const ProactiveSendResult.skipped('target_conversation_not_found');
     }
 
+    final traceContext = await _startTurnTrace(
+      convId: targetConvId,
+      turnId: 'trigger_${trigger.id}',
+      entry: 'proactive_trigger',
+      meta: {'triggerId': trigger.id},
+    );
+
     try {
       if (trigger.hasCachedContent) {
         final cachedReply = trigger.cachedContent!.trim();
@@ -557,6 +710,12 @@ class ChatActions {
             pluginEvents: const [],
             ttsEnabled: settings.ttsEnabled,
           );
+          _recordTurnTrace(
+            traceContext,
+            TraceStage.messageDelivered,
+            meta: {'assistantMessageCount': buildResult.messages.length},
+          );
+          _recordTurnTrace(traceContext, TraceStage.turnCompleted);
           AppLogger.info('ChatActions', '触发器发送成功（cached）', metadata: {
             'triggerId': trigger.id,
             'title': trigger.title,
@@ -569,12 +728,14 @@ class ChatActions {
           ? trigger.prompt!.trim()
           : trigger.title;
       final snapshotHistory = _buildSnapshotHistory(trigger.contextSnapshot);
-      final history =
-          snapshotHistory.isNotEmpty ? snapshotHistory : conv.messages;
+      final history = snapshotHistory.isNotEmpty
+          ? snapshotHistory
+          : await _loadConversationMessages(targetConvId);
       final config = await _sendService.prepareApiConfig(
         conv: conv,
         history: history,
         userText: proactiveInput,
+        traceContext: traceContext,
       );
       final result = await _sendService.executeApiCall(
         config: config,
@@ -594,6 +755,12 @@ class ChatActions {
         pluginEvents: result.pluginEvents,
         ttsEnabled: settings.ttsEnabled,
       );
+      _recordTurnTrace(
+        traceContext,
+        TraceStage.messageDelivered,
+        meta: {'assistantMessageCount': buildResult.messages.length},
+      );
+      _recordTurnTrace(traceContext, TraceStage.turnCompleted);
 
       AppLogger.info('ChatActions', '触发器发送成功', metadata: {
         'triggerId': trigger.id,
@@ -601,6 +768,12 @@ class ChatActions {
       });
       return const ProactiveSendResult.success();
     } catch (e) {
+      _recordTurnTrace(
+        traceContext,
+        TraceStage.turnFailed,
+        status: TraceEventStatus.failed,
+        meta: {'error': e.toString(), 'triggerId': trigger.id},
+      );
       AppLogger.error('ChatActions', '触发器发送失败', metadata: {
         'triggerId': trigger.id,
         'error': e.toString(),
@@ -662,22 +835,25 @@ class ChatActions {
     final conv = _ref.read(activeConversationProvider);
     if (conv == null) return;
     final convId = conv.id;
+    final messages = await _loadConversationMessages(convId);
 
-    final failedMsg = conv.messages.firstWhere(
+    final failedMsg = messages.firstWhere(
       (m) => m.id == messageId && m.status == 'failed',
       orElse: () => throw Exception('消息不存在或状态不正确'),
     );
 
     final runId = _startGeneration(convId: convId, userMsgId: messageId);
+    final traceContext = await _startTurnTrace(
+      convId: convId,
+      turnId: messageId,
+      entry: 'retry',
+    );
 
-    await _ref.read(conversationsProvider.notifier).updateOne(
-        convId,
-        (c) => c.copyWith(
-              messages: c.messages
-                  .map((m) =>
-                      m.id == messageId ? m.copyWith(status: 'sending') : m)
-                  .toList(),
-            ));
+    await _historyStore.markMessageStatus(
+      conversationId: convId,
+      messageId: messageId,
+      status: 'sending',
+    );
     if (!_isGenerationCurrent(convId, runId)) return;
 
     _StreamPlaceholderDelivery? streamDelivery;
@@ -685,10 +861,10 @@ class ChatActions {
     try {
       final settings = await _ref.read(appSettingsProvider.future);
       if (!_isGenerationCurrent(convId, runId)) return;
-      final msgIndex = conv.messages.indexWhere((m) => m.id == messageId);
+      final msgIndex = messages.indexWhere((m) => m.id == messageId);
       // 取重试消息及之前的历史，并过滤掉其他失败消息
       final rawHistory =
-          msgIndex > 0 ? conv.messages.sublist(0, msgIndex + 1) : conv.messages;
+          msgIndex > 0 ? messages.sublist(0, msgIndex + 1) : messages;
       final history = rawHistory
           .where((m) => m.status != 'failed' || m.id == messageId)
           .toList();
@@ -706,7 +882,10 @@ class ChatActions {
       await streamDelivery.start();
 
       final config = await _sendService.prepareApiConfig(
-          conv: conv, history: history, userText: failedMsg.displayText);
+          conv: conv,
+          history: history,
+          userText: failedMsg.displayText,
+          traceContext: traceContext);
       if (!_isGenerationCurrent(convId, runId)) return;
       final result = await _sendService.executeApiCall(
         config: config,
@@ -739,14 +918,11 @@ class ChatActions {
       if (!_isGenerationCurrent(convId, runId)) return;
 
       // 先标记原消息为成功
-      await _ref.read(conversationsProvider.notifier).updateOne(
-          convId,
-          (c) => c.copyWith(
-                messages: c.messages
-                    .map((m) =>
-                        m.id == messageId ? m.copyWith(status: 'sent') : m)
-                    .toList(),
-              ));
+      await _historyStore.markMessageStatus(
+        conversationId: convId,
+        messageId: messageId,
+        status: 'sent',
+      );
       if (!_isGenerationCurrent(convId, runId)) return;
 
       // 处理流式占位提交
@@ -758,7 +934,10 @@ class ChatActions {
 
       if (shouldCommitStream) {
         await streamDelivery.finalize(finalText: streamFinalText);
-        final streamTextMessageIds = streamDelivery.snapshotPlaceholderIds();
+        final streamTextMessageIds =
+            await streamDelivery.commitFinalTextAsSingleMessage(
+          finalText: streamFinalText,
+        );
         await _ttsHandler.deliverSegmentedMessages(
           convId: convId,
           userMsgId: messageId,
@@ -782,16 +961,28 @@ class ChatActions {
         );
       }
       if (!_isGenerationCurrent(convId, runId)) return;
+      _recordTurnTrace(
+        traceContext,
+        TraceStage.messageDelivered,
+        meta: {
+          'assistantMessageCount': buildResult.messages.length,
+          'streamCommitted': shouldCommitStream,
+        },
+      );
+      _recordTurnTrace(traceContext, TraceStage.turnCompleted);
     } catch (e) {
       if (!_isGenerationCurrent(convId, runId)) return;
-      await _ref.read(conversationsProvider.notifier).updateOne(
-          convId,
-          (c) => c.copyWith(
-                messages: c.messages
-                    .map((m) =>
-                        m.id == messageId ? m.copyWith(status: 'failed') : m)
-                    .toList(),
-              ));
+      _recordTurnTrace(
+        traceContext,
+        TraceStage.turnFailed,
+        status: TraceEventStatus.failed,
+        meta: {'error': e.toString()},
+      );
+      await _historyStore.markMessageStatus(
+        conversationId: convId,
+        messageId: messageId,
+        status: 'failed',
+      );
       _setConversationError(convId, e.toString());
     } finally {
       if (!streamCommitted) {
@@ -819,36 +1010,35 @@ class ChatActions {
     final conv = _ref.read(activeConversationProvider);
     if (conv == null) return;
     final convId = conv.id;
+    final messages = await _loadConversationMessages(convId);
 
     // 找到要重新生成的AI消息索引
-    final msgIndex = conv.messages.indexWhere((m) => m.id == aiMessageId);
+    final msgIndex = messages.indexWhere((m) => m.id == aiMessageId);
     if (msgIndex < 0) return;
 
     // 找到该AI消息对应的用户消息（通常是前一条）
     int userMsgIndex = msgIndex - 1;
-    while (userMsgIndex >= 0 && conv.messages[userMsgIndex].role != 'user') {
+    while (userMsgIndex >= 0 && messages[userMsgIndex].role != 'user') {
       userMsgIndex--;
     }
     if (userMsgIndex < 0) return;
 
-    final userMsg = conv.messages[userMsgIndex];
+    final userMsg = messages[userMsgIndex];
     final userText = userMsg.displayText;
+    final traceContext = await _startTurnTrace(
+      convId: convId,
+      turnId: userMsg.id,
+      entry: useEnhancement ? 'regenerate_enhanced' : 'regenerate',
+      meta: {'targetAiMessageId': aiMessageId},
+    );
 
     final runId = _startGeneration(convId: convId, userMsgId: userMsg.id);
 
     // 收集被移除的消息 ID，用于数据库软删除
-    final removedMessages = conv.messages.sublist(userMsgIndex + 1);
-
-    // 删除AI消息及其后的所有消息，保留到用户消息
-    await _ref.read(conversationsProvider.notifier).updateOne(
-        convId,
-        (c) => c.copyWith(
-              messages: c.messages.sublist(0, userMsgIndex + 1),
-            ));
-    if (!_isGenerationCurrent(convId, runId)) return;
-
-    // 在数据库中软删除被移除的消息
-    await _softDeleteMessages(removedMessages.map((m) => m.id).toList());
+    await _historyStore.truncateAfterMessage(
+      conversationId: convId,
+      anchorMessageId: userMsg.id,
+    );
     if (!_isGenerationCurrent(convId, runId)) return;
 
     _StreamPlaceholderDelivery? streamDelivery;
@@ -907,6 +1097,7 @@ class ChatActions {
         conv: requestConv,
         history: history,
         userText: userText,
+        traceContext: traceContext,
       );
       if (!_isGenerationCurrent(convId, runId)) return;
       final rawResult = await _sendService.executeApiCall(
@@ -967,7 +1158,10 @@ class ChatActions {
 
       if (shouldCommitStream) {
         await streamDelivery.finalize(finalText: streamFinalText);
-        final streamTextMessageIds = streamDelivery.snapshotPlaceholderIds();
+        final streamTextMessageIds =
+            await streamDelivery.commitFinalTextAsSingleMessage(
+          finalText: streamFinalText,
+        );
         await _ttsHandler.deliverSegmentedMessages(
           convId: convId,
           userMsgId: userMsg.id,
@@ -991,8 +1185,23 @@ class ChatActions {
         );
       }
       if (!_isGenerationCurrent(convId, runId)) return;
+      _recordTurnTrace(
+        traceContext,
+        TraceStage.messageDelivered,
+        meta: {
+          'assistantMessageCount': buildResult.messages.length,
+          'streamCommitted': shouldCommitStream,
+        },
+      );
+      _recordTurnTrace(traceContext, TraceStage.turnCompleted);
     } catch (e) {
       if (!_isGenerationCurrent(convId, runId)) return;
+      _recordTurnTrace(
+        traceContext,
+        TraceStage.turnFailed,
+        status: TraceEventStatus.failed,
+        meta: {'error': e.toString()},
+      );
       _setConversationError(convId, e.toString());
     } finally {
       if (!streamCommitted) {
@@ -1007,12 +1216,13 @@ class ChatActions {
   Future<void> recallFailedMessage(String messageId) async {
     final conv = _ref.read(activeConversationProvider);
     if (conv == null) return;
+    final messages = await _loadConversationMessages(conv.id);
 
-    final idx = conv.messages.indexWhere(
+    final idx = messages.indexWhere(
       (m) => m.id == messageId && m.status == 'failed',
     );
     if (idx < 0) return;
-    final failedMsg = conv.messages[idx];
+    final failedMsg = messages[idx];
 
     // 将失败消息文本填入输入框
     final text = _extractEditableTextForRecall(failedMsg);
@@ -1082,23 +1292,10 @@ class ChatActions {
     final conv = _ref.read(activeConversationProvider);
     if (conv == null) return;
     final convId = conv.id;
+    final messages = await _loadConversationMessages(convId);
 
-    final idx = conv.messages.indexWhere((m) => m.id == messageId);
+    final idx = messages.indexWhere((m) => m.id == messageId);
     if (idx < 0) return;
-
-    await _ref.read(conversationsProvider.notifier).updateOne(convId, (c) {
-      final newMessages = c.messages.where((m) => m.id != messageId).toList();
-      final lastMsg = newMessages.isNotEmpty ? newMessages.last : null;
-      return c.copyWith(
-        messages: newMessages,
-        lastMessage: lastMsg?.displayText,
-        lastMessageTime: lastMsg?.createdAt,
-        contextStartMessageId: c.contextStartMessageId == messageId
-            ? null
-            : c.contextStartMessageId,
-        updatedAt: DateTime.now(),
-      );
-    });
 
     // 如果当前引用的是被删除消息，一并清空引用态
     final quoted = _ref.read(quotedMessageProvider);
@@ -1106,7 +1303,11 @@ class ChatActions {
       _ref.read(quotedMessageProvider.notifier).state = null;
     }
 
-    await _softDeleteMessages([messageId]);
+    await _historyStore.softDeleteMessages(
+      convId,
+      [messageId],
+      clearContextStartIfDeleted: true,
+    );
   }
 
   /// 编辑消息：删除指定消息及其后的所有消息，返回被删除消息的文本用于填充输入框
@@ -1114,27 +1315,20 @@ class ChatActions {
     final conv = _ref.read(activeConversationProvider);
     if (conv == null) return null;
     final convId = conv.id;
+    final messages = await _loadConversationMessages(convId);
 
-    final msgIndex = conv.messages.indexWhere((m) => m.id == messageId);
+    final msgIndex = messages.indexWhere((m) => m.id == messageId);
     if (msgIndex < 0) return null;
 
-    final msg = conv.messages[msgIndex];
-    final text = msg.displayText;
+    final msg = messages[msgIndex];
+    final text = _extractEditableTextForRecall(msg);
+    _ref.read(recalledAttachmentProvider.notifier).state =
+        _extractAttachmentForRecall(msg);
 
-    // 删除该消息及其后的所有消息
-    final removedMessages = conv.messages.sublist(msgIndex);
-    await _ref.read(conversationsProvider.notifier).updateOne(convId, (c) {
-      final newMessages = c.messages.sublist(0, msgIndex);
-      final lastMsg = newMessages.isNotEmpty ? newMessages.last : null;
-      return c.copyWith(
-        messages: newMessages,
-        lastMessage: lastMsg?.displayText ?? '',
-        lastMessageTime: lastMsg?.createdAt ?? c.createdAt,
-      );
-    });
-
-    // 在数据库中软删除被移除的消息
-    await _softDeleteMessages(removedMessages.map((m) => m.id).toList());
+    await _historyStore.truncateFromMessage(
+      conversationId: convId,
+      fromMessageId: messageId,
+    );
 
     return text;
   }
@@ -1234,8 +1428,6 @@ class _StreamPlaceholderDelivery {
   final MessageFormatConfig formatConfig;
   final Duration segmentDelay;
 
-  final List<String> _activePlaceholderIds = <String>[];
-  final Set<String> _allPlaceholderIds = <String>{};
   final List<String> _sealedChunks = <String>[];
   final List<String> _pendingSealedChunks = <String>[];
   final StringBuffer _activeChunkText = StringBuffer();
@@ -1250,10 +1442,7 @@ class _StreamPlaceholderDelivery {
   bool _fallbackTriggered = false;
 
   Future<void> start() async {
-    if (_disposed || _activePlaceholderIds.isNotEmpty) return;
-    final id = genId('msg');
-    _activePlaceholderIds.add(id);
-    _allPlaceholderIds.add(id);
+    if (_disposed) return;
     await _applyState(finalize: false);
   }
 
@@ -1323,6 +1512,44 @@ class _StreamPlaceholderDelivery {
     await _applyState(finalize: true);
   }
 
+  Future<List<String>> commitFinalTextAsSingleMessage({
+    required String finalText,
+  }) async {
+    if (_disposed) return const <String>[];
+    final effectiveFinalText = _resolveEffectiveFinalText(finalText).trim();
+    if (effectiveFinalText.isEmpty) return const <String>[];
+    final messageId = genId('msg');
+    final committedMessage = Message.fromBlocks(
+      id: messageId,
+      role: 'assistant',
+      blocks: [
+        TextBlock(
+          messageId: messageId,
+          content: effectiveFinalText,
+          status: BlockStatus.success,
+        ),
+      ],
+      createdAt: DateTime.now(),
+      status: 'sent',
+    );
+    if (userMsgId.trim().isNotEmpty) {
+      await _ref.read(chatHistoryStoreProvider).appendAssistantMessages(
+            conversationId: convId,
+            userMessageId: userMsgId,
+            messages: [committedMessage],
+            lastMessagePreview: committedMessage.displayText,
+          );
+    } else {
+      await _ref.read(chatHistoryStoreProvider).appendMessage(
+            conversationId: convId,
+            message: committedMessage,
+            lastMessagePreview: committedMessage.displayText,
+          );
+    }
+    await removePlaceholders();
+    return <String>[messageId];
+  }
+
   String _resolveEffectiveFinalText(String finalText) {
     final candidate = finalText.trim();
     if (candidate.isNotEmpty) {
@@ -1336,33 +1563,13 @@ class _StreamPlaceholderDelivery {
   }
 
   Future<void> removePlaceholders() async {
-    if (_allPlaceholderIds.isEmpty) return;
     _flushTimer?.cancel();
     _flushTimer = null;
     _dirty = false;
-    await _enqueue(() async {
-      await _ref.read(conversationsProvider.notifier).updateOne(
-        convId,
-        (c) {
-          final remaining = [
-            for (final m in c.messages)
-              if (!_allPlaceholderIds.contains(m.id)) m,
-          ];
-          final last = remaining.isNotEmpty ? remaining.last : null;
-          return c.copyWith(
-            messages: remaining,
-            updatedAt: DateTime.now(),
-            lastMessage: last?.displayText,
-            lastMessageTime: last?.createdAt,
-          );
-        },
-        persist: false,
-      );
-    });
-    _activePlaceholderIds.clear();
-    _allPlaceholderIds.clear();
+    await _setBubbleState(StreamingBubbleState.hidden);
     _resetTextBuffers();
     _receivedDelta = false;
+    _fallbackTriggered = false;
   }
 
   void dispose() {
@@ -1394,84 +1601,29 @@ class _StreamPlaceholderDelivery {
   }
 
   Future<void> _applyState({required bool finalize}) async {
-    if (_disposed || _activePlaceholderIds.isEmpty) return;
-    final chunks = _buildChunks(finalize: finalize);
-    _ensurePlaceholderCount(chunks.length);
-    final snapshotIds = List<String>.from(_activePlaceholderIds);
-    await _enqueue(() async {
-      await _ref.read(conversationsProvider.notifier).updateOne(
-        convId,
-        (c) {
-          final existingById = <String, Message>{
-            for (final m in c.messages) m.id: m,
-          };
-          final kept = <Message>[
-            for (final m in c.messages)
-              if (!_allPlaceholderIds.contains(m.id))
-                if (m.id == userMsgId && finalize && m.status == 'sending')
-                  m.copyWith(status: 'sent')
-                else
-                  m,
-          ];
-          final now = DateTime.now();
-          final placeholders = <Message>[];
-          for (var i = 0; i < snapshotIds.length; i++) {
-            final id = snapshotIds[i];
-            final rawChunk = chunks[i];
-            final content =
-                rawChunk.trim().isEmpty ? _kGeneratingText : rawChunk;
-            final isLast = i == snapshotIds.length - 1;
-            final status = finalize ? 'sent' : (isLast ? 'sending' : 'sent');
-            final showRawTextWhileStreaming = !finalize &&
-                !formatConfig.enableChunking &&
-                _receivedDelta &&
-                content != _kGeneratingText;
-            final blockStatus = finalize
-                ? BlockStatus.success
-                : (showRawTextWhileStreaming
-                    ? BlockStatus.success
-                    : (isLast ? BlockStatus.streaming : BlockStatus.success));
-            final createdAt = existingById[id]?.createdAt ?? now;
-            placeholders.add(
-              Message.fromBlocks(
-                id: id,
-                role: 'assistant',
-                blocks: [
-                  TextBlock(
-                    messageId: id,
-                    content: content,
-                    status: blockStatus,
-                  ),
-                ],
-                createdAt: createdAt,
-                status: status,
-              ),
-            );
-          }
-
-          final preview = placeholders.isNotEmpty
-              ? placeholders.last.displayText
-              : c.lastMessage;
-
-          return c.copyWith(
-            messages: [...kept, ...placeholders],
-            updatedAt: now,
-            lastMessage: preview,
-            lastMessageTime: now,
-          );
-        },
-        persist: finalize,
-      );
-    });
+    if (_disposed) return;
+    final text = _buildDisplayText(finalize: finalize);
+    final status = _fallbackTriggered
+        ? StreamingBubbleStatus.fallback
+        : (_receivedDelta
+            ? StreamingBubbleStatus.streaming
+            : StreamingBubbleStatus.thinking);
+    await _setBubbleState(
+      StreamingBubbleState(
+        visible: true,
+        text: text,
+        status: status,
+      ),
+    );
   }
 
-  List<String> _buildChunks({required bool finalize}) {
+  String _buildDisplayText({required bool finalize}) {
     if (!formatConfig.enableChunking) {
       final rawText = _rawStreamText.toString();
       if (rawText.trim().isEmpty) {
-        return <String>[_kGeneratingText];
+        return _kGeneratingText;
       }
-      return <String>[rawText];
+      return rawText;
     }
 
     final chunks = <String>[
@@ -1485,9 +1637,9 @@ class _StreamPlaceholderDelivery {
       chunks.add(_kGeneratingText);
     }
     if (chunks.isEmpty) {
-      return <String>[_kGeneratingText];
+      return _kGeneratingText;
     }
-    return chunks;
+    return chunks.join('\n\n');
   }
 
   void _sealCompletedChunks() {
@@ -1594,19 +1746,6 @@ class _StreamPlaceholderDelivery {
     }
   }
 
-  void _ensurePlaceholderCount(int targetCount) {
-    var target = targetCount;
-    if (target <= 0) target = 1;
-    while (_activePlaceholderIds.length < target) {
-      final id = genId('msg');
-      _activePlaceholderIds.add(id);
-      _allPlaceholderIds.add(id);
-    }
-    if (_activePlaceholderIds.length > target) {
-      _activePlaceholderIds.removeRange(target, _activePlaceholderIds.length);
-    }
-  }
-
   Future<void> _enqueue(Future<void> Function() task) {
     _queue = _queue.catchError((_) {}).then((_) async {
       if (_disposed) return;
@@ -1615,8 +1754,13 @@ class _StreamPlaceholderDelivery {
     return _queue;
   }
 
-  List<String> snapshotPlaceholderIds() =>
-      List<String>.unmodifiable(_activePlaceholderIds);
+  Future<void> _setBubbleState(StreamingBubbleState state) {
+    return _enqueue(() async {
+      _ref.read(streamingBubbleProvider(convId).notifier).state = state;
+    });
+  }
+
+  List<String> snapshotPlaceholderIds() => const <String>[];
 }
 
 bool streamTextEndsWithChunkBoundary(

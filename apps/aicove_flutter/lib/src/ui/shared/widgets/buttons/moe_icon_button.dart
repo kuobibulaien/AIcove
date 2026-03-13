@@ -180,13 +180,13 @@ class _MoeIconButtonState extends State<MoeIconButton> {
             border: widget.border != null ? Border.fromBorderSide(widget.border!) : null,
           ),
           child: Center(
-            child: AnimatedSwitcher(
+            child: TweenAnimationBuilder<Color?>(
               duration: kAnimFast,
-              child: Icon(
+              tween: ColorTween(end: currentIconColor),
+              builder: (context, animatedColor, _) => Icon(
                 widget.icon,
-                key: ValueKey(currentIconColor),
                 size: widget.size,
-                color: currentIconColor,
+                color: animatedColor ?? currentIconColor,
               ),
             ),
           ),

@@ -16,14 +16,22 @@ class ConversationImporter {
   final ConversationRepository _convRepo;
   final MessageRepository _msgRepo;
   final MessageBlockRepository _blockRepo;
+  final Future<Directory> Function() _temporaryDirectoryResolver;
+  final Future<Directory> Function() _documentsDirectoryResolver;
 
   ConversationImporter({
     required ConversationRepository convRepo,
     required MessageRepository msgRepo,
     required MessageBlockRepository blockRepo,
+    Future<Directory> Function()? temporaryDirectoryResolver,
+    Future<Directory> Function()? documentsDirectoryResolver,
   })  : _convRepo = convRepo,
         _msgRepo = msgRepo,
-        _blockRepo = blockRepo;
+        _blockRepo = blockRepo,
+        _temporaryDirectoryResolver =
+            temporaryDirectoryResolver ?? getTemporaryDirectory,
+        _documentsDirectoryResolver =
+            documentsDirectoryResolver ?? getApplicationDocumentsDirectory;
 
   /// (注释已丢失)
   Future<ImportPreview> preview(File file) async {
@@ -184,7 +192,7 @@ class ConversationImporter {
           .toList();
 
       // 获取应用数据目录
-      final appDir = await getApplicationDocumentsDirectory();
+      final appDir = await _documentsDirectoryResolver();
       final filesDir = Directory(p.join(appDir.path, 'imported_files'));
       await filesDir.create(recursive: true);
 
@@ -246,6 +254,8 @@ class ConversationImporter {
         // (注释已丢失)
         String newConvId;
         final resolution = conflictResolutions[originalId];
+        final messageIdMapping = <String, String>{};
+        final blockIdMapping = <String, String>{};
 
         if (existingConvIds.contains(originalId)) {
           switch (resolution) {
@@ -259,7 +269,11 @@ class ConversationImporter {
             case ImportConflictResolution.replace:
               newConvId = originalId;
               if (resolution == ImportConflictResolution.replace) {
-                // (注释已丢失)
+                final existingMsgs =
+                    await _msgRepo.getAllByConversationOrderedStable(originalId);
+                await _blockRepo.deleteByMessages(
+                  existingMsgs.map((m) => m.id).toList(growable: false),
+                );
                 await _msgRepo.deleteByConversation(originalId);
               }
               break;
@@ -333,17 +347,39 @@ class ConversationImporter {
 
         // 获取已有消息 ID（用于合并模式去重）
         Set<String> existingMsgIds = {};
+        Set<String> existingSourceMsgIds = {};
         if (resolution == ImportConflictResolution.merge) {
-          final existingMsgs = await _msgRepo.getByConversation(newConvId);
+          final existingMsgs =
+              await _msgRepo.getAllByConversationOrderedStable(newConvId);
           existingMsgIds = existingMsgs.map((m) => m.id).toSet();
+          existingSourceMsgIds = existingMsgs
+              .map((m) => m.sourceMessageId)
+              .whereType<String>()
+              .toSet();
+        }
+
+        if (resolution == ImportConflictResolution.createNew) {
+          for (final msg in convMessages) {
+            final oldMsgId = msg['id'] as String;
+            messageIdMapping[oldMsgId] = genId('msg');
+            final blocks = msg['blocks'] as List<dynamic>? ?? const [];
+            for (final block in blocks) {
+              final oldBlockId = block['id'] as String?;
+              if (oldBlockId == null || oldBlockId.isEmpty) continue;
+              blockIdMapping[oldBlockId] = genId('blk');
+            }
+          }
         }
 
         for (final msg in convMessages) {
           final msgId = msg['id'] as String;
+          final sourceMessageId =
+              msg['source_message_id'] as String? ?? msgId;
 
           // 合并模式跳过已存在的消息
           if (resolution == ImportConflictResolution.merge &&
-              existingMsgIds.contains(msgId)) {
+              (existingMsgIds.contains(msgId) ||
+                  existingSourceMsgIds.contains(sourceMessageId))) {
             skipped++;
             continue;
           }
@@ -373,8 +409,31 @@ class ConversationImporter {
             }
           }
 
-          await _importMessage(msg, newConvId, fileMapping);
+          await _importMessage(
+            msg,
+            newConvId,
+            fileMapping,
+            overrideMessageId: messageIdMapping[msgId],
+            messageIdMapping: messageIdMapping,
+            blockIdMapping: blockIdMapping,
+          );
+          existingMsgIds.add(messageIdMapping[msgId] ?? msgId);
+          existingSourceMsgIds.add(sourceMessageId);
           messagesImported++;
+        }
+
+        final lastMessage = await _msgRepo.getLastMessageStable(newConvId);
+        if (lastMessage == null) {
+          await _convRepo.clearSummary(
+            newConvId,
+            DateTime.now().millisecondsSinceEpoch,
+          );
+        } else {
+          await _convRepo.updateSummary(
+            newConvId,
+            lastMessage.content,
+            lastMessage.createdAt,
+          );
         }
       }
 
@@ -402,7 +461,7 @@ class ConversationImporter {
     final bytes = await file.readAsBytes();
     final archive = ZipDecoder().decodeBytes(bytes);
 
-    final tempDir = await getTemporaryDirectory();
+    final tempDir = await _temporaryDirectoryResolver();
     final importDir = Directory(
       p.join(tempDir.path, 'import_${DateTime.now().millisecondsSinceEpoch}'),
     );
@@ -483,8 +542,13 @@ class ConversationImporter {
     Map<String, dynamic> msg,
     String convId,
     Map<String, String> fileMapping,
-  ) async {
-    final msgId = msg['id'] as String;
+    {
+    String? overrideMessageId,
+    Map<String, String> messageIdMapping = const {},
+    Map<String, String> blockIdMapping = const {},
+  }) async {
+    final originalMsgId = msg['id'] as String;
+    final msgId = overrideMessageId ?? originalMsgId;
     final nowMs = DateTime.now().millisecondsSinceEpoch;
 
     await _msgRepo.upsert(MessagesCompanion.insert(
@@ -494,6 +558,8 @@ class ConversationImporter {
       content: msg['content'] as String? ?? '',
       status: Value(msg['status'] as String? ?? 'sent'),
       createdAt: msg['created_at'] as int? ?? nowMs,
+      sourceMessageId:
+          Value(msg['source_message_id'] as String? ?? originalMsgId),
     ));
 
     // 导入 blocks
@@ -513,11 +579,18 @@ class ConversationImporter {
               updatedData[key] = fileMapping[updatedData[key]];
             }
           }
+          final linkedMessageId = updatedData['messageId'] as String?;
+          if (linkedMessageId != null &&
+              messageIdMapping.containsKey(linkedMessageId)) {
+            updatedData['messageId'] = messageIdMapping[linkedMessageId];
+          }
         }
 
         await _blockRepo.upsert(MessageBlocksCompanion.insert(
-          id: block['id'] as String,
+          id: blockIdMapping[block['id'] as String?] ?? block['id'] as String,
           messageId: msgId,
+          sourceBlockId:
+              Value(block['source_block_id'] as String? ?? block['id'] as String?),
           type: block['type'] as String? ?? 'unknown',
           status: Value(block['status'] as String? ?? 'success'),
           sortOrder: Value(block['sort_order'] as int? ?? i),

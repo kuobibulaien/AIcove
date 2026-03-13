@@ -10,18 +10,21 @@ import '../../../../core/utils/avatar_helper.dart';
 import '../../../../core/utils/blurred_background_cache.dart';
 import '../../../../core/utils/data_image.dart';
 import '../../../../features/chat/domain/conversation.dart';
+import '../../../../features/chat/domain/persona_prompt_codec.dart';
 import '../../../../features/chat/presentation/widgets/contact_edit_dialog.dart';
 import '../../../../features/chat/providers2.dart';
+import '../../../../features/plugins/image/image_config.dart';
 import '../../../../features/plugins/plugin_providers.dart';
 import '../../../../ui/features/settings/pages/chat_plugin_settings_page.dart';
 import '../widgets/avatar_name_section.dart';
-import '../widgets/character_image_section.dart';
+
 import '../widgets/character_text_editor_sheet.dart';
 import '../widgets/chat_background_section.dart';
+import '../widgets/drawing_prompt_section.dart';
 import '../widgets/plugin_voice_section.dart';
 import '../widgets/prompt_section.dart';
-import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/widgets/index.dart';
 
 /// 编辑模式枚举
 /// - editTemplate: template/favorite role card edit mode
@@ -57,6 +60,10 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
   late final TextEditingController _nameCtrl;
   late final TextEditingController _descCtrl;
   late final TextEditingController _personaCtrl;
+  late final TextEditingController _customDrawingPromptCtrl;
+  late String _selectedToolPresetName;
+  late bool _followGlobalArtistPreset;
+  String? _selectedArtistPresetName;
   late final TextEditingController _selfAddressCtrl;
   late final TextEditingController _addressUserCtrl;
   late final TextEditingController _avatarCtrl;
@@ -78,6 +85,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
         _nameCtrl,
         _descCtrl,
         _personaCtrl,
+        _customDrawingPromptCtrl,
         _selfAddressCtrl,
         _addressUserCtrl,
         _chatBackgroundCtrl,
@@ -87,10 +95,36 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
   void initState() {
     super.initState();
     final conv = widget.conversation;
+    final personaParts = PersonaPromptCodec.parse(conv.personaPrompt);
+    final imageConfig = ref.read(imagePluginConfigProvider);
+    final fallbackToolPresetName = imageConfig.selectedSystemPromptPresetName ??
+        (imageConfig.systemPromptPresets.isNotEmpty
+            ? imageConfig.systemPromptPresets.first.name
+            : '');
 
     _nameCtrl = TextEditingController(text: conv.displayName);
     _descCtrl = TextEditingController(text: conv.description ?? '');
-    _personaCtrl = TextEditingController(text: conv.personaPrompt);
+    _personaCtrl = TextEditingController(text: personaParts.userPrompt);
+    _customDrawingPromptCtrl = TextEditingController(
+      text: personaParts.customDrawingPrompt,
+    );
+    _selectedToolPresetName = _pickValidToolPresetName(
+          personaParts.drawingToolPresetName,
+          imageConfig,
+        ) ??
+        fallbackToolPresetName;
+    final initialArtistBinding = personaParts.drawingArtistPresetName;
+    if (PersonaPromptCodec.isArtistPresetDisabledBinding(
+        initialArtistBinding)) {
+      _followGlobalArtistPreset = false;
+      _selectedArtistPresetName = null;
+    } else {
+      _selectedArtistPresetName = _pickValidArtistPresetName(
+        initialArtistBinding,
+        imageConfig,
+      );
+      _followGlobalArtistPreset = _selectedArtistPresetName == null;
+    }
     _selfAddressCtrl = TextEditingController(text: conv.selfAddress ?? '');
     _addressUserCtrl = TextEditingController(text: conv.addressUser ?? '');
     _avatarCtrl = TextEditingController(text: conv.avatarUrl ?? '');
@@ -153,6 +187,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     _nameCtrl.dispose();
     _descCtrl.dispose();
     _personaCtrl.dispose();
+    _customDrawingPromptCtrl.dispose();
     _selfAddressCtrl.dispose();
     _addressUserCtrl.dispose();
     _avatarCtrl.dispose();
@@ -211,28 +246,15 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
 
                     const SizedBox(height: 24),
 
-                    // 头像 + 名称
+                    // 立绘 + 名称（合并区域）
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 24),
                       child: AvatarNameSection(
                         nameCtrl: _nameCtrl,
                         avatarCtrl: _avatarCtrl,
                         refImageCtrl: _refImageCtrl,
-                        avatarBytes: _avatarBytes,
-                        onPickAvatar: _pickAvatarImage,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-
-                    // 角色立绘
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: CharacterImageSection(
-                        avatarCtrl: _avatarCtrl,
-                        refImageCtrl: _refImageCtrl,
-                        nameCtrl: _nameCtrl,
-                        onPick: _pickCharacterImage,
-                        onClear: _clearCharacterImage,
+                        onPickCharacterImage: _pickCharacterImage,
+                        onClearCharacterImage: _clearCharacterImage,
                       ),
                     ),
                     const SizedBox(height: 16),
@@ -302,6 +324,49 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
                             onClear: _clearChatBackgroundImage,
                           ),
                         ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // 专属绘图提示（工具提示词预设 + 个性化绘图提示词）
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: DrawingPromptSection(
+                        customDrawingPromptCtrl: _customDrawingPromptCtrl,
+                        followsGlobalArtistPreset: _followGlobalArtistPreset,
+                        selectedToolPresetName: _selectedToolPresetName,
+                        selectedArtistPresetName: _selectedArtistPresetName,
+                        onToolPresetChanged: (name) {
+                          setState(() => _selectedToolPresetName = name);
+                          _scheduleAutoSave();
+                        },
+                        onArtistPresetFollowGlobal: () {
+                          setState(() {
+                            _followGlobalArtistPreset = true;
+                            _selectedArtistPresetName = null;
+                          });
+                          _scheduleAutoSave();
+                        },
+                        onArtistPresetDisable: () {
+                          setState(() {
+                            _followGlobalArtistPreset = false;
+                            _selectedArtistPresetName = null;
+                          });
+                          _scheduleAutoSave();
+                        },
+                        onArtistPresetSelected: (name) {
+                          setState(() {
+                            _followGlobalArtistPreset = false;
+                            _selectedArtistPresetName = name;
+                          });
+                          _scheduleAutoSave();
+                        },
+                        onEdit: () => _openFullScreenEditor(
+                          title: '编辑个性化绘图提示',
+                          controller: _customDrawingPromptCtrl,
+                          hint:
+                              '可在此设定男女主外貌标签优先使用 Danbooru，也可用自然语言描述，以及对生图的要求。\n\n示例：女主纳西妲，danbooru标签"nahida_(genshin_impact)",男主danbooru标签"aether_(genshin_impact)"，默认生图视角为男主第一视角，少数情况使用第三视角出现男主全身。',
+                        ),
                       ),
                     ),
 
@@ -633,7 +698,10 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
 
   // ==================== 图片选择 ====================
 
-  Future<void> _pickAvatarImage() async {
+  /// 上传立绘（两步流程）：
+  /// 1. 选择原图 → 保存为立绘（characterImage）
+  /// 2. 自动弹出裁剪界面 → 裁剪结果保存为头像（avatarUrl）
+  Future<void> _pickCharacterImage() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.image,
       withData: true,
@@ -644,74 +712,48 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     if (file.bytes == null) return;
     final originalBytes = file.bytes!;
 
-    Uint8List finalBytes = originalBytes;
+    // 第一步：原图保存为立绘
+    final characterDataUrl = buildDataImage(originalBytes, fileName: file.name);
+    setState(() {
+      _refImageCtrl.text = characterDataUrl;
+    });
 
-    if (mounted) {
-      final croppedBytes = await Navigator.of(context).push<Uint8List>(
-        PageRouteBuilder(
-          opaque: false,
-          barrierDismissible: false,
-          barrierColor: Colors.black,
-          transitionDuration: kAnim,
-          reverseTransitionDuration: kAnim,
-          pageBuilder: (context, animation, secondaryAnimation) =>
-              ImageCropDialog(
-            imageBytes: originalBytes,
-            fileName: file.name,
-          ),
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            final fadeAnimation =
-                CurvedAnimation(parent: animation, curve: Curves.easeOut);
-            final scaleAnimation =
-                Tween<double>(begin: 0.95, end: 1.0).animate(
-              CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
-            );
-            return FadeTransition(
-              opacity: fadeAnimation,
-              child: ScaleTransition(scale: scaleAnimation, child: child),
-            );
-          },
+    // 第二步：自动打开裁剪界面，裁剪为头像
+    if (!mounted) return;
+    final croppedBytes = await Navigator.of(context).push<Uint8List>(
+      PageRouteBuilder(
+        opaque: false,
+        barrierDismissible: false,
+        barrierColor: Colors.black,
+        transitionDuration: kAnim,
+        reverseTransitionDuration: kAnim,
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            ImageCropDialog(
+          imageBytes: originalBytes,
+          fileName: file.name,
         ),
-      );
-      if (croppedBytes != null) {
-        finalBytes = croppedBytes;
-      } else {
-        return;
-      }
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          final fadeAnimation =
+              CurvedAnimation(parent: animation, curve: Curves.easeOut);
+          final scaleAnimation = Tween<double>(begin: 0.95, end: 1.0).animate(
+            CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+          );
+          return FadeTransition(
+            opacity: fadeAnimation,
+            child: ScaleTransition(scale: scaleAnimation, child: child),
+          );
+        },
+      ),
+    );
+
+    if (croppedBytes != null && mounted) {
+      final avatarDataUrl = buildDataImage(croppedBytes, fileName: file.name);
+      setState(() {
+        _avatarBytes = croppedBytes;
+        _avatarCtrl.text = avatarDataUrl;
+      });
     }
 
-    final avatarDataUrl = buildDataImage(finalBytes, fileName: file.name);
-    final characterDataUrl =
-        buildDataImage(originalBytes, fileName: file.name);
-    final prevAvatar = _avatarCtrl.text.trim();
-    final prevRefImage = _refImageCtrl.text.trim();
-    setState(() {
-      _avatarBytes = finalBytes;
-      _avatarCtrl.text = avatarDataUrl;
-      // 头像上传时，立绘应保存原图而不是裁剪图；
-      // 仅在"立绘未独立设置"时同步，避免覆盖用户单独配置的立绘。
-      if (prevRefImage.isEmpty || prevRefImage == prevAvatar) {
-        _refImageCtrl.text = characterDataUrl;
-      }
-    });
-    _scheduleAutoSave();
-  }
-
-  Future<void> _pickCharacterImage() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
-      withData: true,
-    );
-    if (result == null || result.files.isEmpty) return;
-
-    final file = result.files.first;
-    final bytes = file.bytes;
-    if (bytes == null) return;
-
-    final dataUrl = buildDataImage(bytes, fileName: file.name);
-    setState(() {
-      _refImageCtrl.text = dataUrl;
-    });
     _scheduleAutoSave();
   }
 
@@ -751,6 +793,20 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
 
   // ==================== 保存逻辑 ====================
 
+  String? _pickValidToolPresetName(String? value, ImageConfig config) {
+    final name = value?.trim();
+    if (name == null || name.isEmpty) return null;
+    final exists = config.systemPromptPresets.any((p) => p.name == name);
+    return exists ? name : null;
+  }
+
+  String? _pickValidArtistPresetName(String? value, ImageConfig config) {
+    final name = value?.trim();
+    if (name == null || name.isEmpty) return null;
+    final exists = config.artistPresets.any((p) => p.name == name);
+    return exists ? name : null;
+  }
+
   ContactEditResult _buildEditResult() {
     final name = _nameCtrl.text.trim();
     final avatar =
@@ -770,6 +826,15 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
         : _addressUserCtrl.text.trim();
     final description =
         _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim();
+    final personaPrompt = PersonaPromptCodec.compose(
+      userPrompt: _personaCtrl.text.trim(),
+      customDrawingPrompt: _customDrawingPromptCtrl.text.trim(),
+      drawingToolPresetName: _selectedToolPresetName,
+      drawingArtistPresetName: _followGlobalArtistPreset
+          ? null
+          : (_selectedArtistPresetName ??
+              PersonaPromptCodec.artistPresetDisabledBinding),
+    );
     final voiceFile = (_boundVoiceId == null || _boundVoiceId!.trim().isEmpty)
         ? null
         : _boundVoiceId!.trim();
@@ -784,7 +849,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
       addressUser: addressUser,
       voiceFile: voiceFile,
       description: description,
-      personaPrompt: _personaCtrl.text.trim(),
+      personaPrompt: personaPrompt,
       enabledPlugins: enabledPlugins,
       clearAvatarUrl: avatar == null,
       clearCharacterImage: characterImage == null,

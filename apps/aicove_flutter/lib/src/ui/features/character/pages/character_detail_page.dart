@@ -10,6 +10,7 @@ import '../../../../ui/shared/animations/hero_rect_tweens.dart';
 import '../../../../ui/shared/effects/frosted_glass_card.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../features/chat/domain/conversation.dart';
+import '../../../../features/chat/domain/persona_prompt_codec.dart';
 import 'contact_edit_page.dart';
 import '../../../../features/chat/providers2.dart';
 import '../../../../ui/shared/widgets/moe_toast.dart';
@@ -369,9 +370,11 @@ class _CharacterDetailPageState extends ConsumerState<CharacterDetailPage> {
   /// 信息卡片区域（简介 + 人格设定）
   Widget _buildInfoCard(BuildContext context, Conversation conversation) {
     final colors = context.moeColors;
+    final personaText =
+        PersonaPromptCodec.parse(conversation.personaPrompt).userPrompt;
     final hasDescription = conversation.description != null &&
         conversation.description!.isNotEmpty;
-    final hasPersona = conversation.personaPrompt.isNotEmpty;
+    final hasPersona = personaText.isNotEmpty;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -415,7 +418,7 @@ class _CharacterDetailPageState extends ConsumerState<CharacterDetailPage> {
                   child: Text(
                     hasDescription
                         ? conversation.description!
-                        : (hasPersona ? conversation.personaPrompt : '暂无简介'),
+                        : (hasPersona ? personaText : '暂无简介'),
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: MoeFontWeights.normal,
@@ -452,7 +455,7 @@ class _CharacterDetailPageState extends ConsumerState<CharacterDetailPage> {
             FrostedGlassContainer(
               padding: const EdgeInsets.all(16),
               child: Text(
-                conversation.personaPrompt,
+                personaText,
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: MoeFontWeights.normal,

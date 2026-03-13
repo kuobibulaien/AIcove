@@ -13,6 +13,9 @@ import '../../../core/api/providers/provider_adapter_factory.dart';
 import '../../../core/api_logger.dart';
 import '../../../core/app_logger.dart';
 import '../../settings/settings_models.dart';
+import '../../observability/trace_models.dart';
+import '../../observability/trace_store.dart';
+import 'chat_request_message_builder.dart';
 import 'chat_tool_fallback_parser.dart';
 import 'chat_types.dart';
 import 'stream_monitor_service.dart';
@@ -33,6 +36,7 @@ class ChatSendApiRunner {
   static const ChatToolFallbackParser _fallbackParser =
       ChatToolFallbackParser();
   static const String _logTag = 'ChatSendService';
+  static const int _maxFastFollowupRounds = 1;
   static AgentApiClient _defaultAgentClientFactory(Duration timeout) =>
       AgentApiClient(timeout: timeout);
 
@@ -52,11 +56,10 @@ class ChatSendApiRunner {
     void Function()? onStreamTextReset,
     void Function()? onStreamToolCallObserved,
     void Function()? onStreamingFallback,
+    TraceContext? traceContext,
   }) async {
     final flowSettings = config.settings.callFlowSettings;
-    final isFastMode = flowSettings.mode == CallFlowMode.fast;
-    // fast 模式下允许“工具接单后补一轮文本回复”。
-    final effectiveMaxRounds = isFastMode ? 2 : maxRounds;
+    final fastModeEnabled = flowSettings.mode == CallFlowMode.fast;
     final modelTimeout = Duration(seconds: flowSettings.modelTimeoutSeconds);
     final toolTimeout = Duration(seconds: flowSettings.toolTimeoutSeconds);
     final supportsVision = config.settings.hasChatModelCapability(
@@ -71,7 +74,8 @@ class ChatSendApiRunner {
       'model': config.modelFullId,
       'history': config.messages.length,
       'mode': flowSettings.mode.value,
-      'maxRounds': effectiveMaxRounds,
+      'maxRounds': maxRounds,
+      'fastFollowupBudget': fastModeEnabled ? _maxFastFollowupRounds : 0,
       'modelTimeoutSec': flowSettings.modelTimeoutSeconds,
       'toolTimeoutSec': flowSettings.toolTimeoutSeconds,
     });
@@ -89,7 +93,10 @@ class ChatSendApiRunner {
     if (idx > 0) {
       provider = config.modelFullId.substring(0, idx);
     }
-    final adapter = ProviderAdapterFactory.getAdapter(provider);
+    final adapter = ProviderAdapterFactory.getAdapter(
+      provider,
+      customConfig: config.customConfig,
+    );
     const supportsTextToolFallback = true;
 
     var currentMessages = List<Map<String, dynamic>>.from(config.messages);
@@ -99,6 +106,8 @@ class ChatSendApiRunner {
     var executedAnyTool = false;
     var lastRoundIndex = 1;
     final preToolNarrativeTexts = <String>[];
+    var remainingFastFollowupRounds =
+        fastModeEnabled ? _maxFastFollowupRounds : 0;
 
     final allToolCalls = <ToolCall>[];
     final allRawToolResults = <ToolResult>[];
@@ -106,12 +115,40 @@ class ChatSendApiRunner {
     Future<_ToolExecutionOutcome> executeToolCall(
       ToolCall tc, {
       required int round,
+      required bool useFastToolRoute,
     }) async {
+      final startedAt = DateTime.now();
+      if (traceContext != null) {
+        await TraceStore.instance.record(
+          traceId: traceContext.traceId,
+          sessionId: traceContext.sessionId,
+          turnId: traceContext.turnId,
+          roundIndex: round,
+          stage: TraceStage.toolExecStarted,
+          status: TraceEventStatus.running,
+          source: 'ChatSendApiRunner',
+          startedAt: startedAt,
+          endedAt: startedAt,
+          durationMs: 0,
+          meta: {
+            'toolName': tc.name,
+            'toolCallId': tc.id,
+          },
+        );
+      }
+
+      var finishedStatus = TraceEventStatus.success;
+      var finishMeta = <String, dynamic>{
+        'toolName': tc.name,
+        'toolCallId': tc.id,
+      };
       try {
         final tool = _findToolByName(effectivePlugins, tc.name);
         if (tool == null) {
           AppLogger.warning(_logTag, 'Tool not found',
               metadata: {'name': tc.name});
+          finishedStatus = TraceEventStatus.failed;
+          finishMeta['error'] = 'tool_not_found';
           return _ToolExecutionOutcome(
             toolResult: ToolResult(
               toolCallId: tc.id,
@@ -125,10 +162,12 @@ class ChatSendApiRunner {
         final executionArgs = _buildToolArgumentsForExecution(
           toolName: tc.name,
           originalArguments: tc.arguments,
-          isFastMode: isFastMode,
+          useFastToolRoute: useFastToolRoute,
           flowMode: flowSettings.mode.value,
           sessionId: sessionId,
           turnId: effectiveTurnId,
+          roleToolPresetName: config.boundImageToolPresetName,
+          roleArtistPresetName: config.boundImageArtistPresetName,
         );
         AppLogger.info(_logTag, '执行工具调用', metadata: {
           'round': round,
@@ -138,6 +177,7 @@ class ChatSendApiRunner {
 
         final result = await tool.handler(executionArgs).timeout(toolTimeout);
         final resultStr = result ?? '';
+        finishMeta['rawResultLength'] = resultStr.length;
         AppLogger.info(_logTag, '工具调用完成', metadata: {
           'name': tc.name,
           'result': resultStr,
@@ -152,6 +192,7 @@ class ChatSendApiRunner {
             final text = parsed['text'] as String? ?? '';
             if (success && audioUrl != null && audioUrl.isNotEmpty) {
               audioResult = ToolAudioResult(audioUrl: audioUrl, text: text);
+              finishMeta['audioProduced'] = true;
               AppLogger.info(_logTag, '收集到 speak 工具音频', metadata: {
                 'audioUrlLength': audioUrl.length,
                 'text': text,
@@ -176,6 +217,8 @@ class ChatSendApiRunner {
         if (tc.name == 'draw_image') {
           final asyncAccepted = _isAsyncDrawImageAccepted(resultStr);
           final imageContents = _extractToolImageContents(resultStr);
+          finishMeta['imageCount'] = imageContents.length;
+          finishMeta['asyncAccepted'] = asyncAccepted;
           if (imageContents.isNotEmpty) {
             AppLogger.info(_logTag, 'Collected draw_image tool images',
                 metadata: {
@@ -207,6 +250,8 @@ class ChatSendApiRunner {
           ),
         );
       } on TimeoutException {
+        finishedStatus = TraceEventStatus.failed;
+        finishMeta['error'] = 'timeout';
         AppLogger.warning(_logTag, '工具调用超时', metadata: {
           'name': tc.name,
           'timeoutSec': flowSettings.toolTimeoutSeconds,
@@ -224,6 +269,8 @@ class ChatSendApiRunner {
           ),
         );
       } catch (e) {
+        finishedStatus = TraceEventStatus.failed;
+        finishMeta['error'] = e.toString();
         AppLogger.error(_logTag, '工具调用失败', metadata: {
           'name': tc.name,
           'error': e.toString(),
@@ -235,6 +282,23 @@ class ChatSendApiRunner {
             result: jsonEncode({'error': e.toString()}),
           ),
         );
+      } finally {
+        if (traceContext != null) {
+          final endedAt = DateTime.now();
+          await TraceStore.instance.record(
+            traceId: traceContext.traceId,
+            sessionId: traceContext.sessionId,
+            turnId: traceContext.turnId,
+            roundIndex: round,
+            stage: TraceStage.toolExecFinished,
+            status: finishedStatus,
+            source: 'ChatSendApiRunner',
+            startedAt: startedAt,
+            endedAt: endedAt,
+            durationMs: endedAt.difference(startedAt).inMilliseconds,
+            meta: finishMeta,
+          );
+        }
       }
     }
 
@@ -249,7 +313,7 @@ class ChatSendApiRunner {
       }
     }
 
-    for (var round = 1; round <= effectiveMaxRounds; round++) {
+    for (var round = 1; round <= maxRounds; round++) {
       if (!supportsVision) {
         currentMessages = _sanitizeMessagesForNonVisionModel(currentMessages);
       }
@@ -279,6 +343,7 @@ class ChatSendApiRunner {
             trace: roundTrace,
             turnId: effectiveTurnId,
             roundIndex: round,
+            traceId: traceContext?.traceId,
           );
 
       if (shouldAttemptStreaming) {
@@ -306,6 +371,7 @@ class ChatSendApiRunner {
             trace: roundTrace,
             turnId: effectiveTurnId,
             roundIndex: round,
+            traceId: traceContext?.traceId,
           );
           unawaited(StreamMonitorService.recordSuccess(
             modelFullId: config.modelFullId,
@@ -371,8 +437,35 @@ class ChatSendApiRunner {
         }
       }
       if (currentToolCalls.isEmpty) {
+        if (traceContext != null) {
+          await TraceStore.instance.record(
+            traceId: traceContext.traceId,
+            sessionId: traceContext.sessionId,
+            turnId: traceContext.turnId,
+            roundIndex: round,
+            stage: TraceStage.roundCompleted,
+            source: 'ChatSendApiRunner',
+            meta: {'toolCalls': 0, 'hasToolExecution': false},
+          );
+        }
         roundTrace?.end(additionalMessage: 'no tool call, stop');
         break;
+      }
+
+      if (traceContext != null) {
+        await TraceStore.instance.record(
+          traceId: traceContext.traceId,
+          sessionId: traceContext.sessionId,
+          turnId: traceContext.turnId,
+          roundIndex: round,
+          stage: TraceStage.toolCallDetected,
+          source: 'ChatSendApiRunner',
+          meta: {
+            'count': currentToolCalls.length,
+            'names': currentToolCalls.map((t) => t.name).toList(),
+            'fallbackParsed': usesFallbackToolCalls,
+          },
+        );
       }
 
       final roundNarrativeText = _normalizeRoundNarrativeText(lastRich.text);
@@ -383,18 +476,34 @@ class ChatSendApiRunner {
 
       onStreamToolCallObserved?.call();
 
+      final useFastToolRoute = _shouldUseFastToolRoute(
+        fastModeEnabled: fastModeEnabled,
+        toolCalls: currentToolCalls,
+      );
+      if (fastModeEnabled && !useFastToolRoute) {
+        AppLogger.info(_logTag, '快速模式回落稳定路由', metadata: {
+          'round': round,
+          'toolNames': currentToolCalls.map((t) => t.name).toList(),
+        });
+      }
+
       final toolTrace = roundTrace?.startChild('执行工具调用');
       toolTrace?.note('工具', metadata: {
         'count': currentToolCalls.length,
         'names': currentToolCalls.map((t) => t.name).toList(),
-        'parallel': isFastMode,
+        'parallel': useFastToolRoute,
       });
 
       final toolResults = <ToolResult>[];
       final toolOutcomes = <_ToolExecutionOutcome>[];
-      if (isFastMode) {
+      if (useFastToolRoute) {
         final outcomes = await Future.wait([
-          for (final tc in currentToolCalls) executeToolCall(tc, round: round),
+          for (final tc in currentToolCalls)
+            executeToolCall(
+              tc,
+              round: round,
+              useFastToolRoute: useFastToolRoute,
+            ),
         ]);
         toolOutcomes.addAll(outcomes);
         for (final outcome in outcomes) {
@@ -402,7 +511,11 @@ class ChatSendApiRunner {
         }
       } else {
         for (final tc in currentToolCalls) {
-          final outcome = await executeToolCall(tc, round: round);
+          final outcome = await executeToolCall(
+            tc,
+            round: round,
+            useFastToolRoute: useFastToolRoute,
+          );
           toolOutcomes.add(outcome);
           collectToolOutcome(outcome, toolResults);
         }
@@ -411,6 +524,39 @@ class ChatSendApiRunner {
       executedAnyTool = true;
       allToolCalls.addAll(currentToolCalls);
       allRawToolResults.addAll(toolResults);
+      final encodedToolCalls = _encodeToolCallsForLog(currentToolCalls);
+      final encodedToolResults = _encodeToolResultsForLog(toolResults);
+      Map<String, dynamic>? toolPayloadRef;
+      int? toolEventSeq;
+      if (traceContext != null) {
+        toolPayloadRef = await TraceStore.instance.writePayload(
+          traceId: traceContext.traceId,
+          sessionId: traceContext.sessionId,
+          turnId: traceContext.turnId,
+          roundIndex: round,
+          stage: TraceStage.toolExecFinished.value,
+          source: 'ChatSendApiRunner',
+          payload: {
+            'rawToolCalls': encodedToolCalls,
+            'rawToolResults': encodedToolResults,
+          },
+        );
+        final toolTraceEvent = await TraceStore.instance.record(
+          traceId: traceContext.traceId,
+          sessionId: traceContext.sessionId,
+          turnId: traceContext.turnId,
+          roundIndex: round,
+          stage: TraceStage.toolExecFinished,
+          source: 'ChatSendApiRunner',
+          payloadRef: toolPayloadRef,
+          meta: {
+            'toolCalls': currentToolCalls.length,
+            'toolResults': toolResults.length,
+            'aggregated': true,
+          },
+        );
+        toolEventSeq = toolTraceEvent.eventSeq;
+      }
       ApiLogger.add(ApiLogEntry(
         time: DateTime.now(),
         method: 'TOOL',
@@ -424,19 +570,43 @@ class ChatSendApiRunner {
         turnId: effectiveTurnId,
         roundIndex: round,
         eventType: 'tool_execution',
-        rawToolCalls: _encodeToolCallsForLog(currentToolCalls),
-        rawToolResults: _encodeToolResultsForLog(toolResults),
+        rawToolCalls: encodedToolCalls,
+        rawToolResults: encodedToolResults,
+        stage: TraceStage.toolExecFinished.value,
+        stageStatus: TraceEventStatus.success.value,
+        source: 'ChatSendApiRunner',
+        eventSeq: toolEventSeq,
+        payloadRef: toolPayloadRef,
       ));
-
-      final shouldContinueFastFollowup =
-          isFastMode && toolOutcomes.any((o) => o.isAsyncAcceptedDrawImage);
-      if (shouldContinueFastFollowup) {
-        // 第一轮里的“我去画图了”之类前置话术不保留，第二轮重新流式正文。
-        preToolNarrativeTexts.clear();
-        onStreamTextReset?.call();
+      if (traceContext != null) {
+        await TraceStore.instance.record(
+          traceId: traceContext.traceId,
+          sessionId: traceContext.sessionId,
+          turnId: traceContext.turnId,
+          roundIndex: round,
+          stage: TraceStage.roundCompleted,
+          source: 'ChatSendApiRunner',
+          meta: {
+            'toolCalls': currentToolCalls.length,
+            'toolResults': toolResults.length,
+            'hasToolExecution': true,
+          },
+        );
       }
 
-      if (isFastMode && !shouldContinueFastFollowup) {
+      final shouldContinueFastFollowup = useFastToolRoute &&
+          toolOutcomes.any((o) => o.isAsyncAcceptedDrawImage);
+      if (shouldContinueFastFollowup) {
+        // 第一轮里的“我去画图了”之类前置话术不保留，第二轮重新流式正文。
+        final hasAsyncAcceptedDrawImage =
+            toolOutcomes.any((o) => o.isAsyncAcceptedDrawImage);
+        if (hasAsyncAcceptedDrawImage) {
+          preToolNarrativeTexts.clear();
+          onStreamTextReset?.call();
+        }
+      }
+
+      if (useFastToolRoute && !shouldContinueFastFollowup) {
         AppLogger.info(_logTag, '快速模式停止后续模型轮次', metadata: {
           'round': round,
         });
@@ -444,27 +614,39 @@ class ChatSendApiRunner {
         break;
       }
 
-      if (round == effectiveMaxRounds) {
-        if (isFastMode) {
+      if (round == maxRounds) {
+        if (useFastToolRoute && shouldContinueFastFollowup) {
           AppLogger.info(_logTag, '快速模式达到补充轮次上限', metadata: {
             'round': round,
-            'maxRounds': effectiveMaxRounds,
+            'maxRounds': maxRounds,
           });
           roundTrace?.end(additionalMessage: 'fast follow-up max round');
         } else {
           AppLogger.warning(_logTag, '达到最大回合数',
-              metadata: {'maxRounds': effectiveMaxRounds});
+              metadata: {'maxRounds': maxRounds});
           roundTrace?.end(additionalMessage: '达到最大回合数');
         }
         break;
       }
 
+      if (shouldContinueFastFollowup) {
+        if (remainingFastFollowupRounds <= 0) {
+          AppLogger.info(_logTag, '快速模式达到补充轮次上限', metadata: {
+            'round': round,
+            'maxRounds': _maxFastFollowupRounds + 1,
+          });
+          roundTrace?.end(additionalMessage: 'fast follow-up max round');
+          break;
+        }
+        remainingFastFollowupRounds -= 1;
+      }
+
       final assistantMessage = usesFallbackToolCalls
           ? _buildFallbackAssistantMessageForToolCalls(
               currentToolCalls,
-              provider,
+              adapter.name,
             )
-          : _buildAssistantMessageFromRich(lastRich, provider);
+          : _buildAssistantMessageFromRich(lastRich, adapter.name);
       final toolResultMessages = adapter.buildToolResultMessages(
         assistantMessage: assistantMessage,
         toolResults: toolResults,
@@ -532,6 +714,36 @@ class ChatSendApiRunner {
       'events': pluginResult.events.length,
     });
     pluginTrace?.end();
+    Map<String, dynamic>? finalPayloadRef;
+    int? finalEventSeq;
+    if (traceContext != null) {
+      finalPayloadRef = await TraceStore.instance.writePayload(
+        traceId: traceContext.traceId,
+        sessionId: traceContext.sessionId,
+        turnId: traceContext.turnId,
+        roundIndex: lastRoundIndex,
+        stage: TraceStage.finalReplyReady.value,
+        source: 'ChatSendApiRunner',
+        payload: {
+          'rawAiResponse': finalAssistantText,
+          'finalReply': pluginResult.processedText,
+        },
+      );
+      final traceEvent = await TraceStore.instance.record(
+        traceId: traceContext.traceId,
+        sessionId: traceContext.sessionId,
+        turnId: traceContext.turnId,
+        roundIndex: lastRoundIndex,
+        stage: TraceStage.finalReplyReady,
+        source: 'ChatSendApiRunner',
+        payloadRef: finalPayloadRef,
+        meta: {
+          'rawReplyLength': finalAssistantText.length,
+          'finalReplyLength': pluginResult.processedText.length,
+        },
+      );
+      finalEventSeq = traceEvent.eventSeq;
+    }
     ApiLogger.add(ApiLogEntry(
       time: DateTime.now(),
       method: 'DELIVER',
@@ -547,6 +759,11 @@ class ChatSendApiRunner {
       eventType: 'final_response',
       rawAiResponse: finalAssistantText,
       finalReply: pluginResult.processedText,
+      stage: TraceStage.finalReplyReady.value,
+      stageStatus: TraceEventStatus.success.value,
+      source: 'ChatSendApiRunner',
+      eventSeq: finalEventSeq,
+      payloadRef: finalPayloadRef,
     ));
 
     final allEvents = [...allToolEvents, ...pluginResult.events];
@@ -743,10 +960,12 @@ class ChatSendApiRunner {
   Map<String, dynamic> _buildToolArgumentsForExecution({
     required String toolName,
     required Map<String, dynamic> originalArguments,
-    required bool isFastMode,
+    required bool useFastToolRoute,
     required String flowMode,
     required String sessionId,
     required String turnId,
+    required String? roleToolPresetName,
+    required String? roleArtistPresetName,
   }) {
     if (toolName != 'draw_image') {
       return originalArguments;
@@ -755,10 +974,27 @@ class ChatSendApiRunner {
     args['_aicove_flow_mode'] = flowMode;
     args['_aicove_session_id'] = sessionId;
     args['_aicove_turn_id'] = turnId;
-    if (isFastMode) {
+    if (useFastToolRoute) {
       args['_aicove_async'] = true;
     }
+    if (roleToolPresetName != null && roleToolPresetName.trim().isNotEmpty) {
+      args['_aicove_role_tool_preset_name'] = roleToolPresetName.trim();
+    }
+    if (roleArtistPresetName != null &&
+        roleArtistPresetName.trim().isNotEmpty) {
+      args['_aicove_role_artist_preset_name'] = roleArtistPresetName.trim();
+    }
     return args;
+  }
+
+  bool _shouldUseFastToolRoute({
+    required bool fastModeEnabled,
+    required List<ToolCall> toolCalls,
+  }) {
+    if (!fastModeEnabled || toolCalls.isEmpty) {
+      return false;
+    }
+    return toolCalls.every((call) => call.name == 'draw_image');
   }
 
   bool _isAsyncDrawImageAccepted(String rawResult) {
@@ -795,6 +1031,12 @@ class ChatSendApiRunner {
     }
 
     final summary = <String, dynamic>{};
+    void copyTrimmedString(String key, {String? toKey}) {
+      final value = payload[key]?.toString().trim();
+      if (value == null || value.isEmpty) return;
+      summary[toKey ?? key] = value;
+    }
+
     final success = payload['success'];
     if (success is bool) {
       summary['success'] = success;
@@ -843,6 +1085,24 @@ class ChatSendApiRunner {
     }
     summary['image_count'] = imageCount;
 
+    final prompt = payload['prompt']?.toString().trim();
+    if (prompt != null && prompt.isNotEmpty) {
+      summary['prompt'] = prompt;
+    }
+    copyTrimmedString('raw_prompt');
+    copyTrimmedString('negative_prompt');
+    copyTrimmedString('artist_preset_name');
+    copyTrimmedString('artist_preset_source');
+    copyTrimmedString('artist_prompt_prefix');
+    copyTrimmedString('artist_negative_prompt');
+
+    if (imageCount > 0) {
+      summary['image_present'] = true;
+      summary['delivered_to_chat'] = true;
+    } else if (accepted == true) {
+      summary['image_delivery_pending'] = true;
+    }
+
     final message = payload['message']?.toString().trim();
     if (message != null && message.isNotEmpty) {
       summary['message'] = message;
@@ -871,6 +1131,14 @@ class ChatSendApiRunner {
       RegExp(r'\[(图片|image)\s*:\s*[^\]]*?\]', caseSensitive: false),
       (_) => '[图片]',
     );
+
+    cleaned = cleaned.replaceAll(
+      RegExp(
+        '${RegExp.escape(ChatRequestMessageBuilder.nonVisionImageContextPrefix)}\\{[^\\r\\n]*\\}(?:\\r?\\n)?',
+      ),
+      '',
+    );
+    cleaned = cleaned.replaceAll(RegExp(r'\n{3,}'), '\n\n');
 
     return cleaned.trim();
   }
@@ -988,9 +1256,9 @@ class ChatSendApiRunner {
 
   Map<String, dynamic> _buildFallbackAssistantMessageForToolCalls(
     List<ToolCall> toolCalls,
-    String provider,
+    String adapterName,
   ) {
-    if (!ProviderAdapterFactory.isOpenAICompatible(provider)) {
+    if (adapterName != 'openai') {
       return <String, dynamic>{'content': ''};
     }
     return <String, dynamic>{
@@ -1012,8 +1280,8 @@ class ChatSendApiRunner {
   }
 
   Map<String, dynamic> _buildAssistantMessageFromRich(
-      SendMessageRichResult rich, String provider) {
-    switch (provider) {
+      SendMessageRichResult rich, String adapterName) {
+    switch (adapterName) {
       case 'claude':
       case 'anthropic':
         return rich.rawResponse ?? {'content': []};

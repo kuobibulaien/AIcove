@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../../core/app_logger.dart';
 import '../providers2.dart';
+import '../services/chat_history_store.dart';
 import 'auto_reply_trigger.dart';
 import 'auto_reply_trigger_storage.dart';
 import 'background_service.dart';
@@ -57,20 +58,8 @@ class AutoReplyTriggerController
       AppLogger.warning('AutoReplyTrigger', 'Skip creating manual trigger: no conversation bound');
       return;
     }
-    final conversations = ref.read(conversationsProvider).valueOrNull ?? [];
-    final conv = conversations.where((c) => c.id == convId).firstOrNull;
-
-    String? lastUserMsgId;
-    DateTime? lastUserMsgAt;
-    if (conv != null) {
-      for (final m in conv.messages.reversed) {
-        if (m.role == 'user') {
-          lastUserMsgId = m.id;
-          lastUserMsgAt = m.createdAt;
-          break;
-        }
-      }
-    }
+    final lastUserMessage =
+        await ref.read(chatHistoryStoreProvider).getLastUserMessage(convId);
 
     final trigger = AutoReplyTrigger(
       id: _uuid.v4(),
@@ -88,8 +77,8 @@ class AutoReplyTriggerController
       priority: priority,
       conversationId: convId,
       source: TriggerSource.userManual,
-      contextLastUserMessageId: lastUserMsgId,
-      contextLastUserMessageAt: lastUserMsgAt,
+      contextLastUserMessageId: lastUserMessage?.id,
+      contextLastUserMessageAt: lastUserMessage?.createdAt,
     );
     final current = state.valueOrNull ?? const <AutoReplyTrigger>[];
     final updated = [...current, trigger];
@@ -393,15 +382,10 @@ class AutoReplyTriggerController
     }
 
     // 3. 获取当前会话中最后一条用户消息
-    String? currentLastUserMsgId;
-    DateTime? currentLastUserMsgAt;
-    for (final m in conv.messages.reversed) {
-      if (m.role == 'user') {
-        currentLastUserMsgId = m.id;
-        currentLastUserMsgAt = m.createdAt;
-        break;
-      }
-    }
+    final lastUserMessage =
+        await ref.read(chatHistoryStoreProvider).getLastUserMessage(targetConvId);
+    final currentLastUserMsgId = lastUserMessage?.id;
+    final currentLastUserMsgAt = lastUserMessage?.createdAt;
 
     // 4. 判断用户是否正在聊天界面
     final isChatActive = activeChatId == targetConvId;

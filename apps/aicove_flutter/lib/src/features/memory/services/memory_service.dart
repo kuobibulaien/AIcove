@@ -15,6 +15,69 @@ import 'memory_compressor_service.dart';
 import 'memory_merger_service.dart';
 import 'profile_service.dart';
 
+List<Map<String, String?>> parseMemorySummaryItemsForTest(String raw) {
+  final parsed = _parseSummaryPayload(raw);
+  return [
+    for (final item in parsed.items)
+      <String, String?>{
+        'fact': item.fact,
+        'category': item.category,
+        'targetLayer': item.targetLayer,
+      }
+  ];
+}
+
+String? resolveMemoryTargetLayerForTest({
+  String? preferredLayer,
+  required String category,
+  required int totalMessages,
+  required double avgUserChars,
+}) {
+  return _resolveTargetLayer(
+    preferredLayer: preferredLayer,
+    category: category,
+    quality: _ConversationQuality(
+      totalMessages: totalMessages,
+      userMessages: totalMessages,
+      avgUserChars: avgUserChars,
+    ),
+  );
+}
+
+String? _resolveTargetLayer({
+  required String? preferredLayer,
+  required String category,
+  required _ConversationQuality quality,
+}) {
+  final explicitLayer = _normalizeTargetLayer(preferredLayer);
+  if (explicitLayer != null) {
+    return explicitLayer;
+  }
+  return _routeLayerByRules(category: category, quality: quality);
+}
+
+String? _routeLayerByRules({
+  required String category,
+  required _ConversationQuality quality,
+}) {
+  if (category == 'core_preference' ||
+      category == 'identity_fact' ||
+      category == 'emotional_event') {
+    return 'L2';
+  }
+  if (category == 'ongoing_plan') {
+    return (quality.totalMessages >= 8 || quality.avgUserChars >= 25)
+        ? 'L2'
+        : 'L3';
+  }
+  if (category == 'temporary_state') return 'L3';
+  if (category == 'daily_chatter') {
+    if (quality.totalMessages <= 3 && quality.avgUserChars < 15) return null;
+    return 'L4';
+  }
+  return 'L4';
+}
+
 class ResolvedModelConfig {
   final String apiKey;
   final String baseUrl;
@@ -144,7 +207,11 @@ class MemoryService {
 
     for (final item in parsed.items) {
       final category = _normalizeCategory(item.category);
-      final targetLayer = _routeLayer(category: category, quality: quality);
+      final targetLayer = _resolveTargetLayer(
+        preferredLayer: item.targetLayer,
+        category: category,
+        quality: quality,
+      );
       if (targetLayer == null) continue;
 
       var content = _formatByLayer(
@@ -469,64 +536,7 @@ class MemoryService {
     final raw = await _callSummarizeLLM(prompt);
     if (raw == null || raw.trim().isEmpty)
       return const _ParsedSummary(items: []);
-
-    final jsonPart = _extractJsonBlock(raw);
-    if (jsonPart == null) {
-      // fallback: plain-text lines as L3 candidates
-      final lines = LineSplitter.split(raw)
-          .map((e) => e.trim())
-          .where((e) => e.isNotEmpty)
-          .toList();
-      return _ParsedSummary(
-        items: lines
-            .take(8)
-            .map((e) => _SummaryItem(fact: e, category: 'daily_chatter'))
-            .toList(),
-      );
-    }
-
-    try {
-      final data = jsonDecode(jsonPart) as Map<String, dynamic>;
-      final itemsJson = (data['items'] as List?) ?? const [];
-      final items = <_SummaryItem>[];
-      for (final rawItem in itemsJson) {
-        if (rawItem is! Map<String, dynamic>) continue;
-        final fact = (rawItem['fact'] as String?)?.trim() ?? '';
-        if (fact.isEmpty) continue;
-        items.add(
-          _SummaryItem(
-            fact: fact,
-            category:
-                (rawItem['category'] as String?)?.trim() ?? 'daily_chatter',
-            targetLayer: (rawItem['target_layer'] as String?)?.trim(),
-            chatProcess: (rawItem['chat_process'] as String?)?.trim(),
-            emotion: (rawItem['emotion'] as String?)?.trim(),
-            personalityInsight:
-                (rawItem['personality_insight'] as String?)?.trim(),
-            aiStrategy: (rawItem['ai_strategy'] as String?)?.trim(),
-          ),
-        );
-      }
-
-      String? trait;
-      String? evidence;
-      final profile = data['profile_suggestion'];
-      if (profile is Map<String, dynamic>) {
-        final t = (profile['trait'] as String?)?.trim();
-        if (t != null && t.isNotEmpty && t.toLowerCase() != 'null') {
-          trait = t;
-          evidence = (profile['evidence'] as String?)?.trim();
-        }
-      }
-
-      return _ParsedSummary(
-        items: items,
-        profileSuggestionTrait: trait,
-        profileSuggestionEvidence: evidence,
-      );
-    } catch (_) {
-      return const _ParsedSummary(items: []);
-    }
+    return _parseSummaryPayload(raw);
   }
 
   String _buildSummaryPrompt(List<chat.Message> messages) {
@@ -563,16 +573,6 @@ class MemoryService {
     }
   }
 
-  String? _extractJsonBlock(String raw) {
-    final fence = RegExp(r'```(?:json)?\s*([\s\S]*?)```', multiLine: true)
-        .firstMatch(raw);
-    final candidate = fence?.group(1) ?? raw;
-    final start = candidate.indexOf('{');
-    final end = candidate.lastIndexOf('}');
-    if (start < 0 || end <= start) return null;
-    return candidate.substring(start, end + 1);
-  }
-
   _ConversationQuality _conversationQuality(List<chat.Message> messages) {
     final userMsgs = messages.where((m) => m.role == 'user').toList();
     final avgLen = userMsgs.isEmpty
@@ -597,28 +597,6 @@ class MemoryService {
       'daily_chatter',
     };
     return allowed.contains(c) ? c : 'daily_chatter';
-  }
-
-  String? _routeLayer({
-    required String category,
-    required _ConversationQuality quality,
-  }) {
-    if (category == 'core_preference' ||
-        category == 'identity_fact' ||
-        category == 'emotional_event') {
-      return 'L2';
-    }
-    if (category == 'ongoing_plan') {
-      return (quality.totalMessages >= 8 || quality.avgUserChars >= 25)
-          ? 'L2'
-          : 'L3';
-    }
-    if (category == 'temporary_state') return 'L3';
-    if (category == 'daily_chatter') {
-      if (quality.totalMessages <= 3 && quality.avgUserChars < 15) return null;
-      return 'L4';
-    }
-    return 'L4';
   }
 
   String _formatByLayer({
@@ -707,6 +685,90 @@ class MemoryService {
   String _nowYmd() => _dateKey(DateTime.now());
   String _sha256(String input) => sha256.convert(utf8.encode(input)).toString();
   String _sha1(String input) => sha1.convert(utf8.encode(input)).toString();
+}
+
+_ParsedSummary _parseSummaryPayload(String raw) {
+  final jsonPart = _extractJsonBlock(raw);
+  if (jsonPart == null) {
+    return _parsePlainTextSummary(raw);
+  }
+
+  try {
+    final data = jsonDecode(jsonPart) as Map<String, dynamic>;
+    final itemsJson = (data['items'] as List?) ?? const [];
+    final items = <_SummaryItem>[];
+    for (final rawItem in itemsJson) {
+      if (rawItem is! Map<String, dynamic>) continue;
+      final fact = (rawItem['fact'] as String?)?.trim() ?? '';
+      if (fact.isEmpty) continue;
+      items.add(
+        _SummaryItem(
+          fact: fact,
+          category: (rawItem['category'] as String?)?.trim() ?? 'daily_chatter',
+          targetLayer: (rawItem['target_layer'] as String?)?.trim(),
+          chatProcess: (rawItem['chat_process'] as String?)?.trim(),
+          emotion: (rawItem['emotion'] as String?)?.trim(),
+          personalityInsight:
+              (rawItem['personality_insight'] as String?)?.trim(),
+          aiStrategy: (rawItem['ai_strategy'] as String?)?.trim(),
+        ),
+      );
+    }
+
+    String? trait;
+    String? evidence;
+    final profile = data['profile_suggestion'];
+    if (profile is Map<String, dynamic>) {
+      final t = (profile['trait'] as String?)?.trim();
+      if (t != null && t.isNotEmpty && t.toLowerCase() != 'null') {
+        trait = t;
+        evidence = (profile['evidence'] as String?)?.trim();
+      }
+    }
+
+    return _ParsedSummary(
+      items: items,
+      profileSuggestionTrait: trait,
+      profileSuggestionEvidence: evidence,
+    );
+  } catch (_) {
+    return _parsePlainTextSummary(raw);
+  }
+}
+
+_ParsedSummary _parsePlainTextSummary(String raw) {
+  final lines = LineSplitter.split(raw)
+      .map((e) => e.replaceFirst(RegExp(r'^[\s\-*•\d\.\)\(]+'), '').trim())
+      .where((e) => e.isNotEmpty)
+      .toList();
+  return _ParsedSummary(
+    items: lines
+        .take(8)
+        .map(
+          (e) => _SummaryItem(
+            fact: e,
+            category: 'daily_chatter',
+            targetLayer: 'L3',
+          ),
+        )
+        .toList(),
+  );
+}
+
+String? _extractJsonBlock(String raw) {
+  final fence =
+      RegExp(r'```(?:json)?\s*([\s\S]*?)```', multiLine: true).firstMatch(raw);
+  final candidate = fence?.group(1) ?? raw;
+  final start = candidate.indexOf('{');
+  final end = candidate.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  return candidate.substring(start, end + 1);
+}
+
+String? _normalizeTargetLayer(String? layer) {
+  final normalized = (layer ?? '').trim().toUpperCase();
+  const allowed = {'L2', 'L3', 'L4'};
+  return allowed.contains(normalized) ? normalized : null;
 }
 
 const String _defaultSummaryPrompt = '''

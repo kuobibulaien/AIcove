@@ -8,6 +8,7 @@
 /// (注释已丢失)
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -15,9 +16,12 @@ import 'package:path/path.dart' as p;
 
 import '../domain/conversation.dart';
 import '../domain/message.dart';
+import '../domain/persona_prompt_codec.dart';
 import '../id_gen.dart';
 import '../conversation_providers.dart';
+import 'chat_history_store.dart';
 import '../../settings/app_settings.dart';
+import '../../plugins/image/image_config.dart';
 import '../../../core/database/database_provider.dart';
 import '../../../core/database/converters/database_converters.dart';
 import 'chat_request_config.dart';
@@ -33,6 +37,8 @@ import 'chat_send_api_runner.dart';
 import 'chat_plugin_context_builder.dart';
 import 'chat_request_message_builder.dart';
 import 'chat_types.dart';
+import '../../observability/trace_models.dart';
+import '../../observability/trace_store.dart';
 
 export 'chat_types.dart'
     show SendRequest, ApiCallResult, ApiConfig, ToolAudioResult;
@@ -52,6 +58,8 @@ class ChatSendService {
   static const String visionDescriptionSystemPrompt =
       ChatRequestMessageBuilder.visionDescriptionSystemPrompt;
   static const String _logTag = 'ChatSendService';
+  static const String _internalImageContextRule =
+      '__AICOVE_IMAGE_CONTEXT__{...} 是内部图片上下文记录，只供理解，不是发给用户的话，禁止原样输出这段标记。';
 
   ChatSendService(this._ref);
 
@@ -62,10 +70,8 @@ class ChatSendService {
 
   /// 构建图片消息发送时的模型调用链。
   ///
-  /// 规则：
-  /// - 开启“优先视觉辅助模型”后：若已配置视觉辅助模型，则无条件将其置于首位
-  /// - 只要聊天模型链中有视觉能力（自动识别或手动标签），就不插入视觉辅助模型
-  /// - 仅在聊天模型链全部无视觉能力时，才把视觉辅助模型放在最前
+  /// 图片消息始终由聊天模型链负责主回复；
+  /// 视觉辅助模型只参与图片预处理，不作为前台回复模型。
   List<String> buildImageSendModelRefs(AppSettings settings) {
     final chatModels = settings.defaultChatModels.isNotEmpty
         ? settings.defaultChatModels
@@ -80,49 +86,33 @@ class ChatSendService {
       final fallback = settings.defaultModelName.trim();
       if (fallback.isNotEmpty) normalizedChatModels.add(fallback);
     }
-
-    final visionModelRef = settings.defaultVisionModel?.trim();
-    final hasVisionAssistant =
-        visionModelRef != null && visionModelRef.isNotEmpty;
-
-    if (settings.preferVisionAssistant) {
-      if (hasVisionAssistant) {
-        final preferredChain = <String>[visionModelRef];
-        for (final modelRef in normalizedChatModels) {
-          if (!preferredChain.contains(modelRef)) {
-            preferredChain.add(modelRef);
-          }
-        }
-        return preferredChain;
-      }
+    if (settings.preferVisionAssistant &&
+        !hasVisionAssistant(settings.defaultVisionModel)) {
       AppLogger.warning(
         _logTag,
-        'prefer_vision_assistant 已开启，但 defaultVisionModel 未配置，回退聊天模型链',
+        'prefer_vision_assistant 已开启，但 defaultVisionModel 未配置，图片将仅复用已有提示词',
       );
     }
+    return normalizedChatModels;
+  }
 
-    final hasVisionCapableChatModel = normalizedChatModels.any(
-      (modelRef) => settings.hasChatModelCapability(
-        modelRef,
-        ChatModelCapability.vision,
-      ),
+  bool shouldUseNonVisionImageFlow({
+    required AppSettings settings,
+    required String modelRef,
+  }) {
+    if (settings.preferVisionAssistant &&
+        hasVisionAssistant(settings.defaultVisionModel)) {
+      return true;
+    }
+    return !settings.hasChatModelCapability(
+      modelRef,
+      ChatModelCapability.vision,
     );
-    if (hasVisionCapableChatModel) return normalizedChatModels;
+  }
 
-    final modelsToTry = <String>[];
-    if (hasVisionAssistant) {
-      modelsToTry.add(visionModelRef);
-    }
-    for (final modelRef in normalizedChatModels) {
-      if (!modelsToTry.contains(modelRef)) {
-        modelsToTry.add(modelRef);
-      }
-    }
-    if (modelsToTry.isEmpty) {
-      final fallback = settings.defaultModelName.trim();
-      if (fallback.isNotEmpty) modelsToTry.add(fallback);
-    }
-    return modelsToTry;
+  static bool hasVisionAssistant(String? modelRef) {
+    final normalized = modelRef?.trim();
+    return normalized != null && normalized.isNotEmpty;
   }
 
   /// 在聊天模型不支持视觉时，为图片解析可发送给模型的文字描述。
@@ -151,9 +141,7 @@ class ChatSendService {
 
   /// 构造非视觉模型下的图片上下文文本。
   ///
-  /// 设计约束：
-  /// - assistant 图片不注入普通消息正文（避免模型模仿固定壳子文本）
-  /// - user 图片转成中性说明，供模型理解用户刚发送了图片
+  /// 统一把图片转成文字上下文，供非视觉链路理解。
   static String? buildNonVisionImageMessageText({
     required String role,
     required String? description,
@@ -162,6 +150,38 @@ class ChatSendService {
         role: role,
         description: description,
       );
+
+  bool _containsInternalImageContext(List<Map<String, dynamic>> messages) {
+    for (final message in messages) {
+      if (_containsInternalImageContextNode(message)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool _containsInternalImageContextNode(dynamic node) {
+    final marker = ChatRequestMessageBuilder.nonVisionImageContextPrefix;
+    if (node is String) {
+      return node.contains(marker);
+    }
+    if (node is List) {
+      for (final item in node) {
+        if (_containsInternalImageContextNode(item)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    if (node is Map) {
+      for (final value in node.values) {
+        if (_containsInternalImageContextNode(value)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
 
   /// 创建用户消息
   Message createUserMessage({
@@ -245,15 +265,10 @@ class ChatSendService {
     required Message userMsg,
     required String displayText,
   }) async {
-    final now = DateTime.now();
-    await _ref.read(conversationsProvider.notifier).updateOne(
-          convId,
-          (c) => c.copyWith(
-            messages: [...c.messages, userMsg],
-            updatedAt: now,
-            lastMessage: displayText,
-            lastMessageTime: now,
-          ),
+    await _ref.read(chatHistoryStoreProvider).appendUserMessage(
+          conversationId: convId,
+          message: userMsg,
+          displayText: displayText,
         );
   }
 
@@ -264,6 +279,7 @@ class ChatSendService {
     required String? userText,
     TraceLogger? trace,
     String? overrideModel,
+    TraceContext? traceContext,
   }) async {
     final configTrace = trace?.startChild('读取配置');
 
@@ -281,13 +297,27 @@ class ChatSendService {
           (toolPrefs['mcp_enabled_tools'] as List?)?.length ?? 0,
     });
     configTrace?.end();
+    if (traceContext != null) {
+      unawaited(
+        TraceStore.instance.record(
+          traceId: traceContext.traceId,
+          sessionId: traceContext.sessionId,
+          turnId: traceContext.turnId,
+          stage: TraceStage.historyPrepared,
+          source: 'ChatSendService',
+          meta: {
+            'historyCount': history.length,
+            'hasUserText': (userText?.trim().isNotEmpty ?? false),
+          },
+        ),
+      );
+    }
 
     final modelRef = requestConfig.modelRef;
     final modelFull = requestConfig.modelFullId;
-
-    final supportsVision = settings.hasChatModelCapability(
-      modelRef,
-      ChatModelCapability.vision,
+    final supportsVision = !shouldUseNonVisionImageFlow(
+      settings: settings,
+      modelRef: modelRef,
     );
     final reqMessages = await _requestMessageBuilder.buildRequestMessages(
       history,
@@ -295,9 +325,22 @@ class ChatSendService {
       supportsVision: supportsVision,
     );
 
+    final personaParts = PersonaPromptCodec.parse(conv.personaPrompt);
+    final imageConfig = _ref.read(imagePluginConfigProvider);
+    final boundImageToolPresetName = _resolveBoundToolPresetName(
+      imageConfig,
+      personaParts.drawingToolPresetName,
+    );
+    final boundImageArtistPresetName = _resolveBoundArtistPresetName(
+      imageConfig,
+      personaParts.drawingArtistPresetName,
+    );
     final systemParts = <String>[];
-    if (conv.personaPrompt.isNotEmpty) {
-      systemParts.add(conv.personaPrompt);
+    if (personaParts.userPrompt.isNotEmpty) {
+      systemParts.add(personaParts.userPrompt);
+    }
+    if (_containsInternalImageContext(reqMessages)) {
+      systemParts.add(_internalImageContextRule);
     }
     final supportsToolCalling =
         settings.hasChatModelCapability(modelRef, ChatModelCapability.tools) &&
@@ -315,14 +358,15 @@ class ChatSendService {
         break;
       }
     }
-    final pluginPrompts =
-        await _pluginContextBuilder.buildPluginPromptsWithFilter(
+    final pluginPromptBuild =
+        await _pluginContextBuilder.buildPluginPromptEntriesWithFilter(
       effectivePlugins,
       userMessage: userText ?? '',
       supportsToolCalling: supportsToolCalling,
     );
-    if (pluginPrompts.isNotEmpty) {
-      systemParts.add(pluginPrompts);
+    for (final promptEntry in pluginPromptBuild.entries) {
+      if (!promptEntry.injected) continue;
+      systemParts.add(promptEntry.content);
     }
 
     List<Map<String, dynamic>>? tools;
@@ -332,12 +376,25 @@ class ChatSendService {
       );
       if (aiTools.isNotEmpty) {
         tools = aiTools.map((t) => t.toOpenAISchema()).toList();
+        tools = _applyRoleBoundDrawImageToolPreset(
+          tools: tools,
+          imageConfig: imageConfig,
+          toolPresetName: boundImageToolPresetName,
+          customDrawingPrompt: personaParts.customDrawingPrompt,
+        );
         AppLogger.debug('ChatSendService', '收集到工具定义', metadata: {
           'toolCount': tools.length,
           'toolNames': aiTools.map((t) => t.name).toList(),
         });
       }
     }
+
+    final systemAssemblyEntries = _buildSystemAssemblyEntries(
+      personaPrompt: personaParts.userPrompt,
+      includeInternalImageRule: _containsInternalImageContext(reqMessages),
+      pluginPromptBuild: pluginPromptBuild,
+    );
+    final messagesBeforeSystemCount = reqMessages.length;
 
     if (systemParts.isNotEmpty) {
       reqMessages.insert(0, {
@@ -377,6 +434,50 @@ class ChatSendService {
       }
     }
 
+    if (traceContext != null) {
+      final now = DateTime.now();
+      final payloadRef = await TraceStore.instance.writePayload(
+        traceId: traceContext.traceId,
+        sessionId: traceContext.sessionId,
+        turnId: traceContext.turnId,
+        stage: TraceStage.apiConfigReady.value,
+        source: 'ChatSendService',
+        payload: {
+          'runtimeContext': _buildRuntimeContextPayload(
+            now: now,
+            lastMessageTime: timeAwarenessAnchor,
+            effectivePlugins: effectivePlugins,
+            pluginPromptBuild: pluginPromptBuild,
+            historyCount: history.length,
+          ),
+          'promptAssembly': _buildPromptAssemblyPayload(
+            systemAssemblyEntries: systemAssemblyEntries,
+            pluginPromptBuild: pluginPromptBuild,
+            messagesBeforeSystemCount: messagesBeforeSystemCount,
+            messagesAfterSystemCount: reqMessages.length,
+            finalMessages: truncatedMessages,
+            toolsCount: tools?.length ?? 0,
+          ),
+        },
+        now: now,
+      );
+      await TraceStore.instance.record(
+        traceId: traceContext.traceId,
+        sessionId: traceContext.sessionId,
+        turnId: traceContext.turnId,
+        stage: TraceStage.apiConfigReady,
+        source: 'ChatSendService',
+        payloadRef: payloadRef,
+        meta: {
+          'modelFullId': modelFull,
+          'messagesCount': truncatedMessages.length,
+          'toolsCount': tools?.length ?? 0,
+          'supportsToolCalling': supportsToolCalling,
+          'supportsVision': supportsVision,
+        },
+      );
+    }
+
     return ApiConfig(
       settings: settings,
       modelFullId: modelFull,
@@ -390,7 +491,112 @@ class ChatSendService {
       modelTemperature: requestConfig.modelTemperature,
       modelTopP: requestConfig.modelTopP,
       modelContextMessageLimit: requestConfig.modelContextMessageLimit,
+      traceContext: traceContext,
+      boundImageToolPresetName: boundImageToolPresetName,
+      boundImageArtistPresetName: boundImageArtistPresetName,
     );
+  }
+
+  String? _resolveBoundToolPresetName(
+    ImageConfig imageConfig,
+    String? candidate,
+  ) {
+    final name = candidate?.trim();
+    if (name == null || name.isEmpty) return null;
+    final exists =
+        imageConfig.systemPromptPresets.any((preset) => preset.name == name);
+    return exists ? name : null;
+  }
+
+  String? _resolveBoundArtistPresetName(
+    ImageConfig imageConfig,
+    String? candidate,
+  ) {
+    final name = candidate?.trim();
+    if (name == null || name.isEmpty) return null;
+    if (PersonaPromptCodec.isArtistPresetDisabledBinding(name)) {
+      return PersonaPromptCodec.artistPresetDisabledBinding;
+    }
+    final exists =
+        imageConfig.artistPresets.any((preset) => preset.name == name);
+    return exists ? name : null;
+  }
+
+  List<Map<String, dynamic>> _applyRoleBoundDrawImageToolPreset({
+    required List<Map<String, dynamic>> tools,
+    required ImageConfig imageConfig,
+    required String? toolPresetName,
+    required String customDrawingPrompt,
+  }) {
+    final normalizedDrawingPrompt = customDrawingPrompt.trim();
+    final hasToolPreset = toolPresetName != null && toolPresetName.isNotEmpty;
+    if (!hasToolPreset && normalizedDrawingPrompt.isEmpty) {
+      return tools;
+    }
+
+    var blocks = imageConfig.effectiveToolDescriptionBlocks;
+    if (hasToolPreset) {
+      final preset = imageConfig.systemPromptPresets
+          .where((item) => item.name == toolPresetName)
+          .firstOrNull;
+      if (preset != null) {
+        blocks = ImageConfig.decodeToolDescriptionBlocks(preset.content) ??
+            ImageConfig.defaultToolDescriptionBlocks;
+      }
+    }
+    if (normalizedDrawingPrompt.isNotEmpty) {
+      final promptDescription = blocks.promptDescription.trim();
+      blocks = blocks.copyWith(
+        promptDescription:
+            '$promptDescription\n\n【角色专属生图要求】\n$normalizedDrawingPrompt',
+      );
+    }
+
+    return [
+      for (final rawSchema in tools)
+        () {
+          final schema = Map<String, dynamic>.from(rawSchema);
+          final rawFunction = schema['function'];
+          if (rawFunction is! Map) return schema;
+
+          final function = Map<String, dynamic>.from(rawFunction);
+          final functionName = function['name']?.toString().trim();
+          if (functionName != 'draw_image') return schema;
+
+          function['description'] = blocks.toolDescription;
+
+          final rawParameters = function['parameters'];
+          if (rawParameters is Map) {
+            final parameters = Map<String, dynamic>.from(rawParameters);
+            final rawProperties = parameters['properties'];
+            if (rawProperties is Map) {
+              final properties = Map<String, dynamic>.from(rawProperties);
+
+              void overrideDescription(String key, String description) {
+                final rawProperty = properties[key];
+                if (rawProperty is! Map) return;
+                final property = Map<String, dynamic>.from(rawProperty);
+                property['description'] = description;
+                properties[key] = property;
+              }
+
+              overrideDescription('prompt', blocks.promptDescription);
+              overrideDescription(
+                'negative_prompt',
+                blocks.negativePromptDescription,
+              );
+              overrideDescription('width', blocks.widthDescription);
+              overrideDescription('height', blocks.heightDescription);
+
+              parameters['properties'] = properties;
+            }
+            function['parameters'] = parameters;
+          }
+
+          schema['function'] = function;
+          return schema;
+        }(),
+    ];
   }
 
   /// (注释已丢失)
@@ -399,9 +605,14 @@ class ChatSendService {
     required List<Message> history,
     required String? userText,
     TraceLogger? trace,
+    TraceContext? traceContext,
   }) =>
       prepareApiConfig(
-          conv: conv, history: history, userText: userText, trace: trace);
+          conv: conv,
+          history: history,
+          userText: userText,
+          trace: trace,
+          traceContext: traceContext);
 
   /// (注释已丢失)
   ///
@@ -445,6 +656,7 @@ class ChatSendService {
       onStreamTextReset: onStreamTextReset,
       onStreamToolCallObserved: onStreamToolCallObserved,
       onStreamingFallback: onStreamingFallback,
+      traceContext: config.traceContext,
     );
   }
 
@@ -519,24 +731,12 @@ class ChatSendService {
       'firstChunk': messages.isNotEmpty ? messages.first.displayText : '',
     });
 
-    final now = DateTime.now();
-    await _ref.read(conversationsProvider.notifier).updateOne(
-      convId,
-      (c) {
-        final updatedMessages = c.messages.map((m) {
-          if (m.id == userMsgId) {
-            return m.copyWith(status: 'sent');
-          }
-          return m;
-        }).toList();
-        return c.copyWith(
-          messages: [...updatedMessages, ...messages],
-          updatedAt: now,
-          lastMessage: lastMessagePreview,
-          lastMessageTime: now,
+    await _ref.read(chatHistoryStoreProvider).appendAssistantMessages(
+          conversationId: convId,
+          userMessageId: userMsgId,
+          messages: messages,
+          lastMessagePreview: lastMessagePreview,
         );
-      },
-    );
 
     forwardTrace?.info('消息已转发到用户', metadata: {
       'messagesCount': messages.length,
@@ -551,21 +751,11 @@ class ChatSendService {
     required String convId,
     required String userMsgId,
   }) async {
-    await _ref.read(conversationsProvider.notifier).updateOne(
-      convId,
-      (c) {
-        final updatedMessages = c.messages.map((m) {
-          if (m.id == userMsgId) {
-            return m.copyWith(status: 'failed');
-          }
-          return m;
-        }).toList();
-        return c.copyWith(
-          messages: updatedMessages,
-          updatedAt: DateTime.now(),
+    await _ref.read(chatHistoryStoreProvider).markMessageStatus(
+          conversationId: convId,
+          messageId: userMsgId,
+          status: 'failed',
         );
-      },
-    );
   }
 
   /// (注释已丢失)
@@ -594,6 +784,177 @@ class ChatSendService {
     return last.createdAt;
   }
 
+  List<Map<String, dynamic>> _buildSystemAssemblyEntries({
+    required String personaPrompt,
+    required bool includeInternalImageRule,
+    required PluginPromptBuildResult pluginPromptBuild,
+  }) {
+    final entries = <Map<String, dynamic>>[];
+
+    void addEntry({
+      required String source,
+      required String label,
+      required String content,
+      Map<String, dynamic>? extra,
+    }) {
+      final trimmed = content.trim();
+      if (trimmed.isEmpty) return;
+      entries.add(<String, dynamic>{
+        'order': entries.length,
+        'source': source,
+        'label': label,
+        'content': trimmed,
+        if (extra != null && extra.isNotEmpty) ...extra,
+      });
+    }
+
+    addEntry(
+      source: 'persona.userPrompt',
+      label: '角色人设',
+      content: personaPrompt,
+    );
+    if (includeInternalImageRule) {
+      addEntry(
+        source: 'internal.imageContextRule',
+        label: '内部图片上下文规则',
+        content: _internalImageContextRule,
+      );
+    }
+    for (final promptEntry in pluginPromptBuild.entries) {
+      if (!promptEntry.injected) continue;
+      addEntry(
+        source: 'plugin.${promptEntry.pluginId}',
+        label: '插件提示词',
+        content: promptEntry.content,
+        extra: <String, dynamic>{
+          'pluginId': promptEntry.pluginId,
+          'pluginName': promptEntry.pluginName,
+        },
+      );
+    }
+    return entries;
+  }
+
+  Map<String, dynamic> _buildRuntimeContextPayload({
+    required DateTime now,
+    required DateTime? lastMessageTime,
+    required List<dynamic> effectivePlugins,
+    required PluginPromptBuildResult pluginPromptBuild,
+    required int historyCount,
+  }) {
+    Map<String, dynamic>? timeAwarenessConfig;
+    String? timeAwarenessPluginName;
+    var timeAwarenessPluginEnabled = false;
+    for (final plugin in effectivePlugins) {
+      if (plugin is! TimeAwarenessPlugin) continue;
+      timeAwarenessPluginName = plugin.name;
+      timeAwarenessPluginEnabled = plugin.enabled;
+      timeAwarenessConfig = Map<String, dynamic>.from(plugin.getConfig());
+      break;
+    }
+
+    PluginPromptEntry? timePromptEntry;
+    for (final promptEntry in pluginPromptBuild.entries) {
+      if (promptEntry.pluginId != 'time_awareness') continue;
+      timePromptEntry = promptEntry;
+      break;
+    }
+
+    final elapsed =
+        lastMessageTime == null ? null : now.difference(lastMessageTime);
+
+    return <String, dynamic>{
+      'clockSource': 'device_local',
+      'generatedAt': now.toIso8601String(),
+      'timezoneName': now.timeZoneName,
+      'timezoneOffset': _formatTimezoneOffset(now.timeZoneOffset),
+      'timezoneOffsetMinutes': now.timeZoneOffset.inMinutes,
+      'historyCount': historyCount,
+      if (lastMessageTime != null)
+        'lastMessageTime': lastMessageTime.toIso8601String(),
+      if (elapsed != null)
+        'elapsedSinceLastMessage': <String, dynamic>{
+          'milliseconds': elapsed.inMilliseconds,
+          'minutes': elapsed.inMinutes,
+          'human': _formatElapsedForTrace(elapsed),
+        },
+      'timeAwareness': <String, dynamic>{
+        'pluginEnabled': timeAwarenessPluginEnabled,
+        if (timeAwarenessPluginName != null)
+          'pluginName': timeAwarenessPluginName,
+        'promptInjected': timePromptEntry?.injected ?? false,
+        if (timePromptEntry != null) 'reason': timePromptEntry.reason,
+        if (timeAwarenessConfig != null) 'config': timeAwarenessConfig,
+        if (timePromptEntry != null && timePromptEntry.content.isNotEmpty)
+          'promptContent': timePromptEntry.content,
+      },
+    };
+  }
+
+  Map<String, dynamic> _buildPromptAssemblyPayload({
+    required List<Map<String, dynamic>> systemAssemblyEntries,
+    required PluginPromptBuildResult pluginPromptBuild,
+    required int messagesBeforeSystemCount,
+    required int messagesAfterSystemCount,
+    required List<Map<String, dynamic>> finalMessages,
+    required int toolsCount,
+  }) {
+    final finalSystemPrompt = [
+      for (final entry in systemAssemblyEntries)
+        (entry['content'] ?? '').toString().trim(),
+    ].where((content) => content.isNotEmpty).join('\n\n');
+
+    return <String, dynamic>{
+      'systemEntries': systemAssemblyEntries,
+      'pluginPrompts': pluginPromptBuild.toJson(),
+      'finalSystemPrompt': finalSystemPrompt,
+      'insertedSystemMessage': finalSystemPrompt.isNotEmpty,
+      'messagesCountBeforeSystem': messagesBeforeSystemCount,
+      'messagesCountAfterSystem': messagesAfterSystemCount,
+      'messagesCountAfterTruncate': finalMessages.length,
+      'wasTruncated': finalMessages.length < messagesAfterSystemCount,
+      'finalMessageRoles': <String>[
+        for (final message in finalMessages) (message['role'] ?? '').toString(),
+      ],
+      'toolsCount': toolsCount,
+    };
+  }
+
+  String _formatTimezoneOffset(Duration offset) {
+    final totalMinutes = offset.inMinutes;
+    final sign = totalMinutes >= 0 ? '+' : '-';
+    final absoluteMinutes = totalMinutes.abs();
+    final hours = (absoluteMinutes ~/ 60).toString().padLeft(2, '0');
+    final minutes = (absoluteMinutes % 60).toString().padLeft(2, '0');
+    return '$sign$hours:$minutes';
+  }
+
+  String? _formatElapsedForTrace(Duration elapsed) {
+    final totalMinutes = elapsed.inMinutes;
+    if (totalMinutes < 1) return '不足1分钟';
+
+    final days = elapsed.inDays;
+    final hours = elapsed.inHours;
+
+    if (days >= 1) {
+      final remainHours = hours - days * 24;
+      if (remainHours > 0) {
+        return '$days天${remainHours}小时';
+      }
+      return '$days天';
+    }
+
+    if (hours >= 1) {
+      final remainMinutes = totalMinutes - hours * 60;
+      if (remainMinutes > 0) {
+        return '$hours小时${remainMinutes}分钟';
+      }
+      return '$hours小时';
+    }
+
+    return '$totalMinutes分钟';
+  }
+
   /// 准备历史消息
   List<Message> prepareHistory({
     required Conversation conv,
@@ -615,27 +976,8 @@ class ChatSendService {
     required Conversation conv,
     Message? ensureTailMessage,
   }) async {
-    final msgRepo = _ref.read(messageRepositoryProvider);
-    final blockRepo = _ref.read(messageBlockRepositoryProvider);
-
-    final dbMessages = await msgRepo.getAllByConversationOrdered(conv.id);
-    final messageIds = dbMessages.map((m) => m.id).toList(growable: false);
-    final dbBlocks = await blockRepo.getByMessages(messageIds);
-
-    final blocksByMessageId = <String, List<MessageBlock>>{};
-    for (final dbBlock in dbBlocks) {
-      final block = MessageBlockConverter.fromDb(dbBlock);
-      if (block == null) continue;
-      blocksByMessageId.putIfAbsent(dbBlock.messageId, () => []).add(block);
-    }
-
-    final all = <Message>[
-      for (final dbMessage in dbMessages)
-        MessageConverter.fromDb(
-          dbMessage,
-          blocks: blocksByMessageId[dbMessage.id],
-        ),
-    ];
+    final all =
+        await _ref.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
 
     if (ensureTailMessage != null &&
         all.every((m) => m.id != ensureTailMessage.id)) {

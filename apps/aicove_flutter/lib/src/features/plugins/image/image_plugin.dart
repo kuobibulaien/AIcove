@@ -9,11 +9,14 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../../../core/api/agent_api.dart';
+import '../../../core/api/image_providers/image_provider_adapter_factory.dart';
 import '../../../core/app_logger.dart';
 import '../../../core/models/message_block.dart';
 import '../../chat/conversation_providers.dart';
 import '../../chat/domain/message.dart';
+import '../../chat/domain/persona_prompt_codec.dart';
 import '../../chat/id_gen.dart';
+import '../../chat/services/chat_history_store.dart';
 import '../../settings/app_settings.dart';
 import '../domain/index.dart';
 import 'image_config.dart';
@@ -100,10 +103,7 @@ class ImagePlugin extends BasePlugin {
     String? userMessage,
     bool supportsToolCalling = false,
   }) async {
-    if (!enabled || !supportsToolCalling) return null;
-    final settings = _ref.read(appSettingsProvider).valueOrNull;
-    if (settings == null || _resolveTarget(settings) == null) return null;
-    return _config.effectiveSystemPrompt;
+    return null;
   }
 
   @override
@@ -125,28 +125,31 @@ class ImagePlugin extends BasePlugin {
 
   AITool get _drawImageTool => AITool(
         name: 'draw_image',
-        description:
-            '根据提示词生成图片。以 Danbooru 标签为骨架，场景或姿势越复杂越需要用英文自然语言补充细节。多角色用 | 分隔基底和各角色段，交互用 source#/target#/mutual# 前缀。权重：{} 加强、[] 减弱、1.4::...:: 数值权重。',
+        description: _config.effectiveToolDescriptionBlocks.toolDescription,
         parameters: {
           'prompt': ToolParameter(
             type: 'string',
-            description: '图片提示词。Danbooru tag + 可选英文短句。多角色用 | 分隔。',
+            description:
+                _config.effectiveToolDescriptionBlocks.promptDescription,
             required: true,
           ),
           'negative_prompt': ToolParameter(
             type: 'string',
-            description: '负面提示词，排除不想出现的元素。',
-            required: false,
+            description: _config
+                .effectiveToolDescriptionBlocks.negativePromptDescription,
+            required: true,
           ),
           'width': ToolParameter(
             type: 'integer',
-            description: '图片宽度。竖图 832，横图 1216，方图 1024。',
-            required: false,
+            description:
+                _config.effectiveToolDescriptionBlocks.widthDescription,
+            required: true,
           ),
           'height': ToolParameter(
             type: 'integer',
-            description: '图片高度。竖图 1216，横图 832，方图 1024。',
-            required: false,
+            description:
+                _config.effectiveToolDescriptionBlocks.heightDescription,
+            required: true,
           ),
         },
         handler: _handleDrawImage,
@@ -159,6 +162,12 @@ class ImagePlugin extends BasePlugin {
     final sessionId =
         (args.remove('_aicove_session_id') ?? '').toString().trim();
     final turnId = (args.remove('_aicove_turn_id') ?? '').toString().trim();
+    final roleToolPresetName =
+        (args.remove('_aicove_role_tool_preset_name') ?? '').toString().trim();
+    final roleArtistPresetName =
+        (args.remove('_aicove_role_artist_preset_name') ?? '')
+            .toString()
+            .trim();
 
     final rawPrompt = (args['prompt'] as String?)?.trim() ?? '';
     if (rawPrompt.isEmpty) {
@@ -181,10 +190,25 @@ class ImagePlugin extends BasePlugin {
         });
       }
 
-      // 画师串自动拼接：如果用户选了画师串预设，拼在 prompt 前面
-      final artistPreset = _config.selectedArtistPreset;
-      final prompt = artistPreset != null && artistPreset.content.trim().isNotEmpty
-          ? '${artistPreset.content.trim()}, $rawPrompt'
+      // 画师串自动拼接：优先角色绑定，其次全局选中预设。
+      ArtistPreset? artistPreset = _config.selectedArtistPreset;
+      var artistPresetSource = 'none';
+      if (roleArtistPresetName ==
+          PersonaPromptCodec.artistPresetDisabledBinding) {
+        artistPreset = null;
+        artistPresetSource = 'role_disabled';
+      } else if (roleArtistPresetName.isNotEmpty) {
+        artistPreset = _config.artistPresets
+            .where((preset) => preset.name == roleArtistPresetName)
+            .firstOrNull;
+        artistPresetSource =
+            artistPreset == null ? 'role_bound_missing' : 'role_bound';
+      } else if (artistPreset != null) {
+        artistPresetSource = 'global_selected';
+      }
+      final artistPromptPrefix = artistPreset?.content.trim() ?? '';
+      final prompt = artistPromptPrefix.isNotEmpty
+          ? '$artistPromptPrefix, $rawPrompt'
           : rawPrompt;
 
       final width = _readInt(args['width'], _config.defaultWidth, 256, 2048);
@@ -194,8 +218,12 @@ class ImagePlugin extends BasePlugin {
       final count = _config.defaultCount;
       final guidanceScale = _config.defaultGuidanceScale;
 
+      // 负面提示词合并：画师串负面 + 配置默认 + AI 运行时值
+      final artistNeg = artistPreset?.negativeContent.trim() ?? '';
+      final configNeg = _config.defaultNegativePrompt;
+      final baseNeg = _mergeNegativePrompts(artistNeg, configNeg);
       final negativePrompt = _mergeNegativePrompts(
-        _config.defaultNegativePrompt,
+        baseNeg,
         (args['negative_prompt'] as String?)?.trim(),
       );
 
@@ -209,6 +237,8 @@ class ImagePlugin extends BasePlugin {
               'sessionId': sessionId,
               'turnId': turnId,
               'flowMode': flowMode,
+              'roleToolPreset': roleToolPresetName,
+              'roleArtistPreset': roleArtistPresetName,
               'provider': resolvedTarget.provider.id,
               'model': resolvedTarget.modelId,
             });
@@ -237,6 +267,14 @@ class ImagePlugin extends BasePlugin {
           'job_id': jobId,
           'provider': resolvedTarget.provider.id,
           'model': resolvedTarget.modelId,
+          'raw_prompt': rawPrompt,
+          'prompt': prompt,
+          'negative_prompt': negativePrompt,
+          'artist_preset_name': artistPreset?.name,
+          'artist_preset_source': artistPresetSource,
+          if (artistPromptPrefix.isNotEmpty)
+            'artist_prompt_prefix': artistPromptPrefix,
+          if (artistNeg.isNotEmpty) 'artist_negative_prompt': artistNeg,
           'image_count': 0,
           'message': 'image job accepted',
         });
@@ -261,6 +299,8 @@ class ImagePlugin extends BasePlugin {
       AppLogger.info('ImagePlugin', 'Image generated by tool', metadata: {
         'provider': resolvedTarget.provider.id,
         'model': resolvedTarget.modelId,
+        'roleToolPreset': roleToolPresetName,
+        'roleArtistPreset': roleArtistPresetName,
         'count': saved.length,
       });
 
@@ -268,7 +308,14 @@ class ImagePlugin extends BasePlugin {
         'success': true,
         'provider': resolvedTarget.provider.id,
         'model': resolvedTarget.modelId,
+        'raw_prompt': rawPrompt,
         'prompt': prompt,
+        'negative_prompt': negativePrompt,
+        'artist_preset_name': artistPreset?.name,
+        'artist_preset_source': artistPresetSource,
+        if (artistPromptPrefix.isNotEmpty)
+          'artist_prompt_prefix': artistPromptPrefix,
+        if (artistNeg.isNotEmpty) 'artist_negative_prompt': artistNeg,
         'images': [
           for (final localPath in saved)
             {
@@ -413,46 +460,60 @@ class ImagePlugin extends BasePlugin {
     required List<String> localPaths,
   }) async {
     if (localPaths.isEmpty || sessionId.isEmpty) return;
+    final now = DateTime.now();
+    final appended = <Message>[
+      for (final localPath in localPaths)
+        () {
+          final messageId = genId('img');
+          return Message.fromBlocks(
+            id: messageId,
+            role: 'assistant',
+            blocks: [
+              ImageBlock(
+                messageId: messageId,
+                localPath: localPath,
+                prompt: prompt,
+              ),
+            ],
+            createdAt: now,
+            status: 'sent',
+          );
+        }(),
+    ];
 
-    await _ref.read(conversationsProvider.notifier).updateOne(
-      sessionId,
-      (c) {
-        final now = DateTime.now();
-        final appended = <Message>[
-          for (final localPath in localPaths)
-            () {
-              final messageId = genId('img');
-              return Message.fromBlocks(
-                id: messageId,
-                role: 'assistant',
-                blocks: [
-                  ImageBlock(
-                    messageId: messageId,
-                    localPath: localPath,
-                    prompt: prompt,
-                  ),
-                ],
-                createdAt: now,
-                status: 'sent',
-              );
-            }(),
-        ];
-
-        final nextMessages = [...c.messages, ...appended];
-        final last = appended.last;
-        return c.copyWith(
-          messages: nextMessages,
-          updatedAt: now,
-          lastMessage: last.displayText,
-          lastMessageTime: now,
-        );
-      },
-    );
+    for (final message in appended) {
+      await _ref.read(chatHistoryStoreProvider).appendMessage(
+            conversationId: sessionId,
+            message: message,
+            lastMessagePreview: message.displayText,
+          );
+    }
   }
 
   _ImageTarget? _resolveTarget(AppSettings settings) {
+    final selectedModelRef = _config.selectedModelId?.trim();
+    final selectedProviderIdFromModel =
+        selectedModelRef == null || selectedModelRef.isEmpty
+            ? null
+            : settings.getModelProviderId(selectedModelRef);
+    final selectedRawModelId =
+        selectedModelRef == null || selectedModelRef.isEmpty
+            ? null
+            : settings.getRawModelId(selectedModelRef);
+
     ProviderAuth? provider;
-    if (_config.selectedProviderId != null &&
+    if (selectedProviderIdFromModel != null &&
+        selectedProviderIdFromModel.isNotEmpty) {
+      provider = settings.providers
+          .where((p) => p.id == selectedProviderIdFromModel)
+          .firstOrNull;
+      if (provider != null && !_isProviderUsable(provider)) {
+        provider = null;
+      }
+    }
+
+    if (provider == null &&
+        _config.selectedProviderId != null &&
         _config.selectedProviderId!.trim().isNotEmpty) {
       provider = settings.providers
           .where((p) => p.id == _config.selectedProviderId)
@@ -467,16 +528,17 @@ class ImagePlugin extends BasePlugin {
       orElse: () => const ProviderAuth(id: '', apiBaseUrl: '', apiKeys: []),
     );
     if (provider.id.isEmpty) return null;
+    final resolvedProvider = provider;
 
-    final allModels = _imageModelsOf(settings, provider);
-    final selectedModel = _config.selectedModelId?.trim();
+    final allModels = _imageModelsOf(settings, resolvedProvider);
     final configuredModel =
-        provider.customConfig['defaultImageModel']?.toString().trim();
+        resolvedProvider.customConfig['defaultImageModel']?.toString().trim();
     final modelId = () {
-      if (selectedModel != null &&
-          selectedModel.isNotEmpty &&
-          allModels.contains(selectedModel)) {
-        return selectedModel;
+      if (selectedProviderIdFromModel == resolvedProvider.id &&
+          selectedRawModelId != null &&
+          selectedRawModelId.isNotEmpty &&
+          allModels.contains(selectedRawModelId)) {
+        return selectedRawModelId;
       }
       if (configuredModel != null &&
           configuredModel.isNotEmpty &&
@@ -488,10 +550,12 @@ class ImagePlugin extends BasePlugin {
     }();
     if (modelId.isEmpty) return null;
 
-    final apiKey = provider.apiKeys.isNotEmpty ? provider.apiKeys.first : '';
+    final apiKey = resolvedProvider.apiKeys.isNotEmpty
+        ? resolvedProvider.apiKeys.first
+        : '';
     if (apiKey.trim().isEmpty) return null;
     return _ImageTarget(
-      provider: provider,
+      provider: resolvedProvider,
       modelId: modelId,
       apiKey: apiKey.trim(),
     );
@@ -506,29 +570,17 @@ class ImagePlugin extends BasePlugin {
   }
 
   List<String> _imageModelsOf(AppSettings settings, ProviderAuth provider) {
-    final models = provider.visibleModels.isNotEmpty
-        ? provider.visibleModels
-        : provider.models;
-    return models
-        .where((modelId) =>
-            settings
-                .getModelType(settings.buildModelRef(provider.id, modelId)) ==
-            ModelType.image)
-        .toList();
+    return settings.getProviderVisibleModelsByType(
+      provider.id,
+      type: ModelType.image,
+    );
   }
 
   String _resolveRequestProvider(ProviderAuth provider) {
-    final requestFormat = (provider.customConfig['requestFormat'] as String?)
-        ?.trim()
-        .toLowerCase();
-    if (requestFormat == 'novelai' || requestFormat == 'nai') {
-      return 'novelai';
-    }
-    final providerId = provider.id.trim().toLowerCase();
-    if (providerId == 'novelai' || providerId == 'nai') {
-      return 'novelai';
-    }
-    return provider.id;
+    return ImageProviderAdapterFactory.resolveProvider(
+      provider.id,
+      customConfig: provider.customConfig,
+    );
   }
 
   Future<List<String>> _saveImages({

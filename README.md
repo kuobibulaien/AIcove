@@ -110,6 +110,9 @@ python main.py               # 或用 Docker：docker-compose up -d
 | [docs/README.md](apps/aicove_flutter/docs/README.md) | 文档库索引（入口） |
 | [docs/公共组件总览.md](apps/aicove_flutter/docs/公共组件总览.md) | 前端公共组件速查（新手推荐） |
 | [docs/API架构说明.md](apps/aicove_flutter/docs/API架构说明.md) | API 架构与聊天流程 |
+| [docs/聊天发送链路拆分总结_20260226.md](apps/aicove_flutter/docs/聊天发送链路拆分总结_20260226.md) | 聊天发送链路排障入口 |
+| [docs/绘图功能/README.md](apps/aicove_flutter/docs/绘图功能/README.md) | 绘图工具说明、配置与排障 |
+| [docs/日志中心全链路监控重构方案_20260302/README.md](apps/aicove_flutter/docs/日志中心全链路监控重构方案_20260302/README.md) | 日志中心全链路监控重构说明 |
 | [docs/界面布局说明.md](apps/aicove_flutter/docs/界面布局说明.md) | 响应式布局设计 |
 | [cloud_backend/README.md](cloud_backend/README.md) | 后端完整文档（API 端点、部署、配置） |
 

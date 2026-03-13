@@ -1,13 +1,14 @@
 /// 我的收藏页面 - 展示收藏的角色卡片
-/// 
+///
 /// 功能：以网格形式展示用户收藏的角色（模板库）
 /// 点击后进入编辑页面，可以修改模板或另存为新角色卡
-/// 
+///
 /// 更新记录：
 /// - 2026-01-06: 点击跳转到编辑页（editTemplate模式）
 /// - 2025-12-08: 从 role_card_page.dart 独立为单独文件
 /// - 2025-12-07: 在 role_card_page.dart 中创建，使用展开动画跳转
 library;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -17,6 +18,7 @@ import '../../../../ui/shared/effects/frosted_glass_card.dart';
 import '../../../../ui/shared/widgets/moe_app_bar.dart';
 import '../../../../core/utils/data_image.dart';
 import '../../../../features/chat/domain/conversation.dart';
+import '../../../../features/chat/domain/persona_prompt_codec.dart';
 import '../../../../features/chat/providers2.dart';
 import 'contact_edit_page.dart';
 
@@ -43,7 +45,7 @@ class FavoritesPage extends ConsumerWidget {
         error: (e, _) => Center(child: Text('加载失败: $e')),
         data: (conversations) {
           final favorites = conversations.where((c) => c.isFavorite).toList();
-          
+
           if (favorites.isEmpty) {
             return Center(
               child: Column(
@@ -51,7 +53,8 @@ class FavoritesPage extends ConsumerWidget {
                 children: [
                   Icon(Icons.favorite_border, size: 64, color: colors.muted),
                   const SizedBox(height: 16),
-                  Text('还没有收藏的角色', style: TextStyle(color: colors.textSecondary)),
+                  Text('还没有收藏的角色',
+                      style: TextStyle(color: colors.textSecondary)),
                   const SizedBox(height: 8),
                   Text(
                     '长按角色卡片可以添加收藏',
@@ -111,7 +114,7 @@ class _FavoriteCard extends StatelessWidget {
       if (charBytes != null) return MemoryImage(charBytes);
       return AssetImage(charImage);
     }
-    
+
     final avatar = conversation.avatarUrl;
     if (avatar != null && avatar.isNotEmpty) {
       final avatarBytes = decodeDataImage(avatar);
@@ -124,6 +127,8 @@ class _FavoriteCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final personaText =
+        PersonaPromptCodec.parse(conversation.personaPrompt).userPrompt;
     return FrostedGlassCard(
       imageProvider: _getImageProvider(),
       blurSigma: 0, // 不需要模糊
@@ -168,9 +173,9 @@ class _FavoriteCard extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                if (conversation.personaPrompt.isNotEmpty)
+                if (personaText.isNotEmpty)
                   Text(
-                    conversation.personaPrompt,
+                    personaText,
                     style: TextStyle(
                       fontSize: 12,
                       color: Colors.white.withValues(alpha: 0.8),
@@ -191,7 +196,8 @@ class _FavoriteCard extends StatelessWidget {
                 color: Colors.black.withValues(alpha: 0.3),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.favorite, color: Colors.pinkAccent, size: 16),
+              child: const Icon(Icons.favorite,
+                  color: Colors.pinkAccent, size: 16),
             ),
           ),
         ],

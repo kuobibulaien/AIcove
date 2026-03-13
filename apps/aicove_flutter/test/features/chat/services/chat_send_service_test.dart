@@ -1,6 +1,11 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:drift/native.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:aicove_flutter/src/core/models/message_block.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
@@ -9,8 +14,44 @@ import 'package:aicove_flutter/src/core/database/database_provider.dart';
 import 'package:aicove_flutter/src/core/database/converters/database_converters.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
+import 'package:aicove_flutter/src/features/chat/domain/persona_prompt_codec.dart';
+import 'package:aicove_flutter/src/features/plugins/image/image_config.dart';
+import 'package:aicove_flutter/src/features/plugins/plugin_providers.dart';
+import 'package:aicove_flutter/src/features/plugins/trigger/trigger_config.dart';
+import 'package:aicove_flutter/src/features/plugins/trigger/trigger_plugin.dart';
+import 'package:aicove_flutter/src/features/observability/trace_models.dart';
+import 'package:aicove_flutter/src/features/observability/trace_store.dart';
+import 'package:aicove_flutter/src/features/chat/services/chat_request_message_builder.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_send_service.dart';
+import 'package:aicove_flutter/src/features/plugins/time_awareness/time_awareness_config.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
+
+class _FakeAppSettingsNotifier extends AppSettingsNotifier {
+  _FakeAppSettingsNotifier(this._settings);
+
+  final AppSettings _settings;
+
+  @override
+  Future<AppSettings> build() async => _settings;
+}
+
+class _FakeImagePluginConfigNotifier extends ImagePluginConfigNotifier {
+  _FakeImagePluginConfigNotifier(ImageConfig initial) : super() {
+    state = initial;
+  }
+}
+
+class _FakePathProviderPlatform extends PathProviderPlatform {
+  _FakePathProviderPlatform(this.rootPath);
+
+  final String rootPath;
+
+  @override
+  Future<String?> getApplicationDocumentsPath() async => rootPath;
+
+  @override
+  Future<String?> getTemporaryPath() async => rootPath;
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -352,23 +393,30 @@ void main() {
     expect(visionCalled, isFalse);
   });
 
-  test('non-vision assistant image should not inject placeholder text', () {
+  test('non-vision assistant image uses hidden context marker', () {
     final text = ChatSendService.buildNonVisionImageMessageText(
       role: 'assistant',
       description: '一只猫在草地上',
     );
 
-    expect(text, isNull);
+    expect(text, isNotNull);
+    expect(text, contains('__AICOVE_IMAGE_CONTEXT__'));
+    expect(text, contains('"role":"assistant"'));
+    expect(text, contains('"delivered_to_chat":true'));
+    expect(text, contains('"prompt":"一只猫在草地上"'));
   });
 
-  test('non-vision user image uses neutral description text', () {
+  test('non-vision user image uses hidden context marker', () {
     final text = ChatSendService.buildNonVisionImageMessageText(
       role: 'user',
       description: '一只猫在草地上',
     );
 
     expect(text, isNotNull);
-    expect(text, contains('用户刚刚发送了一张图片'));
+    expect(text, contains('__AICOVE_IMAGE_CONTEXT__'));
+    expect(text, contains('"role":"user"'));
+    expect(text, contains('"uploaded_to_chat":true'));
+    expect(text, contains('"description":"一只猫在草地上"'));
     expect(text, isNot(contains('[图片]')));
     expect(text, isNot(contains('图片已转换为文本描述')));
   });
@@ -415,8 +463,7 @@ void main() {
     expect(chain, isNot(contains('openai:gpt-4o-mini')));
   });
 
-  test(
-      'image send chain prepends vision assistant when chat model has no vision',
+  test('image send chain keeps chat model first when chat model has no vision',
       () {
     final settings = fakeSettings(
       defaultModelName: 'openai:gpt-3.5-turbo',
@@ -429,8 +476,7 @@ void main() {
 
     final chain = service.buildImageSendModelRefs(settings);
 
-    expect(chain.first, 'openai:gpt-4o-mini');
-    expect(chain, contains('openai:gpt-3.5-turbo'));
+    expect(chain, <String>['openai:gpt-3.5-turbo']);
   });
 
   test(
@@ -452,7 +498,7 @@ void main() {
   });
 
   test(
-      'image send chain prefers vision assistant when preference switch is enabled',
+      'image send chain keeps chat model first when preference switch is enabled',
       () {
     final settings = fakeSettings(
       defaultModelName: 'openai:gpt-4o',
@@ -466,7 +512,7 @@ void main() {
 
     final chain = service.buildImageSendModelRefs(settings);
 
-    expect(chain, <String>['openai:gpt-4o-mini', 'openai:gpt-4o']);
+    expect(chain, <String>['openai:gpt-4o']);
   });
 
   test(
@@ -485,5 +531,368 @@ void main() {
     final chain = service.buildImageSendModelRefs(settings);
 
     expect(chain, <String>['openai:gpt-4o']);
+  });
+
+  test('preferVisionAssistant treats vision chat model as non-vision flow', () {
+    final settings = fakeSettings(
+      defaultModelName: 'openai:gpt-4o',
+      defaultChatModels: const <String>['openai:gpt-4o'],
+      defaultVisionModel: 'openai:gpt-4o-mini',
+      preferVisionAssistant: true,
+    );
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final service = container.read(chatSendServiceProvider);
+
+    final shouldPreprocess = service.shouldUseNonVisionImageFlow(
+      settings: settings,
+      modelRef: 'openai:gpt-4o',
+    );
+
+    expect(shouldPreprocess, isTrue);
+  });
+
+  test(
+      'assistant generated image becomes hidden image context in non-vision flow',
+      () async {
+    final builder = ChatRequestMessageBuilder(
+      readImageAsBase64: (_) async => null,
+    );
+    final settings = fakeSettings(
+      defaultModelName: 'openai:gpt-3.5-turbo',
+      defaultChatModels: const <String>['openai:gpt-3.5-turbo'],
+      defaultVisionModel: 'openai:gpt-4o-mini',
+    );
+    final message = Message.fromBlocks(
+      id: 'msg_assistant_image',
+      role: 'assistant',
+      blocks: [
+        ImageBlock(
+          messageId: 'msg_assistant_image',
+          url: 'https://example.com/generated.png',
+          prompt: '黄昏下的城市天际线',
+        ),
+      ],
+      createdAt: DateTime(2026, 1, 1, 12, 0, 0),
+    );
+
+    final result = await builder.buildRequestMessages(
+      [message],
+      settings: settings,
+      supportsVision: false,
+    );
+
+    expect(result, hasLength(1));
+    expect(result.first['role'], 'assistant');
+    expect(result.first['content'], contains('__AICOVE_IMAGE_CONTEXT__'));
+    expect(result.first['content'], contains('"role":"assistant"'));
+    expect(result.first['content'], contains('"delivered_to_chat":true'));
+    expect(result.first['content'], contains('"prompt":"黄昏下的城市天际线"'));
+    expect(result.first['content'], isNot(contains('生图提示词')));
+  });
+
+  test('prepareApiConfig should keep draw prompt out of system and into tool',
+      () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final now = DateTime(2026, 3, 7, 12, 0, 0);
+    final settings = fakeSettings(
+      defaultModelName: 'openai:gpt-4o',
+      defaultChatModels: const <String>['openai:gpt-4o'],
+      modelConfigs: const <String, ModelConfig>{
+        'openai:gpt-4o': ModelConfig(
+          chatCapabilities: <String>['tools'],
+        ),
+      },
+    ).copyWith(
+      imageGenerationEnabled: true,
+      modelTypes: const <String, String>{
+        'openai:gpt-4o': 'chat',
+        'openai:test-image-model': 'image',
+        'test-image-model': 'image',
+      },
+      providers: const <ProviderAuth>[
+        ProviderAuth(
+          id: 'openai',
+          apiKeys: <String>['test-key'],
+          apiBaseUrl: 'https://api.openai.com/v1',
+          models: <String>['test-image-model'],
+          visibleModels: <String>['test-image-model'],
+          capabilities: <String>['chat', 'image'],
+        ),
+      ],
+      modelProviderMap: const <String, String>{
+        'openai:gpt-4o': 'openai',
+        'gpt-4o': 'openai',
+        'openai:test-image-model': 'openai',
+        'test-image-model': 'openai',
+      },
+    );
+    final imageConfig = ImageConfig(
+      systemPromptPresets: const <DrawingPromptPreset>[
+        DrawingPromptPreset(
+          name: '全局预设',
+          content: ImageConfig.defaultToolDescriptionPresetMarker,
+        ),
+      ],
+      selectedSystemPromptPresetName: '全局预设',
+    );
+    final conv = Conversation(
+      id: 'conv_draw_tool_prompt',
+      title: 'Chat',
+      displayName: 'Chat',
+      addressUser: '宝贝',
+      personaPrompt: PersonaPromptCodec.compose(
+        userPrompt: '你是测试助手。',
+        customDrawingPrompt: '第一视角，保持人物一致性。',
+      ),
+      enabledPlugins: const <String>['image'],
+      createdAt: now,
+      updatedAt: now,
+      messages: const <Message>[],
+    );
+    final userMsg = Message(
+      id: 'msg_user',
+      role: 'user',
+      content: '画一张自拍',
+      createdAt: now,
+    );
+    final container = ProviderContainer(
+      overrides: [
+        appSettingsProvider
+            .overrideWith(() => _FakeAppSettingsNotifier(settings)),
+        imagePluginConfigProvider
+            .overrideWith((ref) => _FakeImagePluginConfigNotifier(imageConfig)),
+      ],
+    );
+    addTearDown(container.dispose);
+    final service = container.read(chatSendServiceProvider);
+
+    final apiConfig = await service.prepareApiConfig(
+      conv: conv,
+      history: <Message>[userMsg],
+      userText: userMsg.content,
+    );
+
+    final systemMessage = apiConfig.messages.firstWhere(
+      (msg) => msg['role'] == 'system',
+      orElse: () => const <String, dynamic>{},
+    );
+    final systemContent = (systemMessage['content'] ?? '').toString();
+    expect(systemContent, contains('你是测试助手。'));
+    expect(systemContent, isNot(contains('你应该称呼用户为')));
+    expect(systemContent, isNot(contains('第一视角，保持人物一致性。')));
+
+    final drawTool = apiConfig.tools!.firstWhere(
+      (tool) =>
+          ((tool['function'] as Map<String, dynamic>)['name'] ?? '')
+              .toString() ==
+          'draw_image',
+    );
+    final function = drawTool['function'] as Map<String, dynamic>;
+    final parameters = function['parameters'] as Map<String, dynamic>;
+    final properties = parameters['properties'] as Map<String, dynamic>;
+    final promptSchema = properties['prompt'] as Map<String, dynamic>;
+    final promptDescription = (promptSchema['description'] ?? '').toString();
+    expect(promptDescription, contains('第一视角，保持人物一致性。'));
+  });
+
+  test(
+      'prepareApiConfig should preserve explicit artist preset disable binding',
+      () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final now = DateTime(2026, 3, 7, 12, 0, 0);
+    final settings = fakeSettings(
+      defaultModelName: 'openai:gpt-4o',
+      defaultChatModels: const <String>['openai:gpt-4o'],
+      modelConfigs: const <String, ModelConfig>{
+        'openai:gpt-4o': ModelConfig(
+          chatCapabilities: <String>['tools'],
+        ),
+      },
+    );
+    final imageConfig = ImageConfig(
+      artistPresets: const <ArtistPreset>[
+        ArtistPreset(name: '全局画风', content: 'global style'),
+      ],
+      selectedArtistPresetName: '全局画风',
+    );
+    final conv = Conversation(
+      id: 'conv_artist_binding',
+      title: 'Chat',
+      displayName: 'Chat',
+      personaPrompt: PersonaPromptCodec.compose(
+        userPrompt: '你是测试助手。',
+        drawingArtistPresetName: PersonaPromptCodec.artistPresetDisabledBinding,
+      ),
+      enabledPlugins: const <String>['image'],
+      createdAt: now,
+      updatedAt: now,
+      messages: const <Message>[],
+    );
+    final userMsg = Message(
+      id: 'msg_user',
+      role: 'user',
+      content: '画一张自拍',
+      createdAt: now,
+    );
+    final container = ProviderContainer(
+      overrides: [
+        appSettingsProvider
+            .overrideWith(() => _FakeAppSettingsNotifier(settings)),
+        imagePluginConfigProvider
+            .overrideWith((ref) => _FakeImagePluginConfigNotifier(imageConfig)),
+      ],
+    );
+    addTearDown(container.dispose);
+    final service = container.read(chatSendServiceProvider);
+
+    final apiConfig = await service.prepareApiConfig(
+      conv: conv,
+      history: <Message>[userMsg],
+      userText: userMsg.content,
+    );
+
+    expect(
+      apiConfig.boundImageArtistPresetName,
+      PersonaPromptCodec.artistPresetDisabledBinding,
+    );
+  });
+
+  test(
+      'prepareApiConfig should write runtimeContext and promptAssembly to trace',
+      () async {
+    final tempDir = await Directory.systemTemp.createTemp('aicove_trace_');
+    final previousPathProvider = PathProviderPlatform.instance;
+    PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir.path);
+    TraceStore.instance.debugResetForTest();
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'aicove.plugins.time_awareness.config': jsonEncode(
+        TimeAwarenessConfig(
+          enabled: true,
+          includeCurrentTime: true,
+          includeMessageTimestamp: true,
+          currentTimePromptTemplate: '当前时间: {datetime}',
+        ).toJson(),
+      ),
+    });
+    addTearDown(() async {
+      PathProviderPlatform.instance = previousPathProvider;
+      TraceStore.instance.debugResetForTest();
+      if (await tempDir.exists()) {
+        await tempDir.delete(recursive: true);
+      }
+    });
+
+    final settings = fakeSettings(
+      defaultModelName: 'openai:gpt-4o-mini',
+      defaultChatModels: const <String>['openai:gpt-4o-mini'],
+    );
+    final now = DateTime(2026, 3, 12, 20, 0, 0);
+    final conv = Conversation(
+      id: 'conv_trace_runtime',
+      title: 'Chat',
+      displayName: 'Chat',
+      personaPrompt: PersonaPromptCodec.compose(
+        userPrompt: '你是贴心助手。',
+      ),
+      enabledPlugins: const <String>['time_awareness'],
+      createdAt: now,
+      updatedAt: now,
+      messages: const <Message>[],
+    );
+    final assistantMsg = Message(
+      id: 'msg_prev',
+      role: 'assistant',
+      content: '上一轮回复',
+      createdAt: now.subtract(const Duration(hours: 3, minutes: 20)),
+    );
+    final userMsg = Message(
+      id: 'msg_user',
+      role: 'user',
+      content: '现在几点了？',
+      createdAt: now,
+    );
+    final container = ProviderContainer(
+      overrides: [
+        appSettingsProvider
+            .overrideWith(() => _FakeAppSettingsNotifier(settings)),
+      ],
+    );
+    addTearDown(container.dispose);
+    final service = container.read(chatSendServiceProvider);
+    final traceContext = await TraceStore.instance.startTurn(
+      sessionId: conv.id,
+      turnId: userMsg.id,
+    );
+
+    await service.prepareApiConfig(
+      conv: conv,
+      history: <Message>[assistantMsg, userMsg],
+      userText: userMsg.content,
+      traceContext: traceContext,
+    );
+    await TraceStore.instance.waitForPendingWrites();
+
+    final events = await TraceStore.instance.readEventsByTraceId(
+      traceContext.traceId,
+    );
+    final apiConfigEvent = events.lastWhere(
+      (event) => event.stage == TraceStage.apiConfigReady.value,
+    );
+    final envelope = await TraceStore.instance.readPayloadByRef(
+      apiConfigEvent.payloadRef,
+    );
+
+    expect(envelope, isNotNull);
+    final payload = envelope!['payload'] as Map<String, dynamic>;
+    final runtimeContext = payload['runtimeContext'] as Map<String, dynamic>;
+    final promptAssembly = payload['promptAssembly'] as Map<String, dynamic>;
+
+    expect(runtimeContext['clockSource'], 'device_local');
+    expect(runtimeContext['timezoneName'], isNotNull);
+    expect(runtimeContext['timeAwareness'], isA<Map>());
+    expect(
+      (runtimeContext['timeAwareness']
+          as Map<String, dynamic>)['promptInjected'],
+      isTrue,
+    );
+    expect(
+      (runtimeContext['timeAwareness'] as Map<String, dynamic>)['promptContent']
+          .toString(),
+      contains('当前时间: '),
+    );
+    expect(
+      (runtimeContext['elapsedSinceLastMessage']
+              as Map<String, dynamic>)['human']
+          .toString(),
+      contains('小时'),
+    );
+
+    expect(promptAssembly['systemEntries'], isA<List>());
+    expect(promptAssembly['pluginPrompts'], isA<List>());
+    expect(
+      promptAssembly['finalSystemPrompt'].toString(),
+      contains('你是贴心助手。'),
+    );
+    expect(
+      promptAssembly['finalSystemPrompt'].toString(),
+      contains('当前时间: '),
+    );
+  });
+
+  test('trigger plugin should not inject system prompt', () async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final pluginProvider = Provider<TriggerPlugin>(
+      (ref) => TriggerPlugin(const TriggerConfig(enabled: true), ref),
+    );
+    final plugin = container.read(pluginProvider);
+
+    final prompt = await plugin.getSystemPrompt(
+      userMessage: '明天八点提醒我',
+      supportsToolCalling: true,
+    );
+
+    expect(prompt, isNull);
   });
 }

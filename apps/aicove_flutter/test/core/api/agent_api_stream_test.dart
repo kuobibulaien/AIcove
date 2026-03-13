@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import 'package:aicove_flutter/src/core/api/agent_api.dart';
 import 'package:aicove_flutter/src/core/api_logger.dart';
+import 'package:aicove_flutter/src/features/observability/trace_store.dart';
 
 class _FakeStreamingClient extends http.BaseClient {
   _FakeStreamingClient({
@@ -29,9 +30,11 @@ class _FakeStreamingClient extends http.BaseClient {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   group('AgentApiClient.sendMessageRichStream', () {
     setUp(() {
       ApiLogger.clear();
+      TraceStore.instance.debugResetForTest();
     });
 
     test('returns rawResponse carrying assistant tool_calls for next round',
@@ -192,6 +195,137 @@ void main() {
 
       expect(result.text, '你好');
       expect(emitted, <String>['你好']);
+    });
+
+    test('writes ApiLogEntry.eventSeq from TraceStore when traceId is provided',
+        () async {
+      final client = AgentApiClient(
+        client: _FakeStreamingClient(
+          statusCode: 200,
+          responseLines: const <String>[
+            'data: {"choices":[{"delta":{"content":"Hello"}}]}',
+            '',
+            'data: [DONE]',
+            '',
+          ],
+        ),
+      );
+
+      final result = await client.sendMessageRichStream(
+        agentId: 'agent_1',
+        sessionId: 'session_1',
+        modelFullId: 'openai:gpt-4o-mini',
+        messages: const <Map<String, dynamic>>[],
+        userText: '继续',
+        providerApiBase: 'https://api.openai.com/v1',
+        providerApiKey: 'test-key',
+        turnId: 'turn_1',
+        roundIndex: 1,
+        traceId: 'tr_test_stream',
+      );
+
+      expect(result.text, 'Hello');
+      final latest = ApiLogger.entries.value.last;
+      expect(latest.eventSeq, isNotNull);
+      expect(latest.eventSeq!, greaterThan(0));
+    });
+
+    test('supports gemini stream with text/functionCall parts and preserves thoughtSignature',
+        () async {
+      final client = AgentApiClient(
+        client: _FakeStreamingClient(
+          statusCode: 200,
+          responseLines: const <String>[
+            'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"你好"}]}}]}',
+            '',
+            'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"，世界"},{"functionCall":{"name":"lookup_weather","args":{"city":"Shanghai"}},"thoughtSignature":"sig_lookup_weather"}]}}]}',
+            '',
+          ],
+        ),
+      );
+
+      final result = await client.sendMessageRichStream(
+        agentId: 'agent_1',
+        sessionId: 'session_1',
+        modelFullId: 'gemini:gemini-2.0-flash',
+        messages: const <Map<String, dynamic>>[],
+        userText: '继续',
+        providerApiBase: 'https://generativelanguage.googleapis.com/v1beta',
+        providerApiKey: 'test-key',
+      );
+
+      expect(result.text, '你好，世界');
+      expect(result.toolCalls, hasLength(1));
+      expect(result.toolCalls.first.name, 'lookup_weather');
+      expect(result.toolCalls.first.arguments['city'], 'Shanghai');
+      expect(result.toolCalls.first.thoughtSignature, 'sig_lookup_weather');
+
+      final rawCandidates = result.rawResponse?['candidates'];
+      expect(rawCandidates, isA<List>());
+      expect((rawCandidates as List).isNotEmpty, isTrue);
+      final firstCandidate = rawCandidates.first as Map<String, dynamic>;
+      final content = firstCandidate['content'] as Map<String, dynamic>?;
+      final parts = content?['parts'] as List?;
+      expect(parts, isNotNull);
+      final functionCallPart =
+          parts!.last as Map<String, dynamic>;
+      expect(functionCallPart['thoughtSignature'], 'sig_lookup_weather');
+
+      final latest = ApiLogger.entries.value.last;
+      expect(latest.url, contains(':streamGenerateContent'));
+      expect(latest.url, contains('alt=sse'));
+    });
+
+    test('supports claude stream with text_delta and input_json_delta',
+        () async {
+      final client = AgentApiClient(
+        client: _FakeStreamingClient(
+          statusCode: 200,
+          responseLines: const <String>[
+            'event: message_start',
+            'data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[]}}',
+            '',
+            'event: content_block_start',
+            'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+            '',
+            'event: content_block_delta',
+            'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"你好"}}',
+            '',
+            'event: content_block_start',
+            'data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"lookup_weather","input":{}}}',
+            '',
+            'event: content_block_delta',
+            'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"city\\":\\"Shanghai\\"}"}}',
+            '',
+            'event: content_block_stop',
+            'data: {"type":"content_block_stop","index":1}',
+            '',
+            'event: message_stop',
+            'data: {"type":"message_stop"}',
+            '',
+          ],
+        ),
+      );
+
+      final result = await client.sendMessageRichStream(
+        agentId: 'agent_1',
+        sessionId: 'session_1',
+        modelFullId: 'claude:claude-sonnet-4-6',
+        messages: const <Map<String, dynamic>>[],
+        userText: '继续',
+        providerApiBase: 'https://api.anthropic.com',
+        providerApiKey: 'test-key',
+      );
+
+      expect(result.text, '你好');
+      expect(result.toolCalls, hasLength(1));
+      expect(result.toolCalls.first.id, 'toolu_1');
+      expect(result.toolCalls.first.name, 'lookup_weather');
+      expect(result.toolCalls.first.arguments['city'], 'Shanghai');
+
+      final rawContent = result.rawResponse?['content'];
+      expect(rawContent, isA<List>());
+      expect((rawContent as List).length, 2);
     });
   });
 }

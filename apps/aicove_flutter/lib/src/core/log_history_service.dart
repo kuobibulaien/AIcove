@@ -50,6 +50,7 @@ class LogHistoryFile {
 class LogHistoryService {
   static const String _logDirName = 'logs'; // 新的实时日志目录
   static const String _oldLogDirName = 'log_history'; // 旧的手动保存目录（兼容）
+  static const String _traceDirName = 'trace';
   static const int _retentionDays = 7;
 
   /// 获取日志存储目录
@@ -73,7 +74,7 @@ class LogHistoryService {
   }
 
   /// 【已废弃】保存当前日志到文件
-  /// 
+  ///
   /// 现在日志已改为实时写入文件，此方法保留用于兼容旧代码，
   /// 实际不会执行任何操作（因为日志已经保存了）
   @Deprecated('日志已改为实时保存，此方法不再需要调用')
@@ -93,7 +94,8 @@ class LogHistoryService {
         final fileName = entity.path.split(Platform.pathSeparator).last;
 
         // 解析应用日志: app_2026-01-28.jsonl
-        final appMatch = RegExp(r'app_(\d{4})-(\d{2})-(\d{2})\.jsonl').firstMatch(fileName);
+        final appMatch =
+            RegExp(r'app_(\d{4})-(\d{2})-(\d{2})\.jsonl').firstMatch(fileName);
         if (appMatch != null) {
           final stat = await entity.stat();
           files.add(LogHistoryFile(
@@ -111,7 +113,8 @@ class LogHistoryService {
         }
 
         // 解析API日志: api_2026-01-28.jsonl
-        final apiMatch = RegExp(r'api_(\d{4})-(\d{2})-(\d{2})\.jsonl').firstMatch(fileName);
+        final apiMatch =
+            RegExp(r'api_(\d{4})-(\d{2})-(\d{2})\.jsonl').firstMatch(fileName);
         if (apiMatch != null) {
           final stat = await entity.stat();
           files.add(LogHistoryFile(
@@ -138,7 +141,8 @@ class LogHistoryService {
           final fileName = entity.path.split(Platform.pathSeparator).last;
 
           DateTime? createdAt;
-          final match = RegExp(r'log_(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})\.json')
+          final match = RegExp(
+                  r'log_(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})\.json')
               .firstMatch(fileName);
           if (match != null) {
             createdAt = DateTime(
@@ -240,7 +244,8 @@ class LogHistoryService {
     await for (final entity in logDir.list()) {
       if (entity is File && entity.path.endsWith('.jsonl')) {
         final fileName = entity.path.split(Platform.pathSeparator).last;
-        final match = RegExp(r'(app|api)_(\d{4})-(\d{2})-(\d{2})\.jsonl').firstMatch(fileName);
+        final match = RegExp(r'(app|api)_(\d{4})-(\d{2})-(\d{2})\.jsonl')
+            .firstMatch(fileName);
         if (match != null) {
           final fileDate = DateTime(
             int.parse(match.group(2)!),
@@ -255,13 +260,65 @@ class LogHistoryService {
       }
     }
 
+    // 清理 Trace 日志文件（index_YYYY-MM-DD.jsonl）与导出文件
+    final traceDir = Directory('${logDir.path}/$_traceDirName');
+    if (await traceDir.exists()) {
+      await for (final entity in traceDir.list(recursive: true)) {
+        if (entity is! File) continue;
+        final fileName = entity.path.split(Platform.pathSeparator).last;
+        if (fileName.endsWith('.jsonl') && fileName.startsWith('index_')) {
+          final match = RegExp(r'index_(\d{4})-(\d{2})-(\d{2})\.jsonl')
+              .firstMatch(fileName);
+          if (match != null) {
+            final fileDate = DateTime(
+              int.parse(match.group(1)!),
+              int.parse(match.group(2)!),
+              int.parse(match.group(3)!),
+            );
+            if (fileDate.isBefore(expireDate)) {
+              await entity.delete();
+              deletedCount++;
+            }
+            continue;
+          }
+        }
+
+        // Payload 文件优先按目录日期清理：trace/payload/YYYY-MM-DD/*.json
+        final normalizedPath = entity.path.replaceAll('\\', '/').toLowerCase();
+        final payloadMatch =
+            RegExp(r'/trace/payload/(\d{4})-(\d{2})-(\d{2})/').firstMatch(
+          normalizedPath,
+        );
+        if (payloadMatch != null) {
+          final fileDate = DateTime(
+            int.parse(payloadMatch.group(1)!),
+            int.parse(payloadMatch.group(2)!),
+            int.parse(payloadMatch.group(3)!),
+          );
+          if (fileDate.isBefore(expireDate)) {
+            await entity.delete();
+            deletedCount++;
+          }
+          continue;
+        }
+
+        // 导出文件按修改时间清理（文件名可能不固定）
+        final stat = await entity.stat();
+        if (stat.modified.isBefore(expireDate)) {
+          await entity.delete();
+          deletedCount++;
+        }
+      }
+    }
+
     // 清理旧的历史日志文件
     final oldLogDir = await _getOldLogDir();
     if (oldLogDir != null) {
       await for (final entity in oldLogDir.list()) {
         if (entity is File && entity.path.endsWith('.json')) {
           final fileName = entity.path.split(Platform.pathSeparator).last;
-          final match = RegExp(r'log_(\d{4})-(\d{2})-(\d{2})_').firstMatch(fileName);
+          final match =
+              RegExp(r'log_(\d{4})-(\d{2})-(\d{2})_').firstMatch(fileName);
           if (match != null) {
             final fileDate = DateTime(
               int.parse(match.group(1)!),
@@ -290,6 +347,18 @@ class LogHistoryService {
       if (entity is File && entity.path.endsWith('.jsonl')) {
         await entity.delete();
         deletedCount++;
+      }
+    }
+
+    // 清理 Trace 目录下的索引与导出文件
+    final traceDir = Directory('${logDir.path}/$_traceDirName');
+    if (await traceDir.exists()) {
+      await for (final entity in traceDir.list(recursive: true)) {
+        if (entity is File &&
+            (entity.path.endsWith('.jsonl') || entity.path.endsWith('.json'))) {
+          await entity.delete();
+          deletedCount++;
+        }
       }
     }
 

@@ -18,7 +18,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/message.dart';
 import '../id_gen.dart';
-import '../conversation_providers.dart';
 import '../../plugins/domain/plugin.dart';
 import '../../plugins/plugin_providers.dart';
 import '../../plugins/tts/tts_player_manager.dart';
@@ -26,6 +25,7 @@ import '../../../core/models/message_block.dart';
 import '../../../core/app_logger.dart';
 import '../chat_providers.dart' show chatStatusProvider, ChatStatus;
 import 'chat_message_processor.dart';
+import 'chat_history_store.dart';
 import 'chat_send_service.dart';
 import 'chat_types.dart';
 import 'tts_fallback_notification.dart';
@@ -481,77 +481,18 @@ class ChatTtsHandler {
   }) async {
     if (insertOps.isEmpty) return;
 
-    await _ref.read(conversationsProvider.notifier).updateOne(
-      convId,
-      (c) {
-        final now = DateTime.now();
-        final messageById = <String, Message>{
-          for (final message in c.messages) message.id: message,
-        };
-        final existingStreamIds = <String>[
-          for (final id in streamTextMessageIds)
-            if (messageById.containsKey(id)) id,
-        ];
-
-        if (existingStreamIds.isEmpty) {
-          final merged = <Message>[
-            ...c.messages,
-            ...insertOps.map((op) => op.message),
-          ];
-          final last = merged.isNotEmpty ? merged.last : null;
-          return c.copyWith(
-            messages: merged,
-            updatedAt: now,
-            lastMessage: last?.displayText ?? c.lastMessage,
-            lastMessageTime: now,
-          );
-        }
-
-        final textChunkLengths = <int>[
-          for (final id in existingStreamIds)
-            _normalizedTextLength(_extractTextPart(messageById[id]!)),
-        ];
-        final slotMessages = <int, List<Message>>{};
-        for (final op in insertOps) {
-          final slot = resolveSupplementInsertSlot(
-            textChunkLengths: textChunkLengths,
-            textCharsBefore: op.textCharsBefore,
-            forceAppendToTail: op.forceAppendToTail,
-          );
-          (slotMessages[slot] ??= <Message>[]).add(op.message);
-        }
-
-        final streamOrderById = <String, int>{
-          for (var i = 0; i < existingStreamIds.length; i++)
-            existingStreamIds[i]: i,
-        };
-        final rebuilt = <Message>[];
-        final firstStreamId = existingStreamIds.first;
-        var insertedBeforeFirstStream = false;
-        for (final message in c.messages) {
-          if (!insertedBeforeFirstStream && message.id == firstStreamId) {
-            rebuilt.addAll(slotMessages[0] ?? const <Message>[]);
-            insertedBeforeFirstStream = true;
-          }
-          rebuilt.add(message);
-          final order = streamOrderById[message.id];
-          if (order == null) continue;
-          final slot = order + 1;
-          final inserts = slotMessages[slot];
-          if (inserts != null && inserts.isNotEmpty) {
-            rebuilt.addAll(inserts);
-          }
-        }
-
-        final last = rebuilt.isNotEmpty ? rebuilt.last : null;
-        return c.copyWith(
-          messages: rebuilt,
-          updatedAt: now,
-          lastMessage: last?.displayText ?? c.lastMessage,
-          lastMessageTime: now,
+    await _ref.read(chatHistoryStoreProvider).insertMessagesAroundAnchor(
+          conversationId: convId,
+          anchorIds: streamTextMessageIds,
+          insertOps: [
+            for (final op in insertOps)
+              ConversationSupplementInsertOp(
+                textCharsBefore: op.textCharsBefore,
+                message: op.message,
+                forceAppendToTail: op.forceAppendToTail,
+              ),
+          ],
         );
-      },
-    );
     trace?.note('后补多模态已按流式文本位置插入', metadata: {
       'convId': convId,
       'insertCount': insertOps.length,
@@ -611,17 +552,11 @@ class ChatTtsHandler {
     });
 
     if (markUserMessageAsSent) {
-      // 先标记用户消息为已发送
-      await _ref.read(conversationsProvider.notifier).updateOne(
-        convId,
-        (c) {
-          final updatedMessages = c.messages.map((m) {
-            if (m.id == userMsgId) return m.copyWith(status: 'sent');
-            return m;
-          }).toList();
-          return c.copyWith(messages: updatedMessages);
-        },
-      );
+      await _ref.read(chatHistoryStoreProvider).markMessageStatus(
+            conversationId: convId,
+            messageId: userMsgId,
+            status: 'sent',
+          );
     }
 
     // 按段顺序发送
@@ -851,16 +786,10 @@ class ChatTtsHandler {
     required Message message,
     String? lastMessagePreview,
   }) async {
-    final now = DateTime.now();
-    await _ref.read(conversationsProvider.notifier).updateOne(
-          convId,
-          (c) => c.copyWith(
-            messages: [...c.messages, message],
-            updatedAt: now,
-            lastMessage: lastMessagePreview ?? c.lastMessage,
-            lastMessageTime:
-                lastMessagePreview != null ? now : c.lastMessageTime,
-          ),
+    await _ref.read(chatHistoryStoreProvider).appendMessage(
+          conversationId: convId,
+          message: message,
+          lastMessagePreview: lastMessagePreview,
         );
   }
 }

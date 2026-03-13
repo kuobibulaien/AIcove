@@ -83,7 +83,6 @@ final pluginManagerProvider = Provider<PluginManager>((ref) {
         'effectiveModel': ttsSelectedModel,
         'providerFound': selectedProvider != null,
         'providerEnabled': selectedProvider?.enabled,
-        'providerModelType': selectedProvider?.modelType,
         'providerApiBaseUrl': selectedProvider?.apiBaseUrl,
         'providerModels': modelsSummary,
         'requestFormat': ttsRequestFormat,
@@ -645,7 +644,22 @@ class ImagePluginConfigNotifier extends StateNotifier<ImageConfig> {
   }
 
   Future<void> setDrawingSystemPrompt(String text) async {
-    state = state.copyWith(drawingSystemPrompt: text);
+    final updated = state.manualToolDescriptionBlocks.copyWith(
+      promptDescription: text.trim(),
+    );
+    state = state.copyWith(
+      drawingSystemPrompt: ImageConfig.encodeToolDescriptionBlocks(updated),
+      clearSelectedSystemPromptPreset: true,
+    );
+    await _saveConfig();
+  }
+
+  Future<void> setManualToolDescriptionBlocks(
+      DrawImageToolDescriptionBlocks blocks) async {
+    state = state.copyWith(
+      drawingSystemPrompt: ImageConfig.encodeToolDescriptionBlocks(blocks),
+      clearSelectedSystemPromptPreset: true,
+    );
     await _saveConfig();
   }
 
@@ -656,8 +670,7 @@ class ImagePluginConfigNotifier extends StateNotifier<ImageConfig> {
   }
 
   Future<void> removeArtistPreset(String name) async {
-    final updated =
-        state.artistPresets.where((p) => p.name != name).toList();
+    final updated = state.artistPresets.where((p) => p.name != name).toList();
     final clearSelection = state.selectedArtistPresetName == name;
     state = state.copyWith(
       artistPresets: updated,

@@ -5,6 +5,58 @@ import '../../plugins/domain/plugin.dart';
 import '../../plugins/plugin_manager.dart';
 import '../../../core/app_logger.dart';
 
+class PluginPromptEntry {
+  const PluginPromptEntry({
+    required this.order,
+    required this.pluginId,
+    required this.pluginName,
+    required this.injected,
+    required this.content,
+    this.reason,
+    this.error,
+  });
+
+  final int order;
+  final String pluginId;
+  final String pluginName;
+  final bool injected;
+  final String content;
+  final String? reason;
+  final String? error;
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'order': order,
+      'pluginId': pluginId,
+      'pluginName': pluginName,
+      'injected': injected,
+      'content': content,
+      if (reason != null) 'reason': reason,
+      if (error != null) 'error': error,
+    };
+  }
+}
+
+class PluginPromptBuildResult {
+  const PluginPromptBuildResult({
+    required this.entries,
+  });
+
+  final List<PluginPromptEntry> entries;
+
+  String get mergedPrompt => [
+        for (final entry in entries)
+          if (entry.injected && entry.content.trim().isNotEmpty)
+            entry.content.trim(),
+      ].join('\n\n');
+
+  List<Map<String, dynamic>> toJson() {
+    return <Map<String, dynamic>>[
+      for (final entry in entries) entry.toJson(),
+    ];
+  }
+}
+
 /// 插件上下文构建器。
 ///
 /// 负责：
@@ -33,27 +85,61 @@ class ChatPluginContextBuilder {
     required String userMessage,
     required bool supportsToolCalling,
   }) async {
-    if (plugins.isEmpty) return '';
+    final result = await buildPluginPromptEntriesWithFilter(
+      plugins,
+      userMessage: userMessage,
+      supportsToolCalling: supportsToolCalling,
+    );
+    return result.mergedPrompt;
+  }
 
-    final prompts = <String>[];
+  Future<PluginPromptBuildResult> buildPluginPromptEntriesWithFilter(
+    List<Plugin> plugins, {
+    required String userMessage,
+    required bool supportsToolCalling,
+  }) async {
+    if (plugins.isEmpty) {
+      return const PluginPromptBuildResult(entries: <PluginPromptEntry>[]);
+    }
+
+    final entries = <PluginPromptEntry>[];
     for (final plugin in plugins) {
       try {
         final prompt = await plugin.getSystemPrompt(
           userMessage: userMessage,
           supportsToolCalling: supportsToolCalling,
         );
-        if (prompt != null && prompt.isNotEmpty) {
-          prompts.add(prompt);
-        }
+        final trimmedPrompt = prompt?.trim() ?? '';
+        entries.add(
+          PluginPromptEntry(
+            order: entries.length,
+            pluginId: plugin.id,
+            pluginName: plugin.name,
+            injected: trimmedPrompt.isNotEmpty,
+            content: trimmedPrompt,
+            reason: trimmedPrompt.isEmpty ? 'empty_prompt' : null,
+          ),
+        );
       } catch (e) {
         AppLogger.warning('ChatSendService', 'Failed to build plugin prompt',
             metadata: {
               'pluginId': plugin.id,
               'error': e.toString(),
             });
+        entries.add(
+          PluginPromptEntry(
+            order: entries.length,
+            pluginId: plugin.id,
+            pluginName: plugin.name,
+            injected: false,
+            content: '',
+            reason: 'build_failed',
+            error: e.toString(),
+          ),
+        );
       }
     }
-    return prompts.join('\n\n');
+    return PluginPromptBuildResult(entries: entries);
   }
 
   List<AITool> collectPluginTools(List<Plugin> plugins) {

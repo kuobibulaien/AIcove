@@ -17,6 +17,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_gallery_saver_plus/image_gallery_saver_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
+import '../../../../features/chat/conversation_timeline_providers.dart';
 import '../../../../features/chat/providers2.dart';
 import '../../../../features/chat/domain/message.dart';
 import '../../../../features/chat/presentation/widgets/message_bubble.dart';
@@ -40,6 +41,7 @@ class ChatMessageList extends ConsumerStatefulWidget {
   final String conversationId;
   final String? avatarUrl;
   final String displayName;
+  final StreamingBubbleState streamingBubbleState;
   final double bottomOverlayHeight;
   final void Function(Message message)? onEditMessage;
   final void Function(Message message)? onRegenerateMessage;
@@ -63,12 +65,16 @@ class ChatMessageList extends ConsumerStatefulWidget {
   /// 当用户手势接管滚动时回调（用于通知上层关闭自动回底）
   final VoidCallback? onAutoScrollDisabled;
 
+  /// 强制回到底部信号（值变化时代表触发一次强制回底）
+  final int forceScrollToBottomSignal;
+
   const ChatMessageList({
     super.key,
     required this.messages,
     required this.conversationId,
     this.avatarUrl,
     required this.displayName,
+    this.streamingBubbleState = StreamingBubbleState.hidden,
     this.bottomOverlayHeight = 0,
     this.onEditMessage,
     this.onRegenerateMessage,
@@ -79,6 +85,7 @@ class ChatMessageList extends ConsumerStatefulWidget {
     this.hasMoreMessages = true,
     this.autoScrollToBottomEnabled = true,
     this.onAutoScrollDisabled,
+    this.forceScrollToBottomSignal = 0,
   });
 
   @override
@@ -112,6 +119,9 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   /// 首次进入会话时，确保列表定位到最新消息
   bool _didInitialBottomPosition = false;
 
+  bool get _hasTimelineContent =>
+      widget.messages.isNotEmpty || widget.streamingBubbleState.visible;
+
   @override
   void initState() {
     super.initState();
@@ -124,7 +134,7 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     // 初始化 ScrollController 并添加监听
     _scrollController = ScrollController();
     _scrollController.addListener(_onScroll);
-    if (_autoScrollEnabled && widget.messages.isNotEmpty) {
+    if (_autoScrollEnabled && _hasTimelineContent) {
       _scheduleScrollToBottom();
     }
   }
@@ -184,10 +194,10 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
 
   void _ensureInitialBottomPosition() {
     if (_didInitialBottomPosition) return;
-    if (!_autoScrollEnabled || widget.messages.isEmpty) return;
+    if (!_autoScrollEnabled || !_hasTimelineContent) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _didInitialBottomPosition) return;
-      if (!_autoScrollEnabled || widget.messages.isEmpty) return;
+      if (!_autoScrollEnabled || !_hasTimelineContent) return;
       if (!_scrollController.hasClients) return;
       final position = _scrollController.position;
       if (!position.hasContentDimensions) return;
@@ -301,6 +311,8 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
 
     final resumeAutoScroll = !oldWidget.autoScrollToBottomEnabled &&
         widget.autoScrollToBottomEnabled;
+    final forceScrollRequested =
+        oldWidget.forceScrollToBottomSignal != widget.forceScrollToBottomSignal;
     final overlayHeightDelta =
         widget.bottomOverlayHeight - oldWidget.bottomOverlayHeight;
     final overlayHeightChanged = overlayHeightDelta.abs() > 0.5;
@@ -309,9 +321,13 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
         widget.autoScrollToBottomEnabled) {
       _autoScrollEnabled = widget.autoScrollToBottomEnabled;
     }
+    if (forceScrollRequested) {
+      _autoScrollEnabled = true;
+      shouldResumeAutoScroll = true;
+    }
 
     // 点击输入框时：若用户仍在历史中段，不应强制跳底。
-    if (resumeAutoScroll && !_isNearBottom()) {
+    if (resumeAutoScroll && !forceScrollRequested && !_isNearBottom()) {
       _autoScrollEnabled = false;
       shouldResumeAutoScroll = false;
       _notifyAutoScrollDisabledDeferred();
@@ -330,6 +346,7 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     }
 
     final messagesChanged = widget.messages != oldWidget.messages;
+    final streamingBubbleChanged = _didStreamingBubbleChange(oldWidget);
 
     // 缓存优化：仅当消息列表引用变化时才重构列表项
     // 避免键盘弹出/收起导致 MediaQuery 变化进而触发全量重建 (Layout Thrashing)
@@ -340,6 +357,9 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     if (widget.messages.isEmpty) {
       _pendingAnimationIds.clear();
       _latestAnimatedAt = null;
+      if (streamingBubbleChanged && _autoScrollEnabled) {
+        _scheduleScrollToBottom();
+      }
       return;
     }
 
@@ -367,8 +387,10 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
       }
     }
 
-    if (shouldResumeAutoScroll ||
+    if (forceScrollRequested ||
+        shouldResumeAutoScroll ||
         (messagesChanged && _autoScrollEnabled) ||
+        (streamingBubbleChanged && _autoScrollEnabled) ||
         (overlayHeightChanged && _autoScrollEnabled)) {
       _scheduleScrollToBottom();
       return;
@@ -378,6 +400,14 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
       // 阅读中段时，输入框升高应“顶走”当前窗口，而不是跳到底部。
       _shiftViewportByOverlayDelta(overlayHeightDelta);
     }
+  }
+
+  bool _didStreamingBubbleChange(ChatMessageList oldWidget) {
+    final previous = oldWidget.streamingBubbleState;
+    final current = widget.streamingBubbleState;
+    return previous.visible != current.visible ||
+        previous.text != current.text ||
+        previous.status != current.status;
   }
 
   @override
@@ -418,9 +448,12 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     // 构建包含时间分隔器的列表项（非反转列表，时间顺序与数据一致）
     // 使用缓存的列表项，避免每次 build 重复计算
     final listItems = _cachedListItems;
+    final hasStreamingBubble = widget.streamingBubbleState.visible;
 
     // 计算实际 itemCount：如果正在加载更多，顶部多显示一个加载指示器
-    final itemCount = listItems.length + (widget.isLoadingMore ? 1 : 0);
+    final itemCount = listItems.length +
+        (widget.isLoadingMore ? 1 : 0) +
+        (hasStreamingBubble ? 1 : 0);
     _ensureInitialBottomPosition();
 
     return NotificationListener<ScrollNotification>(
@@ -450,6 +483,9 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
           }
 
           final dataIndex = widget.isLoadingMore ? index - 1 : index;
+          if (dataIndex == listItems.length && hasStreamingBubble) {
+            return _buildStreamingBubble(context);
+          }
           final item = listItems[dataIndex];
 
           if (item is _TimeDivider) {
@@ -583,16 +619,25 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
 
       // 判断是否需要分段显示（仅对 AI 消息的纯文本内容进行分段）
       final isAssistant = currentMessage.role == 'assistant';
-      final hasBlocks = currentMessage.blocks?.isNotEmpty ?? false;
+      final blocks = currentMessage.blocks;
+      final hasNonTextBlocks =
+          blocks?.any((block) => block is! TextBlock) ?? false;
+      final chunkSourceText = (blocks == null || blocks.isEmpty)
+          ? currentMessage.content
+          : blocks
+              .whereType<TextBlock>()
+              .map((block) => block.content)
+              .join('\n\n');
       final shouldChunk = enableChunking &&
           isAssistant &&
-          !hasBlocks &&
-          currentMessage.content.isNotEmpty;
+          currentMessage.status != 'sending' &&
+          !hasNonTextBlocks &&
+          chunkSourceText.trim().isNotEmpty;
 
       if (shouldChunk && config != null) {
         // 对 AI 消息进行分段
         final chunks =
-            MessageFormatter.formatAndChunkText(currentMessage.content, config);
+            MessageFormatter.formatAndChunkText(chunkSourceText, config);
         if (chunks.length > 1) {
           // 多个分段：每个分段作为独立的列表项
           for (int j = 0; j < chunks.length; j++) {
@@ -715,6 +760,67 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
           width: 24,
           height: 24,
           child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStreamingBubble(BuildContext context) {
+    final colors = context.moeColors;
+    final state = widget.streamingBubbleState;
+    final text = state.text.trim().isEmpty ? '生成中...' : state.text;
+    final statusLabel = switch (state.status) {
+      StreamingBubbleStatus.fallback => '补发中',
+      StreamingBubbleStatus.streaming => '生成中',
+      StreamingBubbleStatus.thinking => '思考中',
+      StreamingBubbleStatus.hidden => '',
+    };
+
+    return Padding(
+      key: const ValueKey<String>('streaming_bubble'),
+      padding:
+          const EdgeInsets.symmetric(vertical: _kMessageItemVerticalPadding),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 320),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+            decoration: MoeG2Decoration(
+              radius: 18,
+              color: colors.surfaceAlt.withValues(alpha: 0.94),
+              border: Border.all(
+                color: colors.borderLight,
+                width: borderWidth,
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (statusLabel.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text(
+                      statusLabel,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: colors.muted,
+                        fontWeight: MoeFontWeights.emphasis,
+                      ),
+                    ),
+                  ),
+                Text(
+                  text,
+                  key: const ValueKey<String>('streaming_bubble_text'),
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: colors.text,
+                    height: 1.45,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

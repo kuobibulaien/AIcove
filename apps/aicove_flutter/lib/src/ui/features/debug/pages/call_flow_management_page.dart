@@ -97,8 +97,8 @@ class _CallFlowManagementPageState
                   border: Border.all(color: colors.borderLight),
                 ),
                 child: Text(
-                  '稳定模式：模型会按“请求模型 -> 执行工具 -> 再请求模型”的回合循环，结果更稳但更慢。\n'
-                  '快速模式：只请求模型一轮，工具并发执行，失败不再补救，速度优先。',
+                  '稳定模式：模型会按“请求模型 -> 执行工具 -> 再请求模型”的回合循环，适合回复必须依赖工具结果的场景。\n'
+                  '快速模式：仅在本轮工具全部为生图时走快路径；异步生图会补一轮正文，混合工具或非生图工具会自动回落到稳定模式。',
                   style: TextStyle(fontSize: 13, color: colors.textSecondary),
                 ),
               ),
@@ -204,7 +204,7 @@ class _CallFlowManagementPageState
                       ),
                     ),
                     Text(
-                      '作用：限制单个工具调用等待时间。快速模式下超时直接忽略。',
+                      '作用：限制单个工具调用等待时间。快速模式只对纯生图轮次生效，其他工具会回落稳定模式。',
                       style:
                           TextStyle(fontSize: 12, color: colors.textSecondary),
                     ),

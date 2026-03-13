@@ -160,8 +160,8 @@ class _ToolPromptsPageState extends ConsumerState<ToolPromptsPage> {
       pluginName: '绘图工具',
       icon: Icons.brush_outlined,
       enabled: imageEnabled,
-      promptText: imageConfig.drawingSystemPrompt,
-      description: '指导 AI 如何编写绘图提示词、何时调用 draw_image 工具',
+      promptText: imageConfig.manualToolDescriptionBlocks.promptDescription,
+      description: 'draw_image.prompt 字段说明（固定块中的 prompt 描述）',
       tools: imagePlugin?.getTools() ?? [],
       onSave: (text) => imageNotifier.setDrawingSystemPrompt(text),
     ));
@@ -183,8 +183,7 @@ class _ToolPromptsPageState extends ConsumerState<ToolPromptsPage> {
 
     // === TimeAwareness ===
     final timeConfig = ref.watch(timeAwarenessPluginConfigProvider);
-    final timeNotifier =
-        ref.read(timeAwarenessPluginConfigProvider.notifier);
+    final timeNotifier = ref.read(timeAwarenessPluginConfigProvider.notifier);
     final timePlugin = pluginManager.getPlugin('time_awareness');
     entries.add(_PluginPromptEntry(
       pluginId: 'time_awareness',
@@ -442,8 +441,7 @@ class _PluginPromptCardState extends State<_PluginPromptCard> {
                         ),
                         child: Text(
                           '${entry.tools.length} 工具',
-                          style:
-                              TextStyle(fontSize: 10, color: colors.primary),
+                          style: TextStyle(fontSize: 10, color: colors.primary),
                         ),
                       ),
                     AnimatedRotation(
@@ -512,8 +510,7 @@ class _PluginPromptCardState extends State<_PluginPromptCard> {
                           ),
                         ),
                       const SizedBox(height: 4),
-                      Divider(
-                          height: 1, thickness: 1, color: colors.border),
+                      Divider(height: 1, thickness: 1, color: colors.border),
                     ],
                   ),
                 ),
@@ -551,14 +548,14 @@ class _PluginPromptCardState extends State<_PluginPromptCard> {
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8),
-                      borderSide:
-                          BorderSide(color: colors.primary, width: 1.5),
+                      borderSide: BorderSide(color: colors.primary, width: 1.5),
                     ),
                     hintText: '输入系统提示词...',
                     hintStyle: TextStyle(color: colors.muted, fontSize: 13),
                   ),
                   onChanged: (_) {
-                    final nowDirty = _controller.text != widget.entry.promptText;
+                    final nowDirty =
+                        _controller.text != widget.entry.promptText;
                     if (nowDirty != _dirty) _setDirty(nowDirty);
                   },
                 ),
@@ -587,15 +584,13 @@ class _PluginPromptCardState extends State<_PluginPromptCard> {
                             ? const SizedBox(
                                 width: 14,
                                 height: 14,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2),
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
                               )
                             : const Icon(Icons.save_outlined, size: 16),
-                        label:
-                            const Text('保存', style: TextStyle(fontSize: 13)),
+                        label: const Text('保存', style: TextStyle(fontSize: 13)),
                         style: FilledButton.styleFrom(
-                          padding:
-                              const EdgeInsets.symmetric(horizontal: 12),
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
                         ),
                       ),
                     ),

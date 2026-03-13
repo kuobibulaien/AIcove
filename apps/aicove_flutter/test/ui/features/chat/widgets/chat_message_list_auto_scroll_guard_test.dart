@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:aicove_flutter/src/features/chat/conversation_timeline_providers.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
+import 'package:aicove_flutter/src/core/models/message_block.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:aicove_flutter/src/ui/features/chat/widgets/chat_message_list.dart';
 import 'package:aicove_flutter/src/ui/theme/skin_provider.dart';
@@ -38,7 +40,7 @@ AppSettings _buildSettings() {
     modelProviderMap: <String, String>{},
     backendApiKey: '',
     messageChunkingEnabled: false,
-    messageFormatConfig: MessageFormatConfig(),
+    messageFormatConfig: MessageFormatConfig(enableChunking: false),
     textScaleFactor: 1.0,
     uiScaleFactor: 1.0,
     imagePreviewScale: 1.0,
@@ -77,6 +79,7 @@ class _ChatListHarness extends StatefulWidget {
 class _ChatListHarnessState extends State<_ChatListHarness> {
   late List<Message> _messages;
   bool _autoScrollToBottomEnabled = true;
+  int _forceScrollToBottomSignal = 0;
   String? _streamingAssistantId;
   double _bottomOverlayHeight = 0;
 
@@ -97,6 +100,24 @@ class _ChatListHarnessState extends State<_ChatListHarness> {
           id: 'm_$nextIndex',
           role: 'assistant',
           content: '新增AI消息：$longText',
+          createdAt: lastTime.add(const Duration(minutes: 1)),
+          status: 'sent',
+        ),
+      ];
+    });
+  }
+
+  void appendUserMessage() {
+    final nextIndex = _messages.length;
+    final lastTime = _messages.last.createdAt;
+    final longText = List.filled(10, '用户发送消息').join('，');
+    setState(() {
+      _messages = [
+        ..._messages,
+        Message.text(
+          id: 'm_$nextIndex',
+          role: 'user',
+          content: '新增用户消息：$longText',
           createdAt: lastTime.add(const Duration(minutes: 1)),
           status: 'sent',
         ),
@@ -140,6 +161,13 @@ class _ChatListHarnessState extends State<_ChatListHarness> {
     });
   }
 
+  void forceScrollToBottomFromSend() {
+    setState(() {
+      _autoScrollToBottomEnabled = true;
+      _forceScrollToBottomSignal += 1;
+    });
+  }
+
   void setBottomOverlayHeight(double height) {
     setState(() {
       _bottomOverlayHeight = height;
@@ -159,6 +187,7 @@ class _ChatListHarnessState extends State<_ChatListHarness> {
         if (!_autoScrollToBottomEnabled) return;
         setState(() => _autoScrollToBottomEnabled = false);
       },
+      forceScrollToBottomSignal: _forceScrollToBottomSignal,
     );
   }
 }
@@ -179,6 +208,39 @@ Widget _buildHost(GlobalKey<_ChatListHarnessState> harnessKey) {
               width: 360,
               height: 520,
               child: _ChatListHarness(key: harnessKey),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+Widget _buildHostWithMessages({
+  required AppSettings settings,
+  required List<Message> messages,
+  StreamingBubbleState streamingBubbleState = StreamingBubbleState.hidden,
+}) {
+  return ProviderScope(
+    overrides: [
+      appSettingsProvider
+          .overrideWith(() => _FakeAppSettingsNotifier(settings)),
+    ],
+    child: SkinScope(
+      skin: const MoeTalkSkin(),
+      child: MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 360,
+              height: 520,
+              child: ChatMessageList(
+                conversationId: 'conv_test',
+                messages: messages,
+                displayName: '测试AI',
+                avatarUrl: null,
+                streamingBubbleState: streamingBubbleState,
+              ),
             ),
           ),
         ),
@@ -214,6 +276,65 @@ GlobalKey _extractBubbleGestureKey(WidgetTester tester, String messageId) {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  testWidgets('assistant 纯 TextBlock 消息也应按前端规则分段', (tester) async {
+    final settings = _buildSettings().copyWith(
+      messageChunkingEnabled: true,
+      messageFormatConfig: const MessageFormatConfig(
+        enableChunking: true,
+        chunkPunctuations: <String>['。'],
+        minSegmentLength: 1,
+      ),
+    );
+    final now = DateTime(2026, 1, 1, 12, 0, 0);
+    final messages = <Message>[
+      Message.fromBlocks(
+        id: 'assistant_text_block',
+        role: 'assistant',
+        blocks: <MessageBlock>[
+          TextBlock(
+            messageId: 'assistant_text_block',
+            content: '第一段。第二段。',
+          ),
+        ],
+        createdAt: now,
+        status: 'sent',
+      ),
+    ];
+
+    await tester.pumpWidget(
+      _buildHostWithMessages(
+        settings: settings,
+        messages: messages,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('第一段。'), findsOneWidget);
+    expect(find.text('第二段。'), findsOneWidget);
+    expect(find.text('第一段。第二段。'), findsNothing);
+  });
+
+  testWidgets('流式挂件应独立渲染并显示状态', (tester) async {
+    await tester.pumpWidget(
+      _buildHostWithMessages(
+        settings: _buildSettings(),
+        messages: const <Message>[],
+        streamingBubbleState: const StreamingBubbleState(
+          visible: true,
+          text: '正在慢慢生成',
+          status: StreamingBubbleStatus.streaming,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey<String>('streaming_bubble')), findsOne);
+    expect(
+        find.byKey(const ValueKey<String>('streaming_bubble_text')), findsOne);
+    expect(find.text('生成中'), findsOneWidget);
+    expect(find.text('正在慢慢生成'), findsOneWidget);
+  });
 
   testWidgets('用户上滑后，AI新增消息不应强制回到底部', (tester) async {
     final harnessKey = GlobalKey<_ChatListHarnessState>();
@@ -280,6 +401,37 @@ void main() {
 
     controller = tester.widget<ListView>(listFinder).controller!;
     expect(_distanceToBottom(controller), greaterThan(40));
+  });
+
+  testWidgets('用户发送后应立即回到底部查看最新消息', (tester) async {
+    final harnessKey = GlobalKey<_ChatListHarnessState>();
+
+    await tester.pumpWidget(_buildHost(harnessKey));
+    await tester.pumpAndSettle();
+
+    final listFinder = find.byType(ListView);
+    expect(listFinder, findsOneWidget);
+
+    await tester.drag(listFinder, const Offset(0, 320));
+    await tester.pumpAndSettle();
+
+    var controller = tester.widget<ListView>(listFinder).controller!;
+    var gapAfterManual = _distanceToBottom(controller);
+    if (gapAfterManual <= 40) {
+      await tester.drag(listFinder, const Offset(0, -320));
+      await tester.pumpAndSettle();
+      controller = tester.widget<ListView>(listFinder).controller!;
+      gapAfterManual = _distanceToBottom(controller);
+    }
+    expect(gapAfterManual, greaterThan(40));
+
+    harnessKey.currentState!.forceScrollToBottomFromSend();
+    harnessKey.currentState!.appendUserMessage();
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    controller = tester.widget<ListView>(listFinder).controller!;
+    expect(_distanceToBottom(controller), lessThanOrEqualTo(8));
   });
 
   testWidgets('静止态下流式生成时，列表锚点应保持稳定', (tester) async {

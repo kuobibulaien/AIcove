@@ -6,7 +6,8 @@ import '../../../../features/plugins/plugin_providers.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/theme/tokens.dart';
-import 'drawing_prompt_page.dart';
+import 'artist_preset_page.dart';
+import 'draw_image_tool_description_page.dart';
 
 class ImagePluginDetailPage extends ConsumerWidget {
   const ImagePluginDetailPage({super.key});
@@ -46,12 +47,13 @@ class ImagePluginDetailPage extends ConsumerWidget {
     final configNotifier = ref.read(imagePluginConfigProvider.notifier);
     final settingsNotifier = ref.read(appSettingsProvider.notifier);
 
-    // 直接从所有可见模型中筛选 image 类型
-    final imageModels = _allImageModels(settings);
+    // 只展示渠道管理里已显示且带图像生成标签的模型。
+    final imageModels = _visibleImageModels(settings);
     final selectedModel = _resolveSelectedModel(
       config: config,
       imageModels: imageModels,
     );
+    final hasStoredSelection = _hasStoredModelSelection(config);
 
     return ListView(
       padding: const EdgeInsets.symmetric(vertical: 16),
@@ -73,10 +75,13 @@ class ImagePluginDetailPage extends ConsumerWidget {
             ),
             MoeSettingsRow(
               icon: Icons.auto_awesome_outlined,
-              label: selectedModel?.displayName ?? '自动选择首个模型',
+              label: selectedModel?.displayName ??
+                  (imageModels.isEmpty
+                      ? '暂无可用绘图模型'
+                      : (hasStoredSelection ? '当前模型已不可用' : '自动选择首个模型')),
               subtitle: imageModels.isEmpty
-                  ? '暂无可用图片模型，请先到渠道商管理添加'
-                  : '模型来源：渠道商管理中的模型列表',
+                  ? '暂无可用绘图模型，请先到渠道商管理显示并标记生图模型'
+                  : '模型来源：渠道商管理中已显示且带生图标签的模型',
               trailingType: MoeSettingsRowTrailing.chevron,
               onTap: imageModels.isEmpty
                   ? () => MoeToast.show(context, '暂无可用图片模型')
@@ -89,8 +94,11 @@ class ImagePluginDetailPage extends ConsumerWidget {
             ),
             MoeSettingsRow(
               icon: Icons.rule_folder_outlined,
-              label: '生图提示词预设',
-              subtitle: config.selectedSystemPromptPreset?.name ?? '手动自定义',
+              label: '工具描述预设',
+              subtitle: config.selectedSystemPromptPreset?.name ??
+                  (config.systemPromptPresets.isNotEmpty
+                      ? config.systemPromptPresets.first.name
+                      : '默认'),
               trailingType: MoeSettingsRowTrailing.chevron,
               onTap: () => _showSystemPromptPresetPicker(
                 context: context,
@@ -148,20 +156,6 @@ class ImagePluginDetailPage extends ConsumerWidget {
                 notifier: configNotifier,
                 current: config.defaultCount,
               ),
-            ),
-            MoeSettingsRow(
-              icon: Icons.block_outlined,
-              label: '默认负面提示词',
-              subtitle: config.defaultNegativePrompt.trim().isEmpty
-                  ? '未设置'
-                  : config.defaultNegativePrompt.trim(),
-              labelMaxLines: 1,
-              trailingType: MoeSettingsRowTrailing.chevron,
-              onTap: () => _editNegativePrompt(
-                context: context,
-                notifier: configNotifier,
-                current: config.defaultNegativePrompt,
-              ),
               showDivider: false,
             ),
           ],
@@ -172,14 +166,30 @@ class ImagePluginDetailPage extends ConsumerWidget {
           margin: const EdgeInsets.symmetric(horizontal: 16),
           children: [
             MoeSettingsRow(
+              icon: Icons.palette_outlined,
+              label: '画师串预设',
+              subtitle: config.selectedArtistPreset != null
+                  ? config.selectedArtistPreset!.name
+                  : '未选择',
+              subtitleColor: config.selectedArtistPreset != null
+                  ? colors.primary
+                  : colors.muted,
+              trailingType: MoeSettingsRowTrailing.chevron,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const ArtistPresetPage(),
+                ),
+              ),
+            ),
+            MoeSettingsRow(
               icon: Icons.description_outlined,
-              label: '绘图提示词',
+              label: '绘图工具描述',
               subtitle: _buildPromptSummary(config),
               labelMaxLines: 1,
               trailingType: MoeSettingsRowTrailing.chevron,
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(
-                  builder: (_) => const DrawingPromptPage(),
+                  builder: (_) => const DrawImageToolDescriptionPage(),
                 ),
               ),
               showDivider: false,
@@ -191,27 +201,31 @@ class ImagePluginDetailPage extends ConsumerWidget {
   }
 
   /// 图片模型条目
-  List<_ImageModelEntry> _allImageModels(AppSettings settings) {
+  List<_ImageModelEntry> _visibleImageModels(AppSettings settings) {
     final result = <_ImageModelEntry>[];
     for (final provider in settings.providers) {
       if (!provider.enabled) continue;
-      final models = provider.visibleModels.isNotEmpty
-          ? provider.visibleModels
-          : provider.models;
+      final models = settings.getProviderVisibleModelsByType(
+        provider.id,
+        type: ModelType.image,
+      );
       for (final modelId in models) {
         final modelRef = settings.buildModelRef(provider.id, modelId);
-        if (settings.getModelType(modelRef) == ModelType.image) {
-          result.add(_ImageModelEntry(
-            modelRef: modelRef,
-            modelId: modelId,
-            providerId: provider.id,
-            providerName: provider.displayName ?? provider.id,
-            displayName: settings.getModelDisplayName(modelRef),
-          ));
-        }
+        result.add(_ImageModelEntry(
+          modelRef: modelRef,
+          modelId: modelId,
+          providerId: provider.id,
+          providerName: provider.displayName ?? provider.id,
+          displayName: settings.getModelDisplayName(modelRef),
+        ));
       }
     }
     return result;
+  }
+
+  bool _hasStoredModelSelection(ImageConfig config) {
+    final selected = config.selectedModelId?.trim();
+    return selected != null && selected.isNotEmpty;
   }
 
   _ImageModelEntry? _resolveSelectedModel({
@@ -220,12 +234,10 @@ class ImagePluginDetailPage extends ConsumerWidget {
   }) {
     if (imageModels.isEmpty) return null;
     final selected = config.selectedModelId?.trim();
-    if (selected != null && selected.isNotEmpty) {
-      final match =
-          imageModels.where((m) => m.modelRef == selected).firstOrNull;
-      if (match != null) return match;
+    if (selected == null || selected.isEmpty) {
+      return imageModels.first;
     }
-    return imageModels.first;
+    return imageModels.where((m) => m.modelRef == selected).firstOrNull;
   }
 
   Future<void> _showModelPicker({
@@ -273,23 +285,13 @@ class ImagePluginDetailPage extends ConsumerWidget {
     required ImageConfig config,
   }) async {
     final actions = <MoeSheetAction>[
-      MoeSheetAction(
-        icon: config.selectedSystemPromptPresetName == null
-            ? Icons.check_circle
-            : Icons.circle_outlined,
-        label: '手动自定义',
-        subtitle: '使用「绘图提示词」页里手动编辑的内容',
-        onTap: () => notifier.updateConfig(
-          config.copyWith(clearSelectedSystemPromptPreset: true),
-        ),
-      ),
       for (final preset in config.systemPromptPresets)
         MoeSheetAction(
           icon: config.selectedSystemPromptPresetName == preset.name
               ? Icons.check_circle
               : Icons.circle_outlined,
           label: preset.name,
-          subtitle: _shortPreview(preset.content),
+          subtitle: config.buildPresetPreview(preset),
           onTap: () => notifier.updateConfig(
             config.copyWith(selectedSystemPromptPresetName: preset.name),
           ),
@@ -298,7 +300,7 @@ class ImagePluginDetailPage extends ConsumerWidget {
 
     await showMoeActionSheet(
       context: context,
-      title: '选择生图提示词预设',
+      title: '选择工具描述预设',
       actions: actions,
     );
   }
@@ -473,60 +475,14 @@ class ImagePluginDetailPage extends ConsumerWidget {
     );
   }
 
-  Future<void> _editNegativePrompt({
-    required BuildContext context,
-    required ImagePluginConfigNotifier notifier,
-    required String current,
-  }) async {
-    final controller = TextEditingController(text: current);
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('默认负面提示词'),
-          content: TextField(
-            controller: controller,
-            maxLines: 5,
-            decoration: const InputDecoration(
-              hintText: '例如：lowres, blurry, watermark',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('取消'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('保存'),
-            ),
-          ],
-        );
-      },
-    );
-    if (ok == true) {
-      await notifier.setDefaultNegativePrompt(controller.text);
-    }
-    controller.dispose();
-  }
-
   String _buildPromptSummary(ImageConfig config) {
     final systemPart = config.selectedSystemPromptPreset != null
-        ? '系统：${config.selectedSystemPromptPreset!.name}'
-        : (config.drawingSystemPrompt == ImageConfig.defaultDrawingSystemPrompt
-            ? '系统：手动默认'
-            : '系统：手动自定义');
+        ? '预设：${config.selectedSystemPromptPreset!.name}'
+        : (config.isManualToolDescriptionDefault ? '预设：手动默认' : '预设：手动自定义');
     final artistPart = config.selectedArtistPreset != null
         ? ' / 画师串：${config.selectedArtistPreset!.name}'
         : '';
     return '$systemPart$artistPart';
-  }
-
-  String _shortPreview(String text) {
-    final normalized = text.replaceAll('\n', ' ').trim();
-    if (normalized.length <= 28) return normalized;
-    return '${normalized.substring(0, 28)}...';
   }
 }
 

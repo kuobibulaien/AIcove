@@ -4,123 +4,42 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'domain/conversation.dart';
 import 'id_gen.dart';
 import 'data/preset_characters_loader.dart';
-import '../../core/models/message_block.dart';
-import '../../core/app_logger.dart';
+import '../../core/database/database.dart' as db;
 import '../../core/database/database_provider.dart';
 import '../../core/database/converters/database_converters.dart';
+import '../../core/database/repositories/repositories.dart';
 
 class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
+  StreamSubscription<List<db.Conversation>>? _watchSub;
+
   @override
   Future<List<Conversation>> build() async {
     final convRepo = ref.read(conversationRepositoryProvider);
-    final msgRepo = ref.read(messageRepositoryProvider);
-    final blockRepo = ref.read(messageBlockRepositoryProvider);
+    ref.onDispose(() => _watchSub?.cancel());
 
-    // (注释已丢失)
     final dbConvs = await convRepo.getAll();
     if (dbConvs.isEmpty) {
       final conv = await _createInitialConversation();
       await _saveOne(conv);
-      return [conv];
+      _bindWatch(convRepo);
+      return <Conversation>[conv];
     }
 
-    // load initial messages (first page) with batched blocks
-    final result = <Conversation>[];
-    for (final dbConv in dbConvs) {
-      // only load recent messages for first paint
-      final dbMsgs = await msgRepo.getByConversation(dbConv.id, limit: 30);
+    _bindWatch(convRepo);
+    return _mapConversations(dbConvs);
+  }
 
-      // batch load blocks for these messages
-      final messageIds = dbMsgs.map((m) => m.id).toList();
-      final dbBlocks = await blockRepo.getByMessages(messageIds);
+  void _bindWatch(ConversationRepository convRepo) {
+    _watchSub?.cancel();
+    _watchSub = convRepo.watchAll().listen((dbConvs) {
+      state = AsyncValue.data(_mapConversations(dbConvs));
+    });
+  }
 
-      // (注释已丢失)
-      final blocksByMsgId = <String, List<MessageBlock>>{};
-      final hasPlayableAudioByMsgId = <String, bool>{};
-      final emptyAudioBlockIdsByMsgId = <String, List<String>>{};
-      for (final dbBlock in dbBlocks) {
-        final block = MessageBlockConverter.fromDb(dbBlock);
-        if (block != null) {
-          blocksByMsgId.putIfAbsent(dbBlock.messageId, () => []).add(block);
-          if (block is AudioBlock) {
-            if (block.url.isNotEmpty) {
-              hasPlayableAudioByMsgId[dbBlock.messageId] = true;
-            } else {
-              emptyAudioBlockIdsByMsgId
-                  .putIfAbsent(dbBlock.messageId, () => [])
-                  .add(dbBlock.id);
-            }
-          }
-        }
-      }
-
-      final stalePendingAudioBlockIds = <String>[];
-      // Track messages that should fallback to plain text
-      final orphanPendingByMsgId = <String, String>{}; // msgId -> fallbackText
-      for (final entry in emptyAudioBlockIdsByMsgId.entries) {
-        final msgId = entry.key;
-        final ids = entry.value;
-        if (ids.isEmpty) continue;
-        if (hasPlayableAudioByMsgId[msgId] == true) {
-          // Case 1: message has both playable and empty audio blocks
-          final blocks = blocksByMsgId[msgId];
-          if (blocks != null) {
-            blocksByMsgId[msgId] = [
-              for (final b in blocks)
-                if (b is! AudioBlock || b.url.isNotEmpty) b,
-            ];
-          }
-          stalePendingAudioBlockIds.addAll(ids);
-        } else {
-          // (注释已丢失)
-          final blocks = blocksByMsgId[msgId];
-          if (blocks != null) {
-            final audioBlock = blocks.whereType<AudioBlock>().firstOrNull;
-            final fallbackText = audioBlock?.text ?? '';
-            orphanPendingByMsgId[msgId] = fallbackText;
-            blocksByMsgId.remove(msgId); // (注释已丢失)
-            stalePendingAudioBlockIds.addAll(ids);
-          }
-        }
-      }
-
-      if (stalePendingAudioBlockIds.isNotEmpty) {
-        unawaited(() async {
-          try {
-            final deletedAt = DateTime.now().millisecondsSinceEpoch;
-            for (final id in stalePendingAudioBlockIds) {
-              await blockRepo.softDelete(id, deletedAt);
-            }
-            AppLogger.info('DB', '已清理残留语音占位块', metadata: {
-              'count': stalePendingAudioBlockIds.length,
-              'orphanCount': orphanPendingByMsgId.length,
-              'conversationId': dbConv.id,
-            });
-          } catch (e) {
-            AppLogger.warning('DB', 'Failed to cleanup stale audio blocks',
-                metadata: {
-                  'error': e.toString(),
-                  'conversationId': dbConv.id,
-                });
-          }
-        }());
-      }
-
-      // Assemble messages (db desc -> ui asc)
-      final messages = dbMsgs.reversed.map((dbMsg) {
-        final blocks = blocksByMsgId[dbMsg.id];
-        // (注释已丢失)
-        final fallbackText = orphanPendingByMsgId[dbMsg.id];
-        if (fallbackText != null) {
-          return MessageConverter.fromDb(dbMsg, blocks: null).copyWith(
-              content: fallbackText.isNotEmpty ? fallbackText : dbMsg.content);
-        }
-        return MessageConverter.fromDb(dbMsg, blocks: blocks);
-      }).toList();
-
-      result.add(ConversationConverter.fromDb(dbConv, messages: messages));
-    }
-    return result;
+  List<Conversation> _mapConversations(List<db.Conversation> dbConvs) {
+    return [
+      for (final dbConv in dbConvs) ConversationConverter.fromDb(dbConv),
+    ];
   }
 
   /// Build initial conversation when database is empty
@@ -147,7 +66,6 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
       characterImage: 'assets/characters/images/nahida.jpg',
       createdAt: now,
       updatedAt: now,
-      messages: const [],
     );
   }
 
@@ -160,55 +78,20 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
       displayName: 'New Chat',
       createdAt: now,
       updatedAt: now,
-      messages: const [],
     );
   }
 
   Future<void> _save(List<Conversation> list) async {
-    // (注释已丢失)
     final convRepo = ref.read(conversationRepositoryProvider);
-    final msgRepo = ref.read(messageRepositoryProvider);
-    final blockRepo = ref.read(messageBlockRepositoryProvider);
 
     for (final conv in list) {
       await convRepo.upsert(ConversationConverter.toCompanion(conv));
-      // 保存消息和内容块
-      for (var i = 0; i < conv.messages.length; i++) {
-        final msg = conv.messages[i];
-        await msgRepo.upsert(MessageConverter.toCompanion(msg, conv.id));
-        if (msg.blocks != null) {
-          for (var j = 0; j < msg.blocks!.length; j++) {
-            await blockRepo.upsert(
-              MessageBlockConverter.toCompanion(msg.blocks![j], msg.id, j),
-            );
-          }
-        }
-      }
     }
   }
 
-  /// 保存单个会话及其消息
   Future<void> _saveOne(Conversation conv) async {
     final convRepo = ref.read(conversationRepositoryProvider);
-    final msgRepo = ref.read(messageRepositoryProvider);
-    final blockRepo = ref.read(messageBlockRepositoryProvider);
-
     await convRepo.upsert(ConversationConverter.toCompanion(conv));
-    for (var i = 0; i < conv.messages.length; i++) {
-      final msg = conv.messages[i];
-      await msgRepo.upsert(MessageConverter.toCompanion(msg, conv.id));
-      if (msg.blocks != null && msg.blocks!.isNotEmpty) {
-        for (var j = 0; j < msg.blocks!.length; j++) {
-          await blockRepo.upsert(
-            MessageBlockConverter.toCompanion(msg.blocks![j], msg.id, j),
-          );
-        }
-      } else {
-        // (注释已丢失)
-        // (注释已丢失)
-        await blockRepo.deleteByMessage(msg.id);
-      }
-    }
   }
 
   Future<void> setAll(
@@ -339,23 +222,15 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
   // 清空消息
   Future<void> clearMessages(String id) async {
     final msgRepo = ref.read(messageRepositoryProvider);
+    final convRepo = ref.read(conversationRepositoryProvider);
 
     final now = DateTime.now().millisecondsSinceEpoch;
     final purgeAt = now + 30 * 24 * 60 * 60 * 1000; // (注释已丢失)
 
     // (注释已丢失)
     await msgRepo.softDeleteByConversation(id, now, purgeAt);
-
-    // update in-memory state
-    await updateOne(
-        id,
-        (c) => c.copyWith(
-              messages: const [],
-              lastMessage: null,
-              lastMessageTime: null,
-              unreadCount: 0,
-              updatedAt: DateTime.now(),
-            ));
+    await convRepo.clearSummary(id, now);
+    await clearUnread(id);
   }
 
   // delete conversation (soft delete to trash)

@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
+import 'package:aicove_flutter/src/features/settings/settings_models.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -23,8 +24,6 @@ void main() {
         apiKey: 'invalid-key',
         apiBaseUrl: 'http://[::1',
         provider: 'openai',
-        capabilities: const ['chat'],
-        modelType: 'chat',
         customConfig: const <String, dynamic>{'requestFormat': 'openai'},
       ),
       throwsA(isA<Exception>()),
@@ -52,8 +51,6 @@ void main() {
       apiKey: 'dummy-key',
       apiBaseUrl: 'https://example.invalid/v1',
       provider: 'openai',
-      capabilities: const <String>['chat'],
-      modelType: 'chat',
       customConfig: const <String, dynamic>{'requestFormat': 'openai'},
       allModels: const <String>[],
       visibleModels: const <String>[],
@@ -63,6 +60,80 @@ void main() {
     final provider = settings.providers.firstWhere((p) => p.id == 'openai');
     expect(provider.models, isEmpty);
     expect(provider.visibleModels, isEmpty);
+  });
+
+  test('mixed provider import should preserve embedding models and derive tags',
+      () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    await container.read(appSettingsProvider.future);
+    final notifier = container.read(appSettingsProvider.notifier);
+
+    await notifier.importCustomModel(
+      name: null,
+      apiKey: 'dummy-key',
+      apiBaseUrl: 'https://example.invalid/v1beta',
+      provider: 'gemini',
+      customConfig: const <String, dynamic>{'requestFormat': 'gemini'},
+      allModels: const <String>['gemini-2.0-flash', 'text-embedding-004'],
+      visibleModels: const <String>['gemini-2.0-flash', 'text-embedding-004'],
+    );
+
+    final settings = container.read(appSettingsProvider).requireValue;
+    final provider = settings.providers.firstWhere((p) => p.id == 'gemini');
+    expect(provider.models, contains('gemini-2.0-flash'));
+    expect(provider.models, contains('text-embedding-004'));
+    expect(provider.visibleModels, contains('text-embedding-004'));
+    expect(provider.capabilities, containsAll(<String>['chat', 'embedding']));
+  });
+
+  test('mixed provider update should keep explicit model_types models',
+      () async {
+    final store = <String, dynamic>{
+      'providers': [
+        {
+          'id': 'gemini',
+          'displayName': 'Gemini',
+          'apiKeys': <String>['dummy-key'],
+          'apiBaseUrl': 'https://generativelanguage.googleapis.com/v1beta',
+          'enabled': true,
+          'models': <String>['gemini-2.0-flash'],
+          'visible_models': <String>['gemini-2.0-flash'],
+          'hidden_models': <String>[],
+          'capabilities': <String>['chat'],
+        },
+      ],
+      'model_types': <String, String>{
+        'gemini:custom-model': 'embedding',
+      },
+      'default_model': 'gemini:gemini-2.0-flash',
+      'default_chat_models': <String>['gemini:gemini-2.0-flash'],
+      'visible_models': <String>['gemini-2.0-flash'],
+    };
+
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'aicove.ui_models.v1': jsonEncode(store),
+    });
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    await container.read(appSettingsProvider.future);
+    final notifier = container.read(appSettingsProvider.notifier);
+
+    await notifier.updateProviderModels(
+      providerId: 'gemini',
+      allModels: const <String>['custom-model', 'gemini-2.0-flash'],
+      visibleModels: const <String>['custom-model', 'gemini-2.0-flash'],
+    );
+
+    final settings = container.read(appSettingsProvider).requireValue;
+    final provider = settings.providers.firstWhere((p) => p.id == 'gemini');
+    expect(provider.models, <String>['custom-model', 'gemini-2.0-flash']);
+    expect(
+        provider.visibleModels, <String>['custom-model', 'gemini-2.0-flash']);
+    expect(provider.capabilities, containsAll(<String>['chat', 'embedding']));
   });
 
   test('importing openai provider twice should not overwrite old provider',
@@ -80,8 +151,6 @@ void main() {
       apiBaseUrl: 'https://api.first.example/v1',
       provider: 'openai',
       displayName: '渠道A',
-      capabilities: const <String>['chat'],
-      modelType: 'chat',
       customConfig: const <String, dynamic>{'requestFormat': 'openai'},
       allModels: const <String>['gpt-4o-mini'],
       visibleModels: const <String>['gpt-4o-mini'],
@@ -93,8 +162,6 @@ void main() {
       apiBaseUrl: 'https://api.second.example/v1',
       provider: 'openai',
       displayName: '渠道B',
-      capabilities: const <String>['chat'],
-      modelType: 'chat',
       customConfig: const <String, dynamic>{'requestFormat': 'openai'},
       allModels: const <String>['gpt-4o-mini'],
       visibleModels: const <String>['gpt-4o-mini'],
@@ -107,6 +174,46 @@ void main() {
     expect(first.apiBaseUrl, 'https://api.first.example/v1');
     expect(second.apiBaseUrl, 'https://api.second.example/v1');
     expect(second.visibleModels, contains('gpt-4o-mini'));
+  });
+
+  test('importing novelai provider twice should not overwrite old provider',
+      () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    await container.read(appSettingsProvider.future);
+    final notifier = container.read(appSettingsProvider.notifier);
+
+    await notifier.importCustomModel(
+      name: null,
+      apiKey: 'nai-key-1',
+      apiBaseUrl: 'https://image.first.example',
+      provider: 'novelai',
+      displayName: 'NovelAI A',
+      customConfig: const <String, dynamic>{'requestFormat': 'novelai'},
+      allModels: const <String>['nai-diffusion-4-5-curated'],
+      visibleModels: const <String>['nai-diffusion-4-5-curated'],
+    );
+
+    await notifier.importCustomModel(
+      name: null,
+      apiKey: 'nai-key-2',
+      apiBaseUrl: 'https://image.second.example',
+      provider: 'novelai',
+      displayName: 'NovelAI B',
+      customConfig: const <String, dynamic>{'requestFormat': 'novelai'},
+      allModels: const <String>['nai-diffusion-4-5-curated'],
+      visibleModels: const <String>['nai-diffusion-4-5-curated'],
+    );
+
+    final settings = container.read(appSettingsProvider).requireValue;
+    final providerIds = settings.providers.map((p) => p.id).toList();
+    final second = settings.providers.firstWhere((p) => p.id == 'novelai__2');
+
+    expect(providerIds, contains('novelai'));
+    expect(providerIds, contains('novelai__2'));
+    expect(second.visibleModels, contains('nai-diffusion-4-5-curated'));
   });
 
   test('model chat capabilities can be set and cleared per model', () async {
@@ -122,8 +229,6 @@ void main() {
       apiKey: 'key-cap',
       apiBaseUrl: 'https://api.cap.example/v1',
       provider: 'openai',
-      capabilities: const <String>['chat'],
-      modelType: 'chat',
       customConfig: const <String, dynamic>{'requestFormat': 'openai'},
       allModels: const <String>['gpt-4o'],
       visibleModels: const <String>['gpt-4o'],
@@ -173,7 +278,6 @@ void main() {
           'visible_models': <String>['model-on'],
           'hidden_models': <String>[],
           'capabilities': <String>['chat'],
-          'model_type': 'chat',
         },
         {
           'id': 'disabled',
@@ -185,7 +289,6 @@ void main() {
           'visible_models': <String>['model-off'],
           'hidden_models': <String>[],
           'capabilities': <String>['chat'],
-          'model_type': 'chat',
         },
       ],
       'default_model': 'disabled:model-off',
@@ -223,7 +326,6 @@ void main() {
           'visible_models': <String>['model-a', 'model-b'],
           'hidden_models': <String>[],
           'capabilities': <String>['chat'],
-          'model_type': 'chat',
         },
       ],
       'default_model': 'enabled:model-a',
@@ -246,6 +348,91 @@ void main() {
     expect(
       settings.defaultChatModels,
       <String>['enabled:model-b', 'enabled:model-a'],
+    );
+  });
+
+  test('loading legacy provider model_type should scrub old field', () async {
+    final store = <String, dynamic>{
+      'providers': [
+        {
+          'id': 'legacy',
+          'displayName': '旧渠道',
+          'apiKeys': <String>[],
+          'apiBaseUrl': 'https://legacy.example/v1',
+          'enabled': true,
+          'models': <String>['text-embedding-3-small'],
+          'visible_models': <String>['text-embedding-3-small'],
+          'hidden_models': <String>[],
+          'capabilities': <String>['chat'],
+          'model_type': 'chat',
+        },
+      ],
+      'model_types': <String, String>{
+        'legacy:text-embedding-3-small': 'embedding',
+      },
+      'default_model': 'legacy:text-embedding-3-small',
+      'visible_models': <String>['text-embedding-3-small'],
+    };
+
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'aicove.ui_models.v1': jsonEncode(store),
+    });
+
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    final settings = await container.read(appSettingsProvider.future);
+    final provider = settings.providers.firstWhere((p) => p.id == 'legacy');
+    expect(provider.capabilities, contains('embedding'));
+    expect(provider.capabilities, isNot(contains('chat')));
+
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getString('aicove.ui_models.v1');
+    expect(saved, isNotNull);
+    expect(saved, isNot(contains('"model_type"')));
+  });
+
+  test('tts available models should exclude hidden voice-tagged models',
+      () async {
+    final store = <String, dynamic>{
+      'providers': [
+        {
+          'id': 'voice',
+          'displayName': '语音渠道',
+          'apiKeys': <String>[],
+          'apiBaseUrl': 'https://voice.example/v1',
+          'enabled': true,
+          'models': <String>['voice-public', 'voice-hidden', 'chat-model'],
+          'visible_models': <String>['voice-public', 'chat-model'],
+          'hidden_models': <String>['voice-hidden'],
+          'capabilities': <String>['chat', 'tts'],
+        },
+      ],
+      'model_types': <String, String>{
+        'voice:voice-public': 'tts',
+        'voice:voice-hidden': 'tts',
+        'voice:chat-model': 'chat',
+      },
+      'default_model': 'voice:chat-model',
+      'default_chat_models': <String>['voice:chat-model'],
+      'visible_models': <String>['voice-public', 'chat-model'],
+    };
+
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'aicove.ui_models.v1': jsonEncode(store),
+    });
+
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    final settings = await container.read(appSettingsProvider.future);
+
+    expect(
+      settings.getProviderVisibleModelsByType(
+        'voice',
+        type: ModelType.tts,
+      ),
+      <String>['voice-public'],
     );
   });
 

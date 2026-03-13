@@ -678,7 +678,6 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     List<String>? apiKeys,
     List<String>? capabilities,
     Map<String, dynamic>? customConfig,
-    String? modelType,
   }) async {
     await _commit(() => _api.updateProvider(
           providerId: providerId,
@@ -687,7 +686,6 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
           apiKeys: apiKeys,
           capabilities: capabilities,
           customConfig: customConfig,
-          modelType: modelType,
         ));
   }
 
@@ -695,11 +693,13 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     required String providerId,
     required String apiKey,
     required String apiBaseUrl,
+    Map<String, dynamic>? customConfig,
   }) {
     return _api.previewProvider(
       providerId: providerId,
       apiKey: apiKey,
       apiBaseUrl: apiBaseUrl,
+      customConfig: customConfig,
     );
   }
 
@@ -709,36 +709,33 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     required String apiKey,
     required String apiBaseUrl,
     required String modelId,
+    Map<String, dynamic>? customConfig,
   }) {
     return _api.testModel(
       providerId: providerId,
       apiKey: apiKey,
       apiBaseUrl: apiBaseUrl,
       modelId: modelId,
+      customConfig: customConfig,
     );
   }
 
-  /// 为 OpenAI 渠道分配唯一 ID，避免新建渠道覆盖旧渠道。
-  /// 规则：
-  /// - 第一个保持 `openai`
-  /// - 后续依次为 `openai__2`、`openai__3`...
   String _resolveImportProviderId(String providerId) {
-    final base = providerId.trim();
+    final base = providerId.trim().toLowerCase();
     if (base.isEmpty) return base;
-    if (base.toLowerCase() != 'openai') return base;
 
     final current = state.value;
     if (current == null) return base;
 
     final usedIds =
         current.providers.map((p) => p.id.trim().toLowerCase()).toSet();
-    if (!usedIds.contains('openai')) return 'openai';
+    if (!usedIds.contains(base)) return base;
 
     var index = 2;
-    while (usedIds.contains('openai__$index')) {
+    while (usedIds.contains('${base}__$index')) {
       index++;
     }
-    return 'openai__$index';
+    return '${base}__$index';
   }
 
   Future<void> importCustomModel({
@@ -752,7 +749,6 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     List<String>? allModels,
     List<String>? capabilities,
     Map<String, dynamic>? customConfig,
-    String? modelType,
   }) async {
     final resolvedProviderId = _resolveImportProviderId(provider);
     await _commit(() => _api.importProvider(
@@ -766,7 +762,6 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
           allModels: allModels,
           capabilities: capabilities,
           customConfig: customConfig,
-          modelType: modelType,
         ));
   }
 

@@ -10,10 +10,13 @@
 /// 遵循 DRY 原则：从 ChatActions 中提取的重复代码
 library;
 
+import 'dart:math';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/conversation.dart';
 import '../domain/message.dart';
+import '../domain/persona_prompt_codec.dart';
 import '../../settings/app_settings.dart';
 import '../../settings/mcp_api.dart';
 import '../../settings/direct_mode.dart' as direct;
@@ -45,8 +48,27 @@ class ChatRequestParams {
   });
 }
 
+class _ProviderApiKeyCandidate {
+  const _ProviderApiKeyCandidate({
+    required this.key,
+    required this.enabled,
+    required this.isError,
+  });
+
+  final String key;
+  final bool enabled;
+  final bool isError;
+}
+
 /// 聊天请求构建器
 class ChatRequestBuilder {
+  static const String _multiKeyEnabledField = 'multi_key_enabled';
+  static const String _multiKeyStrategyField = 'multi_key_strategy';
+  static const String _multiKeyItemsField = 'multi_key_items';
+  static const String _multiKeyStrategyRoundRobin = 'round_robin';
+  static const String _multiKeyStrategyRandom = 'random';
+  static final Map<String, int> _roundRobinIndexMap = <String, int>{};
+
   ChatRequestBuilder(this._ref);
 
   final Ref _ref;
@@ -56,6 +78,70 @@ class ChatRequestBuilder {
   McpConfigDto? _cachedMcpConfig;
   DateTime? _cachedMcpFetchedAt;
   static const Duration _mcpCacheDuration = McpApi.mobileConfigCacheTtl;
+
+  String? _selectProviderApiKey(ProviderAuth providerAuth) {
+    final fallback = providerAuth.apiKeys.isNotEmpty
+        ? providerAuth.apiKeys.first.trim()
+        : null;
+    final customConfig = providerAuth.customConfig;
+    if (customConfig[_multiKeyEnabledField] != true) {
+      return fallback?.isEmpty == true ? null : fallback;
+    }
+
+    final items = <_ProviderApiKeyCandidate>[];
+    final rawItems = customConfig[_multiKeyItemsField];
+    if (rawItems is List) {
+      for (final item in rawItems) {
+        if (item is! Map) continue;
+        final mapped = Map<String, dynamic>.from(item);
+        final key = mapped['key']?.toString().trim() ?? '';
+        if (key.isEmpty) continue;
+        final enabled = mapped['enabled'] != false;
+        final status =
+            mapped['status']?.toString().trim().toLowerCase() ?? 'normal';
+        items.add(_ProviderApiKeyCandidate(
+          key: key,
+          enabled: enabled,
+          isError: status == 'error',
+        ));
+      }
+    }
+    if (items.isEmpty) {
+      for (final raw in providerAuth.apiKeys) {
+        final key = raw.trim();
+        if (key.isEmpty) continue;
+        items.add(_ProviderApiKeyCandidate(
+          key: key,
+          enabled: true,
+          isError: false,
+        ));
+      }
+    }
+    if (items.isEmpty) {
+      return fallback?.isEmpty == true ? null : fallback;
+    }
+
+    var available = items
+        .where((item) => item.enabled && !item.isError && item.key.isNotEmpty)
+        .toList();
+    available = available.isEmpty
+        ? items.where((item) => item.enabled && item.key.isNotEmpty).toList()
+        : available;
+    if (available.isEmpty) {
+      return fallback?.isEmpty == true ? null : fallback;
+    }
+
+    final strategy =
+        customConfig[_multiKeyStrategyField]?.toString().trim().toLowerCase() ??
+            _multiKeyStrategyRoundRobin;
+    if (strategy == _multiKeyStrategyRandom && available.length > 1) {
+      return available[Random().nextInt(available.length)].key;
+    }
+    final providerId = providerAuth.id.trim();
+    final index = (_roundRobinIndexMap[providerId] ?? 0) % available.length;
+    _roundRobinIndexMap[providerId] = (index + 1) % available.length;
+    return available[index].key;
+  }
 
   /// 获取 MCP 配置（带缓存）
   Future<McpConfigDto?> getMcpConfig() async {
@@ -130,9 +216,7 @@ class ChatRequestBuilder {
     var providerApiBase = providerAuth.apiBaseUrl.trim().isEmpty
         ? settings.apiBaseUrl
         : providerAuth.apiBaseUrl.trim();
-    var providerApiKey = providerAuth.apiKeys.isNotEmpty
-        ? providerAuth.apiKeys.first.trim()
-        : null;
+    var providerApiKey = _selectProviderApiKey(providerAuth);
 
     // 直连配置兜底
     try {
@@ -174,18 +258,14 @@ class ChatRequestBuilder {
       systemParts.add(additionalPrompt);
     }
 
+    final personaParts = PersonaPromptCodec.parse(conversation.personaPrompt);
+
     // 2. 对话角色提示词
-    if (conversation.personaPrompt.isNotEmpty) {
-      systemParts.add(conversation.personaPrompt);
+    if (personaParts.userPrompt.isNotEmpty) {
+      systemParts.add(personaParts.userPrompt);
     }
 
-    // 3. 用户称呼
-    if (conversation.addressUser != null &&
-        conversation.addressUser!.isNotEmpty) {
-      systemParts.add('你应该称呼用户为"${conversation.addressUser}"。');
-    }
-
-    // 4. 插件提示词（如 TTS）
+    // 3. 插件提示词（如 TTS）
     final pluginManager = _ref.read(pluginManagerProvider);
     final pluginPrompts =
         await pluginManager.getSystemPrompts(userMessage: userMessage);
@@ -196,7 +276,6 @@ class ChatRequestBuilder {
         'promptsLength': pluginPrompts.length,
       });
     }
-
     return systemParts.join('\n\n');
   }
 

@@ -4,11 +4,42 @@ import '../../../core/app_logger.dart';
 import '../../../core/database/database_provider.dart';
 import '../../chat/domain/message.dart' as chat;
 import '../../chat/providers2.dart';
+import '../../chat/services/chat_history_store.dart';
 import '../../memory/services/memory_service.dart';
 import '../../memory/utils/lexical_tokenizer_zh.dart';
 import '../../settings/app_settings.dart';
 import '../domain/index.dart';
 import 'memory_config.dart';
+
+String buildMemorySearchQuery(
+  List<chat.Message> messages, {
+  required String currentUserMessage,
+  int historyLimit = 2,
+  int maxChars = 200,
+}) {
+  final normalizedCurrent = currentUserMessage.trim();
+  final recent = messages
+      .map((m) => m.displayText.trim())
+      .where((c) => c.isNotEmpty)
+      .toList();
+  final historyWindow = recent.length > historyLimit
+      ? recent.sublist(recent.length - historyLimit)
+      : List<String>.from(recent);
+
+  if (normalizedCurrent.isNotEmpty) {
+    final alreadyIncluded =
+        historyWindow.isNotEmpty && historyWindow.last == normalizedCurrent;
+    if (!alreadyIncluded) {
+      historyWindow.add(normalizedCurrent);
+    }
+  }
+
+  final joined = historyWindow.join('\n').trim();
+  if (joined.isEmpty) return normalizedCurrent;
+  return joined.length > maxChars
+      ? joined.substring(joined.length - maxChars)
+      : joined;
+}
 
 class MemoryPlugin extends BasePlugin {
   static final _metadata = PluginMetadata(
@@ -162,8 +193,15 @@ class MemoryPlugin extends BasePlugin {
       });
     }
 
-    final query =
-        _buildSearchQuery(conv.messages, fallbackUserMessage: userMessage);
+    final recentMessages =
+        await _ref.read(chatHistoryStoreProvider).loadRecentMessages(
+              conv.id,
+              limit: 3,
+            );
+    final query = buildMemorySearchQuery(
+      recentMessages,
+      currentUserMessage: userMessage,
+    );
     final isFiller = LexicalTokenizerZh.looksLikeFillerUtterance(userMessage);
 
     List<String> related = [];
@@ -210,20 +248,6 @@ class MemoryPlugin extends BasePlugin {
   @override
   Future<PluginProcessResult> processResponse(String text) async {
     return PluginProcessResult(processedText: text, events: const []);
-  }
-
-  String _buildSearchQuery(List<chat.Message> messages,
-      {required String fallbackUserMessage}) {
-    if (messages.isEmpty) return fallbackUserMessage;
-    final take =
-        messages.length > 3 ? messages.sublist(messages.length - 3) : messages;
-    final joined =
-        take.map((m) => m.content).where((c) => c.trim().isNotEmpty).join('\n');
-    final trimmed = joined.trim();
-    if (trimmed.isEmpty) return fallbackUserMessage;
-    return trimmed.length > 200
-        ? trimmed.substring(trimmed.length - 200)
-        : trimmed;
   }
 
   void triggerPreFlush({

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,6 +8,8 @@ import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../providers2.dart';
 import '../../domain/conversation.dart';
+import '../../domain/message.dart';
+import '../../services/chat_history_store.dart';
 import '../../../../core/models/message_block.dart';
 import 'character_list_item.dart';
 import 'momotalk_sort_dialog.dart';
@@ -69,20 +72,21 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
 
   List<ImageProvider> _collectConversationPreviewProviders(
     Conversation conv, {
+    List<Message>? messages,
     required int maxMessagesToScan,
     required int maxImagesToCache,
   }) {
     final images = <ImageProvider>[];
     images.addAll(_collectAvatarProviders(conv));
 
-    final messages = conv.messages;
-    final start = messages.length > maxMessagesToScan
-        ? messages.length - maxMessagesToScan
+    final previewMessages = messages ?? const <Message>[];
+    final start = previewMessages.length > maxMessagesToScan
+        ? previewMessages.length - maxMessagesToScan
         : 0;
     for (var i = start;
-        i < messages.length && images.length < maxImagesToCache;
+        i < previewMessages.length && images.length < maxImagesToCache;
         i++) {
-      final blocks = messages[i].blocks;
+      final blocks = previewMessages[i].blocks;
       if (blocks == null) continue;
 
       for (final block in blocks) {
@@ -122,7 +126,7 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
 
     final fingerprint = [
       for (final c in targets)
-        '${c.id}:${c.updatedAt.millisecondsSinceEpoch}:${c.messages.length}'
+        '${c.id}:${c.updatedAt.millisecondsSinceEpoch}'
     ].join('|');
     if (fingerprint == _lastWarmupFingerprint) return;
 
@@ -138,15 +142,40 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
       final queue = ref.read(imagePreheatQueueProvider);
       final configuration = createLocalImageConfiguration(context);
       for (final conv in _pendingWarmupTargets) {
-        final providers = _collectConversationPreviewProviders(
+        final avatarProviders = _collectAvatarProviders(conv);
+        if (avatarProviders.isNotEmpty) {
+          queue.enqueueAll(avatarProviders, configuration);
+        }
+        unawaited(_warmupConversationPreview(
           conv,
           maxMessagesToScan: _kListWarmupMaxMessagesToScan,
           maxImagesToCache: _kListWarmupMaxImagesToCache,
-        );
-        if (providers.isEmpty) continue;
-        queue.enqueueAll(providers, configuration);
+        ));
       }
     });
+  }
+
+  Future<void> _warmupConversationPreview(
+    Conversation conv, {
+    required int maxMessagesToScan,
+    required int maxImagesToCache,
+  }) async {
+    final preheatQueue = ref.read(imagePreheatQueueProvider);
+    final messages = await ref.read(chatHistoryStoreProvider).loadRecentMessages(
+          conv.id,
+          limit: maxMessagesToScan,
+        );
+    if (!mounted) return;
+    preheatQueue.enqueueAllFromContext(
+      context,
+      _collectConversationPreviewProviders(
+        conv,
+        messages: messages,
+        maxMessagesToScan: maxMessagesToScan,
+        maxImagesToCache: maxImagesToCache,
+      ),
+      priority: ImagePreheatPriority.high,
+    );
   }
 
   @override
@@ -302,27 +331,18 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
                     conversation: c,
                     isActive: c.id == highlightId,
                     onTapDown: (_) {
-                      preheatQueue.enqueueAllFromContext(
-                        context,
-                        _collectConversationPreviewProviders(
-                          c,
-                          // 尽量覆盖聊天页首屏附近的图片，减少“进去后才加载”造成的闪烁。
-                          maxMessagesToScan: _kTapWarmupMaxMessagesToScan,
-                          maxImagesToCache: _kTapWarmupMaxImagesToCache,
-                        ),
-                        priority: ImagePreheatPriority.high,
-                      );
+                      unawaited(_warmupConversationPreview(
+                        c,
+                        maxMessagesToScan: _kTapWarmupMaxMessagesToScan,
+                        maxImagesToCache: _kTapWarmupMaxImagesToCache,
+                      ));
                     },
                     onTap: () {
-                      preheatQueue.enqueueAllFromContext(
-                        context,
-                        _collectConversationPreviewProviders(
-                          c,
-                          maxMessagesToScan: _kTapWarmupMaxMessagesToScan,
-                          maxImagesToCache: _kTapWarmupMaxImagesToCache,
-                        ),
-                        priority: ImagePreheatPriority.high,
-                      );
+                      unawaited(_warmupConversationPreview(
+                        c,
+                        maxMessagesToScan: _kTapWarmupMaxMessagesToScan,
+                        maxImagesToCache: _kTapWarmupMaxImagesToCache,
+                      ));
 
                       if (widget.onContactTap != null) {
                         // 使用自定义回调（宽屏模式）

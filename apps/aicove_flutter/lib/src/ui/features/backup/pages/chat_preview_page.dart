@@ -7,8 +7,14 @@ import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../../../features/chat/domain/conversation.dart';
 import '../../../../features/chat/domain/message.dart';
+import '../../../../features/chat/services/chat_history_store.dart';
 import '../../../shared/effects/smooth_clip.dart';
 import '../../../shared/widgets/index.dart';
+
+final _chatPreviewMessagesProvider =
+    FutureProvider.family<List<Message>, String>((ref, conversationId) {
+  return ref.read(chatHistoryStoreProvider).loadAllMessages(conversationId);
+});
 
 /// 只读聊天预览页面
 class ChatPreviewPage extends ConsumerWidget {
@@ -22,7 +28,7 @@ class ChatPreviewPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
-    final messages = conversation.messages;
+    final messagesAsync = ref.watch(_chatPreviewMessagesProvider(conversation.id));
 
     return Scaffold(
       appBar: MoeAppBar(
@@ -45,7 +51,11 @@ class ChatPreviewPage extends ConsumerWidget {
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  '只读预览模式 · ${messages.length} 条消息',
+                  messagesAsync.when(
+                    data: (messages) => '只读预览模式 · ${messages.length} 条消息',
+                    loading: () => '只读预览模式 · 加载中',
+                    error: (_, __) => '只读预览模式 · 加载失败',
+                  ),
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
@@ -56,20 +66,27 @@ class ChatPreviewPage extends ConsumerWidget {
 
           // 消息列表
           Expanded(
-            child: messages.isEmpty
-                ? const MoeEmptyState(
+            child: messagesAsync.when(
+              loading: () => const Center(child: MoeLoadingIndicator()),
+              error: (e, _) => Center(child: Text('加载失败: $e')),
+              data: (messages) {
+                if (messages.isEmpty) {
+                  return const MoeEmptyState(
                     icon: LucideIcons.messageSquare,
                     title: '暂无消息',
                     description: '该角色还没有聊天记录',
-                  )
-                : ListView.builder(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: messages.length,
-                    itemBuilder: (context, index) {
-                      final message = messages[index];
-                      return _buildMessageBubble(context, message);
-                    },
-                  ),
+                  );
+                }
+                return ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: messages.length,
+                  itemBuilder: (context, index) {
+                    final message = messages[index];
+                    return _buildMessageBubble(context, message);
+                  },
+                );
+              },
+            ),
           ),
 
           // 底部提示（没有输入框）

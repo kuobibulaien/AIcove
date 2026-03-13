@@ -7,9 +7,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../../../features/chat/domain/conversation.dart';
+import '../../../../features/chat/domain/message.dart';
+import '../../../../features/chat/conversation_timeline_providers.dart';
 import '../../../../features/chat/providers2.dart';
 import '../../../../features/chat/presentation/widgets/composer.dart';
 import '../../../../features/chat/presentation/widgets/contact_edit_dialog.dart';
+import '../../../../features/chat/services/chat_history_store.dart';
 import '../../../../ui/features/character/pages/contact_edit_page.dart';
 import '../../../../features/chat/presentation/widgets/chat_settings_dialog.dart';
 import '../../../../ui/theme/tokens.dart';
@@ -19,7 +22,6 @@ import '../../../../ui/shared/widgets/index.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../../core/database/database.dart' as db;
 import '../../../../core/database/database_provider.dart';
-import '../../../../core/database/converters/database_converters.dart';
 import '../../../../core/models/message_block.dart';
 import '../../../../core/utils/data_image.dart';
 import '../../../../core/utils/image_preheat_queue.dart';
@@ -43,14 +45,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   /// (注释已丢失)
   bool _isLoadingMore = false;
 
-  /// 是否还有更多历史消息
-  bool _hasMoreMessages = true;
-
   /// (注释已丢失)
   String? _preloadedConversationId;
   bool _didSchedulePrecache = false;
   double _composerOverlayHeight = 0;
   bool _autoScrollToBottomEnabled = true;
+  int _forceScrollToBottomSignal = 0;
 
   @override
   void initState() {
@@ -62,6 +62,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     if (activeId != targetId) {
       ref.read(activeConversationIdProvider.notifier).state = targetId;
     }
+    _resetVisibleCount(targetId);
     // (注释已丢失)
     ref.read(conversationsProvider.notifier).clearUnread(targetId);
   }
@@ -100,6 +101,14 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     setState(() => _autoScrollToBottomEnabled = true);
   }
 
+  void _forceChatListToBottom() {
+    if (!mounted) return;
+    setState(() {
+      _autoScrollToBottomEnabled = true;
+      _forceScrollToBottomSignal += 1;
+    });
+  }
+
   void _disableChatListAutoScroll() {
     if (!mounted) return;
     if (!_autoScrollToBottomEnabled) return;
@@ -128,7 +137,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
 
     // 判断上下文 / 当前消息是否包含图片
-    final historyHasImage = conv.messages.any((m) => m.images.isNotEmpty);
+    final history = await ref.read(chatHistoryStoreProvider).loadAllMessages(
+          conv.id,
+        );
+    final historyHasImage = history.any((m) => m.images.isNotEmpty);
     if (!historyHasImage && !currentMessageHasImage) return true;
 
     // 需要弹窗
@@ -263,6 +275,30 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     );
   }
 
+  String _buildBriefSendErrorMessage(String rawError) {
+    final text = rawError.trim();
+    if (text.isEmpty) {
+      return '发送失败，请到日志中心看详情';
+    }
+
+    final httpMatch =
+        RegExp(r'HTTP\s*(\d{3})', caseSensitive: false).firstMatch(text);
+    if (httpMatch != null) {
+      return '发送失败（HTTP ${httpMatch.group(1)}）';
+    }
+
+    final lower = text.toLowerCase();
+    if (lower.contains('timeout') || lower.contains('timed out')) {
+      return '发送超时，请稍后重试';
+    }
+    if (lower.contains('socketexception') ||
+        lower.contains('failed host lookup') ||
+        lower.contains('connection refused')) {
+      return '网络异常，请检查连接';
+    }
+    return '发送失败，请到日志中心看详情';
+  }
+
   /// (注释已丢失)
   void _triggerImagePreload() {
     final targetId = widget.conversationId;
@@ -285,14 +321,20 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               },
               orElse: () => null,
             );
+    final messages =
+        ref.read(conversationMessagesProvider(targetId)).valueOrNull ??
+            const <Message>[];
 
     if (conv != null) {
-      _preloadImages(conv);
+      _preloadImages(conv, messages);
     }
   }
 
   /// (注释已丢失)
-  Future<void> _preloadImages(Conversation conv) async {
+  Future<void> _preloadImages(
+    Conversation conv,
+    List<Message> messages,
+  ) async {
     if (_preloadedConversationId == conv.id) return;
 
     try {
@@ -311,7 +353,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       }
 
       // (注释已丢失)
-      final messages = conv.messages;
       final start = messages.length > maxMessagesToScan
           ? messages.length - maxMessagesToScan
           : 0;
@@ -475,80 +516,36 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final targetId = widget.conversationId;
     if (targetId != oldWidget.conversationId && targetId != null) {
       ref.read(activeConversationIdProvider.notifier).state = targetId;
+      _resetVisibleCount(targetId);
       // (注释已丢失)
       setState(() {
-        _hasMoreMessages = true;
         _isLoadingMore = false;
         _autoScrollToBottomEnabled = true;
       });
+      _preloadedConversationId = null;
       _scheduleImagePrecache();
       // (注释已丢失)
       ref.read(conversationsProvider.notifier).clearUnread(targetId);
     }
   }
 
+  void _resetVisibleCount(String conversationId) {
+    ref.read(conversationVisibleCountProvider(conversationId).notifier).state =
+        30;
+  }
+
   /// (注释已丢失)
-  Future<void> _loadMoreMessages(Conversation conv) async {
-    if (_isLoadingMore || !_hasMoreMessages) return;
-    if (conv.messages.isEmpty) {
-      setState(() => _hasMoreMessages = false);
-      return;
-    }
+  Future<void> _loadMoreMessages(String conversationId) async {
+    if (_isLoadingMore) return;
+    if (!ref.read(conversationHasMoreProvider(conversationId))) return;
 
     setState(() => _isLoadingMore = true);
 
     try {
-      final msgRepo = ref.read(messageRepositoryProvider);
-      final blockRepo = ref.read(messageBlockRepositoryProvider);
-
-      // (注释已丢失)
-      final oldestMessage = conv.messages.first;
-      final oldestTime = oldestMessage.createdAt.millisecondsSinceEpoch;
-
-      // (注释已丢失)
-      final dbMsgs = await msgRepo.getByConversation(
-        conv.id,
-        limit: 30,
-        beforeTime: oldestTime,
-      );
-
-      if (dbMsgs.isEmpty) {
-        setState(() {
-          _hasMoreMessages = false;
-          _isLoadingMore = false;
-        });
-        return;
-      }
-
-      // 批量获取 blocks
-      final messageIds = dbMsgs.map((m) => m.id).toList();
-      final dbBlocks = await blockRepo.getByMessages(messageIds);
-
-      // (注释已丢失)
-      final blocksByMsgId = <String, List<MessageBlock>>{};
-      for (final dbBlock in dbBlocks) {
-        final block = MessageBlockConverter.fromDb(dbBlock);
-        if (block != null) {
-          blocksByMsgId.putIfAbsent(dbBlock.messageId, () => []).add(block);
-        }
-      }
-
-      // (注释已丢失)
-      final olderMessages = dbMsgs.reversed.map((dbMsg) {
-        final blocks = blocksByMsgId[dbMsg.id];
-        return MessageConverter.fromDb(dbMsg, blocks: blocks);
-      }).toList();
-
-      // 更新会话，把更旧的消息插入到头部
-      await ref.read(conversationsProvider.notifier).updateOne(
-            conv.id,
-            (c) => c.copyWith(messages: [...olderMessages, ...c.messages]),
-          );
-
-      // (注释已丢失)
-      if (dbMsgs.length < 30) {
-        setState(() => _hasMoreMessages = false);
-      }
+      final notifier =
+          ref.read(conversationVisibleCountProvider(conversationId).notifier);
+      notifier.state += 30;
+      await Future<void>.delayed(const Duration(milliseconds: 120));
     } catch (e) {
       debugPrint('加载更多消息失败: $e');
     } finally {
@@ -575,6 +572,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               },
               orElse: () => initial,
             );
+    final currentConversationId = conv?.id ?? targetId;
+    final messagesAsync = currentConversationId == null
+        ? const AsyncValue.data(<Message>[])
+        : ref.watch(conversationMessagesProvider(currentConversationId));
+    final messages = messagesAsync.valueOrNull ?? const <Message>[];
+    final hasMoreMessages = currentConversationId != null &&
+        ref.watch(conversationHasMoreProvider(currentConversationId));
+    final streamingBubble = currentConversationId == null
+        ? StreamingBubbleState.hidden
+        : ref.watch(streamingBubbleProvider(currentConversationId));
     // (注释已丢失)
     // (注释已丢失)
     final actions = ref.read(chatActionsProvider); // (注释已丢失)
@@ -592,7 +599,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     // 监听发送错误，弹出失败原因提示
     ref.listen<String?>(errorProvider, (prev, next) {
       if (next != null && next.isNotEmpty && mounted) {
-        MoeToast.show(context, '发送失败: $next',
+        final briefMessage = _buildBriefSendErrorMessage(next);
+        MoeToast.show(context, briefMessage,
             type: ToastType.error, duration: const Duration(seconds: 3));
       }
     });
@@ -686,7 +694,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   color: colors.headerContentColor),
               tooltip: '新话题',
               onPressed: () async {
-                if (conv.messages.isEmpty) {
+                if (messages.isEmpty) {
                   MoeToast.brief(context, '当前没有聊天记录');
                   return;
                 }
@@ -708,7 +716,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   ),
                 );
                 if (ok == true && context.mounted) {
-                  final lastMsgId = conv.messages.last.id;
+                  final lastMsgId = messages.last.id;
                   await ref.read(conversationsProvider.notifier).updateOne(
                         conv.id,
                         (c) => c.copyWith(
@@ -887,17 +895,20 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                           child: ChatMessageList(
                             key: ValueKey(conv.id),
                             conversationId: conv.id,
-                            messages: conv.messages,
+                            messages: messages,
                             avatarUrl: conv.avatarUrl ?? conv.characterImage,
                             displayName: conv.displayName,
+                            streamingBubbleState: streamingBubble,
                             bottomOverlayHeight: _composerOverlayHeight,
                             autoScrollToBottomEnabled:
                                 _autoScrollToBottomEnabled,
                             onAutoScrollDisabled: _disableChatListAutoScroll,
+                            forceScrollToBottomSignal:
+                                _forceScrollToBottomSignal,
                             contextStartMessageId: conv.contextStartMessageId,
-                            onLoadMore: () => _loadMoreMessages(conv),
+                            onLoadMore: () => _loadMoreMessages(conv.id),
                             isLoadingMore: _isLoadingMore,
-                            hasMoreMessages: _hasMoreMessages,
+                            hasMoreMessages: hasMoreMessages,
                             onEditMessage: (message) async {
                               final text =
                                   await actions.editMessage(message.id);
@@ -961,11 +972,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                         ? '${quoted.content.substring(0, 30)}...'
                         : quoted.content;
                     final quotedPrefix = '> Quote: $quotedText\n\n';
-                    _resumeChatListAutoScroll();
+                    _forceChatListToBottom();
                     actions.send(quotedPrefix + text);
                     ref.read(quotedMessageProvider.notifier).state = null;
                   } else {
-                    _resumeChatListAutoScroll();
+                    _forceChatListToBottom();
                     actions.send(text);
                   }
                 },
@@ -987,7 +998,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     );
                     if (!ok) return;
                   }
-                  _resumeChatListAutoScroll();
+                  _forceChatListToBottom();
                   actions.sendWithImage(imagePath, text: text);
                 },
                 onFileSelected: (filePath) {
@@ -999,7 +1010,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     );
                     return;
                   }
-                  _resumeChatListAutoScroll();
+                  _forceChatListToBottom();
                   actions.sendWithFile(filePath);
                 },
               ),

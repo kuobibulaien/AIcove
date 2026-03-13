@@ -18,6 +18,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:figma_squircle/figma_squircle.dart';
 
+import '../../../../core/api/providers/google_api_mode.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../theme/tokens.dart';
 import '../../../shared/effects/smooth_clip.dart';
@@ -33,15 +34,33 @@ Future<bool?> showAddProviderSheet(BuildContext context) {
   );
 }
 
-/// API 鏍煎紡鏋氫妇
-enum ApiFormat {
-  openai('openai', 'OpenAI'),
-  claude('claude', 'Claude'),
-  gemini('gemini', 'Gemini');
+/// API 鏍煎紡
+class ApiFormat {
+  const ApiFormat._(this.value, this.label, this.defaultBaseUrl);
 
-  const ApiFormat(this.value, this.label);
+  static const openai =
+      ApiFormat._('openai', 'OpenAI', 'https://api.openai.com/v1');
+  static const claude =
+      ApiFormat._('claude', 'Claude', 'https://api.anthropic.com/v1');
+  static const gemini = ApiFormat._(
+    'gemini',
+    'Gemini',
+    kGeminiDeveloperApiBase,
+  );
+  static const novelai =
+      ApiFormat._('novelai', 'NovelAI', 'https://image.novelai.net');
+
+  static const chatFormats = <ApiFormat>[openai, claude, gemini];
+  static const imageFormats = <ApiFormat>[openai, novelai];
+
+  static List<ApiFormat> forCapability(String capability) {
+    if (capability == 'image') return imageFormats;
+    return chatFormats;
+  }
+
   final String value;
   final String label;
+  final String defaultBaseUrl;
 }
 
 /// 娣诲姞渚涘簲鍟嗗簳閮ㄥ脊绐?
@@ -55,10 +74,10 @@ class AddProviderSheet extends ConsumerStatefulWidget {
 class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
   final _displayCtrl = TextEditingController();
   final _keyCtrl = TextEditingController();
-  final _urlCtrl = TextEditingController(text: 'https://api.openai.com/v1');
+  final _urlCtrl = TextEditingController(text: ApiFormat.openai.defaultBaseUrl);
 
-  String _selectedCapability = 'chat';
   ApiFormat _selectedFormat = ApiFormat.openai;
+  bool _vertexExpressEnabled = false;
   bool _submitting = false;
 
   @override
@@ -72,18 +91,37 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
   void _onFormatChanged(ApiFormat format) {
     setState(() {
       _selectedFormat = format;
-      switch (format) {
-        case ApiFormat.openai:
-          _urlCtrl.text = 'https://api.openai.com/v1';
-          break;
-        case ApiFormat.claude:
-          _urlCtrl.text = 'https://api.anthropic.com/v1';
-          break;
-        case ApiFormat.gemini:
-          _urlCtrl.text = 'https://generativelanguage.googleapis.com/v1beta';
-          break;
+      if (format == ApiFormat.gemini) {
+        _urlCtrl.text =
+            googleSuggestedBaseUrl(vertexExpress: _vertexExpressEnabled);
+      } else {
+        _urlCtrl.text = format.defaultBaseUrl;
       }
     });
+  }
+
+  void _onVertexExpressChanged(bool enabled) {
+    setState(() {
+      _vertexExpressEnabled = enabled;
+      if (_selectedFormat == ApiFormat.gemini) {
+        _urlCtrl.text = googleSuggestedBaseUrl(vertexExpress: enabled);
+      }
+    });
+  }
+
+  List<String> _pickDefaultVisibleModels(List<String> models) {
+    final selected = <String>[];
+    final pickedTypes = <ModelType>{};
+    for (final model in models) {
+      final type = ModelType.inferFromModelId(model);
+      if (pickedTypes.add(type)) {
+        selected.add(model);
+      }
+    }
+    if (selected.isEmpty && models.isNotEmpty) {
+      selected.add(models.first);
+    }
+    return selected;
   }
 
   Future<void> _submit() async {
@@ -113,10 +151,14 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
           providerId: _selectedFormat.value,
           apiKey: apiKey,
           apiBaseUrl: apiBaseUrl,
+          customConfig: _selectedFormat == ApiFormat.gemini
+              ? <String, dynamic>{
+                  kGoogleVertexExpressField: _vertexExpressEnabled,
+                }
+              : null,
         );
         allModels = preview;
-        visibleModels =
-            preview.isNotEmpty ? <String>[preview.first] : const <String>[];
+        visibleModels = _pickDefaultVisibleModels(preview);
       } catch (_) {
         warningMessage =
             '\u65e0\u6cd5\u8fde\u63a5\u5230\u6a21\u578b\u670d\u52a1\uff0c\u5df2\u5148\u4fdd\u5b58\u6e20\u9053\u3002\u8bf7\u68c0\u67e5 API \u5730\u5740\u6216 Key\uff0c\u53ef\u5728\u8be6\u60c5\u9875\u5237\u65b0\u6a21\u578b\u5217\u8868\u3002';
@@ -130,10 +172,10 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
         displayName: displayName.isNotEmpty ? displayName : null,
         allModels: allModels,
         visibleModels: visibleModels,
-        capabilities: [_selectedCapability],
-        modelType: _selectedCapability,
         customConfig: {
           'requestFormat': _selectedFormat.value,
+          if (_selectedFormat == ApiFormat.gemini)
+            kGoogleVertexExpressField: _vertexExpressEnabled,
         },
       );
 
@@ -167,6 +209,27 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
     return '\u6dfb\u52a0\u5931\u8d25\uff1a$raw';
   }
 
+  Widget _buildLockedUrlPreview(MoeColors colors, {required double width}) {
+    return SizedBox(
+      width: width,
+      child: ValueListenableBuilder<TextEditingValue>(
+        valueListenable: _urlCtrl,
+        builder: (context, value, _) {
+          return Align(
+            alignment: Alignment.centerRight,
+            child: Text(
+              value.text.trim().isEmpty ? '-' : value.text.trim(),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.end,
+              style: TextStyle(fontSize: 14, color: colors.text),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
@@ -176,6 +239,8 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
     const sheetBorderRadius = SmoothBorderRadius.vertical(
       top: SmoothRadius(cornerRadius: 24, cornerSmoothing: 0.6),
     );
+    final showVertexAddress =
+        _selectedFormat == ApiFormat.gemini && _vertexExpressEnabled;
 
     // 涓嶆妸鏁翠釜 sheet 寰€涓婇《锛氬彧鍦ㄥ唴閮ㄥ唴瀹瑰尯缁欓敭鐩樿浣嶏紝瑙傛劅鏇村儚"杈撳叆鍖烘姮璧?銆?
     return MoeG2ClipRRect.borderRadius(
@@ -247,7 +312,7 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                           children: [
                             MoeToggleBar<ApiFormat>(
                               value: _selectedFormat,
-                              items: ApiFormat.values
+                              items: ApiFormat.chatFormats
                                   .map((f) =>
                                       MoeToggleItem(value: f, label: f.label))
                                   .toList(),
@@ -313,32 +378,69 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                               icon: Icons.link_outlined,
                               label: 'API \u5730\u5740',
                               trailingType: MoeSettingsRowTrailing.custom,
-                              trailing: SizedBox(
-                                width: 180,
-                                child: TextField(
-                                  controller: _urlCtrl,
-                                  textAlign: TextAlign.end,
-                                  style: TextStyle(
-                                      fontSize: 14, color: colors.text),
-                                  decoration: InputDecoration(
-                                    hintStyle: TextStyle(
-                                        color: colors.muted, fontSize: 14),
-                                    border: InputBorder.none,
-                                    isDense: true,
-                                    contentPadding: EdgeInsets.zero,
+                              trailing: showVertexAddress
+                                  ? Opacity(
+                                      opacity: 0.45,
+                                      child: _buildLockedUrlPreview(
+                                        colors,
+                                        width: 180,
+                                      ),
+                                    )
+                                  : SizedBox(
+                                      width: 180,
+                                      child: TextField(
+                                        controller: _urlCtrl,
+                                        textAlign: TextAlign.end,
+                                        style: TextStyle(
+                                            fontSize: 14, color: colors.text),
+                                        decoration: InputDecoration(
+                                          hintStyle: TextStyle(
+                                              color: colors.muted,
+                                              fontSize: 14),
+                                          border: InputBorder.none,
+                                          isDense: true,
+                                          contentPadding: EdgeInsets.zero,
+                                        ),
+                                      ),
+                                    ),
+                            ),
+                            if (_selectedFormat == ApiFormat.gemini)
+                              MoeSettingsRow(
+                                icon: Icons.cloud_sync_outlined,
+                                label: 'Vertex Express',
+                                subtitle: '开启后默认切到 aiplatform 端点',
+                                trailingType: MoeSettingsRowTrailing.custom,
+                                trailing: MoeSwitch(
+                                  value: _vertexExpressEnabled,
+                                  onChanged: _onVertexExpressChanged,
+                                ),
+                              ),
+                            if (showVertexAddress)
+                              MoeSettingsRow(
+                                icon: Icons.hub_outlined,
+                                label: 'Vertex 地址',
+                                trailingType: MoeSettingsRowTrailing.custom,
+                                trailing: SizedBox(
+                                  width: 220,
+                                  child: TextField(
+                                    controller: _urlCtrl,
+                                    textAlign: TextAlign.end,
+                                    style: TextStyle(
+                                        fontSize: 14, color: colors.text),
+                                    decoration: InputDecoration(
+                                      hintStyle: TextStyle(
+                                          color: colors.muted, fontSize: 14),
+                                      border: InputBorder.none,
+                                      isDense: true,
+                                      contentPadding: EdgeInsets.zero,
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
                           ],
                         ),
 
                         const SizedBox(height: 20),
-
-                        // 3. 閫夋嫨鐢ㄩ€旓紙鍗曡4閫?锛屾斁鍦ㄥ簳閮級
-                        _buildSectionTitle('\u9009\u62e9\u7528\u9014', colors),
-                        const SizedBox(height: 8),
-                        _buildCapabilityRow(colors),
 
                         const SizedBox(height: 24),
 
@@ -383,79 +485,6 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
           fontSize: 13,
           fontWeight: MoeFontWeights.emphasis,
           color: colors.textSecondary,
-        ),
-      ),
-    );
-  }
-
-  /// 鍗曡4閫?鐨勭敤閫旈€夋嫨鍣?
-  Widget _buildCapabilityRow(MoeColors colors) {
-    final capabilities = [
-      ModelCapability.chat,
-      ModelCapability.embedding,
-      ModelCapability.image,
-      ModelCapability.tts,
-    ];
-
-    return MoeSettingsGroup(
-      margin: EdgeInsets.zero,
-      padding: const EdgeInsets.all(8),
-      children: [
-        Row(
-          children: capabilities.map((cap) {
-            final isSelected = _selectedCapability == cap.value;
-            return Expanded(
-              child: _buildCapabilityChip(cap, isSelected, colors),
-            );
-          }).toList(),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildCapabilityChip(
-      ModelCapability cap, bool isSelected, MoeColors colors) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bgColor = isSelected
-        ? cap.color.withValues(alpha: isDark ? 0.25 : 0.15)
-        : Colors.transparent;
-    final iconColor = isSelected ? cap.color : colors.muted;
-    final textColor = isSelected ? cap.color : colors.textSecondary;
-
-    return GestureDetector(
-      onTap: () {
-        if (_selectedCapability != cap.value) {
-          setState(() => _selectedCapability = cap.value);
-        }
-      },
-      behavior: HitTestBehavior.opaque,
-      child: AnimatedContainer(
-        duration: kAnimFast,
-        margin: const EdgeInsets.symmetric(horizontal: 2),
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        decoration: MoeG2Decoration(
-          radius: MoeRadii.sm,
-          color: bgColor,
-          border: isSelected
-              ? Border.all(color: cap.color.withValues(alpha: 0.4), width: 1)
-              : null,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(cap.icon, size: 20, color: iconColor),
-            const SizedBox(height: 4),
-            Text(
-              cap.label,
-              style: TextStyle(
-                fontSize: 11,
-                color: textColor,
-                fontWeight: isSelected
-                    ? MoeFontWeights.emphasis
-                    : MoeFontWeights.normal,
-              ),
-            ),
-          ],
         ),
       ),
     );

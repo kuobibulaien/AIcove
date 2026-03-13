@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:drift/drift.dart' hide isNull, isNotNull;
 import 'package:drift/native.dart';
@@ -8,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:aicove_flutter/src/core/database/database.dart'
     hide Conversation, Message;
 import 'package:aicove_flutter/src/core/database/database_provider.dart';
+import 'package:aicove_flutter/src/core/database/converters/database_converters.dart';
 import 'package:aicove_flutter/src/core/app_logger.dart';
 import 'package:aicove_flutter/src/core/models/message_block.dart';
 import 'package:aicove_flutter/src/core/models/block_status.dart';
@@ -16,7 +18,9 @@ import 'package:aicove_flutter/src/features/chat/chat_actions.dart';
 import 'package:aicove_flutter/src/features/chat/conversation_providers.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
+import 'package:aicove_flutter/src/features/chat/services/chat_request_message_builder.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_send_service.dart';
+import 'package:aicove_flutter/src/features/observability/trace_models.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
 
@@ -208,6 +212,7 @@ class _SpyStreamingSendService extends _InMemoryHistorySendService {
     required String? userText,
     TraceLogger? trace,
     String? overrideModel,
+    TraceContext? traceContext,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -287,6 +292,7 @@ class _FallbackAfterDeltaSendService extends _InMemoryHistorySendService {
     required String? userText,
     TraceLogger? trace,
     String? overrideModel,
+    TraceContext? traceContext,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -375,6 +381,7 @@ class _MultiDeltaStreamingSendService extends _InMemoryHistorySendService {
     required String? userText,
     TraceLogger? trace,
     String? overrideModel,
+    TraceContext? traceContext,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -453,6 +460,7 @@ class _SingleDeltaSlowFinalizeSendService extends _InMemoryHistorySendService {
     required String? userText,
     TraceLogger? trace,
     String? overrideModel,
+    TraceContext? traceContext,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -505,6 +513,91 @@ class _SingleDeltaSlowFinalizeSendService extends _InMemoryHistorySendService {
       messages: <Message>[
         Message(
           id: 'assistant_result',
+          role: 'assistant',
+          content: apiResult.processedText,
+          createdAt: DateTime.now(),
+          status: 'sent',
+        ),
+      ],
+      lastMessageText: apiResult.processedText,
+    );
+  }
+}
+
+class _RecordingImageConfigSendService extends _InMemoryHistorySendService {
+  _RecordingImageConfigSendService(super.ref, this._settings);
+
+  final AppSettings _settings;
+  ApiConfig? lastConfig;
+  String? lastOverrideModel;
+  List<Message>? lastHistory;
+  String? lastUserText;
+  int executeCalls = 0;
+
+  @override
+  Future<ApiConfig> prepareApiConfig({
+    required Conversation conv,
+    required List<Message> history,
+    required String? userText,
+    TraceLogger? trace,
+    String? overrideModel,
+    TraceContext? traceContext,
+  }) async {
+    lastOverrideModel = overrideModel;
+    lastHistory = List<Message>.from(history);
+    lastUserText = userText;
+    return ApiConfig(
+      settings: _settings,
+      modelFullId: overrideModel ?? 'openai:gpt-3.5-turbo',
+      providerApiBase: 'https://api.openai.com/v1',
+      providerApiKey: null,
+      customConfig: const <String, dynamic>{},
+      toolPrefs: const <String, dynamic>{},
+      messages: const <Map<String, dynamic>>[
+        {'role': 'user', 'content': 'stub'},
+      ],
+      tools: null,
+      enabledPluginIds: null,
+      modelTemperature: null,
+      modelTopP: null,
+      modelContextMessageLimit: null,
+    );
+  }
+
+  @override
+  Future<ApiCallResult> executeApiCall({
+    required ApiConfig config,
+    required String sessionId,
+    required String? userText,
+    String? turnId,
+    TraceLogger? trace,
+    int maxRounds = 5,
+    void Function(String toolName)? onToolExecuting,
+    bool enableStreaming = false,
+    void Function(String delta)? onStreamTextDelta,
+    void Function()? onStreamTextReset,
+    void Function()? onStreamToolCallObserved,
+    void Function()? onStreamingFallback,
+  }) async {
+    executeCalls += 1;
+    lastConfig = config;
+    return const ApiCallResult(
+      replyText: '图片内容',
+      processedText: '图片内容',
+      pluginEvents: [],
+      toolResults: <Map<String, dynamic>>[],
+    );
+  }
+
+  @override
+  AssistantMessageBuildResult buildAssistantMessages({
+    required ApiCallResult apiResult,
+    required AppSettings settings,
+  }) {
+    return AssistantMessageBuildResult(
+      messages: <Message>[
+        Message(
+          id: 'assistant_image_result',
           role: 'assistant',
           content: apiResult.processedText,
           createdAt: DateTime.now(),
@@ -635,6 +728,88 @@ void main() {
     expect(recalledAttachment, isNotNull);
     expect(recalledAttachment!.type, AttachmentType.image);
     expect(recalledAttachment.path, imagePath);
+  });
+
+  test('editMessage 会回填图文消息的文字和图片附件', () async {
+    final now = DateTime.now();
+    const imagePath = r'C:\tmp\demo_edit.png';
+    final userMsg = Message.fromBlocks(
+      id: 'msg_edit_img',
+      role: 'user',
+      blocks: [
+        ImageBlock(
+          messageId: 'msg_edit_img',
+          localPath: imagePath,
+        ),
+        TextBlock(
+          messageId: 'msg_edit_img',
+          content: '编辑时应回填这段文字',
+        ),
+      ],
+      createdAt: now,
+      status: 'sent',
+    );
+    final aiMsg = Message(
+      id: 'msg_edit_ai',
+      role: 'assistant',
+      content: '后续回复',
+      createdAt: now.add(const Duration(seconds: 1)),
+      status: 'sent',
+    );
+    final conv = Conversation(
+      id: 'conv_edit',
+      title: 'C_EDIT',
+      displayName: 'C_EDIT',
+      createdAt: now,
+      updatedAt: now,
+      messages: [userMsg, aiMsg],
+      lastMessage: aiMsg.displayText,
+      lastMessageTime: aiMsg.createdAt,
+    );
+
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+    await _insertMessage(db, conv.id, userMsg);
+    await _insertMessage(db, conv.id, aiMsg);
+
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        conversationsProvider.overrideWith(
+          () => _FakeConversationsNotifier([conv]),
+        ),
+        activeConversationProvider.overrideWith((ref) {
+          final list = ref.watch(conversationsProvider).valueOrNull;
+          if (list == null || list.isEmpty) return null;
+          return list.first;
+        }),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await container.read(conversationsProvider.future);
+    final actions = container.read(chatActionsProvider);
+
+    final text = await actions.editMessage(userMsg.id);
+
+    expect(text, '编辑时应回填这段文字');
+
+    final recalledAttachment = container.read(recalledAttachmentProvider);
+    expect(recalledAttachment, isNotNull);
+    expect(recalledAttachment!.type, AttachmentType.image);
+    expect(recalledAttachment.path, imagePath);
+
+    final updated = container.read(conversationsProvider).valueOrNull!.first;
+    expect(updated.messages, isEmpty);
+
+    final repo = container.read(messageRepositoryProvider);
+    final deletedUser = await repo.getById(userMsg.id);
+    final deletedAi = await repo.getById(aiMsg.id);
+    expect(deletedUser, isNotNull);
+    expect(deletedUser!.deletedAt, isNotNull);
+    expect(deletedAi, isNotNull);
+    expect(deletedAi!.deletedAt, isNotNull);
   });
 
   test('deleteMessage 会删除单条消息并清理引用态', () async {
@@ -985,7 +1160,7 @@ void main() {
     );
   });
 
-  test('send 在分段延迟模式下完成时，不会撤回已流出的文本段', () async {
+  test('send 在开启分段时只做前端流式展示，最终持久化为单条 assistant', () async {
     final now = DateTime.now();
     final conv = Conversation(
       id: 'conv_stream_finalize',
@@ -1027,7 +1202,7 @@ void main() {
 
     await actions.send('测试流式收尾不回退');
 
-    final sealedCounts = <int>[];
+    var peakAssistantCount = 0;
     for (final snapshot in recordingNotifier.snapshots) {
       final current = snapshot.first;
       final count = current.messages
@@ -1035,35 +1210,339 @@ void main() {
           .map((m) => m.displayText.trim())
           .where((text) => text.isNotEmpty && text != '生成中...')
           .length;
-      if (count > 0) {
-        sealedCounts.add(count);
+      if (count > peakAssistantCount) {
+        peakAssistantCount = count;
       }
     }
 
-    final compactCounts = <int>[];
-    for (final count in sealedCounts) {
-      if (compactCounts.isEmpty || compactCounts.last != count) {
-        compactCounts.add(count);
-      }
-    }
-
-    expect(compactCounts, isNotEmpty);
-    for (var i = 1; i < compactCounts.length; i++) {
-      expect(
-        compactCounts[i] >= compactCounts[i - 1],
-        isTrue,
-        reason: '流式完成阶段不应撤回已出现分段，counts=$compactCounts',
-      );
-    }
+    expect(
+      peakAssistantCount,
+      greaterThanOrEqualTo(2),
+      reason: '流式中应当能看到分段逐条出现（前端效果）',
+    );
 
     final updated = container.read(conversationsProvider).valueOrNull!.first;
-    final finalAssistantTexts = updated.messages
+    final finalAssistantMessages = updated.messages
         .where((m) => m.role == 'assistant')
-        .map((m) => m.displayText.trim())
-        .where((text) => text.isNotEmpty && text != '生成中...')
+        .where((m) => m.displayText.trim().isNotEmpty)
+        .where((m) => m.displayText.trim() != '生成中...')
         .toList(growable: false);
-    expect(finalAssistantTexts.join(''), contains('第一段。'));
-    expect(finalAssistantTexts.join(''), contains('第二段。'));
-    expect(finalAssistantTexts.join(''), contains('第三段。'));
+    expect(finalAssistantMessages.length, 1);
+    expect(
+      finalAssistantMessages.single.displayText,
+      '第一段。第二段。第三段。',
+    );
+  });
+
+  test('send 流式收尾后不应在数据库残留占位消息和旧文本块', () async {
+    final now = DateTime.now();
+    final conv = Conversation(
+      id: 'conv_stream_db_cleanup',
+      title: 'StreamDbCleanup',
+      displayName: 'StreamDbCleanup',
+      createdAt: now,
+      updatedAt: now,
+      messages: const [],
+      lastMessage: '',
+      lastMessageTime: now,
+    );
+    final settings = _buildTestSettings(streamSegmentDelaySeconds: 0.02);
+
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(settings),
+        ),
+        chatSendServiceProvider.overrideWith(
+          (ref) => _MultiDeltaStreamingSendService(ref, settings),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    container.read(activeConversationIdProvider.notifier).state = conv.id;
+    await container.read(conversationsProvider.future);
+    await container.read(appSettingsProvider.future);
+
+    final actions = container.read(chatActionsProvider);
+    await actions.send('测试流式数据库清理');
+
+    final msgRepo = container.read(messageRepositoryProvider);
+    final blockRepo = container.read(messageBlockRepositoryProvider);
+    final storedMessages = await msgRepo.getAllByConversationOrdered(conv.id);
+
+    expect(
+      storedMessages.where((m) => m.role == 'assistant').length,
+      1,
+      reason: '流式占位消息只应存在于前端，不应作为历史重复落库',
+    );
+    expect(
+      storedMessages.where((m) => m.status == 'sending'),
+      isEmpty,
+      reason: '流式结束后数据库里不应残留 sending 状态消息',
+    );
+
+    final assistantRow = storedMessages.singleWhere((m) => m.role == 'assistant');
+    final assistantBlocks = await blockRepo.getByMessage(assistantRow.id);
+    final textBlocks = assistantBlocks
+        .map(MessageBlockConverter.fromDb)
+        .whereType<TextBlock>()
+        .toList(growable: false);
+
+    expect(textBlocks.length, 1, reason: '同一条 assistant 消息不应残留旧文本块');
+    expect(textBlocks.single.status, BlockStatus.success);
+    expect(textBlocks.single.content, '第一段。第二段。第三段。');
+  });
+
+  test('同一消息二次保存时应清掉旧文本块', () async {
+    final now = DateTime.now();
+    const convId = 'conv_stale_blocks';
+    const msgId = 'msg_stale_blocks';
+    const staleBlockId = 'blk_stale_streaming';
+    const freshBlockId = 'blk_fresh_final';
+
+    final conv = Conversation(
+      id: convId,
+      title: 'StaleBlocks',
+      displayName: 'StaleBlocks',
+      createdAt: now,
+      updatedAt: now,
+      messages: [
+        Message.fromBlocks(
+          id: msgId,
+          role: 'assistant',
+          blocks: [
+            TextBlock(
+              id: staleBlockId,
+              messageId: msgId,
+              content: '生成中...',
+              status: BlockStatus.streaming,
+            ),
+          ],
+          createdAt: now,
+          status: 'sending',
+        ),
+      ],
+      lastMessage: '生成中...',
+      lastMessageTime: now,
+    );
+
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+    await _insertMessage(db, convId, conv.messages.single);
+    await db.into(db.messageBlocks).insert(
+          MessageBlocksCompanion.insert(
+            id: staleBlockId,
+            messageId: msgId,
+            type: 'mainText',
+            data: jsonEncode(
+              TextBlock(
+                id: staleBlockId,
+                messageId: msgId,
+                content: '生成中...',
+                status: BlockStatus.streaming,
+              ).toJson(),
+            ),
+            sortOrder: const Value(0),
+            createdAt: now.millisecondsSinceEpoch,
+          ),
+        );
+
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    container.read(activeConversationIdProvider.notifier).state = convId;
+    await container.read(conversationsProvider.future);
+
+    await container.read(conversationsProvider.notifier).updateOne(
+          convId,
+          (c) => c.copyWith(
+            messages: c.messages
+                .map(
+                  (m) => m.id == msgId
+                      ? Message.fromBlocks(
+                          id: msgId,
+                          role: 'assistant',
+                          blocks: [
+                            TextBlock(
+                              id: freshBlockId,
+                              messageId: msgId,
+                              content: '最终回复',
+                              status: BlockStatus.success,
+                            ),
+                          ],
+                          createdAt: m.createdAt,
+                          status: 'sent',
+                        )
+                      : m,
+                )
+                .toList(),
+            lastMessage: '最终回复',
+            lastMessageTime: now.add(const Duration(seconds: 1)),
+          ),
+        );
+
+    final storedBlocks = await container
+        .read(messageBlockRepositoryProvider)
+        .getByMessage(msgId);
+    final textBlocks = storedBlocks
+        .map(MessageBlockConverter.fromDb)
+        .whereType<TextBlock>()
+        .toList(growable: false);
+
+    expect(
+      textBlocks.length,
+      1,
+      reason: '旧 streaming 文本块会让历史消息重复保存，并把生成中内容带回历史',
+    );
+    expect(textBlocks.single.id, freshBlockId);
+    expect(textBlocks.single.content, '最终回复');
+    expect(textBlocks.single.status, BlockStatus.success);
+  });
+
+  test('sendWithImage 发送图片时仍由聊天模型链负责主回复', () async {
+    final now = DateTime.now();
+    final conv = Conversation(
+      id: 'conv_image_vision_only',
+      title: 'ImageVisionOnly',
+      displayName: 'ImageVisionOnly',
+      createdAt: now,
+      updatedAt: now,
+      messages: [
+        Message(
+          id: 'old_user',
+          role: 'user',
+          content: '上一轮文字',
+          createdAt: now.subtract(const Duration(minutes: 2)),
+          status: 'sent',
+        ),
+        Message(
+          id: 'old_ai',
+          role: 'assistant',
+          content: '上一轮回复',
+          createdAt: now.subtract(const Duration(minutes: 1)),
+          status: 'sent',
+        ),
+      ],
+      lastMessage: '上一轮回复',
+      lastMessageTime: now.subtract(const Duration(minutes: 1)),
+    );
+    final settings = _buildTestSettings().copyWith(
+      defaultModelName: 'openai:gpt-3.5-turbo',
+      defaultChatModels: const <String>['openai:gpt-3.5-turbo'],
+      defaultVisionModel: 'openai:gpt-4o-mini',
+      modelList: const <String>['openai:gpt-3.5-turbo', 'openai:gpt-4o-mini'],
+      allKnownModels: const <String>[
+        'openai:gpt-3.5-turbo',
+        'openai:gpt-4o-mini',
+      ],
+      modelProviderMap: const <String, String>{
+        'openai:gpt-3.5-turbo': 'openai',
+        'gpt-3.5-turbo': 'openai',
+        'openai:gpt-4o-mini': 'openai',
+        'gpt-4o-mini': 'openai',
+      },
+    );
+
+    final tempDir = await Directory.systemTemp.createTemp('aicove_image_test');
+    addTearDown(() async {
+      if (await tempDir.exists()) {
+        await tempDir.delete(recursive: true);
+      }
+    });
+    final imageFile = File('${tempDir.path}\\demo.png');
+    await imageFile.writeAsBytes(const <int>[1, 2, 3, 4]);
+
+    late _RecordingImageConfigSendService sendService;
+    final container = ProviderContainer(
+      overrides: [
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(settings),
+        ),
+        chatSendServiceProvider.overrideWith((ref) {
+          sendService = _RecordingImageConfigSendService(ref, settings);
+          return sendService;
+        }),
+        conversationsProvider.overrideWith(
+          () => _FakeConversationsNotifier([conv]),
+        ),
+        activeConversationProvider.overrideWith((ref) {
+          final list = ref.watch(conversationsProvider).valueOrNull;
+          if (list == null || list.isEmpty) return null;
+          return list.first;
+        }),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await container.read(conversationsProvider.future);
+    await container.read(appSettingsProvider.future);
+    final actions = container.read(chatActionsProvider);
+
+    await actions.sendWithImage(imageFile.path, text: '帮我看看这图');
+
+    expect(sendService.executeCalls, 1);
+    expect(sendService.lastOverrideModel, 'openai:gpt-3.5-turbo');
+    expect(sendService.lastOverrideModel, isNot('openai:gpt-4o-mini'));
+    expect(sendService.lastUserText, '帮我看看这图');
+    expect(sendService.lastHistory, isNotNull);
+    expect(sendService.lastHistory!.length, 3);
+    expect(sendService.lastHistory!.first.content, '上一轮文字');
+    expect(sendService.lastHistory![1].content, '上一轮回复');
+    final config = sendService.lastConfig;
+    expect(config, isNotNull);
+    expect(config!.modelFullId, 'openai:gpt-3.5-turbo');
+  });
+
+  test('ChatRequestMessageBuilder 会合并连续 assistant 文本段，避免分段污染上下文', () async {
+    final builder = ChatRequestMessageBuilder(
+      readImageAsBase64: (_) async => null,
+    );
+    final settings = _buildTestSettings();
+    final now = DateTime(2026, 3, 3, 2, 0, 0);
+    final history = <Message>[
+      Message(
+        id: 'a_1',
+        role: 'assistant',
+        content: '第一段。',
+        createdAt: now,
+        status: 'sent',
+      ),
+      Message(
+        id: 'a_2',
+        role: 'assistant',
+        content: '第二段。',
+        createdAt: now.add(const Duration(seconds: 1)),
+        status: 'sent',
+      ),
+      Message(
+        id: 'u_1',
+        role: 'user',
+        content: '继续',
+        createdAt: now.add(const Duration(seconds: 2)),
+        status: 'sent',
+      ),
+    ];
+
+    final requestMessages = await builder.buildRequestMessages(
+      history,
+      settings: settings,
+    );
+
+    expect(requestMessages.length, 2);
+    expect(requestMessages.first['role'], 'assistant');
+    expect(requestMessages.first['content'], '第一段。\n第二段。');
+    expect(requestMessages.last['role'], 'user');
+    expect(requestMessages.last['content'], '继续');
   });
 }

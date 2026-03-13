@@ -117,7 +117,8 @@ class _ModelPickerSheet extends StatelessWidget {
                       color: colors.muted,
                       onPressed: () => Navigator.pop(context),
                       padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                      constraints:
+                          const BoxConstraints(minWidth: 32, minHeight: 32),
                     ),
                     Expanded(
                       child: Text(
@@ -167,7 +168,7 @@ class _ModelPickerContent extends StatefulWidget {
 class _ModelPickerContentState extends State<_ModelPickerContent> {
   final _searchCtrl = TextEditingController();
   String _searchQuery = '';
-  
+
   bool _isLoading = true;
   String? _error;
   List<String> _availableModels = [];
@@ -205,6 +206,7 @@ class _ModelPickerContentState extends State<_ModelPickerContent> {
         providerId: provider.id,
         apiKey: provider.apiKeys.isNotEmpty ? provider.apiKeys.first : '',
         apiBaseUrl: provider.apiBaseUrl,
+        customConfig: provider.customConfig,
       );
 
       // 预选已经在 visibleModels 中的模型
@@ -266,13 +268,14 @@ class _ModelPickerContentState extends State<_ModelPickerContent> {
     }
 
     final notifier = widget.ref.read(appSettingsProvider.notifier);
-    
+
     // 更新供应商的模型列表
     await notifier.updateProviderModels(
       providerId: widget.providerId,
       allModels: _availableModels,
       visibleModels: _selectedModels.toList(),
-      hiddenModels: _availableModels.where((m) => !_selectedModels.contains(m)).toList(),
+      hiddenModels:
+          _availableModels.where((m) => !_selectedModels.contains(m)).toList(),
     );
 
     if (mounted) {
@@ -285,7 +288,7 @@ class _ModelPickerContentState extends State<_ModelPickerContent> {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
     final filtered = _filteredModels;
-    final allSelected = filtered.isNotEmpty && 
+    final allSelected = filtered.isNotEmpty &&
         filtered.every((m) => _selectedModels.contains(m));
 
     final groupG2Radius = MoeRadii.borderMd.topLeft.x;
@@ -317,7 +320,8 @@ class _ModelPickerContentState extends State<_ModelPickerContent> {
                           },
                         )
                       : null,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                   onChanged: (value) {
                     setState(() {
                       _searchQuery = value.toLowerCase().trim();
@@ -359,12 +363,13 @@ class _ModelPickerContentState extends State<_ModelPickerContent> {
                           title: '暂无可用模型',
                         )
                       : filtered.isEmpty
-                          ? MoeEmptyState(
+                          ? const MoeEmptyState(
                               icon: Icons.search_off,
                               title: '未找到匹配的模型',
                             )
                           : Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 16),
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 16),
                               child: Container(
                                 decoration: MoeG2Decoration(
                                   radius: groupG2Radius,
@@ -375,17 +380,25 @@ class _ModelPickerContentState extends State<_ModelPickerContent> {
                                 child: MoeG2ClipRRect(
                                   radius: groupG2Radius,
                                   child: ListView.builder(
-                                    padding: const EdgeInsets.symmetric(vertical: 4),
+                                    padding:
+                                        const EdgeInsets.symmetric(vertical: 4),
                                     itemCount: filtered.length,
                                     itemBuilder: (context, index) {
                                       final modelId = filtered[index];
-                                      final isSelected = _selectedModels.contains(modelId);
+                                      final isSelected =
+                                          _selectedModels.contains(modelId);
                                       return MoeSettingsRow(
-                                        icon: isSelected ? Icons.check_circle : Icons.circle_outlined,
-                                        iconColor: isSelected ? colors.primary : colors.muted,
+                                        icon: isSelected
+                                            ? Icons.check_circle
+                                            : Icons.circle_outlined,
+                                        iconColor: isSelected
+                                            ? colors.primary
+                                            : colors.muted,
                                         label: modelId,
-                                        trailingType: MoeSettingsRowTrailing.none,
-                                        showDivider: index != filtered.length - 1,
+                                        trailingType:
+                                            MoeSettingsRowTrailing.none,
+                                        showDivider:
+                                            index != filtered.length - 1,
                                         onTap: () => _toggleModel(modelId),
                                       );
                                     },
@@ -411,7 +424,8 @@ class _ModelPickerContentState extends State<_ModelPickerContent> {
               ),
               MoePrimaryButton(
                 label: '确认导入',
-                onPressed: _selectedModels.isNotEmpty ? _confirmSelection : null,
+                onPressed:
+                    _selectedModels.isNotEmpty ? _confirmSelection : null,
               ),
             ],
           ),

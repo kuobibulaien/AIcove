@@ -14,14 +14,32 @@ class ConversationExporter {
   final ConversationRepository _convRepo;
   final MessageRepository _msgRepo;
   final MessageBlockRepository _blockRepo;
+  final Future<Directory> Function() _temporaryDirectoryResolver;
+  final Future<Directory> Function() _documentsDirectoryResolver;
+  final Future<Directory?> Function() _externalStorageDirectoryResolver;
+  final Future<String> Function() _appVersionResolver;
+  final Future<Directory> Function()? _outputDirectoryResolver;
 
   ConversationExporter({
     required ConversationRepository convRepo,
     required MessageRepository msgRepo,
     required MessageBlockRepository blockRepo,
+    Future<Directory> Function()? temporaryDirectoryResolver,
+    Future<Directory> Function()? documentsDirectoryResolver,
+    Future<Directory?> Function()? externalStorageDirectoryResolver,
+    Future<String> Function()? appVersionResolver,
+    Future<Directory> Function()? outputDirectoryResolver,
   })  : _convRepo = convRepo,
         _msgRepo = msgRepo,
-        _blockRepo = blockRepo;
+        _blockRepo = blockRepo,
+        _temporaryDirectoryResolver =
+            temporaryDirectoryResolver ?? getTemporaryDirectory,
+        _documentsDirectoryResolver =
+            documentsDirectoryResolver ?? getApplicationDocumentsDirectory,
+        _externalStorageDirectoryResolver =
+            externalStorageDirectoryResolver ?? getExternalStorageDirectory,
+        _appVersionResolver = appVersionResolver ?? _defaultAppVersionResolver,
+        _outputDirectoryResolver = outputDirectoryResolver;
 
   /// 导出多个会话
   Future<ExportResult> exportConversations({
@@ -36,7 +54,7 @@ class ConversationExporter {
     ));
 
     // 1. 创建临时目录
-    final tempDir = await getTemporaryDirectory();
+    final tempDir = await _temporaryDirectoryResolver();
     final exportId = DateTime.now().millisecondsSinceEpoch.toString();
     final exportDir = Directory(p.join(tempDir.path, 'export_$exportId'));
     await exportDir.create(recursive: true);
@@ -65,7 +83,7 @@ class ConversationExporter {
         if (dbConv == null) continue;
 
         // 查询消息（全部）
-        final dbMsgs = await _msgRepo.getByConversation(convId);
+        final dbMsgs = await _msgRepo.getAllByConversationOrderedStable(convId);
         final messageIds = dbMsgs.map((m) => m.id).toList();
         final dbBlocks = await _blockRepo.getByMessages(messageIds);
 
@@ -74,10 +92,11 @@ class ConversationExporter {
         for (final dbBlock in dbBlocks) {
           blocksByMsgId.putIfAbsent(dbBlock.messageId, () => []).add({
             'id': dbBlock.id,
+            'source_block_id': dbBlock.sourceBlockId,
             'type': dbBlock.type,
             'status': dbBlock.status,
             'sort_order': dbBlock.sortOrder,
-            'data': jsonDecode(dbBlock.data),
+            'data': _decodeJsonMapSafely(dbBlock.data),
           });
         }
 
@@ -177,12 +196,12 @@ class ConversationExporter {
       ));
 
       // 获取应用版本
-      final packageInfo = await PackageInfo.fromPlatform();
+      final appVersion = await _appVersionResolver();
 
       // manifest.json
       final manifest = ExportManifest(
         formatVersion: kExportFormatVersion,
-        appVersion: packageInfo.version,
+        appVersion: appVersion,
         exportTime: DateTime.now(),
         exportDevice: '${Platform.operatingSystem} / ${Platform.localHostname}',
         includedScopes: options.scopes,
@@ -227,16 +246,28 @@ class ConversationExporter {
       String fileName;
       if (conversations.length == 1) {
         final name = conversations.first['display_name'] as String? ?? 'export';
-        fileName = 'export_${name}_$dateStr$kExportFileExtension';
+        fileName =
+            'export_${_sanitizeFileName(name)}_$dateStr$kExportFileExtension';
       } else {
         fileName =
             'export_${conversations.length}个角色_$dateStr$kExportFileExtension';
       }
 
       // (注释已丢失)
-      final downloadsDir = await _getDownloadsDirectory();
-      final outputFile = File(p.join(downloadsDir.path, fileName));
-      await outputFile.writeAsBytes(zipBytes);
+      File outputFile;
+      try {
+        final downloadsDir = _outputDirectoryResolver != null
+            ? await _outputDirectoryResolver()
+            : await _getDownloadsDirectory();
+        await downloadsDir.create(recursive: true);
+        outputFile = File(p.join(downloadsDir.path, fileName));
+        await outputFile.writeAsBytes(zipBytes, flush: true);
+      } on FileSystemException {
+        final fallbackDir = await _documentsDirectoryResolver();
+        await fallbackDir.create(recursive: true);
+        outputFile = File(p.join(fallbackDir.path, fileName));
+        await outputFile.writeAsBytes(zipBytes, flush: true);
+      }
 
       // 6. 清理临时目录
       await exportDir.delete(recursive: true);
@@ -314,10 +345,9 @@ class ConversationExporter {
       'persona_prompt': dbConv.personaPrompt,
       'self_address': dbConv.selfAddress,
       'address_user': dbConv.addressUser,
-      'description': dbConv.description,
       'default_provider': dbConv.defaultProvider,
-      'created_at': dbConv.createdAt?.millisecondsSinceEpoch,
-      'updated_at': dbConv.updatedAt?.millisecondsSinceEpoch,
+      'created_at': _toEpochMillis(dbConv.createdAt),
+      'updated_at': _toEpochMillis(dbConv.updatedAt),
       'is_pinned': dbConv.isPinned,
       'is_favorite': dbConv.isFavorite,
       'is_muted': dbConv.isMuted,
@@ -353,11 +383,12 @@ class ConversationExporter {
 
     return {
       'id': dbMsg.id,
+      'source_message_id': dbMsg.sourceMessageId,
       'conversation_id': dbMsg.conversationId,
       'role': dbMsg.role,
       'content': dbMsg.content,
       'status': dbMsg.status,
-      'created_at': dbMsg.createdAt?.millisecondsSinceEpoch,
+      'created_at': _toEpochMillis(dbMsg.createdAt),
       'blocks': updatedBlocks,
     };
   }
@@ -390,8 +421,8 @@ class ConversationExporter {
         return dir;
       }
       // (注释已丢失)
-      final extDir = await getExternalStorageDirectory();
-      return extDir ?? await getApplicationDocumentsDirectory();
+      final extDir = await _externalStorageDirectoryResolver();
+      return extDir ?? await _documentsDirectoryResolver();
     } else if (Platform.isWindows) {
       // (注释已丢失)
       final userProfile = Platform.environment['USERPROFILE'];
@@ -403,11 +434,49 @@ class ConversationExporter {
       }
     }
     // (注释已丢失)
-    return await getApplicationDocumentsDirectory();
+    return await _documentsDirectoryResolver();
   }
 
   /// (注释已丢失)
   String _formatDate(DateTime date) {
     return '${date.year}${date.month.toString().padLeft(2, '0')}${date.day.toString().padLeft(2, '0')}';
+  }
+
+  Map<String, dynamic> _decodeJsonMapSafely(String raw) {
+    if (raw.trim().isEmpty) return <String, dynamic>{};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) {
+        return decoded;
+      }
+      if (decoded is Map) {
+        return decoded.map(
+          (key, value) => MapEntry(key.toString(), value),
+        );
+      }
+    } catch (_) {
+      // ignore malformed legacy block data
+    }
+    return <String, dynamic>{};
+  }
+
+  String _sanitizeFileName(String fileName) {
+    final sanitized = fileName
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    return sanitized.isEmpty ? 'export' : sanitized;
+  }
+
+  static Future<String> _defaultAppVersionResolver() async {
+    final packageInfo = await PackageInfo.fromPlatform();
+    return packageInfo.version;
+  }
+
+  int? _toEpochMillis(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is DateTime) return value.millisecondsSinceEpoch;
+    return null;
   }
 }

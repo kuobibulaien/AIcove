@@ -10,6 +10,7 @@ import 'trigger_config.dart';
 import '../../chat/data/auto_reply_trigger.dart';
 import '../../chat/data/auto_reply_trigger_controller.dart';
 import '../../chat/conversation_providers.dart';
+import '../../chat/services/chat_history_store.dart';
 import '../../settings/app_settings.dart';
 
 /// (注释已丢失)
@@ -68,29 +69,7 @@ class TriggerPlugin extends BasePlugin {
 
   @override
   Future<String?> getSystemPrompt({String? userMessage, bool supportsToolCalling = false}) async {
-    if (!enabled) return null;
-    final lowerMsg = (userMessage ?? '').toLowerCase();
-    final isReminderRelated = lowerMsg.contains('提醒') ||
-        lowerMsg.contains('闹钟') ||
-        lowerMsg.contains('取消') ||
-        lowerMsg.contains('remind') ||
-        lowerMsg.contains('alarm') ||
-        lowerMsg.contains('reminder');
-    if (!isReminderRelated) return null;
-
-    if (!supportsToolCalling) {
-      return _triggerConfig.logicSystemPrompt;
-    }
-
-    return '''
-${_triggerConfig.logicSystemPrompt}
-
-Use these tools for reminder management:
-- create_reminder
-- delete_reminder
-- list_reminders
-- search_reminders
-''';
+    return null;
   }
 
   // (注释已丢失)
@@ -239,20 +218,8 @@ Use these tools for reminder management:
     }
 
     // (注释已丢失)
-    final conversations = _ref.read(conversationsProvider).valueOrNull ?? [];
-    final conv = conversations.where((c) => c.id == convId).firstOrNull;
-
-    String? lastUserMsgId;
-    DateTime? lastUserMsgAt;
-    if (conv != null) {
-      for (final m in conv.messages.reversed) {
-        if (m.role == 'user') {
-          lastUserMsgId = m.id;
-          lastUserMsgAt = m.createdAt;
-          break;
-        }
-      }
-    }
+    final lastUserMessage =
+        await _ref.read(chatHistoryStoreProvider).getLastUserMessage(convId);
 
     // (注释已丢失)
     final trigger = await _ref.read(autoReplyTriggersProvider.notifier).createTrigger(
@@ -266,8 +233,8 @@ Use these tools for reminder management:
       priority: AutoReplyTriggerPriority.high, // (注释已丢失)
       source: TriggerSource.userRequest,
       conversationId: convId,
-      contextLastUserMessageId: lastUserMsgId,
-      contextLastUserMessageAt: lastUserMsgAt,
+      contextLastUserMessageId: lastUserMessage?.id,
+      contextLastUserMessageAt: lastUserMessage?.createdAt,
     );
 
     AppLogger.info('TriggerPlugin', '通过工具调用创建触发器', metadata: {

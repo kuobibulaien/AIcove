@@ -65,4 +65,11 @@ class MessageBlockRepository {
           ..where((t) => t.messageId.equals(messageId)))
         .go();
   }
+
+  Future<int> deleteByMessages(List<String> messageIds) async {
+    if (messageIds.isEmpty) return 0;
+    return (_db.delete(_db.messageBlocks)
+          ..where((t) => t.messageId.isIn(messageIds)))
+        .go();
+  }
 }

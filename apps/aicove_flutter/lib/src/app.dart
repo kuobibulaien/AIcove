@@ -18,9 +18,12 @@ import 'core/utils/svg_preheat.dart';
 import 'core/log_history_service.dart';
 import 'core/app_logger.dart';
 import 'core/api_logger.dart';
+import 'features/observability/trace_store.dart';
 import 'features/chat/domain/conversation.dart';
+import 'features/chat/domain/message.dart';
 import 'features/chat/data/auto_reply_service.dart';
 import 'features/chat/providers2.dart';
+import 'features/chat/services/chat_history_store.dart';
 import 'features/chat/services/tts_fallback_notification.dart';
 import 'features/settings/app_settings.dart';
 import 'ui/theme/accent_color_provider.dart';
@@ -65,6 +68,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     try {
       await AppLogger.initialize();
       await ApiLogger.initialize();
+      await TraceStore.instance.initialize();
       AppLogger.info('App', '日志系统初始化完成');
     } catch (e) {
       // 日志初始化失败不影响主流程
@@ -160,17 +164,35 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
     // 预热最近会话内容（聊天界面）
     for (final conv in targets) {
-      final providers = _collectConversationPreviewProviders(
+      unawaited(_warmupRecentConversationPreview(
         conv,
         maxMessagesToScan: maxMessagesToScan,
         maxImagesToCache: maxImagesToCache,
-      );
-      queue.enqueueAll(
-        providers,
-        configuration,
-        priority: ImagePreheatPriority.high,
-      );
+      ));
     }
+  }
+
+  Future<void> _warmupRecentConversationPreview(
+    Conversation conv, {
+    required int maxMessagesToScan,
+    required int maxImagesToCache,
+  }) async {
+    final queue = ref.read(imagePreheatQueueProvider);
+    final messages = await ref.read(chatHistoryStoreProvider).loadRecentMessages(
+          conv.id,
+          limit: maxMessagesToScan,
+        );
+    if (!mounted) return;
+    queue.enqueueAll(
+      _collectConversationPreviewProviders(
+        conv,
+        messages: messages,
+        maxMessagesToScan: maxMessagesToScan,
+        maxImagesToCache: maxImagesToCache,
+      ),
+      createLocalImageConfiguration(context),
+      priority: ImagePreheatPriority.high,
+    );
   }
 
   DateTime _conversationRecency(Conversation c) {
@@ -197,21 +219,22 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
   List<ImageProvider> _collectConversationPreviewProviders(
     Conversation conv, {
+    List<Message>? messages,
     required int maxMessagesToScan,
     required int maxImagesToCache,
   }) {
     final images = <ImageProvider>[];
     images.addAll(_collectConversationAvatarProviders(conv));
 
-    final messages = conv.messages;
-    final start = messages.length > maxMessagesToScan
-        ? messages.length - maxMessagesToScan
+    final previewMessages = messages ?? const <Message>[];
+    final start = previewMessages.length > maxMessagesToScan
+        ? previewMessages.length - maxMessagesToScan
         : 0;
 
     for (var i = start;
-        i < messages.length && images.length < maxImagesToCache;
+        i < previewMessages.length && images.length < maxImagesToCache;
         i++) {
-      final blocks = messages[i].blocks;
+      final blocks = previewMessages[i].blocks;
       if (blocks == null) continue;
 
       for (final block in blocks) {

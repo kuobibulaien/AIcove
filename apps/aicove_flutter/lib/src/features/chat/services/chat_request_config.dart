@@ -1,5 +1,7 @@
 library;
 
+import 'dart:math';
+
 import '../../settings/app_settings.dart';
 import '../../settings/direct_mode.dart' as direct;
 import '../../settings/mcp_api.dart';
@@ -46,11 +48,99 @@ class ChatRequestConfig {
   });
 }
 
+class _ProviderApiKeyCandidate {
+  const _ProviderApiKeyCandidate({
+    required this.key,
+    required this.enabled,
+    required this.isError,
+  });
+
+  final String key;
+  final bool enabled;
+  final bool isError;
+}
+
 /// Builds chat request config with MCP cache and direct-mode fallback.
 class ChatRequestConfigBuilder {
+  static const String _multiKeyEnabledField = 'multi_key_enabled';
+  static const String _multiKeyStrategyField = 'multi_key_strategy';
+  static const String _multiKeyItemsField = 'multi_key_items';
+  static const String _multiKeyRoundRobin = 'round_robin';
+  static const String _multiKeyRandom = 'random';
+  static final Map<String, int> _roundRobinIndexMap = <String, int>{};
+
   final McpApi _mcpApi = McpApi();
   McpConfigDto? _cachedMcpConfig;
   DateTime? _cachedMcpFetchedAt;
+
+  String? _selectProviderApiKey(ProviderAuth providerAuth) {
+    final fallback = providerAuth.apiKeys.isNotEmpty
+        ? providerAuth.apiKeys.first.trim()
+        : null;
+
+    final customConfig = providerAuth.customConfig;
+    if (customConfig[_multiKeyEnabledField] != true) {
+      return fallback?.isEmpty == true ? null : fallback;
+    }
+
+    final items = <_ProviderApiKeyCandidate>[];
+    final rawItems = customConfig[_multiKeyItemsField];
+    if (rawItems is List) {
+      for (final item in rawItems) {
+        if (item is! Map) continue;
+        final mapped = Map<String, dynamic>.from(item);
+        final key = mapped['key']?.toString().trim() ?? '';
+        if (key.isEmpty) continue;
+        final enabled = mapped['enabled'] != false;
+        final status =
+            mapped['status']?.toString().trim().toLowerCase() ?? 'normal';
+        items.add(_ProviderApiKeyCandidate(
+          key: key,
+          enabled: enabled,
+          isError: status == 'error',
+        ));
+      }
+    }
+
+    if (items.isEmpty) {
+      for (final raw in providerAuth.apiKeys) {
+        final key = raw.trim();
+        if (key.isEmpty) continue;
+        items.add(_ProviderApiKeyCandidate(
+          key: key,
+          enabled: true,
+          isError: false,
+        ));
+      }
+    }
+    if (items.isEmpty) {
+      return fallback?.isEmpty == true ? null : fallback;
+    }
+
+    var available = items
+        .where((item) => item.enabled && !item.isError && item.key.isNotEmpty)
+        .toList();
+    available = available.isEmpty
+        ? items.where((item) => item.enabled && item.key.isNotEmpty).toList()
+        : available;
+    if (available.isEmpty) {
+      return fallback?.isEmpty == true ? null : fallback;
+    }
+
+    final strategy =
+        customConfig[_multiKeyStrategyField]?.toString().trim().toLowerCase() ??
+            _multiKeyRoundRobin;
+    if (strategy == _multiKeyRandom && available.length > 1) {
+      final index = Random().nextInt(available.length);
+      return available[index].key;
+    }
+
+    final providerId = providerAuth.id.trim();
+    final current = _roundRobinIndexMap[providerId] ?? 0;
+    final index = current % available.length;
+    _roundRobinIndexMap[providerId] = (index + 1) % available.length;
+    return available[index].key;
+  }
 
   Future<McpConfigDto?> getMcpConfig() async {
     final now = DateTime.now();
@@ -130,9 +220,7 @@ class ChatRequestConfigBuilder {
     var providerApiBase = providerAuth.apiBaseUrl.trim().isEmpty
         ? settings.apiBaseUrl
         : providerAuth.apiBaseUrl.trim();
-    var providerApiKey = providerAuth.apiKeys.isNotEmpty
-        ? providerAuth.apiKeys.first.trim()
-        : null;
+    var providerApiKey = _selectProviderApiKey(providerAuth);
 
     try {
       final cfg = await direct.loadDirectConfig();

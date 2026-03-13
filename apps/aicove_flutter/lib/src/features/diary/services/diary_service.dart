@@ -4,6 +4,7 @@ import '../../../core/database/repositories/diary_repository.dart';
 import '../../../core/network/json_http_client.dart';
 import '../../chat/domain/message.dart';
 import '../../chat/domain/conversation.dart';
+import '../../chat/domain/persona_prompt_codec.dart';
 import '../../memory/services/memory_service.dart';
 import '../../memory/services/hybrid_embedding_service.dart';
 import '../models/diary_entry.dart';
@@ -53,7 +54,8 @@ class DiaryService {
       primaryApiKey: primary.apiKey,
       primaryBaseUrl: primary.baseUrl,
       primaryModel: primary.model,
-      fallbackEnabled: config.fallbackEnabled && fallback != null && fallback.isValid,
+      fallbackEnabled:
+          config.fallbackEnabled && fallback != null && fallback.isValid,
       fallbackBaseUrl: fallback?.baseUrl ?? '',
       fallbackModel: fallback?.model ?? '',
       fallbackApiKey: fallback?.apiKey ?? '',
@@ -108,7 +110,8 @@ class DiaryService {
         try {
           embedding = await _embeddingService!.getEmbedding(diaryContent);
         } catch (e) {
-          AppLogger.warning('DiaryService', 'Failed to generate embedding', metadata: {'error': e.toString()});
+          AppLogger.warning('DiaryService', 'Failed to generate embedding',
+              metadata: {'error': e.toString()});
         }
       }
 
@@ -130,7 +133,8 @@ class DiaryService {
 
       return diary;
     } catch (e) {
-      AppLogger.error('DiaryService', 'Failed to generate diary', metadata: {'error': e.toString()});
+      AppLogger.error('DiaryService', 'Failed to generate diary',
+          metadata: {'error': e.toString()});
       return null;
     }
   }
@@ -140,8 +144,10 @@ class DiaryService {
     final characterName = conversation.displayName;
     final selfAddress = conversation.selfAddress ?? '我';
     final addressUser = conversation.addressUser ?? '你';
-    final personaHint = conversation.personaPrompt.isNotEmpty
-        ? '\n角色设定参考：${conversation.personaPrompt.substring(0, conversation.personaPrompt.length.clamp(0, 200))}...'
+    final personaText =
+        PersonaPromptCodec.parse(conversation.personaPrompt).userPrompt;
+    final personaHint = personaText.isNotEmpty
+        ? '\n角色设定参考：${personaText.substring(0, personaText.length.clamp(0, 200))}...'
         : '';
 
     // 格式化对话内容
@@ -207,7 +213,8 @@ $conversationText
       AppLogger.error('DiaryService', 'LLM Call Failed',
           metadata: {'statusCode': e.statusCode, 'error': e.toString()});
     } catch (e) {
-      AppLogger.error('DiaryService', 'LLM Call Failed', metadata: {'error': e.toString()});
+      AppLogger.error('DiaryService', 'LLM Call Failed',
+          metadata: {'error': e.toString()});
     }
     return null;
   }
@@ -215,8 +222,10 @@ $conversationText
   // ==================== 查询接口 ====================
 
   /// 获取指定角色的所有日记
-  Future<List<DiaryEntry>> getDiaries(String conversationId, {int? limit}) async {
-    return await _repository.getDiariesByConversation(conversationId, limit: limit);
+  Future<List<DiaryEntry>> getDiaries(String conversationId,
+      {int? limit}) async {
+    return await _repository.getDiariesByConversation(conversationId,
+        limit: limit);
   }
 
   /// 获取指定角色的日记数量
@@ -235,14 +244,17 @@ $conversationText
   }
 
   /// 搜索相关日记（基于语义）
-  Future<List<DiaryEntry>> searchDiaries(String conversationId, String query, {int topK = 5}) async {
+  Future<List<DiaryEntry>> searchDiaries(String conversationId, String query,
+      {int topK = 5}) async {
     if (_embeddingService == null) return [];
 
     try {
       final embedding = await _embeddingService!.getEmbedding(query);
-      return await _repository.searchByEmbedding(conversationId, embedding, topK: topK);
+      return await _repository.searchByEmbedding(conversationId, embedding,
+          topK: topK);
     } catch (e) {
-      AppLogger.error('DiaryService', 'Search Failed', metadata: {'error': e.toString()});
+      AppLogger.error('DiaryService', 'Search Failed',
+          metadata: {'error': e.toString()});
       return [];
     }
   }
@@ -258,9 +270,15 @@ $conversationText
   List<String> formatDiariesForPrompt(List<DiaryEntry> diaries) {
     return diaries.map((d) {
       final daysAgo = DateTime.now().difference(d.date).inDays;
-      final timeDesc = daysAgo == 0 ? '今天' : daysAgo == 1 ? '昨天' : '$daysAgo天前';
+      final timeDesc = daysAgo == 0
+          ? '今天'
+          : daysAgo == 1
+              ? '昨天'
+              : '$daysAgo天前';
       // 截取摘要，避免太长
-      final summary = d.content.length > 100 ? '${d.content.substring(0, 100)}...' : d.content;
+      final summary = d.content.length > 100
+          ? '${d.content.substring(0, 100)}...'
+          : d.content;
       return '$timeDesc的日记："$summary"';
     }).toList();
   }

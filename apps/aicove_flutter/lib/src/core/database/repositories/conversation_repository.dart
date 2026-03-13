@@ -18,6 +18,16 @@ class ConversationRepository {
         .get();
   }
 
+  Stream<List<Conversation>> watchAll() {
+    return (_db.select(_db.conversations)
+          ..where((t) => t.deletedAt.isNull())
+          ..orderBy([
+            (t) => OrderingTerm.desc(t.isPinned),
+            (t) => OrderingTerm.desc(t.updatedAt),
+          ]))
+        .watch();
+  }
+
   /// 获取单个会话
   Future<Conversation?> getById(String id) async {
     return (_db.select(_db.conversations)..where((t) => t.id.equals(id)))
@@ -55,6 +65,15 @@ class ConversationRepository {
       lastMessage: Value(lastMessage),
       lastMessageTime: Value(lastMessageTime),
       updatedAt: Value(lastMessageTime),
+    ));
+  }
+
+  Future<void> clearSummary(String id, int updatedAt) async {
+    await (_db.update(_db.conversations)..where((t) => t.id.equals(id)))
+        .write(ConversationsCompanion(
+      lastMessage: const Value(null),
+      lastMessageTime: const Value(null),
+      updatedAt: Value(updatedAt),
     ));
   }
 

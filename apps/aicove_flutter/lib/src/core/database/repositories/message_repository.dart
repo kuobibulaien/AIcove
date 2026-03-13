@@ -30,6 +30,59 @@ class MessageRepository {
     return query.get();
   }
 
+  Future<List<Message>> getByConversationStable(
+    String conversationId, {
+    int limit = 50,
+    int? beforeTime,
+    String? beforeId,
+  }) async {
+    var query = _db.select(_db.messages)
+      ..where((t) =>
+          t.conversationId.equals(conversationId) &
+          t.deletedAt.isNull() &
+          t.replacedBy.isNull());
+
+    if (beforeTime != null) {
+      final cursorId = beforeId?.trim();
+      query = query
+        ..where((t) {
+          final olderTime = t.createdAt.isSmallerThanValue(beforeTime);
+          if (cursorId == null || cursorId.isEmpty) {
+            return olderTime;
+          }
+          final sameTimeOlderId =
+              t.createdAt.equals(beforeTime) & t.id.isSmallerThanValue(cursorId);
+          return olderTime | sameTimeOlderId;
+        });
+    }
+
+    query
+      ..orderBy([
+        (t) => OrderingTerm.desc(t.createdAt),
+        (t) => OrderingTerm.desc(t.id),
+      ])
+      ..limit(limit);
+
+    return query.get();
+  }
+
+  Stream<List<Message>> watchByConversationStable(
+    String conversationId, {
+    int limit = 50,
+  }) {
+    return (_db.select(_db.messages)
+          ..where((t) =>
+              t.conversationId.equals(conversationId) &
+              t.deletedAt.isNull() &
+              t.replacedBy.isNull())
+          ..orderBy([
+            (t) => OrderingTerm.desc(t.createdAt),
+            (t) => OrderingTerm.desc(t.id),
+          ])
+          ..limit(limit))
+        .watch();
+  }
+
   /// 在单个会话内搜索消息（按关键词 + 可选时间范围）
   ///
   /// - keyword: 文本关键字（会用 LIKE 做包含匹配）
@@ -130,6 +183,38 @@ class MessageRepository {
         .getSingleOrNull();
   }
 
+  Future<Message?> getLastMessageStable(String conversationId) {
+    return (_db.select(_db.messages)
+          ..where((t) =>
+              t.conversationId.equals(conversationId) &
+              t.deletedAt.isNull() &
+              t.replacedBy.isNull())
+          ..orderBy([
+            (t) => OrderingTerm.desc(t.createdAt),
+            (t) => OrderingTerm.desc(t.id),
+          ])
+          ..limit(1))
+        .getSingleOrNull();
+  }
+
+  Future<Message?> getLastMessageByRole(
+    String conversationId, {
+    required String role,
+  }) {
+    return (_db.select(_db.messages)
+          ..where((t) =>
+              t.conversationId.equals(conversationId) &
+              t.role.equals(role) &
+              t.deletedAt.isNull() &
+              t.replacedBy.isNull())
+          ..orderBy([
+            (t) => OrderingTerm.desc(t.createdAt),
+            (t) => OrderingTerm.desc(t.id),
+          ])
+          ..limit(1))
+        .getSingleOrNull();
+  }
+
   /// 获取 since 之后创建的消息（用于同步）
   Future<List<Message>> getChangesSince(int since) async {
     return (_db.select(_db.messages)
@@ -175,6 +260,31 @@ class MessageRepository {
               t.replacedBy.isNull())
           ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]))
         .get();
+  }
+
+  Future<List<Message>> getAllByConversationOrderedStable(
+      String conversationId) async {
+    return (_db.select(_db.messages)
+          ..where((t) =>
+              t.conversationId.equals(conversationId) &
+              t.deletedAt.isNull() &
+              t.replacedBy.isNull())
+          ..orderBy([
+            (t) => OrderingTerm.asc(t.createdAt),
+            (t) => OrderingTerm.asc(t.id),
+          ]))
+        .get();
+  }
+
+  Future<int> countByConversation(String conversationId) async {
+    final countExpr = _db.messages.id.count();
+    final query = _db.selectOnly(_db.messages)
+      ..addColumns([countExpr])
+      ..where(_db.messages.conversationId.equals(conversationId) &
+          _db.messages.deletedAt.isNull() &
+          _db.messages.replacedBy.isNull());
+    final row = await query.getSingle();
+    return row.read(countExpr) ?? 0;
   }
 
   /// 获取会话中截止某时刻前未总结的消息

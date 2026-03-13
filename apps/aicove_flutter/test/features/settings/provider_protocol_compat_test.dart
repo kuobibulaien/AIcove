@@ -1,0 +1,557 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:aicove_flutter/src/core/api/agent_api.dart';
+import 'package:aicove_flutter/src/core/api/providers/google_api_mode.dart';
+import 'package:aicove_flutter/src/features/settings/ui_models_api.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+class _CapturingClient extends http.BaseClient {
+  _CapturingClient(this._onRequest);
+
+  final Future<http.StreamedResponse> Function(http.BaseRequest request)
+      _onRequest;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) {
+    return _onRequest(request);
+  }
+}
+
+http.StreamedResponse _jsonResponse(
+  Map<String, dynamic> body, {
+  int statusCode = 200,
+}) {
+  return http.StreamedResponse(
+    Stream<List<int>>.value(Uint8List.fromList(utf8.encode(jsonEncode(body)))),
+    statusCode,
+    headers: const <String, String>{
+      'content-type': 'application/json',
+    },
+  );
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  group('Provider protocol compatibility', () {
+    test('NovelAI V4.5 should build minimal v4 payload', () async {
+      Map<String, dynamic>? requestBody;
+
+      final client = AgentApiClient(
+        client: _CapturingClient((request) async {
+          if (request is http.Request) {
+            requestBody = jsonDecode(request.body) as Map<String, dynamic>;
+          }
+          return _jsonResponse({
+            'image': base64Encode(
+              Uint8List.fromList(<int>[0x89, 0x50, 0x4E, 0x47, 0x00]),
+            ),
+          });
+        }),
+      );
+
+      final result = await client.generateImage(
+        provider: 'novelai',
+        model: 'nai-diffusion-4-5-full',
+        prompt: '1girl, solo',
+        negativePrompt: 'lowres',
+        width: 832,
+        height: 1216,
+        providerApiBase: 'https://image.novelai.net',
+        providerApiKey: 'test-key',
+      );
+
+      expect(result.images, hasLength(1));
+      final parameters =
+          requestBody?['parameters'] as Map<String, dynamic>? ?? const {};
+      expect(requestBody?['model'], 'nai-diffusion-4-5-full');
+      expect(parameters['v4_prompt'], isNotNull);
+      expect(parameters['v4_negative_prompt'], isNotNull);
+      expect(parameters['qualityToggle'], isNull);
+      expect(parameters['ucPreset'], isNull);
+      expect(parameters['legacy'], isNull);
+      expect(parameters['legacy_v3_extend'], isNull);
+      expect(parameters['noise_schedule'], isNull);
+      expect(parameters['add_original_image'], isNull);
+      expect(parameters['cfg_rescale'], isNull);
+      expect(parameters['sm'], isNull);
+      expect(parameters['sm_dyn'], isNull);
+      expect(parameters['dynamic_thresholding'], isNull);
+      expect(parameters['prefer_brownian'], isNull);
+      expect(parameters['deliberate_euler_ancestral_bug'], isNull);
+      expect(parameters['autoSmea'], isNull);
+    });
+
+    test('NovelAI V4.5 should ignore extra overrides for core payload keys',
+        () async {
+      Map<String, dynamic>? requestBody;
+
+      final client = AgentApiClient(
+        client: _CapturingClient((request) async {
+          if (request is http.Request) {
+            requestBody = jsonDecode(request.body) as Map<String, dynamic>;
+          }
+          return _jsonResponse({
+            'image': base64Encode(
+              Uint8List.fromList(<int>[0x89, 0x50, 0x4E, 0x47, 0x00]),
+            ),
+          });
+        }),
+      );
+
+      await client.generateImage(
+        provider: 'novelai',
+        model: 'nai-diffusion-4-5-full',
+        prompt: '1girl, solo',
+        negativePrompt: 'lowres',
+        width: 832,
+        height: 1216,
+        providerApiBase: 'https://image.novelai.net',
+        providerApiKey: 'test-key',
+        customConfig: const {
+          'requestFormat': 'novelai',
+          'image_parameters': {
+            'sampler': 'ddim',
+            'v4_prompt': {
+              'caption': {'base_caption': 'broken'},
+            },
+            'qualityToggle': true,
+            'new_toggle': true,
+          },
+        },
+      );
+
+      final parameters =
+          requestBody?['parameters'] as Map<String, dynamic>? ?? const {};
+      expect(parameters['sampler'], 'k_euler_ancestral');
+      expect(
+        ((parameters['v4_prompt'] as Map<String, dynamic>)['caption']
+            as Map<String, dynamic>)['base_caption'],
+        '1girl, solo',
+      );
+      expect(parameters['qualityToggle'], isNull);
+      expect(parameters['new_toggle'], isTrue);
+    });
+
+    test('NovelAI V3 should keep legacy generation fields', () async {
+      Map<String, dynamic>? requestBody;
+
+      final client = AgentApiClient(
+        client: _CapturingClient((request) async {
+          if (request is http.Request) {
+            requestBody = jsonDecode(request.body) as Map<String, dynamic>;
+          }
+          return _jsonResponse({
+            'image': base64Encode(
+              Uint8List.fromList(<int>[0x89, 0x50, 0x4E, 0x47, 0x00]),
+            ),
+          });
+        }),
+      );
+
+      await client.generateImage(
+        provider: 'novelai',
+        model: 'nai-diffusion-3',
+        prompt: '1girl, solo',
+        negativePrompt: 'lowres',
+        width: 832,
+        height: 1216,
+        providerApiBase: 'https://image.novelai.net',
+        providerApiKey: 'test-key',
+      );
+
+      final parameters =
+          requestBody?['parameters'] as Map<String, dynamic>? ?? const {};
+      expect(parameters['qualityToggle'], true);
+      expect(parameters['legacy'], false);
+      expect(parameters['legacy_v3_extend'], false);
+      expect(parameters['noise_schedule'], 'karras');
+      expect(parameters['sm'], false);
+      expect(parameters['sm_dyn'], false);
+      expect(parameters['v4_prompt'], isNull);
+      expect(parameters['v4_negative_prompt'], isNull);
+    });
+
+    test('OpenAI compatible image generation should accept url responses',
+        () async {
+      final calls = <Uri>[];
+      final client = MockClient((request) async {
+        calls.add(request.url);
+        if (request.url.path.endsWith('/images/generations')) {
+          return http.Response(
+            jsonEncode({
+              'data': [
+                {'url': 'https://cdn.unit.test/generated/cat.png'}
+              ],
+            }),
+            200,
+            headers: const {'content-type': 'application/json'},
+          );
+        }
+        if (request.url.toString() ==
+            'https://cdn.unit.test/generated/cat.png') {
+          return http.Response.bytes(
+            Uint8List.fromList(<int>[0x89, 0x50, 0x4E, 0x47, 0x00]),
+            200,
+            headers: const {'content-type': 'image/png'},
+          );
+        }
+        return http.Response('not found', 404);
+      });
+
+      final result = await AgentApiClient(client: client).generateImage(
+        provider: 'openai',
+        model: 'gpt-image-1',
+        prompt: 'a cat',
+        providerApiBase: 'https://unit.test/v1',
+        providerApiKey: 'test-key',
+      );
+
+      expect(result.images, hasLength(1));
+      expect(result.images.first, isNotEmpty);
+      expect(
+        calls.map((e) => e.toString()).toList(),
+        <String>[
+          'https://unit.test/v1/images/generations',
+          'https://cdn.unit.test/generated/cat.png',
+        ],
+      );
+    });
+
+    test('Gemini sendMessageRich should call models/{model}:generateContent',
+        () async {
+      Uri? calledUri;
+      Map<String, String>? calledHeaders;
+
+      final client = AgentApiClient(
+        client: _CapturingClient((request) async {
+          calledUri = request.url;
+          calledHeaders = Map<String, String>.from(request.headers);
+          return _jsonResponse({
+            'candidates': [
+              {
+                'content': {
+                  'parts': [
+                    {'text': 'ok'}
+                  ]
+                }
+              }
+            ]
+          });
+        }),
+      );
+
+      final result = await client.sendMessageRich(
+        agentId: 'a1',
+        sessionId: 's1',
+        modelFullId: 'gemini:gemini-2.0-flash',
+        messages: const <Map<String, dynamic>>[],
+        userText: 'hello',
+        providerApiBase: 'https://generativelanguage.googleapis.com/v1beta',
+        providerApiKey: 'test-gemini-key',
+      );
+
+      expect(result.text, 'ok');
+      expect(
+        calledUri.toString(),
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
+      );
+      expect(
+        calledHeaders?['x-goog-api-key'],
+        'test-gemini-key',
+      );
+    });
+
+    test('requestFormat=openai should override gemini provider adapter',
+        () async {
+      Uri? calledUri;
+      Map<String, String>? calledHeaders;
+
+      final client = AgentApiClient(
+        client: _CapturingClient((request) async {
+          calledUri = request.url;
+          calledHeaders = Map<String, String>.from(request.headers);
+          return _jsonResponse({
+            'choices': [
+              {
+                'message': {'content': 'ok'}
+              }
+            ]
+          });
+        }),
+      );
+
+      final result = await client.sendMessageRich(
+        agentId: 'a1',
+        sessionId: 's1',
+        modelFullId: 'gemini:gpt-4o-mini',
+        messages: const <Map<String, dynamic>>[],
+        userText: 'hello',
+        providerApiBase: 'https://unit.test',
+        providerApiKey: 'openai-like-key',
+        customConfig: const {'requestFormat': 'openai'},
+      );
+
+      expect(result.text, 'ok');
+      expect(calledUri.toString(), 'https://unit.test/v1/chat/completions');
+      expect(calledHeaders?['Authorization'], 'Bearer openai-like-key');
+      expect(calledHeaders?.containsKey('x-goog-api-key'), isFalse);
+    });
+
+    test('Gemini previewProvider should use x-goog-api-key and parse models[]',
+        () async {
+      Uri? calledUri;
+      Map<String, String>? calledHeaders;
+      final client = MockClient((request) async {
+        calledUri = request.url;
+        calledHeaders = Map<String, String>.from(request.headers);
+        return http.Response(
+          jsonEncode({
+            'models': [
+              {'name': 'models/gemini-2.0-flash'},
+              {'name': 'models/text-embedding-004'},
+            ],
+          }),
+          200,
+          headers: const {'content-type': 'application/json'},
+        );
+      });
+
+      final api = UiModelsApi(httpClient: client);
+      final models = await api.previewProvider(
+        providerId: 'gemini',
+        apiKey: 'gemini-key',
+        apiBaseUrl: 'https://unit.test/v1beta',
+      );
+
+      expect(calledUri.toString(), 'https://unit.test/v1beta/models');
+      expect(calledHeaders?['x-goog-api-key'], 'gemini-key');
+      expect(calledHeaders?.containsKey('Authorization'), isFalse);
+      expect(models, <String>['gemini-2.0-flash', 'text-embedding-004']);
+    });
+
+    test('Vertex Express previewProvider should use publisherModels list',
+        () async {
+      Uri? calledUri;
+      final client = MockClient((request) async {
+        calledUri = request.url;
+        return http.Response(
+          jsonEncode({
+            'publisherModels': [
+              {'name': 'publishers/google/models/gemini-2.5-pro'},
+              {'name': 'publishers/google/models/gemini-2.5-flash'},
+            ],
+          }),
+          200,
+          headers: const {'content-type': 'application/json'},
+        );
+      });
+
+      final api = UiModelsApi(httpClient: client);
+      final models = await api.previewProvider(
+        providerId: 'gemini',
+        apiKey: 'vertex-key',
+        apiBaseUrl: 'https://aiplatform.googleapis.com/v1/publishers/google',
+        customConfig: const {'vertexExpress': true},
+      );
+
+      expect(
+        calledUri.toString(),
+        'https://aiplatform.googleapis.com/v1beta1/publishers/google/models?key=vertex-key&pageSize=200',
+      );
+      expect(models, <String>['gemini-2.5-pro', 'gemini-2.5-flash']);
+    });
+
+    test('Vertex Express previewProvider should also work for imported ids',
+        () async {
+      Uri? calledUri;
+      final client = MockClient((request) async {
+        calledUri = request.url;
+        return http.Response(
+          jsonEncode({
+            'publisherModels': [
+              {'name': 'publishers/google/models/gemini-2.5-pro'},
+            ],
+          }),
+          200,
+          headers: const {'content-type': 'application/json'},
+        );
+      });
+
+      final api = UiModelsApi(httpClient: client);
+      final models = await api.previewProvider(
+        providerId: 'gemini__2',
+        apiKey: 'vertex-key',
+        apiBaseUrl: 'https://aiplatform.googleapis.com/v1/publishers/google',
+        customConfig: const {
+          'requestFormat': 'gemini',
+          'vertexExpress': true,
+        },
+      );
+
+      expect(
+        calledUri.toString(),
+        'https://aiplatform.googleapis.com/v1beta1/publishers/google/models?key=vertex-key&pageSize=200',
+      );
+      expect(models, contains('gemini-2.5-pro'));
+    });
+
+    test('Vertex Express importProvider should fall back to built-in models',
+        () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final client = MockClient((request) async {
+        return http.Response('unexpected', 500);
+      });
+
+      final api = UiModelsApi(httpClient: client);
+      final result = await api.importProvider(
+        providerId: 'gemini',
+        apiKey: 'vertex-key',
+        apiBaseUrl: 'https://aiplatform.googleapis.com/v1/publishers/google',
+        customConfig: const {
+          'requestFormat': 'gemini',
+          'vertexExpress': true,
+        },
+      );
+
+      final providers =
+          (result['providers'] as List).cast<Map<String, dynamic>>();
+      final imported =
+          providers.firstWhere((provider) => provider['id'] == 'gemini');
+      expect(
+        imported['models'],
+        containsAll(kVertexExpressDefaultModels),
+      );
+    });
+
+    test('Vertex Express sendMessageRich should use aiplatform key query',
+        () async {
+      Uri? calledUri;
+      Map<String, String>? calledHeaders;
+
+      final client = AgentApiClient(
+        client: _CapturingClient((request) async {
+          calledUri = request.url;
+          calledHeaders = Map<String, String>.from(request.headers);
+          return _jsonResponse({
+            'candidates': [
+              {
+                'content': {
+                  'parts': [
+                    {'text': 'ok'}
+                  ]
+                }
+              }
+            ]
+          });
+        }),
+      );
+
+      final result = await client.sendMessageRich(
+        agentId: 'a1',
+        sessionId: 's1',
+        modelFullId: 'gemini:gemini-2.5-pro',
+        messages: const <Map<String, dynamic>>[],
+        userText: 'hello',
+        providerApiBase: 'https://aiplatform.googleapis.com/v1',
+        providerApiKey: 'vertex-key',
+        customConfig: const {
+          'requestFormat': 'gemini',
+          'vertexExpress': true,
+        },
+      );
+
+      expect(result.text, 'ok');
+      expect(
+        calledUri.toString(),
+        'https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-pro:generateContent?key=vertex-key',
+      );
+      expect(calledHeaders?.containsKey('x-goog-api-key'), isFalse);
+    });
+
+    test('Vertex Express sendMessageRichStream should use stream endpoint',
+        () async {
+      Uri? calledUri;
+      Map<String, String>? calledHeaders;
+
+      final client = AgentApiClient(
+        client: _CapturingClient((request) async {
+          calledUri = request.url;
+          calledHeaders = Map<String, String>.from(request.headers);
+          return http.StreamedResponse(
+            Stream<List<int>>.fromIterable(<List<int>>[
+              utf8.encode(
+                'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]}}]}\n\n',
+              ),
+            ]),
+            200,
+            headers: const <String, String>{
+              'content-type': 'text/event-stream',
+            },
+          );
+        }),
+      );
+
+      final result = await client.sendMessageRichStream(
+        agentId: 'a1',
+        sessionId: 's1',
+        modelFullId: 'gemini:gemini-2.5-pro',
+        messages: const <Map<String, dynamic>>[],
+        userText: 'hello',
+        providerApiBase: 'https://aiplatform.googleapis.com/v1',
+        providerApiKey: 'vertex-key',
+        customConfig: const {
+          'requestFormat': 'gemini',
+          'vertexExpress': true,
+        },
+      );
+
+      expect(result.text, 'ok');
+      expect(
+        calledUri.toString(),
+        'https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-pro:streamGenerateContent?key=vertex-key',
+      );
+      expect(calledUri?.queryParameters['alt'], isNull);
+      expect(calledHeaders?['Accept'], 'text/event-stream');
+      expect(calledHeaders?.containsKey('x-goog-api-key'), isFalse);
+    });
+
+    test(
+        'Claude previewProvider should use x-api-key + anthropic-version and parse data[]',
+        () async {
+      Uri? calledUri;
+      Map<String, String>? calledHeaders;
+      final client = MockClient((request) async {
+        calledUri = request.url;
+        calledHeaders = Map<String, String>.from(request.headers);
+        return http.Response(
+          jsonEncode({
+            'data': [
+              {'id': 'claude-3-5-haiku-latest'},
+              {'id': 'claude-sonnet-4-5'},
+            ]
+          }),
+          200,
+          headers: const {'content-type': 'application/json'},
+        );
+      });
+
+      final api = UiModelsApi(httpClient: client);
+      final models = await api.previewProvider(
+        providerId: 'claude',
+        apiKey: 'claude-key',
+        apiBaseUrl: 'https://unit.test/v1',
+      );
+
+      expect(calledUri.toString(), 'https://unit.test/v1/models');
+      expect(calledHeaders?['x-api-key'], 'claude-key');
+      expect(calledHeaders?['anthropic-version'], '2023-06-01');
+      expect(calledHeaders?.containsKey('Authorization'), isFalse);
+      expect(models, <String>['claude-3-5-haiku-latest', 'claude-sonnet-4-5']);
+    });
+  });
+}

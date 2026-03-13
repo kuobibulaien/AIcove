@@ -83,6 +83,7 @@ class Messages extends Table {
 
   // (注释已丢失)
   TextColumn get replacedBy => text().nullable()();
+  TextColumn get sourceMessageId => text().nullable()();
 
   // 冲突字段
   TextColumn get conflictOf => text().nullable()();
@@ -102,6 +103,7 @@ class Messages extends Table {
 class MessageBlocks extends Table {
   TextColumn get id => text()();
   TextColumn get messageId => text().references(Messages, #id)();
+  TextColumn get sourceBlockId => text().nullable()();
   TextColumn get type =>
       text()(); // 'mainText' | 'image' | 'audio' | 'emoji' | 'tool' | 'thinking'
   TextColumn get status => text().withDefault(const Constant('success'))();
@@ -328,7 +330,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(QueryExecutor executor) : super(executor);
 
   @override
-  int get schemaVersion => 10;
+  int get schemaVersion => 11;
 
   @override
   MigrationStrategy get migration {
@@ -393,6 +395,11 @@ class AppDatabase extends _$AppDatabase {
         if (from < 10) {
           await _safeAddColumn(
               'conversations', 'context_start_message_id TEXT');
+        }
+        // v10 -> v11: add import source id columns
+        if (from < 11) {
+          await _safeAddColumn('messages', 'source_message_id TEXT');
+          await _safeAddColumn('message_blocks', 'source_block_id TEXT');
         }
       },
     );

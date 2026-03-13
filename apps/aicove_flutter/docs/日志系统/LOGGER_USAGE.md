@@ -306,3 +306,15 @@ trace.end(additionalMessage: '查询到 ${results.length} 条记录');
   - `AI 原始 JSON 响应（模型回包）`
   - `AI -> 工具调用 / 工具 -> AI 返回`
   - `AI 原始回复 / 最终展示给用户的回复`
+
+## 2026-03-05 更新
+
+- `AppLogger` / `ApiLogger` 的文件写入改为**批量队列写入**，避免 `removeAt(0)` 和逐条写盘带来的高开销。
+- 流式回包日志增加事件上限（Debug `360` 条，Release `120` 条），超出部分只记统计，不再无限膨胀。
+- `rawResponseBody.streamEventStats` 新增 `total/captured/dropped/maxCaptured`，用于定位“日志被截断”是否发生。
+
+## 2026-03-11 更新
+
+- 日志中心把 `rawRequestBody` 明确标成 `AI 第一视角原始请求串`，直接展示模型真正收到的原文，不再和 `rawContext` 混在一起理解。
+- 对话视图新增 `本轮可用工具清单`，从 `rawRequestBody.tools` 里抽出展示。
+- Payload 检查器的 `工具清单` 现在兼容 OpenAI、Claude、Gemini 三种工具定义结构。

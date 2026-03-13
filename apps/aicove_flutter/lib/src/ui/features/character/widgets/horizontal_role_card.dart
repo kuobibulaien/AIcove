@@ -23,6 +23,7 @@ import '../../../../core/utils/blurred_background_manager.dart';
 import '../../../../core/utils/image_preheat_queue.dart';
 import '../../../../core/utils/role_transition_tags.dart';
 import '../../../../features/chat/domain/conversation.dart';
+import '../../../../features/chat/domain/persona_prompt_codec.dart';
 import '../pages/character_detail_page.dart';
 
 /// 横向角色卡片 - 左图右文风格 + 背景 Hero 动效
@@ -313,7 +314,8 @@ class _HorizontalRoleCardState extends ConsumerState<HorizontalRoleCard> {
     final desc = widget.conversation.description;
     if (desc != null && desc.isNotEmpty) return desc;
 
-    final persona = widget.conversation.personaPrompt;
+    final persona =
+        PersonaPromptCodec.parse(widget.conversation.personaPrompt).userPrompt;
     if (persona.isNotEmpty) return persona;
 
     return '暂无简介';

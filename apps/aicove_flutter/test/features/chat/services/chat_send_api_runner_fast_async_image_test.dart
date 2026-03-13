@@ -150,6 +150,12 @@ class _AsyncAcceptedImagePlugin extends BasePlugin {
             'mode': mode,
             'provider': 'novelai',
             'model': 'nai-diffusion-4-5-full',
+            'raw_prompt': 'cat',
+            'prompt': 'artist style, cat',
+            'negative_prompt': 'bad anatomy, low quality',
+            'artist_preset_name': '防冻液',
+            'artist_preset_source': 'global_selected',
+            'artist_prompt_prefix': 'artist style',
             'image_count': 0,
             'message': 'image job accepted',
           });
@@ -277,5 +283,17 @@ void main() {
         result.rawToolResults.firstWhere((r) => r.name == 'draw_image').result;
     expect(drawToolResult, contains('"accepted":true'));
     expect(drawToolResult, contains('"job_id":"job_fast_1"'));
+    expect(drawToolResult, contains('"image_delivery_pending":true'));
+    expect(drawToolResult, contains('"raw_prompt":"cat"'));
+    expect(drawToolResult, contains('"prompt":"artist style, cat"'));
+    expect(
+      drawToolResult,
+      contains('"negative_prompt":"bad anatomy, low quality"'),
+    );
+    expect(drawToolResult, contains('"artist_preset_name":"防冻液"'));
+    expect(
+      drawToolResult,
+      contains('"artist_preset_source":"global_selected"'),
+    );
   });
 }

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -54,6 +55,11 @@ class ApiLogEntry {
   final String? eventType;
   final String? rawToolResults;
   final String? finalReply;
+  final String? stage;
+  final String? stageStatus;
+  final String? source;
+  final int? eventSeq;
+  final Map<String, dynamic>? payloadRef;
 
   /// 是否为 AI 对话日志（用于筛选）
   bool get isConversation =>
@@ -87,6 +93,11 @@ class ApiLogEntry {
     this.eventType,
     this.rawToolResults,
     this.finalReply,
+    this.stage,
+    this.stageStatus,
+    this.source,
+    this.eventSeq,
+    this.payloadRef,
   });
 
   /// 转换为 JSON
@@ -111,6 +122,11 @@ class ApiLogEntry {
       if (eventType != null) 'eventType': eventType,
       if (rawToolResults != null) 'rawToolResults': rawToolResults,
       if (finalReply != null) 'finalReply': finalReply,
+      if (stage != null) 'stage': stage,
+      if (stageStatus != null) 'stageStatus': stageStatus,
+      if (source != null) 'source': source,
+      if (eventSeq != null) 'eventSeq': eventSeq,
+      if (payloadRef != null) 'payloadRef': payloadRef,
     };
   }
 
@@ -136,6 +152,11 @@ class ApiLogEntry {
       eventType: json['eventType'] as String?,
       rawToolResults: json['rawToolResults'] as String?,
       finalReply: json['finalReply'] as String?,
+      stage: json['stage'] as String?,
+      stageStatus: json['stageStatus'] as String?,
+      source: json['source'] as String?,
+      eventSeq: json['eventSeq'] as int?,
+      payloadRef: (json['payloadRef'] as Map?)?.cast<String, dynamic>(),
     );
   }
 }
@@ -163,7 +184,8 @@ class ApiLogger {
   static int? _cachedFileDay; // 缓存的日期（用于检测跨天）
 
   // 写入队列
-  static final List<ApiLogEntry> _writeQueue = [];
+  static const int _writeBatchSize = 24;
+  static final ListQueue<ApiLogEntry> _writeQueue = ListQueue<ApiLogEntry>();
   static bool _isWriting = false;
 
   // 初始化前的缓冲区
@@ -241,7 +263,7 @@ class ApiLogger {
 
   /// 将日志加入写入队列
   static void _enqueueWrite(ApiLogEntry entry) {
-    _writeQueue.add(entry);
+    _writeQueue.addLast(entry);
     _processWriteQueue();
   }
 
@@ -252,21 +274,32 @@ class ApiLogger {
     _isWriting = true;
     try {
       while (_writeQueue.isNotEmpty) {
-        final entry = _writeQueue.removeAt(0);
-        await _writeToFile(entry);
+        final batch = <ApiLogEntry>[];
+        while (_writeQueue.isNotEmpty && batch.length < _writeBatchSize) {
+          batch.add(_writeQueue.removeFirst());
+        }
+        await _writeBatchToFile(batch);
       }
     } finally {
       _isWriting = false;
     }
   }
 
-  /// 实际写入文件
-  static Future<void> _writeToFile(ApiLogEntry entry) async {
+  /// 批量写入文件，降低频繁 flush 导致的主线程卡顿
+  static Future<void> _writeBatchToFile(List<ApiLogEntry> batch) async {
+    if (batch.isEmpty) return;
     try {
       final filePath = await _getTodayLogFilePath();
       final file = File(filePath);
-      final line = '${jsonEncode(entry.toJson())}\n';
-      await file.writeAsString(line, mode: FileMode.append, flush: true);
+      final buffer = StringBuffer();
+      for (final entry in batch) {
+        buffer.writeln(jsonEncode(entry.toJson()));
+      }
+      await file.writeAsString(
+        buffer.toString(),
+        mode: FileMode.append,
+        flush: true,
+      );
     } catch (e) {
       if (kDebugMode) {
         debugPrint('API日志写入文件失败: $e');

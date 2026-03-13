@@ -4,6 +4,9 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'settings_models.dart';
+import '../../core/api/providers/google_api_mode.dart';
+import '../../core/network/json_http_client.dart';
 import '../../core/api/providers/provider_adapter_factory.dart';
 
 /// SharedPreferences 键名，统一管理模型与渠道配置。
@@ -49,7 +52,6 @@ Map<String, dynamic> _defaultStoreData() => <String, dynamic>{
           'visible_models': <String>['deepseek-reasoner', 'deepseek-chat'],
           'hidden_models': <String>[],
           'capabilities': <String>['chat'],
-          'model_type': 'chat',
         },
         {
           'id': 'openrouter',
@@ -61,7 +63,6 @@ Map<String, dynamic> _defaultStoreData() => <String, dynamic>{
           'visible_models': <String>[],
           'hidden_models': <String>[],
           'capabilities': <String>['chat'],
-          'model_type': 'chat',
         },
         {
           'id': 'minimax',
@@ -83,7 +84,6 @@ Map<String, dynamic> _defaultStoreData() => <String, dynamic>{
           ],
           'hidden_models': <String>[],
           'capabilities': <String>['tts'],
-          'model_type': 'tts',
         },
         {
           'id': 'kimi',
@@ -95,7 +95,6 @@ Map<String, dynamic> _defaultStoreData() => <String, dynamic>{
           'visible_models': <String>[],
           'hidden_models': <String>[],
           'capabilities': <String>['chat'],
-          'model_type': 'chat',
         },
         // === 中文供应商 ===
         {
@@ -114,7 +113,6 @@ Map<String, dynamic> _defaultStoreData() => <String, dynamic>{
           ],
           'hidden_models': <String>[],
           'capabilities': <String>['tts'],
-          'model_type': 'tts',
         },
         {
           'id': 'novelai',
@@ -132,7 +130,6 @@ Map<String, dynamic> _defaultStoreData() => <String, dynamic>{
           ],
           'hidden_models': <String>[],
           'capabilities': <String>['image'],
-          'model_type': 'image',
           'customConfig': <String, dynamic>{
             'requestFormat': 'novelai',
             'defaultImageModel': 'nai-diffusion-4-5-full',
@@ -148,7 +145,6 @@ Map<String, dynamic> _defaultStoreData() => <String, dynamic>{
           'visible_models': <String>[],
           'hidden_models': <String>[],
           'capabilities': <String>['chat'],
-          'model_type': 'chat',
         },
         {
           'id': 'volcengine',
@@ -160,7 +156,6 @@ Map<String, dynamic> _defaultStoreData() => <String, dynamic>{
           'visible_models': <String>[],
           'hidden_models': <String>[],
           'capabilities': <String>['chat'],
-          'model_type': 'chat',
         },
       ],
       'visible_models': <String>['deepseek-reasoner', 'deepseek-chat'],
@@ -392,9 +387,67 @@ List<String> _cleanStrings(dynamic source) {
 
 int _caseSort(String a, String b) => a.toLowerCase().compareTo(b.toLowerCase());
 
+bool _isGoogleVertexExpress({
+  required String providerId,
+  Map<String, dynamic>? customConfig,
+}) {
+  final normalized = ProviderAdapterFactory.resolveProvider(providerId,
+      customConfig: customConfig);
+  if (normalized != 'gemini') {
+    return false;
+  }
+  return isVertexExpressEnabled(customConfig);
+}
+
+ModelType _resolveProviderModelType({
+  required String providerId,
+  required String modelId,
+  required Map<String, String> modelTypes,
+}) {
+  final modelRef = '$providerId:$modelId';
+  final stored = modelTypes[modelRef] ?? modelTypes[modelId];
+  if (stored != null && stored.trim().isNotEmpty) {
+    return ModelType.fromValue(stored.trim());
+  }
+  return ModelType.inferFromModelId(modelId);
+}
+
+List<String> _deriveProviderCapabilities({
+  required String providerId,
+  required List<String> models,
+  required Map<String, String> modelTypes,
+  List<String>? fallbackCapabilities,
+}) {
+  final derived = <String>[];
+  for (final model in models) {
+    final resolved = _resolveProviderModelType(
+      providerId: providerId,
+      modelId: model,
+      modelTypes: modelTypes,
+    );
+    if (!derived.contains(resolved.value)) {
+      derived.add(resolved.value);
+    }
+  }
+  if (derived.isNotEmpty) {
+    return derived;
+  }
+
+  final fallback = _cleanStrings(fallbackCapabilities);
+  if (providerId == 'aliyun' && !fallback.contains('tts')) {
+    fallback.add('tts');
+  }
+  if (fallback.isNotEmpty) {
+    return fallback;
+  }
+  return <String>[ModelType.chat.value];
+}
+
 Map<String, dynamic> _normalizeData(Map<String, dynamic> raw) {
   final data = Map<String, dynamic>.from(raw);
   final providersRaw = data['providers'];
+  final modelTypes = (data['model_types'] as Map? ?? const <String, dynamic>{})
+      .map((key, value) => MapEntry(key.toString(), value?.toString() ?? ''));
   final normalizedProviders = <Map<String, dynamic>>[];
   final visibleUnion = <String>[];
 
@@ -415,9 +468,6 @@ Map<String, dynamic> _normalizeData(Map<String, dynamic> raw) {
       final visible = _cleanStrings(provider['visible_models']);
       final hidden = _cleanStrings(provider['hidden_models']);
       final capabilities = _cleanStrings(provider['capabilities']);
-      if (capabilities.isEmpty) {
-        capabilities.add('chat');
-      }
 
       // 迁移：给阿里云渠道自动补上 tts capability
       var customConfig = provider['custom_config'] is Map
@@ -501,8 +551,12 @@ Map<String, dynamic> _normalizeData(Map<String, dynamic> raw) {
 
       final visibleList = visibleSet.toList()..sort(_caseSort);
       final hiddenList = hiddenSet.toList()..sort(_caseSort);
-
-      final modelType = (provider['model_type'] as String?)?.trim() ?? 'chat';
+      final normalizedCapabilities = _deriveProviderCapabilities(
+        providerId: id,
+        models: models,
+        modelTypes: modelTypes,
+        fallbackCapabilities: capabilities,
+      );
 
       normalizedProviders.add({
         'id': id,
@@ -513,9 +567,8 @@ Map<String, dynamic> _normalizeData(Map<String, dynamic> raw) {
         'models': models,
         'visible_models': visibleList,
         'hidden_models': hiddenList,
-        'capabilities': capabilities,
+        'capabilities': normalizedCapabilities,
         'custom_config': customConfig,
-        'model_type': modelType,
         // 保留模型参数字段
         if (provider['disable_tool_calling'] == true)
           'disable_tool_calling': true,
@@ -553,7 +606,9 @@ Map<String, dynamic> _normalizeData(Map<String, dynamic> raw) {
 }
 
 class UiModelsApi {
-  const UiModelsApi();
+  const UiModelsApi({http.Client? httpClient}) : _httpClient = httpClient;
+
+  final http.Client? _httpClient;
 
   Future<Map<String, dynamic>> fetchAll() async {
     final prefs = await SharedPreferences.getInstance();
@@ -575,38 +630,180 @@ class UiModelsApi {
     required String providerId,
     required String apiKey,
     required String apiBaseUrl,
+    Map<String, dynamic>? customConfig,
   }) async {
     if (_isNovelAiProvider(providerId: providerId, apiBaseUrl: apiBaseUrl)) {
       return _novelAiDefaultModels;
     }
+    if (_isGoogleVertexExpress(
+      providerId: providerId,
+      customConfig: customConfig,
+    )) {
+      return _previewVertexExpressProvider(
+        providerId: providerId,
+        apiKey: apiKey,
+        apiBaseUrl: apiBaseUrl,
+        customConfig: customConfig,
+      );
+    }
 
     try {
-      final url = '${apiBaseUrl.replaceAll(RegExp(r'/+$'), '')}/models';
-      final response = await http.get(
-        Uri.parse(url),
-        headers: {'Authorization': 'Bearer $apiKey'},
-      ).timeout(const Duration(seconds: 10));
-
-      if (response.statusCode != 200) {
-        throw Exception('HTTP ${response.statusCode}');
-      }
-
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
-      final models = (data['data'] as List?)
-              ?.whereType<Map>()
-              .map((e) => (e['id'] as String?)?.trim() ?? '')
-              .where((e) => e.isNotEmpty)
-              .toList() ??
-          <String>[];
+      final adapter = ProviderAdapterFactory.getAdapter(providerId);
+      final base = apiBaseUrl.replaceAll(RegExp(r'/+$'), '');
+      final uri = Uri.parse('$base/models');
+      final response = await JsonHttpClient.getJson(
+        uri: uri,
+        headers: adapter.buildHeaders(apiKey),
+        timeout: const Duration(seconds: 10),
+        client: _httpClient,
+      );
+      final models = _extractPreviewModels(
+        response.data,
+        providerId: providerId,
+        customConfig: customConfig,
+      );
 
       if (models.isEmpty) {
         throw Exception('No models found');
       }
 
       return models;
+    } on JsonHttpRequestException catch (e) {
+      throw Exception('Failed to fetch models: ${e.message}');
     } catch (e) {
       throw Exception('Failed to fetch models: $e');
     }
+  }
+
+  Future<List<String>> _previewVertexExpressProvider({
+    required String providerId,
+    required String apiKey,
+    required String apiBaseUrl,
+    Map<String, dynamic>? customConfig,
+  }) async {
+    try {
+      final models = <String>[];
+      String? pageToken;
+
+      do {
+        final baseUri = buildGooglePublisherModelsListUri(
+          baseUrl: apiBaseUrl,
+          apiKey: apiKey,
+        );
+        final query = <String, String>{
+          ...baseUri.queryParameters,
+          'pageSize': '200',
+          if (pageToken != null && pageToken.isNotEmpty) 'pageToken': pageToken,
+        };
+        final uri = baseUri.replace(queryParameters: query);
+        final response = await JsonHttpClient.getJson(
+          uri: uri,
+          headers: const <String, String>{},
+          timeout: const Duration(seconds: 10),
+          client: _httpClient,
+        );
+        final pageModels = _extractPreviewModels(
+          response.data,
+          providerId: providerId,
+          customConfig: customConfig,
+        );
+        for (final model in pageModels) {
+          if (!models.contains(model)) {
+            models.add(model);
+          }
+        }
+
+        final nextToken = response.data['nextPageToken']?.toString().trim();
+        pageToken = (nextToken == null || nextToken.isEmpty) ? null : nextToken;
+      } while (pageToken != null);
+
+      if (models.isEmpty) {
+        throw Exception('No models found');
+      }
+
+      return models;
+    } on JsonHttpRequestException catch (e) {
+      throw Exception('Failed to fetch Vertex models: ${e.message}');
+    } catch (e) {
+      throw Exception('Failed to fetch Vertex models: $e');
+    }
+  }
+
+  List<String> _extractPreviewModels(
+    Map<String, dynamic> data, {
+    required String providerId,
+    Map<String, dynamic>? customConfig,
+  }) {
+    final normalizedProvider = providerId.trim().toLowerCase();
+    final models = <String>[];
+
+    void addModel(String rawModelId) {
+      final raw = rawModelId.trim();
+      if (raw.isEmpty) return;
+      final normalized = _normalizePreviewModelId(
+        raw,
+        providerId: normalizedProvider,
+        customConfig: customConfig,
+      );
+      if (normalized.isEmpty || models.contains(normalized)) {
+        return;
+      }
+      models.add(normalized);
+    }
+
+    final dataList = data['data'];
+    if (dataList is List) {
+      for (final item in dataList) {
+        if (item is! Map) continue;
+        final id = item['id']?.toString() ?? '';
+        addModel(id);
+      }
+    }
+
+    final geminiModels = data['models'];
+    if (geminiModels is List) {
+      for (final item in geminiModels) {
+        if (item is! Map) continue;
+        final name = item['name']?.toString() ?? '';
+        addModel(name);
+      }
+    }
+
+    final publisherModels = data['publisherModels'];
+    if (publisherModels is List) {
+      for (final item in publisherModels) {
+        if (item is! Map) continue;
+        final name = item['name']?.toString() ?? '';
+        addModel(name);
+      }
+    }
+
+    return models;
+  }
+
+  String _normalizePreviewModelId(
+    String modelId, {
+    required String providerId,
+    Map<String, dynamic>? customConfig,
+  }) {
+    final normalized = modelId.trim();
+    if (normalized.isEmpty) return '';
+
+    if (ProviderAdapterFactory.resolveProvider(
+          providerId,
+          customConfig: customConfig,
+        ) ==
+        'gemini') {
+      return normalizeGoogleModelId(
+        normalized,
+        vertexExpress: _isGoogleVertexExpress(
+          providerId: providerId,
+          customConfig: customConfig,
+        ),
+      );
+    }
+
+    return normalized;
   }
 
   /// 测试指定模型是否可用：发送一条极简的 chat completion 请求
@@ -616,24 +813,49 @@ class UiModelsApi {
     required String apiKey,
     required String apiBaseUrl,
     required String modelId,
+    Map<String, dynamic>? customConfig,
   }) async {
     try {
       final adapter = ProviderAdapterFactory.getAdapter(providerId);
-      final endpoint = adapter.buildEndpoint(
-        apiBaseUrl.replaceAll(RegExp(r'/+$'), ''),
-        modelType: 'chat',
+      final vertexExpress = _isGoogleVertexExpress(
+        providerId: providerId,
+        customConfig: customConfig,
       );
+      final endpoint = adapter.name == 'gemini'
+          ? buildGoogleGenerateContentEndpoint(
+              baseUrl: apiBaseUrl,
+              model: modelId,
+              streaming: false,
+              vertexExpress: vertexExpress,
+            )
+          : adapter.buildEndpoint(
+              apiBaseUrl.replaceAll(RegExp(r'/+$'), ''),
+              modelType: 'chat',
+            );
       final headers = adapter.buildHeaders(apiKey);
+      if (adapter.name == 'gemini' && vertexExpress) {
+        headers.remove('x-goog-api-key');
+      }
       final body = adapter.buildRequestBody(
         model: modelId,
         messages: [
           {'role': 'user', 'content': 'hi'},
         ],
-        customConfig: {'max_tokens': 3},
+        customConfig: {
+          ...?customConfig,
+          'max_tokens': 3,
+        },
       );
+      final uri = adapter.name == 'gemini'
+          ? buildGoogleRequestUri(
+              endpoint: endpoint,
+              vertexExpress: vertexExpress,
+              apiKey: apiKey,
+            )
+          : Uri.parse(endpoint);
 
       final response = await http
-          .post(Uri.parse(endpoint), headers: headers, body: jsonEncode(body))
+          .post(uri, headers: headers, body: jsonEncode(body))
           .timeout(const Duration(seconds: 15));
 
       if (response.statusCode != 200) {
@@ -662,7 +884,6 @@ class UiModelsApi {
     List<String>? allModels,
     List<String>? capabilities,
     Map<String, dynamic>? customConfig,
-    String? modelType,
   }) async {
     if (providerId != 'openai_full_compat' && apiKey.trim().isEmpty) {
       throw ArgumentError('provider_id 和 api_key 不能为空');
@@ -670,6 +891,9 @@ class UiModelsApi {
 
     final prefs = await SharedPreferences.getInstance();
     final current = await _loadStore(prefs);
+    final modelTypes = (current['model_types'] as Map? ??
+            const <String, dynamic>{})
+        .map((key, value) => MapEntry(key.toString(), value?.toString() ?? ''));
     final providers = (current['providers'] as List)
         .cast<Map<String, dynamic>>()
         .map((e) => Map<String, dynamic>.from(e))
@@ -680,20 +904,30 @@ class UiModelsApi {
         _isNovelAiProvider(providerId: providerId, apiBaseUrl: apiBaseUrl) ||
             requestFormat == 'novelai' ||
             requestFormat == 'nai';
+    final isVertexExpress = _isGoogleVertexExpress(
+      providerId: providerId,
+      customConfig: customConfig,
+    );
 
     List<String> models;
     if (allModels != null) {
       models = _cleanStrings(allModels);
+      if (isVertexExpress && models.isEmpty) {
+        models = List<String>.from(kVertexExpressDefaultModels);
+      }
     } else {
       try {
         models = await previewProvider(
           providerId: providerId,
           apiKey: apiKey,
           apiBaseUrl: apiBaseUrl,
+          customConfig: customConfig,
         );
       } catch (e) {
         if (isNovelAi) {
           models = _novelAiDefaultModels;
+        } else if (isVertexExpress) {
+          models = List<String>.from(kVertexExpressDefaultModels);
         } else {
           rethrow;
         }
@@ -717,8 +951,10 @@ class UiModelsApi {
       visible = _normalizeNovelAiModels(visible);
       hidden = _normalizeNovelAiModels(hidden);
     }
-    final caps = _cleanStrings(capabilities);
-    if (caps.isEmpty) caps.add('chat');
+    visible = visible.where((m) => models.contains(m)).toList();
+    hidden = hidden
+        .where((m) => models.contains(m) && !visible.contains(m))
+        .toList();
     final normalizedConfig = Map<String, dynamic>.from(customConfig ?? {});
     if (isNovelAi) {
       normalizedConfig['requestFormat'] = 'novelai';
@@ -751,11 +987,13 @@ class UiModelsApi {
       'models': models,
       'visible_models': visible,
       'hidden_models': hidden.where((m) => !visible.contains(m)).toList(),
-      'capabilities': caps,
+      'capabilities': _deriveProviderCapabilities(
+        providerId: providerId,
+        models: models,
+        modelTypes: modelTypes,
+        fallbackCapabilities: capabilities,
+      ),
       'custom_config': normalizedConfig,
-      'model_type': modelType?.trim().isEmpty == true
-          ? 'chat'
-          : (modelType?.trim() ?? 'chat'),
     };
 
     providers.removeWhere((p) => p['id'] == providerId);
@@ -778,7 +1016,6 @@ class UiModelsApi {
     bool? enabled,
     List<String>? capabilities,
     Map<String, dynamic>? customConfig,
-    String? modelType,
     List<String>? allModels,
     List<String>? visibleModels,
     List<String>? hiddenModels,
@@ -802,6 +1039,9 @@ class UiModelsApi {
       throw ArgumentError('Provider [$providerId] 不存在');
     }
     final provider = providers[index];
+    final currentModelTypes = (current['model_types'] as Map? ??
+            const <String, dynamic>{})
+        .map((key, value) => MapEntry(key.toString(), value?.toString() ?? ''));
     if (displayName != null) {
       provider['displayName'] =
           displayName.trim().isEmpty ? null : displayName.trim();
@@ -828,28 +1068,38 @@ class UiModelsApi {
     if (enabled != null) {
       provider['enabled'] = enabled;
     }
-    if (capabilities != null) {
-      provider['capabilities'] = _cleanStrings(capabilities);
-    }
     if (customConfig != null) {
       provider['custom_config'] = customConfig;
     }
-    if (modelType != null && modelType.trim().isNotEmpty) {
-      provider['model_type'] = modelType.trim();
-    }
     // 模型列表更新
     if (allModels != null) {
-      provider['models'] = _cleanStrings(allModels)..sort(_caseSort);
+      final cleaned = _cleanStrings(allModels)..sort(_caseSort);
+      final filtered = cleaned..sort(_caseSort);
+      provider['models'] = filtered;
     }
     if (visibleModels != null) {
-      provider['visible_models'] = _cleanStrings(visibleModels);
+      final models = _cleanStrings(provider['models']);
+      provider['visible_models'] = _cleanStrings(visibleModels)
+          .where((m) => models.contains(m))
+          .toList();
     }
     if (hiddenModels != null) {
-      provider['hidden_models'] = _cleanStrings(hiddenModels);
+      final models = _cleanStrings(provider['models']);
+      final visible = _cleanStrings(provider['visible_models']);
+      provider['hidden_models'] = _cleanStrings(hiddenModels)
+          .where((m) => models.contains(m) && !visible.contains(m))
+          .toList();
     }
     if (disableToolCalling != null) {
       provider['disable_tool_calling'] = disableToolCalling;
     }
+    provider['capabilities'] = _deriveProviderCapabilities(
+      providerId: providerId,
+      models: _cleanStrings(provider['models']),
+      modelTypes: currentModelTypes,
+      fallbackCapabilities:
+          capabilities ?? _cleanStrings(provider['capabilities']),
+    );
     // 模型参数更新
     if (clearTemperature) {
       provider.remove('temperature');
@@ -946,7 +1196,12 @@ class UiModelsApi {
       final data = jsonDecode(raw) as Map<String, dynamic>;
       // 每次加载时检查并补充本地 key（用户清空数据后自动恢复）
       final withKeys = await _applyLocalKeys(data);
-      return _normalizeData(withKeys);
+      final normalized = _normalizeData(withKeys);
+      final normalizedJson = jsonEncode(normalized);
+      if (normalizedJson != raw) {
+        await prefs.setString(_kStoreKey, normalizedJson);
+      }
+      return normalized;
     } catch (e) {
       final migrated = await _tryMigrateLegacyStore(prefs);
       if (migrated != null) return migrated;

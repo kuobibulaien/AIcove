@@ -67,6 +67,13 @@
 
 `ChatActions.retry()` 现在和 `send()` 使用同一套流式参数透传（`enableStreaming`、`onStreamTextDelta` 等回调），避免“正常发送能流式显示、重试时行为不一致”。
 
+### 直连流式 Provider 支持（2026-03-05）
+
+- `AgentApiClient.sendMessageRichStream(...)` 已支持 3 类直连流式：`openai`、`gemini`、`claude`。
+- `gemini` 走 `:streamGenerateContent?alt=sse`，并解析 `candidates[].content.parts[].text/functionCall`。
+- `claude` 走 `/v1/messages` + `stream=true`，并解析 `content_block_delta`（`text_delta` / `input_json_delta`）恢复工具调用参数。
+- 仍保持原有回退机制：流式失败时 `ChatSendApiRunner` 自动切回非流式整段响应。
+
 ### 工具状态文案显示策略（2026-02-27）
 
 - `ChatSendApiRunner` 在工具调用后会保留状态文案到日志（如 `Image generated and sent.` / `图片已生成并发送。`），用于排查。

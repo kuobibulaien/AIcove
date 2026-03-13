@@ -1548,6 +1548,12 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
   late final GeneratedColumn<String> replacedBy = GeneratedColumn<String>(
       'replaced_by', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _sourceMessageIdMeta =
+      const VerificationMeta('sourceMessageId');
+  @override
+  late final GeneratedColumn<String> sourceMessageId = GeneratedColumn<String>(
+      'source_message_id', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   static const VerificationMeta _conflictOfMeta =
       const VerificationMeta('conflictOf');
   @override
@@ -1582,6 +1588,7 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
         summarized,
         summarizedAt,
         replacedBy,
+        sourceMessageId,
         conflictOf,
         deletedAt,
         purgeAt,
@@ -1644,6 +1651,12 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
           replacedBy.isAcceptableOrUnknown(
               data['replaced_by']!, _replacedByMeta));
     }
+    if (data.containsKey('source_message_id')) {
+      context.handle(
+          _sourceMessageIdMeta,
+          sourceMessageId.isAcceptableOrUnknown(
+              data['source_message_id']!, _sourceMessageIdMeta));
+    }
     if (data.containsKey('conflict_of')) {
       context.handle(
           _conflictOfMeta,
@@ -1689,6 +1702,8 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
           .read(DriftSqlType.int, data['${effectivePrefix}summarized_at']),
       replacedBy: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}replaced_by']),
+      sourceMessageId: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}source_message_id']),
       conflictOf: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}conflict_of']),
       deletedAt: attachedDatabase.typeMapping
@@ -1715,6 +1730,7 @@ class Message extends DataClass implements Insertable<Message> {
   final bool summarized;
   final int? summarizedAt;
   final String? replacedBy;
+  final String? sourceMessageId;
   final String? conflictOf;
   final int? deletedAt;
   final int? purgeAt;
@@ -1728,6 +1744,7 @@ class Message extends DataClass implements Insertable<Message> {
       required this.summarized,
       this.summarizedAt,
       this.replacedBy,
+      this.sourceMessageId,
       this.conflictOf,
       this.deletedAt,
       this.purgeAt,
@@ -1746,6 +1763,9 @@ class Message extends DataClass implements Insertable<Message> {
     }
     if (!nullToAbsent || replacedBy != null) {
       map['replaced_by'] = Variable<String>(replacedBy);
+    }
+    if (!nullToAbsent || sourceMessageId != null) {
+      map['source_message_id'] = Variable<String>(sourceMessageId);
     }
     if (!nullToAbsent || conflictOf != null) {
       map['conflict_of'] = Variable<String>(conflictOf);
@@ -1774,6 +1794,9 @@ class Message extends DataClass implements Insertable<Message> {
       replacedBy: replacedBy == null && nullToAbsent
           ? const Value.absent()
           : Value(replacedBy),
+      sourceMessageId: sourceMessageId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(sourceMessageId),
       conflictOf: conflictOf == null && nullToAbsent
           ? const Value.absent()
           : Value(conflictOf),
@@ -1799,6 +1822,7 @@ class Message extends DataClass implements Insertable<Message> {
       summarized: serializer.fromJson<bool>(json['summarized']),
       summarizedAt: serializer.fromJson<int?>(json['summarizedAt']),
       replacedBy: serializer.fromJson<String?>(json['replacedBy']),
+      sourceMessageId: serializer.fromJson<String?>(json['sourceMessageId']),
       conflictOf: serializer.fromJson<String?>(json['conflictOf']),
       deletedAt: serializer.fromJson<int?>(json['deletedAt']),
       purgeAt: serializer.fromJson<int?>(json['purgeAt']),
@@ -1817,6 +1841,7 @@ class Message extends DataClass implements Insertable<Message> {
       'summarized': serializer.toJson<bool>(summarized),
       'summarizedAt': serializer.toJson<int?>(summarizedAt),
       'replacedBy': serializer.toJson<String?>(replacedBy),
+      'sourceMessageId': serializer.toJson<String?>(sourceMessageId),
       'conflictOf': serializer.toJson<String?>(conflictOf),
       'deletedAt': serializer.toJson<int?>(deletedAt),
       'purgeAt': serializer.toJson<int?>(purgeAt),
@@ -1833,6 +1858,7 @@ class Message extends DataClass implements Insertable<Message> {
           bool? summarized,
           Value<int?> summarizedAt = const Value.absent(),
           Value<String?> replacedBy = const Value.absent(),
+          Value<String?> sourceMessageId = const Value.absent(),
           Value<String?> conflictOf = const Value.absent(),
           Value<int?> deletedAt = const Value.absent(),
           Value<int?> purgeAt = const Value.absent(),
@@ -1847,6 +1873,9 @@ class Message extends DataClass implements Insertable<Message> {
         summarizedAt:
             summarizedAt.present ? summarizedAt.value : this.summarizedAt,
         replacedBy: replacedBy.present ? replacedBy.value : this.replacedBy,
+        sourceMessageId: sourceMessageId.present
+            ? sourceMessageId.value
+            : this.sourceMessageId,
         conflictOf: conflictOf.present ? conflictOf.value : this.conflictOf,
         deletedAt: deletedAt.present ? deletedAt.value : this.deletedAt,
         purgeAt: purgeAt.present ? purgeAt.value : this.purgeAt,
@@ -1868,6 +1897,9 @@ class Message extends DataClass implements Insertable<Message> {
           : this.summarizedAt,
       replacedBy:
           data.replacedBy.present ? data.replacedBy.value : this.replacedBy,
+      sourceMessageId: data.sourceMessageId.present
+          ? data.sourceMessageId.value
+          : this.sourceMessageId,
       conflictOf:
           data.conflictOf.present ? data.conflictOf.value : this.conflictOf,
       deletedAt: data.deletedAt.present ? data.deletedAt.value : this.deletedAt,
@@ -1887,6 +1919,7 @@ class Message extends DataClass implements Insertable<Message> {
           ..write('summarized: $summarized, ')
           ..write('summarizedAt: $summarizedAt, ')
           ..write('replacedBy: $replacedBy, ')
+          ..write('sourceMessageId: $sourceMessageId, ')
           ..write('conflictOf: $conflictOf, ')
           ..write('deletedAt: $deletedAt, ')
           ..write('purgeAt: $purgeAt, ')
@@ -1905,6 +1938,7 @@ class Message extends DataClass implements Insertable<Message> {
       summarized,
       summarizedAt,
       replacedBy,
+      sourceMessageId,
       conflictOf,
       deletedAt,
       purgeAt,
@@ -1921,6 +1955,7 @@ class Message extends DataClass implements Insertable<Message> {
           other.summarized == this.summarized &&
           other.summarizedAt == this.summarizedAt &&
           other.replacedBy == this.replacedBy &&
+          other.sourceMessageId == this.sourceMessageId &&
           other.conflictOf == this.conflictOf &&
           other.deletedAt == this.deletedAt &&
           other.purgeAt == this.purgeAt &&
@@ -1936,6 +1971,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
   final Value<bool> summarized;
   final Value<int?> summarizedAt;
   final Value<String?> replacedBy;
+  final Value<String?> sourceMessageId;
   final Value<String?> conflictOf;
   final Value<int?> deletedAt;
   final Value<int?> purgeAt;
@@ -1950,6 +1986,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     this.summarized = const Value.absent(),
     this.summarizedAt = const Value.absent(),
     this.replacedBy = const Value.absent(),
+    this.sourceMessageId = const Value.absent(),
     this.conflictOf = const Value.absent(),
     this.deletedAt = const Value.absent(),
     this.purgeAt = const Value.absent(),
@@ -1965,6 +2002,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     this.summarized = const Value.absent(),
     this.summarizedAt = const Value.absent(),
     this.replacedBy = const Value.absent(),
+    this.sourceMessageId = const Value.absent(),
     this.conflictOf = const Value.absent(),
     this.deletedAt = const Value.absent(),
     this.purgeAt = const Value.absent(),
@@ -1984,6 +2022,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     Expression<bool>? summarized,
     Expression<int>? summarizedAt,
     Expression<String>? replacedBy,
+    Expression<String>? sourceMessageId,
     Expression<String>? conflictOf,
     Expression<int>? deletedAt,
     Expression<int>? purgeAt,
@@ -1999,6 +2038,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
       if (summarized != null) 'summarized': summarized,
       if (summarizedAt != null) 'summarized_at': summarizedAt,
       if (replacedBy != null) 'replaced_by': replacedBy,
+      if (sourceMessageId != null) 'source_message_id': sourceMessageId,
       if (conflictOf != null) 'conflict_of': conflictOf,
       if (deletedAt != null) 'deleted_at': deletedAt,
       if (purgeAt != null) 'purge_at': purgeAt,
@@ -2016,6 +2056,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
       Value<bool>? summarized,
       Value<int?>? summarizedAt,
       Value<String?>? replacedBy,
+      Value<String?>? sourceMessageId,
       Value<String?>? conflictOf,
       Value<int?>? deletedAt,
       Value<int?>? purgeAt,
@@ -2030,6 +2071,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
       summarized: summarized ?? this.summarized,
       summarizedAt: summarizedAt ?? this.summarizedAt,
       replacedBy: replacedBy ?? this.replacedBy,
+      sourceMessageId: sourceMessageId ?? this.sourceMessageId,
       conflictOf: conflictOf ?? this.conflictOf,
       deletedAt: deletedAt ?? this.deletedAt,
       purgeAt: purgeAt ?? this.purgeAt,
@@ -2065,6 +2107,9 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     if (replacedBy.present) {
       map['replaced_by'] = Variable<String>(replacedBy.value);
     }
+    if (sourceMessageId.present) {
+      map['source_message_id'] = Variable<String>(sourceMessageId.value);
+    }
     if (conflictOf.present) {
       map['conflict_of'] = Variable<String>(conflictOf.value);
     }
@@ -2094,6 +2139,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
           ..write('summarized: $summarized, ')
           ..write('summarizedAt: $summarizedAt, ')
           ..write('replacedBy: $replacedBy, ')
+          ..write('sourceMessageId: $sourceMessageId, ')
           ..write('conflictOf: $conflictOf, ')
           ..write('deletedAt: $deletedAt, ')
           ..write('purgeAt: $purgeAt, ')
@@ -2124,6 +2170,12 @@ class $MessageBlocksTable extends MessageBlocks
       requiredDuringInsert: true,
       defaultConstraints:
           GeneratedColumn.constraintIsAlways('REFERENCES messages (id)'));
+  static const VerificationMeta _sourceBlockIdMeta =
+      const VerificationMeta('sourceBlockId');
+  @override
+  late final GeneratedColumn<String> sourceBlockId = GeneratedColumn<String>(
+      'source_block_id', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   static const VerificationMeta _typeMeta = const VerificationMeta('type');
   @override
   late final GeneratedColumn<String> type = GeneratedColumn<String>(
@@ -2162,8 +2214,17 @@ class $MessageBlocksTable extends MessageBlocks
       'created_at', aliasedName, false,
       type: DriftSqlType.int, requiredDuringInsert: true);
   @override
-  List<GeneratedColumn> get $columns =>
-      [id, messageId, type, status, data, sortOrder, deletedAt, createdAt];
+  List<GeneratedColumn> get $columns => [
+        id,
+        messageId,
+        sourceBlockId,
+        type,
+        status,
+        data,
+        sortOrder,
+        deletedAt,
+        createdAt
+      ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -2184,6 +2245,12 @@ class $MessageBlocksTable extends MessageBlocks
           messageId.isAcceptableOrUnknown(data['message_id']!, _messageIdMeta));
     } else if (isInserting) {
       context.missing(_messageIdMeta);
+    }
+    if (data.containsKey('source_block_id')) {
+      context.handle(
+          _sourceBlockIdMeta,
+          sourceBlockId.isAcceptableOrUnknown(
+              data['source_block_id']!, _sourceBlockIdMeta));
     }
     if (data.containsKey('type')) {
       context.handle(
@@ -2228,6 +2295,8 @@ class $MessageBlocksTable extends MessageBlocks
           .read(DriftSqlType.string, data['${effectivePrefix}id'])!,
       messageId: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}message_id'])!,
+      sourceBlockId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}source_block_id']),
       type: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}type'])!,
       status: attachedDatabase.typeMapping
@@ -2252,6 +2321,7 @@ class $MessageBlocksTable extends MessageBlocks
 class MessageBlock extends DataClass implements Insertable<MessageBlock> {
   final String id;
   final String messageId;
+  final String? sourceBlockId;
   final String type;
   final String status;
   final String data;
@@ -2261,6 +2331,7 @@ class MessageBlock extends DataClass implements Insertable<MessageBlock> {
   const MessageBlock(
       {required this.id,
       required this.messageId,
+      this.sourceBlockId,
       required this.type,
       required this.status,
       required this.data,
@@ -2272,6 +2343,9 @@ class MessageBlock extends DataClass implements Insertable<MessageBlock> {
     final map = <String, Expression>{};
     map['id'] = Variable<String>(id);
     map['message_id'] = Variable<String>(messageId);
+    if (!nullToAbsent || sourceBlockId != null) {
+      map['source_block_id'] = Variable<String>(sourceBlockId);
+    }
     map['type'] = Variable<String>(type);
     map['status'] = Variable<String>(status);
     map['data'] = Variable<String>(data);
@@ -2287,6 +2361,9 @@ class MessageBlock extends DataClass implements Insertable<MessageBlock> {
     return MessageBlocksCompanion(
       id: Value(id),
       messageId: Value(messageId),
+      sourceBlockId: sourceBlockId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(sourceBlockId),
       type: Value(type),
       status: Value(status),
       data: Value(data),
@@ -2304,6 +2381,7 @@ class MessageBlock extends DataClass implements Insertable<MessageBlock> {
     return MessageBlock(
       id: serializer.fromJson<String>(json['id']),
       messageId: serializer.fromJson<String>(json['messageId']),
+      sourceBlockId: serializer.fromJson<String?>(json['sourceBlockId']),
       type: serializer.fromJson<String>(json['type']),
       status: serializer.fromJson<String>(json['status']),
       data: serializer.fromJson<String>(json['data']),
@@ -2318,6 +2396,7 @@ class MessageBlock extends DataClass implements Insertable<MessageBlock> {
     return <String, dynamic>{
       'id': serializer.toJson<String>(id),
       'messageId': serializer.toJson<String>(messageId),
+      'sourceBlockId': serializer.toJson<String?>(sourceBlockId),
       'type': serializer.toJson<String>(type),
       'status': serializer.toJson<String>(status),
       'data': serializer.toJson<String>(data),
@@ -2330,6 +2409,7 @@ class MessageBlock extends DataClass implements Insertable<MessageBlock> {
   MessageBlock copyWith(
           {String? id,
           String? messageId,
+          Value<String?> sourceBlockId = const Value.absent(),
           String? type,
           String? status,
           String? data,
@@ -2339,6 +2419,8 @@ class MessageBlock extends DataClass implements Insertable<MessageBlock> {
       MessageBlock(
         id: id ?? this.id,
         messageId: messageId ?? this.messageId,
+        sourceBlockId:
+            sourceBlockId.present ? sourceBlockId.value : this.sourceBlockId,
         type: type ?? this.type,
         status: status ?? this.status,
         data: data ?? this.data,
@@ -2350,6 +2432,9 @@ class MessageBlock extends DataClass implements Insertable<MessageBlock> {
     return MessageBlock(
       id: data.id.present ? data.id.value : this.id,
       messageId: data.messageId.present ? data.messageId.value : this.messageId,
+      sourceBlockId: data.sourceBlockId.present
+          ? data.sourceBlockId.value
+          : this.sourceBlockId,
       type: data.type.present ? data.type.value : this.type,
       status: data.status.present ? data.status.value : this.status,
       data: data.data.present ? data.data.value : this.data,
@@ -2364,6 +2449,7 @@ class MessageBlock extends DataClass implements Insertable<MessageBlock> {
     return (StringBuffer('MessageBlock(')
           ..write('id: $id, ')
           ..write('messageId: $messageId, ')
+          ..write('sourceBlockId: $sourceBlockId, ')
           ..write('type: $type, ')
           ..write('status: $status, ')
           ..write('data: $data, ')
@@ -2375,14 +2461,15 @@ class MessageBlock extends DataClass implements Insertable<MessageBlock> {
   }
 
   @override
-  int get hashCode => Object.hash(
-      id, messageId, type, status, data, sortOrder, deletedAt, createdAt);
+  int get hashCode => Object.hash(id, messageId, sourceBlockId, type, status,
+      data, sortOrder, deletedAt, createdAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       (other is MessageBlock &&
           other.id == this.id &&
           other.messageId == this.messageId &&
+          other.sourceBlockId == this.sourceBlockId &&
           other.type == this.type &&
           other.status == this.status &&
           other.data == this.data &&
@@ -2394,6 +2481,7 @@ class MessageBlock extends DataClass implements Insertable<MessageBlock> {
 class MessageBlocksCompanion extends UpdateCompanion<MessageBlock> {
   final Value<String> id;
   final Value<String> messageId;
+  final Value<String?> sourceBlockId;
   final Value<String> type;
   final Value<String> status;
   final Value<String> data;
@@ -2404,6 +2492,7 @@ class MessageBlocksCompanion extends UpdateCompanion<MessageBlock> {
   const MessageBlocksCompanion({
     this.id = const Value.absent(),
     this.messageId = const Value.absent(),
+    this.sourceBlockId = const Value.absent(),
     this.type = const Value.absent(),
     this.status = const Value.absent(),
     this.data = const Value.absent(),
@@ -2415,6 +2504,7 @@ class MessageBlocksCompanion extends UpdateCompanion<MessageBlock> {
   MessageBlocksCompanion.insert({
     required String id,
     required String messageId,
+    this.sourceBlockId = const Value.absent(),
     required String type,
     this.status = const Value.absent(),
     required String data,
@@ -2430,6 +2520,7 @@ class MessageBlocksCompanion extends UpdateCompanion<MessageBlock> {
   static Insertable<MessageBlock> custom({
     Expression<String>? id,
     Expression<String>? messageId,
+    Expression<String>? sourceBlockId,
     Expression<String>? type,
     Expression<String>? status,
     Expression<String>? data,
@@ -2441,6 +2532,7 @@ class MessageBlocksCompanion extends UpdateCompanion<MessageBlock> {
     return RawValuesInsertable({
       if (id != null) 'id': id,
       if (messageId != null) 'message_id': messageId,
+      if (sourceBlockId != null) 'source_block_id': sourceBlockId,
       if (type != null) 'type': type,
       if (status != null) 'status': status,
       if (data != null) 'data': data,
@@ -2454,6 +2546,7 @@ class MessageBlocksCompanion extends UpdateCompanion<MessageBlock> {
   MessageBlocksCompanion copyWith(
       {Value<String>? id,
       Value<String>? messageId,
+      Value<String?>? sourceBlockId,
       Value<String>? type,
       Value<String>? status,
       Value<String>? data,
@@ -2464,6 +2557,7 @@ class MessageBlocksCompanion extends UpdateCompanion<MessageBlock> {
     return MessageBlocksCompanion(
       id: id ?? this.id,
       messageId: messageId ?? this.messageId,
+      sourceBlockId: sourceBlockId ?? this.sourceBlockId,
       type: type ?? this.type,
       status: status ?? this.status,
       data: data ?? this.data,
@@ -2482,6 +2576,9 @@ class MessageBlocksCompanion extends UpdateCompanion<MessageBlock> {
     }
     if (messageId.present) {
       map['message_id'] = Variable<String>(messageId.value);
+    }
+    if (sourceBlockId.present) {
+      map['source_block_id'] = Variable<String>(sourceBlockId.value);
     }
     if (type.present) {
       map['type'] = Variable<String>(type.value);
@@ -2512,6 +2609,7 @@ class MessageBlocksCompanion extends UpdateCompanion<MessageBlock> {
     return (StringBuffer('MessageBlocksCompanion(')
           ..write('id: $id, ')
           ..write('messageId: $messageId, ')
+          ..write('sourceBlockId: $sourceBlockId, ')
           ..write('type: $type, ')
           ..write('status: $status, ')
           ..write('data: $data, ')
@@ -7396,6 +7494,7 @@ typedef $$MessagesTableCreateCompanionBuilder = MessagesCompanion Function({
   Value<bool> summarized,
   Value<int?> summarizedAt,
   Value<String?> replacedBy,
+  Value<String?> sourceMessageId,
   Value<String?> conflictOf,
   Value<int?> deletedAt,
   Value<int?> purgeAt,
@@ -7411,6 +7510,7 @@ typedef $$MessagesTableUpdateCompanionBuilder = MessagesCompanion Function({
   Value<bool> summarized,
   Value<int?> summarizedAt,
   Value<String?> replacedBy,
+  Value<String?> sourceMessageId,
   Value<String?> conflictOf,
   Value<int?> deletedAt,
   Value<int?> purgeAt,
@@ -7443,6 +7543,7 @@ class $$MessagesTableTableManager extends RootTableManager<
             Value<bool> summarized = const Value.absent(),
             Value<int?> summarizedAt = const Value.absent(),
             Value<String?> replacedBy = const Value.absent(),
+            Value<String?> sourceMessageId = const Value.absent(),
             Value<String?> conflictOf = const Value.absent(),
             Value<int?> deletedAt = const Value.absent(),
             Value<int?> purgeAt = const Value.absent(),
@@ -7458,6 +7559,7 @@ class $$MessagesTableTableManager extends RootTableManager<
             summarized: summarized,
             summarizedAt: summarizedAt,
             replacedBy: replacedBy,
+            sourceMessageId: sourceMessageId,
             conflictOf: conflictOf,
             deletedAt: deletedAt,
             purgeAt: purgeAt,
@@ -7473,6 +7575,7 @@ class $$MessagesTableTableManager extends RootTableManager<
             Value<bool> summarized = const Value.absent(),
             Value<int?> summarizedAt = const Value.absent(),
             Value<String?> replacedBy = const Value.absent(),
+            Value<String?> sourceMessageId = const Value.absent(),
             Value<String?> conflictOf = const Value.absent(),
             Value<int?> deletedAt = const Value.absent(),
             Value<int?> purgeAt = const Value.absent(),
@@ -7488,6 +7591,7 @@ class $$MessagesTableTableManager extends RootTableManager<
             summarized: summarized,
             summarizedAt: summarizedAt,
             replacedBy: replacedBy,
+            sourceMessageId: sourceMessageId,
             conflictOf: conflictOf,
             deletedAt: deletedAt,
             purgeAt: purgeAt,
@@ -7532,6 +7636,11 @@ class $$MessagesTableFilterComposer
 
   ColumnFilters<String> get replacedBy => $state.composableBuilder(
       column: $state.table.replacedBy,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get sourceMessageId => $state.composableBuilder(
+      column: $state.table.sourceMessageId,
       builder: (column, joinBuilders) =>
           ColumnFilters(column, joinBuilders: joinBuilders));
 
@@ -7619,6 +7728,11 @@ class $$MessagesTableOrderingComposer
       builder: (column, joinBuilders) =>
           ColumnOrderings(column, joinBuilders: joinBuilders));
 
+  ColumnOrderings<String> get sourceMessageId => $state.composableBuilder(
+      column: $state.table.sourceMessageId,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
   ColumnOrderings<String> get conflictOf => $state.composableBuilder(
       column: $state.table.conflictOf,
       builder: (column, joinBuilders) =>
@@ -7657,6 +7771,7 @@ typedef $$MessageBlocksTableCreateCompanionBuilder = MessageBlocksCompanion
     Function({
   required String id,
   required String messageId,
+  Value<String?> sourceBlockId,
   required String type,
   Value<String> status,
   required String data,
@@ -7669,6 +7784,7 @@ typedef $$MessageBlocksTableUpdateCompanionBuilder = MessageBlocksCompanion
     Function({
   Value<String> id,
   Value<String> messageId,
+  Value<String?> sourceBlockId,
   Value<String> type,
   Value<String> status,
   Value<String> data,
@@ -7697,6 +7813,7 @@ class $$MessageBlocksTableTableManager extends RootTableManager<
           updateCompanionCallback: ({
             Value<String> id = const Value.absent(),
             Value<String> messageId = const Value.absent(),
+            Value<String?> sourceBlockId = const Value.absent(),
             Value<String> type = const Value.absent(),
             Value<String> status = const Value.absent(),
             Value<String> data = const Value.absent(),
@@ -7708,6 +7825,7 @@ class $$MessageBlocksTableTableManager extends RootTableManager<
               MessageBlocksCompanion(
             id: id,
             messageId: messageId,
+            sourceBlockId: sourceBlockId,
             type: type,
             status: status,
             data: data,
@@ -7719,6 +7837,7 @@ class $$MessageBlocksTableTableManager extends RootTableManager<
           createCompanionCallback: ({
             required String id,
             required String messageId,
+            Value<String?> sourceBlockId = const Value.absent(),
             required String type,
             Value<String> status = const Value.absent(),
             required String data,
@@ -7730,6 +7849,7 @@ class $$MessageBlocksTableTableManager extends RootTableManager<
               MessageBlocksCompanion.insert(
             id: id,
             messageId: messageId,
+            sourceBlockId: sourceBlockId,
             type: type,
             status: status,
             data: data,
@@ -7746,6 +7866,11 @@ class $$MessageBlocksTableFilterComposer
   $$MessageBlocksTableFilterComposer(super.$state);
   ColumnFilters<String> get id => $state.composableBuilder(
       column: $state.table.id,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get sourceBlockId => $state.composableBuilder(
+      column: $state.table.sourceBlockId,
       builder: (column, joinBuilders) =>
           ColumnFilters(column, joinBuilders: joinBuilders));
 
@@ -7797,6 +7922,11 @@ class $$MessageBlocksTableOrderingComposer
   $$MessageBlocksTableOrderingComposer(super.$state);
   ColumnOrderings<String> get id => $state.composableBuilder(
       column: $state.table.id,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get sourceBlockId => $state.composableBuilder(
+      column: $state.table.sourceBlockId,
       builder: (column, joinBuilders) =>
           ColumnOrderings(column, joinBuilders: joinBuilders));
 

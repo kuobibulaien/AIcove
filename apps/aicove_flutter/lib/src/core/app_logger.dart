@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -22,12 +23,12 @@ enum LogLevel {
 class LogEntry {
   final DateTime time;
   final LogLevel level;
-  final String source;  // 来源模块，如 "Core", "TTS", "runners"
-  final String? file;   // 具体文件名，如 "tts_service.dart"
+  final String source; // 来源模块，如 "Core", "TTS", "runners"
+  final String? file; // 具体文件名，如 "tts_service.dart"
   final String message;
-  final Map<String, dynamic>? metadata;  // 额外的元数据
-  final String? traceId;  // 追踪ID，用于关联同一事件流的日志
-  final int depth;  // 层级深度，用于缩进显示
+  final Map<String, dynamic>? metadata; // 额外的元数据
+  final String? traceId; // 追踪ID，用于关联同一事件流的日志
+  final int depth; // 层级深度，用于缩进显示
 
   const LogEntry({
     required this.time,
@@ -87,8 +88,9 @@ class LogEntry {
 /// - 初始化前的日志会被缓冲，初始化后批量写入
 /// - 缓存文件路径，避免重复计算
 class AppLogger {
-  static final ValueNotifier<List<LogEntry>> entries = ValueNotifier<List<LogEntry>>(<LogEntry>[]);
-  static const int maxEntries = 1000;  // 内存中最多保存 1000 条日志
+  static final ValueNotifier<List<LogEntry>> entries =
+      ValueNotifier<List<LogEntry>>(<LogEntry>[]);
+  static const int maxEntries = 1000; // 内存中最多保存 1000 条日志
   static const String _logDirName = 'logs';
 
   /// 最小日志级别（低于此级别的日志会被丢弃）
@@ -102,10 +104,11 @@ class AppLogger {
   // 文件路径缓存
   static String? _cachedLogDirPath;
   static String? _cachedTodayFilePath;
-  static int? _cachedFileDay;  // 缓存的日期（用于检测跨天）
+  static int? _cachedFileDay; // 缓存的日期（用于检测跨天）
 
   // 写入队列
-  static final List<LogEntry> _writeQueue = [];
+  static const int _writeBatchSize = 32;
+  static final ListQueue<LogEntry> _writeQueue = ListQueue<LogEntry>();
   static bool _isWriting = false;
 
   // 初始化前的缓冲区
@@ -137,7 +140,8 @@ class AppLogger {
     if (_cachedTodayFilePath != null) return _cachedTodayFilePath!;
 
     final logDirPath = await _getLogDirPath();
-    final fileName = 'app_${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}.jsonl';
+    final fileName =
+        'app_${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}.jsonl';
     _cachedTodayFilePath = '$logDirPath/$fileName';
     _cachedFileDay = today;
     return _cachedTodayFilePath!;
@@ -172,7 +176,7 @@ class AppLogger {
         }
       }
     } catch (e) {
-      _initialized = true;  // 即使失败也标记为已初始化，避免死循环
+      _initialized = true; // 即使失败也标记为已初始化，避免死循环
       _initCompleter!.complete();
       if (kDebugMode) {
         debugPrint('AppLogger 初始化失败: $e');
@@ -182,7 +186,7 @@ class AppLogger {
 
   /// 将日志加入写入队列
   static void _enqueueWrite(LogEntry entry) {
-    _writeQueue.add(entry);
+    _writeQueue.addLast(entry);
     _processWriteQueue();
   }
 
@@ -193,21 +197,32 @@ class AppLogger {
     _isWriting = true;
     try {
       while (_writeQueue.isNotEmpty) {
-        final entry = _writeQueue.removeAt(0);
-        await _writeToFile(entry);
+        final batch = <LogEntry>[];
+        while (_writeQueue.isNotEmpty && batch.length < _writeBatchSize) {
+          batch.add(_writeQueue.removeFirst());
+        }
+        await _writeBatchToFile(batch);
       }
     } finally {
       _isWriting = false;
     }
   }
 
-  /// 实际写入文件
-  static Future<void> _writeToFile(LogEntry entry) async {
+  /// 批量写入文件，降低频繁 flush 导致的卡顿
+  static Future<void> _writeBatchToFile(List<LogEntry> batch) async {
+    if (batch.isEmpty) return;
     try {
       final filePath = await _getTodayLogFilePath();
       final file = File(filePath);
-      final line = '${jsonEncode(entry.toJson())}\n';
-      await file.writeAsString(line, mode: FileMode.append, flush: true);
+      final buffer = StringBuffer();
+      for (final entry in batch) {
+        buffer.writeln(jsonEncode(entry.toJson()));
+      }
+      await file.writeAsString(
+        buffer.toString(),
+        mode: FileMode.append,
+        flush: true,
+      );
     } catch (e) {
       if (kDebugMode) {
         debugPrint('日志写入文件失败: $e');
@@ -245,15 +260,20 @@ class AppLogger {
 
   /// 格式化并打印日志（支持层级缩进和追踪ID）
   static void _printFormattedLog(LogEntry entry) {
-    final indent = '  ' * entry.depth;  // 每层缩进2个空格
+    final indent = '  ' * entry.depth; // 每层缩进2个空格
     final traceInfo = entry.traceId != null ? '[Trace:${entry.traceId}] ' : '';
-    final location = entry.file ?? entry.source;  // 优先显示文件名
-    final prefix = '${entry.formattedTime} [${entry.level.label}] [$location] $traceInfo$indent';
+    final location = entry.file ?? entry.source; // 优先显示文件名
+    final prefix =
+        '${entry.formattedTime} [${entry.level.label}] [$location] $traceInfo$indent';
     debugPrint('$prefix${entry.message}');
   }
 
   /// 记录 DEBUG 级别日志
-  static void debug(String source, String message, {String? file, Map<String, dynamic>? metadata, String? traceId, int depth = 0}) {
+  static void debug(String source, String message,
+      {String? file,
+      Map<String, dynamic>? metadata,
+      String? traceId,
+      int depth = 0}) {
     add(LogEntry(
       time: DateTime.now(),
       level: LogLevel.debug,
@@ -267,7 +287,11 @@ class AppLogger {
   }
 
   /// 记录 INFO 级别日志
-  static void info(String source, String message, {String? file, Map<String, dynamic>? metadata, String? traceId, int depth = 0}) {
+  static void info(String source, String message,
+      {String? file,
+      Map<String, dynamic>? metadata,
+      String? traceId,
+      int depth = 0}) {
     add(LogEntry(
       time: DateTime.now(),
       level: LogLevel.info,
@@ -281,7 +305,11 @@ class AppLogger {
   }
 
   /// 记录 WARNING 级别日志
-  static void warning(String source, String message, {String? file, Map<String, dynamic>? metadata, String? traceId, int depth = 0}) {
+  static void warning(String source, String message,
+      {String? file,
+      Map<String, dynamic>? metadata,
+      String? traceId,
+      int depth = 0}) {
     add(LogEntry(
       time: DateTime.now(),
       level: LogLevel.warning,
@@ -295,7 +323,11 @@ class AppLogger {
   }
 
   /// 记录 ERROR 级别日志
-  static void error(String source, String message, {String? file, Map<String, dynamic>? metadata, String? traceId, int depth = 0}) {
+  static void error(String source, String message,
+      {String? file,
+      Map<String, dynamic>? metadata,
+      String? traceId,
+      int depth = 0}) {
     add(LogEntry(
       time: DateTime.now(),
       level: LogLevel.error,
@@ -309,7 +341,11 @@ class AppLogger {
   }
 
   /// 记录 CRITICAL 级别日志
-  static void critical(String source, String message, {String? file, Map<String, dynamic>? metadata, String? traceId, int depth = 0}) {
+  static void critical(String source, String message,
+      {String? file,
+      Map<String, dynamic>? metadata,
+      String? traceId,
+      int depth = 0}) {
     add(LogEntry(
       time: DateTime.now(),
       level: LogLevel.critical,
@@ -385,7 +421,8 @@ class _TraceIdGenerator {
 
   /// 生成一个短的追踪ID（8位字符）
   static String generate() {
-    return List.generate(8, (_) => _chars[_random.nextInt(_chars.length)]).join();
+    return List.generate(8, (_) => _chars[_random.nextInt(_chars.length)])
+        .join();
   }
 }
 
@@ -426,7 +463,8 @@ class TraceLogger {
   }
 
   /// 记录日志（使用当前追踪的上下文）
-  void _log(LogLevel logLevel, String message, {Map<String, dynamic>? metadata}) {
+  void _log(LogLevel logLevel, String message,
+      {Map<String, dynamic>? metadata}) {
     AppLogger.add(LogEntry(
       time: DateTime.now(),
       level: logLevel,
@@ -477,14 +515,15 @@ class TraceLogger {
   /// 创建子追踪（用于嵌套的操作）
   ///
   /// 子追踪会继承父追踪的 traceId，但层级深度会+1
-  TraceLogger startChild(String childName, {String? childSource, String? childFile}) {
+  TraceLogger startChild(String childName,
+      {String? childSource, String? childFile}) {
     return TraceLogger(
       name: childName,
       source: childSource ?? source,
       file: childFile ?? file,
       level: level,
-      traceId: traceId,  // 继承父追踪的ID
-      depth: depth + 1,   // 层级加深
+      traceId: traceId, // 继承父追踪的ID
+      depth: depth + 1, // 层级加深
       parent: this,
       compact: compact,
     );

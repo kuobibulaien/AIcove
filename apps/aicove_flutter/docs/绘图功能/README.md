@@ -1,6 +1,6 @@
 # 绘图功能
 
-> 更新日期：2026-02-21
+> 更新日期：2026-03-06
 
 AI 角色可以通过 `draw_image` 工具调用来生成图片。用户在聊天中说"画一张图"之类的话，AI 就会自动调用绘图工具，生成图片后以图片消息的形式发送到聊天中。
 
@@ -28,7 +28,7 @@ AI 角色可以通过 `draw_image` 工具调用来生成图片。用户在聊天
 | `lib/src/features/plugins/image/image_config.dart` | **配置模型** - 定义所有绘图参数（尺寸、步数、画师串等） |
 | `lib/src/features/plugins/plugin_providers.dart` | **状态管理** - ImagePluginConfigNotifier，管理配置的读写和持久化 |
 | `lib/src/ui/features/plugins/pages/image_plugin_detail_page.dart` | **设置页面** - 绘图功能的配置界面（选渠道、选模型、调参数） |
-| `lib/src/ui/features/plugins/pages/drawing_prompt_page.dart` | **提示词页面** - 管理系统提示词和画师串预设 |
+| `lib/src/ui/features/plugins/pages/draw_image_tool_description_page.dart` | **工具描述页面** - 管理 draw_image 工具描述与预设 |
 | `lib/src/features/chat/services/chat_send_service.dart` | **聊天服务** - AI 调用枢纽，负责发消息、执行工具调用、收集图片结果 |
 | `lib/src/features/chat/presentation/widgets/message_bubble.dart` | **消息气泡** - 在聊天中显示生成的图片 |
 
@@ -43,7 +43,7 @@ AI 角色可以通过 `draw_image` 工具调用来生成图片。用户在聊天
       |
       v
 ChatSendService 把消息发给 AI
-（同时附上 draw_image 工具定义 + 绘图系统提示词）
+（同时附上 draw_image 工具定义 + 简短路由提示）
       |
       v
 AI 理解后决定调用 draw_image 工具
@@ -75,9 +75,38 @@ MessageBubble 渲染：
 
 1. 先读取图片消息里已有的生图提示词（`ImageBlock.prompt`）
 2. 若没有提示词，再调用视觉辅助模型做图片转文字
-3. 若仍失败，才降级为 `[图片]` 占位文本
+3. 最终写回请求历史时，不再伪装成普通助手文案，而是输出隐藏的图片上下文标记
+4. 若仍拿不到描述，也会保留“这里有图片”的结构化标记，而不是降级成自然语言摘要
 
 这样可以优先复用真实生图参数，减少额外一次视觉模型调用。
+
+新增原因：
+
+- 旧做法会把“助手上一条发了一张图片，生图提示词/内容摘要：...”当成 assistant 正文塞回历史
+- 模型容易把这句当作自己上一轮说过的话继续续写
+- 现在改成 `__AICOVE_IMAGE_CONTEXT__{...}` 这类隐藏标记，只表达“这轮有图”，不伪装成聊天正文
+- 同轮工具续写时，`draw_image` 的 tool result 也会带上 `delivered_to_chat` 或 `image_delivery_pending`，让模型知道图片已发出还是仍在排队
+
+---
+
+## 工具描述固定块
+
+`draw_image` 的主要规则现在不再靠长篇 system prompt 传递，而是写进工具自己的描述里。
+
+```
+draw_image.description
++ prompt.description
++ negative_prompt.description
++ width.description
++ height.description
+```
+
+- 这些内容由 `ImageConfig.effectiveToolDescriptionBlocks` 提供
+- 设置入口是「绘图设置页 -> 绘图工具描述」
+- `getSystemPrompt()` 不再额外注入绘图路由提示，避免出现预设外的隐藏指令
+- 旧版纯文本 `drawingSystemPrompt` 仍会自动迁移成新的描述块，避免老配置失效
+
+这次改完后，聊天链路里真正负责“怎么写提示词、尺寸怎么选、负面词怎么写”的，是工具 schema，不是系统提示词正文。
 
 ---
 
@@ -125,23 +154,34 @@ MessageBubble 渲染：
 
 ---
 
-## 画师串预设系统
+## 工具描述预设与画师串预设
 
-画师串（Artist String）是一组画师名字和风格标签的组合，加在提示词里可以控制画风。
+现在有两套独立预设：
+
+- 工具描述预设：控制 `draw_image` 工具怎么向模型说明规则
+- 画师串预设：控制最终生图 prompt 前面自动拼什么风格词
 
 ### 工作方式
 
 ```
-最终系统提示词 = 基础系统提示词 + 选中的画师串预设
+工具调用规则 = 全局选中的工具描述预设
+最终图片 prompt = 角色绑定画师串预设 或 全局选中的画师串预设 + AI 生成的 prompt
+最终 negative prompt = 画师串负面词 + 全局默认负面词 + 本次调用传入的 negative_prompt
 ```
 
-- 在「绘图提示词」页面可以管理多个画师串预设
-- 每个预设有名称和内容（比如：名称"防冻液"，内容"[[omochi monaka]], {{kele mimi}}, ..."）
-- 选中一个预设后，它会自动追加到系统提示词中，AI 每次画图都会使用这个画风
+- 工具描述预设放在 `systemPromptPresets`
+- 画师串预设放在 `artistPresets`
+- 角色卡还能额外绑定“工具描述预设名”和“画师串预设名”
+- 聊天发送时，会把角色绑定的工具描述预设改写进 `draw_image` schema
+- 真正执行绘图时，会优先使用角色绑定的画师串预设；没有绑定才回退到全局选中预设
 
 ### 操作入口
 
-绘图设置页 → 绘图提示词 → 画师串预设管理
+绘图设置页 → 绘图工具描述
+
+绘图设置页 → 工具描述预设 / 画师串预设
+
+角色编辑页 → 专属绘图提示
 
 ---
 
@@ -209,6 +249,11 @@ AI 会自动在末尾加上：`masterpiece, best quality, very aesthetic, absurd
 - 已填写 API 密钥
 - 渠道类型支持图片生成 (modelType = 'image' 或 capabilities 包含 'image')
 
+绘图设置页里的模型列表也按同一口径收敛：
+- 只显示「渠道管理」里已显示的模型
+- 且该模型必须带图像生成标签（也就是生图标签）
+- 隐藏模型不会再出现在绘图设置里，也不会被绘图工具当成可用模型
+
 ---
 
 ## 故障排查
@@ -245,6 +290,20 @@ AI 会自动在末尾加上：`masterpiece, best quality, very aesthetic, absurd
 - 尺寸：512x512 < 832x1216 < 1216x1216
 - 张数：1 < 2 < 4
 
+### 问题：在「绘图提示词模板」里新建预设后爆红（`_dependents.isEmpty`）
+
+已知触发链路：
+- 新建预设弹窗关闭后，输入框 `TextEditingController` 被立即释放，动画尾帧仍可能访问该 controller
+- 同时页面初始化迁移逻辑若在 `initState` 里直接改 Riverpod 状态，会放大异常并引发后续框架断言
+
+修复策略（2026-03-04）：
+- 预设迁移改为首帧后写入（`addPostFrameCallback`），避免在构建生命周期内修改 provider
+- 名称弹窗里的 controller 改为首帧后释放，避免关闭动画阶段访问已释放对象
+
+验证方式：
+- Widget 测试：`test/ui/features/plugins/pages/draw_image_tool_description_page_test.dart`
+- 运行验证：`flutter run --no-resident`，进入绘图提示词模板页面连续新建预设不应再红屏
+
 ---
 
 ## 技术架构图
@@ -256,7 +315,7 @@ AI 会自动在末尾加上：`masterpiece, best quality, very aesthetic, absurd
 │  ImageConfig (image_config.dart)                  │
 │  ├── 渠道/模型选择                                │
 │  ├── 默认参数（尺寸、步数、强度等）                │
-│  ├── 系统提示词                                   │
+│  ├── 工具描述固定块 / 工具描述预设                 │
 │  └── 画师串预设                                   │
 │            ↕ 持久化: SharedPreferences             │
 │  ImagePluginConfigNotifier (plugin_providers.dart) │
@@ -268,9 +327,10 @@ AI 会自动在末尾加上：`masterpiece, best quality, very aesthetic, absurd
 │                                                   │
 │  ImagePlugin (image_plugin.dart)                  │
 │  ├── getTools()        → 提供 draw_image 工具定义 │
-│  ├── getSystemPrompt() → 提供绘图系统提示词       │
+│  ├── getSystemPrompt() → 提供简短工具路由提示     │
 │  └── _handleDrawImage()→ 执行图片生成             │
 │       ├── _resolveTarget() → 选渠道+模型          │
+│       ├── 拼角色/全局画师串 → 组最终 prompt       │
 │       ├── AgentApiClient.generateImage() → 调API  │
 │       └── _saveImages() → 保存图片到本地          │
 └──────────────────────┬───────────────────────────┘
@@ -280,7 +340,8 @@ AI 会自动在末尾加上：`masterpiece, best quality, very aesthetic, absurd
 │                    调用层                         │
 │                                                   │
 │  ChatSendService (chat_send_service.dart)         │
-│  ├── 组装系统提示词 + 工具列表                     │
+│  ├── 组装工具列表 + 简短路由提示                   │
+│  ├── 按角色绑定改写 draw_image 工具描述            │
 │  ├── 调用 AI API，获取回复 + 工具调用              │
 │  ├── 执行 draw_image → 收集图片结果               │
 │  └── 构建 Message(TextBlock + ImageBlock)          │
@@ -305,6 +366,7 @@ AI 会自动在末尾加上：`masterpiece, best quality, very aesthetic, absurd
 - 绘图配置模型：`lib/src/features/plugins/image/image_config.dart`
 - 状态管理：`lib/src/features/plugins/plugin_providers.dart` → `imagePluginConfigProvider`
 - 设置页面 UI：`lib/src/ui/features/plugins/pages/image_plugin_detail_page.dart`
-- 提示词管理 UI：`lib/src/ui/features/plugins/pages/drawing_prompt_page.dart`
+- 工具描述管理 UI：`lib/src/ui/features/plugins/pages/draw_image_tool_description_page.dart`
+- 角色绑定编解码：`lib/src/features/chat/domain/persona_prompt_codec.dart`
 - 聊天调用入口：`lib/src/features/chat/services/chat_send_service.dart` → `executeApiCall()`
 - 消息渲染：`lib/src/features/chat/presentation/widgets/message_bubble.dart`

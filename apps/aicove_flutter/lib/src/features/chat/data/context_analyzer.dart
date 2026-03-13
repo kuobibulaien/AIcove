@@ -4,9 +4,11 @@ import '../../../core/api/agent_api.dart';
 import '../../../core/app_logger.dart';
 import '../../settings/app_settings.dart';
 import '../domain/conversation.dart';
+import '../domain/message.dart';
 import 'auto_reply_trigger.dart';
 import 'auto_reply_trigger_controller.dart';
 import 'background_service.dart';
+import '../services/chat_history_store.dart';
 import '../../plugins/plugin_providers.dart';
 import '../../plugins/time_awareness/time_awareness_plugin.dart';
 
@@ -14,19 +16,21 @@ final contextAnalyzerProvider = Provider((ref) => ContextAnalyzer(ref));
 
 class ContextAnalyzer {
   final Ref _ref;
-  final AgentApiClient _agent = AgentApiClient();
+  final AgentApiClient _agent;
 
-  ContextAnalyzer(this._ref);
+  ContextAnalyzer(this._ref, {AgentApiClient? agent})
+      : _agent = agent ?? AgentApiClient();
 
   Future<void> analyzeAndSchedule(Conversation conversation) async {
     final settings = await _ref.read(appSettingsProvider.future);
     final autoReplySettings = settings.autoReplySettings;
     if (!autoReplySettings.enabled) return;
 
-    final history = conversation.messages;
-    // Only analyze last 10 messages to save tokens
-    final recent =
-        history.length > 10 ? history.sublist(history.length - 10) : history;
+    final recent = await _ref.read(chatHistoryStoreProvider).loadRecentMessages(
+          conversation.id,
+          limit: 10,
+        );
+    if (recent.isEmpty) return;
 
     // 根据时间增强插件配置决定是否添加时间戳
     final pluginManager = _ref.read(pluginManagerProvider);
@@ -153,6 +157,7 @@ Do not output markdown. Just JSON.
       await _processResponse(
           jsonStr: response,
           conversation: conversation,
+          recentMessages: recent,
           settings: settings,
           apiKey: apiKey,
           apiBase: apiBase,
@@ -166,6 +171,7 @@ Do not output markdown. Just JSON.
   Future<void> _processResponse({
     required String jsonStr,
     required Conversation conversation,
+    required List<Message> recentMessages,
     required AppSettings settings,
     String? apiKey,
     String? apiBase,
@@ -193,11 +199,8 @@ Do not output markdown. Just JSON.
 
       final aiTriggerIds = <String>{};
       final triggersToAdd = <Map<String, dynamic>>[];
-      final snapshotSource = conversation.messages.length > 10
-          ? conversation.messages.sublist(conversation.messages.length - 10)
-          : conversation.messages;
       final contextSnapshot = jsonEncode(
-        snapshotSource.expand((m) => m.toHistoryJsonList()).toList(),
+        recentMessages.expand((m) => m.toHistoryJsonList()).toList(),
       );
 
       for (final item in aiTriggers) {
@@ -240,15 +243,9 @@ Do not output markdown. Just JSON.
         }
 
         // 获取会话中最后一条用户消息（用于作废判断）
-        String? lastUserMsgId;
-        DateTime? lastUserMsgAt;
-        for (final m in conversation.messages.reversed) {
-          if (m.role == 'user') {
-            lastUserMsgId = m.id;
-            lastUserMsgAt = m.createdAt;
-            break;
-          }
-        }
+        final lastUserMessage = await _ref
+            .read(chatHistoryStoreProvider)
+            .getLastUserMessage(conversation.id);
 
         // 1. 使用新的 createTrigger 方法创建触发器
         final createdTrigger = await controller.createTrigger(
@@ -262,8 +259,8 @@ Do not output markdown. Just JSON.
           priority: priority,
           source: TriggerSource.aiScheduler, // AI 管家创建
           conversationId: conversation.id,
-          contextLastUserMessageId: lastUserMsgId,
-          contextLastUserMessageAt: lastUserMsgAt,
+          contextLastUserMessageId: lastUserMessage?.id,
+          contextLastUserMessageAt: lastUserMessage?.createdAt,
           contextSnapshot: contextSnapshot,
         );
 

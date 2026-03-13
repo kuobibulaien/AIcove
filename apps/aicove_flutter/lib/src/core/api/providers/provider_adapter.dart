@@ -32,11 +32,13 @@ class ToolCall {
   final String id;
   final String name;
   final Map<String, dynamic> arguments;
+  final String? thoughtSignature;
 
   const ToolCall({
     required this.id,
     required this.name,
     required this.arguments,
+    this.thoughtSignature,
   });
 
   factory ToolCall.fromOpenAI(Map<String, dynamic> json) {
@@ -61,6 +63,8 @@ class ToolCall {
       id: json['id']?.toString() ?? '',
       name: function['name']?.toString() ?? '',
       arguments: args,
+      thoughtSignature: json['thoughtSignature']?.toString() ??
+          json['thought_signature']?.toString(),
     );
   }
 

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/theme/accent_color_provider.dart';
+import '../../../../core/utils/message_formatter.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
@@ -727,8 +728,7 @@ class UiSettingsPage extends ConsumerWidget {
               final value = double.tryParse(controller.text);
               if (value != null) {
                 ref.read(appSettingsProvider.notifier).setImagePreviewScale(
-                      value.clamp(
-                          kMinImagePreviewScale, kMaxImagePreviewScale),
+                      value.clamp(kMinImagePreviewScale, kMaxImagePreviewScale),
                     );
               }
               Navigator.of(context).pop();
@@ -809,6 +809,17 @@ class UiSettingsPage extends ConsumerWidget {
     MoeColors colors,
   ) {
     final config = settings.messageFormatConfig;
+    final sets = config.chunkPunctuationSets;
+    final activeSet = config.activeChunkPunctuationSet ??
+        (sets.isNotEmpty
+            ? sets.first
+            : const MessageChunkPunctuationSet(
+                id: 'default',
+                name: '默认',
+                punctuations: <String>[],
+              ));
+    final activeIndex = sets.indexWhere((item) => item.id == activeSet.id);
+    final activeName = _displaySetName(activeSet, activeIndex);
 
     return MoeSettingsGroup(
       margin: EdgeInsets.zero,
@@ -828,20 +839,22 @@ class UiSettingsPage extends ConsumerWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                '遇到以下标点时分段（用空格分隔多个标点）',
+                '当前集合：$activeName',
                 style: TextStyle(fontSize: 13, color: colors.muted),
               ),
               const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
+              Column(
                 children: [
-                  _buildPunctuationChip(context, ref, settings, colors, '默认',
-                      ['。', '！', '？', '，', '、', '；', '…']),
-                  _buildPunctuationChip(
-                      context, ref, settings, colors, '精简', ['。', '！', '？']),
-                  _buildPunctuationChip(context, ref, settings, colors, '详细',
-                      ['。', '！', '？', '，', '、', '；', '：', '…']),
+                  for (var i = 0; i < sets.length; i++)
+                    _buildPunctuationSetRow(
+                      context,
+                      ref,
+                      settings,
+                      colors,
+                      sets,
+                      sets[i],
+                      i,
+                    ),
                 ],
               ),
               const SizedBox(height: 12),
@@ -859,13 +872,73 @@ class UiSettingsPage extends ConsumerWidget {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        '当前：${config.chunkPunctuations.join(" ")}',
+                        activeSet.punctuations.isEmpty
+                            ? '当前集合为空：只在换行或超过3个连续空格时分段'
+                            : '当前标点：${activeSet.punctuations.join(" ")}',
                         style: TextStyle(
                             fontSize: 13, color: colors.textSecondary),
                       ),
                     ),
                   ],
                 ),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (var i = 0; i < activeSet.punctuations.length; i++)
+                    InputChip(
+                      label: Text(activeSet.punctuations[i]),
+                      onPressed: () => _editPunctuationToken(
+                        context,
+                        ref,
+                        settings,
+                        activeSet,
+                        i,
+                      ),
+                      onDeleted: () => _deletePunctuationToken(
+                        context,
+                        ref,
+                        settings,
+                        activeSet,
+                        i,
+                      ),
+                      deleteIconColor: colors.muted,
+                    ),
+                  ActionChip(
+                    avatar: const Icon(Icons.add, size: 16),
+                    label: const Text('新增标点'),
+                    onPressed: () => _addPunctuationToken(
+                      context,
+                      ref,
+                      settings,
+                      activeSet,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ActionChip(
+                    label: const Text('另存为集合'),
+                    onPressed: () =>
+                        _showSaveAsSetDialog(context, ref, settings, activeSet),
+                  ),
+                  ActionChip(
+                    label: const Text('重命名当前集合'),
+                    onPressed: () => _showRenameSetDialog(
+                      context,
+                      ref,
+                      settings,
+                      activeSet,
+                      activeIndex,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -874,50 +947,358 @@ class UiSettingsPage extends ConsumerWidget {
     );
   }
 
-  /// 构建标点预设选择芯片
-  Widget _buildPunctuationChip(
+  Widget _buildPunctuationSetRow(
     BuildContext context,
     WidgetRef ref,
     AppSettings settings,
     MoeColors colors,
-    String label,
-    List<String> punctuations,
+    List<MessageChunkPunctuationSet> sets,
+    MessageChunkPunctuationSet set,
+    int index,
   ) {
-    final isSelected = _listEquals(
-        settings.messageFormatConfig.chunkPunctuations, punctuations);
+    final selected =
+        settings.messageFormatConfig.activeChunkPunctuationSetId == set.id;
+    final label = _displaySetName(set, index);
 
-    return ActionChip(
-      label: Text(
-        label,
-        style: TextStyle(
-          color: isSelected ? colors.primary : colors.text,
-          fontWeight:
-              isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
-        ),
-      ),
-      onPressed: () async {
-        final newConfig = settings.messageFormatConfig
-            .copyWith(chunkPunctuations: punctuations);
-        await ref
-            .read(appSettingsProvider.notifier)
-            .updateMessageFormatConfig(newConfig);
-      },
-      backgroundColor: isSelected
-          ? colors.primary.withValues(alpha: 0.15)
-          : colors.componentBackground,
-      side: BorderSide(color: isSelected ? colors.primary : colors.borderLight),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: ChoiceChip(
+              label: Text(label),
+              selected: selected,
+              onSelected: (_) => _updateChunkPunctuationSets(
+                context,
+                ref,
+                settings,
+                sets,
+                set.id,
+              ),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.edit_outlined, size: 18),
+            tooltip: '重命名',
+            onPressed: () =>
+                _showRenameSetDialog(context, ref, settings, set, index),
+          ),
+          IconButton(
+            icon: const Icon(Icons.delete_outline, size: 18),
+            tooltip: '删除集合',
+            onPressed: sets.length <= 1
+                ? null
+                : () => _deleteSet(context, ref, settings, set.id),
+          ),
+        ],
       ),
     );
   }
 
-  /// 比较两个列表是否相等
-  bool _listEquals(List<String> a, List<String> b) {
-    if (a.length != b.length) return false;
-    for (int i = 0; i < a.length; i++) {
-      if (a[i] != b[i]) return false;
+  String _displaySetName(MessageChunkPunctuationSet set, int index) {
+    final name = set.name?.trim() ?? '';
+    if (name.isNotEmpty) return name;
+    final safeIndex = index < 0 ? 0 : index;
+    return '未命名集合${safeIndex + 1}';
+  }
+
+  String _createSetId() => 'set_${DateTime.now().microsecondsSinceEpoch}';
+
+  Future<void> _updateChunkPunctuationSets(
+    BuildContext context,
+    WidgetRef ref,
+    AppSettings settings,
+    List<MessageChunkPunctuationSet> sets,
+    String activeSetId, {
+    String? successText,
+  }) async {
+    if (sets.isEmpty) return;
+    final activeSet = sets.firstWhere(
+      (item) => item.id == activeSetId,
+      orElse: () => sets.first,
+    );
+    final newConfig = settings.messageFormatConfig.copyWith(
+      chunkPunctuationSets: sets,
+      activeChunkPunctuationSetId: activeSet.id,
+      chunkPunctuations: activeSet.punctuations,
+    );
+    await ref
+        .read(appSettingsProvider.notifier)
+        .updateMessageFormatConfig(newConfig);
+    if (successText != null && context.mounted) {
+      MoeToast.success(context, successText);
     }
-    return true;
+  }
+
+  Future<void> _showSaveAsSetDialog(
+    BuildContext context,
+    WidgetRef ref,
+    AppSettings settings,
+    MessageChunkPunctuationSet source,
+  ) async {
+    final controller = TextEditingController();
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('保存为新集合'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            hintText: '可选名称，留空则未命名',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () async {
+              final name = controller.text.trim();
+              final newSet = MessageChunkPunctuationSet(
+                id: _createSetId(),
+                name: name.isEmpty ? null : name,
+                punctuations: List<String>.from(source.punctuations),
+              );
+              final nextSets = <MessageChunkPunctuationSet>[
+                ...settings.messageFormatConfig.chunkPunctuationSets,
+                newSet,
+              ];
+              await _updateChunkPunctuationSets(
+                context,
+                ref,
+                settings,
+                nextSets,
+                newSet.id,
+                successText: '已保存新集合',
+              );
+              if (dialogContext.mounted) {
+                Navigator.of(dialogContext).pop();
+              }
+            },
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showRenameSetDialog(
+    BuildContext context,
+    WidgetRef ref,
+    AppSettings settings,
+    MessageChunkPunctuationSet target,
+    int index,
+  ) async {
+    final controller = TextEditingController(text: target.name ?? '');
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('重命名集合'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            hintText: '可留空',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () async {
+              final name = controller.text.trim();
+              final sets = List<MessageChunkPunctuationSet>.from(
+                  settings.messageFormatConfig.chunkPunctuationSets);
+              sets[index] =
+                  sets[index].copyWith(name: name.isEmpty ? null : name);
+              await _updateChunkPunctuationSets(
+                context,
+                ref,
+                settings,
+                sets,
+                settings.messageFormatConfig.activeChunkPunctuationSetId,
+                successText: '集合名称已更新',
+              );
+              if (dialogContext.mounted) {
+                Navigator.of(dialogContext).pop();
+              }
+            },
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<String?> _showPunctuationInputDialog(
+    BuildContext context, {
+    required String title,
+    String initialValue = '',
+  }) async {
+    final controller = TextEditingController(text: initialValue);
+    String? result;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            hintText: '输入一个标点或组合',
+            border: OutlineInputBorder(),
+          ),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () {
+              final value = controller.text.trim();
+              if (value.isNotEmpty) {
+                result = value;
+              }
+              Navigator.of(dialogContext).pop();
+            },
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    return result;
+  }
+
+  Future<void> _addPunctuationToken(
+    BuildContext context,
+    WidgetRef ref,
+    AppSettings settings,
+    MessageChunkPunctuationSet activeSet,
+  ) async {
+    final token = await _showPunctuationInputDialog(
+      context,
+      title: '新增标点',
+    );
+    if (!context.mounted) return;
+    if (token == null) return;
+    if (activeSet.punctuations.contains(token)) {
+      if (context.mounted) {
+        MoeToast.warning(context, '该标点已存在');
+      }
+      return;
+    }
+
+    final sets = List<MessageChunkPunctuationSet>.from(
+        settings.messageFormatConfig.chunkPunctuationSets);
+    final index = sets.indexWhere((item) => item.id == activeSet.id);
+    if (index < 0) return;
+
+    final nextPunctuations = <String>[...sets[index].punctuations, token];
+    sets[index] = sets[index].copyWith(punctuations: nextPunctuations);
+    await _updateChunkPunctuationSets(
+      context,
+      ref,
+      settings,
+      sets,
+      activeSet.id,
+      successText: '标点已添加',
+    );
+  }
+
+  Future<void> _editPunctuationToken(
+    BuildContext context,
+    WidgetRef ref,
+    AppSettings settings,
+    MessageChunkPunctuationSet activeSet,
+    int tokenIndex,
+  ) async {
+    final oldToken = activeSet.punctuations[tokenIndex];
+    final token = await _showPunctuationInputDialog(
+      context,
+      title: '编辑标点',
+      initialValue: oldToken,
+    );
+    if (!context.mounted) return;
+    if (token == null || token == oldToken) return;
+    if (activeSet.punctuations.contains(token)) {
+      if (context.mounted) {
+        MoeToast.warning(context, '该标点已存在');
+      }
+      return;
+    }
+
+    final sets = List<MessageChunkPunctuationSet>.from(
+        settings.messageFormatConfig.chunkPunctuationSets);
+    final index = sets.indexWhere((item) => item.id == activeSet.id);
+    if (index < 0) return;
+    final nextPunctuations = List<String>.from(sets[index].punctuations);
+    nextPunctuations[tokenIndex] = token;
+    sets[index] = sets[index].copyWith(punctuations: nextPunctuations);
+    await _updateChunkPunctuationSets(
+      context,
+      ref,
+      settings,
+      sets,
+      activeSet.id,
+      successText: '标点已更新',
+    );
+  }
+
+  Future<void> _deletePunctuationToken(
+    BuildContext context,
+    WidgetRef ref,
+    AppSettings settings,
+    MessageChunkPunctuationSet activeSet,
+    int tokenIndex,
+  ) async {
+    final sets = List<MessageChunkPunctuationSet>.from(
+        settings.messageFormatConfig.chunkPunctuationSets);
+    final index = sets.indexWhere((item) => item.id == activeSet.id);
+    if (index < 0) return;
+    final nextPunctuations = List<String>.from(sets[index].punctuations)
+      ..removeAt(tokenIndex);
+    sets[index] = sets[index].copyWith(punctuations: nextPunctuations);
+    await _updateChunkPunctuationSets(
+      context,
+      ref,
+      settings,
+      sets,
+      activeSet.id,
+      successText: '标点已删除',
+    );
+  }
+
+  Future<void> _deleteSet(
+    BuildContext context,
+    WidgetRef ref,
+    AppSettings settings,
+    String setId,
+  ) async {
+    final currentSets = settings.messageFormatConfig.chunkPunctuationSets;
+    if (currentSets.length <= 1) {
+      if (context.mounted) {
+        MoeToast.warning(context, '至少保留一个集合');
+      }
+      return;
+    }
+
+    final nextSets = currentSets.where((item) => item.id != setId).toList();
+    final currentActiveId =
+        settings.messageFormatConfig.activeChunkPunctuationSetId;
+    final nextActiveId =
+        currentActiveId == setId ? nextSets.first.id : currentActiveId;
+    await _updateChunkPunctuationSets(
+      context,
+      ref,
+      settings,
+      nextSets,
+      nextActiveId,
+      successText: '集合已删除',
+    );
   }
 }

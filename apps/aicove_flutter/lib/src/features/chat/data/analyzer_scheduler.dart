@@ -15,6 +15,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../conversation_providers.dart';
 import '../data/context_analyzer.dart';
+import '../services/chat_history_store.dart';
 import '../../settings/app_settings.dart';
 import '../../../core/api/agent_api.dart';
 import '../../../core/app_logger.dart';
@@ -50,7 +51,7 @@ class AnalyzerScheduler {
 
     // 创建新的5分钟延迟定时器
     _analyzerDelayTimer = Timer(_defaultDelay, () {
-      _triggerAnalysis('5分钟无新消息');
+      unawaited(_triggerAnalysis('5分钟无新消息'));
     });
 
     _log('analyzer:scheduled', {'delayMinutes': 5}, level: 'DEBUG');
@@ -100,7 +101,7 @@ class AnalyzerScheduler {
     _bgAnalyzerTimer?.cancel();
 
     _bgAnalyzerTimer = Timer(_backgroundDelay, () {
-      _triggerAnalysis('app_background');
+      unawaited(_triggerAnalysis('app_background'));
     });
 
     _log('analyzer:scheduled_fast', {'delaySeconds': _backgroundDelay.inSeconds}, level: 'DEBUG');
@@ -110,16 +111,18 @@ class AnalyzerScheduler {
   }
 
   /// 触发分析
-  void _triggerAnalysis(String reason) {
+  Future<void> _triggerAnalysis(String reason) async {
     try {
       final conv = _ref.read(activeConversationProvider);
-      if (conv != null && conv.messages.isNotEmpty) {
-        _log('analyzer:triggered', {
-          'reason': reason,
-          'messagesCount': conv.messages.length,
-        });
-        _ref.read(contextAnalyzerProvider).analyzeAndSchedule(conv);
-      }
+      if (conv == null) return;
+      final messagesCount =
+          await _ref.read(chatHistoryStoreProvider).loadMessageCount(conv.id);
+      if (messagesCount <= 0) return;
+      _log('analyzer:triggered', {
+        'reason': reason,
+        'messagesCount': messagesCount,
+      });
+      await _ref.read(contextAnalyzerProvider).analyzeAndSchedule(conv);
     } catch (e) {
       _log('analyzer:error', {'error': e.toString()}, level: 'ERROR');
     }
@@ -142,7 +145,7 @@ class AnalyzerScheduler {
   /// 立即触发分析（延迟2秒，避免阻塞UI）
   void triggerDelayed() {
     Future.delayed(const Duration(seconds: 2), () {
-      _triggerAnalysis('immediate_delayed');
+      unawaited(_triggerAnalysis('immediate_delayed'));
     });
   }
 

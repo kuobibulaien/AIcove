@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:flutter/material.dart' show IconData, Icons;
+
 import '../../../../core/api_logger.dart' show ApiLogEntry, truncateLongText;
 import '../../../../core/app_logger.dart' show LogEntry, LogLevel;
 import 'log_models.dart';
@@ -660,6 +662,62 @@ String formatDurationLabel(int? durationMs) {
   if (minutes < 60) return '${minutes.toStringAsFixed(1)}min';
   final hours = minutes / 60.0;
   return '${hours.toStringAsFixed(1)}h';
+}
+
+/// Stage 英文标识 → 中文展示名称（用于日志中心 UI）
+String stageToZh(String stage) {
+  const map = <String, String>{
+    'TURN_STARTED': '开始处理',
+    'USER_MESSAGE_PERSISTED': '消息已保存',
+    'HISTORY_PREPARED': '历史准备完毕',
+    'API_CONFIG_READY': '配置就绪',
+    'ROUND_REQUEST_BUILT': '构建请求',
+    'MODEL_REQUEST_SENT': '发送AI请求',
+    'MODEL_RESPONSE_RECEIVED': 'AI回复收到',
+    'MODEL_STREAM_AGGREGATED': 'AI流式回复汇总',
+    'TOOL_CALL_DETECTED': '发现工具调用',
+    'TOOL_EXEC_STARTED': '工具执行中',
+    'TOOL_EXEC_FINISHED': '工具执行完毕',
+    'ROUND_COMPLETED': '本轮完成',
+    'FINAL_REPLY_READY': '最终回复就绪',
+    'MESSAGE_DELIVERED': '消息已送达',
+    'TURN_COMPLETED': '全部完成',
+    'TURN_FAILED': '处理失败',
+  };
+  return map[stage] ?? stage;
+}
+
+/// Trace 状态英文 → 中文
+String statusToZh(String status) {
+  const map = <String, String>{
+    'success': '成功',
+    'failed': '失败',
+    'running': '进行中',
+  };
+  return map[status] ?? status;
+}
+
+/// Stage → 对应图标
+IconData stageIcon(String stage) {
+  const map = <String, IconData>{
+    'TURN_STARTED': Icons.play_circle_outline,
+    'USER_MESSAGE_PERSISTED': Icons.save_outlined,
+    'HISTORY_PREPARED': Icons.history,
+    'API_CONFIG_READY': Icons.settings_outlined,
+    'ROUND_REQUEST_BUILT': Icons.build_outlined,
+    'MODEL_REQUEST_SENT': Icons.send,
+    'MODEL_RESPONSE_RECEIVED': Icons.download_outlined,
+    'MODEL_STREAM_AGGREGATED': Icons.downloading,
+    'TOOL_CALL_DETECTED': Icons.handyman_outlined,
+    'TOOL_EXEC_STARTED': Icons.hourglass_top,
+    'TOOL_EXEC_FINISHED': Icons.check_circle_outline,
+    'ROUND_COMPLETED': Icons.refresh,
+    'FINAL_REPLY_READY': Icons.chat_bubble_outline,
+    'MESSAGE_DELIVERED': Icons.mark_email_read_outlined,
+    'TURN_COMPLETED': Icons.done_all,
+    'TURN_FAILED': Icons.error_outline,
+  };
+  return map[stage] ?? Icons.circle_outlined;
 }
 
 String? firstNonEmpty(Iterable<String?> values) {

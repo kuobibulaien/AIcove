@@ -8,6 +8,7 @@ import 'package:aicove_flutter/src/core/utils/data_image.dart';
 import 'package:aicove_flutter/src/ui/shared/effects/smooth_clip.dart';
 
 import '../../domain/conversation.dart';
+import '../../domain/persona_prompt_codec.dart';
 import '../../../../ui/shared/widgets/meotalk_dialog.dart';
 
 class ContactEditResult {
@@ -59,7 +60,8 @@ Future<ContactEditResult?> showContactEditDialog({
   final nameCtrl = TextEditingController(text: conversation.displayName);
   final addressCtrl =
       TextEditingController(text: conversation.addressUser ?? '');
-  final personaCtrl = TextEditingController(text: conversation.personaPrompt);
+  final personaParts = PersonaPromptCodec.parse(conversation.personaPrompt);
+  final personaCtrl = TextEditingController(text: personaParts.userPrompt);
 
   String? avatarData = conversation.avatarUrl;
   String? characterData = conversation.characterImage;
@@ -245,7 +247,12 @@ Future<ContactEditResult?> showContactEditDialog({
                 avatarUrl: avatarData,
                 characterImage: characterData,
                 addressUser: address,
-                personaPrompt: persona,
+                personaPrompt: PersonaPromptCodec.compose(
+                  userPrompt: persona,
+                  customDrawingPrompt: personaParts.customDrawingPrompt,
+                  drawingToolPresetName: personaParts.drawingToolPresetName,
+                  drawingArtistPresetName: personaParts.drawingArtistPresetName,
+                ),
               ));
             },
           );
