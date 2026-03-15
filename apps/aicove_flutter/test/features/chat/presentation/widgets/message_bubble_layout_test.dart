@@ -128,6 +128,14 @@ void main() {
     expect((assistantWidth - userWidth).abs(), lessThanOrEqualTo(1.0));
   });
 
+  testWidgets('首次渲染后不应再因头像测量触发额外 settle 帧', (tester) async {
+    await tester.pumpWidget(_buildLayoutHost(hideUserAvatar: false));
+
+    final settleCount = await tester.pumpAndSettle();
+
+    expect(settleCount, 1);
+  });
+
   testWidgets('隐藏用户头像后，对方消息气泡应变宽（从双侧留白变单侧留白）', (tester) async {
     await tester.pumpWidget(_buildLayoutHost(hideUserAvatar: false));
     await tester.pumpAndSettle();

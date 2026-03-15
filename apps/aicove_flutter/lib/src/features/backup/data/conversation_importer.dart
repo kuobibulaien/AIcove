@@ -6,6 +6,7 @@ import 'package:drift/drift.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../../../core/utils/blurred_background_service.dart';
 import '../models/export_format.dart';
 import '../../../core/database/database.dart';
 import '../../../core/database/repositories/repositories.dart';
@@ -269,8 +270,8 @@ class ConversationImporter {
             case ImportConflictResolution.replace:
               newConvId = originalId;
               if (resolution == ImportConflictResolution.replace) {
-                final existingMsgs =
-                    await _msgRepo.getAllByConversationOrderedStable(originalId);
+                final existingMsgs = await _msgRepo
+                    .getAllByConversationOrderedStable(originalId);
                 await _blockRepo.deleteByMessages(
                   existingMsgs.map((m) => m.id).toList(growable: false),
                 );
@@ -373,8 +374,7 @@ class ConversationImporter {
 
         for (final msg in convMessages) {
           final msgId = msg['id'] as String;
-          final sourceMessageId =
-              msg['source_message_id'] as String? ?? msgId;
+          final sourceMessageId = msg['source_message_id'] as String? ?? msgId;
 
           // 合并模式跳过已存在的消息
           if (resolution == ImportConflictResolution.merge &&
@@ -508,15 +508,17 @@ class ConversationImporter {
     Map<String, String> fileMapping,
   ) async {
     final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final avatarUrl =
+        fileMapping[conv['avatar_file']] ?? conv['avatar_file'] as String?;
+    final characterImage = fileMapping[conv['character_image_file']] ??
+        conv['character_image_file'] as String?;
 
     await _convRepo.upsert(ConversationsCompanion.insert(
       id: newId,
       title: conv['title'] as String? ?? conv['display_name'] as String? ?? '',
       displayName: conv['display_name'] as String? ?? '',
-      avatarUrl: Value(
-          fileMapping[conv['avatar_file']] ?? conv['avatar_file'] as String?),
-      characterImage: Value(fileMapping[conv['character_image_file']] ??
-          conv['character_image_file'] as String?),
+      avatarUrl: Value(avatarUrl),
+      characterImage: Value(characterImage),
       chatBackgroundImage: Value(
         fileMapping[conv['chat_background_image_file']] ??
             conv['chat_background_image_file'] as String?,
@@ -535,14 +537,24 @@ class ConversationImporter {
       isMuted: Value(conv['is_muted'] as bool? ?? false),
       notificationSound: Value(conv['notification_sound'] as bool? ?? true),
     ));
+
+    final source = BlurredBackgroundService.pickPreferredSource(
+      characterImage: characterImage,
+      avatarUrl: avatarUrl,
+    );
+    if (BlurredBackgroundService.shouldPreGenerateEagerly(source)) {
+      await BlurredBackgroundService.ensureBlur(
+        source,
+        allowNetwork: false,
+      );
+    }
   }
 
   /// 导入消息
   Future<void> _importMessage(
     Map<String, dynamic> msg,
     String convId,
-    Map<String, String> fileMapping,
-    {
+    Map<String, String> fileMapping, {
     String? overrideMessageId,
     Map<String, String> messageIdMapping = const {},
     Map<String, String> blockIdMapping = const {},
@@ -589,8 +601,8 @@ class ConversationImporter {
         await _blockRepo.upsert(MessageBlocksCompanion.insert(
           id: blockIdMapping[block['id'] as String?] ?? block['id'] as String,
           messageId: msgId,
-          sourceBlockId:
-              Value(block['source_block_id'] as String? ?? block['id'] as String?),
+          sourceBlockId: Value(
+              block['source_block_id'] as String? ?? block['id'] as String?),
           type: block['type'] as String? ?? 'unknown',
           status: Value(block['status'] as String? ?? 'success'),
           sortOrder: Value(block['sort_order'] as int? ?? i),

@@ -68,7 +68,7 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
       state = state.copyWith(
         isPlaying: _completed ? false : playerState.playing,
         isLoading: playerState.processingState == ProcessingState.loading ||
-                   playerState.processingState == ProcessingState.buffering,
+            playerState.processingState == ProcessingState.buffering,
       );
 
       // 播放完成后自动重置到开头，避免 UI 一直停留在“播放中”或无法重播
@@ -95,7 +95,8 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
     });
 
     // 自动加载音频
-    _player.playbackEventStream.listen((_) {}, onError: (Object e, StackTrace st) {
+    _player.playbackEventStream.listen((_) {},
+        onError: (Object e, StackTrace st) {
       AppLogger.error('AudioPlayer', '音频播放流出错', metadata: {
         'error': e.toString(),
       });
@@ -109,7 +110,8 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
     _loadAudio();
   }
 
-  bool _isHttpUrl(String url) => url.startsWith('http://') || url.startsWith('https://');
+  bool _isHttpUrl(String url) =>
+      url.startsWith('http://') || url.startsWith('https://');
 
   bool _isDataUrl(String url) => url.startsWith('data:');
 
@@ -128,7 +130,8 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
     return 'bin';
   }
 
-  String _guessFileExtFromBytes(List<int> bytes, {required String fallbackExt}) {
+  String _guessFileExtFromBytes(List<int> bytes,
+      {required String fallbackExt}) {
     bool startsWithAscii(String s) {
       if (bytes.length < s.length) return false;
       for (var i = 0; i < s.length; i++) {
@@ -144,7 +147,8 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
     }
     if (startsWithAscii('OggS')) return 'ogg';
     if (startsWithAscii('ID3')) return 'mp3';
-    if (bytes.length >= 2 && bytes[0] == 0xFF && (bytes[1] & 0xE0) == 0xE0) return 'mp3';
+    if (bytes.length >= 2 && bytes[0] == 0xFF && (bytes[1] & 0xE0) == 0xE0)
+      return 'mp3';
     return fallbackExt;
   }
 
@@ -174,12 +178,14 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
     final hash = md5.convert(utf8.encode(dataUrl)).toString();
 
     final dir = await getTemporaryDirectory();
-    final cacheDir = Directory('${dir.path}${Platform.pathSeparator}aicove_audio_cache');
+    final cacheDir =
+        Directory('${dir.path}${Platform.pathSeparator}aicove_audio_cache');
     if (!await cacheDir.exists()) {
       await cacheDir.create(recursive: true);
     }
 
-    final file = File('${cacheDir.path}${Platform.pathSeparator}audio_$hash.$ext');
+    final file =
+        File('${cacheDir.path}${Platform.pathSeparator}audio_$hash.$ext');
     if (!await file.exists()) {
       await file.writeAsBytes(bytes, flush: true);
       AppLogger.info('AudioPlayer', '已将 data url 落地为临时文件', metadata: {
@@ -267,7 +273,8 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
         // 首次播放或播放完成后重播，都从头开始
         // 这样可以避免首次播放时因为缓冲导致的"吞字"问题
         if (_completed ||
-            state.position >= state.duration && state.duration > Duration.zero) {
+            state.position >= state.duration &&
+                state.duration > Duration.zero) {
           await _player.seek(Duration.zero);
           _completed = false;
         }
@@ -303,8 +310,8 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
 }
 
 /// Provider工厂：为每个音频URL创建独立的控制器
-final audioPlayerControllerProvider = StateNotifierProvider.family<
-    AudioPlayerController, AudioPlayerState, String>(
+final audioPlayerControllerProvider = StateNotifierProvider.autoDispose
+    .family<AudioPlayerController, AudioPlayerState, String>(
   (ref, audioUrl) => AudioPlayerController(audioUrl),
 );
 
@@ -329,12 +336,15 @@ class AudioPlayerWidget extends ConsumerWidget {
     }
 
     final state = ref.watch(audioPlayerControllerProvider(block.url));
-    final controller = ref.read(audioPlayerControllerProvider(block.url).notifier);
+    final controller =
+        ref.read(audioPlayerControllerProvider(block.url).notifier);
 
     // 优先使用 block 中的 durationSeconds，如果没有则尝试使用 state 中的 duration
-    final double durationSec = block.durationSeconds ?? 
-        (state.duration.inSeconds > 0 ? state.duration.inSeconds.toDouble() : 2.0);
-    
+    final double durationSec = block.durationSeconds ??
+        (state.duration.inSeconds > 0
+            ? state.duration.inSeconds.toDouble()
+            : 2.0);
+
     // 动态宽度计算：
     // 基础宽度 80
     // 每秒增加 8 像素
@@ -390,7 +400,7 @@ class AudioPlayerWidget extends ConsumerWidget {
   ) {
     // 统一按钮和加载指示器的大小，防止状态切换时闪烁 (UI Consistency)
     const double size = 24.0;
-    
+
     if (state.isLoading) {
       return SizedBox(
         width: size,
@@ -458,7 +468,7 @@ class _AnimatedWaveformState extends State<_AnimatedWaveform>
       duration: kAnimLong,
       vsync: this,
     )..repeat();
-    
+
     // 初始化随机种子，让波形看起来更自然
     _generateSeeds();
   }
@@ -495,7 +505,7 @@ class _AnimatedWaveformState extends State<_AnimatedWaveform>
   Widget build(BuildContext context) {
     // 降低波形高度以匹配文本消息高度
     const double height = 20.0;
-    
+
     return SizedBox(
       height: height,
       child: AnimatedBuilder(
@@ -507,17 +517,21 @@ class _AnimatedWaveformState extends State<_AnimatedWaveform>
             children: List.generate(widget.barCount, (index) {
               // 波形动画逻辑
               double heightFactor = 0.4; // 默认静止高度
-              
+
               if (widget.isPlaying) {
                 // 使用正弦波 + 随机种子产生波动效果
                 final progress = _controller.value;
                 final offset = index / widget.barCount;
                 final wave = sin((progress + offset) * 2 * pi);
                 // 归一化到 0.3 ~ 1.0
-                heightFactor = 0.3 + ((wave + 1) / 2) * 0.7 * _randomSeeds[index % _randomSeeds.length];
+                heightFactor = 0.3 +
+                    ((wave + 1) / 2) *
+                        0.7 *
+                        _randomSeeds[index % _randomSeeds.length];
               } else {
                 // 静止时也保留一点随机高度，看起来像真实的波形
-                heightFactor = 0.3 + 0.4 * _randomSeeds[index % _randomSeeds.length];
+                heightFactor =
+                    0.3 + 0.4 * _randomSeeds[index % _randomSeeds.length];
               }
 
               return Container(
@@ -525,7 +539,8 @@ class _AnimatedWaveformState extends State<_AnimatedWaveform>
                 height: height * heightFactor,
                 decoration: MoeG2Decoration(
                   radius: 1.5,
-                  color: widget.color.withValues(alpha: widget.isPlaying ? 0.9 : 0.6),
+                  color: widget.color
+                      .withValues(alpha: widget.isPlaying ? 0.9 : 0.6),
                 ),
               );
             }),

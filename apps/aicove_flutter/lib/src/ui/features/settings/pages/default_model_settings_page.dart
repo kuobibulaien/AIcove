@@ -7,6 +7,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../features/settings/app_settings.dart';
@@ -33,6 +34,18 @@ class _DefaultModelSettingsPageState
   bool _visionInitialized = false;
   bool? _localPreferVisionAssistant;
   bool _preferVisionInitialized = false;
+
+  /// 本地状态：历史消息条数
+  late TextEditingController _historyLimitCtrl;
+  bool _historyLimitInitialized = false;
+
+  @override
+  void dispose() {
+    if (_historyLimitInitialized) {
+      _historyLimitCtrl.dispose();
+    }
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -79,6 +92,12 @@ class _DefaultModelSettingsPageState
     if (!_preferVisionInitialized) {
       _localPreferVisionAssistant = settings.preferVisionAssistant;
       _preferVisionInitialized = true;
+    }
+    if (!_historyLimitInitialized) {
+      _historyLimitCtrl = TextEditingController(
+        text: settings.historyMessageLimit.toString(),
+      );
+      _historyLimitInitialized = true;
     }
     final preferVisionAssistant =
         _localPreferVisionAssistant ?? settings.preferVisionAssistant;
@@ -194,6 +213,46 @@ class _DefaultModelSettingsPageState
                 );
               }),
             ],
+          ],
+        ),
+
+        const SizedBox(height: 24),
+
+        // ============ 上下文管理 ============
+        _buildSectionHeader(colors, '上下文管理', '控制发送给 AI 的历史消息量'),
+        const SizedBox(height: 8),
+        MoeSettingsGroup(
+          margin: EdgeInsets.zero,
+          padding: EdgeInsets.zero,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  MoeTextField(
+                    controller: _historyLimitCtrl,
+                    label: '历史消息条数',
+                    hint: '请输入整数',
+                    helperText: '发送前最多保留最近 N 条历史消息',
+                    keyboardType: TextInputType.number,
+                    textInputAction: TextInputAction.done,
+                    inputFormatters: <TextInputFormatter>[
+                      FilteringTextInputFormatter.digitsOnly,
+                    ],
+                    onSubmitted: (_) => _saveHistoryMessageLimit(settings),
+                  ),
+                  const SizedBox(height: 12),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: MoePrimaryButton(
+                      label: '保存',
+                      onPressed: () => _saveHistoryMessageLimit(settings),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       ],
@@ -334,6 +393,27 @@ class _DefaultModelSettingsPageState
       _localPreferVisionAssistant = value;
     });
     ref.read(appSettingsProvider.notifier).setPreferVisionAssistant(value);
+  }
+
+  Future<void> _saveHistoryMessageLimit(AppSettings settings) async {
+    if (!_historyLimitInitialized) return;
+
+    final rawValue = _historyLimitCtrl.text.trim();
+    final parsed = int.tryParse(rawValue);
+    if (parsed == null || parsed <= 0) {
+      MoeToast.warning(context, '请输入大于 0 的整数');
+      _historyLimitCtrl.text = settings.historyMessageLimit.toString();
+      return;
+    }
+    if (parsed == settings.historyMessageLimit) {
+      MoeToast.brief(context, '未修改');
+      return;
+    }
+
+    await ref.read(appSettingsProvider.notifier).setHistoryMessageLimit(parsed);
+    if (!mounted) return;
+    _historyLimitCtrl.text = parsed.toString();
+    MoeToast.success(context, '已保存');
   }
 }
 

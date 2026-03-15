@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aicove_flutter/src/features/chat/services/chat_plugin_context_builder.dart';
@@ -6,6 +7,8 @@ import 'package:aicove_flutter/src/features/plugins/domain/base_plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/handlers/ai_tool.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin_metadata.dart';
+import 'package:aicove_flutter/src/features/plugins/memory/memory_config.dart';
+import 'package:aicove_flutter/src/features/plugins/memory/memory_plugin.dart';
 
 Future<String?> _noopToolHandler(Map<String, dynamic> _) async => 'ok';
 
@@ -56,6 +59,22 @@ class _StubPlugin extends BasePlugin {
         processedText: text,
         events: const [],
       );
+}
+
+class _SpyMemoryPlugin extends MemoryPlugin {
+  _SpyMemoryPlugin(Ref ref) : super(const MemoryConfig(enabled: true), ref);
+
+  String? lastConversationId;
+
+  @override
+  Future<String?> getSystemPrompt({
+    String? userMessage,
+    bool supportsToolCalling = false,
+    String? conversationId,
+  }) async {
+    lastConversationId = conversationId;
+    return 'memory_prompt';
+  }
 }
 
 void main() {
@@ -124,5 +143,26 @@ void main() {
 
     expect(tools, isEmpty);
     expect(plugin.getToolsCallCount, 2);
+  });
+
+  test('buildPluginPromptEntriesWithFilter 会向 MemoryPlugin 透传目标会话 ID',
+      () async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final builder = const ChatPluginContextBuilder();
+    final pluginProvider = Provider<_SpyMemoryPlugin>((ref) {
+      return _SpyMemoryPlugin(ref);
+    });
+    final plugin = container.read(pluginProvider);
+
+    final result = await builder.buildPluginPromptEntriesWithFilter(
+      [plugin],
+      userMessage: '你好',
+      supportsToolCalling: false,
+      conversationId: 'conv_target',
+    );
+
+    expect(plugin.lastConversationId, 'conv_target');
+    expect(result.entries.single.content, 'memory_prompt');
   });
 }

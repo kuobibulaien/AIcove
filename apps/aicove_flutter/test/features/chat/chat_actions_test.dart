@@ -15,12 +15,15 @@ import 'package:aicove_flutter/src/core/models/message_block.dart';
 import 'package:aicove_flutter/src/core/models/block_status.dart';
 import 'package:aicove_flutter/src/core/services/attachment_picker_service.dart';
 import 'package:aicove_flutter/src/features/chat/chat_actions.dart';
+import 'package:aicove_flutter/src/features/chat/data/auto_reply_trigger.dart';
 import 'package:aicove_flutter/src/features/chat/conversation_providers.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_request_message_builder.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_send_service.dart';
+import 'package:aicove_flutter/src/features/chat/services/chat_tts_handler.dart';
 import 'package:aicove_flutter/src/features/observability/trace_models.dart';
+import 'package:aicove_flutter/src/features/plugins/domain/plugin.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
 
@@ -212,6 +215,7 @@ class _SpyStreamingSendService extends _InMemoryHistorySendService {
     required String? userText,
     TraceLogger? trace,
     String? overrideModel,
+    String? conversationId,
     TraceContext? traceContext,
   }) async {
     return ApiConfig(
@@ -292,6 +296,7 @@ class _FallbackAfterDeltaSendService extends _InMemoryHistorySendService {
     required String? userText,
     TraceLogger? trace,
     String? overrideModel,
+    String? conversationId,
     TraceContext? traceContext,
   }) async {
     return ApiConfig(
@@ -381,6 +386,7 @@ class _MultiDeltaStreamingSendService extends _InMemoryHistorySendService {
     required String? userText,
     TraceLogger? trace,
     String? overrideModel,
+    String? conversationId,
     TraceContext? traceContext,
   }) async {
     return ApiConfig(
@@ -460,6 +466,7 @@ class _SingleDeltaSlowFinalizeSendService extends _InMemoryHistorySendService {
     required String? userText,
     TraceLogger? trace,
     String? overrideModel,
+    String? conversationId,
     TraceContext? traceContext,
   }) async {
     return ApiConfig(
@@ -530,6 +537,7 @@ class _RecordingImageConfigSendService extends _InMemoryHistorySendService {
   final AppSettings _settings;
   ApiConfig? lastConfig;
   String? lastOverrideModel;
+  String? lastConversationId;
   List<Message>? lastHistory;
   String? lastUserText;
   int executeCalls = 0;
@@ -541,9 +549,11 @@ class _RecordingImageConfigSendService extends _InMemoryHistorySendService {
     required String? userText,
     TraceLogger? trace,
     String? overrideModel,
+    String? conversationId,
     TraceContext? traceContext,
   }) async {
     lastOverrideModel = overrideModel;
+    lastConversationId = conversationId;
     lastHistory = List<Message>.from(history);
     lastUserText = userText;
     return ApiConfig(
@@ -607,6 +617,23 @@ class _RecordingImageConfigSendService extends _InMemoryHistorySendService {
       lastMessageText: apiResult.processedText,
     );
   }
+}
+
+class _NoopChatTtsHandler extends ChatTtsHandler {
+  _NoopChatTtsHandler(super.ref);
+
+  @override
+  Future<void> deliverSegmentedMessages({
+    required String convId,
+    required String userMsgId,
+    required AssistantMessageBuildResult buildResult,
+    required String replyText,
+    required List<PluginEvent> pluginEvents,
+    required bool ttsEnabled,
+    bool appendAfterStreamText = false,
+    List<String>? streamTextMessageIds,
+    TraceLogger? trace,
+  }) async {}
 }
 
 void main() {
@@ -957,6 +984,76 @@ void main() {
     expect(spyService.sawFallbackCallback, isTrue);
   });
 
+  test('sendProactiveTrigger 会把 targetConvId 显式传给 prepareApiConfig', () async {
+    final now = DateTime.now();
+    final activeConv = Conversation(
+      id: 'conv_active',
+      title: 'Active',
+      displayName: 'Active',
+      createdAt: now,
+      updatedAt: now,
+      messages: const [],
+    );
+    final targetConv = Conversation(
+      id: 'conv_target',
+      title: 'Target',
+      displayName: 'Target',
+      createdAt: now,
+      updatedAt: now,
+      messages: const [],
+    );
+    final trigger = AutoReplyTrigger(
+      id: 'trigger_1',
+      title: '早安问候',
+      type: AutoReplyTriggerType.fixed,
+      status: AutoReplyTriggerStatus.pending,
+      createdAt: now,
+      nextFireAt: now,
+      allowNight: true,
+      requireExact: false,
+      delayMinutes: 0,
+      manual: false,
+      conversationId: targetConv.id,
+      contextSnapshot: '[{"role":"user","content":"昨晚聊过了"}]',
+    );
+    final settings = _buildTestSettings().copyWith(
+      ttsEnabled: false,
+      autoReplySettings: const AutoReplySettings(enabled: true),
+    );
+
+    late _RecordingImageConfigSendService sendService;
+    final container = ProviderContainer(
+      overrides: [
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(settings),
+        ),
+        chatTtsHandlerProvider.overrideWith((ref) => _NoopChatTtsHandler(ref)),
+        chatSendServiceProvider.overrideWith((ref) {
+          sendService = _RecordingImageConfigSendService(ref, settings);
+          return sendService;
+        }),
+        conversationsProvider.overrideWith(
+          () => _FakeConversationsNotifier([activeConv, targetConv]),
+        ),
+        activeConversationProvider.overrideWith((ref) {
+          final list = ref.watch(conversationsProvider).valueOrNull;
+          if (list == null || list.isEmpty) return null;
+          return list.firstWhere((c) => c.id == activeConv.id);
+        }),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await container.read(conversationsProvider.future);
+    await container.read(appSettingsProvider.future);
+    final actions = container.read(chatActionsProvider);
+
+    final result = await actions.sendProactiveTrigger(trigger);
+
+    expect(result.success, isTrue);
+    expect(sendService.lastConversationId, targetConv.id);
+  });
+
   test('regenerate 会使用流式参数调用 API', () async {
     final now = DateTime.now();
     final userMsg = Message(
@@ -1287,7 +1384,8 @@ void main() {
       reason: '流式结束后数据库里不应残留 sending 状态消息',
     );
 
-    final assistantRow = storedMessages.singleWhere((m) => m.role == 'assistant');
+    final assistantRow =
+        storedMessages.singleWhere((m) => m.role == 'assistant');
     final assistantBlocks = await blockRepo.getByMessage(assistantRow.id);
     final textBlocks = assistantBlocks
         .map(MessageBlockConverter.fromDb)

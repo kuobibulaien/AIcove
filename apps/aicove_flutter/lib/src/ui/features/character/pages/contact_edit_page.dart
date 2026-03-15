@@ -6,8 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../../core/utils/avatar_helper.dart';
-import '../../../../core/utils/blurred_background_cache.dart';
+import '../../../../core/utils/blurred_background_service.dart';
 import '../../../../core/utils/data_image.dart';
 import '../../../../features/chat/domain/conversation.dart';
 import '../../../../features/chat/domain/persona_prompt_codec.dart';
@@ -70,7 +69,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
   late final TextEditingController _refImageCtrl;
   late final TextEditingController _chatBackgroundCtrl;
 
-  Uint8List? _avatarBytes;
   Uint8List? _chatBackgroundBytes;
   late Set<String> _selectedPluginIds;
   String? _boundVoiceId;
@@ -79,6 +77,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
   bool _autoSaveQueued = false;
   String? _lastAutoSavedSignature;
   bool _allowNativePop = false;
+  String? _scheduledBlurSource;
 
   bool get _enableAutoSave => false;
   List<TextEditingController> get _autoSaveControllers => [
@@ -135,9 +134,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
       text: conv.chatBackgroundImage ?? '',
     );
 
-    if (_avatarCtrl.text.isNotEmpty) {
-      _avatarBytes = decodeDataImage(_avatarCtrl.text);
-    }
     if (_chatBackgroundCtrl.text.isNotEmpty) {
       _chatBackgroundBytes = decodeDataImage(_chatBackgroundCtrl.text);
     }
@@ -164,15 +160,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     _lastAutoSavedSignature = _buildEditSignature(_buildEditResult());
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final provider = _getImageProvider();
-      if (provider != null) {
-        BlurredBackgroundCache.warm(
-          widget.conversation.id,
-          provider,
-          context,
-        );
-      }
+      _scheduleBlurEnsure();
     });
   }
 
@@ -196,16 +184,27 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     super.dispose();
   }
 
-  /// 获取立绘 ImageProvider（用于背景模糊）
-  ImageProvider? _getImageProvider() {
-    final helper = AvatarHelper(
-      avatarUrl:
-          _avatarCtrl.text.trim().isEmpty ? null : _avatarCtrl.text.trim(),
+  String? _getBackgroundSource() {
+    return BlurredBackgroundService.pickPreferredSource(
       characterImage:
           _refImageCtrl.text.trim().isEmpty ? null : _refImageCtrl.text.trim(),
-      displayName: _nameCtrl.text,
+      avatarUrl:
+          _avatarCtrl.text.trim().isEmpty ? null : _avatarCtrl.text.trim(),
     );
-    return helper.getCharacterProvider();
+  }
+
+  void _scheduleBlurEnsure() {
+    final source = _getBackgroundSource();
+    if (source == null || _scheduledBlurSource == source) return;
+    _scheduledBlurSource = source;
+    unawaited(
+      BlurredBackgroundService.ensureBlur(source).then((provider) {
+        if (!mounted) return;
+        if (provider == null && _scheduledBlurSource == source) {
+          _scheduledBlurSource = null;
+        }
+      }),
+    );
   }
 
   // ==================== build ====================
@@ -385,31 +384,28 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
   // ==================== 模糊背景 ====================
 
   Widget _buildBlurredBackground(MoeColors colors) {
-    final provider = _getImageProvider();
-    if (provider == null) {
+    final source = _getBackgroundSource();
+    if (source == null) {
       return Container(color: colors.surface);
     }
+    _scheduleBlurEnsure();
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    final charImage =
-        _refImageCtrl.text.trim().isEmpty ? null : _refImageCtrl.text.trim();
-    final blurAsset = _deriveBlurAssetPath(charImage);
 
     return Stack(
       fit: StackFit.expand,
       children: [
-        Container(color: colors.surface),
-        if (blurAsset != null)
-          Image.asset(
-            blurAsset,
-            fit: BoxFit.cover,
-            gaplessPlayback: true,
-            filterQuality: FilterQuality.medium,
-            errorBuilder: (_, __, ___) => _buildGeneratedBlur(provider),
-          )
-        else
-          _buildGeneratedBlur(provider),
+        _buildGradientFallback(colors, isDark),
+        ValueListenableBuilder<int>(
+          valueListenable: BlurredBackgroundService.ticker,
+          builder: (context, _, __) {
+            final provider = BlurredBackgroundService.getBlurProvider(source);
+            return AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              child: _buildBlurLayer(source, provider),
+            );
+          },
+        ),
         Container(
           color: isDark
               ? Colors.black.withValues(alpha: 0.25)
@@ -419,45 +415,56 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     );
   }
 
-  String? _deriveBlurAssetPath(String? originalAssetPath) {
-    if (originalAssetPath == null) return null;
-    final trimmed = originalAssetPath.trim();
-    if (!trimmed.startsWith('assets/')) return null;
-    final dot = trimmed.lastIndexOf('.');
-    if (dot <= 0) return null;
-    return '${trimmed.substring(0, dot)}_blur${trimmed.substring(dot)}';
-  }
+  Widget _buildBlurLayer(String source, ImageProvider? provider) {
+    final blurAsset = BlurredBackgroundService.deriveBlurAssetPath(source);
 
-  Widget _buildGeneratedBlur(ImageProvider provider) {
-    return ValueListenableBuilder<int>(
-      valueListenable: BlurredBackgroundCache.ticker,
-      builder: (context, _, __) {
-        final (bgProvider, isFallback) = BlurredBackgroundCache.getOrFallback(
-          widget.conversation.id,
-          provider,
-        );
-
-        final displayProvider = isFallback
-            ? ResizeImage(
-                bgProvider,
-                width: 96,
-                height: 96,
-                policy: ResizeImagePolicy.fit,
-              )
-            : bgProvider;
-
-        final baseImage = Image(
-          image: displayProvider,
+    if (blurAsset != null) {
+      return SizedBox.expand(
+        key: ValueKey('asset:$blurAsset'),
+        child: Image.asset(
+          blurAsset,
           fit: BoxFit.cover,
           gaplessPlayback: true,
-          filterQuality: isFallback ? FilterQuality.none : FilterQuality.medium,
-        );
+          filterQuality: FilterQuality.medium,
+          errorBuilder: (_, __, ___) => provider == null
+              ? const SizedBox.shrink(key: ValueKey('empty'))
+              : _buildBlurImage(provider, key: ValueKey('file:$source')),
+        ),
+      );
+    }
 
-        if (isFallback) {
-          return Transform.scale(scale: 1.2, child: baseImage);
-        }
-        return baseImage;
-      },
+    if (provider == null) {
+      return const SizedBox.shrink(key: ValueKey('empty'));
+    }
+
+    return _buildBlurImage(provider, key: ValueKey('file:$source'));
+  }
+
+  Widget _buildBlurImage(ImageProvider provider, {required Key key}) {
+    return SizedBox.expand(
+      key: key,
+      child: Image(
+        image: provider,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        filterQuality: FilterQuality.medium,
+      ),
+    );
+  }
+
+  Widget _buildGradientFallback(MoeColors colors, bool isDark) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            colors.surface,
+            colors.primary.withValues(alpha: isDark ? 0.18 : 0.1),
+            isDark ? const Color(0xFF12161C) : Colors.white,
+          ],
+        ),
+      ),
     );
   }
 
@@ -749,7 +756,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     if (croppedBytes != null && mounted) {
       final avatarDataUrl = buildDataImage(croppedBytes, fileName: file.name);
       setState(() {
-        _avatarBytes = croppedBytes;
         _avatarCtrl.text = avatarDataUrl;
       });
     }

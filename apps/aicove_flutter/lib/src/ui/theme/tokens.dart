@@ -449,10 +449,10 @@ const Duration kAnim = Duration(milliseconds: 240);
 const Duration kAnimSlow = Duration(milliseconds: 320);
 
 /// 页面打开动画
-const Duration kAnimPage = Duration(milliseconds: 400);
+const Duration kAnimPage = Duration(milliseconds: 320);
 
 /// 页面关闭动画
-const Duration kAnimPageReverse = Duration(milliseconds: 350);
+const Duration kAnimPageReverse = Duration(milliseconds: 280);
 
 /// 较长动画（如滚动同步、复杂展开）
 const Duration kAnimLong = Duration(milliseconds: 1200);

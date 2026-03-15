@@ -4,6 +4,9 @@ import 'domain/message.dart';
 import 'services/chat_history_store.dart';
 import 'conversation_providers.dart';
 
+const int kConversationInitialVisibleCount = 5;
+const int kConversationVisiblePageSize = 5;
+
 class StreamingBubbleState {
   const StreamingBubbleState({
     this.visible = false,
@@ -38,10 +41,12 @@ enum StreamingBubbleStatus {
 }
 
 final conversationVisibleCountProvider =
-    StateProvider.family<int, String>((ref, conversationId) => 30);
+    StateProvider.autoDispose.family<int, String>(
+  (ref, conversationId) => kConversationInitialVisibleCount,
+);
 
 final conversationMessageWindowProvider =
-    StreamProvider.family<ConversationMessageWindow, String>(
+    StreamProvider.autoDispose.family<ConversationMessageWindow, String>(
   (ref, conversationId) {
     final limit = ref.watch(conversationVisibleCountProvider(conversationId));
     return ref.watch(chatHistoryStoreProvider).watchWindow(
@@ -51,24 +56,23 @@ final conversationMessageWindowProvider =
   },
 );
 
-final conversationMessagesProvider =
-    Provider.family<AsyncValue<List<Message>>, String>((ref, conversationId) {
+final conversationMessagesProvider = Provider.autoDispose
+    .family<AsyncValue<List<Message>>, String>((ref, conversationId) {
   return ref.watch(conversationMessageWindowProvider(conversationId)).whenData(
         (window) => window.messages,
       );
 });
 
 final conversationHasMoreProvider =
-    Provider.family<bool, String>((ref, conversationId) {
-  return ref
-      .watch(conversationMessageWindowProvider(conversationId))
-      .maybeWhen(
+    Provider.autoDispose.family<bool, String>((ref, conversationId) {
+  return ref.watch(conversationMessageWindowProvider(conversationId)).maybeWhen(
         data: (window) => window.hasMore,
         orElse: () => true,
       );
 });
 
-final activeConversationMessagesProvider = Provider<AsyncValue<List<Message>>>(
+final activeConversationMessagesProvider =
+    Provider.autoDispose<AsyncValue<List<Message>>>(
   (ref) {
     final convId = ref.watch(activeConversationIdProvider);
     if (convId == null || convId.trim().isEmpty) {
@@ -78,7 +82,7 @@ final activeConversationMessagesProvider = Provider<AsyncValue<List<Message>>>(
   },
 );
 
-final activeConversationHasMoreProvider = Provider<bool>((ref) {
+final activeConversationHasMoreProvider = Provider.autoDispose<bool>((ref) {
   final convId = ref.watch(activeConversationIdProvider);
   if (convId == null || convId.trim().isEmpty) {
     return false;

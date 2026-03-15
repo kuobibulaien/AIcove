@@ -1,11 +1,12 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
-import 'dart:ui' as ui;
 
 import 'package:figma_squircle/figma_squircle.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
+import '../../../../core/utils/blurred_background_service.dart';
 import '../../../../core/utils/data_image.dart';
 import '../../../../features/chat/domain/conversation.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
@@ -52,6 +53,8 @@ class _ChatBackgroundSettingsPageState
   late double _maskOpacity;
   late double _blurSigma;
   bool _previewDark = false;
+  String? _staticPreviewBlurSource;
+  ImageProvider? _staticPreviewBlurProvider;
 
   @override
   void initState() {
@@ -133,14 +136,16 @@ class _ChatBackgroundSettingsPageState
 
     if (_backgroundBytes != null) {
       return Image.memory(_backgroundBytes!,
-          fit: BoxFit.cover, gaplessPlayback: true,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
           errorBuilder: (_, __, ___) => const SizedBox.shrink());
     }
 
     final bytes = decodeDataImage(raw);
     if (bytes != null) {
       return Image.memory(bytes,
-          fit: BoxFit.cover, gaplessPlayback: true,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
           errorBuilder: (_, __, ___) => const SizedBox.shrink());
     }
 
@@ -186,7 +191,8 @@ class _ChatBackgroundSettingsPageState
 
     return Container(
       color: colors.surface,
-      padding: EdgeInsets.only(top: topPadding + 8, left: 24, right: 24, bottom: 12),
+      padding:
+          EdgeInsets.only(top: topPadding + 8, left: 24, right: 24, bottom: 12),
       child: Column(
         children: [
           // 真正的返回 / 保存按钮行
@@ -236,12 +242,16 @@ class _ChatBackgroundSettingsPageState
   /// 等比缩小的聊天界面模型
   Widget _buildChatMiniature(MoeColors colors) {
     final darkMode = _previewDark;
-    final fallbackColor = darkMode
-        ? const Color(0xFF151A22)
-        : const Color(0xFFF5F7FA);
+    final fallbackColor =
+        darkMode ? const Color(0xFF151A22) : const Color(0xFFF5F7FA);
     final textColor = darkMode ? Colors.white : const Color(0xFF1E2A3A);
     final mutedColor = darkMode ? Colors.white54 : Colors.black38;
     final image = _buildBackgroundImage();
+    final blurOverlay = image == null
+        ? null
+        : _buildStaticBlurPreviewLayer(
+            opacity: _staticBlurOverlayOpacity(_blurSigma),
+          );
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(16),
@@ -257,19 +267,10 @@ class _ChatBackgroundSettingsPageState
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // 背景图 + 模糊
+            // 背景图 + 静态模糊叠层
             if (image != null) ...[
-              if (_blurSigma > 0.1)
-                ImageFiltered(
-                  imageFilter: ui.ImageFilter.blur(
-                    sigmaX: _blurSigma,
-                    sigmaY: _blurSigma,
-                    tileMode: TileMode.decal,
-                  ),
-                  child: image,
-                )
-              else
-                image,
+              image,
+              if (blurOverlay != null) blurOverlay,
               // 遮罩
               IgnorePointer(
                 child: Container(
@@ -286,7 +287,8 @@ class _ChatBackgroundSettingsPageState
                   height: 44,
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: darkMode ? 0.2 : 0.08),
+                    color:
+                        Colors.black.withValues(alpha: darkMode ? 0.2 : 0.08),
                   ),
                   child: Row(
                     children: [
@@ -323,14 +325,16 @@ class _ChatBackgroundSettingsPageState
                 // ── 模拟聊天消息区域 ──
                 Expanded(
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         // 时间戳
                         Center(
                           child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 2),
                             decoration: BoxDecoration(
                               color: Colors.black.withValues(alpha: 0.08),
                               borderRadius: BorderRadius.circular(8),
@@ -381,7 +385,8 @@ class _ChatBackgroundSettingsPageState
                   height: 42,
                   padding: const EdgeInsets.symmetric(horizontal: 10),
                   decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: darkMode ? 0.18 : 0.05),
+                    color:
+                        Colors.black.withValues(alpha: darkMode ? 0.18 : 0.05),
                   ),
                   child: Row(
                     children: [
@@ -404,7 +409,8 @@ class _ChatBackgroundSettingsPageState
                         ),
                       ),
                       const SizedBox(width: 8),
-                      Icon(Icons.arrow_upward_rounded, size: 18, color: mutedColor),
+                      Icon(Icons.arrow_upward_rounded,
+                          size: 18, color: mutedColor),
                     ],
                   ),
                 ),
@@ -427,6 +433,90 @@ class _ChatBackgroundSettingsPageState
         ),
       ),
     );
+  }
+
+  double _staticBlurOverlayOpacity(double blurSigma) {
+    if (blurSigma <= 0.1) return 0;
+    return Curves.easeOut.transform((blurSigma / 30).clamp(0.0, 1.0));
+  }
+
+  Widget? _buildStaticBlurPreviewLayer({required double opacity}) {
+    if (opacity <= 0) return null;
+    final source = _backgroundImage?.trim();
+    if (source == null || source.isEmpty) return null;
+
+    final blurAsset = BlurredBackgroundService.deriveBlurAssetPath(source);
+    if (blurAsset == null) {
+      _scheduleStaticPreviewBlur(source);
+    }
+
+    Widget? layer;
+    if (blurAsset != null) {
+      layer = SizedBox.expand(
+        child: Image.asset(
+          blurAsset,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+          filterQuality: FilterQuality.medium,
+          errorBuilder: (_, __, ___) {
+            final provider = _resolveStaticPreviewBlurProvider(source);
+            if (provider == null) return const SizedBox.shrink();
+            return _buildStaticPreviewBlurImage(provider);
+          },
+        ),
+      );
+    } else {
+      final provider = _resolveStaticPreviewBlurProvider(source);
+      if (provider != null) {
+        layer = _buildStaticPreviewBlurImage(provider);
+      }
+    }
+
+    if (layer == null) return null;
+    return IgnorePointer(
+      child: Opacity(
+        key: const ValueKey<String>(
+            'chat_background_settings_static_blur_layer'),
+        opacity: opacity,
+        child: layer,
+      ),
+    );
+  }
+
+  ImageProvider? _resolveStaticPreviewBlurProvider(String source) {
+    if (_staticPreviewBlurSource != source) return null;
+    return _staticPreviewBlurProvider;
+  }
+
+  Widget _buildStaticPreviewBlurImage(ImageProvider provider) {
+    return SizedBox.expand(
+      child: Image(
+        image: provider,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        filterQuality: FilterQuality.medium,
+        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+      ),
+    );
+  }
+
+  void _scheduleStaticPreviewBlur(String source) {
+    if (_staticPreviewBlurSource == source) return;
+    _staticPreviewBlurSource = source;
+    _staticPreviewBlurProvider = null;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _staticPreviewBlurSource != source) return;
+      unawaited(
+        BlurredBackgroundService.ensureBlur(source).then((provider) {
+          if (!mounted || _staticPreviewBlurSource != source) return;
+          if (identical(_staticPreviewBlurProvider, provider)) return;
+          setState(() {
+            _staticPreviewBlurProvider = provider;
+          });
+        }),
+      );
+    });
   }
 
   Widget _mockBubble(

@@ -49,76 +49,83 @@ class SettingsContent extends ConsumerStatefulWidget {
 class _SettingsContentState extends ConsumerState<SettingsContent> {
   @override
   Widget build(BuildContext context) {
-    final settingsAsync = ref.watch(appSettingsProvider);
+    final isLoading =
+        ref.watch(appSettingsProvider.select((settings) => settings.isLoading));
+    final error = ref.watch(
+      appSettingsProvider.select(
+        (settings) => settings.hasError ? settings.error : null,
+      ),
+    );
     final colors = context.moeColors;
 
-    return settingsAsync.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => Center(child: Text('加载设置失败: $e')),
-      data: (settings) {
-        return ListView(
-          children: [
-            // ============ 模型管理 ============
-            _buildSettingItem(
-              context,
-              icon: Icons.list_alt,
-              title: '模型管理',
-              subtitle: '管理模型渠道和默认设置',
-              onTap: () => _navigateTo(context, const ModelListPage()),
-            ),
+    if (isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (error != null) {
+      return Center(child: Text('加载设置失败: $error'));
+    }
 
-            // ============ 组间分割 ============
-            _buildGroupDivider(colors),
+    return ListView(
+      children: [
+        // ============ 模型管理 ============
+        _buildSettingItem(
+          context,
+          icon: Icons.list_alt,
+          title: '模型管理',
+          subtitle: '管理模型渠道和默认设置',
+          onTap: () => _navigateTo(context, const ModelListPage()),
+        ),
 
-            // ============ 界面设置 ============
-            _buildSettingItem(
-              context,
-              icon: Icons.palette_outlined,
-              title: '界面设置',
-              subtitle: '字体、暗色模式',
-              onTap: () => _navigateTo(context, const UiSettingsPage()),
-            ),
+        // ============ 组间分割 ============
+        _buildGroupDivider(colors),
 
-            // ============ 组间分割 ============
-            _buildGroupDivider(colors),
+        // ============ 界面设置 ============
+        _buildSettingItem(
+          context,
+          icon: Icons.palette_outlined,
+          title: '界面设置',
+          subtitle: '字体、暗色模式',
+          onTap: () => _navigateTo(context, const UiSettingsPage()),
+        ),
 
-            // ============ 聊天插件 ============
-            _buildSettingItem(
-              context,
-              icon: Icons.extension_outlined,
-              title: '聊天插件',
-              subtitle: '记忆、语音、表情包等',
-              onTap: () => _navigateTo(context, const ChatPluginSettingsPage()),
-            ),
+        // ============ 组间分割 ============
+        _buildGroupDivider(colors),
 
-            // ============ 组间分割 ============
-            _buildGroupDivider(colors),
+        // ============ 聊天插件 ============
+        _buildSettingItem(
+          context,
+          icon: Icons.extension_outlined,
+          title: '聊天插件',
+          subtitle: '记忆、语音、表情包等',
+          onTap: () => _navigateTo(context, const ChatPluginSettingsPage()),
+        ),
 
-            // ============ 数据管理 ============
-            _buildSettingItem(
-              context,
-              icon: Icons.cloud_sync_outlined,
-              title: '数据管理',
-              subtitle: '备份、导入导出、云同步',
-              onTap: () => _navigateTo(context, const DataManagementPage()),
-            ),
+        // ============ 组间分割 ============
+        _buildGroupDivider(colors),
 
-            // ============ 组间分割 ============
-            _buildGroupDivider(colors),
+        // ============ 数据管理 ============
+        _buildSettingItem(
+          context,
+          icon: Icons.cloud_sync_outlined,
+          title: '数据管理',
+          subtitle: '备份、导入导出、云同步',
+          onTap: () => _navigateTo(context, const DataManagementPage()),
+        ),
 
-            // ============ 调试中心 ============
-            _buildSettingItem(
-              context,
-              icon: Icons.bug_report_outlined,
-              title: '调试中心',
-              subtitle: '日志、组件库、工具提示词',
-              onTap: () => _navigateTo(context, const DebugCenterPage()),
-            ),
+        // ============ 组间分割 ============
+        _buildGroupDivider(colors),
 
-            const SizedBox(height: 24),
-          ],
-        );
-      },
+        // ============ 调试中心 ============
+        _buildSettingItem(
+          context,
+          icon: Icons.bug_report_outlined,
+          title: '调试中心',
+          subtitle: '日志、组件库、工具提示词',
+          onTap: () => _navigateTo(context, const DebugCenterPage()),
+        ),
+
+        const SizedBox(height: 24),
+      ],
     );
   }
 

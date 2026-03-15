@@ -1,6 +1,7 @@
 /// 云同步服务
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:drift/drift.dart';
@@ -9,6 +10,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:uuid/uuid.dart';
 import '../database/database.dart' hide Provider;
 import '../database/database_provider.dart';
+import '../utils/blurred_background_service.dart';
 
 /// 同步状态
 enum SyncStatus { idle, syncing, success, error }
@@ -162,6 +164,8 @@ class SyncService {
   // 应用远程会话到本地
   Future<void> _applyConversation(Map<String, dynamic> data) async {
     final id = data['id'] as String;
+    final avatarUrl = data['avatar_url'] as String?;
+    final characterImage = data['character_image'] as String?;
     final existing = await (_db.select(_db.conversations)
           ..where((t) => t.id.equals(id)))
         .getSingleOrNull();
@@ -170,8 +174,8 @@ class SyncService {
       id: Value(id),
       title: Value(data['title'] as String? ?? ''),
       displayName: Value(data['display_name'] as String? ?? ''),
-      avatarUrl: Value(data['avatar_url'] as String?),
-      characterImage: Value(data['character_image'] as String?),
+      avatarUrl: Value(avatarUrl),
+      characterImage: Value(characterImage),
       chatBackgroundImage: Value(data['chat_background_image'] as String?),
       chatBackgroundMaskOpacity:
           Value((data['chat_background_mask_opacity'] as num?)?.toDouble()),
@@ -202,6 +206,17 @@ class SyncService {
     } else {
       await (_db.update(_db.conversations)..where((t) => t.id.equals(id)))
           .write(companion);
+    }
+
+    final source = BlurredBackgroundService.pickPreferredSource(
+      characterImage: characterImage,
+      avatarUrl: avatarUrl,
+    );
+    if (BlurredBackgroundService.shouldPreGenerateEagerly(source)) {
+      unawaited(BlurredBackgroundService.ensureBlur(
+        source,
+        allowNetwork: false,
+      ));
     }
   }
 

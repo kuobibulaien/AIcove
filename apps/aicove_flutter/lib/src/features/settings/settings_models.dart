@@ -8,6 +8,7 @@ library;
 
 import 'package:flutter/material.dart';
 import '../../core/utils/message_formatter.dart';
+import '../../core/utils/token_estimator.dart';
 
 /// 模型类型枚举
 enum ModelType {
@@ -690,6 +691,9 @@ class ProviderAuth {
   /// 上下文消息数量限制，null 表示不限制，超过时自动截断
   final int? contextMessageLimit;
 
+  /// 最大上下文 Token 数，null 表示使用硬编码表或兜底值
+  final int? maxContextTokens;
+
   const ProviderAuth({
     required this.id,
     this.displayName,
@@ -705,6 +709,7 @@ class ProviderAuth {
     this.temperature,
     this.topP,
     this.contextMessageLimit,
+    this.maxContextTokens,
   });
 
   ProviderAuth copyWith({
@@ -722,9 +727,11 @@ class ProviderAuth {
     double? temperature,
     double? topP,
     int? contextMessageLimit,
+    int? maxContextTokens,
     bool clearTemperature = false,
     bool clearTopP = false,
     bool clearContextMessageLimit = false,
+    bool clearMaxContextTokens = false,
   }) =>
       ProviderAuth(
         id: id ?? this.id,
@@ -744,6 +751,9 @@ class ProviderAuth {
         contextMessageLimit: clearContextMessageLimit
             ? null
             : (contextMessageLimit ?? this.contextMessageLimit),
+        maxContextTokens: clearMaxContextTokens
+            ? null
+            : (maxContextTokens ?? this.maxContextTokens),
       );
 
   Map<String, dynamic> toJson() => {
@@ -762,6 +772,7 @@ class ProviderAuth {
         if (topP != null) 'top_p': topP,
         if (contextMessageLimit != null)
           'context_message_limit': contextMessageLimit,
+        if (maxContextTokens != null) 'max_context_tokens': maxContextTokens,
       };
 
   factory ProviderAuth.fromJson(Map<String, dynamic> json) {
@@ -803,6 +814,7 @@ class ProviderAuth {
       temperature: (json['temperature'] as num?)?.toDouble(),
       topP: (json['top_p'] as num?)?.toDouble(),
       contextMessageLimit: json['context_message_limit'] as int?,
+      maxContextTokens: json['max_context_tokens'] as int?,
     );
   }
 }
@@ -823,12 +835,16 @@ class ModelConfig {
   final int? contextMessageLimit;
   final List<String>? chatCapabilities;
 
+  /// 最大上下文 Token 数，null 表示使用硬编码表或兜底值
+  final int? maxContextTokens;
+
   const ModelConfig({
     this.disableToolCalling = false,
     this.temperature,
     this.topP,
     this.contextMessageLimit,
     this.chatCapabilities,
+    this.maxContextTokens,
   });
 
   /// 是否为默认配置（全部为默认值时可删除以节省空间）
@@ -837,7 +853,8 @@ class ModelConfig {
       temperature == null &&
       topP == null &&
       contextMessageLimit == null &&
-      chatCapabilities == null;
+      chatCapabilities == null &&
+      maxContextTokens == null;
 
   ModelConfig copyWith({
     bool? disableToolCalling,
@@ -849,6 +866,8 @@ class ModelConfig {
     bool clearContextMessageLimit = false,
     List<String>? chatCapabilities,
     bool clearChatCapabilities = false,
+    int? maxContextTokens,
+    bool clearMaxContextTokens = false,
   }) =>
       ModelConfig(
         disableToolCalling: disableToolCalling ?? this.disableToolCalling,
@@ -863,6 +882,9 @@ class ModelConfig {
             : (chatCapabilities != null
                 ? ChatModelCapability.normalizeValues(chatCapabilities)
                 : this.chatCapabilities),
+        maxContextTokens: clearMaxContextTokens
+            ? null
+            : (maxContextTokens ?? this.maxContextTokens),
       );
 
   Map<String, dynamic> toJson() => {
@@ -872,6 +894,7 @@ class ModelConfig {
         if (contextMessageLimit != null)
           'context_message_limit': contextMessageLimit,
         if (chatCapabilities != null) 'chat_capabilities': chatCapabilities,
+        if (maxContextTokens != null) 'max_context_tokens': maxContextTokens,
       };
 
   factory ModelConfig.fromJson(Map<String, dynamic> json) => ModelConfig(
@@ -884,6 +907,7 @@ class ModelConfig {
                 (json['chat_capabilities'] as List? ?? const <dynamic>[]),
               )
             : null,
+        maxContextTokens: json['max_context_tokens'] as int?,
       );
 }
 
@@ -1274,5 +1298,25 @@ class AppSettings {
   /// 检查模型是否禁用工具调用
   bool isModelToolCallingDisabled(String modelId) {
     return getModelConfig(modelId).disableToolCalling;
+  }
+
+  /// 获取模型的最大上下文 Token 数（优先用户配置 > 硬编码表 > 128K 兜底）
+  int getMaxContextTokens(String modelId) {
+    // 1. 模型级别配置
+    final modelConfig = getModelConfig(modelId);
+    if (modelConfig.maxContextTokens != null) {
+      return modelConfig.maxContextTokens!;
+    }
+    // 2. Provider 级别配置
+    final providerId = getModelProviderId(modelId);
+    if (providerId != null) {
+      final provider = getProvider(providerId);
+      if (provider?.maxContextTokens != null) {
+        return provider!.maxContextTokens!;
+      }
+    }
+    // 3. 回退到硬编码表
+    final rawId = getRawModelId(modelId);
+    return getModelContextLimit(rawId);
   }
 }

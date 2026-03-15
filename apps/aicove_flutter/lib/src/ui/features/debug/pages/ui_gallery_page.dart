@@ -3,7 +3,6 @@ import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 
-
 /// UI 组件库页面 - 用于展示所有公共组件
 class UiGalleryPage extends StatefulWidget {
   const UiGalleryPage({super.key});
@@ -15,8 +14,15 @@ class UiGalleryPage extends StatefulWidget {
 class _UiGalleryPageState extends State<UiGalleryPage> {
   bool _switchValue = true;
   bool _checkboxValue = true;
-  final TextEditingController _textController = TextEditingController(text: 'Hello MoeTalk');
+  final TextEditingController _textController =
+      TextEditingController(text: 'Hello MoeTalk');
   double _cornerRadius = 20.0;
+
+  @override
+  void dispose() {
+    _textController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -94,7 +100,8 @@ class _UiGalleryPageState extends State<UiGalleryPage> {
                           const Text('复选框: '),
                           MoeCheckbox(
                             value: _checkboxValue,
-                            onChanged: (v) => setState(() => _checkboxValue = v),
+                            onChanged: (v) =>
+                                setState(() => _checkboxValue = v),
                           ),
                         ],
                       ),
@@ -239,7 +246,8 @@ class _UiGalleryPageState extends State<UiGalleryPage> {
                         actions: [
                           MoeSheetAction(label: '选项 A', onTap: () {}),
                           MoeSheetAction(label: '选项 B', onTap: () {}),
-                          MoeSheetAction(label: '危险操作', isDestructive: true, onTap: () {}),
+                          MoeSheetAction(
+                              label: '危险操作', isDestructive: true, onTap: () {}),
                         ],
                       );
                     },
@@ -308,7 +316,8 @@ class _UiGalleryPageState extends State<UiGalleryPage> {
 
   Widget _buildHeader(String title) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(MoeSpacing.md, 0, MoeSpacing.md, MoeSpacing.sm),
+      padding: const EdgeInsets.fromLTRB(
+          MoeSpacing.md, 0, MoeSpacing.md, MoeSpacing.sm),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -330,7 +339,7 @@ class _UiGalleryPageState extends State<UiGalleryPage> {
   /// 构建圆角对比展示
   Widget _buildCornerRadiusDemo(MoeColors colors) {
     const boxSize = 100.0;
-    
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: MoeSpacing.md),
       child: Column(
@@ -359,7 +368,7 @@ class _UiGalleryPageState extends State<UiGalleryPage> {
             ],
           ),
           const SizedBox(height: MoeSpacing.md),
-          
+
           // G2 圆角用法示例（项目统一标准）
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -405,7 +414,8 @@ class _UiGalleryPageState extends State<UiGalleryPage> {
                   decoration: MoeG2Decoration(
                     radius: _cornerRadius,
                     color: colors.accentColor,
-                    border: Border.all(color: Colors.white.withValues(alpha: 0.35)),
+                    border:
+                        Border.all(color: Colors.white.withValues(alpha: 0.35)),
                   ),
                 ),
               ),
@@ -554,7 +564,8 @@ class _UiGalleryPageState extends State<UiGalleryPage> {
           _buildColorRow('surface', '表面背景色', colors.surface, colors),
           _buildColorRow('surfaceAlt', '次级表面（略深）', colors.surfaceAlt, colors),
           _buildColorRow('panel', '容器背景（卡片/面板）', colors.panel, colors),
-          _buildColorRow('componentBackground', '组件背景（设置分组）', colors.componentBackground, colors),
+          _buildColorRow('componentBackground', '组件背景（设置分组）',
+              colors.componentBackground, colors),
           const SizedBox(height: MoeSpacing.sm),
           Container(
             padding: const EdgeInsets.all(MoeSpacing.sm),
@@ -577,7 +588,8 @@ class _UiGalleryPageState extends State<UiGalleryPage> {
     );
   }
 
-  Widget _buildColorRow(String name, String desc, Color color, MoeColors colors) {
+  Widget _buildColorRow(
+      String name, String desc, Color color, MoeColors colors) {
     final hex = '#${color.value.toRadixString(16).substring(2).toUpperCase()}';
     return Padding(
       padding: const EdgeInsets.only(bottom: MoeSpacing.sm),

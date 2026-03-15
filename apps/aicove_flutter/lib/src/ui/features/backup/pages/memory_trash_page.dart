@@ -3,15 +3,21 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../../../core/database/database_provider.dart';
+import '../../../../features/chat/conversation_providers.dart';
 import '../../../../features/memory/models/memory_entity.dart';
 import '../../../shared/effects/smooth_clip.dart';
 import '../../../shared/widgets/index.dart';
 import '../../../theme/tokens.dart';
 
 /// 回收站记忆列表 Provider
-final trashMemoriesProvider = FutureProvider.autoDispose<List<MemoryEntity>>((ref) async {
+final trashMemoriesProvider =
+    FutureProvider.autoDispose<List<MemoryEntity>>((ref) async {
   final repository = ref.watch(memoryRepositoryProvider);
-  return await repository.getTrash();
+  final conversationId = ref.watch(activeConversationIdProvider);
+  if (conversationId == null || conversationId.isEmpty) {
+    return const <MemoryEntity>[];
+  }
+  return await repository.getTrash(conversationId: conversationId);
 });
 
 /// 记忆回收站页面
@@ -71,11 +77,19 @@ class MemoryTrashPage extends ConsumerWidget {
     );
   }
 
-  Future<void> _restoreMemory(BuildContext context, WidgetRef ref, MemoryEntity memory) async {
+  Future<void> _restoreMemory(
+      BuildContext context, WidgetRef ref, MemoryEntity memory) async {
     final repository = ref.read(memoryRepositoryProvider);
-    
+    final conversationId = ref.read(activeConversationIdProvider);
+    if (conversationId == null || conversationId.isEmpty) {
+      if (context.mounted) {
+        MoeToast.error(context, '恢复失败: 当前会话无效');
+      }
+      return;
+    }
+
     try {
-      await repository.restore(memory.id);
+      await repository.restore(memory.id, conversationId: conversationId);
       ref.invalidate(trashMemoriesProvider);
       if (context.mounted) {
         MoeToast.success(context, '记忆已恢复');
@@ -105,7 +119,8 @@ class MemoryTrashPage extends ConsumerWidget {
             padding: const EdgeInsets.all(12),
             decoration: MoeG2Decoration(
               radius: 8,
-              color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+              color: theme.colorScheme.surfaceContainerHighest
+                  .withValues(alpha: 0.5),
             ),
             child: Text(
               memory.content,
@@ -134,7 +149,8 @@ class MemoryTrashPage extends ConsumerWidget {
     );
   }
 
-  Widget _buildInfoRow(BuildContext context, String label, String value, {Color? valueColor}) {
+  Widget _buildInfoRow(BuildContext context, String label, String value,
+      {Color? valueColor}) {
     final theme = Theme.of(context);
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -198,7 +214,8 @@ class _MemoryTrashItem extends StatelessWidget {
                   height: 40,
                   decoration: MoeG2Decoration(
                     radius: 10,
-                    color: theme.colorScheme.errorContainer.withValues(alpha: 0.3),
+                    color:
+                        theme.colorScheme.errorContainer.withValues(alpha: 0.3),
                   ),
                   child: Icon(
                     LucideIcons.brain,
@@ -219,9 +236,7 @@ class _MemoryTrashItem extends StatelessWidget {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        daysRemaining > 0
-                            ? '$daysRemaining 天后彻底删除'
-                            : '即将删除',
+                        daysRemaining > 0 ? '$daysRemaining 天后彻底删除' : '即将删除',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: daysRemaining <= 1
                               ? theme.colorScheme.error

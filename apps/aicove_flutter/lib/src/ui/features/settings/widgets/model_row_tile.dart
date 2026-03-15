@@ -233,6 +233,9 @@ class ModelRowTile extends ConsumerWidget {
     final ctxLimitCtrl = TextEditingController(
       text: currentConfig.contextMessageLimit?.toString() ?? '',
     );
+    final maxCtxTokensCtrl = TextEditingController(
+      text: currentConfig.maxContextTokens?.toString() ?? '',
+    );
     var selectedType = currentType;
     var disableToolCalling = currentConfig.disableToolCalling;
     var useAutoCapabilities = currentConfig.chatCapabilities == null;
@@ -595,6 +598,20 @@ class ModelRowTile extends ConsumerWidget {
                     ),
                   ],
                 ),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: maxCtxTokensCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    labelText: '最大上下文 Token',
+                    hintText: '自动',
+                    hintStyle: TextStyle(color: context.moeColors.muted),
+                    border: const OutlineInputBorder(),
+                    helperText: '留空=按模型名自动判断',
+                    helperStyle: TextStyle(
+                        fontSize: 10, color: context.moeColors.muted),
+                  ),
+                ),
 
                 // 禁用工具调用开关
                 const SizedBox(height: 16),
@@ -688,6 +705,7 @@ class ModelRowTile extends ConsumerWidget {
         final tempText = tempCtrl.text.trim();
         final topPText = topPCtrl.text.trim();
         final ctxText = ctxLimitCtrl.text.trim();
+        final maxCtxTokensText = maxCtxTokensCtrl.text.trim();
         final manualChatCapabilities = ChatModelCapability.values
             .where(
                 (capability) => selectedCapabilities.contains(capability.value))
@@ -705,6 +723,8 @@ class ModelRowTile extends ConsumerWidget {
           contextMessageLimit:
               ctxText.isNotEmpty ? int.tryParse(ctxText) : null,
           clearContextMessageLimit: ctxText.isEmpty,
+          maxContextTokens: maxCtxTokensText.isNotEmpty ? int.tryParse(maxCtxTokensText) : null,
+          clearMaxContextTokens: maxCtxTokensText.isEmpty,
           chatCapabilities:
               selectedType == ModelType.chat && !useAutoCapabilities
                   ? manualChatCapabilities

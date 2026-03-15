@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'package:uuid/uuid.dart';
@@ -129,10 +130,13 @@ class MemoryServiceConfig {
   });
 }
 
+enum MemoryIngestTrigger { daily, preFlush, manual }
+
 class MemoryService {
   final MemoryServiceConfig config;
   final MemoryRepository _memoryRepository;
   final MessageRepository _messageRepository;
+  static final Map<String, Future<void>> _conversationIngestLocks = {};
 
   late final ProfileService _profileService;
   late final MemoryMergerService _mergerService;
@@ -159,6 +163,25 @@ class MemoryService {
   }
 
   bool get isEmbeddingAvailable => _embeddingService != null;
+
+  Future<void> _withConversationIngestLock(
+    String conversationId,
+    Future<void> Function() action,
+  ) async {
+    final previous =
+        _conversationIngestLocks[conversationId] ?? Future<void>.value();
+    final operation = previous
+        .catchError((Object _, StackTrace __) {})
+        .then<void>((_) => action());
+    _conversationIngestLocks[conversationId] = operation;
+    try {
+      await operation;
+    } finally {
+      if (identical(_conversationIngestLocks[conversationId], operation)) {
+        _conversationIngestLocks.remove(conversationId);
+      }
+    }
+  }
 
   void _initEmbeddingService() {
     final primary = config.embeddingModel;
@@ -289,151 +312,55 @@ class MemoryService {
     }
   }
 
+  /// 统一的记忆入库入口。
+  ///
+  /// - 幂等：仅处理当前仍处于未总结状态的消息；已成功的 round 会直接跳过。
+  /// - 线程安全：同一会话的入库过程会被串行化，避免 daily / pre-flush 并发重复入库。
+  /// - 触发器职责：调用方只负责提供候选范围，完整生命周期由本方法统一处理。
+  Future<void> ingestMessages({
+    required String conversationId,
+    Iterable<String>? candidateMessageIds,
+    int? beforeTimestampExclusive,
+    required MemoryIngestTrigger trigger,
+  }) {
+    return _withConversationIngestLock(conversationId, () async {
+      final candidateRows = await _messageRepository.getIngestCandidates(
+        conversationId: conversationId,
+        candidateMessageIds: candidateMessageIds,
+        beforeTimestampExclusive: beforeTimestampExclusive,
+      );
+      if (candidateRows.isEmpty) return;
+
+      final planningRows = await _loadPlanningRowsForIngest(
+        conversationId: conversationId,
+        candidateRows: candidateRows,
+        beforeTimestampExclusive: beforeTimestampExclusive,
+        trigger: trigger,
+      );
+      final candidateIds = {for (final row in candidateRows) row.id};
+      final units = _buildIngestUnits(
+        planningRows,
+        trigger: trigger,
+        candidateMessageIds: candidateIds,
+      );
+      for (final unit in units) {
+        await _ingestUnit(conversationId: conversationId, unit: unit);
+      }
+    });
+  }
+
   Future<void> checkAndTriggerDailySummarization({
     required String conversationId,
   }) async {
     if (!config.enabled || !config.enableNextDayTrigger) return;
 
-    final all =
-        await _messageRepository.getAllByConversationOrdered(conversationId);
-    if (all.isEmpty) return;
-
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
-    final rounds = _splitByOneHourGap(all);
-
-    // Always group by full-day rounds first (including already summarized
-    // messages), so round_key generation stays stable across retries.
-    final grouped = <String, List<_DbMessageRound>>{};
-    for (final round in rounds) {
-      final start = DateTime.fromMillisecondsSinceEpoch(round.first.createdAt);
-      final dateKey = _dateKey(start);
-      final day = DateTime(start.year, start.month, start.day);
-      if (!day.isBefore(today)) continue;
-      grouped.putIfAbsent(dateKey, () => []).add(round);
-    }
-    if (grouped.isEmpty) return;
-
-    for (final entry in grouped.entries) {
-      final dateKey = entry.key;
-      final dayRounds = entry.value;
-      final dayMessages = dayRounds.expand((r) => r).toList()
-        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
-      if (!dayMessages.any((m) => !m.summarized)) continue;
-      final userCount = dayMessages.where((m) => m.role == 'user').length;
-
-      final units = <_RoundUnit>[];
-      if (userCount <= config.roundSplitThreshold || dayRounds.length <= 1) {
-        final rk = 'day:$dateKey';
-        units.add(_RoundUnit(
-          dateKey: dateKey,
-          roundKey: rk,
-          roundIndex: 0,
-          messages: dayMessages,
-        ));
-      } else {
-        for (var i = 0; i < dayRounds.length; i++) {
-          final r = dayRounds[i];
-          final first = r.first.createdAt;
-          final last = r.last.createdAt;
-          final rk = _sha1('$dateKey|$first|$last');
-          units.add(_RoundUnit(
-            dateKey: dateKey,
-            roundKey: rk,
-            roundIndex: i,
-            messages: r,
-          ));
-        }
-      }
-
-      for (final unit in units) {
-        final unsummarizedMessageIds =
-            unit.messages.where((m) => !m.summarized).map((m) => m.id).toList();
-        final existing = await _messageRepository.getSummarizationRecord(
-          conversationId: conversationId,
-          dateKey: unit.dateKey,
-          roundKey: unit.roundKey,
-        );
-
-        // Heal historical data where round is marked summarized but some
-        // messages are not. This can happen if old non-atomic writes existed.
-        if (existing?.summarized == true) {
-          if (unsummarizedMessageIds.isNotEmpty) {
-            final fixAt =
-                existing!.summarizedAt ?? DateTime.now().millisecondsSinceEpoch;
-            await _messageRepository.markMessagesSummarized(
-                unsummarizedMessageIds, fixAt);
-            AppLogger.warning(
-              'MemoryService',
-              'Fixed inconsistent summarized flags for successful round',
-              metadata: {
-                'conversationId': conversationId,
-                'dateKey': unit.dateKey,
-                'roundKey': unit.roundKey,
-                'fixedCount': unsummarizedMessageIds.length,
-              },
-            );
-          }
-          continue;
-        }
-
-        if (unsummarizedMessageIds.isEmpty) {
-          if (existing != null && existing.summarized == false) {
-            final summarizedAt = DateTime.now().millisecondsSinceEpoch;
-            await _messageRepository.markRoundSuccessAndMessages(
-              conversationId: conversationId,
-              dateKey: unit.dateKey,
-              roundKey: unit.roundKey,
-              summarizedAt: summarizedAt,
-              messageIds: const [],
-            );
-          }
-          continue;
-        }
-
-        await _messageRepository.upsertSummarizationRecord(
-          conversationId: conversationId,
-          dateKey: unit.dateKey,
-          roundKey: unit.roundKey,
-          roundIndex: unit.roundIndex,
-          firstMsgTime: unit.messages.first.createdAt,
-          lastMsgTime: unit.messages.last.createdAt,
-          messageCount: unit.messages.length,
-          summarized: false,
-          errorMessage: null,
-        );
-
-        try {
-          final domainMessages = unit.messages
-              .map((m) => chat.Message(
-                    id: m.id,
-                    role: m.role,
-                    content: m.content,
-                    createdAt: DateTime.fromMillisecondsSinceEpoch(m.createdAt),
-                    status: m.status,
-                  ))
-              .toList();
-          await summarizeAndStore(domainMessages,
-              conversationId: conversationId);
-
-          final summarizedAt = DateTime.now().millisecondsSinceEpoch;
-          await _messageRepository.markRoundSuccessAndMessages(
-            conversationId: conversationId,
-            dateKey: unit.dateKey,
-            roundKey: unit.roundKey,
-            summarizedAt: summarizedAt,
-            messageIds: unsummarizedMessageIds,
-          );
-        } catch (e) {
-          await _messageRepository.markRoundFailure(
-            conversationId: conversationId,
-            dateKey: unit.dateKey,
-            roundKey: unit.roundKey,
-            errorMessage: e.toString(),
-          );
-        }
-      }
-    }
+    await ingestMessages(
+      conversationId: conversationId,
+      beforeTimestampExclusive: today.millisecondsSinceEpoch,
+      trigger: MemoryIngestTrigger.daily,
+    );
   }
 
   Future<void> runPreFlush({
@@ -442,11 +369,23 @@ class MemoryService {
   }) async {
     if (!config.enabled ||
         !config.enablePreFlush ||
-        messagesLikelyToLose.isEmpty) return;
+        messagesLikelyToLose.isEmpty) {
+      return;
+    }
     final focus = messagesLikelyToLose.length > 12
         ? messagesLikelyToLose.sublist(messagesLikelyToLose.length - 12)
         : messagesLikelyToLose;
-    await summarizeAndStore(focus, conversationId: conversationId);
+    final messageIds = focus
+        .map((m) => m.id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (messageIds.isEmpty) return;
+    await ingestMessages(
+      conversationId: conversationId,
+      candidateMessageIds: messageIds,
+      trigger: MemoryIngestTrigger.preFlush,
+    );
   }
 
   Future<String> getProfilePrompt(String conversationId) async {
@@ -530,12 +469,197 @@ class MemoryService {
     }
   }
 
+  Future<List<db.Message>> _loadPlanningRowsForIngest({
+    required String conversationId,
+    required List<db.Message> candidateRows,
+    int? beforeTimestampExclusive,
+    required MemoryIngestTrigger trigger,
+  }) async {
+    if (candidateRows.isEmpty || trigger != MemoryIngestTrigger.daily) {
+      return candidateRows;
+    }
+
+    final candidateDateKeys = {
+      for (final row in candidateRows)
+        _dateKey(DateTime.fromMillisecondsSinceEpoch(row.createdAt)),
+    };
+    final allRows =
+        await _messageRepository.getAllByConversationOrdered(conversationId);
+    final scoped = allRows.where((row) {
+      if (beforeTimestampExclusive != null &&
+          row.createdAt >= beforeTimestampExclusive) {
+        return false;
+      }
+      final dateKey =
+          _dateKey(DateTime.fromMillisecondsSinceEpoch(row.createdAt));
+      return candidateDateKeys.contains(dateKey);
+    }).toList(growable: false);
+    return scoped.isEmpty ? candidateRows : scoped;
+  }
+
+  List<_RoundUnit> _buildIngestUnits(
+    List<db.Message> orderedMessages, {
+    required MemoryIngestTrigger trigger,
+    required Set<String> candidateMessageIds,
+  }) {
+    if (orderedMessages.isEmpty || candidateMessageIds.isEmpty) return const [];
+
+    final rounds = _splitByOneHourGap(orderedMessages);
+    final grouped = <String, List<_DbMessageRound>>{};
+    for (final round in rounds) {
+      if (!round.any((m) => candidateMessageIds.contains(m.id))) continue;
+      final start = DateTime.fromMillisecondsSinceEpoch(round.first.createdAt);
+      final dateKey = _dateKey(start);
+      grouped.putIfAbsent(dateKey, () => []).add(round);
+    }
+    if (grouped.isEmpty) return const [];
+
+    final units = <_RoundUnit>[];
+    for (final entry in grouped.entries) {
+      final dateKey = entry.key;
+      final dayRounds = entry.value;
+      final dayMessages = dayRounds.expand((r) => r).toList()
+        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      final dayMessageIds = [
+        for (final message in dayMessages)
+          if (candidateMessageIds.contains(message.id)) message.id,
+      ];
+      if (dayMessageIds.isEmpty) continue;
+
+      final userCount = dayMessages.where((m) => m.role == 'user').length;
+      final allowDayAggregation = trigger == MemoryIngestTrigger.daily &&
+          !dayMessages.any((m) => m.summarized) &&
+          (userCount <= config.roundSplitThreshold || dayRounds.length <= 1);
+      if (allowDayAggregation) {
+        units.add(_RoundUnit(
+          dateKey: dateKey,
+          roundKey: 'day:$dateKey',
+          roundIndex: 0,
+          messages: dayMessages,
+          messageIds: dayMessageIds,
+        ));
+        continue;
+      }
+
+      for (var i = 0; i < dayRounds.length; i++) {
+        final roundMessages = dayRounds[i];
+        final roundMessageIds = [
+          for (final message in roundMessages)
+            if (candidateMessageIds.contains(message.id)) message.id,
+        ];
+        if (roundMessageIds.isEmpty) continue;
+        final first = roundMessages.first.createdAt;
+        final last = roundMessages.last.createdAt;
+        units.add(_RoundUnit(
+          dateKey: dateKey,
+          roundKey: _sha1('$dateKey|$first|$last'),
+          roundIndex: i,
+          messages: roundMessages,
+          messageIds: roundMessageIds,
+        ));
+      }
+    }
+    return units;
+  }
+
+  Future<void> _ingestUnit({
+    required String conversationId,
+    required _RoundUnit unit,
+  }) async {
+    final unsummarizedMessageIds = unit.messageIds;
+    final existing = await _messageRepository.getSummarizationRecord(
+      conversationId: conversationId,
+      dateKey: unit.dateKey,
+      roundKey: unit.roundKey,
+    );
+
+    // Heal historical data where round is marked summarized but some messages
+    // are not. This can happen if old non-atomic writes existed.
+    if (existing?.summarized == true) {
+      if (unsummarizedMessageIds.isNotEmpty) {
+        final fixAt =
+            existing!.summarizedAt ?? DateTime.now().millisecondsSinceEpoch;
+        await _messageRepository.markMessagesSummarized(
+          unsummarizedMessageIds,
+          fixAt,
+        );
+        AppLogger.warning(
+          'MemoryService',
+          'Fixed inconsistent summarized flags for successful round',
+          metadata: {
+            'conversationId': conversationId,
+            'dateKey': unit.dateKey,
+            'roundKey': unit.roundKey,
+            'fixedCount': unsummarizedMessageIds.length,
+          },
+        );
+      }
+      return;
+    }
+
+    if (unsummarizedMessageIds.isEmpty) {
+      if (existing != null && existing.summarized == false) {
+        final summarizedAt = DateTime.now().millisecondsSinceEpoch;
+        await _messageRepository.markRoundSuccessAndMessages(
+          conversationId: conversationId,
+          dateKey: unit.dateKey,
+          roundKey: unit.roundKey,
+          summarizedAt: summarizedAt,
+          messageIds: const [],
+        );
+      }
+      return;
+    }
+
+    await _messageRepository.upsertSummarizationRecord(
+      conversationId: conversationId,
+      dateKey: unit.dateKey,
+      roundKey: unit.roundKey,
+      roundIndex: unit.roundIndex,
+      firstMsgTime: unit.messages.first.createdAt,
+      lastMsgTime: unit.messages.last.createdAt,
+      messageCount: unit.messages.length,
+      summarized: false,
+      errorMessage: null,
+    );
+
+    try {
+      final domainMessages = unit.messages
+          .map((m) => chat.Message(
+                id: m.id,
+                role: m.role,
+                content: m.content,
+                createdAt: DateTime.fromMillisecondsSinceEpoch(m.createdAt),
+                status: m.status,
+              ))
+          .toList(growable: false);
+      await summarizeAndStore(domainMessages, conversationId: conversationId);
+
+      final summarizedAt = DateTime.now().millisecondsSinceEpoch;
+      await _messageRepository.markRoundSuccessAndMessages(
+        conversationId: conversationId,
+        dateKey: unit.dateKey,
+        roundKey: unit.roundKey,
+        summarizedAt: summarizedAt,
+        messageIds: unsummarizedMessageIds,
+      );
+    } catch (e) {
+      await _messageRepository.markRoundFailure(
+        conversationId: conversationId,
+        dateKey: unit.dateKey,
+        roundKey: unit.roundKey,
+        errorMessage: e.toString(),
+      );
+    }
+  }
+
   Future<_ParsedSummary> _summarizeWithClassification(
       List<chat.Message> messages) async {
     final prompt = _buildSummaryPrompt(messages);
     final raw = await _callSummarizeLLM(prompt);
-    if (raw == null || raw.trim().isEmpty)
+    if (raw == null || raw.trim().isEmpty) {
       return const _ParsedSummary(items: []);
+    }
     return _parseSummaryPayload(raw);
   }
 
@@ -636,16 +760,19 @@ class MemoryService {
     final buffer = StringBuffer();
     buffer.writeln('【${_extractTitle(fact)}】');
     buffer.writeln('事件：$fact');
-    if (chatProcess != null && chatProcess.isNotEmpty)
+    if (chatProcess != null && chatProcess.isNotEmpty) {
       buffer.writeln('聊天经过：$chatProcess');
+    }
     if (emotion != null && emotion.isNotEmpty) buffer.writeln('情绪：$emotion');
     if (personalityInsight != null && personalityInsight.isNotEmpty) {
       buffer.writeln('性格分析：$personalityInsight');
     }
-    if (aiStrategy != null && aiStrategy.isNotEmpty)
+    if (aiStrategy != null && aiStrategy.isNotEmpty) {
       buffer.writeln('应对策略：$aiStrategy');
-    if (currentStatus != null && currentStatus.isNotEmpty)
+    }
+    if (currentStatus != null && currentStatus.isNotEmpty) {
       buffer.writeln('→ 当前状态：$currentStatus');
+    }
     return buffer.toString().trim();
   }
 
@@ -848,11 +975,13 @@ class _RoundUnit {
   final String roundKey;
   final int roundIndex;
   final List<db.Message> messages;
+  final List<String> messageIds;
 
   const _RoundUnit({
     required this.dateKey,
     required this.roundKey,
     required this.roundIndex,
     required this.messages,
+    required this.messageIds,
   });
 }

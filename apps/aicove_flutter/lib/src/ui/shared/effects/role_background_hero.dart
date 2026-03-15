@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'smooth_clip.dart';
 import '../../../core/utils/role_transition_tags.dart';
-import '../../../core/utils/blurred_background_cache.dart';
-import '../../theme/tokens.dart';
 
 /// 角色背景 Hero 组件
 ///
@@ -34,48 +32,6 @@ class RoleBackgroundHero extends StatefulWidget {
 }
 
 class _RoleBackgroundHeroState extends State<RoleBackgroundHero> {
-  ImageProvider? _blurredImage;
-  bool _isFallback = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadBackground();
-  }
-
-  void _loadBackground() {
-    final (image, isFallback) = BlurredBackgroundCache.getOrFallback(
-      widget.conversationId,
-      widget.imageProvider,
-    );
-    _blurredImage = image;
-    _isFallback = isFallback;
-
-    // 如果是 fallback，异步加载真正的模糊图
-    if (isFallback && widget.isDestination) {
-      _loadBlurredAsync();
-    }
-  }
-
-  Future<void> _loadBlurredAsync() async {
-    // 等待 Hero 动画完成后再替换（约 300ms）
-    await Future.delayed(kAnimPageReverse);
-    if (!mounted) return;
-
-    final blurred = await BlurredBackgroundCache.getBlurredFuture(
-      widget.conversationId,
-      widget.imageProvider,
-      context,
-    );
-
-    if (mounted && blurred != null) {
-      setState(() {
-        _blurredImage = blurred;
-        _isFallback = false;
-      });
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Hero(
@@ -100,7 +56,8 @@ class _RoleBackgroundHeroState extends State<RoleBackgroundHero> {
     return AnimatedBuilder(
       animation: animation,
       builder: (context, child) {
-        final currentRadius = lerpDouble(fromRadius, toRadius, animation.value) ?? fromRadius;
+        final currentRadius =
+            lerpDouble(fromRadius, toRadius, animation.value) ?? fromRadius;
         return MoeG2ClipRRect(
           radius: currentRadius,
           child: _buildBackgroundImage(),
@@ -120,17 +77,7 @@ class _RoleBackgroundHeroState extends State<RoleBackgroundHero> {
   }
 
   Widget _buildBackgroundImage() {
-    final image = _blurredImage ?? widget.imageProvider;
-
-    // 详情页：如果从 fallback 切换到 blurred，使用淡入动画
-    if (widget.isDestination && !_isFallback) {
-      return AnimatedSwitcher(
-        duration: kAnimFast,
-        child: _buildImageWidget(image, key: ValueKey(_isFallback)),
-      );
-    }
-
-    return _buildImageWidget(image);
+    return _buildImageWidget(widget.imageProvider);
   }
 
   Widget _buildImageWidget(ImageProvider image, {Key? key}) {

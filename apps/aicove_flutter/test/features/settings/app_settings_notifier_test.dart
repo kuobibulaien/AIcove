@@ -351,6 +351,135 @@ void main() {
     );
   });
 
+  test('history_message_limit should load from persisted store', () async {
+    final store = <String, dynamic>{
+      'providers': [
+        {
+          'id': 'openai',
+          'displayName': 'OpenAI',
+          'apiKeys': <String>[],
+          'apiBaseUrl': 'https://api.example.com/v1',
+          'enabled': true,
+          'models': <String>['gpt-4o'],
+          'visible_models': <String>['gpt-4o'],
+          'hidden_models': <String>[],
+          'capabilities': <String>['chat'],
+        },
+      ],
+      'default_model': 'openai:gpt-4o',
+      'default_chat_models': <String>['openai:gpt-4o'],
+      'visible_models': <String>['gpt-4o'],
+      'history_message_limit': 42,
+    };
+
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'aicove.ui_models.v1': jsonEncode(store),
+    });
+
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    final settings = await container.read(appSettingsProvider.future);
+    expect(settings.historyMessageLimit, 42);
+  });
+
+  test('setHistoryMessageLimit should persist values', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    await container.read(appSettingsProvider.future);
+    final notifier = container.read(appSettingsProvider.notifier);
+
+    await notifier.setHistoryMessageLimit(36);
+
+    final settings = container.read(appSettingsProvider).requireValue;
+    expect(settings.historyMessageLimit, 36);
+
+    final prefs = await SharedPreferences.getInstance();
+    final saved = jsonDecode(prefs.getString('aicove.ui_models.v1')!)
+        as Map<String, dynamic>;
+    expect(saved['history_message_limit'], 36);
+  });
+
+  test(
+      'provider max_context_tokens should survive normalization and override model defaults',
+      () async {
+    final store = <String, dynamic>{
+      'providers': [
+        {
+          'id': 'openai',
+          'displayName': 'OpenAI',
+          'apiKeys': <String>[],
+          'apiBaseUrl': 'https://api.example.com/v1',
+          'enabled': true,
+          'models': <String>['gpt-4o'],
+          'visible_models': <String>['gpt-4o'],
+          'hidden_models': <String>[],
+          'capabilities': <String>['chat'],
+          'max_context_tokens': 65536,
+        },
+      ],
+      'default_model': 'openai:gpt-4o',
+      'default_chat_models': <String>['openai:gpt-4o'],
+      'visible_models': <String>['gpt-4o'],
+    };
+
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'aicove.ui_models.v1': jsonEncode(store),
+    });
+
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    final settings = await container.read(appSettingsProvider.future);
+    final provider = settings.providers.firstWhere((p) => p.id == 'openai');
+
+    expect(provider.maxContextTokens, 65536);
+    expect(settings.getMaxContextTokens('openai:gpt-4o'), 65536);
+  });
+
+  test('updateProviderParams should persist provider max_context_tokens',
+      () async {
+    final store = <String, dynamic>{
+      'providers': [
+        {
+          'id': 'openai',
+          'displayName': 'OpenAI',
+          'apiKeys': <String>[],
+          'apiBaseUrl': 'https://api.example.com/v1',
+          'enabled': true,
+          'models': <String>['gpt-4o'],
+          'visible_models': <String>['gpt-4o'],
+          'hidden_models': <String>[],
+          'capabilities': <String>['chat'],
+        },
+      ],
+      'default_model': 'openai:gpt-4o',
+      'default_chat_models': <String>['openai:gpt-4o'],
+      'visible_models': <String>['gpt-4o'],
+    };
+
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'aicove.ui_models.v1': jsonEncode(store),
+    });
+
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    await container.read(appSettingsProvider.future);
+    final notifier = container.read(appSettingsProvider.notifier);
+    await notifier.updateProviderParams(
+      providerId: 'openai',
+      maxContextTokens: 65536,
+    );
+
+    final settings = container.read(appSettingsProvider).requireValue;
+    final provider = settings.providers.firstWhere((p) => p.id == 'openai');
+    expect(provider.maxContextTokens, 65536);
+    expect(settings.getMaxContextTokens('openai:gpt-4o'), 65536);
+  });
+
   test('loading legacy provider model_type should scrub old field', () async {
     final store = <String, dynamic>{
       'providers': [

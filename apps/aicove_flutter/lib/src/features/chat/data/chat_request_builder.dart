@@ -356,10 +356,7 @@ class ChatRequestBuilder {
     final providerConfig = await resolveProviderConfig(settings);
 
     // Token 截断：确保消息总长度不超过模型上下文限制
-    final modelName = providerConfig.modelFullId.contains(':')
-        ? providerConfig.modelFullId.split(':').last
-        : providerConfig.modelFullId;
-    final maxContextTokens = getModelContextLimit(modelName);
+    final maxContextTokens = settings.getMaxContextTokens(settings.defaultModelName);
     final truncatedMessages = truncateMessagesToFit(
       messages: messages,
       maxContextTokens: maxContextTokens,

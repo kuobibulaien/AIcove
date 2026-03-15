@@ -58,7 +58,20 @@ class MemoryRepository {
     }
   }
 
-  Future<void> updateMemory(MemoryEntity memory) async {
+  Future<void> updateMemory(
+    MemoryEntity memory, {
+    String? conversationId,
+  }) async {
+    final existing = await (_db.select(_db.memories)
+          ..where((t) => t.id.equals(memory.id)))
+        .getSingleOrNull();
+    if (existing == null) return;
+    _validateConversationId(
+      memoryId: memory.id,
+      actualConversationId: existing.conversationId,
+      expectedConversationId: conversationId,
+      nextConversationId: memory.conversationId,
+    );
     await (_db.update(_db.memories)..where((t) => t.id.equals(memory.id)))
         .write(_toCompanion(memory));
     if (memory.deletedAt == null &&
@@ -352,7 +365,19 @@ LIMIT 20
     };
   }
 
-  Future<void> softDelete(String id, {String reason = 'user_delete'}) async {
+  Future<void> softDelete(
+    String id, {
+    String reason = 'user_delete',
+    String? conversationId,
+  }) async {
+    final row = await (_db.select(_db.memories)..where((t) => t.id.equals(id)))
+        .getSingleOrNull();
+    if (row == null) return;
+    _validateConversationId(
+      memoryId: id,
+      actualConversationId: row.conversationId,
+      expectedConversationId: conversationId,
+    );
     final now = DateTime.now();
     final purge = now.add(const Duration(days: trashRetentionDays));
 
@@ -367,10 +392,15 @@ LIMIT 20
     await _writeTombstone(id, reason, now, purge);
   }
 
-  Future<void> restore(String id) async {
+  Future<void> restore(String id, {String? conversationId}) async {
     final row = await (_db.select(_db.memories)..where((t) => t.id.equals(id)))
         .getSingleOrNull();
     if (row == null) return;
+    _validateConversationId(
+      memoryId: id,
+      actualConversationId: row.conversationId,
+      expectedConversationId: conversationId,
+    );
     await (_db.update(_db.memories)..where((t) => t.id.equals(id))).write(
       MemoriesCompanion(
         deletedAt: const Value(null),
@@ -380,6 +410,32 @@ LIMIT 20
     );
     if (row.conversationId != null) {
       await _upsertFts(row.id, row.conversationId!, row.content);
+    }
+  }
+
+  void _validateConversationId({
+    required String memoryId,
+    required String? actualConversationId,
+    String? expectedConversationId,
+    String? nextConversationId,
+  }) {
+    final normalizedExpected = expectedConversationId?.trim();
+    if (normalizedExpected == null || normalizedExpected.isEmpty) return;
+
+    final normalizedActual = actualConversationId?.trim();
+    if (normalizedActual != normalizedExpected) {
+      throw StateError(
+        'Memory $memoryId does not belong to conversation $normalizedExpected',
+      );
+    }
+
+    final normalizedNext = nextConversationId?.trim();
+    if (normalizedNext != null &&
+        normalizedNext.isNotEmpty &&
+        normalizedNext != normalizedExpected) {
+      throw StateError(
+        'Memory $memoryId cannot move to conversation $normalizedNext',
+      );
     }
   }
 

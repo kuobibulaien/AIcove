@@ -12,6 +12,8 @@
 .aceignore
 AGENTS.md
 .claude/settings.local.json
+.codex-polish/
+.codex-polish-draft-*.md
 
 # Windows 误创建的空文件
 nul

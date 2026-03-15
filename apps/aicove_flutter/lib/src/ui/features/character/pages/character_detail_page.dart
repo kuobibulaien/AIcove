@@ -1,10 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../core/utils/avatar_helper.dart';
+import '../../../../core/utils/blurred_background_service.dart';
 import '../../../../core/utils/role_transition_tags.dart';
-import '../../../../core/utils/blurred_background_cache.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../../ui/shared/animations/hero_rect_tweens.dart';
 import '../../../../ui/shared/effects/frosted_glass_card.dart';
@@ -45,56 +47,12 @@ class CharacterDetailPage extends ConsumerStatefulWidget {
 
 class _CharacterDetailPageState extends ConsumerState<CharacterDetailPage> {
   Animation<double>? _routeAnimation;
-  bool _blurWarmupScheduled = false;
+  String? _scheduledBlurSource;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-
-    final animation = ModalRoute.of(context)?.animation;
-    if (_routeAnimation == animation) return;
-
-    _routeAnimation?.removeStatusListener(_onRouteAnimationStatus);
-    _routeAnimation = animation;
-    _routeAnimation?.addStatusListener(_onRouteAnimationStatus);
-
-    // 某些场景下 animation 可能为空或已结束（如直接展示/热重载）。此时直接安排一次预热。
-    if (animation == null || animation.status == AnimationStatus.completed) {
-      _scheduleBlurWarmupAfterTransition();
-    }
-  }
-
-  @override
-  void dispose() {
-    _routeAnimation?.removeStatusListener(_onRouteAnimationStatus);
-    super.dispose();
-  }
-
-  void _onRouteAnimationStatus(AnimationStatus status) {
-    if (status == AnimationStatus.completed) {
-      _scheduleBlurWarmupAfterTransition();
-    }
-  }
-
-  void _scheduleBlurWarmupAfterTransition() {
-    if (_blurWarmupScheduled) return;
-    _blurWarmupScheduled = true;
-
-    // 关键：不要在转场动画中做“生成模糊图”这种重活。
-    // 等动画结束后，下一帧再开始，避免掉帧。
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-
-      final blurAsset =
-          _deriveBlurAssetPath(widget.initialConversation.characterImage);
-      if (blurAsset != null) return; // 有预制模糊图就不用生成
-
-      final imageProvider = _getImageProvider(widget.initialConversation);
-      if (imageProvider == null) return;
-
-      BlurredBackgroundCache.warm(
-          widget.conversationId, imageProvider, context);
-    });
+    _routeAnimation = ModalRoute.of(context)?.animation;
   }
 
   @override
@@ -245,32 +203,26 @@ class _CharacterDetailPageState extends ConsumerState<CharacterDetailPage> {
   /// 背景（使用静态模糊图，无遮罩）
   Widget _buildBackground(BuildContext context, Conversation conversation) {
     final colors = context.moeColors;
-    final imageProvider = _getImageProvider(conversation);
-    if (imageProvider == null) {
+    final source = _getBackgroundSource(conversation);
+    if (source == null) {
       return Container(color: colors.surface);
     }
-
-    final blurAsset = _deriveBlurAssetPath(conversation.characterImage);
+    _scheduleEnsureBlur(source);
 
     return Stack(
       fit: StackFit.expand,
       children: [
-        Container(color: colors.surface),
-        if (blurAsset != null)
-          Image.asset(
-            blurAsset,
-            fit: BoxFit.cover,
-            gaplessPlayback: true,
-            filterQuality: FilterQuality.medium,
-            errorBuilder: (_, __, ___) => _buildGeneratedBackgroundImage(
-              context,
-              conversation.id,
-              imageProvider,
-            ),
-          )
-        else
-          _buildGeneratedBackgroundImage(
-              context, conversation.id, imageProvider),
+        _buildGradientFallback(colors),
+        ValueListenableBuilder<int>(
+          valueListenable: BlurredBackgroundService.ticker,
+          builder: (context, _, __) {
+            final provider = BlurredBackgroundService.getBlurProvider(source);
+            return AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              child: _buildBlurLayer(source, provider),
+            );
+          },
+        ),
         // 轻微玻璃提亮/压暗（与卡片一致）
         Builder(builder: (context) {
           final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -284,64 +236,81 @@ class _CharacterDetailPageState extends ConsumerState<CharacterDetailPage> {
     );
   }
 
-  String? _deriveBlurAssetPath(String? originalAssetPath) {
-    if (originalAssetPath == null) return null;
-    final trimmed = originalAssetPath.trim();
-    if (!trimmed.startsWith('assets/')) return null;
-    final dot = trimmed.lastIndexOf('.');
-    if (dot <= 0) return null;
-    return '${trimmed.substring(0, dot)}_blur${trimmed.substring(dot)}';
+  String? _getBackgroundSource(Conversation conversation) {
+    return BlurredBackgroundService.pickPreferredSource(
+      characterImage: conversation.characterImage,
+      avatarUrl: conversation.avatarUrl,
+    );
   }
 
-  Widget _buildGeneratedBackgroundImage(
-    BuildContext context,
-    String conversationId,
-    ImageProvider imageProvider,
-  ) {
-    return ValueListenableBuilder<int>(
-      valueListenable: BlurredBackgroundCache.ticker,
-      builder: (context, _, unused) {
-        final (bgProvider, isFallback) = BlurredBackgroundCache.getOrFallback(
-          conversationId,
-          imageProvider,
-        );
+  void _scheduleEnsureBlur(String source) {
+    if (_scheduledBlurSource == source) return;
+    _scheduledBlurSource = source;
 
-        // 兜底策略：如果静态模糊图还没就绪，用“低分辨率放大”模拟模糊感。
-        // 这样比实时 ImageFilter.blur 更省 GPU/更不容易在转场时掉帧。
-        final displayProvider = isFallback
-            ? ResizeImage(
-                bgProvider,
-                width: 96,
-                height: 96,
-                policy: ResizeImagePolicy.fit,
-              )
-            : bgProvider;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(
+        BlurredBackgroundService.ensureBlur(source).then((provider) {
+          if (!mounted) return;
+          if (provider == null && _scheduledBlurSource == source) {
+            _scheduledBlurSource = null;
+          }
+        }),
+      );
+    });
+  }
 
-        final baseImage = Image(
-          image: displayProvider,
+  Widget _buildBlurLayer(String source, ImageProvider? provider) {
+    final blurAsset = BlurredBackgroundService.deriveBlurAssetPath(source);
+
+    if (blurAsset != null) {
+      return SizedBox.expand(
+        key: ValueKey('asset:$blurAsset'),
+        child: Image.asset(
+          blurAsset,
           fit: BoxFit.cover,
           gaplessPlayback: true,
-          filterQuality: isFallback ? FilterQuality.none : FilterQuality.medium,
-        );
+          filterQuality: FilterQuality.medium,
+          errorBuilder: (_, __, ___) => provider == null
+              ? const SizedBox.shrink(key: ValueKey('empty'))
+              : _buildBlurImage(provider, key: ValueKey('file:$source')),
+        ),
+      );
+    }
 
-        if (isFallback) {
-          // 放大一点避免边缘留白
-          return Transform.scale(scale: 1.2, child: baseImage);
-        }
+    if (provider == null) {
+      return const SizedBox.shrink(key: ValueKey('empty'));
+    }
 
-        return baseImage;
-      },
+    return _buildBlurImage(provider, key: ValueKey('file:$source'));
+  }
+
+  Widget _buildBlurImage(ImageProvider provider, {required Key key}) {
+    return SizedBox.expand(
+      key: key,
+      child: Image(
+        image: provider,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        filterQuality: FilterQuality.medium,
+      ),
     );
   }
 
-  /// 获取图片 Provider（立绘优先级）
-  ImageProvider? _getImageProvider(Conversation conversation) {
-    final helper = AvatarHelper(
-      avatarUrl: conversation.avatarUrl,
-      characterImage: conversation.characterImage,
-      displayName: conversation.displayName,
+  Widget _buildGradientFallback(MoeColors colors) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            colors.surface,
+            colors.primary.withValues(alpha: isDark ? 0.18 : 0.1),
+            isDark ? const Color(0xFF11161C) : Colors.white,
+          ],
+        ),
+      ),
     );
-    return helper.getCharacterProvider();
   }
 
   /// 角色立绘展示（将 Hero 移入 AspectRatio 内部，确保 Hero 的内容比例恒定为 3:4，解决形变问题）

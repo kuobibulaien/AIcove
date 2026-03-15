@@ -7,12 +7,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'ui/theme/tokens.dart';
+import 'ui/shared/animations/parallax_slide_page_route.dart';
 import 'ui/shared/widgets/desktop_window_frame.dart';
 import 'ui/features/home/pages/main_page.dart';
 import 'ui/features/chat/pages/chat_page.dart';
 import 'ui/features/chat/pages/split_chat_page.dart';
 import 'ui/features/character/pages/contact_edit_page.dart';
 import 'core/models/message_block.dart';
+import 'core/utils/blurred_background_service.dart';
 import 'core/utils/image_preheat_queue.dart';
 import 'core/utils/svg_preheat.dart';
 import 'core/log_history_service.dart';
@@ -43,6 +45,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   Timer? _recentConversationsWarmupRetryTimer;
   bool _recentConversationsWarmupPending = false;
   bool _recentConversationsWarmupScheduled = false;
+  bool _blurMigrationRunning = false;
 
   @override
   void initState() {
@@ -51,6 +54,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
     // 初始化日志系统（从文件加载当天日志）
     _initializeLoggers();
+    unawaited(BlurredBackgroundService.init());
 
     // App 启动后，尽早预热"最近会话"的图片（避免用户一打开就点进聊天导致闪烁）
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -170,6 +174,8 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         maxImagesToCache: maxImagesToCache,
       ));
     }
+
+    unawaited(_migrateConversationBlurBackgrounds(sorted));
   }
 
   Future<void> _warmupRecentConversationPreview(
@@ -178,10 +184,11 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     required int maxImagesToCache,
   }) async {
     final queue = ref.read(imagePreheatQueueProvider);
-    final messages = await ref.read(chatHistoryStoreProvider).loadRecentMessages(
-          conv.id,
-          limit: maxMessagesToScan,
-        );
+    final messages =
+        await ref.read(chatHistoryStoreProvider).loadRecentMessages(
+              conv.id,
+              limit: maxMessagesToScan,
+            );
     if (!mounted) return;
     queue.enqueueAll(
       _collectConversationPreviewProviders(
@@ -193,6 +200,52 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       createLocalImageConfiguration(context),
       priority: ImagePreheatPriority.high,
     );
+  }
+
+  Future<void> _migrateConversationBlurBackgrounds(
+    List<Conversation> conversations,
+  ) async {
+    if (_blurMigrationRunning) return;
+    _blurMigrationRunning = true;
+
+    try {
+      await BlurredBackgroundService.init();
+      final pendingSources = <String>[];
+      final seen = <String>{};
+
+      for (final conv in conversations) {
+        final source = BlurredBackgroundService.pickPreferredSource(
+          characterImage: conv.characterImage,
+          avatarUrl: conv.avatarUrl,
+        );
+        if (!BlurredBackgroundService.shouldPreGenerateEagerly(source)) {
+          continue;
+        }
+        if (source == null || !seen.add(source)) continue;
+        if (BlurredBackgroundService.hasBlur(source)) continue;
+        pendingSources.add(source);
+      }
+
+      var nextIndex = 0;
+
+      Future<void> worker() async {
+        while (nextIndex < pendingSources.length) {
+          final source = pendingSources[nextIndex++];
+          await BlurredBackgroundService.ensureBlur(
+            source,
+            allowNetwork: false,
+          );
+          await Future<void>.delayed(Duration.zero);
+        }
+      }
+
+      await Future.wait([
+        worker(),
+        worker(),
+      ]);
+    } finally {
+      _blurMigrationRunning = false;
+    }
   }
 
   DateTime _conversationRecency(Conversation c) {
@@ -305,6 +358,8 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
   /// 创建路由配置（只调用一次）
   GoRouter _createRouter() {
+    const parallaxConfig = ParallaxSlideConfig.defaultConfig;
+
     return GoRouter(
       routes: [
         GoRoute(
@@ -320,26 +375,8 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
               key: state.pageKey,
               child: child,
               // 主页面被覆盖时的视差动画（参考鸿蒙NEXT风格）
-              // 优化：使用专用 Transition widget，减少每帧对象创建
               transitionsBuilder:
-                  (context, animation, secondaryAnimation, child) {
-                const curve = Curves.fastOutSlowIn;
-                final curvedSecondary = CurvedAnimation(
-                  parent: secondaryAnimation,
-                  curve: curve,
-                );
-
-                final slideTween = Tween(
-                  begin: Offset.zero,
-                  end: const Offset(-0.08, 0.0),
-                );
-
-                // 底层页面 - 仅微幅左移，无遮罩
-                return SlideTransition(
-                  position: curvedSecondary.drive(slideTween),
-                  child: child,
-                );
-              },
+                  buildSecondaryParallaxTransition(config: parallaxConfig),
             );
           },
           routes: [
@@ -355,35 +392,11 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
                   child: ChatPage(
                       conversationId: id,
                       initialConversation: initialConversation),
-                  transitionDuration: kAnimPage,
-                  reverseTransitionDuration: kAnimPageReverse,
+                  transitionDuration: parallaxConfig.duration,
+                  reverseTransitionDuration: parallaxConfig.reverseDuration,
                   // 视差滑动动画：新页面从右边滑入覆盖，左侧带阴影
                   transitionsBuilder:
-                      (context, animation, secondaryAnimation, child) {
-                    const curve = Curves.fastOutSlowIn;
-
-                    final slideIn = Tween(
-                      begin: const Offset(1.0, 0.0),
-                      end: Offset.zero,
-                    ).chain(CurveTween(curve: curve));
-
-                    return SlideTransition(
-                      position: animation.drive(slideIn),
-                      // 左侧阴影 - 增强层次感
-                      child: DecoratedBox(
-                        decoration: const BoxDecoration(
-                          boxShadow: [
-                            BoxShadow(
-                              color: Color(0x33000000), // 20% 黑色
-                              blurRadius: 16,
-                              offset: Offset(-4, 0), // 向左偏移
-                            ),
-                          ],
-                        ),
-                        child: child,
-                      ),
-                    );
-                  },
+                      buildPrimaryParallaxTransition(config: parallaxConfig),
                 );
               },
             ),
@@ -403,21 +416,10 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
                   key: state.pageKey,
                   child: ContactEditPage(
                       conversation: tempConv, editMode: EditMode.create),
+                  transitionDuration: parallaxConfig.duration,
+                  reverseTransitionDuration: parallaxConfig.reverseDuration,
                   transitionsBuilder:
-                      (context, animation, secondaryAnimation, child) {
-                    const begin = Offset(1.0, 0.0);
-                    const end = Offset.zero;
-                    const curve = Curves.easeInOut;
-
-                    var tween = Tween(begin: begin, end: end).chain(
-                      CurveTween(curve: curve),
-                    );
-
-                    return SlideTransition(
-                      position: animation.drive(tween),
-                      child: child,
-                    );
-                  },
+                      buildPrimaryParallaxTransition(config: parallaxConfig),
                 );
               },
             ),

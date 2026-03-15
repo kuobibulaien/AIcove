@@ -7,6 +7,7 @@
 /// - 2026-01-28: 添加消息分段显示功能（纯前端展示）
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -32,6 +33,7 @@ import '../../../../core/utils/message_formatter.dart';
 import '../../../../core/utils/data_image.dart';
 import '../../../../core/models/message_block.dart';
 import 'animated_message_item.dart';
+import 'chat_message_list_display_cache.dart';
 
 const double _kMessageItemVerticalPadding = 2.0;
 
@@ -119,6 +121,9 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   /// 首次进入会话时，确保列表定位到最新消息
   bool _didInitialBottomPosition = false;
 
+  bool _hasHydratedInitialListItems = false;
+  int _hydrationGeneration = 0;
+
   bool get _hasTimelineContent =>
       widget.messages.isNotEmpty || widget.streamingBubbleState.visible;
 
@@ -129,7 +134,7 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     if (widget.messages.isNotEmpty) {
       _latestAnimatedAt = widget.messages.last.createdAt;
     }
-    _updateListItems();
+    _hydrateInitialListItems();
 
     // 初始化 ScrollController 并添加监听
     _scrollController = ScrollController();
@@ -146,9 +151,85 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     super.dispose();
   }
 
+  void _hydrateInitialListItems([MessageFormatConfig? config]) {
+    final effectiveConfig =
+        config ?? _cachedFormatConfig ?? const MessageFormatConfig();
+    final windowSignature = _buildWindowSignature(
+      widget.messages,
+      contextStartMessageId: widget.contextStartMessageId,
+    );
+    final formatSignature = _buildFormatSignature(effectiveConfig);
+    final cached = ChatMessageListDisplayCache.read(
+      conversationId: widget.conversationId,
+      windowSignature: windowSignature,
+      formatSignature: formatSignature,
+    );
+    if (cached != null) {
+      _applyDisplayCacheEntry(cached, effectiveConfig);
+      return;
+    }
+
+    if (!_shouldRestorePersistentSnapshot()) {
+      _updateListItems(effectiveConfig);
+      return;
+    }
+
+    final generation = ++_hydrationGeneration;
+    ChatMessageListDisplayCache.readPersistent(
+      conversationId: widget.conversationId,
+      windowSignature: _buildPersistentWindowSignature(),
+      formatSignature: formatSignature,
+    ).then((snapshot) {
+      if (!mounted || generation != _hydrationGeneration) {
+        return;
+      }
+
+      final restoredItems =
+          snapshot == null ? null : _deserializeListItems(snapshot.listItems);
+      if (restoredItems != null) {
+        final chatImages = _collectChatImages();
+        final restoredEntry = ChatMessageListDisplayCacheEntry(
+          windowSignature: windowSignature,
+          formatSignature: formatSignature,
+          listItems: restoredItems.cast<Object>(),
+          chatImages: chatImages,
+        );
+        setState(() {
+          _applyDisplayCacheEntry(restoredEntry, effectiveConfig);
+        });
+        return;
+      }
+
+      if (!mounted || generation != _hydrationGeneration) {
+        return;
+      }
+
+      setState(() {
+        _updateListItems(effectiveConfig);
+      });
+    });
+  }
+
+  void _applyDisplayCacheEntry(
+    ChatMessageListDisplayCacheEntry cached,
+    MessageFormatConfig config,
+  ) {
+    _cachedFormatConfig = config;
+    _cachedListItems = cached.listItems.cast<_ListItem>();
+    _cachedChatImages = List<ImagePreviewItem>.from(cached.chatImages);
+    _hasHydratedInitialListItems = true;
+    _cleanupBubbleAnchorKeys();
+  }
+
+  bool _shouldRestorePersistentSnapshot() {
+    return widget.messages.isNotEmpty &&
+        widget.messages.length <= kConversationInitialVisibleCount &&
+        !widget.streamingBubbleState.visible;
+  }
+
   /// 滚动监听：当接近列表顶部（历史消息方向）时触发加载更多
   void _onScroll() {
-    // 非反转列表：minScrollExtent(通常为0) 是历史消息方向的顶部
+    // 反转列表：maxScrollExtent 是历史消息方向的顶部
     if (!_scrollController.hasClients) return;
 
     final position = _scrollController.position;
@@ -157,7 +238,8 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     // 距离顶部 200 像素时触发加载
     const threshold = 200.0;
 
-    if (currentScroll <= threshold &&
+    if (currentScroll >= position.maxScrollExtent - threshold &&
+        position.maxScrollExtent > threshold &&
         !_isLoadingTriggered &&
         !widget.isLoadingMore &&
         widget.hasMoreMessages &&
@@ -188,7 +270,7 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
         }
         return;
       }
-      _jumpToOffset(position.maxScrollExtent);
+      _jumpToOffset(position.minScrollExtent);
     });
   }
 
@@ -201,7 +283,7 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
       if (!_scrollController.hasClients) return;
       final position = _scrollController.position;
       if (!position.hasContentDimensions) return;
-      _jumpToOffset(position.maxScrollExtent);
+      _jumpToOffset(position.minScrollExtent);
       _didInitialBottomPosition = true;
     });
   }
@@ -225,7 +307,7 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     if (!_scrollController.hasClients) return double.infinity;
     final position = _scrollController.position;
     if (!position.hasContentDimensions) return double.infinity;
-    return position.maxScrollExtent - position.pixels;
+    return position.pixels - position.minScrollExtent;
   }
 
   bool _isNearBottom([double threshold = 56.0]) {
@@ -275,10 +357,237 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   }
 
   void _updateListItems([MessageFormatConfig? config]) {
-    _cachedFormatConfig = config;
-    _cachedListItems = _buildListItemsWithTimeDividers(config);
+    final effectiveConfig =
+        config ?? _cachedFormatConfig ?? const MessageFormatConfig();
+    final windowSignature = _buildWindowSignature(
+      widget.messages,
+      contextStartMessageId: widget.contextStartMessageId,
+    );
+    final formatSignature = _buildFormatSignature(effectiveConfig);
+    final cached = ChatMessageListDisplayCache.read(
+      conversationId: widget.conversationId,
+      windowSignature: windowSignature,
+      formatSignature: formatSignature,
+    );
+    if (cached != null) {
+      _applyDisplayCacheEntry(cached, effectiveConfig);
+      return;
+    }
+
+    _cachedFormatConfig = effectiveConfig;
+    _cachedListItems = _buildListItemsWithTimeDividers(effectiveConfig);
     _cachedChatImages = _collectChatImages();
+    _hasHydratedInitialListItems = true;
+    ChatMessageListDisplayCache.write(
+      conversationId: widget.conversationId,
+      windowSignature: windowSignature,
+      formatSignature: formatSignature,
+      listItems: _cachedListItems.cast<Object>(),
+      chatImages: _cachedChatImages,
+    );
+    unawaited(_persistRecentMessagesSnapshot(effectiveConfig));
     _cleanupBubbleAnchorKeys();
+  }
+
+  String _buildWindowSignature(
+    List<Message> messages, {
+    String? contextStartMessageId,
+  }) {
+    if (messages.isEmpty) return 'empty';
+    final buffer = StringBuffer()
+      ..write(messages.length)
+      ..write('|context=')
+      ..write(contextStartMessageId ?? '');
+    for (final message in messages) {
+      final blocks = message.blocks;
+      buffer
+        ..write('|')
+        ..write(message.id)
+        ..write('@')
+        ..write(message.createdAt.millisecondsSinceEpoch)
+        ..write('#')
+        ..write(message.status ?? 'sent')
+        ..write('#')
+        ..write(message.role)
+        ..write('#')
+        ..write(message.content)
+        ..write('#')
+        ..write(blocks?.length ?? 0);
+      if (blocks != null && blocks.isNotEmpty) {
+        for (final block in blocks) {
+          buffer
+            ..write(':')
+            ..write(block.runtimeType)
+            ..write('=')
+            ..write(block.id);
+        }
+      }
+    }
+    return buffer.toString();
+  }
+
+  String _buildPersistentWindowSignature() {
+    return _buildWindowSignature(
+      _recentMessagesForPersistentSnapshot(),
+      contextStartMessageId: widget.contextStartMessageId,
+    );
+  }
+
+  List<Message> _recentMessagesForPersistentSnapshot() {
+    if (widget.messages.length <= kConversationInitialVisibleCount) {
+      return List<Message>.from(widget.messages, growable: false);
+    }
+    return widget.messages
+        .sublist(widget.messages.length - kConversationInitialVisibleCount)
+        .toList(growable: false);
+  }
+
+  Future<void> _persistRecentMessagesSnapshot(
+      MessageFormatConfig effectiveConfig) async {
+    final recentMessages = _recentMessagesForPersistentSnapshot();
+    if (recentMessages.isEmpty) {
+      return;
+    }
+
+    final listItems = _buildListItemsForMessages(
+      recentMessages,
+      effectiveConfig,
+      contextStartMessageId: widget.contextStartMessageId,
+    );
+    await ChatMessageListDisplayCache.writePersistent(
+      conversationId: widget.conversationId,
+      windowSignature: _buildWindowSignature(
+        recentMessages,
+        contextStartMessageId: widget.contextStartMessageId,
+      ),
+      formatSignature: _buildFormatSignature(effectiveConfig),
+      listItems: _serializeListItems(listItems),
+    );
+  }
+
+  String _buildFormatSignature(MessageFormatConfig config) {
+    final activePunctuations = config.effectiveChunkPunctuations.join(',');
+    final filterPunctuations = config.filterPunctuations.join(',');
+    return [
+      config.enableChunking,
+      config.filterPunctuation,
+      activePunctuations,
+      filterPunctuations,
+      config.minSegmentLength,
+      config.protectQuotes,
+    ].join('|');
+  }
+
+  List<Map<String, dynamic>> _serializeListItems(List<_ListItem> listItems) {
+    return [
+      for (final item in listItems)
+        if (item is _TimeDivider)
+          <String, dynamic>{
+            'type': 'time',
+            'time': item.time.millisecondsSinceEpoch,
+          }
+        else if (item is _NewTopicDivider)
+          const <String, dynamic>{
+            'type': 'new_topic',
+          }
+        else if (item is _MessageItem)
+          <String, dynamic>{
+            'type': 'message',
+            'messageId': item.message.id,
+            'showCorner': item.showCorner,
+            'showAvatar': item.showAvatar,
+          }
+        else if (item is _ChunkedMessageItem)
+          <String, dynamic>{
+            'type': 'chunk',
+            'messageId': item.originalMessage.id,
+            'chunkText': item.chunkText,
+            'chunkIndex': item.chunkIndex,
+            'totalChunks': item.totalChunks,
+            'showCorner': item.showCorner,
+            'showAvatar': item.showAvatar,
+          },
+    ];
+  }
+
+  List<_ListItem>? _deserializeListItems(List<Map<String, dynamic>> rawItems) {
+    final messagesById = <String, Message>{
+      for (final message in widget.messages) message.id: message,
+    };
+    final restored = <_ListItem>[];
+
+    for (final raw in rawItems) {
+      final type = raw['type'] as String?;
+      switch (type) {
+        case 'time':
+          final timestamp = _readInt(raw['time']);
+          if (timestamp == null) {
+            return null;
+          }
+          restored.add(
+            _TimeDivider(
+              DateTime.fromMillisecondsSinceEpoch(timestamp),
+            ),
+          );
+          break;
+        case 'new_topic':
+          restored.add(_NewTopicDivider());
+          break;
+        case 'message':
+          final messageId = raw['messageId'] as String?;
+          final message =
+              messageId == null ? null : messagesById[messageId];
+          if (message == null) {
+            return null;
+          }
+          restored.add(
+            _MessageItem(
+              message,
+              showCorner: raw['showCorner'] == true,
+              showAvatar: raw['showAvatar'] != false,
+            ),
+          );
+          break;
+        case 'chunk':
+          final messageId = raw['messageId'] as String?;
+          final message =
+              messageId == null ? null : messagesById[messageId];
+          final chunkText = raw['chunkText'] as String?;
+          final chunkIndex = _readInt(raw['chunkIndex']);
+          final totalChunks = _readInt(raw['totalChunks']);
+          if (message == null ||
+              chunkText == null ||
+              chunkIndex == null ||
+              totalChunks == null) {
+            return null;
+          }
+          restored.add(
+            _ChunkedMessageItem(
+              originalMessage: message,
+              chunkText: chunkText,
+              chunkIndex: chunkIndex,
+              totalChunks: totalChunks,
+              showCorner: raw['showCorner'] == true,
+              showAvatar: raw['showAvatar'] != false,
+            ),
+          );
+          break;
+        default:
+          return null;
+      }
+    }
+
+    return restored;
+  }
+
+  int? _readInt(Object? value) {
+    if (value is int) {
+      return value;
+    }
+    if (value is num) {
+      return value.toInt();
+    }
+    return null;
   }
 
   GlobalKey _bubbleAnchorKeyFor(String messageId) {
@@ -340,7 +649,12 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
           widget.messages.isNotEmpty ? widget.messages.last.createdAt : null;
       _autoScrollEnabled = widget.autoScrollToBottomEnabled;
       _didInitialBottomPosition = false;
-      _updateListItems(_cachedFormatConfig);
+      _hydrationGeneration += 1;
+      _cachedFormatConfig = null;
+      _cachedListItems = [];
+      _cachedChatImages = [];
+      _hasHydratedInitialListItems = false;
+      _hydrateInitialListItems();
       _scheduleScrollToBottom();
       return;
     }
@@ -435,22 +749,16 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     );
 
     // 检测配置变化，需要重新构建列表项
-    if (_cachedFormatConfig != formatConfig) {
-      // 使用 addPostFrameCallback 避免在 build 中调用 setState
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          _updateListItems(formatConfig);
-          setState(() {});
-        }
-      });
+    if (_hasHydratedInitialListItems && _cachedFormatConfig != formatConfig) {
+      _updateListItems(formatConfig);
     }
 
-    // 构建包含时间分隔器的列表项（非反转列表，时间顺序与数据一致）
-    // 使用缓存的列表项，避免每次 build 重复计算
+    // 构建包含时间分隔器的列表项，数据顺序保持 oldest -> newest，
+    // 仅在 UI 层通过 reverse + 索引映射实现 bottom-up 布局。
     final listItems = _cachedListItems;
     final hasStreamingBubble = widget.streamingBubbleState.visible;
 
-    // 计算实际 itemCount：如果正在加载更多，顶部多显示一个加载指示器
+    // reverse:true 下：底部可选 streaming bubble，顶部可选 loading indicator。
     final itemCount = listItems.length +
         (widget.isLoadingMore ? 1 : 0) +
         (hasStreamingBubble ? 1 : 0);
@@ -460,33 +768,34 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
       onNotification: _handleScrollNotification,
       child: ListView.builder(
         controller: _scrollController, // 添加 ScrollController 用于分页触发
-        reverse: false, // 非反转列表：上旧下新
+        reverse: true, // 反转列表：天然从底部渲染最新消息，无闪跳
         // 性能优化：增加缓存范围，减少滚动时的重建
         cacheExtent: 500,
         // 性能优化：禁用自动 keep alive，由我们自己控制
         addAutomaticKeepAlives: false,
         // 性能优化：添加重绘边界，隔离每个消息的重绘
         addRepaintBoundaries: true,
+        // reverse:true 不影响 padding 的物理方向，top 仍是屏幕顶部，bottom 仍是屏幕底部。
         padding: EdgeInsets.only(
           left: 4,
           right: 4,
           top: 10,
-          // 保证输入框上方始终是消息列表底部：
-          // 常态预留 Composer 高度，键盘弹出时再叠加键盘高度。
           bottom: listBottomPadding,
         ),
         itemCount: itemCount,
         itemBuilder: (context, index) {
-          // 如果正在加载更多，第一项显示加载指示器（顶部）
-          if (widget.isLoadingMore && index == 0) {
+          // reverse:true 下，index 0 是视觉底部：先放 streaming bubble。
+          if (hasStreamingBubble && index == 0) {
+            return _buildStreamingBubble(context);
+          }
+
+          // 加载更多指示器保留在视觉顶部（reverse:true 下是最大 index）。
+          if (widget.isLoadingMore && index == itemCount - 1) {
             return _buildLoadingIndicator();
           }
 
-          final dataIndex = widget.isLoadingMore ? index - 1 : index;
-          if (dataIndex == listItems.length && hasStreamingBubble) {
-            return _buildStreamingBubble(context);
-          }
-          final item = listItems[dataIndex];
+          final dataIndex = index - (hasStreamingBubble ? 1 : 0);
+          final item = listItems[listItems.length - 1 - dataIndex];
 
           if (item is _TimeDivider) {
             return _buildTimeDivider(context, item.time);
@@ -585,8 +894,19 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   /// [config] 消息格式化配置，用于分段显示
   List<_ListItem> _buildListItemsWithTimeDividers(
       [MessageFormatConfig? config]) {
+    return _buildListItemsForMessages(
+      widget.messages,
+      config,
+      contextStartMessageId: widget.contextStartMessageId,
+    );
+  }
+
+  List<_ListItem> _buildListItemsForMessages(
+    List<Message> messages,
+    MessageFormatConfig? config, {
+    String? contextStartMessageId,
+  }) {
     final List<_ListItem> items = [];
-    final messages = widget.messages;
     final enableChunking = config?.enableChunking ?? true;
 
     for (int i = 0; i < messages.length; i++) {
@@ -667,8 +987,8 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
             ));
           }
           // 在截断点消息之后插入新话题分隔线（分段消息场景）
-          if (widget.contextStartMessageId != null &&
-              currentMessage.id == widget.contextStartMessageId) {
+          if (contextStartMessageId != null &&
+              currentMessage.id == contextStartMessageId) {
             items.add(_NewTopicDivider());
           }
           continue;
@@ -692,8 +1012,8 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
           showCorner: showCorner, showAvatar: showAvatar));
 
       // 在截断点消息之后插入新话题分隔线
-      if (widget.contextStartMessageId != null &&
-          currentMessage.id == widget.contextStartMessageId) {
+      if (contextStartMessageId != null &&
+          currentMessage.id == contextStartMessageId) {
         items.add(_NewTopicDivider());
       }
     }
@@ -730,9 +1050,7 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
           path.startsWith('assets/') || path.startsWith('packages/');
       if (isNetwork) return CachedNetworkImageProvider(path);
       if (isAsset) return AssetImage(path);
-      final file = File(path);
-      if (file.existsSync()) return FileImage(file);
-      return null;
+      return FileImage(File(path));
     }
     if (block is ImageBlock) {
       if (block.localPath != null && block.localPath!.isNotEmpty) {

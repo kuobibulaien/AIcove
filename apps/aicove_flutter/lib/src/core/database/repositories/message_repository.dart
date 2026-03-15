@@ -50,8 +50,8 @@ class MessageRepository {
           if (cursorId == null || cursorId.isEmpty) {
             return olderTime;
           }
-          final sameTimeOlderId =
-              t.createdAt.equals(beforeTime) & t.id.isSmallerThanValue(cursorId);
+          final sameTimeOlderId = t.createdAt.equals(beforeTime) &
+              t.id.isSmallerThanValue(cursorId);
           return olderTime | sameTimeOlderId;
         });
     }
@@ -274,6 +274,45 @@ class MessageRepository {
             (t) => OrderingTerm.asc(t.id),
           ]))
         .get();
+  }
+
+  /// 获取记忆入库候选消息（仅未总结、未删除、未被替换）
+  Future<List<Message>> getIngestCandidates({
+    required String conversationId,
+    Iterable<String>? candidateMessageIds,
+    int? beforeTimestampExclusive,
+  }) async {
+    final normalizedIds = candidateMessageIds
+        ?.map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (candidateMessageIds != null &&
+        (normalizedIds == null || normalizedIds.isEmpty)) {
+      return const [];
+    }
+
+    final query = _db.select(_db.messages)
+      ..where((t) =>
+          t.conversationId.equals(conversationId) &
+          t.deletedAt.isNull() &
+          t.replacedBy.isNull() &
+          t.summarized.equals(false));
+
+    if (normalizedIds != null) {
+      query.where((t) => t.id.isIn(normalizedIds));
+    }
+    if (beforeTimestampExclusive != null) {
+      query.where(
+          (t) => t.createdAt.isSmallerThanValue(beforeTimestampExclusive));
+    }
+
+    query.orderBy([
+      (t) => OrderingTerm.asc(t.createdAt),
+      (t) => OrderingTerm.asc(t.id),
+    ]);
+
+    return query.get();
   }
 
   Future<int> countByConversation(String conversationId) async {

@@ -166,6 +166,7 @@ Map<String, dynamic> _defaultStoreData() => <String, dynamic>{
       },
       'backend_api_key': '',
       'image_generation_enabled': false,
+      'history_message_limit': 100,
       'message_chunking_enabled': false,
       'message_format_config': null, // 默认为 null，由前端使用默认配置
       'stream_segment_delay_seconds': 0.0, // 流式分段逐条延迟（调试）
@@ -444,6 +445,11 @@ List<String> _deriveProviderCapabilities({
 }
 
 Map<String, dynamic> _normalizeData(Map<String, dynamic> raw) {
+  int normalizeHistoryMessageLimit(num? value) {
+    final limit = value?.toInt() ?? 100;
+    return limit > 0 ? limit : 100;
+  }
+
   final data = Map<String, dynamic>.from(raw);
   final providersRaw = data['providers'];
   final modelTypes = (data['model_types'] as Map? ?? const <String, dynamic>{})
@@ -557,6 +563,10 @@ Map<String, dynamic> _normalizeData(Map<String, dynamic> raw) {
         modelTypes: modelTypes,
         fallbackCapabilities: capabilities,
       );
+      final contextMessageLimit =
+          (provider['context_message_limit'] as num?)?.toInt();
+      final maxContextTokens =
+          (provider['max_context_tokens'] as num?)?.toInt();
 
       normalizedProviders.add({
         'id': id,
@@ -575,8 +585,9 @@ Map<String, dynamic> _normalizeData(Map<String, dynamic> raw) {
         if (provider['temperature'] != null)
           'temperature': provider['temperature'],
         if (provider['top_p'] != null) 'top_p': provider['top_p'],
-        if (provider['context_message_limit'] != null)
-          'context_message_limit': provider['context_message_limit'],
+        if (contextMessageLimit != null)
+          'context_message_limit': contextMessageLimit,
+        if (maxContextTokens != null) 'max_context_tokens': maxContextTokens,
       });
 
       if (enabled) {
@@ -597,6 +608,8 @@ Map<String, dynamic> _normalizeData(Map<String, dynamic> raw) {
       _normalizeEnhancedDialogueSettings(data['enhanced_dialogue_settings']);
   data['call_flow_settings'] =
       _normalizeCallFlowSettings(data['call_flow_settings']);
+  data['history_message_limit'] =
+      normalizeHistoryMessageLimit(data['history_message_limit'] as num?);
   data['stream_segment_delay_seconds'] =
       ((data['stream_segment_delay_seconds'] as num?)?.toDouble() ?? 0.0)
           .clamp(0.0, 5.0)
@@ -1027,6 +1040,8 @@ class UiModelsApi {
     bool clearTopP = false,
     int? contextMessageLimit,
     bool clearContextMessageLimit = false,
+    int? maxContextTokens,
+    bool clearMaxContextTokens = false,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     final current = await _loadStore(prefs);
@@ -1115,6 +1130,11 @@ class UiModelsApi {
       provider.remove('context_message_limit');
     } else if (contextMessageLimit != null) {
       provider['context_message_limit'] = contextMessageLimit;
+    }
+    if (clearMaxContextTokens) {
+      provider.remove('max_context_tokens');
+    } else if (maxContextTokens != null) {
+      provider['max_context_tokens'] = maxContextTokens;
     }
     providers[index] = provider;
     current['providers'] = providers;

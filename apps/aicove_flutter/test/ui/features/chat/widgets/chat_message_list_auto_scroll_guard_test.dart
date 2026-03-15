@@ -250,7 +250,8 @@ Widget _buildHostWithMessages({
 }
 
 double _distanceToBottom(ScrollController controller) {
-  return controller.position.maxScrollExtent - controller.offset;
+  final position = controller.position;
+  return position.pixels - position.minScrollExtent;
 }
 
 GlobalKey _extractBubbleGestureKey(WidgetTester tester, String messageId) {

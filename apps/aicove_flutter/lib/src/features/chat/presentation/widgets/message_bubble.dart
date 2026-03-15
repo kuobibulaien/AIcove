@@ -520,10 +520,7 @@ class MessageBubble extends ConsumerWidget {
         } else if (isAsset) {
           imageProvider = AssetImage(path);
         } else {
-          final file = File(path);
-          if (file.existsSync()) {
-            imageProvider = FileImage(file);
-          }
+          imageProvider = FileImage(File(_normalizeLocalFilePath(path)));
         }
       }
       imageWidget = imageProvider != null
@@ -779,7 +776,7 @@ class _AvatarSlot extends StatelessWidget {
 /// 规则：
 /// - 默认双头像：左右都预留头像列宽度
 /// - 隐藏用户头像：仅预留左侧头像列
-class _AvatarAwareBubbleRow extends StatefulWidget {
+class _AvatarAwareBubbleRow extends StatelessWidget {
   static const double _kMinBubbleMaxWidth = 120.0;
   static const double _kFailedIndicatorWidth = 24.0; // 20 + 右侧间距 4
 
@@ -808,43 +805,12 @@ class _AvatarAwareBubbleRow extends StatefulWidget {
   });
 
   @override
-  State<_AvatarAwareBubbleRow> createState() => _AvatarAwareBubbleRowState();
-}
-
-class _AvatarAwareBubbleRowState extends State<_AvatarAwareBubbleRow> {
-  final GlobalKey _leftSlotKey = GlobalKey(debugLabel: 'left_avatar_slot');
-  final GlobalKey _rightSlotKey = GlobalKey(debugLabel: 'right_avatar_slot');
-
-  double? _leftSlotWidth;
-  double? _rightSlotWidth;
-  bool _measureScheduled = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _scheduleSlotMeasure();
-  }
-
-  @override
-  void didUpdateWidget(covariant _AvatarAwareBubbleRow oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.showLeftSlot != widget.showLeftSlot ||
-        oldWidget.showRightSlot != widget.showRightSlot ||
-        oldWidget.hideUserAvatar != widget.hideUserAvatar) {
-      _scheduleSlotMeasure();
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
-    _scheduleSlotMeasure();
-
     return LayoutBuilder(
       builder: (context, constraints) {
-        final leftReserve = _resolvedLeftSlotWidth;
-        final rightReserve =
-            widget.hideUserAvatar ? 0.0 : _resolvedRightSlotWidth;
-        final failedReserve = (widget.isMe && widget.hasFailedIndicator)
+        final leftReserve = _AvatarSlot.fallbackWidth;
+        final rightReserve = hideUserAvatar ? 0.0 : _AvatarSlot.fallbackWidth;
+        final failedReserve = (isMe && hasFailedIndicator)
             ? _AvatarAwareBubbleRow._kFailedIndicatorWidth
             : 0.0;
         final maxBubbleWidth =
@@ -857,20 +823,18 @@ class _AvatarAwareBubbleRowState extends State<_AvatarAwareBubbleRow> {
 
         Widget bubbleArea = ConstrainedBox(
           key: ValueKey<String>(
-            'message_bubble_constraints_${widget.debugId}',
+            'message_bubble_constraints_$debugId',
           ),
           constraints: BoxConstraints(maxWidth: maxBubbleWidth),
-          child: widget.bubbleChild,
+          child: bubbleChild,
         );
 
-        if (widget.isMe &&
-            widget.hasFailedIndicator &&
-            widget.failedIndicator != null) {
+        if (isMe && hasFailedIndicator && failedIndicator != null) {
           bubbleArea = Row(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              widget.failedIndicator!,
+              failedIndicator!,
               bubbleArea,
             ],
           );
@@ -879,73 +843,18 @@ class _AvatarAwareBubbleRowState extends State<_AvatarAwareBubbleRow> {
         return Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (widget.showLeftSlot)
-              KeyedSubtree(
-                key: _leftSlotKey,
-                child: widget.leftSlot,
-              ),
+            if (showLeftSlot) leftSlot,
             Flexible(
               child: Align(
-                alignment: widget.isMe ? Alignment.topRight : Alignment.topLeft,
+                alignment: isMe ? Alignment.topRight : Alignment.topLeft,
                 child: bubbleArea,
               ),
             ),
-            if (widget.showRightSlot)
-              KeyedSubtree(
-                key: _rightSlotKey,
-                child: widget.rightSlot,
-              ),
+            if (showRightSlot) rightSlot,
           ],
         );
       },
     );
-  }
-
-  double get _resolvedLeftSlotWidth =>
-      _leftSlotWidth ?? _rightSlotWidth ?? _AvatarSlot.fallbackWidth;
-
-  double get _resolvedRightSlotWidth =>
-      _rightSlotWidth ?? _leftSlotWidth ?? _AvatarSlot.fallbackWidth;
-
-  void _scheduleSlotMeasure() {
-    if (_measureScheduled) return;
-    _measureScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _measureScheduled = false;
-      if (!mounted) return;
-      _syncSlotWidth();
-    });
-  }
-
-  void _syncSlotWidth() {
-    final measuredLeft = _measureWidth(_leftSlotKey);
-    final measuredRight = _measureWidth(_rightSlotKey);
-
-    final nextLeft = measuredLeft ?? _leftSlotWidth;
-    final nextRight = measuredRight ?? _rightSlotWidth;
-
-    if (_near(nextLeft, _leftSlotWidth) && _near(nextRight, _rightSlotWidth)) {
-      return;
-    }
-
-    setState(() {
-      _leftSlotWidth = nextLeft;
-      _rightSlotWidth = nextRight;
-    });
-  }
-
-  double? _measureWidth(GlobalKey key) {
-    final context = key.currentContext;
-    if (context == null) return null;
-    final renderObject = context.findRenderObject();
-    if (renderObject is! RenderBox || !renderObject.hasSize) return null;
-    return renderObject.size.width;
-  }
-
-  bool _near(double? a, double? b) {
-    if (a == null && b == null) return true;
-    if (a == null || b == null) return false;
-    return (a - b).abs() < 0.1;
   }
 }
 
@@ -970,11 +879,15 @@ class _Avatar extends StatelessWidget {
       final alignment =
           trimmed.contains('#top') ? Alignment.topCenter : Alignment.center;
       final cleanUrl = trimmed.split('#').first;
+      final isNetwork =
+          cleanUrl.startsWith('http://') || cleanUrl.startsWith('https://');
+      final isAsset =
+          cleanUrl.startsWith('assets/') || cleanUrl.startsWith('packages/');
+      final isLocalFile = _looksLikeLocalFilePath(cleanUrl);
 
-      // 优先检查是否为本地文件路径（用户头像）
-      if (isUser && File(cleanUrl).existsSync()) {
+      if (isLocalFile) {
         return Image.file(
-          File(cleanUrl),
+          File(_normalizeLocalFilePath(cleanUrl)),
           fit: BoxFit.cover,
           alignment: alignment,
           gaplessPlayback: true,
@@ -992,11 +905,9 @@ class _Avatar extends StatelessWidget {
           errorBuilder: (_, __, ___) => buildFallback(),
         );
       }
-      final isNetwork =
-          cleanUrl.startsWith('http://') || cleanUrl.startsWith('https://');
-      // 支持本地 assets 头像，避免再渲染时丢失角色图片（KISS/SOLID）。
       if (!isNetwork &&
-          (cleanUrl.startsWith('assets/') || !cleanUrl.contains('://'))) {
+          !isLocalFile &&
+          (isAsset || !cleanUrl.contains('://'))) {
         return Image.asset(
           cleanUrl,
           fit: BoxFit.cover,
@@ -1033,6 +944,22 @@ class _Avatar extends StatelessWidget {
       ),
     );
   }
+}
+
+bool _looksLikeLocalFilePath(String path) {
+  if (path.isEmpty) return false;
+  if (path.startsWith('/')) return true;
+  if (path.startsWith(r'\')) return true;
+  if (path.startsWith('file://')) return true;
+  if (RegExp(r'^[A-Za-z]:[\\/]').hasMatch(path)) return true;
+  return path.contains(r'\');
+}
+
+String _normalizeLocalFilePath(String path) {
+  if (path.startsWith('file://')) {
+    return Uri.parse(path).toFilePath();
+  }
+  return path;
 }
 
 /// Momotalk 风格三点闪动输入指示器

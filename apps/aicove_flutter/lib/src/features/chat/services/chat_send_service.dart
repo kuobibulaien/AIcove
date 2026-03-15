@@ -18,12 +18,9 @@ import '../domain/conversation.dart';
 import '../domain/message.dart';
 import '../domain/persona_prompt_codec.dart';
 import '../id_gen.dart';
-import '../conversation_providers.dart';
 import 'chat_history_store.dart';
 import '../../settings/app_settings.dart';
 import '../../plugins/image/image_config.dart';
-import '../../../core/database/database_provider.dart';
-import '../../../core/database/converters/database_converters.dart';
 import 'chat_request_config.dart';
 import '../../plugins/plugin_providers.dart';
 import '../../plugins/memory/memory_plugin.dart';
@@ -279,8 +276,12 @@ class ChatSendService {
     required String? userText,
     TraceLogger? trace,
     String? overrideModel,
+    String? conversationId,
     TraceContext? traceContext,
   }) async {
+    final resolvedConversationId = (conversationId?.trim().isNotEmpty ?? false)
+        ? conversationId!.trim()
+        : conv.id;
     final configTrace = trace?.startChild('读取配置');
 
     final settings = await _ref.read(appSettingsProvider.future);
@@ -363,6 +364,7 @@ class ChatSendService {
       effectivePlugins,
       userMessage: userText ?? '',
       supportsToolCalling: supportsToolCalling,
+      conversationId: resolvedConversationId,
     );
     for (final promptEntry in pluginPromptBuild.entries) {
       if (!promptEntry.injected) continue;
@@ -403,9 +405,7 @@ class ChatSendService {
       });
     }
 
-    final modelName =
-        modelFull.contains(':') ? modelFull.split(':').last : modelFull;
-    final maxContextTokens = getModelContextLimit(modelName);
+    final maxContextTokens = settings.getMaxContextTokens(modelRef);
     final truncatedMessages = truncateMessagesToFit(
       messages: reqMessages,
       maxContextTokens: maxContextTokens,
@@ -427,7 +427,7 @@ class ChatSendService {
         final droppedCount = history.length - keptHistoryCount;
         if (droppedCount > 0) {
           memoryPlugin.triggerPreFlush(
-            conversationId: conv.id,
+            conversationId: resolvedConversationId,
             droppedMessages: history.take(droppedCount).toList(),
           );
         }
@@ -605,6 +605,7 @@ class ChatSendService {
     required List<Message> history,
     required String? userText,
     TraceLogger? trace,
+    String? conversationId,
     TraceContext? traceContext,
   }) =>
       prepareApiConfig(
@@ -612,6 +613,7 @@ class ChatSendService {
           history: history,
           userText: userText,
           trace: trace,
+          conversationId: conversationId,
           traceContext: traceContext);
 
   /// (注释已丢失)

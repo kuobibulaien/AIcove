@@ -191,18 +191,28 @@ bool _hasMatchingAssistantToolCall({
 }
 
 const Map<String, int> knownModelContextLimits = {
-  // OpenAI
-  'gpt-3.5-turbo': 4096,
+  // OpenAI — legacy
+  'gpt-3.5-turbo': 16384,
   'gpt-3.5-turbo-16k': 16384,
   'gpt-4': 8192,
   'gpt-4-32k': 32768,
   'gpt-4-turbo': 128000,
   'gpt-4o': 128000,
   'gpt-4o-mini': 128000,
+  // OpenAI — current gen
+  'gpt-4.1': 1000000,
+  'gpt-4.1-mini': 1000000,
+  'gpt-4.1-nano': 1000000,
+  'gpt-5': 400000,
+  'gpt-5.2': 400000,
+  'gpt-5.4': 1000000,
+  'gpt-5-nano': 400000,
   'o1': 200000,
   'o1-mini': 128000,
   'o1-pro': 200000,
+  'o3': 200000,
   'o3-mini': 200000,
+  'o4-mini': 200000,
 
   // Claude
   'claude-3-opus': 200000,
@@ -211,32 +221,52 @@ const Map<String, int> knownModelContextLimits = {
   'claude-3.5-sonnet': 200000,
   'claude-3.5-haiku': 200000,
   'claude-4-sonnet': 200000,
+  'claude-4-opus': 200000,
+  'claude-sonnet-4': 200000,
+  'claude-opus-4': 200000,
+  'claude-haiku-4.5': 200000,
+  'claude-sonnet-4.5': 200000,
+  'claude-sonnet-4.6': 200000,
+  'claude-opus-4.6': 200000,
 
   // DeepSeek
-  'deepseek-chat': 65536,
-  'deepseek-coder': 65536,
-  'deepseek-reasoner': 65536,
+  'deepseek-chat': 128000,
+  'deepseek-coder': 128000,
+  'deepseek-reasoner': 128000,
+  'deepseek-r1': 128000,
+  'deepseek-v3': 128000,
 
   // Google Gemini
   'gemini-pro': 32768,
   'gemini-1.5-pro': 1048576,
   'gemini-1.5-flash': 1048576,
   'gemini-2.0-flash': 1048576,
+  'gemini-2.5-pro': 1048576,
+  'gemini-2.5-flash': 1048576,
 
   // Qwen
   'qwen-turbo': 131072,
   'qwen-plus': 131072,
-  'qwen-max': 32768,
+  'qwen-max': 131072,
+  'qwen3-235b': 128000,
 
   // Llama
   'llama-3.1-8b': 131072,
   'llama-3.1-70b': 131072,
   'llama-3.1-405b': 131072,
+  'llama-4-scout': 10000000,
+  'llama-4-maverick': 1000000,
+
+  // Mistral
+  'mistral-large': 128000,
+
+  // Grok
+  'grok-4': 2000000,
 };
 
 /// Resolve context limit by model name.
 int getModelContextLimit(String modelName) {
-  const defaultLimit = 32768;
+  const defaultLimit = 128000;
 
   if (knownModelContextLimits.containsKey(modelName)) {
     return knownModelContextLimits[modelName]!;

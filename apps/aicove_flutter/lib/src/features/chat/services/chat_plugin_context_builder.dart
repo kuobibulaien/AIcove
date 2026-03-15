@@ -3,6 +3,7 @@ library;
 import '../../plugins/domain/handlers/ai_tool.dart';
 import '../../plugins/domain/plugin.dart';
 import '../../plugins/plugin_manager.dart';
+import '../../plugins/memory/memory_plugin.dart';
 import '../../../core/app_logger.dart';
 
 class PluginPromptEntry {
@@ -84,11 +85,13 @@ class ChatPluginContextBuilder {
     List<Plugin> plugins, {
     required String userMessage,
     required bool supportsToolCalling,
+    String? conversationId,
   }) async {
     final result = await buildPluginPromptEntriesWithFilter(
       plugins,
       userMessage: userMessage,
       supportsToolCalling: supportsToolCalling,
+      conversationId: conversationId,
     );
     return result.mergedPrompt;
   }
@@ -97,6 +100,7 @@ class ChatPluginContextBuilder {
     List<Plugin> plugins, {
     required String userMessage,
     required bool supportsToolCalling,
+    String? conversationId,
   }) async {
     if (plugins.isEmpty) {
       return const PluginPromptBuildResult(entries: <PluginPromptEntry>[]);
@@ -105,10 +109,16 @@ class ChatPluginContextBuilder {
     final entries = <PluginPromptEntry>[];
     for (final plugin in plugins) {
       try {
-        final prompt = await plugin.getSystemPrompt(
-          userMessage: userMessage,
-          supportsToolCalling: supportsToolCalling,
-        );
+        final prompt = plugin is MemoryPlugin
+            ? await plugin.getSystemPrompt(
+                userMessage: userMessage,
+                supportsToolCalling: supportsToolCalling,
+                conversationId: conversationId,
+              )
+            : await plugin.getSystemPrompt(
+                userMessage: userMessage,
+                supportsToolCalling: supportsToolCalling,
+              );
         final trimmedPrompt = prompt?.trim() ?? '';
         entries.add(
           PluginPromptEntry(

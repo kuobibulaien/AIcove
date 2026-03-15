@@ -166,27 +166,30 @@ class MemoryPlugin extends BasePlugin {
 
   @override
   Future<String?> getSystemPrompt(
-      {String? userMessage, bool supportsToolCalling = false}) async {
+      {String? userMessage,
+      bool supportsToolCalling = false,
+      String? conversationId}) async {
     final service = _service;
     if (!enabled ||
         service == null ||
         userMessage == null ||
         userMessage.trim().isEmpty) return null;
 
-    final conv = _ref.read(activeConversationProvider);
-    if (conv == null) return null;
+    final resolvedConversationId = _resolveConversationId(conversationId);
+    if (resolvedConversationId == null) return null;
 
     // next-day summary trigger on user message (fire-and-forget)
     if (_memoryConfig.enableNextDayTrigger) {
       Future(() async {
         try {
           await service.checkAndTriggerDailySummarization(
-              conversationId: conv.id);
+            conversationId: resolvedConversationId,
+          );
         } catch (e) {
           AppLogger.warning(
               'MemoryPlugin', 'Daily summarization trigger failed',
               metadata: {
-                'conversationId': conv.id,
+                'conversationId': resolvedConversationId,
                 'error': e.toString(),
               });
         }
@@ -195,7 +198,7 @@ class MemoryPlugin extends BasePlugin {
 
     final recentMessages =
         await _ref.read(chatHistoryStoreProvider).loadRecentMessages(
-              conv.id,
+              resolvedConversationId,
               limit: 3,
             );
     final query = buildMemorySearchQuery(
@@ -206,26 +209,27 @@ class MemoryPlugin extends BasePlugin {
 
     List<String> related = [];
     if (isFiller) {
-      related = _lastRetrievedByConversation[conv.id] ?? const [];
+      related =
+          _lastRetrievedByConversation[resolvedConversationId] ?? const [];
     }
 
     if (!isFiller || related.isEmpty) {
       try {
         related = await service.searchFormatted(
-          conversationId: conv.id,
+          conversationId: resolvedConversationId,
           query: query,
         );
-        _lastRetrievedByConversation[conv.id] = related;
+        _lastRetrievedByConversation[resolvedConversationId] = related;
       } catch (e) {
         AppLogger.warning('MemoryPlugin', 'Memory retrieval failed', metadata: {
-          'conversationId': conv.id,
+          'conversationId': resolvedConversationId,
           'error': e.toString(),
         });
       }
     }
 
     final profilePrompt = _memoryConfig.enableProfileLayer
-        ? await service.getProfilePrompt(conv.id)
+        ? await service.getProfilePrompt(resolvedConversationId)
         : '';
     if (profilePrompt.trim().isEmpty && related.isEmpty) return null;
 
@@ -251,7 +255,7 @@ class MemoryPlugin extends BasePlugin {
   }
 
   void triggerPreFlush({
-    required String conversationId,
+    String? conversationId,
     required List<chat.Message> droppedMessages,
   }) {
     final service = _service;
@@ -259,19 +263,29 @@ class MemoryPlugin extends BasePlugin {
         service == null ||
         !_memoryConfig.enablePreFlush ||
         droppedMessages.isEmpty) return;
+    final resolvedConversationId = _resolveConversationId(conversationId);
+    if (resolvedConversationId == null) return;
     Future(() async {
       try {
         await service.runPreFlush(
-          conversationId: conversationId,
+          conversationId: resolvedConversationId,
           messagesLikelyToLose: droppedMessages,
         );
       } catch (e) {
         AppLogger.warning('MemoryPlugin', 'Pre-flush failed', metadata: {
-          'conversationId': conversationId,
+          'conversationId': resolvedConversationId,
           'error': e.toString(),
         });
       }
     });
+  }
+
+  String? _resolveConversationId(String? conversationId) {
+    final explicitConversationId = conversationId?.trim();
+    if (explicitConversationId != null && explicitConversationId.isNotEmpty) {
+      return explicitConversationId;
+    }
+    return _ref.read(activeConversationProvider)?.id;
   }
 
   /// kept for backward compatibility with existing caller

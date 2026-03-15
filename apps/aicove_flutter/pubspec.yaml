@@ -31,6 +31,7 @@ dependencies:
   dio: ^5.4.0  # (注释已丢失)
   path_provider: ^2.1.2  # 文件路径
   crypto: ^3.0.3
+  image: ^4.3.0
   flutter_secure_storage: ^9.0.0  # 安全存储Token
   workmanager: ^0.6.0-rc.1 # (注释已丢失)
   # (注释已丢失)

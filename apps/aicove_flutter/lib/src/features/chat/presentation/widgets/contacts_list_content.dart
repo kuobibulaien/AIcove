@@ -15,6 +15,26 @@ import 'character_list_item.dart';
 import 'momotalk_sort_dialog.dart';
 import '../../../../ui/theme/tokens.dart';
 
+const Duration kConversationTapWarmupDelay = Duration(milliseconds: 140);
+
+VoidCallback scheduleConversationTapWarmup(
+  BuildContext context,
+  VoidCallback callback, {
+  Duration delay = kConversationTapWarmupDelay,
+}) {
+  var canceled = false;
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    if (canceled || !context.mounted) return;
+    Timer(delay, () {
+      if (canceled || !context.mounted) return;
+      callback();
+    });
+  });
+  return () {
+    canceled = true;
+  };
+}
+
 /// 联系人列表内容组件 - 纯内容展示，无AppBar（应用DRY原则）
 /// 可复用于小屏和大屏布局
 class ContactsListContent extends ConsumerStatefulWidget {
@@ -50,6 +70,8 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
   String _lastWarmupFingerprint = '';
   bool _warmupScheduled = false;
   List<Conversation> _pendingWarmupTargets = const [];
+  VoidCallback? _cancelTapWarmup;
+  String? _pendingTapWarmupConversationId;
 
   List<ImageProvider> _collectAvatarProviders(Conversation conv) {
     final images = <ImageProvider>[];
@@ -125,8 +147,7 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
     if (targets.isEmpty) return;
 
     final fingerprint = [
-      for (final c in targets)
-        '${c.id}:${c.updatedAt.millisecondsSinceEpoch}'
+      for (final c in targets) '${c.id}:${c.updatedAt.millisecondsSinceEpoch}'
     ].join('|');
     if (fingerprint == _lastWarmupFingerprint) return;
 
@@ -161,10 +182,11 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
     required int maxImagesToCache,
   }) async {
     final preheatQueue = ref.read(imagePreheatQueueProvider);
-    final messages = await ref.read(chatHistoryStoreProvider).loadRecentMessages(
-          conv.id,
-          limit: maxMessagesToScan,
-        );
+    final messages =
+        await ref.read(chatHistoryStoreProvider).loadRecentMessages(
+              conv.id,
+              limit: maxMessagesToScan,
+            );
     if (!mounted) return;
     preheatQueue.enqueueAllFromContext(
       context,
@@ -176,6 +198,31 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
       ),
       priority: ImagePreheatPriority.high,
     );
+  }
+
+  void _scheduleTapWarmup(Conversation conv) {
+    if (_pendingTapWarmupConversationId == conv.id &&
+        _cancelTapWarmup != null) {
+      return;
+    }
+    _pendingTapWarmupConversationId = conv.id;
+    _cancelTapWarmup?.call();
+    _cancelTapWarmup = scheduleConversationTapWarmup(context, () {
+      if (!mounted) return;
+      _pendingTapWarmupConversationId = null;
+      _cancelTapWarmup = null;
+      unawaited(_warmupConversationPreview(
+        conv,
+        maxMessagesToScan: _kTapWarmupMaxMessagesToScan,
+        maxImagesToCache: _kTapWarmupMaxImagesToCache,
+      ));
+    });
+  }
+
+  @override
+  void dispose() {
+    _cancelTapWarmup?.call();
+    super.dispose();
   }
 
   @override
@@ -330,19 +377,9 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
                   child: CharacterListItem(
                     conversation: c,
                     isActive: c.id == highlightId,
-                    onTapDown: (_) {
-                      unawaited(_warmupConversationPreview(
-                        c,
-                        maxMessagesToScan: _kTapWarmupMaxMessagesToScan,
-                        maxImagesToCache: _kTapWarmupMaxImagesToCache,
-                      ));
-                    },
+                    onTapDown: (_) => _scheduleTapWarmup(c),
                     onTap: () {
-                      unawaited(_warmupConversationPreview(
-                        c,
-                        maxMessagesToScan: _kTapWarmupMaxMessagesToScan,
-                        maxImagesToCache: _kTapWarmupMaxImagesToCache,
-                      ));
+                      _scheduleTapWarmup(c);
 
                       if (widget.onContactTap != null) {
                         // 使用自定义回调（宽屏模式）

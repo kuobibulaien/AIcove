@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,7 +7,6 @@ import 'package:go_router/go_router.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../../../features/chat/domain/conversation.dart';
 import '../../../../features/chat/domain/message.dart';
-import '../../../../features/chat/conversation_timeline_providers.dart';
 import '../../../../features/chat/providers2.dart';
 import '../../../../features/chat/presentation/widgets/composer.dart';
 import '../../../../features/chat/presentation/widgets/contact_edit_dialog.dart';
@@ -23,9 +21,14 @@ import '../../../../features/settings/app_settings.dart';
 import '../../../../core/database/database.dart' as db;
 import '../../../../core/database/database_provider.dart';
 import '../../../../core/models/message_block.dart';
+import '../../../../core/utils/blurred_background_service.dart';
 import '../../../../core/utils/data_image.dart';
 import '../../../../core/utils/image_preheat_queue.dart';
+import 'deferred_conversation_activation.dart';
 import '../widgets/chat_message_list.dart';
+
+const Duration kChatPageImagePrecacheDelay = Duration(milliseconds: 180);
+const Duration kChatPageUnreadClearDelay = Duration(milliseconds: 160);
 
 class ChatPage extends ConsumerStatefulWidget {
   final String? conversationId;
@@ -51,6 +54,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   double _composerOverlayHeight = 0;
   bool _autoScrollToBottomEnabled = true;
   int _forceScrollToBottomSignal = 0;
+  Timer? _imagePrecacheTimer;
+  Timer? _clearUnreadTimer;
+  String? _staticBackgroundBlurSource;
+  ImageProvider? _staticBackgroundBlurProvider;
+  final DeferredConversationActivation _conversationActivation =
+      DeferredConversationActivation();
 
   @override
   void initState() {
@@ -58,13 +67,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     // (注释已丢失)
     final targetId = widget.conversationId;
     if (targetId == null) return;
-    final activeId = ref.read(activeConversationIdProvider);
-    if (activeId != targetId) {
-      ref.read(activeConversationIdProvider.notifier).state = targetId;
-    }
-    _resetVisibleCount(targetId);
-    // (注释已丢失)
-    ref.read(conversationsProvider.notifier).clearUnread(targetId);
+    _scheduleConversationActivation(targetId);
+    _scheduleUnreadClear(targetId);
   }
 
   @override
@@ -82,8 +86,33 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _didSchedulePrecache = false;
       if (!mounted) return;
-      _triggerImagePreload();
+      _imagePrecacheTimer?.cancel();
+      _imagePrecacheTimer = Timer(kChatPageImagePrecacheDelay, () {
+        if (!mounted) return;
+        _triggerImagePreload();
+      });
     });
+  }
+
+  void _scheduleUnreadClear(String conversationId) {
+    _clearUnreadTimer?.cancel();
+    _clearUnreadTimer = Timer(kChatPageUnreadClearDelay, () {
+      if (!mounted) return;
+      unawaited(ref.read(conversationsProvider.notifier).clearUnread(
+            conversationId,
+          ));
+    });
+  }
+
+  void _scheduleConversationActivation(String conversationId) {
+    _conversationActivation.schedule(
+      conversationId: conversationId,
+      isMounted: () => mounted,
+      readActiveConversationId: () => ref.read(activeConversationIdProvider),
+      activateConversation: (id) {
+        ref.read(activeConversationIdProvider.notifier).state = id;
+      },
+    );
   }
 
   /// 检查视觉兼容性，必要时弹窗确认
@@ -448,24 +477,21 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         (conv?.chatBackgroundMaskOpacity ?? 0.8).clamp(0.0, 1.0);
     final topMaskOpacity = (maskOpacity + 0.12).clamp(0.0, 1.0);
     final blurSigma = (conv?.chatBackgroundBlurSigma ?? 0.0).clamp(0.0, 30.0);
-
-    final Widget bgImage = blurSigma > 0.1
-        ? ImageFiltered(
-            imageFilter: ui.ImageFilter.blur(
-              sigmaX: blurSigma,
-              sigmaY: blurSigma,
-              tileMode: TileMode.decal,
-            ),
-            child: image,
+    final blurOverlayOpacity = _staticBlurOverlayOpacity(blurSigma);
+    final blurOverlay = blurOverlayOpacity > 0
+        ? _buildStaticBackgroundBlurLayer(
+            raw,
+            opacity: blurOverlayOpacity,
           )
-        : image;
+        : null;
 
     return Container(
       color: fallbackColor,
       child: Stack(
         fit: StackFit.expand,
         children: [
-          bgImage,
+          image,
+          if (blurOverlay != null) blurOverlay,
           IgnorePointer(
             child: DecoratedBox(
               decoration: BoxDecoration(
@@ -486,6 +512,87 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         ],
       ),
     );
+  }
+
+  double _staticBlurOverlayOpacity(double blurSigma) {
+    if (blurSigma <= 0.1) return 0;
+    return Curves.easeOut.transform((blurSigma / 30).clamp(0.0, 1.0));
+  }
+
+  Widget? _buildStaticBackgroundBlurLayer(
+    String source, {
+    required double opacity,
+  }) {
+    final blurAsset = BlurredBackgroundService.deriveBlurAssetPath(source);
+    if (blurAsset == null) {
+      _scheduleStaticBackgroundBlur(source);
+    }
+    Widget? layer;
+    if (blurAsset != null) {
+      layer = SizedBox.expand(
+        child: Image.asset(
+          blurAsset,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+          filterQuality: FilterQuality.medium,
+          errorBuilder: (_, __, ___) {
+            final provider = _resolveStaticBackgroundBlurProvider(source);
+            if (provider == null) return const SizedBox.shrink();
+            return _buildStaticBackgroundBlurImage(provider);
+          },
+        ),
+      );
+    } else {
+      final provider = _resolveStaticBackgroundBlurProvider(source);
+      if (provider != null) {
+        layer = _buildStaticBackgroundBlurImage(provider);
+      }
+    }
+
+    if (layer == null) return null;
+    return IgnorePointer(
+      child: Opacity(
+        key: const ValueKey<String>('chat_page_static_blur_layer'),
+        opacity: opacity,
+        child: layer,
+      ),
+    );
+  }
+
+  ImageProvider? _resolveStaticBackgroundBlurProvider(String source) {
+    if (_staticBackgroundBlurSource != source) return null;
+    return _staticBackgroundBlurProvider;
+  }
+
+  Widget _buildStaticBackgroundBlurImage(ImageProvider provider) {
+    return SizedBox.expand(
+      child: Image(
+        image: provider,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        filterQuality: FilterQuality.medium,
+        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+      ),
+    );
+  }
+
+  void _scheduleStaticBackgroundBlur(String source) {
+    if (_staticBackgroundBlurSource == source) return;
+    _staticBackgroundBlurSource = source;
+    _staticBackgroundBlurProvider = null;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _staticBackgroundBlurSource != source) return;
+      unawaited(
+        BlurredBackgroundService.ensureBlur(source).then((provider) {
+          if (!mounted || _staticBackgroundBlurSource != source) return;
+          if (identical(_staticBackgroundBlurProvider, provider)) return;
+          setState(() {
+            _staticBackgroundBlurProvider = provider;
+          });
+        }),
+      );
+    });
   }
 
   Widget? _buildBackgroundImage(String raw) {
@@ -515,8 +622,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     // (注释已丢失)
     final targetId = widget.conversationId;
     if (targetId != oldWidget.conversationId && targetId != null) {
-      ref.read(activeConversationIdProvider.notifier).state = targetId;
-      _resetVisibleCount(targetId);
+      _scheduleConversationActivation(targetId);
       // (注释已丢失)
       setState(() {
         _isLoadingMore = false;
@@ -524,14 +630,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       });
       _preloadedConversationId = null;
       _scheduleImagePrecache();
-      // (注释已丢失)
-      ref.read(conversationsProvider.notifier).clearUnread(targetId);
+      _scheduleUnreadClear(targetId);
     }
   }
 
-  void _resetVisibleCount(String conversationId) {
-    ref.read(conversationVisibleCountProvider(conversationId).notifier).state =
-        30;
+  @override
+  void dispose() {
+    _conversationActivation.clear();
+    _imagePrecacheTimer?.cancel();
+    _clearUnreadTimer?.cancel();
+    super.dispose();
   }
 
   /// (注释已丢失)
@@ -544,7 +652,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     try {
       final notifier =
           ref.read(conversationVisibleCountProvider(conversationId).notifier);
-      notifier.state += 30;
+      notifier.state += kConversationVisiblePageSize;
       await Future<void>.delayed(const Duration(milliseconds: 120));
     } catch (e) {
       debugPrint('加载更多消息失败: $e');
@@ -561,17 +669,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final initial = widget.initialConversation?.id == targetId
         ? widget.initialConversation
         : null;
+    final targetConversation = targetId == null
+        ? null
+        : ref.watch(conversationSnapshotByIdProvider(targetId));
     final conv = targetId == null
         ? ref.watch(activeConversationProvider)
-        : ref.watch(conversationsProvider).maybeWhen(
-              data: (list) {
-                for (final c in list) {
-                  if (c.id == targetId) return c;
-                }
-                return initial;
-              },
-              orElse: () => initial,
-            );
+        : targetConversation ??
+            ref.watch(
+              conversationByIdProvider(targetId)
+                  .select((value) => value.valueOrNull),
+            ) ??
+            initial;
     final currentConversationId = conv?.id ?? targetId;
     final messagesAsync = currentConversationId == null
         ? const AsyncValue.data(<Message>[])

@@ -735,6 +735,7 @@ class ChatActions {
         conv: conv,
         history: history,
         userText: proactiveInput,
+        conversationId: targetConvId,
         traceContext: traceContext,
       );
       final result = await _sendService.executeApiCall(

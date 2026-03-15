@@ -7,10 +7,8 @@
 /// - 2025-12-31: 从 role_card_page.dart 提取
 library;
 
-import 'dart:io';
-import 'dart:ui' as ui;
+import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../ui/theme/tokens.dart';
@@ -19,7 +17,7 @@ import '../../../../ui/shared/animations/hero_rect_tweens.dart';
 import '../../../../ui/shared/effects/frosted_glass_card.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../core/utils/avatar_helper.dart';
-import '../../../../core/utils/blurred_background_manager.dart';
+import '../../../../core/utils/blurred_background_service.dart';
 import '../../../../core/utils/image_preheat_queue.dart';
 import '../../../../core/utils/role_transition_tags.dart';
 import '../../../../features/chat/domain/conversation.dart';
@@ -44,13 +42,12 @@ class HorizontalRoleCard extends ConsumerStatefulWidget {
 }
 
 class _HorizontalRoleCardState extends ConsumerState<HorizontalRoleCard> {
-  ImageProvider? _blurredBackgroundProvider;
-  int _backgroundLoadToken = 0;
+  String? _scheduledBlurSource;
 
   @override
   void initState() {
     super.initState();
-    _loadBlurredBackground();
+    _scheduleBlurEnsure();
   }
 
   @override
@@ -61,60 +58,7 @@ class _HorizontalRoleCardState extends ConsumerState<HorizontalRoleCard> {
             widget.conversation.characterImage ||
         oldWidget.conversation.avatarUrl != widget.conversation.avatarUrl;
     if (!imageChanged) return;
-
-    setState(() {
-      _blurredBackgroundProvider = null;
-    });
-    _loadBlurredBackground();
-  }
-
-  /// 加载或生成模糊背景
-  Future<void> _loadBlurredBackground() async {
-    final token = ++_backgroundLoadToken;
-    final blurAsset = _deriveBlurAssetPath(widget.conversation.characterImage);
-    if (blurAsset != null) {
-      try {
-        await rootBundle.load(blurAsset);
-        if (mounted && token == _backgroundLoadToken) {
-          setState(() {
-            _blurredBackgroundProvider = AssetImage(blurAsset);
-          });
-        }
-        return;
-      } catch (_) {
-        // 没有预制模糊图，继续走“生成模糊图”的逻辑
-      }
-    }
-
-    final imageBytes = await _getImageBytes();
-    if (imageBytes == null) return;
-
-    final path = await BlurredBackgroundManager.getOrGenerate(imageBytes);
-    if (mounted && token == _backgroundLoadToken && path != null) {
-      setState(() {
-        _blurredBackgroundProvider = FileImage(File(path));
-      });
-    }
-  }
-
-  String? _deriveBlurAssetPath(String? originalAssetPath) {
-    if (originalAssetPath == null) return null;
-    final trimmed = originalAssetPath.trim();
-    if (!trimmed.startsWith('assets/')) return null;
-    final dot = trimmed.lastIndexOf('.');
-    if (dot <= 0) return null;
-    return '${trimmed.substring(0, dot)}_blur${trimmed.substring(dot)}';
-  }
-
-  /// 获取图片字节（支持 base64 和 asset）
-  /// 使用立绘优先级：characterImage → avatarUrl
-  Future<Uint8List?> _getImageBytes() async {
-    final helper = AvatarHelper(
-      avatarUrl: widget.conversation.avatarUrl,
-      characterImage: widget.conversation.characterImage,
-      displayName: widget.conversation.displayName,
-    );
-    return helper.getCharacterBytes();
+    _scheduleBlurEnsure();
   }
 
   /// 获取图片 Provider（用于背景 Hero）
@@ -126,6 +70,30 @@ class _HorizontalRoleCardState extends ConsumerState<HorizontalRoleCard> {
       displayName: widget.conversation.displayName,
     );
     return helper.getCharacterProvider();
+  }
+
+  String? _getBackgroundSource() {
+    return BlurredBackgroundService.pickPreferredSource(
+      characterImage: widget.conversation.characterImage,
+      avatarUrl: widget.conversation.avatarUrl,
+    );
+  }
+
+  void _scheduleBlurEnsure() {
+    final source = _getBackgroundSource();
+    if (source == null || _scheduledBlurSource == source) return;
+    _scheduledBlurSource = source;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(
+        BlurredBackgroundService.ensureBlur(source).then((provider) {
+          if (!mounted) return;
+          if (provider == null && _scheduledBlurSource == source) {
+            _scheduledBlurSource = null;
+          }
+        }),
+      );
+    });
   }
 
   /// 导航到详情页（使用 ExpandingPageRoute 无缝展开）
@@ -162,8 +130,7 @@ class _HorizontalRoleCardState extends ConsumerState<HorizontalRoleCard> {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final imageProvider = _getImageProvider();
-    final blurredProvider = _blurredBackgroundProvider;
+    final source = _getBackgroundSource();
 
     return SizedBox(
       width: widget.cardWidth,
@@ -177,31 +144,19 @@ class _HorizontalRoleCardState extends ConsumerState<HorizontalRoleCard> {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                // 1. 背景（优先：预制模糊图 asset / 本地生成模糊图 file；兜底：实时模糊原图）
-                if (blurredProvider != null)
-                  Image(
-                    image: blurredProvider,
-                    fit: BoxFit.cover,
-                    gaplessPlayback: true,
-                    filterQuality: FilterQuality.medium,
-                  )
-                else if (imageProvider != null)
-                  ImageFiltered(
-                    imageFilter: ui.ImageFilter.blur(sigmaX: 25, sigmaY: 25),
-                    child: Transform.scale(
-                      scale: 1.2,
-                      child: Image(
-                        image: imageProvider,
-                        fit: BoxFit.cover,
-                        gaplessPlayback: true,
-                        filterQuality: FilterQuality.medium,
-                      ),
-                    ),
-                  )
-                else
-                  Container(
-                      color:
-                          isDark ? const Color(0xFF1E1E1E) : Colors.grey[200]),
+                _buildGradientFallback(colors, isDark),
+                if (source != null)
+                  ValueListenableBuilder<int>(
+                    valueListenable: BlurredBackgroundService.ticker,
+                    builder: (context, _, __) {
+                      final provider =
+                          BlurredBackgroundService.getBlurProvider(source);
+                      return AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 300),
+                        child: _buildBlurLayer(source, provider),
+                      );
+                    },
+                  ),
 
                 // 2. 轻微玻璃提亮/压暗
                 Container(
@@ -304,6 +259,59 @@ class _HorizontalRoleCardState extends ConsumerState<HorizontalRoleCard> {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBlurLayer(String source, ImageProvider? provider) {
+    final blurAsset = BlurredBackgroundService.deriveBlurAssetPath(source);
+
+    if (blurAsset != null) {
+      return SizedBox.expand(
+        key: ValueKey('asset:$blurAsset'),
+        child: Image.asset(
+          blurAsset,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+          filterQuality: FilterQuality.medium,
+          errorBuilder: (_, __, ___) => provider == null
+              ? const SizedBox.shrink(key: ValueKey('empty'))
+              : _buildBlurImage(provider, key: ValueKey('file:$source')),
+        ),
+      );
+    }
+
+    if (provider == null) {
+      return const SizedBox.shrink(key: ValueKey('empty'));
+    }
+
+    return _buildBlurImage(provider, key: ValueKey('file:$source'));
+  }
+
+  Widget _buildBlurImage(ImageProvider provider, {required Key key}) {
+    return SizedBox.expand(
+      key: key,
+      child: Image(
+        image: provider,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        filterQuality: FilterQuality.medium,
+      ),
+    );
+  }
+
+  Widget _buildGradientFallback(MoeColors colors, bool isDark) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            colors.surface,
+            colors.primary.withValues(alpha: isDark ? 0.18 : 0.1),
+            isDark ? const Color(0xFF161A20) : Colors.white,
+          ],
         ),
       ),
     );

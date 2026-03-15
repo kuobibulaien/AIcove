@@ -209,6 +209,11 @@ List<String> _collectVisible(List<Map<String, dynamic>> providers) {
 }
 
 AppSettings _mapToSettings(Map<String, dynamic> data) {
+  int normalizeHistoryMessageLimit(num? value) {
+    final limit = value?.toInt() ?? 100;
+    return limit > 0 ? limit : 100;
+  }
+
   final providers = (data['providers'] as List? ?? const <dynamic>[])
       .whereType<Map>()
       .map((e) => ProviderAuth.fromJson(e.cast<String, dynamic>()))
@@ -356,7 +361,8 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     apiBaseUrl: 'https://api.openai.com/v1',
     imageGenerationEnabled: data['image_generation_enabled'] == true,
     maxFileUploadMB: 10,
-    historyMessageLimit: 100,
+    historyMessageLimit:
+        normalizeHistoryMessageLimit(data['history_message_limit'] as num?),
     customModels: const <CustomModel>[],
     providers: providers,
     modelProviderMap: meta.providerMap,
@@ -572,7 +578,7 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
         ));
   }
 
-  /// 更新渠道的模型参数（temperature, topP, contextMessageLimit）
+  /// 更新渠道的模型参数（temperature, topP, contextMessageLimit, maxContextTokens）
   Future<void> updateProviderParams({
     required String providerId,
     double? temperature,
@@ -581,6 +587,8 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     bool clearTopP = false,
     int? contextMessageLimit,
     bool clearContextMessageLimit = false,
+    int? maxContextTokens,
+    bool clearMaxContextTokens = false,
   }) async {
     await _commit(() => _api.updateProvider(
           providerId: providerId,
@@ -590,6 +598,8 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
           clearTopP: clearTopP,
           contextMessageLimit: contextMessageLimit,
           clearContextMessageLimit: clearContextMessageLimit,
+          maxContextTokens: maxContextTokens,
+          clearMaxContextTokens: clearMaxContextTokens,
         ));
   }
 
@@ -616,6 +626,8 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     bool clearContextMessageLimit = false,
     List<String>? chatCapabilities,
     bool clearChatCapabilities = false,
+    int? maxContextTokens,
+    bool clearMaxContextTokens = false,
   }) async {
     final normalizedModelId = _normalizeModelRefForPersist(modelId);
     await _commit(() async {
@@ -640,6 +652,8 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
         clearContextMessageLimit: clearContextMessageLimit,
         chatCapabilities: chatCapabilities,
         clearChatCapabilities: clearChatCapabilities,
+        maxContextTokens: maxContextTokens,
+        clearMaxContextTokens: clearMaxContextTokens,
       );
 
       if (updated.isDefault) {
@@ -815,6 +829,13 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
   Future<void> setMessageChunkingEnabled(bool value) async {
     await _commit(
         () => _api.updatePartial({'message_chunking_enabled': value}));
+  }
+
+  Future<void> setHistoryMessageLimit(int limit) async {
+    final normalized = limit > 0 ? limit : 100;
+    await _commit(
+      () => _api.updatePartial({'history_message_limit': normalized}),
+    );
   }
 
   Future<void> setImageGenerationEnabled(bool value) async {

@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'package:drift/drift.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/utils/blurred_background_service.dart';
 import 'domain/conversation.dart';
 import 'id_gen.dart';
 import 'data/preset_characters_loader.dart';
@@ -152,6 +154,22 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
     List<String>? enabledPlugins,
     bool clearEnabledPlugins = false,
   }) async {
+    final currentList = state.value ?? const <Conversation>[];
+    Conversation? current;
+    for (final conversation in currentList) {
+      if (conversation.id == id) {
+        current = conversation;
+        break;
+      }
+    }
+
+    final oldSource = current == null
+        ? null
+        : BlurredBackgroundService.pickPreferredSource(
+            characterImage: current.characterImage,
+            avatarUrl: current.avatarUrl,
+          );
+
     await updateOne(
         id,
         (c) => c.copyWith(
@@ -182,6 +200,23 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
                   : (enabledPlugins ?? c.enabledPlugins),
               updatedAt: DateTime.now(),
             ));
+
+    final nextCharacterImage = clearCharacterImage
+        ? null
+        : (characterImage ?? current?.characterImage);
+    final nextAvatarUrl =
+        clearAvatarUrl ? null : (avatarUrl ?? current?.avatarUrl);
+    final newSource = BlurredBackgroundService.pickPreferredSource(
+      characterImage: nextCharacterImage,
+      avatarUrl: nextAvatarUrl,
+    );
+
+    if (oldSource != null && oldSource != newSource) {
+      unawaited(BlurredBackgroundService.evict(oldSource));
+    }
+    if (newSource != null) {
+      unawaited(BlurredBackgroundService.ensureBlur(newSource));
+    }
   }
 
   // 更新对话设置
@@ -258,18 +293,88 @@ final conversationsProvider =
 
 final activeConversationIdProvider = StateProvider<String?>((ref) => null);
 
+final conversationSnapshotByIdProvider = Provider.family<Conversation?, String>(
+  (ref, conversationId) {
+    return ref.watch(
+      conversationsProvider.select(
+        (listAsync) => listAsync.maybeWhen(
+          data: (list) {
+            for (final conversation in list) {
+              if (conversation.id == conversationId) {
+                return conversation;
+              }
+            }
+            return null;
+          },
+          orElse: () => null,
+        ),
+      ),
+    );
+  },
+);
+
+final conversationByIdProvider =
+    StreamProvider.autoDispose.family<Conversation?, String>(
+  (ref, conversationId) {
+    final db = ref.watch(databaseProvider);
+    final query = db.select(db.conversations)
+      ..where(
+        (t) => t.id.equals(conversationId) & t.deletedAt.isNull(),
+      );
+    return query.watchSingleOrNull().map((row) {
+      if (row == null) return null;
+      return ConversationConverter.fromDb(row);
+    });
+  },
+);
+
 final activeConversationProvider = Provider<Conversation?>((ref) {
-  final id = ref.watch(activeConversationIdProvider);
-  final listAsync = ref.watch(conversationsProvider);
-  return listAsync.maybeWhen(
-    data: (list) {
-      if (list.isEmpty) return null;
-      if (id == null) return list.first;
-      for (final c in list) {
-        if (c.id == id) return c;
-      }
-      return list.first;
-    },
-    orElse: () => null,
+  final rawId = ref.watch(activeConversationIdProvider);
+  final activeId = rawId?.trim();
+  if (activeId != null && activeId.isNotEmpty) {
+    final snapshotConversation =
+        ref.watch(conversationSnapshotByIdProvider(activeId));
+    if (snapshotConversation != null) {
+      return snapshotConversation;
+    }
+
+    final activeConversationAsync =
+        ref.watch(conversationByIdProvider(activeId));
+    if (activeConversationAsync.isLoading) {
+      return null;
+    }
+
+    final activeConversation = activeConversationAsync.valueOrNull;
+    if (activeConversation != null) {
+      return activeConversation;
+    }
+
+    return null;
+  }
+
+  final fallbackId = ref.watch(
+    conversationsProvider.select(
+      (listAsync) => listAsync.maybeWhen(
+        data: (list) => list.isEmpty ? null : list.first.id,
+        orElse: () => null,
+      ),
+    ),
   );
+  if (fallbackId == null) {
+    return null;
+  }
+
+  final fallbackSnapshot =
+      ref.watch(conversationSnapshotByIdProvider(fallbackId));
+  if (fallbackSnapshot != null) {
+    return fallbackSnapshot;
+  }
+
+  final fallbackConversationAsync =
+      ref.watch(conversationByIdProvider(fallbackId));
+  if (fallbackConversationAsync.isLoading) {
+    return null;
+  }
+
+  return fallbackConversationAsync.valueOrNull;
 });

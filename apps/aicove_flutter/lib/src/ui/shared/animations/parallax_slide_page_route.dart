@@ -1,14 +1,21 @@
 /// 视差滑动路由 - 实现类似鸿蒙NEXT/iOS风格的页面切换动画
-/// 
+///
 /// 动画效果：
 /// - 新页面从右侧滑入，左侧带阴影
 /// - 底层页面微幅左移（视差跟随效果）
-/// 
+///
 /// 更新记录：
 /// - 2025-12-02: 创建并调优参数
 library;
+
 import 'package:flutter/material.dart';
 import '../../theme/tokens.dart';
+
+/// 鸿蒙风格前景页曲线：起步平稳，中后段柔和收束。
+const Cubic kHarmonySmoothCurve = Cubic(0.4, 0.0, 0.4, 1.0);
+
+/// 鸿蒙风格背景页曲线：更像被轻轻带走，减少左移的生硬感。
+const Cubic kHarmonyFrictionCurve = Cubic(0.2, 0.0, 0.2, 1.0);
 
 /// ============================================================
 /// 视差滑动路由配置
@@ -17,23 +24,27 @@ import '../../theme/tokens.dart';
 class ParallaxSlideConfig {
   /// 进入动画时长
   final Duration duration;
-  
+
   /// 返回动画时长
   final Duration reverseDuration;
-  
-  /// 动画曲线
-  final Curve curve;
-  
+
+  /// 新页面进入曲线
+  final Curve primaryCurve;
+
+  /// 底层页面左移曲线
+  final Curve secondaryCurve;
+
   /// 底层页面位移比例（0-1），如 0.08 表示左移 8%
   final double secondarySlideRatio;
-  
+
   /// 新页面左侧阴影
   final BoxShadow? shadow;
 
   const ParallaxSlideConfig({
     this.duration = kAnimPage,
     this.reverseDuration = kAnimPageReverse,
-    this.curve = Curves.fastOutSlowIn,
+    this.primaryCurve = kHarmonySmoothCurve,
+    this.secondaryCurve = kHarmonyFrictionCurve,
     this.secondarySlideRatio = 0.08,
     this.shadow = const BoxShadow(
       color: Color(0x33000000),
@@ -41,7 +52,7 @@ class ParallaxSlideConfig {
       offset: Offset(-4, 0),
     ),
   });
-  
+
   /// 默认配置
   static const defaultConfig = ParallaxSlideConfig();
 }
@@ -51,7 +62,7 @@ class ParallaxSlideConfig {
 /// ============================================================
 
 /// 构建底层页面的视差动画（用于 go_router 的主页面）
-/// 
+///
 /// 使用示例：
 /// ```dart
 /// GoRoute(
@@ -62,21 +73,21 @@ class ParallaxSlideConfig {
 ///   ),
 /// )
 /// ```
-Widget Function(BuildContext, Animation<double>, Animation<double>, Widget) 
-buildSecondaryParallaxTransition({
+Widget Function(BuildContext, Animation<double>, Animation<double>, Widget)
+    buildSecondaryParallaxTransition({
   ParallaxSlideConfig config = ParallaxSlideConfig.defaultConfig,
 }) {
   return (context, animation, secondaryAnimation, child) {
     final curvedSecondary = CurvedAnimation(
       parent: secondaryAnimation,
-      curve: config.curve,
+      curve: config.secondaryCurve,
     );
-    
+
     final slideTween = Tween(
       begin: Offset.zero,
       end: Offset(-config.secondarySlideRatio, 0.0),
     );
-    
+
     return SlideTransition(
       position: curvedSecondary.drive(slideTween),
       child: child,
@@ -85,7 +96,7 @@ buildSecondaryParallaxTransition({
 }
 
 /// 构建新页面的滑入动画（用于 go_router 的目标页面）
-/// 
+///
 /// 使用示例：
 /// ```dart
 /// GoRoute(
@@ -97,15 +108,15 @@ buildSecondaryParallaxTransition({
 ///   ),
 /// )
 /// ```
-Widget Function(BuildContext, Animation<double>, Animation<double>, Widget) 
-buildPrimaryParallaxTransition({
+Widget Function(BuildContext, Animation<double>, Animation<double>, Widget)
+    buildPrimaryParallaxTransition({
   ParallaxSlideConfig config = ParallaxSlideConfig.defaultConfig,
 }) {
   return (context, animation, secondaryAnimation, child) {
     final slideIn = Tween(
       begin: const Offset(1.0, 0.0),
       end: Offset.zero,
-    ).chain(CurveTween(curve: config.curve));
+    ).chain(CurveTween(curve: config.primaryCurve));
 
     return SlideTransition(
       position: animation.drive(slideIn),
@@ -155,7 +166,7 @@ class ParallaxSlidePageRoute<T> extends PageRoute<T> {
   Duration get reverseTransitionDuration => config.reverseDuration;
 
   @override
-  Widget buildPage(BuildContext context, Animation<double> animation, 
+  Widget buildPage(BuildContext context, Animation<double> animation,
       Animation<double> secondaryAnimation) {
     return page;
   }
@@ -167,12 +178,12 @@ class ParallaxSlidePageRoute<T> extends PageRoute<T> {
     final slideIn = Tween(
       begin: const Offset(1.0, 0.0),
       end: Offset.zero,
-    ).chain(CurveTween(curve: config.curve));
+    ).chain(CurveTween(curve: config.primaryCurve));
 
     // 2. 被覆盖时的动画：微幅左移（视差跟随效果）
     final curvedSecondary = CurvedAnimation(
       parent: secondaryAnimation,
-      curve: config.curve,
+      curve: config.secondaryCurve,
     );
     final slideOut = Tween(
       begin: Offset.zero,
