@@ -8,7 +8,8 @@
 /// - 2026-01-28: 移除分段逻辑，分段改为纯前端展示
 /// - 2026-01-28: TTS 标签必须拆分，文本和语音交替出现
 /// - 2026-02-21: 统一多模态拆分机制，表情包也按原始位置拆分保证语序
-/// - 2026-02-26: draw_image 图片按 [图片]/[image] 占位回插，避免总在首尾
+/// - 2026-02-26: draw_image 图片按占位回插，避免总在首尾
+/// - 2026-03-18: 统一图片标签为 <image></image>，快速模式图片改为后补分段
 library;
 
 import '../domain/message.dart';
@@ -22,7 +23,7 @@ import '../../../core/api/providers/provider_adapter.dart'
 import 'chat_types.dart';
 
 /// 多模态片段类型（供 ChatTtsHandler 使用）
-enum MultimodalSegmentType { text, tts, sticker }
+enum MultimodalSegmentType { text, tts, sticker, image }
 
 /// 多模态片段（供 ChatTtsHandler 使用）
 class MultimodalSegment {
@@ -32,22 +33,26 @@ class MultimodalSegment {
   /// 表情包段携带的事件数据（stickerId, assetPath, tag 等）
   final Map<String, dynamic>? stickerData;
 
+  /// 图片段携带的事件数据（prompt 等）
+  final Map<String, dynamic>? imageData;
+
   const MultimodalSegment({
     required this.type,
     required this.content,
     this.stickerData,
+    this.imageData,
   });
 }
 
 // ===== 内部类型 =====
 
-enum _SegType { text, tts, sticker }
+enum _SegType { text, tts, sticker, image }
 
 class _Seg {
   final _SegType type;
   final String content;
-  final Map<String, dynamic>? stickerData;
-  const _Seg(this.type, this.content, {this.stickerData});
+  final Map<String, dynamic>? data;
+  const _Seg(this.type, this.content, {this.data});
 }
 
 /// 内部标记位置（用于排序和去重叠）
@@ -73,7 +78,7 @@ class _Marker {
 class ChatMessageProcessor {
   const ChatMessageProcessor();
   static final RegExp _imagePlaceholderRegex = RegExp(
-    r'\[(?:图片|image)(?:\s*:[^\]]*)?\]',
+    r'(?:<image>\s*</image>|\[(?:图片|image)(?:\s*:[^\]]*)?\])',
     caseSensitive: false,
   );
   static final RegExp _punctuationOnlyTextRegex = RegExp(
@@ -112,7 +117,10 @@ class ChatMessageProcessor {
     if (!hasTextContent) {
       // 检查是否有多模态事件（TTS 语音或表情包）
       final hasMultimodal = pluginEvents.any(
-        (e) => e.type == 'tts_convert' || e.type == 'sticker_convert',
+        (e) =>
+            e.type == 'tts_convert' ||
+            e.type == 'sticker_convert' ||
+            e.type == 'image_generate',
       );
 
       if (hasMultimodal) {
@@ -125,13 +133,14 @@ class ChatMessageProcessor {
           switch (segment.type) {
             case _SegType.text:
               aiMessages.add(_buildTextMessage(segment.content.trim()));
+              break;
             case _SegType.tts:
               // TTS 段不在这里处理，交给 ChatTtsHandler
               break;
             case _SegType.sticker:
-              final assetPath = segment.stickerData?['assetPath'] as String?;
-              final stickerId = segment.stickerData?['stickerId'] as String?;
-              final tag = segment.stickerData?['tag'] as String?;
+              final assetPath = segment.data?['assetPath'] as String?;
+              final stickerId = segment.data?['stickerId'] as String?;
+              final tag = segment.data?['tag'] as String?;
               if (assetPath != null && assetPath.isNotEmpty) {
                 aiMessages.add(Message.fromBlocks(
                   id: genId('sticker'),
@@ -148,6 +157,10 @@ class ChatMessageProcessor {
                   status: 'sent',
                 ));
               }
+              break;
+            case _SegType.image:
+              // 图片段交给 ChatTtsHandler 直连生成并后补，不在这里直接入库
+              break;
           }
         }
         if (imageContents.isNotEmpty) {
@@ -271,9 +284,11 @@ class ChatMessageProcessor {
                 _SegType.text => MultimodalSegmentType.text,
                 _SegType.tts => MultimodalSegmentType.tts,
                 _SegType.sticker => MultimodalSegmentType.sticker,
+                _SegType.image => MultimodalSegmentType.image,
               },
               content: s.content,
-              stickerData: s.stickerData,
+              stickerData: s.type == _SegType.sticker ? s.data : null,
+              imageData: s.type == _SegType.image ? s.data : null,
             ))
         .toList();
   }
@@ -334,9 +349,35 @@ class ChatMessageProcessor {
       }
     }
 
-    // 移除被 TTS 标记包含的表情包标记（嵌套场景）
+    // 图片标记（只匹配本轮确认过的 image_generate 事件）
+    final imageEvents = pluginEvents
+        .where((event) => event.type == 'image_generate')
+        .toList(growable: false);
+    var imageEventIndex = 0;
+    final imageRegex = RegExp(
+      r'<image>([\s\S]*?)</image>',
+      caseSensitive: false,
+    );
+    for (final match in imageRegex.allMatches(cleanedText)) {
+      final prompt = (match.group(1) ?? '').trim();
+      if (prompt.isEmpty || imageEventIndex >= imageEvents.length) {
+        continue;
+      }
+      markers.add(_Marker(
+        start: match.start,
+        end: match.end,
+        type: _SegType.image,
+        content: prompt,
+        data: imageEvents[imageEventIndex].data,
+      ));
+      imageEventIndex += 1;
+    }
+
+    // 移除被 TTS 标记包含的表情包 / 图片标记（嵌套场景）
     markers.removeWhere((m) {
-      if (m.type != _SegType.sticker) return false;
+      if (m.type != _SegType.sticker && m.type != _SegType.image) {
+        return false;
+      }
       return markers.any((other) =>
           other.type == _SegType.tts &&
           m.start >= other.start &&
@@ -363,7 +404,7 @@ class ChatMessageProcessor {
       segments.add(_Seg(
         marker.type,
         marker.content,
-        stickerData: marker.data,
+        data: marker.data,
       ));
 
       lastEnd = marker.end;
@@ -380,7 +421,7 @@ class ChatMessageProcessor {
     return segments;
   }
 
-  /// 移除非多模态的插件标签（保留 TTS 和表情包标签）
+  /// 移除非多模态的插件标签（保留 TTS / 图片 / 表情包标签）
   ///
   /// 只移除标签本身，不改动其他任何字符（包括空格、标点）
   String _stripNonTtsTags(String text) {
@@ -581,6 +622,12 @@ class ChatMessageProcessor {
     // 移除 <delete_trigger ... /> 标签
     result = result.replaceAll(
         RegExp(r'<delete_trigger\s[^>]*?/?>', caseSensitive: false), '');
+
+    // 移除 <image>...</image> 标签（包含内部历史标签）
+    result = result.replaceAll(
+      RegExp(r'<image\b[^>]*>[\s\S]*?</image>', caseSensitive: false),
+      '',
+    );
 
     result = result.trim();
 

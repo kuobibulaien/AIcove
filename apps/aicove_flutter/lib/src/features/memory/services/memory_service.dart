@@ -4,10 +4,16 @@ import 'package:crypto/crypto.dart';
 import 'package:uuid/uuid.dart';
 import '../../../core/app_logger.dart';
 import '../../../core/database/database.dart' as db;
+import '../../../core/database/repositories/conversation_repository.dart';
+import '../../../core/database/repositories/diary_repository.dart';
 import '../../../core/database/repositories/memory_repository.dart';
 import '../../../core/database/repositories/message_repository.dart';
-import '../../../core/network/json_http_client.dart';
+import '../../background_agent/background_agent_service.dart';
+import '../../background_agent/domain/background_agent_definition.dart';
+import '../../background_agent/domain/background_context_spec.dart';
+import '../../chat/domain/persona_prompt_codec.dart';
 import '../../chat/domain/message.dart' as chat;
+import '../../diary/models/diary_entry.dart';
 import '../models/memory_entity.dart';
 import '../utils/memory_time_formatter.dart';
 import 'embedding_service.dart';
@@ -15,6 +21,9 @@ import 'hybrid_embedding_service.dart';
 import 'memory_compressor_service.dart';
 import 'memory_merger_service.dart';
 import 'profile_service.dart';
+
+const Duration _summaryProtectionWindow = Duration(hours: 24);
+const Duration _boundaryMergeWindow = Duration(minutes: 10);
 
 List<Map<String, String?>> parseMemorySummaryItemsForTest(String raw) {
   final parsed = _parseSummaryPayload(raw);
@@ -98,6 +107,7 @@ class MemoryServiceConfig {
   final bool enabled;
   final String summarizePrompt;
   final ResolvedModelConfig? summarizeModel;
+  final String? summarizeModelRef;
   final ResolvedModelConfig? embeddingModel;
   final ResolvedModelConfig? fallbackEmbeddingModel;
   final bool fallbackEnabled;
@@ -115,6 +125,7 @@ class MemoryServiceConfig {
     this.enabled = true,
     this.summarizePrompt = '',
     this.summarizeModel,
+    this.summarizeModelRef,
     this.embeddingModel,
     this.fallbackEmbeddingModel,
     this.fallbackEnabled = false,
@@ -136,6 +147,9 @@ class MemoryService {
   final MemoryServiceConfig config;
   final MemoryRepository _memoryRepository;
   final MessageRepository _messageRepository;
+  final BackgroundAgentService? _backgroundAgentService;
+  final ConversationRepository? _conversationRepository;
+  final DiaryRepository? _diaryRepository;
   static final Map<String, Future<void>> _conversationIngestLocks = {};
 
   late final ProfileService _profileService;
@@ -147,14 +161,24 @@ class MemoryService {
   MemoryService(
     this.config,
     this._memoryRepository,
-    this._messageRepository,
-  ) {
+    this._messageRepository, {
+    BackgroundAgentService? backgroundAgentService,
+    ConversationRepository? conversationRepository,
+    DiaryRepository? diaryRepository,
+    EmbeddingService? embeddingServiceOverride,
+  })  : _backgroundAgentService = backgroundAgentService,
+        _conversationRepository = conversationRepository,
+        _diaryRepository = diaryRepository {
     _memoryRepository.setLocalMaxMemories(config.localMaxMemories);
     _profileService = ProfileService(_memoryRepository);
     _mergerService = MemoryMergerService(_memoryRepository,
         mergeModel: config.summarizeModel);
     _compressorService = MemoryCompressorService(_memoryRepository);
-    _initEmbeddingService();
+    if (embeddingServiceOverride != null) {
+      _embeddingService = embeddingServiceOverride;
+    } else {
+      _initEmbeddingService();
+    }
   }
 
   bool get isInFallbackMode {
@@ -214,7 +238,10 @@ class MemoryService {
       return;
     }
 
-    final parsed = await _summarizeWithClassification(messages);
+    final parsed = await _summarizeWithClassification(
+      messages,
+      conversationId: conversationId,
+    );
     if (parsed.items.isEmpty) {
       if (config.enableCapacityCompress) {
         await _reEnrichMarkedMemories(
@@ -227,6 +254,9 @@ class MemoryService {
 
     final now = DateTime.now();
     final quality = _conversationQuality(messages);
+    final summaryDate = _resolveSummaryDate(messages);
+    final summaryDateKey = _dateKey(summaryDate);
+    final l3Facts = <String>[];
 
     for (final item in parsed.items) {
       final category = _normalizeCategory(item.category);
@@ -236,8 +266,15 @@ class MemoryService {
         quality: quality,
       );
       if (targetLayer == null) continue;
+      if (targetLayer == 'L3') {
+        final normalizedFact = item.fact.trim();
+        if (normalizedFact.isNotEmpty) {
+          l3Facts.add(normalizedFact);
+        }
+      }
 
       var content = _formatByLayer(
+        summaryDateKey: summaryDateKey,
         targetLayer: targetLayer,
         fact: item.fact,
         chatProcess: item.chatProcess,
@@ -288,6 +325,14 @@ class MemoryService {
         createdAt: now,
       ).recalculateImportance();
       await _memoryRepository.addMemory(memory, triggerEviction: false);
+    }
+
+    if (l3Facts.isNotEmpty) {
+      await _saveDiaryFromL3Facts(
+        conversationId: conversationId,
+        summaryDate: summaryDate,
+        facts: l3Facts,
+      );
     }
 
     if (config.enableProfileLayer &&
@@ -351,16 +396,88 @@ class MemoryService {
 
   Future<void> checkAndTriggerDailySummarization({
     required String conversationId,
+    DateTime? disturbanceTime,
   }) async {
     if (!config.enabled || !config.enableNextDayTrigger) return;
 
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
+    final resolvedDisturbanceTime =
+        await _resolveDisturbanceTime(conversationId, disturbanceTime);
+    if (resolvedDisturbanceTime == null) return;
+
+    final cutoffTimestamp = resolvedDisturbanceTime
+        .subtract(_summaryProtectionWindow)
+        .millisecondsSinceEpoch;
+    final agedCandidates = await _messageRepository.getIngestCandidates(
+      conversationId: conversationId,
+      beforeTimestampExclusive: cutoffTimestamp,
+    );
+    if (agedCandidates.isEmpty) return;
+
+    final ingestBoundaryExclusive = await _resolveIngestBoundaryExclusive(
+      conversationId: conversationId,
+      cutoffTimestamp: cutoffTimestamp,
+    );
     await ingestMessages(
       conversationId: conversationId,
-      beforeTimestampExclusive: today.millisecondsSinceEpoch,
+      beforeTimestampExclusive: ingestBoundaryExclusive,
       trigger: MemoryIngestTrigger.daily,
     );
+  }
+
+  Future<DateTime?> _resolveDisturbanceTime(
+    String conversationId,
+    DateTime? explicitDisturbanceTime,
+  ) async {
+    if (explicitDisturbanceTime != null) {
+      return explicitDisturbanceTime;
+    }
+    final latestUserMessage = await _messageRepository.getLastMessageByRole(
+      conversationId,
+      role: 'user',
+    );
+    if (latestUserMessage == null) return null;
+    return DateTime.fromMillisecondsSinceEpoch(latestUserMessage.createdAt);
+  }
+
+  Future<int> _resolveIngestBoundaryExclusive({
+    required String conversationId,
+    required int cutoffTimestamp,
+  }) async {
+    final orderedMessages =
+        await _messageRepository.getAllByConversationOrdered(conversationId);
+    if (orderedMessages.isEmpty) return cutoffTimestamp;
+
+    final orderedUserMessages = orderedMessages
+        .where((row) => row.role.trim().toLowerCase() == 'user')
+        .toList(growable: false);
+    if (orderedUserMessages.isEmpty) {
+      return cutoffTimestamp;
+    }
+
+    final firstProtectedUserIndex = orderedUserMessages.indexWhere(
+      (row) => row.createdAt >= cutoffTimestamp,
+    );
+    if (firstProtectedUserIndex <= 0) {
+      return cutoffTimestamp;
+    }
+
+    // Trigger continuity by adjacent user-message gaps across the 24h boundary,
+    // and only absorb protected messages up to the last user message that
+    // stays continuous. This preserves the 24h protection window unless the
+    // user-message chain explicitly bridges the boundary.
+    var lastIncludedUserTimestamp =
+        orderedUserMessages[firstProtectedUserIndex - 1].createdAt;
+    var boundaryExclusive = cutoffTimestamp;
+    for (var i = firstProtectedUserIndex; i < orderedUserMessages.length; i++) {
+      final currentUser = orderedUserMessages[i];
+      final gap = currentUser.createdAt - lastIncludedUserTimestamp;
+      if (gap > _boundaryMergeWindow.inMilliseconds) {
+        break;
+      }
+      lastIncludedUserTimestamp = currentUser.createdAt;
+      boundaryExclusive = currentUser.createdAt + 1;
+    }
+    return boundaryExclusive;
   }
 
   Future<void> runPreFlush({
@@ -654,47 +771,63 @@ class MemoryService {
   }
 
   Future<_ParsedSummary> _summarizeWithClassification(
-      List<chat.Message> messages) async {
-    final prompt = _buildSummaryPrompt(messages);
-    final raw = await _callSummarizeLLM(prompt);
+    List<chat.Message> messages, {
+    required String conversationId,
+  }) async {
+    final raw = await _runSummaryBackgroundAgent(
+      messages: messages,
+      conversationId: conversationId,
+    );
     if (raw == null || raw.trim().isEmpty) {
       return const _ParsedSummary(items: []);
     }
     return _parseSummaryPayload(raw);
   }
 
-  String _buildSummaryPrompt(List<chat.Message> messages) {
-    final conversationText =
-        messages.map((m) => '${m.role}: ${m.content}').join('\n');
-    final base = config.summarizePrompt.trim().isEmpty
-        ? _defaultSummaryPrompt
-        : config.summarizePrompt;
-    return '$base\n\n聊天记录：\n$conversationText';
-  }
-
-  Future<String?> _callSummarizeLLM(String prompt) async {
-    final model = config.summarizeModel;
-    if (model == null || !model.isValid) return null;
-    final url = Uri.parse('${model.baseUrl}/chat/completions');
-    try {
-      final response = await JsonHttpClient.postJson(
-        uri: url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ${model.apiKey}',
-        },
-        jsonBody: {
-          'model': model.model,
-          'messages': [
-            {'role': 'user', 'content': prompt}
-          ],
-          'temperature': 0.2,
-        },
-      );
-      return response.data['choices']?[0]?['message']?['content'] as String?;
-    } on JsonHttpRequestException {
+  Future<String?> _runSummaryBackgroundAgent({
+    required List<chat.Message> messages,
+    required String conversationId,
+  }) async {
+    final backgroundAgentService = _backgroundAgentService;
+    final modelRef = config.summarizeModelRef?.trim();
+    if (messages.isEmpty) {
       return null;
     }
+    if (backgroundAgentService == null ||
+        modelRef == null ||
+        modelRef.isEmpty) {
+      throw StateError(
+        'MemoryService 需要 BackgroundAgentService 和 summarizeModelRef 才能执行记忆总结。',
+      );
+    }
+    final extraInstruction =
+        await _buildMemorySummaryExtraInstruction(conversationId);
+
+    final result = await backgroundAgentService.run(
+      definition: BackgroundAgentDefinition(
+        id: 'memory_manager',
+        name: '记忆管理',
+        objectivePrompt: config.summarizePrompt.trim().isEmpty
+            ? _defaultSummaryPrompt
+            : config.summarizePrompt,
+        contextSpec: BackgroundContextSpec(
+          lastMessages: messages.length,
+          includeUser: true,
+          includeAssistant: true,
+          includeSystem: false,
+          includeTimestamps: true,
+        ),
+        allowedToolNames: const <String>[],
+        modelRef: modelRef,
+        temperature: 0.2,
+        maxRounds: 1,
+      ),
+      conversationId: conversationId,
+      extraInstruction: extraInstruction,
+      contextMessages: messages,
+    );
+    final text = result.text.trim();
+    return text.isEmpty ? null : text;
   }
 
   _ConversationQuality _conversationQuality(List<chat.Message> messages) {
@@ -724,6 +857,7 @@ class MemoryService {
   }
 
   String _formatByLayer({
+    required String summaryDateKey,
     required String targetLayer,
     required String fact,
     String? chatProcess,
@@ -741,12 +875,176 @@ class MemoryService {
           aiStrategy: aiStrategy,
         );
       case 'L3':
-        return '${_nowYmd()}，$fact';
+        return '$summaryDateKey，$fact';
       case 'L4':
       default:
         final title = _extractTitle(fact);
-        return '${_nowYmd()}，$title';
+        return '$summaryDateKey，$title';
     }
+  }
+
+  Future<String> _buildMemorySummaryExtraInstruction(
+    String conversationId,
+  ) async {
+    final sections = <String>[_memorySummaryExtraInstruction.trim()];
+    final roleInstruction = await _buildRolePersonaInstruction(conversationId);
+    if (roleInstruction.isNotEmpty) {
+      sections.add(roleInstruction);
+    }
+    return sections.join('\n\n');
+  }
+
+  Future<String> _buildRolePersonaInstruction(String conversationId) async {
+    const genericInstruction = '''
+当 target_layer = L3 时：
+- fact 必须用角色第一视角写成单条日记事件，像角色自己在回顾“我和用户发生了什么”
+- 可以输出同一天的多条不同事件，每条只聚焦一件事
+- 不要写成旁白、观察报告或分析结论
+''';
+
+    final conversationRepository = _conversationRepository;
+    if (conversationRepository == null) {
+      return genericInstruction.trim();
+    }
+
+    final conversation = await conversationRepository.getById(conversationId);
+    if (conversation == null) {
+      return genericInstruction.trim();
+    }
+
+    final roleName = conversation.displayName.trim().isEmpty
+        ? conversation.title.trim()
+        : conversation.displayName.trim();
+    final selfAddress = conversation.selfAddress?.trim().isNotEmpty == true
+        ? conversation.selfAddress!.trim()
+        : '我';
+    final addressUser = conversation.addressUser?.trim().isNotEmpty == true
+        ? conversation.addressUser!.trim()
+        : '你';
+    final personaPrompt =
+        PersonaPromptCodec.parse(conversation.personaPrompt).userPrompt;
+    final personaSummary = _truncateForPrompt(personaPrompt, maxChars: 600);
+
+    final buffer = StringBuffer()
+      ..writeln('当前需要你以指定角色的人设来整理记忆：')
+      ..writeln('- 角色名：$roleName')
+      ..writeln('- 角色自称优先使用：$selfAddress')
+      ..writeln('- 对用户称呼优先使用：$addressUser');
+    if (personaSummary.isNotEmpty) {
+      buffer.writeln('- 角色设定摘要：$personaSummary');
+    }
+    buffer.writeln(genericInstruction.trim());
+    buffer.writeln('- 单日内允许输出多条 L3 事件，这些事件之后会被拼接为同一篇日记展示');
+    return buffer.toString().trim();
+  }
+
+  String _truncateForPrompt(String text, {required int maxChars}) {
+    final normalized = text.trim();
+    if (normalized.length <= maxChars) {
+      return normalized;
+    }
+    return '${normalized.substring(0, maxChars)}...';
+  }
+
+  DateTime _resolveSummaryDate(List<chat.Message> messages) {
+    var earliest = messages.first.createdAt;
+    for (final message in messages.skip(1)) {
+      if (message.createdAt.isBefore(earliest)) {
+        earliest = message.createdAt;
+      }
+    }
+    return DateTime(earliest.year, earliest.month, earliest.day);
+  }
+
+  Future<void> _saveDiaryFromL3Facts({
+    required String conversationId,
+    required DateTime summaryDate,
+    required List<String> facts,
+  }) async {
+    final diaryRepository = _diaryRepository;
+    if (diaryRepository == null) return;
+
+    final incomingParagraphs = _normalizeDiaryParagraphs(facts);
+    if (incomingParagraphs.isEmpty) return;
+
+    final existing = await diaryRepository.getDiaryByDate(
+      conversationId,
+      summaryDate,
+    );
+    final mergedParagraphs = _mergeDiaryParagraphs(
+      existing?.content,
+      incomingParagraphs,
+    );
+    final mergedContent = mergedParagraphs.join('\n\n').trim();
+    if (mergedContent.isEmpty) return;
+    if (existing != null && existing.content.trim() == mergedContent) {
+      return;
+    }
+
+    final now = DateTime.now();
+    final embedding = _embeddingService == null
+        ? const <double>[]
+        : await _embeddingService!.getEmbedding(mergedContent);
+    final diary = (existing ??
+            DiaryEntry(
+              id: const Uuid().v4(),
+              conversationId: conversationId,
+              date: summaryDate,
+              content: mergedContent,
+              createdAt: now,
+            ))
+        .copyWith(
+      date: summaryDate,
+      content: mergedContent,
+      embedding: embedding,
+      updatedAt: now,
+      isSynced: false,
+      syncState: existing == null ? 'local' : 'modified',
+    );
+    await diaryRepository.saveDiary(diary);
+  }
+
+  List<String> _normalizeDiaryParagraphs(List<String> facts) {
+    final seen = <String>{};
+    final normalized = <String>[];
+    for (final fact in facts) {
+      final paragraph = fact.trim();
+      if (paragraph.isEmpty || !seen.add(paragraph)) {
+        continue;
+      }
+      normalized.add(paragraph);
+    }
+    return normalized;
+  }
+
+  List<String> _mergeDiaryParagraphs(
+    String? existingContent,
+    List<String> incomingParagraphs,
+  ) {
+    final seen = <String>{};
+    final merged = <String>[];
+    for (final paragraph in _splitDiaryParagraphs(existingContent)) {
+      if (seen.add(paragraph)) {
+        merged.add(paragraph);
+      }
+    }
+    for (final paragraph in incomingParagraphs) {
+      if (seen.add(paragraph)) {
+        merged.add(paragraph);
+      }
+    }
+    return merged;
+  }
+
+  List<String> _splitDiaryParagraphs(String? content) {
+    if (content == null || content.trim().isEmpty) {
+      return const [];
+    }
+    return content
+        .split(RegExp(r'\n\s*\n+'))
+        .map((paragraph) => paragraph.trim())
+        .where((paragraph) => paragraph.isNotEmpty)
+        .toList(growable: false);
   }
 
   String formatL2Content({
@@ -809,7 +1107,6 @@ class MemoryService {
     return '$y-$m-$d';
   }
 
-  String _nowYmd() => _dateKey(DateTime.now());
   String _sha256(String input) => sha256.convert(utf8.encode(input)).toString();
   String _sha1(String input) => sha1.convert(utf8.encode(input)).toString();
 }
@@ -905,7 +1202,7 @@ const String _defaultSummaryPrompt = '''
 {
   "items": [
     {
-      "fact": "事件概要，20~80字",
+      "fact": "事件概要；若 target_layer=L3，必须写成角色第一视角的单条日记事件，20~80字",
       "category": "core_preference|identity_fact|emotional_event|ongoing_plan|temporary_state|daily_chatter",
       "target_layer": "L2|L3|L4",
       "chat_process": "仅L2可填",
@@ -922,6 +1219,16 @@ const String _defaultSummaryPrompt = '''
 硬约束：
 - 不要编造；不确定就不输出
 - 输出 0~8 条，宁缺毋滥
+- 认真使用消息时间戳，判断事情发生在多久前、现在是否还在持续
+- L3 允许同一天输出多条事件，每条都是可独立展示的日记片段
+''';
+
+const String _memorySummaryExtraInstruction = '''
+你当前收到的是已经按记忆触发规则挑选过的一批旧消息：
+- 核心部分是当前用户消息之前 24 小时保护期之外、且尚未总结的消息
+- 如果保护期边界前后的用户消息连续间隔不超过 10 分钟，保护期内相邻消息也可能被并入
+请强烈关注每条消息中的时间戳，判断事件发生在多久前、是否已经结束，不要把短期状态误写成长期稳定事实。
+严格按要求输出 JSON，不要输出 markdown。
 ''';
 
 class _SummaryItem {

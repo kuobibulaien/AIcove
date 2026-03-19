@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:aicove_flutter/src/core/utils/image_preheat_queue.dart';
+import 'package:aicove_flutter/src/core/utils/avatar_helper.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../providers2.dart';
@@ -33,6 +34,15 @@ VoidCallback scheduleConversationTapWarmup(
   return () {
     canceled = true;
   };
+}
+
+ImageProvider? buildConversationAvatarProvider(Conversation conv) {
+  final helper = AvatarHelper(
+    avatarUrl: conv.avatarUrl,
+    characterImage: conv.characterImage,
+    displayName: conv.displayName,
+  );
+  return helper.getAvatarProvider();
 }
 
 /// 联系人列表内容组件 - 纯内容展示，无AppBar（应用DRY原则）
@@ -75,18 +85,9 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
 
   List<ImageProvider> _collectAvatarProviders(Conversation conv) {
     final images = <ImageProvider>[];
-
-    final avatarUrl = (conv.avatarUrl ?? conv.characterImage)?.trim();
-    if (avatarUrl != null && avatarUrl.isNotEmpty) {
-      final isNetwork =
-          avatarUrl.startsWith('http://') || avatarUrl.startsWith('https://');
-      final isAsset =
-          avatarUrl.startsWith('assets/') || avatarUrl.startsWith('packages/');
-      if (isNetwork) {
-        images.add(CachedNetworkImageProvider(avatarUrl));
-      } else if (isAsset) {
-        images.add(AssetImage(avatarUrl));
-      }
+    final avatarProvider = buildConversationAvatarProvider(conv);
+    if (avatarProvider != null) {
+      images.add(avatarProvider);
     }
 
     return images;

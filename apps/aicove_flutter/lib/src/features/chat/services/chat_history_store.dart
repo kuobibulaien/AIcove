@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:drift/drift.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -19,6 +20,129 @@ class ConversationMessageWindow {
   final bool hasMore;
 }
 
+class ConversationTurnWindow {
+  const ConversationTurnWindow({
+    required this.messages,
+    required this.hasMoreMessages,
+  });
+
+  final List<Message> messages;
+  final bool hasMoreMessages;
+}
+
+typedef LoadConversationOlderPage = Future<List<Message>> Function({
+  required DateTime beforeCreatedAt,
+  required String beforeId,
+  required int limit,
+});
+
+const int kConversationTurnWindowFetchPageSize = 24;
+const int kConversationTurnWindowMaxFetchPages = 4;
+
+int countConversationTurns(List<Message> messages) {
+  if (messages.isEmpty) return 0;
+  final anchorCount = _countConversationTurnAnchors(messages);
+  return anchorCount > 0 ? anchorCount : 1;
+}
+
+Future<ConversationTurnWindow> resolveConversationTurnWindow({
+  required List<Message> currentMessages,
+  required bool hasMoreMessages,
+  required LoadConversationOlderPage loadOlderPage,
+  required int targetTurnCount,
+  int fetchPageSize = kConversationTurnWindowFetchPageSize,
+  int maxFetchPages = kConversationTurnWindowMaxFetchPages,
+}) async {
+  if (currentMessages.isEmpty) {
+    return const ConversationTurnWindow(
+      messages: <Message>[],
+      hasMoreMessages: false,
+    );
+  }
+
+  final loadedMessages = List<Message>.from(currentMessages, growable: true)
+    ..sort((a, b) {
+      final byTime = a.createdAt.compareTo(b.createdAt);
+      if (byTime != 0) return byTime;
+      return a.id.compareTo(b.id);
+    });
+  var canLoadMore = hasMoreMessages;
+  var fetchedPages = 0;
+
+  while (canLoadMore &&
+      countConversationTurns(loadedMessages) < targetTurnCount &&
+      fetchedPages < maxFetchPages) {
+    final oldest = loadedMessages.first;
+    final olderMessages = await loadOlderPage(
+      beforeCreatedAt: oldest.createdAt,
+      beforeId: oldest.id,
+      limit: fetchPageSize,
+    );
+    if (olderMessages.isEmpty) {
+      canLoadMore = false;
+      break;
+    }
+    loadedMessages.insertAll(0, olderMessages);
+    canLoadMore = olderMessages.length >= fetchPageSize;
+    fetchedPages += 1;
+  }
+
+  final selectedMessages =
+      _selectRecentTurnWindow(loadedMessages, targetTurnCount);
+  final hasHiddenOlderMessages = selectedMessages.isNotEmpty &&
+      selectedMessages.first.id != loadedMessages.first.id;
+
+  return ConversationTurnWindow(
+    messages: List<Message>.unmodifiable(selectedMessages),
+    hasMoreMessages: hasHiddenOlderMessages || canLoadMore,
+  );
+}
+
+int _countConversationTurnAnchors(List<Message> messages) {
+  var count = 0;
+  for (var i = 0; i < messages.length; i++) {
+    if (_isConversationTurnAnchor(messages, i)) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+bool _isConversationTurnAnchor(List<Message> messages, int index) {
+  if (index < 0 || index >= messages.length) return false;
+  if (messages[index].role.trim() != 'user') return false;
+  if (index == 0) return true;
+  return messages[index - 1].role.trim() != 'user';
+}
+
+List<Message> _selectRecentTurnWindow(
+  List<Message> messages,
+  int targetTurnCount,
+) {
+  if (messages.isEmpty) return const <Message>[];
+
+  var remainingTurns = targetTurnCount;
+  var startIndex = 0;
+  for (var i = messages.length - 1; i >= 0; i--) {
+    if (!_isConversationTurnAnchor(messages, i)) {
+      continue;
+    }
+    startIndex = i;
+    remainingTurns -= 1;
+    if (remainingTurns <= 0) {
+      return List<Message>.from(
+        messages.sublist(startIndex),
+        growable: false,
+      );
+    }
+  }
+
+  return List<Message>.from(
+    messages.sublist(startIndex),
+    growable: false,
+  );
+}
+
 class ChatHistoryStore {
   ChatHistoryStore(this._ref);
 
@@ -31,18 +155,44 @@ class ChatHistoryStore {
     required int limit,
   }) {
     final normalizedLimit = limit < 1 ? 1 : limit;
+    final seedFetchLimit = math.max(
+      kConversationTurnWindowFetchPageSize,
+      normalizedLimit * 4,
+    );
+    final maxFetchPages = math.max(
+      kConversationTurnWindowMaxFetchPages,
+      normalizedLimit,
+    );
     return _watchDbWindow(
       conversationId: conversationId,
-      limit: normalizedLimit + 1,
+      limit: seedFetchLimit,
     ).asyncMap((dbMessages) async {
-      final hasMore = dbMessages.length > normalizedLimit;
-      final visibleDesc = hasMore
-          ? dbMessages.take(normalizedLimit).toList(growable: false)
-          : dbMessages;
       final messages = await _buildMessagesFromDb(
-        visibleDesc.reversed.toList(growable: false),
+        dbMessages.reversed.toList(growable: false),
       );
-      return ConversationMessageWindow(messages: messages, hasMore: hasMore);
+      final turnWindow = await resolveConversationTurnWindow(
+        currentMessages: messages,
+        hasMoreMessages: dbMessages.length >= seedFetchLimit,
+        loadOlderPage: ({
+          required DateTime beforeCreatedAt,
+          required String beforeId,
+          required int limit,
+        }) {
+          return loadMessagesBefore(
+            conversationId: conversationId,
+            beforeCreatedAt: beforeCreatedAt,
+            beforeId: beforeId,
+            limit: limit,
+          );
+        },
+        targetTurnCount: normalizedLimit,
+        fetchPageSize: seedFetchLimit,
+        maxFetchPages: maxFetchPages,
+      );
+      return ConversationMessageWindow(
+        messages: turnWindow.messages,
+        hasMore: turnWindow.hasMoreMessages,
+      );
     });
   }
 
@@ -208,7 +358,8 @@ class ChatHistoryStore {
       }
 
       final anchorOrder = <String, int>{
-        for (var i = 0; i < existingAnchorIds.length; i++) existingAnchorIds[i]: i,
+        for (var i = 0; i < existingAnchorIds.length; i++)
+          existingAnchorIds[i]: i,
       };
       final firstAnchorId = existingAnchorIds.first;
       var insertedBeforeFirst = false;
@@ -307,7 +458,8 @@ class ChatHistoryStore {
     required String fromMessageId,
   }) async {
     final allMessages = await loadAllMessages(conversationId);
-    final index = allMessages.indexWhere((message) => message.id == fromMessageId);
+    final index =
+        allMessages.indexWhere((message) => message.id == fromMessageId);
     if (index < 0) return;
     final ids = [
       for (final message in allMessages.skip(index)) message.id,
@@ -320,7 +472,8 @@ class ChatHistoryStore {
     required String anchorMessageId,
   }) async {
     final allMessages = await loadAllMessages(conversationId);
-    final index = allMessages.indexWhere((message) => message.id == anchorMessageId);
+    final index =
+        allMessages.indexWhere((message) => message.id == anchorMessageId);
     if (index < 0) return;
     final ids = [
       for (final message in allMessages.skip(index + 1)) message.id,
@@ -455,16 +608,20 @@ class ChatHistoryStore {
     return loadMessageById(dbMessage.id);
   }
 
-  Future<List<Message>> _buildMessagesFromDb(List<db.Message> dbMessages) async {
+  Future<List<Message>> _buildMessagesFromDb(
+      List<db.Message> dbMessages) async {
     if (dbMessages.isEmpty) return const <Message>[];
     final blockRepo = _ref.read(messageBlockRepositoryProvider);
-    final messageIds = dbMessages.map((message) => message.id).toList(growable: false);
+    final messageIds =
+        dbMessages.map((message) => message.id).toList(growable: false);
     final dbBlocks = await blockRepo.getByMessages(messageIds);
     final blocksByMessageId = <String, List<MessageBlock>>{};
     for (final dbBlock in dbBlocks) {
       final block = MessageBlockConverter.fromDb(dbBlock);
       if (block == null) continue;
-      blocksByMessageId.putIfAbsent(dbBlock.messageId, () => <MessageBlock>[]).add(block);
+      blocksByMessageId
+          .putIfAbsent(dbBlock.messageId, () => <MessageBlock>[])
+          .add(block);
     }
     return [
       for (final dbMessage in dbMessages)

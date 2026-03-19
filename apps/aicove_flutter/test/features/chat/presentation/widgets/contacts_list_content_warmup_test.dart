@@ -1,10 +1,29 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
 import 'package:aicove_flutter/src/features/chat/presentation/widgets/contacts_list_content.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('带 #top 标记的头像预热 provider 会清理资源路径', () {
+    final now = DateTime(2026, 3, 19);
+    final conversation = Conversation(
+      id: 'preset_nahida',
+      title: '纳西妲',
+      displayName: '纳西妲',
+      avatarUrl: 'assets/characters/images/nahida.jpg#top',
+      createdAt: now,
+      updatedAt: now,
+    );
+
+    final provider = buildConversationAvatarProvider(conversation);
+
+    expect(provider, isA<AssetImage>());
+    expect((provider! as AssetImage).assetName,
+        'assets/characters/images/nahida.jpg');
+  });
 
   testWidgets('联系人点击预热会延后到下一帧之后再执行', (tester) async {
     late BuildContext context;

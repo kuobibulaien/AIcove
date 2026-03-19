@@ -8,8 +8,8 @@ import 'package:aicove_flutter/src/features/plugins/domain/plugin_content.dart';
 void main() {
   test('draw_image 图片按占位符位置插回文本中间', () {
     final result = chatMessageProcessor.buildAssistantMessages(
-      replyText: '先看这张[图片]然后再看这张[image]结束',
-      processedText: '先看这张[图片]然后再看这张[image]结束',
+      replyText: '先看这张<image></image>然后再看这张<image></image>结束',
+      processedText: '先看这张<image></image>然后再看这张<image></image>结束',
       pluginEvents: const <PluginEvent>[],
       contents: const <PluginContent>[
         PluginImageContent('/tmp/image_1.png', caption: 'img1'),
@@ -46,8 +46,8 @@ void main() {
 
   test('图片数量多于占位符时，剩余图片顺序追加到末尾', () {
     final result = chatMessageProcessor.buildAssistantMessages(
-      replyText: '开头[图片]结尾',
-      processedText: '开头[图片]结尾',
+      replyText: '开头<image></image>结尾',
+      processedText: '开头<image></image>结尾',
       pluginEvents: const <PluginEvent>[],
       contents: const <PluginContent>[
         PluginImageContent('/tmp/image_a.png'),
@@ -66,8 +66,8 @@ void main() {
 
   test('图片占位符旁只有标点时，不生成独立文本气泡', () {
     final result = chatMessageProcessor.buildAssistantMessages(
-      replyText: '[图片]。',
-      processedText: '[图片]。',
+      replyText: '<image></image>。',
+      processedText: '<image></image>。',
       pluginEvents: const <PluginEvent>[],
       contents: const <PluginContent>[
         PluginImageContent('/tmp/image_dot.png'),

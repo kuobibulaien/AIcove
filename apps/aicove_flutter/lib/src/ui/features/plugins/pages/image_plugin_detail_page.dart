@@ -4,10 +4,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../features/plugins/image/image_config.dart';
 import '../../../../features/plugins/plugin_providers.dart';
 import '../../../../features/settings/app_settings.dart';
+import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/theme/tokens.dart';
 import 'artist_preset_page.dart';
 import 'draw_image_tool_description_page.dart';
+import 'image_generation_test_page.dart';
+import 'inline_image_prompt_page.dart';
 
 class ImagePluginDetailPage extends ConsumerWidget {
   const ImagePluginDetailPage({super.key});
@@ -58,6 +61,12 @@ class ImagePluginDetailPage extends ConsumerWidget {
     return ListView(
       padding: const EdgeInsets.symmetric(vertical: 16),
       children: [
+        _buildGenerationPathSection(
+          context: context,
+          settings: settings,
+          settingsNotifier: settingsNotifier,
+        ),
+        const SizedBox(height: 16),
         MoeSettingsGroup(
           margin: const EdgeInsets.symmetric(horizontal: 16),
           children: [
@@ -94,13 +103,27 @@ class ImagePluginDetailPage extends ConsumerWidget {
             ),
             MoeSettingsRow(
               icon: Icons.rule_folder_outlined,
-              label: '工具描述预设',
+              label: '稳定链路预设',
               subtitle: config.selectedSystemPromptPreset?.name ??
                   (config.systemPromptPresets.isNotEmpty
                       ? config.systemPromptPresets.first.name
                       : '默认'),
               trailingType: MoeSettingsRowTrailing.chevron,
               onTap: () => _showSystemPromptPresetPicker(
+                context: context,
+                notifier: configNotifier,
+                config: config,
+              ),
+            ),
+            MoeSettingsRow(
+              icon: Icons.flash_on_outlined,
+              label: '快速链路预设',
+              subtitle: config.selectedFastPromptPreset?.name ??
+                  (config.fastPromptPresets.isNotEmpty
+                      ? config.fastPromptPresets.first.name
+                      : '默认'),
+              trailingType: MoeSettingsRowTrailing.chevron,
+              onTap: () => _showFastPromptPresetPicker(
                 context: context,
                 notifier: configNotifier,
                 config: config,
@@ -183,7 +206,7 @@ class ImagePluginDetailPage extends ConsumerWidget {
             ),
             MoeSettingsRow(
               icon: Icons.description_outlined,
-              label: '绘图工具描述',
+              label: '稳定链路提示词',
               subtitle: _buildPromptSummary(config),
               labelMaxLines: 1,
               trailingType: MoeSettingsRowTrailing.chevron,
@@ -192,11 +215,121 @@ class ImagePluginDetailPage extends ConsumerWidget {
                   builder: (_) => const DrawImageToolDescriptionPage(),
                 ),
               ),
+            ),
+            MoeSettingsRow(
+              icon: Icons.bolt_outlined,
+              label: '快速链路提示词',
+              subtitle: _buildInlinePromptSummary(config),
+              labelMaxLines: 1,
+              trailingType: MoeSettingsRowTrailing.chevron,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const InlineImagePromptPage(),
+                ),
+              ),
               showDivider: false,
             ),
           ],
         ),
+        const SizedBox(height: 16),
+        MoeSettingsGroup(
+          title: '调试',
+          margin: const EdgeInsets.symmetric(horizontal: 16),
+          children: [
+            MoeSettingsRow(
+              icon: Icons.science_outlined,
+              label: '生图测试',
+              subtitle: '进入独立页面，直接查看返回图片和原始错误',
+              trailingType: MoeSettingsRowTrailing.chevron,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => ImageGenerationTestPage(
+                    initialProviderLabel: selectedModel?.providerName,
+                    initialModelLabel: selectedModel?.displayName,
+                  ),
+                ),
+              ),
+              showDivider: false,
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
       ],
+    );
+  }
+
+  Widget _buildGenerationPathSection({
+    required BuildContext context,
+    required AppSettings settings,
+    required AppSettingsNotifier settingsNotifier,
+  }) {
+    final colors = context.moeColors;
+    final mode = settings.callFlowSettings.mode;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: MoeG2Decoration(
+              radius: 12,
+              color: colors.surface,
+              border: Border.all(color: colors.borderLight),
+            ),
+            child: Text(
+              '自动：只有当前聊天模型同时具备视觉能力和工具调用能力时，才会暴露 `draw_image` 并进入审图/返工链路。\n'
+              '快速：不向模型暴露 `draw_image`，只注入 `<image>英文提示词</image>` 规则。\n'
+              '当前直连生图渠道是 NovelAI，所以 `<image>` 里的提示词必须写英文。',
+              style: TextStyle(fontSize: 13, color: colors.textSecondary),
+            ),
+          ),
+          const SizedBox(height: 12),
+          MoeSettingsGroup(
+            margin: EdgeInsets.zero,
+            children: [
+              MoeSettingsRow(
+                icon: Icons.alt_route_outlined,
+                label: '生图路径',
+                subtitle: _buildGenerationPathSummary(mode),
+                trailingType: MoeSettingsRowTrailing.text,
+                detailText: mode.label,
+                showDivider: false,
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          MoeToggleBar<CallFlowMode>(
+            value: mode,
+            items: const [
+              MoeToggleItem(
+                value: CallFlowMode.auto,
+                label: '自动',
+              ),
+              MoeToggleItem(
+                value: CallFlowMode.fast,
+                label: '快速',
+              ),
+            ],
+            onChanged: (nextMode) async {
+              if (nextMode == mode) return;
+              try {
+                await settingsNotifier.updateCallFlowSettings(
+                  settings.callFlowSettings.copyWith(mode: nextMode),
+                );
+                if (context.mounted) {
+                  MoeToast.success(context, '生图路径已切换为${nextMode.label}');
+                }
+              } catch (e) {
+                if (context.mounted) {
+                  MoeToast.error(context, '切换生图路径失败: $e');
+                }
+              }
+            },
+          ),
+        ],
+      ),
     );
   }
 
@@ -300,7 +433,33 @@ class ImagePluginDetailPage extends ConsumerWidget {
 
     await showMoeActionSheet(
       context: context,
-      title: '选择工具描述预设',
+      title: '选择稳定链路预设',
+      actions: actions,
+    );
+  }
+
+  Future<void> _showFastPromptPresetPicker({
+    required BuildContext context,
+    required ImagePluginConfigNotifier notifier,
+    required ImageConfig config,
+  }) async {
+    final actions = <MoeSheetAction>[
+      for (final preset in config.fastPromptPresets)
+        MoeSheetAction(
+          icon: config.selectedFastPromptPreset?.name == preset.name
+              ? Icons.check_circle
+              : Icons.circle_outlined,
+          label: preset.name,
+          subtitle: config.buildInlinePresetPreview(preset),
+          onTap: () => notifier.updateConfig(
+            config.copyWith(selectedFastPromptPresetName: preset.name),
+          ),
+        ),
+    ];
+
+    await showMoeActionSheet(
+      context: context,
+      title: '选择快速链路预设',
       actions: actions,
     );
   }
@@ -347,7 +506,7 @@ class ImagePluginDetailPage extends ConsumerWidget {
     required BuildContext context,
     required ImagePluginConfigNotifier notifier,
   }) async {
-    final currentState = notifier.debugState;
+    final currentState = notifier.currentConfig;
     final widthController =
         TextEditingController(text: '${currentState.defaultWidth}');
     final heightController =
@@ -483,6 +642,23 @@ class ImagePluginDetailPage extends ConsumerWidget {
         ? ' / 画师串：${config.selectedArtistPreset!.name}'
         : '';
     return '$systemPart$artistPart';
+  }
+
+  String _buildInlinePromptSummary(ImageConfig config) {
+    final presetName = config.selectedFastPromptPreset?.name ??
+        (config.fastPromptPresets.isNotEmpty
+            ? config.fastPromptPresets.first.name
+            : '默认');
+    return '预设：$presetName';
+  }
+
+  String _buildGenerationPathSummary(CallFlowMode mode) {
+    switch (mode) {
+      case CallFlowMode.auto:
+        return '满足视觉 + 工具调用时走 `draw_image` 审图链路，否则自动改走 `<image>`';
+      case CallFlowMode.fast:
+        return '移除 `draw_image` 工具，只允许模型输出 `<image>...</image>`';
+    }
   }
 }
 

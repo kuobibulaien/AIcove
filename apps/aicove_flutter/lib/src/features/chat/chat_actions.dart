@@ -71,6 +71,10 @@ class ProactiveSendResult {
 }
 
 class ChatActions {
+  static const Duration _kProviderRefreshRetryDelay =
+      Duration(milliseconds: 120);
+  static const int _kProviderRefreshMaxRetries = 1;
+
   ChatActions(this._ref);
 
   final Ref _ref;
@@ -81,6 +85,7 @@ class ChatActions {
       const EnhancedDialogueService();
   int _generationSerial = 0;
   final Map<String, _GenerationTask> _activeGenerations = {};
+  final Map<String, Future<void> Function()> _generationInterruptCleanups = {};
 
   Future<TraceContext?> _startTurnTrace({
     required String convId,
@@ -137,19 +142,27 @@ class ChatActions {
   }
 
   void _setConversationSending(String convId, bool isSending) {
-    _ref.read(conversationSendingProvider(convId).notifier).state = isSending;
+    _runIgnoringProviderRefreshTiming('set_conversation_sending', () {
+      _ref.read(conversationSendingProvider(convId).notifier).state = isSending;
+    });
   }
 
   void _setConversationStatus(String convId, ChatStatus status) {
-    _ref.read(chatStatusProvider.notifier).state = status;
+    _runIgnoringProviderRefreshTiming('set_conversation_status', () {
+      _ref.read(chatStatusProvider.notifier).state = status;
+    });
   }
 
   void _setConversationError(String convId, String? error) {
-    _ref.read(errorProvider.notifier).state = error;
+    _runIgnoringProviderRefreshTiming('set_conversation_error', () {
+      _ref.read(errorProvider.notifier).state = error;
+    });
   }
 
   void _setConversationFailoverInfo(String convId, String? modelName) {
-    _ref.read(modelFailoverInfoProvider.notifier).state = modelName;
+    _runIgnoringProviderRefreshTiming('set_conversation_failover_info', () {
+      _ref.read(modelFailoverInfoProvider.notifier).state = modelName;
+    });
   }
 
   int _startGeneration({
@@ -168,8 +181,35 @@ class ChatActions {
     return runId;
   }
 
+  void _setGenerationInterruptCleanup(
+    String convId,
+    int runId,
+    Future<void> Function() cleanup,
+  ) {
+    if (!_isGenerationCurrent(convId, runId)) return;
+    _generationInterruptCleanups[convId] = cleanup;
+  }
+
   bool _isGenerationCurrent(String convId, int runId) =>
       _activeGenerations[convId]?.id == runId;
+
+  void _runIgnoringProviderRefreshTiming(
+    String action,
+    void Function() callback,
+  ) {
+    try {
+      callback();
+    } catch (e) {
+      if (!_isProviderRefreshTimingError(e)) {
+        rethrow;
+      }
+      AppLogger.info(
+        'ChatActions',
+        '命中 Provider 刷新窗口，跳过一次瞬时状态更新',
+        metadata: {'action': action},
+      );
+    }
+  }
 
   void _finishGeneration(
     String convId,
@@ -179,6 +219,7 @@ class ChatActions {
   }) {
     if (!_isGenerationCurrent(convId, runId)) return;
     _activeGenerations.remove(convId);
+    _generationInterruptCleanups.remove(convId);
     _setConversationSending(convId, false);
     _setConversationStatus(convId, ChatStatus.idle);
     if (clearFailoverInfo) {
@@ -200,6 +241,49 @@ class ChatActions {
     );
   }
 
+  bool _isProviderRefreshTimingError(Object error) {
+    final message = error.toString();
+    return message.contains(
+          'Cannot use ref functions after the dependency of a provider changed but before the provider rebuilt',
+        ) ||
+        message.contains('!_didChangeDependency');
+  }
+
+  Future<T> _runWithProviderRefreshRetry<T>({
+    required String entry,
+    required String convId,
+    required Future<T> Function() task,
+    Future<void> Function(int nextAttempt)? beforeRetry,
+  }) async {
+    var attempt = 0;
+    while (true) {
+      try {
+        return await task();
+      } catch (e, st) {
+        final shouldRetry = _isProviderRefreshTimingError(e) &&
+            attempt < _kProviderRefreshMaxRetries;
+        if (!shouldRetry) {
+          Error.throwWithStackTrace(e, st);
+        }
+        attempt += 1;
+        AppLogger.info(
+          'ChatActions',
+          '命中 Provider 刷新窗口，短延迟后重试',
+          metadata: {
+            'entry': entry,
+            'convId': convId,
+            'attempt': attempt,
+            'retryDelayMs': _kProviderRefreshRetryDelay.inMilliseconds,
+          },
+        );
+        if (beforeRetry != null) {
+          await beforeRetry(attempt);
+        }
+        await Future<void>.delayed(_kProviderRefreshRetryDelay);
+      }
+    }
+  }
+
   /// 中断当前正在生成的消息（软中断：后续结果会被丢弃，不再落库到会话）。
   /// 默认中断当前激活会话；也可显式传入 [convId]。
   Future<bool> interruptCurrentGeneration({String? convId}) async {
@@ -209,10 +293,26 @@ class ChatActions {
     if (task == null) return false;
 
     _activeGenerations.remove(targetConvId);
+    final cleanup = _generationInterruptCleanups.remove(targetConvId);
     _setConversationSending(targetConvId, false);
     _setConversationStatus(targetConvId, ChatStatus.idle);
     _setConversationError(targetConvId, null);
     _setConversationFailoverInfo(targetConvId, null);
+
+    if (cleanup != null) {
+      try {
+        await cleanup();
+      } catch (e) {
+        AppLogger.warning(
+          'ChatActions',
+          'interrupt cleanup failed',
+          metadata: {
+            'convId': targetConvId,
+            'error': e.toString(),
+          },
+        );
+      }
+    }
 
     await _markUserMessageAsSent(task);
     _ref.read(analyzerSchedulerProvider).scheduleAnalysis();
@@ -260,6 +360,10 @@ class ChatActions {
     _StreamPlaceholderDelivery? streamDelivery;
     var streamCommitted = false;
     var turnSucceeded = false;
+    _setGenerationInterruptCleanup(convId, runId, () async {
+      await streamDelivery?.removePlaceholders();
+      streamDelivery?.dispose();
+    });
     try {
       final settings = await _ref.read(appSettingsProvider.future);
       if (!_isGenerationCurrent(convId, runId)) return;
@@ -273,6 +377,7 @@ class ChatActions {
         convId: convId,
         userMsgId: userMsg.id,
         formatConfig: settings.messageFormatConfig,
+        enableTtsPlaceholders: settings.ttsEnabled,
         segmentDelay: Duration(
           milliseconds: (settings.streamSegmentDelaySeconds * 1000).round(),
         ),
@@ -333,19 +438,15 @@ class ChatActions {
         result,
         buildResult,
       );
-      final shouldCommitStream = streamDelivery.canFinalizeWith(
-        buildResult,
-        finalText: streamFinalText,
-      );
+      final shouldCommitStream =
+          streamDelivery.canFinalizeWith(finalText: streamFinalText);
 
       if (shouldCommitStream) {
         await streamDelivery.finalize(
           finalText: streamFinalText,
         );
-        final streamTextMessageIds =
-            await streamDelivery.commitFinalTextAsSingleMessage(
-          finalText: streamFinalText,
-        );
+        final streamCommit = await streamDelivery.commitFinalTimeline(
+            finalText: streamFinalText);
         await _ttsHandler.deliverSegmentedMessages(
           convId: convId,
           userMsgId: userMsg.id,
@@ -354,7 +455,8 @@ class ChatActions {
           pluginEvents: result.pluginEvents,
           ttsEnabled: usedSettings.ttsEnabled,
           appendAfterStreamText: true,
-          streamTextMessageIds: streamTextMessageIds,
+          streamTextMessageIds: streamCommit.textMessageIds,
+          streamPendingTtsMessages: streamCommit.pendingTtsMessages,
           trace: trace,
         );
         streamCommitted = true;
@@ -419,6 +521,10 @@ class ChatActions {
     ApiCallResult apiResult,
     AssistantMessageBuildResult buildResult,
   ) {
+    final rawReplyText = apiResult.replyText.trim();
+    if (rawReplyText.isNotEmpty) {
+      return apiResult.replyText;
+    }
     final processedText = apiResult.processedText.trim();
     if (processedText.isNotEmpty) {
       return processedText;
@@ -480,59 +586,66 @@ class ChatActions {
 
     var turnSucceeded = false;
     try {
-      final settings = await _ref.read(appSettingsProvider.future);
-      if (!_isGenerationCurrent(convId, runId)) return;
-      final history = await _sendService.prepareHistoryFromStore(
-        conv: conv,
-        userMsg: userMsg,
-        limit: settings.historyMessageLimit,
-      );
-      final apiText = hasText ? userText : '[image]';
-
-      final modelsToTry = _sendService.buildImageSendModelRefs(settings);
-
-      final (result, usedSettings) = await _executeWithFailover(
+      await _runWithProviderRefreshRetry<void>(
+        entry: 'send_image',
         convId: convId,
-        modelsToTry: modelsToTry,
-        buildConfig: (model) => _sendService.prepareApiConfig(
-          conv: conv,
-          history: history,
-          userText: apiText,
-          overrideModel: model,
-          traceContext: traceContext,
-        ),
-        execute: (config) => _sendService.executeApiCall(
-          config: config,
-          sessionId: convId,
-          userText: apiText,
-          turnId: userMsg.id,
-          onToolExecuting: (toolName) => _updateStatusForTool(convId, toolName),
-        ),
-        settings: settings,
-      );
-      if (!_isGenerationCurrent(convId, runId)) return;
+        task: () async {
+          final settings = await _ref.read(appSettingsProvider.future);
+          if (!_isGenerationCurrent(convId, runId)) return;
+          final history = await _sendService.prepareHistoryFromStore(
+            conv: conv,
+            userMsg: userMsg,
+            limit: settings.historyMessageLimit,
+          );
+          final apiText = hasText ? userText : '[image]';
 
-      _setConversationStatus(convId, ChatStatus.processingResponse);
-      final buildResult = _sendService.buildAssistantMessages(
-          apiResult: result, settings: usedSettings);
-      if (!_isGenerationCurrent(convId, runId)) return;
+          final modelsToTry = _sendService.buildImageSendModelRefs(settings);
 
-      await _ttsHandler.deliverSegmentedMessages(
-        convId: convId,
-        userMsgId: userMsg.id,
-        buildResult: buildResult,
-        replyText: result.replyText,
-        pluginEvents: result.pluginEvents,
-        ttsEnabled: usedSettings.ttsEnabled,
+          final (result, usedSettings) = await _executeWithFailover(
+            convId: convId,
+            modelsToTry: modelsToTry,
+            buildConfig: (model) => _sendService.prepareApiConfig(
+              conv: conv,
+              history: history,
+              userText: apiText,
+              overrideModel: model,
+              traceContext: traceContext,
+            ),
+            execute: (config) => _sendService.executeApiCall(
+              config: config,
+              sessionId: convId,
+              userText: apiText,
+              turnId: userMsg.id,
+              onToolExecuting: (toolName) =>
+                  _updateStatusForTool(convId, toolName),
+            ),
+            settings: settings,
+          );
+          if (!_isGenerationCurrent(convId, runId)) return;
+
+          _setConversationStatus(convId, ChatStatus.processingResponse);
+          final buildResult = _sendService.buildAssistantMessages(
+              apiResult: result, settings: usedSettings);
+          if (!_isGenerationCurrent(convId, runId)) return;
+
+          await _ttsHandler.deliverSegmentedMessages(
+            convId: convId,
+            userMsgId: userMsg.id,
+            buildResult: buildResult,
+            replyText: result.replyText,
+            pluginEvents: result.pluginEvents,
+            ttsEnabled: usedSettings.ttsEnabled,
+          );
+          if (!_isGenerationCurrent(convId, runId)) return;
+          _recordTurnTrace(
+            traceContext,
+            TraceStage.messageDelivered,
+            meta: {'assistantMessageCount': buildResult.messages.length},
+          );
+          _recordTurnTrace(traceContext, TraceStage.turnCompleted);
+          turnSucceeded = true;
+        },
       );
-      if (!_isGenerationCurrent(convId, runId)) return;
-      _recordTurnTrace(
-        traceContext,
-        TraceStage.messageDelivered,
-        meta: {'assistantMessageCount': buildResult.messages.length},
-      );
-      _recordTurnTrace(traceContext, TraceStage.turnCompleted);
-      turnSucceeded = true;
     } catch (e) {
       if (!_isGenerationCurrent(convId, runId)) return;
       _recordTurnTrace(
@@ -582,48 +695,54 @@ class ChatActions {
 
     var turnSucceeded = false;
     try {
-      final settings = await _ref.read(appSettingsProvider.future);
-      if (!_isGenerationCurrent(convId, runId)) return;
-      final history = await _sendService.prepareHistoryFromStore(
-        conv: conv,
-        userMsg: userMsg,
-        limit: settings.historyMessageLimit,
-      );
-      final config = await _sendService.prepareApiConfig(
-          conv: conv,
-          history: history,
-          userText: '[file]',
-          traceContext: traceContext);
-      if (!_isGenerationCurrent(convId, runId)) return;
-      final result = await _sendService.executeApiCall(
-          config: config,
-          sessionId: convId,
-          userText: '[file]',
-          turnId: userMsg.id,
-          onToolExecuting: (toolName) =>
-              _updateStatusForTool(convId, toolName));
-      if (!_isGenerationCurrent(convId, runId)) return;
-      _setConversationStatus(convId, ChatStatus.processingResponse);
-      final buildResult = _sendService.buildAssistantMessages(
-          apiResult: result, settings: settings);
-      if (!_isGenerationCurrent(convId, runId)) return;
-
-      await _ttsHandler.deliverSegmentedMessages(
+      await _runWithProviderRefreshRetry<void>(
+        entry: 'send_file',
         convId: convId,
-        userMsgId: userMsg.id,
-        buildResult: buildResult,
-        replyText: result.replyText,
-        pluginEvents: result.pluginEvents,
-        ttsEnabled: settings.ttsEnabled,
+        task: () async {
+          final settings = await _ref.read(appSettingsProvider.future);
+          if (!_isGenerationCurrent(convId, runId)) return;
+          final history = await _sendService.prepareHistoryFromStore(
+            conv: conv,
+            userMsg: userMsg,
+            limit: settings.historyMessageLimit,
+          );
+          final config = await _sendService.prepareApiConfig(
+              conv: conv,
+              history: history,
+              userText: '[file]',
+              traceContext: traceContext);
+          if (!_isGenerationCurrent(convId, runId)) return;
+          final result = await _sendService.executeApiCall(
+              config: config,
+              sessionId: convId,
+              userText: '[file]',
+              turnId: userMsg.id,
+              onToolExecuting: (toolName) =>
+                  _updateStatusForTool(convId, toolName));
+          if (!_isGenerationCurrent(convId, runId)) return;
+          _setConversationStatus(convId, ChatStatus.processingResponse);
+          final buildResult = _sendService.buildAssistantMessages(
+              apiResult: result, settings: settings);
+          if (!_isGenerationCurrent(convId, runId)) return;
+
+          await _ttsHandler.deliverSegmentedMessages(
+            convId: convId,
+            userMsgId: userMsg.id,
+            buildResult: buildResult,
+            replyText: result.replyText,
+            pluginEvents: result.pluginEvents,
+            ttsEnabled: settings.ttsEnabled,
+          );
+          if (!_isGenerationCurrent(convId, runId)) return;
+          _recordTurnTrace(
+            traceContext,
+            TraceStage.messageDelivered,
+            meta: {'assistantMessageCount': buildResult.messages.length},
+          );
+          _recordTurnTrace(traceContext, TraceStage.turnCompleted);
+          turnSucceeded = true;
+        },
       );
-      if (!_isGenerationCurrent(convId, runId)) return;
-      _recordTurnTrace(
-        traceContext,
-        TraceStage.messageDelivered,
-        meta: {'assistantMessageCount': buildResult.messages.length},
-      );
-      _recordTurnTrace(traceContext, TraceStage.turnCompleted);
-      turnSucceeded = true;
     } catch (e) {
       if (!_isGenerationCurrent(convId, runId)) return;
       _recordTurnTrace(
@@ -859,118 +978,132 @@ class ChatActions {
 
     _StreamPlaceholderDelivery? streamDelivery;
     var streamCommitted = false;
+    _setGenerationInterruptCleanup(convId, runId, () async {
+      await streamDelivery?.removePlaceholders();
+      streamDelivery?.dispose();
+    });
     try {
-      final settings = await _ref.read(appSettingsProvider.future);
-      if (!_isGenerationCurrent(convId, runId)) return;
-      final msgIndex = messages.indexWhere((m) => m.id == messageId);
-      // 取重试消息及之前的历史，并过滤掉其他失败消息
-      final rawHistory =
-          msgIndex > 0 ? messages.sublist(0, msgIndex + 1) : messages;
-      final history = rawHistory
-          .where((m) => m.status != 'failed' || m.id == messageId)
-          .toList();
-
-      // 创建流式占位交付器
-      streamDelivery = _StreamPlaceholderDelivery(
-        _ref,
+      await _runWithProviderRefreshRetry<void>(
+        entry: 'retry',
         convId: convId,
-        userMsgId: messageId,
-        formatConfig: settings.messageFormatConfig,
-        segmentDelay: Duration(
-          milliseconds: (settings.streamSegmentDelaySeconds * 1000).round(),
-        ),
-      );
-      await streamDelivery.start();
-
-      final config = await _sendService.prepareApiConfig(
-          conv: conv,
-          history: history,
-          userText: failedMsg.displayText,
-          traceContext: traceContext);
-      if (!_isGenerationCurrent(convId, runId)) return;
-      final result = await _sendService.executeApiCall(
-        config: config,
-        sessionId: convId,
-        userText: failedMsg.displayText,
-        turnId: messageId,
-        onToolExecuting: (toolName) => _updateStatusForTool(convId, toolName),
-        enableStreaming: true,
-        onStreamTextDelta: (delta) {
+        beforeRetry: (_) async {
+          if (!streamCommitted) {
+            await streamDelivery?.removePlaceholders();
+          }
+          streamDelivery?.dispose();
+          streamDelivery = null;
+          streamCommitted = false;
+        },
+        task: () async {
+          final settings = await _ref.read(appSettingsProvider.future);
           if (!_isGenerationCurrent(convId, runId)) return;
-          streamDelivery?.onDelta(delta);
-        },
-        onStreamTextReset: () {
-          if (!_isGenerationCurrent(convId, runId)) return;
-          streamDelivery?.onStreamReset();
-        },
-        onStreamToolCallObserved: () {
-          if (!_isGenerationCurrent(convId, runId)) return;
-          streamDelivery?.onToolCallObserved();
-        },
-        onStreamingFallback: () {
-          if (!_isGenerationCurrent(convId, runId)) return;
-          streamDelivery?.onStreamingFallback();
-        },
-      );
-      if (!_isGenerationCurrent(convId, runId)) return;
-      _setConversationStatus(convId, ChatStatus.processingResponse);
-      final buildResult = _sendService.buildAssistantMessages(
-          apiResult: result, settings: settings);
-      if (!_isGenerationCurrent(convId, runId)) return;
+          final msgIndex = messages.indexWhere((m) => m.id == messageId);
+          final rawHistory =
+              msgIndex > 0 ? messages.sublist(0, msgIndex + 1) : messages;
+          final history = rawHistory
+              .where((m) => m.status != 'failed' || m.id == messageId)
+              .toList();
 
-      // 先标记原消息为成功
-      await _historyStore.markMessageStatus(
-        conversationId: convId,
-        messageId: messageId,
-        status: 'sent',
-      );
-      if (!_isGenerationCurrent(convId, runId)) return;
+          streamDelivery = _StreamPlaceholderDelivery(
+            _ref,
+            convId: convId,
+            userMsgId: messageId,
+            formatConfig: settings.messageFormatConfig,
+            enableTtsPlaceholders: settings.ttsEnabled,
+            segmentDelay: Duration(
+              milliseconds: (settings.streamSegmentDelaySeconds * 1000).round(),
+            ),
+          );
+          await streamDelivery!.start();
 
-      // 处理流式占位提交
-      final streamFinalText = _resolveFinalStreamText(result, buildResult);
-      final shouldCommitStream = streamDelivery.canFinalizeWith(
-        buildResult,
-        finalText: streamFinalText,
-      );
+          final config = await _sendService.prepareApiConfig(
+              conv: conv,
+              history: history,
+              userText: failedMsg.displayText,
+              traceContext: traceContext);
+          if (!_isGenerationCurrent(convId, runId)) return;
+          final result = await _sendService.executeApiCall(
+            config: config,
+            sessionId: convId,
+            userText: failedMsg.displayText,
+            turnId: messageId,
+            onToolExecuting: (toolName) =>
+                _updateStatusForTool(convId, toolName),
+            enableStreaming: true,
+            onStreamTextDelta: (delta) {
+              if (!_isGenerationCurrent(convId, runId)) return;
+              streamDelivery?.onDelta(delta);
+            },
+            onStreamTextReset: () {
+              if (!_isGenerationCurrent(convId, runId)) return;
+              streamDelivery?.onStreamReset();
+            },
+            onStreamToolCallObserved: () {
+              if (!_isGenerationCurrent(convId, runId)) return;
+              streamDelivery?.onToolCallObserved();
+            },
+            onStreamingFallback: () {
+              if (!_isGenerationCurrent(convId, runId)) return;
+              streamDelivery?.onStreamingFallback();
+            },
+          );
+          if (!_isGenerationCurrent(convId, runId)) return;
+          _setConversationStatus(convId, ChatStatus.processingResponse);
+          final buildResult = _sendService.buildAssistantMessages(
+              apiResult: result, settings: settings);
+          if (!_isGenerationCurrent(convId, runId)) return;
 
-      if (shouldCommitStream) {
-        await streamDelivery.finalize(finalText: streamFinalText);
-        final streamTextMessageIds =
-            await streamDelivery.commitFinalTextAsSingleMessage(
-          finalText: streamFinalText,
-        );
-        await _ttsHandler.deliverSegmentedMessages(
-          convId: convId,
-          userMsgId: messageId,
-          buildResult: buildResult,
-          replyText: result.replyText,
-          pluginEvents: result.pluginEvents,
-          ttsEnabled: settings.ttsEnabled,
-          appendAfterStreamText: true,
-          streamTextMessageIds: streamTextMessageIds,
-        );
-        streamCommitted = true;
-      } else {
-        await streamDelivery.removePlaceholders();
-        await _ttsHandler.deliverSegmentedMessages(
-          convId: convId,
-          userMsgId: messageId,
-          buildResult: buildResult,
-          replyText: result.replyText,
-          pluginEvents: result.pluginEvents,
-          ttsEnabled: settings.ttsEnabled,
-        );
-      }
-      if (!_isGenerationCurrent(convId, runId)) return;
-      _recordTurnTrace(
-        traceContext,
-        TraceStage.messageDelivered,
-        meta: {
-          'assistantMessageCount': buildResult.messages.length,
-          'streamCommitted': shouldCommitStream,
+          await _historyStore.markMessageStatus(
+            conversationId: convId,
+            messageId: messageId,
+            status: 'sent',
+          );
+          if (!_isGenerationCurrent(convId, runId)) return;
+
+          final streamFinalText = _resolveFinalStreamText(result, buildResult);
+          final shouldCommitStream =
+              streamDelivery!.canFinalizeWith(finalText: streamFinalText);
+
+          if (shouldCommitStream) {
+            await streamDelivery!.finalize(finalText: streamFinalText);
+            final streamCommit = await streamDelivery!.commitFinalTimeline(
+              finalText: streamFinalText,
+            );
+            await _ttsHandler.deliverSegmentedMessages(
+              convId: convId,
+              userMsgId: messageId,
+              buildResult: buildResult,
+              replyText: result.replyText,
+              pluginEvents: result.pluginEvents,
+              ttsEnabled: settings.ttsEnabled,
+              appendAfterStreamText: true,
+              streamTextMessageIds: streamCommit.textMessageIds,
+              streamPendingTtsMessages: streamCommit.pendingTtsMessages,
+            );
+            streamCommitted = true;
+          } else {
+            await streamDelivery!.removePlaceholders();
+            await _ttsHandler.deliverSegmentedMessages(
+              convId: convId,
+              userMsgId: messageId,
+              buildResult: buildResult,
+              replyText: result.replyText,
+              pluginEvents: result.pluginEvents,
+              ttsEnabled: settings.ttsEnabled,
+            );
+          }
+          if (!_isGenerationCurrent(convId, runId)) return;
+          _recordTurnTrace(
+            traceContext,
+            TraceStage.messageDelivered,
+            meta: {
+              'assistantMessageCount': buildResult.messages.length,
+              'streamCommitted': shouldCommitStream,
+            },
+          );
+          _recordTurnTrace(traceContext, TraceStage.turnCompleted);
         },
       );
-      _recordTurnTrace(traceContext, TraceStage.turnCompleted);
     } catch (e) {
       if (!_isGenerationCurrent(convId, runId)) return;
       _recordTurnTrace(
@@ -1044,157 +1177,175 @@ class ChatActions {
 
     _StreamPlaceholderDelivery? streamDelivery;
     var streamCommitted = false;
+    _setGenerationInterruptCleanup(convId, runId, () async {
+      await streamDelivery?.removePlaceholders();
+      streamDelivery?.dispose();
+    });
     try {
-      final settings = await _ref.read(appSettingsProvider.future);
-      if (!_isGenerationCurrent(convId, runId)) return;
-      final updatedConv = _ref.read(activeConversationProvider)!;
-      final bool canUseEnhancement =
-          useEnhancement && settings.enhancedDialogueSettings.enabled;
-
-      late final List<Message> history;
-      late final String sessionId;
-      late final Conversation requestConv;
-      if (canUseEnhancement) {
-        final persistedMessages =
-            await _sendService.loadConversationMessagesFromStore(
-          conv: updatedConv,
-          ensureTailMessage: userMsg,
-        );
-        final persistedConv = updatedConv.copyWith(messages: persistedMessages);
-        final enhancedContext = _enhancedDialogueService.buildContext(
-          conversation: persistedConv,
-          targetUserMessage: userMsg,
-          enhancerSystemPrompt: settings.enhancedDialogueSettings.systemPrompt,
-          bootstrapUserMessage:
-              settings.enhancedDialogueSettings.bootstrapUserMessage,
-          recentRounds: settings.enhancedDialogueSettings.recentRounds,
-        );
-        history = enhancedContext.history;
-        sessionId = enhancedContext.sessionId;
-        requestConv = enhancedContext.conversation;
-      } else {
-        history = await _sendService.prepareHistoryFromStore(
-          conv: updatedConv,
-          userMsg: userMsg,
-          limit: settings.historyMessageLimit,
-        );
-        sessionId = convId;
-        requestConv = updatedConv;
-      }
-
-      // 创建流式占位交付器
-      streamDelivery = _StreamPlaceholderDelivery(
-        _ref,
+      await _runWithProviderRefreshRetry<void>(
+        entry: useEnhancement ? 'regenerate_enhanced' : 'regenerate',
         convId: convId,
-        userMsgId: userMsg.id,
-        formatConfig: settings.messageFormatConfig,
-        segmentDelay: Duration(
-          milliseconds: (settings.streamSegmentDelaySeconds * 1000).round(),
-        ),
-      );
-      await streamDelivery.start();
-
-      final config = await _sendService.prepareApiConfig(
-        conv: requestConv,
-        history: history,
-        userText: userText,
-        traceContext: traceContext,
-      );
-      if (!_isGenerationCurrent(convId, runId)) return;
-      final rawResult = await _sendService.executeApiCall(
-        config: config,
-        sessionId: sessionId,
-        userText: userText,
-        turnId: userMsg.id,
-        onToolExecuting: (toolName) => _updateStatusForTool(convId, toolName),
-        enableStreaming: true,
-        onStreamTextDelta: (delta) {
+        beforeRetry: (_) async {
+          if (!streamCommitted) {
+            await streamDelivery?.removePlaceholders();
+          }
+          streamDelivery?.dispose();
+          streamDelivery = null;
+          streamCommitted = false;
+        },
+        task: () async {
+          final settings = await _ref.read(appSettingsProvider.future);
           if (!_isGenerationCurrent(convId, runId)) return;
-          streamDelivery?.onDelta(delta);
-        },
-        onStreamTextReset: () {
+          final updatedConv = _ref.read(activeConversationProvider)!;
+          final bool canUseEnhancement =
+              useEnhancement && settings.enhancedDialogueSettings.enabled;
+
+          late final List<Message> history;
+          late final String sessionId;
+          late final Conversation requestConv;
+          if (canUseEnhancement) {
+            final persistedMessages =
+                await _sendService.loadConversationMessagesFromStore(
+              conv: updatedConv,
+              ensureTailMessage: userMsg,
+            );
+            final persistedConv =
+                updatedConv.copyWith(messages: persistedMessages);
+            final enhancedContext = _enhancedDialogueService.buildContext(
+              conversation: persistedConv,
+              targetUserMessage: userMsg,
+              enhancerSystemPrompt:
+                  settings.enhancedDialogueSettings.systemPrompt,
+              bootstrapUserMessage:
+                  settings.enhancedDialogueSettings.bootstrapUserMessage,
+              recentRounds: settings.enhancedDialogueSettings.recentRounds,
+            );
+            history = enhancedContext.history;
+            sessionId = enhancedContext.sessionId;
+            requestConv = enhancedContext.conversation;
+          } else {
+            history = await _sendService.prepareHistoryFromStore(
+              conv: updatedConv,
+              userMsg: userMsg,
+              limit: settings.historyMessageLimit,
+            );
+            sessionId = convId;
+            requestConv = updatedConv;
+          }
+
+          streamDelivery = _StreamPlaceholderDelivery(
+            _ref,
+            convId: convId,
+            userMsgId: userMsg.id,
+            formatConfig: settings.messageFormatConfig,
+            enableTtsPlaceholders: settings.ttsEnabled,
+            segmentDelay: Duration(
+              milliseconds: (settings.streamSegmentDelaySeconds * 1000).round(),
+            ),
+          );
+          await streamDelivery!.start();
+
+          final config = await _sendService.prepareApiConfig(
+            conv: requestConv,
+            history: history,
+            userText: userText,
+            traceContext: traceContext,
+          );
           if (!_isGenerationCurrent(convId, runId)) return;
-          streamDelivery?.onStreamReset();
-        },
-        onStreamToolCallObserved: () {
+          final rawResult = await _sendService.executeApiCall(
+            config: config,
+            sessionId: sessionId,
+            userText: userText,
+            turnId: userMsg.id,
+            onToolExecuting: (toolName) =>
+                _updateStatusForTool(convId, toolName),
+            enableStreaming: true,
+            onStreamTextDelta: (delta) {
+              if (!_isGenerationCurrent(convId, runId)) return;
+              streamDelivery?.onDelta(delta);
+            },
+            onStreamTextReset: () {
+              if (!_isGenerationCurrent(convId, runId)) return;
+              streamDelivery?.onStreamReset();
+            },
+            onStreamToolCallObserved: () {
+              if (!_isGenerationCurrent(convId, runId)) return;
+              streamDelivery?.onToolCallObserved();
+            },
+            onStreamingFallback: () {
+              if (!_isGenerationCurrent(convId, runId)) return;
+              streamDelivery?.onStreamingFallback();
+            },
+          );
           if (!_isGenerationCurrent(convId, runId)) return;
-          streamDelivery?.onToolCallObserved();
-        },
-        onStreamingFallback: () {
+
+          final result = (() {
+            if (!canUseEnhancement) return rawResult;
+            final enhancedText = _enhancedDialogueService.extractEnhancedText(
+              processedText: rawResult.processedText,
+              rawReplyText: rawResult.replyText,
+            );
+            return ApiCallResult(
+              replyText: enhancedText,
+              processedText: enhancedText,
+              pluginEvents: rawResult.pluginEvents,
+              pluginContents: rawResult.pluginContents,
+              toolResults: rawResult.toolResults,
+              toolAudioResults: rawResult.toolAudioResults,
+              toolCalls: rawResult.toolCalls,
+              rawToolResults: rawResult.rawToolResults,
+            );
+          })();
+
+          _setConversationStatus(convId, ChatStatus.processingResponse);
+          final buildResult = _sendService.buildAssistantMessages(
+              apiResult: result, settings: settings);
           if (!_isGenerationCurrent(convId, runId)) return;
-          streamDelivery?.onStreamingFallback();
+
+          final streamFinalText = _resolveFinalStreamText(result, buildResult);
+          final shouldCommitStream =
+              streamDelivery!.canFinalizeWith(finalText: streamFinalText);
+
+          if (shouldCommitStream) {
+            await streamDelivery!.finalize(finalText: streamFinalText);
+            final streamCommit = await streamDelivery!.commitFinalTimeline(
+              finalText: streamFinalText,
+            );
+            await _ttsHandler.deliverSegmentedMessages(
+              convId: convId,
+              userMsgId: userMsg.id,
+              buildResult: buildResult,
+              replyText: result.replyText,
+              pluginEvents: result.pluginEvents,
+              ttsEnabled: settings.ttsEnabled,
+              appendAfterStreamText: true,
+              streamTextMessageIds: streamCommit.textMessageIds,
+              streamPendingTtsMessages: streamCommit.pendingTtsMessages,
+            );
+            streamCommitted = true;
+          } else {
+            await streamDelivery!.removePlaceholders();
+            await _ttsHandler.deliverSegmentedMessages(
+              convId: convId,
+              userMsgId: userMsg.id,
+              buildResult: buildResult,
+              replyText: result.replyText,
+              pluginEvents: result.pluginEvents,
+              ttsEnabled: settings.ttsEnabled,
+            );
+          }
+          if (!_isGenerationCurrent(convId, runId)) return;
+          _recordTurnTrace(
+            traceContext,
+            TraceStage.messageDelivered,
+            meta: {
+              'assistantMessageCount': buildResult.messages.length,
+              'streamCommitted': shouldCommitStream,
+            },
+          );
+          _recordTurnTrace(traceContext, TraceStage.turnCompleted);
         },
       );
-      if (!_isGenerationCurrent(convId, runId)) return;
-
-      final result = (() {
-        if (!canUseEnhancement) return rawResult;
-        final enhancedText = _enhancedDialogueService.extractEnhancedText(
-          processedText: rawResult.processedText,
-          rawReplyText: rawResult.replyText,
-        );
-        return ApiCallResult(
-          replyText: enhancedText,
-          processedText: enhancedText,
-          pluginEvents: rawResult.pluginEvents,
-          pluginContents: rawResult.pluginContents,
-          toolResults: rawResult.toolResults,
-          toolAudioResults: rawResult.toolAudioResults,
-          toolCalls: rawResult.toolCalls,
-          rawToolResults: rawResult.rawToolResults,
-        );
-      })();
-
-      _setConversationStatus(convId, ChatStatus.processingResponse);
-      final buildResult = _sendService.buildAssistantMessages(
-          apiResult: result, settings: settings);
-      if (!_isGenerationCurrent(convId, runId)) return;
-
-      // 处理流式占位提交
-      final streamFinalText = _resolveFinalStreamText(result, buildResult);
-      final shouldCommitStream = streamDelivery.canFinalizeWith(
-        buildResult,
-        finalText: streamFinalText,
-      );
-
-      if (shouldCommitStream) {
-        await streamDelivery.finalize(finalText: streamFinalText);
-        final streamTextMessageIds =
-            await streamDelivery.commitFinalTextAsSingleMessage(
-          finalText: streamFinalText,
-        );
-        await _ttsHandler.deliverSegmentedMessages(
-          convId: convId,
-          userMsgId: userMsg.id,
-          buildResult: buildResult,
-          replyText: result.replyText,
-          pluginEvents: result.pluginEvents,
-          ttsEnabled: settings.ttsEnabled,
-          appendAfterStreamText: true,
-          streamTextMessageIds: streamTextMessageIds,
-        );
-        streamCommitted = true;
-      } else {
-        await streamDelivery.removePlaceholders();
-        await _ttsHandler.deliverSegmentedMessages(
-          convId: convId,
-          userMsgId: userMsg.id,
-          buildResult: buildResult,
-          replyText: result.replyText,
-          pluginEvents: result.pluginEvents,
-          ttsEnabled: settings.ttsEnabled,
-        );
-      }
-      if (!_isGenerationCurrent(convId, runId)) return;
-      _recordTurnTrace(
-        traceContext,
-        TraceStage.messageDelivered,
-        meta: {
-          'assistantMessageCount': buildResult.messages.length,
-          'streamCommitted': shouldCommitStream,
-        },
-      );
-      _recordTurnTrace(traceContext, TraceStage.turnCompleted);
     } catch (e) {
       if (!_isGenerationCurrent(convId, runId)) return;
       _recordTurnTrace(
@@ -1217,6 +1368,8 @@ class ChatActions {
   Future<void> recallFailedMessage(String messageId) async {
     final conv = _ref.read(activeConversationProvider);
     if (conv == null) return;
+    final editingNotifier = _ref.read(editingTextProvider.notifier);
+    final attachmentNotifier = _ref.read(recalledAttachmentProvider.notifier);
     final messages = await _loadConversationMessages(conv.id);
 
     final idx = messages.indexWhere(
@@ -1228,10 +1381,9 @@ class ChatActions {
     // 将失败消息文本填入输入框
     final text = _extractEditableTextForRecall(failedMsg);
     if (text.isNotEmpty) {
-      _ref.read(editingTextProvider.notifier).state = text;
+      editingNotifier.state = text;
     }
-    _ref.read(recalledAttachmentProvider.notifier).state =
-        _extractAttachmentForRecall(failedMsg);
+    attachmentNotifier.state = _extractAttachmentForRecall(failedMsg);
 
     await deleteMessage(messageId);
   }
@@ -1293,15 +1445,16 @@ class ChatActions {
     final conv = _ref.read(activeConversationProvider);
     if (conv == null) return;
     final convId = conv.id;
+    final quoted = _ref.read(quotedMessageProvider);
+    final quotedNotifier = _ref.read(quotedMessageProvider.notifier);
     final messages = await _loadConversationMessages(convId);
 
     final idx = messages.indexWhere((m) => m.id == messageId);
     if (idx < 0) return;
 
     // 如果当前引用的是被删除消息，一并清空引用态
-    final quoted = _ref.read(quotedMessageProvider);
     if (quoted?.id == messageId) {
-      _ref.read(quotedMessageProvider.notifier).state = null;
+      quotedNotifier.state = null;
     }
 
     await _historyStore.softDeleteMessages(
@@ -1316,6 +1469,7 @@ class ChatActions {
     final conv = _ref.read(activeConversationProvider);
     if (conv == null) return null;
     final convId = conv.id;
+    final attachmentNotifier = _ref.read(recalledAttachmentProvider.notifier);
     final messages = await _loadConversationMessages(convId);
 
     final msgIndex = messages.indexWhere((m) => m.id == messageId);
@@ -1323,8 +1477,7 @@ class ChatActions {
 
     final msg = messages[msgIndex];
     final text = _extractEditableTextForRecall(msg);
-    _ref.read(recalledAttachmentProvider.notifier).state =
-        _extractAttachmentForRecall(msg);
+    attachmentNotifier.state = _extractAttachmentForRecall(msg);
 
     await _historyStore.truncateFromMessage(
       conversationId: convId,
@@ -1411,8 +1564,649 @@ class ChatActions {
   }
 }
 
+class _StreamCommitResult {
+  const _StreamCommitResult({required this.messages});
+
+  final List<Message> messages;
+
+  List<String> get textMessageIds => <String>[
+        for (final message in messages)
+          if (_isTextTimelineMessage(message)) message.id,
+      ];
+
+  List<Message> get pendingTtsMessages => <Message>[
+        for (final message in messages)
+          if (_isPendingTtsPlaceholderMessage(message)) message,
+      ];
+}
+
+enum _StreamDescriptorKind { text, pendingAudio }
+
+class _StreamDescriptor {
+  const _StreamDescriptor._({
+    required this.kind,
+    required this.content,
+    required this.messageStatus,
+    this.textStatus,
+  });
+
+  final _StreamDescriptorKind kind;
+  final String content;
+  final String messageStatus;
+  final BlockStatus? textStatus;
+
+  factory _StreamDescriptor.text({
+    required String content,
+    required String messageStatus,
+    required BlockStatus textStatus,
+  }) {
+    return _StreamDescriptor._(
+      kind: _StreamDescriptorKind.text,
+      content: content,
+      messageStatus: messageStatus,
+      textStatus: textStatus,
+    );
+  }
+
+  factory _StreamDescriptor.generating() {
+    return const _StreamDescriptor._(
+      kind: _StreamDescriptorKind.text,
+      content: _StreamPlaceholderDelivery.kGeneratingText,
+      messageStatus: 'sending',
+      textStatus: BlockStatus.streaming,
+    );
+  }
+
+  factory _StreamDescriptor.pendingAudio(String text) {
+    return _StreamDescriptor._(
+      kind: _StreamDescriptorKind.pendingAudio,
+      content: text,
+      messageStatus: 'sending',
+    );
+  }
+}
+
+class _TextSegmentDescriptors {
+  const _TextSegmentDescriptors({
+    this.sealed = const <_StreamDescriptor>[],
+    this.active,
+  });
+
+  final List<_StreamDescriptor> sealed;
+  final _StreamDescriptor? active;
+}
+
+enum _RawStreamSegmentKind { text, tts, image }
+
+class _RawStreamSegment {
+  const _RawStreamSegment(this.kind, this.content);
+
+  final _RawStreamSegmentKind kind;
+  final String content;
+}
+
+bool _isTextTimelineMessage(Message message) {
+  final blocks = message.blocks;
+  return blocks != null && blocks.length == 1 && blocks.first is TextBlock;
+}
+
+bool _isPendingTtsPlaceholderMessage(Message message) {
+  final blocks = message.blocks;
+  if (blocks == null || blocks.length != 1) return false;
+  final block = blocks.first;
+  return block is AudioBlock &&
+      (block.url.isEmpty || block.status == BlockStatus.pending);
+}
+
+final RegExp _streamHiddenImageTagRegex = RegExp(
+  r'<image\b[^>]*>[\s\S]*?</image>',
+  caseSensitive: false,
+);
+
+String _stripHiddenImageTagsForDisplay(String value) {
+  if (value.isEmpty) return value;
+  var result = value.replaceAll(_streamHiddenImageTagRegex, '');
+  final lower = result.toLowerCase();
+  final openIndex = lower.lastIndexOf('<image');
+  if (openIndex >= 0 && lower.indexOf('</image>', openIndex) < 0) {
+    result = result.substring(0, openIndex);
+  }
+  return result;
+}
+
 class _StreamPlaceholderDelivery {
   _StreamPlaceholderDelivery(
+    this._ref, {
+    required this.convId,
+    required this.userMsgId,
+    required this.formatConfig,
+    required this.enableTtsPlaceholders,
+    this.segmentDelay = Duration.zero,
+  });
+
+  static const String kGeneratingText = '生成中...';
+  static const Duration _kFlushInterval = Duration(milliseconds: 180);
+  static const Duration _kThinkingPlaceholderDelay =
+      Duration(milliseconds: 500);
+
+  final Ref _ref;
+  final String convId;
+  final String userMsgId;
+  final MessageFormatConfig formatConfig;
+  final bool enableTtsPlaceholders;
+  final Duration segmentDelay;
+
+  final StringBuffer _rawStreamText = StringBuffer();
+  final List<Message> _currentTimelineMessages = <Message>[];
+
+  int? _timelineBaseMs;
+  int _timelineTick = 0;
+  Future<void> _queue = Future<void>.value();
+  Timer? _flushTimer;
+  Timer? _thinkingPlaceholderTimer;
+  bool _dirty = false;
+  bool _disposed = false;
+  bool _receivedDelta = false;
+  bool _fallbackTriggered = false;
+  bool _thinkingPlaceholderElapsed = false;
+  String? _finalizedRawText;
+
+  Future<void> start() async {
+    if (_disposed) return;
+    _restartThinkingPlaceholderTimer();
+  }
+
+  void onDelta(String delta) {
+    if (_disposed || delta.isEmpty) return;
+    _rawStreamText.write(delta);
+    _receivedDelta = true;
+    _dirty = true;
+    _scheduleFlush();
+  }
+
+  void onStreamReset() {
+    if (_disposed) return;
+    _fallbackTriggered = false;
+    _receivedDelta = false;
+    _finalizedRawText = null;
+    _thinkingPlaceholderElapsed = false;
+    _rawStreamText.clear();
+    _currentTimelineMessages.clear();
+    _timelineBaseMs = null;
+    _timelineTick = 0;
+    _dirty = true;
+    _restartThinkingPlaceholderTimer();
+    _scheduleFlush(forceNow: true);
+  }
+
+  void onToolCallObserved() {}
+
+  void onStreamingFallback() {
+    if (_disposed || _receivedDelta) return;
+    _fallbackTriggered = true;
+  }
+
+  bool canFinalizeWith({required String finalText}) {
+    if (_disposed || !_receivedDelta || _fallbackTriggered) return false;
+    final effectiveFinalText = _resolveEffectiveFinalText(finalText);
+    return _buildTimelineDescriptors(
+      effectiveFinalText,
+      finalize: true,
+    ).isNotEmpty;
+  }
+
+  Future<void> finalize({required String finalText}) async {
+    if (_disposed) return;
+    _finalizedRawText = _resolveEffectiveFinalText(finalText);
+    _fallbackTriggered = false;
+    _cancelThinkingPlaceholderTimer();
+    _flushTimer?.cancel();
+    _flushTimer = null;
+    _dirty = false;
+    await _applyState(finalize: true);
+  }
+
+  Future<_StreamCommitResult> commitFinalTimeline({
+    required String finalText,
+  }) async {
+    if (_disposed) {
+      return const _StreamCommitResult(messages: <Message>[]);
+    }
+    _finalizedRawText = _resolveEffectiveFinalText(finalText);
+    if (_currentTimelineMessages.isEmpty) {
+      await _applyState(finalize: true);
+    }
+    final committedMessages =
+        List<Message>.from(_currentTimelineMessages, growable: false);
+    if (committedMessages.isEmpty) {
+      await removePlaceholders();
+      return const _StreamCommitResult(messages: <Message>[]);
+    }
+    await _ref.read(chatHistoryStoreProvider).appendAssistantMessages(
+          conversationId: convId,
+          userMessageId: userMsgId.trim(),
+          messages: committedMessages,
+          lastMessagePreview: committedMessages.last.displayText,
+        );
+    await removePlaceholders();
+    return _StreamCommitResult(messages: committedMessages);
+  }
+
+  String _resolveEffectiveFinalText(String finalText) {
+    final candidate = finalText.trim();
+    if (candidate.isNotEmpty) return finalText;
+    final streamed = _rawStreamText.toString();
+    if (streamed.trim().isNotEmpty) return streamed;
+    return finalText;
+  }
+
+  Future<void> removePlaceholders() async {
+    _cancelThinkingPlaceholderTimer();
+    _flushTimer?.cancel();
+    _flushTimer = null;
+    _dirty = false;
+    await _setTransientMessages(const <Message>[]);
+    _currentTimelineMessages.clear();
+    _rawStreamText.clear();
+    _finalizedRawText = null;
+    _receivedDelta = false;
+    _fallbackTriggered = false;
+    _timelineBaseMs = null;
+    _timelineTick = 0;
+  }
+
+  void dispose() {
+    _disposed = true;
+    _cancelThinkingPlaceholderTimer();
+    _flushTimer?.cancel();
+    _flushTimer = null;
+  }
+
+  void _restartThinkingPlaceholderTimer() {
+    _cancelThinkingPlaceholderTimer();
+    _thinkingPlaceholderElapsed = false;
+    _thinkingPlaceholderTimer = Timer(_kThinkingPlaceholderDelay, () {
+      if (_disposed || _thinkingPlaceholderElapsed) return;
+      _thinkingPlaceholderElapsed = true;
+      _dirty = true;
+      _scheduleFlush(forceNow: true);
+    });
+  }
+
+  void _cancelThinkingPlaceholderTimer() {
+    _thinkingPlaceholderTimer?.cancel();
+    _thinkingPlaceholderTimer = null;
+  }
+
+  void _scheduleFlush({bool forceNow = false}) {
+    if (_disposed) return;
+    if (forceNow) {
+      _flushTimer?.cancel();
+      _flushTimer = null;
+      _flushNow();
+      return;
+    }
+    _flushTimer ??= Timer(_kFlushInterval, _flushNow);
+  }
+
+  void _flushNow() {
+    if (_disposed) return;
+    _flushTimer = null;
+    if (!_dirty) return;
+    _dirty = false;
+    unawaited(_applyState(finalize: false));
+  }
+
+  Future<void> _applyState({required bool finalize}) async {
+    if (_disposed) return;
+    final sourceRaw = finalize
+        ? (_finalizedRawText ?? _rawStreamText.toString())
+        : _rawStreamText.toString();
+    final messages = _materializeTimeline(
+      _buildTimelineDescriptors(sourceRaw, finalize: finalize),
+    );
+    _currentTimelineMessages
+      ..clear()
+      ..addAll(messages);
+    await _setTransientMessages(messages);
+  }
+
+  List<_StreamDescriptor> _buildTimelineDescriptors(
+    String rawText, {
+    required bool finalize,
+  }) {
+    final segments = _extractRawSegments(rawText);
+    final descriptors = <_StreamDescriptor>[];
+    _StreamDescriptor? activeText;
+    for (var index = 0; index < segments.length; index++) {
+      final segment = segments[index];
+      final hasFollowingBoundary = index < segments.length - 1;
+      if (segment.kind == _RawStreamSegmentKind.tts && enableTtsPlaceholders) {
+        final ttsText = segment.content.trim();
+        if (ttsText.isNotEmpty) {
+          descriptors.add(_StreamDescriptor.pendingAudio(ttsText));
+        }
+        continue;
+      }
+      final described = _describeTextSegment(
+        segment.content,
+        forceSealTail: finalize || hasFollowingBoundary,
+      );
+      descriptors.addAll(described.sealed);
+      if (!finalize && !formatConfig.enableChunking && !hasFollowingBoundary) {
+        activeText = described.active;
+      }
+    }
+    if (finalize) {
+      return descriptors;
+    }
+    if (activeText != null) {
+      descriptors.add(activeText);
+      return descriptors;
+    }
+    if (_shouldShowGeneratingPlaceholder(descriptors)) {
+      descriptors.add(_StreamDescriptor.generating());
+    }
+    return descriptors;
+  }
+
+  bool _shouldShowGeneratingPlaceholder(List<_StreamDescriptor> descriptors) {
+    if (descriptors.isNotEmpty) return true;
+    return _thinkingPlaceholderElapsed || _fallbackTriggered;
+  }
+
+  List<_RawStreamSegment> _extractRawSegments(String rawText) {
+    if (rawText.isEmpty) return const <_RawStreamSegment>[];
+    final segments = <_RawStreamSegment>[];
+    final lowerRaw = rawText.toLowerCase();
+    var cursor = 0;
+    parseLoop:
+    while (cursor < rawText.length) {
+      final ttsOpenIndex = lowerRaw.indexOf('<tts>', cursor);
+      final imageOpenIndex = lowerRaw.indexOf('<image', cursor);
+      final openIndex = switch ((ttsOpenIndex, imageOpenIndex)) {
+        (>= 0, >= 0) =>
+          ttsOpenIndex < imageOpenIndex ? ttsOpenIndex : imageOpenIndex,
+        (>= 0, _) => ttsOpenIndex,
+        (_, >= 0) => imageOpenIndex,
+        _ => -1,
+      };
+      if (openIndex < 0) {
+        final tail = enableTtsPlaceholders
+            ? _sanitizeVisibleTextFragment(rawText.substring(cursor))
+            : _renderTtsAsPlainText(rawText.substring(cursor));
+        if (tail.trim().isNotEmpty) {
+          segments.add(_RawStreamSegment(_RawStreamSegmentKind.text, tail));
+        }
+        break;
+      }
+      final beforeText = _sanitizeVisibleTextFragment(
+        rawText.substring(cursor, openIndex),
+      );
+      if (beforeText.trim().isNotEmpty) {
+        segments.add(_RawStreamSegment(_RawStreamSegmentKind.text, beforeText));
+      }
+      if (openIndex == ttsOpenIndex) {
+        final closeIndex = lowerRaw.indexOf('</tts>', openIndex + 5);
+        if (closeIndex < 0) {
+          if (enableTtsPlaceholders) {
+            segments
+                .add(const _RawStreamSegment(_RawStreamSegmentKind.tts, ''));
+          }
+          break parseLoop;
+        }
+        final ttsText = rawText.substring(openIndex + 5, closeIndex).trim();
+        if (enableTtsPlaceholders) {
+          segments.add(_RawStreamSegment(_RawStreamSegmentKind.tts, ttsText));
+        } else if (ttsText.isNotEmpty) {
+          segments.add(_RawStreamSegment(_RawStreamSegmentKind.text, ttsText));
+        }
+        cursor = closeIndex + 6;
+        continue;
+      }
+      final openTagEnd = lowerRaw.indexOf('>', openIndex);
+      if (openTagEnd < 0) {
+        segments.add(const _RawStreamSegment(_RawStreamSegmentKind.image, ''));
+        break;
+      }
+      final closeIndex = lowerRaw.indexOf('</image>', openTagEnd + 1);
+      segments.add(const _RawStreamSegment(_RawStreamSegmentKind.image, ''));
+      if (closeIndex < 0) {
+        break;
+      }
+      cursor = closeIndex + 8;
+    }
+    return segments;
+  }
+
+  String _renderTtsAsPlainText(String rawText) {
+    if (rawText.isEmpty) return rawText;
+    var result = rawText.replaceAllMapped(
+      RegExp(r'<tts>(.*?)</tts>', caseSensitive: false, dotAll: true),
+      (match) => (match.group(1) ?? '').trim(),
+    );
+    final lower = result.toLowerCase();
+    final openIndex = lower.lastIndexOf('<tts>');
+    if (openIndex >= 0 && lower.indexOf('</tts>', openIndex) < 0) {
+      result = result.substring(0, openIndex);
+    }
+    return _sanitizeVisibleTextFragment(result);
+  }
+
+  String _sanitizeVisibleTextFragment(String value) {
+    if (value.isEmpty) return value;
+    var result = _stripHiddenImageTagsForDisplay(value);
+    result = result.replaceAll(
+      RegExp(r'<create_trigger\s[^>]*?/?>', caseSensitive: false),
+      '',
+    );
+    result = result.replaceAll(
+      RegExp(
+        r'<create_trigger\s[^>]*?>.*?</create_trigger>',
+        caseSensitive: false,
+        dotAll: true,
+      ),
+      '',
+    );
+    result = result.replaceAll(
+      RegExp(r'<delete_trigger\s[^>]*?/?>', caseSensitive: false),
+      '',
+    );
+    final lastLt = result.lastIndexOf('<');
+    final lastGt = result.lastIndexOf('>');
+    if (lastLt > lastGt) result = result.substring(0, lastLt);
+    return result;
+  }
+
+  _TextSegmentDescriptors _describeTextSegment(
+    String value, {
+    required bool forceSealTail,
+  }) {
+    final text = _sanitizeVisibleTextFragment(value).trim();
+    if (text.isEmpty) return const _TextSegmentDescriptors();
+    if (!formatConfig.enableChunking) {
+      if (forceSealTail) {
+        return _TextSegmentDescriptors(
+          sealed: <_StreamDescriptor>[
+            _StreamDescriptor.text(
+              content: text,
+              messageStatus: 'sent',
+              textStatus: BlockStatus.success,
+            ),
+          ],
+        );
+      }
+      return _TextSegmentDescriptors(
+        active: _StreamDescriptor.text(
+          content: text,
+          messageStatus: 'sending',
+          textStatus: BlockStatus.success,
+        ),
+      );
+    }
+    final chunks = MessageFormatter.formatAndChunkText(text, formatConfig)
+        .map((chunk) => chunk.trim())
+        .where((chunk) => chunk.isNotEmpty)
+        .toList(growable: false);
+    if (chunks.isEmpty) return const _TextSegmentDescriptors();
+    if (forceSealTail) {
+      return _TextSegmentDescriptors(
+        sealed: <_StreamDescriptor>[
+          for (final chunk in chunks)
+            _StreamDescriptor.text(
+              content: chunk,
+              messageStatus: 'sent',
+              textStatus: BlockStatus.success,
+            ),
+        ],
+      );
+    }
+    final sealed = <_StreamDescriptor>[
+      for (final chunk in chunks.take(chunks.length - 1))
+        _StreamDescriptor.text(
+          content: chunk,
+          messageStatus: 'sent',
+          textStatus: BlockStatus.success,
+        ),
+    ];
+    final lastChunk = chunks.last;
+    if (streamTextEndsWithChunkBoundary(lastChunk, formatConfig)) {
+      sealed.add(
+        _StreamDescriptor.text(
+          content: lastChunk,
+          messageStatus: 'sent',
+          textStatus: BlockStatus.success,
+        ),
+      );
+      return _TextSegmentDescriptors(sealed: sealed);
+    }
+    return _TextSegmentDescriptors(sealed: sealed);
+  }
+
+  List<Message> _materializeTimeline(List<_StreamDescriptor> descriptors) {
+    final previous =
+        List<Message>.from(_currentTimelineMessages, growable: false);
+    final messages = <Message>[];
+    for (var index = 0; index < descriptors.length; index++) {
+      final descriptor = descriptors[index];
+      final previousMessage = index < previous.length &&
+              _matchesDescriptor(previous[index], descriptor)
+          ? previous[index]
+          : null;
+      messages.add(
+        previousMessage == null
+            ? _createMessage(descriptor)
+            : _rebuildMessage(previousMessage, descriptor),
+      );
+    }
+    return messages;
+  }
+
+  bool _matchesDescriptor(Message message, _StreamDescriptor descriptor) {
+    final blocks = message.blocks;
+    if (blocks == null || blocks.length != 1) return false;
+    return switch (descriptor.kind) {
+      _StreamDescriptorKind.text => blocks.first is TextBlock,
+      _StreamDescriptorKind.pendingAudio => blocks.first is AudioBlock,
+    };
+  }
+
+  Message _createMessage(_StreamDescriptor descriptor) {
+    final messageId = genId('msg');
+    return switch (descriptor.kind) {
+      _StreamDescriptorKind.text => Message.fromBlocks(
+          id: messageId,
+          role: 'assistant',
+          blocks: [
+            TextBlock(
+              messageId: messageId,
+              content: descriptor.content,
+              status: descriptor.textStatus ?? BlockStatus.success,
+            ),
+          ],
+          createdAt: _allocateCreatedAt(),
+          status: descriptor.messageStatus,
+        ),
+      _StreamDescriptorKind.pendingAudio => Message.fromBlocks(
+          id: messageId,
+          role: 'assistant',
+          blocks: [
+            AudioBlock(
+              messageId: messageId,
+              url: '',
+              text: descriptor.content,
+              status: BlockStatus.pending,
+            ),
+          ],
+          createdAt: _allocateCreatedAt(),
+          status: descriptor.messageStatus,
+        ),
+    };
+  }
+
+  Message _rebuildMessage(Message baseMessage, _StreamDescriptor descriptor) {
+    return switch (descriptor.kind) {
+      _StreamDescriptorKind.text => Message.fromBlocks(
+          id: baseMessage.id,
+          role: baseMessage.role,
+          blocks: [
+            TextBlock(
+              messageId: baseMessage.id,
+              content: descriptor.content,
+              status: descriptor.textStatus ?? BlockStatus.success,
+            ),
+          ],
+          createdAt: baseMessage.createdAt,
+          status: descriptor.messageStatus,
+        ),
+      _StreamDescriptorKind.pendingAudio => Message.fromBlocks(
+          id: baseMessage.id,
+          role: baseMessage.role,
+          blocks: [
+            AudioBlock(
+              messageId: baseMessage.id,
+              url: '',
+              text: descriptor.content,
+              status: BlockStatus.pending,
+            ),
+          ],
+          createdAt: baseMessage.createdAt,
+          status: descriptor.messageStatus,
+        ),
+    };
+  }
+
+  DateTime _allocateCreatedAt() {
+    final baseMs = _timelineBaseMs ??= DateTime.now().millisecondsSinceEpoch;
+    final createdAt =
+        DateTime.fromMillisecondsSinceEpoch(baseMs + (_timelineTick * 100));
+    _timelineTick += 1;
+    return createdAt;
+  }
+
+  Future<void> _enqueue(Future<void> Function() task) {
+    _queue = _queue.catchError((_) {}).then((_) async {
+      if (_disposed) return;
+      await task();
+    });
+    return _queue;
+  }
+
+  Future<void> _setTransientMessages(List<Message> messages) {
+    return _enqueue(() async {
+      _ref
+          .read(conversationTransientTimelineProvider(convId).notifier)
+          .setMessages(messages);
+    });
+  }
+
+  List<String> snapshotPlaceholderIds() => <String>[
+        for (final message in _currentTimelineMessages) message.id,
+      ];
+}
+
+class _LegacyStreamPlaceholderDelivery {
+  _LegacyStreamPlaceholderDelivery(
     this._ref, {
     required this.convId,
     required this.userMsgId,
@@ -1429,11 +2223,16 @@ class _StreamPlaceholderDelivery {
   final MessageFormatConfig formatConfig;
   final Duration segmentDelay;
 
+  final List<Message> _sealedMessages = <Message>[];
   final List<String> _sealedChunks = <String>[];
   final List<String> _pendingSealedChunks = <String>[];
   final StringBuffer _activeChunkText = StringBuffer();
   final StringBuffer _rawStreamText = StringBuffer();
 
+  Message? _activeMessage;
+  String _lastVisibleText = '';
+  int? _timelineBaseMs;
+  int _timelineTick = 0;
   Future<void> _queue = Future<void>.value();
   Timer? _flushTimer;
   Timer? _segmentDelayTimer;
@@ -1452,14 +2251,22 @@ class _StreamPlaceholderDelivery {
     final value = delta;
     if (value.isEmpty) return;
     _rawStreamText.write(value);
-    if (formatConfig.enableChunking) {
-      _activeChunkText.write(value);
-      _sealCompletedChunks();
+    final visibleText = _sanitizeStreamDisplayText(_rawStreamText.toString());
+    if (_lastVisibleText.isNotEmpty &&
+        !visibleText.startsWith(_lastVisibleText)) {
+      _setFromVisibleText(visibleText);
     } else {
-      _activeChunkText
-        ..clear()
-        ..write(_rawStreamText.toString());
+      final visibleDelta = visibleText.substring(_lastVisibleText.length);
+      if (formatConfig.enableChunking) {
+        _activeChunkText.write(visibleDelta);
+        _sealCompletedChunks();
+      } else {
+        _activeChunkText
+          ..clear()
+          ..write(visibleText);
+      }
     }
+    _lastVisibleText = visibleText;
     _receivedDelta = true;
     _dirty = true;
     _scheduleFlush();
@@ -1513,42 +2320,44 @@ class _StreamPlaceholderDelivery {
     await _applyState(finalize: true);
   }
 
-  Future<List<String>> commitFinalTextAsSingleMessage({
+  Future<List<String>> commitFinalTextAsMessages({
     required String finalText,
   }) async {
     if (_disposed) return const <String>[];
-    final effectiveFinalText = _resolveEffectiveFinalText(finalText).trim();
-    if (effectiveFinalText.isEmpty) return const <String>[];
-    final messageId = genId('msg');
-    final committedMessage = Message.fromBlocks(
-      id: messageId,
-      role: 'assistant',
-      blocks: [
-        TextBlock(
-          messageId: messageId,
-          content: effectiveFinalText,
-          status: BlockStatus.success,
-        ),
-      ],
-      createdAt: DateTime.now(),
-      status: 'sent',
-    );
+    final effectiveFinalText = _resolveEffectiveFinalText(finalText);
+    if (_sanitizeStreamDisplayText(effectiveFinalText).trim().isEmpty) {
+      await removePlaceholders();
+      return const <String>[];
+    }
+    if (_sealedMessages.isEmpty) {
+      _setFromFinalText(effectiveFinalText);
+      await _applyState(finalize: true);
+    }
+    final committedMessages =
+        List<Message>.from(_sealedMessages, growable: false);
+    if (committedMessages.isEmpty) {
+      await removePlaceholders();
+      return const <String>[];
+    }
     if (userMsgId.trim().isNotEmpty) {
       await _ref.read(chatHistoryStoreProvider).appendAssistantMessages(
             conversationId: convId,
             userMessageId: userMsgId,
-            messages: [committedMessage],
-            lastMessagePreview: committedMessage.displayText,
+            messages: committedMessages,
+            lastMessagePreview: committedMessages.last.displayText,
           );
     } else {
-      await _ref.read(chatHistoryStoreProvider).appendMessage(
+      await _ref.read(chatHistoryStoreProvider).appendAssistantMessages(
             conversationId: convId,
-            message: committedMessage,
-            lastMessagePreview: committedMessage.displayText,
+            userMessageId: '',
+            messages: committedMessages,
+            lastMessagePreview: committedMessages.last.displayText,
           );
     }
     await removePlaceholders();
-    return <String>[messageId];
+    return committedMessages
+        .map((message) => message.id)
+        .toList(growable: false);
   }
 
   String _resolveEffectiveFinalText(String finalText) {
@@ -1567,7 +2376,7 @@ class _StreamPlaceholderDelivery {
     _flushTimer?.cancel();
     _flushTimer = null;
     _dirty = false;
-    await _setBubbleState(StreamingBubbleState.hidden);
+    await _setTransientMessages(const <Message>[]);
     _resetTextBuffers();
     _receivedDelta = false;
     _fallbackTriggered = false;
@@ -1603,44 +2412,136 @@ class _StreamPlaceholderDelivery {
 
   Future<void> _applyState({required bool finalize}) async {
     if (_disposed) return;
-    final text = _buildDisplayText(finalize: finalize);
-    final status = _fallbackTriggered
-        ? StreamingBubbleStatus.fallback
-        : (_receivedDelta
-            ? StreamingBubbleStatus.streaming
-            : StreamingBubbleStatus.thinking);
-    await _setBubbleState(
-      StreamingBubbleState(
-        visible: true,
-        text: text,
-        status: status,
-      ),
+    await _setTransientMessages(_buildTimelineMessages(finalize: finalize));
+  }
+
+  List<Message> _buildTimelineMessages({required bool finalize}) {
+    final sealedTexts = <String>[
+      for (final chunk in _sealedChunks)
+        if (chunk.trim().isNotEmpty) chunk.trim(),
+    ];
+    final activeText = _activeChunkText.toString().trim();
+    final targetTexts = <String>[
+      ...sealedTexts,
+      if (finalize && activeText.isNotEmpty) activeText,
+    ];
+
+    final nextSealedMessages = <Message>[];
+    for (var i = 0; i < targetTexts.length; i++) {
+      final text = targetTexts[i];
+      Message? baseMessage;
+      if (i < _sealedMessages.length) {
+        baseMessage = _sealedMessages[i];
+      } else if (i == _sealedMessages.length && _activeMessage != null) {
+        baseMessage = _activeMessage;
+        _activeMessage = null;
+      }
+      nextSealedMessages.add(
+        baseMessage == null
+            ? _createTextMessage(
+                text: text,
+                status: 'sent',
+                blockStatus: BlockStatus.success,
+              )
+            : _rebuildTextMessage(
+                baseMessage,
+                text: text,
+                status: 'sent',
+                blockStatus: BlockStatus.success,
+              ),
+      );
+    }
+
+    _sealedMessages
+      ..clear()
+      ..addAll(nextSealedMessages);
+
+    if (finalize) {
+      _activeMessage = null;
+      return List<Message>.from(_sealedMessages, growable: false);
+    }
+
+    final shouldShowPlaceholder = _fallbackTriggered ||
+        _receivedDelta ||
+        _sealedMessages.isNotEmpty ||
+        activeText.isNotEmpty;
+    if (!shouldShowPlaceholder) {
+      _activeMessage = null;
+      return List<Message>.from(_sealedMessages, growable: false);
+    }
+
+    final placeholderText = activeText.isEmpty ? _kGeneratingText : activeText;
+    final placeholderBlockStatus =
+        !formatConfig.enableChunking && activeText.isNotEmpty
+            ? BlockStatus.success
+            : BlockStatus.streaming;
+    _activeMessage = _activeMessage == null
+        ? _createTextMessage(
+            text: placeholderText,
+            status: 'sending',
+            blockStatus: placeholderBlockStatus,
+          )
+        : _rebuildTextMessage(
+            _activeMessage!,
+            text: placeholderText,
+            status: 'sending',
+            blockStatus: placeholderBlockStatus,
+          );
+
+    return <Message>[
+      ..._sealedMessages,
+      _activeMessage!,
+    ];
+  }
+
+  Message _createTextMessage({
+    required String text,
+    required String status,
+    required BlockStatus blockStatus,
+  }) {
+    final messageId = genId('msg');
+    return Message.fromBlocks(
+      id: messageId,
+      role: 'assistant',
+      blocks: [
+        TextBlock(
+          messageId: messageId,
+          content: text,
+          status: blockStatus,
+        ),
+      ],
+      createdAt: _allocateCreatedAt(),
+      status: status,
     );
   }
 
-  String _buildDisplayText({required bool finalize}) {
-    if (!formatConfig.enableChunking) {
-      final rawText = _rawStreamText.toString();
-      if (rawText.trim().isEmpty) {
-        return _kGeneratingText;
-      }
-      return rawText;
-    }
+  Message _rebuildTextMessage(
+    Message baseMessage, {
+    required String text,
+    required String status,
+    required BlockStatus blockStatus,
+  }) {
+    return Message.fromBlocks(
+      id: baseMessage.id,
+      role: baseMessage.role,
+      blocks: [
+        TextBlock(
+          messageId: baseMessage.id,
+          content: text,
+          status: blockStatus,
+        ),
+      ],
+      createdAt: baseMessage.createdAt,
+      status: status,
+    );
+  }
 
-    final chunks = <String>[
-      ..._sealedChunks,
-    ];
-    final active = _activeChunkText.toString();
-    if (active.trim().isNotEmpty) {
-      chunks.add(active);
-    } else if (!finalize && chunks.isNotEmpty) {
-      // 当前段已封口，立即展示下一条“生成中...”占位，形成分段式逐条发送体验。
-      chunks.add(_kGeneratingText);
-    }
-    if (chunks.isEmpty) {
-      return _kGeneratingText;
-    }
-    return chunks.join('\n\n');
+  DateTime _allocateCreatedAt() {
+    final baseMs = _timelineBaseMs ??= DateTime.now().millisecondsSinceEpoch;
+    final createdAt =
+        DateTime.fromMillisecondsSinceEpoch(baseMs + (_timelineTick * 100));
+    _timelineTick += 1;
+    return createdAt;
   }
 
   void _sealCompletedChunks() {
@@ -1672,17 +2573,22 @@ class _StreamPlaceholderDelivery {
   }
 
   void _setFromFinalText(String finalText) {
-    _resetTextBuffers();
-    _rawStreamText.write(finalText);
+    final visibleText = _sanitizeStreamDisplayText(finalText);
+    _resetChunkBuffers();
+    _lastVisibleText = visibleText;
+    _rawStreamText
+      ..clear()
+      ..write(finalText);
 
     if (!formatConfig.enableChunking) {
-      _activeChunkText.write(finalText);
+      _activeChunkText.write(visibleText);
       return;
     }
 
-    final chunks = MessageFormatter.formatAndChunkText(finalText, formatConfig);
+    final chunks =
+        MessageFormatter.formatAndChunkText(visibleText, formatConfig);
     if (chunks.isEmpty) {
-      _activeChunkText.write(finalText);
+      _activeChunkText.write(visibleText);
       return;
     }
     if (chunks.length == 1) {
@@ -1692,6 +2598,41 @@ class _StreamPlaceholderDelivery {
 
     _sealedChunks.addAll(chunks.sublist(0, chunks.length - 1));
     _activeChunkText.write(chunks.last);
+  }
+
+  void _setFromVisibleText(String visibleText) {
+    _resetChunkBuffers();
+    _lastVisibleText = visibleText;
+
+    if (!formatConfig.enableChunking) {
+      _activeChunkText.write(visibleText);
+      return;
+    }
+
+    final chunks =
+        MessageFormatter.formatAndChunkText(visibleText, formatConfig);
+    if (chunks.isEmpty) {
+      _activeChunkText.write(visibleText);
+      return;
+    }
+    if (chunks.length == 1) {
+      final first = chunks.first;
+      if (streamTextEndsWithChunkBoundary(first, formatConfig)) {
+        _sealedChunks.add(first);
+      } else {
+        _activeChunkText.write(first);
+      }
+      return;
+    }
+
+    final completed = chunks.sublist(0, chunks.length - 1);
+    _sealedChunks.addAll(completed);
+    final last = chunks.last;
+    if (streamTextEndsWithChunkBoundary(last, formatConfig)) {
+      _sealedChunks.add(last);
+    } else {
+      _activeChunkText.write(last);
+    }
   }
 
   Future<void> _finalizeWithoutReplay(String finalText) async {
@@ -1708,12 +2649,21 @@ class _StreamPlaceholderDelivery {
   }
 
   void _resetTextBuffers() {
+    _resetChunkBuffers();
     _segmentDelayTimer?.cancel();
     _segmentDelayTimer = null;
+    _sealedMessages.clear();
+    _activeMessage = null;
+    _lastVisibleText = '';
+    _timelineBaseMs = null;
+    _timelineTick = 0;
+    _rawStreamText.clear();
+  }
+
+  void _resetChunkBuffers() {
     _sealedChunks.clear();
     _pendingSealedChunks.clear();
     _activeChunkText.clear();
-    _rawStreamText.clear();
   }
 
   bool get _hasSegmentDelay => segmentDelay.inMilliseconds > 0;
@@ -1755,13 +2705,42 @@ class _StreamPlaceholderDelivery {
     return _queue;
   }
 
-  Future<void> _setBubbleState(StreamingBubbleState state) {
+  String _sanitizeStreamDisplayText(String rawText) {
+    if (rawText.isEmpty) return rawText;
+    var result = rawText.replaceAll(
+      RegExp(r'<tts>.*?</tts>', caseSensitive: false, dotAll: true),
+      '',
+    );
+    final openTagIndex =
+        result.lastIndexOf(RegExp(r'<tts>', caseSensitive: false));
+    if (openTagIndex >= 0) {
+      final closeTagIndex =
+          result.indexOf(RegExp(r'</tts>', caseSensitive: false), openTagIndex);
+      if (closeTagIndex < 0) {
+        result = result.substring(0, openTagIndex);
+      }
+    }
+    result = _stripHiddenImageTagsForDisplay(result);
+    final lastLt = result.lastIndexOf('<');
+    final lastGt = result.lastIndexOf('>');
+    if (lastLt > lastGt) {
+      result = result.substring(0, lastLt);
+    }
+    return result;
+  }
+
+  Future<void> _setTransientMessages(List<Message> messages) {
     return _enqueue(() async {
-      _ref.read(streamingBubbleProvider(convId).notifier).state = state;
+      _ref
+          .read(conversationTransientTimelineProvider(convId).notifier)
+          .setMessages(messages);
     });
   }
 
-  List<String> snapshotPlaceholderIds() => const <String>[];
+  List<String> snapshotPlaceholderIds() => <String>[
+        for (final message in _sealedMessages) message.id,
+        if (_activeMessage != null) _activeMessage!.id,
+      ];
 }
 
 bool streamTextEndsWithChunkBoundary(

@@ -141,6 +141,23 @@ class PluginVoiceSection extends ConsumerWidget {
   // ==================== 插件选择弹窗 ====================
 
   Future<void> _showPluginPicker(BuildContext context, WidgetRef ref) async {
+    final sheetSelectedPluginIds = Set<String>.from(selectedPluginIds);
+
+    void updateSheetSelection(
+      StateSetter setSheetState,
+      String pluginId,
+      bool value,
+    ) {
+      setSheetState(() {
+        if (value) {
+          sheetSelectedPluginIds.add(pluginId);
+        } else {
+          sheetSelectedPluginIds.remove(pluginId);
+        }
+      });
+      onPluginIdsChanged(Set<String>.from(sheetSelectedPluginIds));
+    }
+
     await showMoeBottomSheet(
       context: context,
       title: '选择插件',
@@ -153,9 +170,8 @@ class PluginVoiceSection extends ConsumerWidget {
               itemCount: chatPluginItems.length,
               itemBuilder: (_, index) {
                 final item = chatPluginItems[index];
-                final selected = selectedPluginIds.contains(item.id);
-                final globallyEnabled =
-                    _isPluginGloballyEnabled(ref, item.id);
+                final selected = sheetSelectedPluginIds.contains(item.id);
+                final globallyEnabled = _isPluginGloballyEnabled(ref, item.id);
 
                 return ListTile(
                   leading: Icon(
@@ -174,27 +190,21 @@ class PluginVoiceSection extends ConsumerWidget {
                     activeColor: colors.primary,
                     onChanged: globallyEnabled
                         ? (value) {
-                            final newSet = Set<String>.from(selectedPluginIds);
-                            if (value) {
-                              newSet.add(item.id);
-                            } else {
-                              newSet.remove(item.id);
-                            }
-                            onPluginIdsChanged(newSet);
-                            setSheetState(() {});
+                            updateSheetSelection(
+                              setSheetState,
+                              item.id,
+                              value,
+                            );
                           }
                         : null,
                   ),
                   onTap: globallyEnabled
                       ? () {
-                          final newSet = Set<String>.from(selectedPluginIds);
-                          if (selected) {
-                            newSet.remove(item.id);
-                          } else {
-                            newSet.add(item.id);
-                          }
-                          onPluginIdsChanged(newSet);
-                          setSheetState(() {});
+                          updateSheetSelection(
+                            setSheetState,
+                            item.id,
+                            !selected,
+                          );
                         }
                       : null,
                 );

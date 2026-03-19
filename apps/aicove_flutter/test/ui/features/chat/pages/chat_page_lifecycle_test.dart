@@ -118,7 +118,7 @@ void main() {
     expect(container.read(activeConversationIdProvider), 'conv_b');
   });
 
-  test('退出监听后可见窗口应回到默认 5 条', () async {
+  test('退出监听后可见窗口应保留最近一次历史窗口大小', () async {
     final container = ProviderContainer();
     addTearDown(container.dispose);
 
@@ -138,7 +138,7 @@ void main() {
 
     expect(
       container.read(conversationVisibleCountProvider('conv_a')),
-      kConversationInitialVisibleCount,
+      12,
     );
   });
 }

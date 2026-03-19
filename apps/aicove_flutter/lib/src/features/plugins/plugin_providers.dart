@@ -571,6 +571,8 @@ class ImagePluginConfigNotifier extends StateNotifier<ImageConfig> {
     _loadConfig();
   }
 
+  ImageConfig get currentConfig => state;
+
   Future<void> _loadConfig() async {
     try {
       final prefs = await SharedPreferences.getInstance();

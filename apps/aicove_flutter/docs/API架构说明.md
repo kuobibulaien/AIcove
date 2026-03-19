@@ -1,6 +1,6 @@
 # API 架构说明
 
-> 更新日期：2026-02-27
+> 更新日期：2026-03-18
 > 适用范围：`apps/mygril_flutter/lib/src/features/chat/`、`apps/mygril_flutter/lib/src/core/api/`
 
 ## 当前实现
@@ -31,7 +31,7 @@
 | `plugins/plugin_manager.dart` | 插件系统（生成 system prompt、处理回复得到事件/多媒体内容） |
 | `core/models/message_block.dart` | 多模态 Block 定义（`TextBlock`/`ImageBlock`/`AudioBlock`/`FileBlock` 等） |
 | `domain/message.dart` | 消息模型与 `toHistoryJson()`（用于拼请求历史） |
-| `ui/features/debug/pages/call_flow_management_page.dart` | 调试页：切换稳定/快速模式，配置模型/工具默认超时 |
+| `ui/features/debug/pages/call_flow_management_page.dart` | 调试页：配置模型/工具默认超时（生图路径切换已移到绘图设置） |
 
 ### 一次发送的完整流程
 
@@ -47,9 +47,9 @@
    - 超出上下文限制时触发 memory 插件预刷新（保存即将丢弃的历史）
 6. `ChatSendService.executeApiCall(...)` 发起请求并处理插件：
    - `ChatSendService` 只负责组织参数，底层执行委托给 `ChatSendApiRunner.executeApiCall(...)`
-   - 根据 `call_flow_settings` 决定流程模式：
-     - `stable`：多轮循环（模型请求 -> 工具执行 -> 再次请求模型）
-     - `fast`：仅首轮模型请求，工具并发执行，不再进入下一轮模型请求
+   - 根据 `call_flow_settings` 决定生图路径：
+     - `auto`：只有聊天模型同时具备 `vision + tools` 能力且未禁用工具调用时，才向模型暴露 `draw_image`，走“模型请求 -> 工具执行 -> 再请求模型”的稳定链路，并进入审图/返工闭环
+     - `fast`：不向模型暴露 `draw_image`，改为注入 `<image>英文提示词</image>` 规则，让模型直接用标签触发生图；若仍有其他非生图工具，则继续按常规工具循环处理
    - 模型请求超时与工具超时都来自 `call_flow_settings`
    - `AgentApiClient.sendMessageRich(...)` 发起请求（通过 `ProviderAdapterFactory` 适配不同 provider）
    - 若模型不支持原生 tool call，`ChatToolFallbackParser` 从回复文本中提取工具调用

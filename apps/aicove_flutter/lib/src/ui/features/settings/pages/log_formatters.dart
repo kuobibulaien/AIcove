@@ -107,6 +107,18 @@ class StreamResponsePreview {
   bool get hasMergedText => mergedText.trim().isNotEmpty;
 }
 
+class ConversationRawResponseSection {
+  final String title;
+  final String content;
+  final bool isCollapsedStream;
+
+  const ConversationRawResponseSection({
+    required this.title,
+    required this.content,
+    this.isCollapsedStream = false,
+  });
+}
+
 /// 将 `rawResponseBody={"streamEvents":[...]}` 解析成可读预览。
 ///
 /// 返回 `null` 代表不是流式事件包（例如普通一次性 JSON 回包）。
@@ -170,6 +182,50 @@ StreamResponsePreview? parseStreamResponsePreview(String? rawResponseBody) {
     eventCount: streamEvents.length,
     parseErrorCount: parseErrorCount,
     hasDoneMarker: hasDoneMarker,
+  );
+}
+
+ConversationRawResponseSection? buildConversationRawResponseSection(
+  String? rawResponseBody, {
+  bool includeRawStreamEvents = false,
+}) {
+  if (rawResponseBody == null) return null;
+  final trimmed = rawResponseBody.trim();
+  if (trimmed.isEmpty) return null;
+
+  final streamPreview = parseStreamResponsePreview(trimmed);
+  if (streamPreview == null) {
+    return ConversationRawResponseSection(
+      title: 'AI 原始 JSON 响应（模型回包）',
+      content: tryFormatJson(trimmed),
+    );
+  }
+
+  if (includeRawStreamEvents) {
+    return ConversationRawResponseSection(
+      title: '流式回包原始事件（JSON，按轮汇总）',
+      content: tryFormatJson(trimmed),
+    );
+  }
+
+  final summaryParts = <String>[
+    '事件数: ${streamPreview.eventCount}',
+    if (streamPreview.hasDoneMarker) '含 [DONE]',
+    if (streamPreview.parseErrorCount > 0)
+      '解析失败: ${streamPreview.parseErrorCount}条',
+  ];
+
+  final buffer = StringBuffer()
+    ..writeln('原始流式事件已默认折叠，避免日常预览和导出被 streamEvents 刷屏。')
+    ..writeln(summaryParts.join(' | '))
+    ..writeln()
+    ..writeln('--- 按轮聚合后的文本 ---')
+    ..writeln(streamPreview.hasMergedText ? streamPreview.mergedText : '(空)');
+
+  return ConversationRawResponseSection(
+    title: '流式回包（默认折叠原始事件）',
+    content: buffer.toString().trim(),
+    isCollapsedStream: true,
   );
 }
 
@@ -836,7 +892,12 @@ String formatApiLogFull(ApiLogEntry log) {
 
     writeJsonSection('AI 实际收到的完整上下文（messages）', log.rawContext);
     writeJsonSection('AI 实际发送的完整请求体（rawRequestBody）', log.rawRequestBody);
-    writeJsonSection('AI 原始 JSON 响应（模型回包）', log.rawResponseBody);
+    final rawResponseSection =
+        buildConversationRawResponseSection(log.rawResponseBody);
+    if (rawResponseSection != null) {
+      buffer.writeln('\n========== ${rawResponseSection.title} ==========');
+      buffer.writeln(rawResponseSection.content);
+    }
     writeJsonSection('AI -> 工具调用', log.rawToolCalls);
     writeJsonSection('工具 -> AI 返回', log.rawToolResults);
     writeTextSection('AI 原始回复', log.rawAiResponse);
@@ -1089,17 +1150,25 @@ DateTime? latestRoundLogTime(ConversationTurnLog turn) {
 }
 
 String resolveFinalReply(ConversationTurnLog turn) {
+  final rawFinalReply = resolveRawFinalReply(turn);
+  if (rawFinalReply != null) return rawFinalReply;
+
   final finalReply = turn.finalLog?.finalReply?.trim();
   if (finalReply != null && finalReply.isNotEmpty) return finalReply;
 
-  final finalRawReply = turn.finalLog?.rawAiResponse?.trim();
-  if (finalRawReply != null && finalRawReply.isNotEmpty) return finalRawReply;
+  return '';
+}
 
+String? resolveRawFinalReply(ConversationTurnLog turn) {
   for (var i = turn.rounds.length - 1; i >= 0; i--) {
     final text = turn.rounds[i].requestLog?.rawAiResponse?.trim();
     if (text != null && text.isNotEmpty) return text;
   }
-  return '';
+
+  final finalRawReply = turn.finalLog?.rawAiResponse?.trim();
+  if (finalRawReply != null && finalRawReply.isNotEmpty) return finalRawReply;
+
+  return null;
 }
 
 // ─────────────────────────────────────────────

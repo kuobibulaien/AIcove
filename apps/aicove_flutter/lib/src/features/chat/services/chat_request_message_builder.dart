@@ -25,7 +25,12 @@ class ChatRequestMessageBuilder {
 
   static const int _maxImageDescriptionCacheSize = 128;
   static const String visionDescriptionSystemPrompt = '你是图片解释助手。只输出客观、简洁的图片描述。';
-  static const String nonVisionImageContextPrefix = '__AICOVE_IMAGE_CONTEXT__';
+  static const String internalImageContextToolName = 'image_context';
+  static const String nonVisionImageContextSource = 'history';
+  static final RegExp nonVisionImageContextRegex = RegExp(
+    r'<image\s+[^>]*source="history"[^>]*>[\s\S]*?</image>',
+    caseSensitive: false,
+  );
 
   Future<List<Map<String, dynamic>>> buildRequestMessages(
     List<Message> history, {
@@ -172,6 +177,13 @@ class ChatRequestMessageBuilder {
       }
 
       if (block is ToolBlock) {
+        final internalImageContextText =
+            buildInternalImageContextTextFromToolBlock(block);
+        if (internalImageContextText != null &&
+            internalImageContextText.isNotEmpty) {
+          parts.add({'type': 'text', 'text': internalImageContextText});
+          continue;
+        }
         if (block.toolCallId != null && block.toolCallId!.isNotEmpty) {
           toolCalls.add({
             'id': block.toolCallId,
@@ -260,25 +272,98 @@ class ChatRequestMessageBuilder {
     required String? description,
   }) {
     final normalized = description?.trim();
+    if (role == 'assistant') {
+      return buildInternalImageContextText(
+        buildImageContextPayload(
+          role: role,
+          status: 'delivered',
+          prompt: normalized,
+        ),
+      );
+    }
+    return buildInternalImageContextText(
+      buildImageContextPayload(
+        role: role,
+        status: 'uploaded',
+        description: normalized,
+      ),
+    );
+  }
+
+  static Map<String, dynamic> buildImageContextPayload({
+    required String role,
+    required String status,
+    String? description,
+    String? prompt,
+    String? rawPrompt,
+    String? reason,
+    bool imagePresent = true,
+  }) {
     final payload = <String, dynamic>{
       'type': 'image_context',
       'role': role,
-      'image_present': true,
+      'status': status,
+      'image_present': imagePresent,
     };
 
+    final normalizedDescription = description?.trim();
+    final normalizedPrompt = prompt?.trim();
+    final normalizedRawPrompt = rawPrompt?.trim();
+    final normalizedReason = reason?.trim();
+
     if (role == 'assistant') {
-      payload['delivered_to_chat'] = true;
-      if (normalized != null && normalized.isNotEmpty) {
-        payload['prompt'] = normalized;
+      if (status == 'failed') {
+        payload['generation_failed'] = true;
+      } else {
+        payload['delivered_to_chat'] = true;
+      }
+      if (normalizedRawPrompt != null && normalizedRawPrompt.isNotEmpty) {
+        payload['raw_prompt'] = normalizedRawPrompt;
+      }
+      if (normalizedPrompt != null && normalizedPrompt.isNotEmpty) {
+        payload['prompt'] = normalizedPrompt;
       }
     } else {
       payload['uploaded_to_chat'] = true;
-      if (normalized != null && normalized.isNotEmpty) {
-        payload['description'] = normalized;
+      if (normalizedDescription != null && normalizedDescription.isNotEmpty) {
+        payload['description'] = normalizedDescription;
       }
     }
 
-    return '$nonVisionImageContextPrefix${jsonEncode(payload)}';
+    if (normalizedReason != null && normalizedReason.isNotEmpty) {
+      payload['reason'] = normalizedReason;
+    }
+
+    return payload;
+  }
+
+  static String buildInternalImageContextText(Map<String, dynamic> payload) {
+    final role = payload['role']?.toString().trim();
+    final status = payload['status']?.toString().trim();
+    final attrs = <String>[
+      'source="$nonVisionImageContextSource"',
+      if (role != null && role.isNotEmpty) 'role="$role"',
+      if (status != null && status.isNotEmpty) 'status="$status"',
+    ];
+    return '<image ${attrs.join(' ')}>${jsonEncode(payload)}</image>';
+  }
+
+  static bool containsInternalImageContextText(String text) {
+    return nonVisionImageContextRegex.hasMatch(text);
+  }
+
+  static String? buildInternalImageContextTextFromToolBlock(ToolBlock block) {
+    if (block.toolCallId != null && block.toolCallId!.trim().isNotEmpty) {
+      return null;
+    }
+    if (block.toolName != internalImageContextToolName) {
+      return null;
+    }
+    final payload = block.result ?? block.arguments;
+    if (payload == null || payload.isEmpty) {
+      return null;
+    }
+    return buildInternalImageContextText(payload);
   }
 
   String? _buildImageDescriptionCacheKey(ImageBlock block) {

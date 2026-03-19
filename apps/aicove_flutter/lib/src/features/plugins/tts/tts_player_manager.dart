@@ -9,7 +9,7 @@ import '../../../core/app_logger.dart';
 typedef TtsServiceGetter = TtsService? Function();
 
 /// TTS 播放队列管理器（简化版）
-/// 职责：负责管理多个 TTS 事件的顺序「生成」，并通过事件流把可用的音频 URL 通知给上层。
+/// 职责：负责管理多个 TTS 事件的并发「生成」，并通过事件流把可用的音频 URL 通知给上层。
 /// 注意：不再在这里直接播放音频，播放由前端语音条组件控制（KISS / YAGNI）。
 ///
 /// 重要变更 2026-01-28：
@@ -19,11 +19,11 @@ class TtsPlayerManager {
   /// 获取最新 TtsService 的回调函数
   TtsServiceGetter _serviceGetter;
 
-  /// 待处理的 TTS 队列
-  final List<TtsPlayItem> _queue = [];
+  /// 当前活跃的 TTS 任务
+  final Map<String, TtsPlayItem> _activeItems = {};
 
-  /// 是否正在处理队列
-  bool _isProcessing = false;
+  /// 已取消的任务 ID；底层请求可能仍会返回，但结果会被忽略
+  final Set<String> _cancelledItemIds = <String>{};
 
   /// 当前正在处理的条目
   TtsPlayItem? _currentItem;
@@ -52,111 +52,114 @@ class TtsPlayerManager {
     _serviceGetter = () => service;
   }
 
-  /// 添加 TTS 事件到队列
-  /// 如果队列为空，会自动开始处理（KISS：简单队列，而不是复杂调度器）
+  /// 添加 TTS 事件并立即并发处理
   Future<void> addEvents(List<PluginEvent> events) async {
     if (events.isEmpty) return;
 
     for (final event in events) {
-      if (event.type == 'tts_convert') {
-        final rawText = (event.data['text'] as String?)?.trim();
-        final original = (event.data['originalText'] as String?)?.trim();
-        final text = (rawText != null && rawText.isNotEmpty)
-            ? rawText
-            : (original != null && original.isNotEmpty ? original : null);
+      if (event.type != 'tts_convert') continue;
 
-        if (text != null && text.isNotEmpty) {
-          _queue.add(TtsPlayItem(
-            id: event.id,
-            text: text,
-            event: event,
-          ));
-          AppLogger.info('TTS', '队列加入事件', metadata: {
-            'eventId': event.id,
-            'textLen': text.length,
-            'queueLen': _queue.length,
-          });
-        } else {
-          // 文本为空，直接标记失败并通知上层，方便移除占位条
-          AppLogger.warning('TTS', '事件缺少可用文本，直接失败', metadata: {
-            'eventId': event.id,
-          });
-          final item = TtsPlayItem(
-            id: event.id,
-            text: '',
-            event: event,
-            status: TtsPlayItemStatus.failed,
-            error: 'empty_text',
-          );
-          _processedItemController.add(item);
-        }
+      final rawText = (event.data['text'] as String?)?.trim();
+      final original = (event.data['originalText'] as String?)?.trim();
+      final text = (rawText != null && rawText.isNotEmpty)
+          ? rawText
+          : (original != null && original.isNotEmpty ? original : null);
+
+      if (text == null || text.isEmpty) {
+        AppLogger.warning('TTS', '事件缺少可用文本，直接失败', metadata: {
+          'eventId': event.id,
+        });
+        _emitProcessedItem(TtsPlayItem(
+          id: event.id,
+          text: '',
+          event: event,
+          status: TtsPlayItemStatus.failed,
+          error: 'empty_text',
+        ));
+        continue;
       }
-    }
 
-    if (!_isProcessing) {
-      AppLogger.info('TTS', '开始处理队列', metadata: {
-        'queueLen': _queue.length,
+      if (_activeItems.containsKey(event.id)) {
+        AppLogger.warning('TTS', '重复的 TTS 事件已忽略', metadata: {
+          'eventId': event.id,
+        });
+        continue;
+      }
+
+      _cancelledItemIds.remove(event.id);
+      final item = TtsPlayItem(
+        id: event.id,
+        text: text,
+        event: event,
+      );
+      _activeItems[event.id] = item;
+      _currentItem ??= item;
+
+      AppLogger.info('TTS', '提交并发转换事件', metadata: {
+        'eventId': event.id,
+        'textLen': text.length,
+        'inFlightCount': _activeItems.length,
       });
-      _processQueue();
+      _updateState(TtsPlayState.converting);
+      unawaited(_processItem(item));
     }
   }
 
-  /// 顺序处理队列：只负责调用 TTS 接口并把结果抛给上层，不做播放控制
-  Future<void> _processQueue() async {
-    if (_isProcessing || _queue.isEmpty) return;
+  /// 并发处理单个任务：只负责调用 TTS 接口并把结果抛给上层，不做播放控制
+  Future<void> _processItem(TtsPlayItem item) async {
+    try {
+      item.status = TtsPlayItemStatus.converting;
 
-    _isProcessing = true;
-    _updateState(TtsPlayState.converting);
+      final ttsService = _serviceGetter();
+      if (ttsService == null) {
+        throw Exception('TTS 服务未初始化，请检查插件配置');
+      }
 
-    while (_queue.isNotEmpty) {
-      final item = _queue.removeAt(0);
-      _currentItem = item;
+      AppLogger.info('TTS', '开始转换，检查服务配置', metadata: {
+        'eventId': item.id,
+        'requestUrl': ttsService.requestUrl,
+        'requestFormat': ttsService.requestFormat,
+        'hasApiKey': ttsService.apiKey?.isNotEmpty == true,
+        'model': ttsService.model,
+        'textToConvert':
+            item.text.length > 50 ? '${item.text.substring(0, 50)}...' : item.text,
+      });
 
-      try {
-        item.status = TtsPlayItemStatus.converting;
+      final result = await ttsService.convert(item.text);
+      if (_cancelledItemIds.contains(item.id)) return;
 
-        // 每次转换时获取最新的 TtsService，确保配置是最新的
-        final ttsService = _serviceGetter();
-        if (ttsService == null) {
-          throw Exception('TTS 服务未初始化，请检查插件配置');
-        }
-
-        // 调试日志：检查 TtsService 的配置状态
-        AppLogger.info('TTS', '开始转换，检查服务配置', metadata: {
-          'requestUrl': ttsService.requestUrl,
-          'requestFormat': ttsService.requestFormat,
-          'hasApiKey': ttsService.apiKey?.isNotEmpty == true,
-          'model': ttsService.model,
-          'textToConvert': item.text.length > 50 ? '${item.text.substring(0, 50)}...' : item.text,
-        });
-
-        final result = await ttsService.convert(item.text);
-
-        if (result.success) {
-          item.audioUrl = result.audioUrl;
-          item.status = TtsPlayItemStatus.completed;
-
-          // 通知上层：已有可用音频资源，用于更新语音条等 UI
-          _processedItemController.add(item);
-        } else {
-          item.status = TtsPlayItemStatus.failed;
-          item.error = result.error;
-          _processedItemController.add(item);
-        }
-      } catch (e) {
+      if (result.success) {
+        item.audioUrl = result.audioUrl;
+        item.status = TtsPlayItemStatus.completed;
+      } else {
         item.status = TtsPlayItemStatus.failed;
-        item.error = e.toString();
-        AppLogger.error('TTS', '处理队列项失败', metadata: {
-          'eventId': item.id,
-          'error': e.toString(),
-        });
-        _processedItemController.add(item);
+        item.error = result.error;
+      }
+      _emitProcessedItem(item);
+    } catch (e) {
+      if (_cancelledItemIds.contains(item.id)) return;
+      item.status = TtsPlayItemStatus.failed;
+      item.error = e.toString();
+      AppLogger.error('TTS', '处理任务失败', metadata: {
+        'eventId': item.id,
+        'error': e.toString(),
+      });
+      _emitProcessedItem(item);
+    } finally {
+      _activeItems.remove(item.id);
+      _cancelledItemIds.remove(item.id);
+      _currentItem = _activeItems.isEmpty ? null : _activeItems.values.first;
+      if (_currentState != TtsPlayState.paused) {
+        _updateState(
+          _activeItems.isEmpty ? TtsPlayState.idle : TtsPlayState.converting,
+        );
       }
     }
+  }
 
-    _isProcessing = false;
-    _currentItem = null;
-    _updateState(TtsPlayState.idle);
+  void _emitProcessedItem(TtsPlayItem item) {
+    if (_processedItemController.isClosed) return;
+    _processedItemController.add(item);
   }
 
   /// 更新整体 TTS 状态并广播
@@ -169,8 +172,8 @@ class TtsPlayerManager {
 
   /// 停止当前处理：清空队列并回到 idle
   Future<void> stop() async {
-    _queue.clear();
-    _isProcessing = false;
+    _cancelledItemIds.addAll(_activeItems.keys);
+    _activeItems.clear();
     _currentItem = null;
     _updateState(TtsPlayState.idle);
   }
@@ -182,20 +185,24 @@ class TtsPlayerManager {
 
   /// 恢复：如果还有待处理的队列，则继续处理
   Future<void> resume() async {
-    if (_queue.isNotEmpty && !_isProcessing) {
-      _processQueue();
-    } else if (_currentState == TtsPlayState.paused) {
+    if (_currentState != TtsPlayState.paused) return;
+    _updateState(
+      _activeItems.isEmpty ? TtsPlayState.idle : TtsPlayState.converting,
+    );
+  }
+
+  /// 清空已登记的任务（不影响底层已经发出的网络请求）
+  void clearQueue() {
+    _cancelledItemIds.addAll(_activeItems.keys);
+    _activeItems.clear();
+    _currentItem = null;
+    if (_currentState != TtsPlayState.paused) {
       _updateState(TtsPlayState.idle);
     }
   }
 
-  /// 清空队列（不影响已生成的结果）
-  void clearQueue() {
-    _queue.clear();
-  }
-
   /// 队列长度
-  int get queueLength => _queue.length;
+  int get queueLength => _activeItems.length;
 
   /// 当前条目
   TtsPlayItem? get currentItem => _currentItem;
@@ -246,4 +253,3 @@ enum TtsPlayState {
   playing, //（保留枚举值以兼容历史，当前未在此类中使用）
   paused, // 暂停
 }
-

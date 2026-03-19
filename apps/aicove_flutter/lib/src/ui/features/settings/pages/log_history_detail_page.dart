@@ -260,9 +260,11 @@ class _LogHistoryDetailPageState extends State<LogHistoryDetailPage> {
       buffer.writeln('\n--- AI 实际发送的完整请求体 ---');
       buffer.writeln(tryFormatJson(rawRequestBody));
     }
-    if (rawResponseBody != null) {
-      buffer.writeln('\n--- AI 原始 JSON 响应（模型回包） ---');
-      buffer.writeln(tryFormatJson(rawResponseBody));
+    final rawResponseSection =
+        buildConversationRawResponseSection(rawResponseBody);
+    if (rawResponseSection != null) {
+      buffer.writeln('\n--- ${rawResponseSection.title} ---');
+      buffer.writeln(rawResponseSection.content);
     }
     if (toolCalls != null) {
       buffer.writeln('\n--- AI -> 工具调用 ---');

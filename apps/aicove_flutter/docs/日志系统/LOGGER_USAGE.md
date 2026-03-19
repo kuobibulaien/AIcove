@@ -318,3 +318,9 @@ trace.end(additionalMessage: '查询到 ${results.length} 条记录');
 - 日志中心把 `rawRequestBody` 明确标成 `AI 第一视角原始请求串`，直接展示模型真正收到的原文，不再和 `rawContext` 混在一起理解。
 - 对话视图新增 `本轮可用工具清单`，从 `rawRequestBody.tools` 里抽出展示。
 - Payload 检查器的 `工具清单` 现在兼容 OpenAI、Claude、Gemini 三种工具定义结构。
+
+## 2026-03-19 更新
+
+- 日志中心顶部的 `导出全部` 改为真实文件导出，不再把“导出”伪装成剪贴板复制。
+- 导出内容继续沿用 `fullContent`，因此当前筛选后的完整排障文本会原样写入 `.txt` 文件。
+- 桌面端保存对话框会优先从 `Downloads` 这类较浅目录打开；导出成功后会直接提示保存位置，方便马上去找文件。

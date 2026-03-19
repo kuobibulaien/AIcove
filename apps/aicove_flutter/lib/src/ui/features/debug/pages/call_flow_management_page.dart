@@ -8,9 +8,9 @@ import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
 
-/// 调试工具：调用流程管理
+/// 调试工具：调用超时管理
 ///
-/// 用于切换稳定/快速模式，并配置模型/工具默认超时。
+/// 用于配置模型/工具默认超时。生图路径切换已迁移到绘图设置。
 class CallFlowManagementPage extends ConsumerStatefulWidget {
   const CallFlowManagementPage({super.key});
 
@@ -40,7 +40,7 @@ class _CallFlowManagementPageState
           .read(appSettingsProvider.notifier)
           .updateCallFlowSettings(draft);
       if (mounted && showToast) {
-        MoeToast.success(context, '调用流程设置已保存');
+        MoeToast.success(context, '调用超时设置已保存');
       }
     } catch (e) {
       if (mounted) {
@@ -53,14 +53,15 @@ class _CallFlowManagementPageState
     }
   }
 
-  Future<void> _toggleMode(CallFlowMode mode) async {
-    final current = _draft ?? const CallFlowSettings();
-    setState(() => _draft = current.copyWith(mode: mode));
-    await _persist(showToast: false);
-  }
-
   void _resetToDefault() {
-    setState(() => _draft = const CallFlowSettings());
+    final current = _draft ?? const CallFlowSettings();
+    const defaults = CallFlowSettings();
+    setState(
+      () => _draft = current.copyWith(
+        modelTimeoutSeconds: defaults.modelTimeoutSeconds,
+        toolTimeoutSeconds: defaults.toolTimeoutSeconds,
+      ),
+    );
   }
 
   @override
@@ -70,7 +71,7 @@ class _CallFlowManagementPageState
 
     return Scaffold(
       backgroundColor: colors.surface,
-      appBar: const MoeAppBar(title: '调用流程管理', showBackButton: true),
+      appBar: const MoeAppBar(title: '调用超时管理', showBackButton: true),
       body: settingsAsync.when(
         loading: () => const Center(child: MoeLoadingIndicator()),
         error: (error, _) => Center(
@@ -97,39 +98,12 @@ class _CallFlowManagementPageState
                   border: Border.all(color: colors.borderLight),
                 ),
                 child: Text(
-                  '稳定模式：模型会按“请求模型 -> 执行工具 -> 再请求模型”的回合循环，适合回复必须依赖工具结果的场景。\n'
-                  '快速模式：仅在本轮工具全部为生图时走快路径；异步生图会补一轮正文，混合工具或非生图工具会自动回落到稳定模式。',
+                  '这里只调试模型请求和工具执行超时。\n'
+                  '生图路径切换已经移动到「绘图设置」，自动档会在满足视觉 + 工具调用时走 draw_image 审图链路，否则改走 <image> 标签直连链路。',
                   style: TextStyle(fontSize: 13, color: colors.textSecondary),
                 ),
               ),
               const SizedBox(height: 12),
-              MoeSettingsGroup(
-                children: [
-                  MoeSettingsRow(
-                    icon: Icons.alt_route_outlined,
-                    label: '当前模式',
-                    trailingType: MoeSettingsRowTrailing.text,
-                    detailText: draft.mode.label,
-                    showDivider: false,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              MoeToggleBar<CallFlowMode>(
-                value: draft.mode,
-                items: const [
-                  MoeToggleItem(
-                    value: CallFlowMode.stable,
-                    label: '稳定模式',
-                  ),
-                  MoeToggleItem(
-                    value: CallFlowMode.fast,
-                    label: '快速模式',
-                  ),
-                ],
-                onChanged: _toggleMode,
-              ),
-              const SizedBox(height: 16),
               Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -204,7 +178,7 @@ class _CallFlowManagementPageState
                       ),
                     ),
                     Text(
-                      '作用：限制单个工具调用等待时间。快速模式只对纯生图轮次生效，其他工具会回落稳定模式。',
+                      '作用：限制单个工具调用等待时间。自动档命中稳定链路时主要影响 draw_image 及其他工具执行；快速档下生图改走 <image> 标签链路，这里主要影响非生图工具。',
                       style:
                           TextStyle(fontSize: 12, color: colors.textSecondary),
                     ),
@@ -224,7 +198,7 @@ class _CallFlowManagementPageState
                   const SizedBox(width: 12),
                   Expanded(
                     child: MoePrimaryButton(
-                      label: '保存配置',
+                      label: '保存超时',
                       icon: Icons.save_outlined,
                       onPressed: _saving ? null : _persist,
                     ),

@@ -9,7 +9,6 @@ import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
 import 'package:aicove_flutter/src/features/plugins/image/image_config.dart';
 import 'package:aicove_flutter/src/features/plugins/image/image_plugin.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
-import 'package:aicove_flutter/src/features/settings/settings_models.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/image_plugin_detail_page.dart';
 
 class _FakeAppSettingsNotifier extends AppSettingsNotifier {
@@ -21,9 +20,11 @@ class _FakeAppSettingsNotifier extends AppSettingsNotifier {
   Future<AppSettings> build() async => _settings;
 }
 
-AppSettings _buildImageSettings() {
+AppSettings _buildImageSettings({
+  CallFlowMode mode = CallFlowMode.auto,
+}) {
   const modelRef = 'openai:test-image-model';
-  return const AppSettings(
+  return AppSettings(
     ttsEnabled: false,
     defaultModelName: modelRef,
     defaultPersonaPrompt: '',
@@ -42,7 +43,7 @@ AppSettings _buildImageSettings() {
     historyMessageLimit: 100,
     customModels: <CustomModel>[],
     providers: <ProviderAuth>[
-      ProviderAuth(
+      const ProviderAuth(
         id: 'openai',
         apiKeys: <String>['test-key'],
         apiBaseUrl: 'https://api.openai.com/v1',
@@ -57,11 +58,11 @@ AppSettings _buildImageSettings() {
     },
     backendApiKey: '',
     messageChunkingEnabled: false,
-    messageFormatConfig: MessageFormatConfig(),
+    messageFormatConfig: const MessageFormatConfig(),
     textScaleFactor: 1.0,
     uiScaleFactor: 1.0,
     imagePreviewScale: 1.0,
-    autoReplySettings: AutoReplySettings(),
+    autoReplySettings: const AutoReplySettings(),
     globalBackgroundColor: GlobalBackgroundColor.white,
     chatBackgroundColor: ChatBackgroundColor.defaultColor,
     isDarkMode: false,
@@ -69,7 +70,7 @@ AppSettings _buildImageSettings() {
     accentColor: 'FC96AA',
     hideUserAvatar: true,
     defaultChatModels: <String>[modelRef],
-    callFlowSettings: CallFlowSettings(mode: CallFlowMode.stable),
+    callFlowSettings: CallFlowSettings(mode: mode),
   );
 }
 
@@ -122,7 +123,7 @@ AppSettings _buildHiddenOnlyImageSettings() {
     accentColor: 'FC96AA',
     hideUserAvatar: true,
     defaultChatModels: <String>[modelRef],
-    callFlowSettings: CallFlowSettings(mode: CallFlowMode.stable),
+    callFlowSettings: CallFlowSettings(mode: CallFlowMode.auto),
   );
 }
 
@@ -138,6 +139,7 @@ void main() {
       ],
     );
     addTearDown(container.dispose);
+    await container.read(appSettingsProvider.future);
 
     final pluginProvider = Provider<ImagePlugin>((ref) {
       return ImagePlugin(config, ref);
@@ -150,6 +152,135 @@ void main() {
     );
 
     expect(prompt, isNull);
+    expect(plugin.getTools().map((tool) => tool.name), contains('draw_image'));
+  });
+
+  test('image plugin should inject inline <image> prompt in fast mode',
+      () async {
+    const config = ImageConfig();
+    final container = ProviderContainer(
+      overrides: [
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(
+            _buildImageSettings(mode: CallFlowMode.fast),
+          ),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    await container.read(appSettingsProvider.future);
+
+    final pluginProvider = Provider<ImagePlugin>((ref) {
+      return ImagePlugin(config, ref);
+    });
+    final plugin = container.read(pluginProvider);
+
+    final prompt = await plugin.getSystemPrompt(
+      userMessage: '画一张自拍',
+      supportsToolCalling: true,
+    );
+
+    expect(prompt, isNotNull);
+    expect(prompt, contains('<image>英文正向提示词</image>'));
+    expect(prompt, contains('NovelAI'));
+    expect(plugin.getTools(), isEmpty);
+  });
+
+  test('image plugin should parse non-empty <image> tag into generation event',
+      () async {
+    const config = ImageConfig();
+    final container = ProviderContainer(
+      overrides: [
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(
+            _buildImageSettings(mode: CallFlowMode.fast),
+          ),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    await container.read(appSettingsProvider.future);
+
+    final pluginProvider = Provider<ImagePlugin>((ref) {
+      return ImagePlugin(config, ref);
+    });
+    final plugin = container.read(pluginProvider);
+
+    final result = await plugin.processResponse(
+      '前文 <image>1girl, cat ears, masterpiece</image> 后文',
+    );
+
+    expect(result.processedText, '前文 后文');
+    expect(result.events, hasLength(1));
+    expect(result.events.single.type, 'image_generate');
+    expect(result.events.single.data['prompt'], '1girl, cat ears, masterpiece');
+
+    final emptyTagResult = await plugin.processResponse('<image></image>');
+    expect(emptyTagResult.events, isEmpty);
+    expect(emptyTagResult.processedText, '<image></image>');
+  });
+
+  test('image plugin should use independent fast prompt preset in fast mode',
+      () async {
+    final stablePreset = DrawingPromptPreset(
+      name: '稳定预设',
+      content: ImageConfig.encodeToolDescriptionBlocks(
+        const DrawImageToolDescriptionBlocks(
+          promptDescription: '稳定模式专用规则',
+        ),
+      ),
+    );
+    const fastPreset = DrawingPromptPreset(
+      name: '快速预设',
+      content: '快速模式独立规则：只在需要时输出 <image>英文提示词</image>',
+    );
+    final config = ImageConfig(
+      systemPromptPresets: <DrawingPromptPreset>[stablePreset],
+      selectedSystemPromptPresetName: stablePreset.name,
+      fastPromptPresets: const <DrawingPromptPreset>[fastPreset],
+      selectedFastPromptPresetName: fastPreset.name,
+    );
+    final container = ProviderContainer(
+      overrides: [
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(
+            _buildImageSettings(mode: CallFlowMode.fast),
+          ),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    await container.read(appSettingsProvider.future);
+
+    final pluginProvider = Provider<ImagePlugin>((ref) {
+      return ImagePlugin(config, ref);
+    });
+    final plugin = container.read(pluginProvider);
+
+    final prompt = await plugin.getSystemPrompt(
+      userMessage: '画一张自拍',
+      supportsToolCalling: true,
+    );
+
+    expect(prompt, contains('快速模式独立规则'));
+    expect(prompt, isNot(contains('稳定模式专用规则')));
+  });
+
+  test('image config should preserve fast prompt preset selection', () {
+    const preset = DrawingPromptPreset(
+      name: '快速预设',
+      content: '快速模式模板内容',
+    );
+    final config = ImageConfig(
+      fastPromptPresets: const <DrawingPromptPreset>[preset],
+      selectedFastPromptPresetName: preset.name,
+    );
+
+    final restored = ImageConfig.fromJson(config.toJson());
+
+    expect(restored.fastPromptPresets, hasLength(1));
+    expect(restored.selectedFastPromptPreset?.name, preset.name);
+    expect(restored.effectiveInlinePromptTemplate, '快速模式模板内容');
   });
 
   test('image plugin should ignore hidden image models when resolving tools',

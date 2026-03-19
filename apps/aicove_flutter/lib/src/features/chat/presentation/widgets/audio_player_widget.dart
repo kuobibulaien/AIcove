@@ -558,10 +558,10 @@ class _PendingAudioBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: 100,
-      // 移除垂直间距
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: 100, maxWidth: 160),
       child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
           SizedBox(
             width: 24,
@@ -578,11 +578,15 @@ class _PendingAudioBubble extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          Text(
-            '生成中...',
-            style: TextStyle(
-              color: textColor.withValues(alpha: 0.8),
-              fontSize: 12,
+          Flexible(
+            child: Text(
+              '生成中...',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: textColor.withValues(alpha: 0.8),
+                fontSize: 12,
+              ),
             ),
           ),
         ],

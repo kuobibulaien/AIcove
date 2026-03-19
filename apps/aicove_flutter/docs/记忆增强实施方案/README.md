@@ -70,3 +70,4 @@
 2. ~~`apps/mygril_flutter/docs/记忆存储与召回方案/记忆重要性计算.md`~~ **⚠️ 已废弃**：PEIJ 浮点数打分体系已被 AI 分类 + 系统规则替代。
 3. `apps/mygril_flutter/docs/备份与同步方案/同步范围清单.md`（仍有效）
 4. `apps/mygril_flutter/docs/主动关怀系统重构方案/01_架构设计.md`（AnalyzerScheduler 触发机制参考，仍有效）
+5. `apps/aicove_flutter/docs/后台Agent架构方案/README.md`（后台 Agent 公共运行时入口；后续记忆机制后台执行链路以此为准）

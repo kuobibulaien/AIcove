@@ -21,6 +21,7 @@ import '../id_gen.dart';
 import 'chat_history_store.dart';
 import '../../settings/app_settings.dart';
 import '../../plugins/image/image_config.dart';
+import '../../plugins/image/image_plugin.dart';
 import 'chat_request_config.dart';
 import '../../plugins/plugin_providers.dart';
 import '../../plugins/memory/memory_plugin.dart';
@@ -56,7 +57,9 @@ class ChatSendService {
       ChatRequestMessageBuilder.visionDescriptionSystemPrompt;
   static const String _logTag = 'ChatSendService';
   static const String _internalImageContextRule =
-      '__AICOVE_IMAGE_CONTEXT__{...} 是内部图片上下文记录，只供理解，不是发给用户的话，禁止原样输出这段标记。';
+      '<image source="history" ...>...</image> 是内部图片上下文记录，只供理解，不是发给用户的话，'
+      '也不是新的生图指令，禁止原样输出这段标记。只有你当前这轮主动输出的普通 '
+      '<image>英文提示词</image> 或稳定模式发送占位 <image></image> 才表示真的要发图。';
 
   ChatSendService(this._ref);
 
@@ -158,9 +161,8 @@ class ChatSendService {
   }
 
   bool _containsInternalImageContextNode(dynamic node) {
-    final marker = ChatRequestMessageBuilder.nonVisionImageContextPrefix;
     if (node is String) {
-      return node.contains(marker);
+      return ChatRequestMessageBuilder.containsInternalImageContextText(node);
     }
     if (node is List) {
       for (final item in node) {
@@ -320,6 +322,12 @@ class ChatSendService {
       settings: settings,
       modelRef: modelRef,
     );
+    final effectiveImageRoute =
+        settings.resolveEffectiveImageGenerationRoute(modelRef);
+    final shouldUseStableImageRoute =
+        effectiveImageRoute == EffectiveImageGenerationRoute.stable;
+    final shouldUseFastImageRoute =
+        effectiveImageRoute == EffectiveImageGenerationRoute.fast;
     final reqMessages = await _requestMessageBuilder.buildRequestMessages(
       history,
       settings: settings,
@@ -352,6 +360,7 @@ class ChatSendService {
       pluginManager: pluginManager,
       enabledPluginIds: enabledPluginIds,
     );
+    final imagePlugin = effectivePlugins.whereType<ImagePlugin>().firstOrNull;
     final timeAwarenessAnchor = resolveTimeAwarenessLastMessageTime(history);
     for (final plugin in effectivePlugins) {
       if (plugin is TimeAwarenessPlugin) {
@@ -366,24 +375,42 @@ class ChatSendService {
       supportsToolCalling: supportsToolCalling,
       conversationId: resolvedConversationId,
     );
+    final shouldInjectManagedFastImagePrompt =
+        imagePlugin != null && imagePlugin.enabled && shouldUseFastImageRoute;
     for (final promptEntry in pluginPromptBuild.entries) {
       if (!promptEntry.injected) continue;
+      if (promptEntry.pluginId == 'image' &&
+          shouldInjectManagedFastImagePrompt) {
+        continue;
+      }
       systemParts.add(promptEntry.content);
+    }
+    if (shouldInjectManagedFastImagePrompt) {
+      systemParts.add(
+        imagePlugin.buildInlineImageSystemPrompt(
+          customDrawingPrompt: personaParts.customDrawingPrompt,
+        ),
+      );
     }
 
     List<Map<String, dynamic>>? tools;
     if (supportsToolCalling) {
-      final aiTools = await _pluginContextBuilder.collectPluginToolsWithRetry(
+      var aiTools = await _pluginContextBuilder.collectPluginToolsWithRetry(
         effectivePlugins,
       );
+      if (shouldUseFastImageRoute) {
+        aiTools = aiTools.where((tool) => tool.name != 'draw_image').toList();
+      }
       if (aiTools.isNotEmpty) {
         tools = aiTools.map((t) => t.toOpenAISchema()).toList();
-        tools = _applyRoleBoundDrawImageToolPreset(
-          tools: tools,
-          imageConfig: imageConfig,
-          toolPresetName: boundImageToolPresetName,
-          customDrawingPrompt: personaParts.customDrawingPrompt,
-        );
+        if (shouldUseStableImageRoute) {
+          tools = _applyRoleBoundDrawImageToolPreset(
+            tools: tools,
+            imageConfig: imageConfig,
+            toolPresetName: boundImageToolPresetName,
+            customDrawingPrompt: personaParts.customDrawingPrompt,
+          );
+        }
         AppLogger.debug('ChatSendService', '收集到工具定义', metadata: {
           'toolCount': tools.length,
           'toolNames': aiTools.map((t) => t.name).toList(),
@@ -941,7 +968,7 @@ class ChatSendService {
     if (days >= 1) {
       final remainHours = hours - days * 24;
       if (remainHours > 0) {
-        return '$days天${remainHours}小时';
+        return '$days天$remainHours小时';
       }
       return '$days天';
     }
@@ -949,7 +976,7 @@ class ChatSendService {
     if (hours >= 1) {
       final remainMinutes = totalMinutes - hours * 60;
       if (remainMinutes > 0) {
-        return '$hours小时${remainMinutes}分钟';
+        return '$hours小时$remainMinutes分钟';
       }
       return '$hours小时';
     }

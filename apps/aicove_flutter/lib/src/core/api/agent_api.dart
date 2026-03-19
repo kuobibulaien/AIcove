@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
@@ -214,6 +215,9 @@ class AgentApiClient {
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
+    String? requestId,
+    String? requestSource,
+    String? flowMode,
   }) async {
     final trimmedBase = providerApiBase?.trim();
     final trimmedKey = providerApiKey?.trim();
@@ -224,6 +228,9 @@ class AgentApiClient {
       provider,
       customConfig: customConfig,
     );
+    final normalizedRequestId = _normalizeImageRequestId(requestId);
+    final normalizedRequestSource = requestSource?.trim();
+    final normalizedFlowMode = flowMode?.trim();
     final isNovelAi =
         normalizedProvider == 'novelai' || normalizedProvider == 'nai';
     if (isNovelAi) {
@@ -251,6 +258,9 @@ class AgentApiClient {
             baseUrl: base,
             apiKey: trimmedKey,
             customConfig: customConfig,
+            requestId: normalizedRequestId,
+            requestSource: normalizedRequestSource,
+            flowMode: normalizedFlowMode,
           );
         } catch (e) {
           lastError = e;
@@ -277,32 +287,75 @@ class AgentApiClient {
       normalizedProvider,
       customConfig: customConfig,
     );
-    final result = await adapter.generate(
-      client: _client,
-      timeout: timeout,
-      request: ImageProviderRequest(
-        provider: normalizedProvider,
-        model: model,
-        prompt: prompt,
-        negativePrompt: negativePrompt,
-        width: width,
-        height: height,
-        count: count,
-        steps: steps,
-        guidanceScale: guidanceScale,
-        seed: seed,
-        sampler: sampler,
-        baseUrl: baseUrl,
-        apiKey: trimmedKey,
-        customConfig: customConfig,
-      ),
-    );
-    return ImageGenerationResult(
-      images: result.images,
+    final request = ImageProviderRequest(
       provider: normalizedProvider,
       model: model,
-      rawResponse: result.rawResponse,
+      prompt: prompt,
+      negativePrompt: negativePrompt,
+      width: width,
+      height: height,
+      count: count,
+      steps: steps,
+      guidanceScale: guidanceScale,
+      seed: seed,
+      sampler: sampler,
+      baseUrl: baseUrl,
+      apiKey: trimmedKey,
+      customConfig: customConfig,
     );
+    final logMetadata = <String, dynamic>{
+      'requestId': normalizedRequestId,
+      if (normalizedRequestSource != null && normalizedRequestSource.isNotEmpty)
+        'requestSource': normalizedRequestSource,
+      if (normalizedFlowMode != null && normalizedFlowMode.isNotEmpty)
+        'flowMode': normalizedFlowMode,
+      'provider': normalizedProvider,
+      'model': model,
+      'baseUrl': baseUrl,
+      'timeoutMs': timeout.inMilliseconds,
+      'width': width,
+      'height': height,
+      'count': count,
+      'hasNegativePrompt': negativePrompt?.trim().isNotEmpty == true,
+    };
+    final startedAt = DateTime.now();
+    AppLogger.info('AgentApiClient', '图片请求开始', metadata: {
+      ...logMetadata,
+      'requestFormat': 'adapter',
+      'adapter': adapter.name,
+    });
+    try {
+      final result = await adapter.generate(
+        client: _client,
+        timeout: timeout,
+        request: request,
+      );
+      final durationMs = DateTime.now().difference(startedAt).inMilliseconds;
+      AppLogger.info('AgentApiClient', '图片请求完成', metadata: {
+        ...logMetadata,
+        'requestFormat': 'adapter',
+        'adapter': adapter.name,
+        'durationMs': durationMs,
+        'imageCount': result.images.length,
+      });
+      return ImageGenerationResult(
+        images: result.images,
+        provider: normalizedProvider,
+        model: model,
+        rawResponse: result.rawResponse,
+      );
+    } catch (e) {
+      final durationMs = DateTime.now().difference(startedAt).inMilliseconds;
+      AppLogger.warning('AgentApiClient', '图片请求失败', metadata: {
+        ...logMetadata,
+        'requestFormat': 'adapter',
+        'adapter': adapter.name,
+        'durationMs': durationMs,
+        'phase': 'adapter_generate',
+        'error': e.toString(),
+      });
+      rethrow;
+    }
   }
 
   String _normalizeNovelAiModel(
@@ -372,7 +425,13 @@ class AgentApiClient {
     int? seed,
     String? sampler,
     Map<String, dynamic>? customConfig,
+    String? requestId,
+    String? requestSource,
+    String? flowMode,
   }) async {
+    final normalizedRequestId = _normalizeImageRequestId(requestId);
+    final normalizedRequestSource = requestSource?.trim();
+    final normalizedFlowMode = flowMode?.trim();
     final normalized = baseUrl.endsWith('/')
         ? baseUrl.substring(0, baseUrl.length - 1)
         : baseUrl;
@@ -405,28 +464,238 @@ class AgentApiClient {
       'action': 'generate',
       'parameters': params,
     };
-    final resp = await _client
-        .post(
-          Uri.parse(endpoint),
-          headers: <String, String>{
-            'Authorization': 'Bearer $apiKey',
-            'Content-Type': 'application/json',
-            'Accept': 'application/zip',
-          },
-          body: jsonEncode(payload),
-        )
-        .timeout(timeout);
-    if (resp.statusCode < 200 || resp.statusCode >= 300) {
-      throw Exception(
-          'HTTP ${resp.statusCode}: ${utf8.decode(resp.bodyBytes)}');
+    final requestBodyJson = jsonEncode(payload);
+    final requestBodyBytes = utf8.encode(requestBodyJson).length;
+    final startedAt = DateTime.now();
+    final baseMetadata = <String, dynamic>{
+      'requestId': normalizedRequestId,
+      if (normalizedRequestSource != null && normalizedRequestSource.isNotEmpty)
+        'requestSource': normalizedRequestSource,
+      if (normalizedFlowMode != null && normalizedFlowMode.isNotEmpty)
+        'flowMode': normalizedFlowMode,
+      'provider': provider,
+      'model': model,
+      'endpoint': endpoint,
+      'timeoutMs': timeout.inMilliseconds,
+      'width': width,
+      'height': height,
+      'count': count,
+      'hasNegativePrompt': negativePromptValue?.isNotEmpty == true,
+    };
+    var phase = 'prepare_request';
+    var apiLogWritten = false;
+
+    AppLogger.info('AgentApiClient', '图片请求准备发送', metadata: {
+      ...baseMetadata,
+      'phase': phase,
+      'requestBodyBytes': requestBodyBytes,
+      'requestBodyPreview': ApiLogger.safeSnippet(requestBodyJson, max: 2000),
+    });
+
+    try {
+      final request = http.Request('POST', Uri.parse(endpoint))
+        ..headers.addAll(<String, String>{
+          'Authorization': 'Bearer $apiKey',
+          'Content-Type': 'application/json',
+          'Accept': 'application/zip',
+        })
+        ..body = requestBodyJson;
+      phase = 'wait_headers';
+      final response = await _client.send(request).timeout(timeout);
+      final headersElapsed = DateTime.now().difference(startedAt);
+      AppLogger.info('AgentApiClient', '图片请求收到响应头', metadata: {
+        ...baseMetadata,
+        'phase': phase,
+        'statusCode': response.statusCode,
+        'durationMs': headersElapsed.inMilliseconds,
+        'contentType': response.headers['content-type'],
+        'contentLength': response.headers['content-length'],
+      });
+
+      final remaining = _remainingImageTimeout(startedAt);
+      if (remaining == Duration.zero) {
+        throw TimeoutException('Image response body timed out', timeout);
+      }
+
+      phase = 'read_body';
+      final bytes = await response.stream.toBytes().timeout(remaining);
+      final durationMs = DateTime.now().difference(startedAt).inMilliseconds;
+      final contentType = response.headers['content-type']?.trim();
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        final errorBody = utf8.decode(bytes);
+        apiLogWritten = true;
+        ApiLogger.add(ApiLogEntry(
+          time: startedAt,
+          method: 'POST',
+          url: endpoint,
+          status: response.statusCode,
+          durationMs: durationMs,
+          requestBody: ApiLogger.safeSnippet(requestBodyJson),
+          responseBody: ApiLogger.safeSnippet(errorBody, max: 1200),
+          ok: false,
+          rawRequestBody: requestBodyJson,
+          rawResponseBody: jsonEncode({
+            'kind': 'error',
+            'phase': phase,
+            'requestId': normalizedRequestId,
+            'statusCode': response.statusCode,
+            'contentType': contentType,
+            'bodyBytes': bytes.length,
+            'headers': _compactImageResponseHeaders(response.headers),
+            'bodyPreview': ApiLogger.safeSnippet(errorBody, max: 2000),
+          }),
+          eventType: 'image_generation',
+          source: 'AgentApiClient',
+        ));
+        AppLogger.warning('AgentApiClient', '图片请求返回非成功状态', metadata: {
+          ...baseMetadata,
+          'phase': phase,
+          'statusCode': response.statusCode,
+          'durationMs': durationMs,
+          'contentType': contentType,
+          'bodyBytes': bytes.length,
+          'errorBodyPreview': ApiLogger.safeSnippet(errorBody, max: 800),
+        });
+        throw Exception('HTTP ${response.statusCode}: $errorBody');
+      }
+
+      phase = 'decode_body';
+      final images =
+          _extractImageBytesFromNovelAIResponse(bytes, response.headers);
+      apiLogWritten = true;
+      ApiLogger.add(ApiLogEntry(
+        time: startedAt,
+        method: 'POST',
+        url: endpoint,
+        status: response.statusCode,
+        durationMs: durationMs,
+        requestBody: ApiLogger.safeSnippet(requestBodyJson),
+        responseBody: '[image binary] ${bytes.length} bytes',
+        ok: true,
+        rawRequestBody: requestBodyJson,
+        rawResponseBody: jsonEncode({
+          'kind': 'binary',
+          'phase': phase,
+          'requestId': normalizedRequestId,
+          'statusCode': response.statusCode,
+          'contentType': contentType,
+          'bodyBytes': bytes.length,
+          'headers': _compactImageResponseHeaders(response.headers),
+          'imageCount': images.length,
+        }),
+        eventType: 'image_generation',
+        source: 'AgentApiClient',
+      ));
+      AppLogger.info('AgentApiClient', '图片请求完成', metadata: {
+        ...baseMetadata,
+        'phase': phase,
+        'statusCode': response.statusCode,
+        'durationMs': durationMs,
+        'contentType': contentType,
+        'bodyBytes': bytes.length,
+        'imageCount': images.length,
+      });
+      return ImageGenerationResult(
+        images: images,
+        provider: provider,
+        model: model,
+      );
+    } on TimeoutException catch (e) {
+      final durationMs = DateTime.now().difference(startedAt).inMilliseconds;
+      if (!apiLogWritten) {
+        ApiLogger.add(ApiLogEntry(
+          time: startedAt,
+          method: 'POST',
+          url: endpoint,
+          status: null,
+          durationMs: durationMs,
+          requestBody: ApiLogger.safeSnippet(requestBodyJson),
+          responseBody: ApiLogger.safeSnippet(e.toString(), max: 1200),
+          ok: false,
+          rawRequestBody: requestBodyJson,
+          rawResponseBody: jsonEncode({
+            'kind': 'timeout',
+            'phase': phase,
+            'requestId': normalizedRequestId,
+            'durationMs': durationMs,
+            'timeoutMs': timeout.inMilliseconds,
+            'error': e.toString(),
+          }),
+          eventType: 'image_generation',
+          source: 'AgentApiClient',
+        ));
+      }
+      AppLogger.warning('AgentApiClient', '图片请求超时', metadata: {
+        ...baseMetadata,
+        'phase': phase,
+        'durationMs': durationMs,
+        'error': e.toString(),
+      });
+      rethrow;
+    } catch (e) {
+      final durationMs = DateTime.now().difference(startedAt).inMilliseconds;
+      if (!apiLogWritten) {
+        ApiLogger.add(ApiLogEntry(
+          time: startedAt,
+          method: 'POST',
+          url: endpoint,
+          status: null,
+          durationMs: durationMs,
+          requestBody: ApiLogger.safeSnippet(requestBodyJson),
+          responseBody: ApiLogger.safeSnippet(e.toString(), max: 1200),
+          ok: false,
+          rawRequestBody: requestBodyJson,
+          rawResponseBody: jsonEncode({
+            'kind': 'exception',
+            'phase': phase,
+            'requestId': normalizedRequestId,
+            'durationMs': durationMs,
+            'error': e.toString(),
+          }),
+          eventType: 'image_generation',
+          source: 'AgentApiClient',
+        ));
+      }
+      AppLogger.warning('AgentApiClient', '图片请求失败', metadata: {
+        ...baseMetadata,
+        'phase': phase,
+        'durationMs': durationMs,
+        'error': e.toString(),
+      });
+      rethrow;
     }
-    final bytes = resp.bodyBytes;
-    final images = _extractImageBytesFromNovelAIResponse(bytes, resp.headers);
-    return ImageGenerationResult(
-      images: images,
-      provider: provider,
-      model: model,
-    );
+  }
+
+  String _normalizeImageRequestId(String? requestId) {
+    final trimmed = requestId?.trim() ?? '';
+    if (trimmed.isNotEmpty) return trimmed;
+    return 'imgreq_${DateTime.now().microsecondsSinceEpoch}';
+  }
+
+  Duration _remainingImageTimeout(DateTime startedAt) {
+    final elapsed = DateTime.now().difference(startedAt);
+    final remaining = timeout - elapsed;
+    if (remaining.isNegative || remaining == Duration.zero) {
+      return Duration.zero;
+    }
+    return remaining;
+  }
+
+  Map<String, String> _compactImageResponseHeaders(
+      Map<String, String> headers) {
+    if (headers.isEmpty) return const <String, String>{};
+    return <String, String>{
+      for (final entry in headers.entries)
+        if (const <String>{
+          'content-type',
+          'content-length',
+          'content-disposition',
+          'transfer-encoding',
+          'content-encoding',
+        }.contains(entry.key.toLowerCase()))
+          entry.key: entry.value,
+    };
   }
 
   bool _isNovelAiV4Model(String model) {
@@ -1763,11 +2032,11 @@ class AgentApiClient {
         final content =
             Map<String, dynamic>.from(rawContent.cast<String, dynamic>());
         final rawParts = content['parts'];
-      if (rawParts is! List) return;
-      for (final rawPart in rawParts) {
-        if (rawPart is! Map) continue;
-        final part =
-            Map<String, dynamic>.from(rawPart.cast<String, dynamic>());
+        if (rawParts is! List) return;
+        for (final rawPart in rawParts) {
+          if (rawPart is! Map) continue;
+          final part =
+              Map<String, dynamic>.from(rawPart.cast<String, dynamic>());
           final textPart = _extractStreamingText(part['text']);
           if (textPart.isNotEmpty) {
             emitTextDelta(textPart);

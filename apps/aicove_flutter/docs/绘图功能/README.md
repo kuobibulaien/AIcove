@@ -1,8 +1,11 @@
 # 绘图功能
 
-> 更新日期：2026-03-06
+> 更新日期：2026-03-19
 
-AI 角色可以通过 `draw_image` 工具调用来生成图片。用户在聊天中说"画一张图"之类的话，AI 就会自动调用绘图工具，生成图片后以图片消息的形式发送到聊天中。
+AI 角色现在有两条统一的生图链路：
+
+- 自动档：只有当前聊天模型同时具备视觉能力和工具调用能力时，才进入稳定工具链。模型先调用 `draw_image`，再看一眼生成结果，决定是发送图片还是调整提示词返工；不满足条件时会自动回退到快速链路。
+- 快速档：不走工具调用。模型直接输出 `<image>英文正向提示词</image>`，系统按 TTS 类似的后处理链路直接调用 NovelAI 生图。
 
 ---
 
@@ -11,10 +14,24 @@ AI 角色可以通过 `draw_image` 工具调用来生成图片。用户在聊天
 | 项目 | 说明 |
 |------|------|
 | 插件名称 | 绘图工具 (ImagePlugin) |
-| 工具名称 | `draw_image` |
-| 触发方式 | 用户在聊天中要求画图，AI 自动调用 |
+| 工具名称 | `draw_image`（仅自动档命中稳定链路时暴露） |
+| 触发方式 | 自动档按能力决定稳定/快速链路；快速档固定走 `<image>...</image>` 直连标签 |
 | 支持渠道 | NovelAI 等支持图片生成的渠道 |
 | 图片存储 | 本地存储（应用文档目录） |
+
+---
+
+## 设置页测试入口
+
+绘图设置页现在提供一个独立的「生图测试」二级页面，用来单独验证当前渠道和模型能不能真正出图。
+
+- 入口位置：`lib/src/ui/features/plugins/pages/image_plugin_detail_page.dart`
+- 页面文件：`lib/src/ui/features/plugins/pages/image_generation_test_page.dart`
+- 测试方式：点击“生图测试”进入专用页面，填写正向提示词后固定走 `draw_image` 工具链
+- 复用配置：沿用当前已选模型、默认尺寸、默认步数、默认张数、默认负面词与画师串
+- 结果展示：成功时以大图形式直接展示本地图片并支持点开全屏；失败时直接显示工具返回的原始错误
+
+这个入口主要用于排查“聊天里不出图，到底是链路问题还是模型本身不可用”这类问题。
 
 ---
 
@@ -24,11 +41,13 @@ AI 角色可以通过 `draw_image` 工具调用来生成图片。用户在聊天
 
 | 文件 | 负责什么 |
 |------|----------|
-| `lib/src/features/plugins/image/image_plugin.dart` | **核心引擎** - 提供 draw_image 工具定义、执行图片生成请求、保存图片 |
-| `lib/src/features/plugins/image/image_config.dart` | **配置模型** - 定义所有绘图参数（尺寸、步数、画师串等） |
+| `lib/src/features/plugins/image/image_plugin.dart` | **核心引擎** - 提供 `draw_image` 工具、解析 `<image>...</image>`、执行图片生成请求、保存图片 |
+| `lib/src/features/plugins/image/image_config.dart` | **配置模型** - 定义绘图参数、稳定模式预设、快速模式预设、画师串预设 |
 | `lib/src/features/plugins/plugin_providers.dart` | **状态管理** - ImagePluginConfigNotifier，管理配置的读写和持久化 |
 | `lib/src/ui/features/plugins/pages/image_plugin_detail_page.dart` | **设置页面** - 绘图功能的配置界面（选渠道、选模型、调参数） |
+| `lib/src/ui/features/plugins/pages/image_generation_test_page.dart` | **独立测试页** - 直接测试 `draw_image` 工具链并大图展示结果 |
 | `lib/src/ui/features/plugins/pages/draw_image_tool_description_page.dart` | **工具描述页面** - 管理 draw_image 工具描述与预设 |
+| `lib/src/ui/features/plugins/pages/inline_image_prompt_page.dart` | **快速模式提示词页面** - 管理 `<image>...</image>` 直连提示词模板 |
 | `lib/src/features/chat/services/chat_send_service.dart` | **聊天服务** - AI 调用枢纽，负责发消息、执行工具调用、收集图片结果 |
 | `lib/src/features/chat/presentation/widgets/message_bubble.dart` | **消息气泡** - 在聊天中显示生成的图片 |
 
@@ -42,32 +61,71 @@ AI 角色可以通过 `draw_image` 工具调用来生成图片。用户在聊天
 用户说 "画一只猫"
       |
       v
-ChatSendService 把消息发给 AI
-（同时附上 draw_image 工具定义 + 简短路由提示）
+ChatSendService / ChatSendApiRunner 把消息发给 AI
+（根据当前模式附上不同规则）
       |
+      +-------------------------------+
+      |                               |
+      v                               v
+快速模式                        自动档命中稳定链路（需 vision + tools）
+AI 输出：                        第一轮：
+<image>1girl, cat ears...</image>  AI 理解需求，先回复一句话，再调用 draw_image
+      |                               |
+      v                               v
+ImagePlugin.processResponse()     ImagePlugin._handleDrawImage() 执行：
+解析出 image_generate 事件          1. 检查参数是否合法
+并移除正文中的非空 <image> 标签      2. 找到配置中选择的渠道和模型
+      |                               3. 调用 AgentApiClient.generateImage() 发请求
+      v                               4. 收到图片数据，保存到本地文件
+ChatTtsHandler 直连调用 NovelAI      5. 返回结果 { success: true, images: [{ localPath: "..." }] }
+生成单张图片并插回消息                |
+      |                               v
+      |                           ChatSendApiRunner 收到结果后：
+      |                             1. 先把图片暂存为"待审图候选"
+      |                             2. 把本地图片回灌给模型看
+      |                             3. 第二轮由模型决定：
+      |                                - 输出 <image></image>：这张图正式发给用户
+      |                                - 再次调用 draw_image：说明要返工，旧图不发，进入下一轮审图
+      |                                - 不输出占位符：本轮不发图
       v
-AI 理解后决定调用 draw_image 工具
-返回：{ name: "draw_image", arguments: { prompt: "1girl, cat ears, ..." } }
-      |
-      v
-ImagePlugin._handleDrawImage() 执行：
-  1. 检查参数是否合法
-  2. 找到配置中选择的渠道和模型
-  3. 调用 AgentApiClient.generateImage() 发请求
-  4. 收到图片数据，保存到本地文件
-  5. 返回结果 { success: true, images: [{ localPath: "..." }] }
-      |
-      v
-ChatSendService 收到结果：
-  - 提取图片 -> 创建 ImageBlock
-  - 构建 Message（包含文字 + 图片）
-  - 投递到聊天记录
-      |
-      v
+如果快速模式生成失败：
+  - 该 <image> 不会显示给用户
+  - 系统会把失败信息作为隐藏图片上下文写回历史
+  - 后续模型能知道“刚才生成失败了”
+
 MessageBubble 渲染：
   - 文字部分 -> 在气泡内显示
   - 图片部分 -> 显示为可点击的图片（无气泡）
 ```
+
+### 自动档路由规则（2026-03-18）
+
+`draw_image` 现在按下面的规则路由：
+
+1. 当前调用模式为 `auto`
+2. 当前聊天模型必须同时声明 `vision` 和 `tools` 能力
+3. 当前模型不能禁用工具调用
+4. 工具执行后只回灌 1 张候选图，因为绘图插件原始设计就是单次发送一张图
+
+满足以上条件时，链路才会进入“生成 -> 审图 -> 决定发送 / 返工”的稳定闭环。
+
+如果当前模型不满足这些条件，那么自动档不会暴露 `draw_image`，而是统一走快速链路：直接输出 `<image>英文正向提示词</image>`。
+
+### 稳定模式里，图片什么时候真正发给用户
+
+- `draw_image` 返回成功时，图片不会立刻出现在聊天里
+- 只有模型在后续回复正文里明确输出空标签 `<image></image>`，这张图才会被插入消息并发送
+- 如果模型判断画面有问题，例如肢体错误、结构异常、明显不符合需求，它应该自己调整提示词并再次调用 `draw_image`
+- 如果模型没有输出占位符，也没有再次调用 `draw_image`，那张候选图会被丢弃，不会自动发出
+
+### 快速模式里，图片什么时候真正发给用户
+
+- 模型输出 `<image>...</image>` 后，标签内文本会被直接当作 NovelAI 的正向提示词
+- 这里必须是英文，因为当前直连生图渠道是 NovelAI
+- 一轮最多只允许 1 个非空 `<image>...</image>`
+- 生成成功时，图片会作为同一条回复里的补充块插回聊天
+- 生成失败时，这个 `<image>` 会直接从最终展示里消失，不向用户暴露报错
+- 同时系统会把失败记录写成隐藏上下文，方便后续模型知道刚才尝试过且失败了
 
 ### 非视觉模型下的图片描述优先级（新增）
 
@@ -84,14 +142,14 @@ MessageBubble 渲染：
 
 - 旧做法会把“助手上一条发了一张图片，生图提示词/内容摘要：...”当成 assistant 正文塞回历史
 - 模型容易把这句当作自己上一轮说过的话继续续写
-- 现在改成 `__AICOVE_IMAGE_CONTEXT__{...}` 这类隐藏标记，只表达“这轮有图”，不伪装成聊天正文
+- 现在改成 `<image source="history">...</image>` 这类隐藏标记，只表达“这轮有图”，不伪装成聊天正文
 - 同轮工具续写时，`draw_image` 的 tool result 也会带上 `delivered_to_chat` 或 `image_delivery_pending`，让模型知道图片已发出还是仍在排队
 
 ---
 
 ## 工具描述固定块
 
-`draw_image` 的主要规则现在不再靠长篇 system prompt 传递，而是写进工具自己的描述里。
+稳定模式下，`draw_image` 的主要规则不再靠长篇 system prompt 传递，而是写进工具自己的描述里。
 
 ```
 draw_image.description
@@ -102,11 +160,13 @@ draw_image.description
 ```
 
 - 这些内容由 `ImageConfig.effectiveToolDescriptionBlocks` 提供
-- 设置入口是「绘图设置页 -> 绘图工具描述」
-- `getSystemPrompt()` 不再额外注入绘图路由提示，避免出现预设外的隐藏指令
+- 设置入口是「绘图设置页 -> 稳定模式提示词」
+- 快速档下，`getSystemPrompt()` 会注入 `<image>英文正向提示词</image>` 的直连规则
+- 自动档命中稳定链路时，`getSystemPrompt()` 不再额外注入绘图路由提示，避免出现预设外的隐藏指令
 - 旧版纯文本 `drawingSystemPrompt` 仍会自动迁移成新的描述块，避免老配置失效
 
 这次改完后，聊天链路里真正负责“怎么写提示词、尺寸怎么选、负面词怎么写”的，是工具 schema，不是系统提示词正文。
+在自动档命中稳定链路时，工具结果还会额外告诉模型这张图目前是“待审图候选”还是“已经发给用户”。
 
 ---
 
@@ -156,30 +216,42 @@ draw_image.description
 
 ## 工具描述预设与画师串预设
 
-现在有两套独立预设：
+现在有三套独立预设：
 
 - 工具描述预设：控制 `draw_image` 工具怎么向模型说明规则
+- 快速模式预设：控制快速链路下注入给模型的 `<image>...</image>` 直连规则
 - 画师串预设：控制最终生图 prompt 前面自动拼什么风格词
 
 ### 工作方式
 
 ```
-工具调用规则 = 全局选中的工具描述预设
+自动档命中稳定链路时的工具调用规则 = 全局选中的工具描述预设
+快速链路直连规则 = 全局选中的快速模式预设
 最终图片 prompt = 角色绑定画师串预设 或 全局选中的画师串预设 + AI 生成的 prompt
 最终 negative prompt = 画师串负面词 + 全局默认负面词 + 本次调用传入的 negative_prompt
 ```
 
 - 工具描述预设放在 `systemPromptPresets`
+- 快速模式预设放在 `fastPromptPresets`
 - 画师串预设放在 `artistPresets`
 - 角色卡还能额外绑定“工具描述预设名”和“画师串预设名”
-- 聊天发送时，会把角色绑定的工具描述预设改写进 `draw_image` schema
+- 聊天发送时，自动档命中稳定链路会把角色绑定的工具描述预设改写进 `draw_image` schema
+- 聊天发送时，快速链路会读取快速模式预设生成 `<image>` 直连系统提示词
 - 真正执行绘图时，会优先使用角色绑定的画师串预设；没有绑定才回退到全局选中预设
 
 ### 操作入口
 
-绘图设置页 → 绘图工具描述
+绘图设置页 → 生图路径
 
-绘图设置页 → 工具描述预设 / 画师串预设
+绘图设置页 → 稳定模式提示词
+
+绘图设置页 → 快速模式提示词
+
+绘图设置页 → 稳定模式预设 / 快速模式预设 / 画师串预设
+
+调试中心 → 调用超时管理
+
+这里只保留模型/工具超时调试，不再切换自动档/快速档。
 
 角色编辑页 → 专属绘图提示
 
@@ -282,6 +354,7 @@ AI 会自动在末尾加上：`masterpiece, best quality, very aesthetic, absurd
 3. 添加合适的画师串预设
 4. 补充负面提示词（排除不想要的元素）
 5. 确保 AI 按 NovelAI Tag 规范生成提示词
+6. 在稳定模式下，让视觉模型根据坏手、坏肢体、构图异常等问题自动返工一轮
 
 ### 问题：生成速度慢
 

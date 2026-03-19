@@ -337,6 +337,24 @@ function Get-SessionMessageText {
     return ($parts -join "`n").Trim()
 }
 
+function Get-FocusedSessionUserText {
+    param(
+        [string]$Text
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return ''
+    }
+
+    $normalized = $Text.Trim()
+    $requestMatch = [regex]::Match($normalized, '(?s)## My request for Codex:\s*(.+)$')
+    if ($requestMatch.Success) {
+        return $requestMatch.Groups[1].Value.Trim()
+    }
+
+    return $normalized
+}
+
 function Test-IgnorableSessionMessage {
     param(
         [string]$Text
@@ -347,6 +365,49 @@ function Test-IgnorableSessionMessage {
     }
 
     return $Text -match '(?s)^\s*<turn_aborted>.*</turn_aborted>\s*$'
+}
+
+function Format-RecentConversationTurns {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$Turns
+    )
+
+    if ($Turns.Count -eq 0) {
+        return ''
+    }
+
+    $latestTurn = $Turns[-1]
+    $builder = New-Object System.Text.StringBuilder
+    [void]$builder.AppendLine('### 当前要回答的最后一条 user 消息')
+    [void]$builder.AppendLine($latestTurn.user.Trim())
+
+    if (-not [string]::IsNullOrWhiteSpace($latestTurn.assistant)) {
+        [void]$builder.AppendLine()
+        [void]$builder.AppendLine('### 这条消息前 assistant 刚回复过')
+        [void]$builder.AppendLine($latestTurn.assistant.Trim())
+    }
+
+    if ($Turns.Count -gt 1) {
+        $olderTurns = @($Turns | Select-Object -SkipLast 1)
+        $turnNumber = 1
+        foreach ($turn in $olderTurns) {
+            [void]$builder.AppendLine()
+            [void]$builder.AppendLine("### 更早的上下文 $turnNumber")
+            [void]$builder.AppendLine('user:')
+            [void]$builder.AppendLine($turn.user.Trim())
+
+            if (-not [string]::IsNullOrWhiteSpace($turn.assistant)) {
+                [void]$builder.AppendLine()
+                [void]$builder.AppendLine('assistant:')
+                [void]$builder.AppendLine($turn.assistant.Trim())
+            }
+
+            $turnNumber += 1
+        }
+    }
+
+    return $builder.ToString().TrimEnd()
 }
 
 function Get-RecentConversationHistory {
@@ -398,6 +459,10 @@ function Get-RecentConversationHistory {
         }
 
         $text = Get-SessionMessageText -ContentItems $payload.content
+        if ($role -eq 'user') {
+            $text = Get-FocusedSessionUserText -Text $text
+        }
+
         if (Test-IgnorableSessionMessage -Text $text) {
             continue
         }
@@ -436,26 +501,7 @@ function Get-RecentConversationHistory {
     }
 
     $selectedTurns = @($turns | Select-Object -Last $MaxUserMessages)
-    $builder = New-Object System.Text.StringBuilder
-    $turnNumber = 1
-
-    foreach ($turn in $selectedTurns) {
-        [void]$builder.AppendLine("### 最近第 $turnNumber 轮")
-        [void]$builder.AppendLine('user:')
-        [void]$builder.AppendLine($turn.user.Trim())
-
-        if (-not [string]::IsNullOrWhiteSpace($turn.assistant)) {
-            [void]$builder.AppendLine()
-            [void]$builder.AppendLine('assistant:')
-            [void]$builder.AppendLine($turn.assistant.Trim())
-        }
-
-        [void]$builder.AppendLine()
-        [void]$builder.AppendLine()
-        $turnNumber += 1
-    }
-
-    $historyText = $builder.ToString().TrimEnd()
+    $historyText = Format-RecentConversationTurns -Turns $selectedTurns
     if ($historyText.Length -le $MaxChars) {
         return $historyText
     }
@@ -727,83 +773,91 @@ function Invoke-Translator {
         [int]$TimeoutSeconds
     )
 
-    $tempFile = [System.IO.Path]::GetTempFileName()
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    if ($Provider -eq 'claude') {
+        $startInfo.FileName = 'claude.cmd'
+        [void]$startInfo.ArgumentList.Add('-p')
+        [void]$startInfo.ArgumentList.Add('--output-format')
+        [void]$startInfo.ArgumentList.Add('text')
+    }
+    else {
+        $startInfo.FileName = 'gemini.cmd'
+        [void]$startInfo.ArgumentList.Add('--prompt')
+        [void]$startInfo.ArgumentList.Add('.')
+        [void]$startInfo.ArgumentList.Add('--output-format')
+        [void]$startInfo.ArgumentList.Add('text')
+    }
+
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardInput = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.StandardInputEncoding = [System.Text.Encoding]::UTF8
+    $startInfo.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+    $startInfo.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+
     try {
-        Set-Content -LiteralPath $tempFile -Value $PromptText -Encoding UTF8
+        [void]$process.Start()
 
-        if ($Provider -eq 'claude') {
-            $commandLine = "type `"$tempFile`" | claude.cmd -p --output-format text"
-        }
-        else {
-            # Gemini CLI 在 PowerShell 下直接传空 prompt 会出问题，
-            # 用一个占位 prompt，再把真正内容通过 stdin 喂进去。
-            $commandLine = "type `"$tempFile`" | gemini.cmd --prompt . --output-format text"
-        }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
 
-        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-        $startInfo.FileName = 'cmd.exe'
-        [void]$startInfo.ArgumentList.Add('/d')
-        [void]$startInfo.ArgumentList.Add('/c')
-        [void]$startInfo.ArgumentList.Add($commandLine)
-        $startInfo.UseShellExecute = $false
-        $startInfo.CreateNoWindow = $true
-        $startInfo.RedirectStandardOutput = $true
-        $startInfo.RedirectStandardError = $true
-        $startInfo.StandardOutputEncoding = [System.Text.Encoding]::UTF8
-        $startInfo.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+        $process.StandardInput.Write($PromptText)
+        $process.StandardInput.Close()
 
-        $process = New-Object System.Diagnostics.Process
-        $process.StartInfo = $startInfo
-
-        try {
-            [void]$process.Start()
-            if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-                try {
-                    $process.Kill($true)
-                }
-                catch {
-                    $process.Kill()
-                }
-
-                throw "调用 $Provider 超时：${TimeoutSeconds} 秒内未返回。"
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            try {
+                $process.Kill($true)
+            }
+            catch {
+                $process.Kill()
             }
 
-            $stdoutText = $process.StandardOutput.ReadToEnd()
-            $stderrText = $process.StandardError.ReadToEnd()
-            $process.WaitForExit()
-            $exitCode = $process.ExitCode
-        }
-        finally {
-            $process.Dispose()
+            throw "调用 $Provider 超时：${TimeoutSeconds} 秒内未返回。"
         }
 
-        $resultText = @($stdoutText.Trim(), $stderrText.Trim()) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Join-String -Separator "`n"
-        $cleanText = $stdoutText.Trim()
+        $stdoutTask.Wait()
+        $stderrTask.Wait()
 
-        if ($exitCode -ne 0) {
-            $errorText = $resultText
-            if ([string]::IsNullOrWhiteSpace($errorText)) {
-                $errorText = 'CLI 没有返回可读的错误信息。'
-            }
-
-            throw "调用 $Provider 失败：`n$errorText"
-        }
-
-        if ([string]::IsNullOrWhiteSpace($cleanText)) {
-            return $resultText
-        }
-
-        return $cleanText
+        $stdoutText = $stdoutTask.Result
+        $stderrText = $stderrTask.Result
+        $process.WaitForExit()
+        $exitCode = $process.ExitCode
     }
     finally {
-        Remove-Item -LiteralPath $tempFile -ErrorAction SilentlyContinue
+        $process.Dispose()
     }
+
+    $resultText = @($stdoutText.Trim(), $stderrText.Trim()) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Join-String -Separator "`n"
+    $cleanText = $stdoutText.Trim()
+
+    if ($exitCode -ne 0) {
+        $errorText = $resultText
+        if ([string]::IsNullOrWhiteSpace($errorText)) {
+            $errorText = 'CLI 没有返回可读的错误信息。'
+        }
+
+        throw "调用 $Provider 失败：`n$errorText"
+    }
+
+    if ([string]::IsNullOrWhiteSpace($cleanText)) {
+        return $resultText
+    }
+
+    return $cleanText
 }
 
 $reportText = ''
 $bundlePaths = $null
 $bundleContextText = ''
-$shouldFetchCodexReport = $UseLastCodexSession -or -not [string]::IsNullOrWhiteSpace($CodexSessionId)
+$hasExplicitReportSource = -not [string]::IsNullOrWhiteSpace($ReportId) -or -not [string]::IsNullOrWhiteSpace($ReportFile)
+$useLastCodexSessionWasExplicit = $PSBoundParameters.ContainsKey('UseLastCodexSession')
+$shouldFetchCodexReport = (-not $hasExplicitReportSource) -and ($UseLastCodexSession -or -not [string]::IsNullOrWhiteSpace($CodexSessionId))
+$shouldFetchStandaloneConversation = (-not [string]::IsNullOrWhiteSpace($CodexSessionId)) -or ($useLastCodexSessionWasExplicit -and $UseLastCodexSession)
 
 if (-not [string]::IsNullOrWhiteSpace($ReportId)) {
     $bundlePaths = Get-PolishBundlePaths -BundleId $ReportId
@@ -856,8 +910,8 @@ if ($Mode -eq 'translate' -or $Mode -eq 'translate-review') {
     if (-not [string]::IsNullOrWhiteSpace($ReportId)) {
         $recentConversationText = $bundleContextText
     }
-    else {
-        $recentConversationText = Get-RecentConversationHistory -SessionId $CodexSessionId -UseLastSession:$UseLastCodexSession -MaxUserMessages 3 -MaxChars ([Math]::Max([int]($MaxReportChars / 2), 6000))
+    elseif ($shouldFetchStandaloneConversation) {
+        $recentConversationText = Get-RecentConversationHistory -SessionId $CodexSessionId -UseLastSession:$UseLastCodexSession -MaxUserMessages 1 -MaxChars 2000
     }
 }
 

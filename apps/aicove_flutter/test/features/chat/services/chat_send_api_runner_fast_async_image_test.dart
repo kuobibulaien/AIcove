@@ -273,7 +273,11 @@ void main() {
     );
 
     expect(fakeHttpClient.callCount, 2);
-    expect(streamResetCount, 1);
+    expect(
+      streamResetCount,
+      0,
+      reason: '快速生图进入后续轮次时不应再清屏重置已流出的文本',
+    );
     expect(result.replyText, contains('"ok":true'));
     expect(result.processedText, contains('"ok":true'));
     expect(result.toolCalls, isNotEmpty);

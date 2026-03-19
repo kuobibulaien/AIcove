@@ -173,6 +173,53 @@ void main() {
       expect(find.textContaining('已完成'), findsOneWidget);
     });
 
+    testWidgets(
+        'TracePayloadPanel should prefer raw AI response and keep delivered reply',
+        (tester) async {
+      final event = TraceEvent(
+        traceId: 'tr_final',
+        sessionId: 's1',
+        turnId: 't1',
+        roundIndex: 1,
+        eventSeq: 6,
+        stage: TraceStage.finalReplyReady.value,
+        status: TraceEventStatus.success.value,
+        source: 'test',
+        startedAt: DateTime(2026, 3, 18, 21, 14, 41),
+        endedAt: DateTime(2026, 3, 18, 21, 14, 41),
+        durationMs: 0,
+      );
+
+      final payloadEnvelope = <String, dynamic>{
+        'payload': {
+          'rawAiResponse': '原始回复 <tts>这段要读</tts>\n<image>海边晚霞</image>',
+          'finalReply': '处理后文本',
+        },
+      };
+
+      await tester.pumpWidget(
+        _wrap(
+          SizedBox(
+            height: 420,
+            child: TracePayloadPanel(
+              selectedEvent: event,
+              payloadEnvelope: payloadEnvelope,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('最终回复'), findsOneWidget);
+      expect(find.text('最终交付文本'), findsOneWidget);
+      expect(find.textContaining('<tts>这段要读</tts>'), findsOneWidget);
+      expect(find.textContaining('<image>海边晚霞</image>'), findsOneWidget);
+
+      await tester.tap(find.text('最终交付文本'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('处理后文本'), findsOneWidget);
+    });
+
     testWidgets('TracePayloadPanel should render Claude top-level system',
         (tester) async {
       final event = TraceEvent(

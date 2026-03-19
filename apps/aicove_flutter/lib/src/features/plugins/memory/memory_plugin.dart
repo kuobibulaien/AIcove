@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/app_logger.dart';
 import '../../../core/database/database_provider.dart';
+import '../../background_agent/background_agent_service.dart';
 import '../../chat/domain/message.dart' as chat;
 import '../../chat/providers2.dart';
 import '../../chat/services/chat_history_store.dart';
@@ -42,7 +43,7 @@ String buildMemorySearchQuery(
 }
 
 class MemoryPlugin extends BasePlugin {
-  static final _metadata = PluginMetadata(
+  static const _metadata = PluginMetadata(
     id: 'memory',
     name: '长期记忆',
     description: '允许AI记住用户的长期喜好和重要信息',
@@ -98,14 +99,24 @@ class MemoryPlugin extends BasePlugin {
     final memoryRepository = _ref.read(memoryRepositoryProvider);
     final messageRepository = _ref.read(messageRepositoryProvider);
     final serviceConfig = _resolveConfig(appSettings);
-    _service =
-        MemoryService(serviceConfig, memoryRepository, messageRepository);
+    _service = MemoryService(
+      serviceConfig,
+      memoryRepository,
+      messageRepository,
+      backgroundAgentService: _ref.read(backgroundAgentServiceProvider),
+      conversationRepository: _ref.read(conversationRepositoryProvider),
+      diaryRepository: _ref.read(diaryRepositoryProvider),
+    );
   }
 
   MemoryServiceConfig _resolveConfig(AppSettings settings) {
     return MemoryServiceConfig(
       enabled: _memoryConfig.enabled,
       summarizePrompt: _memoryConfig.summarizePrompt,
+      summarizeModelRef: _buildModelRef(
+        _memoryConfig.summarizeProviderId,
+        _memoryConfig.summarizeModelName,
+      ),
       summarizeModel: _resolveModel(settings, _memoryConfig.summarizeProviderId,
           _memoryConfig.summarizeModelName),
       embeddingModel: _resolveModel(settings, _memoryConfig.embeddingProviderId,
@@ -133,7 +144,9 @@ class MemoryPlugin extends BasePlugin {
     if (providerId == null ||
         providerId.isEmpty ||
         modelName == null ||
-        modelName.isEmpty) return null;
+        modelName.isEmpty) {
+      return null;
+    }
     final provider = settings.providers.firstWhere(
       (p) => p.id == providerId && p.enabled,
       orElse: () => const ProviderAuth(id: '', apiKeys: [], apiBaseUrl: ''),
@@ -144,6 +157,15 @@ class MemoryPlugin extends BasePlugin {
       baseUrl: provider.apiBaseUrl,
       model: modelName,
     );
+  }
+
+  String? _buildModelRef(String? providerId, String? modelName) {
+    final normalizedProviderId = providerId?.trim() ?? '';
+    final normalizedModelName = modelName?.trim() ?? '';
+    if (normalizedProviderId.isEmpty || normalizedModelName.isEmpty) {
+      return null;
+    }
+    return '$normalizedProviderId:$normalizedModelName';
   }
 
   @override
@@ -173,7 +195,9 @@ class MemoryPlugin extends BasePlugin {
     if (!enabled ||
         service == null ||
         userMessage == null ||
-        userMessage.trim().isEmpty) return null;
+        userMessage.trim().isEmpty) {
+      return null;
+    }
 
     final resolvedConversationId = _resolveConversationId(conversationId);
     if (resolvedConversationId == null) return null;
@@ -262,7 +286,9 @@ class MemoryPlugin extends BasePlugin {
     if (!enabled ||
         service == null ||
         !_memoryConfig.enablePreFlush ||
-        droppedMessages.isEmpty) return;
+        droppedMessages.isEmpty) {
+      return;
+    }
     final resolvedConversationId = _resolveConversationId(conversationId);
     if (resolvedConversationId == null) return;
     Future(() async {

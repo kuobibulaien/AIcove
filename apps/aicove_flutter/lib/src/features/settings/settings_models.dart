@@ -547,22 +547,34 @@ class EnhancedDialogueSettings {
 
 /// 调用流程模式
 enum CallFlowMode {
-  stable('stable', '稳定模式'),
-  fast('fast', '快速模式');
+  auto('auto', '自动'),
+  fast('fast', '快速');
 
   const CallFlowMode(this.value, this.label);
   final String value;
   final String label;
 
   static CallFlowMode fromValue(String? value) {
-    for (final mode in CallFlowMode.values) {
-      if (mode.value == value) return mode;
+    final normalized = value?.trim().toLowerCase();
+    if (normalized == 'stable') {
+      return CallFlowMode.auto;
     }
-    return CallFlowMode.stable;
+    for (final mode in CallFlowMode.values) {
+      if (mode.value == normalized) return mode;
+    }
+    return CallFlowMode.auto;
   }
 }
 
-/// 调用流程设置（调试工具）
+enum EffectiveImageGenerationRoute {
+  stable('stable'),
+  fast('fast');
+
+  const EffectiveImageGenerationRoute(this.value);
+  final String value;
+}
+
+/// 调用流程设置（生图路径 + 超时）
 class CallFlowSettings {
   static const int minModelTimeoutSeconds = 10;
   static const int maxModelTimeoutSeconds = 300;
@@ -574,7 +586,7 @@ class CallFlowSettings {
   final int toolTimeoutSeconds;
 
   const CallFlowSettings({
-    this.mode = CallFlowMode.stable,
+    this.mode = CallFlowMode.auto,
     this.modelTimeoutSeconds = 120,
     this.toolTimeoutSeconds = 30,
   });
@@ -1293,6 +1305,34 @@ class AppSettings {
 
   bool hasChatModelCapability(String modelId, ChatModelCapability capability) {
     return getChatModelCapabilities(modelId).contains(capability);
+  }
+
+  EffectiveImageGenerationRoute resolveEffectiveImageGenerationRoute(
+    String modelId,
+  ) {
+    if (callFlowSettings.mode == CallFlowMode.fast) {
+      return EffectiveImageGenerationRoute.fast;
+    }
+    final supportsVision = hasChatModelCapability(
+      modelId,
+      ChatModelCapability.vision,
+    );
+    final supportsToolCalling =
+        hasChatModelCapability(modelId, ChatModelCapability.tools) &&
+            !isModelToolCallingDisabled(modelId);
+    return supportsVision && supportsToolCalling
+        ? EffectiveImageGenerationRoute.stable
+        : EffectiveImageGenerationRoute.fast;
+  }
+
+  bool shouldUseStableImageGenerationRoute(String modelId) {
+    return resolveEffectiveImageGenerationRoute(modelId) ==
+        EffectiveImageGenerationRoute.stable;
+  }
+
+  bool shouldUseFastImageGenerationRoute(String modelId) {
+    return resolveEffectiveImageGenerationRoute(modelId) ==
+        EffectiveImageGenerationRoute.fast;
   }
 
   /// 检查模型是否禁用工具调用

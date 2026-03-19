@@ -1,8 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../../core/api_logger.dart' show ApiLogEntry, ApiLogger;
@@ -22,6 +26,126 @@ import 'log_history_list_page.dart';
 import 'log_models.dart';
 import 'trace_payload_panel.dart';
 import 'trace_timeline_panel.dart';
+
+typedef SaveLogFileCallback = Future<String?> Function({
+  String? dialogTitle,
+  String? fileName,
+  String? initialDirectory,
+  FileType type,
+  List<String>? allowedExtensions,
+  Uint8List? bytes,
+  bool lockParentWindow,
+});
+
+class LogExportResult {
+  final String fileName;
+  final String? savedPath;
+  final int entryCount;
+
+  const LogExportResult({
+    required this.fileName,
+    required this.savedPath,
+    required this.entryCount,
+  });
+}
+
+class LogViewerExportService {
+  const LogViewerExportService._();
+
+  static String buildExportContent(Iterable<UnifiedLogEntry> entries) {
+    final list = entries.toList(growable: false);
+    final buffer = StringBuffer();
+    for (var i = 0; i < list.length; i++) {
+      buffer.writeln(list[i].fullContent);
+      if (i != list.length - 1) {
+        buffer.writeln('---');
+      }
+    }
+    return buffer.toString().trim();
+  }
+
+  static String buildDefaultFileName({DateTime? now}) {
+    final time = now ?? DateTime.now();
+    final yyyy = time.year.toString().padLeft(4, '0');
+    final mm = time.month.toString().padLeft(2, '0');
+    final dd = time.day.toString().padLeft(2, '0');
+    final hh = time.hour.toString().padLeft(2, '0');
+    final min = time.minute.toString().padLeft(2, '0');
+    final ss = time.second.toString().padLeft(2, '0');
+    return 'aicove_logs_${yyyy}${mm}${dd}_$hh$min$ss.txt';
+  }
+
+  static Future<String?> resolveInitialDirectory() async {
+    if (Platform.isAndroid || Platform.isIOS) {
+      return null;
+    }
+
+    if (Platform.isWindows) {
+      final userProfile = Platform.environment['USERPROFILE'];
+      if (userProfile != null) {
+        final downloadsDir = Directory('$userProfile\\Downloads');
+        if (await downloadsDir.exists()) {
+          return downloadsDir.path;
+        }
+      }
+    }
+
+    final downloadsDir = await getDownloadsDirectory();
+    if (downloadsDir != null && await downloadsDir.exists()) {
+      return downloadsDir.path;
+    }
+
+    final documentsDir = await getApplicationDocumentsDirectory();
+    return documentsDir.path;
+  }
+
+  static Future<LogExportResult?> exportEntries({
+    required List<UnifiedLogEntry> entries,
+    required SaveLogFileCallback saveFile,
+    DateTime? now,
+    String? initialDirectory,
+    bool? writeBytesInPicker,
+    Future<void> Function(String path, Uint8List bytes)? writeFileBytes,
+  }) async {
+    if (entries.isEmpty) return null;
+
+    final content = buildExportContent(entries);
+    final bytes = Uint8List.fromList(utf8.encode(content));
+    final fileName = buildDefaultFileName(now: now);
+    final pickerHandlesWrite =
+        writeBytesInPicker ?? (Platform.isAndroid || Platform.isIOS);
+
+    final savedPath = await saveFile(
+      dialogTitle: '导出日志文件',
+      fileName: fileName,
+      initialDirectory: initialDirectory,
+      type: FileType.custom,
+      allowedExtensions: const ['txt'],
+      bytes: pickerHandlesWrite ? bytes : null,
+      lockParentWindow: true,
+    );
+    if (savedPath == null) {
+      return null;
+    }
+
+    final normalizedPath = savedPath.trim().isEmpty ? null : savedPath.trim();
+    if (!pickerHandlesWrite) {
+      if (normalizedPath == null) {
+        throw const FileSystemException('未获取到有效保存路径');
+      }
+      final writer = writeFileBytes ??
+          (String path, Uint8List data) async =>
+              File(path).writeAsBytes(data, flush: true);
+      await writer(normalizedPath, bytes);
+    }
+
+    return LogExportResult(
+      fileName: fileName,
+      savedPath: normalizedPath,
+      entryCount: entries.length,
+    );
+  }
+}
 
 class LogViewerPage extends StatefulWidget {
   const LogViewerPage({super.key});
@@ -926,11 +1050,16 @@ class _LogViewerPageState extends State<LogViewerPage> {
       if (turn.sessionId != null) 'session=${turn.sessionId}',
       if (turn.turnId == null) 'key=${turn.turnKey}',
     ].join(' | ');
+    final rawFinalReply = resolveRawFinalReply(turn);
     final finalReply = resolveFinalReply(turn);
     final finalDeliveryDurationMs = resolveFinalDeliveryDurationMs(turn);
-    final finalReplyTitle = finalDeliveryDurationMs != null
-        ? '最终展示给用户的回复（耗时：${formatDurationLabel(finalDeliveryDurationMs)}）'
-        : '最终展示给用户的回复';
+    final finalReplyTitle = rawFinalReply != null
+        ? (finalDeliveryDurationMs != null
+            ? '模型原始最终回复（按轮聚合原文，耗时：${formatDurationLabel(finalDeliveryDurationMs)}）'
+            : '模型原始最终回复（按轮聚合原文）')
+        : (finalDeliveryDurationMs != null
+            ? '最终展示给用户的回复（耗时：${formatDurationLabel(finalDeliveryDurationMs)}）'
+            : '最终展示给用户的回复');
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -1765,15 +1894,42 @@ class _LogViewerPageState extends State<LogViewerPage> {
       return;
     }
 
-    final buffer = StringBuffer();
-    for (final entry in entries) {
-      buffer.writeln(entry.fullContent);
-      buffer.writeln('---');
-    }
+    try {
+      final initialDirectory =
+          await LogViewerExportService.resolveInitialDirectory();
+      final result = await LogViewerExportService.exportEntries(
+        entries: entries,
+        initialDirectory: initialDirectory,
+        saveFile: ({
+          String? dialogTitle,
+          String? fileName,
+          String? initialDirectory,
+          FileType type = FileType.any,
+          List<String>? allowedExtensions,
+          Uint8List? bytes,
+          bool lockParentWindow = false,
+        }) {
+          return FilePicker.platform.saveFile(
+            dialogTitle: dialogTitle,
+            fileName: fileName,
+            initialDirectory: initialDirectory,
+            type: type,
+            allowedExtensions: allowedExtensions,
+            bytes: bytes,
+            lockParentWindow: lockParentWindow,
+          );
+        },
+      );
 
-    await Clipboard.setData(ClipboardData(text: buffer.toString().trim()));
-    if (mounted) {
-      MoeToast.success(context, '已复制 ${entries.length} 条日志到剪贴板');
+      if (!mounted || result == null) return;
+      final location = result.savedPath ?? result.fileName;
+      MoeToast.success(
+        context,
+        '已导出 ${result.entryCount} 条日志\n$location',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      MoeToast.error(context, '导出失败: $e');
     }
   }
 

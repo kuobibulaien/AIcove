@@ -210,7 +210,7 @@ Map<String, dynamic> _defaultEnhancedDialogueSettings() => <String, dynamic>{
     };
 
 Map<String, dynamic> _defaultCallFlowSettings() => <String, dynamic>{
-      'mode': 'stable',
+      'mode': 'auto',
       'model_timeout_seconds': 120,
       'tool_timeout_seconds': 30,
     };
@@ -353,8 +353,8 @@ Map<String, dynamic> _normalizeCallFlowSettings(dynamic source) {
     return v;
   }
 
-  final mode = (source['mode'] as String?)?.trim();
-  final normalizedMode = mode == 'fast' ? 'fast' : 'stable';
+  final mode = (source['mode'] as String?)?.trim().toLowerCase();
+  final normalizedMode = mode == 'fast' ? 'fast' : 'auto';
 
   return <String, dynamic>{
     'mode': normalizedMode,

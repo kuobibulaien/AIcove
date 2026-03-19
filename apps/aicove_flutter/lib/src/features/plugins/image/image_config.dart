@@ -29,7 +29,7 @@ class ArtistPreset {
       );
 }
 
-/// 绘图系统提示词预设
+/// 绘图提示词预设
 class DrawingPromptPreset {
   final String name;
   final String content;
@@ -154,6 +154,8 @@ class ImageConfig {
   final String drawingSystemPrompt;
   final List<DrawingPromptPreset> systemPromptPresets;
   final String? selectedSystemPromptPresetName;
+  final List<DrawingPromptPreset> fastPromptPresets;
+  final String? selectedFastPromptPresetName;
   final List<ArtistPreset> artistPresets;
   final String? selectedArtistPresetName;
 
@@ -167,6 +169,24 @@ class ImageConfig {
           'worst quality, low quality, jpeg artifacts, watermark, text',
     ),
   ];
+
+  /// 快速模式默认提示词模板
+  static const String defaultInlinePromptTemplate = '''
+你可以使用 <image>英文正向提示词</image> 直接触发一次图片生成。
+
+当前生图使用 NovelAI，<image> 标签里的内容会被直接当作正向提示词使用。
+
+使用规则：
+1. 只有你真的要生成并发送图片时，才输出 <image>...</image>
+2. <image> 内只能写英文正向提示词，不要写中文、解释、JSON、代码块、负面提示词或参数说明
+3. 一轮最多输出 1 个 <image>...</image>
+4. 如果只是文字里提到图片，不要输出 <image> 标签
+
+提示词规范参考：
+【快速模式正向提示词】只写单张图片的英文正向提示词，不要写负面提示词、尺寸、步数或额外解释。
+【推荐顺序】镜头/视角 -> 主体人数 -> 外貌服装 -> 动作表情 -> 场景光影 -> 自然语言细节 -> 质量标签(masterpiece, best quality, very aesthetic)。
+【POV/自拍】需要第一人称视角时，把 {{{pov}}} 放在前面，可按需加 {pov_hands} 或 head out of frame。
+【多人】多人场景可用 | 分隔基底与各角色描述。''';
 
   /// NovelAI 生图提示词规范（默认值），作为 system prompt 注入给 AI。
   static const defaultDrawingSystemPrompt = '''
@@ -235,6 +255,14 @@ class ImageConfig {
     ),
   ];
 
+  /// 内置快速模式提示词预设
+  static const defaultInlinePromptPresets = [
+    DrawingPromptPreset(
+      name: '默认',
+      content: defaultInlinePromptTemplate,
+    ),
+  ];
+
   const ImageConfig({
     this.selectedProviderId,
     this.selectedModelId,
@@ -248,6 +276,8 @@ class ImageConfig {
     this.drawingSystemPrompt = defaultToolDescriptionPresetMarker,
     this.systemPromptPresets = defaultSystemPromptPresets,
     this.selectedSystemPromptPresetName,
+    this.fastPromptPresets = defaultInlinePromptPresets,
+    this.selectedFastPromptPresetName,
     this.artistPresets = defaultArtistPresets,
     this.selectedArtistPresetName,
   });
@@ -268,6 +298,9 @@ class ImageConfig {
     List<DrawingPromptPreset>? systemPromptPresets,
     String? selectedSystemPromptPresetName,
     bool clearSelectedSystemPromptPreset = false,
+    List<DrawingPromptPreset>? fastPromptPresets,
+    String? selectedFastPromptPresetName,
+    bool clearSelectedFastPromptPreset = false,
     List<ArtistPreset>? artistPresets,
     String? selectedArtistPresetName,
     bool clearSelectedArtistPreset = false,
@@ -293,6 +326,10 @@ class ImageConfig {
           ? null
           : (selectedSystemPromptPresetName ??
               this.selectedSystemPromptPresetName),
+      fastPromptPresets: fastPromptPresets ?? this.fastPromptPresets,
+      selectedFastPromptPresetName: clearSelectedFastPromptPreset
+          ? null
+          : (selectedFastPromptPresetName ?? this.selectedFastPromptPresetName),
       artistPresets: artistPresets ?? this.artistPresets,
       selectedArtistPresetName: clearSelectedArtistPreset
           ? null
@@ -315,6 +352,8 @@ class ImageConfig {
       'systemPromptPresets':
           systemPromptPresets.map((e) => e.toJson()).toList(),
       'selectedSystemPromptPresetName': selectedSystemPromptPresetName,
+      'fastPromptPresets': fastPromptPresets.map((e) => e.toJson()).toList(),
+      'selectedFastPromptPresetName': selectedFastPromptPresetName,
       'artistPresets': artistPresets.map((e) => e.toJson()).toList(),
       'selectedArtistPresetName': selectedArtistPresetName,
     };
@@ -341,6 +380,13 @@ class ImageConfig {
           defaultSystemPromptPresets,
       selectedSystemPromptPresetName:
           json['selectedSystemPromptPresetName'] as String?,
+      fastPromptPresets: (json['fastPromptPresets'] as List<dynamic>?)
+              ?.map((e) =>
+                  DrawingPromptPreset.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          defaultInlinePromptPresets,
+      selectedFastPromptPresetName:
+          json['selectedFastPromptPresetName'] as String?,
       artistPresets: (json['artistPresets'] as List<dynamic>?)
               ?.map((e) => ArtistPreset.fromJson(e as Map<String, dynamic>))
               .toList() ??
@@ -355,6 +401,17 @@ class ImageConfig {
     return systemPromptPresets
         .where((p) => p.name == selectedSystemPromptPresetName)
         .firstOrNull;
+  }
+
+  /// 获取当前选中的快速模式提示词预设（如果有）
+  DrawingPromptPreset? get selectedFastPromptPreset {
+    if (selectedFastPromptPresetName != null) {
+      final matched = fastPromptPresets
+          .where((p) => p.name == selectedFastPromptPresetName)
+          .firstOrNull;
+      if (matched != null) return matched;
+    }
+    return fastPromptPresets.firstOrNull;
   }
 
   /// 获取当前选中的画师串预设（如果有）
@@ -406,6 +463,14 @@ class ImageConfig {
     return selectedToolDescriptionPresetBlocks ?? manualToolDescriptionBlocks;
   }
 
+  String get effectiveInlinePromptTemplate {
+    final selectedPreset = selectedFastPromptPreset;
+    if (selectedPreset != null && selectedPreset.content.trim().isNotEmpty) {
+      return selectedPreset.content.trim();
+    }
+    return defaultInlinePromptTemplate;
+  }
+
   bool get isManualToolDescriptionDefault {
     final blocks = manualToolDescriptionBlocks;
     return blocks.toolDescription ==
@@ -423,9 +488,11 @@ class ImageConfig {
   String buildPresetPreview(DrawingPromptPreset preset, {int max = 42}) {
     final blocks = decodeToolDescriptionBlocks(preset.content) ??
         _legacyTextToBlocks(preset.content);
-    final text = blocks.promptDescription.replaceAll('\n', ' ').trim();
-    if (text.length <= max) return text;
-    return '${text.substring(0, max)}...';
+    return _buildTextPreview(blocks.promptDescription, max: max);
+  }
+
+  String buildInlinePresetPreview(DrawingPromptPreset preset, {int max = 42}) {
+    return _buildTextPreview(preset.content, max: max);
   }
 
   static DrawImageToolDescriptionBlocks _legacyTextToBlocks(String text) {
@@ -448,6 +515,12 @@ class ImageConfig {
     } catch (_) {
       return null;
     }
+  }
+
+  static String _buildTextPreview(String raw, {required int max}) {
+    final text = raw.replaceAll('\n', ' ').trim();
+    if (text.length <= max) return text;
+    return '${text.substring(0, max)}...';
   }
 
   /// 组合最终发送给 AI 的 system prompt（纯提示词规范，不含画师串）

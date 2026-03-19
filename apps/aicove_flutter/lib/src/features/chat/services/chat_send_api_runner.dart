@@ -2,6 +2,7 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import '../../plugins/domain/handlers/ai_tool.dart';
 import '../../plugins/domain/plugin.dart';
@@ -12,6 +13,7 @@ import '../../../core/api/providers/provider_adapter.dart'
 import '../../../core/api/providers/provider_adapter_factory.dart';
 import '../../../core/api_logger.dart';
 import '../../../core/app_logger.dart';
+import '../../../core/utils/mime_utils.dart';
 import '../../settings/settings_models.dart';
 import '../../observability/trace_models.dart';
 import '../../observability/trace_store.dart';
@@ -37,6 +39,17 @@ class ChatSendApiRunner {
       ChatToolFallbackParser();
   static const String _logTag = 'ChatSendService';
   static const int _maxFastFollowupRounds = 1;
+  static const String _stableDrawImageReviewPrefix =
+      '__AICOVE_DRAW_IMAGE_REVIEW__';
+  static const String _stableDrawImageReviewInstruction =
+      '$_stableDrawImageReviewPrefix以下图片是你刚刚通过 draw_image 生成的候选图，尚未发给用户。'
+      '请先检查图片内容是否符合用户要求。若图片画得不好、肢体有错误、结构异常，或明显不符合需求，'
+      '你可以调整提示词后再次调用 draw_image 返工。只有当你决定把这张图发给用户时，才在正文里输出空标签 <image></image>；'
+      '如果暂时不要发，就不要输出占位符。';
+  static final RegExp _imagePlaceholderRegex = RegExp(
+    r'(?:<image>\s*</image>|\[(?:图片|image)(?:\s*:[^\]]*)?\])',
+    caseSensitive: false,
+  );
   static AgentApiClient _defaultAgentClientFactory(Duration timeout) =>
       AgentApiClient(timeout: timeout);
 
@@ -47,6 +60,7 @@ class ChatSendApiRunner {
     required String sessionId,
     required String? userText,
     required List<Plugin> effectivePlugins,
+    List<AITool>? availableTools,
     String? turnId,
     TraceLogger? trace,
     int maxRounds = 5,
@@ -59,13 +73,21 @@ class ChatSendApiRunner {
     TraceContext? traceContext,
   }) async {
     final flowSettings = config.settings.callFlowSettings;
-    final fastModeEnabled = flowSettings.mode == CallFlowMode.fast;
+    final effectiveImageRoute =
+        config.settings.resolveEffectiveImageGenerationRoute(
+      config.modelFullId,
+    );
+    final stableImageRouteEnabled =
+        effectiveImageRoute == EffectiveImageGenerationRoute.stable;
+    final fastImageRouteEnabled =
+        effectiveImageRoute == EffectiveImageGenerationRoute.fast;
     final modelTimeout = Duration(seconds: flowSettings.modelTimeoutSeconds);
     final toolTimeout = Duration(seconds: flowSettings.toolTimeoutSeconds);
     final supportsVision = config.settings.hasChatModelCapability(
       config.modelFullId,
       ChatModelCapability.vision,
     );
+    final drawImageStableReviewEnabled = stableImageRouteEnabled;
 
     final apiCallTrace = trace?.startChild('调用AI API');
     apiCallTrace?.note('连接', metadata: {
@@ -74,8 +96,9 @@ class ChatSendApiRunner {
       'model': config.modelFullId,
       'history': config.messages.length,
       'mode': flowSettings.mode.value,
+      'effectiveImageRoute': effectiveImageRoute.value,
       'maxRounds': maxRounds,
-      'fastFollowupBudget': fastModeEnabled ? _maxFastFollowupRounds : 0,
+      'fastFollowupBudget': fastImageRouteEnabled ? _maxFastFollowupRounds : 0,
       'modelTimeoutSec': flowSettings.modelTimeoutSeconds,
       'toolTimeoutSec': flowSettings.toolTimeoutSeconds,
     });
@@ -107,10 +130,11 @@ class ChatSendApiRunner {
     var lastRoundIndex = 1;
     final preToolNarrativeTexts = <String>[];
     var remainingFastFollowupRounds =
-        fastModeEnabled ? _maxFastFollowupRounds : 0;
+        fastImageRouteEnabled ? _maxFastFollowupRounds : 0;
 
     final allToolCalls = <ToolCall>[];
     final allRawToolResults = <ToolResult>[];
+    var pendingStableReviewImages = <PluginImageContent>[];
 
     Future<_ToolExecutionOutcome> executeToolCall(
       ToolCall tc, {
@@ -143,7 +167,11 @@ class ChatSendApiRunner {
         'toolCallId': tc.id,
       };
       try {
-        final tool = _findToolByName(effectivePlugins, tc.name);
+        final tool = _findToolByName(
+          effectivePlugins,
+          tc.name,
+          availableTools: availableTools,
+        );
         if (tool == null) {
           AppLogger.warning(_logTag, 'Tool not found',
               metadata: {'name': tc.name});
@@ -159,11 +187,14 @@ class ChatSendApiRunner {
         }
 
         onToolExecuting?.call(tc.name);
+        final actualFlowMode = useFastToolRoute
+            ? EffectiveImageGenerationRoute.fast.value
+            : EffectiveImageGenerationRoute.stable.value;
         final executionArgs = _buildToolArgumentsForExecution(
           toolName: tc.name,
           originalArguments: tc.arguments,
           useFastToolRoute: useFastToolRoute,
-          flowMode: flowSettings.mode.value,
+          flowMode: actualFlowMode,
           sessionId: sessionId,
           turnId: effectiveTurnId,
           roleToolPresetName: config.boundImageToolPresetName,
@@ -217,8 +248,16 @@ class ChatSendApiRunner {
         if (tc.name == 'draw_image') {
           final asyncAccepted = _isAsyncDrawImageAccepted(resultStr);
           final imageContents = _extractToolImageContents(resultStr);
+          final actualFlowMode = useFastToolRoute
+              ? EffectiveImageGenerationRoute.fast.value
+              : EffectiveImageGenerationRoute.stable.value;
+          final requiresStableVisionReview = drawImageStableReviewEnabled &&
+              !useFastToolRoute &&
+              imageContents.isNotEmpty;
           finishMeta['imageCount'] = imageContents.length;
           finishMeta['asyncAccepted'] = asyncAccepted;
+          finishMeta['stableVisionReview'] = requiresStableVisionReview;
+          finishMeta['actualFlowMode'] = actualFlowMode;
           if (imageContents.isNotEmpty) {
             AppLogger.info(_logTag, 'Collected draw_image tool images',
                 metadata: {
@@ -232,6 +271,8 @@ class ChatSendApiRunner {
               result: _buildToolResultForModel(
                 toolName: tc.name,
                 rawResult: resultStr,
+                drawImageDeliveredToChat: !requiresStableVisionReview,
+                drawImageRequiresReview: requiresStableVisionReview,
               ),
             ),
             imageContents: imageContents,
@@ -309,7 +350,57 @@ class ChatSendApiRunner {
         allToolAudioResults.add(outcome.audioResult!);
       }
       if (outcome.imageContents.isNotEmpty) {
-        allToolContents.addAll(outcome.imageContents);
+        if (drawImageStableReviewEnabled &&
+            !outcome.isAsyncAcceptedDrawImage &&
+            outcome.toolResult.name == 'draw_image') {
+          pendingStableReviewImages =
+              _selectStableReviewImages(outcome.imageContents);
+          AppLogger.info(_logTag, 'Stable draw_image result held for review',
+              metadata: {
+                'count': pendingStableReviewImages.length,
+              });
+        } else {
+          allToolContents.addAll(outcome.imageContents);
+        }
+      }
+    }
+
+    void applyStableReviewDecision({
+      required String assistantText,
+      required List<ToolCall> toolCalls,
+      required int round,
+    }) {
+      if (pendingStableReviewImages.isEmpty) return;
+
+      final wantsToSend = _containsImagePlaceholder(assistantText);
+      final requestsRedraw = toolCalls.any((call) => call.name == 'draw_image');
+
+      if (wantsToSend) {
+        allToolContents.addAll(pendingStableReviewImages);
+        AppLogger.info(_logTag, 'Stable draw_image approved for delivery',
+            metadata: {
+              'round': round,
+              'count': pendingStableReviewImages.length,
+            });
+        pendingStableReviewImages = <PluginImageContent>[];
+        return;
+      }
+
+      if (requestsRedraw) {
+        AppLogger.info(_logTag, 'Stable draw_image rejected, regenerate',
+            metadata: {
+              'round': round,
+            });
+        pendingStableReviewImages = <PluginImageContent>[];
+        return;
+      }
+
+      if (toolCalls.isEmpty) {
+        AppLogger.info(_logTag, 'Stable draw_image not delivered by model',
+            metadata: {
+              'round': round,
+            });
+        pendingStableReviewImages = <PluginImageContent>[];
       }
     }
 
@@ -347,6 +438,7 @@ class ChatSendApiRunner {
           );
 
       if (shouldAttemptStreaming) {
+        final streamTextFilter = _VisibleAssistantStreamFilter();
         unawaited(StreamMonitorService.recordAttempt(
           modelFullId: config.modelFullId,
           round: round,
@@ -366,7 +458,12 @@ class ChatSendApiRunner {
             providerApiKey: config.providerApiKey,
             customConfig: config.customConfig,
             tools: config.tools,
-            onTextDelta: onStreamTextDelta,
+            onTextDelta: (delta) {
+              if (onStreamTextDelta == null || delta.isEmpty) return;
+              final visibleDelta = streamTextFilter.consume(delta);
+              if (visibleDelta.isEmpty) return;
+              onStreamTextDelta(visibleDelta);
+            },
             onToolCallsDetected: onStreamToolCallObserved,
             trace: roundTrace,
             turnId: effectiveTurnId,
@@ -436,6 +533,11 @@ class ChatSendApiRunner {
           }
         }
       }
+      applyStableReviewDecision(
+        assistantText: lastRich.text,
+        toolCalls: currentToolCalls,
+        round: round,
+      );
       if (currentToolCalls.isEmpty) {
         if (traceContext != null) {
           await TraceStore.instance.record(
@@ -477,11 +579,11 @@ class ChatSendApiRunner {
       onStreamToolCallObserved?.call();
 
       final useFastToolRoute = _shouldUseFastToolRoute(
-        fastModeEnabled: fastModeEnabled,
+        fastModeEnabled: fastImageRouteEnabled,
         toolCalls: currentToolCalls,
       );
-      if (fastModeEnabled && !useFastToolRoute) {
-        AppLogger.info(_logTag, '快速模式回落稳定路由', metadata: {
+      if (fastImageRouteEnabled && !useFastToolRoute) {
+        AppLogger.info(_logTag, '快速生图路由回落常规工具串行执行', metadata: {
           'round': round,
           'toolNames': currentToolCalls.map((t) => t.name).toList(),
         });
@@ -597,17 +699,11 @@ class ChatSendApiRunner {
       final shouldContinueFastFollowup = useFastToolRoute &&
           toolOutcomes.any((o) => o.isAsyncAcceptedDrawImage);
       if (shouldContinueFastFollowup) {
-        // 第一轮里的“我去画图了”之类前置话术不保留，第二轮重新流式正文。
-        final hasAsyncAcceptedDrawImage =
-            toolOutcomes.any((o) => o.isAsyncAcceptedDrawImage);
-        if (hasAsyncAcceptedDrawImage) {
-          preToolNarrativeTexts.clear();
-          onStreamTextReset?.call();
-        }
+        // 保留已流出的前置话术，后续轮次只继续追加正文，不再清屏重置。
       }
 
       if (useFastToolRoute && !shouldContinueFastFollowup) {
-        AppLogger.info(_logTag, '快速模式停止后续模型轮次', metadata: {
+        AppLogger.info(_logTag, '快速生图路由停止后续模型轮次', metadata: {
           'round': round,
         });
         roundTrace?.end(additionalMessage: 'fast mode stop');
@@ -616,7 +712,7 @@ class ChatSendApiRunner {
 
       if (round == maxRounds) {
         if (useFastToolRoute && shouldContinueFastFollowup) {
-          AppLogger.info(_logTag, '快速模式达到补充轮次上限', metadata: {
+          AppLogger.info(_logTag, '快速生图路由达到补充轮次上限', metadata: {
             'round': round,
             'maxRounds': maxRounds,
           });
@@ -631,7 +727,7 @@ class ChatSendApiRunner {
 
       if (shouldContinueFastFollowup) {
         if (remainingFastFollowupRounds <= 0) {
-          AppLogger.info(_logTag, '快速模式达到补充轮次上限', metadata: {
+          AppLogger.info(_logTag, '快速生图路由达到补充轮次上限', metadata: {
             'round': round,
             'maxRounds': _maxFastFollowupRounds + 1,
           });
@@ -654,11 +750,24 @@ class ChatSendApiRunner {
       final normalizedToolResultMessages = !supportsVision
           ? _sanitizeMessagesForNonVisionModel(toolResultMessages)
           : toolResultMessages;
-      currentMessages = [...currentMessages, ...normalizedToolResultMessages];
+      var nextRoundMessages = List<Map<String, dynamic>>.from(
+        normalizedToolResultMessages,
+      );
+      if (drawImageStableReviewEnabled &&
+          pendingStableReviewImages.isNotEmpty) {
+        final reviewMessages = await _buildStableDrawImageReviewMessages(
+          pendingStableReviewImages,
+        );
+        if (reviewMessages.isNotEmpty) {
+          nextRoundMessages = [...nextRoundMessages, ...reviewMessages];
+        }
+      }
+      currentMessages = [...currentMessages, ...nextRoundMessages];
 
       roundTrace?.note('追加工具结果', metadata: {
-        'newMessagesCount': normalizedToolResultMessages.length,
+        'newMessagesCount': nextRoundMessages.length,
         'totalMessages': currentMessages.length,
+        'pendingStableReviewImages': pendingStableReviewImages.length,
       });
       roundTrace?.end(additionalMessage: 'continue next round');
     }
@@ -790,7 +899,18 @@ class ChatSendApiRunner {
     );
   }
 
-  AITool? _findToolByName(List<Plugin> plugins, String name) {
+  AITool? _findToolByName(
+    List<Plugin> plugins,
+    String name, {
+    List<AITool>? availableTools,
+  }) {
+    if (availableTools != null) {
+      for (final tool in availableTools) {
+        if (tool.name == name) return tool;
+      }
+      return null;
+    }
+
     for (final plugin in plugins) {
       try {
         final tools = plugin.getTools();
@@ -939,6 +1059,76 @@ class ChatSendApiRunner {
     return contents;
   }
 
+  List<PluginImageContent> _selectStableReviewImages(
+    List<PluginImageContent> images,
+  ) {
+    if (images.isEmpty) return const <PluginImageContent>[];
+    return <PluginImageContent>[images.first];
+  }
+
+  Future<List<Map<String, dynamic>>> _buildStableDrawImageReviewMessages(
+    List<PluginImageContent> images,
+  ) async {
+    if (images.isEmpty) return const <Map<String, dynamic>>[];
+
+    final content = <Map<String, dynamic>>[
+      <String, dynamic>{
+        'type': 'text',
+        'text': _stableDrawImageReviewInstruction,
+      },
+    ];
+
+    for (final image in images) {
+      final imagePart = await _buildLocalImageInputPart(image.localPath);
+      if (imagePart != null) {
+        content.add(imagePart);
+      }
+    }
+
+    if (content.length <= 1) {
+      AppLogger.warning(_logTag, 'Stable draw_image review image load failed');
+      return const <Map<String, dynamic>>[];
+    }
+
+    return <Map<String, dynamic>>[
+      <String, dynamic>{
+        'role': 'user',
+        'content': content,
+      },
+    ];
+  }
+
+  Future<Map<String, dynamic>?> _buildLocalImageInputPart(
+      String localPath) async {
+    final trimmed = localPath.trim();
+    if (trimmed.isEmpty) return null;
+
+    try {
+      final file = File(trimmed);
+      if (!await file.exists()) return null;
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) return null;
+      final mime = MimeUtils.guessImageMimeType(trimmed);
+      final base64 = base64Encode(bytes);
+      return <String, dynamic>{
+        'type': 'image_url',
+        'image_url': <String, dynamic>{
+          'url': 'data:$mime;base64,$base64',
+        },
+      };
+    } catch (e) {
+      AppLogger.warning(_logTag, 'Stable draw_image review image read failed',
+          metadata: {
+            'path': trimmed,
+            'error': e.toString(),
+          });
+      return null;
+    }
+  }
+
+  bool _containsImagePlaceholder(String text) =>
+      _imagePlaceholderRegex.hasMatch(text);
+
   List<ToolCall> _extractFallbackToolCalls(String text) =>
       _fallbackParser.extractFallbackToolCalls(text);
 
@@ -1020,6 +1210,8 @@ class ChatSendApiRunner {
   String _buildToolResultForModel({
     required String toolName,
     required String rawResult,
+    bool drawImageDeliveredToChat = true,
+    bool drawImageRequiresReview = false,
   }) {
     if (toolName != 'draw_image') {
       return rawResult;
@@ -1098,7 +1290,14 @@ class ChatSendApiRunner {
 
     if (imageCount > 0) {
       summary['image_present'] = true;
-      summary['delivered_to_chat'] = true;
+      if (drawImageDeliveredToChat) {
+        summary['delivered_to_chat'] = true;
+      } else {
+        summary['image_delivery_pending'] = true;
+      }
+      if (drawImageRequiresReview) {
+        summary['image_review_pending'] = true;
+      }
     } else if (accepted == true) {
       summary['image_delivery_pending'] = true;
     }
@@ -1129,12 +1328,20 @@ class ChatSendApiRunner {
 
     cleaned = cleaned.replaceAllMapped(
       RegExp(r'\[(图片|image)\s*:\s*[^\]]*?\]', caseSensitive: false),
-      (_) => '[图片]',
+      (_) => '<image></image>',
+    );
+    cleaned = cleaned.replaceAllMapped(
+      RegExp(r'<image>\s*</image>', caseSensitive: false),
+      (_) => '<image></image>',
     );
 
     cleaned = cleaned.replaceAll(
+      ChatRequestMessageBuilder.nonVisionImageContextRegex,
+      '',
+    );
+    cleaned = cleaned.replaceAll(
       RegExp(
-        '${RegExp.escape(ChatRequestMessageBuilder.nonVisionImageContextPrefix)}\\{[^\\r\\n]*\\}(?:\\r?\\n)?',
+        '${RegExp.escape(_stableDrawImageReviewPrefix)}[^\\r\\n]*(?:\\r?\\n)?',
       ),
       '',
     );
@@ -1149,7 +1356,7 @@ class ChatSendApiRunner {
 
     cleaned = cleaned.replaceAll(
       RegExp(
-        r'^[ \t]*\[(?:图片|image)(?:\s*:[^\]]*)?\][ \t]*(?:\r?\n)?',
+        r'^[ \t]*(?:<image>\s*</image>|\[(?:图片|image)(?:\s*:[^\]]*)?\])[ \t]*(?:\r?\n)?',
         caseSensitive: false,
         multiLine: true,
       ),
@@ -1451,6 +1658,82 @@ class _ToolExecutionOutcome {
     this.imageContents = const <PluginImageContent>[],
     this.isAsyncAcceptedDrawImage = false,
   });
+}
+
+class _VisibleAssistantStreamFilter {
+  static const String _imageOpenTagPrefix = '<image';
+  static const String _imageCloseTag = '</image>';
+
+  String _pending = '';
+  bool _insideImageTag = false;
+
+  String consume(String delta) {
+    if (delta.isEmpty) return '';
+    _pending = '$_pending$delta';
+    final output = StringBuffer();
+
+    while (_pending.isNotEmpty) {
+      if (_insideImageTag) {
+        final lowerPending = _pending.toLowerCase();
+        final closeIndex = lowerPending.indexOf(_imageCloseTag);
+        if (closeIndex < 0) {
+          _pending = _retainTail(_pending, _imageCloseTag.length - 1);
+          break;
+        }
+        _pending = _pending.substring(closeIndex + _imageCloseTag.length);
+        _insideImageTag = false;
+        continue;
+      }
+
+      final lowerPending = _pending.toLowerCase();
+      final openIndex = lowerPending.indexOf(_imageOpenTagPrefix);
+      if (openIndex >= 0) {
+        if (openIndex > 0) {
+          output.write(_pending.substring(0, openIndex));
+        }
+        final tagEndIndex = _pending.indexOf('>', openIndex);
+        if (tagEndIndex < 0) {
+          _pending = _pending.substring(openIndex);
+          break;
+        }
+        _pending = _pending.substring(tagEndIndex + 1);
+        _insideImageTag = true;
+        continue;
+      }
+
+      final partialPrefixLength =
+          _findTrailingPrefixLength(lowerPending, _imageOpenTagPrefix);
+      if (partialPrefixLength > 0) {
+        final visibleEnd = _pending.length - partialPrefixLength;
+        if (visibleEnd > 0) {
+          output.write(_pending.substring(0, visibleEnd));
+        }
+        _pending = _pending.substring(visibleEnd);
+        break;
+      }
+
+      output.write(_pending);
+      _pending = '';
+    }
+
+    return output.toString();
+  }
+
+  String _retainTail(String value, int maxLength) {
+    if (value.length <= maxLength) return value;
+    return value.substring(value.length - maxLength);
+  }
+
+  int _findTrailingPrefixLength(String value, String prefix) {
+    final maxLength =
+        value.length < prefix.length ? value.length : prefix.length;
+    for (var length = maxLength; length > 0; length--) {
+      if (prefix.startsWith(value.substring(value.length - length))) {
+        return length;
+      }
+    }
+    return 0;
+  }
 }
 
 class _SanitizeResult {

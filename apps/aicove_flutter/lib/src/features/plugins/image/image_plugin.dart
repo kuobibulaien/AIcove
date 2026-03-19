@@ -12,7 +12,6 @@ import '../../../core/api/agent_api.dart';
 import '../../../core/api/image_providers/image_provider_adapter_factory.dart';
 import '../../../core/app_logger.dart';
 import '../../../core/models/message_block.dart';
-import '../../chat/conversation_providers.dart';
 import '../../chat/domain/message.dart';
 import '../../chat/domain/persona_prompt_codec.dart';
 import '../../chat/id_gen.dart';
@@ -23,10 +22,18 @@ import 'image_config.dart';
 
 class ImagePlugin extends BasePlugin {
   static int _asyncJobSeq = 0;
-  static final _metadata = PluginMetadata(
+  static int _imageRequestSeq = 0;
+  static final RegExp _inlineImageTagRegex = RegExp(
+    r'<image>([\s\S]*?)</image>',
+    caseSensitive: false,
+  );
+  static final RegExp _cjkPromptRegex = RegExp(
+    r'[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af]',
+  );
+  static const _metadata = PluginMetadata(
     id: 'image',
     name: '绘图工具',
-    description: '允许 AI 通过原生工具调用生成图片',
+    description: '允许 AI 通过稳定工具调用或 <image> 直连生成图片',
     version: '1.0.0',
     author: 'AIcove Team',
     icon: Icons.brush_outlined,
@@ -103,24 +110,203 @@ class ImagePlugin extends BasePlugin {
     String? userMessage,
     bool supportsToolCalling = false,
   }) async {
-    return null;
+    if (!enabled) {
+      return null;
+    }
+    final settings = _ref.read(appSettingsProvider).valueOrNull;
+    if (settings == null ||
+        settings.callFlowSettings.mode != CallFlowMode.fast ||
+        _resolveTarget(settings) == null) {
+      return null;
+    }
+    return buildInlineImageSystemPrompt();
   }
 
   @override
   List<AITool> getTools() {
     if (!enabled) return [];
     final settings = _ref.read(appSettingsProvider).valueOrNull;
-    if (settings == null || _resolveTarget(settings) == null) return [];
+    if (settings == null ||
+        settings.callFlowSettings.mode == CallFlowMode.fast ||
+        _resolveTarget(settings) == null) {
+      return [];
+    }
     return [_drawImageTool];
   }
 
   @override
   Future<PluginProcessResult> processResponse(String text) async {
+    if (!enabled) {
+      return PluginProcessResult(
+        processedText: text,
+        events: const [],
+        contents: const [],
+      );
+    }
+
+    final matches =
+        _inlineImageTagRegex.allMatches(text).toList(growable: false);
+    if (matches.isEmpty) {
+      return PluginProcessResult(
+        processedText: text,
+        events: const [],
+        contents: const [],
+      );
+    }
+
+    final events = <PluginEvent>[];
+    for (final match in matches) {
+      final prompt = (match.group(1) ?? '').trim();
+      if (prompt.isEmpty) {
+        continue;
+      }
+      events.add(PluginEvent(
+        pluginId: id,
+        type: 'image_generate',
+        data: <String, dynamic>{
+          'prompt': prompt,
+          'tag': match.group(0),
+          'markerStart': match.start,
+          'markerEnd': match.end,
+        },
+      ));
+    }
+
+    if (events.isEmpty) {
+      return PluginProcessResult(
+        processedText: text,
+        events: const [],
+        contents: const [],
+      );
+    }
+
+    final processedText = _normalizeProcessedText(
+      text.replaceAllMapped(_inlineImageTagRegex, (match) {
+        final prompt = (match.group(1) ?? '').trim();
+        return prompt.isEmpty ? match.group(0)! : '';
+      }),
+    );
+
+    AppLogger.info('ImagePlugin', '解析到 <image> 直连生图标签', metadata: {
+      'events': events.length,
+      'textLength': text.length,
+    });
+
     return PluginProcessResult(
-      processedText: text,
-      events: const [],
+      processedText: processedText,
+      events: events,
       contents: const [],
     );
+  }
+
+  String buildInlineImageSystemPrompt({
+    String? customDrawingPrompt,
+  }) {
+    final baseTemplate = _config.effectiveInlinePromptTemplate.trim();
+    final extraRule = customDrawingPrompt?.trim() ?? '';
+    if (extraRule.isEmpty) {
+      return baseTemplate;
+    }
+    return '$baseTemplate\n\n角色专属生图要求：\n$extraRule';
+  }
+
+  Future<InlineImageGenerationResult> generateInlineImage({
+    required String prompt,
+    String? roleArtistPresetName,
+  }) async {
+    final rawPrompt = prompt.trim();
+    if (rawPrompt.isEmpty) {
+      return const InlineImageGenerationResult.failure('prompt is empty');
+    }
+    if (_containsDisallowedPromptChars(rawPrompt)) {
+      return const InlineImageGenerationResult.failure(
+        'inline image prompt must be English for NovelAI',
+      );
+    }
+
+    _ImageTarget? resolvedTarget;
+    try {
+      final settings = await _ref.read(appSettingsProvider.future);
+      if (!settings.imageGenerationEnabled) {
+        return const InlineImageGenerationResult.failure(
+          'image plugin is disabled',
+        );
+      }
+
+      resolvedTarget = _resolveTarget(settings);
+      if (resolvedTarget == null) {
+        return const InlineImageGenerationResult.failure(
+          'no configured image provider/model in provider settings',
+        );
+      }
+
+      final promptBundle = _buildPromptBundle(
+        rawPrompt: rawPrompt,
+        roleArtistPresetName: roleArtistPresetName,
+      );
+      final requestProvider = _resolveRequestProvider(resolvedTarget.provider);
+      final saved = await _generateAndSaveImages(
+        requestProvider: requestProvider,
+        providerId: resolvedTarget.provider.id,
+        modelId: resolvedTarget.modelId,
+        prompt: promptBundle.prompt,
+        negativePrompt: promptBundle.negativePrompt,
+        width: _config.defaultWidth,
+        height: _config.defaultHeight,
+        count: 1,
+        steps: _config.defaultSteps,
+        guidanceScale: _config.defaultGuidanceScale,
+        providerApiBase: resolvedTarget.provider.apiBaseUrl,
+        providerApiKey: resolvedTarget.apiKey,
+        customConfig: resolvedTarget.provider.customConfig,
+        requestSource: 'inline_image',
+        flowMode: 'fast',
+      );
+      if (saved.isEmpty) {
+        return const InlineImageGenerationResult.failure(
+          'provider returned no images',
+        );
+      }
+
+      AppLogger.info('ImagePlugin', '直连 <image> 生图完成', metadata: {
+        'provider': resolvedTarget.provider.id,
+        'model': resolvedTarget.modelId,
+        'artistPresetName': promptBundle.artistPreset?.name,
+      });
+
+      return InlineImageGenerationResult.success(
+        localPath: saved.first,
+        rawPrompt: rawPrompt,
+        prompt: promptBundle.prompt,
+        negativePrompt: promptBundle.negativePrompt,
+        artistPresetName: promptBundle.artistPreset?.name,
+        artistPresetSource: promptBundle.artistPresetSource,
+      );
+    } catch (e) {
+      AppLogger.warning('ImagePlugin', '直连 <image> 生图失败', metadata: {
+        'error': e.toString(),
+        'selectedProviderId': _config.selectedProviderId,
+        'selectedModelId': _config.selectedModelId,
+        'resolvedProviderId': resolvedTarget?.provider.id,
+        'resolvedModelId': resolvedTarget?.modelId,
+      });
+      return InlineImageGenerationResult.failure(e.toString());
+    }
+  }
+
+  Future<String?> runDrawImageToolForDebug({
+    required String prompt,
+    String? negativePrompt,
+    int? width,
+    int? height,
+  }) {
+    return _handleDrawImage({
+      'prompt': prompt,
+      if (negativePrompt != null) 'negative_prompt': negativePrompt,
+      'width': width ?? _config.defaultWidth,
+      'height': height ?? _config.defaultHeight,
+      '_aicove_flow_mode': 'settings_test',
+    });
   }
 
   AITool get _drawImageTool => AITool(
@@ -190,26 +376,12 @@ class ImagePlugin extends BasePlugin {
         });
       }
 
-      // 画师串自动拼接：优先角色绑定，其次全局选中预设。
-      ArtistPreset? artistPreset = _config.selectedArtistPreset;
-      var artistPresetSource = 'none';
-      if (roleArtistPresetName ==
-          PersonaPromptCodec.artistPresetDisabledBinding) {
-        artistPreset = null;
-        artistPresetSource = 'role_disabled';
-      } else if (roleArtistPresetName.isNotEmpty) {
-        artistPreset = _config.artistPresets
-            .where((preset) => preset.name == roleArtistPresetName)
-            .firstOrNull;
-        artistPresetSource =
-            artistPreset == null ? 'role_bound_missing' : 'role_bound';
-      } else if (artistPreset != null) {
-        artistPresetSource = 'global_selected';
-      }
-      final artistPromptPrefix = artistPreset?.content.trim() ?? '';
-      final prompt = artistPromptPrefix.isNotEmpty
-          ? '$artistPromptPrefix, $rawPrompt'
-          : rawPrompt;
+      final promptBundle = _buildPromptBundle(
+        rawPrompt: rawPrompt,
+        runtimeNegativePrompt: (args['negative_prompt'] as String?)?.trim(),
+        roleArtistPresetName: roleArtistPresetName,
+      );
+      final prompt = promptBundle.prompt;
 
       final width = _readInt(args['width'], _config.defaultWidth, 256, 2048);
       final height = _readInt(args['height'], _config.defaultHeight, 256, 2048);
@@ -217,15 +389,7 @@ class ImagePlugin extends BasePlugin {
       final steps = _config.defaultSteps;
       final count = _config.defaultCount;
       final guidanceScale = _config.defaultGuidanceScale;
-
-      // 负面提示词合并：画师串负面 + 配置默认 + AI 运行时值
-      final artistNeg = artistPreset?.negativeContent.trim() ?? '';
-      final configNeg = _config.defaultNegativePrompt;
-      final baseNeg = _mergeNegativePrompts(artistNeg, configNeg);
-      final negativePrompt = _mergeNegativePrompts(
-        baseNeg,
-        (args['negative_prompt'] as String?)?.trim(),
-      );
+      final negativePrompt = promptBundle.negativePrompt;
 
       final requestProvider = _resolveRequestProvider(resolvedTarget.provider);
       final canRunAsync = asyncRequested && sessionId.isNotEmpty;
@@ -246,6 +410,7 @@ class ImagePlugin extends BasePlugin {
           jobId: jobId,
           sessionId: sessionId,
           turnId: turnId,
+          flowMode: flowMode,
           providerId: resolvedTarget.provider.id,
           modelId: resolvedTarget.modelId,
           requestProvider: requestProvider,
@@ -270,11 +435,12 @@ class ImagePlugin extends BasePlugin {
           'raw_prompt': rawPrompt,
           'prompt': prompt,
           'negative_prompt': negativePrompt,
-          'artist_preset_name': artistPreset?.name,
-          'artist_preset_source': artistPresetSource,
-          if (artistPromptPrefix.isNotEmpty)
-            'artist_prompt_prefix': artistPromptPrefix,
-          if (artistNeg.isNotEmpty) 'artist_negative_prompt': artistNeg,
+          'artist_preset_name': promptBundle.artistPreset?.name,
+          'artist_preset_source': promptBundle.artistPresetSource,
+          if (promptBundle.artistPromptPrefix.isNotEmpty)
+            'artist_prompt_prefix': promptBundle.artistPromptPrefix,
+          if (promptBundle.artistNegativePrompt.isNotEmpty)
+            'artist_negative_prompt': promptBundle.artistNegativePrompt,
           'image_count': 0,
           'message': 'image job accepted',
         });
@@ -294,6 +460,8 @@ class ImagePlugin extends BasePlugin {
         providerApiBase: resolvedTarget.provider.apiBaseUrl,
         providerApiKey: resolvedTarget.apiKey,
         customConfig: resolvedTarget.provider.customConfig,
+        requestSource: 'draw_image',
+        flowMode: flowMode.isEmpty ? 'stable' : flowMode,
       );
 
       AppLogger.info('ImagePlugin', 'Image generated by tool', metadata: {
@@ -311,11 +479,12 @@ class ImagePlugin extends BasePlugin {
         'raw_prompt': rawPrompt,
         'prompt': prompt,
         'negative_prompt': negativePrompt,
-        'artist_preset_name': artistPreset?.name,
-        'artist_preset_source': artistPresetSource,
-        if (artistPromptPrefix.isNotEmpty)
-          'artist_prompt_prefix': artistPromptPrefix,
-        if (artistNeg.isNotEmpty) 'artist_negative_prompt': artistNeg,
+        'artist_preset_name': promptBundle.artistPreset?.name,
+        'artist_preset_source': promptBundle.artistPresetSource,
+        if (promptBundle.artistPromptPrefix.isNotEmpty)
+          'artist_prompt_prefix': promptBundle.artistPromptPrefix,
+        if (promptBundle.artistNegativePrompt.isNotEmpty)
+          'artist_negative_prompt': promptBundle.artistNegativePrompt,
         'images': [
           for (final localPath in saved)
             {
@@ -362,28 +531,67 @@ class ImagePlugin extends BasePlugin {
     required String providerApiBase,
     required String providerApiKey,
     required Map<String, dynamic> customConfig,
+    required String requestSource,
+    String? flowMode,
   }) async {
+    final requestId = _nextImageRequestId();
+    final metadata = <String, dynamic>{
+      'requestId': requestId,
+      'requestSource': requestSource,
+      if (flowMode != null && flowMode.trim().isNotEmpty)
+        'flowMode': flowMode.trim(),
+      'providerId': providerId,
+      'requestProvider': requestProvider,
+      'modelId': modelId,
+      'promptLength': prompt.length,
+      'negativePromptLength': negativePrompt?.length ?? 0,
+      'width': width,
+      'height': height,
+      'count': count,
+      'steps': steps,
+      'guidanceScale': guidanceScale,
+      'timeoutSeconds': _config.timeoutSeconds,
+    };
+    AppLogger.info('ImagePlugin', '图片生成请求开始', metadata: metadata);
     final client = AgentApiClient(
       timeout: Duration(seconds: _config.timeoutSeconds),
     );
-    final result = await client.generateImage(
-      provider: requestProvider,
-      model: modelId,
-      prompt: prompt,
-      negativePrompt: negativePrompt,
-      width: width,
-      height: height,
-      count: count,
-      steps: steps,
-      guidanceScale: guidanceScale,
-      providerApiBase: providerApiBase,
-      providerApiKey: providerApiKey,
-      customConfig: customConfig,
-    );
+    late final ImageGenerationResult result;
+    try {
+      result = await client.generateImage(
+        provider: requestProvider,
+        model: modelId,
+        prompt: prompt,
+        negativePrompt: negativePrompt,
+        width: width,
+        height: height,
+        count: count,
+        steps: steps,
+        guidanceScale: guidanceScale,
+        providerApiBase: providerApiBase,
+        providerApiKey: providerApiKey,
+        customConfig: customConfig,
+        requestId: requestId,
+        requestSource: requestSource,
+        flowMode: flowMode,
+      );
+    } catch (e) {
+      AppLogger.warning('ImagePlugin', '图片生成请求失败', metadata: {
+        ...metadata,
+        'error': e.toString(),
+      });
+      rethrow;
+    }
 
     if (result.images.isEmpty) {
+      AppLogger.warning('ImagePlugin', '图片生成请求返回空结果', metadata: metadata);
       throw StateError('provider returned no images');
     }
+
+    AppLogger.info('ImagePlugin', '图片生成请求成功', metadata: {
+      ...metadata,
+      'imageCount': result.images.length,
+    });
 
     return _saveImages(
       bytesList: result.images,
@@ -396,6 +604,7 @@ class ImagePlugin extends BasePlugin {
     required String jobId,
     required String sessionId,
     required String turnId,
+    required String flowMode,
     required String providerId,
     required String modelId,
     required String requestProvider,
@@ -425,6 +634,8 @@ class ImagePlugin extends BasePlugin {
         providerApiBase: providerApiBase,
         providerApiKey: providerApiKey,
         customConfig: customConfig,
+        requestSource: 'draw_image_async',
+        flowMode: flowMode.isEmpty ? 'fast' : flowMode,
       );
 
       await _appendGeneratedImagesToConversation(
@@ -653,20 +864,53 @@ class ImagePlugin extends BasePlugin {
     return 'image_job_${DateTime.now().microsecondsSinceEpoch}_$_asyncJobSeq';
   }
 
-  int? _readOptionalInt(dynamic value) {
-    if (value == null) return null;
-    if (value is int) return value;
-    if (value is num) return value.toInt();
-    return int.tryParse(value.toString());
+  String _nextImageRequestId() {
+    _imageRequestSeq += 1;
+    return 'img_${DateTime.now().microsecondsSinceEpoch}_$_imageRequestSeq';
   }
 
-  double _readDouble(dynamic value, double fallback, double min, double max) {
-    final parsed = value is double
-        ? value
-        : value is num
-            ? value.toDouble()
-            : double.tryParse(value?.toString() ?? '');
-    return (parsed ?? fallback).clamp(min, max);
+  _ImagePromptBundle _buildPromptBundle({
+    required String rawPrompt,
+    String? runtimeNegativePrompt,
+    String? roleArtistPresetName,
+  }) {
+    ArtistPreset? artistPreset = _config.selectedArtistPreset;
+    var artistPresetSource = 'none';
+    final normalizedRoleArtistPresetName = roleArtistPresetName?.trim() ?? '';
+    if (normalizedRoleArtistPresetName ==
+        PersonaPromptCodec.artistPresetDisabledBinding) {
+      artistPreset = null;
+      artistPresetSource = 'role_disabled';
+    } else if (normalizedRoleArtistPresetName.isNotEmpty) {
+      artistPreset = _config.artistPresets
+          .where((preset) => preset.name == normalizedRoleArtistPresetName)
+          .firstOrNull;
+      artistPresetSource =
+          artistPreset == null ? 'role_bound_missing' : 'role_bound';
+    } else if (artistPreset != null) {
+      artistPresetSource = 'global_selected';
+    }
+
+    final artistPromptPrefix = artistPreset?.content.trim() ?? '';
+    final prompt = artistPromptPrefix.isNotEmpty
+        ? '$artistPromptPrefix, $rawPrompt'
+        : rawPrompt;
+    final artistNegativePrompt = artistPreset?.negativeContent.trim() ?? '';
+    final negativePrompt = _mergeNegativePrompts(
+      _mergeNegativePrompts(
+          artistNegativePrompt, _config.defaultNegativePrompt),
+      runtimeNegativePrompt,
+    );
+
+    return _ImagePromptBundle(
+      rawPrompt: rawPrompt,
+      prompt: prompt,
+      negativePrompt: negativePrompt,
+      artistPreset: artistPreset,
+      artistPresetSource: artistPresetSource,
+      artistPromptPrefix: artistPromptPrefix,
+      artistNegativePrompt: artistNegativePrompt,
+    );
   }
 
   String? _mergeNegativePrompts(String? defaultText, String? runtimeText) {
@@ -685,6 +929,16 @@ class ImagePlugin extends BasePlugin {
 
   @override
   Map<String, dynamic> getConfig() => _config.toJson();
+
+  bool _containsDisallowedPromptChars(String text) =>
+      _cjkPromptRegex.hasMatch(text);
+
+  String _normalizeProcessedText(String text) {
+    var normalized = text;
+    normalized = normalized.replaceAll(RegExp(r'[ \t]{2,}'), ' ');
+    normalized = normalized.replaceAll(RegExp(r'\n{3,}'), '\n\n');
+    return normalized.trim();
+  }
 }
 
 class _ImageTarget {
@@ -697,4 +951,54 @@ class _ImageTarget {
     required this.modelId,
     required this.apiKey,
   });
+}
+
+class _ImagePromptBundle {
+  final String rawPrompt;
+  final String prompt;
+  final String? negativePrompt;
+  final ArtistPreset? artistPreset;
+  final String artistPresetSource;
+  final String artistPromptPrefix;
+  final String artistNegativePrompt;
+
+  const _ImagePromptBundle({
+    required this.rawPrompt,
+    required this.prompt,
+    required this.negativePrompt,
+    required this.artistPreset,
+    required this.artistPresetSource,
+    required this.artistPromptPrefix,
+    required this.artistNegativePrompt,
+  });
+}
+
+class InlineImageGenerationResult {
+  final bool success;
+  final String? localPath;
+  final String? rawPrompt;
+  final String? prompt;
+  final String? negativePrompt;
+  final String? artistPresetName;
+  final String? artistPresetSource;
+  final String? error;
+
+  const InlineImageGenerationResult.success({
+    required this.localPath,
+    required this.rawPrompt,
+    required this.prompt,
+    required this.negativePrompt,
+    required this.artistPresetName,
+    required this.artistPresetSource,
+  })  : success = true,
+        error = null;
+
+  const InlineImageGenerationResult.failure(this.error)
+      : success = false,
+        localPath = null,
+        rawPrompt = null,
+        prompt = null,
+        negativePrompt = null,
+        artistPresetName = null,
+        artistPresetSource = null;
 }

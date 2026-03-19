@@ -29,6 +29,9 @@ import '../widgets/chat_message_list.dart';
 
 const Duration kChatPageImagePrecacheDelay = Duration(milliseconds: 180);
 const Duration kChatPageUnreadClearDelay = Duration(milliseconds: 160);
+final Duration kChatPageDeferredEntryWindow = Duration(
+  milliseconds: kAnimPage.inMilliseconds + 120,
+);
 
 class ChatPage extends ConsumerStatefulWidget {
   final String? conversationId;
@@ -47,6 +50,8 @@ class ChatPage extends ConsumerStatefulWidget {
 class _ChatPageState extends ConsumerState<ChatPage> {
   /// (注释已丢失)
   bool _isLoadingMore = false;
+  bool _databaseTimelineActivated = true;
+  bool _persistentViewportHasMoreMessages = true;
 
   /// (注释已丢失)
   String? _preloadedConversationId;
@@ -56,27 +61,59 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   int _forceScrollToBottomSignal = 0;
   Timer? _imagePrecacheTimer;
   Timer? _clearUnreadTimer;
+  Timer? _deferredEntryTimer;
   String? _staticBackgroundBlurSource;
   ImageProvider? _staticBackgroundBlurProvider;
+  bool _deferredEntryShellActive = false;
+  bool _entrySideEffectsStarted = false;
   final DeferredConversationActivation _conversationActivation =
       DeferredConversationActivation();
+
+  bool get _shouldDeferEntrySideEffects => _deferredEntryShellActive;
 
   @override
   void initState() {
     super.initState();
-    // (注释已丢失)
     final targetId = widget.conversationId;
+    _databaseTimelineActivated = targetId == null;
+    _persistentViewportHasMoreMessages = true;
     if (targetId == null) return;
-    _scheduleConversationActivation(targetId);
-    _scheduleUnreadClear(targetId);
+    final initial = widget.initialConversation?.id == targetId
+        ? widget.initialConversation
+        : null;
+    if (initial != null) {
+      _beginDeferredEntryShell(targetId);
+      return;
+    }
+    _startEntrySideEffects(targetId);
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // (注释已丢失)
-    // (注释已丢失)
-    // (注释已丢失)
+    if (_shouldDeferEntrySideEffects) {
+      return;
+    }
+    _scheduleImagePrecache();
+  }
+
+  void _beginDeferredEntryShell(String conversationId) {
+    _deferredEntryShellActive = true;
+    _deferredEntryTimer?.cancel();
+    _deferredEntryTimer = Timer(kChatPageDeferredEntryWindow, () {
+      if (!mounted || widget.conversationId != conversationId) return;
+      setState(() {
+        _deferredEntryShellActive = false;
+      });
+      _startEntrySideEffects(conversationId);
+    });
+  }
+
+  void _startEntrySideEffects(String conversationId) {
+    if (_entrySideEffectsStarted) return;
+    _entrySideEffectsStarted = true;
+    _scheduleConversationActivation(conversationId);
+    _scheduleUnreadClear(conversationId);
     _scheduleImagePrecache();
   }
 
@@ -113,6 +150,44 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         ref.read(activeConversationIdProvider.notifier).state = id;
       },
     );
+  }
+
+  void _activateDatabaseTimeline(
+    String conversationId, {
+    bool loadMoreOnActivate = false,
+  }) {
+    if (_databaseTimelineActivated) {
+      if (loadMoreOnActivate) {
+        unawaited(_loadMoreMessages(conversationId));
+      }
+      return;
+    }
+
+    final visibleCountNotifier =
+        ref.read(conversationVisibleCountProvider(conversationId).notifier);
+    final currentVisibleCount = visibleCountNotifier.state;
+    if (loadMoreOnActivate) {
+      final targetVisibleCount = currentVisibleCount <
+              kConversationInitialVisibleCount + kConversationVisiblePageSize
+          ? kConversationInitialVisibleCount + kConversationVisiblePageSize
+          : currentVisibleCount + kConversationVisiblePageSize;
+      visibleCountNotifier.state = targetVisibleCount;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _databaseTimelineActivated = true;
+      if (loadMoreOnActivate) {
+        _isLoadingMore = true;
+      }
+    });
+
+    if (loadMoreOnActivate) {
+      Future<void>.delayed(const Duration(milliseconds: 120)).then((_) {
+        if (!mounted) return;
+        setState(() => _isLoadingMore = false);
+      });
+    }
   }
 
   /// 检查视觉兼容性，必要时弹窗确认
@@ -350,9 +425,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               },
               orElse: () => null,
             );
-    final messages =
-        ref.read(conversationMessagesProvider(targetId)).valueOrNull ??
-            const <Message>[];
+    final messages = _databaseTimelineActivated
+        ? ref.read(conversationMessagesProvider(targetId)).valueOrNull ??
+            const <Message>[]
+        : const <Message>[];
 
     if (conv != null) {
       _preloadImages(conv, messages);
@@ -619,18 +695,29 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   @override
   void didUpdateWidget(covariant ChatPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // (注释已丢失)
     final targetId = widget.conversationId;
-    if (targetId != oldWidget.conversationId && targetId != null) {
-      _scheduleConversationActivation(targetId);
-      // (注释已丢失)
+    if (targetId != oldWidget.conversationId) {
+      _deferredEntryTimer?.cancel();
+      _entrySideEffectsStarted = false;
+      _deferredEntryShellActive = false;
       setState(() {
         _isLoadingMore = false;
         _autoScrollToBottomEnabled = true;
+        _databaseTimelineActivated = targetId == null;
+        _persistentViewportHasMoreMessages = true;
       });
       _preloadedConversationId = null;
-      _scheduleImagePrecache();
-      _scheduleUnreadClear(targetId);
+      if (targetId == null) {
+        return;
+      }
+      final initial = widget.initialConversation?.id == targetId
+          ? widget.initialConversation
+          : null;
+      if (initial != null) {
+        _beginDeferredEntryShell(targetId);
+        return;
+      }
+      _startEntrySideEffects(targetId);
     }
   }
 
@@ -639,12 +726,21 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _conversationActivation.clear();
     _imagePrecacheTimer?.cancel();
     _clearUnreadTimer?.cancel();
+    _deferredEntryTimer?.cancel();
     super.dispose();
   }
 
   /// (注释已丢失)
   Future<void> _loadMoreMessages(String conversationId) async {
     if (_isLoadingMore) return;
+    if (!_databaseTimelineActivated) {
+      if (!_persistentViewportHasMoreMessages) return;
+      _activateDatabaseTimeline(
+        conversationId,
+        loadMoreOnActivate: true,
+      );
+      return;
+    }
     if (!ref.read(conversationHasMoreProvider(conversationId))) return;
 
     setState(() => _isLoadingMore = true);
@@ -669,32 +765,45 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final initial = widget.initialConversation?.id == targetId
         ? widget.initialConversation
         : null;
-    final targetConversation = targetId == null
+    final deferEntryShell =
+        targetId != null && initial != null && _deferredEntryShellActive;
+    final targetConversation = targetId == null || deferEntryShell
         ? null
         : ref.watch(conversationSnapshotByIdProvider(targetId));
     final conv = targetId == null
         ? ref.watch(activeConversationProvider)
-        : targetConversation ??
-            ref.watch(
-              conversationByIdProvider(targetId)
-                  .select((value) => value.valueOrNull),
-            ) ??
-            initial;
+        : deferEntryShell
+            ? initial
+            : targetConversation ??
+                ref.watch(
+                  conversationByIdProvider(targetId)
+                      .select((value) => value.valueOrNull),
+                ) ??
+                initial;
     final currentConversationId = conv?.id ?? targetId;
-    final messagesAsync = currentConversationId == null
+    final useDatabaseTimeline =
+        _databaseTimelineActivated || currentConversationId == null;
+    final messagesAsync = !useDatabaseTimeline
         ? const AsyncValue.data(<Message>[])
-        : ref.watch(conversationMessagesProvider(currentConversationId));
+        : currentConversationId == null
+            ? const AsyncValue.data(<Message>[])
+            : ref.watch(conversationMessagesProvider(currentConversationId));
     final messages = messagesAsync.valueOrNull ?? const <Message>[];
-    final hasMoreMessages = currentConversationId != null &&
-        ref.watch(conversationHasMoreProvider(currentConversationId));
-    final streamingBubble = currentConversationId == null
-        ? StreamingBubbleState.hidden
-        : ref.watch(streamingBubbleProvider(currentConversationId));
-    // (注释已丢失)
-    // (注释已丢失)
+    final hasMoreMessages = currentConversationId == null
+        ? false
+        : useDatabaseTimeline
+            ? ref.watch(conversationHasMoreProvider(currentConversationId))
+            : _persistentViewportHasMoreMessages;
+    final transientMessages = deferEntryShell || currentConversationId == null
+        ? const <Message>[]
+        : ref.watch(
+            conversationTransientMessagesProvider(currentConversationId));
     final actions = ref.read(chatActionsProvider); // (注释已丢失)
-    final sidebarVisible = ref.watch(sidebarVisibleProvider);
-    final settingsAsync = ref.watch(appSettingsProvider);
+    final sidebarVisible = widget.showToggleButton && !deferEntryShell
+        ? ref.watch(sidebarVisibleProvider)
+        : false;
+    final settingsAsync =
+        deferEntryShell ? null : ref.watch(appSettingsProvider);
     final colors = context.moeColors;
 
     // 监听模型轮询通知，弹 toast 提示
@@ -714,14 +823,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     });
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final chatBgColor = settingsAsync.maybeWhen(
-      data: (settings) {
-        if (isDark) return colors.bgMain;
-        // (注释已丢失)
-        return settings.chatBackgroundColor.color ?? colors.surface;
-      },
-      orElse: () => isDark ? colors.bgMain : colors.surface,
-    );
+    final chatBgColor = settingsAsync == null
+        ? (isDark ? colors.bgMain : colors.surface)
+        : settingsAsync.maybeWhen(
+            data: (settings) {
+              if (isDark) return colors.bgMain;
+              return settings.chatBackgroundColor.color ?? colors.surface;
+            },
+            orElse: () => isDark ? colors.bgMain : colors.surface,
+          );
     final hasCustomBackground =
         (conv?.chatBackgroundImage?.trim().isNotEmpty ?? false);
     final extendBehindAppBar = hasCustomBackground;
@@ -764,17 +874,19 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   ),
                 ),
               ),
-        title: Consumer(
-          builder: (context, ref, _) {
-            final status = ref.watch(chatStatusProvider);
-            final displayName = conv?.displayName ?? '聊天';
-            return Text(
-              status == ChatStatus.idle ? displayName : status.label,
-            );
-          },
-        ),
+        title: deferEntryShell
+            ? Text(conv?.displayName ?? '聊天')
+            : Consumer(
+                builder: (context, ref, _) {
+                  final status = ref.watch(chatStatusProvider);
+                  final displayName = conv?.displayName ?? '聊天';
+                  return Text(
+                    status == ChatStatus.idle ? displayName : status.label,
+                  );
+                },
+              ),
         centerTitle: false,
-        leading: widget.showToggleButton
+        leading: widget.showToggleButton && !deferEntryShell
             ? MoeG2ClipRRect(
                 radius: 8,
                 child: Material(
@@ -796,7 +908,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               )
             : null,
         actions: [
-          if (conv != null) ...[
+          if (!deferEntryShell && conv != null) ...[
             IconButton(
               icon: Icon(Icons.add_comment_outlined,
                   color: colors.headerContentColor),
@@ -1004,20 +1116,51 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                             key: ValueKey(conv.id),
                             conversationId: conv.id,
                             messages: messages,
+                            transientMessages: transientMessages,
                             avatarUrl: conv.avatarUrl ?? conv.characterImage,
                             displayName: conv.displayName,
-                            streamingBubbleState: streamingBubble,
                             bottomOverlayHeight: _composerOverlayHeight,
                             autoScrollToBottomEnabled:
                                 _autoScrollToBottomEnabled,
                             onAutoScrollDisabled: _disableChatListAutoScroll,
                             forceScrollToBottomSignal:
                                 _forceScrollToBottomSignal,
+                            allowPersistentViewportBoot:
+                                !_databaseTimelineActivated,
+                            onPersistentViewportBootMiss: () {
+                              _activateDatabaseTimeline(conv.id);
+                            },
+                            onPersistentViewportVisibleCountResolved:
+                                (visibleCount) {
+                              final normalizedVisibleCount = visibleCount <
+                                      kConversationInitialVisibleCount
+                                  ? kConversationInitialVisibleCount
+                                  : visibleCount;
+                              final notifier = ref.read(
+                                conversationVisibleCountProvider(conv.id)
+                                    .notifier,
+                              );
+                              if (notifier.state != normalizedVisibleCount) {
+                                notifier.state = normalizedVisibleCount;
+                              }
+                            },
+                            onPersistentViewportHasMoreResolved: (hasMore) {
+                              if (!mounted) return;
+                              if (_persistentViewportHasMoreMessages !=
+                                  hasMore) {
+                                setState(() {
+                                  _persistentViewportHasMoreMessages = hasMore;
+                                });
+                              }
+                            },
+                            expectedLastMessagePreview: conv.lastMessage,
+                            expectedLastMessageTime: conv.lastMessageTime,
                             contextStartMessageId: conv.contextStartMessageId,
                             onLoadMore: () => _loadMoreMessages(conv.id),
                             isLoadingMore: _isLoadingMore,
                             hasMoreMessages: hasMoreMessages,
                             onEditMessage: (message) async {
+                              _activateDatabaseTimeline(conv.id);
                               final text =
                                   await actions.editMessage(message.id);
                               if (text != null && text.isNotEmpty) {
@@ -1026,6 +1169,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                               }
                             },
                             onRegenerateMessage: (message) {
+                              _activateDatabaseTimeline(conv.id);
                               if (ref.read(sendingProvider)) {
                                 MoeToast.brief(
                                   context,
@@ -1036,6 +1180,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                               actions.regenerate(message.id);
                             },
                             onEnhanceRegenerateMessage: (message) {
+                              _activateDatabaseTimeline(conv.id);
                               if (ref.read(sendingProvider)) {
                                 MoeToast.brief(
                                   context,
@@ -1043,7 +1188,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                                 );
                                 return;
                               }
-                              actions.regenerateWithEnhancement(message.id);
+                              actions.regenerateWithEnhancement(
+                                message.id,
+                              );
                             },
                           ),
                         ),
@@ -1067,29 +1214,32 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     );
                     return;
                   }
-                  // 视觉兼容性检查
                   final conv = ref.read(activeConversationProvider);
                   if (conv != null) {
                     final ok = await _checkVisionCompat(conv: conv);
                     if (!ok) return;
                   }
-                  // 检查是否有引用消息
                   final quoted = ref.read(quotedMessageProvider);
                   if (quoted != null) {
                     final quotedText = quoted.content.length > 30
                         ? '${quoted.content.substring(0, 30)}...'
                         : quoted.content;
                     final quotedPrefix = '> Quote: $quotedText\n\n';
+                    if (conv != null) {
+                      _activateDatabaseTimeline(conv.id);
+                    }
                     _forceChatListToBottom();
                     actions.send(quotedPrefix + text);
                     ref.read(quotedMessageProvider.notifier).state = null;
                   } else {
+                    if (conv != null) {
+                      _activateDatabaseTimeline(conv.id);
+                    }
                     _forceChatListToBottom();
                     actions.send(text);
                   }
                 },
                 onImageSelected: (imagePath, {String? text}) async {
-                  // 如果正在发送，不处理新图片
                   if (ref.read(sendingProvider)) {
                     MoeToast.brief(
                       context,
@@ -1097,7 +1247,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     );
                     return;
                   }
-                  // 视觉兼容性检查（当前消息包含图片）
                   final conv = ref.read(activeConversationProvider);
                   if (conv != null) {
                     final ok = await _checkVisionCompat(
@@ -1105,18 +1254,22 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                       currentMessageHasImage: true,
                     );
                     if (!ok) return;
+                    _activateDatabaseTimeline(conv.id);
                   }
                   _forceChatListToBottom();
                   actions.sendWithImage(imagePath, text: text);
                 },
                 onFileSelected: (filePath) {
-                  // 如果正在发送，不处理新文件
                   if (ref.read(sendingProvider)) {
                     MoeToast.brief(
                       context,
                       'Please wait for current message to finish',
                     );
                     return;
+                  }
+                  final conv = ref.read(activeConversationProvider);
+                  if (conv != null) {
+                    _activateDatabaseTimeline(conv.id);
                   }
                   _forceChatListToBottom();
                   actions.sendWithFile(filePath);

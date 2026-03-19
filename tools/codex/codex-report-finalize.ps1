@@ -17,9 +17,9 @@ param(
 
     [int]$ProviderTimeoutSeconds = 90,
 
-    [int]$MaxUserMessages = 3,
+    [int]$MaxUserMessages = 1,
 
-    [int]$MaxContextChars = 6000,
+    [int]$MaxContextChars = 2000,
 
     [switch]$DryRun
 )
@@ -83,6 +83,14 @@ function Get-WorkspaceRoot {
     return $script:WorkspaceRoot
 }
 
+function Get-PolishRootDirectory {
+    return (Join-Path (Get-WorkspaceRoot) '.codex-polish')
+}
+
+function Get-ManagedDraftDirectory {
+    return (Join-Path (Get-PolishRootDirectory) 'drafts')
+}
+
 function ConvertTo-SafePathSegment {
     param(
         [string]$Value,
@@ -107,6 +115,37 @@ function New-GeneratedRunId {
     $timestamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssfffZ')
     $suffix = [guid]::NewGuid().ToString('N').Substring(0, 8)
     return "$timestamp-$suffix"
+}
+
+function Resolve-DraftFilePath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DraftFile,
+        [Parameter(Mandatory = $true)]
+        [string]$WorkspaceRoot
+    )
+
+    $resolvedDraftPath = (Resolve-Path -LiteralPath $DraftFile).Path
+    $draftDirectory = Split-Path -Path $resolvedDraftPath -Parent
+    $draftFileName = Split-Path -Path $resolvedDraftPath -Leaf
+    $workspaceRootPath = (Resolve-Path -LiteralPath $WorkspaceRoot).Path
+    $managedDraftDirectory = Get-ManagedDraftDirectory
+
+    if (
+        $draftDirectory -ieq $workspaceRootPath -and
+        $draftFileName -match '^\.codex-polish-draft(?:-.+)?\.md$'
+    ) {
+        New-Item -ItemType Directory -Path $managedDraftDirectory -Force | Out-Null
+        $managedDraftPath = Join-Path $managedDraftDirectory $draftFileName
+
+        if ($resolvedDraftPath -ine $managedDraftPath) {
+            Move-Item -LiteralPath $resolvedDraftPath -Destination $managedDraftPath -Force
+        }
+
+        return (Resolve-Path -LiteralPath $managedDraftPath).Path
+    }
+
+    return $resolvedDraftPath
 }
 
 function Get-SessionFile {
@@ -171,6 +210,24 @@ function Get-SessionMessageText {
     return ($parts -join "`n").Trim()
 }
 
+function Get-FocusedSessionUserText {
+    param(
+        [string]$Text
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return ''
+    }
+
+    $normalized = $Text.Trim()
+    $requestMatch = [regex]::Match($normalized, '(?s)## My request for Codex:\s*(.+)$')
+    if ($requestMatch.Success) {
+        return $requestMatch.Groups[1].Value.Trim()
+    }
+
+    return $normalized
+}
+
 function Test-IgnorableSessionMessage {
     param(
         [string]$Text
@@ -181,6 +238,49 @@ function Test-IgnorableSessionMessage {
     }
 
     return $Text -match '(?s)^\s*<turn_aborted>.*</turn_aborted>\s*$'
+}
+
+function Format-RecentConversationTurns {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$Turns
+    )
+
+    if ($Turns.Count -eq 0) {
+        return ''
+    }
+
+    $latestTurn = $Turns[-1]
+    $builder = New-Object System.Text.StringBuilder
+    [void]$builder.AppendLine('### 当前要回答的最后一条 user 消息')
+    [void]$builder.AppendLine($latestTurn.user.Trim())
+
+    if (-not [string]::IsNullOrWhiteSpace($latestTurn.assistant)) {
+        [void]$builder.AppendLine()
+        [void]$builder.AppendLine('### 这条消息前 assistant 刚回复过')
+        [void]$builder.AppendLine($latestTurn.assistant.Trim())
+    }
+
+    if ($Turns.Count -gt 1) {
+        $olderTurns = @($Turns | Select-Object -SkipLast 1)
+        $turnNumber = 1
+        foreach ($turn in $olderTurns) {
+            [void]$builder.AppendLine()
+            [void]$builder.AppendLine("### 更早的上下文 $turnNumber")
+            [void]$builder.AppendLine('user:')
+            [void]$builder.AppendLine($turn.user.Trim())
+
+            if (-not [string]::IsNullOrWhiteSpace($turn.assistant)) {
+                [void]$builder.AppendLine()
+                [void]$builder.AppendLine('assistant:')
+                [void]$builder.AppendLine($turn.assistant.Trim())
+            }
+
+            $turnNumber += 1
+        }
+    }
+
+    return $builder.ToString().TrimEnd()
 }
 
 function Get-RecentConversationContext {
@@ -236,6 +336,10 @@ function Get-RecentConversationContext {
         }
 
         $text = Get-SessionMessageText -ContentItems $payload.content
+        if ($role -eq 'user') {
+            $text = Get-FocusedSessionUserText -Text $text
+        }
+
         if (Test-IgnorableSessionMessage -Text $text) {
             continue
         }
@@ -279,26 +383,7 @@ function Get-RecentConversationContext {
     }
 
     $selectedTurns = @($turns | Select-Object -Last $MaxUserMessages)
-    $builder = New-Object System.Text.StringBuilder
-    $turnNumber = 1
-
-    foreach ($turn in $selectedTurns) {
-        [void]$builder.AppendLine("### 最近第 $turnNumber 轮")
-        [void]$builder.AppendLine('user:')
-        [void]$builder.AppendLine($turn.user.Trim())
-
-        if (-not [string]::IsNullOrWhiteSpace($turn.assistant)) {
-            [void]$builder.AppendLine()
-            [void]$builder.AppendLine('assistant:')
-            [void]$builder.AppendLine($turn.assistant.Trim())
-        }
-
-        [void]$builder.AppendLine()
-        [void]$builder.AppendLine()
-        $turnNumber += 1
-    }
-
-    $historyText = $builder.ToString().TrimEnd()
+    $historyText = Format-RecentConversationTurns -Turns $selectedTurns
     if ($historyText.Length -gt $MaxChars) {
         $historyText = ($historyText.Substring(0, $MaxChars) + "`n`n[最近对话历史已截断]").TrimEnd()
     }
@@ -345,7 +430,7 @@ function Write-MetaFile {
 }
 
 $workspaceRoot = Get-WorkspaceRoot
-$draftPath = (Resolve-Path -LiteralPath $DraftFile).Path
+$draftPath = Resolve-DraftFilePath -DraftFile $DraftFile -WorkspaceRoot $workspaceRoot
 $draftText = Get-Content -LiteralPath $draftPath -Raw -Encoding UTF8
 
 if ([string]::IsNullOrWhiteSpace($draftText)) {
@@ -358,7 +443,7 @@ $rawRunId = if (-not [string]::IsNullOrWhiteSpace($RunId)) { $RunId } else { New
 $safeThreadId = ConvertTo-SafePathSegment -Value $rawThreadId -Fallback 'manual'
 $safeRunId = ConvertTo-SafePathSegment -Value $rawRunId -Fallback (New-GeneratedRunId)
 $bundleId = "$safeThreadId\$safeRunId"
-$bundleDirectory = Join-Path (Join-Path $workspaceRoot '.codex-polish') $bundleId
+$bundleDirectory = Join-Path (Get-PolishRootDirectory) $bundleId
 
 New-Item -ItemType Directory -Path $bundleDirectory -Force | Out-Null
 
@@ -388,8 +473,10 @@ $meta = [ordered]@{
     safe_thread_id = $safeThreadId
     run_id = $rawRunId
     safe_run_id = $safeRunId
+    report_id = $bundleId
     created_at = (Get-Date).ToUniversalTime().ToString('o')
     workspace_root = $workspaceRoot
+    requested_draft_file = $DraftFile
     draft_file = $draftPath
     bundle_id = $bundleId
     bundle_directory = $bundleDirectory

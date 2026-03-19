@@ -69,8 +69,8 @@ class DebugCenterPage extends StatelessWidget {
               ),
               MoeSettingsRow(
                 icon: Icons.route_outlined,
-                label: '调用流程管理',
-                subtitle: '切换稳定/快速模式，配置模型与工具超时',
+                label: '调用超时管理',
+                subtitle: '配置模型与工具超时，生图路径切换已移到绘图设置',
                 trailingType: MoeSettingsRowTrailing.chevron,
                 onTap: () => Navigator.of(context).push(
                   ParallaxSlidePageRoute(page: const CallFlowManagementPage()),

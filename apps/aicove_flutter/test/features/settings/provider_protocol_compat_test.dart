@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:aicove_flutter/src/core/api/agent_api.dart';
+import 'package:aicove_flutter/src/core/api_logger.dart';
 import 'package:aicove_flutter/src/core/api/providers/google_api_mode.dart';
 import 'package:aicove_flutter/src/features/settings/ui_models_api.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -18,6 +20,13 @@ class _CapturingClient extends http.BaseClient {
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) {
     return _onRequest(request);
+  }
+}
+
+class _HangingClient extends http.BaseClient {
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) {
+    return Completer<http.StreamedResponse>().future;
   }
 }
 
@@ -38,6 +47,10 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('Provider protocol compatibility', () {
+    setUp(() {
+      ApiLogger.clear();
+    });
+
     test('NovelAI V4.5 should build minimal v4 payload', () async {
       Map<String, dynamic>? requestBody;
 
@@ -84,6 +97,19 @@ void main() {
       expect(parameters['prefer_brownian'], isNull);
       expect(parameters['deliberate_euler_ancestral_bug'], isNull);
       expect(parameters['autoSmea'], isNull);
+
+      final latestLog = ApiLogger.entries.value.last;
+      expect(latestLog.eventType, 'image_generation');
+      expect(latestLog.url, 'https://image.novelai.net/ai/generate-image');
+      expect(latestLog.rawRequestBody, isNotNull);
+      final loggedRequest =
+          jsonDecode(latestLog.rawRequestBody!) as Map<String, dynamic>;
+      expect(loggedRequest['model'], 'nai-diffusion-4-5-full');
+      final loggedResponse =
+          jsonDecode(latestLog.rawResponseBody!) as Map<String, dynamic>;
+      expect(loggedResponse['kind'], 'binary');
+      expect(loggedResponse['imageCount'], 1);
+      expect(loggedResponse['statusCode'], 200);
     });
 
     test('NovelAI V4.5 should ignore extra overrides for core payload keys',
@@ -220,6 +246,38 @@ void main() {
           'https://cdn.unit.test/generated/cat.png',
         ],
       );
+    });
+
+    test('NovelAI timeout should record wait_headers phase in ApiLogger',
+        () async {
+      final client = AgentApiClient(
+        client: _HangingClient(),
+        timeout: const Duration(milliseconds: 20),
+      );
+
+      await expectLater(
+        client.generateImage(
+          provider: 'novelai',
+          model: 'nai-diffusion-4-5-full',
+          prompt: '1girl, solo',
+          providerApiBase: 'https://image.novelai.net',
+          providerApiKey: 'test-key',
+          requestId: 'img_timeout_test',
+          requestSource: 'inline_image',
+          flowMode: 'fast',
+        ),
+        throwsA(isA<TimeoutException>()),
+      );
+
+      final latestLog = ApiLogger.entries.value.last;
+      expect(latestLog.eventType, 'image_generation');
+      expect(latestLog.ok, isFalse);
+      expect(latestLog.rawRequestBody, isNotNull);
+      final loggedResponse =
+          jsonDecode(latestLog.rawResponseBody!) as Map<String, dynamic>;
+      expect(loggedResponse['kind'], 'timeout');
+      expect(loggedResponse['phase'], 'wait_headers');
+      expect(loggedResponse['requestId'], 'img_timeout_test');
     });
 
     test('Gemini sendMessageRich should call models/{model}:generateContent',

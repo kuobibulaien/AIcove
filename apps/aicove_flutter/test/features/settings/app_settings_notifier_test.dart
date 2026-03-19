@@ -5,7 +5,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
-import 'package:aicove_flutter/src/features/settings/settings_models.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -612,6 +611,14 @@ void main() {
     expect(settings.callFlowSettings.mode, CallFlowMode.fast);
     expect(settings.callFlowSettings.modelTimeoutSeconds, 180);
     expect(settings.callFlowSettings.toolTimeoutSeconds, 20);
+  });
+
+  test('call flow settings should migrate legacy stable mode to auto', () {
+    final settings = CallFlowSettings.fromJson(<String, dynamic>{
+      'mode': 'stable',
+    });
+
+    expect(settings.mode, CallFlowMode.auto);
   });
 
   test('setPreferVisionAssistant persists values', () async {

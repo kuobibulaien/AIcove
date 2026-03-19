@@ -83,12 +83,6 @@ class _DrawImageToolDescriptionPageState
         a.heightDescription == b.heightDescription;
   }
 
-  DrawImageToolDescriptionBlocks _resolveBlocks(
-      ImageConfig config, DrawingPromptPreset preset) {
-    return ImageConfig.decodeToolDescriptionBlocks(preset.content) ??
-        ImageConfig.defaultToolDescriptionBlocks;
-  }
-
   // ── build ──
 
   @override
@@ -100,7 +94,7 @@ class _DrawImageToolDescriptionPageState
     return Scaffold(
       backgroundColor: colors.surface,
       appBar: const MoeAppBar(
-        title: '绘图提示词模板',
+        title: '稳定链路提示词模板',
         showBackButton: true,
       ),
       body: ListView(
@@ -142,7 +136,7 @@ class _DrawImageToolDescriptionPageState
         ),
         const SizedBox(height: MoeSpacing.xxs),
         Text(
-          '点击切换预设，点 ··· 可编辑、重命名或删除',
+          '管理稳定链路下 draw_image 工具使用的提示词模板',
           style: TextStyle(color: colors.muted, fontSize: 13),
         ),
         const SizedBox(height: MoeSpacing.sm),
@@ -263,7 +257,7 @@ class _DrawImageToolDescriptionPageState
             child: SelectableText(
               previewText,
               style: TextStyle(
-                color: colors.text.withOpacity(0.8),
+                color: colors.text.withValues(alpha: 0.8),
                 fontSize: 12,
                 height: 1.6,
                 fontFamily: 'monospace',
@@ -419,13 +413,13 @@ class _DrawImageToolDescriptionPageState
   ) async {
     final updated =
         config.systemPromptPresets.where((p) => p.name != preset.name).toList();
-    final wasSelected =
-        config.selectedSystemPromptPresetName == preset.name;
+    final wasSelected = config.selectedSystemPromptPresetName == preset.name;
     await notifier.updateConfig(
       config.copyWith(
         systemPromptPresets: updated,
-        selectedSystemPromptPresetName:
-            wasSelected ? updated.first.name : config.selectedSystemPromptPresetName,
+        selectedSystemPromptPresetName: wasSelected
+            ? updated.first.name
+            : config.selectedSystemPromptPresetName,
       ),
     );
   }

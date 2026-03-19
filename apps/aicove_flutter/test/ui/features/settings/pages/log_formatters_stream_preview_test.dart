@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aicove_flutter/src/core/api_logger.dart';
 import 'package:aicove_flutter/src/ui/features/settings/pages/log_formatters.dart';
+import 'package:aicove_flutter/src/ui/features/settings/pages/log_models.dart';
 
 void main() {
   group('parseStreamResponsePreview', () {
@@ -150,7 +151,7 @@ void main() {
   });
 
   group('formatApiLogFull', () {
-    test('conversation log includes full request/response/tool sections', () {
+    test('conversation log folds raw stream events in default full output', () {
       final longSystemPrompt = List.filled(130, 'S').join();
       final log = ApiLogEntry(
         time: DateTime(2026, 3, 2, 12, 30, 45),
@@ -213,10 +214,70 @@ void main() {
       expect(full, contains('AI 实际发送的完整请求体（rawRequestBody）'));
       expect(full, contains('"model": "openai:gpt-4o-mini"'));
       expect(full, contains(longSystemPrompt));
-      expect(full, contains('AI 原始 JSON 响应（模型回包）'));
+      expect(full, contains('流式回包（默认折叠原始事件）'));
+      expect(full, contains('原始流式事件已默认折叠'));
+      expect(full, contains('你'));
+      expect(full, isNot(contains('"streamEvents"')));
+      expect(full, isNot(contains('"delta"')));
       expect(full, contains('AI -> 工具调用'));
       expect(full, contains('工具 -> AI 返回'));
       expect(full, contains('最终展示给用户的回复'));
+    });
+  });
+
+  group('resolveFinalReply', () {
+    test('prefers last round raw model reply over processed final reply', () {
+      ApiLogEntry buildLog({
+        required String eventType,
+        String? rawAiResponse,
+        String? finalReply,
+      }) {
+        return ApiLogEntry(
+          time: DateTime(2026, 3, 18, 21, 0, 0),
+          method: 'POST',
+          url: 'local://test',
+          status: 200,
+          durationMs: 1,
+          requestBody: '',
+          responseBody: '',
+          ok: true,
+          rawAiResponse: rawAiResponse,
+          finalReply: finalReply,
+          eventType: eventType,
+          sessionId: 'session_1',
+          turnId: 'turn_1',
+        );
+      }
+
+      final turn = ConversationTurnLog(
+        turnKey: 'turn_1',
+        sessionId: 'session_1',
+        turnId: 'turn_1',
+        startedAt: DateTime(2026, 3, 18, 21, 0, 0),
+        rounds: [
+          ConversationRoundLog(
+            roundIndex: 1,
+            requestLog: buildLog(
+              eventType: 'round_stream',
+              rawAiResponse: '你好呀 <tts>这个要读出来</tts>\n<image>夕阳海边的猫</image>',
+            ),
+          ),
+        ],
+        finalLog: buildLog(
+          eventType: 'final_response',
+          rawAiResponse: '你好呀 这个要读出来',
+          finalReply: '你好呀',
+        ),
+      );
+
+      expect(
+        resolveFinalReply(turn),
+        '你好呀 <tts>这个要读出来</tts>\n<image>夕阳海边的猫</image>',
+      );
+      expect(
+        resolveRawFinalReply(turn),
+        '你好呀 <tts>这个要读出来</tts>\n<image>夕阳海边的猫</image>',
+      );
     });
   });
 }

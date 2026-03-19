@@ -186,6 +186,11 @@ class _TracePayloadPanelState extends State<TracePayloadPanel> {
   ) {
     final rawRequestValue = _readByKeys(
         payload, const ['rawRequestBody', 'requestBody', 'request']);
+    final rawReplyValue =
+        _readByKeys(payload, const ['rawAiResponse', 'reply', 'finalReply']);
+    final rawReplyContent = _stringifyPayload(rawReplyValue);
+    final deliveredReplyValue = _readByKeys(payload, const ['finalReply']);
+    final deliveredReplyContent = _stringifyPayload(deliveredReplyValue);
     final requestBody = _decodeJsonMap(rawRequestValue) ??
         _decodeJsonMap(_readByKeys(payload, const ['requestBody'])) ??
         _decodeJsonMap(_readByKeys(payload, const ['request']));
@@ -248,10 +253,14 @@ class _TracePayloadPanelState extends State<TracePayloadPanel> {
       ),
       _PayloadSection(
         label: '最终回复',
-        content: _stringifyPayload(
-          _readByKeys(payload, const ['finalReply', 'rawAiResponse', 'reply']),
-        ),
+        content: rawReplyContent,
       ),
+      if (deliveredReplyContent != '(空)' &&
+          deliveredReplyContent != rawReplyContent)
+        _PayloadSection(
+          label: '最终交付文本',
+          content: deliveredReplyContent,
+        ),
     ].where((section) => !section.isEmpty).toList(growable: false);
 
     if (sections.isNotEmpty) {

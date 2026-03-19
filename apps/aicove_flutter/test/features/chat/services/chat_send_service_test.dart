@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:drift/native.dart';
+// ignore: depend_on_referenced_packages
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -69,6 +70,8 @@ void main() {
     String? defaultVisionModel,
     bool preferVisionAssistant = false,
     Map<String, ModelConfig>? modelConfigs,
+    bool imageGenerationEnabled = false,
+    CallFlowMode callFlowMode = CallFlowMode.auto,
   }) {
     return AppSettings(
       ttsEnabled: true,
@@ -81,7 +84,7 @@ void main() {
       modelConfigs: modelConfigs ?? const <String, ModelConfig>{},
       apiKey: '',
       apiBaseUrl: 'https://api.openai.com/v1',
-      imageGenerationEnabled: false,
+      imageGenerationEnabled: imageGenerationEnabled,
       maxFileUploadMB: 10,
       historyMessageLimit: 100,
       customModels: const <CustomModel>[],
@@ -118,6 +121,7 @@ void main() {
       defaultChatModels: defaultChatModels ?? <String>[defaultModelName],
       defaultVisionModel: defaultVisionModel,
       preferVisionAssistant: preferVisionAssistant,
+      callFlowSettings: CallFlowSettings(mode: callFlowMode),
     );
   }
 
@@ -400,8 +404,9 @@ void main() {
     );
 
     expect(text, isNotNull);
-    expect(text, contains('__AICOVE_IMAGE_CONTEXT__'));
+    expect(text, contains('<image source="history"'));
     expect(text, contains('"role":"assistant"'));
+    expect(text, contains('"status":"delivered"'));
     expect(text, contains('"delivered_to_chat":true'));
     expect(text, contains('"prompt":"一只猫在草地上"'));
   });
@@ -413,12 +418,59 @@ void main() {
     );
 
     expect(text, isNotNull);
-    expect(text, contains('__AICOVE_IMAGE_CONTEXT__'));
+    expect(text, contains('<image source="history"'));
     expect(text, contains('"role":"user"'));
+    expect(text, contains('"status":"uploaded"'));
     expect(text, contains('"uploaded_to_chat":true'));
     expect(text, contains('"description":"一只猫在草地上"'));
     expect(text, isNot(contains('[图片]')));
     expect(text, isNot(contains('图片已转换为文本描述')));
+  });
+
+  test('internal image context tool block should serialize as hidden image tag',
+      () async {
+    final builder = ChatRequestMessageBuilder(
+      readImageAsBase64: (_) async => null,
+    );
+    final message = Message.fromBlocks(
+      id: 'msg_hidden_image_context',
+      role: 'assistant',
+      blocks: [
+        TextBlock(messageId: 'msg_hidden_image_context', content: '正文'),
+        ToolBlock(
+          messageId: 'msg_hidden_image_context',
+          toolName: ChatRequestMessageBuilder.internalImageContextToolName,
+          result: ChatRequestMessageBuilder.buildImageContextPayload(
+            role: 'assistant',
+            status: 'failed',
+            rawPrompt: '1girl, cat ears',
+            reason: 'novelai timeout',
+            imagePresent: false,
+          ),
+        ),
+      ],
+      createdAt: DateTime(2026, 3, 18, 12, 0, 0),
+    );
+
+    final result = await builder.buildRequestMessages(
+      [message],
+      settings: fakeSettings(defaultModelName: 'openai:gpt-4o'),
+    );
+
+    expect(result, hasLength(1));
+    final content = result.single['content'];
+    expect(content, isA<List>());
+    final parts = content as List<dynamic>;
+    expect(
+        parts.any((part) => (part as Map<String, dynamic>)['text']
+            .toString()
+            .contains('<image source="history"')),
+        isTrue);
+    expect(
+        parts.any((part) => (part as Map<String, dynamic>)['text']
+            .toString()
+            .contains('"status":"failed"')),
+        isTrue);
   });
 
   test('vision translation request uses system prompt + single image only', () {
@@ -584,8 +636,9 @@ void main() {
 
     expect(result, hasLength(1));
     expect(result.first['role'], 'assistant');
-    expect(result.first['content'], contains('__AICOVE_IMAGE_CONTEXT__'));
+    expect(result.first['content'], contains('<image source="history"'));
     expect(result.first['content'], contains('"role":"assistant"'));
+    expect(result.first['content'], contains('"status":"delivered"'));
     expect(result.first['content'], contains('"delivered_to_chat":true'));
     expect(result.first['content'], contains('"prompt":"黄昏下的城市天际线"'));
     expect(result.first['content'], isNot(contains('生图提示词')));
@@ -600,7 +653,7 @@ void main() {
       defaultChatModels: const <String>['openai:gpt-4o'],
       modelConfigs: const <String, ModelConfig>{
         'openai:gpt-4o': ModelConfig(
-          chatCapabilities: <String>['tools'],
+          chatCapabilities: <String>['tools', 'vision'],
         ),
       },
     ).copyWith(
@@ -627,8 +680,8 @@ void main() {
         'test-image-model': 'openai',
       },
     );
-    final imageConfig = ImageConfig(
-      systemPromptPresets: const <DrawingPromptPreset>[
+    const imageConfig = ImageConfig(
+      systemPromptPresets: <DrawingPromptPreset>[
         DrawingPromptPreset(
           name: '全局预设',
           content: ImageConfig.defaultToolDescriptionPresetMarker,
@@ -697,6 +750,95 @@ void main() {
   });
 
   test(
+      'prepareApiConfig should route non-vision auto image flow into inline <image> mode',
+      () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final now = DateTime(2026, 3, 18, 12, 0, 0);
+    final settings = fakeSettings(
+      defaultModelName: 'openai:gpt-3.5-turbo',
+      defaultChatModels: const <String>['openai:gpt-3.5-turbo'],
+      modelConfigs: const <String, ModelConfig>{
+        'openai:gpt-3.5-turbo': ModelConfig(
+          chatCapabilities: <String>['tools'],
+        ),
+      },
+      imageGenerationEnabled: true,
+      callFlowMode: CallFlowMode.auto,
+    ).copyWith(
+      modelTypes: const <String, String>{
+        'openai:gpt-3.5-turbo': 'chat',
+        'openai:test-image-model': 'image',
+      },
+      providers: const <ProviderAuth>[
+        ProviderAuth(
+          id: 'openai',
+          apiKeys: <String>['test-key'],
+          apiBaseUrl: 'https://api.openai.com/v1',
+          models: <String>['gpt-3.5-turbo', 'test-image-model'],
+          visibleModels: <String>['gpt-3.5-turbo', 'test-image-model'],
+          capabilities: <String>['chat', 'image'],
+        ),
+      ],
+      modelProviderMap: const <String, String>{
+        'openai:gpt-3.5-turbo': 'openai',
+        'openai:test-image-model': 'openai',
+        'gpt-3.5-turbo': 'openai',
+        'test-image-model': 'openai',
+      },
+    );
+    const imageConfig = ImageConfig(selectedModelId: 'openai:test-image-model');
+    final conv = Conversation(
+      id: 'conv_force_inline_image_mode',
+      title: 'Chat',
+      displayName: 'Chat',
+      personaPrompt: PersonaPromptCodec.compose(
+        userPrompt: '你是测试助手。',
+        customDrawingPrompt: '第一人称自拍视角。',
+      ),
+      enabledPlugins: const <String>['image'],
+      createdAt: now,
+      updatedAt: now,
+      messages: const <Message>[],
+    );
+    final userMsg = Message(
+      id: 'msg_force_inline_image_mode',
+      role: 'user',
+      content: '画一张自拍',
+      createdAt: now,
+    );
+    final container = ProviderContainer(
+      overrides: [
+        appSettingsProvider
+            .overrideWith(() => _FakeAppSettingsNotifier(settings)),
+        imagePluginConfigProvider
+            .overrideWith((ref) => _FakeImagePluginConfigNotifier(imageConfig)),
+      ],
+    );
+    addTearDown(container.dispose);
+    final service = container.read(chatSendServiceProvider);
+
+    final apiConfig = await service.prepareApiConfig(
+      conv: conv,
+      history: <Message>[userMsg],
+      userText: userMsg.content,
+    );
+
+    final systemMessage = apiConfig.messages.firstWhere(
+      (msg) => msg['role'] == 'system',
+      orElse: () => const <String, dynamic>{},
+    );
+    final systemContent = (systemMessage['content'] ?? '').toString();
+    expect(systemContent, contains('<image>英文正向提示词</image>'));
+    expect(systemContent, contains('NovelAI'));
+    expect(systemContent, contains('第一人称自拍视角。'));
+    final drawTools = apiConfig.tools?.where((tool) {
+      final function = tool['function'] as Map<String, dynamic>?;
+      return function?['name'] == 'draw_image';
+    }).toList();
+    expect(drawTools, anyOf(isNull, isEmpty));
+  });
+
+  test(
       'prepareApiConfig should preserve explicit artist preset disable binding',
       () async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
@@ -710,8 +852,8 @@ void main() {
         ),
       },
     );
-    final imageConfig = ImageConfig(
-      artistPresets: const <ArtistPreset>[
+    const imageConfig = ImageConfig(
+      artistPresets: <ArtistPreset>[
         ArtistPreset(name: '全局画风', content: 'global style'),
       ],
       selectedArtistPresetName: '全局画风',

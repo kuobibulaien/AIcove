@@ -14,66 +14,8 @@ import 'package:aicove_flutter/src/features/plugins/domain/plugin_metadata.dart'
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
 
-class _FakeDrawImagePlugin extends BasePlugin {
-  _FakeDrawImagePlugin()
-      : super(
-          metadata: const PluginMetadata(
-            id: 'image',
-            name: 'Image',
-            description: 'fake image tool',
-            version: '1.0.0',
-            author: 'test',
-            icon: Icons.image,
-          ),
-        );
-
-  @override
-  bool get enabled => true;
-
-  @override
-  Future<String?> getSystemPrompt({
-    String? userMessage,
-    bool supportsToolCalling = false,
-  }) async {
-    return null;
-  }
-
-  @override
-  Future<PluginProcessResult> processResponse(String text) async {
-    return PluginProcessResult(
-      processedText: text,
-      events: const <PluginEvent>[],
-      contents: const [],
-    );
-  }
-
-  @override
-  List<AITool> getTools() {
-    return <AITool>[
-      AITool(
-        name: 'draw_image',
-        description: 'draw image for test',
-        parameters: const {},
-        handler: (args) async {
-          return jsonEncode(<String, dynamic>{
-            'success': true,
-            'prompt': args['prompt'] ?? '',
-            'images': <Map<String, dynamic>>[
-              <String, dynamic>{
-                'localPath': r'C:\tmp\generated_test.png',
-                'caption': args['prompt'] ?? '',
-              },
-            ],
-            'message': 'ok',
-          });
-        },
-      ),
-    ];
-  }
-}
-
 AppSettings _buildTestSettings({
-  CallFlowMode mode = CallFlowMode.stable,
+  CallFlowMode mode = CallFlowMode.auto,
 }) {
   const modelRef = 'openai:gpt-3.5-turbo';
   return AppSettings(
@@ -124,66 +66,7 @@ AppSettings _buildTestSettings({
   );
 }
 
-bool _containsImageInput(dynamic node) {
-  if (node is List) {
-    for (final item in node) {
-      if (_containsImageInput(item)) return true;
-    }
-    return false;
-  }
-
-  if (node is! Map) return false;
-  final map = <String, dynamic>{};
-  node.forEach((key, value) {
-    map[key.toString()] = value;
-  });
-
-  final type = (map['type'] ?? '').toString().toLowerCase();
-  if (type == 'image_url' || type == 'input_image' || type == 'image') {
-    return true;
-  }
-  if (map.containsKey('image_url')) return true;
-  if (map.containsKey('inlineData')) {
-    final inline = map['inlineData'];
-    if (inline is Map) {
-      final mime = inline['mimeType']?.toString().toLowerCase() ?? '';
-      if (mime.isEmpty || mime.startsWith('image/')) return true;
-    }
-  }
-  if (map.containsKey('fileData')) {
-    final file = map['fileData'];
-    if (file is Map) {
-      final mime = file['mimeType']?.toString().toLowerCase() ?? '';
-      if (mime.startsWith('image/')) return true;
-    }
-  }
-
-  for (final value in map.values) {
-    if (_containsImageInput(value)) return true;
-  }
-  return false;
-}
-
-bool _containsStringFragment(dynamic node, String fragment) {
-  if (node is String) {
-    return node.contains(fragment);
-  }
-
-  if (node is List) {
-    for (final item in node) {
-      if (_containsStringFragment(item, fragment)) return true;
-    }
-    return false;
-  }
-
-  if (node is! Map) return false;
-  for (final value in node.values) {
-    if (_containsStringFragment(value, fragment)) return true;
-  }
-  return false;
-}
-
-class _SequencedChatClient extends http.BaseClient {
+class _SingleRoundDrawClient extends http.BaseClient {
   final List<Map<String, dynamic>> payloads = <Map<String, dynamic>>[];
   int callCount = 0;
 
@@ -194,8 +77,7 @@ class _SequencedChatClient extends http.BaseClient {
     }
 
     callCount += 1;
-    final payload = jsonDecode(request.body) as Map<String, dynamic>;
-    payloads.add(payload);
+    payloads.add(jsonDecode(request.body) as Map<String, dynamic>);
 
     if (callCount == 1) {
       return _json(
@@ -205,21 +87,10 @@ class _SequencedChatClient extends http.BaseClient {
             <String, dynamic>{
               'message': <String, dynamic>{
                 'role': 'assistant',
-                'content': <Map<String, dynamic>>[
-                  <String, dynamic>{
-                    'type': 'text',
-                    'text': '收到，我去生成图片',
-                  },
-                  <String, dynamic>{
-                    'type': 'image_url',
-                    'image_url': <String, dynamic>{
-                      'url': 'https://example.com/preview.png',
-                    },
-                  },
-                ],
+                'content': '收到，我去生成图片',
                 'tool_calls': <Map<String, dynamic>>[
                   <String, dynamic>{
-                    'id': 'call_draw_1',
+                    'id': 'call_draw_fast_1',
                     'type': 'function',
                     'function': <String, dynamic>{
                       'name': 'draw_image',
@@ -227,36 +98,6 @@ class _SequencedChatClient extends http.BaseClient {
                     },
                   },
                 ],
-              },
-            },
-          ],
-        },
-      );
-    }
-
-    if (callCount == 2) {
-      final hasImage = _containsImageInput(payload['messages']);
-      if (hasImage) {
-        return _json(
-          400,
-          <String, dynamic>{
-            'error': <String, dynamic>{
-              'message':
-                  'This model does not support image content in context.',
-            },
-          },
-        );
-      }
-
-      return _json(
-        200,
-        <String, dynamic>{
-          'choices': <Map<String, dynamic>>[
-            <String, dynamic>{
-              'message': <String, dynamic>{
-                'role': 'assistant',
-                'content':
-                    '__AICOVE_IMAGE_CONTEXT__{"role":"assistant","delivered_to_chat":true,"prompt":"cat"}\n图片已生成并发送。',
               },
             },
           ],
@@ -704,9 +545,10 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
-      'stable mode round2 should not resend image content for non-vision model',
+      'auto setting should force draw_image into fast route for non-vision model',
       () async {
-    final fakeHttpClient = _SequencedChatClient();
+    final fakeHttpClient = _SingleRoundDrawClient();
+    final drawPlugin = _AsyncAwareDrawImagePlugin();
 
     final settings = _buildTestSettings();
     final config = ApiConfig(
@@ -750,28 +592,13 @@ void main() {
       config: config,
       sessionId: 'conv_non_vision_test',
       userText: '帮我画一只猫',
-      effectivePlugins: <Plugin>[_FakeDrawImagePlugin()],
+      effectivePlugins: <Plugin>[drawPlugin],
       maxRounds: 3,
     );
 
-    expect(fakeHttpClient.callCount, 2);
-    expect(fakeHttpClient.payloads.length, 2);
-    expect(
-        _containsImageInput(fakeHttpClient.payloads[1]['messages']), isFalse);
-    expect(
-      _containsStringFragment(
-        fakeHttpClient.payloads[1]['messages'],
-        '"delivered_to_chat":true',
-      ),
-      isTrue,
-    );
-    expect(
-      _containsStringFragment(
-        fakeHttpClient.payloads[1]['messages'],
-        '"prompt":"cat"',
-      ),
-      isTrue,
-    );
+    expect(fakeHttpClient.callCount, 1);
+    expect(fakeHttpClient.payloads.length, 1);
+    expect(drawPlugin.sawAsyncFlag, isTrue);
     expect(
       result.processedText,
       isNot(contains('__AICOVE_IMAGE_CONTEXT__')),
@@ -779,9 +606,13 @@ void main() {
     expect(result.processedText, contains('收到，我去生成图片'));
     expect(result.processedText, isNot(contains('[图片]')));
     expect(result.pluginContents.length, 1);
+    expect(
+      result.rawToolResults.singleWhere((r) => r.name == 'draw_image').result,
+      contains('"delivered_to_chat":true'),
+    );
   });
 
-  test('stable mode should keep round1 narrative text when tool calls continue',
+  test('auto mode should keep round1 narrative text when tool calls continue',
       () async {
     final fakeHttpClient = _TwoRoundNarrativeClient(
       firstRoundContent: '我先帮你查一下日程。',
