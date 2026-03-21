@@ -6,6 +6,8 @@
 /// - 2026-02-20: 创建
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -14,6 +16,9 @@ import '../../../../features/settings/app_settings.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
+
+const Duration _kDefaultModelSettingsDeferredWindow =
+    Duration(milliseconds: 420);
 
 /// 默认模型设置页面
 class DefaultModelSettingsPage extends ConsumerStatefulWidget {
@@ -38,13 +43,38 @@ class _DefaultModelSettingsPageState
   /// 本地状态：历史消息条数
   late TextEditingController _historyLimitCtrl;
   bool _historyLimitInitialized = false;
+  Timer? _deferredSectionsTimer;
+  bool _deferHeavySections = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleDeferredSectionsActivation();
+  }
 
   @override
   void dispose() {
+    _deferredSectionsTimer?.cancel();
     if (_historyLimitInitialized) {
       _historyLimitCtrl.dispose();
     }
     super.dispose();
+  }
+
+  void _scheduleDeferredSectionsActivation() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _deferredSectionsTimer?.cancel();
+      _deferredSectionsTimer = Timer(
+        _kDefaultModelSettingsDeferredWindow,
+        _activateHeavySections,
+      );
+    });
+  }
+
+  void _activateHeavySections() {
+    if (!mounted || !_deferHeavySections) return;
+    setState(() => _deferHeavySections = false);
   }
 
   @override
@@ -65,40 +95,17 @@ class _DefaultModelSettingsPageState
   }
 
   Widget _buildBody(AppSettings settings, MoeColors colors) {
-    // 收集所有启用供应商中的 chat 类型模型
-    final chatModels = <_ModelEntry>[];
-    for (final provider in settings.providers) {
-      if (!provider.enabled) continue;
-      for (final modelId in provider.visibleModels) {
-        final type = settings.getModelType(modelId);
-        if (type == ModelType.chat) {
-          chatModels.add(_ModelEntry(
-            modelRef: settings.buildModelRef(provider.id, modelId),
-            modelId: modelId,
-            providerId: provider.id,
-            providerName: provider.displayName ?? provider.id,
-            displayName: settings.getModelDisplayName(modelId),
-          ));
-        }
-      }
+    _ensureLocalStateInitialized(settings);
+    final shouldDeferSections = _deferHeavySections &&
+        settings.providers.any(
+          (provider) => provider.enabled && provider.visibleModels.isNotEmpty,
+        );
+    if (shouldDeferSections) {
+      return _buildDeferredShell(colors);
     }
 
-    // 初始化本地状态
+    final chatModels = _buildChatModels(settings);
     final selectedChatModels = _localChatModels ?? settings.defaultChatModels;
-    if (!_visionInitialized) {
-      _localVisionModel = settings.defaultVisionModel;
-      _visionInitialized = true;
-    }
-    if (!_preferVisionInitialized) {
-      _localPreferVisionAssistant = settings.preferVisionAssistant;
-      _preferVisionInitialized = true;
-    }
-    if (!_historyLimitInitialized) {
-      _historyLimitCtrl = TextEditingController(
-        text: settings.historyMessageLimit.toString(),
-      );
-      _historyLimitInitialized = true;
-    }
     final preferVisionAssistant =
         _localPreferVisionAssistant ?? settings.preferVisionAssistant;
 
@@ -255,6 +262,120 @@ class _DefaultModelSettingsPageState
             ),
           ],
         ),
+      ],
+    );
+  }
+
+  void _ensureLocalStateInitialized(AppSettings settings) {
+    if (!_visionInitialized) {
+      _localVisionModel = settings.defaultVisionModel;
+      _visionInitialized = true;
+    }
+    if (!_preferVisionInitialized) {
+      _localPreferVisionAssistant = settings.preferVisionAssistant;
+      _preferVisionInitialized = true;
+    }
+    if (!_historyLimitInitialized) {
+      _historyLimitCtrl = TextEditingController(
+        text: settings.historyMessageLimit.toString(),
+      );
+      _historyLimitInitialized = true;
+    }
+  }
+
+  List<_ModelEntry> _buildChatModels(AppSettings settings) {
+    final chatModels = <_ModelEntry>[];
+    for (final provider in settings.providers) {
+      if (!provider.enabled) continue;
+      final providerName = provider.displayName ?? provider.id;
+      for (final modelId in provider.visibleModels) {
+        final modelRef = settings.buildModelRef(provider.id, modelId);
+        if (settings.getModelType(modelRef) != ModelType.chat) {
+          continue;
+        }
+        chatModels.add(
+          _ModelEntry(
+            modelRef: modelRef,
+            modelId: modelId,
+            providerId: provider.id,
+            providerName: providerName,
+            displayName: settings.getModelDisplayName(modelRef),
+          ),
+        );
+      }
+    }
+    return chatModels;
+  }
+
+  Widget _buildDeferredShell(MoeColors colors) {
+    return ListView(
+      key: const ValueKey<String>('default_model_settings_deferred_shell'),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+      children: [
+        _buildSectionHeader(colors, '默认聊天模型', '可多选，失败后自动尝试下一个模型'),
+        const SizedBox(height: 8),
+        _buildShellGroup(colors, rowHeights: const [62, 62, 62]),
+        const SizedBox(height: 24),
+        _buildSectionHeader(colors, '图片识别模型', '发送图片时使用的模型'),
+        const SizedBox(height: 8),
+        _buildShellGroup(colors, rowHeights: const [72, 62, 62]),
+        const SizedBox(height: 24),
+        _buildSectionHeader(colors, '上下文管理', '控制发送给 AI 的历史消息量'),
+        const SizedBox(height: 8),
+        _buildShellGroup(colors, rowHeights: const [148]),
+        const SizedBox(height: 18),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: colors.text,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              '正在准备默认模型设置',
+              style: TextStyle(
+                color: colors.textSecondary,
+                fontSize: 13,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildShellGroup(MoeColors colors,
+      {required List<double> rowHeights}) {
+    return MoeSettingsGroup(
+      margin: EdgeInsets.zero,
+      padding: EdgeInsets.zero,
+      children: [
+        for (var index = 0; index < rowHeights.length; index++)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              border: index == rowHeights.length - 1
+                  ? null
+                  : Border(
+                      bottom: BorderSide(
+                        color: colors.borderLight,
+                        width: borderWidth,
+                      ),
+                    ),
+            ),
+            child: Container(
+              height: rowHeights[index] - 28,
+              decoration: BoxDecoration(
+                color: colors.surfaceAlt.withValues(alpha: 0.62),
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+          ),
       ],
     );
   }

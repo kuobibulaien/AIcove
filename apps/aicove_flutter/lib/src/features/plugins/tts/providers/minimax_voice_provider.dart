@@ -13,9 +13,26 @@ import '../tts_config.dart';
 import 'tts_voice_provider.dart';
 
 /// MiniMax TTS 音色管理 Provider
-class MinimaxVoiceProvider implements TtsVoiceProvider {
+class MinimaxVoiceProvider extends TtsVoiceProvider {
   @override
   String get providerId => 'minimax';
+
+  @override
+  List<String> get providerAliases => const <String>[
+        'minimax',
+      ];
+
+  @override
+  List<String> get requestFormatAliases => const <String>[
+        'minimax',
+        'minimax_tts',
+      ];
+
+  @override
+  List<String> get apiHostKeywords => const <String>[
+        'minimaxi.com',
+        'minimax',
+      ];
 
   @override
   String get displayName => 'MiniMax';
@@ -51,7 +68,7 @@ class MinimaxVoiceProvider implements TtsVoiceProvider {
           name: voice.name ?? voice.voiceId,
           sourceType: VoiceSourceType.preset,
           providerType: VoiceProviderType.custom, // MiniMax 暂无专门的枚举
-          source: '${voice.description ?? "MiniMax 系统音色"}',
+          source: voice.description ?? 'MiniMax 系统音色',
           isBuiltIn: false,
         )..setMinimaxVoiceId(voice.voiceId);
       }).toList();

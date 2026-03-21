@@ -6,6 +6,7 @@ import 'package:aicove_flutter/src/ui/features/chat/pages/chat_background_settin
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const mockBackgroundAsset = 'assets/mock/chat_background.png';
+  const deferredPreviewWindow = Duration(milliseconds: 450);
 
   Conversation buildConversation({
     double? blurSigma,
@@ -23,7 +24,7 @@ void main() {
     );
   }
 
-  testWidgets('聊天背景预览使用静态模糊层而不是实时 ImageFiltered', (tester) async {
+  testWidgets('聊天背景预览在转场期先显示轻壳，再延后渲染静态模糊层', (tester) async {
     tester.view.devicePixelRatio = 1.0;
     tester.view.physicalSize = const Size(1080, 2200);
     addTearDown(tester.view.resetPhysicalSize);
@@ -40,7 +41,18 @@ void main() {
       ),
     );
 
+    expect(find.text('正在准备背景预览'), findsOneWidget);
+    expect(
+      find.byKey(
+          const ValueKey<String>('chat_background_settings_static_blur_layer')),
+      findsNothing,
+    );
     expect(find.byType(ImageFiltered), findsNothing);
+
+    await tester.pump(deferredPreviewWindow);
+    await tester.pump(const Duration(milliseconds: 320));
+
+    expect(find.text('正在准备背景预览'), findsNothing);
     expect(
       find.byKey(
           const ValueKey<String>('chat_background_settings_static_blur_layer')),
@@ -49,7 +61,7 @@ void main() {
     expect(find.byType(ImageFiltered), findsNothing);
   });
 
-  testWidgets('聊天背景无模糊时不渲染静态模糊层', (tester) async {
+  testWidgets('聊天背景无模糊时转场结束后也不渲染静态模糊层', (tester) async {
     tester.view.devicePixelRatio = 1.0;
     tester.view.physicalSize = const Size(1080, 2200);
     addTearDown(tester.view.resetPhysicalSize);
@@ -66,6 +78,13 @@ void main() {
       ),
     );
 
+    expect(find.text('正在准备背景预览'), findsOneWidget);
+    expect(find.byType(ImageFiltered), findsNothing);
+
+    await tester.pump(deferredPreviewWindow);
+    await tester.pump(const Duration(milliseconds: 320));
+
+    expect(find.text('正在准备背景预览'), findsNothing);
     expect(
       find.byKey(
           const ValueKey<String>('chat_background_settings_static_blur_layer')),

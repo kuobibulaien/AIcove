@@ -50,13 +50,13 @@ void main() {
 }
 
 Widget _buildApp() {
-  return ProviderScope(
+  return const ProviderScope(
     child: MediaQuery(
-      data: const MediaQueryData(
+      data: MediaQueryData(
         size: Size(390, 844),
         viewInsets: EdgeInsets.only(bottom: 240),
       ),
-      child: const MaterialApp(
+      child: MaterialApp(
         home: MultiKeyManagerPage(providerId: 'openai'),
       ),
     ),

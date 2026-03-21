@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../../features/chat/providers2.dart';
+import '../../../../features/chat/domain/sort_mode.dart';
 import 'chat_page.dart';
 import '../../../../features/chat/presentation/widgets/contacts_list_content.dart';
 import '../../../../features/chat/presentation/widgets/contacts_sub_header.dart';
@@ -11,7 +12,6 @@ import '../../../../ui/shared/widgets/nav/moe_side_nav.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/settings_drawer_wrapper.dart';
 import '../../../../ui/shared/widgets/settings_drawer_panel.dart';
-import '../../../../features/chat/presentation/widgets/momotalk_sort_dialog.dart';
 
 
 class SplitChatPage extends ConsumerStatefulWidget {

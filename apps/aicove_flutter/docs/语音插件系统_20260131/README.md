@@ -267,11 +267,11 @@ TtsService.convert(text)
 - [x] 统一 Provider 抽象层设计与实现
 - [x] MiniMax 服务层 API 封装（`minimax_tts_service.dart`）
 - [x] MiniMax Provider 适配器（`minimax_voice_provider.dart`）
+- [x] TTS 设置页接入 `TtsProviderContext + TtsVoiceCatalogService`
+- [x] `tts_settings_form.dart` 等 UI 组件按 `TtsCapabilities` 动态渲染
 
 ### 待完成
 - [ ] MiniMax 语音合成接入 `TtsService`（添加 requestFormat 分支）
 - [ ] `VoicePreset` 添加 MiniMax 专用字段（目前用 extension 临时存储）
 - [ ] `VoiceProviderType` 枚举添加 `minimax` 选项
-- [ ] UI 层接入统一 Provider 接口（替代 `voice_manager_service.dart` 中的散落逻辑）
-- [ ] `tts_settings_form.dart` 等 UI 组件适配 TtsCapabilities 动态渲染
 - [ ] 旧的 `voice_manager_service.dart` 逐步迁移到 providers 层

@@ -30,6 +30,9 @@ class ChatBackgroundSettingsResult {
   });
 }
 
+const Duration _kChatBackgroundDeferredPreviewWindow =
+    Duration(milliseconds: 420);
+
 class ChatBackgroundSettingsPage extends StatefulWidget {
   final Conversation conversation;
 
@@ -55,6 +58,9 @@ class _ChatBackgroundSettingsPageState
   bool _previewDark = false;
   String? _staticPreviewBlurSource;
   ImageProvider? _staticPreviewBlurProvider;
+  Timer? _deferredPreviewTimer;
+  bool _deferHeavyPreview = true;
+  bool _previewDarkInitialized = false;
 
   @override
   void initState() {
@@ -62,19 +68,50 @@ class _ChatBackgroundSettingsPageState
     final initialRaw = widget.conversation.chatBackgroundImage?.trim();
     _backgroundImage =
         (initialRaw == null || initialRaw.isEmpty) ? null : initialRaw;
-    _backgroundBytes = decodeDataImage(_backgroundImage);
     _maskOpacity =
         (widget.conversation.chatBackgroundMaskOpacity ?? _defaultMaskOpacity)
             .clamp(0.0, 1.0);
     _blurSigma =
         (widget.conversation.chatBackgroundBlurSigma ?? _defaultBlurSigma)
             .clamp(0.0, 30.0);
+    _scheduleDeferredPreviewActivation();
+  }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_previewDarkInitialized) return;
+    _previewDark = Theme.of(context).brightness == Brightness.dark;
+    _previewDarkInitialized = true;
+  }
+
+  @override
+  void dispose() {
+    _deferredPreviewTimer?.cancel();
+    super.dispose();
+  }
+
+  void _scheduleDeferredPreviewActivation() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        setState(() =>
-            _previewDark = Theme.of(context).brightness == Brightness.dark);
-      }
+      if (!mounted) return;
+      _deferredPreviewTimer?.cancel();
+      _deferredPreviewTimer = Timer(
+        _kChatBackgroundDeferredPreviewWindow,
+        _activateHeavyPreview,
+      );
+    });
+  }
+
+  void _activateHeavyPreview() {
+    if (!mounted || !_deferHeavyPreview) return;
+
+    final raw = _backgroundImage?.trim();
+    final decodedBytes =
+        raw == null || raw.isEmpty ? null : decodeDataImage(raw);
+
+    setState(() {
+      _backgroundBytes = decodedBytes;
+      _deferHeavyPreview = false;
     });
   }
 
@@ -141,13 +178,7 @@ class _ChatBackgroundSettingsPageState
           errorBuilder: (_, __, ___) => const SizedBox.shrink());
     }
 
-    final bytes = decodeDataImage(raw);
-    if (bytes != null) {
-      return Image.memory(bytes,
-          fit: BoxFit.cover,
-          gaplessPlayback: true,
-          errorBuilder: (_, __, ___) => const SizedBox.shrink());
-    }
+    if (raw.startsWith('data:image')) return null;
 
     if (raw.startsWith('http://') || raw.startsWith('https://')) {
       return Image.network(raw,
@@ -241,6 +272,10 @@ class _ChatBackgroundSettingsPageState
 
   /// 等比缩小的聊天界面模型
   Widget _buildChatMiniature(MoeColors colors) {
+    if (_deferHeavyPreview) {
+      return _buildDeferredMiniature(colors);
+    }
+
     final darkMode = _previewDark;
     final fallbackColor =
         darkMode ? const Color(0xFF151A22) : const Color(0xFFF5F7FA);
@@ -435,12 +470,113 @@ class _ChatBackgroundSettingsPageState
     );
   }
 
+  Widget _buildDeferredMiniature(MoeColors colors) {
+    final fallbackColor =
+        _previewDark ? const Color(0xFF151A22) : const Color(0xFFF5F7FA);
+    final cardColor = _previewDark
+        ? Colors.white.withValues(alpha: 0.10)
+        : Colors.white.withValues(alpha: 0.72);
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        decoration: BoxDecoration(
+          color: fallbackColor,
+          border: Border.all(
+            color: colors.border.withValues(alpha: 0.3),
+            width: 0.5,
+          ),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      colors.surfaceAlt.withValues(alpha: 0.55),
+                      fallbackColor,
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 120,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: cardColor,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Container(
+                    width: 180,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: cardColor,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: Container(
+                      width: 132,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        color: colors.primary.withValues(alpha: 0.22),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                  ),
+                  const Spacer(),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: colors.text,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        '正在准备背景预览',
+                        style: TextStyle(
+                          color: colors.textSecondary,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   double _staticBlurOverlayOpacity(double blurSigma) {
     if (blurSigma <= 0.1) return 0;
     return Curves.easeOut.transform((blurSigma / 30).clamp(0.0, 1.0));
   }
 
   Widget? _buildStaticBlurPreviewLayer({required double opacity}) {
+    if (_deferHeavyPreview) return null;
     if (opacity <= 0) return null;
     final source = _backgroundImage?.trim();
     if (source == null || source.isEmpty) return null;

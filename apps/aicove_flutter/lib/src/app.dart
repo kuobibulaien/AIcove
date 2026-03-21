@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -13,7 +12,6 @@ import 'ui/features/home/pages/main_page.dart';
 import 'ui/features/chat/pages/chat_page.dart';
 import 'ui/features/chat/pages/split_chat_page.dart';
 import 'ui/features/character/pages/contact_edit_page.dart';
-import 'core/models/message_block.dart';
 import 'core/utils/blurred_background_service.dart';
 import 'core/utils/image_preheat_queue.dart';
 import 'core/utils/svg_preheat.dart';
@@ -22,10 +20,9 @@ import 'core/app_logger.dart';
 import 'core/api_logger.dart';
 import 'features/observability/trace_store.dart';
 import 'features/chat/domain/conversation.dart';
-import 'features/chat/domain/message.dart';
 import 'features/chat/data/auto_reply_service.dart';
 import 'features/chat/providers2.dart';
-import 'features/chat/services/chat_history_store.dart';
+import 'features/chat/services/conversation_short_window_store.dart';
 import 'features/chat/services/tts_fallback_notification.dart';
 import 'features/settings/app_settings.dart';
 import 'ui/theme/accent_color_provider.dart';
@@ -140,17 +137,13 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     _recentConversationsWarmupPending = false;
 
     // 启动预热策略：
-    // 1) 联系人列表：预热更多会话头像，保证主列表首屏滚动和点击更顺。
-    // 2) 聊天页：预热最近会话的消息图片，减少“进入聊天后才加载”的闪烁。
+    // 1) 联系人列表：继续只预热头像，保证主列表滚动稳定。
+    // 2) 聊天页：改为后台准备每个会话的短列表持久层，而不是进入时现读数据库。
     const contactsAvatarWarmupCount = 12;
-    const recentConversationCount = 3;
-    const maxMessagesToScan = 10;
-    const maxImagesToCache = 24;
 
     final sorted = [...list]..sort(
         (a, b) => _conversationRecency(b).compareTo(_conversationRecency(a)));
-    final targets = sorted.take(recentConversationCount).toList();
-    if (targets.isEmpty) return;
+    if (sorted.isEmpty) return;
 
     final queue = ref.read(imagePreheatQueueProvider);
     final configuration = createLocalImageConfiguration(context);
@@ -165,41 +158,15 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         priority: ImagePreheatPriority.normal,
       );
     }
-
-    // 预热最近会话内容（聊天界面）
-    for (final conv in targets) {
-      unawaited(_warmupRecentConversationPreview(
-        conv,
-        maxMessagesToScan: maxMessagesToScan,
-        maxImagesToCache: maxImagesToCache,
-      ));
-    }
+    unawaited(
+      ref.read(conversationShortWindowStoreProvider).warmupConversations(
+        <String>[
+          for (final conversation in sorted) conversation.id,
+        ],
+      ),
+    );
 
     unawaited(_migrateConversationBlurBackgrounds(sorted));
-  }
-
-  Future<void> _warmupRecentConversationPreview(
-    Conversation conv, {
-    required int maxMessagesToScan,
-    required int maxImagesToCache,
-  }) async {
-    final queue = ref.read(imagePreheatQueueProvider);
-    final messages =
-        await ref.read(chatHistoryStoreProvider).loadRecentMessages(
-              conv.id,
-              limit: maxMessagesToScan,
-            );
-    if (!mounted) return;
-    queue.enqueueAll(
-      _collectConversationPreviewProviders(
-        conv,
-        messages: messages,
-        maxMessagesToScan: maxMessagesToScan,
-        maxImagesToCache: maxImagesToCache,
-      ),
-      createLocalImageConfiguration(context),
-      priority: ImagePreheatPriority.high,
-    );
   }
 
   Future<void> _migrateConversationBlurBackgrounds(
@@ -268,65 +235,6 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     final hashIndex = path.indexOf('#');
     if (hashIndex < 0) return path;
     return path.substring(0, hashIndex);
-  }
-
-  List<ImageProvider> _collectConversationPreviewProviders(
-    Conversation conv, {
-    List<Message>? messages,
-    required int maxMessagesToScan,
-    required int maxImagesToCache,
-  }) {
-    final images = <ImageProvider>[];
-    images.addAll(_collectConversationAvatarProviders(conv));
-
-    final previewMessages = messages ?? const <Message>[];
-    final start = previewMessages.length > maxMessagesToScan
-        ? previewMessages.length - maxMessagesToScan
-        : 0;
-
-    for (var i = start;
-        i < previewMessages.length && images.length < maxImagesToCache;
-        i++) {
-      final blocks = previewMessages[i].blocks;
-      if (blocks == null) continue;
-
-      for (final block in blocks) {
-        if (images.length >= maxImagesToCache) break;
-
-        if (block is ImageBlock) {
-          final url = block.url?.trim();
-          final localPath = block.localPath?.trim();
-
-          if (url != null && url.isNotEmpty) {
-            images.add(CachedNetworkImageProvider(url));
-          } else if (localPath != null && localPath.isNotEmpty) {
-            images.add(FileImage(File(localPath)));
-          }
-        } else if (block is EmojiBlock) {
-          final rawPath = block.path.trim();
-          if (rawPath.isEmpty) continue;
-
-          final isNetwork =
-              rawPath.startsWith('http://') || rawPath.startsWith('https://');
-          if (isNetwork) {
-            images.add(CachedNetworkImageProvider(rawPath));
-            continue;
-          }
-
-          final path = _stripPathFragment(rawPath);
-          if (path.isEmpty) continue;
-          final isAsset =
-              path.startsWith('assets/') || path.startsWith('packages/');
-          if (isAsset) {
-            images.add(AssetImage(path));
-          } else {
-            images.add(FileImage(File(path)));
-          }
-        }
-      }
-    }
-
-    return images;
   }
 
   List<ImageProvider> _collectConversationAvatarProviders(Conversation conv) {

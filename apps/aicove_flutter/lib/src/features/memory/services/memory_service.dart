@@ -525,7 +525,14 @@ class MemoryService {
     required String query,
     int topK = 5,
   }) async {
-    if (_embeddingService == null || query.trim().isEmpty) return const [];
+    if (query.trim().isEmpty) return const [];
+    if (_embeddingService == null) {
+      return _memoryRepository.searchTopKKeywordOnly(
+        query,
+        conversationId: conversationId,
+        k: topK,
+      );
+    }
     final embedding = await _embeddingService!.getEmbedding(query);
     if (config.enableHybridSearch) {
       return _memoryRepository.searchTopKHybrid(
@@ -896,6 +903,10 @@ class MemoryService {
 
   Future<String> _buildRolePersonaInstruction(String conversationId) async {
     const genericInstruction = '''
+当前正在整理一个角色专属记忆库：
+- conversationId：{conversation_id}
+- 你写出的 L1/L2/L3/L4 都只能属于这个角色
+
 当 target_layer = L3 时：
 - fact 必须用角色第一视角写成单条日记事件，像角色自己在回顾“我和用户发生了什么”
 - 可以输出同一天的多条不同事件，每条只聚焦一件事
@@ -904,12 +915,16 @@ class MemoryService {
 
     final conversationRepository = _conversationRepository;
     if (conversationRepository == null) {
-      return genericInstruction.trim();
+      return genericInstruction
+          .replaceAll('{conversation_id}', conversationId)
+          .trim();
     }
 
     final conversation = await conversationRepository.getById(conversationId);
     if (conversation == null) {
-      return genericInstruction.trim();
+      return genericInstruction
+          .replaceAll('{conversation_id}', conversationId)
+          .trim();
     }
 
     final roleName = conversation.displayName.trim().isEmpty
@@ -927,13 +942,17 @@ class MemoryService {
 
     final buffer = StringBuffer()
       ..writeln('当前需要你以指定角色的人设来整理记忆：')
+      ..writeln('- 当前记忆库类型：角色专属记忆库')
+      ..writeln('- 当前记忆库 ID：$conversationId')
       ..writeln('- 角色名：$roleName')
       ..writeln('- 角色自称优先使用：$selfAddress')
       ..writeln('- 对用户称呼优先使用：$addressUser');
     if (personaSummary.isNotEmpty) {
       buffer.writeln('- 角色设定摘要：$personaSummary');
     }
-    buffer.writeln(genericInstruction.trim());
+    buffer.writeln(
+      genericInstruction.replaceAll('{conversation_id}', conversationId).trim(),
+    );
     buffer.writeln('- 单日内允许输出多条 L3 事件，这些事件之后会被拼接为同一篇日记展示');
     return buffer.toString().trim();
   }
@@ -1227,6 +1246,10 @@ const String _memorySummaryExtraInstruction = '''
 你当前收到的是已经按记忆触发规则挑选过的一批旧消息：
 - 核心部分是当前用户消息之前 24 小时保护期之外、且尚未总结的消息
 - 如果保护期边界前后的用户消息连续间隔不超过 10 分钟，保护期内相邻消息也可能被并入
+你正在整理的是某一个角色自己的专属记忆库：
+- 每个 conversationId 都代表一个独立角色记忆库
+- L1 / L2 / L3 / L4 都是这个角色记忆库内部的分层，不是全局共享池
+- 不要把其他角色可能拥有的经历、口吻或记忆混进当前输出
 请强烈关注每条消息中的时间戳，判断事件发生在多久前、是否已经结束，不要把短期状态误写成长期稳定事实。
 严格按要求输出 JSON，不要输出 markdown。
 ''';

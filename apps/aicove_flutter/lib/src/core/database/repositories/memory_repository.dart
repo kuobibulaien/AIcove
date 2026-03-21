@@ -260,6 +260,28 @@ class MemoryRepository {
     return _touchHits(top);
   }
 
+  Future<List<MemoryEntity>> searchTopKKeywordOnly(
+    String queryText, {
+    required String conversationId,
+    int k = 5,
+  }) async {
+    if (queryText.trim().isEmpty) return const [];
+    final bm25Scores = await _searchBm25Scores(conversationId, queryText);
+    if (bm25Scores.isEmpty) return const [];
+
+    final byId = await _loadByIds(bm25Scores.keys.toList());
+    final scored = <MapEntry<MemoryEntity, double>>[];
+    for (final entry in bm25Scores.entries) {
+      final memory = byId[entry.key];
+      if (memory == null || memory.layer == 'L1') continue;
+      scored.add(MapEntry(memory, entry.value));
+    }
+    scored.sort((a, b) => b.value.compareTo(a.value));
+
+    final top = scored.take(k).map((e) => e.key).toList();
+    return _touchHits(top);
+  }
+
   Future<List<MemoryEntity>> _touchHits(List<MemoryEntity> hits) async {
     final updated = <MemoryEntity>[];
     for (final m in hits) {
@@ -313,10 +335,9 @@ LIMIT 20
     if (matchExpr.trim().isEmpty) return const [];
     final rows = await _db.customSelect(
       '''
-SELECT memory_id, MIN(bm25(memory_fts)) AS bm25_score
+SELECT memory_id, bm25(memory_fts) AS bm25_score
 FROM memory_fts
 WHERE conversation_id = ? AND tokenized_content MATCH ?
-GROUP BY memory_id
 ORDER BY bm25_score ASC
 LIMIT 20
 ''',

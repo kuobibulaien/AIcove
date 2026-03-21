@@ -207,6 +207,23 @@ AppSettings _buildTestSettings({double streamSegmentDelaySeconds = 0}) {
   );
 }
 
+bool _isGeneratingPlaceholderMessage(Message message) {
+  return message.role == 'assistant' &&
+      message.status == 'sending' &&
+      (message.blocks?.whereType<TextBlock>().any(
+                (block) =>
+                    block.status == BlockStatus.streaming &&
+                    block.content.trim() == '生成中...',
+              ) ??
+          false);
+}
+
+List<Message> _collectGeneratingPlaceholderMessages(Iterable<Message> messages) {
+  return messages
+      .where(_isGeneratingPlaceholderMessage)
+      .toList(growable: false);
+}
+
 class _FakeAppSettingsNotifier extends AppSettingsNotifier {
   _FakeAppSettingsNotifier(this._settings);
 
@@ -1826,6 +1843,54 @@ void main() {
     expect(sendService.lastConversationId, targetConv.id);
   });
 
+  test('sendComposerText 会拼接引用前缀并清空引用态', () async {
+    final now = DateTime.now();
+    final conv = Conversation(
+      id: 'conv_send_composer_quote',
+      title: 'ComposerQuote',
+      displayName: 'ComposerQuote',
+      createdAt: now,
+      updatedAt: now,
+      messages: const [],
+    );
+    final settings = _buildTestSettings().copyWith(ttsEnabled: false);
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+
+    late _RecordingImageConfigSendService sendService;
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(settings),
+        ),
+        chatSendServiceProvider.overrideWith((ref) {
+          sendService = _RecordingImageConfigSendService(ref, settings);
+          return sendService;
+        }),
+        activeConversationProvider.overrideWith((ref) => conv),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await container.read(appSettingsProvider.future);
+    final actions = container.read(chatActionsProvider);
+    container.read(quotedMessageProvider.notifier).state = const QuotedMessage(
+      id: 'quoted_1',
+      content: '上一条引用消息',
+      isUser: false,
+    );
+
+    await actions.sendComposerText('继续往下说');
+
+    expect(
+      sendService.lastUserText,
+      '> Quote: 上一条引用消息\n\n继续往下说',
+    );
+    expect(container.read(quotedMessageProvider), isNull);
+  });
+
   test('regenerate 会使用流式参数调用 API', () async {
     final now = DateTime.now();
     final userMsg = Message(
@@ -2059,19 +2124,17 @@ void main() {
     final actions = container.read(chatActionsProvider);
 
     final sendFuture = actions.send('测试关闭分段时也要看到流式文本');
-    final transientSnapshots = <List<Message>>[];
+    final stableSnapshots = <List<Message>>[];
     for (var i = 0; i < 6; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 80));
-      transientSnapshots.add(
-        List<Message>.from(
-          container.read(conversationTransientMessagesProvider(conv.id)),
-        ),
+      stableSnapshots.add(
+        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id),
       );
     }
     await sendFuture;
 
     var sawInProgressSuccessText = false;
-    for (final snapshot in transientSnapshots) {
+    for (final snapshot in stableSnapshots) {
       final assistantSendingMessages = snapshot.where((m) {
         return m.role == 'assistant' && m.status == 'sending';
       });
@@ -2135,10 +2198,10 @@ void main() {
         container.read(chatActionsProvider).send('测试 0.5 秒生成中占位');
 
     await Future<void>.delayed(const Duration(milliseconds: 560));
-    final transientMessages =
-        container.read(conversationTransientMessagesProvider(conv.id));
+    final stableMessages =
+        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
 
-    final thinkingBubble = transientMessages.cast<Message?>().firstWhere(
+    final thinkingBubble = stableMessages.cast<Message?>().firstWhere(
           (message) =>
               message != null &&
               message.role == 'assistant' &&
@@ -2159,6 +2222,64 @@ void main() {
     );
 
     await sendFuture;
+  });
+
+  test('send 流式文本期间应直接写入正式时间线，临时层保持为空', () async {
+    final now = DateTime.now();
+    final conv = Conversation(
+      id: 'conv_stream_stable_timeline_only',
+      title: 'StableTimelineOnly',
+      displayName: 'StableTimelineOnly',
+      createdAt: now,
+      updatedAt: now,
+      messages: const [],
+      lastMessage: '',
+      lastMessageTime: now,
+    );
+    final settings = _buildTestSettings();
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(settings),
+        ),
+        chatSendServiceProvider.overrideWith(
+          (ref) => _DelayedFirstSentenceSendService(ref, settings),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    container.read(activeConversationIdProvider.notifier).state = conv.id;
+    await container.read(conversationsProvider.future);
+    await container.read(appSettingsProvider.future);
+
+    final sendFuture = container.read(chatActionsProvider).send('测试正式时间线直写');
+    await Future<void>.delayed(const Duration(milliseconds: 560));
+    final stableMessages =
+        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
+    final transientMessages =
+        container.read(conversationTransientMessagesProvider(conv.id));
+    await sendFuture;
+
+    expect(
+      stableMessages.any(
+        (message) => message.role == 'assistant' && message.status == 'sending',
+      ),
+      isTrue,
+      reason: '流式中的 assistant 气泡应直接出现在正式时间线里，避免 transient->stable 交接闪白',
+    );
+    expect(
+      transientMessages.any(
+        (message) => message.role == 'assistant' && message.status == 'sending',
+      ),
+      isFalse,
+      reason: '文本流式改为正式时间线承载后，不应再把发送中的正文挂在 transient 临时层',
+    );
   });
 
   test('send 在打断生成后，应立即清掉临时占位气泡', () async {
@@ -2200,11 +2321,13 @@ void main() {
     sendFuture.whenComplete(() => sendFinished = true);
 
     await Future<void>.delayed(const Duration(milliseconds: 560));
-    final transientBeforeInterrupt =
-        container.read(conversationTransientMessagesProvider(conv.id));
+    final stableBeforeInterrupt =
+        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
     expect(
-      transientBeforeInterrupt,
-      isNotEmpty,
+      stableBeforeInterrupt.any(
+        (message) => message.role == 'assistant' && message.status == 'sending',
+      ),
+      isTrue,
       reason: '停止前应先看到生成中占位，才能证明本用例覆盖到了用户反馈的场景',
     );
 
@@ -2219,9 +2342,10 @@ void main() {
       reason: '此时底层请求尚未自然返回，需要证明占位是在“中断瞬间”被清掉，而不是等请求结束后才消失',
     );
     expect(
-      container.read(conversationTransientMessagesProvider(conv.id)),
+      (await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id))
+          .where((message) => message.role == 'assistant'),
       isEmpty,
-      reason: '打断生成后，临时时间线里的生成中占位应立即清空',
+      reason: '打断生成后，正式时间线里的发送中占位也应立即清空',
     );
 
     await sendFuture;
@@ -2270,18 +2394,16 @@ void main() {
     await container.read(appSettingsProvider.future);
 
     final sendFuture = container.read(chatActionsProvider).send('测试句级装填');
-    final transientSnapshots = <List<Message>>[];
+    final stableSnapshots = <List<Message>>[];
     for (var i = 0; i < 9; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 90));
-      transientSnapshots.add(
-        List<Message>.from(
-          container.read(conversationTransientMessagesProvider(conv.id)),
-        ),
+      stableSnapshots.add(
+        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id),
       );
     }
     await sendFuture;
 
-    final leakedPartialText = transientSnapshots.any((snapshot) {
+    final leakedPartialText = stableSnapshots.any((snapshot) {
       return snapshot.any((message) {
         if (message.role != 'assistant' || message.status != 'sending') {
           return false;
@@ -2294,10 +2416,10 @@ void main() {
     expect(
       leakedPartialText,
       isFalse,
-      reason: '分段模式下，未封口的半句正文应只留在后台缓冲，不能提前装填到前端占位气泡',
+      reason: '分段模式下，未封口的半句正文应只留在后台缓冲，不能提前写进正式时间线的发送中气泡',
     );
 
-    final sawFirstSentenceThenNextThinking = transientSnapshots.any((snapshot) {
+    final sawFirstSentenceThenNextThinking = stableSnapshots.any((snapshot) {
       final hasCommittedFirstSentence = snapshot.any(
         (message) =>
             message.role == 'assistant' &&
@@ -2485,18 +2607,16 @@ void main() {
     await container.read(appSettingsProvider.future);
 
     final sendFuture = container.read(chatActionsProvider).send('测试流式 TTS');
-    final transientSnapshots = <List<Message>>[];
+    final stableSnapshots = <List<Message>>[];
     for (var i = 0; i < 6; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 80));
-      transientSnapshots.add(
-        List<Message>.from(
-          container.read(conversationTransientMessagesProvider(conv.id)),
-        ),
+      stableSnapshots.add(
+        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id),
       );
     }
     await sendFuture;
 
-    final sawPendingAudio = transientSnapshots.any((snapshot) {
+    final sawPendingAudio = stableSnapshots.any((snapshot) {
       var hasLeadingText = false;
       var hasPendingAudio = false;
       for (final message in snapshot) {
@@ -2532,7 +2652,7 @@ void main() {
     expect(
       container.read(conversationTransientMessagesProvider(conv.id)),
       isEmpty,
-      reason: '流式完成落库后，临时时间线应及时清空',
+      reason: '语音流式并入正式时间线后，不应再残留临时层数据',
     );
   });
 
@@ -3037,15 +3157,17 @@ void main() {
 
     await Future<void>.delayed(const Duration(milliseconds: 40));
 
+    var storedMessages =
+        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
     expect(
-      container.read(conversationTransientMessagesProvider(conv.id)),
+      _collectGeneratingPlaceholderMessages(storedMessages),
       hasLength(2),
       reason: '两个慢图都应先挂出独立占位，不阻塞正文',
     );
 
     await Future<void>.delayed(const Duration(milliseconds: 120));
 
-    var storedMessages =
+    storedMessages =
         await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
     final imageBlocks = storedMessages
         .where(
@@ -3055,7 +3177,7 @@ void main() {
     expect(imageBlocks, hasLength(1));
     expect(imageBlocks.single.prompt, 'fast portrait');
     expect(
-      container.read(conversationTransientMessagesProvider(conv.id)),
+      _collectGeneratingPlaceholderMessages(storedMessages),
       hasLength(1),
       reason: '快图完成后应先单独发出，慢图继续保留占位等待',
     );
@@ -3073,7 +3195,7 @@ void main() {
         containsAll(<String>['slow landscape', 'fast portrait']));
     expect(imagePlugin.prompts, <String>['slow landscape', 'fast portrait']);
     expect(
-      container.read(conversationTransientMessagesProvider(conv.id)),
+      _collectGeneratingPlaceholderMessages(storedMessages),
       isEmpty,
       reason: '所有图片完成后，尾部等待占位应全部清掉',
     );
@@ -3174,45 +3296,47 @@ void main() {
       streamTextMessageIds: const <String>['stream_text_handoff_anchor'],
     );
 
-    var sawPlaceholder = false;
+    var sawStablePlaceholder = false;
     var sawStableImage = false;
     var sawEmptyGap = false;
     for (var i = 0; i < 35; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 10));
-      final transientMessages =
-          container.read(conversationTransientMessagesProvider(conv.id));
       final stableMessages =
           container.read(conversationMessagesProvider(conv.id)).valueOrNull ??
               const <Message>[];
-      final hasTransientOverlay = transientMessages.isNotEmpty;
+      final hasStablePlaceholder =
+          _collectGeneratingPlaceholderMessages(stableMessages).isNotEmpty;
       final hasStableImage = stableMessages.any(
         (message) =>
             message.blocks?.any((block) => block is ImageBlock) ?? false,
       );
-      if (hasTransientOverlay) {
-        sawPlaceholder = true;
+      if (hasStablePlaceholder) {
+        sawStablePlaceholder = true;
       }
       if (hasStableImage) {
         sawStableImage = true;
       }
-      if (sawPlaceholder && !hasStableImage && !hasTransientOverlay) {
+      if (sawStablePlaceholder && !hasStableImage && !hasStablePlaceholder) {
         sawEmptyGap = true;
       }
     }
 
-    expect(sawPlaceholder, isTrue);
+    expect(sawStablePlaceholder, isTrue);
     expect(sawStableImage, isTrue);
     expect(
       sawEmptyGap,
       isFalse,
-      reason: '正式图片接管前，占位至少要一直顶住列表位置，不能先清空再等稳定时间线补位',
+      reason: '图片占位改为正式时间线同 ID 原地升级后，不应再出现“占位没了、图片还没到”的空窗',
     );
 
     await Future<void>.delayed(const Duration(milliseconds: 120));
+    final finalStableMessages =
+        container.read(conversationMessagesProvider(conv.id)).valueOrNull ??
+            const <Message>[];
     expect(
-      container.read(conversationTransientMessagesProvider(conv.id)),
+      _collectGeneratingPlaceholderMessages(finalStableMessages),
       isEmpty,
-      reason: '稳定时间线接管后，临时占位仍应及时清空，避免长期残留',
+      reason: '图片升级为最终态后，不应继续残留生成中占位',
     );
     expect(imagePlugin.prompts, <String>['handoff portrait']);
   });
@@ -3340,7 +3464,7 @@ void main() {
       reason: '慢图完成前不应挡住后续文本，也不应提前落成最终图片',
     );
     expect(
-      container.read(conversationTransientMessagesProvider(conv.id)),
+      _collectGeneratingPlaceholderMessages(storedMessages),
       hasLength(1),
       reason: '慢图应先挂一个普通生成中气泡占位',
     );
@@ -3359,7 +3483,7 @@ void main() {
       reason: 'TTS 原位完成后，慢图仍应继续独立等待，不回头阻塞正文',
     );
     expect(
-      container.read(conversationTransientMessagesProvider(conv.id)),
+      _collectGeneratingPlaceholderMessages(storedMessages),
       hasLength(1),
     );
 
@@ -3373,7 +3497,7 @@ void main() {
     expect(imageIndex, greaterThan(textCIndex));
     expect(imagePlugin.prompts, <String>['slow landscape']);
     expect(
-      container.read(conversationTransientMessagesProvider(conv.id)),
+      _collectGeneratingPlaceholderMessages(storedMessages),
       isEmpty,
       reason: '图片补齐后，生成中占位应及时清空',
     );
@@ -3447,18 +3571,19 @@ void main() {
     await container.read(chatActionsProvider).send('测试混合尾部慢图');
     await Future<void>.delayed(const Duration(milliseconds: 40));
 
-    var transientMessages =
-        container.read(conversationTransientMessagesProvider(conv.id));
-    expect(transientMessages, hasLength(1));
-    final tailPlaceholder = transientMessages.single;
+    var storedMessages =
+        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
+    final tailPlaceholders = _collectGeneratingPlaceholderMessages(
+      storedMessages,
+    );
+    expect(tailPlaceholders, hasLength(1));
+    final tailPlaceholder = tailPlaceholders.single;
     expect(tailPlaceholder.displayText.trim(), '生成中...');
     expect(tailPlaceholder.status, 'sending');
     final placeholderTextBlock =
         tailPlaceholder.blocks!.whereType<TextBlock>().single;
     expect(placeholderTextBlock.status, BlockStatus.streaming);
 
-    var storedMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
     final assistantMessages = storedMessages
         .where((message) => message.role == 'assistant')
         .toList(growable: false);
@@ -3507,10 +3632,8 @@ void main() {
       isFalse,
       reason: '尾部慢图不应阻塞 TTS 原位完成，也不应在这之前抢先落库',
     );
-    transientMessages =
-        container.read(conversationTransientMessagesProvider(conv.id));
     expect(
-      transientMessages.single.id,
+      _collectGeneratingPlaceholderMessages(storedMessages).single.id,
       tailPlaceholder.id,
       reason: '慢图仍未完成时，尾部生成中气泡应继续保留原位等待',
     );
@@ -3531,10 +3654,64 @@ void main() {
     expect(imageIndex, greaterThan(finalTextCIndex));
     expect(imagePlugin.prompts, <String>['slow landscape']);
     expect(
-      container.read(conversationTransientMessagesProvider(conv.id)),
+      _collectGeneratingPlaceholderMessages(storedMessages),
       isEmpty,
       reason: '慢图完成后，尾部生成中占位应及时让位给最终图片',
     );
+  });
+
+  test('send 处理多模态回复时，不应切到消息整理中状态', () async {
+    final now = DateTime.now();
+    final conv = Conversation(
+      id: 'conv_stream_multimodal_no_processing_status',
+      title: 'StreamMultimodalNoProcessingStatus',
+      displayName: 'StreamMultimodalNoProcessingStatus',
+      createdAt: now,
+      updatedAt: now,
+      messages: const [],
+      lastMessage: '',
+      lastMessageTime: now,
+    );
+    final settings = _buildTestSettings();
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(settings),
+        ),
+        chatSendServiceProvider.overrideWith(
+          (ref) => _StreamingMixedTtsImageTailSendService(ref, settings),
+        ),
+        chatTtsHandlerProvider.overrideWith((ref) => _NoopChatTtsHandler(ref)),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    container.read(activeConversationIdProvider.notifier).state = conv.id;
+    await container.read(conversationsProvider.future);
+    await container.read(appSettingsProvider.future);
+
+    final statuses = <ChatStatus>[];
+    final statusSub = container.listen<ChatStatus>(
+      chatStatusProvider,
+      (_, next) => statuses.add(next),
+      fireImmediately: true,
+    );
+    addTearDown(statusSub.close);
+
+    await container.read(chatActionsProvider).send('测试多模态状态切换');
+
+    expect(statuses, contains(ChatStatus.thinking));
+    expect(
+      statuses.where((status) => status == ChatStatus.processingResponse),
+      isEmpty,
+      reason: '多模态消息已按顺序正常交付，不应再额外进入“消息整理中”阶段。',
+    );
+    expect(container.read(chatStatusProvider), ChatStatus.idle);
   });
 
   test('同一消息二次保存时应清掉旧文本块', () async {

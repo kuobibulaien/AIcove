@@ -10,6 +10,22 @@ import 'siliconflow_voice_provider.dart';
 import 'aliyun_voice_provider.dart';
 import 'minimax_voice_provider.dart';
 
+String _normalizeRoutingValue(String? value) {
+  return value?.trim().toLowerCase() ?? '';
+}
+
+class TtsProviderResolution {
+  final TtsVoiceProvider? voiceProvider;
+  final String requestFormat;
+  final String? matchedBy;
+
+  const TtsProviderResolution({
+    required this.voiceProvider,
+    required this.requestFormat,
+    this.matchedBy,
+  });
+}
+
 /// TTS Provider 工厂
 class TtsProviderFactory {
   /// 所有已注册的 Provider
@@ -25,43 +41,86 @@ class TtsProviderFactory {
   /// [providerId] 渠道标识，如 'siliconflow'、'aliyun_qwen'、'minimax'
   /// 返回对应的 Provider 实例，如果不存在则返回 null
   static TtsVoiceProvider? getProvider(String providerId) {
-    return _providers[providerId.toLowerCase()];
+    final normalized = _normalizeRoutingValue(providerId);
+    if (normalized.isEmpty) return null;
+    for (final provider in _providers.values) {
+      if (provider.matchesProviderId(normalized)) {
+        return provider;
+      }
+    }
+    return null;
+  }
+
+  static String _normalizeRequestFormat(String? requestFormat) {
+    final normalized = _normalizeRoutingValue(requestFormat);
+    return normalized.isEmpty ? 'openai_tts' : normalized;
+  }
+
+  static TtsProviderResolution resolve({
+    String? providerId,
+    String? apiUrl,
+    String? requestFormat,
+  }) {
+    final normalizedRequestFormat = _normalizeRequestFormat(requestFormat);
+
+    if (normalizedRequestFormat != 'openai_tts') {
+      for (final provider in _providers.values) {
+        if (provider.matchesRequestFormat(normalizedRequestFormat)) {
+          return TtsProviderResolution(
+            voiceProvider: provider,
+            requestFormat: normalizedRequestFormat,
+            matchedBy: 'requestFormat',
+          );
+        }
+      }
+    }
+
+    final normalizedProviderId = _normalizeRoutingValue(providerId);
+    if (normalizedProviderId.isNotEmpty) {
+      for (final provider in _providers.values) {
+        if (provider.matchesProviderId(normalizedProviderId)) {
+          return TtsProviderResolution(
+            voiceProvider: provider,
+            requestFormat: normalizedRequestFormat,
+            matchedBy: 'providerId',
+          );
+        }
+      }
+    }
+
+    final normalizedApiUrl = _normalizeRoutingValue(apiUrl);
+    if (normalizedApiUrl.isNotEmpty) {
+      for (final provider in _providers.values) {
+        if (provider.matchesApiUrl(normalizedApiUrl)) {
+          return TtsProviderResolution(
+            voiceProvider: provider,
+            requestFormat: normalizedRequestFormat,
+            matchedBy: 'apiUrl',
+          );
+        }
+      }
+    }
+
+    return TtsProviderResolution(
+      voiceProvider: null,
+      requestFormat: normalizedRequestFormat,
+    );
   }
 
   /// 根据 API URL 自动识别渠道并获取 Provider
   ///
   /// [apiUrl] API 基础 URL
   /// [requestFormat] 可选，请求格式标识
-  static TtsVoiceProvider? getProviderByUrl(String apiUrl,
-      {String? requestFormat}) {
-    final url = apiUrl.toLowerCase();
-
-    // 根据 requestFormat 判断
-    if (requestFormat != null) {
-      if (requestFormat == 'aliyun_qwen_tts') {
-        return _providers['aliyun_qwen'];
-      }
-      if (requestFormat == 'aliyun_cosyvoice') {
-        return _providers['aliyun_cosyvoice'];
-      }
-      if (requestFormat == 'siliconflow_indextts') {
-        return _providers['siliconflow'];
-      }
-    }
-
-    // 根据 URL 判断
-    if (url.contains('siliconflow')) {
-      return _providers['siliconflow'];
-    }
-    if (url.contains('dashscope') || url.contains('aliyuncs')) {
-      // 默认使用 Qwen-TTS
-      return _providers['aliyun_qwen'];
-    }
-    if (url.contains('minimax')) {
-      return _providers['minimax'];
-    }
-
-    return null;
+  static TtsVoiceProvider? getProviderByUrl(
+    String apiUrl, {
+    String? requestFormat,
+    String? providerId,
+  }) {
+    return resolve(
+      providerId: providerId,
+      apiUrl: apiUrl,
+      requestFormat: requestFormat,
+    ).voiceProvider;
   }
 
   /// 获取所有可用的 Provider 列表

@@ -7,7 +7,6 @@ import 'package:flutter_test/flutter_test.dart';
 // ignore: depend_on_referenced_packages
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 
-import 'package:aicove_flutter/src/features/chat/conversation_timeline_providers.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
 import 'package:aicove_flutter/src/core/models/block_status.dart';
@@ -15,6 +14,7 @@ import 'package:aicove_flutter/src/core/models/message_block.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:aicove_flutter/src/ui/features/chat/widgets/chat_message_list.dart';
 import 'package:aicove_flutter/src/ui/features/chat/widgets/chat_message_list_display_cache.dart';
+import 'package:aicove_flutter/src/ui/features/chat/widgets/chat_viewport_controller.dart';
 import 'package:aicove_flutter/src/ui/theme/skin_provider.dart';
 import 'package:aicove_flutter/src/ui/theme/skins/moetalk_skin.dart';
 
@@ -86,7 +86,14 @@ List<Message> _buildInitialMessages(int count) {
 }
 
 class _ChatListHarness extends StatefulWidget {
-  const _ChatListHarness({super.key});
+  const _ChatListHarness({
+    super.key,
+    this.onDebugAutoScrollRequested,
+    this.onDebugListItemCountChanged,
+  });
+
+  final ValueChanged<String>? onDebugAutoScrollRequested;
+  final ValueChanged<int>? onDebugListItemCountChanged;
 
   @override
   State<_ChatListHarness> createState() => _ChatListHarnessState();
@@ -94,15 +101,21 @@ class _ChatListHarness extends StatefulWidget {
 
 class _ChatListHarnessState extends State<_ChatListHarness> {
   late List<Message> _messages;
-  bool _autoScrollToBottomEnabled = true;
-  int _forceScrollToBottomSignal = 0;
+  late final ChatViewportController _viewportController;
   String? _streamingAssistantId;
   double _bottomOverlayHeight = 0;
 
   @override
   void initState() {
     super.initState();
+    _viewportController = ChatViewportController();
     _messages = _buildInitialMessages(40);
+  }
+
+  @override
+  void dispose() {
+    _viewportController.dispose();
+    super.dispose();
   }
 
   void appendAssistantMessage() {
@@ -165,23 +178,40 @@ class _ChatListHarnessState extends State<_ChatListHarness> {
     if (streamId == null) return;
     setState(() {
       _messages = _messages
-          .map((m) =>
-              m.id == streamId ? m.copyWith(content: '${m.content} · 继续生成') : m)
+          .map((m) => m.id == streamId
+              ? _replaceMessageText(
+                  m,
+                  '${m.displayText} · 继续生成',
+                  status: 'sending',
+                )
+              : m)
+          .toList();
+    });
+  }
+
+  void growAssistantStreamingChunkLarge() {
+    final streamId = _streamingAssistantId;
+    if (streamId == null) return;
+    const fragment = '继续生成内容用于撑高列表，继续生成内容用于撑高列表，继续生成内容用于撑高列表';
+    setState(() {
+      _messages = _messages
+          .map((m) => m.id == streamId
+              ? _replaceMessageText(
+                  m,
+                  '${m.displayText}\n$fragment',
+                  status: 'sending',
+                )
+              : m)
           .toList();
     });
   }
 
   void resumeAutoScrollFromInputTap() {
-    setState(() {
-      _autoScrollToBottomEnabled = true;
-    });
+    _viewportController.onComposerTapped();
   }
 
   void forceScrollToBottomFromSend() {
-    setState(() {
-      _autoScrollToBottomEnabled = true;
-      _forceScrollToBottomSignal += 1;
-    });
+    _viewportController.onUserSend();
   }
 
   void setBottomOverlayHeight(double height) {
@@ -198,12 +228,9 @@ class _ChatListHarnessState extends State<_ChatListHarness> {
       displayName: '测试AI',
       avatarUrl: null,
       bottomOverlayHeight: _bottomOverlayHeight,
-      autoScrollToBottomEnabled: _autoScrollToBottomEnabled,
-      onAutoScrollDisabled: () {
-        if (!_autoScrollToBottomEnabled) return;
-        setState(() => _autoScrollToBottomEnabled = false);
-      },
-      forceScrollToBottomSignal: _forceScrollToBottomSignal,
+      viewportController: _viewportController,
+      onDebugAutoScrollRequested: widget.onDebugAutoScrollRequested,
+      onDebugListItemCountChanged: widget.onDebugListItemCountChanged,
     );
   }
 }
@@ -224,10 +251,10 @@ class _PagingChatListHarness extends StatefulWidget {
 
 class _PagingChatListHarnessState extends State<_PagingChatListHarness> {
   late List<Message> _messages;
-  bool _autoScrollToBottomEnabled = true;
+  late final ChatViewportController _viewportController;
   bool _isLoadingMore = false;
   bool _hasMoreMessages = true;
-  StreamingBubbleState _streamingBubbleState = StreamingBubbleState.hidden;
+  List<Message> _transientMessages = const <Message>[];
   Completer<void>? _pendingLoadMore;
   List<Message>? _transientEmptyBackupMessages;
   int loadMoreCallCount = 0;
@@ -235,7 +262,14 @@ class _PagingChatListHarnessState extends State<_PagingChatListHarness> {
   @override
   void initState() {
     super.initState();
+    _viewportController = ChatViewportController();
     _messages = _buildInitialMessages(40).sublist(20);
+  }
+
+  @override
+  void dispose() {
+    _viewportController.dispose();
+    super.dispose();
   }
 
   Future<void> triggerLoadMore() {
@@ -280,12 +314,25 @@ class _PagingChatListHarnessState extends State<_PagingChatListHarness> {
   }
 
   void updateStreamingBubble(String text) {
+    final createdAt = _messages.isNotEmpty
+        ? _messages.last.createdAt.add(const Duration(milliseconds: 1))
+        : DateTime(2026, 1, 1, 12, 0, 0);
     setState(() {
-      _streamingBubbleState = StreamingBubbleState(
-        visible: true,
-        text: text,
-        status: StreamingBubbleStatus.streaming,
-      );
+      _transientMessages = <Message>[
+        Message.fromBlocks(
+          id: 'temp_streaming',
+          role: 'assistant',
+          blocks: <MessageBlock>[
+            TextBlock(
+              messageId: 'temp_streaming',
+              content: text,
+              status: BlockStatus.streaming,
+            ),
+          ],
+          createdAt: createdAt,
+          status: 'sending',
+        ),
+      ];
     });
   }
 
@@ -294,8 +341,9 @@ class _PagingChatListHarnessState extends State<_PagingChatListHarness> {
     setState(() {
       _messages = [
         ..._messages.sublist(0, _messages.length - 1),
-        last.copyWith(
-          content: '${last.content} · 尾消息更新',
+        _replaceMessageText(
+          last,
+          '${last.displayText} · 尾消息更新',
           status: 'sending',
         ),
       ];
@@ -326,14 +374,10 @@ class _PagingChatListHarnessState extends State<_PagingChatListHarness> {
     return ChatMessageList(
       conversationId: 'conv_paging_test',
       messages: _messages,
+      transientMessages: _transientMessages,
       displayName: '测试AI',
       avatarUrl: null,
-      streamingBubbleState: _streamingBubbleState,
-      autoScrollToBottomEnabled: _autoScrollToBottomEnabled,
-      onAutoScrollDisabled: () {
-        if (!_autoScrollToBottomEnabled) return;
-        setState(() => _autoScrollToBottomEnabled = false);
-      },
+      viewportController: _viewportController,
       onLoadMore: triggerLoadMore,
       isLoadingMore: _isLoadingMore,
       hasMoreMessages: _hasMoreMessages,
@@ -343,7 +387,25 @@ class _PagingChatListHarnessState extends State<_PagingChatListHarness> {
   }
 }
 
-Widget _buildHost(GlobalKey<_ChatListHarnessState> harnessKey) {
+Message _replaceMessageText(
+  Message message,
+  String text, {
+  String? status,
+}) {
+  return Message.text(
+    id: message.id,
+    role: message.role,
+    content: text,
+    createdAt: message.createdAt,
+    status: status ?? message.status,
+  );
+}
+
+Widget _buildHost(
+  GlobalKey<_ChatListHarnessState> harnessKey, {
+  ValueChanged<String>? onDebugAutoScrollRequested,
+  ValueChanged<int>? onDebugListItemCountChanged,
+}) {
   final settings = _buildSettings();
   return ProviderScope(
     overrides: [
@@ -358,7 +420,11 @@ Widget _buildHost(GlobalKey<_ChatListHarnessState> harnessKey) {
             child: SizedBox(
               width: 360,
               height: 520,
-              child: _ChatListHarness(key: harnessKey),
+              child: _ChatListHarness(
+                key: harnessKey,
+                onDebugAutoScrollRequested: onDebugAutoScrollRequested,
+                onDebugListItemCountChanged: onDebugListItemCountChanged,
+              ),
             ),
           ),
         ),
@@ -402,7 +468,6 @@ Widget _buildPagingHost(
 Widget _buildHostWithMessages({
   required AppSettings settings,
   required List<Message> messages,
-  StreamingBubbleState streamingBubbleState = StreamingBubbleState.hidden,
   List<Message> transientMessages = const <Message>[],
   bool allowPersistentViewportBoot = false,
   Key? chatListKey,
@@ -431,7 +496,7 @@ Widget _buildHostWithMessages({
                 transientMessages: transientMessages,
                 displayName: '测试AI',
                 avatarUrl: null,
-                streamingBubbleState: streamingBubbleState,
+                viewportController: ChatViewportController(),
                 allowPersistentViewportBoot: allowPersistentViewportBoot,
                 onPersistentViewportVisibleCountResolved:
                     onPersistentViewportVisibleCountResolved,
@@ -700,18 +765,18 @@ void main() {
     await tester.pumpWidget(_buildHost(harnessKey));
     await tester.pumpAndSettle();
 
-    final listFinder = find.byType(ListView);
+    final listFinder = find.byType(CustomScrollView);
     expect(listFinder, findsOneWidget);
 
     await tester.drag(listFinder, const Offset(0, 320));
     await tester.pumpAndSettle();
 
-    var controller = tester.widget<ListView>(listFinder).controller!;
+    var controller = tester.widget<CustomScrollView>(listFinder).controller!;
     var gapAfterManual = _distanceToBottom(controller);
     if (gapAfterManual <= 40) {
       await tester.drag(listFinder, const Offset(0, -320));
       await tester.pumpAndSettle();
-      controller = tester.widget<ListView>(listFinder).controller!;
+      controller = tester.widget<CustomScrollView>(listFinder).controller!;
       gapAfterManual = _distanceToBottom(controller);
     }
     expect(gapAfterManual, greaterThan(40));
@@ -720,8 +785,66 @@ void main() {
     await tester.pump();
     await tester.pumpAndSettle();
 
-    controller = tester.widget<ListView>(listFinder).controller!;
+    controller = tester.widget<CustomScrollView>(listFinder).controller!;
     expect(_distanceToBottom(controller), greaterThan(40));
+  });
+
+  testWidgets('用户远离底部后，应显示回到底部箭头且不受新消息影响', (tester) async {
+    final harnessKey = GlobalKey<_ChatListHarnessState>();
+
+    await tester.pumpWidget(_buildHost(harnessKey));
+    await tester.pumpAndSettle();
+
+    final listFinder = find.byType(CustomScrollView);
+    expect(listFinder, findsOneWidget);
+
+    await tester.drag(listFinder, const Offset(0, 320));
+    await tester.pumpAndSettle();
+
+    var controller = tester.widget<CustomScrollView>(listFinder).controller!;
+    var gapAfterManual = _distanceToBottom(controller);
+    if (gapAfterManual <= 40) {
+      await tester.drag(listFinder, const Offset(0, -320));
+      await tester.pumpAndSettle();
+      controller = tester.widget<CustomScrollView>(listFinder).controller!;
+      gapAfterManual = _distanceToBottom(controller);
+    }
+    expect(gapAfterManual, greaterThan(120));
+    expect(
+      find.byKey(const ValueKey<String>('chat_jump_to_latest_badge')),
+      findsOneWidget,
+      reason: '只要用户已经离底部比较远，就应该直接提供回到底部的小箭头',
+    );
+
+    harnessKey.currentState!.appendAssistantMessage();
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    controller = tester.widget<CustomScrollView>(listFinder).controller!;
+    expect(
+      _distanceToBottom(controller),
+      greaterThan(40),
+      reason: '阅读历史时收到新消息不应强制回到底部',
+    );
+    expect(
+      find.byKey(const ValueKey<String>('chat_jump_to_latest_badge')),
+      findsOneWidget,
+      reason: '箭头显示条件应继续只由离底部距离决定，而不是由新消息触发',
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('chat_jump_to_latest_badge')),
+    );
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    controller = tester.widget<CustomScrollView>(listFinder).controller!;
+    expect(_distanceToBottom(controller), lessThanOrEqualTo(8));
+    expect(
+      find.byKey(const ValueKey<String>('chat_jump_to_latest_badge')),
+      findsNothing,
+      reason: '回到底部后，箭头应自动消失',
+    );
   });
 
   testWidgets('用户点击输入框时，若不在底部不应强制回到底部', (tester) async {
@@ -730,18 +853,18 @@ void main() {
     await tester.pumpWidget(_buildHost(harnessKey));
     await tester.pumpAndSettle();
 
-    final listFinder = find.byType(ListView);
+    final listFinder = find.byType(CustomScrollView);
     expect(listFinder, findsOneWidget);
 
     await tester.drag(listFinder, const Offset(0, 320));
     await tester.pumpAndSettle();
 
-    var controller = tester.widget<ListView>(listFinder).controller!;
+    var controller = tester.widget<CustomScrollView>(listFinder).controller!;
     var gapAfterManual = _distanceToBottom(controller);
     if (gapAfterManual <= 40) {
       await tester.drag(listFinder, const Offset(0, -320));
       await tester.pumpAndSettle();
-      controller = tester.widget<ListView>(listFinder).controller!;
+      controller = tester.widget<CustomScrollView>(listFinder).controller!;
       gapAfterManual = _distanceToBottom(controller);
     }
     expect(gapAfterManual, greaterThan(40));
@@ -750,15 +873,52 @@ void main() {
     await tester.pump();
     await tester.pumpAndSettle();
 
-    controller = tester.widget<ListView>(listFinder).controller!;
+    controller = tester.widget<CustomScrollView>(listFinder).controller!;
     expect(_distanceToBottom(controller), greaterThan(40));
 
     harnessKey.currentState!.resumeAutoScrollFromInputTap();
     await tester.pump();
     await tester.pumpAndSettle();
 
-    controller = tester.widget<ListView>(listFinder).controller!;
+    controller = tester.widget<CustomScrollView>(listFinder).controller!;
     expect(_distanceToBottom(controller), greaterThan(40));
+  });
+
+  testWidgets('点击输入框不应解除阅读锁，只有发送消息才恢复自动跟随', (tester) async {
+    final harnessKey = GlobalKey<_ChatListHarnessState>();
+
+    await tester.pumpWidget(_buildHost(harnessKey));
+    await tester.pumpAndSettle();
+
+    final listFinder = find.byType(CustomScrollView);
+    expect(listFinder, findsOneWidget);
+
+    await tester.drag(listFinder, const Offset(0, 320));
+    await tester.pumpAndSettle();
+
+    expect(
+      harnessKey.currentState!._viewportController.shouldFollowLatest,
+      isFalse,
+      reason: '用户手势介入后，应进入阅读锁定态',
+    );
+
+    harnessKey.currentState!.resumeAutoScrollFromInputTap();
+    await tester.pumpAndSettle();
+
+    expect(
+      harnessKey.currentState!._viewportController.shouldFollowLatest,
+      isFalse,
+      reason: '点击输入框不应解除阅读锁，避免程序重新接管视窗',
+    );
+
+    harnessKey.currentState!.forceScrollToBottomFromSend();
+    await tester.pumpAndSettle();
+
+    expect(
+      harnessKey.currentState!._viewportController.shouldFollowLatest,
+      isTrue,
+      reason: '只有用户再次发送消息后，才应恢复自动跟随',
+    );
   });
 
   testWidgets('用户发送后应立即回到底部查看最新消息', (tester) async {
@@ -767,18 +927,18 @@ void main() {
     await tester.pumpWidget(_buildHost(harnessKey));
     await tester.pumpAndSettle();
 
-    final listFinder = find.byType(ListView);
+    final listFinder = find.byType(CustomScrollView);
     expect(listFinder, findsOneWidget);
 
     await tester.drag(listFinder, const Offset(0, 320));
     await tester.pumpAndSettle();
 
-    var controller = tester.widget<ListView>(listFinder).controller!;
+    var controller = tester.widget<CustomScrollView>(listFinder).controller!;
     var gapAfterManual = _distanceToBottom(controller);
     if (gapAfterManual <= 40) {
       await tester.drag(listFinder, const Offset(0, -320));
       await tester.pumpAndSettle();
-      controller = tester.widget<ListView>(listFinder).controller!;
+      controller = tester.widget<CustomScrollView>(listFinder).controller!;
       gapAfterManual = _distanceToBottom(controller);
     }
     expect(gapAfterManual, greaterThan(40));
@@ -788,8 +948,189 @@ void main() {
     await tester.pump();
     await tester.pumpAndSettle();
 
-    controller = tester.widget<ListView>(listFinder).controller!;
+    controller = tester.widget<CustomScrollView>(listFinder).controller!;
     expect(_distanceToBottom(controller), lessThanOrEqualTo(8));
+  });
+
+  testWidgets('AI流式生成期间用户手势仍应能立即接管列表', (tester) async {
+    final harnessKey = GlobalKey<_ChatListHarnessState>();
+
+    await tester.pumpWidget(_buildHost(harnessKey));
+    await tester.pumpAndSettle();
+
+    final listFinder = find.byType(CustomScrollView);
+    expect(listFinder, findsOneWidget);
+
+    harnessKey.currentState!.appendAssistantStreamingMessage();
+    await tester.pumpAndSettle();
+
+    final gesture = await tester.startGesture(tester.getCenter(listFinder));
+    harnessKey.currentState!.growAssistantStreamingChunkLarge();
+    await tester.pump(const Duration(milliseconds: 16));
+    await gesture.moveBy(const Offset(0, 80));
+    await tester.pump(const Duration(milliseconds: 16));
+    harnessKey.currentState!.growAssistantStreamingChunkLarge();
+    await gesture.moveBy(const Offset(0, 180));
+    await tester.pump(const Duration(milliseconds: 16));
+
+    expect(
+      harnessKey.currentState!._viewportController.shouldFollowLatest,
+      isFalse,
+      reason: 'AI 正在流式生成时，用户手势一旦介入就应立即关闭自动回底',
+    );
+
+    var controller = tester.widget<CustomScrollView>(listFinder).controller!;
+    var gapAfterTakeover = _distanceToBottom(controller);
+    if (gapAfterTakeover <= 40) {
+      await gesture.up();
+      await tester.pump();
+      await tester.drag(listFinder, const Offset(0, 320));
+      await tester.pumpAndSettle();
+      controller = tester.widget<CustomScrollView>(listFinder).controller!;
+      gapAfterTakeover = _distanceToBottom(controller);
+    } else {
+      await gesture.up();
+      await tester.pumpAndSettle();
+    }
+    expect(gapAfterTakeover, greaterThan(40));
+
+    final gaps = <double>[gapAfterTakeover];
+    for (var i = 0; i < 6; i++) {
+      harnessKey.currentState!.growAssistantStreamingChunkLarge();
+      await tester.pump(const Duration(milliseconds: 16));
+      controller = tester.widget<CustomScrollView>(listFinder).controller!;
+      gaps.add(_distanceToBottom(controller));
+    }
+    await tester.pumpAndSettle();
+
+    for (final gap in gaps.skip(1)) {
+      expect(
+        gap,
+        greaterThan(40),
+        reason: '用户接管后，后续流式增量不应再把列表强行拽回到底部',
+      );
+    }
+  });
+
+  testWidgets('贴底状态下轻微手势接管后，旧消息不应继续被新消息向上顶走', (tester) async {
+    final harnessKey = GlobalKey<_ChatListHarnessState>();
+
+    await tester.pumpWidget(_buildHost(harnessKey));
+    await tester.pumpAndSettle();
+
+    final listFinder = find.byType(CustomScrollView);
+    expect(listFinder, findsOneWidget);
+
+    harnessKey.currentState!.appendAssistantStreamingMessage();
+    await tester.pumpAndSettle();
+
+    final anchorFinder = find.textContaining('第39条消息');
+    expect(anchorFinder, findsWidgets);
+
+    final gesture = await tester.startGesture(tester.getCenter(listFinder));
+    await gesture.moveBy(const Offset(0, 12));
+    await tester.pump(const Duration(milliseconds: 16));
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(
+      harnessKey.currentState!._viewportController.shouldFollowLatest,
+      isFalse,
+      reason: '轻微手势后也应立即进入阅读锁定态',
+    );
+
+    final dyBeforeGrowth = tester.getCenter(anchorFinder.first).dy;
+
+    for (var i = 0; i < 4; i++) {
+      harnessKey.currentState!.growAssistantStreamingChunkLarge();
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await tester.pumpAndSettle();
+
+    final dyAfterGrowth = tester.getCenter(anchorFinder.first).dy;
+    expect(
+      (dyAfterGrowth - dyBeforeGrowth).abs(),
+      lessThan(18.0),
+      reason: '用户已接管时，尾消息继续增长不应把旧消息持续向上顶走',
+    );
+  });
+
+  testWidgets('贴底状态下轻微手势接管后，新消息插入也不应推动当前视窗', (tester) async {
+    final harnessKey = GlobalKey<_ChatListHarnessState>();
+
+    await tester.pumpWidget(_buildHost(harnessKey));
+    await tester.pumpAndSettle();
+
+    final listFinder = find.byType(CustomScrollView);
+    expect(listFinder, findsOneWidget);
+
+    final anchorFinder = find.textContaining('第39条消息');
+    expect(anchorFinder, findsWidgets);
+
+    final gesture = await tester.startGesture(tester.getCenter(listFinder));
+    await gesture.moveBy(const Offset(0, 12));
+    await tester.pump(const Duration(milliseconds: 16));
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(
+      harnessKey.currentState!._viewportController.shouldFollowLatest,
+      isFalse,
+      reason: '轻微手势后也应立即进入阅读锁定态',
+    );
+
+    final dyBeforeInsert = tester.getCenter(anchorFinder.first).dy;
+    harnessKey.currentState!.appendAssistantMessage();
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    final dyAfterInsert = tester.getCenter(anchorFinder.first).dy;
+    expect(
+      (dyAfterInsert - dyBeforeInsert).abs(),
+      lessThan(18.0),
+      reason: '用户已接管时，新消息插入不应推动当前视窗里的旧消息',
+    );
+  });
+
+  testWidgets('轻微手势脱离后，靠近底部也不应自动恢复贴底跟随', (tester) async {
+    final harnessKey = GlobalKey<_ChatListHarnessState>();
+
+    await tester.pumpWidget(_buildHost(harnessKey));
+    await tester.pumpAndSettle();
+
+    final listFinder = find.byType(CustomScrollView);
+    expect(listFinder, findsOneWidget);
+
+    final gesture = await tester.startGesture(tester.getCenter(listFinder));
+    await gesture.moveBy(const Offset(0, 8));
+    await tester.pump(const Duration(milliseconds: 16));
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(
+      harnessKey.currentState!._viewportController.shouldFollowLatest,
+      isFalse,
+      reason: '用户只要明确开始手势接管，就不应因为仍靠近底部而自动恢复贴底',
+    );
+    expect(
+      find.byKey(const ValueKey<String>('chat_jump_to_latest_badge')),
+      findsNothing,
+    );
+
+    harnessKey.currentState!.appendAssistantMessage();
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(
+      harnessKey.currentState!._viewportController.shouldFollowLatest,
+      isFalse,
+      reason: '轻微手势脱离后，收到AI新消息也不应悄悄恢复自动跟随',
+    );
+    expect(
+      find.byKey(const ValueKey<String>('chat_jump_to_latest_badge')),
+      findsNothing,
+      reason: '轻微脱离且仍靠近底部时，不应因为收到新消息就出现回到底部箭头',
+    );
   });
 
   testWidgets('静止态下流式生成时，列表锚点应保持稳定', (tester) async {
@@ -798,18 +1139,18 @@ void main() {
     await tester.pumpWidget(_buildHost(harnessKey));
     await tester.pumpAndSettle();
 
-    final listFinder = find.byType(ListView);
+    final listFinder = find.byType(CustomScrollView);
     expect(listFinder, findsOneWidget);
 
     await tester.drag(listFinder, const Offset(0, 320));
     await tester.pumpAndSettle();
 
-    var controller = tester.widget<ListView>(listFinder).controller!;
+    var controller = tester.widget<CustomScrollView>(listFinder).controller!;
     var gapAfterManual = _distanceToBottom(controller);
     if (gapAfterManual <= 40) {
       await tester.drag(listFinder, const Offset(0, -320));
       await tester.pumpAndSettle();
-      controller = tester.widget<ListView>(listFinder).controller!;
+      controller = tester.widget<CustomScrollView>(listFinder).controller!;
       gapAfterManual = _distanceToBottom(controller);
     }
     expect(gapAfterManual, greaterThan(40));
@@ -821,7 +1162,8 @@ void main() {
     for (var i = 0; i < 12; i++) {
       harnessKey.currentState!.growAssistantStreamingChunk();
       await tester.pump(const Duration(milliseconds: 16));
-      final controller = tester.widget<ListView>(listFinder).controller!;
+      final controller =
+          tester.widget<CustomScrollView>(listFinder).controller!;
       gaps.add(_distanceToBottom(controller));
     }
     await tester.pumpAndSettle();
@@ -863,38 +1205,53 @@ void main() {
     );
   });
 
-  testWidgets('阅读中点击输入框后，输入框升高应在当前位置上顶', (tester) async {
+  testWidgets('阅读中点击输入框后，输入框升高不应触发自动回底', (tester) async {
     final harnessKey = GlobalKey<_ChatListHarnessState>();
+    final autoScrollReasons = <String>[];
 
-    await tester.pumpWidget(_buildHost(harnessKey));
+    await tester.pumpWidget(
+      _buildHost(
+        harnessKey,
+        onDebugAutoScrollRequested: autoScrollReasons.add,
+      ),
+    );
     await tester.pumpAndSettle();
 
-    final listFinder = find.byType(ListView);
+    final listFinder = find.byType(CustomScrollView);
     expect(listFinder, findsOneWidget);
 
     await tester.drag(listFinder, const Offset(0, 320));
     await tester.pumpAndSettle();
 
-    var controller = tester.widget<ListView>(listFinder).controller!;
+    var controller = tester.widget<CustomScrollView>(listFinder).controller!;
     expect(_distanceToBottom(controller), greaterThan(40));
 
     harnessKey.currentState!.resumeAutoScrollFromInputTap();
     await tester.pump();
     await tester.pumpAndSettle();
 
-    controller = tester.widget<ListView>(listFinder).controller!;
+    controller = tester.widget<CustomScrollView>(listFinder).controller!;
     var gapBeforeOverlay = _distanceToBottom(controller);
     expect(gapBeforeOverlay, greaterThan(40));
-    final offsetBeforeOverlay = controller.offset;
+    autoScrollReasons.clear();
 
     harnessKey.currentState!.setBottomOverlayHeight(260);
     await tester.pump();
     await tester.pumpAndSettle();
 
-    controller = tester.widget<ListView>(listFinder).controller!;
+    controller = tester.widget<CustomScrollView>(listFinder).controller!;
     final gapAfterOverlay = _distanceToBottom(controller);
     expect(gapAfterOverlay, greaterThan(40));
-    expect(controller.offset, greaterThan(offsetBeforeOverlay + 100));
+    expect(
+      autoScrollReasons,
+      isEmpty,
+      reason: '阅读态下输入区高度变化不应触发自动回底请求',
+    );
+    expect(
+      harnessKey.currentState!._viewportController.shouldFollowLatest,
+      isFalse,
+      reason: '阅读态下输入区升高后，列表仍应保持手势接管状态',
+    );
   });
 
   testWidgets('首屏快照切真实时间线时，真实消息未到前不应短暂清空列表', (tester) async {
@@ -1108,7 +1465,7 @@ void main() {
     await tester.pumpWidget(_buildPagingHost(harnessKey));
     await tester.pumpAndSettle();
 
-    final listFinder = find.byType(ListView);
+    final listFinder = find.byType(CustomScrollView);
     expect(listFinder, findsOneWidget);
 
     await tester.drag(listFinder, const Offset(0, 4000));
@@ -1119,7 +1476,7 @@ void main() {
     expect(find.byKey(const ValueKey<String>('history_loading_overlay')),
         findsOneWidget);
 
-    var controller = tester.widget<ListView>(listFinder).controller!;
+    var controller = tester.widget<CustomScrollView>(listFinder).controller!;
     final gapWhileLoading = _distanceToBottom(controller);
     expect(gapWhileLoading, greaterThan(40));
 
@@ -1127,7 +1484,7 @@ void main() {
     await tester.pump();
     await tester.pumpAndSettle();
 
-    controller = tester.widget<ListView>(listFinder).controller!;
+    controller = tester.widget<CustomScrollView>(listFinder).controller!;
     expect(_distanceToBottom(controller), greaterThan(40));
     expect(find.byKey(const ValueKey<String>('history_loading_overlay')),
         findsNothing);
@@ -1384,7 +1741,7 @@ void main() {
     await tester.pumpWidget(_buildPagingHost(harnessKey));
     await tester.pumpAndSettle();
 
-    final listFinder = find.byType(ListView);
+    final listFinder = find.byType(CustomScrollView);
     expect(listFinder, findsOneWidget);
 
     await tester.drag(listFinder, const Offset(0, 4000));
@@ -1398,7 +1755,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 120));
     expect(tester.takeException(), isNull);
 
-    final controller = tester.widget<ListView>(listFinder).controller!;
+    final controller = tester.widget<CustomScrollView>(listFinder).controller!;
     final position = controller.position;
     final distanceToTop = (position.maxScrollExtent - controller.offset).abs();
 

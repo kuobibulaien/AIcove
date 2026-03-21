@@ -1,11 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
-
-enum SortMode {
-  latest,
-  name,
-}
+import '../../domain/sort_mode.dart';
 
 class MomotalkSortDialog extends StatelessWidget {
   final SortMode currentMode;

@@ -8,6 +8,8 @@ import 'provider_adapter.dart';
 import 'openai_adapter.dart';
 import 'claude_adapter.dart';
 import 'gemini_adapter.dart';
+import 'minimax_adapter.dart';
+import 'minimax_compat.dart';
 
 class ProviderAdapterFactory {
   static final _adapters = <String, ProviderAdapter>{
@@ -16,6 +18,18 @@ class ProviderAdapterFactory {
     'anthropic': ClaudeAdapter(),
     'gemini': GeminiAdapter(),
     'google': GeminiAdapter(),
+    'minimax': MiniMaxAdapter(),
+  };
+
+  static const Set<String> _requestLocalOnlyKeys = <String>{
+    'requestFormat',
+    'vertexExpress',
+    'defaultImageModel',
+    'tts_models',
+    'multi_key_enabled',
+    'multi_key_strategy',
+    'multi_key_items',
+    'multi_key_rr_index',
   };
 
   static String? _normalizeRequestFormat(Map<String, dynamic>? customConfig) {
@@ -23,6 +37,8 @@ class ProviderAdapterFactory {
     switch (raw) {
       case 'openai':
         return 'openai';
+      case 'minimax':
+        return 'minimax';
       case 'claude':
       case 'anthropic':
         return 'claude';
@@ -42,9 +58,11 @@ class ProviderAdapterFactory {
   static String resolveProvider(
     String provider, {
     Map<String, dynamic>? customConfig,
+    String? apiBaseUrl,
   }) {
     final fromConfig = _normalizeRequestFormat(customConfig);
     if (fromConfig != null) return fromConfig;
+    if (isMiniMaxNativeChatEndpoint(apiBaseUrl)) return 'minimax';
 
     final normalized = provider.toLowerCase().trim();
     if (normalized == 'anthropic') return 'claude';
@@ -56,17 +74,45 @@ class ProviderAdapterFactory {
   static ProviderAdapter getAdapter(
     String provider, {
     Map<String, dynamic>? customConfig,
+    String? apiBaseUrl,
   }) {
-    final resolved = resolveProvider(provider, customConfig: customConfig);
+    final resolved = resolveProvider(
+      provider,
+      customConfig: customConfig,
+      apiBaseUrl: apiBaseUrl,
+    );
     return _adapters[resolved] ?? OpenAIAdapter();
+  }
+
+  static Map<String, dynamic>? sanitizeRequestCustomConfig(
+    Map<String, dynamic>? customConfig,
+  ) {
+    if (customConfig == null || customConfig.isEmpty) {
+      return customConfig;
+    }
+    final sanitized = <String, dynamic>{};
+    customConfig.forEach((key, value) {
+      if (_requestLocalOnlyKeys.contains(key)) {
+        return;
+      }
+      sanitized[key] = value;
+    });
+    return sanitized;
   }
 
   /// 判断是否为 OpenAI 兼容格式（大部分国内中转都兼容）
   static bool isOpenAICompatible(
     String provider, {
     Map<String, dynamic>? customConfig,
+    String? apiBaseUrl,
   }) {
-    final resolved = resolveProvider(provider, customConfig: customConfig);
-    return !_adapters.containsKey(resolved) || resolved == 'openai';
+    final resolved = resolveProvider(
+      provider,
+      customConfig: customConfig,
+      apiBaseUrl: apiBaseUrl,
+    );
+    return !_adapters.containsKey(resolved) ||
+        resolved == 'openai' ||
+        resolved == 'minimax';
   }
 }

@@ -13,9 +13,27 @@ import '../tts_config.dart';
 import 'tts_voice_provider.dart';
 
 /// 硅基流动 TTS 音色管理 Provider
-class SiliconFlowVoiceProvider implements TtsVoiceProvider {
+class SiliconFlowVoiceProvider extends TtsVoiceProvider {
   @override
   String get providerId => 'siliconflow';
+
+  @override
+  List<String> get providerAliases => const <String>[
+        'siliconflow',
+        'silicon_flow',
+      ];
+
+  @override
+  List<String> get requestFormatAliases => const <String>[
+        'siliconflow_indextts',
+      ];
+
+  @override
+  List<String> get apiHostKeywords => const <String>[
+        'siliconflow.cn',
+        'siliconflow.com',
+        'siliconflow',
+      ];
 
   @override
   String get displayName => '硅基流动';

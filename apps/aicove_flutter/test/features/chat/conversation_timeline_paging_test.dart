@@ -1,10 +1,23 @@
+import 'dart:io';
+
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+// ignore: depend_on_referenced_packages
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 
 import 'package:aicove_flutter/src/core/database/database.dart' as db;
 import 'package:aicove_flutter/src/core/database/database_provider.dart';
 import 'package:aicove_flutter/src/features/chat/conversation_timeline_providers.dart';
+
+class _FakePathProviderPlatform extends PathProviderPlatform {
+  _FakePathProviderPlatform(this.rootPath);
+
+  final String rootPath;
+
+  @override
+  Future<String?> getApplicationDocumentsPath() async => rootPath;
+}
 
 Future<void> _insertConversation(
   db.AppDatabase database,
@@ -44,6 +57,20 @@ Future<void> _insertMessage(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  late PathProviderPlatform previousPathProvider;
+  Directory? tempDir;
+
+  setUp(() {
+    previousPathProvider = PathProviderPlatform.instance;
+  });
+
+  tearDown(() async {
+    PathProviderPlatform.instance = previousPathProvider;
+    if (tempDir != null && await tempDir!.exists()) {
+      await tempDir!.delete(recursive: true);
+    }
+  });
+
   test('聊天首屏窗口默认应为 5 轮', () {
     final container = ProviderContainer();
     addTearDown(container.dispose);
@@ -70,7 +97,10 @@ void main() {
     );
   });
 
-  test('真实时间线应按最近 5 轮问答收口，而不是最近 5 条碎片消息', () async {
+  test('真实时间线应按最近 5 条原始消息收口，并按 5 条继续向上扩展', () async {
+    tempDir = await Directory.systemTemp.createTemp('timeline_window_test');
+    PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir!.path);
+
     final database = db.AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(database.close);
 
@@ -119,14 +149,6 @@ void main() {
     expect(
       initialWindow.messages.map((message) => message.id).toList(),
       <String>[
-        'u2',
-        'a2',
-        'u3',
-        'a3',
-        'u4',
-        'a4',
-        'u5',
-        'a5_text',
         'a5_audio',
         'u6',
         'a6_text',
@@ -147,8 +169,31 @@ void main() {
     );
     expect(
       expandedWindow.messages.map((message) => message.id).toList(),
+      <String>[
+        'a3',
+        'u4',
+        'a4',
+        'u5',
+        'a5_text',
+        'a5_audio',
+        'u6',
+        'a6_text',
+        'a6_image',
+        'a6_audio',
+      ],
+    );
+    expect(expandedWindow.hasMore, isTrue);
+
+    notifier.state += kConversationVisiblePageSize;
+    await container.pump();
+
+    final fullWindow = await container.read(
+      conversationMessageWindowProvider('conv-turn-window').future,
+    );
+    expect(
+      fullWindow.messages.map((message) => message.id).toList(),
       rows.map((row) => row.id).toList(),
     );
-    expect(expandedWindow.hasMore, isFalse);
+    expect(fullWindow.hasMore, isFalse);
   });
 }

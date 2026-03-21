@@ -8,6 +8,7 @@ import '../settings/app_settings.dart';
 import 'plugin_manager.dart';
 import 'tts/tts_plugin.dart';
 import 'tts/tts_config.dart';
+import 'tts/tts_provider_context.dart';
 import 'tts/tts_player_manager.dart';
 import 'tts/tts_service.dart';
 import 'trigger/trigger_plugin.dart';
@@ -41,31 +42,15 @@ final pluginManagerProvider = Provider<PluginManager>((ref) {
 
   final appSettingsAsync = ref.watch(appSettingsProvider);
   appSettingsAsync.whenData((settings) {
-    ProviderAuth? selectedProvider;
-
-    if (ttsConfig.selectedProviderId != null) {
-      // (注释已丢失)
-      selectedProvider = settings.providers
-          .where(
-            (p) => p.id == ttsConfig.selectedProviderId,
-          )
-          .firstOrNull;
-      if (selectedProvider != null) {
-        ttsApiKey = selectedProvider.apiKeys.isNotEmpty
-            ? selectedProvider.apiKeys.first
-            : null;
-        ttsRequestUrl = selectedProvider.apiBaseUrl;
-        ttsRequestFormat =
-            selectedProvider.customConfig['requestFormat'] as String? ??
-                'openai_tts';
-        final modelId = ttsConfig.selectedModelId;
-        if (modelId != null &&
-            (selectedProvider.visibleModels.contains(modelId) ||
-                selectedProvider.models.contains(modelId))) {
-          ttsSelectedModel = modelId;
-        }
-      }
-    }
+    final providerContext = TtsProviderContext.resolve(
+      config: ttsConfig,
+      settings: settings,
+    );
+    final selectedProvider = providerContext.providerAuth;
+    ttsApiKey = providerContext.apiKey;
+    ttsRequestUrl = selectedProvider?.apiBaseUrl ?? '';
+    ttsRequestFormat = providerContext.requestFormat;
+    ttsSelectedModel = providerContext.selectedModelId;
 
     // (注释已丢失)
     final diagKey =

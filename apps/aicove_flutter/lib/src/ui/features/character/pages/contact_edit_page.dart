@@ -39,6 +39,8 @@ enum _ExitAction {
   cancel,
 }
 
+const Duration _kContactEditDeferredVisualWindow = Duration(milliseconds: 420);
+
 class ContactEditPage extends ConsumerStatefulWidget {
   final Conversation conversation;
   final EditMode editMode;
@@ -78,6 +80,8 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
   String? _lastAutoSavedSignature;
   bool _allowNativePop = false;
   String? _scheduledBlurSource;
+  Timer? _deferredVisualsTimer;
+  bool _deferHeavyVisuals = true;
 
   bool get _enableAutoSave => false;
   List<TextEditingController> get _autoSaveControllers => [
@@ -134,10 +138,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
       text: conv.chatBackgroundImage ?? '',
     );
 
-    if (_chatBackgroundCtrl.text.isNotEmpty) {
-      _chatBackgroundBytes = decodeDataImage(_chatBackgroundCtrl.text);
-    }
-
     final allPluginIds = chatPluginItems.map((e) => e.id).toSet();
     if (conv.enabledPlugins == null) {
       _selectedPluginIds = {...allPluginIds};
@@ -158,14 +158,12 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
       }
     }
     _lastAutoSavedSignature = _buildEditSignature(_buildEditResult());
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _scheduleBlurEnsure();
-    });
+    _scheduleDeferredVisualActivation();
   }
 
   @override
   void dispose() {
+    _deferredVisualsTimer?.cancel();
     _autoSaveDebounce?.cancel();
     if (_enableAutoSave) {
       for (final controller in _autoSaveControllers) {
@@ -193,6 +191,31 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     );
   }
 
+  void _scheduleDeferredVisualActivation() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _deferredVisualsTimer?.cancel();
+      _deferredVisualsTimer = Timer(
+        _kContactEditDeferredVisualWindow,
+        _activateHeavyVisuals,
+      );
+    });
+  }
+
+  void _activateHeavyVisuals() {
+    if (!mounted || !_deferHeavyVisuals) return;
+
+    final rawBackground = _chatBackgroundCtrl.text.trim();
+    final decodedBackgroundBytes =
+        rawBackground.isEmpty ? null : decodeDataImage(rawBackground);
+
+    setState(() {
+      _chatBackgroundBytes = decodedBackgroundBytes;
+      _deferHeavyVisuals = false;
+    });
+    _scheduleBlurEnsure();
+  }
+
   void _scheduleBlurEnsure() {
     final source = _getBackgroundSource();
     if (source == null || _scheduledBlurSource == source) return;
@@ -212,7 +235,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
-    final voicePresets = ref.watch(ttsPluginConfigProvider).voicePresets;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return PopScope(
       canPop: _allowNativePop,
@@ -226,157 +249,244 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
           children: [
             // 1. 模糊背景（固定不动）
             Positioned.fill(
-              child: _buildBlurredBackground(colors),
+              child: _deferHeavyVisuals
+                  ? _buildGradientFallback(colors, isDark)
+                  : _buildBlurredBackground(colors),
             ),
 
             // 2. 可滚动内容区
             Positioned.fill(
-              child: SingleChildScrollView(
-                physics: const BouncingScrollPhysics(),
-                child: Column(
-                  children: [
-                    SafeArea(
-                      bottom: false,
-                      child: Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: _buildNavBar(colors),
-                      ),
-                    ),
-
-                    const SizedBox(height: 24),
-
-                    // 立绘 + 名称（合并区域）
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: AvatarNameSection(
-                        nameCtrl: _nameCtrl,
-                        avatarCtrl: _avatarCtrl,
-                        refImageCtrl: _refImageCtrl,
-                        onPickCharacterImage: _pickCharacterImage,
-                        onClearCharacterImage: _clearCharacterImage,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-
-                    // 角色描述
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: ReadonlyEditCard(
-                        icon: Icons.notes,
-                        title: '角色描述',
-                        content: _descCtrl.text,
-                        placeholder: '暂无描述',
-                        onEdit: () => _openFullScreenEditor(
-                          title: '编辑描述',
-                          controller: _descCtrl,
-                          hint: '一句话介绍这个角色（可选）',
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 16),
-
-                    // 提示词
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: PromptPreviewCard(
-                        personaCtrl: _personaCtrl,
-                        onEdit: () => _openFullScreenEditor(
-                          title: '编辑提示词',
-                          controller: _personaCtrl,
-                          hint: '详细描述角色的性格、说话方式、行为边界和世界观...',
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 16),
-
-                    // 插件 + 音色 + 聊天背景
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: Column(
-                        children: [
-                          PluginVoiceSection(
-                            selectedPluginIds: _selectedPluginIds,
-                            boundVoiceId: _boundVoiceId,
-                            voicePresets: voicePresets,
-                            onPluginIdsChanged: (newIds) {
-                              setState(() => _selectedPluginIds = newIds);
-                              _scheduleAutoSave();
-                            },
-                            onVoiceChanged: (voiceId) {
-                              setState(() {
-                                _boundVoiceId = voiceId;
-                                // 绑定音色后自动启用 TTS 插件
-                                if (voiceId != null) {
-                                  _selectedPluginIds.add('tts');
-                                }
-                              });
-                              _scheduleAutoSave();
-                            },
-                          ),
-                          const SizedBox(height: 16),
-                          ChatBackgroundSection(
-                            chatBackgroundCtrl: _chatBackgroundCtrl,
-                            chatBackgroundBytes: _chatBackgroundBytes,
-                            onPick: _pickChatBackgroundImage,
-                            onClear: _clearChatBackgroundImage,
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-
-                    // 专属绘图提示（工具提示词预设 + 个性化绘图提示词）
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: DrawingPromptSection(
-                        customDrawingPromptCtrl: _customDrawingPromptCtrl,
-                        followsGlobalArtistPreset: _followGlobalArtistPreset,
-                        selectedToolPresetName: _selectedToolPresetName,
-                        selectedArtistPresetName: _selectedArtistPresetName,
-                        onToolPresetChanged: (name) {
-                          setState(() => _selectedToolPresetName = name);
-                          _scheduleAutoSave();
-                        },
-                        onArtistPresetFollowGlobal: () {
-                          setState(() {
-                            _followGlobalArtistPreset = true;
-                            _selectedArtistPresetName = null;
-                          });
-                          _scheduleAutoSave();
-                        },
-                        onArtistPresetDisable: () {
-                          setState(() {
-                            _followGlobalArtistPreset = false;
-                            _selectedArtistPresetName = null;
-                          });
-                          _scheduleAutoSave();
-                        },
-                        onArtistPresetSelected: (name) {
-                          setState(() {
-                            _followGlobalArtistPreset = false;
-                            _selectedArtistPresetName = name;
-                          });
-                          _scheduleAutoSave();
-                        },
-                        onEdit: () => _openFullScreenEditor(
-                          title: '编辑个性化绘图提示',
-                          controller: _customDrawingPromptCtrl,
-                          hint:
-                              '可在此设定男女主外貌标签优先使用 Danbooru，也可用自然语言描述，以及对生图的要求。\n\n示例：女主纳西妲，danbooru标签"nahida_(genshin_impact)",男主danbooru标签"aether_(genshin_impact)"，默认生图视角为男主第一视角，少数情况使用第三视角出现男主全身。',
-                        ),
-                      ),
-                    ),
-
-                    // 底部留白
-                    const SizedBox(height: 48),
-                  ],
-                ),
-              ),
+              child: _deferHeavyVisuals
+                  ? _buildDeferredShell(colors)
+                  : _buildEditorScrollContent(colors),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildEditorScrollContent(MoeColors colors) {
+    final voicePresets = ref.watch(ttsPluginConfigProvider).voicePresets;
+
+    return SingleChildScrollView(
+      physics: const BouncingScrollPhysics(),
+      child: Column(
+        children: [
+          SafeArea(
+            bottom: false,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: _buildNavBar(colors),
+            ),
+          ),
+
+          const SizedBox(height: 24),
+
+          // 立绘 + 名称（合并区域）
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: AvatarNameSection(
+              nameCtrl: _nameCtrl,
+              avatarCtrl: _avatarCtrl,
+              refImageCtrl: _refImageCtrl,
+              onPickCharacterImage: _pickCharacterImage,
+              onClearCharacterImage: _clearCharacterImage,
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // 角色描述
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: ReadonlyEditCard(
+              icon: Icons.notes,
+              title: '角色描述',
+              content: _descCtrl.text,
+              placeholder: '暂无描述',
+              onEdit: () => _openFullScreenEditor(
+                title: '编辑描述',
+                controller: _descCtrl,
+                hint: '一句话介绍这个角色（可选）',
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // 提示词
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: PromptPreviewCard(
+              personaCtrl: _personaCtrl,
+              onEdit: () => _openFullScreenEditor(
+                title: '编辑提示词',
+                controller: _personaCtrl,
+                hint: '详细描述角色的性格、说话方式、行为边界和世界观...',
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // 插件 + 音色 + 聊天背景
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Column(
+              children: [
+                PluginVoiceSection(
+                  selectedPluginIds: _selectedPluginIds,
+                  boundVoiceId: _boundVoiceId,
+                  voicePresets: voicePresets,
+                  onPluginIdsChanged: (newIds) {
+                    setState(() => _selectedPluginIds = newIds);
+                    _scheduleAutoSave();
+                  },
+                  onVoiceChanged: (voiceId) {
+                    setState(() {
+                      _boundVoiceId = voiceId;
+                      // 绑定音色后自动启用 TTS 插件
+                      if (voiceId != null) {
+                        _selectedPluginIds.add('tts');
+                      }
+                    });
+                    _scheduleAutoSave();
+                  },
+                ),
+                const SizedBox(height: 16),
+                ChatBackgroundSection(
+                  chatBackgroundCtrl: _chatBackgroundCtrl,
+                  chatBackgroundBytes: _chatBackgroundBytes,
+                  onPick: _pickChatBackgroundImage,
+                  onClear: _clearChatBackgroundImage,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // 专属绘图提示（工具提示词预设 + 个性化绘图提示词）
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: DrawingPromptSection(
+              customDrawingPromptCtrl: _customDrawingPromptCtrl,
+              followsGlobalArtistPreset: _followGlobalArtistPreset,
+              selectedToolPresetName: _selectedToolPresetName,
+              selectedArtistPresetName: _selectedArtistPresetName,
+              onToolPresetChanged: (name) {
+                setState(() => _selectedToolPresetName = name);
+                _scheduleAutoSave();
+              },
+              onArtistPresetFollowGlobal: () {
+                setState(() {
+                  _followGlobalArtistPreset = true;
+                  _selectedArtistPresetName = null;
+                });
+                _scheduleAutoSave();
+              },
+              onArtistPresetDisable: () {
+                setState(() {
+                  _followGlobalArtistPreset = false;
+                  _selectedArtistPresetName = null;
+                });
+                _scheduleAutoSave();
+              },
+              onArtistPresetSelected: (name) {
+                setState(() {
+                  _followGlobalArtistPreset = false;
+                  _selectedArtistPresetName = name;
+                });
+                _scheduleAutoSave();
+              },
+              onEdit: () => _openFullScreenEditor(
+                title: '编辑个性化绘图提示',
+                controller: _customDrawingPromptCtrl,
+                hint:
+                    '可在此设定男女主外貌标签优先使用 Danbooru，也可用自然语言描述，以及对生图的要求。\n\n示例：女主纳西妲，danbooru标签"nahida_(genshin_impact)",男主danbooru标签"aether_(genshin_impact)"，默认生图视角为男主第一视角，少数情况使用第三视角出现男主全身。',
+              ),
+            ),
+          ),
+
+          // 底部留白
+          const SizedBox(height: 48),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDeferredShell(MoeColors colors) {
+    return SingleChildScrollView(
+      physics: const NeverScrollableScrollPhysics(),
+      child: Column(
+        children: [
+          SafeArea(
+            bottom: false,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: _buildNavBar(colors),
+            ),
+          ),
+          const SizedBox(height: 24),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: _buildShellCard(colors, height: 176),
+          ),
+          const SizedBox(height: 16),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: _buildShellCard(colors, height: 120),
+          ),
+          const SizedBox(height: 16),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: _buildShellCard(colors, height: 132),
+          ),
+          const SizedBox(height: 16),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: _buildShellCard(colors, height: 216),
+          ),
+          const SizedBox(height: 16),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: _buildShellCard(colors, height: 188),
+          ),
+          const SizedBox(height: 20),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: colors.text,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                '正在准备编辑界面',
+                style: TextStyle(
+                  color: colors.textSecondary,
+                  fontSize: 13,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 48),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildShellCard(MoeColors colors, {required double height}) {
+    return Container(
+      height: height,
+      decoration: BoxDecoration(
+        color: colors.surfaceAlt.withValues(alpha: 0.6),
+        border: Border.all(color: colors.borderLight, width: borderWidth),
+        borderRadius: BorderRadius.circular(18),
       ),
     );
   }

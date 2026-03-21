@@ -13,6 +13,7 @@
 /// - 2026-01-21: 改造为 kelivo 风格的供应商列表
 library;
 
+import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -28,6 +29,8 @@ import 'add_provider_sheet.dart';
 import 'default_model_settings_page.dart';
 import 'provider_detail_page.dart';
 
+const Duration _kModelListDeferredContentWindow = Duration(milliseconds: 420);
+
 class ModelListPage extends ConsumerStatefulWidget {
   const ModelListPage({super.key});
 
@@ -39,10 +42,40 @@ class _ModelListPageState extends ConsumerState<ModelListPage> {
   bool _selectMode = false;
   final Set<String> _selected = {};
   final Set<String> _settleKeys = {}; // 正在"落定"动画的项目
+  Timer? _deferredContentTimer;
+  bool _deferHeavyContent = true;
 
   // 本地 providers 列表，用于乐观更新拖拽排序
   // 拖拽时先更新本地状态让 UI 立即响应，再异步保存
   List<ProviderAuth>? _localProviders;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleDeferredContentActivation();
+  }
+
+  @override
+  void dispose() {
+    _deferredContentTimer?.cancel();
+    super.dispose();
+  }
+
+  void _scheduleDeferredContentActivation() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _deferredContentTimer?.cancel();
+      _deferredContentTimer = Timer(
+        _kModelListDeferredContentWindow,
+        _activateHeavyContent,
+      );
+    });
+  }
+
+  void _activateHeavyContent() {
+    if (!mounted || !_deferHeavyContent) return;
+    setState(() => _deferHeavyContent = false);
+  }
 
   void _exitSelectMode() {
     setState(() {
@@ -71,7 +104,6 @@ class _ModelListPageState extends ConsumerState<ModelListPage> {
     });
   }
 
-
   Future<void> _onReorderProviders(int oldIndex, int newIndex) async {
     if (oldIndex == newIndex) return;
 
@@ -79,7 +111,8 @@ class _ModelListPageState extends ConsumerState<ModelListPage> {
     if (settings == null) return;
 
     // 使用本地状态或从设置中获取
-    final providers = List<ProviderAuth>.from(_localProviders ?? settings.providers);
+    final providers =
+        List<ProviderAuth>.from(_localProviders ?? settings.providers);
 
     // ReorderableListView 的 newIndex 需要调整
     if (newIndex > oldIndex) {
@@ -108,7 +141,10 @@ class _ModelListPageState extends ConsumerState<ModelListPage> {
   }
 
   Future<void> _deleteSelected(List<ProviderAuth> providers) async {
-    final ids = providers.map((p) => p.id).where(_selected.contains).toList(growable: false);
+    final ids = providers
+        .map((p) => p.id)
+        .where(_selected.contains)
+        .toList(growable: false);
     if (ids.isEmpty) return;
 
     final confirm = await showMeoTalkDialog(
@@ -165,16 +201,158 @@ class _ModelListPageState extends ConsumerState<ModelListPage> {
         ),
         backgroundColor: colors.surface,
         body: settingsAsync.when(
-        loading: () => const Center(child: MoeLoadingIndicator(message: '加载中...')),
-        error: (e, _) => Center(
-          child: MoeEmptyState(
-            icon: Icons.error_outline,
-            title: '加载失败',
-            description: '$e',
+          loading: () =>
+              const Center(child: MoeLoadingIndicator(message: '加载中...')),
+          error: (e, _) => Center(
+            child: MoeEmptyState(
+              icon: Icons.error_outline,
+              title: '加载失败',
+              description: '$e',
+            ),
           ),
+          data: (settings) =>
+              _deferHeavyContent && settings.providers.isNotEmpty
+                  ? _buildDeferredContent(settings, colors)
+                  : _buildContent(settings, colors),
         ),
-        data: (settings) => _buildContent(settings, colors),
+      ),
+    );
+  }
+
+  Widget _buildDeferredContent(AppSettings settings, MoeColors colors) {
+    final providers = _localProviders ?? settings.providers;
+    final placeholderCount = providers.length >= 3 ? 3 : 2;
+
+    return ListView(
+      key: const ValueKey<String>('model_list_deferred_shell'),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+      children: [
+        MoeSettingsGroup(
+          margin: EdgeInsets.zero,
+          padding: EdgeInsets.zero,
+          children: [
+            MoeSettingsRow(
+              iconWidget: SizedBox(
+                width: 32,
+                height: 32,
+                child: DecoratedBox(
+                  decoration: MoeG2Decoration(
+                    radius: 8,
+                    color: colors.primary.withValues(alpha: 0.1),
+                  ),
+                  child: Icon(Icons.tune, color: colors.primary, size: 18),
+                ),
+              ),
+              iconContainerWidth: 40,
+              label: '默认模型设置',
+              subtitle: '聊天模型、图片识别模型',
+              trailingType: MoeSettingsRowTrailing.chevron,
+              onTap: () {
+                Navigator.of(context).push(
+                  ParallaxSlidePageRoute(
+                    page: const DefaultModelSettingsPage(),
+                  ),
+                );
+              },
+            ),
+          ],
         ),
+        const SizedBox(height: 16),
+        MoeSettingsGroup(
+          margin: EdgeInsets.zero,
+          padding: EdgeInsets.zero,
+          children: [
+            for (var index = 0; index < placeholderCount; index++)
+              _buildShellRow(
+                colors,
+                showDivider: index != placeholderCount - 1,
+              ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: colors.text,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              '正在准备模型列表',
+              style: TextStyle(
+                color: colors.textSecondary,
+                fontSize: 13,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildShellRow(MoeColors colors, {required bool showDivider}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        border: showDivider
+            ? Border(
+                bottom: BorderSide(
+                  color: colors.borderLight,
+                  width: borderWidth,
+                ),
+              )
+            : null,
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: colors.surfaceAlt.withValues(alpha: 0.7),
+              borderRadius: BorderRadius.circular(999),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 132,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: colors.surfaceAlt.withValues(alpha: 0.7),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Container(
+                  width: 184,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: colors.surfaceAlt.withValues(alpha: 0.52),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Container(
+            width: 52,
+            height: 22,
+            decoration: BoxDecoration(
+              color: colors.primary.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(999),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -182,8 +360,11 @@ class _ModelListPageState extends ConsumerState<ModelListPage> {
   Widget _buildContent(AppSettings settings, MoeColors colors) {
     // 优先使用本地状态（乐观更新），否则使用设置中的数据
     final providers = _localProviders ?? settings.providers;
+    final providerEntries =
+        providers.map(_ProviderListEntry.fromProvider).toList(growable: false);
 
-    final selectedCount = providers.where((p) => _selected.contains(p.id)).length;
+    final selectedCount =
+        providers.where((p) => _selected.contains(p.id)).length;
 
     return GestureDetector(
       onTap: _selectMode ? _exitSelectMode : null,
@@ -206,7 +387,8 @@ class _ModelListPageState extends ConsumerState<ModelListPage> {
                           radius: 8,
                           color: colors.primary.withValues(alpha: 0.1),
                         ),
-                        child: Icon(Icons.tune, color: colors.primary, size: 18),
+                        child:
+                            Icon(Icons.tune, color: colors.primary, size: 18),
                       ),
                     ),
                     iconContainerWidth: 40,
@@ -254,7 +436,8 @@ class _ModelListPageState extends ConsumerState<ModelListPage> {
                         return AnimatedBuilder(
                           animation: animation,
                           builder: (context, child) {
-                            final t = Curves.easeInOut.transform(animation.value);
+                            final t =
+                                Curves.easeInOut.transform(animation.value);
                             final scale = lerpDouble(1.0, 0.98, t) ?? 1.0;
                             return Transform.scale(
                               scale: scale,
@@ -268,25 +451,28 @@ class _ModelListPageState extends ConsumerState<ModelListPage> {
                         );
                       },
                       itemBuilder: (context, index) {
-                        final p = providers[index];
+                        final entry = providerEntries[index];
                         return ReorderableDelayedDragStartListener(
-                          key: ValueKey(p.id),
+                          key: ValueKey(entry.provider.id),
                           index: index,
                           child: _SettleAnim(
-                            active: _settleKeys.contains(p.id),
+                            active: _settleKeys.contains(entry.provider.id),
                             child: _ProviderRow(
-                              provider: p,
+                              entry: entry,
                               selectMode: _selectMode,
-                              selected: _selected.contains(p.id),
-                              onToggleSelect: () => _toggleSelected(p.id),
+                              selected: _selected.contains(entry.provider.id),
+                              onToggleSelect: () =>
+                                  _toggleSelected(entry.provider.id),
                               onOpenDetail: () {
                                 Navigator.of(context).push(
                                   ParallaxSlidePageRoute(
-                                    page: ProviderDetailPage(providerId: p.id),
+                                    page: ProviderDetailPage(
+                                      providerId: entry.provider.id,
+                                    ),
                                   ),
                                 );
                               },
-                              showDivider: index != providers.length - 1,
+                              showDivider: index != providerEntries.length - 1,
                             ),
                           ),
                         );
@@ -298,18 +484,19 @@ class _ModelListPageState extends ConsumerState<ModelListPage> {
               const SizedBox(height: 80), // 底部留白
             ],
           ),
-        Positioned(
-          left: 0,
-          right: 0,
-          bottom: 0,
-          child: _SelectionBar(
-            visible: _selectMode,
-            count: selectedCount,
-            total: providers.length,
-            onDelete: selectedCount == 0 ? null : () => _deleteSelected(providers),
-            onSelectAll: () => _toggleSelectAll(providers),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: _SelectionBar(
+              visible: _selectMode,
+              count: selectedCount,
+              total: providers.length,
+              onDelete:
+                  selectedCount == 0 ? null : () => _deleteSelected(providers),
+              onSelectAll: () => _toggleSelectAll(providers),
+            ),
           ),
-        ),
         ],
       ),
     );
@@ -318,7 +505,7 @@ class _ModelListPageState extends ConsumerState<ModelListPage> {
 
 class _ProviderRow extends StatelessWidget {
   const _ProviderRow({
-    required this.provider,
+    required this.entry,
     required this.selectMode,
     required this.selected,
     required this.onToggleSelect,
@@ -326,7 +513,7 @@ class _ProviderRow extends StatelessWidget {
     this.showDivider = true,
   });
 
-  final ProviderAuth provider;
+  final _ProviderListEntry entry;
   final bool selectMode;
   final bool selected;
   final VoidCallback onToggleSelect;
@@ -336,56 +523,82 @@ class _ProviderRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
-    final name = (provider.displayName?.trim().isNotEmpty ?? false) ? provider.displayName!.trim() : provider.id;
 
+    return MoeSettingsRow(
+      iconWidget: Row(
+        children: [
+          if (selectMode) ...[
+            MoeCheckbox(
+              value: selected,
+              onChanged: (_) => onToggleSelect(),
+              size: MoeCheckboxSize.md,
+            ),
+            const SizedBox(width: 8),
+          ],
+          ProviderAvatar(
+            providerName: entry.name,
+            size: ProviderAvatarSize.sm,
+          ),
+        ],
+      ),
+      iconContainerWidth: selectMode ? 84 : 40,
+      label: entry.name,
+      labelMaxLines: 1,
+      subtitle: entry.subtitle,
+      trailingType: MoeSettingsRowTrailing.custom,
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _StatusChip(enabled: entry.provider.enabled),
+          if (!selectMode) ...[
+            const SizedBox(width: 6),
+            Icon(Icons.chevron_right, size: 16, color: colors.muted),
+          ],
+        ],
+      ),
+      onTap: selectMode ? onToggleSelect : onOpenDetail,
+      showDivider: showDivider,
+    );
+  }
+}
+
+class _ProviderListEntry {
+  const _ProviderListEntry({
+    required this.provider,
+    required this.name,
+    required this.subtitle,
+  });
+
+  final ProviderAuth provider;
+  final String name;
+  final String subtitle;
+
+  factory _ProviderListEntry.fromProvider(ProviderAuth provider) {
+    final name = (provider.displayName?.trim().isNotEmpty ?? false)
+        ? provider.displayName!.trim()
+        : provider.id;
     final caps = provider.capabilities
         .map((c) => ModelCapability.fromValue(c)?.label)
         .whereType<String>()
-        .toList();
-    final capSummary = caps.isEmpty ? null : (caps.length > 2 ? '${caps.take(2).join('/')} +${caps.length - 2}' : caps.join('/'));
-
+        .toList(growable: false);
+    final capSummary = caps.isEmpty
+        ? null
+        : (caps.length > 2
+            ? '${caps.take(2).join('/')} +${caps.length - 2}'
+            : caps.join('/'));
     final modelCount = provider.visibleModels.isNotEmpty
         ? provider.visibleModels.length
         : provider.models.length;
-
     final subtitleParts = <String>[];
-    if (capSummary != null && capSummary.isNotEmpty) subtitleParts.add(capSummary);
+    if (capSummary != null && capSummary.isNotEmpty) {
+      subtitleParts.add(capSummary);
+    }
     subtitleParts.add('$modelCount 个模型');
 
-    return MoeSettingsRow(
-        iconWidget: Row(
-          children: [
-            if (selectMode) ...[
-              MoeCheckbox(
-                value: selected,
-                onChanged: (_) => onToggleSelect(),
-                size: MoeCheckboxSize.md,
-              ),
-              const SizedBox(width: 8),
-            ],
-            ProviderAvatar(
-              providerName: name,
-              size: ProviderAvatarSize.sm,
-            ),
-          ],
-        ),
-        iconContainerWidth: selectMode ? 84 : 40,
-        label: name,
-        labelMaxLines: 1,
-        subtitle: subtitleParts.join(' · '),
-        trailingType: MoeSettingsRowTrailing.custom,
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _StatusChip(enabled: provider.enabled),
-            if (!selectMode) ...[
-              const SizedBox(width: 6),
-              Icon(Icons.chevron_right, size: 16, color: colors.muted),
-            ],
-          ],
-        ),
-        onTap: selectMode ? onToggleSelect : onOpenDetail,
-        showDivider: showDivider,
+    return _ProviderListEntry(
+      provider: provider,
+      name: name,
+      subtitle: subtitleParts.join(' · '),
     );
   }
 }
@@ -478,7 +691,8 @@ class _CircleActionButton extends StatelessWidget {
       backgroundColor: backgroundColor.withValues(alpha: 0.75),
       pressedBackgroundColor: backgroundColor.withValues(alpha: 0.9),
       borderRadius: MoeRadii.borderCapsule,
-      border: BorderSide(color: colors.border.withValues(alpha: 0.25), width: 0.8),
+      border:
+          BorderSide(color: colors.border.withValues(alpha: 0.25), width: 0.8),
     );
   }
 }

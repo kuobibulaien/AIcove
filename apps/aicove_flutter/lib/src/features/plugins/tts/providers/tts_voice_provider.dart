@@ -15,6 +15,10 @@ import 'dart:typed_data';
 
 import '../tts_config.dart';
 
+String _normalizeRoutingValue(String? value) {
+  return value?.trim().toLowerCase() ?? '';
+}
+
 /// TTS 渠道能力描述
 ///
 /// 用于告诉 UI 该渠道支持哪些功能，UI 根据此信息动态显示/隐藏相关控件
@@ -189,11 +193,71 @@ class VoiceListResult {
   int get totalCount => presetVoices.length + userVoices.length;
 }
 
+/// TTS 厂商识别元数据骨架
+///
+/// 用于统一 providerId / requestFormat / apiUrl 的识别规则。
+/// 第一版只承载路由元数据，不介入真实 API 调用逻辑。
+abstract class TtsVendorAdapter {
+  /// 厂商主标识。
+  String get providerId;
+
+  /// 厂商别名，用于匹配显式 providerId。
+  List<String> get providerAliases => <String>[providerId];
+
+  /// 厂商支持的 requestFormat 别名。
+  List<String> get requestFormatAliases => const <String>[];
+
+  /// API 地址识别关键字。
+  List<String> get apiHostKeywords => const <String>[];
+
+  bool matchesProviderId(String? rawProviderId) {
+    final normalized = _normalizeRoutingValue(rawProviderId);
+    if (normalized.isEmpty) return false;
+    for (final alias in providerAliases) {
+      if (_normalizeRoutingValue(alias) == normalized) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool matchesRequestFormat(String? rawRequestFormat) {
+    final normalized = _normalizeRoutingValue(rawRequestFormat);
+    if (normalized.isEmpty) return false;
+    for (final alias in requestFormatAliases) {
+      if (_normalizeRoutingValue(alias) == normalized) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool matchesApiUrl(String? rawApiUrl) {
+    final normalizedUrl = _normalizeRoutingValue(rawApiUrl);
+    if (normalizedUrl.isEmpty) return false;
+
+    final parsedUri = Uri.tryParse(rawApiUrl?.trim() ?? '');
+    final normalizedHost = _normalizeRoutingValue(parsedUri?.host);
+
+    for (final keyword in apiHostKeywords) {
+      final normalizedKeyword = _normalizeRoutingValue(keyword);
+      if (normalizedKeyword.isEmpty) continue;
+      if (normalizedHost == normalizedKeyword ||
+          normalizedHost.endsWith('.$normalizedKeyword') ||
+          normalizedUrl.contains(normalizedKeyword)) {
+        return true;
+      }
+    }
+    return false;
+  }
+}
+
 /// TTS 音色管理 Provider 抽象接口
 ///
 /// 各 TTS 渠道商需要实现此接口，提供统一的音色管理能力
-abstract class TtsVoiceProvider {
+abstract class TtsVoiceProvider extends TtsVendorAdapter {
   /// 渠道标识（如 'siliconflow'、'aliyun_qwen'、'minimax'）
+  @override
   String get providerId;
 
   /// 渠道显示名称（如 '硅基流动'、'阿里云'、'MiniMax'）

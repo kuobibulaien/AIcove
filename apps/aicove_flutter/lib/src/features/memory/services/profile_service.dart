@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 import '../../../core/app_logger.dart';
 import '../../../core/database/repositories/memory_repository.dart';
 import '../models/memory_entity.dart';
+import '../utils/memory_time_formatter.dart';
 
 class ProfileService {
   final MemoryRepository _memoryRepository;
@@ -31,7 +32,9 @@ class ProfileService {
 
     final buffer = StringBuffer()..writeln('## 用户画像');
     for (final p in sorted.take(15)) {
-      buffer.writeln('- ${p.content.trim()}');
+      buffer.writeln(
+        '- ${MemoryTimeFormatter.getTimePrefix(p.createdAt)}：${p.content.trim()}',
+      );
     }
     return buffer.toString();
   }

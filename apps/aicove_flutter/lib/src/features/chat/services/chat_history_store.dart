@@ -9,6 +9,7 @@ import '../../../core/database/database_provider.dart';
 import '../../../core/database/converters/database_converters.dart';
 import '../../../core/models/message_block.dart';
 import '../domain/message.dart';
+import 'conversation_short_window_store.dart';
 
 class ConversationMessageWindow {
   const ConversationMessageWindow({
@@ -308,6 +309,20 @@ class ChatHistoryStore {
             );
       }
     });
+
+    final shortWindowUpdates = <Message>[...messages];
+    if (userMessageId.trim().isNotEmpty) {
+      final userMessage = await loadMessageById(userMessageId);
+      if (userMessage != null) {
+        shortWindowUpdates.insert(0, userMessage);
+      }
+    }
+    if (shortWindowUpdates.isNotEmpty) {
+      await _ref.read(conversationShortWindowStoreProvider).upsertMessages(
+            conversationId: conversationId,
+            messages: shortWindowUpdates,
+          );
+    }
   }
 
   Future<void> appendMessage({
@@ -399,6 +414,18 @@ class ChatHistoryStore {
             );
       }
     }
+
+    final message = await loadMessageById(messageId);
+    if (message != null) {
+      await _ref.read(conversationShortWindowStoreProvider).upsertMessage(
+            conversationId: conversationId,
+            message: message,
+          );
+    } else {
+      await _ref.read(conversationShortWindowStoreProvider).syncConversation(
+            conversationId,
+          );
+    }
   }
 
   Future<void> updateMessage({
@@ -416,6 +443,10 @@ class ChatHistoryStore {
             );
       }
     });
+    await _ref.read(conversationShortWindowStoreProvider).upsertMessage(
+          conversationId: conversationId,
+          message: message,
+        );
   }
 
   Future<void> softDeleteMessages(
@@ -451,6 +482,10 @@ class ChatHistoryStore {
         ));
       }
     }
+
+    await _ref.read(conversationShortWindowStoreProvider).syncConversation(
+          conversationId,
+        );
   }
 
   Future<void> truncateFromMessage({
@@ -525,6 +560,10 @@ class ChatHistoryStore {
             previewTime.millisecondsSinceEpoch,
           );
     });
+    await _ref.read(conversationShortWindowStoreProvider).upsertMessages(
+          conversationId: conversationId,
+          messages: messages,
+        );
   }
 
   Future<void> _upsertSingleMessage(
@@ -582,6 +621,9 @@ class ChatHistoryStore {
     });
 
     await _refreshSummary(conversationId);
+    await _ref.read(conversationShortWindowStoreProvider).syncConversation(
+          conversationId,
+        );
   }
 
   Future<void> _refreshSummary(String conversationId) async {

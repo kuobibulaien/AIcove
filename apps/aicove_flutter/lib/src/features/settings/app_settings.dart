@@ -398,7 +398,7 @@ final appSettingsProvider =
         AppSettingsNotifier.new);
 
 class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
-  UiModelsApi get _api => const UiModelsApi();
+  UiModelsApi get _api => UiModelsApi();
 
   @override
   Future<AppSettings> build() async {

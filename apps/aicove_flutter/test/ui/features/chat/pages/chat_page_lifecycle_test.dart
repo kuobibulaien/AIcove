@@ -4,6 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aicove_flutter/src/features/chat/conversation_providers.dart';
 import 'package:aicove_flutter/src/features/chat/conversation_timeline_providers.dart';
+import 'package:aicove_flutter/src/features/observability/trace_models.dart';
+import 'package:aicove_flutter/src/ui/features/chat/pages/chat_page.dart';
 import 'package:aicove_flutter/src/ui/features/chat/pages/deferred_conversation_activation.dart';
 
 class _ActivationHarness extends ConsumerStatefulWidget {
@@ -140,5 +142,107 @@ void main() {
       container.read(conversationVisibleCountProvider('conv_a')),
       12,
     );
+  });
+
+  test('AppBar 标题应跟当前会话最新进行中的 Trace 阶段走', () {
+    final now = DateTime(2026, 3, 21, 12, 0, 0);
+    final title = resolveChatPageAppBarTitle(
+      displayName: 'Arona',
+      conversationId: 'conv_a',
+      traceEvents: <TraceEvent>[
+        TraceEvent(
+          traceId: 'trace_other',
+          sessionId: 'conv_b',
+          turnId: 'turn_other',
+          roundIndex: 0,
+          eventSeq: 1,
+          stage: TraceStage.toolExecStarted.value,
+          status: TraceEventStatus.success.value,
+          source: 'ChatActions',
+          startedAt: now,
+          endedAt: now,
+          durationMs: 0,
+        ),
+        TraceEvent(
+          traceId: 'trace_a',
+          sessionId: 'conv_a',
+          turnId: 'turn_a',
+          roundIndex: 0,
+          eventSeq: 1,
+          stage: TraceStage.turnStarted.value,
+          status: TraceEventStatus.success.value,
+          source: 'ChatActions',
+          startedAt: now,
+          endedAt: now,
+          durationMs: 0,
+        ),
+        TraceEvent(
+          traceId: 'trace_a',
+          sessionId: 'conv_a',
+          turnId: 'turn_a',
+          roundIndex: 0,
+          eventSeq: 2,
+          stage: TraceStage.toolExecStarted.value,
+          status: TraceEventStatus.success.value,
+          source: 'ChatActions',
+          startedAt: now.add(const Duration(milliseconds: 200)),
+          endedAt: now.add(const Duration(milliseconds: 200)),
+          durationMs: 0,
+        ),
+      ],
+    );
+
+    expect(title, '工具执行中');
+  });
+
+  test('AppBar 标题在当前会话没有进行中的 Trace 时应回退为角色名', () {
+    final now = DateTime(2026, 3, 21, 12, 0, 0);
+    final title = resolveChatPageAppBarTitle(
+      displayName: 'Arona',
+      conversationId: 'conv_a',
+      traceEvents: <TraceEvent>[
+        TraceEvent(
+          traceId: 'trace_done',
+          sessionId: 'conv_a',
+          turnId: 'turn_done',
+          roundIndex: 0,
+          eventSeq: 1,
+          stage: TraceStage.turnStarted.value,
+          status: TraceEventStatus.success.value,
+          source: 'ChatActions',
+          startedAt: now,
+          endedAt: now,
+          durationMs: 0,
+        ),
+        TraceEvent(
+          traceId: 'trace_done',
+          sessionId: 'conv_a',
+          turnId: 'turn_done',
+          roundIndex: 0,
+          eventSeq: 2,
+          stage: TraceStage.turnCompleted.value,
+          status: TraceEventStatus.success.value,
+          source: 'ChatActions',
+          startedAt: now.add(const Duration(milliseconds: 100)),
+          endedAt: now.add(const Duration(milliseconds: 100)),
+          durationMs: 0,
+        ),
+        TraceEvent(
+          traceId: 'trace_other_running',
+          sessionId: 'conv_b',
+          turnId: 'turn_other_running',
+          roundIndex: 0,
+          eventSeq: 1,
+          stage: TraceStage.toolExecStarted.value,
+          status: TraceEventStatus.success.value,
+          source: 'ChatActions',
+          startedAt: now.add(const Duration(milliseconds: 200)),
+          endedAt: now.add(const Duration(milliseconds: 200)),
+          durationMs: 0,
+        ),
+      ],
+    );
+
+    expect(title, 'Arona');
   });
 }

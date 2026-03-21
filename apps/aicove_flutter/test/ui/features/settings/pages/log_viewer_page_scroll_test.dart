@@ -72,7 +72,9 @@ void main() {
     });
 
     await tester.pumpWidget(_wrap(const LogViewerPage()));
-    await tester.pumpAndSettle();
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
 
     expect(find.textContaining('日志 79'), findsOneWidget);
 
@@ -83,7 +85,7 @@ void main() {
 
     expect(controller.hasClients, isTrue);
     expect(controller.position.maxScrollExtent, greaterThan(0));
-    expect(controller.offset,
-        closeTo(controller.position.maxScrollExtent, 1.0));
+    expect(
+        controller.offset, closeTo(controller.position.maxScrollExtent, 1.0));
   });
 }

@@ -7,7 +7,7 @@
 library;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'presentation/widgets/momotalk_sort_dialog.dart' show SortMode;
+import 'domain/sort_mode.dart';
 import 'conversation_providers.dart' show activeConversationProvider;
 
 // ===== 发送状态 =====

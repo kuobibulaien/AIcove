@@ -10,6 +10,7 @@ import '../../core/database/database.dart' as db;
 import '../../core/database/database_provider.dart';
 import '../../core/database/converters/database_converters.dart';
 import '../../core/database/repositories/repositories.dart';
+import 'services/conversation_short_window_store.dart';
 
 class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
   StreamSubscription<List<db.Conversation>>? _watchSub;
@@ -256,16 +257,35 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
 
   // 清空消息
   Future<void> clearMessages(String id) async {
+    final database = ref.read(databaseProvider);
     final msgRepo = ref.read(messageRepositoryProvider);
-    final convRepo = ref.read(conversationRepositoryProvider);
 
     final now = DateTime.now().millisecondsSinceEpoch;
     final purgeAt = now + 30 * 24 * 60 * 60 * 1000; // (注释已丢失)
 
     // (注释已丢失)
     await msgRepo.softDeleteByConversation(id, now, purgeAt);
-    await convRepo.clearSummary(id, now);
-    await clearUnread(id);
+    await (database.delete(database.memories)
+          ..where((table) => table.conversationId.equals(id)))
+        .go();
+    await (database.delete(database.diaries)
+          ..where((table) => table.conversationId.equals(id)))
+        .go();
+    await (database.delete(database.summarizationRecords)
+          ..where((table) => table.conversationId.equals(id)))
+        .go();
+
+    await updateOne(
+      id,
+      (conversation) => conversation.copyWith(
+        contextStartMessageId: null,
+        lastMessage: null,
+        lastMessageTime: null,
+        unreadCount: 0,
+        updatedAt: DateTime.now(),
+      ),
+    );
+    await ref.read(conversationShortWindowStoreProvider).clearConversation(id);
   }
 
   // delete conversation (soft delete to trash)
@@ -283,6 +303,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
     // update in-memory state
     final current = state.value ?? <Conversation>[];
     state = AsyncValue.data(current.where((c) => c.id != id).toList());
+    await ref.read(conversationShortWindowStoreProvider).deleteConversation(id);
   }
 }
 
@@ -328,28 +349,35 @@ final conversationByIdProvider =
   },
 );
 
+Conversation? _resolveConversationById(Ref ref, String conversationId) {
+  final snapshotConversation =
+      ref.watch(conversationSnapshotByIdProvider(conversationId));
+  if (snapshotConversation != null) {
+    return snapshotConversation;
+  }
+
+  final conversationAsync = ref.watch(conversationByIdProvider(conversationId));
+  if (conversationAsync.isLoading) {
+    return null;
+  }
+  return conversationAsync.valueOrNull;
+}
+
+final resolvedConversationByIdProvider = Provider.family<Conversation?, String>(
+  (ref, conversationId) {
+    final normalizedId = conversationId.trim();
+    if (normalizedId.isEmpty) {
+      return null;
+    }
+    return _resolveConversationById(ref, normalizedId);
+  },
+);
+
 final activeConversationProvider = Provider<Conversation?>((ref) {
   final rawId = ref.watch(activeConversationIdProvider);
   final activeId = rawId?.trim();
   if (activeId != null && activeId.isNotEmpty) {
-    final snapshotConversation =
-        ref.watch(conversationSnapshotByIdProvider(activeId));
-    if (snapshotConversation != null) {
-      return snapshotConversation;
-    }
-
-    final activeConversationAsync =
-        ref.watch(conversationByIdProvider(activeId));
-    if (activeConversationAsync.isLoading) {
-      return null;
-    }
-
-    final activeConversation = activeConversationAsync.valueOrNull;
-    if (activeConversation != null) {
-      return activeConversation;
-    }
-
-    return null;
+    return ref.watch(resolvedConversationByIdProvider(activeId));
   }
 
   final fallbackId = ref.watch(
@@ -363,18 +391,5 @@ final activeConversationProvider = Provider<Conversation?>((ref) {
   if (fallbackId == null) {
     return null;
   }
-
-  final fallbackSnapshot =
-      ref.watch(conversationSnapshotByIdProvider(fallbackId));
-  if (fallbackSnapshot != null) {
-    return fallbackSnapshot;
-  }
-
-  final fallbackConversationAsync =
-      ref.watch(conversationByIdProvider(fallbackId));
-  if (fallbackConversationAsync.isLoading) {
-    return null;
-  }
-
-  return fallbackConversationAsync.valueOrNull;
+  return ref.watch(resolvedConversationByIdProvider(fallbackId));
 });

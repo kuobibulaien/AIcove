@@ -12,9 +12,27 @@ import '../tts_config.dart';
 import 'tts_voice_provider.dart';
 
 /// 阿里云 Qwen-TTS 音色管理 Provider
-class AliyunQwenVoiceProvider implements TtsVoiceProvider {
+class AliyunQwenVoiceProvider extends TtsVoiceProvider {
   @override
   String get providerId => 'aliyun_qwen';
+
+  @override
+  List<String> get providerAliases => const <String>[
+        'aliyun_qwen',
+        'aliyun',
+      ];
+
+  @override
+  List<String> get requestFormatAliases => const <String>[
+        'aliyun_qwen_tts',
+      ];
+
+  @override
+  List<String> get apiHostKeywords => const <String>[
+        'dashscope.aliyuncs.com',
+        'dashscope',
+        'aliyuncs',
+      ];
 
   @override
   String get displayName => '阿里云 Qwen-TTS';
@@ -222,9 +240,19 @@ class AliyunQwenVoiceProvider implements TtsVoiceProvider {
 }
 
 /// 阿里云 CosyVoice 音色管理 Provider
-class AliyunCosyVoiceProvider implements TtsVoiceProvider {
+class AliyunCosyVoiceProvider extends TtsVoiceProvider {
   @override
   String get providerId => 'aliyun_cosyvoice';
+
+  @override
+  List<String> get providerAliases => const <String>[
+        'aliyun_cosyvoice',
+      ];
+
+  @override
+  List<String> get requestFormatAliases => const <String>[
+        'aliyun_cosyvoice',
+      ];
 
   @override
   String get displayName => '阿里云 CosyVoice';

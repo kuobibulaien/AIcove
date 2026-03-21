@@ -17,6 +17,7 @@ import '../../../../ui/theme/skin_provider.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../providers2.dart';
+import '../../domain/sort_mode.dart';
 import 'momotalk_sort_dialog.dart';
 
 /// 联系人列表次级标题栏

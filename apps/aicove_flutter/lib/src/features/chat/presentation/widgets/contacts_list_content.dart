@@ -1,40 +1,14 @@
-import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:aicove_flutter/src/core/utils/image_preheat_queue.dart';
 import 'package:aicove_flutter/src/core/utils/avatar_helper.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import '../../providers2.dart';
 import '../../domain/conversation.dart';
-import '../../domain/message.dart';
-import '../../services/chat_history_store.dart';
-import '../../../../core/models/message_block.dart';
+import '../../domain/sort_mode.dart';
 import 'character_list_item.dart';
-import 'momotalk_sort_dialog.dart';
 import '../../../../ui/theme/tokens.dart';
-
-const Duration kConversationTapWarmupDelay = Duration(milliseconds: 140);
-
-VoidCallback scheduleConversationTapWarmup(
-  BuildContext context,
-  VoidCallback callback, {
-  Duration delay = kConversationTapWarmupDelay,
-}) {
-  var canceled = false;
-  WidgetsBinding.instance.addPostFrameCallback((_) {
-    if (canceled || !context.mounted) return;
-    Timer(delay, () {
-      if (canceled || !context.mounted) return;
-      callback();
-    });
-  });
-  return () {
-    canceled = true;
-  };
-}
 
 ImageProvider? buildConversationAvatarProvider(Conversation conv) {
   final helper = AvatarHelper(
@@ -72,71 +46,16 @@ class ContactsListContent extends ConsumerStatefulWidget {
 
 class _ContactsListContentState extends ConsumerState<ContactsListContent> {
   static const int _kListWarmupConversationCount = 6;
-  static const int _kListWarmupMaxMessagesToScan = 6;
-  static const int _kListWarmupMaxImagesToCache = 10;
-  static const int _kTapWarmupMaxMessagesToScan = 30;
-  static const int _kTapWarmupMaxImagesToCache = 24;
 
   String _lastWarmupFingerprint = '';
   bool _warmupScheduled = false;
   List<Conversation> _pendingWarmupTargets = const [];
-  VoidCallback? _cancelTapWarmup;
-  String? _pendingTapWarmupConversationId;
 
   List<ImageProvider> _collectAvatarProviders(Conversation conv) {
     final images = <ImageProvider>[];
     final avatarProvider = buildConversationAvatarProvider(conv);
     if (avatarProvider != null) {
       images.add(avatarProvider);
-    }
-
-    return images;
-  }
-
-  List<ImageProvider> _collectConversationPreviewProviders(
-    Conversation conv, {
-    List<Message>? messages,
-    required int maxMessagesToScan,
-    required int maxImagesToCache,
-  }) {
-    final images = <ImageProvider>[];
-    images.addAll(_collectAvatarProviders(conv));
-
-    final previewMessages = messages ?? const <Message>[];
-    final start = previewMessages.length > maxMessagesToScan
-        ? previewMessages.length - maxMessagesToScan
-        : 0;
-    for (var i = start;
-        i < previewMessages.length && images.length < maxImagesToCache;
-        i++) {
-      final blocks = previewMessages[i].blocks;
-      if (blocks == null) continue;
-
-      for (final block in blocks) {
-        if (images.length >= maxImagesToCache) break;
-
-        if (block is ImageBlock) {
-          final url = block.url;
-          final localPath = block.localPath;
-          if (url != null && url.isNotEmpty) {
-            images.add(CachedNetworkImageProvider(url));
-          } else if (localPath != null && localPath.isNotEmpty) {
-            images.add(FileImage(File(localPath)));
-          }
-        } else if (block is EmojiBlock) {
-          final path = block.path.trim();
-          if (path.isEmpty) continue;
-          final isNetwork =
-              path.startsWith('http://') || path.startsWith('https://');
-          final isAsset =
-              path.startsWith('assets/') || path.startsWith('packages/');
-          if (isNetwork) {
-            images.add(CachedNetworkImageProvider(path));
-          } else if (isAsset) {
-            images.add(AssetImage(path));
-          }
-        }
-      }
     }
 
     return images;
@@ -168,62 +87,8 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
         if (avatarProviders.isNotEmpty) {
           queue.enqueueAll(avatarProviders, configuration);
         }
-        unawaited(_warmupConversationPreview(
-          conv,
-          maxMessagesToScan: _kListWarmupMaxMessagesToScan,
-          maxImagesToCache: _kListWarmupMaxImagesToCache,
-        ));
       }
     });
-  }
-
-  Future<void> _warmupConversationPreview(
-    Conversation conv, {
-    required int maxMessagesToScan,
-    required int maxImagesToCache,
-  }) async {
-    final preheatQueue = ref.read(imagePreheatQueueProvider);
-    final messages =
-        await ref.read(chatHistoryStoreProvider).loadRecentMessages(
-              conv.id,
-              limit: maxMessagesToScan,
-            );
-    if (!mounted) return;
-    preheatQueue.enqueueAllFromContext(
-      context,
-      _collectConversationPreviewProviders(
-        conv,
-        messages: messages,
-        maxMessagesToScan: maxMessagesToScan,
-        maxImagesToCache: maxImagesToCache,
-      ),
-      priority: ImagePreheatPriority.high,
-    );
-  }
-
-  void _scheduleTapWarmup(Conversation conv) {
-    if (_pendingTapWarmupConversationId == conv.id &&
-        _cancelTapWarmup != null) {
-      return;
-    }
-    _pendingTapWarmupConversationId = conv.id;
-    _cancelTapWarmup?.call();
-    _cancelTapWarmup = scheduleConversationTapWarmup(context, () {
-      if (!mounted) return;
-      _pendingTapWarmupConversationId = null;
-      _cancelTapWarmup = null;
-      unawaited(_warmupConversationPreview(
-        conv,
-        maxMessagesToScan: _kTapWarmupMaxMessagesToScan,
-        maxImagesToCache: _kTapWarmupMaxImagesToCache,
-      ));
-    });
-  }
-
-  @override
-  void dispose() {
-    _cancelTapWarmup?.call();
-    super.dispose();
   }
 
   @override
@@ -233,8 +98,6 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => Center(child: Text('加载失败: $e')),
       data: (list) {
-        final preheatQueue = ref.read(imagePreheatQueueProvider);
-
         // 按搜索关键字进行本地过滤（大小写不敏感）
         final q = (widget.searchQuery ?? '').trim().toLowerCase();
         var filtered = q.isEmpty
@@ -378,10 +241,7 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
                   child: CharacterListItem(
                     conversation: c,
                     isActive: c.id == highlightId,
-                    onTapDown: (_) => _scheduleTapWarmup(c),
                     onTap: () {
-                      _scheduleTapWarmup(c);
-
                       if (widget.onContactTap != null) {
                         // 使用自定义回调（宽屏模式）
                         widget.onContactTap!(c.id, ref);

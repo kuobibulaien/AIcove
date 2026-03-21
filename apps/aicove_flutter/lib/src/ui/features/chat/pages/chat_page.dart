@@ -5,12 +5,28 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import '../../../../features/chat/chat_actions.dart';
+import '../../../../features/chat/application/chat_page_conversation_actions.dart';
+import '../../../../features/chat/application/chat_page_send_support.dart'
+    show chatPageSendSupportProvider;
+import '../../../../features/chat/conversation_providers.dart'
+    show
+        activeConversationIdProvider,
+        activeConversationProvider,
+        conversationsProvider,
+        resolvedConversationByIdProvider;
+import '../../../../features/chat/conversation_timeline_providers.dart'
+    show
+        conversationHasMoreProvider,
+        conversationMessagesProvider,
+        conversationTransientMessagesProvider,
+        conversationVisibleCountProvider,
+        kConversationInitialVisibleCount,
+        kConversationVisiblePageSize;
 import '../../../../features/chat/domain/conversation.dart';
 import '../../../../features/chat/domain/message.dart';
-import '../../../../features/chat/providers2.dart';
 import '../../../../features/chat/presentation/widgets/composer.dart';
 import '../../../../features/chat/presentation/widgets/contact_edit_dialog.dart';
-import '../../../../features/chat/services/chat_history_store.dart';
 import '../../../../ui/features/character/pages/contact_edit_page.dart';
 import '../../../../features/chat/presentation/widgets/chat_settings_dialog.dart';
 import '../../../../ui/theme/tokens.dart';
@@ -18,20 +34,71 @@ import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../features/settings/app_settings.dart';
-import '../../../../core/database/database.dart' as db;
-import '../../../../core/database/database_provider.dart';
 import '../../../../core/models/message_block.dart';
 import '../../../../core/utils/blurred_background_service.dart';
 import '../../../../core/utils/data_image.dart';
 import '../../../../core/utils/image_preheat_queue.dart';
+import '../../../../features/observability/trace_models.dart';
+import '../../../../features/observability/trace_query_service.dart';
+import '../../../../features/observability/trace_store.dart';
+import '../../../../ui/features/settings/pages/log_formatters.dart';
 import 'deferred_conversation_activation.dart';
 import '../widgets/chat_message_list.dart';
+import '../widgets/chat_viewport_controller.dart';
+import '../widgets/chat_message_search_content.dart';
 
 const Duration kChatPageImagePrecacheDelay = Duration(milliseconds: 180);
 const Duration kChatPageUnreadClearDelay = Duration(milliseconds: 160);
 final Duration kChatPageDeferredEntryWindow = Duration(
   milliseconds: kAnimPage.inMilliseconds + 120,
 );
+
+@visibleForTesting
+String resolveChatPageAppBarTitle({
+  required String displayName,
+  required String? conversationId,
+  required List<TraceEvent> traceEvents,
+}) {
+  final normalizedDisplayName =
+      displayName.trim().isEmpty ? '聊天' : displayName.trim();
+  final normalizedConversationId = conversationId?.trim() ?? '';
+  if (normalizedConversationId.isEmpty || traceEvents.isEmpty) {
+    return normalizedDisplayName;
+  }
+
+  final conversationEvents = traceEvents
+      .where((event) => event.sessionId == normalizedConversationId)
+      .toList(growable: false);
+  if (conversationEvents.isEmpty) {
+    return normalizedDisplayName;
+  }
+
+  TraceTurnSummary? activeTurn;
+  for (final turn in TraceQueryService.aggregateTurns(conversationEvents)) {
+    if (turn.status == TraceEventStatus.running.value) {
+      activeTurn = turn;
+      break;
+    }
+  }
+  if (activeTurn == null) {
+    return normalizedDisplayName;
+  }
+
+  final timeline = TraceQueryService.sortEvents(
+    conversationEvents
+        .where((event) => event.traceId == activeTurn!.traceId)
+        .toList(growable: false),
+  );
+  if (timeline.isEmpty) {
+    return normalizedDisplayName;
+  }
+
+  final stageLabel = stageToZh(timeline.last.stage).trim();
+  if (stageLabel.isEmpty || stageLabel == timeline.last.stage) {
+    return normalizedDisplayName;
+  }
+  return stageLabel;
+}
 
 class ChatPage extends ConsumerStatefulWidget {
   final String? conversationId;
@@ -57,8 +124,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   String? _preloadedConversationId;
   bool _didSchedulePrecache = false;
   double _composerOverlayHeight = 0;
-  bool _autoScrollToBottomEnabled = true;
-  int _forceScrollToBottomSignal = 0;
+  late final ChatViewportController _viewportController;
   Timer? _imagePrecacheTimer;
   Timer? _clearUnreadTimer;
   Timer? _deferredEntryTimer;
@@ -74,17 +140,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   @override
   void initState() {
     super.initState();
+    _viewportController = ChatViewportController();
     final targetId = widget.conversationId;
-    _databaseTimelineActivated = targetId == null;
+    _databaseTimelineActivated = true;
     _persistentViewportHasMoreMessages = true;
     if (targetId == null) return;
-    final initial = widget.initialConversation?.id == targetId
-        ? widget.initialConversation
-        : null;
-    if (initial != null) {
-      _beginDeferredEntryShell(targetId);
-      return;
-    }
     _startEntrySideEffects(targetId);
   }
 
@@ -135,7 +195,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _clearUnreadTimer?.cancel();
     _clearUnreadTimer = Timer(kChatPageUnreadClearDelay, () {
       if (!mounted) return;
-      unawaited(ref.read(conversationsProvider.notifier).clearUnread(
+      unawaited(ref.read(chatPageConversationActionsProvider).clearUnread(
             conversationId,
           ));
     });
@@ -200,60 +260,31 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   void _resumeChatListAutoScroll() {
-    if (!mounted) return;
-    if (_autoScrollToBottomEnabled) return;
-    setState(() => _autoScrollToBottomEnabled = true);
+    _viewportController.onComposerTapped();
   }
 
   void _forceChatListToBottom() {
-    if (!mounted) return;
-    setState(() {
-      _autoScrollToBottomEnabled = true;
-      _forceScrollToBottomSignal += 1;
-    });
-  }
-
-  void _disableChatListAutoScroll() {
-    if (!mounted) return;
-    if (!_autoScrollToBottomEnabled) return;
-    setState(() => _autoScrollToBottomEnabled = false);
+    _viewportController.onUserSend();
   }
 
   Future<bool> _checkVisionCompat({
     required Conversation conv,
     bool currentMessageHasImage = false,
   }) async {
-    final settings = await ref.read(appSettingsProvider.future);
-
-    // 已勾选"不再提醒"→ 直接放行
-    if (settings.skipVisionCompatDialog) return true;
-
-    // 判断当前聊天模型是否支持视觉
-    final chatModels = settings.defaultChatModels.isNotEmpty
-        ? settings.defaultChatModels
-        : [settings.defaultModelName];
-    final primaryModel = chatModels.first;
-    if (settings.hasChatModelCapability(
-      primaryModel,
-      ChatModelCapability.vision,
-    )) {
+    final decision =
+        await ref.read(chatPageSendSupportProvider).resolveVisionCompatibility(
+              conversation: conv,
+              currentMessageHasImage: currentMessageHasImage,
+            );
+    if (decision.canSend) {
       return true;
     }
 
-    // 判断上下文 / 当前消息是否包含图片
-    final history = await ref.read(chatHistoryStoreProvider).loadAllMessages(
-          conv.id,
-        );
-    final historyHasImage = history.any((m) => m.images.isNotEmpty);
-    if (!historyHasImage && !currentMessageHasImage) return true;
-
-    // 需要弹窗
     if (!mounted) return false;
     final confirmed = await _showVisionCompatDialog(
       context: context,
-      modelName: settings.getModelDisplayName(primaryModel),
-      hasVisionModel: settings.defaultVisionModel != null &&
-          settings.defaultVisionModel!.isNotEmpty,
+      modelName: decision.modelDisplayName ?? '当前模型',
+      hasVisionModel: decision.hasVisionModel,
     );
     return confirmed == true;
   }
@@ -702,19 +733,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       _deferredEntryShellActive = false;
       setState(() {
         _isLoadingMore = false;
-        _autoScrollToBottomEnabled = true;
-        _databaseTimelineActivated = targetId == null;
+        _databaseTimelineActivated = true;
         _persistentViewportHasMoreMessages = true;
       });
+      _viewportController.onConversationChanged();
       _preloadedConversationId = null;
       if (targetId == null) {
-        return;
-      }
-      final initial = widget.initialConversation?.id == targetId
-          ? widget.initialConversation
-          : null;
-      if (initial != null) {
-        _beginDeferredEntryShell(targetId);
         return;
       }
       _startEntrySideEffects(targetId);
@@ -727,6 +751,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _imagePrecacheTimer?.cancel();
     _clearUnreadTimer?.cancel();
     _deferredEntryTimer?.cancel();
+    _viewportController.dispose();
     super.dispose();
   }
 
@@ -769,17 +794,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         targetId != null && initial != null && _deferredEntryShellActive;
     final targetConversation = targetId == null || deferEntryShell
         ? null
-        : ref.watch(conversationSnapshotByIdProvider(targetId));
+        : ref.watch(resolvedConversationByIdProvider(targetId));
     final conv = targetId == null
         ? ref.watch(activeConversationProvider)
         : deferEntryShell
             ? initial
-            : targetConversation ??
-                ref.watch(
-                  conversationByIdProvider(targetId)
-                      .select((value) => value.valueOrNull),
-                ) ??
-                initial;
+            : targetConversation ?? initial;
     final currentConversationId = conv?.id ?? targetId;
     final useDatabaseTimeline =
         _databaseTimelineActivated || currentConversationId == null;
@@ -876,12 +896,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               ),
         title: deferEntryShell
             ? Text(conv?.displayName ?? '聊天')
-            : Consumer(
-                builder: (context, ref, _) {
-                  final status = ref.watch(chatStatusProvider);
+            : ValueListenableBuilder<List<TraceEvent>>(
+                valueListenable: TraceStore.instance.entries,
+                builder: (context, traceEvents, _) {
                   final displayName = conv?.displayName ?? '聊天';
                   return Text(
-                    status == ChatStatus.idle ? displayName : status.label,
+                    resolveChatPageAppBarTitle(
+                      displayName: displayName,
+                      conversationId: currentConversationId,
+                      traceEvents: traceEvents,
+                    ),
                   );
                 },
               ),
@@ -937,12 +961,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 );
                 if (ok == true && context.mounted) {
                   final lastMsgId = messages.last.id;
-                  await ref.read(conversationsProvider.notifier).updateOne(
-                        conv.id,
-                        (c) => c.copyWith(
-                          contextStartMessageId: lastMsgId,
-                          updatedAt: DateTime.now(),
-                        ),
+                  await ref
+                      .read(chatPageConversationActionsProvider)
+                      .startNewTopic(
+                        conversationId: conv.id,
+                        lastMessageId: lastMsgId,
                       );
                   if (context.mounted) {
                     MoeToast.brief(context, '已开始新话题');
@@ -963,8 +986,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                       title: '查找聊天记录',
                       showCloseButton: true,
                       maxHeight: MediaQuery.sizeOf(context).height * 0.85,
-                      builder: (context) =>
-                          _ChatMessageSearchContent(conversation: conv),
+                      builder: (context) => ChatMessageSearchContent(
+                        conversationId: conv.id,
+                      ),
                     );
                   },
                   onEditContact: () async {
@@ -979,8 +1003,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     );
                     if (result != null) {
                       await ref
-                          .read(conversationsProvider.notifier)
-                          .applyContactEdit(
+                          .read(chatPageConversationActionsProvider)
+                          .applyConversationEdits(
                             conv.id,
                             displayName: result.displayName,
                             avatarUrl: result.avatarUrl,
@@ -1010,8 +1034,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   },
                   onChatBackgroundSettings: (result) async {
                     await ref
-                        .read(conversationsProvider.notifier)
-                        .applyContactEdit(
+                        .read(chatPageConversationActionsProvider)
+                        .applyConversationEdits(
                           conv.id,
                           chatBackgroundImage: result.backgroundImage,
                           clearChatBackgroundImage: result.clearBackgroundImage,
@@ -1026,7 +1050,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   },
                   onPinnedChanged: (value) async {
                     await ref
-                        .read(conversationsProvider.notifier)
+                        .read(chatPageConversationActionsProvider)
                         .updateConversationSettings(
                           conv.id,
                           isPinned: value,
@@ -1039,7 +1063,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   },
                   onMutedChanged: (value) async {
                     await ref
-                        .read(conversationsProvider.notifier)
+                        .read(chatPageConversationActionsProvider)
                         .updateConversationSettings(
                           conv.id,
                           isMuted: value,
@@ -1049,7 +1073,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   },
                   onNotificationSoundChanged: (value) async {
                     await ref
-                        .read(conversationsProvider.notifier)
+                        .read(chatPageConversationActionsProvider)
                         .updateConversationSettings(
                           conv.id,
                           notificationSound: value,
@@ -1059,20 +1083,20 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   },
                   onClearMessages: () async {
                     await ref
-                        .read(conversationsProvider.notifier)
+                        .read(chatPageConversationActionsProvider)
                         .clearMessages(conv.id);
                     if (!context.mounted) return;
                     MoeToast.brief(context, 'Chat history cleared');
                   },
                   onDeleteConversation: () async {
                     await ref
-                        .read(conversationsProvider.notifier)
+                        .read(chatPageConversationActionsProvider)
                         .deleteConversation(conv.id);
                     if (context.mounted && context.canPop()) context.pop();
                   },
                   onEnabledPluginsChanged: (plugins) async {
                     await ref
-                        .read(conversationsProvider.notifier)
+                        .read(chatPageConversationActionsProvider)
                         .updateConversationSettings(
                           conv.id,
                           enabledPlugins: plugins,
@@ -1120,13 +1144,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                             avatarUrl: conv.avatarUrl ?? conv.characterImage,
                             displayName: conv.displayName,
                             bottomOverlayHeight: _composerOverlayHeight,
-                            autoScrollToBottomEnabled:
-                                _autoScrollToBottomEnabled,
-                            onAutoScrollDisabled: _disableChatListAutoScroll,
-                            forceScrollToBottomSignal:
-                                _forceScrollToBottomSignal,
-                            allowPersistentViewportBoot:
-                                !_databaseTimelineActivated,
+                            viewportController: _viewportController,
+                            allowPersistentViewportBoot: false,
                             onPersistentViewportBootMiss: () {
                               _activateDatabaseTimeline(conv.id);
                             },
@@ -1219,25 +1238,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     final ok = await _checkVisionCompat(conv: conv);
                     if (!ok) return;
                   }
-                  final quoted = ref.read(quotedMessageProvider);
-                  if (quoted != null) {
-                    final quotedText = quoted.content.length > 30
-                        ? '${quoted.content.substring(0, 30)}...'
-                        : quoted.content;
-                    final quotedPrefix = '> Quote: $quotedText\n\n';
-                    if (conv != null) {
-                      _activateDatabaseTimeline(conv.id);
-                    }
-                    _forceChatListToBottom();
-                    actions.send(quotedPrefix + text);
-                    ref.read(quotedMessageProvider.notifier).state = null;
-                  } else {
-                    if (conv != null) {
-                      _activateDatabaseTimeline(conv.id);
-                    }
-                    _forceChatListToBottom();
-                    actions.send(text);
+                  if (conv != null) {
+                    _activateDatabaseTimeline(conv.id);
                   }
+                  _forceChatListToBottom();
+                  unawaited(actions.sendComposerText(text));
                 },
                 onImageSelected: (imagePath, {String? text}) async {
                   if (ref.read(sendingProvider)) {
@@ -1279,352 +1284,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _ChatMessageSearchContent extends ConsumerStatefulWidget {
-  final Conversation conversation;
-
-  const _ChatMessageSearchContent({required this.conversation});
-
-  @override
-  ConsumerState<_ChatMessageSearchContent> createState() =>
-      _ChatMessageSearchContentState();
-}
-
-class _ChatMessageSearchContentState
-    extends ConsumerState<_ChatMessageSearchContent> {
-  final _searchCtrl = TextEditingController();
-  Timer? _debounce;
-  String _keyword = '';
-  DateTime? _selectedDate;
-  int _searchSeq = 0;
-
-  bool _loading = false;
-  String? _error;
-  List<db.Message> _results = const [];
-
-  @override
-  void dispose() {
-    _debounce?.cancel();
-    _searchCtrl.dispose();
-    super.dispose();
-  }
-
-  void _scheduleSearch() {
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 250), () {
-      _runSearch();
-    });
-  }
-
-  Future<void> _runSearch() async {
-    final seq = ++_searchSeq;
-    final keyword = _keyword.trim();
-    final date = _selectedDate;
-
-    // (注释已丢失)
-    if (keyword.isEmpty && date == null) {
-      if (!mounted || seq != _searchSeq) return;
-      setState(() {
-        _loading = false;
-        _error = null;
-        _results = const [];
-      });
-      return;
-    }
-
-    final int? startMs;
-    final int? endMs;
-    if (date == null) {
-      startMs = null;
-      endMs = null;
-    } else {
-      final start = DateTime(date.year, date.month, date.day);
-      startMs = start.millisecondsSinceEpoch;
-      endMs = start.add(const Duration(days: 1)).millisecondsSinceEpoch;
-    }
-
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-
-    try {
-      final repo = ref.read(messageRepositoryProvider);
-      final rows = await repo.searchByConversation(
-        widget.conversation.id,
-        keyword: keyword.isEmpty ? null : keyword,
-        startTime: startMs,
-        endTime: endMs,
-        limit: 200,
-      );
-      if (!mounted || seq != _searchSeq) return;
-      setState(() {
-        _loading = false;
-        _results = rows;
-      });
-    } catch (e) {
-      if (!mounted || seq != _searchSeq) return;
-      setState(() {
-        _loading = false;
-        _error = '$e';
-      });
-    }
-  }
-
-  Future<void> _pickDate() async {
-    final now = DateTime.now();
-    final picked = await showDatePicker(
-      context: context,
-      firstDate: DateTime(2000),
-      lastDate: now,
-      initialDate: _selectedDate ?? now,
-    );
-    if (picked == null || !mounted) return;
-    setState(() => _selectedDate = picked);
-    _scheduleSearch();
-  }
-
-  void _clearDate() {
-    setState(() => _selectedDate = null);
-    _scheduleSearch();
-  }
-
-  void _clearKeyword() {
-    setState(() {
-      _searchCtrl.clear();
-      _keyword = '';
-    });
-    _scheduleSearch();
-  }
-
-  String _formatDay(DateTime date) {
-    final y = date.year.toString().padLeft(4, '0');
-    final m = date.month.toString().padLeft(2, '0');
-    final d = date.day.toString().padLeft(2, '0');
-    return '$y-$m-$d';
-  }
-
-  String _formatTime(DateTime time) {
-    final ymd = _formatDay(time);
-    final hh = time.hour.toString().padLeft(2, '0');
-    final mm = time.minute.toString().padLeft(2, '0');
-    return '$ymd $hh:$mm';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = context.moeColors;
-    final keyword = _keyword.trim();
-    final date = _selectedDate;
-
-    return Column(
-      children: [
-        // (注释已丢失)
-        Padding(
-          padding: const EdgeInsets.all(16),
-          child: MoeTextField(
-            controller: _searchCtrl,
-            autofocus: true,
-            hint: '输入关键词（可选）',
-            prefixIcon: Icons.search,
-            suffix: _searchCtrl.text.isNotEmpty
-                ? IconButton(
-                    icon: const Icon(Icons.clear, size: 20),
-                    onPressed: _clearKeyword,
-                  )
-                : null,
-            borderColor: colors.borderLight,
-            focusBorderColor: colors.primary,
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            onChanged: (value) {
-              setState(() => _keyword = value);
-              _scheduleSearch();
-            },
-          ),
-        ),
-
-        // (注释已丢失)
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: MoeG2ClipRRect(
-            radius: 12,
-            child: Container(
-              decoration: MoeG2Decoration(
-                radius: 12,
-                color: colors.surfaceAlt,
-                border: Border.all(
-                  color: colors.borderLight,
-                  width: borderWidth,
-                ),
-              ),
-              child: Material(
-                color: Colors.transparent,
-                child: ListTile(
-                  dense: true,
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
-                  title: const Text('日期'),
-                  subtitle: Text(date == null ? '全部' : _formatDay(date)),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        tooltip: '选择日期',
-                        icon: const Icon(Icons.calendar_month, size: 20),
-                        color: moePrimary,
-                        onPressed: _pickDate,
-                      ),
-                      if (date != null)
-                        IconButton(
-                          tooltip: '清除日期',
-                          icon: const Icon(Icons.close, size: 20),
-                          color: colors.muted,
-                          onPressed: _clearDate,
-                        ),
-                    ],
-                  ),
-                  onTap: _pickDate,
-                ),
-              ),
-            ),
-          ),
-        ),
-
-        const SizedBox(height: 12),
-
-        // (注释已丢失)
-        Expanded(
-          child: _loading
-              ? const Center(child: MoeLoadingIndicator())
-              : (_error != null)
-                  ? MoeEmptyState(
-                      icon: Icons.error_outline,
-                      title: '搜索失败',
-                      description: _error!,
-                    )
-                  : (keyword.isEmpty && date == null)
-                      ? const MoeEmptyState(
-                          icon: Icons.search,
-                          title: '请输入关键词或选择日期',
-                        )
-                      : (_results.isEmpty)
-                          ? const MoeEmptyState(
-                              icon: Icons.search_off,
-                              title: '未找到匹配的聊天记录',
-                            )
-                          : Column(
-                              children: [
-                                Padding(
-                                  padding:
-                                      const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          '共 ${_results.length} 条（最多显示 200 条）',
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            color: colors.muted,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                Expanded(
-                                  child: ListView.separated(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 16,
-                                      vertical: 8,
-                                    ),
-                                    itemCount: _results.length,
-                                    separatorBuilder: (_, __) =>
-                                        const SizedBox(height: 8),
-                                    itemBuilder: (context, index) {
-                                      final m = _results[index];
-                                      final time =
-                                          DateTime.fromMillisecondsSinceEpoch(
-                                              m.createdAt);
-                                      final roleLabel =
-                                          m.role == 'user' ? 'Me' : 'TA';
-                                      final text = m.content.trim().isEmpty
-                                          ? '[Non-text message]'
-                                          : m.content.trim();
-
-                                      return Container(
-                                        padding: const EdgeInsets.all(12),
-                                        decoration: MoeG2Decoration(
-                                          radius: 8,
-                                          color: colors.surfaceAlt,
-                                          border: Border.all(
-                                            color: colors.borderLight,
-                                            width: borderWidth,
-                                          ),
-                                        ),
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Row(
-                                              children: [
-                                                Container(
-                                                  padding: const EdgeInsets
-                                                      .symmetric(
-                                                      horizontal: 8,
-                                                      vertical: 2),
-                                                  decoration: MoeG2Decoration(
-                                                    radius: 999,
-                                                    color: colors.muted
-                                                        .withValues(
-                                                            alpha: 0.12),
-                                                  ),
-                                                  child: Text(
-                                                    roleLabel,
-                                                    style: TextStyle(
-                                                      fontSize: 12,
-                                                      color: colors.text,
-                                                      fontWeight: MoeFontWeights
-                                                          .emphasis,
-                                                    ),
-                                                  ),
-                                                ),
-                                                const SizedBox(width: 8),
-                                                Expanded(
-                                                  child: Text(
-                                                    _formatTime(time),
-                                                    style: TextStyle(
-                                                      fontSize: 12,
-                                                      color: colors.muted,
-                                                    ),
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                            const SizedBox(height: 8),
-                                            Text(
-                                              text,
-                                              maxLines: 3,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: TextStyle(
-                                                fontSize: 13,
-                                                color: colors.text,
-                                                height: 1.35,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                ),
-                              ],
-                            ),
-        ),
-      ],
     );
   }
 }

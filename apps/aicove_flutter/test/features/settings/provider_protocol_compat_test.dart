@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:aicove_flutter/src/core/api/agent_api.dart';
 import 'package:aicove_flutter/src/core/api_logger.dart';
 import 'package:aicove_flutter/src/core/api/providers/google_api_mode.dart';
+import 'package:aicove_flutter/src/core/api/providers/minimax_compat.dart';
 import 'package:aicove_flutter/src/features/settings/ui_models_api.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -360,6 +361,46 @@ void main() {
       expect(calledHeaders?.containsKey('x-goog-api-key'), isFalse);
     });
 
+    test('MiniMax native endpoint should not be appended twice', () async {
+      Uri? calledUri;
+      Map<String, dynamic>? requestBody;
+
+      final client = AgentApiClient(
+        client: _CapturingClient((request) async {
+          calledUri = request.url;
+          if (request is http.Request) {
+            requestBody = jsonDecode(request.body) as Map<String, dynamic>;
+          }
+          return _jsonResponse({
+            'choices': [
+              {
+                'message': {'content': 'ok'}
+              }
+            ]
+          });
+        }),
+      );
+
+      final result = await client.sendMessageRich(
+        agentId: 'a1',
+        sessionId: 's1',
+        modelFullId: 'openai:MiniMax-M2.7',
+        messages: const <Map<String, dynamic>>[],
+        userText: 'hello',
+        providerApiBase: 'https://api.minimax.io/v1/text/chatcompletion_v2',
+        providerApiKey: 'minimax-key',
+        customConfig: const {'requestFormat': 'openai'},
+      );
+
+      expect(result.text, 'ok');
+      expect(
+        calledUri.toString(),
+        'https://api.minimax.io/v1/text/chatcompletion_v2',
+      );
+      expect(requestBody?['requestFormat'], isNull);
+      expect(requestBody?['model'], 'MiniMax-M2.7');
+    });
+
     test('Gemini previewProvider should use x-goog-api-key and parse models[]',
         () async {
       Uri? calledUri;
@@ -456,6 +497,26 @@ void main() {
         'https://aiplatform.googleapis.com/v1beta1/publishers/google/models?key=vertex-key&pageSize=200',
       );
       expect(models, contains('gemini-2.5-pro'));
+    });
+
+    test('MiniMax previewProvider should fall back to documented model list',
+        () async {
+      var requestCount = 0;
+      final client = MockClient((request) async {
+        requestCount += 1;
+        return http.Response('unexpected', 500);
+      });
+
+      final api = UiModelsApi(httpClient: client);
+      final models = await api.previewProvider(
+        providerId: 'openai',
+        apiKey: 'minimax-key',
+        apiBaseUrl: 'https://api.minimaxi.com/v1/text/chatcompletion_v2',
+        customConfig: const {'requestFormat': 'openai'},
+      );
+
+      expect(requestCount, 0);
+      expect(models, kMiniMaxDefaultChatModels);
     });
 
     test('Vertex Express importProvider should fall back to built-in models',

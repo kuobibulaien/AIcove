@@ -206,5 +206,5 @@ for (final info in infos) {
 
 **迁移路线**：
 1. ✅ 创建 Provider 抽象层（当前阶段）
-2. 🔲 UI 层从直接调 Service 改为通过 Provider 调用
+2. ✅ TTS 设置页已改为通过 `tts_provider_context.dart` + `tts_voice_catalog_service.dart` 调 Provider
 3. 🔲 废弃 `voice_manager_service.dart`

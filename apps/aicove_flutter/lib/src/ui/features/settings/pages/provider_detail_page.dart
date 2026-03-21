@@ -11,326 +11,30 @@
 /// - 2026-01-21: 创建供应商详情页
 library;
 
+export 'multi_key_manager_page.dart' show MultiKeyManagerPage;
+
 import 'dart:async';
+import 'dart:collection';
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/api/providers/google_api_mode.dart';
 import '../../../../features/settings/app_settings.dart';
+import '../../../../features/settings/provider_detail/provider_detail_actions.dart';
+import '../../../../features/settings/provider_detail/provider_detail_support.dart';
 import '../../../theme/tokens.dart';
 import '../../../shared/effects/smooth_clip.dart';
 import '../../../shared/widgets/index.dart';
 import '../widgets/model_row_tile.dart';
 import '../widgets/model_picker_sheet.dart';
+import 'multi_key_manager_page.dart';
 
-const _multiKeyEnabledField = 'multi_key_enabled';
-const _multiKeyStrategyField = 'multi_key_strategy';
-const _multiKeyItemsField = 'multi_key_items';
-const _multiKeyRoundRobinIndexField = 'multi_key_rr_index';
-const _multiKeyStrategyRoundRobin = 'round_robin';
-const _multiKeyStrategyRandom = 'random';
-
-enum _MultiKeyStatus { normal, error }
-
-class _ProviderRequestFormat {
-  const _ProviderRequestFormat._(this.value, this.label);
-
-  static const openai = _ProviderRequestFormat._('openai', 'OpenAI');
-  static const claude = _ProviderRequestFormat._('claude', 'Claude');
-  static const gemini = _ProviderRequestFormat._('gemini', 'Gemini');
-  static const novelai = _ProviderRequestFormat._('novelai', 'NovelAI');
-
-  static const chatFormats = <_ProviderRequestFormat>[openai, claude, gemini];
-  static const imageFormats = <_ProviderRequestFormat>[openai, novelai];
-
-  static List<_ProviderRequestFormat> forProvider(
-    ProviderAuth provider, {
-    AppSettings? settings,
-  }) {
-    final current = fromRaw(provider.customConfig['requestFormat']?.toString());
-    if (current == _ProviderRequestFormat.novelai) {
-      return imageFormats;
-    }
-    if (settings == null) {
-      return chatFormats;
-    }
-    final imageModels =
-        settings.getProviderModelsByType(provider.id, type: ModelType.image);
-    final hasImageModel = imageModels.isNotEmpty;
-    final hasNonImageModel = provider.models.any((modelId) {
-      final modelRef = settings.buildModelRef(provider.id, modelId);
-      return settings.getModelType(modelRef) != ModelType.image;
-    });
-    final isImageProvider = hasImageModel && !hasNonImageModel;
-    return isImageProvider ? imageFormats : chatFormats;
-  }
-
-  final String value;
-  final String label;
-
-  static _ProviderRequestFormat? fromRaw(String? raw) {
-    final normalized = raw?.trim().toLowerCase();
-    switch (normalized) {
-      case 'openai':
-        return _ProviderRequestFormat.openai;
-      case 'claude':
-      case 'anthropic':
-        return _ProviderRequestFormat.claude;
-      case 'gemini':
-      case 'google':
-        return _ProviderRequestFormat.gemini;
-      case 'novelai':
-      case 'nai':
-        return _ProviderRequestFormat.novelai;
-      default:
-        return null;
-    }
-  }
-}
-
-_ProviderRequestFormat _resolveProviderRequestFormat(
-  ProviderAuth provider, {
-  AppSettings? settings,
-}) {
-  final available =
-      _ProviderRequestFormat.forProvider(provider, settings: settings);
-  final fromConfig = _ProviderRequestFormat.fromRaw(
-    provider.customConfig['requestFormat']?.toString(),
-  );
-  if (fromConfig != null && available.contains(fromConfig)) {
-    return fromConfig;
-  }
-
-  final fromId = _ProviderRequestFormat.fromRaw(provider.id);
-  if (fromId != null && available.contains(fromId)) return fromId;
-
-  return available.first;
-}
-
-bool _isVertexExpressMode(ProviderAuth provider) {
-  final requestFormat = _ProviderRequestFormat.fromRaw(
-    provider.customConfig['requestFormat']?.toString(),
-  );
-  if (requestFormat != null && requestFormat != _ProviderRequestFormat.gemini) {
-    return false;
-  }
-  return isVertexExpressEnabled(provider.customConfig);
-}
-
-class _MultiKeyItem {
-  const _MultiKeyItem({
-    required this.id,
-    required this.key,
-    this.alias,
-    this.enabled = true,
-    this.status = _MultiKeyStatus.normal,
-    this.totalRequests = 0,
-    this.successRequests = 0,
-    this.failedRequests = 0,
-    this.consecutiveFailures = 0,
-    this.lastUsedAt,
-    this.lastError,
-    required this.updatedAt,
-  });
-
-  final String id;
-  final String key;
-  final String? alias;
-  final bool enabled;
-  final _MultiKeyStatus status;
-  final int totalRequests;
-  final int successRequests;
-  final int failedRequests;
-  final int consecutiveFailures;
-  final int? lastUsedAt;
-  final String? lastError;
-  final int updatedAt;
-
-  static String createId() =>
-      'mk_${DateTime.now().microsecondsSinceEpoch.toString()}';
-
-  factory _MultiKeyItem.fromJson(Map<String, dynamic> json, {int index = 0}) {
-    final rawStatus = json['status']?.toString().trim().toLowerCase();
-    final status =
-        rawStatus == 'error' ? _MultiKeyStatus.error : _MultiKeyStatus.normal;
-    final rawId = json['id']?.toString().trim();
-    final key = json['key']?.toString().trim() ?? '';
-    final id = (rawId == null || rawId.isEmpty)
-        ? 'legacy_${index}_${key.hashCode.abs()}'
-        : rawId;
-    return _MultiKeyItem(
-      id: id,
-      key: key,
-      alias: json['alias']?.toString().trim(),
-      enabled: json['enabled'] != false,
-      status: status,
-      totalRequests: (json['total_requests'] as num?)?.toInt() ?? 0,
-      successRequests: (json['success_requests'] as num?)?.toInt() ?? 0,
-      failedRequests: (json['failed_requests'] as num?)?.toInt() ?? 0,
-      consecutiveFailures: (json['consecutive_failures'] as num?)?.toInt() ?? 0,
-      lastUsedAt: (json['last_used_at'] as num?)?.toInt(),
-      lastError: json['last_error']?.toString(),
-      updatedAt: (json['updated_at'] as num?)?.toInt() ??
-          DateTime.now().millisecondsSinceEpoch,
-    );
-  }
-
-  factory _MultiKeyItem.fromKey(String key, {int index = 0}) {
-    final trimmed = key.trim();
-    final now = DateTime.now().millisecondsSinceEpoch;
-    return _MultiKeyItem(
-      id: 'legacy_${index}_${trimmed.hashCode.abs()}',
-      key: trimmed,
-      updatedAt: now,
-    );
-  }
-
-  _MultiKeyItem copyWith({
-    String? id,
-    String? key,
-    String? alias,
-    bool? enabled,
-    _MultiKeyStatus? status,
-    int? totalRequests,
-    int? successRequests,
-    int? failedRequests,
-    int? consecutiveFailures,
-    int? lastUsedAt,
-    String? lastError,
-    int? updatedAt,
-    bool clearAlias = false,
-    bool clearLastError = false,
-    bool clearLastUsedAt = false,
-  }) {
-    return _MultiKeyItem(
-      id: id ?? this.id,
-      key: key ?? this.key,
-      alias: clearAlias ? null : (alias ?? this.alias),
-      enabled: enabled ?? this.enabled,
-      status: status ?? this.status,
-      totalRequests: totalRequests ?? this.totalRequests,
-      successRequests: successRequests ?? this.successRequests,
-      failedRequests: failedRequests ?? this.failedRequests,
-      consecutiveFailures: consecutiveFailures ?? this.consecutiveFailures,
-      lastUsedAt: clearLastUsedAt ? null : (lastUsedAt ?? this.lastUsedAt),
-      lastError: clearLastError ? null : (lastError ?? this.lastError),
-      updatedAt: updatedAt ?? this.updatedAt,
-    );
-  }
-
-  Map<String, dynamic> toJson() => <String, dynamic>{
-        'id': id,
-        'key': key,
-        'alias': alias,
-        'enabled': enabled,
-        'status': status == _MultiKeyStatus.error ? 'error' : 'normal',
-        'total_requests': totalRequests,
-        'success_requests': successRequests,
-        'failed_requests': failedRequests,
-        'consecutive_failures': consecutiveFailures,
-        'last_used_at': lastUsedAt,
-        'last_error': lastError,
-        'updated_at': updatedAt,
-      };
-}
-
-class _MultiKeyFormResult {
-  const _MultiKeyFormResult({
-    required this.key,
-    this.alias,
-  });
-
-  final String key;
-  final String? alias;
-}
-
-bool _isMultiKeyEnabled(ProviderAuth provider) =>
-    provider.customConfig[_multiKeyEnabledField] == true;
-
-String _multiKeyStrategy(ProviderAuth provider) {
-  final raw = provider.customConfig[_multiKeyStrategyField]?.toString().trim();
-  if (raw == null || raw.isEmpty) return _multiKeyStrategyRoundRobin;
-  return raw;
-}
-
-String _multiKeyStrategyLabel(String strategy) {
-  switch (strategy.trim().toLowerCase()) {
-    case _multiKeyStrategyRoundRobin:
-      return '轮询';
-    case _multiKeyStrategyRandom:
-      return '随机';
-    default:
-      return strategy.trim().isEmpty ? '轮询' : strategy.trim();
-  }
-}
-
-List<_MultiKeyItem> _multiKeyItemsFromProvider(ProviderAuth provider) {
-  final out = <_MultiKeyItem>[];
-  final rawList = provider.customConfig[_multiKeyItemsField];
-  if (rawList is List) {
-    for (var i = 0; i < rawList.length; i++) {
-      final item = rawList[i];
-      if (item is! Map) continue;
-      final parsed = _MultiKeyItem.fromJson(
-        Map<String, dynamic>.from(item),
-        index: i,
-      );
-      if (parsed.key.isEmpty) continue;
-      out.add(parsed);
-    }
-  }
-  if (out.isNotEmpty) return out;
-
-  final fallback = <_MultiKeyItem>[];
-  for (var i = 0; i < provider.apiKeys.length; i++) {
-    final key = provider.apiKeys[i].trim();
-    if (key.isEmpty) continue;
-    fallback.add(_MultiKeyItem.fromKey(key, index: i));
-  }
-  return fallback;
-}
-
-List<String> _extractApiKeysFromMultiKeyItems(List<_MultiKeyItem> items) {
-  final out = <String>[];
-  for (final item in items) {
-    final key = item.key.trim();
-    if (key.isEmpty || out.contains(key)) continue;
-    out.add(key);
-  }
-  return out;
-}
-
-Map<String, dynamic> _buildProviderCustomConfigForMultiKey({
-  required ProviderAuth provider,
-  bool? enabled,
-  String? strategy,
-  List<_MultiKeyItem>? items,
-  int? roundRobinIndex,
-}) {
-  final config = Map<String, dynamic>.from(provider.customConfig);
-  if (enabled != null) {
-    config[_multiKeyEnabledField] = enabled;
-  }
-  if (strategy != null && strategy.trim().isNotEmpty) {
-    config[_multiKeyStrategyField] = strategy.trim();
-  }
-  if (items != null) {
-    config[_multiKeyItemsField] = items.map((e) => e.toJson()).toList();
-  }
-  if (roundRobinIndex != null) {
-    config[_multiKeyRoundRobinIndexField] = roundRobinIndex;
-  }
-  return config;
-}
-
-String _maskMultiKeyValue(String key) {
-  final value = key.trim();
-  if (value.length <= 8) return value;
-  return '${value.substring(0, 4)}••••${value.substring(value.length - 4)}';
-}
+const Duration _kProviderDetailDeferredContentWindow =
+    Duration(milliseconds: 420);
 
 /// 供应商详情页
 class ProviderDetailPage extends ConsumerStatefulWidget {
@@ -359,9 +63,15 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
   late FocusNode _keyFocusNode;
 
   Timer? _autoSaveTimer;
+  Timer? _deferredContentTimer;
   String _lastSavedName = '';
   String _lastSavedUrl = '';
   String _lastSavedKey = '';
+  bool _deferHeavyContent = true;
+  String? _cachedModelEntriesSignature;
+  List<_ProviderModelEntry>? _cachedModelEntries;
+
+  ProviderDetailActions get _actions => ref.read(providerDetailActionsProvider);
 
   @override
   void initState() {
@@ -372,11 +82,14 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
     _nameFocusNode = FocusNode();
     _urlFocusNode = FocusNode();
     _keyFocusNode = FocusNode();
+    _restoreWarmCacheFromLoadedSettings();
+    _scheduleDeferredContentActivation();
   }
 
   @override
   void dispose() {
     _autoSaveTimer?.cancel();
+    _deferredContentTimer?.cancel();
     _pageController.dispose();
     _nameController.dispose();
     _urlController.dispose();
@@ -387,28 +100,52 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
     super.dispose();
   }
 
-  String _resolvePrimaryApiKey(ProviderAuth provider) {
-    final fallback =
-        provider.apiKeys.isNotEmpty ? provider.apiKeys.first.trim() : '';
-    if (!_isMultiKeyEnabled(provider)) return fallback;
+  void _scheduleDeferredContentActivation() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _deferredContentTimer?.cancel();
+      _deferredContentTimer = Timer(
+        _kProviderDetailDeferredContentWindow,
+        _activateHeavyContent,
+      );
+    });
+  }
 
-    final items = _multiKeyItemsFromProvider(provider);
-    final available = items
-        .where((item) =>
-            item.enabled &&
-            item.status != _MultiKeyStatus.error &&
-            item.key.trim().isNotEmpty)
-        .toList();
-    if (available.isNotEmpty) {
-      return available.first.key.trim();
-    }
-    final enabled = items
-        .where((item) => item.enabled && item.key.trim().isNotEmpty)
-        .toList();
-    if (enabled.isNotEmpty) {
-      return enabled.first.key.trim();
-    }
-    return fallback;
+  void _activateHeavyContent() {
+    if (!mounted || !_deferHeavyContent) return;
+    setState(() => _deferHeavyContent = false);
+  }
+
+  void _restoreWarmCacheFromLoadedSettings() {
+    final settings = ref.read(appSettingsProvider).valueOrNull;
+    if (settings == null) return;
+    final provider = settings.getProvider(widget.providerId);
+    if (provider == null) return;
+    _adoptWarmCacheIfAvailable(provider, settings.modelDisplayNames);
+  }
+
+  bool _adoptWarmCacheIfAvailable(
+    ProviderAuth provider,
+    Map<String, String> displayNames,
+  ) {
+    final signature = _buildProviderDetailWarmSignature(
+      provider,
+      displayNames,
+    );
+    final cached = _ProviderDetailWarmCache.read(
+      providerId: provider.id,
+      signature: signature,
+    );
+    if (cached == null) return false;
+
+    _cachedModelEntriesSignature = signature;
+    _cachedModelEntries = cached.modelEntries;
+    _deferHeavyContent = false;
+    return true;
+  }
+
+  String _resolvePrimaryApiKey(ProviderAuth provider) {
+    return _actions.resolvePrimaryApiKey(provider);
   }
 
   void _syncControllersFromProvider(ProviderAuth provider) {
@@ -467,7 +204,7 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
   void _scheduleAutoSave(ProviderAuth provider) {
     _autoSaveTimer?.cancel();
 
-    final multiKeyEnabled = _isMultiKeyEnabled(provider);
+    final multiKeyEnabled = isProviderMultiKeyEnabled(provider);
     final name = _nameController.text.trim();
     final url = _urlController.text.trim();
     final key = _keyController.text.trim();
@@ -483,7 +220,7 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
   }
 
   Future<void> _autoSave(ProviderAuth provider) async {
-    final multiKeyEnabled = _isMultiKeyEnabled(provider);
+    final multiKeyEnabled = isProviderMultiKeyEnabled(provider);
     final name = _nameController.text.trim();
     final url = _urlController.text.trim();
     final key = _keyController.text.trim();
@@ -494,21 +231,12 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
     if (!hasChanges) return;
 
     try {
-      final notifier = ref.read(appSettingsProvider.notifier);
-      if (multiKeyEnabled) {
-        await notifier.editProvider(
-          providerId: provider.id,
-          displayName: name,
-          apiBaseUrl: url,
-        );
-      } else {
-        await notifier.editProvider(
-          providerId: provider.id,
-          displayName: name,
-          apiBaseUrl: url,
-          apiKeys: [key],
-        );
-      }
+      await _actions.autoSaveProvider(
+        provider: provider,
+        displayName: name,
+        apiBaseUrl: url,
+        apiKey: key,
+      );
       _lastSavedName = name;
       _lastSavedUrl = url;
       _lastSavedKey = key;
@@ -516,10 +244,6 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
       if (!mounted) return;
       MoeToast.show(context, '自动保存失败: $e', type: ToastType.error);
     }
-  }
-
-  String _getDisplayName(Map<String, String> displayNames, String model) {
-    return displayNames[model] ?? '';
   }
 
   void _onTabChanged(int index) {
@@ -544,12 +268,7 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
 
     final displayNames =
         ref.read(appSettingsProvider).value?.modelDisplayNames ?? {};
-    final notifier = ref.read(appSettingsProvider.notifier);
-    final requestFormat = _resolveProviderRequestFormat(
-      provider,
-      settings: ref.read(appSettingsProvider).valueOrNull,
-    );
-    final apiKey = _resolvePrimaryApiKey(provider);
+    final apiKey = _actions.resolvePrimaryApiKey(provider);
     if (apiKey.isEmpty) {
       MoeToast.show(context, '请先配置可用 API Key', type: ToastType.error);
       return;
@@ -578,12 +297,10 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
                   testStates[modelId] = _ModelTestState.loading;
                 });
                 try {
-                  await notifier.testModel(
-                    providerId: requestFormat.value,
+                  await _actions.testModel(
+                    provider: provider,
                     apiKey: apiKey,
-                    apiBaseUrl: provider.apiBaseUrl,
                     modelId: modelId,
-                    customConfig: provider.customConfig,
                   );
                   setSheetState(() {
                     testStates[modelId] = _ModelTestState.success;
@@ -717,8 +434,7 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
       cancelText: '取消',
     );
     if (confirmed == true && mounted) {
-      final notifier = ref.read(appSettingsProvider.notifier);
-      await notifier.deleteProvider(provider.id);
+      await _actions.deleteProvider(provider.id);
       if (mounted) {
         Navigator.of(context).pop();
         MoeToast.show(context, '已删除');
@@ -727,29 +443,12 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
   }
 
   Future<void> _toggleEnabled(ProviderAuth provider) async {
-    final notifier = ref.read(appSettingsProvider.notifier);
-    await notifier.setProviderEnabled(provider.id, !provider.enabled);
+    await _actions.setProviderEnabled(provider, !provider.enabled);
     HapticFeedback.lightImpact();
   }
 
   Future<void> _toggleMultiKeyMode(ProviderAuth provider, bool enabled) async {
-    final notifier = ref.read(appSettingsProvider.notifier);
-    final items = _multiKeyItemsFromProvider(provider);
-    final apiKeys = _extractApiKeysFromMultiKeyItems(items);
-    final customConfig = _buildProviderCustomConfigForMultiKey(
-      provider: provider,
-      enabled: enabled,
-      strategy: _multiKeyStrategy(provider),
-      items: items,
-      roundRobinIndex:
-          (provider.customConfig[_multiKeyRoundRobinIndexField] as num?)
-              ?.toInt(),
-    );
-    await notifier.editProvider(
-      providerId: provider.id,
-      apiKeys: apiKeys,
-      customConfig: customConfig,
-    );
+    await _actions.setProviderMultiKeyMode(provider, enabled: enabled);
     if (!mounted) return;
     MoeToast.show(context, enabled ? '已开启多 Key 模式' : '已关闭多 Key 模式');
   }
@@ -766,9 +465,10 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
 
   Future<void> _showRequestFormatSheet(ProviderAuth provider) async {
     final settings = ref.read(appSettingsProvider).valueOrNull;
-    var selected = _resolveProviderRequestFormat(provider, settings: settings);
+    var selected =
+        resolveProviderDetailRequestFormat(provider, settings: settings);
     final availableFormats =
-        _ProviderRequestFormat.forProvider(provider, settings: settings);
+        ProviderDetailRequestFormat.forProvider(provider, settings: settings);
 
     await showMoeBottomSheet(
       context: context,
@@ -780,11 +480,11 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              MoeToggleBar<_ProviderRequestFormat>(
+              MoeToggleBar<ProviderDetailRequestFormat>(
                 value: selected,
                 items: availableFormats
                     .map(
-                      (e) => MoeToggleItem<_ProviderRequestFormat>(
+                      (e) => MoeToggleItem<ProviderDetailRequestFormat>(
                         value: e,
                         label: e.label,
                       ),
@@ -798,20 +498,13 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
               MoePrimaryButton(
                 label: '保存',
                 onPressed: () async {
-                  final current = _resolveProviderRequestFormat(provider,
+                  final current = resolveProviderDetailRequestFormat(provider,
                       settings: settings);
                   if (current == selected) {
                     Navigator.of(this.context).pop();
                     return;
                   }
-                  final notifier = ref.read(appSettingsProvider.notifier);
-                  final customConfig =
-                      Map<String, dynamic>.from(provider.customConfig);
-                  customConfig['requestFormat'] = selected.value;
-                  await notifier.editProvider(
-                    providerId: provider.id,
-                    customConfig: customConfig,
-                  );
+                  await _actions.updateRequestFormat(provider, selected);
                   if (!mounted) return;
                   Navigator.of(this.context).pop();
                   MoeToast.show(this.context, '已更新 API 格式');
@@ -825,17 +518,10 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
   }
 
   Future<void> _toggleVertexExpress(ProviderAuth provider, bool enabled) async {
-    final notifier = ref.read(appSettingsProvider.notifier);
-    final customConfig = Map<String, dynamic>.from(provider.customConfig);
-    customConfig[kGoogleVertexExpressField] = enabled;
     final nextBaseUrl = googleSuggestedBaseUrl(vertexExpress: enabled);
     _syncControllerIfNotFocused(_urlController, _urlFocusNode, nextBaseUrl);
 
-    await notifier.editProvider(
-      providerId: provider.id,
-      apiBaseUrl: nextBaseUrl,
-      customConfig: customConfig,
-    );
+    await _actions.setVertexExpressMode(provider, enabled: enabled);
     if (!mounted) return;
     MoeToast.show(context, enabled ? '已切到 Vertex Express' : '已切回 Gemini');
   }
@@ -844,8 +530,11 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
       ProviderAuth provider, int oldIndex, int newIndex) async {
     if (oldIndex == newIndex) return;
 
-    final visible = _sortedModels(provider.visibleModels,
-        ref.read(appSettingsProvider).value?.modelDisplayNames ?? {});
+    final visible = _resolveModelEntries(
+      provider,
+      ref.read(appSettingsProvider).value?.modelDisplayNames ??
+          const <String, String>{},
+    ).map((entry) => entry.modelId).toList(growable: false);
 
     // ReorderableListView 的 newIndex 需要调整
     if (newIndex > oldIndex) {
@@ -857,11 +546,7 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
     reordered.insert(newIndex, item);
 
     // 更新模型顺序
-    final notifier = ref.read(appSettingsProvider.notifier);
-    await notifier.reorderProviderModels(
-      providerId: provider.id,
-      modelIds: reordered,
-    );
+    await _actions.reorderModels(provider: provider, modelIds: reordered);
   }
 
   Future<void> _showAddCustomModelDialog(ProviderAuth provider) async {
@@ -902,12 +587,11 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
         return;
       }
 
-      final notifier = ref.read(appSettingsProvider.notifier);
       final displayName = displayNameController.text.trim();
 
       // 添加自定义模型到供应商
-      await notifier.addCustomModel(
-        providerId: provider.id,
+      await _actions.addCustomModel(
+        provider: provider,
         modelId: modelId,
         displayName: displayName.isNotEmpty ? displayName : null,
       );
@@ -952,11 +636,167 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
           );
         }
 
-        _syncControllersFromProvider(provider);
-        final displayNames = settings.modelDisplayNames;
+        if (_deferHeavyContent) {
+          _adoptWarmCacheIfAvailable(provider, settings.modelDisplayNames);
+        }
 
-        return _buildContent(context, provider, colors, displayNames);
+        if (_deferHeavyContent) {
+          return _buildDeferredContent(colors, provider);
+        }
+
+        _syncControllersFromProvider(provider);
+        final modelEntries = _resolveModelEntries(
+          provider,
+          settings.modelDisplayNames,
+        );
+
+        return _buildContent(context, provider, colors, modelEntries);
       },
+    );
+  }
+
+  Widget _buildDeferredContent(MoeColors colors, ProviderAuth provider) {
+    final providerName = provider.displayName ?? provider.id;
+
+    return Scaffold(
+      backgroundColor: colors.surface,
+      appBar: const MoeAppBar(
+        title: '渠道详情',
+        showBackButton: true,
+      ),
+      body: ListView(
+        key: const ValueKey<String>('provider_detail_deferred_shell'),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+        children: [
+          MoeSettingsGroup(
+            margin: EdgeInsets.zero,
+            padding: const EdgeInsets.all(12),
+            children: [
+              Row(
+                children: [
+                  ProviderAvatar(
+                    providerName: providerName,
+                    size: ProviderAvatarSize.lg,
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          providerName,
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: MoeFontWeights.emphasis,
+                            color: colors.text,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Container(
+                          width: 144,
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: colors.surfaceAlt.withValues(alpha: 0.62),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    width: 42,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      color: colors.surfaceAlt.withValues(alpha: 0.62),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _buildDeferredGroupShell(colors, rowHeights: const [60, 60, 60]),
+          const SizedBox(height: 12),
+          _buildDeferredGroupShell(colors, rowHeights: const [60, 60, 60]),
+          const SizedBox(height: 18),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: colors.text,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                '正在准备渠道详情',
+                style: TextStyle(
+                  color: colors.textSecondary,
+                  fontSize: 13,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+          child: FractionallySizedBox(
+            widthFactor: 0.90,
+            child: Container(
+              height: 80,
+              decoration: MoeG2Decoration(
+                radius: MoeSmoothRadii.xl,
+                color: colors.componentBackground.withValues(alpha: 0.96),
+                border: Border.all(
+                  color: colors.border.withValues(alpha: 0.35),
+                  width: borderWidth,
+                ),
+                boxShadow: MoeShadows.soft,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDeferredGroupShell(
+    MoeColors colors, {
+    required List<double> rowHeights,
+  }) {
+    return MoeSettingsGroup(
+      margin: EdgeInsets.zero,
+      padding: EdgeInsets.zero,
+      children: [
+        for (var index = 0; index < rowHeights.length; index++)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              border: index == rowHeights.length - 1
+                  ? null
+                  : Border(
+                      bottom: BorderSide(
+                        color: colors.borderLight,
+                        width: borderWidth,
+                      ),
+                    ),
+            ),
+            child: Container(
+              height: rowHeights[index] - 28,
+              decoration: BoxDecoration(
+                color: colors.surfaceAlt.withValues(alpha: 0.62),
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -964,7 +804,7 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
     BuildContext context,
     ProviderAuth provider,
     MoeColors colors,
-    Map<String, String> displayNames,
+    List<_ProviderModelEntry> modelEntries,
   ) {
     const bottomBarPadding = EdgeInsets.fromLTRB(16, 10, 16, 12);
     const bottomTabsHeight = 80.0;
@@ -1053,7 +893,7 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
               children: [
                 _buildConfigTab(context, provider, colors,
                     bottomPadding: configBottomPadding),
-                _buildModelsTab(context, provider, colors, displayNames,
+                _buildModelsTab(context, provider, colors, modelEntries,
                     bottomPadding: modelsBottomPadding),
               ],
             ),
@@ -1123,14 +963,14 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
     MoeColors colors, {
     required double bottomPadding,
   }) {
-    final multiKeyEnabled = _isMultiKeyEnabled(provider);
-    final vertexExpress = _isVertexExpressMode(provider);
+    final multiKeyEnabled = isProviderMultiKeyEnabled(provider);
+    final vertexExpress = isProviderDetailVertexExpressMode(provider);
     final showVertexAddress = vertexExpress &&
-        _resolveProviderRequestFormat(
+        resolveProviderDetailRequestFormat(
               provider,
               settings: ref.read(appSettingsProvider).valueOrNull,
             ) ==
-            _ProviderRequestFormat.gemini;
+            ProviderDetailRequestFormat.gemini;
 
     // 因为 resizeToAvoidBottomInset: false，不需要监听键盘高度
     // 为底部悬浮操作区预留可滚动空间，避免内容被遮挡
@@ -1244,24 +1084,24 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
                 icon: Icons.swap_horiz_outlined,
                 label: 'API 格式',
                 trailingType: MoeSettingsRowTrailing.text,
-                detailText: _resolveProviderRequestFormat(
+                detailText: resolveProviderDetailRequestFormat(
                   provider,
                   settings: ref.read(appSettingsProvider).valueOrNull,
                 ).label,
                 onTap: () => _showRequestFormatSheet(provider),
               ),
-              if (_resolveProviderRequestFormat(
+              if (resolveProviderDetailRequestFormat(
                     provider,
                     settings: ref.read(appSettingsProvider).valueOrNull,
                   ) ==
-                  _ProviderRequestFormat.gemini)
+                  ProviderDetailRequestFormat.gemini)
                 MoeSettingsRow(
                   icon: Icons.cloud_sync_outlined,
                   label: 'Vertex Express',
                   subtitle: '开启后默认切到 aiplatform 端点',
                   trailingType: MoeSettingsRowTrailing.custom,
                   trailing: MoeSwitch(
-                    value: _isVertexExpressMode(provider),
+                    value: isProviderDetailVertexExpressMode(provider),
                     onChanged: (value) => _toggleVertexExpress(provider, value),
                   ),
                 ),
@@ -1308,10 +1148,10 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
     BuildContext context,
     ProviderAuth provider,
     MoeColors colors,
-    Map<String, String> displayNames, {
+    List<_ProviderModelEntry> modelEntries, {
     required double bottomPadding,
   }) {
-    final visible = _sortedModels(provider.visibleModels, displayNames);
+    final visible = modelEntries;
 
     // 模型 Tab 时底部有额外按钮，动态预留更大的 padding
     return SingleChildScrollView(
@@ -1376,13 +1216,12 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
                   },
                   itemBuilder: (context, index) {
                     return ReorderableDelayedDragStartListener(
-                      key: ValueKey(visible[index]),
+                      key: ValueKey(visible[index].modelId),
                       index: index,
                       child: ModelRowTile(
                         providerId: provider.id,
-                        model: visible[index],
-                        displayName:
-                            _getDisplayName(displayNames, visible[index]),
+                        model: visible[index].modelId,
+                        displayName: visible[index].displayName,
                       ),
                     );
                   },
@@ -1394,734 +1233,137 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
     );
   }
 
-  List<String> _sortedModels(
-      List<String> models, Map<String, String> displayNames) {
-    final list = List<String>.from(models);
-    list.sort((a, b) {
-      final nameA = displayNames[a] ?? a;
-      final nameB = displayNames[b] ?? b;
-      return nameA.toLowerCase().compareTo(nameB.toLowerCase());
-    });
-    return list;
-  }
-}
-
-class MultiKeyManagerPage extends ConsumerStatefulWidget {
-  const MultiKeyManagerPage({
-    super.key,
-    required this.providerId,
-  });
-
-  final String providerId;
-
-  @override
-  ConsumerState<MultiKeyManagerPage> createState() =>
-      _MultiKeyManagerPageState();
-}
-
-class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
-  bool _detecting = false;
-  String? _testingKeyId;
-  String? _detectModelId;
-
-  String? _resolveDetectModel(ProviderAuth provider) {
-    final models = provider.visibleModels.isNotEmpty
-        ? provider.visibleModels
-        : provider.models;
-    if (models.isEmpty) return null;
-    final current = _detectModelId;
-    if (current != null && models.contains(current)) return current;
-    _detectModelId = models.first;
-    return _detectModelId;
-  }
-
-  Future<bool> _testKey(
-    ProviderAuth provider, {
-    required String modelId,
-    required String apiKey,
-  }) async {
-    final notifier = ref.read(appSettingsProvider.notifier);
-    try {
-      await notifier.testModel(
-        providerId: _resolveProviderRequestFormat(
-          provider,
-          settings: ref.read(appSettingsProvider).valueOrNull,
-        ).value,
-        apiKey: apiKey,
-        apiBaseUrl: provider.apiBaseUrl,
-        modelId: modelId,
-        customConfig: provider.customConfig,
-      );
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  Future<void> _saveItems(
+  List<_ProviderModelEntry> _resolveModelEntries(
     ProviderAuth provider,
-    List<_MultiKeyItem> items, {
-    bool? enabled,
-    String? strategy,
-    int? roundRobinIndex,
-  }) async {
-    final notifier = ref.read(appSettingsProvider.notifier);
-    await notifier.editProvider(
+    Map<String, String> displayNames,
+  ) {
+    final signature = _buildProviderDetailWarmSignature(provider, displayNames);
+    if (_cachedModelEntriesSignature == signature &&
+        _cachedModelEntries != null) {
+      return _cachedModelEntries!;
+    }
+
+    final cached = _ProviderDetailWarmCache.read(
       providerId: provider.id,
-      apiKeys: _extractApiKeysFromMultiKeyItems(items),
-      customConfig: _buildProviderCustomConfigForMultiKey(
-        provider: provider,
-        enabled: enabled,
-        strategy: strategy,
-        items: items,
-        roundRobinIndex: roundRobinIndex,
-      ),
+      signature: signature,
     );
-  }
+    if (cached != null) {
+      _cachedModelEntriesSignature = signature;
+      _cachedModelEntries = cached.modelEntries;
+      return cached.modelEntries;
+    }
 
-  Future<void> _pickStrategy(
-    ProviderAuth provider,
-    List<_MultiKeyItem> items,
-  ) async {
-    final current = _multiKeyStrategy(provider).trim().toLowerCase();
-    final selected = await showMoeBottomSheet<String>(
-      context: context,
-      title: '负载均衡策略',
-      builder: (sheetContext) {
-        final colors = sheetContext.moeColors;
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-          child: MoeSettingsGroup(
-            margin: EdgeInsets.zero,
-            children: [
-              MoeSettingsRow(
-                icon: Icons.sync_alt_outlined,
-                label: '轮询',
-                trailingType: MoeSettingsRowTrailing.custom,
-                trailing: current == _multiKeyStrategyRoundRobin
-                    ? Icon(Icons.check, color: colors.primary, size: 18)
-                    : const SizedBox.shrink(),
-                onTap: () =>
-                    Navigator.of(sheetContext).pop(_multiKeyStrategyRoundRobin),
-              ),
-              MoeSettingsRow(
-                icon: Icons.shuffle_outlined,
-                label: '随机',
-                trailingType: MoeSettingsRowTrailing.custom,
-                trailing: current == _multiKeyStrategyRandom
-                    ? Icon(Icons.check, color: colors.primary, size: 18)
-                    : const SizedBox.shrink(),
-                onTap: () =>
-                    Navigator.of(sheetContext).pop(_multiKeyStrategyRandom),
-              ),
-            ],
+    final entries = provider.visibleModels
+        .map(
+          (modelId) => _ProviderModelEntry(
+            modelId: modelId,
+            displayName: displayNames[modelId] ?? '',
           ),
-        );
-      },
+        )
+        .toList(growable: false)
+      ..sort((a, b) {
+        final nameA = a.sortName;
+        final nameB = b.sortName;
+        return nameA.compareTo(nameB);
+      });
+
+    _cachedModelEntriesSignature = signature;
+    _cachedModelEntries = List<_ProviderModelEntry>.unmodifiable(entries);
+    _ProviderDetailWarmCache.write(
+      providerId: provider.id,
+      signature: signature,
+      modelEntries: _cachedModelEntries!,
     );
-    if (selected == null || selected == current) return;
-    await _saveItems(provider, items, strategy: selected);
-    if (!mounted) return;
-    MoeToast.show(context, '已切换为${_multiKeyStrategyLabel(selected)}');
-  }
-
-  Future<void> _detectAll(
-      ProviderAuth provider, List<_MultiKeyItem> items) async {
-    final modelId = _resolveDetectModel(provider);
-    if (modelId == null) {
-      MoeToast.show(context, '请先给渠道添加模型', type: ToastType.warning);
-      return;
-    }
-    if (_detecting) return;
-
-    setState(() {
-      _detecting = true;
-      _testingKeyId = null;
-    });
-
-    final next = List<_MultiKeyItem>.from(items);
-    var successCount = 0;
-    try {
-      for (var i = 0; i < next.length; i++) {
-        final item = next[i];
-        final key = item.key.trim();
-        if (key.isEmpty) continue;
-
-        setState(() => _testingKeyId = item.id);
-        final ok = await _testKey(provider, modelId: modelId, apiKey: key);
-        if (ok) successCount++;
-        final now = DateTime.now().millisecondsSinceEpoch;
-        next[i] = item.copyWith(
-          status: ok ? _MultiKeyStatus.normal : _MultiKeyStatus.error,
-          totalRequests: item.totalRequests + 1,
-          successRequests: item.successRequests + (ok ? 1 : 0),
-          failedRequests: item.failedRequests + (ok ? 0 : 1),
-          consecutiveFailures: ok ? 0 : item.consecutiveFailures + 1,
-          lastUsedAt: now,
-          lastError: ok ? null : '检测失败',
-          clearLastError: ok,
-          updatedAt: now,
-        );
-        await Future<void>.delayed(const Duration(milliseconds: 80));
-      }
-      await _saveItems(provider, next);
-      if (mounted) {
-        MoeToast.show(context, '检测完成：$successCount/${next.length} 正常');
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _detecting = false;
-          _testingKeyId = null;
-        });
-      }
-    }
-  }
-
-  Future<void> _detectOne(
-    ProviderAuth provider,
-    List<_MultiKeyItem> items,
-    _MultiKeyItem target,
-  ) async {
-    final modelId = _resolveDetectModel(provider);
-    if (modelId == null) {
-      MoeToast.show(context, '请先给渠道添加模型', type: ToastType.warning);
-      return;
-    }
-    if (_detecting) return;
-
-    setState(() => _testingKeyId = target.id);
-    try {
-      final ok = await _testKey(
-        provider,
-        modelId: modelId,
-        apiKey: target.key.trim(),
-      );
-      final now = DateTime.now().millisecondsSinceEpoch;
-      final next = items.map((item) {
-        if (item.id != target.id) return item;
-        return item.copyWith(
-          status: ok ? _MultiKeyStatus.normal : _MultiKeyStatus.error,
-          totalRequests: item.totalRequests + 1,
-          successRequests: item.successRequests + (ok ? 1 : 0),
-          failedRequests: item.failedRequests + (ok ? 0 : 1),
-          consecutiveFailures: ok ? 0 : item.consecutiveFailures + 1,
-          lastUsedAt: now,
-          lastError: ok ? null : '检测失败',
-          clearLastError: ok,
-          updatedAt: now,
-        );
-      }).toList();
-      await _saveItems(provider, next);
-      if (mounted) {
-        MoeToast.show(context, ok ? 'Key 可用' : 'Key 检测失败');
-      }
-    } finally {
-      if (mounted) setState(() => _testingKeyId = null);
-    }
-  }
-
-  Future<void> _deleteErrorKeys(
-    ProviderAuth provider,
-    List<_MultiKeyItem> items,
-  ) async {
-    final toDelete =
-        items.where((item) => item.status == _MultiKeyStatus.error);
-    if (toDelete.isEmpty) {
-      MoeToast.show(context, '没有错误 Key');
-      return;
-    }
-    final confirmed = await showMeoTalkDialog(
-      context: context,
-      title: '删除错误 Key',
-      content: Text('将删除 ${toDelete.length} 个错误 Key，确定继续吗？'),
-      confirmText: '删除',
-      cancelText: '取消',
-    );
-    if (confirmed != true) return;
-    final next =
-        items.where((item) => item.status != _MultiKeyStatus.error).toList();
-    await _saveItems(provider, next);
-    if (!mounted) return;
-    MoeToast.show(context, '已删除 ${toDelete.length} 个错误 Key');
-  }
-
-  Future<_MultiKeyFormResult?> _showMultiKeyFormSheet({
-    required String title,
-    required String confirmText,
-    String initialKey = '',
-    String? initialAlias,
-    bool allowBatchInput = false,
-  }) async {
-    final aliasController = allowBatchInput
-        ? null
-        : TextEditingController(text: initialAlias ?? '');
-    final keyController = TextEditingController(text: initialKey);
-
-    try {
-      return await showMoeBottomSheet<_MultiKeyFormResult>(
-        context: context,
-        title: title,
-        showCloseButton: true,
-        builder: (sheetContext) => _MultiKeyFormSheet(
-          aliasController: aliasController,
-          keyController: keyController,
-          allowBatchInput: allowBatchInput,
-          confirmText: confirmText,
-          onCancel: () => Navigator.of(sheetContext).pop(),
-          onSubmit: () => Navigator.of(sheetContext).pop(
-            _MultiKeyFormResult(
-              key: keyController.text,
-              alias: aliasController?.text.trim(),
-            ),
-          ),
-        ),
-      );
-    } finally {
-      aliasController?.dispose();
-      keyController.dispose();
-    }
-  }
-
-  List<String> _splitKeys(String raw) {
-    return raw
-        .replaceAll(',', ' ')
-        .split(RegExp(r'\s+'))
-        .map((e) => e.trim())
-        .where((e) => e.isNotEmpty)
-        .toList();
-  }
-
-  Future<void> _addKeys(
-      ProviderAuth provider, List<_MultiKeyItem> items) async {
-    final result = await _showMultiKeyFormSheet(
-      title: '添加 Key',
-      confirmText: '添加',
-      allowBatchInput: true,
-    );
-    if (result == null || !mounted) return;
-
-    final exists = items.map((e) => e.key.trim()).toSet();
-    final incoming = _splitKeys(result.key);
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final next = List<_MultiKeyItem>.from(items);
-    var added = 0;
-    for (final key in incoming) {
-      if (exists.contains(key)) continue;
-      next.add(_MultiKeyItem(
-        id: _MultiKeyItem.createId(),
-        key: key,
-        updatedAt: now,
-      ));
-      exists.add(key);
-      added++;
-    }
-    if (added == 0) {
-      MoeToast.show(context, '没有可新增的 Key');
-      return;
-    }
-    await _saveItems(provider, next);
-    if (!mounted) return;
-    MoeToast.show(context, '已新增 $added 个 Key');
-  }
-
-  Future<void> _editKey(
-    ProviderAuth provider,
-    List<_MultiKeyItem> items,
-    _MultiKeyItem target,
-  ) async {
-    final result = await _showMultiKeyFormSheet(
-      title: '编辑 Key',
-      confirmText: '保存',
-      initialAlias: target.alias,
-      initialKey: target.key,
-    );
-    if (result == null || !mounted) return;
-
-    final newKey = result.key.trim();
-    if (newKey.isEmpty) {
-      MoeToast.show(context, 'Key 不能为空', type: ToastType.error);
-      return;
-    }
-    final duplicated = items.any((item) =>
-        item.id != target.id &&
-        item.key.trim().toLowerCase() == newKey.toLowerCase());
-    if (duplicated) {
-      MoeToast.show(context, 'Key 已存在', type: ToastType.warning);
-      return;
-    }
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final next = items.map((item) {
-      if (item.id != target.id) return item;
-      final alias = result.alias?.trim() ?? '';
-      return item.copyWith(
-        key: newKey,
-        alias: alias,
-        clearAlias: alias.isEmpty,
-        updatedAt: now,
-      );
-    }).toList();
-    await _saveItems(provider, next);
-    if (!mounted) return;
-    MoeToast.show(context, '已保存');
-  }
-
-  Future<void> _deleteKey(
-    ProviderAuth provider,
-    List<_MultiKeyItem> items,
-    _MultiKeyItem target,
-  ) async {
-    final confirmed = await showMeoTalkDialog(
-      context: context,
-      title: '删除 Key',
-      content:
-          Text('确定删除 ${target.alias ?? _maskMultiKeyValue(target.key)} 吗？'),
-      confirmText: '删除',
-      cancelText: '取消',
-    );
-    if (confirmed != true) return;
-
-    final next = items.where((item) => item.id != target.id).toList();
-    await _saveItems(provider, next);
-    if (!mounted) return;
-    MoeToast.show(context, '已删除');
-  }
-
-  Future<void> _toggleKeyEnabled(
-    ProviderAuth provider,
-    List<_MultiKeyItem> items,
-    _MultiKeyItem target,
-    bool value,
-  ) async {
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final next = items.map((item) {
-      if (item.id != target.id) return item;
-      return item.copyWith(enabled: value, updatedAt: now);
-    }).toList();
-    await _saveItems(provider, next);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final settingsAsync = ref.watch(appSettingsProvider);
-    final colors = context.moeColors;
-
-    return settingsAsync.when(
-      loading: () => Scaffold(
-        backgroundColor: colors.surface,
-        appBar: const MoeAppBar(title: '多 Key 管理', showBackButton: true),
-        body: const Center(child: MoeLoadingIndicator()),
-      ),
-      error: (e, _) => Scaffold(
-        backgroundColor: colors.surface,
-        appBar: const MoeAppBar(title: '多 Key 管理', showBackButton: true),
-        body: MoeEmptyState(title: '加载失败', description: e.toString()),
-      ),
-      data: (settings) {
-        final provider = settings.providers.firstWhere(
-          (p) => p.id == widget.providerId,
-          orElse: () => const ProviderAuth(
-            id: '',
-            displayName: '',
-            apiBaseUrl: '',
-            apiKeys: <String>[],
-          ),
-        );
-        if (provider.id.isEmpty) {
-          return const Scaffold(
-            appBar: MoeAppBar(title: '多 Key 管理', showBackButton: true),
-            body: MoeEmptyState(title: '渠道不存在'),
-          );
-        }
-
-        final items = _multiKeyItemsFromProvider(provider);
-        final total = items.length;
-        final normal =
-            items.where((item) => item.status == _MultiKeyStatus.normal).length;
-        final error =
-            items.where((item) => item.status == _MultiKeyStatus.error).length;
-        final strategy = _multiKeyStrategyLabel(_multiKeyStrategy(provider));
-
-        return Scaffold(
-          backgroundColor: colors.surface,
-          appBar: MoeAppBar(
-            title: '多 Key 管理',
-            showBackButton: true,
-            actions: [
-              IconButton(
-                icon: Icon(Icons.delete_outline, color: colors.text),
-                tooltip: '删除错误 Key',
-                onPressed: () => _deleteErrorKeys(provider, items),
-              ),
-              IconButton(
-                icon: _detecting
-                    ? SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: colors.text,
-                        ),
-                      )
-                    : Icon(Icons.monitor_heart_outlined, color: colors.text),
-                tooltip: '检测',
-                onPressed:
-                    _detecting ? null : () => _detectAll(provider, items),
-              ),
-              IconButton(
-                icon: Icon(Icons.add, color: colors.text),
-                tooltip: '添加',
-                onPressed: () => _addKeys(provider, items),
-              ),
-            ],
-          ),
-          body: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-            child: Column(
-              children: [
-                MoeSettingsGroup(
-                  margin: EdgeInsets.zero,
-                  children: [
-                    MoeSettingsRow(
-                      icon: Icons.numbers,
-                      label: '总数',
-                      trailingType: MoeSettingsRowTrailing.text,
-                      detailText: '$total',
-                    ),
-                    MoeSettingsRow(
-                      icon: Icons.check_circle_outline,
-                      label: '正常',
-                      trailingType: MoeSettingsRowTrailing.text,
-                      detailText: '$normal',
-                    ),
-                    MoeSettingsRow(
-                      icon: Icons.error_outline,
-                      label: '错误',
-                      trailingType: MoeSettingsRowTrailing.text,
-                      detailText: '$error',
-                    ),
-                    MoeSettingsRow(
-                      icon: Icons.sync_alt_outlined,
-                      label: '负载均衡策略',
-                      trailingType: MoeSettingsRowTrailing.text,
-                      detailText: strategy,
-                      onTap: () => _pickStrategy(provider, items),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                if (items.isEmpty)
-                  MoeSettingsGroup(
-                    margin: EdgeInsets.zero,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 20),
-                        child: Center(
-                          child: Text(
-                            '暂无 Key',
-                            style: TextStyle(color: colors.muted, fontSize: 14),
-                          ),
-                        ),
-                      ),
-                    ],
-                  )
-                else
-                  MoeSettingsGroup(
-                    margin: EdgeInsets.zero,
-                    children: [
-                      for (final item in items)
-                        _MultiKeyRow(
-                          item: item,
-                          colors: colors,
-                          testing: _testingKeyId == item.id,
-                          onToggleEnabled: (value) =>
-                              _toggleKeyEnabled(provider, items, item, value),
-                          onDetect: () => _detectOne(provider, items, item),
-                          onEdit: () => _editKey(provider, items, item),
-                          onDelete: () => _deleteKey(provider, items, item),
-                        ),
-                    ],
-                  ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
+    return _cachedModelEntries!;
   }
 }
 
-class _MultiKeyFormSheet extends StatelessWidget {
-  const _MultiKeyFormSheet({
-    required this.keyController,
-    required this.allowBatchInput,
-    required this.confirmText,
-    required this.onCancel,
-    required this.onSubmit,
-    this.aliasController,
+String _buildProviderDetailWarmSignature(
+  ProviderAuth provider,
+  Map<String, String> displayNames,
+) {
+  final buffer = StringBuffer()
+    ..write(provider.id)
+    ..write('|')
+    ..write(provider.displayName ?? '')
+    ..write('|')
+    ..write(provider.enabled ? '1' : '0')
+    ..write('|')
+    ..write(provider.visibleModels.length);
+  for (final modelId in provider.visibleModels) {
+    buffer
+      ..write('|')
+      ..write(modelId)
+      ..write('=')
+      ..write(displayNames[modelId] ?? '');
+  }
+  return buffer.toString();
+}
+
+class _ProviderModelEntry {
+  const _ProviderModelEntry({
+    required this.modelId,
+    required this.displayName,
   });
 
-  final TextEditingController? aliasController;
-  final TextEditingController keyController;
-  final bool allowBatchInput;
-  final String confirmText;
-  final VoidCallback onCancel;
-  final VoidCallback onSubmit;
+  final String modelId;
+  final String displayName;
 
-  @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (aliasController != null) ...[
-            MoeTextField(
-              controller: aliasController,
-              label: '备注',
-              hint: '给这个 Key 起个名字（可选）',
-              textInputAction: TextInputAction.next,
-            ),
-            const SizedBox(height: 12),
-          ],
-          MoeTextField(
-            controller: keyController,
-            autofocus: true,
-            label: allowBatchInput ? 'API Key 列表' : 'API Key',
-            hint: allowBatchInput ? '请输入 API Key（多个可用空格或逗号分隔）' : '请输入 API Key',
-            minLines: allowBatchInput ? 4 : 1,
-            maxLines: allowBatchInput ? 8 : 1,
-            keyboardType:
-                allowBatchInput ? TextInputType.multiline : TextInputType.text,
-            textInputAction: allowBatchInput
-                ? TextInputAction.newline
-                : TextInputAction.done,
-            onSubmitted: allowBatchInput ? null : (_) => onSubmit(),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: MoeSecondaryButton(
-                  label: '取消',
-                  onPressed: onCancel,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: MoePrimaryButton(
-                  label: confirmText,
-                  onPressed: onSubmit,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
+  String get sortName =>
+      (displayName.isEmpty ? modelId : displayName).toLowerCase();
+}
+
+class _ProviderDetailWarmCacheEntry {
+  const _ProviderDetailWarmCacheEntry({
+    required this.signature,
+    required this.modelEntries,
+  });
+
+  final String signature;
+  final List<_ProviderModelEntry> modelEntries;
+}
+
+class _ProviderDetailWarmCache {
+  static const int _maxEntries = 8;
+  static final LinkedHashMap<String, _ProviderDetailWarmCacheEntry> _entries =
+      LinkedHashMap<String, _ProviderDetailWarmCacheEntry>();
+
+  static _ProviderDetailWarmCacheEntry? read({
+    required String providerId,
+    required String signature,
+  }) {
+    final cached = _entries[providerId];
+    if (cached == null || cached.signature != signature) {
+      return null;
+    }
+    _entries.remove(providerId);
+    _entries[providerId] = cached;
+    return cached;
+  }
+
+  static void write({
+    required String providerId,
+    required String signature,
+    required List<_ProviderModelEntry> modelEntries,
+  }) {
+    _entries.remove(providerId);
+    _entries[providerId] = _ProviderDetailWarmCacheEntry(
+      signature: signature,
+      modelEntries: List<_ProviderModelEntry>.unmodifiable(modelEntries),
     );
+    while (_entries.length > _maxEntries) {
+      _entries.remove(_entries.keys.first);
+    }
+  }
+
+  static void clear() {
+    _entries.clear();
   }
 }
 
-class _MultiKeyRow extends StatelessWidget {
-  const _MultiKeyRow({
-    required this.item,
-    required this.colors,
-    required this.testing,
-    required this.onToggleEnabled,
-    required this.onDetect,
-    required this.onEdit,
-    required this.onDelete,
-  });
-
-  final _MultiKeyItem item;
-  final MoeColors colors;
-  final bool testing;
-  final ValueChanged<bool> onToggleEnabled;
-  final VoidCallback onDetect;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
-
-  @override
-  Widget build(BuildContext context) {
-    final statusColor = item.status == _MultiKeyStatus.error
-        ? const Color(0xFFE53935)
-        : const Color(0xFF43A047);
-    final statusText = item.status == _MultiKeyStatus.error ? '错误' : '正常';
-    final title = (item.alias?.trim().isNotEmpty ?? false)
-        ? '${item.alias} · ${_maskMultiKeyValue(item.key)}'
-        : _maskMultiKeyValue(item.key);
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: statusColor.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: Text(
-              statusText,
-              style: TextStyle(
-                color: statusColor,
-                fontSize: 12,
-                fontWeight: MoeFontWeights.emphasis,
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: colors.text,
-                fontSize: 16,
-                fontWeight: MoeFontWeights.emphasis,
-              ),
-            ),
-          ),
-          MoeSwitch(value: item.enabled, onChanged: onToggleEnabled),
-          const SizedBox(width: 4),
-          if (testing)
-            SizedBox(
-              width: 32,
-              height: 32,
-              child: Center(
-                child: SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: colors.primary,
-                  ),
-                ),
-              ),
-            )
-          else
-            IconButton(
-              icon: Icon(Icons.monitor_heart_outlined,
-                  color: colors.textSecondary),
-              tooltip: '检测',
-              onPressed: onDetect,
-            ),
-          IconButton(
-            icon: Icon(Icons.edit_outlined, color: colors.textSecondary),
-            tooltip: '编辑',
-            onPressed: onEdit,
-          ),
-          IconButton(
-            icon: Icon(Icons.delete_outline, color: colors.toastError),
-            tooltip: '删除',
-            onPressed: onDelete,
-          ),
-        ],
-      ),
-    );
-  }
+@visibleForTesting
+void debugClearProviderDetailWarmCache() {
+  _ProviderDetailWarmCache.clear();
 }
 
 /// 操作按钮组件

@@ -17,6 +17,7 @@ import 'package:aicove_flutter/src/features/memory/services/embedding_service.da
 import 'package:aicove_flutter/src/features/memory/services/memory_service.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/handlers/ai_tool.dart';
+import 'package:aicove_flutter/src/features/plugins/memory/memory_plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/plugin_manager.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 
@@ -169,6 +170,27 @@ List<chat.Message> _buildMessages(DateTime start) {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('角色专属记忆 Prompt 会把分层限定在当前角色下', () {
+    final prompt = buildRoleScopedMemoryPrompt(
+      roleLabel: '小璃',
+      profilePrompt: '''
+## 用户画像
+- 对批评很敏感
+- 情绪低落时更需要陪伴
+''',
+      relatedMemories: const <String>[
+        '3天前，用户提到最近最怕复诊时被否定。',
+      ],
+    );
+
+    expect(prompt, contains('## 当前角色专属记忆库'));
+    expect(prompt, contains('当前角色：小璃'));
+    expect(prompt, contains('### L1 用户攻略'));
+    expect(prompt, contains('### L2/L3/L4 相关记忆'));
+    expect(prompt, contains('以下 L1/L2/L3/L4 记忆仅属于当前角色'));
+    expect(prompt, isNot(contains('## 用户画像')));
+  });
+
   group('MemoryService L3 日记化', () {
     late db.AppDatabase database;
     late ConversationRepository conversationRepository;
@@ -265,6 +287,9 @@ void main() {
       );
       expect(capturedConfig, isNotNull);
       final systemPrompt = capturedConfig!.messages.first['content'] as String;
+      expect(systemPrompt, contains('当前记忆库类型：角色专属记忆库'));
+      expect(systemPrompt, contains('当前记忆库 ID：conv_diary'));
+      expect(systemPrompt, contains('L1 / L2 / L3 / L4'));
       expect(systemPrompt, contains('角色名：小璃'));
       expect(systemPrompt, contains('对用户称呼优先使用：宝宝'));
       expect(systemPrompt, contains('target_layer = L3'));
