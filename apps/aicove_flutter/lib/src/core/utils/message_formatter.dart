@@ -345,6 +345,23 @@ class MessageFormatConfig {
   }
 }
 
+/// Build a stable signature for frontend message projection settings.
+///
+/// This signature is used by frontend caches to detect message formatting
+/// strategy changes (chunking, punctuation rules, etc.).
+String buildMessageFormatProjectionSignature(MessageFormatConfig config) {
+  final activePunctuations = config.effectiveChunkPunctuations.join(',');
+  final filterPunctuations = config.filterPunctuations.join(',');
+  return [
+    config.enableChunking,
+    config.filterPunctuation,
+    activePunctuations,
+    filterPunctuations,
+    config.minSegmentLength,
+    config.protectQuotes,
+  ].join('|');
+}
+
 /// Message formatter for chunk display logic.
 class MessageFormatter {
   // Matches paired quotes/brackets to protect quoted text from splitting.

@@ -5,8 +5,13 @@ import 'package:http/http.dart' as http;
 
 import '../../../core/app_logger.dart';
 import '../../../core/utils/mime_utils.dart';
+import 'providers/tts_provider_factory.dart';
 import 'aliyun_qwen_tts_websocket.dart';
 import 'aliyun_voice_clone_service.dart';
+import 'synthesis/minimax_tts_synthesis_adapter.dart';
+import 'synthesis/openai_compatible_tts_synthesis_adapter.dart';
+import 'synthesis/siliconflow_tts_synthesis_adapter.dart';
+import 'synthesis/tts_synthesis_adapter.dart';
 import 'tts_config.dart';
 
 /// TTS 服务：在客户端直接调用第三方 TTS 渠道商
@@ -19,6 +24,13 @@ import 'tts_config.dart';
 /// 2026-01-26: 阿里云格式支持自动创建音色
 /// 2026-01-27: 添加硅基流动 IndexTTS-2 支持
 class TtsService {
+  static const TtsSynthesisAdapter _openAiCompatibleSynthesisAdapter =
+      OpenAiCompatibleTtsSynthesisAdapter();
+  static const TtsSynthesisAdapter _siliconFlowSynthesisAdapter =
+      SiliconFlowTtsSynthesisAdapter();
+  static const TtsSynthesisAdapter _minimaxSynthesisAdapter =
+      MinimaxTtsSynthesisAdapter();
+
   final TtsConfig config;
   final String? apiKey;
   final String requestUrl;
@@ -58,6 +70,12 @@ class TtsService {
     }
 
     final effectiveFormat = _resolveRequestFormat(url);
+    final synthesisContext = _buildSynthesisContext(
+      text: trimmed,
+      rawUrl: url,
+      effectiveFormat: effectiveFormat,
+    );
+    final synthesisAdapter = _resolveSynthesisAdapter(synthesisContext);
 
     // 检查是否需要使用 WebSocket（阿里云 Qwen-TTS 声音复刻模型）
     final effectiveModel = model ?? config.model ?? '';
@@ -66,10 +84,18 @@ class TtsService {
       return _convertViaWebSocket(trimmed, effectiveModel);
     }
 
-    final speechUri = _buildSpeechUri(url, effectiveFormat);
-    final timeout = _resolveTimeout(effectiveFormat);
-    final requestBody = await _buildRequestBodyAsync(trimmed, effectiveFormat);
-    final headers = _buildHeaders();
+    final speechUri = synthesisAdapter != null
+        ? synthesisAdapter.buildSpeechUri(synthesisContext)
+        : _buildSpeechUri(url, effectiveFormat);
+    final timeout = synthesisAdapter != null
+        ? synthesisAdapter.resolveTimeout(synthesisContext)
+        : _resolveTimeout(effectiveFormat);
+    final requestBody = synthesisAdapter != null
+        ? synthesisAdapter.buildRequestBody(synthesisContext)
+        : await _buildRequestBodyAsync(trimmed, effectiveFormat);
+    final headers = synthesisAdapter != null
+        ? synthesisAdapter.buildHeaders(synthesisContext)
+        : _buildHeaders();
     final requestBodyJson = jsonEncode(requestBody);
     final sw = Stopwatch()..start();
     String stage = 'waiting_headers';
@@ -79,9 +105,12 @@ class TtsService {
     AppLogger.info('TTS', '【请求详情】TTS 请求准备发送', metadata: {
       'url': speechUri.toString(),
       'method': 'POST',
-      'headers': headers.map((k, v) => MapEntry(k, k == 'Authorization' ? 'Bearer ***' : v)),
+      'headers': headers
+          .map((k, v) => MapEntry(k, k == 'Authorization' ? 'Bearer ***' : v)),
       'requestFormat': effectiveFormat,
       'configuredRequestFormat': requestFormat,
+      if (synthesisContext.providerId != null)
+        'resolvedProviderId': synthesisContext.providerId,
       'timeoutSeconds': timeout.inSeconds,
       'selectedVoicePresetId': config.selectedVoicePresetId,
       'selectedVoicePresetName': config.selectedVoicePreset?.name,
@@ -126,7 +155,8 @@ class TtsService {
 
       // 详细日志：记录响应信息
       final contentType = resp.headers['content-type'] ?? '';
-      final isAudio = contentType.contains('audio/') || contentType.contains('application/octet-stream');
+      final isAudio = contentType.contains('audio/') ||
+          contentType.contains('application/octet-stream');
 
       AppLogger.info('TTS', '【响应详情】TTS 收到响应', metadata: {
         'statusCode': resp.statusCode,
@@ -151,7 +181,8 @@ class TtsService {
           throw TtsException('TTS 返回的音频数据为空');
         }
 
-        final mimeType = MimeUtils.resolveAudioMimeType(contentType, audioBytes);
+        final mimeType =
+            MimeUtils.resolveAudioMimeType(contentType, audioBytes);
 
         // 转换为 Data URL
         final base64Audio = base64Encode(audioBytes);
@@ -239,7 +270,8 @@ class TtsService {
         );
       } else {
         // 其次使用公网 URL
-        final audioUrl = preset?.promptAudioUrl ?? config.effectivePromptAudioUrl;
+        final audioUrl =
+            preset?.promptAudioUrl ?? config.effectivePromptAudioUrl;
         if (audioUrl != null && audioUrl.isNotEmpty) {
           voiceId = await _getOrCreateAliyunVoice(
             preset: preset,
@@ -281,7 +313,8 @@ class TtsService {
       }
 
       // 将 PCM 转换为 WAV（添加 WAV 头）
-      final wavBytes = _pcmToWav(pcmBytes, sampleRate: 24000, channels: 1, bitsPerSample: 16);
+      final wavBytes = _pcmToWav(pcmBytes,
+          sampleRate: 24000, channels: 1, bitsPerSample: 16);
 
       // 转换为 Data URL
       final base64Audio = base64Encode(wavBytes);
@@ -303,7 +336,8 @@ class TtsService {
   }
 
   /// 将 PCM 数据转换为 WAV 格式（添加 WAV 头）
-  List<int> _pcmToWav(List<int> pcmData, {
+  List<int> _pcmToWav(
+    List<int> pcmData, {
     required int sampleRate,
     required int channels,
     required int bitsPerSample,
@@ -316,20 +350,24 @@ class TtsService {
     final header = <int>[
       // RIFF header
       0x52, 0x49, 0x46, 0x46, // "RIFF"
-      fileSize & 0xff, (fileSize >> 8) & 0xff, (fileSize >> 16) & 0xff, (fileSize >> 24) & 0xff,
+      fileSize & 0xff, (fileSize >> 8) & 0xff, (fileSize >> 16) & 0xff,
+      (fileSize >> 24) & 0xff,
       0x57, 0x41, 0x56, 0x45, // "WAVE"
       // fmt subchunk
       0x66, 0x6d, 0x74, 0x20, // "fmt "
       16, 0, 0, 0, // Subchunk1Size (16 for PCM)
       1, 0, // AudioFormat (1 for PCM)
       channels & 0xff, (channels >> 8) & 0xff,
-      sampleRate & 0xff, (sampleRate >> 8) & 0xff, (sampleRate >> 16) & 0xff, (sampleRate >> 24) & 0xff,
-      byteRate & 0xff, (byteRate >> 8) & 0xff, (byteRate >> 16) & 0xff, (byteRate >> 24) & 0xff,
+      sampleRate & 0xff, (sampleRate >> 8) & 0xff, (sampleRate >> 16) & 0xff,
+      (sampleRate >> 24) & 0xff,
+      byteRate & 0xff, (byteRate >> 8) & 0xff, (byteRate >> 16) & 0xff,
+      (byteRate >> 24) & 0xff,
       blockAlign & 0xff, (blockAlign >> 8) & 0xff,
       bitsPerSample & 0xff, (bitsPerSample >> 8) & 0xff,
       // data subchunk
       0x64, 0x61, 0x74, 0x61, // "data"
-      dataSize & 0xff, (dataSize >> 8) & 0xff, (dataSize >> 16) & 0xff, (dataSize >> 24) & 0xff,
+      dataSize & 0xff, (dataSize >> 8) & 0xff, (dataSize >> 16) & 0xff,
+      (dataSize >> 24) & 0xff,
     ];
 
     return [...header, ...pcmData];
@@ -360,7 +398,8 @@ class TtsService {
 
     // 阿里云 Qwen-TTS 使用 multimodal-generation 端点
     if (effectiveFormat == 'aliyun_qwen_tts') {
-      const qwenTtsPath = '/api/v1/services/aigc/multimodal-generation/generation';
+      const qwenTtsPath =
+          '/api/v1/services/aigc/multimodal-generation/generation';
       if (path.contains('multimodal-generation')) {
         return uri.replace(query: null);
       }
@@ -475,9 +514,50 @@ class TtsService {
     }
   }
 
+  TtsSynthesisContext _buildSynthesisContext({
+    required String text,
+    required String rawUrl,
+    required String effectiveFormat,
+  }) {
+    final resolution = TtsProviderFactory.resolve(
+      providerId: config.selectedProviderId,
+      apiUrl: rawUrl,
+      requestFormat: effectiveFormat,
+    );
+
+    return TtsSynthesisContext(
+      config: config,
+      text: text,
+      rawUrl: rawUrl,
+      providerId: resolution.voiceProvider?.providerId,
+      requestFormat: effectiveFormat,
+      model: model,
+      apiKey: apiKey,
+    );
+  }
+
+  TtsSynthesisAdapter? _resolveSynthesisAdapter(TtsSynthesisContext context) {
+    final normalizedProviderId =
+        TtsSynthesisAdapter.normalizeIdentifier(context.providerId);
+    if (normalizedProviderId == _minimaxSynthesisAdapter.providerId) {
+      return _minimaxSynthesisAdapter;
+    }
+
+    if (_siliconFlowSynthesisAdapter.supports(context)) {
+      return _siliconFlowSynthesisAdapter;
+    }
+
+    if (_openAiCompatibleSynthesisAdapter.supports(context)) {
+      return _openAiCompatibleSynthesisAdapter;
+    }
+
+    return null;
+  }
+
   /// 构建请求体（根据 requestFormat 选择不同格式）
   /// 阿里云格式需要异步处理（可能需要自动创建音色）
-  Future<Map<String, dynamic>> _buildRequestBodyAsync(String text, String effectiveFormat) async {
+  Future<Map<String, dynamic>> _buildRequestBodyAsync(
+      String text, String effectiveFormat) async {
     switch (effectiveFormat) {
       case 'openai_tts':
         return _buildOpenAiTtsBody(text);
@@ -575,7 +655,8 @@ class TtsService {
   /// 文档: https://help.aliyun.com/zh/model-studio/cosyvoice-tts-api
   ///
   /// 如果音色有公网 URL 但没有 aliyunVoiceId，会自动创建音色
-  Future<Map<String, dynamic>> _buildAliyunCosyVoiceBodyAsync(String text) async {
+  Future<Map<String, dynamic>> _buildAliyunCosyVoiceBodyAsync(
+      String text) async {
     final preset = config.selectedVoicePreset;
     final targetModel = model ?? config.model ?? 'cosyvoice-v3-plus';
     String? voiceId;
@@ -608,11 +689,12 @@ class TtsService {
           });
         }
       } else {
-        AppLogger.warning('TTS', '已保存的音色ID与当前模型不匹配，需要重新创建 (CosyVoice)', metadata: {
-          'savedVoiceId': preset.aliyunVoiceId,
-          'savedModel': preset.aliyunTargetModel,
-          'targetModel': targetModel,
-        });
+        AppLogger.warning('TTS', '已保存的音色ID与当前模型不匹配，需要重新创建 (CosyVoice)',
+            metadata: {
+              'savedVoiceId': preset.aliyunVoiceId,
+              'savedModel': preset.aliyunTargetModel,
+              'targetModel': targetModel,
+            });
       }
     }
 
@@ -673,11 +755,12 @@ class TtsService {
           'targetModel': targetModel,
         });
       } else {
-        AppLogger.warning('TTS', '已保存的音色ID与当前模型不匹配，需要重新创建 (Qwen-TTS)', metadata: {
-          'savedVoiceId': preset.aliyunVoiceId,
-          'savedModel': preset.aliyunTargetModel,
-          'targetModel': targetModel,
-        });
+        AppLogger.warning('TTS', '已保存的音色ID与当前模型不匹配，需要重新创建 (Qwen-TTS)',
+            metadata: {
+              'savedVoiceId': preset.aliyunVoiceId,
+              'savedModel': preset.aliyunTargetModel,
+              'targetModel': targetModel,
+            });
       }
     }
 
@@ -694,7 +777,8 @@ class TtsService {
           );
         } else {
           // 其次使用公网 URL
-          final audioUrl = preset?.promptAudioUrl ?? config.effectivePromptAudioUrl;
+          final audioUrl =
+              preset?.promptAudioUrl ?? config.effectivePromptAudioUrl;
           if (audioUrl != null && audioUrl.isNotEmpty) {
             voiceId = await _getOrCreateAliyunVoice(
               preset: preset,
@@ -817,10 +901,11 @@ class TtsService {
         });
         await onVoiceCreated!(updatedPreset);
       } else {
-        AppLogger.warning('TTS', '无法保存音色ID：preset 或 onVoiceCreated 为空', metadata: {
-          'presetIsNull': preset == null,
-          'onVoiceCreatedIsNull': onVoiceCreated == null,
-        });
+        AppLogger.warning('TTS', '无法保存音色ID：preset 或 onVoiceCreated 为空',
+            metadata: {
+              'presetIsNull': preset == null,
+              'onVoiceCreatedIsNull': onVoiceCreated == null,
+            });
       }
 
       if (!completer.isCompleted) completer.complete(voiceId);
@@ -971,6 +1056,11 @@ class TtsService {
 
   /// 从接口返回数据中解析出音频地址
   TtsConvertResult _parseResponse(Map<String, dynamic> data) {
+    final embeddedAudioResult = _tryParseEmbeddedAudio(data);
+    if (embeddedAudioResult != null) {
+      return embeddedAudioResult;
+    }
+
     String? audioUrl;
 
     if (data.containsKey('audio_url')) {
@@ -979,8 +1069,7 @@ class TtsService {
       audioUrl = data['url'] as String?;
     } else if (data.containsKey('result')) {
       final result = data['result'] as Map<String, dynamic>;
-      audioUrl =
-          result['audio_url'] as String? ?? result['url'] as String?;
+      audioUrl = result['audio_url'] as String? ?? result['url'] as String?;
     } else if (data.containsKey('output')) {
       final output = data['output'];
       if (output is Map<String, dynamic>) {
@@ -1005,6 +1094,73 @@ class TtsService {
       text: '',
       success: true,
     );
+  }
+
+  TtsConvertResult? _tryParseEmbeddedAudio(Map<String, dynamic> data) {
+    final embeddedData = data['data'];
+    if (embeddedData is! Map<String, dynamic>) {
+      return null;
+    }
+
+    final audioPayload = embeddedData['audio'];
+    if (audioPayload is! String || audioPayload.trim().isEmpty) {
+      return null;
+    }
+
+    final trimmedPayload = audioPayload.trim();
+    if (_looksLikeRemoteAudioUrl(trimmedPayload)) {
+      return TtsConvertResult(
+        audioUrl: trimmedPayload,
+        text: '',
+        success: true,
+      );
+    }
+
+    final audioBytes = _decodeHexAudio(trimmedPayload);
+    if (audioBytes.isEmpty) {
+      return null;
+    }
+
+    final extraInfo = data['extra_info'];
+    final format = extraInfo is Map<String, dynamic>
+        ? extraInfo['audio_format'] as String?
+        : null;
+    final mimeType = MimeUtils.guessAudioMimeType(
+      'audio.${format ?? 'mp3'}',
+    );
+    final base64Audio = base64Encode(audioBytes);
+
+    return TtsConvertResult(
+      audioUrl: 'data:$mimeType;base64,$base64Audio',
+      text: '',
+      success: true,
+    );
+  }
+
+  bool _looksLikeRemoteAudioUrl(String value) {
+    return value.startsWith('http://') ||
+        value.startsWith('https://') ||
+        value.startsWith('data:');
+  }
+
+  List<int> _decodeHexAudio(String hexValue) {
+    final normalized = hexValue.replaceAll(RegExp(r'\s+'), '');
+    if (normalized.isEmpty || normalized.length.isOdd) {
+      return const <int>[];
+    }
+
+    final bytes = <int>[];
+    for (var index = 0; index < normalized.length; index += 2) {
+      final byte = int.tryParse(
+        normalized.substring(index, index + 2),
+        radix: 16,
+      );
+      if (byte == null) {
+        return const <int>[];
+      }
+      bytes.add(byte);
+    }
+    return bytes;
   }
 }
 

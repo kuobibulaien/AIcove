@@ -11,6 +11,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../features/chat/chat_actions.dart';
 import '../../../../features/chat/application/chat_message_list_queries.dart';
@@ -314,6 +315,10 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   Timer? _historyLoadingOverlayHideTimer;
   Set<String> _pendingTransientHandoffIds = <String>{};
   Timer? _transientHandoffHoldTimer;
+  int _historyViewportRestoreSerial = 0;
+  bool _historyViewportRestorePending = false;
+  bool _holdListForHistoryPagingEmptyTimeline = false;
+  List<Message> _heldTimelineMessagesForLayout = const <Message>[];
 
   List<Message> get _stableMessages {
     if (widget.messages.isNotEmpty) {
@@ -636,25 +641,48 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     if (!_scrollController.hasClients) return;
 
     final position = _scrollController.position;
-    final currentScroll = position.pixels;
+    _triggerLoadMoreIfNeeded(
+      currentScroll: position.pixels,
+      maxScrollExtent: position.maxScrollExtent,
+    );
+  }
 
-    // 距离顶部 200 像素时触发加载
+  void _triggerLoadMoreIfNeeded({
+    required double currentScroll,
+    required double maxScrollExtent,
+    bool allowShortHistoryOverscroll = false,
+  }) {
+    // 距离顶部 200 像素时触发加载；当首屏短历史不足以形成滚动高度时，
+    // 允许用户在继续向历史方向拖拽的过冲里补触发一次分页。
     const threshold = 200.0;
+    final reachedHistoryThreshold = maxScrollExtent > threshold &&
+        currentScroll >= maxScrollExtent - threshold;
+    final shortHistoryOverscrolled =
+        allowShortHistoryOverscroll && maxScrollExtent <= threshold;
 
-    if (currentScroll >= position.maxScrollExtent - threshold &&
-        position.maxScrollExtent > threshold &&
-        !_isLoadingTriggered &&
-        !widget.isLoadingMore &&
-        widget.hasMoreMessages &&
-        widget.onLoadMore != null) {
-      _lockAutoScrollForHistoryPaging('historyPagingThresholdReached');
-      _isLoadingTriggered = true;
-      widget.onLoadMore!().then((_) {
-        _isLoadingTriggered = false;
-      }).catchError((_) {
-        _isLoadingTriggered = false;
-      });
+    if (!reachedHistoryThreshold && !shortHistoryOverscrolled) {
+      return;
     }
+    if (_isLoadingTriggered ||
+        widget.isLoadingMore ||
+        !widget.hasMoreMessages ||
+        widget.onLoadMore == null) {
+      return;
+    }
+
+    _lockAutoScrollForHistoryPaging(
+      shortHistoryOverscrolled
+          ? 'historyPagingShortWindowOverscroll'
+          : 'historyPagingThresholdReached',
+    );
+    _historyViewportRestorePending = true;
+    _isLoadingTriggered = true;
+    _scheduleHistoryPagingStabilization();
+    widget.onLoadMore!().then((_) {
+      _isLoadingTriggered = false;
+    }).catchError((_) {
+      _isLoadingTriggered = false;
+    });
   }
 
   void _scheduleScrollToBottom({int retryFrames = 6}) {
@@ -890,6 +918,44 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     });
   }
 
+  void _scheduleHistoryViewportRestore({
+    required double previousPixels,
+    required double previousMaxScrollExtent,
+    int retryFrames = 6,
+  }) {
+    final requestSerial = ++_historyViewportRestoreSerial;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || requestSerial != _historyViewportRestoreSerial) return;
+      if (!_scrollController.hasClients) {
+        if (retryFrames > 0) {
+          _scheduleHistoryViewportRestore(
+            previousPixels: previousPixels,
+            previousMaxScrollExtent: previousMaxScrollExtent,
+            retryFrames: retryFrames - 1,
+          );
+        }
+        return;
+      }
+      final position = _scrollController.position;
+      if (!position.hasContentDimensions) {
+        if (retryFrames > 0) {
+          _scheduleHistoryViewportRestore(
+            previousPixels: previousPixels,
+            previousMaxScrollExtent: previousMaxScrollExtent,
+            retryFrames: retryFrames - 1,
+          );
+        }
+        return;
+      }
+
+      final deltaMaxScrollExtent =
+          position.maxScrollExtent - previousMaxScrollExtent;
+      if (deltaMaxScrollExtent.abs() <= 0.5) return;
+
+      _jumpToOffset(previousPixels + deltaMaxScrollExtent);
+    });
+  }
+
   double _distanceToBottom() {
     if (!_scrollController.hasClients) return double.infinity;
     final position = _scrollController.position;
@@ -913,9 +979,70 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
         (nextDistance - _manualDetachedDistanceToBottom).abs() <= 0.5) {
       return;
     }
+    final schedulerPhase = WidgetsBinding.instance.schedulerPhase;
+    if (schedulerPhase == SchedulerPhase.persistentCallbacks ||
+        schedulerPhase == SchedulerPhase.transientCallbacks ||
+        schedulerPhase == SchedulerPhase.midFrameMicrotasks) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted ||
+            !_scrollController.hasClients ||
+            _isProgrammaticScroll) {
+          return;
+        }
+        final deferredDistance = _distanceToBottom();
+        if (!deferredDistance.isFinite ||
+            (deferredDistance - _manualDetachedDistanceToBottom).abs() <= 0.5) {
+          return;
+        }
+        setState(() {
+          _manualDetachedDistanceToBottom = deferredDistance;
+        });
+      });
+      return;
+    }
     setState(() {
       _manualDetachedDistanceToBottom = nextDistance;
     });
+  }
+
+  void _scheduleHistoryPagingStabilization({int retryFrames = 3}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_historyPagingLockActive) {
+        return;
+      }
+      _stabilizeHistoryPagingViewport(retryFrames: retryFrames);
+    });
+  }
+
+  void _stabilizeHistoryPagingViewport({int retryFrames = 3}) {
+    if (!_scrollController.hasClients) {
+      if (retryFrames > 0) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _stabilizeHistoryPagingViewport(retryFrames: retryFrames - 1);
+        });
+      }
+      return;
+    }
+    final position = _scrollController.position;
+    if (!position.hasContentDimensions) {
+      if (retryFrames > 0) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _stabilizeHistoryPagingViewport(retryFrames: retryFrames - 1);
+        });
+      }
+      return;
+    }
+
+    const maxAllowedDistanceToHistoryBoundary = 24.0;
+    final distanceToHistoryBoundary =
+        (position.maxScrollExtent - position.pixels).abs();
+    if (distanceToHistoryBoundary <= maxAllowedDistanceToHistoryBoundary) {
+      return;
+    }
+
+    _jumpToOffset(position.maxScrollExtent);
   }
 
   void _resetManualDetachedDistanceToBottom() {
@@ -978,6 +1105,11 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
         notification.dragDetails != null) {
       _lockAutoScrollForUserInterruption('userDragStart');
       _updateManualDetachedDistanceToBottom();
+      _triggerLoadMoreIfNeeded(
+        currentScroll: notification.metrics.pixels,
+        maxScrollExtent: notification.metrics.maxScrollExtent,
+        allowShortHistoryOverscroll: true,
+      );
       return false;
     }
 
@@ -986,6 +1118,11 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
         notification.dragDetails != null) {
       _lockAutoScrollForUserInterruption('userDragUpdate');
       _updateManualDetachedDistanceToBottom();
+      _triggerLoadMoreIfNeeded(
+        currentScroll: notification.metrics.pixels,
+        maxScrollExtent: notification.metrics.maxScrollExtent,
+        allowShortHistoryOverscroll: true,
+      );
       return false;
     }
 
@@ -993,6 +1130,20 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
         notification.dragDetails != null) {
       _lockAutoScrollForUserInterruption('userDragOverscroll');
       _updateManualDetachedDistanceToBottom();
+      _triggerLoadMoreIfNeeded(
+        currentScroll: notification.metrics.pixels,
+        maxScrollExtent: notification.metrics.maxScrollExtent,
+        allowShortHistoryOverscroll: true,
+      );
+      return false;
+    }
+
+    if (_historyPagingLockActive &&
+        ((notification is ScrollUpdateNotification &&
+                notification.dragDetails == null) ||
+            (notification is OverscrollNotification &&
+                notification.dragDetails == null))) {
+      _stabilizeHistoryPagingViewport();
       return false;
     }
 
@@ -1007,6 +1158,9 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
 
     if (notification is ScrollEndNotification && !_isProgrammaticScroll) {
       _updateManualDetachedDistanceToBottom();
+      if (_historyPagingLockActive) {
+        _stabilizeHistoryPagingViewport();
+      }
       return false;
     }
 
@@ -1153,16 +1307,7 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   }
 
   String _buildFormatSignature(MessageFormatConfig config) {
-    final activePunctuations = config.effectiveChunkPunctuations.join(',');
-    final filterPunctuations = config.filterPunctuations.join(',');
-    return [
-      config.enableChunking,
-      config.filterPunctuation,
-      activePunctuations,
-      filterPunctuations,
-      config.minSegmentLength,
-      config.protectQuotes,
-    ].join('|');
+    return buildMessageFormatProjectionSignature(config);
   }
 
   GlobalKey _bubbleAnchorKeyFor(String messageId) {
@@ -1194,9 +1339,6 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     super.didUpdateWidget(oldWidget);
     _syncHistoryLoadingOverlay();
 
-    final overlayHeightChanged =
-        (widget.bottomOverlayHeight - oldWidget.bottomOverlayHeight).abs() >
-            0.5;
     if (!identical(oldWidget.viewportController, widget.viewportController)) {
       _unbindViewportController(oldWidget.viewportController);
       _bindViewportController(widget.viewportController);
@@ -1220,6 +1362,9 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
       _cachedListItems = [];
       _cachedChatImages = [];
       _detachedSplitBoundary = null;
+      _historyViewportRestorePending = false;
+      _holdListForHistoryPagingEmptyTimeline = false;
+      _heldTimelineMessagesForLayout = const <Message>[];
       _hasHydratedInitialListItems = false;
       _showHistoryLoadingOverlay =
           widget.isLoadingMore && widget.hasMoreMessages;
@@ -1235,6 +1380,23 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     final messagesChanged = widget.messages != oldWidget.messages;
     final transientMessagesChanged =
         widget.transientMessages != oldWidget.transientMessages;
+    final didPrependOlderHistory =
+        messagesChanged && _didPrependOlderHistory(oldWidget);
+    final recoveringFromHeldEmptyTimeline = messagesChanged &&
+        oldWidget.messages.isEmpty &&
+        widget.messages.isNotEmpty &&
+        _holdListForHistoryPagingEmptyTimeline &&
+        _heldTimelineMessagesForLayout.isNotEmpty &&
+        _historyViewportRestorePending;
+    final shouldPreserveHistoryViewport = (didPrependOlderHistory &&
+            _shouldPreserveViewportForHistoryPrepend(oldWidget)) ||
+        recoveringFromHeldEmptyTimeline;
+    final previousPixels = shouldPreserveHistoryViewport
+        ? _scrollController.position.pixels
+        : null;
+    final previousMaxScrollExtent = shouldPreserveHistoryViewport
+        ? _scrollController.position.maxScrollExtent
+        : null;
     if (_pendingTransientHandoffIds.isNotEmpty &&
         _stableMessagesContainAllIds(
           widget.messages,
@@ -1253,36 +1415,25 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
       oldWidget,
       transientMessagesChanged: transientMessagesChanged,
     );
-    var suppressTailChangedForBootHandoff = false;
     final timelineOverlayChanged = transientMessagesChanged;
 
     // 缓存优化：仅当消息列表引用变化时才重构列表项
     // 避免键盘弹出/收起导致 MediaQuery 变化进而触发全量重建 (Layout Thrashing)
     if (messagesChanged) {
       if (widget.messages.isNotEmpty && bootSnapshotBeforeUpdate.isNotEmpty) {
-        final bootTail = bootSnapshotBeforeUpdate.last;
-        final liveTail = widget.messages.last;
-        final equivalentTail =
-            _isTailMessageEquivalentForHandoff(bootTail, liveTail);
-        suppressTailChangedForBootHandoff =
-            oldWidget.messages.isEmpty && equivalentTail;
         _bootSnapshotMessages = const [];
-      }
-      if (!suppressTailChangedForBootHandoff &&
-          oldWidget.messages.isEmpty &&
-          widget.messages.isNotEmpty) {
-        final displayedTail = _lastDisplayedMessageFromCachedItems();
-        if (displayedTail != null &&
-            _isTailMessageEquivalentForHandoff(
-              displayedTail,
-              widget.messages.last,
-            )) {
-          suppressTailChangedForBootHandoff = true;
-        }
       }
     }
 
     if (holdListForTransientEmptyWindow) {
+      final previousTimelineMessages = _mergeTimelineMessages(
+        oldWidget.messages,
+        oldWidget.transientMessages,
+      );
+      if (previousTimelineMessages.isNotEmpty) {
+        _holdListForHistoryPagingEmptyTimeline = true;
+        _heldTimelineMessagesForLayout = previousTimelineMessages;
+      }
       _debugAutoScroll('hold:transientEmptyWindow');
       return;
     }
@@ -1291,25 +1442,63 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
       return;
     }
 
-    final tailChanged =
-        _didTailMessageChange(oldWidget) && !suppressTailChangedForBootHandoff;
-
     if (messagesChanged) {
       _updateListItems(_cachedFormatConfig);
+      final skipViewportRestoreForHistoryPaging =
+          _historyViewportRestorePending;
+      if (shouldPreserveHistoryViewport &&
+          !skipViewportRestoreForHistoryPaging &&
+          previousPixels != null &&
+          previousMaxScrollExtent != null) {
+        _scheduleHistoryViewportRestore(
+          previousPixels: previousPixels,
+          previousMaxScrollExtent: previousMaxScrollExtent,
+        );
+      }
+      if (didPrependOlderHistory || recoveringFromHeldEmptyTimeline) {
+        _historyViewportRestorePending = false;
+      }
     } else if (timelineOverlayChanged) {
       _updateListItems(_cachedFormatConfig);
     }
 
+    if (!didPrependOlderHistory &&
+        !widget.isLoadingMore &&
+        !_isLoadingTriggered &&
+        !widget.hasMoreMessages) {
+      _historyViewportRestorePending = false;
+    }
+
     final sourceMessages = _currentTimelineMessages;
     if (sourceMessages.isEmpty) {
+      final shouldHoldViewportStateForHistoryPaging =
+          _historyViewportRestorePending ||
+              widget.isLoadingMore ||
+              oldWidget.isLoadingMore ||
+              _isLoadingTriggered ||
+              widget.hasMoreMessages ||
+              oldWidget.hasMoreMessages;
+      if (shouldHoldViewportStateForHistoryPaging) {
+        final previousTimelineMessages = _mergeTimelineMessages(
+          oldWidget.messages,
+          oldWidget.transientMessages,
+        );
+        if (previousTimelineMessages.isNotEmpty) {
+          _holdListForHistoryPagingEmptyTimeline = true;
+          _heldTimelineMessagesForLayout = previousTimelineMessages;
+        }
+        _debugAutoScroll('hold:emptyTimelineForHistoryPaging');
+        return;
+      }
+      _holdListForHistoryPagingEmptyTimeline = false;
+      _heldTimelineMessagesForLayout = const <Message>[];
       _detachedSplitBoundary = null;
       _pendingAnimationIds.clear();
       _latestAnimatedAt = null;
-      if (timelineOverlayChanged && _autoScrollEnabled) {
-        _requestScrollToBottom('emptyTimelineTransientChanged');
-      }
       return;
     }
+    _holdListForHistoryPagingEmptyTimeline = false;
+    _heldTimelineMessagesForLayout = const <Message>[];
 
     final threshold = _latestAnimatedAt;
     final List<Message> newMessages;
@@ -1335,22 +1524,8 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
       }
     }
 
-    String? autoScrollReason;
-    if (tailChanged && _autoScrollEnabled) {
-      autoScrollReason = 'tailChanged';
-    } else if (timelineOverlayChanged && _autoScrollEnabled) {
-      autoScrollReason = 'transientTimelineChanged';
-    } else if (overlayHeightChanged && _autoScrollEnabled) {
-      autoScrollReason = 'overlayHeightChanged';
-    }
-
-    if (autoScrollReason != null) {
-      if (historyPagingLocked) {
-        _debugAutoScroll('blocked:$autoScrollReason by historyPagingLock');
-        return;
-      }
-      _requestScrollToBottom(autoScrollReason);
-      return;
+    if (didPrependOlderHistory && historyPagingLocked) {
+      _debugAutoScroll('blocked:historyPrepend by historyPagingLock');
     }
   }
 
@@ -1419,63 +1594,57 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     return true;
   }
 
-  void _clearPendingTransientHandoffHold() {
-    _transientHandoffHoldTimer?.cancel();
-    _transientHandoffHoldTimer = null;
-    _pendingTransientHandoffIds = <String>{};
-  }
-
-  Message? _lastDisplayedMessageFromCachedItems() {
-    for (var index = _cachedListItems.length - 1; index >= 0; index--) {
-      final item = _cachedListItems[index];
-      if (item is ChatMessageItem) {
-        return item.message;
-      }
-      if (item is ChatChunkedMessageItem) {
-        return item.originalMessage;
-      }
+  bool _shouldPreserveViewportForHistoryPrepend(ChatMessageList oldWidget) {
+    if (!_scrollController.hasClients || _isProgrammaticScroll) {
+      return false;
     }
-    return null;
+
+    if (!_didPrependOlderHistory(oldWidget)) {
+      return false;
+    }
+
+    return _historyViewportRestorePending ||
+        !_autoScrollEnabled ||
+        oldWidget.isLoadingMore ||
+        widget.isLoadingMore ||
+        _isLoadingTriggered;
   }
 
-  bool _didTailMessageChange(ChatMessageList oldWidget) {
+  bool _didPrependOlderHistory(ChatMessageList oldWidget) {
     final previousMessages = _mergeTimelineMessages(
       oldWidget.messages,
       oldWidget.transientMessages,
     );
     final currentMessages = _currentTimelineMessages;
     if (previousMessages.isEmpty || currentMessages.isEmpty) {
-      return previousMessages.isNotEmpty != currentMessages.isNotEmpty;
+      return false;
     }
-
+    if (currentMessages.length <= previousMessages.length) {
+      return false;
+    }
     final previousTail = previousMessages.last;
     final currentTail = currentMessages.last;
-    return !_isTailMessageEquivalent(previousTail, currentTail);
-  }
-
-  bool _isTailMessageEquivalent(Message previousTail, Message currentTail) {
-    if (previousTail.id != currentTail.id ||
-        previousTail.createdAt != currentTail.createdAt ||
-        previousTail.role != currentTail.role ||
-        previousTail.status != currentTail.status ||
-        previousTail.content != currentTail.content) {
+    final sameTailMessage = previousTail.id == currentTail.id &&
+        previousTail.createdAt == currentTail.createdAt &&
+        previousTail.role == currentTail.role;
+    if (!sameTailMessage) {
       return false;
     }
 
-    final previousBlocks = previousTail.blocks ?? const <MessageBlock>[];
-    final currentBlocks = currentTail.blocks ?? const <MessageBlock>[];
-    return previousBlocks.length == currentBlocks.length;
+    final previousHead = previousMessages.first;
+    final currentHead = currentMessages.first;
+    final prependedOlderHistory = previousHead.id != currentHead.id ||
+        previousHead.createdAt != currentHead.createdAt;
+    if (!prependedOlderHistory) {
+      return false;
+    }
+    return true;
   }
 
-  bool _isTailMessageEquivalentForHandoff(
-    Message previousTail,
-    Message currentTail,
-  ) {
-    return previousTail.id == currentTail.id &&
-        previousTail.createdAt == currentTail.createdAt &&
-        previousTail.role == currentTail.role &&
-        previousTail.status == currentTail.status &&
-        previousTail.content == currentTail.content;
+  void _clearPendingTransientHandoffHold() {
+    _transientHandoffHoldTimer?.cancel();
+    _transientHandoffHoldTimer = null;
+    _pendingTransientHandoffIds = <String>{};
   }
 
   SliverChildBuilderDelegate _buildSectionDelegate(
@@ -1646,7 +1815,16 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     }
 
     final listItems = _cachedListItems;
-    final listSections = _splitListItems(listItems, _currentTimelineMessages);
+    final timelineMessagesForSectioning =
+        _holdListForHistoryPagingEmptyTimeline &&
+                _currentTimelineMessages.isEmpty &&
+                _heldTimelineMessagesForLayout.isNotEmpty
+            ? _heldTimelineMessagesForLayout
+            : _currentTimelineMessages;
+    final listSections = _splitListItems(
+      listItems,
+      timelineMessagesForSectioning,
+    );
     final showHistoryLoadingOverlay = _showHistoryLoadingOverlay;
     final showJumpToBottomButton = _shouldShowJumpToBottomButton();
     final jumpToBottomBottomOffset = (widget.bottomOverlayHeight > 0

@@ -33,6 +33,9 @@ import 'services/chat_tts_handler.dart';
 import 'domain/message.dart';
 import '../settings/app_settings.dart';
 import 'conversation_providers.dart';
+import 'conversation_timeline_providers.dart';
+import 'services/conversation_short_window_store.dart'
+    show conversationShortWindowStoreProvider;
 import 'chat_providers.dart';
 import '../../core/app_logger.dart';
 import '../../core/models/message_block.dart';
@@ -41,6 +44,7 @@ import '../../core/services/attachment_picker_service.dart';
 import '../../core/utils/message_formatter.dart';
 import '../observability/trace_models.dart';
 import '../observability/trace_store.dart';
+import '../plugins/domain/plugin.dart' show PluginEvent;
 
 // 重新导出公共类型，保持向后兼容
 export 'chat_providers.dart';
@@ -220,6 +224,93 @@ class ChatActions {
       conversationId: task.convId,
       messageId: userMsgId,
       status: 'sent',
+    );
+  }
+
+  List<Message> _extractStreamCommittedMessages(List<Message> messages) {
+    final committed = <Message>[];
+    for (final message in messages) {
+      final committedMessage = _toStreamCommittedMessage(message);
+      if (committedMessage != null) {
+        committed.add(committedMessage);
+      }
+    }
+    return committed;
+  }
+
+  Message? _toStreamCommittedMessage(Message message) {
+    final blocks = message.blocks;
+    if (blocks == null || blocks.isEmpty) {
+      return message.content.trim().isEmpty ? null : message;
+    }
+
+    final retainedBlocks = <MessageBlock>[
+      for (final block in blocks)
+        if (block is TextBlock || block is ToolBlock) block,
+    ];
+    final textBlocks = retainedBlocks.whereType<TextBlock>().toList();
+    final hasTextBlock =
+        textBlocks.any((block) => block.content.trim().isNotEmpty);
+    final contentText = message.content.trim();
+    if (!hasTextBlock && contentText.isEmpty) {
+      return null;
+    }
+
+    if (!hasTextBlock && contentText.isNotEmpty) {
+      retainedBlocks.insert(
+        0,
+        TextBlock(
+          messageId: message.id,
+          content: message.content,
+          status: BlockStatus.success,
+        ),
+      );
+    }
+
+    return message.copyWith(
+      content: '',
+      blocks: retainedBlocks,
+      status: 'sent',
+    );
+  }
+
+  Future<void> _commitStreamDelivery({
+    required _StreamPlaceholderDelivery streamDelivery,
+    required String convId,
+    required String userMsgId,
+    required AssistantMessageBuildResult buildResult,
+    required String replyText,
+    required List<PluginEvent> pluginEvents,
+    required bool ttsEnabled,
+    TraceLogger? trace,
+  }) async {
+    final committedMessages = _extractStreamCommittedMessages(
+      buildResult.messages,
+    );
+    if (committedMessages.isEmpty) {
+      throw StateError('流式收尾缺少可提交的文本锚点消息');
+    }
+
+    await _historyPort.appendAssistantMessages(
+      conversationId: convId,
+      userMessageId: userMsgId,
+      messages: committedMessages,
+      lastMessagePreview: committedMessages.last.displayText,
+      updateShortWindow: false,
+    );
+    await streamDelivery.commitToMessages(finalMessages: committedMessages);
+    await _ttsHandler.deliverSegmentedMessages(
+      convId: convId,
+      userMsgId: userMsgId,
+      buildResult: buildResult,
+      replyText: replyText,
+      pluginEvents: pluginEvents,
+      ttsEnabled: ttsEnabled,
+      appendAfterStreamText: true,
+      streamTextMessageIds: committedMessages
+          .map((message) => message.id)
+          .toList(growable: false),
+      trace: trace,
     );
   }
 
@@ -410,7 +501,6 @@ class ChatActions {
           streamDelivery = _StreamPlaceholderDelivery(
             _ref,
             convId: convId,
-            userMsgId: userMsg.id,
             formatConfig: settings.messageFormatConfig,
             enableTtsPlaceholders: settings.ttsEnabled,
             segmentDelay: Duration(
@@ -438,19 +528,14 @@ class ChatActions {
             await streamDelivery!.finalize(
               finalText: streamFinalText,
             );
-            final streamCommit = await streamDelivery!.commitFinalTimeline(
-              finalText: streamFinalText,
-            );
-            await _ttsHandler.deliverSegmentedMessages(
+            await _commitStreamDelivery(
+              streamDelivery: streamDelivery!,
               convId: convId,
               userMsgId: userMsg.id,
               buildResult: buildResult,
               replyText: apiResult.replyText,
               pluginEvents: apiResult.pluginEvents,
               ttsEnabled: settings.ttsEnabled,
-              appendAfterStreamText: true,
-              streamTextMessageIds: streamCommit.textMessageIds,
-              streamPendingTtsMessages: streamCommit.pendingTtsMessages,
               trace: trace,
             );
             streamCommitted = true;

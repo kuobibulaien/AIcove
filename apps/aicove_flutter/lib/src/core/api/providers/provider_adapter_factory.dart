@@ -10,6 +10,7 @@ import 'claude_adapter.dart';
 import 'gemini_adapter.dart';
 import 'minimax_adapter.dart';
 import 'minimax_compat.dart';
+import 'zai_compat.dart';
 
 class ProviderAdapterFactory {
   static final _adapters = <String, ProviderAdapter>{
@@ -23,6 +24,7 @@ class ProviderAdapterFactory {
 
   static const Set<String> _requestLocalOnlyKeys = <String>{
     'requestFormat',
+    'apiPath',
     'vertexExpress',
     'defaultImageModel',
     'tts_models',
@@ -36,6 +38,10 @@ class ProviderAdapterFactory {
     final raw = customConfig?['requestFormat']?.toString().trim().toLowerCase();
     switch (raw) {
       case 'openai':
+      case 'zai':
+      case 'z.ai':
+      case 'glm':
+      case 'zhipu':
         return 'openai';
       case 'minimax':
         return 'minimax';
@@ -60,11 +66,15 @@ class ProviderAdapterFactory {
     Map<String, dynamic>? customConfig,
     String? apiBaseUrl,
   }) {
-    final fromConfig = _normalizeRequestFormat(customConfig);
-    if (fromConfig != null) return fromConfig;
     if (isMiniMaxNativeChatEndpoint(apiBaseUrl)) return 'minimax';
 
+    final fromConfig = _normalizeRequestFormat(customConfig);
+    if (fromConfig != null) return fromConfig;
+
     final normalized = provider.toLowerCase().trim();
+    if (isZaiProvider(providerId: normalized, apiBaseUrl: apiBaseUrl)) {
+      return 'openai';
+    }
     if (normalized == 'anthropic') return 'claude';
     if (normalized == 'google') return 'gemini';
     return normalized;

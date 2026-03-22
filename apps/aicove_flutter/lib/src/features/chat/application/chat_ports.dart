@@ -22,6 +22,7 @@ abstract interface class ChatHistoryPort {
     required String userMessageId,
     required List<Message> messages,
     required String lastMessagePreview,
+    bool updateShortWindow = true,
   });
 
   Future<void> softDeleteMessages(

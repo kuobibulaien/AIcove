@@ -12,7 +12,7 @@ import '../../../core/database/database_provider.dart';
 import '../../../core/models/message_block.dart';
 import '../domain/message.dart';
 
-const int kConversationShortWindowSeedMessageCount = 5;
+const int kConversationShortWindowSeedMessageCount = 20;
 const int kConversationShortWindowBudgetBytes = 50 * 1024 * 1024;
 const String kConversationShortWindowRootDirectoryName =
     'conversation_short_windows';
@@ -130,6 +130,103 @@ class ConversationShortWindowStore {
     });
   }
 
+  Future<void> replaceMessages({
+    required String conversationId,
+    List<String> removeMessageIds = const <String>[],
+    List<Message> messages = const <Message>[],
+  }) async {
+    final normalizedConversationId = conversationId.trim();
+    if (normalizedConversationId.isEmpty) {
+      return;
+    }
+
+    final normalizedRemoveIds = removeMessageIds
+        .map((messageId) => messageId.trim())
+        .where((messageId) => messageId.isNotEmpty)
+        .toSet();
+    if (normalizedRemoveIds.isEmpty && messages.isEmpty) {
+      return;
+    }
+
+    await _runConversationTask(normalizedConversationId, () async {
+      final current = await _ensureConversationReadyUnlocked(
+        normalizedConversationId,
+        minMessages: kConversationShortWindowSeedMessageCount,
+      );
+      final mergedById = <String, Message>{
+        for (final message in current.messages)
+          if (!normalizedRemoveIds.contains(message.id)) message.id: message,
+      };
+      for (final message in messages) {
+        mergedById[message.id] = message;
+      }
+
+      final next = await _persistSnapshotUnlocked(
+        _ConversationShortWindowSnapshot(
+          conversationId: normalizedConversationId,
+          messages: _normalizeMessages(mergedById.values),
+          hasMoreMessages: current.hasMoreMessages,
+        ),
+      );
+      _snapshotsByConversation[normalizedConversationId] = next;
+      _notifyConversationChanged(normalizedConversationId);
+    });
+  }
+
+  Future<int> loadOlderMessages({
+    required String conversationId,
+    int pageSize = kConversationShortWindowSeedMessageCount,
+  }) async {
+    final normalizedConversationId = conversationId.trim();
+    if (normalizedConversationId.isEmpty) {
+      return 0;
+    }
+
+    final normalizedPageSize = pageSize < 1 ? 1 : pageSize;
+    return _runConversationTask(normalizedConversationId, () async {
+      final current = await _ensureConversationReadyUnlocked(
+        normalizedConversationId,
+        minMessages: kConversationShortWindowSeedMessageCount,
+      );
+      if (current.messages.isEmpty || !current.hasMoreMessages) {
+        return 0;
+      }
+
+      final oldestMessage = current.messages.first;
+      final olderPage = await _loadOlderPageFromDb(
+        normalizedConversationId,
+        beforeCreatedAt: oldestMessage.createdAt,
+        beforeId: oldestMessage.id,
+        pageSize: normalizedPageSize,
+      );
+      if (olderPage.messages.isEmpty) {
+        if (current.hasMoreMessages) {
+          final next = await _persistSnapshotUnlocked(
+            current.copyWith(hasMoreMessages: false),
+          );
+          _snapshotsByConversation[normalizedConversationId] = next;
+          _notifyConversationChanged(normalizedConversationId);
+        }
+        return 0;
+      }
+
+      final nextMessages = _normalizeMessages(<Message>[
+        ...olderPage.messages,
+        ...current.messages,
+      ]);
+      final addedCount = nextMessages.length - current.messages.length;
+      final next = await _persistSnapshotUnlocked(
+        current.copyWith(
+          messages: nextMessages,
+          hasMoreMessages: olderPage.hasMoreMessages,
+        ),
+      );
+      _snapshotsByConversation[normalizedConversationId] = next;
+      _notifyConversationChanged(normalizedConversationId);
+      return addedCount < 0 ? 0 : addedCount;
+    });
+  }
+
   Future<void> syncConversation(
     String conversationId, {
     int? targetMessageCount,
@@ -159,6 +256,20 @@ class ConversationShortWindowStore {
       _snapshotsByConversation[normalizedConversationId] = next;
       _notifyConversationChanged(normalizedConversationId);
     });
+  }
+
+  /// Rebuild all known short-window snapshots from database raw messages.
+  ///
+  /// This is used when frontend projection strategy changes and cached
+  /// short-window data must be refreshed consistently.
+  Future<void> rebuildAllFromDb() async {
+    final conversationIds = await _collectRebuildConversationIds();
+    if (conversationIds.isEmpty) {
+      return;
+    }
+    for (final conversationId in conversationIds) {
+      await syncConversation(conversationId);
+    }
   }
 
   Future<void> clearConversation(String conversationId) async {
@@ -221,17 +332,15 @@ class ConversationShortWindowStore {
     final normalizedMinMessages = minMessages < 1 ? 1 : minMessages;
     var snapshot = _snapshotsByConversation[conversationId] ??
         await _readSnapshotFromDiskUnlocked(conversationId);
-    if (snapshot == null) {
-      snapshot = await _persistSnapshotUnlocked(
-        await _loadRecentSnapshotFromDb(
-          conversationId,
-          targetCount: _maxInt(
-            kConversationShortWindowSeedMessageCount,
-            normalizedMinMessages,
-          ),
+    snapshot ??= await _persistSnapshotUnlocked(
+      await _loadRecentSnapshotFromDb(
+        conversationId,
+        targetCount: _maxInt(
+          kConversationShortWindowSeedMessageCount,
+          normalizedMinMessages,
         ),
-      );
-    }
+      ),
+    );
 
     if (snapshot.messages.length < normalizedMinMessages &&
         snapshot.hasMoreMessages) {
@@ -828,6 +937,35 @@ class ConversationShortWindowStore {
         continue;
       }
     }
+    return ids.toList(growable: false);
+  }
+
+  Future<List<String>> _collectRebuildConversationIds() async {
+    final ids = <String>{
+      ..._snapshotsByConversation.keys,
+    };
+
+    try {
+      final conversations =
+          await _ref.read(conversationRepositoryProvider).getAll();
+      for (final conversation in conversations) {
+        final normalizedId = conversation.id.trim();
+        if (normalizedId.isNotEmpty) {
+          ids.add(normalizedId);
+        }
+      }
+    } catch (_) {
+      // 若会话仓库读取失败，仍继续尝试使用已缓存/已持久化的会话 ID。
+    }
+
+    final persistedConversationIds = await _listPersistedConversationIds();
+    for (final conversationId in persistedConversationIds) {
+      final normalizedId = conversationId.trim();
+      if (normalizedId.isNotEmpty) {
+        ids.add(normalizedId);
+      }
+    }
+
     return ids.toList(growable: false);
   }
 

@@ -3,6 +3,28 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:aicove_flutter/src/core/api/providers/openai_adapter.dart';
 
 void main() {
+  group('OpenAIAdapter.buildEndpoint', () {
+    final adapter = OpenAIAdapter();
+
+    test('z.ai 官方 paas/v4 基址不再额外拼接 /v1', () {
+      final endpoint = adapter.buildEndpoint(
+        'https://api.z.ai/api/paas/v4',
+        modelType: 'chat',
+      );
+
+      expect(endpoint, 'https://api.z.ai/api/paas/v4/chat/completions');
+    });
+
+    test('普通 OpenAI 兼容基址仍保持补 /v1 行为', () {
+      final endpoint = adapter.buildEndpoint(
+        'https://api.example.com',
+        modelType: 'chat',
+      );
+
+      expect(endpoint, 'https://api.example.com/v1/chat/completions');
+    });
+  });
+
   group('OpenAIAdapter.buildRequestBody', () {
     final adapter = OpenAIAdapter();
 

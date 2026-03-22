@@ -77,6 +77,10 @@ class _Marker {
 /// 注意：普通分段逻辑已移至 UI 层，但多模态标签（TTS、表情包）必须在存储时拆分
 class ChatMessageProcessor {
   const ChatMessageProcessor();
+  static final RegExp _inlineImageTagRegex = RegExp(
+    r'<image>([\s\S]*?)</image>',
+    caseSensitive: false,
+  );
   static final RegExp _imagePlaceholderRegex = RegExp(
     r'(?:<image>\s*</image>|\[(?:图片|image)(?:\s*:[^\]]*)?\])',
     caseSensitive: false,
@@ -623,9 +627,9 @@ class ChatMessageProcessor {
     result = result.replaceAll(
         RegExp(r'<delete_trigger\s[^>]*?/?>', caseSensitive: false), '');
 
-    // 移除 <image>...</image> 标签（包含内部历史标签）
+    // 只移除标准 <image>...</image>，避免误吞带属性的其他内容
     result = result.replaceAll(
-      RegExp(r'<image\b[^>]*>[\s\S]*?</image>', caseSensitive: false),
+      _inlineImageTagRegex,
       '',
     );
 

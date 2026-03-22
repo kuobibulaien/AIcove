@@ -606,7 +606,7 @@ Map<String, dynamic> _buildFallbackAssistantMessageForToolCalls(
   List<ToolCall> toolCalls,
   String adapterName,
 ) {
-  if (adapterName != 'openai') {
+  if (adapterName != 'openai' && adapterName != 'minimax') {
     return <String, dynamic>{'content': ''};
   }
   return <String, dynamic>{

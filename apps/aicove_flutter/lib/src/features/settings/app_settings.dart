@@ -9,6 +9,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/utils/message_formatter.dart';
+import '../chat/services/conversation_short_window_store.dart';
 import 'settings_models.dart';
 import 'ui_models_api.dart';
 
@@ -848,8 +849,25 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
   }
 
   Future<void> updateMessageFormatConfig(MessageFormatConfig config) async {
+    final previousConfig =
+        state.valueOrNull?.messageFormatConfig ?? const MessageFormatConfig();
+    final previousSignature =
+        buildMessageFormatProjectionSignature(previousConfig);
+    final nextSignature = buildMessageFormatProjectionSignature(config);
+
     await _commit(
-        () => _api.updatePartial({'message_format_config': config.toJson()}));
+      () => _api.updatePartial({'message_format_config': config.toJson()}),
+    );
+
+    if (previousSignature == nextSignature) {
+      return;
+    }
+
+    try {
+      await ref.read(conversationShortWindowStoreProvider).rebuildAllFromDb();
+    } catch (_) {
+      // 分段策略更新不应因短列表刷新失败而回滚设置提交。
+    }
   }
 
   Future<void> setTextScaleFactor(double scale) async {

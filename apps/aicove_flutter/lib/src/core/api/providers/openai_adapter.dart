@@ -4,6 +4,7 @@ library;
 import 'dart:convert';
 
 import 'provider_adapter.dart';
+import 'zai_compat.dart';
 
 class OpenAIAdapter implements ProviderAdapter {
   static const int _kimiThinkingSafeMaxTokens = 16384;
@@ -16,7 +17,9 @@ class OpenAIAdapter implements ProviderAdapter {
     final normalized = baseUrl.endsWith('/')
         ? baseUrl.substring(0, baseUrl.length - 1)
         : baseUrl;
-    final base = normalized.endsWith('/v1') ? normalized : '$normalized/v1';
+    final base = isZaiApiUrl(normalized)
+        ? normalized
+        : (normalized.endsWith('/v1') ? normalized : '$normalized/v1');
 
     switch (modelType) {
       case 'embedding':

@@ -2,6 +2,7 @@ import 'package:http/http.dart' as http;
 
 import '../../core/api/providers/google_api_mode.dart';
 import '../../core/api/providers/minimax_compat.dart';
+import '../../core/api/providers/zai_compat.dart';
 import 'data/local/ui_models_store_local_data_source.dart';
 import 'data/remote/provider_probe_remote_data_source.dart';
 import 'data/support/ui_models_store_support.dart';
@@ -84,6 +85,10 @@ class UiModelsApi {
       customConfig: customConfig,
     );
     final isMiniMax = isMiniMaxApiUrl(apiBaseUrl);
+    final isZai = isZaiProvider(
+      providerId: providerId,
+      apiBaseUrl: apiBaseUrl,
+    );
 
     List<String> models;
     if (allModels != null) {
@@ -92,6 +97,8 @@ class UiModelsApi {
         models = List<String>.from(kVertexExpressDefaultModels);
       } else if (isMiniMax && models.isEmpty) {
         models = List<String>.from(kMiniMaxDefaultChatModels);
+      } else if (isZai && models.isEmpty) {
+        models = List<String>.from(kZaiDefaultChatModels);
       }
     } else {
       try {
@@ -108,6 +115,8 @@ class UiModelsApi {
           models = List<String>.from(kVertexExpressDefaultModels);
         } else if (isMiniMax) {
           models = List<String>.from(kMiniMaxDefaultChatModels);
+        } else if (isZai) {
+          models = List<String>.from(kZaiDefaultChatModels);
         } else {
           rethrow;
         }

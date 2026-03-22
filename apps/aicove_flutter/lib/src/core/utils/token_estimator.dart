@@ -236,6 +236,19 @@ const Map<String, int> knownModelContextLimits = {
   'deepseek-r1': 128000,
   'deepseek-v3': 128000,
 
+  // Z.AI GLM
+  'glm-5': 200000,
+  'glm-5-turbo': 200000,
+  'glm-4.7': 200000,
+  'glm-4.7-flash': 200000,
+  'glm-4.7-flashx': 200000,
+  'glm-4.6': 200000,
+  'glm-4.5': 128000,
+  'glm-4.5-air': 128000,
+  'glm-4.5-x': 128000,
+  'glm-4.5-airx': 128000,
+  'glm-4.5-flash': 128000,
+
   // Google Gemini
   'gemini-pro': 32768,
   'gemini-1.5-pro': 1048576,

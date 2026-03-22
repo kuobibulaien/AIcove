@@ -5,9 +5,50 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
+import 'package:aicove_flutter/src/features/chat/services/conversation_short_window_store.dart';
+import 'package:aicove_flutter/src/core/api/providers/zai_compat.dart';
+
+class _SpyConversationShortWindowStore extends ConversationShortWindowStore {
+  _SpyConversationShortWindowStore(super.ref);
+
+  int rebuildAllFromDbCallCount = 0;
+
+  @override
+  Future<void> rebuildAllFromDb() async {
+    rebuildAllFromDbCallCount += 1;
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('message format strategy changed should rebuild short windows',
+      () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    late _SpyConversationShortWindowStore storeSpy;
+    final container = ProviderContainer(
+      overrides: [
+        conversationShortWindowStoreProvider.overrideWith((ref) {
+          storeSpy = _SpyConversationShortWindowStore(ref);
+          return storeSpy;
+        }),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final settings = await container.read(appSettingsProvider.future);
+    final notifier = container.read(appSettingsProvider.notifier);
+
+    final toggled = settings.messageFormatConfig.copyWith(
+      enableChunking: !settings.messageFormatConfig.enableChunking,
+    );
+    await notifier.updateMessageFormatConfig(toggled);
+
+    expect(storeSpy.rebuildAllFromDbCallCount, 1);
+
+    await notifier.updateMessageFormatConfig(toggled);
+    expect(storeSpy.rebuildAllFromDbCallCount, 1);
+  });
 
   test('failed import keeps appSettingsProvider in data state', () async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
@@ -35,6 +76,69 @@ void main() {
     final after = state.requireValue;
     expect(after.providers.length, initial.providers.length);
     expect(after.defaultModelName, initial.defaultModelName);
+  });
+
+  test('fresh defaults should include built-in Z.AI provider', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    final settings = await container.read(appSettingsProvider.future);
+    final provider = settings.providers.firstWhere((p) => p.id == 'zai');
+
+    expect(provider.displayName, 'Z.AI');
+    expect(provider.apiBaseUrl, kZaiGeneralApiBase);
+    expect(provider.enabled, isFalse);
+    expect(provider.visibleModels, <String>['glm-4.7', 'glm-5', 'glm-5-turbo']);
+    expect(provider.models, containsAll(kZaiDefaultChatModels));
+    expect(provider.customConfig['requestFormat'], 'openai');
+  });
+
+  test('legacy store should backfill Z.AI once and allow user deletion',
+      () async {
+    final legacyStore = <String, dynamic>{
+      'providers': [
+        {
+          'id': 'openai',
+          'displayName': 'OpenAI',
+          'apiKeys': <String>[],
+          'apiBaseUrl': 'https://api.example.com/v1',
+          'enabled': true,
+          'models': <String>['gpt-4o'],
+          'visible_models': <String>['gpt-4o'],
+          'hidden_models': <String>[],
+          'capabilities': <String>['chat'],
+        },
+      ],
+      'default_model': 'openai:gpt-4o',
+      'default_chat_models': <String>['openai:gpt-4o'],
+      'visible_models': <String>['gpt-4o'],
+    };
+
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'aicove.ui_models.v1': jsonEncode(legacyStore),
+    });
+
+    var container = ProviderContainer();
+    addTearDown(() => container.dispose());
+
+    var settings = await container.read(appSettingsProvider.future);
+    expect(settings.providers.map((p) => p.id), contains('zai'));
+
+    final prefs = await SharedPreferences.getInstance();
+    final firstSaved = jsonDecode(prefs.getString('aicove.ui_models.v1')!)
+        as Map<String, dynamic>;
+    expect(
+      (firstSaved['applied_migrations'] as List?)?.cast<String>(),
+      contains(kZaiProviderBackfillMigrationId),
+    );
+
+    await container.read(appSettingsProvider.notifier).deleteProvider('zai');
+    container.dispose();
+
+    container = ProviderContainer();
+    settings = await container.read(appSettingsProvider.future);
+    expect(settings.providers.map((p) => p.id), isNot(contains('zai')));
   });
 
   test('import with explicit empty model list still saves provider', () async {
@@ -561,6 +665,66 @@ void main() {
         type: ModelType.tts,
       ),
       <String>['voice-public'],
+    );
+  });
+
+  test('minimax speech models should infer as tts without explicit model_types',
+      () async {
+    final store = <String, dynamic>{
+      'providers': [
+        {
+          'id': 'minimax',
+          'displayName': 'MiniMax',
+          'apiKeys': <String>['dummy-key'],
+          'apiBaseUrl': 'https://api.minimaxi.com',
+          'enabled': true,
+          'models': <String>[
+            'speech-2.8-hd',
+            'speech-02-turbo',
+            'abab7-chat-preview',
+          ],
+          'visible_models': <String>[
+            'speech-2.8-hd',
+            'speech-02-turbo',
+            'abab7-chat-preview',
+          ],
+          'hidden_models': <String>[],
+          'capabilities': <String>['chat', 'tts'],
+          'custom_config': <String, dynamic>{'requestFormat': 'openai_tts'},
+        },
+      ],
+      'default_model': 'minimax:abab7-chat-preview',
+      'default_chat_models': <String>['minimax:abab7-chat-preview'],
+      'visible_models': <String>[
+        'speech-2.8-hd',
+        'speech-02-turbo',
+        'abab7-chat-preview',
+      ],
+    };
+
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'aicove.ui_models.v1': jsonEncode(store),
+    });
+
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    final settings = await container.read(appSettingsProvider.future);
+
+    expect(
+      settings.getProviderVisibleModelsByType(
+        'minimax',
+        type: ModelType.tts,
+      ),
+      unorderedEquals(<String>['speech-2.8-hd', 'speech-02-turbo']),
+    );
+    expect(
+      settings.getModelType('minimax:speech-2.8-hd'),
+      ModelType.tts,
+    );
+    expect(
+      settings.getModelType('minimax:speech-02-turbo'),
+      ModelType.tts,
     );
   });
 

@@ -19,10 +19,11 @@ import '../../../../features/chat/conversation_timeline_providers.dart'
     show
         conversationHasMoreProvider,
         conversationMessagesProvider,
-        conversationTransientMessagesProvider,
         conversationVisibleCountProvider,
         kConversationInitialVisibleCount,
         kConversationVisiblePageSize;
+import '../../../../features/chat/services/conversation_short_window_store.dart'
+    show conversationShortWindowStoreProvider;
 import '../../../../features/chat/domain/conversation.dart';
 import '../../../../features/chat/domain/message.dart';
 import '../../../../features/chat/presentation/widgets/composer.dart';
@@ -49,9 +50,6 @@ import '../widgets/chat_message_search_content.dart';
 
 const Duration kChatPageImagePrecacheDelay = Duration(milliseconds: 180);
 const Duration kChatPageUnreadClearDelay = Duration(milliseconds: 160);
-final Duration kChatPageDeferredEntryWindow = Duration(
-  milliseconds: kAnimPage.inMilliseconds + 120,
-);
 
 @visibleForTesting
 String resolveChatPageAppBarTitle({
@@ -98,6 +96,15 @@ String resolveChatPageAppBarTitle({
     return normalizedDisplayName;
   }
   return stageLabel;
+}
+
+@visibleForTesting
+bool resolveChatPageAllowPersistentViewportBoot({
+  required String? conversationId,
+  required bool deferEntryShell,
+}) {
+  final normalizedConversationId = conversationId?.trim() ?? '';
+  return !deferEntryShell && normalizedConversationId.isNotEmpty;
 }
 
 class ChatPage extends ConsumerStatefulWidget {
@@ -157,18 +164,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _scheduleImagePrecache();
   }
 
-  void _beginDeferredEntryShell(String conversationId) {
-    _deferredEntryShellActive = true;
-    _deferredEntryTimer?.cancel();
-    _deferredEntryTimer = Timer(kChatPageDeferredEntryWindow, () {
-      if (!mounted || widget.conversationId != conversationId) return;
-      setState(() {
-        _deferredEntryShellActive = false;
-      });
-      _startEntrySideEffects(conversationId);
-    });
-  }
-
   void _startEntrySideEffects(String conversationId) {
     if (_entrySideEffectsStarted) return;
     _entrySideEffectsStarted = true;
@@ -225,14 +220,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
     final visibleCountNotifier =
         ref.read(conversationVisibleCountProvider(conversationId).notifier);
-    final currentVisibleCount = visibleCountNotifier.state;
-    if (loadMoreOnActivate) {
-      final targetVisibleCount = currentVisibleCount <
-              kConversationInitialVisibleCount + kConversationVisiblePageSize
-          ? kConversationInitialVisibleCount + kConversationVisiblePageSize
-          : currentVisibleCount + kConversationVisiblePageSize;
-      visibleCountNotifier.state = targetVisibleCount;
-    }
 
     if (!mounted) return;
     setState(() {
@@ -243,10 +230,20 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     });
 
     if (loadMoreOnActivate) {
-      Future<void>.delayed(const Duration(milliseconds: 120)).then((_) {
+      unawaited(() async {
+        final addedCount = await ref
+            .read(conversationShortWindowStoreProvider)
+            .loadOlderMessages(
+              conversationId: conversationId,
+              pageSize: kConversationVisiblePageSize,
+            );
+        if (!mounted) return;
+        if (addedCount > 0) {
+          visibleCountNotifier.state += addedCount;
+        }
         if (!mounted) return;
         setState(() => _isLoadingMore = false);
-      });
+      }());
     }
   }
 
@@ -265,6 +262,40 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   void _forceChatListToBottom() {
     _viewportController.onUserSend();
+  }
+
+  void _showSendingInProgressToast() {
+    MoeToast.brief(
+      context,
+      'Please wait for current message to finish',
+    );
+  }
+
+  Future<bool> _preparePlainTextSend() async {
+    if (ref.read(sendingProvider)) {
+      _showSendingInProgressToast();
+      return false;
+    }
+    final conv = ref.read(activeConversationProvider);
+    if (conv != null) {
+      final ok = await _checkVisionCompat(conv: conv);
+      if (!ok) return false;
+      _activateDatabaseTimeline(conv.id);
+    }
+    return true;
+  }
+
+  void _dispatchPlainTextSend(
+    String text, {
+    bool throughComposer = true,
+  }) {
+    _forceChatListToBottom();
+    final actions = ref.read(chatActionsProvider);
+    if (throughComposer) {
+      unawaited(actions.sendComposerText(text));
+      return;
+    }
+    unawaited(actions.send(text));
   }
 
   Future<bool> _checkVisionCompat({
@@ -771,10 +802,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     setState(() => _isLoadingMore = true);
 
     try {
-      final notifier =
+      final visibleCountNotifier =
           ref.read(conversationVisibleCountProvider(conversationId).notifier);
-      notifier.state += kConversationVisiblePageSize;
-      await Future<void>.delayed(const Duration(milliseconds: 120));
+      final addedCount = await ref
+          .read(conversationShortWindowStoreProvider)
+          .loadOlderMessages(
+            conversationId: conversationId,
+            pageSize: kConversationVisiblePageSize,
+          );
+      if (addedCount > 0) {
+        visibleCountNotifier.state += addedCount;
+      }
     } catch (e) {
       debugPrint('加载更多消息失败: $e');
     } finally {
@@ -803,6 +841,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final currentConversationId = conv?.id ?? targetId;
     final useDatabaseTimeline =
         _databaseTimelineActivated || currentConversationId == null;
+    final allowPersistentViewportBoot =
+        resolveChatPageAllowPersistentViewportBoot(
+      conversationId: currentConversationId,
+      deferEntryShell: deferEntryShell,
+    );
     final messagesAsync = !useDatabaseTimeline
         ? const AsyncValue.data(<Message>[])
         : currentConversationId == null
@@ -814,10 +857,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         : useDatabaseTimeline
             ? ref.watch(conversationHasMoreProvider(currentConversationId))
             : _persistentViewportHasMoreMessages;
-    final transientMessages = deferEntryShell || currentConversationId == null
-        ? const <Message>[]
-        : ref.watch(
-            conversationTransientMessagesProvider(currentConversationId));
+    const transientMessages = <Message>[];
     final actions = ref.read(chatActionsProvider); // (注释已丢失)
     final sidebarVisible = widget.showToggleButton && !deferEntryShell
         ? ref.watch(sidebarVisibleProvider)
@@ -1145,7 +1185,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                             displayName: conv.displayName,
                             bottomOverlayHeight: _composerOverlayHeight,
                             viewportController: _viewportController,
-                            allowPersistentViewportBoot: false,
+                            allowPersistentViewportBoot:
+                                allowPersistentViewportBoot,
                             onPersistentViewportBootMiss: () {
                               _activateDatabaseTimeline(conv.id);
                             },
@@ -1187,24 +1228,38 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                                     text;
                               }
                             },
-                            onRegenerateMessage: (message) {
-                              _activateDatabaseTimeline(conv.id);
+                            onRegenerateMessage: (message) async {
                               if (ref.read(sendingProvider)) {
-                                MoeToast.brief(
-                                  context,
-                                  'Please wait for current message to finish',
-                                );
+                                _showSendingInProgressToast();
                                 return;
                               }
-                              actions.regenerate(message.id);
+                              final resendText =
+                                  await actions.peekTextRegenerate(message.id);
+                              if (resendText == null) {
+                                _activateDatabaseTimeline(conv.id);
+                                actions.regenerate(message.id);
+                                return;
+                              }
+                              final canSend = await _preparePlainTextSend();
+                              if (!canSend) return;
+                              final preparedText =
+                                  await actions.prepareTextRegenerate(
+                                message.id,
+                              );
+                              if (!mounted ||
+                                  preparedText == null ||
+                                  preparedText.isEmpty) {
+                                return;
+                              }
+                              _dispatchPlainTextSend(
+                                preparedText,
+                                throughComposer: false,
+                              );
                             },
                             onEnhanceRegenerateMessage: (message) {
                               _activateDatabaseTimeline(conv.id);
                               if (ref.read(sendingProvider)) {
-                                MoeToast.brief(
-                                  context,
-                                  'Please wait for current message to finish',
-                                );
+                                _showSendingInProgressToast();
                                 return;
                               }
                               actions.regenerateWithEnhancement(
@@ -1226,30 +1281,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 disabled: false,
                 onInputTap: _resumeChatListAutoScroll,
                 onSend: (text) async {
-                  if (ref.read(sendingProvider)) {
-                    MoeToast.brief(
-                      context,
-                      'Please wait for current message to finish',
-                    );
-                    return;
-                  }
-                  final conv = ref.read(activeConversationProvider);
-                  if (conv != null) {
-                    final ok = await _checkVisionCompat(conv: conv);
-                    if (!ok) return;
-                  }
-                  if (conv != null) {
-                    _activateDatabaseTimeline(conv.id);
-                  }
-                  _forceChatListToBottom();
-                  unawaited(actions.sendComposerText(text));
+                  final canSend = await _preparePlainTextSend();
+                  if (!canSend) return;
+                  _dispatchPlainTextSend(text);
                 },
                 onImageSelected: (imagePath, {String? text}) async {
                   if (ref.read(sendingProvider)) {
-                    MoeToast.brief(
-                      context,
-                      'Please wait for current message to finish',
-                    );
+                    _showSendingInProgressToast();
                     return;
                   }
                   final conv = ref.read(activeConversationProvider);
@@ -1266,10 +1304,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 },
                 onFileSelected: (filePath) {
                   if (ref.read(sendingProvider)) {
-                    MoeToast.brief(
-                      context,
-                      'Please wait for current message to finish',
-                    );
+                    _showSendingInProgressToast();
                     return;
                   }
                   final conv = ref.read(activeConversationProvider);

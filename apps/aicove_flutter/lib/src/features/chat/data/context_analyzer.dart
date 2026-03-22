@@ -155,13 +155,17 @@ Do not output markdown. Just JSON.
       );
 
       await _processResponse(
-          jsonStr: response,
-          conversation: conversation,
-          recentMessages: recent,
-          settings: settings,
-          apiKey: apiKey,
-          apiBase: apiBase,
-          model: modelFull);
+        jsonStr: response,
+        conversation: conversation,
+        recentMessages: recent,
+        settings: settings,
+        apiKey: apiKey,
+        apiBase: apiBase,
+        model: modelFull,
+        requestFormat: providerAuth.customConfig['requestFormat']?.toString(),
+        apiPath: providerAuth.customConfig['apiPath']?.toString(),
+        vertexExpress: providerAuth.customConfig['vertexExpress'] == true,
+      );
     } catch (e) {
       AppLogger.error('ContextAnalyzer', 'Failed to analyze context',
           metadata: {'error': e.toString()});
@@ -176,6 +180,9 @@ Do not output markdown. Just JSON.
     String? apiKey,
     String? apiBase,
     String? model,
+    String? requestFormat,
+    String? apiPath,
+    bool vertexExpress = false,
   }) async {
     try {
       // Clean up markdown if present
@@ -274,6 +281,9 @@ Do not output markdown. Just JSON.
               'apiKey': apiKey,
               'apiBase': apiBase,
               'model': model,
+              'requestFormat': requestFormat,
+              'apiPath': apiPath,
+              'vertexExpress': vertexExpress,
               'prompt': prompt, // AI 生成的 System Prompt
               'contextSnapshot': contextSnapshot,
               'convId': conversation.id,

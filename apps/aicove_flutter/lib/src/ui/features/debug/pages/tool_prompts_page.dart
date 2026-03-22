@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/services/prompt_tag_semantics_service.dart';
+import '../../../../core/services/system_reminder_service.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/moe_app_bar.dart';
 import '../../../../ui/shared/widgets/moe_toast.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
+import '../../../../features/plugins/image/image_plugin.dart';
 import '../../../../features/plugins/plugin_providers.dart';
+import '../../../../features/plugins/time_awareness/time_awareness_plugin.dart';
+import '../../../../features/plugins/tts/tts_plugin.dart';
 import '../../../../features/plugins/domain/handlers/ai_tool.dart';
 import '../../../../features/settings/app_settings.dart';
 
@@ -38,6 +43,20 @@ class _PluginPromptEntry {
     required this.tools,
     required this.onSave,
   });
+}
+
+class _TagSemanticsSummaryEntry {
+  const _TagSemanticsSummaryEntry({
+    required this.promptText,
+    required this.tagNames,
+    required this.description,
+  });
+
+  final String promptText;
+  final List<String> tagNames;
+  final String description;
+
+  bool get enabled => tagNames.isNotEmpty && promptText.trim().isNotEmpty;
 }
 
 /// 工具提示词管理页面
@@ -97,33 +116,35 @@ class _ToolPromptsPageState extends ConsumerState<ToolPromptsPage> {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
     final entries = _buildEntries(ref);
+    final tagSemanticsSummary = _buildTagSemanticsSummary(ref);
 
     return PopScope(
       canPop: !_hasUnsaved,
       onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
+        final navigator = Navigator.of(context);
         final discard = await _confirmDiscardOrSave();
         if (discard && mounted) {
-          Navigator.of(context).pop();
+          navigator.pop();
         }
       },
       child: Scaffold(
         backgroundColor: colors.surface,
         appBar: const MoeAppBar(title: '工具提示词管理', showBackButton: true),
-        body: entries.isEmpty
-            ? Center(
-                child: Text('暂无插件', style: TextStyle(color: colors.muted)),
-              )
-            : ListView.separated(
-                padding:
-                    const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                itemCount: entries.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 12),
-                itemBuilder: (context, index) => _PluginPromptCard(
-                  entry: entries[index],
-                  onDirtyChanged: _onDirtyChanged,
-                ),
+        body: ListView(
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+          children: [
+            _TagSemanticsSummaryCard(entry: tagSemanticsSummary),
+            if (entries.isNotEmpty) const SizedBox(height: 12),
+            for (var index = 0; index < entries.length; index++) ...[
+              _PluginPromptCard(
+                entry: entries[index],
+                onDirtyChanged: _onDirtyChanged,
               ),
+              if (index != entries.length - 1) const SizedBox(height: 12),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -191,7 +212,7 @@ class _ToolPromptsPageState extends ConsumerState<ToolPromptsPage> {
       icon: Icons.schedule_outlined,
       enabled: timeConfig.enabled,
       promptText: timeConfig.currentTimePromptTemplate,
-      description: '注入当前时间信息的模板，{datetime} 会被替换为实际时间',
+      description: '兼容保留项；当前实际时间感知已改走上方的 <system-reminder> 标签说明汇总',
       tools: timePlugin?.getTools() ?? [],
       onSave: (text) => timeNotifier.setCurrentTimePromptTemplate(text),
     ));
@@ -227,6 +248,192 @@ class _ToolPromptsPageState extends ConsumerState<ToolPromptsPage> {
     ));
 
     return entries;
+  }
+
+  _TagSemanticsSummaryEntry _buildTagSemanticsSummary(WidgetRef ref) {
+    final pluginManager = ref.watch(pluginManagerProvider);
+    final promptTagSemanticsService =
+        ref.watch(promptTagSemanticsServiceProvider);
+    final systemReminderService = ref.watch(systemReminderServiceProvider);
+    final timePlugin =
+        pluginManager.getPlugin('time_awareness') as TimeAwarenessPlugin?;
+    final ttsPlugin = pluginManager.getPlugin('tts') as TtsPlugin?;
+    final imagePlugin = pluginManager.getPlugin('image') as ImagePlugin?;
+    final systemReminderPrompt = () {
+      if (timePlugin == null || !timePlugin.enabled) {
+        return '';
+      }
+      final parts = <String>[
+        systemReminderService.buildReminderSemanticsPrompt(),
+        timePlugin.buildSystemReminderFieldGuide(),
+      ];
+      return parts
+          .map((part) => part.trim())
+          .where((part) => part.isNotEmpty)
+          .join('\n');
+    }();
+    final snapshot = promptTagSemanticsService.buildSnapshot(
+      <PromptTagSemanticsEntry>[
+        if (systemReminderPrompt.isNotEmpty)
+          PromptTagSemanticsEntry(
+            id: 'system-reminder',
+            tagName: '<system-reminder>',
+            prompt: systemReminderPrompt,
+          ),
+        if ((ttsPlugin?.buildTagSemanticsPrompt()?.isNotEmpty ?? false))
+          PromptTagSemanticsEntry(
+            id: 'tts',
+            tagName: '<tts>',
+            prompt: ttsPlugin!.buildTagSemanticsPrompt()!,
+          ),
+        if ((imagePlugin?.buildTagSemanticsPrompt()?.isNotEmpty ?? false))
+          PromptTagSemanticsEntry(
+            id: 'image',
+            tagName: '<image>',
+            prompt: imagePlugin!.buildTagSemanticsPrompt()!,
+          ),
+      ],
+    );
+    return _TagSemanticsSummaryEntry(
+      promptText: snapshot.mergedPrompt,
+      tagNames: <String>[
+        for (final entry in snapshot.activeEntries) entry.tagName,
+      ],
+      description:
+          '汇总当前会实际注入到 system prompt 的标签说明。图片部分展示的是全局基础模板，角色专属追加规则会在真实会话里再拼上。',
+    );
+  }
+}
+
+class _TagSemanticsSummaryCard extends StatelessWidget {
+  const _TagSemanticsSummaryCard({
+    required this.entry,
+  });
+
+  final _TagSemanticsSummaryEntry entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.moeColors;
+    final promptText = entry.promptText.trim();
+    final enabledTagsText =
+        entry.tagNames.isEmpty ? '当前没有启用的标签说明注入' : entry.tagNames.join('  ');
+
+    return MoeG2ClipRRect(
+      radius: 12,
+      child: Container(
+        decoration: MoeG2Decoration(
+          radius: 12,
+          color: colors.panel,
+          border: Border.all(color: colors.border, width: 1),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.label_important_outline,
+                      color: colors.primary, size: 22),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              '标签说明汇总提示词',
+                              style: TextStyle(
+                                color: colors.text,
+                                fontSize: 15,
+                                fontWeight: MoeFontWeights.emphasis,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              decoration: MoeG2Decoration(
+                                radius: 4,
+                                color: entry.enabled
+                                    ? colors.primary.withValues(alpha: 0.1)
+                                    : colors.muted.withValues(alpha: 0.1),
+                              ),
+                              child: Text(
+                                entry.enabled ? '已注入' : '未注入',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: entry.enabled
+                                      ? colors.primary
+                                      : colors.muted,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          entry.description,
+                          style: TextStyle(
+                              fontSize: 12, color: colors.textSecondary),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: MoeG2Decoration(
+                  radius: 8,
+                  color: colors.surface,
+                ),
+                child: Text(
+                  enabledTagsText,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: entry.enabled ? colors.text : colors.muted,
+                    fontWeight: MoeFontWeights.emphasis,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                '当前汇总结果',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: MoeFontWeights.emphasis,
+                  color: colors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: MoeG2Decoration(
+                  radius: 8,
+                  color: colors.surface,
+                  border: Border.all(color: colors.border),
+                ),
+                child: SelectableText(
+                  promptText.isEmpty ? '当前没有可注入的标签说明。' : promptText,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: promptText.isEmpty ? colors.muted : colors.text,
+                    height: 1.45,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -393,8 +600,8 @@ class _PluginPromptCardState extends State<_PluginPromptCard> {
                                 decoration: MoeG2Decoration(
                                   radius: 4,
                                   color: entry.enabled
-                                      ? colors.primary.withOpacity(0.1)
-                                      : colors.muted.withOpacity(0.1),
+                                      ? colors.primary.withValues(alpha: 0.1)
+                                      : colors.muted.withValues(alpha: 0.1),
                                 ),
                                 child: Text(
                                   entry.enabled ? '已启用' : '已禁用',
@@ -437,7 +644,7 @@ class _PluginPromptCardState extends State<_PluginPromptCard> {
                             horizontal: 6, vertical: 2),
                         decoration: MoeG2Decoration(
                           radius: 4,
-                          color: colors.primary.withOpacity(0.08),
+                          color: colors.primary.withValues(alpha: 0.08),
                         ),
                         child: Text(
                           '${entry.tools.length} 工具',

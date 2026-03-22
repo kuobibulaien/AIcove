@@ -11,6 +11,7 @@ class ChatSendTracePayloadBuilder {
     required String personaPrompt,
     required bool includeInternalImageRule,
     required String internalImageContextRule,
+    String? tagSemanticsPrompt,
     required PluginPromptBuildResult pluginPromptBuild,
   }) {
     final entries = <Map<String, dynamic>>[];
@@ -44,6 +45,11 @@ class ChatSendTracePayloadBuilder {
         content: internalImageContextRule,
       );
     }
+    addEntry(
+      source: 'promptTags.semantics',
+      label: '标签说明汇总',
+      content: tagSemanticsPrompt ?? '',
+    );
     for (final promptEntry in pluginPromptBuild.entries) {
       if (!promptEntry.injected) continue;
       addEntry(
@@ -61,10 +67,11 @@ class ChatSendTracePayloadBuilder {
 
   Map<String, dynamic> buildRuntimeContextPayload({
     required DateTime now,
-    required DateTime? lastMessageTime,
+    required DateTime? previousUserMessageTime,
     required List<dynamic> effectivePlugins,
-    required PluginPromptBuildResult pluginPromptBuild,
     required int historyCount,
+    required bool systemReminderInjected,
+    String? systemReminderContent,
   }) {
     Map<String, dynamic>? timeAwarenessConfig;
     String? timeAwarenessPluginName;
@@ -77,16 +84,6 @@ class ChatSendTracePayloadBuilder {
       break;
     }
 
-    PluginPromptEntry? timePromptEntry;
-    for (final promptEntry in pluginPromptBuild.entries) {
-      if (promptEntry.pluginId != 'time_awareness') continue;
-      timePromptEntry = promptEntry;
-      break;
-    }
-
-    final elapsed =
-        lastMessageTime == null ? null : now.difference(lastMessageTime);
-
     return <String, dynamic>{
       'clockSource': 'device_local',
       'generatedAt': now.toIso8601String(),
@@ -94,23 +91,17 @@ class ChatSendTracePayloadBuilder {
       'timezoneOffset': _formatTimezoneOffset(now.timeZoneOffset),
       'timezoneOffsetMinutes': now.timeZoneOffset.inMinutes,
       'historyCount': historyCount,
-      if (lastMessageTime != null)
-        'lastMessageTime': lastMessageTime.toIso8601String(),
-      if (elapsed != null)
-        'elapsedSinceLastMessage': <String, dynamic>{
-          'milliseconds': elapsed.inMilliseconds,
-          'minutes': elapsed.inMinutes,
-          'human': _formatElapsedForTrace(elapsed),
-        },
       'timeAwareness': <String, dynamic>{
         'pluginEnabled': timeAwarenessPluginEnabled,
         if (timeAwarenessPluginName != null)
           'pluginName': timeAwarenessPluginName,
-        'promptInjected': timePromptEntry?.injected ?? false,
-        if (timePromptEntry != null) 'reason': timePromptEntry.reason,
+        'systemReminderInjected': systemReminderInjected,
         if (timeAwarenessConfig != null) 'config': timeAwarenessConfig,
-        if (timePromptEntry != null && timePromptEntry.content.isNotEmpty)
-          'promptContent': timePromptEntry.content,
+        'currentTime': now.toIso8601String(),
+        'previousUserMessageTime':
+            previousUserMessageTime?.toIso8601String() ?? 'unknown',
+        if (systemReminderContent != null && systemReminderContent.isNotEmpty)
+          'systemReminderContent': systemReminderContent,
       },
     };
   }
@@ -122,6 +113,8 @@ class ChatSendTracePayloadBuilder {
     required int messagesAfterSystemCount,
     required List<Map<String, dynamic>> finalMessages,
     required int toolsCount,
+    required bool systemReminderInjected,
+    String? systemReminderContent,
   }) {
     final finalSystemPrompt = [
       for (final entry in systemAssemblyEntries)
@@ -137,6 +130,9 @@ class ChatSendTracePayloadBuilder {
       'messagesCountAfterSystem': messagesAfterSystemCount,
       'messagesCountAfterTruncate': finalMessages.length,
       'wasTruncated': finalMessages.length < messagesAfterSystemCount,
+      'systemReminderInjected': systemReminderInjected,
+      if (systemReminderContent != null && systemReminderContent.isNotEmpty)
+        'systemReminderContent': systemReminderContent,
       'finalMessageRoles': <String>[
         for (final message in finalMessages) (message['role'] ?? '').toString(),
       ],
@@ -151,31 +147,5 @@ class ChatSendTracePayloadBuilder {
     final hours = (absoluteMinutes ~/ 60).toString().padLeft(2, '0');
     final minutes = (absoluteMinutes % 60).toString().padLeft(2, '0');
     return '$sign$hours:$minutes';
-  }
-
-  String? _formatElapsedForTrace(Duration elapsed) {
-    final totalMinutes = elapsed.inMinutes;
-    if (totalMinutes < 1) return '不足1分钟';
-
-    final days = elapsed.inDays;
-    final hours = elapsed.inHours;
-
-    if (days >= 1) {
-      final remainHours = hours - days * 24;
-      if (remainHours > 0) {
-        return '$days天$remainHours小时';
-      }
-      return '$days天';
-    }
-
-    if (hours >= 1) {
-      final remainMinutes = totalMinutes - hours * 60;
-      if (remainMinutes > 0) {
-        return '$hours小时$remainMinutes分钟';
-      }
-      return '$hours小时';
-    }
-
-    return '$totalMinutes分钟';
   }
 }

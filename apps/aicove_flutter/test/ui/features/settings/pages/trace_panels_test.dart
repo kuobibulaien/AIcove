@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aicove_flutter/src/features/observability/trace_models.dart';
@@ -342,6 +343,80 @@ void main() {
       expect(find.textContaining('Improperly formed request'), findsOneWidget);
       expect(find.textContaining('messages[0] is invalid'), findsOneWidget);
       expect(find.text('系统提示词'), findsNothing);
+    });
+
+    testWidgets(
+        'TracePayloadPanel should copy current section and all sections',
+        (tester) async {
+      String? copiedText;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        SystemChannels.platform,
+        (methodCall) async {
+          if (methodCall.method == 'Clipboard.setData') {
+            final args =
+                (methodCall.arguments as Map?) ?? const <dynamic, dynamic>{};
+            copiedText = args['text']?.toString();
+            return null;
+          }
+          if (methodCall.method == 'Clipboard.getData') {
+            return <String, dynamic>{'text': copiedText ?? ''};
+          }
+          return null;
+        },
+      );
+      addTearDown(() {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(SystemChannels.platform, null);
+      });
+
+      final event = TraceEvent(
+        traceId: 'tr_copy',
+        sessionId: 's1',
+        turnId: 't1',
+        roundIndex: 1,
+        eventSeq: 7,
+        stage: TraceStage.modelResponseReceived.value,
+        status: TraceEventStatus.success.value,
+        source: 'test',
+        startedAt: DateTime(2026, 3, 2, 12, 3, 0),
+        endedAt: DateTime(2026, 3, 2, 12, 3, 0),
+        durationMs: 100,
+      );
+
+      final payloadEnvelope = <String, dynamic>{
+        'payload': {
+          'rawContext': '[{"role":"user","content":"hello"}]',
+          'finalReply': 'done',
+        },
+      };
+
+      await tester.pumpWidget(
+        _wrap(
+          SizedBox(
+            height: 420,
+            child: TracePayloadPanel(
+              selectedEvent: event,
+              payloadEnvelope: payloadEnvelope,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('复制当前区块'));
+      await tester.pumpAndSettle();
+      expect(copiedText, isNotNull);
+      expect(copiedText, contains('[上下文]'));
+
+      await tester.tap(find.byTooltip('复制全部区块'));
+      await tester.pumpAndSettle();
+      expect(copiedText, isNotNull);
+      expect(copiedText, contains('[上下文]'));
+      expect(copiedText, contains('[最终回复]'));
+
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
     });
   });
 }

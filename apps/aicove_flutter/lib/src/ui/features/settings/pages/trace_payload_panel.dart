@@ -1,9 +1,11 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../../features/observability/trace_models.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
+import '../../../../ui/shared/widgets/moe_toast.dart';
 import '../../../../ui/theme/tokens.dart';
 import 'log_formatters.dart' show tryFormatJson, stageToZh;
 
@@ -79,14 +81,40 @@ class _TracePayloadPanelState extends State<TracePayloadPanel> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
-          child: Text(
-            stageToZh(event.stage),
-            style: TextStyle(
-              color: colors.text,
-              fontSize: 14,
-              fontWeight: MoeFontWeights.emphasis,
-            ),
+          padding: const EdgeInsets.fromLTRB(12, 10, 8, 6),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  stageToZh(event.stage),
+                  style: TextStyle(
+                    color: colors.text,
+                    fontSize: 14,
+                    fontWeight: MoeFontWeights.emphasis,
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: '复制当前区块',
+                icon: Icon(
+                  Icons.copy_outlined,
+                  color: colors.textSecondary,
+                  size: 18,
+                ),
+                visualDensity: VisualDensity.compact,
+                onPressed: () => _copyCurrentSection(current),
+              ),
+              IconButton(
+                tooltip: '复制全部区块',
+                icon: Icon(
+                  Icons.library_books_outlined,
+                  color: colors.textSecondary,
+                  size: 18,
+                ),
+                visualDensity: VisualDensity.compact,
+                onPressed: () => _copyAllSections(sections),
+              ),
+            ],
           ),
         ),
         if (sections.length > 1) ...[
@@ -134,6 +162,43 @@ class _TracePayloadPanelState extends State<TracePayloadPanel> {
         ),
       ],
     );
+  }
+
+  Future<void> _copyCurrentSection(_PayloadSection section) async {
+    final content = section.content.trim();
+    if (content.isEmpty || content == '(空)') {
+      MoeToast.info(context, '当前区块暂无可复制内容');
+      return;
+    }
+    final text = '[${section.label}]\n$content';
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    MoeToast.success(context, '已复制${section.label}');
+  }
+
+  Future<void> _copyAllSections(List<_PayloadSection> sections) async {
+    final copyable = sections.where((section) {
+      final content = section.content.trim();
+      return content.isNotEmpty && content != '(空)';
+    }).toList(growable: false);
+    if (copyable.isEmpty) {
+      MoeToast.info(context, '当前事件暂无可复制内容');
+      return;
+    }
+
+    final buffer = StringBuffer();
+    for (var i = 0; i < copyable.length; i++) {
+      final section = copyable[i];
+      buffer.writeln('[${section.label}]');
+      buffer.writeln(section.content.trim());
+      if (i != copyable.length - 1) {
+        buffer.writeln('---');
+      }
+    }
+
+    await Clipboard.setData(ClipboardData(text: buffer.toString().trim()));
+    if (!mounted) return;
+    MoeToast.success(context, '已复制${copyable.length}个区块');
   }
 
   Widget _buildTabChip(

@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/providers/google_api_mode.dart';
+import '../../../core/api/providers/provider_chat_api_path.dart';
 import '../app_settings.dart';
 import 'provider_detail_support.dart';
 
@@ -44,13 +45,19 @@ class ProviderDetailActions {
     required ProviderAuth provider,
     required String displayName,
     required String apiBaseUrl,
+    required String apiPath,
     required String apiKey,
   }) {
+    final customConfig = copyCustomConfigWithProviderChatApiPath(
+      provider.customConfig,
+      apiPath,
+    );
     if (isProviderMultiKeyEnabled(provider)) {
       return _notifier.editProvider(
         providerId: provider.id,
         displayName: displayName,
         apiBaseUrl: apiBaseUrl,
+        customConfig: customConfig,
       );
     }
     return _notifier.editProvider(
@@ -58,6 +65,7 @@ class ProviderDetailActions {
       displayName: displayName,
       apiBaseUrl: apiBaseUrl,
       apiKeys: <String>[apiKey],
+      customConfig: customConfig,
     );
   }
 
@@ -114,9 +122,14 @@ class ProviderDetailActions {
   Future<void> updateRequestFormat(
     ProviderAuth provider,
     ProviderDetailRequestFormat format,
+    String? apiPath,
   ) {
-    final customConfig = Map<String, dynamic>.from(provider.customConfig);
+    var customConfig = Map<String, dynamic>.from(provider.customConfig);
     customConfig['requestFormat'] = format.value;
+    customConfig = copyCustomConfigWithProviderChatApiPath(
+      customConfig,
+      apiPath,
+    );
     return _notifier.editProvider(
       providerId: provider.id,
       customConfig: customConfig,

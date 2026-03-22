@@ -86,12 +86,14 @@ class ChatPluginContextBuilder {
     required String userMessage,
     required bool supportsToolCalling,
     String? conversationId,
+    Set<String> excludedPluginIds = const <String>{},
   }) async {
     final result = await buildPluginPromptEntriesWithFilter(
       plugins,
       userMessage: userMessage,
       supportsToolCalling: supportsToolCalling,
       conversationId: conversationId,
+      excludedPluginIds: excludedPluginIds,
     );
     return result.mergedPrompt;
   }
@@ -101,6 +103,7 @@ class ChatPluginContextBuilder {
     required String userMessage,
     required bool supportsToolCalling,
     String? conversationId,
+    Set<String> excludedPluginIds = const <String>{},
   }) async {
     if (plugins.isEmpty) {
       return const PluginPromptBuildResult(entries: <PluginPromptEntry>[]);
@@ -108,6 +111,19 @@ class ChatPluginContextBuilder {
 
     final entries = <PluginPromptEntry>[];
     for (final plugin in plugins) {
+      if (excludedPluginIds.contains(plugin.id)) {
+        entries.add(
+          PluginPromptEntry(
+            order: entries.length,
+            pluginId: plugin.id,
+            pluginName: plugin.name,
+            injected: false,
+            content: '',
+            reason: 'handled_by_tag_semantics',
+          ),
+        );
+        continue;
+      }
       try {
         final prompt = plugin is MemoryPlugin
             ? await plugin.getSystemPrompt(

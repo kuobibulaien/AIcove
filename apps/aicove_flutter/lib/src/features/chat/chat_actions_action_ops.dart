@@ -276,7 +276,6 @@ extension ChatActionsActionOps on ChatActions {
               streamDelivery = _StreamPlaceholderDelivery(
                 _ref,
                 convId: convId,
-                userMsgId: messageId,
                 formatConfig: settings.messageFormatConfig,
                 enableTtsPlaceholders: settings.ttsEnabled,
                 segmentDelay: Duration(
@@ -309,19 +308,14 @@ extension ChatActionsActionOps on ChatActions {
 
               if (shouldCommitStream) {
                 await streamDelivery!.finalize(finalText: streamFinalText);
-                final streamCommit = await streamDelivery!.commitFinalTimeline(
-                  finalText: streamFinalText,
-                );
-                await _ttsHandler.deliverSegmentedMessages(
+                await _commitStreamDelivery(
+                  streamDelivery: streamDelivery!,
                   convId: convId,
                   userMsgId: messageId,
                   buildResult: buildResult,
                   replyText: apiResult.replyText,
                   pluginEvents: apiResult.pluginEvents,
                   ttsEnabled: settings.ttsEnabled,
-                  appendAfterStreamText: true,
-                  streamTextMessageIds: streamCommit.textMessageIds,
-                  streamPendingTtsMessages: streamCommit.pendingTtsMessages,
                 );
                 streamCommitted = true;
                 return;
@@ -396,9 +390,75 @@ extension ChatActionsActionOps on ChatActions {
     await _regenerateInternal(aiMessageId, useEnhancement: false);
   }
 
+  /// 预检普通文本重新生成是否可改走现有发送链。
+  Future<String?> peekTextRegenerate(String aiMessageId) async {
+    return _resolveTextRegenerate(
+      aiMessageId,
+      truncateFromUserMessage: false,
+    );
+  }
+
+  /// 为普通文本重新生成准备重发文本，并从原用户消息开始截断当前轮次。
+  Future<String?> prepareTextRegenerate(String aiMessageId) async {
+    return _resolveTextRegenerate(
+      aiMessageId,
+      truncateFromUserMessage: true,
+    );
+  }
+
   /// 增强重新生成（使用增强上下文拼接）
   Future<void> regenerateWithEnhancement(String aiMessageId) async {
     await _regenerateInternal(aiMessageId, useEnhancement: true);
+  }
+
+  Future<String?> _resolveTextRegenerate(
+    String aiMessageId, {
+    required bool truncateFromUserMessage,
+  }) async {
+    final conv = _ref.read(activeConversationProvider);
+    if (conv == null) return null;
+    final messages = await _loadConversationMessages(conv.id);
+    final userMsg = _findRegenerateSourceUserMessage(messages, aiMessageId);
+    if (userMsg == null || !_canReuseTextSendForRegenerate(userMsg)) {
+      return null;
+    }
+
+    final userText = _extractEditableTextForRecall(userMsg);
+    if (userText.isEmpty) return null;
+    if (truncateFromUserMessage) {
+      await _historyPort.truncateFromMessage(
+        conversationId: conv.id,
+        fromMessageId: userMsg.id,
+      );
+    }
+    return userText;
+  }
+
+  Message? _findRegenerateSourceUserMessage(
+    List<Message> messages,
+    String aiMessageId,
+  ) {
+    final msgIndex = messages.indexWhere((m) => m.id == aiMessageId);
+    if (msgIndex < 0) return null;
+
+    int userMsgIndex = msgIndex - 1;
+    while (userMsgIndex >= 0 && messages[userMsgIndex].role != 'user') {
+      userMsgIndex--;
+    }
+    if (userMsgIndex < 0) return null;
+    return messages[userMsgIndex];
+  }
+
+  bool _canReuseTextSendForRegenerate(Message userMsg) {
+    if (userMsg.role != 'user') return false;
+    final blocks = userMsg.blocks;
+    if (blocks == null || blocks.isEmpty) {
+      return _extractEditableTextForRecall(userMsg).isNotEmpty;
+    }
+    if (blocks.any((block) => block is! TextBlock)) {
+      return false;
+    }
+    return _extractEditableTextForRecall(userMsg).isNotEmpty;
   }
 
   Future<void> _regenerateInternal(
@@ -410,18 +470,8 @@ extension ChatActionsActionOps on ChatActions {
     final convId = conv.id;
     final messages = await _loadConversationMessages(convId);
 
-    // 找到要重新生成的AI消息索引
-    final msgIndex = messages.indexWhere((m) => m.id == aiMessageId);
-    if (msgIndex < 0) return;
-
-    // 找到该AI消息对应的用户消息（通常是前一条）
-    int userMsgIndex = msgIndex - 1;
-    while (userMsgIndex >= 0 && messages[userMsgIndex].role != 'user') {
-      userMsgIndex--;
-    }
-    if (userMsgIndex < 0) return;
-
-    final userMsg = messages[userMsgIndex];
+    final userMsg = _findRegenerateSourceUserMessage(messages, aiMessageId);
+    if (userMsg == null) return;
     final userText = userMsg.displayText;
     final traceContext = await _startTurnTrace(
       convId: convId,
@@ -541,7 +591,6 @@ extension ChatActionsActionOps on ChatActions {
               streamDelivery = _StreamPlaceholderDelivery(
                 _ref,
                 convId: convId,
-                userMsgId: userMsg.id,
                 formatConfig: settings.messageFormatConfig,
                 enableTtsPlaceholders: settings.ttsEnabled,
                 segmentDelay: Duration(
@@ -567,19 +616,14 @@ extension ChatActionsActionOps on ChatActions {
 
               if (shouldCommitStream) {
                 await streamDelivery!.finalize(finalText: streamFinalText);
-                final streamCommit = await streamDelivery!.commitFinalTimeline(
-                  finalText: streamFinalText,
-                );
-                await _ttsHandler.deliverSegmentedMessages(
+                await _commitStreamDelivery(
+                  streamDelivery: streamDelivery!,
                   convId: convId,
                   userMsgId: userMsg.id,
                   buildResult: buildResult,
                   replyText: apiResult.replyText,
                   pluginEvents: apiResult.pluginEvents,
                   ttsEnabled: settings.ttsEnabled,
-                  appendAfterStreamText: true,
-                  streamTextMessageIds: streamCommit.textMessageIds,
-                  streamPendingTtsMessages: streamCommit.pendingTtsMessages,
                 );
                 streamCommitted = true;
                 return;

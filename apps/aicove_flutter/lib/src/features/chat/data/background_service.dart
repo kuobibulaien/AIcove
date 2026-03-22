@@ -10,6 +10,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 
+import '../../../core/api/providers/provider_chat_api_path.dart';
 import '../../../core/database/database.dart';
 import '../../../core/database/repositories/repositories.dart';
 
@@ -41,11 +42,14 @@ Future<void> _handleActiveReplyTask(Map<String, dynamic> data) async {
   final String apiKey = data['apiKey'] ?? '';
   final String apiBase = data['apiBase'] ?? '';
   final String model = data['model'] ?? '';
+  final String requestFormat = data['requestFormat'] ?? '';
+  final String apiPath = data['apiPath'] ?? '';
+  final bool vertexExpress = data['vertexExpress'] == true;
   final String prompt = data['prompt'] ?? '';
   final String? contextSnapshot = data['contextSnapshot'] as String?;
   final String convId = data['convId'] ?? '';
   final String characterName = data['characterName'] ?? 'AIcove';
-  
+
   if (apiKey.isEmpty || convId.isEmpty) {
     print('[Background] Missing config, aborting.');
     return;
@@ -60,7 +64,8 @@ Future<void> _handleActiveReplyTask(Map<String, dynamic> data) async {
   if (triggerId.isNotEmpty) {
     final active = await _isTriggerStillActive(triggerId, convId);
     if (!active) {
-      print('[Background] Trigger is no longer active, skip task. triggerId=$triggerId');
+      print(
+          '[Background] Trigger is no longer active, skip task. triggerId=$triggerId');
       return;
     }
   }
@@ -71,6 +76,9 @@ Future<void> _handleActiveReplyTask(Map<String, dynamic> data) async {
     apiBase,
     model,
     prompt,
+    requestFormat: requestFormat,
+    apiPath: apiPath,
+    vertexExpress: vertexExpress,
     contextSnapshot: contextSnapshot,
   );
   if (reply == null || reply.isEmpty) {
@@ -94,15 +102,31 @@ Future<String?> _fetchAiReply(
   String base,
   String model,
   String systemPrompt, {
+  String requestFormat = '',
+  String apiPath = '',
+  bool vertexExpress = false,
   String? contextSnapshot,
 }) async {
   try {
-    // 简单的 OpenAI 格式调用，不依赖复杂的 AgentClient
+    final split = model.split(':');
+    final provider =
+        split.length >= 2 ? split.first.trim() : requestFormat.trim();
+    final modelName = split.length >= 2 ? split.sublist(1).join(':') : model;
     final baseUrl = base.isEmpty ? 'https://api.openai.com/v1' : base;
-    final endpoint = baseUrl.endsWith('/') ? '${baseUrl}chat/completions' : '$baseUrl/chat/completions';
-    final modelName = model.contains(':') ? model.split(':').last : model;
+    final customConfig = <String, dynamic>{
+      if (requestFormat.trim().isNotEmpty)
+        'requestFormat': requestFormat.trim(),
+      if (apiPath.trim().isNotEmpty) kProviderChatApiPathField: apiPath.trim(),
+      if (vertexExpress) 'vertexExpress': true,
+    };
+    final endpoint = buildProviderChatEndpoint(
+      provider: provider.isEmpty ? 'openai' : provider,
+      apiBaseUrl: baseUrl,
+      model: modelName,
+      customConfig: customConfig,
+    );
     final contextMessages = _parseContextSnapshot(contextSnapshot);
-    
+
     final body = {
       'model': modelName,
       'messages': [
@@ -163,7 +187,7 @@ Future<void> _showNotification(String title, String body) async {
   final flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
   const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
   const initSettings = InitializationSettings(android: androidSettings);
-  
+
   // 重新初始化（因为是在后台 isolate）
   await flutterLocalNotificationsPlugin.initialize(initSettings);
 
@@ -244,7 +268,8 @@ Future<bool> _isAutoReplyEnabled() async {
   }
 }
 
-Future<bool> _isTriggerStillActive(String triggerId, String conversationId) async {
+Future<bool> _isTriggerStillActive(
+    String triggerId, String conversationId) async {
   try {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_triggerStoreKey);

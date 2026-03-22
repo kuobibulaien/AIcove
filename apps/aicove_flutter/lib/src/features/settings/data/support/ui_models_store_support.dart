@@ -1,6 +1,7 @@
 import '../../settings_models.dart';
 import '../../../../core/api/providers/google_api_mode.dart';
 import '../../../../core/api/providers/provider_adapter_factory.dart';
+import '../../../../core/api/providers/zai_compat.dart';
 
 /// SharedPreferences 键名，统一管理模型与渠道配置。
 const kUiModelsStoreKey = 'aicove.ui_models.v1';
@@ -127,6 +128,26 @@ Map<String, dynamic> buildDefaultUiModelsStoreData() => <String, dynamic>{
           'capabilities': <String>['chat'],
         },
         {
+          'id': 'zai',
+          'displayName': 'Z.AI',
+          'apiKeys': <String>[],
+          'apiBaseUrl': kZaiGeneralApiBase,
+          'enabled': false,
+          'models': List<String>.from(kZaiDefaultChatModels),
+          'visible_models': <String>['glm-5', 'glm-5-turbo', 'glm-4.7'],
+          'hidden_models': <String>[
+            'glm-4.7-flash',
+            'glm-4.7-flashx',
+            'glm-4.6',
+            'glm-4.5',
+            'glm-4.5-air',
+          ],
+          'capabilities': <String>['chat'],
+          'custom_config': <String, dynamic>{
+            'requestFormat': 'openai',
+          },
+        },
+        {
           'id': 'volcengine',
           'displayName': '火山引擎',
           'apiKeys': <String>[],
@@ -145,6 +166,7 @@ Map<String, dynamic> buildDefaultUiModelsStoreData() => <String, dynamic>{
         'deepseek-reasoner': 'DeepSeek Reasoner',
       },
       'backend_api_key': '',
+      'applied_migrations': <String>[kZaiProviderBackfillMigrationId],
       'image_generation_enabled': false,
       'history_message_limit': 100,
       'message_chunking_enabled': false,

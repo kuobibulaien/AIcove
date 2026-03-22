@@ -1,4 +1,6 @@
 import '../../../core/api/providers/google_api_mode.dart';
+import '../../../core/api/providers/provider_adapter_factory.dart';
+import '../../../core/api/providers/provider_chat_api_path.dart';
 import '../app_settings.dart';
 
 const providerMultiKeyEnabledField = 'multi_key_enabled';
@@ -100,6 +102,27 @@ bool isProviderDetailVertexExpressMode(ProviderAuth provider) {
     return false;
   }
   return isVertexExpressEnabled(provider.customConfig);
+}
+
+String resolveProviderDetailChatProvider(ProviderAuth provider) {
+  return ProviderAdapterFactory.resolveProvider(
+    provider.id,
+    customConfig: provider.customConfig,
+    apiBaseUrl: provider.apiBaseUrl,
+  );
+}
+
+String defaultProviderDetailChatApiPathForFormat(
+  ProviderDetailRequestFormat format,
+) {
+  return defaultChatApiPathForProvider(format.value);
+}
+
+String resolveProviderDetailChatApiPath(ProviderAuth provider) {
+  return resolveProviderChatApiPath(
+    resolveProviderDetailChatProvider(provider),
+    customConfig: provider.customConfig,
+  );
 }
 
 class ProviderMultiKeyItem {

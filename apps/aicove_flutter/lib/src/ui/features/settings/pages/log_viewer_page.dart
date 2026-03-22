@@ -403,6 +403,9 @@ class _LogViewerPageState extends State<LogViewerPage> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useRootNavigator: true,
+      useSafeArea: true,
+      enableDrag: false,
       backgroundColor: colors.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),

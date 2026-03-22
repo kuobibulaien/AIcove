@@ -218,7 +218,8 @@ bool _isGeneratingPlaceholderMessage(Message message) {
           false);
 }
 
-List<Message> _collectGeneratingPlaceholderMessages(Iterable<Message> messages) {
+List<Message> _collectGeneratingPlaceholderMessages(
+    Iterable<Message> messages) {
   return messages
       .where(_isGeneratingPlaceholderMessage)
       .toList(growable: false);
@@ -940,6 +941,89 @@ class _StreamingInlineImageSendService extends _InMemoryHistorySendService {
   }
 }
 
+class _StreamingAttributeImageTagSendService
+    extends _InMemoryHistorySendService {
+  _StreamingAttributeImageTagSendService(super.ref, this._settings);
+
+  final AppSettings _settings;
+
+  @override
+  Future<ApiConfig> prepareApiConfig({
+    required Conversation conv,
+    required List<Message> history,
+    required String? userText,
+    TraceLogger? trace,
+    String? overrideModel,
+    String? conversationId,
+    TraceContext? traceContext,
+  }) async {
+    return ApiConfig(
+      settings: _settings,
+      modelFullId: overrideModel ?? _settings.defaultModelName,
+      providerApiBase: _settings.apiBaseUrl,
+      providerApiKey: null,
+      customConfig: const <String, dynamic>{},
+      toolPrefs: const <String, dynamic>{},
+      messages: const <Map<String, dynamic>>[],
+      tools: null,
+      enabledPluginIds: null,
+      modelTemperature: null,
+      modelTopP: null,
+      modelContextMessageLimit: null,
+    );
+  }
+
+  @override
+  Future<ApiCallResult> executeApiCall({
+    required ApiConfig config,
+    required String sessionId,
+    required String? userText,
+    String? turnId,
+    TraceLogger? trace,
+    int maxRounds = 5,
+    void Function(String toolName)? onToolExecuting,
+    bool enableStreaming = false,
+    void Function(String delta)? onStreamTextDelta,
+    void Function()? onStreamTextReset,
+    void Function()? onStreamToolCallObserved,
+    void Function()? onStreamingFallback,
+  }) async {
+    onStreamTextDelta?.call('第一句。');
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    onStreamTextDelta?.call('<image source="history">保留这段');
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    onStreamTextDelta?.call('</image>');
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    onStreamTextDelta?.call('第二句。');
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    return const ApiCallResult(
+      replyText: '第一句。<image source="history">保留这段</image>第二句。',
+      processedText: '第一句。<image source="history">保留这段</image>第二句。',
+      pluginEvents: <PluginEvent>[],
+      toolResults: <Map<String, dynamic>>[],
+    );
+  }
+
+  @override
+  AssistantMessageBuildResult buildAssistantMessages({
+    required ApiCallResult apiResult,
+    required AppSettings settings,
+  }) {
+    return AssistantMessageBuildResult(
+      messages: <Message>[
+        Message(
+          id: 'assistant_stream_attribute_image_result',
+          role: 'assistant',
+          content: apiResult.processedText,
+          createdAt: DateTime.now(),
+          status: 'sent',
+        ),
+      ],
+      lastMessageText: apiResult.processedText,
+    );
+  }
+}
+
 class _StreamingMixedTtsImageTailSendService
     extends _InMemoryHistorySendService {
   _StreamingMixedTtsImageTailSendService(super.ref, this._settings);
@@ -1049,6 +1133,7 @@ class _RecordingStreamTtsHandler extends ChatTtsHandler {
   _RecordingStreamTtsHandler(super.ref);
 
   List<Message> lastPendingStreamTtsMessages = const <Message>[];
+  bool lastAppendAfterStreamText = false;
 
   @override
   Future<void> deliverSegmentedMessages({
@@ -1063,6 +1148,7 @@ class _RecordingStreamTtsHandler extends ChatTtsHandler {
     List<Message>? streamPendingTtsMessages,
     TraceLogger? trace,
   }) async {
+    lastAppendAfterStreamText = appendAfterStreamText;
     lastPendingStreamTtsMessages =
         List<Message>.from(streamPendingTtsMessages ?? const <Message>[]);
   }
@@ -1423,6 +1509,39 @@ class _NoopChatTtsHandler extends ChatTtsHandler {
   }) async {}
 }
 
+class _DeliverBuildResultOnlyChatTtsHandler extends ChatTtsHandler {
+  _DeliverBuildResultOnlyChatTtsHandler(this._ref) : super(_ref);
+
+  final Ref _ref;
+  bool lastAppendAfterStreamText = false;
+
+  @override
+  Future<void> deliverSegmentedMessages({
+    required String convId,
+    required String userMsgId,
+    required AssistantMessageBuildResult buildResult,
+    required String replyText,
+    required List<PluginEvent> pluginEvents,
+    required bool ttsEnabled,
+    bool appendAfterStreamText = false,
+    List<String>? streamTextMessageIds,
+    List<Message>? streamPendingTtsMessages,
+    TraceLogger? trace,
+  }) async {
+    lastAppendAfterStreamText = appendAfterStreamText;
+    if (buildResult.messages.isEmpty) {
+      return;
+    }
+    await _ref.read(chatSendServiceProvider).deliverAssistantMessages(
+          convId: convId,
+          userMsgId: userMsgId,
+          messages: buildResult.messages,
+          lastMessagePreview: buildResult.lastMessageText,
+          trace: trace,
+        );
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   _installPlatformChannelMocks();
@@ -1627,6 +1746,166 @@ void main() {
     expect(deletedUser!.deletedAt, isNotNull);
     expect(deletedAi, isNotNull);
     expect(deletedAi!.deletedAt, isNotNull);
+  });
+
+  test('prepareTextRegenerate 会复用原用户文本并从用户消息开始截断', () async {
+    final now = DateTime.now();
+    final userMsg = Message(
+      id: 'msg_regen_text_user',
+      role: 'user',
+      content: '这句原话会被重新发送',
+      createdAt: now.subtract(const Duration(seconds: 2)),
+      status: 'sent',
+    );
+    final aiMsg = Message(
+      id: 'msg_regen_text_ai',
+      role: 'assistant',
+      content: '这句 AI 回复不应该被当作发送文本',
+      createdAt: now.subtract(const Duration(seconds: 1)),
+      status: 'sent',
+    );
+    final conv = Conversation(
+      id: 'conv_regen_text_prepare',
+      title: 'C_REGEN_TEXT',
+      displayName: 'C_REGEN_TEXT',
+      createdAt: now,
+      updatedAt: now,
+      messages: [userMsg, aiMsg],
+      lastMessage: aiMsg.displayText,
+      lastMessageTime: aiMsg.createdAt,
+    );
+
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+    await _insertMessage(db, conv.id, userMsg);
+    await _insertMessage(db, conv.id, aiMsg);
+
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        conversationsProvider.overrideWith(
+          () => _FakeConversationsNotifier([conv]),
+        ),
+        activeConversationProvider.overrideWith((ref) {
+          final list = ref.watch(conversationsProvider).valueOrNull;
+          if (list == null || list.isEmpty) return null;
+          return list.first;
+        }),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await container.read(conversationsProvider.future);
+    final actions = container.read(chatActionsProvider);
+
+    final previewText = await actions.peekTextRegenerate(aiMsg.id);
+    expect(previewText, '这句原话会被重新发送');
+
+    final beforeMessages =
+        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
+    expect(beforeMessages.map((message) => message.id), [
+      userMsg.id,
+      aiMsg.id,
+    ]);
+
+    final preparedText = await actions.prepareTextRegenerate(aiMsg.id);
+    expect(preparedText, '这句原话会被重新发送');
+
+    final remainingMessages =
+        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
+    expect(remainingMessages, isEmpty);
+
+    final repo = container.read(messageRepositoryProvider);
+    final deletedUser = await repo.getById(userMsg.id);
+    final deletedAi = await repo.getById(aiMsg.id);
+    expect(deletedUser, isNotNull);
+    expect(deletedUser!.deletedAt, isNotNull);
+    expect(deletedAi, isNotNull);
+    expect(deletedAi!.deletedAt, isNotNull);
+  });
+
+  test('prepareTextRegenerate 遇到图文轮次时会返回 null 且保留原消息', () async {
+    final now = DateTime.now();
+    const imagePath = r'C:\tmp\demo_regen_image.png';
+    final userMsg = Message.fromBlocks(
+      id: 'msg_regen_image_user',
+      role: 'user',
+      blocks: [
+        ImageBlock(
+          messageId: 'msg_regen_image_user',
+          localPath: imagePath,
+        ),
+        TextBlock(
+          messageId: 'msg_regen_image_user',
+          content: '这是一条带图片的原始消息',
+        ),
+      ],
+      createdAt: now.subtract(const Duration(seconds: 2)),
+      status: 'sent',
+    );
+    final aiMsg = Message(
+      id: 'msg_regen_image_ai',
+      role: 'assistant',
+      content: '图片回复',
+      createdAt: now.subtract(const Duration(seconds: 1)),
+      status: 'sent',
+    );
+    final conv = Conversation(
+      id: 'conv_regen_image_prepare',
+      title: 'C_REGEN_IMAGE',
+      displayName: 'C_REGEN_IMAGE',
+      createdAt: now,
+      updatedAt: now,
+      messages: [userMsg, aiMsg],
+      lastMessage: aiMsg.displayText,
+      lastMessageTime: aiMsg.createdAt,
+    );
+
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+    await _insertMessageWithBlocks(db, conv.id, userMsg);
+    await _insertMessage(db, conv.id, aiMsg);
+
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        conversationsProvider.overrideWith(
+          () => _FakeConversationsNotifier([conv]),
+        ),
+        activeConversationProvider.overrideWith((ref) {
+          final list = ref.watch(conversationsProvider).valueOrNull;
+          if (list == null || list.isEmpty) return null;
+          return list.first;
+        }),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await container.read(conversationsProvider.future);
+    final actions = container.read(chatActionsProvider);
+
+    final previewText = await actions.peekTextRegenerate(aiMsg.id);
+    expect(previewText, isNull);
+
+    final preparedText = await actions.prepareTextRegenerate(aiMsg.id);
+    expect(preparedText, isNull);
+
+    final remainingMessages =
+        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
+    expect(remainingMessages.map((message) => message.id), [
+      userMsg.id,
+      aiMsg.id,
+    ]);
+
+    final repo = container.read(messageRepositoryProvider);
+    final persistedUser = await repo.getById(userMsg.id);
+    final persistedAi = await repo.getById(aiMsg.id);
+    expect(persistedUser, isNotNull);
+    expect(persistedUser!.deletedAt, isNull);
+    expect(persistedAi, isNotNull);
+    expect(persistedAi!.deletedAt, isNull);
   });
 
   test('deleteMessage 会删除单条消息并清理引用态', () async {
@@ -2071,8 +2350,8 @@ void main() {
         .toList(growable: false);
     expect(
       assistantMessages.any((m) => m.id == 'assistant_result'),
-      isFalse,
-      reason: '有 delta 后不应走删占位重建文本',
+      isTrue,
+      reason: '有 delta 后回退到正式交付时，应保留 buildResult 里的原始正文消息',
     );
     expect(
       assistantMessages.any((m) => m.displayText.contains('前置流式文本')),
@@ -2124,17 +2403,19 @@ void main() {
     final actions = container.read(chatActionsProvider);
 
     final sendFuture = actions.send('测试关闭分段时也要看到流式文本');
-    final stableSnapshots = <List<Message>>[];
+    final transientSnapshots = <List<Message>>[];
     for (var i = 0; i < 6; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 80));
-      stableSnapshots.add(
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id),
+      transientSnapshots.add(
+        List<Message>.from(
+          container.read(conversationTransientMessagesProvider(conv.id)),
+        ),
       );
     }
     await sendFuture;
 
     var sawInProgressSuccessText = false;
-    for (final snapshot in stableSnapshots) {
+    for (final snapshot in transientSnapshots) {
       final assistantSendingMessages = snapshot.where((m) {
         return m.role == 'assistant' && m.status == 'sending';
       });
@@ -2160,7 +2441,7 @@ void main() {
     );
   });
 
-  test('send 在开启分段时，约 0.5 秒后应先出现生成中占位气泡', () async {
+  test('send 在开启分段时，约 0.5 秒后应先出现 transient 生成中占位气泡', () async {
     final now = DateTime.now();
     final conv = Conversation(
       id: 'conv_stream_thinking_delay',
@@ -2198,10 +2479,10 @@ void main() {
         container.read(chatActionsProvider).send('测试 0.5 秒生成中占位');
 
     await Future<void>.delayed(const Duration(milliseconds: 560));
-    final stableMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
+    final transientMessages =
+        container.read(conversationTransientMessagesProvider(conv.id));
 
-    final thinkingBubble = stableMessages.cast<Message?>().firstWhere(
+    final thinkingBubble = transientMessages.cast<Message?>().firstWhere(
           (message) =>
               message != null &&
               message.role == 'assistant' &&
@@ -2224,7 +2505,7 @@ void main() {
     await sendFuture;
   });
 
-  test('send 流式文本期间应直接写入正式时间线，临时层保持为空', () async {
+  test('send 流式文本期间应只写入 transient timeline，正式时间线保持干净', () async {
     final now = DateTime.now();
     final conv = Conversation(
       id: 'conv_stream_stable_timeline_only',
@@ -2270,15 +2551,15 @@ void main() {
       stableMessages.any(
         (message) => message.role == 'assistant' && message.status == 'sending',
       ),
-      isTrue,
-      reason: '流式中的 assistant 气泡应直接出现在正式时间线里，避免 transient->stable 交接闪白',
+      isFalse,
+      reason: '流式阶段的 assistant 占位不应提前落进正式历史，否则会把分段策略写死到持久层',
     );
     expect(
       transientMessages.any(
         (message) => message.role == 'assistant' && message.status == 'sending',
       ),
-      isFalse,
-      reason: '文本流式改为正式时间线承载后，不应再把发送中的正文挂在 transient 临时层',
+      isTrue,
+      reason: '流式阶段的 assistant 占位应只挂在 transient timeline，等待正式消息落库后再清掉',
     );
   });
 
@@ -2321,10 +2602,10 @@ void main() {
     sendFuture.whenComplete(() => sendFinished = true);
 
     await Future<void>.delayed(const Duration(milliseconds: 560));
-    final stableBeforeInterrupt =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
+    final transientBeforeInterrupt =
+        container.read(conversationTransientMessagesProvider(conv.id));
     expect(
-      stableBeforeInterrupt.any(
+      transientBeforeInterrupt.any(
         (message) => message.role == 'assistant' && message.status == 'sending',
       ),
       isTrue,
@@ -2342,10 +2623,15 @@ void main() {
       reason: '此时底层请求尚未自然返回，需要证明占位是在“中断瞬间”被清掉，而不是等请求结束后才消失',
     );
     expect(
+      container.read(conversationTransientMessagesProvider(conv.id)),
+      isEmpty,
+      reason: '打断生成后，transient timeline 里的发送中占位也应立即清空',
+    );
+    expect(
       (await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id))
           .where((message) => message.role == 'assistant'),
       isEmpty,
-      reason: '打断生成后，正式时间线里的发送中占位也应立即清空',
+      reason: '打断生成后，正式时间线里也不应残留 assistant 占位',
     );
 
     await sendFuture;
@@ -2394,16 +2680,18 @@ void main() {
     await container.read(appSettingsProvider.future);
 
     final sendFuture = container.read(chatActionsProvider).send('测试句级装填');
-    final stableSnapshots = <List<Message>>[];
+    final transientSnapshots = <List<Message>>[];
     for (var i = 0; i < 9; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 90));
-      stableSnapshots.add(
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id),
+      transientSnapshots.add(
+        List<Message>.from(
+          container.read(conversationTransientMessagesProvider(conv.id)),
+        ),
       );
     }
     await sendFuture;
 
-    final leakedPartialText = stableSnapshots.any((snapshot) {
+    final leakedPartialText = transientSnapshots.any((snapshot) {
       return snapshot.any((message) {
         if (message.role != 'assistant' || message.status != 'sending') {
           return false;
@@ -2416,10 +2704,10 @@ void main() {
     expect(
       leakedPartialText,
       isFalse,
-      reason: '分段模式下，未封口的半句正文应只留在后台缓冲，不能提前写进正式时间线的发送中气泡',
+      reason: '分段模式下，未封口的半句正文应只留在 transient 后台缓冲，不能提前露到占位气泡里',
     );
 
-    final sawFirstSentenceThenNextThinking = stableSnapshots.any((snapshot) {
+    final sawFirstSentenceThenNextThinking = transientSnapshots.any((snapshot) {
       final hasCommittedFirstSentence = snapshot.any(
         (message) =>
             message.role == 'assistant' &&
@@ -2446,7 +2734,7 @@ void main() {
     );
   });
 
-  test('send 在开启分段时，最终应按句持久化 assistant 消息', () async {
+  test('send 在开启分段时，最终应持久化原始 assistant 消息，由 UI 决定分段', () async {
     final now = DateTime.now();
     final conv = Conversation(
       id: 'conv_stream_finalize',
@@ -2490,10 +2778,10 @@ void main() {
         .where((m) => m.displayText.trim().isNotEmpty)
         .where((m) => m.displayText.trim() != '生成中...')
         .toList(growable: false);
-    expect(finalAssistantMessages.length, 3);
+    expect(finalAssistantMessages.length, 1);
     expect(
       finalAssistantMessages.map((m) => m.displayText).toList(),
-      <String>['第一段。', '第二段。', '第三段。'],
+      <String>['第一段。第二段。第三段。'],
     );
   });
 
@@ -2541,8 +2829,8 @@ void main() {
 
     expect(
       storedMessages.where((m) => m.role == 'assistant').length,
-      3,
-      reason: '一句一句发出的 assistant 消息应逐条落库，且不混入额外占位记录',
+      1,
+      reason: '流式结束后正式历史只应保留一条原始 assistant 消息，不混入占位记录',
     );
     expect(
       storedMessages.where((m) => m.status == 'sending'),
@@ -2560,14 +2848,18 @@ void main() {
           .map(MessageBlockConverter.fromDb)
           .whereType<TextBlock>()
           .toList(growable: false);
-      expect(textBlocks.length, 1, reason: '每条分段 assistant 只应保留一个最终文本块');
+      if (textBlocks.isEmpty) {
+        storedTexts.add(row.content);
+        continue;
+      }
+      expect(textBlocks.length, 1, reason: 'assistant 消息不应残留重复文本块');
       expect(textBlocks.single.status, BlockStatus.success);
       storedTexts.add(textBlocks.single.content);
     }
-    expect(storedTexts, <String>['第一段。', '第二段。', '第三段。']);
+    expect(storedTexts, <String>['第一段。第二段。第三段。']);
   });
 
-  test('send 遇到 TTS 标签时，应先出现 pending 语音气泡并交给后续原位更新', () async {
+  test('send 遇到 TTS 标签时，应先在 transient timeline 出现 pending 语音气泡', () async {
     final now = DateTime.now();
     final conv = Conversation(
       id: 'conv_stream_tts_pending',
@@ -2607,16 +2899,18 @@ void main() {
     await container.read(appSettingsProvider.future);
 
     final sendFuture = container.read(chatActionsProvider).send('测试流式 TTS');
-    final stableSnapshots = <List<Message>>[];
+    final transientSnapshots = <List<Message>>[];
     for (var i = 0; i < 6; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 80));
-      stableSnapshots.add(
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id),
+      transientSnapshots.add(
+        List<Message>.from(
+          container.read(conversationTransientMessagesProvider(conv.id)),
+        ),
       );
     }
     await sendFuture;
 
-    final sawPendingAudio = stableSnapshots.any((snapshot) {
+    final sawPendingAudio = transientSnapshots.any((snapshot) {
       var hasLeadingText = false;
       var hasPendingAudio = false;
       for (final message in snapshot) {
@@ -2640,19 +2934,15 @@ void main() {
     expect(
       sawPendingAudio,
       isTrue,
-      reason: 'TTS 在流式中途闭合后，应先以 pending 音频气泡进入统一时间线',
+      reason: 'TTS 在流式中途闭合后，应先以 pending 音频气泡进入 transient timeline',
     );
 
-    expect(ttsHandler.lastPendingStreamTtsMessages.length, 1);
-    final pendingAudio = ttsHandler.lastPendingStreamTtsMessages.single.blocks!
-        .whereType<AudioBlock>()
-        .single;
-    expect(pendingAudio.text, '这是一段语音');
-    expect(pendingAudio.status, BlockStatus.pending);
+    expect(ttsHandler.lastAppendAfterStreamText, isFalse);
+    expect(ttsHandler.lastPendingStreamTtsMessages, isEmpty);
     expect(
       container.read(conversationTransientMessagesProvider(conv.id)),
       isEmpty,
-      reason: '语音流式并入正式时间线后，不应再残留临时层数据',
+      reason: '流式收尾后，transient timeline 不应再残留临时层数据',
     );
   });
 
@@ -2983,7 +3273,9 @@ void main() {
         chatSendServiceProvider.overrideWith(
           (ref) => _StreamingInlineImageSendService(ref, settings),
         ),
-        chatTtsHandlerProvider.overrideWith((ref) => _NoopChatTtsHandler(ref)),
+        chatTtsHandlerProvider.overrideWith((ref) {
+          return _DeliverBuildResultOnlyChatTtsHandler(ref);
+        }),
       ],
     );
     addTearDown(container.dispose);
@@ -3026,11 +3318,85 @@ void main() {
         .where((text) => text.isNotEmpty)
         .toList(growable: false);
 
-    expect(storedTexts, <String>['第一句。', '第二句。']);
+    expect(storedTexts, <String>['第一句。第二句。']);
     expect(
       storedTexts.join('\n'),
       isNot(contains('masterpiece')),
       reason: '最终落库正文里不应残留 <image> 标签内的正向提示词',
+    );
+  });
+
+  test('send 遇到带属性的 image 标签时，不应被当成 inline 生图标签吞掉', () async {
+    final now = DateTime.now();
+    final conv = Conversation(
+      id: 'conv_stream_image_attr_visible',
+      title: 'StreamImageAttrVisible',
+      displayName: 'StreamImageAttrVisible',
+      createdAt: now,
+      updatedAt: now,
+      messages: const [],
+      lastMessage: '',
+      lastMessageTime: now,
+    );
+    final settings = _buildTestSettings();
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(settings),
+        ),
+        chatSendServiceProvider.overrideWith(
+          (ref) => _StreamingAttributeImageTagSendService(ref, settings),
+        ),
+        chatTtsHandlerProvider.overrideWith((ref) {
+          return _DeliverBuildResultOnlyChatTtsHandler(ref);
+        }),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    container.read(activeConversationIdProvider.notifier).state = conv.id;
+    await container.read(conversationsProvider.future);
+    await container.read(appSettingsProvider.future);
+
+    final sendFuture =
+        container.read(chatActionsProvider).send('测试属性 image 标签');
+    final transientSnapshots = <List<Message>>[];
+    for (var i = 0; i < 6; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      transientSnapshots.add(
+        List<Message>.from(
+          container.read(conversationTransientMessagesProvider(conv.id)),
+        ),
+      );
+    }
+    await sendFuture;
+
+    final sawAttributeTagInTransient = transientSnapshots.any((snapshot) {
+      return snapshot.any((message) => message.displayText.contains(
+            '<image source="history">保留这段</image>',
+          ));
+    });
+    expect(
+      sawAttributeTagInTransient,
+      isTrue,
+      reason: '带属性的 image 标签不应再被宽匹配吞掉',
+    );
+
+    final storedMessages =
+        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
+    final storedTexts = storedMessages
+        .where((message) => message.role == 'assistant')
+        .map((message) => message.displayText.trim())
+        .where((text) => text.isNotEmpty)
+        .toList(growable: false);
+    expect(
+      storedTexts,
+      <String>['第一句。<image source="history">保留这段</image>第二句。'],
     );
   });
 

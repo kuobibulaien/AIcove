@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../../core/api/providers/zai_compat.dart';
 import '../support/ui_models_store_support.dart';
 
 /// 设置模块本地存储数据源。
@@ -355,6 +356,25 @@ class UiModelsStoreLocalDataSource {
             .whereType<Map>()
             .map((e) => e.cast<String, dynamic>())
             .toList(growable: false);
+    final appliedMigrations = cleanSettingsStrings(data['applied_migrations']);
+
+    if (!appliedMigrations.contains(kZaiProviderBackfillMigrationId)) {
+      final hasZai = providers.any((provider) {
+        if (provider is! Map) return false;
+        return provider['id']?.toString().trim() == 'zai';
+      });
+      if (!hasZai) {
+        final zaiDefault = defaultProviders.firstWhere(
+          (provider) => provider['id'] == 'zai',
+          orElse: () => <String, dynamic>{},
+        );
+        if (zaiDefault.isNotEmpty) {
+          providers.add(Map<String, dynamic>.from(zaiDefault));
+        }
+      }
+      appliedMigrations.add(kZaiProviderBackfillMigrationId);
+      data['applied_migrations'] = appliedMigrations;
+    }
 
     for (final provider in providers) {
       if (provider is! Map) continue;

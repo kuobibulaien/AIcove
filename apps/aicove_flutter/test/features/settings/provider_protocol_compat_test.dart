@@ -6,6 +6,7 @@ import 'package:aicove_flutter/src/core/api/agent_api.dart';
 import 'package:aicove_flutter/src/core/api_logger.dart';
 import 'package:aicove_flutter/src/core/api/providers/google_api_mode.dart';
 import 'package:aicove_flutter/src/core/api/providers/minimax_compat.dart';
+import 'package:aicove_flutter/src/core/api/providers/zai_compat.dart';
 import 'package:aicove_flutter/src/features/settings/ui_models_api.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -356,9 +357,43 @@ void main() {
       );
 
       expect(result.text, 'ok');
-      expect(calledUri.toString(), 'https://unit.test/v1/chat/completions');
+      expect(calledUri.toString(), 'https://unit.test/chat/completions');
       expect(calledHeaders?['Authorization'], 'Bearer openai-like-key');
       expect(calledHeaders?.containsKey('x-goog-api-key'), isFalse);
+    });
+
+    test('custom apiPath should be used as final request path', () async {
+      Uri? calledUri;
+
+      final client = AgentApiClient(
+        client: _CapturingClient((request) async {
+          calledUri = request.url;
+          return _jsonResponse({
+            'choices': [
+              {
+                'message': {'content': 'ok'}
+              }
+            ]
+          });
+        }),
+      );
+
+      final result = await client.sendMessageRich(
+        agentId: 'a1',
+        sessionId: 's1',
+        modelFullId: 'openai:gpt-4o-mini',
+        messages: const <Map<String, dynamic>>[],
+        userText: 'hello',
+        providerApiBase: 'https://unit.test/v1',
+        providerApiKey: 'openai-like-key',
+        customConfig: const {
+          'requestFormat': 'openai',
+          'apiPath': '/responses',
+        },
+      );
+
+      expect(result.text, 'ok');
+      expect(calledUri.toString(), 'https://unit.test/v1/responses');
     });
 
     test('MiniMax native endpoint should not be appended twice', () async {
@@ -399,6 +434,178 @@ void main() {
       );
       expect(requestBody?['requestFormat'], isNull);
       expect(requestBody?['model'], 'MiniMax-M2.7');
+    });
+
+    test('Z.AI sendMessageRich should use官方 paas/v4 端点，不拼 /v1', () async {
+      Uri? calledUri;
+      Map<String, String>? calledHeaders;
+
+      final client = AgentApiClient(
+        client: _CapturingClient((request) async {
+          calledUri = request.url;
+          calledHeaders = Map<String, String>.from(request.headers);
+          return _jsonResponse({
+            'choices': [
+              {
+                'message': {'content': 'ok'}
+              }
+            ]
+          });
+        }),
+      );
+
+      final result = await client.sendMessageRich(
+        agentId: 'a1',
+        sessionId: 's1',
+        modelFullId: 'zai:glm-5',
+        messages: const <Map<String, dynamic>>[],
+        userText: 'hello',
+        providerApiBase: kZaiGeneralApiBase,
+        providerApiKey: 'zai-key',
+      );
+
+      expect(result.text, 'ok');
+      expect(
+        calledUri.toString(),
+        'https://api.z.ai/api/paas/v4/chat/completions',
+      );
+      expect(calledHeaders?['Authorization'], 'Bearer zai-key');
+    });
+
+    test('MiniMax OpenAI compatible previewProvider should try /v1/models',
+        () async {
+      Uri? calledUri;
+      Map<String, String>? calledHeaders;
+      final client = MockClient((request) async {
+        calledUri = request.url;
+        calledHeaders = Map<String, String>.from(request.headers);
+        return http.Response(
+          jsonEncode({
+            'data': [
+              {'id': 'MiniMax-M2.7'},
+              {'id': 'MiniMax-M2.5-lightning'},
+            ],
+          }),
+          200,
+          headers: const {'content-type': 'application/json'},
+        );
+      });
+
+      final api = UiModelsApi(httpClient: client);
+      final models = await api.previewProvider(
+        providerId: 'openai',
+        apiKey: 'minimax-key',
+        apiBaseUrl: 'https://api.minimax.io/v1',
+        customConfig: const {'requestFormat': 'openai'},
+      );
+
+      expect(calledUri.toString(), 'https://api.minimax.io/v1/models');
+      expect(calledHeaders?['Authorization'], 'Bearer minimax-key');
+      expect(calledHeaders?.containsKey('x-api-key'), isFalse);
+      expect(
+        models,
+        <String>[
+          'MiniMax-M2.7',
+          'MiniMax-M2.5-lightning',
+          ...kMiniMaxDefaultTtsModels,
+        ],
+      );
+    });
+
+    test(
+        'MiniMax Anthropic compatible previewProvider should probe sibling /v1/models',
+        () async {
+      Uri? calledUri;
+      Map<String, String>? calledHeaders;
+      final client = MockClient((request) async {
+        calledUri = request.url;
+        calledHeaders = Map<String, String>.from(request.headers);
+        return http.Response(
+          jsonEncode({
+            'data': [
+              {'id': 'MiniMax-M2.7-highspeed'},
+            ],
+          }),
+          200,
+          headers: const {'content-type': 'application/json'},
+        );
+      });
+
+      final api = UiModelsApi(httpClient: client);
+      final models = await api.previewProvider(
+        providerId: 'claude',
+        apiKey: 'minimax-key',
+        apiBaseUrl: 'https://api.minimax.io/anthropic',
+        customConfig: const {'requestFormat': 'claude'},
+      );
+
+      expect(calledUri.toString(), 'https://api.minimax.io/v1/models');
+      expect(calledHeaders?['Authorization'], 'Bearer minimax-key');
+      expect(calledHeaders?.containsKey('x-api-key'), isFalse);
+      expect(
+        models,
+        <String>[
+          'MiniMax-M2.7-highspeed',
+          ...kMiniMaxDefaultTtsModels,
+        ],
+      );
+    });
+
+    test(
+        'MiniMax OpenAI compatible previewProvider should fall back when /models fails',
+        () async {
+      var requestCount = 0;
+      final client = MockClient((request) async {
+        requestCount += 1;
+        return http.Response('oops', 500);
+      });
+
+      final api = UiModelsApi(httpClient: client);
+      final models = await api.previewProvider(
+        providerId: 'openai',
+        apiKey: 'minimax-key',
+        apiBaseUrl: 'https://api.minimaxi.com/v1',
+        customConfig: const {'requestFormat': 'openai'},
+      );
+
+      expect(requestCount, 1);
+      expect(models, kMiniMaxDefaultPreviewModels);
+    });
+
+    test('Z.AI previewProvider should fall back to built-in GLM list',
+        () async {
+      var requestCount = 0;
+      final client = MockClient((request) async {
+        requestCount += 1;
+        return http.Response('not found', 404);
+      });
+
+      final api = UiModelsApi(httpClient: client);
+      final models = await api.previewProvider(
+        providerId: 'zai',
+        apiKey: 'zai-key',
+        apiBaseUrl: kZaiGeneralApiBase,
+        customConfig: const {'requestFormat': 'openai'},
+      );
+
+      expect(requestCount, 1);
+      expect(models, kZaiDefaultChatModels);
+    });
+
+    test('Z.AI alias provider should also fall back to built-in GLM list',
+        () async {
+      final client = MockClient((request) async {
+        return http.Response('not found', 404);
+      });
+
+      final api = UiModelsApi(httpClient: client);
+      final models = await api.previewProvider(
+        providerId: 'zhipu',
+        apiKey: 'zai-key',
+        apiBaseUrl: kZaiGeneralApiBase,
+      );
+
+      expect(models, kZaiDefaultChatModels);
     });
 
     test('Gemini previewProvider should use x-goog-api-key and parse models[]',
@@ -516,7 +723,7 @@ void main() {
       );
 
       expect(requestCount, 0);
-      expect(models, kMiniMaxDefaultChatModels);
+      expect(models, kMiniMaxDefaultPreviewModels);
     });
 
     test('Vertex Express importProvider should fall back to built-in models',

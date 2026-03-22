@@ -110,16 +110,7 @@ class ImagePlugin extends BasePlugin {
     String? userMessage,
     bool supportsToolCalling = false,
   }) async {
-    if (!enabled) {
-      return null;
-    }
-    final settings = _ref.read(appSettingsProvider).valueOrNull;
-    if (settings == null ||
-        settings.callFlowSettings.mode != CallFlowMode.fast ||
-        _resolveTarget(settings) == null) {
-      return null;
-    }
-    return buildInlineImageSystemPrompt();
+    return buildTagSemanticsPrompt();
   }
 
   @override
@@ -208,6 +199,23 @@ class ImagePlugin extends BasePlugin {
       return baseTemplate;
     }
     return '$baseTemplate\n\n角色专属生图要求：\n$extraRule';
+  }
+
+  String? buildTagSemanticsPrompt({
+    String? customDrawingPrompt,
+  }) {
+    if (!enabled) {
+      return null;
+    }
+    final settings = _ref.read(appSettingsProvider).valueOrNull;
+    if (settings == null ||
+        settings.callFlowSettings.mode != CallFlowMode.fast ||
+        _resolveTarget(settings) == null) {
+      return null;
+    }
+    return buildInlineImageSystemPrompt(
+      customDrawingPrompt: customDrawingPrompt,
+    );
   }
 
   Future<InlineImageGenerationResult> generateInlineImage({

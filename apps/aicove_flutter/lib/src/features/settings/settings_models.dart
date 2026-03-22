@@ -66,6 +66,7 @@ final _ttsPatterns = RegExp(
   r'tts|'
   r'text-to-speech|'
   r'speech-synthesis|'
+  r'speech-\d[\d.]*(?:-hd|-turbo)|' // MiniMax TTS
   r'alloy|' // OpenAI TTS voices
   r'echo|'
   r'fable|'
@@ -211,6 +212,7 @@ final _chatToolsPatterns = RegExp(
   r'claude|'
   r'qwen|'
   r'deepseek(?!-vl)|'
+  r'glm-5|'
   r'glm-4|'
   r'gemini|'
   r'grok|'
@@ -231,6 +233,7 @@ final _chatReasoningPatterns = RegExp(
   r'thinking|'
   r'think\b|'
   r'r1\b|'
+  r'glm-5|'
   r'hunyuan-t1|'
   r'glm-zero|'
   r'deepseek-r|'

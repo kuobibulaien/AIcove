@@ -85,6 +85,24 @@ List<Message> _buildInitialMessages(int count) {
   });
 }
 
+List<Message> _buildCompactMessages({
+  required int startIndex,
+  required int count,
+}) {
+  final baseTime = DateTime(2026, 1, 1, 12, 0, 0);
+  return List<Message>.generate(count, (offset) {
+    final index = startIndex + offset;
+    final role = index.isEven ? 'assistant' : 'user';
+    return Message.text(
+      id: 'm_$index',
+      role: role,
+      content: '短消息$index',
+      createdAt: baseTime.add(Duration(minutes: index)),
+      status: 'sent',
+    );
+  });
+}
+
 class _ChatListHarness extends StatefulWidget {
   const _ChatListHarness({
     super.key,
@@ -240,10 +258,14 @@ class _PagingChatListHarness extends StatefulWidget {
     super.key,
     this.onDebugAutoScrollRequested,
     this.onDebugListItemCountChanged,
+    this.initialMessages,
+    this.messageBuilder,
   });
 
   final ValueChanged<String>? onDebugAutoScrollRequested;
   final ValueChanged<int>? onDebugListItemCountChanged;
+  final List<Message>? initialMessages;
+  final Message Function(int messageIndex, DateTime createdAt)? messageBuilder;
 
   @override
   State<_PagingChatListHarness> createState() => _PagingChatListHarnessState();
@@ -263,7 +285,7 @@ class _PagingChatListHarnessState extends State<_PagingChatListHarness> {
   void initState() {
     super.initState();
     _viewportController = ChatViewportController();
-    _messages = _buildInitialMessages(40).sublist(20);
+    _messages = widget.initialMessages ?? _buildInitialMessages(40).sublist(20);
   }
 
   @override
@@ -285,27 +307,90 @@ class _PagingChatListHarnessState extends State<_PagingChatListHarness> {
     return completer.future;
   }
 
-  void completeLoadMore() {
+  void releaseLoadingBeforeMessages() {
     final completer = _pendingLoadMore;
     if (completer == null) return;
-    final oldest = _messages.first;
+    setState(() {
+      _isLoadingMore = false;
+      _pendingLoadMore = null;
+    });
+    completer.complete();
+  }
+
+  List<Message> _buildOlderMessagesFromOldest(
+    Message oldest, {
+    required int count,
+  }) {
     final oldestIndex =
         int.tryParse(oldest.id.replaceFirst('m_', '')) ?? _messages.length;
-    final olderMessages = List<Message>.generate(5, (index) {
-      final messageIndex = oldestIndex - 5 + index;
+    return List<Message>.generate(count, (index) {
+      final messageIndex = oldestIndex - count + index;
+      final createdAt =
+          oldest.createdAt.subtract(Duration(minutes: count - index));
+      final builder = widget.messageBuilder;
+      if (builder != null) {
+        return builder(messageIndex, createdAt);
+      }
       final role = messageIndex.isEven ? 'assistant' : 'user';
       final longText = List.filled(12, '用于撑高列表').join('，');
       return Message.text(
         id: 'm_$messageIndex',
         role: role,
         content: '第$messageIndex条消息：$longText',
-        createdAt: oldest.createdAt.subtract(Duration(minutes: 5 - index)),
+        createdAt: createdAt,
         status: 'sent',
       );
     });
+  }
+
+  void appendOlderMessages({
+    int count = 5,
+    bool hasMoreMessages = false,
+  }) {
+    final oldest = _messages.first;
+    final olderMessages = _buildOlderMessagesFromOldest(
+      oldest,
+      count: count,
+    );
 
     setState(() {
       _messages = [...olderMessages, ..._messages];
+      _hasMoreMessages = hasMoreMessages;
+    });
+  }
+
+  void completeLoadMore({
+    int count = 5,
+    bool hasMoreMessages = false,
+  }) {
+    final completer = _pendingLoadMore;
+    if (completer == null) return;
+    appendOlderMessages(
+      count: count,
+      hasMoreMessages: hasMoreMessages,
+    );
+    setState(() {
+      _isLoadingMore = false;
+      _hasMoreMessages = hasMoreMessages;
+      _pendingLoadMore = null;
+    });
+    completer.complete();
+  }
+
+  void completeLoadMoreWithTailMutation() {
+    final completer = _pendingLoadMore;
+    if (completer == null) return;
+    final tail = _messages.last;
+    appendOlderMessages();
+    setState(() {
+      _messages = [
+        ..._messages.sublist(0, _messages.length - 1),
+        _replaceMessageText(
+          tail,
+          '${tail.displayText} · 分页归档后同步',
+          status: 'sent',
+        ),
+      ];
       _isLoadingMore = false;
       _hasMoreMessages = false;
       _pendingLoadMore = null;
@@ -365,6 +450,35 @@ class _PagingChatListHarnessState extends State<_PagingChatListHarness> {
     setState(() {
       _messages = backup;
       _isLoadingMore = false;
+      _transientEmptyBackupMessages = null;
+    });
+  }
+
+  void beginTransientEmptyWindowAfterLoadingReleased() {
+    _transientEmptyBackupMessages = List<Message>.from(_messages);
+    setState(() {
+      _isLoadingMore = false;
+      _hasMoreMessages = true;
+      _messages = const <Message>[];
+    });
+  }
+
+  void endTransientEmptyWindowAfterLoadingReleased({
+    int count = 5,
+    bool hasMoreMessages = false,
+  }) {
+    final backup = _transientEmptyBackupMessages;
+    if (backup == null || backup.isEmpty) return;
+    final olderMessages = _buildOlderMessagesFromOldest(
+      backup.first,
+      count: count,
+    );
+    setState(() {
+      _messages = <Message>[
+        ...olderMessages,
+        ...backup,
+      ];
+      _hasMoreMessages = hasMoreMessages;
       _transientEmptyBackupMessages = null;
     });
   }
@@ -437,6 +551,8 @@ Widget _buildPagingHost(
   GlobalKey<_PagingChatListHarnessState> harnessKey, {
   ValueChanged<String>? onDebugAutoScrollRequested,
   ValueChanged<int>? onDebugListItemCountChanged,
+  List<Message>? initialMessages,
+  Message Function(int messageIndex, DateTime createdAt)? messageBuilder,
 }) {
   final settings = _buildSettings();
   return ProviderScope(
@@ -456,6 +572,8 @@ Widget _buildPagingHost(
                 key: harnessKey,
                 onDebugAutoScrollRequested: onDebugAutoScrollRequested,
                 onDebugListItemCountChanged: onDebugListItemCountChanged,
+                initialMessages: initialMessages,
+                messageBuilder: messageBuilder,
               ),
             ),
           ),
@@ -470,7 +588,12 @@ Widget _buildHostWithMessages({
   required List<Message> messages,
   List<Message> transientMessages = const <Message>[],
   bool allowPersistentViewportBoot = false,
+  Future<void> Function()? onLoadMore,
+  bool isLoadingMore = false,
+  bool hasMoreMessages = true,
+  double bottomOverlayHeight = 0,
   Key? chatListKey,
+  ChatViewportController? viewportController,
   ValueChanged<int>? onDebugListItemCountChanged,
   ValueChanged<String>? onDebugAutoScrollRequested,
   ValueChanged<int>? onPersistentViewportVisibleCountResolved,
@@ -496,7 +619,12 @@ Widget _buildHostWithMessages({
                 transientMessages: transientMessages,
                 displayName: '测试AI',
                 avatarUrl: null,
-                viewportController: ChatViewportController(),
+                bottomOverlayHeight: bottomOverlayHeight,
+                viewportController:
+                    viewportController ?? ChatViewportController(),
+                onLoadMore: onLoadMore,
+                isLoadingMore: isLoadingMore,
+                hasMoreMessages: hasMoreMessages,
                 allowPersistentViewportBoot: allowPersistentViewportBoot,
                 onPersistentViewportVisibleCountResolved:
                     onPersistentViewportVisibleCountResolved,
@@ -950,6 +1078,141 @@ void main() {
 
     controller = tester.widget<CustomScrollView>(listFinder).controller!;
     expect(_distanceToBottom(controller), lessThanOrEqualTo(8));
+  });
+
+  testWidgets('贴底状态下，AI 新消息不应自动请求回底', (tester) async {
+    final harnessKey = GlobalKey<_ChatListHarnessState>();
+    final autoScrollReasons = <String>[];
+
+    await tester.pumpWidget(
+      _buildHost(
+        harnessKey,
+        onDebugAutoScrollRequested: autoScrollReasons.add,
+      ),
+    );
+    await tester.pumpAndSettle();
+    autoScrollReasons.clear();
+
+    final listFinder = find.byType(CustomScrollView);
+    expect(listFinder, findsOneWidget);
+
+    harnessKey.currentState!.appendAssistantMessage();
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    final controller = tester.widget<CustomScrollView>(listFinder).controller!;
+    expect(
+      _distanceToBottom(controller),
+      greaterThan(40),
+      reason: 'AI 新消息到达后，视口不应继续由程序维持在底部',
+    );
+    expect(autoScrollReasons, isEmpty);
+  });
+
+  testWidgets('贴底状态下，临时流式消息变化不应自动请求回底', (tester) async {
+    final settings = _buildSettings();
+    final autoScrollReasons = <String>[];
+    final viewportController = ChatViewportController();
+    final baseMessages = _buildInitialMessages(40);
+    final transientMessage = Message.text(
+      id: 'temp_streaming',
+      role: 'assistant',
+      content: List.filled(10, '流式临时内容').join('，'),
+      createdAt: baseMessages.last.createdAt.add(const Duration(minutes: 1)),
+      status: 'sending',
+    );
+
+    await tester.pumpWidget(
+      _buildHostWithMessages(
+        settings: settings,
+        messages: baseMessages,
+        viewportController: viewportController,
+        onDebugAutoScrollRequested: autoScrollReasons.add,
+      ),
+    );
+    await tester.pumpAndSettle();
+    autoScrollReasons.clear();
+
+    await tester.pumpWidget(
+      _buildHostWithMessages(
+        settings: settings,
+        messages: baseMessages,
+        transientMessages: <Message>[transientMessage],
+        viewportController: viewportController,
+        onDebugAutoScrollRequested: autoScrollReasons.add,
+      ),
+    );
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    final listFinder = find.byType(CustomScrollView);
+    final controller = tester.widget<CustomScrollView>(listFinder).controller!;
+    expect(
+      _distanceToBottom(controller),
+      greaterThan(40),
+      reason: '临时流式消息出现后，也不应由程序继续贴底',
+    );
+    expect(autoScrollReasons, isEmpty);
+    viewportController.dispose();
+  });
+
+  testWidgets('贴底状态下，输入区高度变化不应自动请求回底', (tester) async {
+    final harnessKey = GlobalKey<_ChatListHarnessState>();
+    final autoScrollReasons = <String>[];
+
+    await tester.pumpWidget(
+      _buildHost(
+        harnessKey,
+        onDebugAutoScrollRequested: autoScrollReasons.add,
+      ),
+    );
+    await tester.pumpAndSettle();
+    autoScrollReasons.clear();
+
+    harnessKey.currentState!.setBottomOverlayHeight(180);
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(autoScrollReasons, isEmpty);
+  });
+
+  testWidgets('空时间线里临时消息变化也不应自动请求回底', (tester) async {
+    final settings = _buildSettings();
+    final autoScrollReasons = <String>[];
+    final viewportController = ChatViewportController();
+    final transientMessage = Message.text(
+      id: 'temp_empty_timeline',
+      role: 'assistant',
+      content: List.filled(10, '空会话流式内容').join('，'),
+      createdAt: DateTime(2026, 1, 1, 12, 0, 0),
+      status: 'sending',
+    );
+
+    await tester.pumpWidget(
+      _buildHostWithMessages(
+        settings: settings,
+        messages: const <Message>[],
+        viewportController: viewportController,
+        onDebugAutoScrollRequested: autoScrollReasons.add,
+      ),
+    );
+    await tester.pumpAndSettle();
+    autoScrollReasons.clear();
+
+    await tester.pumpWidget(
+      _buildHostWithMessages(
+        settings: settings,
+        messages: const <Message>[],
+        transientMessages: <Message>[transientMessage],
+        viewportController: viewportController,
+        onDebugAutoScrollRequested: autoScrollReasons.add,
+      ),
+    );
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(autoScrollReasons, isEmpty);
+    viewportController.dispose();
   });
 
   testWidgets('AI流式生成期间用户手势仍应能立即接管列表', (tester) async {
@@ -1473,30 +1736,177 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(harnessKey.currentState!.loadMoreCallCount, 1);
+    await tester.pump(const Duration(milliseconds: 120));
+    await tester.pump(const Duration(milliseconds: 120));
+    await tester.pump(const Duration(milliseconds: 120));
     expect(find.byKey(const ValueKey<String>('history_loading_overlay')),
         findsOneWidget);
 
     var controller = tester.widget<CustomScrollView>(listFinder).controller!;
     final gapWhileLoading = _distanceToBottom(controller);
+    final offsetWhileLoading = controller.offset;
+    final distanceToTopWhileLoading =
+        (controller.position.maxScrollExtent - controller.offset).abs();
     expect(gapWhileLoading, greaterThan(40));
+    expect(
+      distanceToTopWhileLoading,
+      lessThanOrEqualTo(24),
+      reason: '出现 loading overlay 后应只做轻微回弹，并停在历史顶部边界附近等待',
+    );
+
+    harnessKey.currentState!.completeLoadMore(count: 20);
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    controller = tester.widget<CustomScrollView>(listFinder).controller!;
+    final distanceToTopAfterLoad =
+        (controller.position.maxScrollExtent - controller.offset).abs();
+    expect(_distanceToBottom(controller), greaterThan(40));
+    expect(find.byKey(const ValueKey<String>('history_loading_overlay')),
+        findsNothing);
+    expect(
+      controller.offset,
+      closeTo(offsetWhileLoading, 1),
+      reason: '历史分页完成后应保持当前阅读位置，不应自动把视口继续推向更早消息',
+    );
+    expect(
+      distanceToTopAfterLoad,
+      greaterThan(distanceToTopWhileLoading + 40),
+      reason: '分页完成后只移除 loading overlay，更早消息应继续留在上方等待用户手动上滑',
+    );
+  });
+
+  testWidgets('短历史窗口在上滑过冲时也应触发加载更多', (tester) async {
+    final settings = _buildSettings().copyWith(
+      messageChunkingEnabled: false,
+      messageFormatConfig: const MessageFormatConfig(enableChunking: false),
+    );
+    final baseTime = DateTime(2026, 1, 1, 12, 0, 0);
+    final compactMessages = List<Message>.generate(5, (index) {
+      final role = index.isEven ? 'assistant' : 'user';
+      return Message.text(
+        id: 'compact_$index',
+        role: role,
+        content: '短消息$index',
+        createdAt: baseTime.add(Duration(minutes: index)),
+        status: 'sent',
+      );
+    });
+    var loadMoreCallCount = 0;
+    final loadMoreCompleter = Completer<void>();
+
+    await tester.pumpWidget(
+      _buildHostWithMessages(
+        settings: settings,
+        messages: compactMessages,
+        hasMoreMessages: true,
+        onLoadMore: () async {
+          loadMoreCallCount += 1;
+          return loadMoreCompleter.future;
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final listFinder = find.byType(CustomScrollView);
+    expect(listFinder, findsOneWidget);
+    final controller = tester.widget<CustomScrollView>(listFinder).controller!;
+    expect(
+      controller.position.maxScrollExtent,
+      lessThanOrEqualTo(200),
+      reason: '复现前提：5 条短消息不足以触发原来的 200 像素阈值',
+    );
+
+    await tester.drag(listFinder, const Offset(0, 320));
+    await tester.pump();
+
+    expect(loadMoreCallCount, 1);
+  });
+
+  testWidgets('短历史分页完成后不应回到底部', (tester) async {
+    final harnessKey = GlobalKey<_PagingChatListHarnessState>();
+    final autoScrollReasons = <String>[];
+
+    await tester.pumpWidget(
+      _buildPagingHost(
+        harnessKey,
+        onDebugAutoScrollRequested: autoScrollReasons.add,
+        initialMessages: _buildCompactMessages(startIndex: 20, count: 5),
+        messageBuilder: (messageIndex, createdAt) {
+          final role = messageIndex.isEven ? 'assistant' : 'user';
+          return Message.text(
+            id: 'm_$messageIndex',
+            role: role,
+            content: '短消息$messageIndex',
+            createdAt: createdAt,
+            status: 'sent',
+          );
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+    autoScrollReasons.clear();
+
+    final listFinder = find.byType(CustomScrollView);
+    expect(listFinder, findsOneWidget);
+    final initialController =
+        tester.widget<CustomScrollView>(listFinder).controller!;
+    expect(initialController.position.maxScrollExtent, lessThanOrEqualTo(200));
+
+    await tester.drag(listFinder, const Offset(0, 320));
+    await tester.pump();
+
+    expect(harnessKey.currentState!.loadMoreCallCount, 1);
 
     harnessKey.currentState!.completeLoadMore();
     await tester.pump();
     await tester.pumpAndSettle();
 
-    controller = tester.widget<CustomScrollView>(listFinder).controller!;
-    expect(_distanceToBottom(controller), greaterThan(40));
-    expect(find.byKey(const ValueKey<String>('history_loading_overlay')),
-        findsNothing);
+    final controller = tester.widget<CustomScrollView>(listFinder).controller!;
+    expect(
+      _distanceToBottom(controller),
+      greaterThan(40),
+      reason: '历史分页补齐后，视口应继续停留在历史侧而不是回到底部',
+    );
+    expect(autoScrollReasons, isEmpty);
+  });
 
-    await tester.drag(listFinder, const Offset(0, 260));
+  testWidgets('历史分页即使先释放加载锁，补历史后也不应回到底部', (tester) async {
+    final harnessKey = GlobalKey<_PagingChatListHarnessState>();
+    final autoScrollReasons = <String>[];
+
+    await tester.pumpWidget(
+      _buildPagingHost(
+        harnessKey,
+        onDebugAutoScrollRequested: autoScrollReasons.add,
+      ),
+    );
     await tester.pumpAndSettle();
-    if (find.textContaining('第15条消息').evaluate().isEmpty) {
-      await tester.drag(listFinder, const Offset(0, 220));
-      await tester.pumpAndSettle();
-    }
+    autoScrollReasons.clear();
 
-    expect(find.textContaining('第15条消息'), findsWidgets);
+    final listFinder = find.byType(CustomScrollView);
+    expect(listFinder, findsOneWidget);
+
+    await tester.drag(listFinder, const Offset(0, 4000));
+    await tester.pump();
+
+    expect(harnessKey.currentState!.loadMoreCallCount, 1);
+
+    harnessKey.currentState!.releaseLoadingBeforeMessages();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 160));
+
+    harnessKey.currentState!.appendOlderMessages();
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    final controller = tester.widget<CustomScrollView>(listFinder).controller!;
+    expect(
+      _distanceToBottom(controller),
+      greaterThan(40),
+      reason: '即使页面层先结束 loading，再补进历史消息时也不应把视口拉回到底部',
+    );
+    expect(autoScrollReasons, isEmpty);
   });
 
   testWidgets('历史分页期间尾消息变化不应请求回到底部', (tester) async {
@@ -1522,6 +1932,97 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('历史 prepend 与尾消息归档同帧到达时，不应误判成 tailChanged 回底', (tester) async {
+    final settings = _buildSettings();
+    final autoScrollReasons = <String>[];
+    final viewportController = ChatViewportController();
+    final baseMessages = _buildInitialMessages(40).sublist(20);
+    final expandedMessages = List<Message>.from(
+      _buildInitialMessages(40).sublist(15),
+    );
+    final tail = expandedMessages.last;
+    expandedMessages[expandedMessages.length - 1] = _replaceMessageText(
+      tail,
+      '${tail.displayText} · 数据库归档同步',
+      status: 'sent',
+    );
+
+    await tester.pumpWidget(
+      _buildHostWithMessages(
+        settings: settings,
+        messages: baseMessages,
+        chatListKey: const ValueKey<String>('history_prepend_tail_sync'),
+        viewportController: viewportController,
+        onDebugAutoScrollRequested: autoScrollReasons.add,
+      ),
+    );
+    await tester.pumpAndSettle();
+    autoScrollReasons.clear();
+
+    await tester.pumpWidget(
+      _buildHostWithMessages(
+        settings: settings,
+        messages: expandedMessages,
+        chatListKey: const ValueKey<String>('history_prepend_tail_sync'),
+        viewportController: viewportController,
+        onDebugAutoScrollRequested: autoScrollReasons.add,
+      ),
+    );
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(
+      autoScrollReasons.where((reason) => reason == 'tailChanged'),
+      isEmpty,
+      reason: '同一帧如果主要变化是 prepend 历史，就不应把尾消息同步误判成需要回到底部',
+    );
+    expect(tester.takeException(), isNull);
+    viewportController.dispose();
+  });
+
+  testWidgets('历史分页若同帧完成并伴随尾消息归档，也不应误触发回底', (tester) async {
+    final harnessKey = GlobalKey<_PagingChatListHarnessState>();
+    final autoScrollReasons = <String>[];
+
+    await tester.pumpWidget(
+      _buildPagingHost(
+        harnessKey,
+        onDebugAutoScrollRequested: autoScrollReasons.add,
+      ),
+    );
+    await tester.pumpAndSettle();
+    autoScrollReasons.clear();
+
+    final listFinder = find.byType(CustomScrollView);
+    expect(listFinder, findsOneWidget);
+
+    await tester.drag(listFinder, const Offset(0, 4000));
+
+    expect(
+      harnessKey.currentState!.loadMoreCallCount,
+      1,
+      reason: '真实上滑到历史侧后，应立即触发一次分页加载请求',
+    );
+
+    harnessKey.currentState!.completeLoadMoreWithTailMutation();
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    final updatedController =
+        tester.widget<CustomScrollView>(listFinder).controller!;
+    expect(
+      _distanceToBottom(updatedController),
+      greaterThan(40),
+      reason: '即使分页与尾消息归档在同帧抵达，也应继续保留当前历史阅读位置',
+    );
+    expect(
+      autoScrollReasons,
+      isEmpty,
+      reason: '分页补历史不应因为尾消息同步而误判成需要自动回底',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('历史分页瞬时空窗口不应清空列表或触发回底请求', (tester) async {
     final harnessKey = GlobalKey<_PagingChatListHarnessState>();
     final autoScrollReasons = <String>[];
@@ -1530,11 +2031,15 @@ void main() {
     await tester.pumpWidget(
       _buildPagingHost(
         harnessKey,
+        initialMessages: _buildInitialMessages(60),
         onDebugAutoScrollRequested: autoScrollReasons.add,
         onDebugListItemCountChanged: (count) => latestItemCount = count,
       ),
     );
     await tester.pumpAndSettle();
+    for (var index = 0; index < 20 && latestItemCount <= 0; index++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
 
     expect(latestItemCount, greaterThan(0));
     autoScrollReasons.clear();
@@ -1550,6 +2055,73 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(latestItemCount, greaterThan(0));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('历史分页若先结束 loading 再出现空窗口，补历史后也不应回到底部', (tester) async {
+    final harnessKey = GlobalKey<_PagingChatListHarnessState>();
+    final autoScrollReasons = <String>[];
+
+    await tester.pumpWidget(
+      _buildPagingHost(
+        harnessKey,
+        onDebugAutoScrollRequested: autoScrollReasons.add,
+      ),
+    );
+    await tester.pumpAndSettle();
+    autoScrollReasons.clear();
+
+    final listFinder = find.byType(CustomScrollView);
+    expect(listFinder, findsOneWidget);
+
+    await tester.drag(listFinder, const Offset(0, 4000));
+    await tester.pump();
+    expect(harnessKey.currentState!.loadMoreCallCount, 1);
+    await tester.pump(const Duration(milliseconds: 120));
+    await tester.pump(const Duration(milliseconds: 120));
+    await tester.pump(const Duration(milliseconds: 120));
+    final baselineController =
+        tester.widget<CustomScrollView>(listFinder).controller!;
+    final offsetBeforeRecovery = baselineController.offset;
+    final distanceToTopBeforeRecovery =
+        (baselineController.position.maxScrollExtent -
+                baselineController.offset)
+            .abs();
+
+    harnessKey.currentState!.releaseLoadingBeforeMessages();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 160));
+
+    harnessKey.currentState!.beginTransientEmptyWindowAfterLoadingReleased();
+    await tester.pump();
+
+    harnessKey.currentState!.endTransientEmptyWindowAfterLoadingReleased();
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    final controller = tester.widget<CustomScrollView>(listFinder).controller!;
+    final distanceToTopAfterRecovery =
+        (controller.position.maxScrollExtent - controller.offset).abs();
+    expect(
+      _distanceToBottom(controller),
+      greaterThan(40),
+      reason: '即使 loading 先结束又出现瞬时空窗口，历史补齐后也应继续停留在历史阅读位置',
+    );
+    expect(
+      controller.offset,
+      closeTo(offsetBeforeRecovery, 1),
+      reason: '空窗口恢复后也应保持原位置，不应自动继续上翻',
+    );
+    expect(
+      distanceToTopAfterRecovery,
+      greaterThan(distanceToTopBeforeRecovery + 40),
+      reason: '空窗口恢复后只搬开 loading，更早消息应继续留给用户手动上滑',
+    );
+    expect(
+      autoScrollReasons,
+      isEmpty,
+      reason: '空窗口补历史链路不应触发任何回底请求',
+    );
     expect(tester.takeException(), isNull);
   });
 

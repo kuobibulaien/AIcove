@@ -177,11 +177,7 @@ class ChatRequestMessageBuilder {
       }
 
       if (block is ToolBlock) {
-        final internalImageContextText =
-            buildInternalImageContextTextFromToolBlock(block);
-        if (internalImageContextText != null &&
-            internalImageContextText.isNotEmpty) {
-          parts.add({'type': 'text', 'text': internalImageContextText});
+        if (extractInternalImageContextPayloadFromToolBlock(block) != null) {
           continue;
         }
         if (block.toolCallId != null && block.toolCallId!.isNotEmpty) {
@@ -272,22 +268,13 @@ class ChatRequestMessageBuilder {
     required String? description,
   }) {
     final normalized = description?.trim();
-    if (role == 'assistant') {
-      return buildInternalImageContextText(
-        buildImageContextPayload(
-          role: role,
-          status: 'delivered',
-          prompt: normalized,
-        ),
-      );
+    if (normalized == null || normalized.isEmpty) {
+      return null;
     }
-    return buildInternalImageContextText(
-      buildImageContextPayload(
-        role: role,
-        status: 'uploaded',
-        description: normalized,
-      ),
-    );
+    if (role == 'assistant') {
+      return null;
+    }
+    return normalized;
   }
 
   static Map<String, dynamic> buildImageContextPayload({
@@ -352,7 +339,9 @@ class ChatRequestMessageBuilder {
     return nonVisionImageContextRegex.hasMatch(text);
   }
 
-  static String? buildInternalImageContextTextFromToolBlock(ToolBlock block) {
+  static Map<String, dynamic>? extractInternalImageContextPayloadFromToolBlock(
+    ToolBlock block,
+  ) {
     if (block.toolCallId != null && block.toolCallId!.trim().isNotEmpty) {
       return null;
     }
@@ -360,6 +349,14 @@ class ChatRequestMessageBuilder {
       return null;
     }
     final payload = block.result ?? block.arguments;
+    if (payload == null || payload.isEmpty) {
+      return null;
+    }
+    return Map<String, dynamic>.from(payload);
+  }
+
+  static String? buildInternalImageContextTextFromToolBlock(ToolBlock block) {
+    final payload = extractInternalImageContextPayloadFromToolBlock(block);
     if (payload == null || payload.isEmpty) {
       return null;
     }

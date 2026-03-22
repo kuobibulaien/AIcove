@@ -32,8 +32,8 @@ class ChatSendService {
     _ref,
     readImageAsBase64: readImageAsBase64,
     shouldUseNonVisionImageFlow: shouldUseNonVisionImageFlow,
-    resolveTimeAwarenessLastMessageTime:
-        ChatSendService.resolveTimeAwarenessLastMessageTime,
+    resolveTimeAwarenessPreviousUserMessageTime:
+        ChatSendService.resolveTimeAwarenessPreviousUserMessageTime,
   );
 
   static const String _logTag = 'ChatSendService';
@@ -366,19 +366,27 @@ class ChatSendService {
     }
   }
 
-  /// 计算时间感知插件的“上一轮对话时间锚点”。
+  /// 计算时间感知插件的“上一条用户消息时间”。
   ///
-  /// 当 history 最后一条是当前用户刚发送的消息时，使用倒数第二条；
-  /// 这样能反映“距离上一轮对话过去了多久”。
-  static DateTime? resolveTimeAwarenessLastMessageTime(List<Message> history) {
+  /// 当 history 末尾已经包含当前轮 user 消息时，会跳过这条当前消息，
+  /// 返回它之前最近的一条 user 消息时间；否则返回 history 中最后一条 user 消息时间。
+  static DateTime? resolveTimeAwarenessPreviousUserMessageTime(
+    List<Message> history,
+  ) {
     if (history.isEmpty) return null;
-    if (history.length == 1) return history.first.createdAt;
 
-    final last = history.last;
-    if (last.role == 'user') {
-      return history[history.length - 2].createdAt;
+    final shouldSkipLatestUser = history.last.role == 'user';
+    var skippedLatestUser = false;
+    for (var i = history.length - 1; i >= 0; i--) {
+      final message = history[i];
+      if (message.role != 'user') continue;
+      if (shouldSkipLatestUser && !skippedLatestUser) {
+        skippedLatestUser = true;
+        continue;
+      }
+      return message.createdAt;
     }
-    return last.createdAt;
+    return null;
   }
 
   /// 准备历史消息。

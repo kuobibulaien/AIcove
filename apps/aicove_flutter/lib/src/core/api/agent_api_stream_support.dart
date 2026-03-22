@@ -64,7 +64,7 @@ class _AgentApiStreamSupport {
     final provider = preparedRequest.provider;
     final adapter = preparedRequest.adapter;
     final adapterName = adapter.name;
-    final isOpenAiStream = adapterName == 'openai';
+    final isOpenAiStream = adapterName == 'openai' || adapterName == 'minimax';
     final isGeminiStream = adapterName == 'gemini';
     final isClaudeStream = adapterName == 'claude';
     if (!isOpenAiStream && !isGeminiStream && !isClaudeStream) {

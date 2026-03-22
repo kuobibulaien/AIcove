@@ -4,7 +4,9 @@ import 'package:http/http.dart' as http;
 
 import '../../../../core/api/providers/google_api_mode.dart';
 import '../../../../core/api/providers/minimax_compat.dart';
+import '../../../../core/api/providers/provider_chat_api_path.dart';
 import '../../../../core/api/providers/provider_adapter_factory.dart';
+import '../../../../core/api/providers/zai_compat.dart';
 import '../../../../core/network/json_http_client.dart';
 import '../support/ui_models_store_support.dart';
 
@@ -22,12 +24,21 @@ class ProviderProbeRemoteDataSource {
     required String apiBaseUrl,
     Map<String, dynamic>? customConfig,
   }) async {
-    if (_shouldUseMiniMaxFallbackModels(
-      providerId: providerId,
-      apiBaseUrl: apiBaseUrl,
-      customConfig: customConfig,
-    )) {
-      return List<String>.from(kMiniMaxDefaultChatModels);
+    if (isZaiProvider(providerId: providerId, apiBaseUrl: apiBaseUrl)) {
+      return _previewZaiProvider(
+        providerId: providerId,
+        apiKey: apiKey,
+        apiBaseUrl: apiBaseUrl,
+        customConfig: customConfig,
+      );
+    }
+    if (isMiniMaxApiUrl(apiBaseUrl)) {
+      return _previewMiniMaxProvider(
+        providerId: providerId,
+        apiKey: apiKey,
+        apiBaseUrl: apiBaseUrl,
+        customConfig: customConfig,
+      );
     }
     if (isNovelAiProvider(providerId: providerId, apiBaseUrl: apiBaseUrl)) {
       return kNovelAiDefaultModels;
@@ -93,17 +104,12 @@ class ProviderProbeRemoteDataSource {
         providerId: providerId,
         customConfig: customConfig,
       );
-      final endpoint = adapter.name == 'gemini'
-          ? buildGoogleGenerateContentEndpoint(
-              baseUrl: apiBaseUrl,
-              model: modelId,
-              streaming: false,
-              vertexExpress: vertexExpress,
-            )
-          : adapter.buildEndpoint(
-              apiBaseUrl.replaceAll(RegExp(r'/+$'), ''),
-              modelType: 'chat',
-            );
+      final endpoint = buildProviderChatEndpoint(
+        provider: adapter.name,
+        apiBaseUrl: apiBaseUrl,
+        model: modelId,
+        customConfig: customConfig,
+      );
       final headers = adapter.buildHeaders(apiKey);
       if (adapter.name == 'gemini' && vertexExpress) {
         headers.remove('x-goog-api-key');
@@ -149,20 +155,77 @@ class ProviderProbeRemoteDataSource {
     }
   }
 
-  bool _shouldUseMiniMaxFallbackModels({
+  Future<List<String>> _previewMiniMaxProvider({
     required String providerId,
+    required String apiKey,
     required String apiBaseUrl,
     Map<String, dynamic>? customConfig,
-  }) {
-    if (!isMiniMaxApiUrl(apiBaseUrl)) return false;
-    final resolved = ProviderAdapterFactory.resolveProvider(
-      providerId,
-      customConfig: customConfig,
-      apiBaseUrl: apiBaseUrl,
-    );
-    return resolved == 'openai' ||
-        resolved == 'claude' ||
-        resolved == 'minimax';
+  }) async {
+    final fallbackModels = List<String>.from(kMiniMaxDefaultPreviewModels);
+    final modelsEndpoint = buildMiniMaxModelsEndpoint(apiBaseUrl);
+    if (modelsEndpoint == null) {
+      return fallbackModels;
+    }
+
+    try {
+      final response = await JsonHttpClient.getJson(
+        uri: Uri.parse(modelsEndpoint),
+        headers: ProviderAdapterFactory.getAdapter(
+          'openai',
+        ).buildHeaders(apiKey),
+        timeout: const Duration(seconds: 10),
+        client: _httpClient,
+      );
+      final models = _extractPreviewModels(
+        response.data,
+        providerId: providerId,
+        customConfig: customConfig,
+      );
+      if (models.isNotEmpty) {
+        return mergeMiniMaxPreviewModels(models);
+      }
+    } catch (_) {
+      // MiniMax 官方未文档化稳定的模型列表接口，失败时回退到文档兜底模型。
+    }
+
+    return fallbackModels;
+  }
+
+  Future<List<String>> _previewZaiProvider({
+    required String providerId,
+    required String apiKey,
+    required String apiBaseUrl,
+    Map<String, dynamic>? customConfig,
+  }) async {
+    final fallbackModels = List<String>.from(kZaiDefaultChatModels);
+
+    try {
+      final adapter = ProviderAdapterFactory.getAdapter(
+        providerId,
+        customConfig: customConfig,
+        apiBaseUrl: apiBaseUrl,
+      );
+      final modelsEndpoint =
+          '${apiBaseUrl.replaceAll(RegExp(r'/+$'), '')}/models';
+      final response = await JsonHttpClient.getJson(
+        uri: Uri.parse(modelsEndpoint),
+        headers: adapter.buildHeaders(apiKey),
+        timeout: const Duration(seconds: 10),
+        client: _httpClient,
+      );
+      final models = _extractPreviewModels(
+        response.data,
+        providerId: providerId,
+        customConfig: customConfig,
+      );
+      if (models.isNotEmpty) {
+        return models;
+      }
+    } catch (_) {
+      // Z.AI 当前公开文档未列出稳定的 /models 接口，失败时回退到内置列表。
+    }
+
+    return fallbackModels;
   }
 
   Future<List<String>> _previewVertexExpressProvider({

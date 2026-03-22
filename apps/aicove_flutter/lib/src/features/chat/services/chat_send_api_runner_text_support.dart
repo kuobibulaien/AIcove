@@ -279,11 +279,16 @@ bool _isImagePartMap(Map<String, dynamic> part) {
 }
 
 class _VisibleAssistantStreamFilter {
-  static const String _imageOpenTagPrefix = '<image';
-  static const String _imageCloseTag = '</image>';
+  static const List<_HiddenStreamTagSpec> _hiddenTagSpecs =
+      <_HiddenStreamTagSpec>[
+    _HiddenStreamTagSpec(openTagPrefix: '<image>', closeTag: '</image>'),
+    _HiddenStreamTagSpec(openTagPrefix: '<think', closeTag: '</think>'),
+  ];
 
   String _pending = '';
-  bool _insideImageTag = false;
+  String? _activeCloseTag;
+
+  bool get _insideHiddenTag => _activeCloseTag != null;
 
   String consume(String delta) {
     if (delta.isEmpty) return '';
@@ -291,21 +296,23 @@ class _VisibleAssistantStreamFilter {
     final output = StringBuffer();
 
     while (_pending.isNotEmpty) {
-      if (_insideImageTag) {
+      if (_insideHiddenTag) {
+        final closeTag = _activeCloseTag!;
         final lowerPending = _pending.toLowerCase();
-        final closeIndex = lowerPending.indexOf(_imageCloseTag);
+        final closeIndex = lowerPending.indexOf(closeTag);
         if (closeIndex < 0) {
-          _pending = _retainTail(_pending, _imageCloseTag.length - 1);
+          _pending = _retainTail(_pending, closeTag.length - 1);
           break;
         }
-        _pending = _pending.substring(closeIndex + _imageCloseTag.length);
-        _insideImageTag = false;
+        _pending = _pending.substring(closeIndex + closeTag.length);
+        _activeCloseTag = null;
         continue;
       }
 
       final lowerPending = _pending.toLowerCase();
-      final openIndex = lowerPending.indexOf(_imageOpenTagPrefix);
-      if (openIndex >= 0) {
+      final hiddenTagMatch = _findNextHiddenTag(lowerPending);
+      if (hiddenTagMatch != null) {
+        final openIndex = hiddenTagMatch.openIndex;
         if (openIndex > 0) {
           output.write(_pending.substring(0, openIndex));
         }
@@ -315,12 +322,23 @@ class _VisibleAssistantStreamFilter {
           break;
         }
         _pending = _pending.substring(tagEndIndex + 1);
-        _insideImageTag = true;
+        _activeCloseTag = hiddenTagMatch.closeTag;
+        continue;
+      }
+
+      final hiddenCloseTagMatch = _findNextHiddenCloseTag(lowerPending);
+      if (hiddenCloseTagMatch != null) {
+        final closeIndex = hiddenCloseTagMatch.openIndex;
+        if (closeIndex > 0) {
+          output.write(_pending.substring(0, closeIndex));
+        }
+        _pending = _pending
+            .substring(closeIndex + hiddenCloseTagMatch.closeTag.length);
         continue;
       }
 
       final partialPrefixLength =
-          _findTrailingPrefixLength(lowerPending, _imageOpenTagPrefix);
+          _findTrailingOpenTagPrefixLength(lowerPending);
       if (partialPrefixLength > 0) {
         final visibleEnd = _pending.length - partialPrefixLength;
         if (visibleEnd > 0) {
@@ -335,6 +353,47 @@ class _VisibleAssistantStreamFilter {
     }
 
     return output.toString();
+  }
+
+  _HiddenTagMatch? _findNextHiddenTag(String lowerPending) {
+    _HiddenTagMatch? firstMatch;
+    for (final spec in _hiddenTagSpecs) {
+      final index = lowerPending.indexOf(spec.openTagPrefix);
+      if (index < 0) continue;
+      if (firstMatch == null || index < firstMatch.openIndex) {
+        firstMatch = _HiddenTagMatch(
+          openIndex: index,
+          closeTag: spec.closeTag,
+        );
+      }
+    }
+    return firstMatch;
+  }
+
+  _HiddenTagMatch? _findNextHiddenCloseTag(String lowerPending) {
+    _HiddenTagMatch? firstMatch;
+    for (final spec in _hiddenTagSpecs) {
+      final index = lowerPending.indexOf(spec.closeTag);
+      if (index < 0) continue;
+      if (firstMatch == null || index < firstMatch.openIndex) {
+        firstMatch = _HiddenTagMatch(
+          openIndex: index,
+          closeTag: spec.closeTag,
+        );
+      }
+    }
+    return firstMatch;
+  }
+
+  int _findTrailingOpenTagPrefixLength(String value) {
+    var maxLength = 0;
+    for (final spec in _hiddenTagSpecs) {
+      final length = _findTrailingPrefixLength(value, spec.openTagPrefix);
+      if (length > maxLength) {
+        maxLength = length;
+      }
+    }
+    return maxLength;
   }
 
   String _retainTail(String value, int maxLength) {
@@ -352,6 +411,26 @@ class _VisibleAssistantStreamFilter {
     }
     return 0;
   }
+}
+
+class _HiddenStreamTagSpec {
+  const _HiddenStreamTagSpec({
+    required this.openTagPrefix,
+    required this.closeTag,
+  });
+
+  final String openTagPrefix;
+  final String closeTag;
+}
+
+class _HiddenTagMatch {
+  const _HiddenTagMatch({
+    required this.openIndex,
+    required this.closeTag,
+  });
+
+  final int openIndex;
+  final String closeTag;
 }
 
 class _SanitizeResult {

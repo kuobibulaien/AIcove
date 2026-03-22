@@ -80,4 +80,17 @@ void main() {
       '/tmp/image_dot.png',
     );
   });
+
+  test('stripPluginTags 只移除标准 inline image 标签，不误删带属性的内容', () {
+    expect(
+      chatMessageProcessor.stripPluginTags('前文<image>prompt</image>后文'),
+      '前文后文',
+    );
+    expect(
+      chatMessageProcessor.stripPluginTags(
+        '前文<image source="history">keep me</image>后文',
+      ),
+      '前文<image source="history">keep me</image>后文',
+    );
+  });
 }

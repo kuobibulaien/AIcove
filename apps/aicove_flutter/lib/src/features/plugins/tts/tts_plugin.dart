@@ -12,7 +12,7 @@ import 'tts_service.dart';
 /// 通过构造函数传入，不再存储在 TtsConfig 中。
 class TtsPlugin extends BasePlugin {
   // ========== 元数据定义 ==========
-  static final _metadata = PluginMetadata(
+  static const _metadata = PluginMetadata(
     id: 'tts',
     name: '语音合成 (TTS)',
     description: '将标记文本自动转换为语音',
@@ -57,14 +57,14 @@ class TtsPlugin extends BasePlugin {
 
   // ========== 内部状态 ==========
   TtsConfig _ttsConfig;
-  String? _apiKey;
-  String _requestUrl;
-  String _requestFormat;
-  String? _selectedModel;
+  final String? _apiKey;
+  final String _requestUrl;
+  final String _requestFormat;
+  final String? _selectedModel;
   late TtsService _service;
 
   /// 音色创建回调，用于保存自动创建的阿里云音色
-  Future<void> Function(VoicePreset updatedPreset)? _onVoiceCreated;
+  final Future<void> Function(VoicePreset updatedPreset)? _onVoiceCreated;
 
   // ========== 构造函数 ==========
   TtsPlugin(
@@ -93,13 +93,14 @@ class TtsPlugin extends BasePlugin {
   // ========== 重写 enabled getter ==========
   /// 插件启用状态：配置启用 且 渠道已配置 且 模型已选择
   @override
-  bool get enabled => _ttsConfig.enabled && _requestUrl.isNotEmpty && _selectedModel != null;
+  bool get enabled =>
+      _ttsConfig.enabled && _requestUrl.isNotEmpty && _selectedModel != null;
 
   /// 是否已配置渠道（用于 UI 提示）
   bool get isConfigured => _requestUrl.isNotEmpty && _selectedModel != null;
 
   // ========== 生命周期方法 ==========
-  
+
   @override
   Future<void> onInitialize() async {
     await super.onInitialize();
@@ -202,8 +203,7 @@ class TtsPlugin extends BasePlugin {
   ///
   /// 始终返回标签模式的提示词（工具调用路径已暂时屏蔽）
   /// [supportsToolCalling] 参数暂时忽略，保留接口兼容性
-  @override
-  Future<String?> getSystemPrompt({String? userMessage, bool supportsToolCalling = false}) async {
+  String? buildTagSemanticsPrompt() {
     if (!enabled) {
       return null;
     }
@@ -222,7 +222,8 @@ class TtsPlugin extends BasePlugin {
     });
 
     // MiniMax 特有的语气词和停顿说明
-    final minimaxGuide = isMinimaxProvider ? '''
+    final minimaxGuide = isMinimaxProvider
+        ? '''
 
 【MiniMax 语音增强】
 你可以在 <tts> 标签内使用以下增强功能：
@@ -239,7 +240,8 @@ class TtsPlugin extends BasePlugin {
    - 使用 <#秒数#> 控制停顿，如 <#0.5#> 表示停顿 0.5 秒
    - 范围：0.01~99.99 秒
    示例：<tts>让我想想<#1.5#>嗯，我觉得可以！</tts>
-''' : '';
+'''
+        : '';
 
     return '''
 你可以使用 <tts>文本</tts> 标记来生成语音。
@@ -254,6 +256,12 @@ $frequencyGuide
 示例：
 <tts>你好，很高兴见到你！</tts>
 $minimaxGuide''';
+  }
+
+  @override
+  Future<String?> getSystemPrompt(
+      {String? userMessage, bool supportsToolCalling = false}) async {
+    return buildTagSemanticsPrompt();
   }
 
   /// 判断当前是否使用 MiniMax 渠道
@@ -382,5 +390,4 @@ $minimaxGuide''';
   Future<List<TtsConvertResult>> convertBatch(List<String> texts) async {
     return await _service.convertBatch(texts);
   }
-
 }

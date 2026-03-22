@@ -4,8 +4,8 @@ import 'domain/message.dart';
 import 'services/conversation_short_window_store.dart';
 import 'services/chat_history_store.dart';
 
-const int kConversationInitialVisibleCount = 5;
-const int kConversationVisiblePageSize = 5;
+const int kConversationInitialVisibleCount = 20;
+const int kConversationVisiblePageSize = 20;
 
 class ConversationTransientTimelineState {
   const ConversationTransientTimelineState({

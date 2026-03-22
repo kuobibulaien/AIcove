@@ -1,12 +1,12 @@
 import 'dart:async';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'ui/theme/tokens.dart';
-import 'ui/shared/animations/parallax_slide_page_route.dart';
 import 'ui/shared/widgets/desktop_window_frame.dart';
 import 'ui/features/home/pages/main_page.dart';
 import 'ui/features/chat/pages/chat_page.dart';
@@ -266,8 +266,6 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
   /// 创建路由配置（只调用一次）
   GoRouter _createRouter() {
-    const parallaxConfig = ParallaxSlideConfig.defaultConfig;
-
     return GoRouter(
       routes: [
         GoRoute(
@@ -279,12 +277,9 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
                 ? const MainPage()
                 : const SplitChatPage();
 
-            return CustomTransitionPage(
+            return CupertinoPage(
               key: state.pageKey,
               child: child,
-              // 主页面被覆盖时的视差动画（参考鸿蒙NEXT风格）
-              transitionsBuilder:
-                  buildSecondaryParallaxTransition(config: parallaxConfig),
             );
           },
           routes: [
@@ -295,16 +290,11 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
                 final initialConversation = state.extra is Conversation
                     ? state.extra as Conversation
                     : null;
-                return CustomTransitionPage(
+                return CupertinoPage(
                   key: state.pageKey,
                   child: ChatPage(
                       conversationId: id,
                       initialConversation: initialConversation),
-                  transitionDuration: parallaxConfig.duration,
-                  reverseTransitionDuration: parallaxConfig.reverseDuration,
-                  // 视差滑动动画：新页面从右边滑入覆盖，左侧带阴影
-                  transitionsBuilder:
-                      buildPrimaryParallaxTransition(config: parallaxConfig),
                 );
               },
             ),
@@ -320,14 +310,10 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
                   createdAt: now,
                   updatedAt: now,
                 );
-                return CustomTransitionPage(
+                return CupertinoPage(
                   key: state.pageKey,
                   child: ContactEditPage(
                       conversation: tempConv, editMode: EditMode.create),
-                  transitionDuration: parallaxConfig.duration,
-                  reverseTransitionDuration: parallaxConfig.reverseDuration,
-                  transitionsBuilder:
-                      buildPrimaryParallaxTransition(config: parallaxConfig),
                 );
               },
             ),

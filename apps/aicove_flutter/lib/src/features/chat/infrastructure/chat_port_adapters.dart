@@ -40,12 +40,14 @@ class ChatHistoryStoreAdapter implements ChatHistoryPort {
     required String userMessageId,
     required List<Message> messages,
     required String lastMessagePreview,
+    bool updateShortWindow = true,
   }) {
     return _historyStore.appendAssistantMessages(
       conversationId: conversationId,
       userMessageId: userMessageId,
       messages: messages,
       lastMessagePreview: lastMessagePreview,
+      updateShortWindow: updateShortWindow,
     );
   }
 

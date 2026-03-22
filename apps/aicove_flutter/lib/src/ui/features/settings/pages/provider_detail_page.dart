@@ -57,15 +57,18 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
   // 配置表单
   late TextEditingController _nameController;
   late TextEditingController _urlController;
+  late TextEditingController _pathController;
   late TextEditingController _keyController;
   late FocusNode _nameFocusNode;
   late FocusNode _urlFocusNode;
+  late FocusNode _pathFocusNode;
   late FocusNode _keyFocusNode;
 
   Timer? _autoSaveTimer;
   Timer? _deferredContentTimer;
   String _lastSavedName = '';
   String _lastSavedUrl = '';
+  String _lastSavedPath = '';
   String _lastSavedKey = '';
   bool _deferHeavyContent = true;
   String? _cachedModelEntriesSignature;
@@ -78,9 +81,11 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
     super.initState();
     _nameController = TextEditingController();
     _urlController = TextEditingController();
+    _pathController = TextEditingController();
     _keyController = TextEditingController();
     _nameFocusNode = FocusNode();
     _urlFocusNode = FocusNode();
+    _pathFocusNode = FocusNode();
     _keyFocusNode = FocusNode();
     _restoreWarmCacheFromLoadedSettings();
     _scheduleDeferredContentActivation();
@@ -93,9 +98,11 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
     _pageController.dispose();
     _nameController.dispose();
     _urlController.dispose();
+    _pathController.dispose();
     _keyController.dispose();
     _nameFocusNode.dispose();
     _urlFocusNode.dispose();
+    _pathFocusNode.dispose();
     _keyFocusNode.dispose();
     super.dispose();
   }
@@ -151,14 +158,17 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
   void _syncControllersFromProvider(ProviderAuth provider) {
     final desiredName = provider.displayName ?? '';
     final desiredUrl = provider.apiBaseUrl;
+    final desiredPath = resolveProviderDetailChatApiPath(provider);
     final desiredKey = _resolvePrimaryApiKey(provider);
 
     _syncControllerIfNotFocused(_nameController, _nameFocusNode, desiredName);
     _syncControllerIfNotFocused(_urlController, _urlFocusNode, desiredUrl);
+    _syncControllerIfNotFocused(_pathController, _pathFocusNode, desiredPath);
     _syncControllerIfNotFocused(_keyController, _keyFocusNode, desiredKey);
 
     _lastSavedName = desiredName.trim();
     _lastSavedUrl = desiredUrl.trim();
+    _lastSavedPath = desiredPath.trim();
     _lastSavedKey = desiredKey.trim();
   }
 
@@ -176,40 +186,17 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
     );
   }
 
-  Widget _buildLockedUrlPreview(
-    MoeColors colors, {
-    required TextEditingController controller,
-    required double width,
-  }) {
-    return SizedBox(
-      width: width,
-      child: ValueListenableBuilder<TextEditingValue>(
-        valueListenable: controller,
-        builder: (context, value, _) {
-          return Align(
-            alignment: Alignment.centerRight,
-            child: Text(
-              value.text.trim().isEmpty ? '-' : value.text.trim(),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.end,
-              style: TextStyle(fontSize: 14, color: colors.text),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
   void _scheduleAutoSave(ProviderAuth provider) {
     _autoSaveTimer?.cancel();
 
     final multiKeyEnabled = isProviderMultiKeyEnabled(provider);
     final name = _nameController.text.trim();
     final url = _urlController.text.trim();
+    final path = _pathController.text.trim();
     final key = _keyController.text.trim();
     final hasChanges = name != _lastSavedName ||
         url != _lastSavedUrl ||
+        path != _lastSavedPath ||
         (!multiKeyEnabled && key != _lastSavedKey);
 
     if (!hasChanges) return;
@@ -223,9 +210,11 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
     final multiKeyEnabled = isProviderMultiKeyEnabled(provider);
     final name = _nameController.text.trim();
     final url = _urlController.text.trim();
+    final path = _pathController.text.trim();
     final key = _keyController.text.trim();
     final hasChanges = name != _lastSavedName ||
         url != _lastSavedUrl ||
+        path != _lastSavedPath ||
         (!multiKeyEnabled && key != _lastSavedKey);
 
     if (!hasChanges) return;
@@ -235,10 +224,12 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
         provider: provider,
         displayName: name,
         apiBaseUrl: url,
+        apiPath: path,
         apiKey: key,
       );
       _lastSavedName = name;
       _lastSavedUrl = url;
+      _lastSavedPath = path;
       _lastSavedKey = key;
     } catch (e) {
       if (!mounted) return;
@@ -504,7 +495,19 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
                     Navigator.of(this.context).pop();
                     return;
                   }
-                  await _actions.updateRequestFormat(provider, selected);
+                  final nextPath =
+                      defaultProviderDetailChatApiPathForFormat(selected);
+                  _syncControllerIfNotFocused(
+                    _pathController,
+                    _pathFocusNode,
+                    nextPath,
+                  );
+                  await _actions.updateRequestFormat(
+                    provider,
+                    selected,
+                    nextPath,
+                  );
+                  _lastSavedPath = nextPath;
                   if (!mounted) return;
                   Navigator.of(this.context).pop();
                   MoeToast.show(this.context, '已更新 API 格式');
@@ -964,13 +967,12 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
     required double bottomPadding,
   }) {
     final multiKeyEnabled = isProviderMultiKeyEnabled(provider);
-    final vertexExpress = isProviderDetailVertexExpressMode(provider);
-    final showVertexAddress = vertexExpress &&
-        resolveProviderDetailRequestFormat(
-              provider,
-              settings: ref.read(appSettingsProvider).valueOrNull,
-            ) ==
-            ProviderDetailRequestFormat.gemini;
+    final settings = ref.read(appSettingsProvider).valueOrNull;
+    final showChatApiPath = (settings
+                ?.getProviderModelsByType(provider.id, type: ModelType.chat)
+                .isNotEmpty ??
+            false) ||
+        provider.capabilities.contains(ModelType.chat.value);
 
     // 因为 resizeToAvoidBottomInset: false，不需要监听键盘高度
     // 为底部悬浮操作区预留可滚动空间，避免内容被遮挡
@@ -1004,43 +1006,34 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
               ),
               MoeSettingsRow(
                 icon: Icons.link_outlined,
-                label: 'API 地址',
+                label: '基础 URL',
                 trailingType: MoeSettingsRowTrailing.custom,
-                trailing: showVertexAddress
-                    ? Opacity(
-                        opacity: 0.45,
-                        child: _buildLockedUrlPreview(
-                          colors,
-                          controller: _urlController,
-                          width: 200,
-                        ),
-                      )
-                    : SizedBox(
-                        width: 200,
-                        child: TextField(
-                          controller: _urlController,
-                          focusNode: _urlFocusNode,
-                          style: TextStyle(fontSize: 14, color: colors.text),
-                          textAlign: TextAlign.end,
-                          decoration: const InputDecoration(
-                            border: InputBorder.none,
-                            isDense: true,
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                          onChanged: (_) => _scheduleAutoSave(provider),
-                        ),
-                      ),
+                trailing: SizedBox(
+                  width: 200,
+                  child: TextField(
+                    controller: _urlController,
+                    focusNode: _urlFocusNode,
+                    style: TextStyle(fontSize: 14, color: colors.text),
+                    textAlign: TextAlign.end,
+                    decoration: const InputDecoration(
+                      border: InputBorder.none,
+                      isDense: true,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                    onChanged: (_) => _scheduleAutoSave(provider),
+                  ),
+                ),
               ),
-              if (showVertexAddress)
+              if (showChatApiPath)
                 MoeSettingsRow(
-                  icon: Icons.hub_outlined,
-                  label: 'Vertex 地址',
+                  icon: Icons.route_outlined,
+                  label: 'API 路径',
                   trailingType: MoeSettingsRowTrailing.custom,
                   trailing: SizedBox(
                     width: 220,
                     child: TextField(
-                      controller: _urlController,
-                      focusNode: _urlFocusNode,
+                      controller: _pathController,
+                      focusNode: _pathFocusNode,
                       style: TextStyle(fontSize: 14, color: colors.text),
                       textAlign: TextAlign.end,
                       decoration: const InputDecoration(

@@ -13,9 +13,13 @@ import '../../plugins/image/image_plugin.dart';
 import '../../plugins/memory/memory_plugin.dart';
 import '../../plugins/plugin_providers.dart';
 import '../../plugins/time_awareness/time_awareness_plugin.dart';
+import '../../plugins/tts/tts_plugin.dart';
 import '../../observability/trace_models.dart';
 import '../../observability/trace_store.dart';
 import '../../../core/app_logger.dart';
+import '../../../core/models/message_block.dart';
+import '../../../core/services/prompt_tag_semantics_service.dart';
+import '../../../core/services/system_reminder_service.dart';
 import '../../../core/utils/token_estimator.dart';
 import 'chat_plugin_context_builder.dart';
 import 'chat_request_config.dart';
@@ -29,11 +33,17 @@ typedef ChatSupportsNonVisionImageFlow = bool Function({
   required String modelRef,
 });
 
-typedef ChatLastMessageTimeResolver = DateTime? Function(List<Message> history);
+typedef ChatPreviousUserMessageTimeResolver = DateTime? Function(
+  List<Message> history,
+);
 
 /// 后台发送执行服务：负责请求装配、工具上下文、trace 记录与模型调用。
 class ChatSendBackendService {
   static const String _logTag = 'ChatSendBackendService';
+  static const Set<String> _managedTagSemanticsPluginIds = <String>{
+    'tts',
+    'image',
+  };
   static const String _internalImageContextRule =
       '<image source="history" ...>...</image> 是内部图片上下文记录，只供理解，不是发给用户的话，'
       '也不是新的生图指令，禁止原样输出这段标记。只有你当前这轮主动输出的普通 '
@@ -43,31 +53,40 @@ class ChatSendBackendService {
     this._ref, {
     required Future<String?> Function(String imagePath) readImageAsBase64,
     required ChatSupportsNonVisionImageFlow shouldUseNonVisionImageFlow,
-    required ChatLastMessageTimeResolver resolveTimeAwarenessLastMessageTime,
+    required ChatPreviousUserMessageTimeResolver
+        resolveTimeAwarenessPreviousUserMessageTime,
     ChatSendApiRunner apiRunner = const ChatSendApiRunner(),
     ChatPluginContextBuilder pluginContextBuilder =
         const ChatPluginContextBuilder(),
     ChatRequestConfigBuilder? requestConfigBuilder,
     ChatSendTracePayloadBuilder tracePayloadBuilder =
         const ChatSendTracePayloadBuilder(),
+    SystemReminderService systemReminderService = const SystemReminderService(),
+    PromptTagSemanticsService promptTagSemanticsService =
+        const PromptTagSemanticsService(),
   })  : _readImageAsBase64 = readImageAsBase64,
         _shouldUseNonVisionImageFlow = shouldUseNonVisionImageFlow,
-        _resolveTimeAwarenessLastMessageTime =
-            resolveTimeAwarenessLastMessageTime,
+        _resolveTimeAwarenessPreviousUserMessageTime =
+            resolveTimeAwarenessPreviousUserMessageTime,
         _apiRunner = apiRunner,
         _pluginContextBuilder = pluginContextBuilder,
         _requestConfigBuilder =
             requestConfigBuilder ?? ChatRequestConfigBuilder(),
-        _tracePayloadBuilder = tracePayloadBuilder;
+        _tracePayloadBuilder = tracePayloadBuilder,
+        _systemReminderService = systemReminderService,
+        _promptTagSemanticsService = promptTagSemanticsService;
 
   final Ref _ref;
   final Future<String?> Function(String imagePath) _readImageAsBase64;
   final ChatSupportsNonVisionImageFlow _shouldUseNonVisionImageFlow;
-  final ChatLastMessageTimeResolver _resolveTimeAwarenessLastMessageTime;
+  final ChatPreviousUserMessageTimeResolver
+      _resolveTimeAwarenessPreviousUserMessageTime;
   final ChatSendApiRunner _apiRunner;
   final ChatPluginContextBuilder _pluginContextBuilder;
   final ChatRequestConfigBuilder _requestConfigBuilder;
   final ChatSendTracePayloadBuilder _tracePayloadBuilder;
+  final SystemReminderService _systemReminderService;
+  final PromptTagSemanticsService _promptTagSemanticsService;
 
   late final ChatRequestMessageBuilder _requestMessageBuilder =
       ChatRequestMessageBuilder(
@@ -130,7 +149,7 @@ class ChatSendBackendService {
         effectiveImageRoute == EffectiveImageGenerationRoute.stable;
     final shouldUseFastImageRoute =
         effectiveImageRoute == EffectiveImageGenerationRoute.fast;
-    final reqMessages = await _requestMessageBuilder.buildRequestMessages(
+    var reqMessages = await _requestMessageBuilder.buildRequestMessages(
       history,
       settings: settings,
       supportsVision: supportsVision,
@@ -164,12 +183,41 @@ class ChatSendBackendService {
       enabledPluginIds: enabledPluginIds,
     );
     final imagePlugin = effectivePlugins.whereType<ImagePlugin>().firstOrNull;
-    final timeAwarenessAnchor = _resolveTimeAwarenessLastMessageTime(history);
-    for (final plugin in effectivePlugins) {
-      if (plugin is TimeAwarenessPlugin) {
-        plugin.setLastMessageTime(timeAwarenessAnchor);
-        break;
+    final ttsPlugin = effectivePlugins.whereType<TtsPlugin>().firstOrNull;
+    final timeAwarenessPlugin =
+        effectivePlugins.whereType<TimeAwarenessPlugin>().firstOrNull;
+    final previousUserMessageTime =
+        _resolveTimeAwarenessPreviousUserMessageTime(history);
+    final requestTime = DateTime.now();
+    var systemReminderContent = '';
+    final reminderContents = <String>[];
+    if (timeAwarenessPlugin != null && timeAwarenessPlugin.enabled) {
+      final reminderPayload = timeAwarenessPlugin.buildSystemReminderPayload(
+        currentTime: requestTime,
+        previousUserMessageTime: previousUserMessageTime,
+      );
+      if (reminderPayload != null) {
+        final content = _systemReminderService.buildReminderContent(
+          reminderPayload,
+        );
+        if (content.isNotEmpty) {
+          reminderContents.add(content);
+        }
       }
+    }
+    final imageFailureReminderContent =
+        _buildImageFailureReminderContent(history);
+    if (imageFailureReminderContent != null &&
+        imageFailureReminderContent.isNotEmpty) {
+      reminderContents.add(imageFailureReminderContent);
+    }
+    systemReminderContent =
+        _systemReminderService.mergeReminderContents(reminderContents);
+    if (systemReminderContent.isNotEmpty) {
+      reqMessages = _systemReminderService.insertReminderBeforeLastUser(
+        messages: reqMessages,
+        reminderContent: systemReminderContent,
+      );
     }
     final pluginPromptBuild =
         await _pluginContextBuilder.buildPluginPromptEntriesWithFilter(
@@ -177,23 +225,57 @@ class ChatSendBackendService {
       userMessage: userText ?? '',
       supportsToolCalling: supportsToolCalling,
       conversationId: resolvedConversationId,
+      excludedPluginIds: _managedTagSemanticsPluginIds,
     );
     final shouldInjectManagedFastImagePrompt =
         imagePlugin != null && imagePlugin.enabled && shouldUseFastImageRoute;
+    final systemReminderTagPrompt = systemReminderContent.isEmpty
+        ? null
+        : _buildSystemReminderTagPrompt(timeAwarenessPlugin);
+    final ttsTagPrompt = ttsPlugin?.buildTagSemanticsPrompt();
+    final imageTagPrompt = shouldInjectManagedFastImagePrompt
+        ? imagePlugin.buildTagSemanticsPrompt(
+            customDrawingPrompt: personaParts.customDrawingPrompt,
+          )
+        : null;
+    final tagSemanticsSnapshot = _promptTagSemanticsService.buildSnapshot(
+      <PromptTagSemanticsEntry>[
+        if (systemReminderTagPrompt != null &&
+            systemReminderTagPrompt.isNotEmpty)
+          PromptTagSemanticsEntry(
+            id: 'system-reminder',
+            tagName: '<system-reminder>',
+            prompt: systemReminderTagPrompt,
+          ),
+        if (ttsTagPrompt != null && ttsTagPrompt.isNotEmpty)
+          PromptTagSemanticsEntry(
+            id: 'tts',
+            tagName: '<tts>',
+            prompt: ttsTagPrompt,
+          ),
+        if (imageTagPrompt != null && imageTagPrompt.isNotEmpty)
+          PromptTagSemanticsEntry(
+            id: 'image',
+            tagName: '<image>',
+            prompt: imageTagPrompt,
+          ),
+      ],
+    );
+    if (tagSemanticsSnapshot.mergedPrompt.isNotEmpty) {
+      systemParts.add(tagSemanticsSnapshot.mergedPrompt);
+    }
+    if (shouldInjectManagedFastImagePrompt &&
+        (imageTagPrompt == null || imageTagPrompt.isEmpty)) {
+      final fallbackImagePrompt = imagePlugin.buildInlineImageSystemPrompt(
+        customDrawingPrompt: personaParts.customDrawingPrompt,
+      );
+      if (fallbackImagePrompt.isNotEmpty) {
+        systemParts.add(fallbackImagePrompt);
+      }
+    }
     for (final promptEntry in pluginPromptBuild.entries) {
       if (!promptEntry.injected) continue;
-      if (promptEntry.pluginId == 'image' &&
-          shouldInjectManagedFastImagePrompt) {
-        continue;
-      }
       systemParts.add(promptEntry.content);
-    }
-    if (shouldInjectManagedFastImagePrompt) {
-      systemParts.add(
-        imagePlugin.buildInlineImageSystemPrompt(
-          customDrawingPrompt: personaParts.customDrawingPrompt,
-        ),
-      );
     }
 
     List<Map<String, dynamic>>? tools;
@@ -226,6 +308,7 @@ class ChatSendBackendService {
       personaPrompt: personaParts.userPrompt,
       includeInternalImageRule: includeInternalImageRule,
       internalImageContextRule: _internalImageContextRule,
+      tagSemanticsPrompt: tagSemanticsSnapshot.mergedPrompt,
       pluginPromptBuild: pluginPromptBuild,
     );
     final messagesBeforeSystemCount = reqMessages.length;
@@ -243,8 +326,11 @@ class ChatSendBackendService {
       maxContextTokens: maxContextTokens,
       reserveTokens: 2048,
     );
+    final finalMessages = _systemReminderService.normalizeReminderPlacement(
+      messages: truncatedMessages,
+    );
 
-    if (truncatedMessages.length < reqMessages.length) {
+    if (finalMessages.length < reqMessages.length) {
       MemoryPlugin? memoryPlugin;
       for (final plugin in effectivePlugins) {
         if (plugin is MemoryPlugin && plugin.enabled) {
@@ -255,7 +341,7 @@ class ChatSendBackendService {
       if (memoryPlugin != null) {
         final systemCount = systemParts.isNotEmpty ? 1 : 0;
         final keptHistoryCount =
-            (truncatedMessages.length - systemCount).clamp(0, history.length);
+            (finalMessages.length - systemCount).clamp(0, history.length);
         final droppedCount = history.length - keptHistoryCount;
         if (droppedCount > 0) {
           memoryPlugin.triggerPreFlush(
@@ -267,7 +353,6 @@ class ChatSendBackendService {
     }
 
     if (traceContext != null) {
-      final now = DateTime.now();
       final payloadRef = await TraceStore.instance.writePayload(
         traceId: traceContext.traceId,
         sessionId: traceContext.sessionId,
@@ -276,22 +361,25 @@ class ChatSendBackendService {
         source: 'ChatSendBackendService',
         payload: {
           'runtimeContext': _tracePayloadBuilder.buildRuntimeContextPayload(
-            now: now,
-            lastMessageTime: timeAwarenessAnchor,
+            now: requestTime,
+            previousUserMessageTime: previousUserMessageTime,
             effectivePlugins: effectivePlugins,
-            pluginPromptBuild: pluginPromptBuild,
             historyCount: history.length,
+            systemReminderInjected: systemReminderContent.isNotEmpty,
+            systemReminderContent: systemReminderContent,
           ),
           'promptAssembly': _tracePayloadBuilder.buildPromptAssemblyPayload(
             systemAssemblyEntries: systemAssemblyEntries,
             pluginPromptBuild: pluginPromptBuild,
             messagesBeforeSystemCount: messagesBeforeSystemCount,
             messagesAfterSystemCount: reqMessages.length,
-            finalMessages: truncatedMessages,
+            finalMessages: finalMessages,
             toolsCount: tools?.length ?? 0,
+            systemReminderInjected: systemReminderContent.isNotEmpty,
+            systemReminderContent: systemReminderContent,
           ),
         },
-        now: now,
+        now: requestTime,
       );
       await TraceStore.instance.record(
         traceId: traceContext.traceId,
@@ -302,7 +390,7 @@ class ChatSendBackendService {
         payloadRef: payloadRef,
         meta: {
           'modelFullId': modelFull,
-          'messagesCount': truncatedMessages.length,
+          'messagesCount': finalMessages.length,
           'toolsCount': tools?.length ?? 0,
           'supportsToolCalling': supportsToolCalling,
           'supportsVision': supportsVision,
@@ -317,7 +405,7 @@ class ChatSendBackendService {
       providerApiKey: requestConfig.providerApiKey,
       customConfig: requestConfig.customConfig,
       toolPrefs: toolPrefs,
-      messages: truncatedMessages,
+      messages: finalMessages,
       tools: tools,
       enabledPluginIds: enabledPluginIds,
       modelTemperature: requestConfig.modelTemperature,
@@ -395,6 +483,79 @@ class ChatSendBackendService {
       }
     }
     return false;
+  }
+
+  String? _buildImageFailureReminderContent(List<Message> history) {
+    Map<String, dynamic>? lastFailurePayload;
+    for (final message in history) {
+      final blocks = message.blocks;
+      if (blocks == null || blocks.isEmpty) continue;
+      for (final block in blocks) {
+        if (block is! ToolBlock) continue;
+        final payload = ChatRequestMessageBuilder
+            .extractInternalImageContextPayloadFromToolBlock(
+          block,
+        );
+        if (payload == null || !_isFailedImageContextPayload(payload)) {
+          continue;
+        }
+        lastFailurePayload = payload;
+      }
+    }
+    if (lastFailurePayload == null) {
+      return null;
+    }
+
+    final fields = <SystemReminderField>[
+      const SystemReminderField(
+        name: 'image_generation_failed',
+        value: 'true',
+      ),
+    ];
+
+    void addField(String name, Object? rawValue) {
+      final value = rawValue?.toString().trim() ?? '';
+      if (value.isEmpty) return;
+      fields.add(SystemReminderField(name: name, value: value));
+    }
+
+    addField(
+      'image_generation_failure_reason',
+      lastFailurePayload['reason'],
+    );
+    addField(
+      'image_generation_failure_raw_prompt',
+      lastFailurePayload['raw_prompt'],
+    );
+    addField(
+      'image_generation_failure_prompt',
+      lastFailurePayload['prompt'],
+    );
+
+    return _systemReminderService.buildReminderContent(
+      SystemReminderPayload(fields: fields),
+    );
+  }
+
+  String _buildSystemReminderTagPrompt(
+    TimeAwarenessPlugin? timeAwarenessPlugin,
+  ) {
+    final parts = <String>[
+      _systemReminderService.buildReminderSemanticsPrompt(),
+      if (timeAwarenessPlugin != null &&
+          timeAwarenessPlugin.enabled &&
+          timeAwarenessPlugin.buildSystemReminderFieldGuide().trim().isNotEmpty)
+        timeAwarenessPlugin.buildSystemReminderFieldGuide(),
+    ];
+    return parts
+        .map((part) => part.trim())
+        .where((part) => part.isNotEmpty)
+        .join('\n');
+  }
+
+  bool _isFailedImageContextPayload(Map<String, dynamic> payload) {
+    final status = payload['status']?.toString().trim().toLowerCase();
+    return status == 'failed' || payload['generation_failed'] == true;
   }
 
   String? _resolveBoundToolPresetName(

@@ -10,6 +10,7 @@ import '../utils/content_normalizer.dart';
 import 'image_providers/image_provider_adapter.dart';
 import 'image_providers/image_provider_adapter_factory.dart';
 import 'providers/google_api_mode.dart';
+import 'providers/provider_chat_api_path.dart';
 import 'providers/provider_adapter_factory.dart';
 import 'providers/provider_adapter.dart' show ProviderAdapter, ToolCall;
 import '../../features/observability/trace_models.dart';
@@ -210,20 +211,19 @@ class AgentApiClient {
     Map<String, dynamic>? customConfig,
     bool streaming = false,
   }) {
-    if (adapter.name == 'gemini') {
-      final vertexExpress = isVertexExpressEnabled(customConfig);
-      var endpoint = buildGoogleGenerateContentEndpoint(
-        baseUrl: baseUrl,
-        model: model,
-        streaming: streaming,
-        vertexExpress: vertexExpress,
-      );
-      if (!vertexExpress && streaming) {
-        endpoint = _ensureGeminiSseAlt(endpoint);
-      }
-      return endpoint;
+    var endpoint = buildProviderChatEndpoint(
+      provider: adapter.name,
+      apiBaseUrl: baseUrl,
+      model: model,
+      customConfig: customConfig,
+      streaming: streaming,
+    );
+    if (adapter.name == 'gemini' &&
+        !isVertexExpressEnabled(customConfig) &&
+        streaming) {
+      endpoint = _ensureGeminiSseAlt(endpoint);
     }
-    return adapter.buildEndpoint(baseUrl, modelType: 'chat');
+    return endpoint;
   }
 
   String _ensureGeminiSseAlt(String endpoint) {

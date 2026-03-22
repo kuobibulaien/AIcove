@@ -291,6 +291,7 @@ class ChatHistoryStore {
     required String userMessageId,
     required List<Message> messages,
     required String lastMessagePreview,
+    bool updateShortWindow = true,
   }) async {
     await _db.transaction(() async {
       final msgRepo = _ref.read(messageRepositoryProvider);
@@ -317,7 +318,7 @@ class ChatHistoryStore {
         shortWindowUpdates.insert(0, userMessage);
       }
     }
-    if (shortWindowUpdates.isNotEmpty) {
+    if (updateShortWindow && shortWindowUpdates.isNotEmpty) {
       await _ref.read(conversationShortWindowStoreProvider).upsertMessages(
             conversationId: conversationId,
             messages: shortWindowUpdates,

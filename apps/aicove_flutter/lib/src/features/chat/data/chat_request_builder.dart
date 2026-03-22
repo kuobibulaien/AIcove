@@ -20,10 +20,15 @@ import '../domain/persona_prompt_codec.dart';
 import '../../settings/app_settings.dart';
 import '../../settings/mcp_api.dart';
 import '../../settings/direct_mode.dart' as direct;
+import '../../plugins/image/image_plugin.dart';
 import '../../plugins/plugin_providers.dart';
 import '../../plugins/time_awareness/time_awareness_plugin.dart';
+import '../../plugins/tts/tts_plugin.dart';
 import '../../../core/app_logger.dart';
+import '../../../core/services/prompt_tag_semantics_service.dart';
+import '../../../core/services/system_reminder_service.dart';
 import '../../../core/utils/token_estimator.dart';
+import '../services/chat_plugin_context_builder.dart';
 
 /// 请求构建结果 - 包含发送 AI 请求所需的所有参数
 class ChatRequestParams {
@@ -67,12 +72,22 @@ class ChatRequestBuilder {
   static const String _multiKeyItemsField = 'multi_key_items';
   static const String _multiKeyStrategyRoundRobin = 'round_robin';
   static const String _multiKeyStrategyRandom = 'random';
+  static const Set<String> _managedTagSemanticsPluginIds = <String>{
+    'tts',
+    'image',
+  };
   static final Map<String, int> _roundRobinIndexMap = <String, int>{};
 
   ChatRequestBuilder(this._ref);
 
   final Ref _ref;
   final McpApi _mcpApi = McpApi();
+  final ChatPluginContextBuilder _pluginContextBuilder =
+      const ChatPluginContextBuilder();
+  final PromptTagSemanticsService _promptTagSemanticsService =
+      const PromptTagSemanticsService();
+  final SystemReminderService _systemReminderService =
+      const SystemReminderService();
 
   // MCP 配置缓存（移动端优化 TTL）
   McpConfigDto? _cachedMcpConfig;
@@ -246,11 +261,13 @@ class ChatRequestBuilder {
   }
 
   /// 构建系统提示词
-  Future<String> buildSystemPrompt({
+  String buildSystemPrompt({
     required Conversation conversation,
-    String? userMessage,
     String? additionalPrompt,
-  }) async {
+    String? tagSemanticsPrompt,
+    PluginPromptBuildResult pluginPromptBuild =
+        const PluginPromptBuildResult(entries: <PluginPromptEntry>[]),
+  }) {
     final systemParts = <String>[];
 
     // 1. 额外提示词（如触发器指令）
@@ -265,14 +282,16 @@ class ChatRequestBuilder {
       systemParts.add(personaParts.userPrompt);
     }
 
-    // 3. 插件提示词（如 TTS）
-    final pluginManager = _ref.read(pluginManagerProvider);
-    final pluginPrompts =
-        await pluginManager.getSystemPrompts(userMessage: userMessage);
+    if (tagSemanticsPrompt != null && tagSemanticsPrompt.isNotEmpty) {
+      systemParts.add(tagSemanticsPrompt);
+    }
+
+    // 3. 插件提示词（排除已由标签说明汇总接管的标签型插件）
+    final pluginPrompts = pluginPromptBuild.mergedPrompt;
     if (pluginPrompts.isNotEmpty) {
       systemParts.add(pluginPrompts);
       AppLogger.debug('ChatRequestBuilder', '添加插件提示词', metadata: {
-        'pluginCount': pluginManager.getEnabledPlugins().length,
+        'pluginCount': pluginPromptBuild.entries.length,
         'promptsLength': pluginPrompts.length,
       });
     }
@@ -301,21 +320,69 @@ class ChatRequestBuilder {
     final pluginManager = _ref.read(pluginManagerProvider);
     final timeAwarenessPlugin =
         pluginManager.getPlugin('time_awareness') as TimeAwarenessPlugin?;
+    final ttsPlugin = pluginManager.getPlugin('tts') as TtsPlugin?;
+    final imagePlugin = pluginManager.getPlugin('image') as ImagePlugin?;
     final includeTimestamp =
         timeAwarenessPlugin?.shouldIncludeTimestamp ?? false;
-    final reqMessages = history
+    var reqMessages = history
         .expand((m) => m.toHistoryJsonList(includeTimestamp: includeTimestamp))
         .toList();
 
-    // 将最后一条消息的时间传给时间感知插件，用于计算对话间隔
-    if (timeAwarenessPlugin != null && history.isNotEmpty) {
-      timeAwarenessPlugin.setLastMessageTime(history.last.createdAt);
+    String? systemReminderTagPrompt;
+    if (timeAwarenessPlugin != null && timeAwarenessPlugin.enabled) {
+      final reminderPayload = timeAwarenessPlugin.buildSystemReminderPayload(
+        currentTime: DateTime.now(),
+        previousUserMessageTime: _resolvePreviousUserMessageTime(history),
+      );
+      if (reminderPayload != null) {
+        final reminderContent =
+            _systemReminderService.buildReminderContent(reminderPayload);
+        if (reminderContent.isNotEmpty) {
+          reqMessages = _systemReminderService.insertReminderBeforeLastUser(
+            messages: reqMessages,
+            reminderContent: reminderContent,
+          );
+          systemReminderTagPrompt =
+              _buildSystemReminderTagPrompt(timeAwarenessPlugin);
+        }
+      }
     }
+    final pluginPromptBuild =
+        await _pluginContextBuilder.buildPluginPromptEntriesWithFilter(
+      pluginManager.getEnabledPlugins(),
+      userMessage: userMessage ?? '',
+      supportsToolCalling: false,
+      excludedPluginIds: _managedTagSemanticsPluginIds,
+    );
+    final tagSemanticsPrompt = _promptTagSemanticsService.buildMergedPrompt(
+      <PromptTagSemanticsEntry>[
+        if (systemReminderTagPrompt != null &&
+            systemReminderTagPrompt.isNotEmpty)
+          PromptTagSemanticsEntry(
+            id: 'system-reminder',
+            tagName: '<system-reminder>',
+            prompt: systemReminderTagPrompt,
+          ),
+        if ((ttsPlugin?.buildTagSemanticsPrompt()?.isNotEmpty ?? false))
+          PromptTagSemanticsEntry(
+            id: 'tts',
+            tagName: '<tts>',
+            prompt: ttsPlugin!.buildTagSemanticsPrompt()!,
+          ),
+        if ((imagePlugin?.buildTagSemanticsPrompt()?.isNotEmpty ?? false))
+          PromptTagSemanticsEntry(
+            id: 'image',
+            tagName: '<image>',
+            prompt: imagePlugin!.buildTagSemanticsPrompt()!,
+          ),
+      ],
+    );
 
-    final systemPrompt = await buildSystemPrompt(
+    final systemPrompt = buildSystemPrompt(
       conversation: conversation,
-      userMessage: userMessage,
       additionalPrompt: additionalPrompt,
+      tagSemanticsPrompt: tagSemanticsPrompt,
+      pluginPromptBuild: pluginPromptBuild,
     );
 
     if (systemPrompt.isNotEmpty) {
@@ -326,6 +393,38 @@ class ChatRequestBuilder {
     }
 
     return reqMessages;
+  }
+
+  DateTime? _resolvePreviousUserMessageTime(List<Message> history) {
+    if (history.isEmpty) return null;
+    final shouldSkipLatestUser = history.last.role == 'user';
+    var skippedLatestUser = false;
+    for (var i = history.length - 1; i >= 0; i--) {
+      final message = history[i];
+      if (message.role != 'user') continue;
+      if (shouldSkipLatestUser && !skippedLatestUser) {
+        skippedLatestUser = true;
+        continue;
+      }
+      return message.createdAt;
+    }
+    return null;
+  }
+
+  String _buildSystemReminderTagPrompt(
+    TimeAwarenessPlugin? timeAwarenessPlugin,
+  ) {
+    final parts = <String>[
+      _systemReminderService.buildReminderSemanticsPrompt(),
+      if (timeAwarenessPlugin != null &&
+          timeAwarenessPlugin.enabled &&
+          timeAwarenessPlugin.buildSystemReminderFieldGuide().trim().isNotEmpty)
+        timeAwarenessPlugin.buildSystemReminderFieldGuide(),
+    ];
+    return parts
+        .map((part) => part.trim())
+        .where((part) => part.isNotEmpty)
+        .join('\n');
   }
 
   /// 一站式构建完整请求参数
@@ -356,11 +455,15 @@ class ChatRequestBuilder {
     final providerConfig = await resolveProviderConfig(settings);
 
     // Token 截断：确保消息总长度不超过模型上下文限制
-    final maxContextTokens = settings.getMaxContextTokens(settings.defaultModelName);
+    final maxContextTokens =
+        settings.getMaxContextTokens(settings.defaultModelName);
     final truncatedMessages = truncateMessagesToFit(
       messages: messages,
       maxContextTokens: maxContextTokens,
       reserveTokens: 2048,
+    );
+    final finalMessages = _systemReminderService.normalizeReminderPlacement(
+      messages: truncatedMessages,
     );
 
     return ChatRequestParams(
@@ -368,7 +471,7 @@ class ChatRequestBuilder {
       providerApiBase: providerConfig.providerApiBase,
       providerApiKey: providerConfig.providerApiKey,
       customConfig: providerConfig.customConfig,
-      messages: truncatedMessages,
+      messages: finalMessages,
       toolPrefs: toolPrefs,
       temperature: settings.temperature,
       backendApiKey: settings.backendApiKey,

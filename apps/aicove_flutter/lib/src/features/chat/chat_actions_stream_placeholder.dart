@@ -1,21 +1,5 @@
 part of 'chat_actions.dart';
 
-class _StreamCommitResult {
-  const _StreamCommitResult({required this.messages});
-
-  final List<Message> messages;
-
-  List<String> get textMessageIds => <String>[
-        for (final message in messages)
-          if (_isTextTimelineMessage(message)) message.id,
-      ];
-
-  List<Message> get pendingTtsMessages => <Message>[
-        for (final message in messages)
-          if (_isPendingTtsPlaceholderMessage(message)) message,
-      ];
-}
-
 enum _StreamDescriptorKind { text, pendingAudio }
 
 class _StreamDescriptor {
@@ -81,21 +65,8 @@ class _RawStreamSegment {
   final String content;
 }
 
-bool _isTextTimelineMessage(Message message) {
-  final blocks = message.blocks;
-  return blocks != null && blocks.length == 1 && blocks.first is TextBlock;
-}
-
-bool _isPendingTtsPlaceholderMessage(Message message) {
-  final blocks = message.blocks;
-  if (blocks == null || blocks.length != 1) return false;
-  final block = blocks.first;
-  return block is AudioBlock &&
-      (block.url.isEmpty || block.status == BlockStatus.pending);
-}
-
 final RegExp _streamHiddenImageTagRegex = RegExp(
-  r'<image\b[^>]*>[\s\S]*?</image>',
+  r'<image>([\s\S]*?)</image>',
   caseSensitive: false,
 );
 
@@ -103,7 +74,7 @@ String _stripHiddenImageTagsForDisplay(String value) {
   if (value.isEmpty) return value;
   var result = value.replaceAll(_streamHiddenImageTagRegex, '');
   final lower = result.toLowerCase();
-  final openIndex = lower.lastIndexOf('<image');
+  final openIndex = lower.lastIndexOf('<image>');
   if (openIndex >= 0 && lower.indexOf('</image>', openIndex) < 0) {
     result = result.substring(0, openIndex);
   }
@@ -114,7 +85,6 @@ class _StreamPlaceholderDelivery {
   _StreamPlaceholderDelivery(
     this._ref, {
     required this.convId,
-    required this.userMsgId,
     required this.formatConfig,
     required this.enableTtsPlaceholders,
     this.segmentDelay = Duration.zero,
@@ -127,7 +97,6 @@ class _StreamPlaceholderDelivery {
 
   final Ref _ref;
   final String convId;
-  final String userMsgId;
   final MessageFormatConfig formatConfig;
   final bool enableTtsPlaceholders;
   final Duration segmentDelay;
@@ -205,23 +174,25 @@ class _StreamPlaceholderDelivery {
     await _applyState(finalize: true);
   }
 
-  Future<_StreamCommitResult> commitFinalTimeline({
-    required String finalText,
+  Future<void> commitToMessages({
+    required List<Message> finalMessages,
   }) async {
-    if (_disposed) {
-      return const _StreamCommitResult(messages: <Message>[]);
-    }
-    _finalizedRawText = _resolveEffectiveFinalText(finalText);
-    if (_currentTimelineMessages.isEmpty) {
-      await _applyState(finalize: true);
-    }
-    final committedMessages =
+    if (_disposed) return;
+    final previousMessages =
         List<Message>.from(_currentTimelineMessages, growable: false);
-    if (committedMessages.isEmpty) {
-      await removePlaceholders();
-      return const _StreamCommitResult(messages: <Message>[]);
-    }
-    return _StreamCommitResult(messages: committedMessages);
+    _currentTimelineMessages.clear();
+    _rawStreamText.clear();
+    _finalizedRawText = null;
+    _receivedDelta = false;
+    _fallbackTriggered = false;
+    _timelineBaseMs = null;
+    _timelineTick = 0;
+    await _replaceTimelineMessages(
+      previousMessages: previousMessages,
+      nextMessages: finalMessages,
+      syncTransientProvider: false,
+    );
+    _clearTransientTimeline();
   }
 
   String _resolveEffectiveFinalText(String finalText) {
@@ -304,10 +275,9 @@ class _StreamPlaceholderDelivery {
     _currentTimelineMessages
       ..clear()
       ..addAll(messages);
-    await _syncTimelineMessages(
+    await _replaceTimelineMessages(
       previousMessages: previousMessages,
       nextMessages: messages,
-      finalize: finalize,
     );
   }
 
@@ -363,7 +333,7 @@ class _StreamPlaceholderDelivery {
     parseLoop:
     while (cursor < rawText.length) {
       final ttsOpenIndex = lowerRaw.indexOf('<tts>', cursor);
-      final imageOpenIndex = lowerRaw.indexOf('<image', cursor);
+      final imageOpenIndex = lowerRaw.indexOf('<image>', cursor);
       final openIndex = switch ((ttsOpenIndex, imageOpenIndex)) {
         (>= 0, >= 0) =>
           ttsOpenIndex < imageOpenIndex ? ttsOpenIndex : imageOpenIndex,
@@ -632,43 +602,46 @@ class _StreamPlaceholderDelivery {
     return _queue;
   }
 
-  Future<void> _syncTimelineMessages({
+  Future<void> _replaceTimelineMessages({
     required List<Message> previousMessages,
     required List<Message> nextMessages,
-    required bool finalize,
+    bool syncTransientProvider = true,
   }) {
     return _enqueue(() async {
-      final historyPort = _ref.read(chatHistoryPortProvider);
-      final nextIds = nextMessages.map((message) => message.id).toSet();
-      final removedIds = <String>[
-        for (final message in previousMessages)
-          if (!nextIds.contains(message.id)) message.id,
-      ];
-      if (removedIds.isNotEmpty) {
-        await historyPort.softDeleteMessages(convId, removedIds);
+      if (syncTransientProvider) {
+        final notifier =
+            _ref.read(conversationTransientTimelineProvider(convId).notifier);
+        if (nextMessages.isEmpty) {
+          notifier.clear();
+        } else {
+          notifier.setMessages(nextMessages);
+        }
       }
-      if (nextMessages.isEmpty) return;
-      await historyPort.appendAssistantMessages(
-        conversationId: convId,
-        userMessageId: finalize ? userMsgId.trim() : '',
-        messages: nextMessages,
-        lastMessagePreview: nextMessages.last.displayText,
-      );
+      await _ref.read(conversationShortWindowStoreProvider).replaceMessages(
+            conversationId: convId,
+            removeMessageIds: [
+              for (final message in previousMessages) message.id,
+            ],
+            messages: nextMessages,
+          );
     });
   }
 
   Future<void> _discardTimelineMessages(List<Message> messages) {
-    final removedIds = <String>[
-      for (final message in messages)
-        if (message.id.trim().isNotEmpty) message.id,
-    ];
-    if (removedIds.isEmpty) return Future<void>.value();
+    if (messages.isEmpty) return Future<void>.value();
     return _enqueue(() async {
-      await _ref.read(chatHistoryPortProvider).softDeleteMessages(
-            convId,
-            removedIds,
-          );
+      _clearTransientTimeline();
+      await _ref.read(conversationShortWindowStoreProvider).replaceMessages(
+        conversationId: convId,
+        removeMessageIds: [
+          for (final message in messages) message.id,
+        ],
+      );
     });
+  }
+
+  void _clearTransientTimeline() {
+    _ref.read(conversationTransientTimelineProvider(convId).notifier).clear();
   }
 }
 

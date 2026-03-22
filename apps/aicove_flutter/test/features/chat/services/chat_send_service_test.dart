@@ -397,37 +397,29 @@ void main() {
     expect(visionCalled, isFalse);
   });
 
-  test('non-vision assistant image uses hidden context marker', () {
+  test('non-vision assistant image no longer injects hidden image marker', () {
     final text = ChatSendService.buildNonVisionImageMessageText(
       role: 'assistant',
       description: '一只猫在草地上',
     );
 
-    expect(text, isNotNull);
-    expect(text, contains('<image source="history"'));
-    expect(text, contains('"role":"assistant"'));
-    expect(text, contains('"status":"delivered"'));
-    expect(text, contains('"delivered_to_chat":true'));
-    expect(text, contains('"prompt":"一只猫在草地上"'));
+    expect(text, isNull);
   });
 
-  test('non-vision user image uses hidden context marker', () {
+  test('non-vision user image falls back to plain description text', () {
     final text = ChatSendService.buildNonVisionImageMessageText(
       role: 'user',
       description: '一只猫在草地上',
     );
 
     expect(text, isNotNull);
-    expect(text, contains('<image source="history"'));
-    expect(text, contains('"role":"user"'));
-    expect(text, contains('"status":"uploaded"'));
-    expect(text, contains('"uploaded_to_chat":true'));
-    expect(text, contains('"description":"一只猫在草地上"'));
+    expect(text, '一只猫在草地上');
     expect(text, isNot(contains('[图片]')));
     expect(text, isNot(contains('图片已转换为文本描述')));
   });
 
-  test('internal image context tool block should serialize as hidden image tag',
+  test(
+      'internal image context tool block should be ignored in request messages',
       () async {
     final builder = ChatRequestMessageBuilder(
       readImageAsBase64: (_) async => null,
@@ -458,19 +450,7 @@ void main() {
     );
 
     expect(result, hasLength(1));
-    final content = result.single['content'];
-    expect(content, isA<List>());
-    final parts = content as List<dynamic>;
-    expect(
-        parts.any((part) => (part as Map<String, dynamic>)['text']
-            .toString()
-            .contains('<image source="history"')),
-        isTrue);
-    expect(
-        parts.any((part) => (part as Map<String, dynamic>)['text']
-            .toString()
-            .contains('"status":"failed"')),
-        isTrue);
+    expect(result.single['content'], '正文');
   });
 
   test('vision translation request uses system prompt + single image only', () {
@@ -604,9 +584,7 @@ void main() {
     expect(shouldPreprocess, isTrue);
   });
 
-  test(
-      'assistant generated image becomes hidden image context in non-vision flow',
-      () async {
+  test('assistant generated image is omitted in non-vision flow', () async {
     final builder = ChatRequestMessageBuilder(
       readImageAsBase64: (_) async => null,
     );
@@ -634,14 +612,7 @@ void main() {
       supportsVision: false,
     );
 
-    expect(result, hasLength(1));
-    expect(result.first['role'], 'assistant');
-    expect(result.first['content'], contains('<image source="history"'));
-    expect(result.first['content'], contains('"role":"assistant"'));
-    expect(result.first['content'], contains('"status":"delivered"'));
-    expect(result.first['content'], contains('"delivered_to_chat":true'));
-    expect(result.first['content'], contains('"prompt":"黄昏下的城市天际线"'));
-    expect(result.first['content'], isNot(contains('生图提示词')));
+    expect(result, isEmpty);
   });
 
   test('prepareApiConfig should keep draw prompt out of system and into tool',
@@ -719,6 +690,7 @@ void main() {
     );
     addTearDown(container.dispose);
     final service = container.read(chatSendServiceProvider);
+    await container.read(appSettingsProvider.future);
 
     final apiConfig = await service.prepareApiConfig(
       conv: conv,
@@ -995,31 +967,216 @@ void main() {
     expect(runtimeContext['timeAwareness'], isA<Map>());
     expect(
       (runtimeContext['timeAwareness']
-          as Map<String, dynamic>)['promptInjected'],
+          as Map<String, dynamic>)['systemReminderInjected'],
       isTrue,
     );
     expect(
-      (runtimeContext['timeAwareness'] as Map<String, dynamic>)['promptContent']
+      (runtimeContext['timeAwareness']
+              as Map<String, dynamic>)['systemReminderContent']
           .toString(),
-      contains('当前时间: '),
+      contains('current_datetime='),
     );
     expect(
-      (runtimeContext['elapsedSinceLastMessage']
-              as Map<String, dynamic>)['human']
+      (runtimeContext['timeAwareness']
+              as Map<String, dynamic>)['previousUserMessageTime']
           .toString(),
-      contains('小时'),
+      'unknown',
     );
 
     expect(promptAssembly['systemEntries'], isA<List>());
     expect(promptAssembly['pluginPrompts'], isA<List>());
+    expect(promptAssembly['systemReminderInjected'], isTrue);
     expect(
       promptAssembly['finalSystemPrompt'].toString(),
       contains('你是贴心助手。'),
     );
     expect(
       promptAssembly['finalSystemPrompt'].toString(),
-      contains('当前时间: '),
+      contains('以下是当前会话启用的特殊标签说明'),
     );
+    expect(
+      promptAssembly['finalSystemPrompt'].toString(),
+      contains('<system-reminder>'),
+    );
+  });
+
+  test(
+      'prepareApiConfig should insert system reminder before current user message',
+      () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'aicove.plugins.time_awareness.config': jsonEncode(
+        TimeAwarenessConfig(
+          enabled: true,
+          includeCurrentTime: true,
+          includeMessageTimestamp: true,
+        ).toJson(),
+      ),
+    });
+
+    final settings = fakeSettings(
+      defaultModelName: 'openai:gpt-4o-mini',
+      defaultChatModels: const <String>['openai:gpt-4o-mini'],
+    );
+    final now = DateTime(2026, 3, 12, 20, 0, 0);
+    final conv = Conversation(
+      id: 'conv_system_reminder',
+      title: 'Chat',
+      displayName: 'Chat',
+      personaPrompt: PersonaPromptCodec.compose(
+        userPrompt: '你是贴心助手。',
+      ),
+      enabledPlugins: const <String>['time_awareness'],
+      createdAt: now,
+      updatedAt: now,
+      messages: const <Message>[],
+    );
+    final previousUserMsg = Message(
+      id: 'msg_prev_user',
+      role: 'user',
+      content: '昨晚睡前和你说晚安',
+      createdAt: now.subtract(const Duration(hours: 10)),
+    );
+    final assistantMsg = Message(
+      id: 'msg_prev_assistant',
+      role: 'assistant',
+      content: '晚安呀',
+      createdAt: now.subtract(const Duration(hours: 9, minutes: 50)),
+    );
+    final currentUserMsg = Message(
+      id: 'msg_current_user',
+      role: 'user',
+      content: '现在几点了？',
+      createdAt: now,
+    );
+    final container = ProviderContainer(
+      overrides: [
+        appSettingsProvider
+            .overrideWith(() => _FakeAppSettingsNotifier(settings)),
+      ],
+    );
+    addTearDown(container.dispose);
+    final service = container.read(chatSendServiceProvider);
+
+    final apiConfig = await service.prepareApiConfig(
+      conv: conv,
+      history: <Message>[previousUserMsg, assistantMsg, currentUserMsg],
+      userText: currentUserMsg.content,
+    );
+
+    final reminderIndex = apiConfig.messages.lastIndexWhere((message) {
+      final content = (message['content'] ?? '').toString();
+      return (message['role'] ?? '').toString() == 'system' &&
+          content.trimLeft().startsWith('<system-reminder>');
+    });
+
+    expect(reminderIndex, greaterThan(0));
+    expect(apiConfig.messages[reminderIndex + 1]['role'], 'user');
+    expect(apiConfig.messages[reminderIndex + 1]['content'], contains('现在几点了'));
+    expect(
+      apiConfig.messages[reminderIndex]['content'].toString(),
+      contains('current_datetime='),
+    );
+    expect(
+      apiConfig.messages[reminderIndex]['content'].toString(),
+      contains('previous_user_message_datetime=2026-03-12 10:00:00'),
+    );
+  });
+
+  test('prepareApiConfig should inject image failure into system reminder only',
+      () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final settings = fakeSettings(
+      defaultModelName: 'openai:gpt-4o-mini',
+      defaultChatModels: const <String>['openai:gpt-4o-mini'],
+    );
+    final now = DateTime(2026, 3, 23, 12, 0, 0);
+    final conv = Conversation(
+      id: 'conv_image_failure_reminder',
+      title: 'Chat',
+      displayName: 'Chat',
+      personaPrompt: PersonaPromptCodec.compose(
+        userPrompt: '你是贴心助手。',
+      ),
+      enabledPlugins: const <String>[],
+      createdAt: now,
+      updatedAt: now,
+      messages: const <Message>[],
+    );
+    final previousAssistantMsg = Message.fromBlocks(
+      id: 'msg_prev_assistant_failure',
+      role: 'assistant',
+      blocks: [
+        TextBlock(
+          messageId: 'msg_prev_assistant_failure',
+          content: '刚才试着给你生成图片。',
+        ),
+        ToolBlock(
+          messageId: 'msg_prev_assistant_failure',
+          toolName: ChatRequestMessageBuilder.internalImageContextToolName,
+          result: ChatRequestMessageBuilder.buildImageContextPayload(
+            role: 'assistant',
+            status: 'failed',
+            rawPrompt: '1girl, cat ears',
+            prompt: 'artist style, 1girl, cat ears',
+            reason: 'novelai timeout',
+            imagePresent: false,
+          ),
+        ),
+      ],
+      createdAt: now.subtract(const Duration(minutes: 2)),
+    );
+    final currentUserMsg = Message(
+      id: 'msg_current_user_after_failure',
+      role: 'user',
+      content: '那你继续说吧',
+      createdAt: now,
+    );
+    final container = ProviderContainer(
+      overrides: [
+        appSettingsProvider
+            .overrideWith(() => _FakeAppSettingsNotifier(settings)),
+      ],
+    );
+    addTearDown(container.dispose);
+    final service = container.read(chatSendServiceProvider);
+
+    final apiConfig = await service.prepareApiConfig(
+      conv: conv,
+      history: <Message>[previousAssistantMsg, currentUserMsg],
+      userText: currentUserMsg.content,
+    );
+
+    final reminderIndex = apiConfig.messages.lastIndexWhere((message) {
+      final content = (message['content'] ?? '').toString();
+      return (message['role'] ?? '').toString() == 'system' &&
+          content.trimLeft().startsWith('<system-reminder>');
+    });
+
+    expect(reminderIndex, greaterThanOrEqualTo(0));
+    final reminderContent =
+        apiConfig.messages[reminderIndex]['content'].toString();
+    expect(reminderContent, contains('image_generation_failed=true'));
+    expect(
+      reminderContent,
+      contains('image_generation_failure_reason=novelai timeout'),
+    );
+    expect(
+      reminderContent,
+      contains('image_generation_failure_raw_prompt=1girl, cat ears'),
+    );
+    expect(
+      reminderContent,
+      contains('image_generation_failure_prompt=artist style, 1girl, cat ears'),
+    );
+    expect(reminderContent, isNot(contains('<image source="history"')));
+    expect(apiConfig.messages[reminderIndex + 1]['role'], 'user');
+    expect(
+        apiConfig.messages[reminderIndex + 1]['content'], contains('那你继续说吧'));
+
+    final joinedContents = apiConfig.messages
+        .map((message) => (message['content'] ?? '').toString())
+        .join('\n');
+    expect(joinedContents, isNot(contains('<image source="history"')));
   });
 
   test('trigger plugin should not inject system prompt', () async {

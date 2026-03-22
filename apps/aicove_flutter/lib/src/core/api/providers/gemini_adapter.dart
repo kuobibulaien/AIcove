@@ -44,14 +44,17 @@ class GeminiAdapter implements ProviderAdapter {
     List<Map<String, dynamic>>? tools,
   }) {
     final contents = <Map<String, dynamic>>[];
-    String? systemInstruction;
+    final systemInstructions = <String>[];
 
     for (final msg in messages) {
       final role = (msg['role'] ?? '').toString();
       if (role == 'system') {
         final content = msg['content'];
         if (content != null) {
-          systemInstruction = content is String ? content : content.toString();
+          final text = content is String ? content : content.toString();
+          if (text.trim().isNotEmpty) {
+            systemInstructions.add(text);
+          }
         }
         continue;
       }
@@ -101,10 +104,10 @@ class GeminiAdapter implements ProviderAdapter {
 
     final body = {
       'contents': contents,
-      if (systemInstruction != null)
+      if (systemInstructions.isNotEmpty)
         'systemInstruction': {
           'parts': [
-            {'text': systemInstruction}
+            {'text': systemInstructions.join('\n\n')}
           ]
         },
       if (geminiTools != null)

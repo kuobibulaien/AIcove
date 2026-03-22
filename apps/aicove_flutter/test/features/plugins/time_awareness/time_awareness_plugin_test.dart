@@ -23,31 +23,71 @@ void main() {
     });
   });
 
-  group('TimeAwarenessPlugin 间隔提示', () {
-    test('存在上一轮时间时输出间隔文案', () async {
+  group('TimeAwarenessPlugin 系统提醒数据', () {
+    test('启用后生成语义明确的时间字段', () {
       final plugin = TimeAwarenessPlugin(
         TimeAwarenessConfig(
           enabled: true,
-          includeCurrentTime: true,
         ),
       );
-      plugin.setLastMessageTime(
-        DateTime.now().subtract(
-          const Duration(hours: 2, minutes: 10),
+      final payload = plugin.buildSystemReminderPayload(
+        currentTime: DateTime(2026, 3, 23, 10, 30, 15),
+        previousUserMessageTime: DateTime(2026, 3, 22, 21, 45, 30),
+      );
+
+      expect(payload, isNotNull);
+      expect(payload!.fields.map((field) => field.name).toList(), <String>[
+        TimeAwarenessPlugin.currentDateTimeFieldName,
+        TimeAwarenessPlugin.previousUserMessageDateTimeFieldName,
+      ]);
+      expect(payload.fields.first.value, contains('2026-03-23 10:30:15'));
+      expect(payload.fields.last.value, contains('2026-03-22 21:45:30'));
+    });
+
+    test('没有上一条用户消息时 previous_user_message_datetime 为 unknown', () {
+      final plugin = TimeAwarenessPlugin(
+        TimeAwarenessConfig(
+          enabled: true,
+        ),
+      );
+      final payload = plugin.buildSystemReminderPayload(
+        currentTime: DateTime(2026, 3, 23, 10, 30, 15),
+        previousUserMessageTime: null,
+      );
+
+      expect(payload, isNotNull);
+      expect(payload!.fields.last.name,
+          TimeAwarenessPlugin.previousUserMessageDateTimeFieldName);
+      expect(payload.fields.last.value, 'unknown');
+    });
+
+    test('可生成 system-reminder 字段含义说明', () {
+      final plugin = TimeAwarenessPlugin(
+        TimeAwarenessConfig(
+          enabled: true,
         ),
       );
 
-      final prompt = await plugin.getSystemPrompt();
+      final guide = plugin.buildSystemReminderFieldGuide();
 
-      expect(prompt, isNotNull);
-      expect(prompt!, contains('当前时间: '));
-      expect(prompt, contains('距离上次对话已过去'));
+      expect(guide, contains(TimeAwarenessPlugin.currentDateTimeFieldName));
+      expect(
+        guide,
+        contains(TimeAwarenessPlugin.previousUserMessageDateTimeFieldName),
+      );
+      expect(guide, contains('unknown'));
     });
   });
 
-  group('ChatSendService 时间锚点选择', () {
-    test('最后一条为用户消息时，回退到上一条消息时间', () {
+  group('ChatSendService 上一条用户消息时间选择', () {
+    test('最后一条为当前用户消息时，回退到上一条用户消息时间', () {
       final now = DateTime(2026, 2, 27, 12, 30);
+      final previousUserMessage = Message(
+        id: 'u0',
+        role: 'user',
+        content: 'earlier',
+        createdAt: now.subtract(const Duration(hours: 6)),
+      );
       final assistantMessage = Message(
         id: 'a1',
         role: 'assistant',
@@ -61,35 +101,62 @@ void main() {
         createdAt: now,
       );
 
-      final anchor = ChatSendService.resolveTimeAwarenessLastMessageTime([
+      final anchor =
+          ChatSendService.resolveTimeAwarenessPreviousUserMessageTime([
+        previousUserMessage,
         assistantMessage,
         currentUserMessage,
       ]);
 
-      expect(anchor, assistantMessage.createdAt);
+      expect(anchor, previousUserMessage.createdAt);
     });
 
-    test('最后一条不是用户消息时，使用最后一条消息时间', () {
+    test('最后一条不是当前用户消息时，使用最近一条用户消息时间', () {
       final now = DateTime(2026, 2, 27, 12, 30);
       final first = Message(
-        id: 'a1',
-        role: 'assistant',
+        id: 'u1',
+        role: 'user',
         content: 'hello',
         createdAt: now.subtract(const Duration(hours: 2)),
+      );
+      final middle = Message(
+        id: 'a1',
+        role: 'assistant',
+        content: 'still here',
+        createdAt: now.subtract(const Duration(hours: 1)),
       );
       final last = Message(
         id: 'a2',
         role: 'assistant',
-        content: 'still here',
+        content: 'assistant reply',
         createdAt: now.subtract(const Duration(minutes: 10)),
       );
 
-      final anchor = ChatSendService.resolveTimeAwarenessLastMessageTime([
+      final anchor =
+          ChatSendService.resolveTimeAwarenessPreviousUserMessageTime([
         first,
+        middle,
         last,
       ]);
 
-      expect(anchor, last.createdAt);
+      expect(anchor, first.createdAt);
+    });
+
+    test('只有当前用户消息时返回 null', () {
+      final now = DateTime(2026, 2, 27, 12, 30);
+      final currentUserMessage = Message(
+        id: 'u1',
+        role: 'user',
+        content: 'hi',
+        createdAt: now,
+      );
+
+      final anchor =
+          ChatSendService.resolveTimeAwarenessPreviousUserMessageTime([
+        currentUserMessage,
+      ]);
+
+      expect(anchor, isNull);
     });
   });
 }
