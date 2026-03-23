@@ -4,8 +4,13 @@ import '../../../core/models/message_block.dart';
 /// Message模型（支持多模态Blocks）
 /// 遵循开闭原则(O)：通过blocks扩展多模态能力，无需修改核心逻辑
 class Message {
+  static const Object _unset = Object();
+
   final String id;
   final String role; // 'user' | 'assistant'
+
+  /// 当前消息投影自哪条原始消息
+  final String? sourceMessageId;
 
   /// 文本内容（向后兼容旧版本）
   /// 当blocks为空时使用，或作为blocks的fallback
@@ -21,13 +26,18 @@ class Message {
   /// null 或 'sent' 表示已成功发送（向后兼容）
   final String? status;
 
+  /// 原始后端消息载荷（仅数据库正式消息使用）
+  final Map<String, dynamic>? rawPayload;
+
   const Message({
     required this.id,
     required this.role,
+    this.sourceMessageId,
     required this.content,
     this.blocks,
     required this.createdAt,
     this.status,
+    this.rawPayload,
   });
 
   /// 获取显示文本（智能fallback）
@@ -53,8 +63,7 @@ class Message {
 
   /// 是否包含多模态内容
   bool get hasMultiModal {
-    return blocks != null &&
-           blocks!.any((b) => b is! TextBlock);
+    return blocks != null && blocks!.any((b) => b is! TextBlock);
   }
 
   /// 获取所有图片块
@@ -68,14 +77,15 @@ class Message {
   }
 
   /// 转换为API历史格式（向后兼容）
-  /// 
+  ///
   /// [includeTimestamp] 为 true 时，在消息内容前添加时间戳前缀 [YYYY-MM-DD HH:mm]
   /// 用于让 AI 感知消息的时间顺序
   /// 转换为API历史格式（向后兼容）
-  /// 
+  ///
   /// [includeTimestamp] 为 true 时，在消息内容前添加时间戳前缀 [YYYY-MM-DD HH:mm]
   /// 用于让 AI 感知消息的时间顺序
-  List<Map<String, dynamic>> toHistoryJsonList({bool includeTimestamp = false}) {
+  List<Map<String, dynamic>> toHistoryJsonList(
+      {bool includeTimestamp = false}) {
     // 格式化时间戳前缀
     String addTimestampPrefix(String text) {
       if (!includeTimestamp) return text;
@@ -89,10 +99,12 @@ class Message {
 
     // 如果没有blocks，使用简单格式（向后兼容）
     if (blocks == null || blocks!.isEmpty) {
-      return [{
-        'role': role,
-        'content': addTimestampPrefix(content),
-      }];
+      return [
+        {
+          'role': role,
+          'content': addTimestampPrefix(content),
+        }
+      ];
     }
 
     // 有blocks时，转换为多模态格式
@@ -132,7 +144,9 @@ class Message {
             'role': 'tool',
             'tool_call_id': block.toolCallId,
             'name': block.toolName,
-            'content': block.result != null ? jsonEncode(block.result) : '{"success": true}',
+            'content': block.result != null
+                ? jsonEncode(block.result)
+                : '{"success": true}',
           });
         }
       }
@@ -145,9 +159,9 @@ class Message {
 
     if (contentParts.isNotEmpty) {
       if (contentParts.length == 1 && contentParts[0]['type'] == 'text') {
-         assistantMessage['content'] = contentParts[0]['text'];
+        assistantMessage['content'] = contentParts[0]['text'];
       } else {
-         assistantMessage['content'] = contentParts;
+        assistantMessage['content'] = contentParts;
       }
     } else {
       assistantMessage['content'] = '';
@@ -165,12 +179,15 @@ class Message {
     required String id,
     required String role,
     required String content,
+    String? sourceMessageId,
     DateTime? createdAt,
     String? status,
+    Map<String, dynamic>? rawPayload,
   }) {
     return Message(
       id: id,
       role: role,
+      sourceMessageId: sourceMessageId,
       content: content,
       blocks: [
         TextBlock(
@@ -180,6 +197,7 @@ class Message {
       ],
       createdAt: createdAt ?? DateTime.now(),
       status: status,
+      rawPayload: rawPayload,
     );
   }
 
@@ -188,22 +206,24 @@ class Message {
     required String id,
     required String role,
     required List<MessageBlock> blocks,
+    String? sourceMessageId,
     DateTime? createdAt,
     String? status,
+    Map<String, dynamic>? rawPayload,
   }) {
     // 提取文本内容作为fallback
-    final textContent = blocks
-        .whereType<TextBlock>()
-        .map((b) => b.content)
-        .join('\n\n');
+    final textContent =
+        blocks.whereType<TextBlock>().map((b) => b.content).join('\n\n');
 
     return Message(
       id: id,
       role: role,
+      sourceMessageId: sourceMessageId,
       content: textContent,
       blocks: blocks,
       createdAt: createdAt ?? DateTime.now(),
       status: status,
+      rawPayload: rawPayload,
     );
   }
 
@@ -211,19 +231,28 @@ class Message {
   Message copyWith({
     String? id,
     String? role,
+    Object? sourceMessageId = _unset,
     String? content,
-    List<MessageBlock>? blocks,
+    Object? blocks = _unset,
     DateTime? createdAt,
     String? status,
+    Object? rawPayload = _unset,
   }) {
     return Message(
       id: id ?? this.id,
       role: role ?? this.role,
+      sourceMessageId: identical(sourceMessageId, _unset)
+          ? this.sourceMessageId
+          : sourceMessageId as String?,
       content: content ?? this.content,
-      blocks: blocks ?? this.blocks,
+      blocks: identical(blocks, _unset)
+          ? this.blocks
+          : blocks as List<MessageBlock>?,
       createdAt: createdAt ?? this.createdAt,
       status: status ?? this.status,
+      rawPayload: identical(rawPayload, _unset)
+          ? this.rawPayload
+          : rawPayload as Map<String, dynamic>?,
     );
   }
 }
-

@@ -591,10 +591,19 @@ class ChatSendApiRunner {
       roundTrace?.end(additionalMessage: 'continue next round');
     }
 
-    var finalAssistantText = lastRich?.text ?? '';
+    var rawAssistantText = lastRich?.text ?? '';
+    var finalAssistantText = rawAssistantText;
     final normalizedFinalText =
         _normalizeRoundNarrativeText(finalAssistantText);
     if (preToolNarrativeTexts.isNotEmpty) {
+      final rawMergedTexts = <String>[...preToolNarrativeTexts];
+      final trimmedRawAssistantText = rawAssistantText.trim();
+      if (trimmedRawAssistantText.isNotEmpty &&
+          !_looksLikeToolInstructionText(trimmedRawAssistantText)) {
+        rawMergedTexts.add(rawAssistantText);
+      }
+      rawAssistantText = _mergeNarrativeTexts(rawMergedTexts);
+
       final mergedTexts = <String>[...preToolNarrativeTexts];
       if (normalizedFinalText.isNotEmpty &&
           !_looksLikeToolInstructionText(normalizedFinalText)) {
@@ -707,6 +716,9 @@ class ChatSendApiRunner {
     );
 
     return ApiCallResult(
+      // 用户可见的工具状态文案可以隐藏，但原始回复仍需保留，
+      // 否则后续消息投影无法继续解析 <image></image> / 其他多模态占位。
+      rawReplyText: rawAssistantText,
       replyText: shouldSuppressStatusText ? '' : finalAssistantText,
       processedText: shouldSuppressStatusText ? '' : pluginResult.processedText,
       pluginEvents: allEvents,

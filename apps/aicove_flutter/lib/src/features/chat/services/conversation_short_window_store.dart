@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:drift/drift.dart' show Value;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -11,6 +14,8 @@ import '../../../core/database/converters/database_converters.dart';
 import '../../../core/database/database_provider.dart';
 import '../../../core/models/message_block.dart';
 import '../domain/message.dart';
+import 'chat_frontend_message_projection_service.dart';
+import 'chat_message_projection_codec.dart';
 
 const int kConversationShortWindowSeedMessageCount = 20;
 const int kConversationShortWindowBudgetBytes = 50 * 1024 * 1024;
@@ -77,10 +82,15 @@ class ConversationShortWindowStore {
     };
     for (final conversationId in uniqueConversationIds) {
       try {
-        await _ensureConversationReady(
-          conversationId,
-          minMessages: kConversationShortWindowSeedMessageCount,
-        );
+        await _runConversationTask(conversationId, () async {
+          if (_snapshotsByConversation.containsKey(conversationId)) {
+            return;
+          }
+          final snapshot = await _readSnapshotFromDiskUnlocked(conversationId);
+          if (snapshot != null) {
+            _snapshotsByConversation[conversationId] = snapshot;
+          }
+        });
       } catch (_) {
         // 预热失败不阻断应用主流程。
       }
@@ -285,6 +295,9 @@ class ConversationShortWindowStore {
         messages: const <Message>[],
         hasMoreMessages: false,
       );
+      await _ref
+          .read(messageProjectionMappingRepositoryProvider)
+          .deleteByConversation(normalizedConversationId);
       await _deleteConversationDirectoryUnlocked(normalizedConversationId);
       _notifyConversationChanged(normalizedConversationId);
     });
@@ -292,6 +305,49 @@ class ConversationShortWindowStore {
 
   Future<void> deleteConversation(String conversationId) {
     return clearConversation(conversationId);
+  }
+
+  Future<List<Message>> loadAllMessages(String conversationId) async {
+    final normalizedConversationId = conversationId.trim();
+    if (normalizedConversationId.isEmpty) {
+      return const <Message>[];
+    }
+    final snapshot = await _ensureConversationReady(
+      normalizedConversationId,
+      minMessages: kConversationShortWindowSeedMessageCount,
+    );
+    return List<Message>.unmodifiable(snapshot.messages);
+  }
+
+  Future<Message?> findMessageById(
+    String messageId, {
+    String? conversationId,
+  }) async {
+    final normalizedMessageId = messageId.trim();
+    if (normalizedMessageId.isEmpty) {
+      return null;
+    }
+
+    final normalizedConversationId = conversationId?.trim();
+    if (normalizedConversationId != null &&
+        normalizedConversationId.isNotEmpty) {
+      final messages = await loadAllMessages(normalizedConversationId);
+      for (final message in messages) {
+        if (message.id == normalizedMessageId) {
+          return message;
+        }
+      }
+      return null;
+    }
+
+    for (final snapshot in _snapshotsByConversation.values) {
+      for (final message in snapshot.messages) {
+        if (message.id == normalizedMessageId) {
+          return message;
+        }
+      }
+    }
+    return null;
   }
 
   void dispose() {
@@ -332,14 +388,10 @@ class ConversationShortWindowStore {
     final normalizedMinMessages = minMessages < 1 ? 1 : minMessages;
     var snapshot = _snapshotsByConversation[conversationId] ??
         await _readSnapshotFromDiskUnlocked(conversationId);
-    snapshot ??= await _persistSnapshotUnlocked(
-      await _loadRecentSnapshotFromDb(
-        conversationId,
-        targetCount: _maxInt(
-          kConversationShortWindowSeedMessageCount,
-          normalizedMinMessages,
-        ),
-      ),
+    snapshot ??= _ConversationShortWindowSnapshot(
+      conversationId: conversationId,
+      messages: const <Message>[],
+      hasMoreMessages: false,
     );
 
     if (snapshot.messages.length < normalizedMinMessages &&
@@ -347,6 +399,12 @@ class ConversationShortWindowStore {
       snapshot = await _expandSnapshotFromDb(
         snapshot,
         minMessages: normalizedMinMessages,
+      );
+    }
+    if (_snapshotNeedsImageDimensionUpgrade(snapshot)) {
+      snapshot = await _persistSnapshotUnlocked(
+        snapshot,
+        allowBudgetEnforcement: false,
       );
     }
 
@@ -486,6 +544,7 @@ class ConversationShortWindowStore {
       flush: true,
     );
     await _deleteUnreferencedMediaUnlocked(normalizedSnapshot);
+    await _syncProjectionMappingsUnlocked(normalizedSnapshot);
 
     if (allowBudgetEnforcement) {
       unawaited(_scheduleBudgetEnforcement());
@@ -523,14 +582,18 @@ class ConversationShortWindowStore {
         conversationId,
         block,
       );
+      final dimensions = await _resolveImageDimensions(
+        block,
+        localizedPath: localizedPath,
+      );
       return ImageBlock(
         id: block.id,
         messageId: block.messageId,
         url: localizedPath == null ? block.url : null,
         localPath: localizedPath ?? block.localPath,
         base64: localizedPath == null ? block.base64 : null,
-        width: block.width,
-        height: block.height,
+        width: dimensions?.width ?? block.width,
+        height: dimensions?.height ?? block.height,
         prompt: block.prompt,
         status: block.status,
       );
@@ -622,6 +685,89 @@ class ConversationShortWindowStore {
     }
 
     return null;
+  }
+
+  bool _snapshotNeedsImageDimensionUpgrade(
+    _ConversationShortWindowSnapshot snapshot,
+  ) {
+    for (final message in snapshot.messages) {
+      final blocks = message.blocks;
+      if (blocks == null) continue;
+      for (final block in blocks) {
+        if (block is ImageBlock && !_hasImageDimensions(block)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  bool _hasImageDimensions(ImageBlock block) {
+    final width = block.width;
+    final height = block.height;
+    return width != null && width > 0 && height != null && height > 0;
+  }
+
+  Future<({int width, int height})?> _resolveImageDimensions(
+    ImageBlock block, {
+    String? localizedPath,
+  }) async {
+    if (_hasImageDimensions(block)) {
+      return (width: block.width!, height: block.height!);
+    }
+
+    final candidatePaths = <String>{
+      if (localizedPath != null && localizedPath.trim().isNotEmpty)
+        localizedPath.trim(),
+      if (block.localPath != null && block.localPath!.trim().isNotEmpty)
+        block.localPath!.trim(),
+    };
+    for (final path in candidatePaths) {
+      final dimensions = await _decodeImageDimensionsFromPath(path);
+      if (dimensions != null) {
+        return dimensions;
+      }
+    }
+
+    final base64Value = block.base64?.trim();
+    if (base64Value != null && base64Value.isNotEmpty) {
+      try {
+        return _decodeImageDimensions(base64Decode(base64Value));
+      } catch (_) {
+        return null;
+      }
+    }
+
+    return null;
+  }
+
+  Future<({int width, int height})?> _decodeImageDimensionsFromPath(
+    String path,
+  ) async {
+    try {
+      final file = File(path);
+      if (!await file.exists()) {
+        return null;
+      }
+      return _decodeImageDimensions(await file.readAsBytes());
+    } catch (_) {
+      return null;
+    }
+  }
+
+  ({int width, int height})? _decodeImageDimensions(List<int> bytes) {
+    try {
+      final decoded = img.decodeImage(Uint8List.fromList(bytes));
+      if (decoded == null || decoded.width <= 0 || decoded.height <= 0) {
+        return null;
+      }
+      return (
+        width: decoded.width,
+        height: decoded.height,
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<String> _resolveAudioSource(
@@ -992,13 +1138,52 @@ class ConversationShortWindowStore {
           .add(block);
     }
 
-    return <Message>[
+    final rawMessages = <Message>[
       for (final dbMessage in dbMessages)
         MessageConverter.fromDb(
           dbMessage,
           blocks: blocksByMessageId[dbMessage.id],
         ),
     ];
+    return _ref
+        .read(chatFrontendMessageProjectionServiceProvider)
+        .projectMessages(rawMessages);
+  }
+
+  Future<void> _syncProjectionMappingsUnlocked(
+    _ConversationShortWindowSnapshot snapshot,
+  ) async {
+    final segmentIndexesByRawMessageId = <String, int>{};
+    final mappings = <db.MessageProjectionMappingsCompanion>[];
+    for (final message in snapshot.messages) {
+      final rawMessageId = message.sourceMessageId?.trim();
+      if (rawMessageId == null || rawMessageId.isEmpty) {
+        continue;
+      }
+      final segmentIndex = segmentIndexesByRawMessageId.update(
+        rawMessageId,
+        (value) => value + 1,
+        ifAbsent: () => 0,
+      );
+      mappings.add(
+        db.MessageProjectionMappingsCompanion.insert(
+          id: '$rawMessageId::${message.id}',
+          conversationId: snapshot.conversationId,
+          rawMessageId: rawMessageId,
+          projectedMessageId: message.id,
+          projectionKind: Value(_projectionKindFor(message)),
+          segmentIndex: Value(segmentIndex),
+          projectionVersion: const Value(null),
+          createdAt: message.createdAt.millisecondsSinceEpoch,
+        ),
+      );
+    }
+    await _ref
+        .read(messageProjectionMappingRepositoryProvider)
+        .replaceForConversation(
+          conversationId: snapshot.conversationId,
+          mappings: mappings,
+        );
   }
 
   Future<Directory> _rootDirectory() {
@@ -1150,63 +1335,11 @@ List<Message> _normalizeMessages(Iterable<Message> messages) {
 }
 
 Map<String, dynamic> _serializeMessage(Message message) {
-  return <String, dynamic>{
-    'id': message.id,
-    'role': message.role,
-    'content': message.content,
-    'createdAt': message.createdAt.millisecondsSinceEpoch,
-    'status': message.status,
-    'blocks': <Map<String, dynamic>>[
-      for (final block in message.blocks ?? const <MessageBlock>[])
-        block.toJson(),
-    ],
-  };
+  return ChatMessageProjectionCodec.serializeMessage(message);
 }
 
 Message? _deserializeMessage(Map<String, dynamic> raw) {
-  final id = raw['id'] as String?;
-  final role = raw['role'] as String?;
-  final content = raw['content'] as String?;
-  final createdAt = _readInt(raw['createdAt']);
-  if (id == null || role == null || content == null || createdAt == null) {
-    return null;
-  }
-
-  final blocks = <MessageBlock>[];
-  final rawBlocks = raw['blocks'];
-  if (rawBlocks is List) {
-    for (final rawBlock in rawBlocks) {
-      if (rawBlock is! Map) {
-        return null;
-      }
-      try {
-        blocks.add(
-          MessageBlock.fromJson(Map<String, dynamic>.from(rawBlock)),
-        );
-      } catch (_) {
-        return null;
-      }
-    }
-  }
-
-  return Message(
-    id: id,
-    role: role,
-    content: content,
-    blocks: blocks.isEmpty ? null : blocks,
-    createdAt: DateTime.fromMillisecondsSinceEpoch(createdAt),
-    status: raw['status'] as String?,
-  );
-}
-
-int? _readInt(Object? value) {
-  if (value is int) {
-    return value;
-  }
-  if (value is num) {
-    return value.toInt();
-  }
-  return null;
+  return ChatMessageProjectionCodec.deserializeMessage(raw);
 }
 
 String _encodeConversationId(String conversationId) {
@@ -1239,6 +1372,19 @@ String _normalizePathKey(String value) {
 }
 
 int _maxInt(int left, int right) => left > right ? left : right;
+
+String _projectionKindFor(Message message) {
+  final blocks = message.blocks;
+  if (blocks != null && blocks.isNotEmpty) {
+    final first = blocks.first;
+    if (first is ImageBlock) return 'image';
+    if (first is AudioBlock) return 'audio';
+    if (first is EmojiBlock) return 'emoji';
+    if (first is FileBlock) return 'file';
+    if (first is ToolBlock) return 'tool';
+  }
+  return 'text';
+}
 
 class _DecodedDataUrl {
   const _DecodedDataUrl({

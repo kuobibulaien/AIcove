@@ -16,6 +16,31 @@ import '../../../core/api/providers/provider_adapter.dart'
     show ToolCall, ToolResult;
 import '../../observability/trace_models.dart' show TraceContext;
 
+const String _kProviderRefreshDependencyChangedMessage =
+    'Cannot use ref functions after the dependency of a provider changed';
+const String _kProviderRefreshRebuiltMessage = 'before the provider rebuilt';
+const String _kProviderRefreshDidChangeDependencyToken =
+    '!_didChangeDependency';
+
+/// 是否命中了 Riverpod 依赖切换窗口的瞬时错误。
+///
+/// 当前 Riverpod 没有暴露稳定的专用异常类型，这里统一收敛为：
+/// 1) 标准 ref/dependency changed 文案
+/// 2) `!_didChangeDependency` 断言变体
+///
+/// 这样至少可以把运行时的字符串识别集中到一处，避免多份判断漂移。
+bool isProviderRefreshTimingError(Object error) {
+  final normalized = error.toString().replaceAll(RegExp(r'\s+'), ' ').trim();
+  if (normalized.isEmpty) {
+    return false;
+  }
+  if (normalized.contains(_kProviderRefreshDependencyChangedMessage) &&
+      normalized.contains(_kProviderRefreshRebuiltMessage)) {
+    return true;
+  }
+  return normalized.contains(_kProviderRefreshDidChangeDependencyToken);
+}
+
 /// 发送请求参数数据类
 class SendRequest {
   final Conversation conversation;
@@ -44,6 +69,7 @@ class ToolAudioResult {
 
 /// API 调用结果
 class ApiCallResult {
+  final String rawReplyText;
   final String replyText;
   final String processedText;
   final List<PluginEvent> pluginEvents;
@@ -54,6 +80,7 @@ class ApiCallResult {
   final List<ToolResult> rawToolResults;
 
   const ApiCallResult({
+    String? rawReplyText,
     required this.replyText,
     required this.processedText,
     required this.pluginEvents,
@@ -62,7 +89,7 @@ class ApiCallResult {
     this.toolAudioResults = const [],
     this.toolCalls = const [],
     this.rawToolResults = const [],
-  });
+  }) : rawReplyText = rawReplyText ?? replyText;
 
   bool get hasToolAudio => toolAudioResults.isNotEmpty;
 }
@@ -151,10 +178,12 @@ class AssistantDeliveryResult {
 
 /// 助手消息构建结果
 class AssistantMessageBuildResult {
+  final Message? rawMessage;
   final List<Message> messages;
   final String lastMessageText;
 
   const AssistantMessageBuildResult({
+    this.rawMessage,
     required this.messages,
     required this.lastMessageText,
   });

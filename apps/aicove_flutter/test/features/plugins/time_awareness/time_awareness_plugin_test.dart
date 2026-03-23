@@ -61,6 +61,30 @@ void main() {
       expect(payload.fields.last.value, 'unknown');
     });
 
+    test('关闭当前时间注入后不再生成 current_datetime 字段', () {
+      final plugin = TimeAwarenessPlugin(
+        TimeAwarenessConfig(
+          enabled: true,
+          includeCurrentTime: false,
+        ),
+      );
+
+      final payload = plugin.buildSystemReminderPayload(
+        currentTime: DateTime(2026, 3, 23, 10, 30, 15),
+        previousUserMessageTime: DateTime(2026, 3, 22, 21, 45, 30),
+      );
+
+      expect(payload, isNotNull);
+      expect(
+        payload!.fields.map((field) => field.name),
+        isNot(contains(TimeAwarenessPlugin.currentDateTimeFieldName)),
+      );
+      expect(
+        payload.fields.map((field) => field.name),
+        contains(TimeAwarenessPlugin.previousUserMessageDateTimeFieldName),
+      );
+    });
+
     test('可生成 system-reminder 字段含义说明', () {
       final plugin = TimeAwarenessPlugin(
         TimeAwarenessConfig(
@@ -76,6 +100,24 @@ void main() {
         contains(TimeAwarenessPlugin.previousUserMessageDateTimeFieldName),
       );
       expect(guide, contains('unknown'));
+    });
+
+    test('关闭当前时间注入后说明文案不再提及 current_datetime', () {
+      final plugin = TimeAwarenessPlugin(
+        TimeAwarenessConfig(
+          enabled: true,
+          includeCurrentTime: false,
+        ),
+      );
+
+      final guide = plugin.buildSystemReminderFieldGuide();
+
+      expect(
+          guide, isNot(contains(TimeAwarenessPlugin.currentDateTimeFieldName)));
+      expect(
+        guide,
+        contains(TimeAwarenessPlugin.previousUserMessageDateTimeFieldName),
+      );
     });
   });
 

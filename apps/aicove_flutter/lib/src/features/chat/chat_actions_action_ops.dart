@@ -24,16 +24,6 @@ class ProactiveSendResult {
 extension ChatActionsActionOps on ChatActions {
   Future<ProactiveSendResult> sendProactiveTrigger(
       AutoReplyTrigger trigger) async {
-    final settings = await _ref.read(appSettingsProvider.future);
-    if (!settings.autoReplySettings.enabled) {
-      AppLogger.info(
-          'ChatActions', 'Skip proactive trigger: auto-reply disabled',
-          metadata: {
-            'triggerId': trigger.id,
-          });
-      return const ProactiveSendResult.skipped('auto_reply_disabled');
-    }
-
     // 确定目标会话：优先使用触发器绑定的会话，否则使用当前活跃会话
     final targetConvId = trigger.conversationId.isNotEmpty
         ? trigger.conversationId
@@ -62,121 +52,134 @@ extension ChatActionsActionOps on ChatActions {
     );
 
     try {
-      if (trigger.hasCachedContent) {
-        final cachedReply = trigger.cachedContent!.trim();
-        if (cachedReply.isNotEmpty) {
-          final cachedResult = ApiCallResult(
-            replyText: cachedReply,
-            processedText: cachedReply,
-            pluginEvents: const [],
-            toolResults: const [],
+      return await _runWithProviderRefreshRetry<ProactiveSendResult>(
+        entry: 'proactive_trigger',
+        convId: targetConvId,
+        task: () async {
+          final settings = await _ref.read(appSettingsProvider.future);
+          if (!settings.autoReplySettings.enabled) {
+            AppLogger.info(
+                'ChatActions', 'Skip proactive trigger: auto-reply disabled',
+                metadata: {
+                  'triggerId': trigger.id,
+                });
+            return const ProactiveSendResult.skipped('auto_reply_disabled');
+          }
+
+          if (trigger.hasCachedContent) {
+            final cachedReply = trigger.cachedContent!.trim();
+            if (cachedReply.isNotEmpty) {
+              final cachedResult = ApiCallResult(
+                rawReplyText: cachedReply,
+                replyText: cachedReply,
+                processedText: cachedReply,
+                pluginEvents: const [],
+                toolResults: const [],
+              );
+              final buildResult = _sendPort.buildAssistantMessages(
+                  apiResult: cachedResult, settings: settings);
+              await _ttsHandler.deliverSegmentedMessages(
+                convId: targetConvId,
+                userMsgId: '',
+                buildResult: buildResult,
+                replyText: cachedReply,
+                pluginEvents: const [],
+                ttsEnabled: settings.ttsEnabled,
+              );
+              _recordTurnTrace(
+                traceContext,
+                TraceStage.messageDelivered,
+                meta: {'assistantMessageCount': buildResult.messages.length},
+              );
+              _recordTurnTrace(traceContext, TraceStage.turnCompleted);
+              AppLogger.info('ChatActions', '触发器发送成功（cached）', metadata: {
+                'triggerId': trigger.id,
+                'title': trigger.title,
+              });
+              return const ProactiveSendResult.success();
+            }
+          }
+
+          final proactiveInput = (trigger.prompt?.trim().isNotEmpty ?? false)
+              ? trigger.prompt!.trim()
+              : trigger.title;
+          final syntheticUserMessage = Message(
+            id: 'trigger_${trigger.id}',
+            role: 'user',
+            content: proactiveInput,
+            createdAt: DateTime.now(),
           );
-          final buildResult = _sendPort.buildAssistantMessages(
-              apiResult: cachedResult, settings: settings);
-          await _ttsHandler.deliverSegmentedMessages(
-            convId: targetConvId,
-            userMsgId: '',
-            buildResult: buildResult,
-            replyText: cachedReply,
-            pluginEvents: const [],
-            ttsEnabled: settings.ttsEnabled,
+          final turnResult = await _executeTurnCommand(
+            command: ChatTurnCommand.nonStreaming(
+              conversation: conv,
+              userMessage: syntheticUserMessage,
+              sessionId: targetConvId,
+              apiText: proactiveInput,
+              traceContext: traceContext,
+            ),
+            loadSettings: () async => settings,
+            prepareTurn: (_) async {
+              final snapshotHistory =
+                  _buildSnapshotHistory(trigger.contextSnapshot);
+              return ChatPreparedTurn(
+                requestConversation: conv,
+                history: snapshotHistory.isNotEmpty
+                    ? snapshotHistory
+                    : await _loadConversationMessages(targetConvId),
+                sessionId: targetConvId,
+              );
+            },
+            resolveModelsToTry: _resolvePreferredChatModels,
+            executeWithFailover: ({
+              required modelsToTry,
+              required buildConfig,
+              required execute,
+              required settings,
+            }) =>
+                _executeWithFailover(
+              convId: targetConvId,
+              modelsToTry: modelsToTry,
+              buildConfig: buildConfig,
+              execute: execute,
+              settings: settings,
+            ),
+            onToolExecuting: (toolName) =>
+                _updateStatusForTool(targetConvId, toolName),
+            deliverResult: ({
+              required settings,
+              required apiResult,
+              required buildResult,
+            }) =>
+                _ttsHandler.deliverSegmentedMessages(
+              convId: targetConvId,
+              userMsgId: '',
+              buildResult: buildResult,
+              replyText: apiResult.rawReplyText,
+              pluginEvents: apiResult.pluginEvents,
+              ttsEnabled: settings.ttsEnabled,
+            ),
+            isCurrent: () => true,
           );
+          if (turnResult == null) {
+            return const ProactiveSendResult.skipped('proactive_cancelled');
+          }
+
           _recordTurnTrace(
             traceContext,
             TraceStage.messageDelivered,
-            meta: {'assistantMessageCount': buildResult.messages.length},
+            meta: {
+              'assistantMessageCount': turnResult.buildResult.messages.length,
+            },
           );
           _recordTurnTrace(traceContext, TraceStage.turnCompleted);
-          AppLogger.info('ChatActions', '触发器发送成功（cached）', metadata: {
+
+          AppLogger.info('ChatActions', '触发器发送成功', metadata: {
             'triggerId': trigger.id,
             'title': trigger.title,
           });
           return const ProactiveSendResult.success();
-        }
-      }
-
-      final proactiveInput = (trigger.prompt?.trim().isNotEmpty ?? false)
-          ? trigger.prompt!.trim()
-          : trigger.title;
-      final syntheticUserMessage = Message(
-        id: 'trigger_${trigger.id}',
-        role: 'user',
-        content: proactiveInput,
-        createdAt: DateTime.now(),
-      );
-      final turnResult = await _executeTurnCommand(
-        command: ChatTurnCommand.nonStreaming(
-          conversation: conv,
-          userMessage: syntheticUserMessage,
-          sessionId: targetConvId,
-          apiText: proactiveInput,
-          traceContext: traceContext,
-        ),
-        loadSettings: () async => settings,
-        prepareTurn: (_) async {
-          final snapshotHistory =
-              _buildSnapshotHistory(trigger.contextSnapshot);
-          return ChatPreparedTurn(
-            requestConversation: conv,
-            history: snapshotHistory.isNotEmpty
-                ? snapshotHistory
-                : await _loadConversationMessages(targetConvId),
-            sessionId: targetConvId,
-          );
-        },
-        resolveModelsToTry: (resolvedSettings) =>
-            resolvedSettings.defaultChatModels.isNotEmpty
-                ? resolvedSettings.defaultChatModels
-                : <String>[resolvedSettings.defaultModelName],
-        executeWithFailover: ({
-          required modelsToTry,
-          required buildConfig,
-          required execute,
-          required settings,
-        }) =>
-            _executeWithFailover(
-          convId: targetConvId,
-          modelsToTry: modelsToTry,
-          buildConfig: buildConfig,
-          execute: execute,
-          settings: settings,
-        ),
-        onToolExecuting: (toolName) =>
-            _updateStatusForTool(targetConvId, toolName),
-        deliverResult: ({
-          required settings,
-          required apiResult,
-          required buildResult,
-        }) =>
-            _ttsHandler.deliverSegmentedMessages(
-          convId: targetConvId,
-          userMsgId: '',
-          buildResult: buildResult,
-          replyText: apiResult.replyText,
-          pluginEvents: apiResult.pluginEvents,
-          ttsEnabled: settings.ttsEnabled,
-        ),
-        isCurrent: () => true,
-      );
-      if (turnResult == null) {
-        return const ProactiveSendResult.skipped('proactive_cancelled');
-      }
-
-      // 触发器没有 userMsgId，使用空字符串
-      _recordTurnTrace(
-        traceContext,
-        TraceStage.messageDelivered,
-        meta: {
-          'assistantMessageCount': turnResult.buildResult.messages.length,
         },
       );
-      _recordTurnTrace(traceContext, TraceStage.turnCompleted);
-
-      AppLogger.info('ChatActions', '触发器发送成功', metadata: {
-        'triggerId': trigger.id,
-        'title': trigger.title,
-      });
-      return const ProactiveSendResult.success();
     } catch (e) {
       _recordTurnTrace(
         traceContext,
@@ -256,7 +259,7 @@ extension ChatActionsActionOps on ChatActions {
                 requestConversation: conv,
                 history: history,
                 sessionId: convId,
-                modelsToTry: <String>[settings.defaultModelName],
+                modelsToTry: _resolvePreferredChatModels(settings),
               );
             },
             executeWithFailover: ({
@@ -313,7 +316,7 @@ extension ChatActionsActionOps on ChatActions {
                   convId: convId,
                   userMsgId: messageId,
                   buildResult: buildResult,
-                  replyText: apiResult.replyText,
+                  replyText: apiResult.rawReplyText,
                   pluginEvents: apiResult.pluginEvents,
                   ttsEnabled: settings.ttsEnabled,
                 );
@@ -326,7 +329,7 @@ extension ChatActionsActionOps on ChatActions {
                 convId: convId,
                 userMsgId: messageId,
                 buildResult: buildResult,
-                replyText: apiResult.replyText,
+                replyText: apiResult.rawReplyText,
                 pluginEvents: apiResult.pluginEvents,
                 ttsEnabled: settings.ttsEnabled,
               );
@@ -530,7 +533,7 @@ extension ChatActionsActionOps on ChatActions {
                     limit: settings.historyMessageLimit,
                   ),
                   sessionId: convId,
-                  modelsToTry: <String>[settings.defaultModelName],
+                  modelsToTry: _resolvePreferredChatModels(settings),
                 );
               }
 
@@ -554,7 +557,7 @@ extension ChatActionsActionOps on ChatActions {
                 requestConversation: enhancedContext.conversation,
                 history: enhancedContext.history,
                 sessionId: enhancedContext.sessionId,
-                modelsToTry: <String>[settings.defaultModelName],
+                modelsToTry: _resolvePreferredChatModels(settings),
                 transformApiResult: (rawResult) {
                   final enhancedText =
                       _enhancedDialogueService.extractEnhancedText(
@@ -562,6 +565,7 @@ extension ChatActionsActionOps on ChatActions {
                     rawReplyText: rawResult.replyText,
                   );
                   return ApiCallResult(
+                    rawReplyText: enhancedText,
                     replyText: enhancedText,
                     processedText: enhancedText,
                     pluginEvents: rawResult.pluginEvents,
@@ -621,7 +625,7 @@ extension ChatActionsActionOps on ChatActions {
                   convId: convId,
                   userMsgId: userMsg.id,
                   buildResult: buildResult,
-                  replyText: apiResult.replyText,
+                  replyText: apiResult.rawReplyText,
                   pluginEvents: apiResult.pluginEvents,
                   ttsEnabled: settings.ttsEnabled,
                 );
@@ -634,7 +638,7 @@ extension ChatActionsActionOps on ChatActions {
                 convId: convId,
                 userMsgId: userMsg.id,
                 buildResult: buildResult,
-                replyText: apiResult.replyText,
+                replyText: apiResult.rawReplyText,
                 pluginEvents: apiResult.pluginEvents,
                 ttsEnabled: settings.ttsEnabled,
               );

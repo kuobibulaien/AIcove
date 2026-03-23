@@ -460,6 +460,32 @@ class MessageBubble extends ConsumerWidget {
     return '${gb.toStringAsFixed(1)}GB';
   }
 
+  Size? _resolveImageDisplaySize(
+    ImageBlock block, {
+    required double maxWidth,
+    required double maxHeight,
+  }) {
+    final rawWidth = block.width?.toDouble();
+    final rawHeight = block.height?.toDouble();
+    if (rawWidth == null ||
+        rawHeight == null ||
+        rawWidth <= 0 ||
+        rawHeight <= 0) {
+      return null;
+    }
+    final scale = math.min(
+      1.0,
+      math.min(maxWidth / rawWidth, maxHeight / rawHeight),
+    );
+    if (!scale.isFinite || scale <= 0) {
+      return null;
+    }
+    return Size(
+      rawWidth * scale,
+      rawHeight * scale,
+    );
+  }
+
   /// 统一渲染图片/表情包块
   /// ImageBlock → 等比缩放，最长边贴合最大尺寸（仿微信策略）
   /// EmojiBlock → BoxFit.contain 完整显示（表情包，小尺寸，无裁剪）
@@ -484,11 +510,33 @@ class MessageBubble extends ConsumerWidget {
 
     ImageProvider? imageProvider;
     Widget imageWidget;
+    final photoConstraints = BoxConstraints(maxWidth: maxW, maxHeight: maxH);
+    final photoDisplaySize = block is ImageBlock
+        ? _resolveImageDisplaySize(
+            block,
+            maxWidth: maxW,
+            maxHeight: maxH,
+          )
+        : null;
+
+    Widget wrapPhoto(Widget child) {
+      if (photoDisplaySize == null) {
+        return ConstrainedBox(
+          constraints: photoConstraints,
+          child: child,
+        );
+      }
+      return SizedBox(
+        width: photoDisplaySize.width,
+        height: photoDisplaySize.height,
+        child: child,
+      );
+    }
 
     // 统一的占位/错误态
     Widget placeholder({bool isError = false}) => Container(
-          width: isSticker ? null : maxW,
-          height: isSticker ? null : maxH * 0.55,
+          width: isSticker ? null : photoDisplaySize?.width ?? maxW,
+          height: isSticker ? null : photoDisplaySize?.height ?? maxH * 0.55,
           constraints: isSticker
               ? BoxConstraints(maxWidth: maxW * 0.7, maxHeight: maxH * 0.7)
               : null,
@@ -535,13 +583,11 @@ class MessageBubble extends ConsumerWidget {
           : placeholder(isError: true);
     } else {
       // 照片：用 ConstrainedBox 限制最大尺寸，图片等比缩放（仿微信）
-      final constraints = BoxConstraints(maxWidth: maxW, maxHeight: maxH);
       final imgBlock = block as ImageBlock;
       if (imgBlock.localPath != null && imgBlock.localPath!.isNotEmpty) {
         imageProvider = FileImage(File(imgBlock.localPath!));
-        imageWidget = ConstrainedBox(
-          constraints: constraints,
-          child: Image.file(
+        imageWidget = wrapPhoto(
+          Image.file(
             File(imgBlock.localPath!),
             fit: BoxFit.contain,
             errorBuilder: (_, __, ___) => placeholder(isError: true),
@@ -549,9 +595,8 @@ class MessageBubble extends ConsumerWidget {
         );
       } else if (imgBlock.url != null && imgBlock.url!.isNotEmpty) {
         imageProvider = CachedNetworkImageProvider(imgBlock.url!);
-        imageWidget = ConstrainedBox(
-          constraints: constraints,
-          child: CachedNetworkImage(
+        imageWidget = wrapPhoto(
+          CachedNetworkImage(
             imageUrl: imgBlock.url!,
             fit: BoxFit.contain,
             fadeInDuration: Duration.zero,
@@ -565,9 +610,8 @@ class MessageBubble extends ConsumerWidget {
             decodeDataImage('data:image/jpeg;base64,${imgBlock.base64}');
         if (dataBytes != null) {
           imageProvider = MemoryImage(dataBytes);
-          imageWidget = ConstrainedBox(
-            constraints: constraints,
-            child: Image.memory(
+          imageWidget = wrapPhoto(
+            Image.memory(
               dataBytes,
               fit: BoxFit.contain,
               errorBuilder: (_, __, ___) => placeholder(isError: true),
@@ -808,7 +852,7 @@ class _AvatarAwareBubbleRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final leftReserve = _AvatarSlot.fallbackWidth;
+        const leftReserve = _AvatarSlot.fallbackWidth;
         final rightReserve = hideUserAvatar ? 0.0 : _AvatarSlot.fallbackWidth;
         final failedReserve = (isMe && hasFailedIndicator)
             ? _AvatarAwareBubbleRow._kFailedIndicatorWidth

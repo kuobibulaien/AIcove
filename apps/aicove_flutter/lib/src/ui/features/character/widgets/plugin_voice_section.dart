@@ -229,6 +229,8 @@ class PluginVoiceSection extends ConsumerWidget {
       case 'image':
         return ref.read(appSettingsProvider).value?.imageGenerationEnabled ??
             true;
+      case 'time_awareness':
+        return ref.read(timeAwarenessPluginConfigProvider).enabled;
       default:
         return true;
     }

@@ -18,7 +18,7 @@ class ChatHistoryStoreAdapter implements ChatHistoryPort {
 
   @override
   Future<List<Message>> loadAllMessages(String conversationId) {
-    return _historyStore.loadAllMessages(conversationId);
+    return _historyStore.loadFrontendMessages(conversationId);
   }
 
   @override
@@ -35,17 +35,19 @@ class ChatHistoryStoreAdapter implements ChatHistoryPort {
   }
 
   @override
-  Future<void> appendAssistantMessages({
+  Future<void> appendAssistantRawMessage({
     required String conversationId,
     required String userMessageId,
-    required List<Message> messages,
+    required Message rawMessage,
+    required List<Message> projectedMessages,
     required String lastMessagePreview,
     bool updateShortWindow = true,
   }) {
-    return _historyStore.appendAssistantMessages(
+    return _historyStore.appendAssistantRawMessage(
       conversationId: conversationId,
       userMessageId: userMessageId,
-      messages: messages,
+      rawMessage: rawMessage,
+      projectedMessages: projectedMessages,
       lastMessagePreview: lastMessagePreview,
       updateShortWindow: updateShortWindow,
     );

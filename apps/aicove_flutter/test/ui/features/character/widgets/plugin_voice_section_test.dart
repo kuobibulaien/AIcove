@@ -14,12 +14,14 @@ void main() {
   });
 
   testWidgets('插件弹窗内切换开关后立即刷新状态', (tester) async {
+    final totalPlugins = chatPluginItems.length;
+
     await tester.pumpWidget(const _TestApp());
     await tester.pumpAndSettle();
 
-    expect(find.text('已启用全部 5 个插件'), findsOneWidget);
+    expect(find.text('已启用全部 $totalPlugins 个插件'), findsOneWidget);
 
-    await tester.tap(find.text('已启用全部 5 个插件'));
+    await tester.tap(find.text('已启用全部 $totalPlugins 个插件'));
     await tester.pumpAndSettle();
 
     expect(find.text('选择插件'), findsOneWidget);
@@ -28,7 +30,8 @@ void main() {
     await tester.tap(find.byType(Switch).first);
     await tester.pumpAndSettle();
 
-    expect(find.text('已启用 4 / 5 个插件'), findsOneWidget);
+    expect(find.text('已启用 ${totalPlugins - 1} / $totalPlugins 个插件'),
+        findsOneWidget);
     expect(tester.widget<Switch>(find.byType(Switch).first).value, isFalse);
   });
 }

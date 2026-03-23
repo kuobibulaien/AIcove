@@ -9,6 +9,8 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:chat_bottom_container/chat_bottom_container.dart';
@@ -18,6 +20,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import '../../../../core/services/attachment_picker_service.dart';
 import '../../../../ui/theme/skin_provider.dart';
 import '../../../../ui/theme/tokens.dart';
@@ -29,7 +33,59 @@ import '../../../../ui/shared/widgets/list/moe_list_tile.dart';
 import '../../../../ui/shared/widgets/media/attachment_preview.dart';
 import '../../../settings/app_settings.dart';
 import '../../chat_actions.dart';
+import '../../conversation_providers.dart';
+import '../../domain/conversation.dart';
 import 'composer_more_panel.dart';
+
+@visibleForTesting
+const String composerLegacyDraftStorageKey = 'composer_draft_text';
+
+const String _kComposerDraftKeyPrefix = 'composer_draft_v2:';
+const int _kComposerDraftVersion = 1;
+const String _kComposerDraftMediaDirectoryName = 'composer_drafts';
+
+@visibleForTesting
+String composerDraftStorageKey(String conversationId) =>
+    '$_kComposerDraftKeyPrefix$conversationId';
+
+@visibleForTesting
+SelectedAttachment? composerDecodeDraftAttachment(dynamic rawAttachment) {
+  if (rawAttachment is! Map) return null;
+
+  final attachmentMap =
+      Map<String, dynamic>.from(rawAttachment.cast<String, dynamic>());
+  final path = (attachmentMap['path'] as String?)?.trim();
+  if (path == null || path.isEmpty) return null;
+
+  final typeName = (attachmentMap['type'] as String?)?.trim();
+  final attachmentType = AttachmentType.values
+      .where((candidate) => candidate.name == typeName)
+      .firstOrNull;
+  if (attachmentType == null) return null;
+
+  return SelectedAttachment(
+    path: path,
+    name: attachmentMap['name'] as String?,
+    sizeBytes: attachmentMap['sizeBytes'] as int?,
+    type: attachmentType,
+  );
+}
+
+@visibleForTesting
+Future<SelectedAttachment?> composerResolveRestorableDraftAttachment(
+  SelectedAttachment? attachment,
+) async {
+  if (attachment == null) return null;
+  final path = attachment.path.trim();
+  if (path.isEmpty) return null;
+  try {
+    final exists = await File(path).exists();
+    if (!exists) return null;
+    return attachment;
+  } catch (_) {
+    return null;
+  }
+}
 
 /// 自定义底部面板类型
 enum ComposerPanelType { none, keyboard, more }
@@ -37,9 +93,10 @@ enum ComposerPanelType { none, keyboard, more }
 /// 消息输入组件
 class Composer extends ConsumerStatefulWidget {
   final bool disabled;
-  final ValueChanged<String> onSend;
-  final void Function(String imagePath, {String? text})? onImageSelected;
-  final ValueChanged<String>? onFileSelected;
+  final FutureOr<void> Function(String) onSend;
+  final FutureOr<void> Function(String imagePath, {String? text})?
+      onImageSelected;
+  final FutureOr<void> Function(String)? onFileSelected;
   final ValueChanged<double>? onHeightChanged;
   final VoidCallback? onInputTap;
   const Composer({
@@ -58,12 +115,13 @@ class Composer extends ConsumerStatefulWidget {
 
 class _ComposerState extends ConsumerState<Composer> {
   static const Duration _kKeyboardInterruptGuard = Duration(milliseconds: 280);
-  static const String _kDraftKey = 'composer_draft_text';
 
   final _rootKey = GlobalKey();
   final _ctrl = TextEditingController();
   final _inputFocus = FocusNode();
   Timer? _draftSaveTimer;
+  AppLifecycleListener? _appLifecycleListener;
+  String? _draftConversationId;
 
   // chat_bottom_container 控制器
   final _panelController =
@@ -97,12 +155,25 @@ class _ComposerState extends ConsumerState<Composer> {
     if (!_supportsSoftKeyboardPanel) {
       _inputFocus.addListener(_onDesktopFocusChange);
     }
-    // 加载草稿
-    _loadDraft();
     // 监听输入变化，自动保存草稿
     _ctrl.addListener(_onTextChanged);
+    _appLifecycleListener = AppLifecycleListener(
+      onStateChange: (state) {
+        switch (state) {
+          case AppLifecycleState.inactive:
+          case AppLifecycleState.hidden:
+          case AppLifecycleState.paused:
+          case AppLifecycleState.detached:
+            _persistDraftImmediately();
+            break;
+          case AppLifecycleState.resumed:
+            break;
+        }
+      },
+    );
     // 延迟检查是否有待编辑的文本
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_syncDraftScope(forceReload: true));
       _checkEditingText();
       _checkRecalledAttachment();
       _reportHeightIfNeeded();
@@ -180,8 +251,8 @@ class _ComposerState extends ConsumerState<Composer> {
   void _checkRecalledAttachment() {
     final recalledAttachment = ref.read(recalledAttachmentProvider);
     if (recalledAttachment != null) {
-      setState(() => _selectedAttachment = recalledAttachment);
       ref.read(recalledAttachmentProvider.notifier).state = null;
+      unawaited(_setSelectedAttachment(recalledAttachment));
       _showKeyboardWithPreAnimation();
     }
   }
@@ -205,6 +276,7 @@ class _ComposerState extends ConsumerState<Composer> {
   void dispose() {
     _keyboardGuardTimer?.cancel();
     _draftSaveTimer?.cancel();
+    _appLifecycleListener?.dispose();
     _ctrl.removeListener(_onTextChanged);
     _inputFocus.removeListener(_onDesktopFocusChange);
     _ctrl.dispose();
@@ -212,16 +284,135 @@ class _ComposerState extends ConsumerState<Composer> {
     super.dispose();
   }
 
-  /// 加载草稿
-  Future<void> _loadDraft() async {
+  String? _normalizeDraftScopeId(String? scopeId) {
+    final normalized = scopeId?.trim();
+    if (normalized == null || normalized.isEmpty) return null;
+    return normalized;
+  }
+
+  String _resolveDraftStorageKey(String? scopeId) {
+    final normalizedScopeId = _normalizeDraftScopeId(scopeId);
+    if (normalizedScopeId == null) {
+      return composerLegacyDraftStorageKey;
+    }
+    return composerDraftStorageKey(normalizedScopeId);
+  }
+
+  String? _readCurrentConversationId() {
+    return _normalizeDraftScopeId(ref.read(activeConversationProvider)?.id);
+  }
+
+  Future<void> _syncDraftScope({bool forceReload = false}) async {
+    final nextScopeId = _readCurrentConversationId();
+    final currentScopeId = _normalizeDraftScopeId(_draftConversationId);
+    if (!forceReload && currentScopeId == nextScopeId) return;
+
+    if (!forceReload && currentScopeId != null) {
+      _draftSaveTimer?.cancel();
+      await _saveDraftSnapshot(scopeId: currentScopeId);
+    }
+
+    _draftConversationId = nextScopeId;
+    await _loadDraftSnapshot(scopeId: nextScopeId, replaceCurrent: true);
+  }
+
+  Future<_ComposerDraftSnapshot?> _readStoredDraftSnapshot(
+    SharedPreferences prefs, {
+    required String? scopeId,
+  }) async {
+    final draftKey = _resolveDraftStorageKey(scopeId);
+    final scopedDraftRaw = prefs.getString(draftKey);
+    if (scopedDraftRaw != null && scopedDraftRaw.isNotEmpty) {
+      return _ComposerDraftSnapshot.fromStored(scopedDraftRaw);
+    }
+
+    if (draftKey == composerLegacyDraftStorageKey) {
+      return null;
+    }
+
+    final legacyDraft = prefs.getString(composerLegacyDraftStorageKey);
+    if (legacyDraft == null || legacyDraft.isEmpty) {
+      return null;
+    }
+
+    final snapshot = _ComposerDraftSnapshot.fromStored(legacyDraft);
+    if (snapshot == null) {
+      await prefs.remove(composerLegacyDraftStorageKey);
+      return null;
+    }
+
+    await prefs.setString(draftKey, snapshot.encode());
+    await prefs.remove(composerLegacyDraftStorageKey);
+    return snapshot;
+  }
+
+  Future<SelectedAttachment?> _resolveRestorableAttachment(
+    SelectedAttachment? attachment,
+  ) async {
+    return composerResolveRestorableDraftAttachment(attachment);
+  }
+
+  void _applyDraftText(String text, {required bool replaceCurrent}) {
+    if (!replaceCurrent && _ctrl.text.isNotEmpty) return;
+
+    if (text.isEmpty) {
+      if (replaceCurrent && _ctrl.text.isNotEmpty) {
+        _ctrl.clear();
+      }
+      return;
+    }
+
+    if (_ctrl.text == text) return;
+    _ctrl.text = text;
+    _ctrl.selection = TextSelection.fromPosition(
+      TextPosition(offset: text.length),
+    );
+  }
+
+  bool _sameAttachment(
+    SelectedAttachment? left,
+    SelectedAttachment? right,
+  ) {
+    return left?.path == right?.path &&
+        left?.type == right?.type &&
+        left?.name == right?.name &&
+        left?.sizeBytes == right?.sizeBytes;
+  }
+
+  Future<void> _loadDraftSnapshot({
+    required String? scopeId,
+    required bool replaceCurrent,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
-    final draft = prefs.getString(_kDraftKey);
-    if (draft != null && draft.isNotEmpty && mounted) {
-      // 只有当输入框为空时才恢复草稿（避免覆盖撤回编辑的内容）
-      if (_ctrl.text.isEmpty) {
-        _ctrl.text = draft;
-        _ctrl.selection = TextSelection.fromPosition(
-          TextPosition(offset: draft.length),
+    final snapshot = await _readStoredDraftSnapshot(
+      prefs,
+      scopeId: scopeId,
+    );
+    if (!mounted) return;
+
+    _applyDraftText(snapshot?.text ?? '', replaceCurrent: replaceCurrent);
+
+    final restoredAttachment =
+        await _resolveRestorableAttachment(snapshot?.attachment);
+    if (!mounted) return;
+
+    final shouldReplaceAttachment =
+        replaceCurrent || _selectedAttachment == null;
+    if (shouldReplaceAttachment &&
+        !_sameAttachment(_selectedAttachment, restoredAttachment)) {
+      setState(() => _selectedAttachment = restoredAttachment);
+    }
+
+    if (snapshot != null &&
+        snapshot.attachment != null &&
+        restoredAttachment == null) {
+      final sanitized = snapshot.copyWith(attachment: null);
+      if (sanitized.isEmpty) {
+        await prefs.remove(_resolveDraftStorageKey(scopeId));
+      } else {
+        await prefs.setString(
+          _resolveDraftStorageKey(scopeId),
+          sanitized.encode(),
         );
       }
     }
@@ -229,19 +420,34 @@ class _ComposerState extends ConsumerState<Composer> {
 
   /// 输入变化时触发（带防抖保存草稿）
   void _onTextChanged() {
+    _scheduleDraftSave();
+  }
+
+  void _scheduleDraftSave() {
     _draftSaveTimer?.cancel();
     _draftSaveTimer = Timer(const Duration(milliseconds: 500), () {
-      _saveDraft(_ctrl.text);
+      unawaited(_saveDraftSnapshot(scopeId: _draftConversationId));
     });
   }
 
+  void _persistDraftImmediately() {
+    _draftSaveTimer?.cancel();
+    unawaited(_saveDraftSnapshot(scopeId: _draftConversationId));
+  }
+
   /// 保存草稿到本地
-  Future<void> _saveDraft(String text) async {
+  Future<void> _saveDraftSnapshot({String? scopeId}) async {
     final prefs = await SharedPreferences.getInstance();
-    if (text.isEmpty) {
-      await prefs.remove(_kDraftKey);
+    final snapshot = _ComposerDraftSnapshot(
+      text: _ctrl.text,
+      attachment: _selectedAttachment,
+    );
+    final draftKey = _resolveDraftStorageKey(scopeId);
+
+    if (snapshot.isEmpty) {
+      await prefs.remove(draftKey);
     } else {
-      await prefs.setString(_kDraftKey, text);
+      await prefs.setString(draftKey, snapshot.encode());
     }
   }
 
@@ -249,7 +455,77 @@ class _ComposerState extends ConsumerState<Composer> {
   Future<void> _clearDraft() async {
     _draftSaveTimer?.cancel();
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_kDraftKey);
+    await prefs.remove(_resolveDraftStorageKey(_draftConversationId));
+  }
+
+  Future<SelectedAttachment> _stabilizeAttachmentForDraft(
+    SelectedAttachment attachment,
+  ) async {
+    if (attachment.type != AttachmentType.image) {
+      return attachment;
+    }
+
+    final sourcePath = attachment.path.trim();
+    if (sourcePath.isEmpty) {
+      return attachment;
+    }
+
+    final sourceFile = File(sourcePath);
+    if (!await sourceFile.exists()) {
+      return attachment;
+    }
+
+    final rootDirectory = await getApplicationSupportDirectory();
+    final draftDirectory = Directory(
+      p.join(rootDirectory.path, _kComposerDraftMediaDirectoryName),
+    );
+    if (!await draftDirectory.exists()) {
+      await draftDirectory.create(recursive: true);
+    }
+
+    final normalizedSourcePath = p.normalize(sourceFile.path);
+    final normalizedDraftRoot = p.normalize(draftDirectory.path);
+    if (normalizedSourcePath == normalizedDraftRoot ||
+        p.isWithin(normalizedDraftRoot, normalizedSourcePath)) {
+      return attachment;
+    }
+
+    final scopeId = _normalizeDraftScopeId(_draftConversationId) ?? 'global';
+    final safeScopeId = scopeId.replaceAll(RegExp(r'[^a-zA-Z0-9_-]+'), '_');
+    final extension = p.extension(normalizedSourcePath);
+    final targetPath = p.join(
+      draftDirectory.path,
+      'draft_${safeScopeId}_${DateTime.now().millisecondsSinceEpoch}'
+      '${extension.isNotEmpty ? extension : '.jpg'}',
+    );
+
+    try {
+      await sourceFile.copy(targetPath);
+      return SelectedAttachment(
+        path: targetPath,
+        name: attachment.name,
+        sizeBytes: attachment.sizeBytes,
+        type: attachment.type,
+      );
+    } catch (_) {
+      return attachment;
+    }
+  }
+
+  Future<void> _setSelectedAttachment(
+    SelectedAttachment? attachment, {
+    bool persistImmediately = true,
+  }) async {
+    final nextAttachment = attachment == null
+        ? null
+        : await _stabilizeAttachmentForDraft(attachment);
+    if (!mounted) return;
+    if (_sameAttachment(_selectedAttachment, nextAttachment)) return;
+
+    setState(() => _selectedAttachment = nextAttachment);
+    if (persistImmediately) {
+      _persistDraftImmediately();
+    }
   }
 
   double _uiScaleFactor() {
@@ -552,17 +828,17 @@ class _ComposerState extends ConsumerState<Composer> {
       return;
     }
 
-    _submit();
+    await _submit();
   }
 
-  void _submit() {
+  Future<void> _submit() async {
     final attachment = _selectedAttachment;
     final text = _ctrl.text.trim();
 
     if (attachment != null) {
       if (attachment.type == AttachmentType.image &&
           widget.onImageSelected != null) {
-        widget.onImageSelected!(
+        await widget.onImageSelected!(
           attachment.path,
           text: text.isNotEmpty ? text : null,
         );
@@ -571,18 +847,20 @@ class _ComposerState extends ConsumerState<Composer> {
           MoeToast.brief(context, '当前页面暂未接入文件发送');
           return;
         }
-        widget.onFileSelected!(attachment.path);
+        await widget.onFileSelected!(attachment.path);
       }
+      if (!mounted) return;
       setState(() => _selectedAttachment = null);
       _ctrl.clear();
-      _clearDraft();
+      unawaited(_clearDraft());
       return;
     }
 
     if (text.isEmpty || widget.disabled) return;
-    widget.onSend(text);
+    await widget.onSend(text);
+    if (!mounted) return;
     _ctrl.clear();
-    _clearDraft();
+    unawaited(_clearDraft());
   }
 
   void _onMorePressed() {
@@ -612,10 +890,16 @@ class _ComposerState extends ConsumerState<Composer> {
     ref.listen<SelectedAttachment?>(recalledAttachmentProvider,
         (previous, next) {
       if (next != null) {
-        setState(() => _selectedAttachment = next);
         ref.read(recalledAttachmentProvider.notifier).state = null;
+        unawaited(_setSelectedAttachment(next));
         _showKeyboardWithPreAnimation();
       }
+    });
+    ref.listen<Conversation?>(activeConversationProvider, (previous, next) {
+      final previousId = _normalizeDraftScopeId(previous?.id);
+      final nextId = _normalizeDraftScopeId(next?.id);
+      if (previousId == nextId) return;
+      unawaited(_syncDraftScope());
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -641,16 +925,18 @@ class _ComposerState extends ConsumerState<Composer> {
                   if (_selectedAttachment?.type == AttachmentType.image)
                     ImageAttachmentPreview(
                       imagePath: _selectedAttachment!.path,
-                      onRemove: () =>
-                          setState(() => _selectedAttachment = null),
+                      onRemove: () {
+                        unawaited(_setSelectedAttachment(null));
+                      },
                     ),
                   if (_selectedAttachment?.type == AttachmentType.file)
                     FileAttachmentPreview(
                       filePath: _selectedAttachment!.path,
                       fileName: _selectedAttachment!.name,
                       fileSizeBytes: _selectedAttachment!.sizeBytes,
-                      onRemove: () =>
-                          setState(() => _selectedAttachment = null),
+                      onRemove: () {
+                        unawaited(_setSelectedAttachment(null));
+                      },
                     ),
                   _buildInputBar(),
                   _buildPanelContainer(),
@@ -1082,7 +1368,7 @@ class _ComposerState extends ConsumerState<Composer> {
 
     switch (result) {
       case AttachmentPickSuccess(:final attachment):
-        setState(() => _selectedAttachment = attachment);
+        await _setSelectedAttachment(attachment);
         _showKeyboardWithPreAnimation();
       case AttachmentPickError(:final message):
         MoeToast.error(context, message);
@@ -1100,7 +1386,7 @@ class _ComposerState extends ConsumerState<Composer> {
 
     switch (result) {
       case AttachmentPickSuccess(:final attachment):
-        setState(() => _selectedAttachment = attachment);
+        await _setSelectedAttachment(attachment);
         _showKeyboardWithPreAnimation();
       case AttachmentFileTooLarge(:final maxMb):
         await showMeoTalkAlert(
@@ -1132,4 +1418,64 @@ class _PanelIntent {
     required this.preferPreAnimation,
     required this.explicitShow,
   });
+}
+
+class _ComposerDraftSnapshot {
+  final String text;
+  final SelectedAttachment? attachment;
+
+  const _ComposerDraftSnapshot({
+    required this.text,
+    this.attachment,
+  });
+
+  bool get isEmpty => text.isEmpty && attachment == null;
+
+  _ComposerDraftSnapshot copyWith({
+    String? text,
+    SelectedAttachment? attachment,
+  }) {
+    return _ComposerDraftSnapshot(
+      text: text ?? this.text,
+      attachment: attachment,
+    );
+  }
+
+  String encode() {
+    return jsonEncode(<String, Object?>{
+      'version': _kComposerDraftVersion,
+      'text': text,
+      if (attachment != null)
+        'attachment': <String, Object?>{
+          'path': attachment!.path,
+          'name': attachment!.name,
+          'sizeBytes': attachment!.sizeBytes,
+          'type': attachment!.type.name,
+        },
+    });
+  }
+
+  static _ComposerDraftSnapshot? fromStored(String rawValue) {
+    if (rawValue.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(rawValue);
+      if (decoded is! Map) {
+        return _ComposerDraftSnapshot(text: rawValue);
+      }
+      final draftMap =
+          Map<String, dynamic>.from(decoded.cast<String, dynamic>());
+      final text = (draftMap['text'] as String?) ?? '';
+      final attachment = _decodeAttachment(draftMap['attachment']);
+      return _ComposerDraftSnapshot(
+        text: text,
+        attachment: attachment,
+      );
+    } catch (_) {
+      return _ComposerDraftSnapshot(text: rawValue);
+    }
+  }
+
+  static SelectedAttachment? _decodeAttachment(dynamic rawAttachment) {
+    return composerDecodeDraftAttachment(rawAttachment);
+  }
 }

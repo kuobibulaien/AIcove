@@ -5,6 +5,7 @@ import '../../plugins/domain/plugin.dart';
 import '../../plugins/plugin_manager.dart';
 import '../../plugins/memory/memory_plugin.dart';
 import '../../../core/app_logger.dart';
+import 'chat_types.dart' show isProviderRefreshTimingError;
 
 class PluginPromptEntry {
   const PluginPromptEntry({
@@ -87,6 +88,8 @@ class ChatPluginContextBuilder {
     required bool supportsToolCalling,
     String? conversationId,
     Set<String> excludedPluginIds = const <String>{},
+    Duration retryDelay = const Duration(milliseconds: 120),
+    int maxRetryAttempts = 1,
   }) async {
     final result = await buildPluginPromptEntriesWithFilter(
       plugins,
@@ -94,6 +97,8 @@ class ChatPluginContextBuilder {
       supportsToolCalling: supportsToolCalling,
       conversationId: conversationId,
       excludedPluginIds: excludedPluginIds,
+      retryDelay: retryDelay,
+      maxRetryAttempts: maxRetryAttempts,
     );
     return result.mergedPrompt;
   }
@@ -104,6 +109,8 @@ class ChatPluginContextBuilder {
     required bool supportsToolCalling,
     String? conversationId,
     Set<String> excludedPluginIds = const <String>{},
+    Duration retryDelay = const Duration(milliseconds: 120),
+    int maxRetryAttempts = 1,
   }) async {
     if (plugins.isEmpty) {
       return const PluginPromptBuildResult(entries: <PluginPromptEntry>[]);
@@ -125,16 +132,14 @@ class ChatPluginContextBuilder {
         continue;
       }
       try {
-        final prompt = plugin is MemoryPlugin
-            ? await plugin.getSystemPrompt(
-                userMessage: userMessage,
-                supportsToolCalling: supportsToolCalling,
-                conversationId: conversationId,
-              )
-            : await plugin.getSystemPrompt(
-                userMessage: userMessage,
-                supportsToolCalling: supportsToolCalling,
-              );
+        final prompt = await _buildPluginPromptWithRetry(
+          plugin,
+          userMessage: userMessage,
+          supportsToolCalling: supportsToolCalling,
+          conversationId: conversationId,
+          retryDelay: retryDelay,
+          maxRetryAttempts: maxRetryAttempts,
+        );
         final trimmedPrompt = prompt?.trim() ?? '';
         entries.add(
           PluginPromptEntry(
@@ -166,6 +171,45 @@ class ChatPluginContextBuilder {
       }
     }
     return PluginPromptBuildResult(entries: entries);
+  }
+
+  Future<String?> _buildPluginPromptWithRetry(
+    Plugin plugin, {
+    required String userMessage,
+    required bool supportsToolCalling,
+    String? conversationId,
+    required Duration retryDelay,
+    required int maxRetryAttempts,
+  }) async {
+    var attempt = 0;
+    while (true) {
+      try {
+        return plugin is MemoryPlugin
+            ? await plugin.getSystemPrompt(
+                userMessage: userMessage,
+                supportsToolCalling: supportsToolCalling,
+                conversationId: conversationId,
+              )
+            : await plugin.getSystemPrompt(
+                userMessage: userMessage,
+                supportsToolCalling: supportsToolCalling,
+              );
+      } catch (e) {
+        final retryable = isProviderRefreshTimingError(e);
+        final shouldRetry = retryable && attempt < maxRetryAttempts;
+        if (shouldRetry) {
+          AppLogger.info('ChatSendService', '插件提示词构建命中刷新窗口，准备重试', metadata: {
+            'pluginId': plugin.id,
+            'attempt': attempt + 1,
+            'retryDelayMs': retryDelay.inMilliseconds,
+          });
+          attempt += 1;
+          await Future<void>.delayed(retryDelay);
+          continue;
+        }
+        rethrow;
+      }
+    }
   }
 
   List<AITool> collectPluginTools(List<Plugin> plugins) {
@@ -200,7 +244,7 @@ class ChatPluginContextBuilder {
           tools.addAll(plugin.getTools());
           break;
         } catch (e) {
-          final retryable = _isProviderRefreshTimingError(e);
+          final retryable = isProviderRefreshTimingError(e);
           final shouldRetry = retryable && attempt < maxRetryAttempts;
           if (shouldRetry) {
             AppLogger.info('ChatSendService', '插件工具收集命中刷新窗口，准备重试', metadata: {
@@ -225,13 +269,5 @@ class ChatPluginContextBuilder {
       }
     }
     return tools;
-  }
-
-  bool _isProviderRefreshTimingError(Object error) {
-    final message = error.toString();
-    return message.contains(
-          'Cannot use ref functions after the dependency of a provider changed but before the provider rebuilt',
-        ) ||
-        message.contains('!_didChangeDependency');
   }
 }

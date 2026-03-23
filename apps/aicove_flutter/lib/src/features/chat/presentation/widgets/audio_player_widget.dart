@@ -332,7 +332,7 @@ class AudioPlayerWidget extends ConsumerWidget {
     final isPending = block.url.isEmpty || block.status == BlockStatus.pending;
 
     if (isPending) {
-      return _PendingAudioBubble(textColor: textColor);
+      return _PendingAudioBubble(block: block, textColor: textColor);
     }
 
     final state = ref.watch(audioPlayerControllerProvider(block.url));
@@ -553,15 +553,22 @@ class _AnimatedWaveformState extends State<_AnimatedWaveform>
 
 /// 加载中状态的语音条占位
 class _PendingAudioBubble extends StatelessWidget {
+  final AudioBlock block;
   final Color textColor;
-  const _PendingAudioBubble({required this.textColor});
+  const _PendingAudioBubble({
+    required this.block,
+    required this.textColor,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return ConstrainedBox(
-      constraints: const BoxConstraints(minWidth: 100, maxWidth: 160),
+    final double durationSec = block.durationSeconds ?? 2.0;
+    final double bubbleWidth = (80.0 + (durationSec * 8)).clamp(80.0, 220.0);
+    final int barCount = (bubbleWidth / 12).floor().clamp(5, 15);
+
+    return SizedBox(
+      width: bubbleWidth,
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
           SizedBox(
             width: 24,
@@ -578,15 +585,20 @@ class _PendingAudioBubble extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          Flexible(
-            child: Text(
-              '生成中...',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: textColor.withValues(alpha: 0.8),
-                fontSize: 12,
-              ),
+          Expanded(
+            child: _AnimatedWaveform(
+              isPlaying: false,
+              color: textColor,
+              barCount: barCount,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '${durationSec.toInt()}"',
+            style: TextStyle(
+              color: textColor.withValues(alpha: 0.9),
+              fontSize: 13,
+              fontWeight: MoeFontWeights.emphasis,
             ),
           ),
         ],

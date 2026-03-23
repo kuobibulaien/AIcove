@@ -12,9 +12,12 @@ import '../id_gen.dart';
 import '../../settings/app_settings.dart';
 import '../../observability/trace_models.dart';
 import '../../../core/app_logger.dart';
+import '../../../core/api/providers/provider_adapter.dart'
+    show ToolCall, ToolResult;
 import '../../../core/models/message_block.dart';
 import '../../../core/utils/mime_utils.dart';
 import 'chat_history_store.dart';
+import 'chat_message_projection_codec.dart';
 import 'chat_message_processor.dart';
 import 'chat_request_message_builder.dart';
 import 'chat_send_backend_service.dart';
@@ -300,47 +303,169 @@ class ChatSendService {
           ),
         );
       }
-      return AssistantMessageBuildResult(
-        messages: audioMessages,
+      return _composeAssistantBuildResult(
+        apiResult: apiResult,
+        projectedMessages: audioMessages,
         lastMessageText:
             audioMessages.isNotEmpty ? audioMessages.last.displayText : '',
       );
     }
 
-    return chatMessageProcessor.buildAssistantMessages(
-      replyText: apiResult.replyText,
+    final projectedResult = chatMessageProcessor.buildAssistantMessages(
+      replyText: apiResult.rawReplyText,
       processedText: apiResult.processedText,
       pluginEvents: apiResult.pluginEvents,
       contents: apiResult.pluginContents,
       toolCalls: apiResult.toolCalls,
       rawToolResults: apiResult.rawToolResults,
     );
+    return _composeAssistantBuildResult(
+      apiResult: apiResult,
+      projectedMessages: projectedResult.messages,
+      lastMessageText: projectedResult.lastMessageText,
+    );
+  }
+
+  AssistantMessageBuildResult _composeAssistantBuildResult({
+    required ApiCallResult apiResult,
+    required List<Message> projectedMessages,
+    required String lastMessageText,
+  }) {
+    final rawMessageId = genId('raw_msg');
+    final normalizedProjectedMessages = <Message>[
+      for (final message in projectedMessages)
+        message.copyWith(
+          sourceMessageId: rawMessageId,
+          rawPayload: null,
+        ),
+    ];
+    final rawMessage = _buildRawAssistantMessage(
+      rawMessageId: rawMessageId,
+      apiResult: apiResult,
+      projectedMessages: normalizedProjectedMessages,
+    );
+    return AssistantMessageBuildResult(
+      rawMessage: rawMessage,
+      messages: normalizedProjectedMessages,
+      lastMessageText: lastMessageText,
+    );
+  }
+
+  Message _buildRawAssistantMessage({
+    required String rawMessageId,
+    required ApiCallResult apiResult,
+    required List<Message> projectedMessages,
+  }) {
+    final rawReplyText = apiResult.rawReplyText;
+    final createdAt = DateTime.now();
+    final rawPayload = ChatMessageProjectionCodec.buildRawAssistantPayload(
+      apiResult: apiResult,
+      projectedMessages: projectedMessages,
+    );
+    final toolBlocks = _buildRawToolBlocks(
+      messageId: rawMessageId,
+      toolCalls: apiResult.toolCalls,
+      rawToolResults: apiResult.rawToolResults,
+    );
+
+    if (toolBlocks.isEmpty) {
+      return Message(
+        id: rawMessageId,
+        role: 'assistant',
+        content: rawReplyText,
+        createdAt: createdAt,
+        status: 'sent',
+        rawPayload: rawPayload,
+      );
+    }
+
+    final rawBlocks = <MessageBlock>[
+      if (rawReplyText.trim().isNotEmpty)
+        TextBlock(
+          messageId: rawMessageId,
+          content: rawReplyText,
+        ),
+      ...toolBlocks,
+    ];
+    return Message.fromBlocks(
+      id: rawMessageId,
+      role: 'assistant',
+      blocks: rawBlocks,
+      createdAt: createdAt,
+      status: 'sent',
+    ).copyWith(rawPayload: rawPayload);
+  }
+
+  List<ToolBlock> _buildRawToolBlocks({
+    required String messageId,
+    required List<ToolCall> toolCalls,
+    required List<ToolResult> rawToolResults,
+  }) {
+    if (toolCalls.isEmpty) {
+      return const <ToolBlock>[];
+    }
+
+    final blocks = <ToolBlock>[];
+    for (final call in toolCalls) {
+      final result = rawToolResults.firstWhere(
+        (item) => item.toolCallId == call.id,
+        orElse: () => ToolResult(
+          toolCallId: call.id,
+          name: call.name,
+          result: '{"error":"no result"}',
+        ),
+      );
+      blocks.add(
+        ToolBlock(
+          messageId: messageId,
+          toolCallId: call.id,
+          toolName: call.name,
+          arguments: call.arguments,
+          result: <String, dynamic>{'content': result.result},
+        ),
+      );
+    }
+    return blocks;
   }
 
   Future<void> deliverAssistantMessages({
     required String convId,
     required String userMsgId,
-    required List<Message> messages,
-    required String lastMessagePreview,
+    required AssistantMessageBuildResult buildResult,
     TraceLogger? trace,
+    bool updateShortWindow = true,
+    List<Message>? projectedMessages,
+    String? lastMessagePreview,
   }) async {
+    final rawMessage = buildResult.rawMessage;
+    if (rawMessage == null) {
+      throw StateError('assistant raw message missing');
+    }
+    final effectiveProjectedMessages =
+        projectedMessages ?? buildResult.messages;
+    final effectiveLastMessagePreview =
+        lastMessagePreview ?? buildResult.lastMessageText;
     final forwardTrace = trace?.startChild('deliver message to user');
     forwardTrace?.info('消息分段完成', metadata: {
-      'chunksCount': messages.length,
-      'firstChunk': messages.isNotEmpty ? messages.first.displayText : '',
+      'chunksCount': effectiveProjectedMessages.length,
+      'firstChunk': effectiveProjectedMessages.isNotEmpty
+          ? effectiveProjectedMessages.first.displayText
+          : '',
     });
 
-    await _ref.read(chatHistoryStoreProvider).appendAssistantMessages(
+    await _ref.read(chatHistoryStoreProvider).appendAssistantRawMessage(
           conversationId: convId,
           userMessageId: userMsgId,
-          messages: messages,
-          lastMessagePreview: lastMessagePreview,
+          rawMessage: rawMessage,
+          projectedMessages: effectiveProjectedMessages,
+          lastMessagePreview: effectiveLastMessagePreview,
+          updateShortWindow: updateShortWindow,
         );
 
     forwardTrace?.info('消息已转发到用户', metadata: {
-      'messagesCount': messages.length,
-      'hasAudio':
-          messages.any((m) => m.blocks?.any((b) => b is AudioBlock) ?? false),
+      'messagesCount': effectiveProjectedMessages.length,
+      'hasAudio': effectiveProjectedMessages
+          .any((m) => m.blocks?.any((b) => b is AudioBlock) ?? false),
     });
     forwardTrace?.end(additionalMessage: '转发成功');
   }
@@ -409,7 +534,7 @@ class ChatSendService {
     Message? ensureTailMessage,
   }) async {
     final all =
-        await _ref.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
+        await _ref.read(chatHistoryStoreProvider).loadAllRawMessages(conv.id);
 
     if (ensureTailMessage != null &&
         all.every((m) => m.id != ensureTailMessage.id)) {

@@ -72,40 +72,6 @@ Widget _buildHost({
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('聊天页常规进入时应启用持久首屏快照直出', () {
-    expect(
-      resolveChatPageAllowPersistentViewportBoot(
-        conversationId: 'conv_a',
-        deferEntryShell: false,
-      ),
-      isTrue,
-    );
-  });
-
-  test('聊天页延迟壳或无会话时不应启用持久首屏快照直出', () {
-    expect(
-      resolveChatPageAllowPersistentViewportBoot(
-        conversationId: 'conv_a',
-        deferEntryShell: true,
-      ),
-      isFalse,
-    );
-    expect(
-      resolveChatPageAllowPersistentViewportBoot(
-        conversationId: null,
-        deferEntryShell: false,
-      ),
-      isFalse,
-    );
-    expect(
-      resolveChatPageAllowPersistentViewportBoot(
-        conversationId: '   ',
-        deferEntryShell: false,
-      ),
-      isFalse,
-    );
-  });
-
   testWidgets('进入页面时会话激活应延后到首帧后执行', (tester) async {
     final container = ProviderContainer();
     final activation = DeferredConversationActivation();

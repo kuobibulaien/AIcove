@@ -2,7 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/database/database.dart' as db;
 import '../../../core/database/database_provider.dart';
-import '../services/chat_history_store.dart';
+import '../services/conversation_short_window_store.dart';
 
 class ChatPageMessageSearchItem {
   const ChatPageMessageSearchItem({
@@ -23,10 +23,14 @@ class ChatPageQueries {
 
   final Ref _ref;
 
+  /// Frontend-only query: follows the current short-window timeline semantics.
+  ///
+  /// This is intentionally different from backend context assembly, which reads
+  /// raw database history.
   Future<bool> conversationHasImageMessages(String conversationId) async {
-    final history = await _ref.read(chatHistoryStoreProvider).loadAllMessages(
-          conversationId,
-        );
+    final history = await _ref
+        .read(conversationShortWindowStoreProvider)
+        .loadAllMessages(conversationId);
     return history.any((message) => message.images.isNotEmpty);
   }
 

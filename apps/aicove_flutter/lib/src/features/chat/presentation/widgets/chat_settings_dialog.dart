@@ -8,6 +8,7 @@ import '../../../../ui/shared/widgets/moe_app_bar.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../domain/conversation.dart';
 import '../../../plugins/plugin_providers.dart';
+import '../../../settings/app_settings.dart';
 import '../../../../ui/features/settings/pages/chat_plugin_settings_page.dart';
 import '../../../../ui/features/chat/pages/chat_background_settings_page.dart';
 import '../../../diary/presentation/diary_list_page.dart';
@@ -381,6 +382,14 @@ class _PluginSelectorSheetState extends State<_PluginSelectorSheet> {
         return widget.ref.read(triggerPluginConfigProvider).enabled;
       case 'sticker':
         return widget.ref.read(stickerPluginConfigProvider).enabled;
+      case 'image':
+        return widget.ref
+                .read(appSettingsProvider)
+                .value
+                ?.imageGenerationEnabled ??
+            true;
+      case 'time_awareness':
+        return widget.ref.read(timeAwarenessPluginConfigProvider).enabled;
       default:
         return true; // 未实现的插件默认允许
     }

@@ -20,7 +20,6 @@ import '../../../../features/chat/conversation_timeline_providers.dart'
         conversationHasMoreProvider,
         conversationMessagesProvider,
         conversationVisibleCountProvider,
-        kConversationInitialVisibleCount,
         kConversationVisiblePageSize;
 import '../../../../features/chat/services/conversation_short_window_store.dart'
     show conversationShortWindowStoreProvider;
@@ -98,15 +97,6 @@ String resolveChatPageAppBarTitle({
   return stageLabel;
 }
 
-@visibleForTesting
-bool resolveChatPageAllowPersistentViewportBoot({
-  required String? conversationId,
-  required bool deferEntryShell,
-}) {
-  final normalizedConversationId = conversationId?.trim() ?? '';
-  return !deferEntryShell && normalizedConversationId.isNotEmpty;
-}
-
 class ChatPage extends ConsumerStatefulWidget {
   final String? conversationId;
   final Conversation? initialConversation;
@@ -124,8 +114,6 @@ class ChatPage extends ConsumerStatefulWidget {
 class _ChatPageState extends ConsumerState<ChatPage> {
   /// (注释已丢失)
   bool _isLoadingMore = false;
-  bool _databaseTimelineActivated = true;
-  bool _persistentViewportHasMoreMessages = true;
 
   /// (注释已丢失)
   String? _preloadedConversationId;
@@ -139,6 +127,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   ImageProvider? _staticBackgroundBlurProvider;
   bool _deferredEntryShellActive = false;
   bool _entrySideEffectsStarted = false;
+  int? _activeFailoverPromptRequestId;
   final DeferredConversationActivation _conversationActivation =
       DeferredConversationActivation();
 
@@ -149,8 +138,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     super.initState();
     _viewportController = ChatViewportController();
     final targetId = widget.conversationId;
-    _databaseTimelineActivated = true;
-    _persistentViewportHasMoreMessages = true;
     if (targetId == null) return;
     _startEntrySideEffects(targetId);
   }
@@ -207,46 +194,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     );
   }
 
-  void _activateDatabaseTimeline(
-    String conversationId, {
-    bool loadMoreOnActivate = false,
-  }) {
-    if (_databaseTimelineActivated) {
-      if (loadMoreOnActivate) {
-        unawaited(_loadMoreMessages(conversationId));
-      }
-      return;
-    }
-
-    final visibleCountNotifier =
-        ref.read(conversationVisibleCountProvider(conversationId).notifier);
-
-    if (!mounted) return;
-    setState(() {
-      _databaseTimelineActivated = true;
-      if (loadMoreOnActivate) {
-        _isLoadingMore = true;
-      }
-    });
-
-    if (loadMoreOnActivate) {
-      unawaited(() async {
-        final addedCount = await ref
-            .read(conversationShortWindowStoreProvider)
-            .loadOlderMessages(
-              conversationId: conversationId,
-              pageSize: kConversationVisiblePageSize,
-            );
-        if (!mounted) return;
-        if (addedCount > 0) {
-          visibleCountNotifier.state += addedCount;
-        }
-        if (!mounted) return;
-        setState(() => _isLoadingMore = false);
-      }());
-    }
-  }
-
   /// 检查视觉兼容性，必要时弹窗确认
   ///
   /// 返回 true 表示可以继续发送，false 表示用户取消
@@ -280,7 +227,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     if (conv != null) {
       final ok = await _checkVisionCompat(conv: conv);
       if (!ok) return false;
-      _activateDatabaseTimeline(conv.id);
     }
     return true;
   }
@@ -318,6 +264,75 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       hasVisionModel: decision.hasVisionModel,
     );
     return confirmed == true;
+  }
+
+  Future<void> _cancelModelFailoverRequest(
+    ModelFailoverPromptRequest request,
+  ) async {
+    final stopped = await ref
+        .read(chatActionsProvider)
+        .interruptCurrentGeneration(convId: request.conversationId);
+    if (stopped || !mounted) {
+      return;
+    }
+
+    ref.read(modelFailoverPromptProvider.notifier).dismiss(
+          defaultDecision: ModelFailoverDecision.cancel,
+        );
+  }
+
+  Future<void> _showModelFailoverPrompt(
+    ModelFailoverPromptRequest request,
+  ) async {
+    if (!mounted) {
+      ref.read(modelFailoverPromptProvider.notifier).dismiss();
+      return;
+    }
+    if (_activeFailoverPromptRequestId == request.requestId) {
+      return;
+    }
+    _activeFailoverPromptRequestId = request.requestId;
+
+    var handledByTitleAction = false;
+
+    try {
+      final result = await showMeoTalkDialog(
+        context: context,
+        title: '模型请求失败',
+        titleActionText: '取消',
+        barrierDismissible: false,
+        cancelText: '重试当前模型',
+        confirmText: '尝试下一个模型',
+        onTitleAction: () {
+          handledByTitleAction = true;
+          Navigator.of(context, rootNavigator: true).pop();
+          unawaited(_cancelModelFailoverRequest(request));
+        },
+        content: Text(
+          '当前模型“${request.failedModelName}”这次请求失败。\n'
+          '要继续重试当前模型，还是改为尝试下一个模型“${request.nextModelName}”？',
+        ),
+      );
+
+      if (!mounted) {
+        ref.read(modelFailoverPromptProvider.notifier).dismiss();
+        return;
+      }
+      if (result == null) {
+        if (!handledByTitleAction) {
+          ref.read(modelFailoverPromptProvider.notifier).dismiss();
+        }
+        return;
+      }
+
+      ref.read(modelFailoverPromptProvider.notifier).resolve(
+            result == false
+                ? ModelFailoverDecision.retryCurrent
+                : ModelFailoverDecision.tryNext,
+          );
+    } finally {
+      _activeFailoverPromptRequestId = null;
+    }
   }
 
   /// 显示视觉兼容性确认弹窗
@@ -487,10 +502,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               },
               orElse: () => null,
             );
-    final messages = _databaseTimelineActivated
-        ? ref.read(conversationMessagesProvider(targetId)).valueOrNull ??
-            const <Message>[]
-        : const <Message>[];
+    final messages =
+        ref.read(conversationMessagesProvider(targetId)).valueOrNull ??
+            const <Message>[];
 
     if (conv != null) {
       _preloadImages(conv, messages);
@@ -762,11 +776,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       _deferredEntryTimer?.cancel();
       _entrySideEffectsStarted = false;
       _deferredEntryShellActive = false;
-      setState(() {
-        _isLoadingMore = false;
-        _databaseTimelineActivated = true;
-        _persistentViewportHasMoreMessages = true;
-      });
+      setState(() => _isLoadingMore = false);
       _viewportController.onConversationChanged();
       _preloadedConversationId = null;
       if (targetId == null) {
@@ -778,6 +788,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   @override
   void dispose() {
+    ref.read(modelFailoverPromptProvider.notifier).dismiss();
     _conversationActivation.clear();
     _imagePrecacheTimer?.cancel();
     _clearUnreadTimer?.cancel();
@@ -789,14 +800,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   /// (注释已丢失)
   Future<void> _loadMoreMessages(String conversationId) async {
     if (_isLoadingMore) return;
-    if (!_databaseTimelineActivated) {
-      if (!_persistentViewportHasMoreMessages) return;
-      _activateDatabaseTimeline(
-        conversationId,
-        loadMoreOnActivate: true,
-      );
-      return;
-    }
     if (!ref.read(conversationHasMoreProvider(conversationId))) return;
 
     setState(() => _isLoadingMore = true);
@@ -839,24 +842,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             ? initial
             : targetConversation ?? initial;
     final currentConversationId = conv?.id ?? targetId;
-    final useDatabaseTimeline =
-        _databaseTimelineActivated || currentConversationId == null;
-    final allowPersistentViewportBoot =
-        resolveChatPageAllowPersistentViewportBoot(
-      conversationId: currentConversationId,
-      deferEntryShell: deferEntryShell,
-    );
-    final messagesAsync = !useDatabaseTimeline
+    final messagesAsync = currentConversationId == null
         ? const AsyncValue.data(<Message>[])
-        : currentConversationId == null
-            ? const AsyncValue.data(<Message>[])
-            : ref.watch(conversationMessagesProvider(currentConversationId));
+        : ref.watch(conversationMessagesProvider(currentConversationId));
     final messages = messagesAsync.valueOrNull ?? const <Message>[];
     final hasMoreMessages = currentConversationId == null
         ? false
-        : useDatabaseTimeline
-            ? ref.watch(conversationHasMoreProvider(currentConversationId))
-            : _persistentViewportHasMoreMessages;
+        : ref.watch(conversationHasMoreProvider(currentConversationId));
     const transientMessages = <Message>[];
     final actions = ref.read(chatActionsProvider); // (注释已丢失)
     final sidebarVisible = widget.showToggleButton && !deferEntryShell
@@ -866,11 +858,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         deferEntryShell ? null : ref.watch(appSettingsProvider);
     final colors = context.moeColors;
 
-    // 监听模型轮询通知，弹 toast 提示
-    ref.listen<String?>(modelFailoverInfoProvider, (prev, next) {
-      if (next != null && next.isNotEmpty && mounted) {
-        MoeToast.info(context, '自动尝试下一个模型: $next');
-      }
+    // 监听模型切换确认请求，弹公共确认框
+    ref.listen<ModelFailoverPromptRequest?>(modelFailoverPromptProvider,
+        (prev, next) {
+      if (next == null || !mounted) return;
+      unawaited(_showModelFailoverPrompt(next));
     });
 
     // 监听发送错误，弹出失败原因提示
@@ -1185,42 +1177,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                             displayName: conv.displayName,
                             bottomOverlayHeight: _composerOverlayHeight,
                             viewportController: _viewportController,
-                            allowPersistentViewportBoot:
-                                allowPersistentViewportBoot,
-                            onPersistentViewportBootMiss: () {
-                              _activateDatabaseTimeline(conv.id);
-                            },
-                            onPersistentViewportVisibleCountResolved:
-                                (visibleCount) {
-                              final normalizedVisibleCount = visibleCount <
-                                      kConversationInitialVisibleCount
-                                  ? kConversationInitialVisibleCount
-                                  : visibleCount;
-                              final notifier = ref.read(
-                                conversationVisibleCountProvider(conv.id)
-                                    .notifier,
-                              );
-                              if (notifier.state != normalizedVisibleCount) {
-                                notifier.state = normalizedVisibleCount;
-                              }
-                            },
-                            onPersistentViewportHasMoreResolved: (hasMore) {
-                              if (!mounted) return;
-                              if (_persistentViewportHasMoreMessages !=
-                                  hasMore) {
-                                setState(() {
-                                  _persistentViewportHasMoreMessages = hasMore;
-                                });
-                              }
-                            },
-                            expectedLastMessagePreview: conv.lastMessage,
-                            expectedLastMessageTime: conv.lastMessageTime,
                             contextStartMessageId: conv.contextStartMessageId,
                             onLoadMore: () => _loadMoreMessages(conv.id),
                             isLoadingMore: _isLoadingMore,
                             hasMoreMessages: hasMoreMessages,
                             onEditMessage: (message) async {
-                              _activateDatabaseTimeline(conv.id);
                               final text =
                                   await actions.editMessage(message.id);
                               if (text != null && text.isNotEmpty) {
@@ -1236,7 +1197,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                               final resendText =
                                   await actions.peekTextRegenerate(message.id);
                               if (resendText == null) {
-                                _activateDatabaseTimeline(conv.id);
                                 actions.regenerate(message.id);
                                 return;
                               }
@@ -1257,7 +1217,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                               );
                             },
                             onEnhanceRegenerateMessage: (message) {
-                              _activateDatabaseTimeline(conv.id);
                               if (ref.read(sendingProvider)) {
                                 _showSendingInProgressToast();
                                 return;
@@ -1297,7 +1256,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                       currentMessageHasImage: true,
                     );
                     if (!ok) return;
-                    _activateDatabaseTimeline(conv.id);
                   }
                   _forceChatListToBottom();
                   actions.sendWithImage(imagePath, text: text);
@@ -1306,10 +1264,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   if (ref.read(sendingProvider)) {
                     _showSendingInProgressToast();
                     return;
-                  }
-                  final conv = ref.read(activeConversationProvider);
-                  if (conv != null) {
-                    _activateDatabaseTimeline(conv.id);
                   }
                   _forceChatListToBottom();
                   actions.sendWithFile(filePath);

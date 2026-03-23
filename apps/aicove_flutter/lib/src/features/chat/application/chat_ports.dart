@@ -17,10 +17,11 @@ abstract interface class ChatHistoryPort {
     required String status,
   });
 
-  Future<void> appendAssistantMessages({
+  Future<void> appendAssistantRawMessage({
     required String conversationId,
     required String userMessageId,
-    required List<Message> messages,
+    required Message rawMessage,
+    required List<Message> projectedMessages,
     required String lastMessagePreview,
     bool updateShortWindow = true,
   });

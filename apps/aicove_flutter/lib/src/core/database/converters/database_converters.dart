@@ -93,6 +93,8 @@ class MessageConverter {
       role: Value(m.role),
       content: Value(m.content),
       status: Value(m.status ?? 'sent'),
+      sourceMessageId: Value(m.sourceMessageId),
+      rawPayload: Value(m.rawPayload != null ? jsonEncode(m.rawPayload) : null),
       createdAt: Value(m.createdAt.millisecondsSinceEpoch),
     );
   }
@@ -102,9 +104,13 @@ class MessageConverter {
     return domain.Message(
       id: m.id,
       role: m.role,
+      sourceMessageId: m.sourceMessageId,
       content: m.content,
       status: m.status,
       blocks: blocks,
+      rawPayload: m.rawPayload != null
+          ? jsonDecode(m.rawPayload!) as Map<String, dynamic>
+          : null,
       createdAt: DateTime.fromMillisecondsSinceEpoch(m.createdAt),
     );
   }

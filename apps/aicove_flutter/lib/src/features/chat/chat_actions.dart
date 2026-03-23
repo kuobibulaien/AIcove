@@ -28,12 +28,14 @@ import 'id_gen.dart' show genId;
 import 'chat_layer_providers.dart';
 import 'services/chat_send_service.dart';
 import 'services/chat_types.dart'
-    show ApiCallResult, AssistantMessageBuildResult;
+    show
+        ApiCallResult,
+        AssistantMessageBuildResult,
+        isProviderRefreshTimingError;
 import 'services/chat_tts_handler.dart';
 import 'domain/message.dart';
 import '../settings/app_settings.dart';
 import 'conversation_providers.dart';
-import 'conversation_timeline_providers.dart';
 import 'services/conversation_short_window_store.dart'
     show conversationShortWindowStoreProvider;
 import 'chat_providers.dart';
@@ -151,6 +153,21 @@ class ChatActions {
     });
   }
 
+  Future<ModelFailoverDecision> _requestModelFailoverDecision({
+    required String convId,
+    required String failedModel,
+    required String nextModel,
+    required AppSettings settings,
+    required Object error,
+  }) {
+    return _ref.read(modelFailoverPromptProvider.notifier).request(
+          conversationId: convId,
+          failedModelName: settings.getModelDisplayName(failedModel),
+          nextModelName: settings.getModelDisplayName(nextModel),
+          errorMessage: error.toString(),
+        );
+  }
+
   int _startGeneration({
     required String convId,
     String? userMsgId,
@@ -186,7 +203,7 @@ class ChatActions {
     try {
       callback();
     } catch (e) {
-      if (!_isProviderRefreshTimingError(e)) {
+      if (!isProviderRefreshTimingError(e)) {
         rethrow;
       }
       AppLogger.info(
@@ -225,6 +242,33 @@ class ChatActions {
       messageId: userMsgId,
       status: 'sent',
     );
+  }
+
+  Future<void> _cleanupProjectedMessagesForRawSource({
+    required String convId,
+    required String rawMessageId,
+    required List<Message> keepMessages,
+  }) async {
+    final keepIds = {
+      for (final message in keepMessages)
+        if (message.id.trim().isNotEmpty) message.id.trim(),
+    };
+    final allMessages = await _ref
+        .read(conversationShortWindowStoreProvider)
+        .loadAllMessages(convId);
+    final removeIds = <String>[
+      for (final message in allMessages)
+        if (message.sourceMessageId == rawMessageId &&
+            !keepIds.contains(message.id))
+          message.id,
+    ];
+    if (removeIds.isEmpty) {
+      return;
+    }
+    await _ref.read(conversationShortWindowStoreProvider).replaceMessages(
+          conversationId: convId,
+          removeMessageIds: removeIds,
+        );
   }
 
   List<Message> _extractStreamCommittedMessages(List<Message> messages) {
@@ -291,14 +335,32 @@ class ChatActions {
       throw StateError('流式收尾缺少可提交的文本锚点消息');
     }
 
-    await _historyPort.appendAssistantMessages(
+    final rawMessage = buildResult.rawMessage;
+    if (rawMessage == null) {
+      throw StateError('流式收尾缺少原始 assistant 消息');
+    }
+    final finalTimelineMessages = streamDelivery.buildFinalTimelineMessages(
+      committedMessages: committedMessages,
+      sourceMessageId: rawMessage.id,
+    );
+    final pendingStreamTtsMessages =
+        streamDelivery.pendingAudioPlaceholderMessages(
+      sourceMessageId: rawMessage.id,
+    );
+    await _historyPort.appendAssistantRawMessage(
       conversationId: convId,
       userMessageId: userMsgId,
-      messages: committedMessages,
-      lastMessagePreview: committedMessages.last.displayText,
+      rawMessage: rawMessage,
+      projectedMessages: finalTimelineMessages,
+      lastMessagePreview: finalTimelineMessages.last.displayText,
       updateShortWindow: false,
     );
-    await streamDelivery.commitToMessages(finalMessages: committedMessages);
+    await streamDelivery.commitToMessages(finalMessages: finalTimelineMessages);
+    await _cleanupProjectedMessagesForRawSource(
+      convId: convId,
+      rawMessageId: rawMessage.id,
+      keepMessages: finalTimelineMessages,
+    );
     await _ttsHandler.deliverSegmentedMessages(
       convId: convId,
       userMsgId: userMsgId,
@@ -310,16 +372,9 @@ class ChatActions {
       streamTextMessageIds: committedMessages
           .map((message) => message.id)
           .toList(growable: false),
+      streamPendingTtsMessages: pendingStreamTtsMessages,
       trace: trace,
     );
-  }
-
-  bool _isProviderRefreshTimingError(Object error) {
-    final message = error.toString();
-    return message.contains(
-          'Cannot use ref functions after the dependency of a provider changed but before the provider rebuilt',
-        ) ||
-        message.contains('!_didChangeDependency');
   }
 
   Future<T> _runWithProviderRefreshRetry<T>({
@@ -333,7 +388,7 @@ class ChatActions {
       try {
         return await task();
       } catch (e, st) {
-        final shouldRetry = _isProviderRefreshTimingError(e) &&
+        final shouldRetry = isProviderRefreshTimingError(e) &&
             attempt < _kProviderRefreshMaxRetries;
         if (!shouldRetry) {
           Error.throwWithStackTrace(e, st);
@@ -371,6 +426,9 @@ class ChatActions {
     _setConversationStatus(targetConvId, ChatStatus.idle);
     _setConversationError(targetConvId, null);
     _setConversationFailoverInfo(targetConvId, null);
+    _ref.read(modelFailoverPromptProvider.notifier).dismiss(
+          defaultDecision: ModelFailoverDecision.cancel,
+        );
 
     if (cleanup != null) {
       try {
@@ -428,6 +486,12 @@ class ChatActions {
     );
   }
 
+  List<String> _resolvePreferredChatModels(AppSettings settings) {
+    return settings.defaultChatModels.isNotEmpty
+        ? settings.defaultChatModels
+        : <String>[settings.defaultModelName];
+  }
+
   // ===== 公开 API =====
 
   /// 根据工具名称更新聊天进度状态
@@ -474,117 +538,149 @@ class ChatActions {
       streamDelivery?.dispose();
     });
     try {
-      final turnResult = await _executeTurnCommand(
-        command: ChatTurnCommand.streaming(
-          conversation: conv,
-          userMessage: userMsg,
-          sessionId: convId,
-          apiText: text,
-          traceContext: traceContext,
-          trace: trace,
-        ),
-        loadSettings: () => _ref.read(appSettingsProvider.future),
-        executeWithFailover: ({
-          required modelsToTry,
-          required buildConfig,
-          required execute,
-          required settings,
-        }) =>
-            _executeWithFailover(
-          convId: convId,
-          modelsToTry: modelsToTry,
-          buildConfig: buildConfig,
-          execute: execute,
-          settings: settings,
-        ),
-        prepareStreaming: (settings) async {
-          streamDelivery = _StreamPlaceholderDelivery(
-            _ref,
-            convId: convId,
-            formatConfig: settings.messageFormatConfig,
-            enableTtsPlaceholders: settings.ttsEnabled,
-            segmentDelay: Duration(
-              milliseconds: (settings.streamSegmentDelaySeconds * 1000).round(),
-            ),
-          );
-          await streamDelivery!.start();
-        },
-        onToolExecuting: (toolName) => _updateStatusForTool(convId, toolName),
-        onProcessingResponse: () =>
-            _setConversationStatus(convId, ChatStatus.processingResponse),
-        deliverResult: ({
-          required settings,
-          required apiResult,
-          required buildResult,
-        }) async {
-          final streamFinalText = _resolveFinalStreamText(
-            apiResult,
-            buildResult,
-          );
-          final shouldCommitStream =
-              streamDelivery!.canFinalizeWith(finalText: streamFinalText);
-
-          if (shouldCommitStream) {
-            await streamDelivery!.finalize(
-              finalText: streamFinalText,
-            );
-            await _commitStreamDelivery(
-              streamDelivery: streamDelivery!,
-              convId: convId,
-              userMsgId: userMsg.id,
-              buildResult: buildResult,
-              replyText: apiResult.replyText,
-              pluginEvents: apiResult.pluginEvents,
-              ttsEnabled: settings.ttsEnabled,
-              trace: trace,
-            );
-            streamCommitted = true;
-            return;
+      await _runWithProviderRefreshRetry<void>(
+        entry: 'send_text',
+        convId: convId,
+        beforeRetry: (_) async {
+          if (!streamCommitted) {
+            await streamDelivery?.removePlaceholders();
           }
+          streamDelivery?.dispose();
+          streamDelivery = null;
+          streamCommitted = false;
+        },
+        task: () async {
+          final turnResult = await _executeTurnCommand(
+            command: ChatTurnCommand.streaming(
+              conversation: conv,
+              userMessage: userMsg,
+              sessionId: convId,
+              apiText: text,
+              traceContext: traceContext,
+              trace: trace,
+            ),
+            loadSettings: () => _ref.read(appSettingsProvider.future),
+            resolveModelsToTry: _resolvePreferredChatModels,
+            executeWithFailover: ({
+              required modelsToTry,
+              required buildConfig,
+              required execute,
+              required settings,
+            }) =>
+                _executeWithFailover(
+              convId: convId,
+              modelsToTry: modelsToTry,
+              buildConfig: buildConfig,
+              execute: execute,
+              settings: settings,
+            ),
+            prepareStreaming: (settings) async {
+              streamDelivery = _StreamPlaceholderDelivery(
+                _ref,
+                convId: convId,
+                formatConfig: settings.messageFormatConfig,
+                enableTtsPlaceholders: settings.ttsEnabled,
+                segmentDelay: Duration(
+                  milliseconds:
+                      (settings.streamSegmentDelaySeconds * 1000).round(),
+                ),
+              );
+              await streamDelivery!.start();
+            },
+            onToolExecuting: (toolName) =>
+                _updateStatusForTool(convId, toolName),
+            onProcessingResponse: () =>
+                _setConversationStatus(convId, ChatStatus.processingResponse),
+            deliverResult: ({
+              required settings,
+              required apiResult,
+              required buildResult,
+            }) async {
+              final streamFinalText = _resolveFinalStreamText(
+                apiResult,
+                buildResult,
+              );
+              final shouldCommitStream =
+                  streamDelivery!.canFinalizeWith(finalText: streamFinalText);
+              final committedMessages = shouldCommitStream
+                  ? _extractStreamCommittedMessages(buildResult.messages)
+                  : const <Message>[];
 
-          await streamDelivery!.removePlaceholders();
-          await _ttsHandler.deliverSegmentedMessages(
-            convId: convId,
-            userMsgId: userMsg.id,
-            buildResult: buildResult,
-            replyText: apiResult.replyText,
-            pluginEvents: apiResult.pluginEvents,
-            ttsEnabled: settings.ttsEnabled,
-            trace: trace,
+              if (shouldCommitStream && committedMessages.isNotEmpty) {
+                await streamDelivery!.finalize(
+                  finalText: streamFinalText,
+                );
+                await _commitStreamDelivery(
+                  streamDelivery: streamDelivery!,
+                  convId: convId,
+                  userMsgId: userMsg.id,
+                  buildResult: buildResult,
+                  replyText: apiResult.rawReplyText,
+                  pluginEvents: apiResult.pluginEvents,
+                  ttsEnabled: settings.ttsEnabled,
+                  trace: trace,
+                );
+                streamCommitted = true;
+                return;
+              }
+
+              if (shouldCommitStream && committedMessages.isEmpty) {
+                AppLogger.info(
+                  'ChatActions',
+                  '流式收尾缺少文本锚点，回退到纯多模态补发链路',
+                  metadata: {
+                    'convId': convId,
+                    'pluginEventCount': apiResult.pluginEvents.length,
+                    'rawReplyLength': apiResult.rawReplyText.length,
+                  },
+                );
+              }
+
+              await streamDelivery!.removePlaceholders();
+              await _ttsHandler.deliverSegmentedMessages(
+                convId: convId,
+                userMsgId: userMsg.id,
+                buildResult: buildResult,
+                replyText: apiResult.rawReplyText,
+                pluginEvents: apiResult.pluginEvents,
+                ttsEnabled: settings.ttsEnabled,
+                trace: trace,
+              );
+            },
+            isCurrent: () => _isGenerationCurrent(convId, runId),
+            onStreamTextDelta: (delta) {
+              if (!_isGenerationCurrent(convId, runId)) return;
+              streamDelivery?.onDelta(delta);
+            },
+            onStreamTextReset: () {
+              if (!_isGenerationCurrent(convId, runId)) return;
+              streamDelivery?.onStreamReset();
+            },
+            onStreamToolCallObserved: () {
+              if (!_isGenerationCurrent(convId, runId)) return;
+              streamDelivery?.onToolCallObserved();
+            },
+            onStreamingFallback: () {
+              if (!_isGenerationCurrent(convId, runId)) return;
+              streamDelivery?.onStreamingFallback();
+            },
           );
-        },
-        isCurrent: () => _isGenerationCurrent(convId, runId),
-        onStreamTextDelta: (delta) {
+          if (turnResult == null) return;
           if (!_isGenerationCurrent(convId, runId)) return;
-          streamDelivery?.onDelta(delta);
-        },
-        onStreamTextReset: () {
-          if (!_isGenerationCurrent(convId, runId)) return;
-          streamDelivery?.onStreamReset();
-        },
-        onStreamToolCallObserved: () {
-          if (!_isGenerationCurrent(convId, runId)) return;
-          streamDelivery?.onToolCallObserved();
-        },
-        onStreamingFallback: () {
-          if (!_isGenerationCurrent(convId, runId)) return;
-          streamDelivery?.onStreamingFallback();
-        },
-      );
-      if (turnResult == null) return;
-      if (!_isGenerationCurrent(convId, runId)) return;
-      _recordTurnTrace(
-        traceContext,
-        TraceStage.messageDelivered,
-        meta: {
-          'assistantMessageCount': turnResult.buildResult.messages.length,
-          'streamCommitted': streamCommitted,
-        },
-      );
-      turnSucceeded = true;
+          _recordTurnTrace(
+            traceContext,
+            TraceStage.messageDelivered,
+            meta: {
+              'assistantMessageCount': turnResult.buildResult.messages.length,
+              'streamCommitted': streamCommitted,
+            },
+          );
+          turnSucceeded = true;
 
-      trace.end(additionalMessage: '完成');
-      _recordTurnTrace(traceContext, TraceStage.turnCompleted);
+          trace.end(additionalMessage: '完成');
+          _recordTurnTrace(traceContext, TraceStage.turnCompleted);
+        },
+      );
     } catch (e) {
       await streamDelivery?.removePlaceholders();
       if (!_isGenerationCurrent(convId, runId)) return;
@@ -747,7 +843,7 @@ class ChatActions {
               convId: convId,
               userMsgId: userMsg.id,
               buildResult: buildResult,
-              replyText: apiResult.replyText,
+              replyText: apiResult.rawReplyText,
               pluginEvents: apiResult.pluginEvents,
               ttsEnabled: settings.ttsEnabled,
             ),
@@ -856,7 +952,7 @@ class ChatActions {
               convId: convId,
               userMsgId: userMsg.id,
               buildResult: buildResult,
-              replyText: apiResult.replyText,
+              replyText: apiResult.rawReplyText,
               pluginEvents: apiResult.pluginEvents,
               ttsEnabled: settings.ttsEnabled,
             ),
@@ -980,30 +1076,67 @@ class ChatActions {
     }
 
     Object? lastError;
-    for (var i = 0; i < modelsToTry.length; i++) {
-      final model = modelsToTry[i];
+    var index = 0;
+    while (index < modelsToTry.length) {
+      final model = modelsToTry[index];
       try {
         final config = await buildConfig(model);
         final result = await execute(config);
         // 成功，清除轮询通知
         _setConversationFailoverInfo(convId, null);
         return (result, settings);
-      } catch (e) {
+      } catch (e, st) {
+        if (isProviderRefreshTimingError(e)) {
+          AppLogger.info(
+            'ChatActions',
+            '模型 $model 在本地组装阶段命中 Provider 刷新窗口，交由外层统一重试',
+            metadata: {
+              'failedModel': model,
+              'attempt': index + 1,
+              'total': modelsToTry.length,
+            },
+          );
+          Error.throwWithStackTrace(e, st);
+        }
         lastError = e;
-        AppLogger.warning('ChatActions', '模型 $model 调用失败，尝试下一个', metadata: {
-          'failedModel': model,
-          'attempt': i + 1,
-          'total': modelsToTry.length,
-          'error': e.toString(),
-        });
+        AppLogger.warning('ChatActions', '模型 $model 调用失败，等待用户决定后续动作',
+            metadata: {
+              'failedModel': model,
+              'attempt': index + 1,
+              'total': modelsToTry.length,
+              'error': e.toString(),
+            });
 
         // 还有下一个模型可以尝试
-        if (i < modelsToTry.length - 1) {
-          final nextModel = modelsToTry[i + 1];
-          final displayName = settings.getModelDisplayName(nextModel);
-          _setConversationFailoverInfo(convId, displayName);
+        if (index < modelsToTry.length - 1) {
+          final nextModel = modelsToTry[index + 1];
+          final decision = await _requestModelFailoverDecision(
+            convId: convId,
+            failedModel: model,
+            nextModel: nextModel,
+            settings: settings,
+            error: e,
+          );
+          if (decision == ModelFailoverDecision.retryCurrent) {
+            AppLogger.info('ChatActions', '用户选择重试当前模型', metadata: {
+              'model': model,
+              'attempt': index + 1,
+            });
+            continue;
+          }
+          if (decision == ModelFailoverDecision.cancel) {
+            throw StateError('模型切换已取消');
+          }
+          AppLogger.info('ChatActions', '用户选择尝试下一个模型', metadata: {
+            'failedModel': model,
+            'nextModel': nextModel,
+            'attempt': index + 1,
+          });
+          index += 1;
+          continue;
         }
       }
+      index += 1;
     }
 
     // 所有模型都失败了，抛出最后一个错误

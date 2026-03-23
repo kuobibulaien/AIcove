@@ -13,18 +13,21 @@ import '../../../core/models/block_status.dart';
 import '../../../core/models/message_block.dart';
 import 'chat_history_store.dart';
 import 'chat_request_message_builder.dart';
+import 'conversation_short_window_store.dart';
 
 class DeferredImageJob {
   const DeferredImageJob({
     required this.messageId,
     required this.prompt,
     required this.createdAt,
+    this.sourceMessageId,
     this.failureAnchorMessageId,
   });
 
   final String messageId;
   final String prompt;
   final DateTime createdAt;
+  final String? sourceMessageId;
   final String? failureAnchorMessageId;
 }
 
@@ -45,8 +48,9 @@ class ChatDeferredImageDelivery {
       _runBackgroundTask;
 
   Future<DateTime> resolvePlaceholderBaseTime(String convId) async {
-    final allMessages =
-        await _ref.read(chatHistoryStoreProvider).loadAllMessages(convId);
+    final allMessages = await _ref
+        .read(conversationShortWindowStoreProvider)
+        .loadAllMessages(convId);
     final lastCreatedAt =
         allMessages.isNotEmpty ? allMessages.last.createdAt : DateTime.now();
     final now = DateTime.now();
@@ -63,6 +67,7 @@ class ChatDeferredImageDelivery {
         convId: convId,
         messageId: job.messageId,
         createdAt: job.createdAt,
+        sourceMessageId: job.sourceMessageId,
       );
     }
   }
@@ -83,6 +88,7 @@ class ChatDeferredImageDelivery {
           if (imageResult.message != null) {
             final finalMessage = imageResult.message!.copyWith(
               createdAt: job.createdAt,
+              sourceMessageId: job.sourceMessageId,
             );
             await _enqueueStoreMutation(() {
               return _ref.read(chatHistoryStoreProvider).updateMessage(
@@ -141,10 +147,12 @@ class ChatDeferredImageDelivery {
     required String convId,
     required String messageId,
     required DateTime createdAt,
+    String? sourceMessageId,
   }) async {
     final placeholder = Message.fromBlocks(
       id: messageId,
       role: 'assistant',
+      sourceMessageId: sourceMessageId,
       blocks: [
         TextBlock(
           messageId: messageId,
@@ -260,7 +268,10 @@ class ChatDeferredImageDelivery {
     final normalizedMessageId = anchorMessageId.trim();
     if (normalizedMessageId.isEmpty) return;
     final store = _ref.read(chatHistoryStoreProvider);
-    final anchor = await store.loadMessageById(normalizedMessageId);
+    final anchor = await store.loadFrontendMessageById(
+      normalizedMessageId,
+      conversationId: convId,
+    );
     if (anchor == null) return;
 
     final existingBlocks = List<MessageBlock>.from(anchor.blocks ??

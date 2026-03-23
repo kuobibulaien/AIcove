@@ -14,8 +14,10 @@ import '../effects/smooth_clip.dart';
 class MeoTalkDialog extends StatelessWidget {
   final String title;
   final Widget content;
+  final String? titleActionText;
   final String? cancelText;
   final String? confirmText;
+  final VoidCallback? onTitleAction;
   final VoidCallback? onCancel;
   final VoidCallback? onConfirm;
   final bool showCancelButton;
@@ -27,8 +29,10 @@ class MeoTalkDialog extends StatelessWidget {
     super.key,
     required this.title,
     required this.content,
+    this.titleActionText,
     this.cancelText,
     this.confirmText,
+    this.onTitleAction,
     this.onCancel,
     this.onConfirm,
     this.showCancelButton = true,
@@ -57,16 +61,7 @@ class MeoTalkDialog extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // 标题居中
-                Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: MoeFontWeights.emphasis,
-                    color: colors.text,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
+                _buildTitle(colors),
                 const SizedBox(height: 16),
                 // 内容居左
                 Align(
@@ -86,6 +81,54 @@ class MeoTalkDialog extends StatelessWidget {
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTitle(MoeColors colors) {
+    final hasTitleAction =
+        titleActionText?.trim().isNotEmpty == true && onTitleAction != null;
+
+    return SizedBox(
+      width: double.infinity,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: hasTitleAction ? 56 : 0),
+            child: Text(
+              title,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: MoeFontWeights.emphasis,
+                color: colors.text,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ),
+          if (hasTitleAction)
+            Positioned(
+              right: 0,
+              child: TextButton(
+                onPressed: onTitleAction,
+                style: TextButton.styleFrom(
+                  foregroundColor: colors.textSecondary,
+                  minimumSize: Size.zero,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: Text(
+                  titleActionText!,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: MoeFontWeights.emphasis,
+                    color: colors.textSecondary,
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -119,8 +162,7 @@ class MeoTalkDialog extends StatelessWidget {
               ),
             ),
           ),
-        if (showCancelButton && showConfirmButton)
-          const SizedBox(width: 12),
+        if (showCancelButton && showConfirmButton) const SizedBox(width: 12),
         if (showConfirmButton)
           Expanded(
             child: SizedBox(
@@ -153,8 +195,10 @@ Future<bool?> showMeoTalkDialog({
   required BuildContext context,
   required String title,
   required Widget content,
+  String? titleActionText,
   String? cancelText,
   String? confirmText,
+  VoidCallback? onTitleAction,
   bool showCancelButton = true,
   bool showConfirmButton = true,
   bool barrierDismissible = true,
@@ -167,8 +211,10 @@ Future<bool?> showMeoTalkDialog({
     builder: (context) => MeoTalkDialog(
       title: title,
       content: content,
+      titleActionText: titleActionText,
       cancelText: cancelText,
       confirmText: confirmText,
+      onTitleAction: onTitleAction,
       showCancelButton: showCancelButton,
       showConfirmButton: showConfirmButton,
       barrierDismissible: barrierDismissible,

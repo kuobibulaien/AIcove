@@ -28,7 +28,7 @@ class TimeAwarenessPlugin extends BasePlugin {
       'enabled': ConfigField(
         type: ConfigFieldType.boolean,
         label: '启用插件',
-        defaultValue: false,
+        defaultValue: true,
       ),
       'includeMessageTimestamp': ConfigField(
         type: ConfigFieldType.boolean,
@@ -63,26 +63,33 @@ class TimeAwarenessPlugin extends BasePlugin {
       return null;
     }
 
-    return SystemReminderPayload(
-      fields: <SystemReminderField>[
+    final fields = <SystemReminderField>[
+      if (_config.includeCurrentTime)
         SystemReminderField(
           name: currentDateTimeFieldName,
           value: _formatDateTime(currentTime),
         ),
-        SystemReminderField(
-          name: previousUserMessageDateTimeFieldName,
-          value: previousUserMessageTime == null
-              ? 'unknown'
-              : _formatDateTime(previousUserMessageTime),
-        ),
-      ],
+      SystemReminderField(
+        name: previousUserMessageDateTimeFieldName,
+        value: previousUserMessageTime == null
+            ? 'unknown'
+            : _formatDateTime(previousUserMessageTime),
+      ),
+    ];
+
+    return SystemReminderPayload(
+      fields: fields,
     );
   }
 
   String buildSystemReminderFieldGuide() {
-    return '$currentDateTimeFieldName 表示模型发起本次回复时的设备本地时间；'
-        '$previousUserMessageDateTimeFieldName 表示上一条用户消息的发送时间，'
-        '如果值为 unknown，表示当前没有可用的上一条用户消息时间。';
+    final parts = <String>[
+      if (_config.includeCurrentTime)
+        '$currentDateTimeFieldName 表示模型发起本次回复时的设备本地时间。',
+      '$previousUserMessageDateTimeFieldName 表示上一条用户消息的发送时间，'
+          '如果值为 unknown，表示当前没有可用的上一条用户消息时间。',
+    ];
+    return parts.join('\n');
   }
 
   @override

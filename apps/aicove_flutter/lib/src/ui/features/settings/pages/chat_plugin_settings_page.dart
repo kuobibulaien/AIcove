@@ -13,6 +13,7 @@ import '../../../../features/plugins/plugin_providers.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../plugins/pages/image_plugin_detail_page.dart';
 import '../../plugins/pages/memory_plugin_detail_page.dart';
+import '../../plugins/pages/time_awareness_plugin_detail_page.dart';
 import '../../plugins/pages/tts_plugin_detail_page.dart';
 import '../../plugins/pages/sticker_settings_page.dart';
 import '../../auto_reply/pages/auto_reply_settings_page.dart';
@@ -66,6 +67,12 @@ const chatPluginItems = [
     subtitle: '生图模型',
     icon: Icons.brush_outlined,
   ),
+  ChatPluginItem(
+    id: 'time_awareness',
+    name: '时间感知',
+    subtitle: '当前时间、消息时间线',
+    icon: Icons.schedule_outlined,
+  ),
 ];
 
 class ChatPluginSettingsPage extends ConsumerWidget {
@@ -80,7 +87,10 @@ class ChatPluginSettingsPage extends ConsumerWidget {
       backgroundColor: colors.surface,
       body: ListView.separated(
         itemCount: chatPluginItems.length,
-        separatorBuilder: (_, __) => Divider(height: borderWidth, thickness: borderWidth, color: colors.borderLight),
+        separatorBuilder: (_, __) => Divider(
+            height: borderWidth,
+            thickness: borderWidth,
+            color: colors.borderLight),
         itemBuilder: (context, index) {
           final item = chatPluginItems[index];
           final isEnabled = _isPluginEnabled(ref, item.id);
@@ -90,23 +100,33 @@ class ChatPluginSettingsPage extends ConsumerWidget {
             minLeadingWidth: 24,
             horizontalTitleGap: 12,
             leading: Icon(item.icon, color: colors.text, size: 24),
-            title: Text(item.name, style: TextStyle(fontSize: 15, fontWeight: MoeFontWeights.emphasis, color: colors.text)),
+            title: Text(item.name,
+                style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: MoeFontWeights.emphasis,
+                    color: colors.text)),
             subtitle: Wrap(
               spacing: 8,
               runSpacing: 4,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                Text(item.subtitle, style: TextStyle(fontSize: 13, color: colors.muted)),
+                Text(item.subtitle,
+                    style: TextStyle(fontSize: 13, color: colors.muted)),
                 if (isEnabled != null)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     decoration: MoeG2Decoration(
                       radius: 4,
-                      color: isEnabled ? colors.primary.withOpacity(0.1) : colors.muted.withOpacity(0.1),
+                      color: isEnabled
+                          ? colors.primary.withOpacity(0.1)
+                          : colors.muted.withOpacity(0.1),
                     ),
                     child: Text(
                       isEnabled ? '已启用' : '已禁用',
-                      style: TextStyle(fontSize: 10, color: isEnabled ? colors.primary : colors.muted),
+                      style: TextStyle(
+                          fontSize: 10,
+                          color: isEnabled ? colors.primary : colors.muted),
                     ),
                   ),
               ],
@@ -132,6 +152,8 @@ class ChatPluginSettingsPage extends ConsumerWidget {
         return ref.watch(stickerPluginConfigProvider).enabled;
       case 'image':
         return ref.watch(appSettingsProvider).value?.imageGenerationEnabled;
+      case 'time_awareness':
+        return ref.watch(timeAwarenessPluginConfigProvider).enabled;
       default:
         return null; // 未实现的插件不显示状态
     }
@@ -155,6 +177,9 @@ class ChatPluginSettingsPage extends ConsumerWidget {
         break;
       case 'image':
         page = const ImagePluginDetailPage();
+        break;
+      case 'time_awareness':
+        page = const TimeAwarenessPluginDetailPage();
         break;
     }
 

@@ -1,7 +1,11 @@
+import 'dart:io';
+
 import 'package:drift/drift.dart' hide isNull;
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+// ignore: depend_on_referenced_packages
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 
 import 'package:aicove_flutter/src/core/database/database.dart';
 import 'package:aicove_flutter/src/core/database/database_provider.dart';
@@ -10,6 +14,15 @@ import 'package:aicove_flutter/src/core/database/repositories/message_repository
 import 'package:aicove_flutter/src/features/chat/application/chat_page_conversation_actions.dart';
 import 'package:aicove_flutter/src/features/chat/conversation_providers.dart';
 import 'package:aicove_flutter/src/features/memory/services/memory_service.dart';
+
+class _FakePathProviderPlatform extends PathProviderPlatform {
+  _FakePathProviderPlatform(this.rootPath);
+
+  final String rootPath;
+
+  @override
+  Future<String?> getApplicationDocumentsPath() async => rootPath;
+}
 
 Future<void> _insertConversation(
   AppDatabase db, {
@@ -128,6 +141,25 @@ class _RecordingMemoryService extends MemoryService {
 
   final List<List<String>> candidateMessageIds = <List<String>>[];
   final List<MemoryIngestTrigger> triggers = <MemoryIngestTrigger>[];
+  final List<String?> contextStartMessageIds = <String?>[];
+  final List<String> lastMessageIds = <String>[];
+
+  @override
+  Future<void> ingestConversationTopic({
+    required String conversationId,
+    required String lastMessageId,
+    String? contextStartMessageId,
+    required MemoryIngestTrigger trigger,
+  }) async {
+    contextStartMessageIds.add(contextStartMessageId);
+    lastMessageIds.add(lastMessageId);
+    await super.ingestConversationTopic(
+      conversationId: conversationId,
+      lastMessageId: lastMessageId,
+      contextStartMessageId: contextStartMessageId,
+      trigger: trigger,
+    );
+  }
 
   @override
   Future<void> ingestMessages({
@@ -148,13 +180,22 @@ void main() {
 
   group('ChatPageConversationActions 记忆联动', () {
     late AppDatabase db;
+    late PathProviderPlatform previousPathProvider;
+    Directory? tempDir;
 
     setUp(() async {
+      previousPathProvider = PathProviderPlatform.instance;
+      tempDir = await Directory.systemTemp.createTemp('chat_page_actions_');
+      PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir!.path);
       db = AppDatabase.forTesting(NativeDatabase.memory());
     });
 
     tearDown(() async {
+      PathProviderPlatform.instance = previousPathProvider;
       await db.close();
+      if (tempDir != null && await tempDir!.exists()) {
+        await tempDir!.delete(recursive: true);
+      }
     });
 
     test('开始新话题前会先总结当前上下文消息', () async {
@@ -212,6 +253,8 @@ void main() {
           );
 
       expect(memoryService.triggers, [MemoryIngestTrigger.manual]);
+      expect(memoryService.contextStartMessageIds, ['m1']);
+      expect(memoryService.lastMessageIds, ['m3']);
       expect(memoryService.candidateMessageIds, [
         ['m2', 'm3']
       ]);

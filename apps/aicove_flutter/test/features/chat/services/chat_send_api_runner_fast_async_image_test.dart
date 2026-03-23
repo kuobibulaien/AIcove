@@ -89,6 +89,79 @@ class _FastFollowupClient extends http.BaseClient {
   }
 }
 
+class _ImagePlaceholderFollowupClient extends http.BaseClient {
+  int callCount = 0;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    if (request is! http.Request) {
+      return _jsonResponse(
+        500,
+        <String, dynamic>{'error': 'unsupported request type'},
+      );
+    }
+
+    callCount += 1;
+    if (callCount == 1) {
+      return _jsonResponse(
+        200,
+        <String, dynamic>{
+          'choices': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'message': <String, dynamic>{
+                'role': 'assistant',
+                'content': null,
+                'tool_calls': <Map<String, dynamic>>[
+                  <String, dynamic>{
+                    'id': 'call_draw_placeholder',
+                    'type': 'function',
+                    'function': <String, dynamic>{
+                      'name': 'draw_image',
+                      'arguments': '{"prompt":"sunset beach"}',
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      );
+    }
+
+    if (callCount == 2) {
+      return _jsonResponse(
+        200,
+        <String, dynamic>{
+          'choices': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'message': <String, dynamic>{
+                'role': 'assistant',
+                'content': '<image></image>',
+              },
+            },
+          ],
+        },
+      );
+    }
+
+    return _jsonResponse(
+      500,
+      <String, dynamic>{'error': 'unexpected extra round'},
+    );
+  }
+
+  Future<http.StreamedResponse> _jsonResponse(int code, Object body) async {
+    final bytes = utf8.encode(jsonEncode(body));
+    return http.StreamedResponse(
+      Stream<List<int>>.value(bytes),
+      code,
+      headers: const <String, String>{
+        'content-type': 'application/json',
+      },
+    );
+  }
+}
+
 class _AsyncAcceptedImagePlugin extends BasePlugin {
   _AsyncAcceptedImagePlugin()
       : super(
@@ -165,6 +238,58 @@ class _AsyncAcceptedImagePlugin extends BasePlugin {
   }
 }
 
+class _DeliveredImagePlugin extends BasePlugin {
+  _DeliveredImagePlugin()
+      : super(
+          metadata: const PluginMetadata(
+            id: 'image',
+            name: 'Image',
+            description: 'fake delivered image tool',
+            version: '1.0.0',
+            author: 'test',
+            icon: Icons.image,
+          ),
+        );
+
+  @override
+  bool get enabled => true;
+
+  @override
+  Future<String?> getSystemPrompt({
+    String? userMessage,
+    bool supportsToolCalling = false,
+  }) async {
+    return null;
+  }
+
+  @override
+  Future<PluginProcessResult> processResponse(String text) async {
+    return PluginProcessResult(
+      processedText: text,
+      events: const <PluginEvent>[],
+      contents: const [],
+    );
+  }
+
+  @override
+  List<AITool> getTools() {
+    return <AITool>[
+      AITool(
+        name: 'draw_image',
+        description: 'draw image with immediate file result',
+        parameters: const <String, ToolParameter>{},
+        handler: (args) async {
+          return jsonEncode(<String, dynamic>{
+            'success': true,
+            'localPath': r'C:\tmp\runner_image_placeholder.png',
+            'prompt': args['prompt']?.toString() ?? 'sunset beach',
+          });
+        },
+      ),
+    ];
+  }
+}
+
 AppSettings _buildFastModeSettings() {
   const modelRef = 'openai:gpt-3.5-turbo';
   return const AppSettings(
@@ -212,6 +337,56 @@ AppSettings _buildFastModeSettings() {
     hideUserAvatar: true,
     defaultChatModels: <String>[modelRef],
     callFlowSettings: CallFlowSettings(mode: CallFlowMode.fast),
+  );
+}
+
+AppSettings _buildStableFollowupSettings() {
+  const modelRef = 'openai:gpt-4o-mini';
+  return const AppSettings(
+    ttsEnabled: false,
+    defaultModelName: modelRef,
+    defaultPersonaPrompt: '',
+    modelList: <String>[modelRef],
+    allKnownModels: <String>[modelRef],
+    modelDisplayNames: <String, String>{},
+    modelTypes: <String, String>{},
+    modelConfigs: <String, ModelConfig>{
+      modelRef: ModelConfig(
+        chatCapabilities: <String>['tools', 'vision'],
+      ),
+    },
+    apiKey: '',
+    apiBaseUrl: 'https://api.openai.com/v1',
+    imageGenerationEnabled: true,
+    maxFileUploadMB: 10,
+    historyMessageLimit: 100,
+    customModels: <CustomModel>[],
+    providers: <ProviderAuth>[
+      ProviderAuth(
+        id: 'openai',
+        apiKeys: <String>['test-key'],
+        apiBaseUrl: 'https://api.openai.com/v1',
+      ),
+    ],
+    modelProviderMap: <String, String>{
+      modelRef: 'openai',
+      'gpt-4o-mini': 'openai',
+    },
+    backendApiKey: '',
+    messageChunkingEnabled: false,
+    messageFormatConfig: MessageFormatConfig(),
+    textScaleFactor: 1.0,
+    uiScaleFactor: 1.0,
+    imagePreviewScale: 1.0,
+    autoReplySettings: AutoReplySettings(),
+    globalBackgroundColor: GlobalBackgroundColor.white,
+    chatBackgroundColor: ChatBackgroundColor.defaultColor,
+    isDarkMode: false,
+    useSystemTheme: true,
+    accentColor: 'FC96AA',
+    hideUserAvatar: true,
+    defaultChatModels: <String>[modelRef],
+    callFlowSettings: CallFlowSettings(mode: CallFlowMode.auto),
   );
 }
 
@@ -299,5 +474,63 @@ void main() {
       drawToolResult,
       contains('"artist_preset_source":"global_selected"'),
     );
+  });
+
+  test('suppress tool status text 时仍应保留 rawReplyText 供多模态解析', () async {
+    final fakeHttpClient = _ImagePlaceholderFollowupClient();
+    final settings = _buildStableFollowupSettings();
+    final config = ApiConfig(
+      settings: settings,
+      modelFullId: 'openai:gpt-4o-mini',
+      providerApiBase: 'https://api.openai.com/v1',
+      providerApiKey: 'test-key',
+      customConfig: const <String, dynamic>{},
+      toolPrefs: const <String, dynamic>{},
+      messages: const <Map<String, dynamic>>[
+        <String, dynamic>{
+          'role': 'user',
+          'content': '帮我发一张夕阳海边图',
+        },
+      ],
+      tools: const <Map<String, dynamic>>[
+        <String, dynamic>{
+          'type': 'function',
+          'function': <String, dynamic>{
+            'name': 'draw_image',
+            'description': 'draw image',
+            'parameters': <String, dynamic>{
+              'type': 'object',
+              'properties': <String, dynamic>{
+                'prompt': <String, dynamic>{'type': 'string'},
+              },
+              'required': <String>['prompt'],
+            },
+          },
+        },
+      ],
+    );
+
+    final runner = ChatSendApiRunner.withAgentClientFactory(
+      agentClientFactory: (timeout) => AgentApiClient(
+        client: fakeHttpClient,
+        timeout: timeout,
+      ),
+    );
+
+    final result = await runner.executeApiCall(
+      config: config,
+      sessionId: 'conv_image_placeholder_followup',
+      userText: '帮我发一张夕阳海边图',
+      effectivePlugins: <Plugin>[_DeliveredImagePlugin()],
+    );
+
+    expect(fakeHttpClient.callCount, 2);
+    expect(
+      result.rawReplyText,
+      '<image></image>',
+      reason: '用户可见状态文案可以隐藏，但原始占位符必须保留给后续消息投影链路解析。',
+    );
+    expect(result.replyText, '');
+    expect(result.processedText, '');
   });
 }

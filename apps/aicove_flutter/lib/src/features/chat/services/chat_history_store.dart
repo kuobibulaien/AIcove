@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:drift/drift.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,6 +8,8 @@ import '../../../core/database/database_provider.dart';
 import '../../../core/database/converters/database_converters.dart';
 import '../../../core/models/message_block.dart';
 import '../domain/message.dart';
+import 'chat_frontend_message_projection_service.dart';
+import 'chat_message_projection_codec.dart';
 import 'conversation_short_window_store.dart';
 
 class ConversationMessageWindow {
@@ -151,58 +152,23 @@ class ChatHistoryStore {
 
   db.AppDatabase get _db => _ref.read(databaseProvider);
 
-  Stream<ConversationMessageWindow> watchWindow({
-    required String conversationId,
-    required int limit,
-  }) {
-    final normalizedLimit = limit < 1 ? 1 : limit;
-    final seedFetchLimit = math.max(
-      kConversationTurnWindowFetchPageSize,
-      normalizedLimit * 4,
-    );
-    final maxFetchPages = math.max(
-      kConversationTurnWindowMaxFetchPages,
-      normalizedLimit,
-    );
-    return _watchDbWindow(
-      conversationId: conversationId,
-      limit: seedFetchLimit,
-    ).asyncMap((dbMessages) async {
-      final messages = await _buildMessagesFromDb(
-        dbMessages.reversed.toList(growable: false),
-      );
-      final turnWindow = await resolveConversationTurnWindow(
-        currentMessages: messages,
-        hasMoreMessages: dbMessages.length >= seedFetchLimit,
-        loadOlderPage: ({
-          required DateTime beforeCreatedAt,
-          required String beforeId,
-          required int limit,
-        }) {
-          return loadMessagesBefore(
-            conversationId: conversationId,
-            beforeCreatedAt: beforeCreatedAt,
-            beforeId: beforeId,
-            limit: limit,
-          );
-        },
-        targetTurnCount: normalizedLimit,
-        fetchPageSize: seedFetchLimit,
-        maxFetchPages: maxFetchPages,
-      );
-      return ConversationMessageWindow(
-        messages: turnWindow.messages,
-        hasMore: turnWindow.hasMoreMessages,
-      );
-    });
+  Future<List<Message>> loadFrontendMessages(String conversationId) {
+    return _ref
+        .read(conversationShortWindowStoreProvider)
+        .loadAllMessages(conversationId);
   }
 
   Future<List<Message>> loadAllMessages(String conversationId) async {
+    final rawMessages = await loadAllRawMessages(conversationId);
+    return _projectRawMessages(rawMessages);
+  }
+
+  Future<List<Message>> loadAllRawMessages(String conversationId) async {
     final msgRepo = _ref.read(messageRepositoryProvider);
     final dbMessages = await msgRepo.getAllByConversationOrderedStable(
       conversationId,
     );
-    return _buildMessagesFromDb(dbMessages);
+    return _buildRawMessagesFromDb(dbMessages);
   }
 
   Future<List<Message>> loadRecentMessages(
@@ -214,29 +180,56 @@ class ChatHistoryStore {
       conversationId,
       limit: limit,
     );
-    return _buildMessagesFromDb(
+    return _buildProjectedMessagesFromDb(
       dbMessages.reversed.toList(growable: false),
     );
   }
 
-  Future<Message?> loadMessageById(String messageId) async {
+  Future<Message?> loadMessageById(
+    String messageId, {
+    String? conversationId,
+    bool preferProjection = true,
+  }) async {
     final msgRepo = _ref.read(messageRepositoryProvider);
-    final blockRepo = _ref.read(messageBlockRepositoryProvider);
     final dbMessage = await msgRepo.getById(messageId);
     if (dbMessage == null ||
         dbMessage.deletedAt != null ||
         dbMessage.replacedBy != null) {
-      return null;
+      return _ref.read(conversationShortWindowStoreProvider).findMessageById(
+            messageId,
+            conversationId: conversationId,
+          );
     }
-    final dbBlocks = await blockRepo.getByMessage(messageId);
-    final blocks = <MessageBlock>[];
-    for (final dbBlock in dbBlocks) {
-      final block = MessageBlockConverter.fromDb(dbBlock);
-      if (block != null) {
-        blocks.add(block);
+
+    final rawMessage = await _buildRawMessageFromDbMessage(dbMessage);
+    if (rawMessage == null || !preferProjection) {
+      return rawMessage;
+    }
+
+    final projectedMessages = _projectRawMessages([rawMessage]);
+    for (final projected in projectedMessages) {
+      if (projected.id == messageId) {
+        return projected;
       }
     }
-    return MessageConverter.fromDb(dbMessage, blocks: blocks);
+    if (projectedMessages.length == 1) {
+      return projectedMessages.first;
+    }
+    return rawMessage;
+  }
+
+  Future<Message?> loadFrontendMessageById(
+    String messageId, {
+    String? conversationId,
+  }) {
+    final normalizedMessageId = messageId.trim();
+    if (normalizedMessageId.isEmpty) {
+      return Future.value(null);
+    }
+    return _ref.read(conversationShortWindowStoreProvider).findMessageById(
+          normalizedMessageId,
+          conversationId: conversationId,
+        );
   }
 
   Future<List<Message>> loadMessagesBefore({
@@ -252,7 +245,7 @@ class ChatHistoryStore {
       beforeTime: beforeCreatedAt.millisecondsSinceEpoch,
       beforeId: beforeId,
     );
-    return _buildMessagesFromDb(
+    return _buildProjectedMessagesFromDb(
       dbMessages.reversed.toList(growable: false),
     );
   }
@@ -313,9 +306,12 @@ class ChatHistoryStore {
 
     final shortWindowUpdates = <Message>[...messages];
     if (userMessageId.trim().isNotEmpty) {
-      final userMessage = await loadMessageById(userMessageId);
-      if (userMessage != null) {
-        shortWindowUpdates.insert(0, userMessage);
+      final userMessages = await _loadFrontendMessagesForMessageId(
+        userMessageId,
+        conversationId: conversationId,
+      );
+      if (userMessages.isNotEmpty) {
+        shortWindowUpdates.insertAll(0, userMessages);
       }
     }
     if (updateShortWindow && shortWindowUpdates.isNotEmpty) {
@@ -326,11 +322,80 @@ class ChatHistoryStore {
     }
   }
 
+  Future<void> appendAssistantRawMessage({
+    required String conversationId,
+    required String userMessageId,
+    required Message rawMessage,
+    required List<Message> projectedMessages,
+    required String lastMessagePreview,
+    bool updateShortWindow = true,
+  }) async {
+    final persistedRawMessage = rawMessage.copyWith(
+      rawPayload: ChatMessageProjectionCodec.copyWithProjectedMessages(
+        rawMessage.rawPayload,
+        projectedMessages,
+      ),
+    );
+    List<Message> updatedUserMessages = const <Message>[];
+    await _db.transaction(() async {
+      final msgRepo = _ref.read(messageRepositoryProvider);
+      if (userMessageId.trim().isNotEmpty) {
+        await msgRepo.updateStatus(userMessageId, 'sent');
+        updatedUserMessages = await _loadFrontendMessagesForMessageId(
+          userMessageId,
+          conversationId: conversationId,
+        );
+      }
+      await _upsertSingleMessage(conversationId, persistedRawMessage);
+      await _ref.read(conversationRepositoryProvider).updateSummary(
+            conversationId,
+            lastMessagePreview,
+            persistedRawMessage.createdAt.millisecondsSinceEpoch,
+          );
+    });
+
+    if (updatedUserMessages.isNotEmpty ||
+        (updateShortWindow && projectedMessages.isNotEmpty)) {
+      final shortWindowMessages = <Message>[
+        ...updatedUserMessages,
+        if (updateShortWindow) ...projectedMessages,
+      ];
+      await _ref.read(conversationShortWindowStoreProvider).upsertMessages(
+            conversationId: conversationId,
+            messages: shortWindowMessages,
+          );
+    }
+  }
+
   Future<void> appendMessage({
     required String conversationId,
     required Message message,
     String? lastMessagePreview,
   }) async {
+    final projectedMessage =
+        await _normalizeProjectedMessageForFrontendMutation(
+      conversationId: conversationId,
+      message: message,
+    );
+    if (projectedMessage != null) {
+      await _ref.read(conversationShortWindowStoreProvider).upsertMessage(
+            conversationId: conversationId,
+            message: projectedMessage,
+          );
+      if (lastMessagePreview != null) {
+        await _ref.read(conversationRepositoryProvider).updateSummary(
+              conversationId,
+              lastMessagePreview,
+              projectedMessage.createdAt.millisecondsSinceEpoch,
+            );
+      }
+      await _syncRawProjectionFromShortWindow(
+        conversationId: conversationId,
+        rawMessageIds: {projectedMessage.sourceMessageId!},
+      );
+      return;
+    }
+
     await _upsertMessages(
       conversationId: conversationId,
       messages: [message],
@@ -345,7 +410,8 @@ class ChatHistoryStore {
     required List<ConversationSupplementInsertOp> insertOps,
   }) async {
     if (insertOps.isEmpty) return;
-    final allMessages = await loadAllMessages(conversationId);
+    final shortWindowStore = _ref.read(conversationShortWindowStoreProvider);
+    final allMessages = await shortWindowStore.loadAllMessages(conversationId);
     final messageById = <String, Message>{
       for (final message in allMessages) message.id: message,
     };
@@ -357,7 +423,14 @@ class ChatHistoryStore {
     final rebuilt = <Message>[];
     if (existingAnchorIds.isEmpty) {
       rebuilt.addAll(allMessages);
-      rebuilt.addAll(insertOps.map((op) => op.message));
+      rebuilt.addAll(
+        insertOps.map(
+          (op) => _inheritProjectionSourceFromAnchor(
+            op.message,
+            anchorMessages: const <Message>[],
+          ),
+        ),
+      );
     } else {
       final textChunkLengths = <int>[
         for (final id in existingAnchorIds)
@@ -378,6 +451,19 @@ class ChatHistoryStore {
           existingAnchorIds[i]: i,
       };
       final firstAnchorId = existingAnchorIds.first;
+      final anchorMessages = <Message>[
+        for (final id in existingAnchorIds)
+          if (messageById[id] case final message?) message,
+      ];
+      for (final entry in slotMessages.entries) {
+        slotMessages[entry.key] = <Message>[
+          for (final message in entry.value)
+            _inheritProjectionSourceFromAnchor(
+              message,
+              anchorMessages: anchorMessages,
+            ),
+        ];
+      }
       var insertedBeforeFirst = false;
       for (final message in allMessages) {
         if (!insertedBeforeFirst && message.id == firstAnchorId) {
@@ -391,10 +477,22 @@ class ChatHistoryStore {
       }
     }
 
-    await _replaceConversationMessages(
+    await shortWindowStore.replaceMessages(
       conversationId: conversationId,
+      removeMessageIds: [
+        for (final message in allMessages) message.id,
+      ],
       messages: rebuilt,
     );
+    await _syncRawProjectionFromShortWindow(
+      conversationId: conversationId,
+      rawMessageIds: {
+        for (final message in rebuilt)
+          if (message.sourceMessageId?.trim().isNotEmpty ?? false)
+            message.sourceMessageId!.trim(),
+      },
+    );
+    await _refreshSummaryFromShortWindow(conversationId);
   }
 
   Future<void> markMessageStatus({
@@ -406,26 +504,34 @@ class ChatHistoryStore {
     await msgRepo.updateStatus(messageId, status);
 
     if (status == 'failed') {
-      final message = await loadMessageById(messageId);
-      if (message != null) {
+      final messages = await _loadFrontendMessagesForMessageId(
+        messageId,
+        conversationId: conversationId,
+      );
+      if (messages.isNotEmpty) {
         await _ref.read(conversationRepositoryProvider).updateSummary(
               conversationId,
-              message.displayText,
-              DateTime.now().millisecondsSinceEpoch,
+              messages.last.displayText,
+              messages.last.createdAt.millisecondsSinceEpoch,
             );
       }
     }
 
-    final message = await loadMessageById(messageId);
-    if (message != null) {
-      await _ref.read(conversationShortWindowStoreProvider).upsertMessage(
+    final messages = await _loadFrontendMessagesForMessageId(
+      messageId,
+      conversationId: conversationId,
+    );
+    if (messages.isNotEmpty) {
+      await _ref.read(conversationShortWindowStoreProvider).upsertMessages(
             conversationId: conversationId,
-            message: message,
+            messages: messages,
           );
     } else {
-      await _ref.read(conversationShortWindowStoreProvider).syncConversation(
-            conversationId,
-          );
+      await _removeMessagesFromShortWindowByRawIds(
+        conversationId: conversationId,
+        rawMessageIds: {messageId},
+      );
+      await _refreshSummaryFromShortWindow(conversationId);
     }
   }
 
@@ -434,19 +540,49 @@ class ChatHistoryStore {
     required Message message,
     String? lastMessagePreview,
   }) async {
-    await _db.transaction(() async {
-      await _upsertSingleMessage(conversationId, message);
+    final projectedMessage =
+        await _normalizeProjectedMessageForFrontendMutation(
+      conversationId: conversationId,
+      message: message,
+    );
+    if (projectedMessage != null) {
+      await _ref.read(conversationShortWindowStoreProvider).upsertMessage(
+            conversationId: conversationId,
+            message: projectedMessage,
+          );
       if (lastMessagePreview != null) {
         await _ref.read(conversationRepositoryProvider).updateSummary(
               conversationId,
               lastMessagePreview,
-              DateTime.now().millisecondsSinceEpoch,
+              projectedMessage.createdAt.millisecondsSinceEpoch,
+            );
+      }
+      await _syncRawProjectionFromShortWindow(
+        conversationId: conversationId,
+        rawMessageIds: {projectedMessage.sourceMessageId!},
+      );
+      return;
+    }
+
+    await _db.transaction(() async {
+      await _upsertSingleMessage(conversationId, message);
+      final frontendMessages = _projectRawMessages(<Message>[message]);
+      final effectiveTailMessage =
+          frontendMessages.isNotEmpty ? frontendMessages.last : message;
+      if (lastMessagePreview != null || frontendMessages.isNotEmpty) {
+        await _ref.read(conversationRepositoryProvider).updateSummary(
+              conversationId,
+              lastMessagePreview ?? effectiveTailMessage.displayText,
+              effectiveTailMessage.createdAt.millisecondsSinceEpoch,
             );
       }
     });
-    await _ref.read(conversationShortWindowStoreProvider).upsertMessage(
+    final frontendMessages = _projectRawMessages(<Message>[message]);
+    await _ref.read(conversationShortWindowStoreProvider).upsertMessages(
           conversationId: conversationId,
-          message: message,
+          messages: frontendMessages.isNotEmpty
+              ? frontendMessages
+              : <Message>[message],
         );
   }
 
@@ -456,17 +592,55 @@ class ChatHistoryStore {
     bool clearContextStartIfDeleted = false,
   }) async {
     if (messageIds.isEmpty) return;
+    final shortWindowStore = _ref.read(conversationShortWindowStoreProvider);
+    final projectedMessages = <Message>[];
+    for (final id in messageIds) {
+      final message = await shortWindowStore.findMessageById(
+        id,
+        conversationId: conversationId,
+      );
+      if (message != null) {
+        projectedMessages.add(message);
+      }
+    }
+    final projectedOnlyIds = <String>[
+      for (final message in projectedMessages)
+        if (_isProjectedFrontendMessage(message)) message.id,
+    ];
+    if (projectedOnlyIds.isNotEmpty) {
+      await shortWindowStore.replaceMessages(
+        conversationId: conversationId,
+        removeMessageIds: projectedOnlyIds,
+      );
+      await _syncRawProjectionFromShortWindow(
+        conversationId: conversationId,
+        rawMessageIds: {
+          for (final message in projectedMessages)
+            if (message.sourceMessageId?.trim().isNotEmpty ?? false)
+              message.sourceMessageId!.trim(),
+        },
+      );
+      await _refreshSummaryFromShortWindow(conversationId);
+    }
+
+    final rawDeleteIds = [
+      for (final id in messageIds)
+        if (!projectedOnlyIds.contains(id)) id,
+    ];
+    if (rawDeleteIds.isEmpty) {
+      return;
+    }
     final msgRepo = _ref.read(messageRepositoryProvider);
     final blockRepo = _ref.read(messageBlockRepositoryProvider);
     final convRepo = _ref.read(conversationRepositoryProvider);
     final now = DateTime.now().millisecondsSinceEpoch;
     final purgeAt = now + 30 * 24 * 60 * 60 * 1000;
 
-    final blocks = await blockRepo.getByMessages(messageIds);
+    final blocks = await blockRepo.getByMessages(rawDeleteIds);
     for (final block in blocks) {
       await blockRepo.softDelete(block.id, now);
     }
-    for (final id in messageIds) {
+    for (final id in rawDeleteIds) {
       await msgRepo.softDelete(id, now, purgeAt);
     }
     await _refreshSummary(conversationId);
@@ -475,7 +649,7 @@ class ChatHistoryStore {
       final conv = await convRepo.getById(conversationId);
       if (conv != null &&
           conv.contextStartMessageId != null &&
-          messageIds.contains(conv.contextStartMessageId)) {
+          rawDeleteIds.contains(conv.contextStartMessageId)) {
         await (_db.update(_db.conversations)
               ..where((t) => t.id.equals(conversationId)))
             .write(const db.ConversationsCompanion(
@@ -484,16 +658,18 @@ class ChatHistoryStore {
       }
     }
 
-    await _ref.read(conversationShortWindowStoreProvider).syncConversation(
-          conversationId,
-        );
+    await _removeMessagesFromShortWindowByRawIds(
+      conversationId: conversationId,
+      rawMessageIds: rawDeleteIds.toSet(),
+    );
+    await _refreshSummaryFromShortWindow(conversationId);
   }
 
   Future<void> truncateFromMessage({
     required String conversationId,
     required String fromMessageId,
   }) async {
-    final allMessages = await loadAllMessages(conversationId);
+    final allMessages = await loadFrontendMessages(conversationId);
     final index =
         allMessages.indexWhere((message) => message.id == fromMessageId);
     if (index < 0) return;
@@ -507,7 +683,7 @@ class ChatHistoryStore {
     required String conversationId,
     required String anchorMessageId,
   }) async {
-    final allMessages = await loadAllMessages(conversationId);
+    final allMessages = await loadFrontendMessages(conversationId);
     final index =
         allMessages.indexWhere((message) => message.id == anchorMessageId);
     if (index < 0) return;
@@ -527,23 +703,6 @@ class ChatHistoryStore {
     );
   }
 
-  Stream<List<db.Message>> _watchDbWindow({
-    required String conversationId,
-    required int limit,
-  }) {
-    final query = _db.select(_db.messages)
-      ..where((t) =>
-          t.conversationId.equals(conversationId) &
-          t.deletedAt.isNull() &
-          t.replacedBy.isNull())
-      ..orderBy([
-        (t) => OrderingTerm.desc(t.createdAt),
-        (t) => OrderingTerm.desc(t.id),
-      ])
-      ..limit(limit);
-    return query.watch();
-  }
-
   Future<void> _upsertMessages({
     required String conversationId,
     required List<Message> messages,
@@ -551,19 +710,27 @@ class ChatHistoryStore {
     required DateTime previewTime,
   }) async {
     if (messages.isEmpty) return;
+    final frontendMessages = _projectRawMessages(messages);
+    final effectiveTailMessage =
+        frontendMessages.isNotEmpty ? frontendMessages.last : messages.last;
+    final effectivePreviewTime = frontendMessages.isNotEmpty
+        ? effectiveTailMessage.createdAt
+        : previewTime;
     await _db.transaction(() async {
       for (final message in messages) {
         await _upsertSingleMessage(conversationId, message);
       }
       await _ref.read(conversationRepositoryProvider).updateSummary(
             conversationId,
-            previewText,
-            previewTime.millisecondsSinceEpoch,
+            effectiveTailMessage.displayText.isNotEmpty
+                ? effectiveTailMessage.displayText
+                : previewText,
+            effectivePreviewTime.millisecondsSinceEpoch,
           );
     });
     await _ref.read(conversationShortWindowStoreProvider).upsertMessages(
           conversationId: conversationId,
-          messages: messages,
+          messages: frontendMessages.isNotEmpty ? frontendMessages : messages,
         );
   }
 
@@ -621,10 +788,19 @@ class ChatHistoryStore {
       }
     });
 
-    await _refreshSummary(conversationId);
-    await _ref.read(conversationShortWindowStoreProvider).syncConversation(
-          conversationId,
-        );
+    final shortWindowStore = _ref.read(conversationShortWindowStoreProvider);
+    final currentFrontendMessages =
+        await shortWindowStore.loadAllMessages(conversationId);
+    final nextFrontendMessages = _projectRawMessages(messages);
+    await shortWindowStore.replaceMessages(
+      conversationId: conversationId,
+      removeMessageIds: [
+        for (final message in currentFrontendMessages) message.id,
+      ],
+      messages:
+          nextFrontendMessages.isNotEmpty ? nextFrontendMessages : messages,
+    );
+    await _refreshSummaryFromShortWindow(conversationId);
   }
 
   Future<void> _refreshSummary(String conversationId) async {
@@ -644,14 +820,93 @@ class ChatHistoryStore {
     );
   }
 
+  Future<void> _refreshSummaryFromShortWindow(String conversationId) async {
+    final convRepo = _ref.read(conversationRepositoryProvider);
+    final messages =
+        await _ref.read(conversationShortWindowStoreProvider).loadAllMessages(
+              conversationId,
+            );
+    if (messages.isEmpty) {
+      await convRepo.clearSummary(
+        conversationId,
+        DateTime.now().millisecondsSinceEpoch,
+      );
+      return;
+    }
+    final last = messages.last;
+    await convRepo.updateSummary(
+      conversationId,
+      last.displayText,
+      last.createdAt.millisecondsSinceEpoch,
+    );
+  }
+
+  Future<void> _removeMessagesFromShortWindowByRawIds({
+    required String conversationId,
+    required Set<String> rawMessageIds,
+  }) async {
+    if (rawMessageIds.isEmpty) {
+      return;
+    }
+    final normalizedRawIds = {
+      for (final rawMessageId in rawMessageIds)
+        if (rawMessageId.trim().isNotEmpty) rawMessageId.trim(),
+    };
+    if (normalizedRawIds.isEmpty) {
+      return;
+    }
+
+    final shortWindowStore = _ref.read(conversationShortWindowStoreProvider);
+    final currentMessages = await shortWindowStore.loadAllMessages(
+      conversationId,
+    );
+    if (currentMessages.isEmpty) {
+      return;
+    }
+
+    final removeMessageIds = <String>[
+      for (final message in currentMessages)
+        if (normalizedRawIds.contains(message.id) ||
+            normalizedRawIds.contains(message.sourceMessageId?.trim()))
+          message.id,
+    ];
+    if (removeMessageIds.isEmpty) {
+      return;
+    }
+
+    await shortWindowStore.replaceMessages(
+      conversationId: conversationId,
+      removeMessageIds: removeMessageIds,
+    );
+  }
+
   Future<Message?> loadLastMessage(String conversationId) async {
     final msgRepo = _ref.read(messageRepositoryProvider);
     final dbMessage = await msgRepo.getLastMessageStable(conversationId);
     if (dbMessage == null) return null;
-    return loadMessageById(dbMessage.id);
+    final rawMessage = await _buildRawMessageFromDbMessage(dbMessage);
+    if (rawMessage == null) return null;
+    final projectedMessages = _projectRawMessages(<Message>[rawMessage]);
+    if (projectedMessages.isNotEmpty) {
+      return projectedMessages.last;
+    }
+    return rawMessage;
   }
 
-  Future<List<Message>> _buildMessagesFromDb(
+  Future<List<Message>> _buildProjectedMessagesFromDb(
+    List<db.Message> dbMessages,
+  ) async {
+    final rawMessages = await _buildRawMessagesFromDb(dbMessages);
+    return _projectRawMessages(rawMessages);
+  }
+
+  List<Message> _projectRawMessages(List<Message> rawMessages) {
+    return _ref
+        .read(chatFrontendMessageProjectionServiceProvider)
+        .projectMessages(rawMessages);
+  }
+
+  Future<List<Message>> _buildRawMessagesFromDb(
       List<db.Message> dbMessages) async {
     if (dbMessages.isEmpty) return const <Message>[];
     final blockRepo = _ref.read(messageBlockRepositoryProvider);
@@ -673,6 +928,131 @@ class ChatHistoryStore {
           blocks: blocksByMessageId[dbMessage.id],
         ),
     ];
+  }
+
+  Future<Message?> _buildRawMessageFromDbMessage(db.Message dbMessage) async {
+    final blockRepo = _ref.read(messageBlockRepositoryProvider);
+    final dbBlocks = await blockRepo.getByMessage(dbMessage.id);
+    final blocks = <MessageBlock>[];
+    for (final dbBlock in dbBlocks) {
+      final block = MessageBlockConverter.fromDb(dbBlock);
+      if (block != null) {
+        blocks.add(block);
+      }
+    }
+    return MessageConverter.fromDb(dbMessage, blocks: blocks);
+  }
+
+  bool _isProjectedFrontendMessage(Message message) {
+    final sourceMessageId = message.sourceMessageId?.trim();
+    return sourceMessageId != null &&
+        sourceMessageId.isNotEmpty &&
+        sourceMessageId != message.id;
+  }
+
+  Future<Message?> _normalizeProjectedMessageForFrontendMutation({
+    required String conversationId,
+    required Message message,
+  }) async {
+    final sourceMessageId = message.sourceMessageId?.trim();
+    if (sourceMessageId != null &&
+        sourceMessageId.isNotEmpty &&
+        sourceMessageId != message.id) {
+      return message;
+    }
+    final existing = await _ref
+        .read(conversationShortWindowStoreProvider)
+        .findMessageById(message.id, conversationId: conversationId);
+    final inheritedSourceMessageId = existing?.sourceMessageId?.trim();
+    if (inheritedSourceMessageId == null || inheritedSourceMessageId.isEmpty) {
+      return null;
+    }
+    return message.copyWith(sourceMessageId: inheritedSourceMessageId);
+  }
+
+  Message _inheritProjectionSourceFromAnchor(
+    Message message, {
+    required List<Message> anchorMessages,
+  }) {
+    if (_isProjectedFrontendMessage(message)) {
+      return message;
+    }
+    for (final anchor in anchorMessages) {
+      final sourceMessageId = anchor.sourceMessageId?.trim();
+      if (sourceMessageId == null || sourceMessageId.isEmpty) {
+        continue;
+      }
+      return message.copyWith(sourceMessageId: sourceMessageId);
+    }
+    return message;
+  }
+
+  Future<List<Message>> _loadFrontendMessagesForMessageId(
+    String messageId, {
+    String? conversationId,
+  }) async {
+    final normalizedMessageId = messageId.trim();
+    if (normalizedMessageId.isEmpty) {
+      return const <Message>[];
+    }
+
+    final msgRepo = _ref.read(messageRepositoryProvider);
+    final dbMessage = await msgRepo.getById(normalizedMessageId);
+    if (dbMessage != null &&
+        dbMessage.deletedAt == null &&
+        dbMessage.replacedBy == null) {
+      final rawMessage = await _buildRawMessageFromDbMessage(dbMessage);
+      if (rawMessage != null) {
+        final projectedMessages = _projectRawMessages(<Message>[rawMessage]);
+        if (projectedMessages.isNotEmpty) {
+          return projectedMessages;
+        }
+        return <Message>[rawMessage];
+      }
+    }
+
+    final message =
+        await _ref.read(conversationShortWindowStoreProvider).findMessageById(
+              normalizedMessageId,
+              conversationId: conversationId,
+            );
+    return message == null ? const <Message>[] : <Message>[message];
+  }
+
+  Future<void> _syncRawProjectionFromShortWindow({
+    required String conversationId,
+    required Set<String> rawMessageIds,
+  }) async {
+    if (rawMessageIds.isEmpty) {
+      return;
+    }
+    final projectedMessages =
+        await _ref.read(conversationShortWindowStoreProvider).loadAllMessages(
+              conversationId,
+            );
+    for (final rawMessageId in rawMessageIds) {
+      final rawMessage = await loadMessageById(
+        rawMessageId,
+        conversationId: conversationId,
+        preferProjection: false,
+      );
+      if (rawMessage == null) {
+        continue;
+      }
+      final nextProjectedMessages = <Message>[
+        for (final message in projectedMessages)
+          if (message.sourceMessageId == rawMessageId) message,
+      ];
+      await _upsertSingleMessage(
+        conversationId,
+        rawMessage.copyWith(
+          rawPayload: ChatMessageProjectionCodec.copyWithProjectedMessages(
+            rawMessage.rawPayload,
+            nextProjectedMessages,
+          ),
+        ),
+      );
+    }
   }
 }
 

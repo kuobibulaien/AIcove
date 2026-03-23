@@ -14,6 +14,7 @@
 library;
 
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/message.dart';
@@ -86,6 +87,7 @@ class ChatTtsHandler {
   final ChatMultimodalDeliveryPlanner _deliveryPlanner =
       const ChatMultimodalDeliveryPlanner();
   Future<void> _storeMutationQueue = Future<void>.value();
+  final Map<Future<void>, String> _backgroundTasks = <Future<void>, String>{};
 
   /// TTS 失败回退通知回调
   TtsFallbackNotifier? onTtsFallback;
@@ -114,7 +116,8 @@ class ChatTtsHandler {
   }
 
   void _runBackgroundTask(String label, Future<void> Function() task) {
-    unawaited(() async {
+    late final Future<void> future;
+    future = (() async {
       try {
         await task();
       } catch (e) {
@@ -122,8 +125,28 @@ class ChatTtsHandler {
           'label': label,
           'error': e.toString(),
         });
+      } finally {
+        _backgroundTasks.remove(future);
       }
     }());
+    _backgroundTasks[future] = label;
+    unawaited(future);
+  }
+
+  @visibleForTesting
+  Future<void> debugWaitForBackgroundTasks({String? labelPrefix}) async {
+    while (true) {
+      final pending = <Future<void>>[
+        for (final entry in _backgroundTasks.entries)
+          if (labelPrefix == null || entry.value.startsWith(labelPrefix))
+            entry.key,
+      ];
+      if (pending.isEmpty) {
+        return;
+      }
+      await Future.wait(pending);
+      await Future<void>.delayed(Duration.zero);
+    }
   }
 
   /// 统一的消息交付入口
@@ -152,6 +175,7 @@ class ChatTtsHandler {
   }) async {
     final hasTtsEvents = pluginEvents.any((e) => e.type == 'tts_convert');
     final hasImageEvents = pluginEvents.any((e) => e.type == 'image_generate');
+    final sourceMessageId = buildResult.rawMessage?.id;
 
     // 检查是否有工具音频（路径 A：speak 工具产生的音频）
     final hasToolAudio = buildResult.messages.any(
@@ -171,6 +195,7 @@ class ChatTtsHandler {
         hasImageEvents: hasImageEvents,
         streamTextMessageIds: streamTextMessageIds,
         streamPendingTtsMessages: streamPendingTtsMessages,
+        sourceMessageId: sourceMessageId,
         trace: trace,
       );
       return;
@@ -181,11 +206,21 @@ class ChatTtsHandler {
       await _ref.read(chatSendServiceProvider).deliverAssistantMessages(
             convId: convId,
             userMsgId: userMsgId,
-            messages: buildResult.messages,
-            lastMessagePreview: buildResult.lastMessageText,
+            buildResult: buildResult,
             trace: trace,
           );
       return;
+    }
+
+    if (buildResult.rawMessage != null) {
+      await _ref.read(chatHistoryStoreProvider).appendAssistantRawMessage(
+            conversationId: convId,
+            userMessageId: userMsgId,
+            rawMessage: buildResult.rawMessage!,
+            projectedMessages: const <Message>[],
+            lastMessagePreview: buildResult.lastMessageText,
+            updateShortWindow: false,
+          );
     }
 
     // 有后补多模态标签 → 按段顺序发送（同时处理图片 / TTS / 表情包）
@@ -195,6 +230,7 @@ class ChatTtsHandler {
       replyText: replyText,
       pluginEvents: pluginEvents,
       canGenerateTts: canGenerateTts,
+      sourceMessageId: sourceMessageId,
       trace: trace,
     );
   }
@@ -218,6 +254,7 @@ class ChatTtsHandler {
     required bool hasImageEvents,
     required List<String>? streamTextMessageIds,
     required List<Message>? streamPendingTtsMessages,
+    required String? sourceMessageId,
     TraceLogger? trace,
   }) async {
     final pendingStreamTts = streamPendingTtsMessages
@@ -257,6 +294,7 @@ class ChatTtsHandler {
             skipTextSegments: true,
             markUserMessageAsSent: false,
             allowTtsTextFallback: true,
+            sourceMessageId: sourceMessageId,
             trace: trace,
           );
         });
@@ -291,6 +329,7 @@ class ChatTtsHandler {
         streamTextMessageIds: ids,
         startOrder: insertOps.length,
         includeTts: pendingStreamTts.isEmpty,
+        sourceMessageId: sourceMessageId,
         trace: trace,
       );
     }
@@ -349,13 +388,17 @@ class ChatTtsHandler {
     TraceLogger? trace,
   }) async {
     if (messages.isEmpty) return;
-    await _ref.read(chatSendServiceProvider).deliverAssistantMessages(
-          convId: convId,
-          userMsgId: '',
-          messages: messages,
-          lastMessagePreview: messages.last.displayText,
-          trace: trace,
-        );
+    for (final message in messages) {
+      await _ref.read(chatHistoryStoreProvider).appendMessage(
+            conversationId: convId,
+            message: message,
+            lastMessagePreview: message.displayText,
+          );
+    }
+    trace?.note('后补消息已直接写入前端时间线', metadata: {
+      'convId': convId,
+      'count': messages.length,
+    });
   }
 
   void _scheduleDeferredStreamSupplements({
@@ -366,6 +409,7 @@ class ChatTtsHandler {
     required List<String> streamTextMessageIds,
     required int startOrder,
     required bool includeTts,
+    required String? sourceMessageId,
     TraceLogger? trace,
   }) {
     _runBackgroundTask('post_stream_supplements', () async {
@@ -375,9 +419,15 @@ class ChatTtsHandler {
         canGenerateTts: canGenerateTts,
         includeTts: includeTts,
         startOrder: startOrder,
-        pendingTtsPlaceholderBuilder:
-            _pendingTtsResolver.buildPendingPlaceholderMessage,
-        stickerMessageBuilder: _buildStickerMessageFromSegment,
+        pendingTtsPlaceholderBuilder: (ttsText) =>
+            _buildPendingTtsPlaceholderMessage(
+          ttsText,
+          sourceMessageId: sourceMessageId,
+        ),
+        stickerMessageBuilder: (segment) => _buildStickerMessageFromSegment(
+          segment,
+          sourceMessageId: sourceMessageId,
+        ),
       );
 
       if (plan.insertOps.isNotEmpty) {
@@ -407,6 +457,7 @@ class ChatTtsHandler {
               prompt: plan.imagePrompts[i],
               createdAt:
                   imagePlaceholderBaseTime.add(Duration(milliseconds: i + 1)),
+              sourceMessageId: sourceMessageId,
               failureAnchorMessageId: streamTextMessageIds.isNotEmpty
                   ? streamTextMessageIds.last
                   : null,
@@ -477,7 +528,10 @@ class ChatTtsHandler {
     return ops;
   }
 
-  Message? _buildStickerMessageFromSegment(MultimodalSegment segment) {
+  Message? _buildStickerMessageFromSegment(
+    MultimodalSegment segment, {
+    String? sourceMessageId,
+  }) {
     final assetPath = segment.stickerData?['assetPath'] as String?;
     if (assetPath == null || assetPath.isEmpty) return null;
     final stickerId = segment.stickerData?['stickerId'] as String?;
@@ -486,6 +540,7 @@ class ChatTtsHandler {
     return Message.fromBlocks(
       id: stickerMsgId,
       role: 'assistant',
+      sourceMessageId: sourceMessageId,
       blocks: [
         EmojiBlock(
           messageId: genId('emoji'),
@@ -503,11 +558,13 @@ class ChatTtsHandler {
     String ttsText, {
     String? messageId,
     DateTime? createdAt,
+    String? sourceMessageId,
   }) {
     return _pendingTtsResolver.buildPendingPlaceholderMessage(
       ttsText,
       messageId: messageId ?? genId('msg'),
       createdAt: createdAt,
+      sourceMessageId: sourceMessageId,
     );
   }
 
@@ -568,6 +625,7 @@ class ChatTtsHandler {
     required String replyText,
     required List<PluginEvent> pluginEvents,
     required bool canGenerateTts,
+    required String? sourceMessageId,
     bool skipTextSegments = false,
     bool markUserMessageAsSent = true,
     bool allowTtsTextFallback = true,
@@ -588,6 +646,7 @@ class ChatTtsHandler {
       final fallbackMsg = Message(
         id: genId('msg'),
         role: 'assistant',
+        sourceMessageId: sourceMessageId,
         content: chatMessageProcessor.stripPluginTags(replyText),
         createdAt: DateTime.now(),
         status: 'sent',
@@ -595,8 +654,11 @@ class ChatTtsHandler {
       await _ref.read(chatSendServiceProvider).deliverAssistantMessages(
             convId: convId,
             userMsgId: userMsgId,
-            messages: [fallbackMsg],
-            lastMessagePreview: fallbackMsg.displayText,
+            buildResult: AssistantMessageBuildResult(
+              rawMessage: fallbackMsg,
+              messages: [fallbackMsg],
+              lastMessageText: fallbackMsg.displayText,
+            ),
             trace: trace,
           );
       return;
@@ -629,8 +691,15 @@ class ChatTtsHandler {
       canGenerateTts: canGenerateTts,
       allowTtsTextFallback: allowTtsTextFallback,
       skipTextSegments: skipTextSegments,
-      pendingTtsPlaceholderBuilder: _buildPendingTtsPlaceholderMessage,
-      stickerMessageBuilder: _buildStickerMessageFromSegment,
+      pendingTtsPlaceholderBuilder: (ttsText) =>
+          _buildPendingTtsPlaceholderMessage(
+        ttsText,
+        sourceMessageId: sourceMessageId,
+      ),
+      stickerMessageBuilder: (segment) => _buildStickerMessageFromSegment(
+        segment,
+        sourceMessageId: sourceMessageId,
+      ),
     );
 
     String? lastTextAnchorMessageId;
@@ -647,6 +716,7 @@ class ChatTtsHandler {
           final textMsg = Message(
             id: genId('msg'),
             role: 'assistant',
+            sourceMessageId: sourceMessageId,
             content: text,
             createdAt: DateTime.now(),
             status: 'sent',
@@ -700,6 +770,7 @@ class ChatTtsHandler {
             messageId: genId('img'),
             prompt: imagePrompt,
             createdAt: DateTime.now(),
+            sourceMessageId: sourceMessageId,
             failureAnchorMessageId: lastTextAnchorMessageId,
           ));
           break;
@@ -716,6 +787,7 @@ class ChatTtsHandler {
             messageId: deferredImageJobs[i].messageId,
             prompt: deferredImageJobs[i].prompt,
             createdAt: baseTime.add(Duration(milliseconds: i + 1)),
+            sourceMessageId: deferredImageJobs[i].sourceMessageId,
             failureAnchorMessageId:
                 deferredImageJobs[i].failureAnchorMessageId ??
                     lastTextAnchorMessageId,

@@ -71,7 +71,7 @@ class TtsPendingManager {
   static const Duration _ttsTimeout = Duration(seconds: 30);
   final Map<String, PendingTtsAudio> _pendingEvents = {};
   StreamSubscription<TtsPlayItem>? _subscription;
-  
+
   /// TTS 失败回退通知回调
   TtsFallbackNotifier? onTtsFallback;
 
@@ -108,11 +108,14 @@ class TtsPendingManager {
 
     // TTS 生成失败（空 URL），回退到文本消息
     if (audioUrl == null || audioUrl.isEmpty) {
-      _log('tts:fallback', {
-        'eventId': item.id,
-        'reason': 'empty_url',
-        'textLength': text.length,
-      }, level: 'WARN');
+      _log(
+          'tts:fallback',
+          {
+            'eventId': item.id,
+            'reason': 'empty_url',
+            'textLength': text.length,
+          },
+          level: 'WARN');
       await _fallbackToTextMessage(
         convId: pending.convId,
         placeholderId: pending.placeholderId,
@@ -125,9 +128,11 @@ class TtsPendingManager {
 
     // TTS 成功，就地替换占位语音条
     try {
-      final placeholder = await _ref
-          .read(chatHistoryStoreProvider)
-          .loadMessageById(pending.placeholderId);
+      final placeholder =
+          await _ref.read(chatHistoryStoreProvider).loadFrontendMessageById(
+                pending.placeholderId,
+                conversationId: pending.convId,
+              );
       if (placeholder != null) {
         final audioBlock = AudioBlock(
           messageId: placeholder.id,
@@ -136,16 +141,17 @@ class TtsPendingManager {
           status: BlockStatus.success,
         );
         await _ref.read(chatHistoryStoreProvider).updateMessage(
-          conversationId: pending.convId,
-          message: Message.fromBlocks(
-            id: placeholder.id,
-            role: placeholder.role,
-            blocks: [audioBlock],
-            createdAt: placeholder.createdAt,
-            status: 'sent',
-          ),
-          lastMessagePreview: '[语音]',
-        );
+              conversationId: pending.convId,
+              message: Message.fromBlocks(
+                id: placeholder.id,
+                role: placeholder.role,
+                sourceMessageId: placeholder.sourceMessageId,
+                blocks: [audioBlock],
+                createdAt: placeholder.createdAt,
+                status: 'sent',
+              ),
+              lastMessagePreview: '[语音]',
+            );
       }
     } catch (_) {}
 
@@ -158,7 +164,7 @@ class TtsPendingManager {
   }
 
   /// 回退到文本消息
-  /// 
+  ///
   /// 当 TTS 生成失败时，将占位语音消息替换为原始文本消息
   Future<void> _fallbackToTextMessage({
     required String convId,
@@ -174,23 +180,27 @@ class TtsPendingManager {
 
     try {
       final placeholder =
-          await _ref.read(chatHistoryStoreProvider).loadMessageById(placeholderId);
+          await _ref.read(chatHistoryStoreProvider).loadFrontendMessageById(
+                placeholderId,
+                conversationId: convId,
+              );
       if (placeholder == null) {
         await removePlaceholder(convId, placeholderId);
         return;
       }
 
       await _ref.read(chatHistoryStoreProvider).updateMessage(
-        conversationId: convId,
-        message: Message(
-          id: placeholder.id,
-          role: placeholder.role,
-          content: text,
-          createdAt: placeholder.createdAt,
-          status: 'sent',
-        ),
-        lastMessagePreview: _buildFallbackPreview(text),
-      );
+            conversationId: convId,
+            message: Message(
+              id: placeholder.id,
+              role: placeholder.role,
+              sourceMessageId: placeholder.sourceMessageId,
+              content: text,
+              createdAt: placeholder.createdAt,
+              status: 'sent',
+            ),
+            lastMessagePreview: _buildFallbackPreview(text),
+          );
 
       // 触发通知回调
       onTtsFallback?.call(reason);
@@ -245,7 +255,8 @@ class TtsPendingManager {
       Future.delayed(_ttsTimeout, () async {
         final p = _pendingEvents.remove(event.id);
         if (p != null && !p.completer.isCompleted) {
-          _log('tts:timeout', {'eventId': event.id, 'convId': convId}, level: 'WARN');
+          _log('tts:timeout', {'eventId': event.id, 'convId': convId},
+              level: 'WARN');
           p.completer.complete(const TtsAudioResult.failure('timeout'));
           // 超时时回退到文本消息，而不是直接删除
           final text = p.originalText ?? '';
@@ -332,16 +343,17 @@ final ttsPendingManagerProvider = Provider<TtsPendingManager?>((ref) {
     // TTS 插件不存在，返回 null
     return null;
   }
-  
+
   final manager = TtsPendingManager(ref, ttsManager);
-  
+
   // 连接到全局通知服务
   try {
-    final notificationService = ref.read(ttsFallbackNotificationServiceProvider);
+    final notificationService =
+        ref.read(ttsFallbackNotificationServiceProvider);
     manager.onTtsFallback = notificationService.notify;
   } catch (_) {
     // 服务未初始化，忽略
   }
-  
+
   return manager;
 });

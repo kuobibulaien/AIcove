@@ -84,6 +84,7 @@ class Messages extends Table {
   // (注释已丢失)
   TextColumn get replacedBy => text().nullable()();
   TextColumn get sourceMessageId => text().nullable()();
+  TextColumn get rawPayload => text().nullable()();
 
   // 冲突字段
   TextColumn get conflictOf => text().nullable()();
@@ -97,6 +98,26 @@ class Messages extends Table {
 
   @override
   Set<Column> get primaryKey => {id};
+}
+
+class MessageProjectionMappings extends Table {
+  TextColumn get id => text()();
+  TextColumn get conversationId => text().references(Conversations, #id)();
+  TextColumn get rawMessageId => text().references(Messages, #id)();
+  TextColumn get projectedMessageId => text()();
+  TextColumn get projectionKind =>
+      text().withDefault(const Constant('message'))();
+  IntColumn get segmentIndex => integer().withDefault(const Constant(0))();
+  TextColumn get projectionVersion => text().nullable()();
+  IntColumn get createdAt => integer()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+
+  @override
+  List<Set<Column>> get uniqueKeys => [
+        {rawMessageId, projectedMessageId},
+      ];
 }
 
 /// (注释已丢失)
@@ -209,8 +230,7 @@ class Memories extends Table {
   RealColumn get emotionE =>
       real().withDefault(const Constant(0.0))(); // (注释已丢失)
   RealColumn get infoI => real().withDefault(const Constant(0.5))(); // (注释已丢失)
-  RealColumn get judgeJ =>
-      real().withDefault(const Constant(0.5))(); // J 综合判断
+  RealColumn get judgeJ => real().withDefault(const Constant(0.5))(); // J 综合判断
 
   // (注释已丢失)
   RealColumn get infoImportance =>
@@ -223,8 +243,7 @@ class Memories extends Table {
   // 系统维护字段
   IntColumn get useCount =>
       integer().withDefault(const Constant(0))(); // (注释已丢失)
-  IntColumn get lastActiveAt =>
-      integer().nullable()(); // (注释已丢失)
+  IntColumn get lastActiveAt => integer().nullable()(); // (注释已丢失)
 
   // (注释已丢失)
   IntColumn get deletedAt => integer().nullable()();
@@ -315,6 +334,7 @@ class Diaries extends Table {
 @DriftDatabase(tables: [
   Conversations,
   Messages,
+  MessageProjectionMappings,
   MessageBlocks,
   Providers,
   SyncScopes,
@@ -330,7 +350,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(QueryExecutor executor) : super(executor);
 
   @override
-  int get schemaVersion => 11;
+  int get schemaVersion => 12;
 
   @override
   MigrationStrategy get migration {
@@ -400,6 +420,11 @@ class AppDatabase extends _$AppDatabase {
         if (from < 11) {
           await _safeAddColumn('messages', 'source_message_id TEXT');
           await _safeAddColumn('message_blocks', 'source_block_id TEXT');
+        }
+        // v11 -> v12: add raw payload and raw->frontend projection mapping
+        if (from < 12) {
+          await _safeAddColumn('messages', 'raw_payload TEXT');
+          await m.createTable(messageProjectionMappings);
         }
       },
     );

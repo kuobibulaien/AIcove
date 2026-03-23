@@ -21,18 +21,6 @@ class ChatMessageListDisplayCacheEntry {
   final List<ImagePreviewItem> chatImages;
 }
 
-class ChatMessageListPersistentCacheEntry {
-  const ChatMessageListPersistentCacheEntry({
-    required this.windowSignature,
-    required this.formatSignature,
-    required this.listItems,
-  });
-
-  final String windowSignature;
-  final String formatSignature;
-  final List<Map<String, dynamic>> listItems;
-}
-
 class ChatPageViewportSnapshotEntry {
   const ChatPageViewportSnapshotEntry({
     required this.imageBytes,
@@ -53,13 +41,9 @@ class ChatMessageListDisplayCache {
   ChatMessageListDisplayCache._();
 
   static const int _maxEntries = 5;
-  static const int _persistentCacheVersion = 1;
   static final LinkedHashMap<String, ChatMessageListDisplayCacheEntry>
       _entries = LinkedHashMap<String, ChatMessageListDisplayCacheEntry>();
-  static final Map<String, Future<void>> _persistentWriteQueue =
-      <String, Future<void>>{};
   static Directory? _persistentDir;
-  static int _tempFileSequence = 0;
 
   static ChatMessageListDisplayCacheEntry? read({
     required String conversationId,
@@ -94,87 +78,6 @@ class ChatMessageListDisplayCache {
     while (_entries.length > _maxEntries) {
       _entries.remove(_entries.keys.first);
     }
-  }
-
-  static Future<ChatMessageListPersistentCacheEntry?> readPersistent({
-    required String conversationId,
-    required String windowSignature,
-    required String formatSignature,
-  }) async {
-    final file = await _persistentFileFor(conversationId);
-    try {
-      if (!await file.exists()) {
-        return null;
-      }
-
-      final decoded = jsonDecode(await file.readAsString());
-      if (decoded is! Map) {
-        await _deleteCorruptPersistentFile(file);
-        return null;
-      }
-      final data = Map<String, dynamic>.from(decoded);
-      if (data['version'] != _persistentCacheVersion) {
-        return null;
-      }
-      if (data['windowSignature'] != windowSignature ||
-          data['formatSignature'] != formatSignature) {
-        return null;
-      }
-
-      final rawItems = data['listItems'];
-      if (rawItems is! List) {
-        await _deleteCorruptPersistentFile(file);
-        return null;
-      }
-
-      final listItems = <Map<String, dynamic>>[];
-      for (final item in rawItems) {
-        if (item is! Map) {
-          await _deleteCorruptPersistentFile(file);
-          return null;
-        }
-        listItems.add(Map<String, dynamic>.from(item));
-      }
-
-      return ChatMessageListPersistentCacheEntry(
-        windowSignature: windowSignature,
-        formatSignature: formatSignature,
-        listItems: List<Map<String, dynamic>>.unmodifiable(listItems),
-      );
-    } on FormatException catch (error) {
-      debugPrint('读取聊天显示持久缓存失败: $error');
-      await _deleteCorruptPersistentFile(file);
-      return null;
-    } catch (error) {
-      debugPrint('读取聊天显示持久缓存失败: $error');
-      return null;
-    }
-  }
-
-  static Future<void> writePersistent({
-    required String conversationId,
-    required String windowSignature,
-    required String formatSignature,
-    required List<Map<String, dynamic>> listItems,
-  }) async {
-    await _enqueuePersistentWrite(conversationId, () async {
-      try {
-        final file = await _persistentFileFor(conversationId);
-        await file.parent.create(recursive: true);
-        final payload = jsonEncode(<String, dynamic>{
-          'version': _persistentCacheVersion,
-          'windowSignature': windowSignature,
-          'formatSignature': formatSignature,
-          'listItems': listItems,
-        });
-        await _writeAtomically(
-          file,
-          (tempFile) => tempFile.writeAsString(payload, flush: true),
-        );
-      } catch (error) {
-        debugPrint('写入聊天显示持久缓存失败: $error');
-      }
-    });
   }
 
   static Future<ChatPageViewportSnapshotEntry?> readViewportSnapshot({
@@ -274,18 +177,12 @@ class ChatMessageListDisplayCache {
     } catch (_) {
       // 测试辅助：忽略不存在等清理异常
     } finally {
-      _persistentWriteQueue.clear();
       _persistentDir = null;
     }
   }
 
   @visibleForTesting
   static int get debugSize => _entries.length;
-
-  static Future<File> _persistentFileFor(String conversationId) async {
-    final dir = await _createPersistentDirIfNeeded();
-    return File('${dir.path}/${_fileNameForConversation(conversationId)}.json');
-  }
 
   static Future<File> _viewportSnapshotImageFileFor(
       String conversationId) async {
@@ -316,71 +213,5 @@ class ChatMessageListDisplayCache {
 
   static String _fileNameForConversation(String conversationId) {
     return base64UrlEncode(utf8.encode(conversationId)).replaceAll('=', '');
-  }
-
-  static Future<void> _enqueuePersistentWrite(
-    String conversationId,
-    Future<void> Function() action,
-  ) {
-    final previous = _persistentWriteQueue[conversationId];
-    late final Future<void> queued;
-    queued = (previous ?? Future<void>.value())
-        .catchError((_) {})
-        .then((_) => action())
-        .whenComplete(() {
-      if (identical(_persistentWriteQueue[conversationId], queued)) {
-        _persistentWriteQueue.remove(conversationId);
-      }
-    });
-    _persistentWriteQueue[conversationId] = queued;
-    return queued;
-  }
-
-  static Future<void> _writeAtomically(
-    File destination,
-    Future<void> Function(File tempFile) writer,
-  ) async {
-    final tempFile = _uniqueTempFileFor(destination);
-    try {
-      await writer(tempFile);
-      try {
-        await tempFile.rename(destination.path);
-      } on FileSystemException {
-        if (await destination.exists()) {
-          try {
-            await destination.delete();
-          } on FileSystemException {
-            // 目标文件已经被移除时直接继续 rename 即可。
-          }
-        }
-        await tempFile.rename(destination.path);
-      }
-    } finally {
-      if (await tempFile.exists()) {
-        try {
-          await tempFile.delete();
-        } on FileSystemException {
-          // 临时文件已被 rename 或清理，忽略即可。
-        }
-      }
-    }
-  }
-
-  static File _uniqueTempFileFor(File destination) {
-    _tempFileSequence += 1;
-    return File(
-      '${destination.path}.${DateTime.now().microsecondsSinceEpoch}.'
-      '$_tempFileSequence.tmp',
-    );
-  }
-
-  static Future<void> _deleteCorruptPersistentFile(File file) async {
-    try {
-      if (await file.exists()) {
-        await file.delete();
-      }
-    } catch (_) {
-      // 自愈失败时保持静默，避免再次放大读缓存链路的开销。
-    }
   }
 }

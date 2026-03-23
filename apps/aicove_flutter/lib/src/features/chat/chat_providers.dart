@@ -6,6 +6,8 @@
 /// - 2025-12-31: 从 chat_actions.dart 提取
 library;
 
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'domain/sort_mode.dart';
 import 'conversation_providers.dart' show activeConversationProvider;
@@ -74,3 +76,88 @@ final sortAscendingProvider = StateProvider<bool>((ref) => false);
 /// 模型切换通知（轮询时 UI 层监听此 Provider 弹 toast）
 /// 值为正在尝试的模型名称，null 表示无通知
 final modelFailoverInfoProvider = StateProvider<String?>((ref) => null);
+
+enum ModelFailoverDecision {
+  retryCurrent,
+  tryNext,
+  cancel,
+}
+
+class ModelFailoverPromptRequest {
+  const ModelFailoverPromptRequest({
+    required this.requestId,
+    required this.conversationId,
+    required this.failedModelName,
+    required this.nextModelName,
+    required this.errorMessage,
+  });
+
+  final int requestId;
+  final String conversationId;
+  final String failedModelName;
+  final String nextModelName;
+  final String errorMessage;
+}
+
+class ModelFailoverPromptController
+    extends Notifier<ModelFailoverPromptRequest?> {
+  Completer<ModelFailoverDecision>? _pendingCompleter;
+  int _requestSerial = 0;
+
+  @override
+  ModelFailoverPromptRequest? build() => null;
+
+  Future<ModelFailoverDecision> request({
+    required String conversationId,
+    required String failedModelName,
+    required String nextModelName,
+    required String errorMessage,
+  }) async {
+    _resolve(ModelFailoverDecision.tryNext);
+
+    final completer = Completer<ModelFailoverDecision>();
+    _pendingCompleter = completer;
+    state = ModelFailoverPromptRequest(
+      requestId: ++_requestSerial,
+      conversationId: conversationId,
+      failedModelName: failedModelName,
+      nextModelName: nextModelName,
+      errorMessage: errorMessage,
+    );
+
+    final decision = await completer.future;
+    if (identical(_pendingCompleter, completer)) {
+      _pendingCompleter = null;
+      state = null;
+    }
+    return decision;
+  }
+
+  void resolve(ModelFailoverDecision decision) {
+    _resolve(decision);
+  }
+
+  void dismiss({
+    ModelFailoverDecision defaultDecision = ModelFailoverDecision.tryNext,
+  }) {
+    _resolve(defaultDecision);
+  }
+
+  void _resolve(ModelFailoverDecision decision) {
+    final completer = _pendingCompleter;
+    if (completer == null || completer.isCompleted) {
+      if (state != null) {
+        state = null;
+      }
+      return;
+    }
+    completer.complete(decision);
+    _pendingCompleter = null;
+    state = null;
+  }
+}
+
+final modelFailoverPromptProvider = NotifierProvider<
+    ModelFailoverPromptController, ModelFailoverPromptRequest?>(
+  ModelFailoverPromptController.new,
+);

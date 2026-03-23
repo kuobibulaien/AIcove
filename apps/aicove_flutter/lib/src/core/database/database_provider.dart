@@ -22,6 +22,11 @@ final messageRepositoryProvider = Provider<MessageRepository>((ref) {
   return MessageRepository(ref.watch(databaseProvider));
 });
 
+final messageProjectionMappingRepositoryProvider =
+    Provider<MessageProjectionMappingRepository>((ref) {
+  return MessageProjectionMappingRepository(ref.watch(databaseProvider));
+});
+
 /// 消息内容块 Repository
 final messageBlockRepositoryProvider = Provider<MessageBlockRepository>((ref) {
   return MessageBlockRepository(ref.watch(databaseProvider));

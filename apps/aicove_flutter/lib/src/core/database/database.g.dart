@@ -1554,6 +1554,12 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
   late final GeneratedColumn<String> sourceMessageId = GeneratedColumn<String>(
       'source_message_id', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _rawPayloadMeta =
+      const VerificationMeta('rawPayload');
+  @override
+  late final GeneratedColumn<String> rawPayload = GeneratedColumn<String>(
+      'raw_payload', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   static const VerificationMeta _conflictOfMeta =
       const VerificationMeta('conflictOf');
   @override
@@ -1589,6 +1595,7 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
         summarizedAt,
         replacedBy,
         sourceMessageId,
+        rawPayload,
         conflictOf,
         deletedAt,
         purgeAt,
@@ -1657,6 +1664,12 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
           sourceMessageId.isAcceptableOrUnknown(
               data['source_message_id']!, _sourceMessageIdMeta));
     }
+    if (data.containsKey('raw_payload')) {
+      context.handle(
+          _rawPayloadMeta,
+          rawPayload.isAcceptableOrUnknown(
+              data['raw_payload']!, _rawPayloadMeta));
+    }
     if (data.containsKey('conflict_of')) {
       context.handle(
           _conflictOfMeta,
@@ -1704,6 +1717,8 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
           .read(DriftSqlType.string, data['${effectivePrefix}replaced_by']),
       sourceMessageId: attachedDatabase.typeMapping.read(
           DriftSqlType.string, data['${effectivePrefix}source_message_id']),
+      rawPayload: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}raw_payload']),
       conflictOf: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}conflict_of']),
       deletedAt: attachedDatabase.typeMapping
@@ -1731,6 +1746,7 @@ class Message extends DataClass implements Insertable<Message> {
   final int? summarizedAt;
   final String? replacedBy;
   final String? sourceMessageId;
+  final String? rawPayload;
   final String? conflictOf;
   final int? deletedAt;
   final int? purgeAt;
@@ -1745,6 +1761,7 @@ class Message extends DataClass implements Insertable<Message> {
       this.summarizedAt,
       this.replacedBy,
       this.sourceMessageId,
+      this.rawPayload,
       this.conflictOf,
       this.deletedAt,
       this.purgeAt,
@@ -1766,6 +1783,9 @@ class Message extends DataClass implements Insertable<Message> {
     }
     if (!nullToAbsent || sourceMessageId != null) {
       map['source_message_id'] = Variable<String>(sourceMessageId);
+    }
+    if (!nullToAbsent || rawPayload != null) {
+      map['raw_payload'] = Variable<String>(rawPayload);
     }
     if (!nullToAbsent || conflictOf != null) {
       map['conflict_of'] = Variable<String>(conflictOf);
@@ -1797,6 +1817,9 @@ class Message extends DataClass implements Insertable<Message> {
       sourceMessageId: sourceMessageId == null && nullToAbsent
           ? const Value.absent()
           : Value(sourceMessageId),
+      rawPayload: rawPayload == null && nullToAbsent
+          ? const Value.absent()
+          : Value(rawPayload),
       conflictOf: conflictOf == null && nullToAbsent
           ? const Value.absent()
           : Value(conflictOf),
@@ -1823,6 +1846,7 @@ class Message extends DataClass implements Insertable<Message> {
       summarizedAt: serializer.fromJson<int?>(json['summarizedAt']),
       replacedBy: serializer.fromJson<String?>(json['replacedBy']),
       sourceMessageId: serializer.fromJson<String?>(json['sourceMessageId']),
+      rawPayload: serializer.fromJson<String?>(json['rawPayload']),
       conflictOf: serializer.fromJson<String?>(json['conflictOf']),
       deletedAt: serializer.fromJson<int?>(json['deletedAt']),
       purgeAt: serializer.fromJson<int?>(json['purgeAt']),
@@ -1842,6 +1866,7 @@ class Message extends DataClass implements Insertable<Message> {
       'summarizedAt': serializer.toJson<int?>(summarizedAt),
       'replacedBy': serializer.toJson<String?>(replacedBy),
       'sourceMessageId': serializer.toJson<String?>(sourceMessageId),
+      'rawPayload': serializer.toJson<String?>(rawPayload),
       'conflictOf': serializer.toJson<String?>(conflictOf),
       'deletedAt': serializer.toJson<int?>(deletedAt),
       'purgeAt': serializer.toJson<int?>(purgeAt),
@@ -1859,6 +1884,7 @@ class Message extends DataClass implements Insertable<Message> {
           Value<int?> summarizedAt = const Value.absent(),
           Value<String?> replacedBy = const Value.absent(),
           Value<String?> sourceMessageId = const Value.absent(),
+          Value<String?> rawPayload = const Value.absent(),
           Value<String?> conflictOf = const Value.absent(),
           Value<int?> deletedAt = const Value.absent(),
           Value<int?> purgeAt = const Value.absent(),
@@ -1876,6 +1902,7 @@ class Message extends DataClass implements Insertable<Message> {
         sourceMessageId: sourceMessageId.present
             ? sourceMessageId.value
             : this.sourceMessageId,
+        rawPayload: rawPayload.present ? rawPayload.value : this.rawPayload,
         conflictOf: conflictOf.present ? conflictOf.value : this.conflictOf,
         deletedAt: deletedAt.present ? deletedAt.value : this.deletedAt,
         purgeAt: purgeAt.present ? purgeAt.value : this.purgeAt,
@@ -1900,6 +1927,8 @@ class Message extends DataClass implements Insertable<Message> {
       sourceMessageId: data.sourceMessageId.present
           ? data.sourceMessageId.value
           : this.sourceMessageId,
+      rawPayload:
+          data.rawPayload.present ? data.rawPayload.value : this.rawPayload,
       conflictOf:
           data.conflictOf.present ? data.conflictOf.value : this.conflictOf,
       deletedAt: data.deletedAt.present ? data.deletedAt.value : this.deletedAt,
@@ -1920,6 +1949,7 @@ class Message extends DataClass implements Insertable<Message> {
           ..write('summarizedAt: $summarizedAt, ')
           ..write('replacedBy: $replacedBy, ')
           ..write('sourceMessageId: $sourceMessageId, ')
+          ..write('rawPayload: $rawPayload, ')
           ..write('conflictOf: $conflictOf, ')
           ..write('deletedAt: $deletedAt, ')
           ..write('purgeAt: $purgeAt, ')
@@ -1939,6 +1969,7 @@ class Message extends DataClass implements Insertable<Message> {
       summarizedAt,
       replacedBy,
       sourceMessageId,
+      rawPayload,
       conflictOf,
       deletedAt,
       purgeAt,
@@ -1956,6 +1987,7 @@ class Message extends DataClass implements Insertable<Message> {
           other.summarizedAt == this.summarizedAt &&
           other.replacedBy == this.replacedBy &&
           other.sourceMessageId == this.sourceMessageId &&
+          other.rawPayload == this.rawPayload &&
           other.conflictOf == this.conflictOf &&
           other.deletedAt == this.deletedAt &&
           other.purgeAt == this.purgeAt &&
@@ -1972,6 +2004,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
   final Value<int?> summarizedAt;
   final Value<String?> replacedBy;
   final Value<String?> sourceMessageId;
+  final Value<String?> rawPayload;
   final Value<String?> conflictOf;
   final Value<int?> deletedAt;
   final Value<int?> purgeAt;
@@ -1987,6 +2020,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     this.summarizedAt = const Value.absent(),
     this.replacedBy = const Value.absent(),
     this.sourceMessageId = const Value.absent(),
+    this.rawPayload = const Value.absent(),
     this.conflictOf = const Value.absent(),
     this.deletedAt = const Value.absent(),
     this.purgeAt = const Value.absent(),
@@ -2003,6 +2037,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     this.summarizedAt = const Value.absent(),
     this.replacedBy = const Value.absent(),
     this.sourceMessageId = const Value.absent(),
+    this.rawPayload = const Value.absent(),
     this.conflictOf = const Value.absent(),
     this.deletedAt = const Value.absent(),
     this.purgeAt = const Value.absent(),
@@ -2023,6 +2058,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     Expression<int>? summarizedAt,
     Expression<String>? replacedBy,
     Expression<String>? sourceMessageId,
+    Expression<String>? rawPayload,
     Expression<String>? conflictOf,
     Expression<int>? deletedAt,
     Expression<int>? purgeAt,
@@ -2039,6 +2075,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
       if (summarizedAt != null) 'summarized_at': summarizedAt,
       if (replacedBy != null) 'replaced_by': replacedBy,
       if (sourceMessageId != null) 'source_message_id': sourceMessageId,
+      if (rawPayload != null) 'raw_payload': rawPayload,
       if (conflictOf != null) 'conflict_of': conflictOf,
       if (deletedAt != null) 'deleted_at': deletedAt,
       if (purgeAt != null) 'purge_at': purgeAt,
@@ -2057,6 +2094,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
       Value<int?>? summarizedAt,
       Value<String?>? replacedBy,
       Value<String?>? sourceMessageId,
+      Value<String?>? rawPayload,
       Value<String?>? conflictOf,
       Value<int?>? deletedAt,
       Value<int?>? purgeAt,
@@ -2072,6 +2110,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
       summarizedAt: summarizedAt ?? this.summarizedAt,
       replacedBy: replacedBy ?? this.replacedBy,
       sourceMessageId: sourceMessageId ?? this.sourceMessageId,
+      rawPayload: rawPayload ?? this.rawPayload,
       conflictOf: conflictOf ?? this.conflictOf,
       deletedAt: deletedAt ?? this.deletedAt,
       purgeAt: purgeAt ?? this.purgeAt,
@@ -2110,6 +2149,9 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     if (sourceMessageId.present) {
       map['source_message_id'] = Variable<String>(sourceMessageId.value);
     }
+    if (rawPayload.present) {
+      map['raw_payload'] = Variable<String>(rawPayload.value);
+    }
     if (conflictOf.present) {
       map['conflict_of'] = Variable<String>(conflictOf.value);
     }
@@ -2140,9 +2182,489 @@ class MessagesCompanion extends UpdateCompanion<Message> {
           ..write('summarizedAt: $summarizedAt, ')
           ..write('replacedBy: $replacedBy, ')
           ..write('sourceMessageId: $sourceMessageId, ')
+          ..write('rawPayload: $rawPayload, ')
           ..write('conflictOf: $conflictOf, ')
           ..write('deletedAt: $deletedAt, ')
           ..write('purgeAt: $purgeAt, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $MessageProjectionMappingsTable extends MessageProjectionMappings
+    with TableInfo<$MessageProjectionMappingsTable, MessageProjectionMapping> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $MessageProjectionMappingsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+      'id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _conversationIdMeta =
+      const VerificationMeta('conversationId');
+  @override
+  late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
+      'conversation_id', aliasedName, false,
+      type: DriftSqlType.string,
+      requiredDuringInsert: true,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('REFERENCES conversations (id)'));
+  static const VerificationMeta _rawMessageIdMeta =
+      const VerificationMeta('rawMessageId');
+  @override
+  late final GeneratedColumn<String> rawMessageId = GeneratedColumn<String>(
+      'raw_message_id', aliasedName, false,
+      type: DriftSqlType.string,
+      requiredDuringInsert: true,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('REFERENCES messages (id)'));
+  static const VerificationMeta _projectedMessageIdMeta =
+      const VerificationMeta('projectedMessageId');
+  @override
+  late final GeneratedColumn<String> projectedMessageId =
+      GeneratedColumn<String>('projected_message_id', aliasedName, false,
+          type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _projectionKindMeta =
+      const VerificationMeta('projectionKind');
+  @override
+  late final GeneratedColumn<String> projectionKind = GeneratedColumn<String>(
+      'projection_kind', aliasedName, false,
+      type: DriftSqlType.string,
+      requiredDuringInsert: false,
+      defaultValue: const Constant('message'));
+  static const VerificationMeta _segmentIndexMeta =
+      const VerificationMeta('segmentIndex');
+  @override
+  late final GeneratedColumn<int> segmentIndex = GeneratedColumn<int>(
+      'segment_index', aliasedName, false,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultValue: const Constant(0));
+  static const VerificationMeta _projectionVersionMeta =
+      const VerificationMeta('projectionVersion');
+  @override
+  late final GeneratedColumn<String> projectionVersion =
+      GeneratedColumn<String>('projection_version', aliasedName, true,
+          type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _createdAtMeta =
+      const VerificationMeta('createdAt');
+  @override
+  late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
+      'created_at', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  @override
+  List<GeneratedColumn> get $columns => [
+        id,
+        conversationId,
+        rawMessageId,
+        projectedMessageId,
+        projectionKind,
+        segmentIndex,
+        projectionVersion,
+        createdAt
+      ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'message_projection_mappings';
+  @override
+  VerificationContext validateIntegrity(
+      Insertable<MessageProjectionMapping> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('conversation_id')) {
+      context.handle(
+          _conversationIdMeta,
+          conversationId.isAcceptableOrUnknown(
+              data['conversation_id']!, _conversationIdMeta));
+    } else if (isInserting) {
+      context.missing(_conversationIdMeta);
+    }
+    if (data.containsKey('raw_message_id')) {
+      context.handle(
+          _rawMessageIdMeta,
+          rawMessageId.isAcceptableOrUnknown(
+              data['raw_message_id']!, _rawMessageIdMeta));
+    } else if (isInserting) {
+      context.missing(_rawMessageIdMeta);
+    }
+    if (data.containsKey('projected_message_id')) {
+      context.handle(
+          _projectedMessageIdMeta,
+          projectedMessageId.isAcceptableOrUnknown(
+              data['projected_message_id']!, _projectedMessageIdMeta));
+    } else if (isInserting) {
+      context.missing(_projectedMessageIdMeta);
+    }
+    if (data.containsKey('projection_kind')) {
+      context.handle(
+          _projectionKindMeta,
+          projectionKind.isAcceptableOrUnknown(
+              data['projection_kind']!, _projectionKindMeta));
+    }
+    if (data.containsKey('segment_index')) {
+      context.handle(
+          _segmentIndexMeta,
+          segmentIndex.isAcceptableOrUnknown(
+              data['segment_index']!, _segmentIndexMeta));
+    }
+    if (data.containsKey('projection_version')) {
+      context.handle(
+          _projectionVersionMeta,
+          projectionVersion.isAcceptableOrUnknown(
+              data['projection_version']!, _projectionVersionMeta));
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(_createdAtMeta,
+          createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta));
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+        {rawMessageId, projectedMessageId},
+      ];
+  @override
+  MessageProjectionMapping map(Map<String, dynamic> data,
+      {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return MessageProjectionMapping(
+      id: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}id'])!,
+      conversationId: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}conversation_id'])!,
+      rawMessageId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}raw_message_id'])!,
+      projectedMessageId: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}projected_message_id'])!,
+      projectionKind: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}projection_kind'])!,
+      segmentIndex: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}segment_index'])!,
+      projectionVersion: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}projection_version']),
+      createdAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}created_at'])!,
+    );
+  }
+
+  @override
+  $MessageProjectionMappingsTable createAlias(String alias) {
+    return $MessageProjectionMappingsTable(attachedDatabase, alias);
+  }
+}
+
+class MessageProjectionMapping extends DataClass
+    implements Insertable<MessageProjectionMapping> {
+  final String id;
+  final String conversationId;
+  final String rawMessageId;
+  final String projectedMessageId;
+  final String projectionKind;
+  final int segmentIndex;
+  final String? projectionVersion;
+  final int createdAt;
+  const MessageProjectionMapping(
+      {required this.id,
+      required this.conversationId,
+      required this.rawMessageId,
+      required this.projectedMessageId,
+      required this.projectionKind,
+      required this.segmentIndex,
+      this.projectionVersion,
+      required this.createdAt});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['conversation_id'] = Variable<String>(conversationId);
+    map['raw_message_id'] = Variable<String>(rawMessageId);
+    map['projected_message_id'] = Variable<String>(projectedMessageId);
+    map['projection_kind'] = Variable<String>(projectionKind);
+    map['segment_index'] = Variable<int>(segmentIndex);
+    if (!nullToAbsent || projectionVersion != null) {
+      map['projection_version'] = Variable<String>(projectionVersion);
+    }
+    map['created_at'] = Variable<int>(createdAt);
+    return map;
+  }
+
+  MessageProjectionMappingsCompanion toCompanion(bool nullToAbsent) {
+    return MessageProjectionMappingsCompanion(
+      id: Value(id),
+      conversationId: Value(conversationId),
+      rawMessageId: Value(rawMessageId),
+      projectedMessageId: Value(projectedMessageId),
+      projectionKind: Value(projectionKind),
+      segmentIndex: Value(segmentIndex),
+      projectionVersion: projectionVersion == null && nullToAbsent
+          ? const Value.absent()
+          : Value(projectionVersion),
+      createdAt: Value(createdAt),
+    );
+  }
+
+  factory MessageProjectionMapping.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return MessageProjectionMapping(
+      id: serializer.fromJson<String>(json['id']),
+      conversationId: serializer.fromJson<String>(json['conversationId']),
+      rawMessageId: serializer.fromJson<String>(json['rawMessageId']),
+      projectedMessageId:
+          serializer.fromJson<String>(json['projectedMessageId']),
+      projectionKind: serializer.fromJson<String>(json['projectionKind']),
+      segmentIndex: serializer.fromJson<int>(json['segmentIndex']),
+      projectionVersion:
+          serializer.fromJson<String?>(json['projectionVersion']),
+      createdAt: serializer.fromJson<int>(json['createdAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'conversationId': serializer.toJson<String>(conversationId),
+      'rawMessageId': serializer.toJson<String>(rawMessageId),
+      'projectedMessageId': serializer.toJson<String>(projectedMessageId),
+      'projectionKind': serializer.toJson<String>(projectionKind),
+      'segmentIndex': serializer.toJson<int>(segmentIndex),
+      'projectionVersion': serializer.toJson<String?>(projectionVersion),
+      'createdAt': serializer.toJson<int>(createdAt),
+    };
+  }
+
+  MessageProjectionMapping copyWith(
+          {String? id,
+          String? conversationId,
+          String? rawMessageId,
+          String? projectedMessageId,
+          String? projectionKind,
+          int? segmentIndex,
+          Value<String?> projectionVersion = const Value.absent(),
+          int? createdAt}) =>
+      MessageProjectionMapping(
+        id: id ?? this.id,
+        conversationId: conversationId ?? this.conversationId,
+        rawMessageId: rawMessageId ?? this.rawMessageId,
+        projectedMessageId: projectedMessageId ?? this.projectedMessageId,
+        projectionKind: projectionKind ?? this.projectionKind,
+        segmentIndex: segmentIndex ?? this.segmentIndex,
+        projectionVersion: projectionVersion.present
+            ? projectionVersion.value
+            : this.projectionVersion,
+        createdAt: createdAt ?? this.createdAt,
+      );
+  MessageProjectionMapping copyWithCompanion(
+      MessageProjectionMappingsCompanion data) {
+    return MessageProjectionMapping(
+      id: data.id.present ? data.id.value : this.id,
+      conversationId: data.conversationId.present
+          ? data.conversationId.value
+          : this.conversationId,
+      rawMessageId: data.rawMessageId.present
+          ? data.rawMessageId.value
+          : this.rawMessageId,
+      projectedMessageId: data.projectedMessageId.present
+          ? data.projectedMessageId.value
+          : this.projectedMessageId,
+      projectionKind: data.projectionKind.present
+          ? data.projectionKind.value
+          : this.projectionKind,
+      segmentIndex: data.segmentIndex.present
+          ? data.segmentIndex.value
+          : this.segmentIndex,
+      projectionVersion: data.projectionVersion.present
+          ? data.projectionVersion.value
+          : this.projectionVersion,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('MessageProjectionMapping(')
+          ..write('id: $id, ')
+          ..write('conversationId: $conversationId, ')
+          ..write('rawMessageId: $rawMessageId, ')
+          ..write('projectedMessageId: $projectedMessageId, ')
+          ..write('projectionKind: $projectionKind, ')
+          ..write('segmentIndex: $segmentIndex, ')
+          ..write('projectionVersion: $projectionVersion, ')
+          ..write('createdAt: $createdAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+      id,
+      conversationId,
+      rawMessageId,
+      projectedMessageId,
+      projectionKind,
+      segmentIndex,
+      projectionVersion,
+      createdAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is MessageProjectionMapping &&
+          other.id == this.id &&
+          other.conversationId == this.conversationId &&
+          other.rawMessageId == this.rawMessageId &&
+          other.projectedMessageId == this.projectedMessageId &&
+          other.projectionKind == this.projectionKind &&
+          other.segmentIndex == this.segmentIndex &&
+          other.projectionVersion == this.projectionVersion &&
+          other.createdAt == this.createdAt);
+}
+
+class MessageProjectionMappingsCompanion
+    extends UpdateCompanion<MessageProjectionMapping> {
+  final Value<String> id;
+  final Value<String> conversationId;
+  final Value<String> rawMessageId;
+  final Value<String> projectedMessageId;
+  final Value<String> projectionKind;
+  final Value<int> segmentIndex;
+  final Value<String?> projectionVersion;
+  final Value<int> createdAt;
+  final Value<int> rowid;
+  const MessageProjectionMappingsCompanion({
+    this.id = const Value.absent(),
+    this.conversationId = const Value.absent(),
+    this.rawMessageId = const Value.absent(),
+    this.projectedMessageId = const Value.absent(),
+    this.projectionKind = const Value.absent(),
+    this.segmentIndex = const Value.absent(),
+    this.projectionVersion = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  MessageProjectionMappingsCompanion.insert({
+    required String id,
+    required String conversationId,
+    required String rawMessageId,
+    required String projectedMessageId,
+    this.projectionKind = const Value.absent(),
+    this.segmentIndex = const Value.absent(),
+    this.projectionVersion = const Value.absent(),
+    required int createdAt,
+    this.rowid = const Value.absent(),
+  })  : id = Value(id),
+        conversationId = Value(conversationId),
+        rawMessageId = Value(rawMessageId),
+        projectedMessageId = Value(projectedMessageId),
+        createdAt = Value(createdAt);
+  static Insertable<MessageProjectionMapping> custom({
+    Expression<String>? id,
+    Expression<String>? conversationId,
+    Expression<String>? rawMessageId,
+    Expression<String>? projectedMessageId,
+    Expression<String>? projectionKind,
+    Expression<int>? segmentIndex,
+    Expression<String>? projectionVersion,
+    Expression<int>? createdAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (conversationId != null) 'conversation_id': conversationId,
+      if (rawMessageId != null) 'raw_message_id': rawMessageId,
+      if (projectedMessageId != null)
+        'projected_message_id': projectedMessageId,
+      if (projectionKind != null) 'projection_kind': projectionKind,
+      if (segmentIndex != null) 'segment_index': segmentIndex,
+      if (projectionVersion != null) 'projection_version': projectionVersion,
+      if (createdAt != null) 'created_at': createdAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  MessageProjectionMappingsCompanion copyWith(
+      {Value<String>? id,
+      Value<String>? conversationId,
+      Value<String>? rawMessageId,
+      Value<String>? projectedMessageId,
+      Value<String>? projectionKind,
+      Value<int>? segmentIndex,
+      Value<String?>? projectionVersion,
+      Value<int>? createdAt,
+      Value<int>? rowid}) {
+    return MessageProjectionMappingsCompanion(
+      id: id ?? this.id,
+      conversationId: conversationId ?? this.conversationId,
+      rawMessageId: rawMessageId ?? this.rawMessageId,
+      projectedMessageId: projectedMessageId ?? this.projectedMessageId,
+      projectionKind: projectionKind ?? this.projectionKind,
+      segmentIndex: segmentIndex ?? this.segmentIndex,
+      projectionVersion: projectionVersion ?? this.projectionVersion,
+      createdAt: createdAt ?? this.createdAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (conversationId.present) {
+      map['conversation_id'] = Variable<String>(conversationId.value);
+    }
+    if (rawMessageId.present) {
+      map['raw_message_id'] = Variable<String>(rawMessageId.value);
+    }
+    if (projectedMessageId.present) {
+      map['projected_message_id'] = Variable<String>(projectedMessageId.value);
+    }
+    if (projectionKind.present) {
+      map['projection_kind'] = Variable<String>(projectionKind.value);
+    }
+    if (segmentIndex.present) {
+      map['segment_index'] = Variable<int>(segmentIndex.value);
+    }
+    if (projectionVersion.present) {
+      map['projection_version'] = Variable<String>(projectionVersion.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<int>(createdAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('MessageProjectionMappingsCompanion(')
+          ..write('id: $id, ')
+          ..write('conversationId: $conversationId, ')
+          ..write('rawMessageId: $rawMessageId, ')
+          ..write('projectedMessageId: $projectedMessageId, ')
+          ..write('projectionKind: $projectionKind, ')
+          ..write('segmentIndex: $segmentIndex, ')
+          ..write('projectionVersion: $projectionVersion, ')
           ..write('createdAt: $createdAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
@@ -6850,6 +7372,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
   late final $ConversationsTable conversations = $ConversationsTable(this);
   late final $MessagesTable messages = $MessagesTable(this);
+  late final $MessageProjectionMappingsTable messageProjectionMappings =
+      $MessageProjectionMappingsTable(this);
   late final $MessageBlocksTable messageBlocks = $MessageBlocksTable(this);
   late final $ProvidersTable providers = $ProvidersTable(this);
   late final $SyncScopesTable syncScopes = $SyncScopesTable(this);
@@ -6869,6 +7393,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   List<DatabaseSchemaEntity> get allSchemaEntities => [
         conversations,
         messages,
+        messageProjectionMappings,
         messageBlocks,
         providers,
         syncScopes,
@@ -7279,6 +7804,25 @@ class $$ConversationsTableFilterComposer
     return f(composer);
   }
 
+  ComposableFilter messageProjectionMappingsRefs(
+      ComposableFilter Function(
+              $$MessageProjectionMappingsTableFilterComposer f)
+          f) {
+    final $$MessageProjectionMappingsTableFilterComposer composer =
+        $state.composerBuilder(
+            composer: this,
+            getCurrentColumn: (t) => t.id,
+            referencedTable: $state.db.messageProjectionMappings,
+            getReferencedColumn: (t) => t.conversationId,
+            builder: (joinBuilder, parentComposers) =>
+                $$MessageProjectionMappingsTableFilterComposer(ComposerState(
+                    $state.db,
+                    $state.db.messageProjectionMappings,
+                    joinBuilder,
+                    parentComposers)));
+    return f(composer);
+  }
+
   ComposableFilter memoriesRefs(
       ComposableFilter Function($$MemoriesTableFilterComposer f) f) {
     final $$MemoriesTableFilterComposer composer = $state.composerBuilder(
@@ -7495,6 +8039,7 @@ typedef $$MessagesTableCreateCompanionBuilder = MessagesCompanion Function({
   Value<int?> summarizedAt,
   Value<String?> replacedBy,
   Value<String?> sourceMessageId,
+  Value<String?> rawPayload,
   Value<String?> conflictOf,
   Value<int?> deletedAt,
   Value<int?> purgeAt,
@@ -7511,6 +8056,7 @@ typedef $$MessagesTableUpdateCompanionBuilder = MessagesCompanion Function({
   Value<int?> summarizedAt,
   Value<String?> replacedBy,
   Value<String?> sourceMessageId,
+  Value<String?> rawPayload,
   Value<String?> conflictOf,
   Value<int?> deletedAt,
   Value<int?> purgeAt,
@@ -7544,6 +8090,7 @@ class $$MessagesTableTableManager extends RootTableManager<
             Value<int?> summarizedAt = const Value.absent(),
             Value<String?> replacedBy = const Value.absent(),
             Value<String?> sourceMessageId = const Value.absent(),
+            Value<String?> rawPayload = const Value.absent(),
             Value<String?> conflictOf = const Value.absent(),
             Value<int?> deletedAt = const Value.absent(),
             Value<int?> purgeAt = const Value.absent(),
@@ -7560,6 +8107,7 @@ class $$MessagesTableTableManager extends RootTableManager<
             summarizedAt: summarizedAt,
             replacedBy: replacedBy,
             sourceMessageId: sourceMessageId,
+            rawPayload: rawPayload,
             conflictOf: conflictOf,
             deletedAt: deletedAt,
             purgeAt: purgeAt,
@@ -7576,6 +8124,7 @@ class $$MessagesTableTableManager extends RootTableManager<
             Value<int?> summarizedAt = const Value.absent(),
             Value<String?> replacedBy = const Value.absent(),
             Value<String?> sourceMessageId = const Value.absent(),
+            Value<String?> rawPayload = const Value.absent(),
             Value<String?> conflictOf = const Value.absent(),
             Value<int?> deletedAt = const Value.absent(),
             Value<int?> purgeAt = const Value.absent(),
@@ -7592,6 +8141,7 @@ class $$MessagesTableTableManager extends RootTableManager<
             summarizedAt: summarizedAt,
             replacedBy: replacedBy,
             sourceMessageId: sourceMessageId,
+            rawPayload: rawPayload,
             conflictOf: conflictOf,
             deletedAt: deletedAt,
             purgeAt: purgeAt,
@@ -7644,6 +8194,11 @@ class $$MessagesTableFilterComposer
       builder: (column, joinBuilders) =>
           ColumnFilters(column, joinBuilders: joinBuilders));
 
+  ColumnFilters<String> get rawPayload => $state.composableBuilder(
+      column: $state.table.rawPayload,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
   ColumnFilters<String> get conflictOf => $state.composableBuilder(
       column: $state.table.conflictOf,
       builder: (column, joinBuilders) =>
@@ -7674,6 +8229,25 @@ class $$MessagesTableFilterComposer
             $$ConversationsTableFilterComposer(ComposerState($state.db,
                 $state.db.conversations, joinBuilder, parentComposers)));
     return composer;
+  }
+
+  ComposableFilter messageProjectionMappingsRefs(
+      ComposableFilter Function(
+              $$MessageProjectionMappingsTableFilterComposer f)
+          f) {
+    final $$MessageProjectionMappingsTableFilterComposer composer =
+        $state.composerBuilder(
+            composer: this,
+            getCurrentColumn: (t) => t.id,
+            referencedTable: $state.db.messageProjectionMappings,
+            getReferencedColumn: (t) => t.rawMessageId,
+            builder: (joinBuilder, parentComposers) =>
+                $$MessageProjectionMappingsTableFilterComposer(ComposerState(
+                    $state.db,
+                    $state.db.messageProjectionMappings,
+                    joinBuilder,
+                    parentComposers)));
+    return f(composer);
   }
 
   ComposableFilter messageBlocksRefs(
@@ -7733,6 +8307,11 @@ class $$MessagesTableOrderingComposer
       builder: (column, joinBuilders) =>
           ColumnOrderings(column, joinBuilders: joinBuilders));
 
+  ColumnOrderings<String> get rawPayload => $state.composableBuilder(
+      column: $state.table.rawPayload,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
   ColumnOrderings<String> get conflictOf => $state.composableBuilder(
       column: $state.table.conflictOf,
       builder: (column, joinBuilders) =>
@@ -7763,6 +8342,212 @@ class $$MessagesTableOrderingComposer
             builder: (joinBuilder, parentComposers) =>
                 $$ConversationsTableOrderingComposer(ComposerState($state.db,
                     $state.db.conversations, joinBuilder, parentComposers)));
+    return composer;
+  }
+}
+
+typedef $$MessageProjectionMappingsTableCreateCompanionBuilder
+    = MessageProjectionMappingsCompanion Function({
+  required String id,
+  required String conversationId,
+  required String rawMessageId,
+  required String projectedMessageId,
+  Value<String> projectionKind,
+  Value<int> segmentIndex,
+  Value<String?> projectionVersion,
+  required int createdAt,
+  Value<int> rowid,
+});
+typedef $$MessageProjectionMappingsTableUpdateCompanionBuilder
+    = MessageProjectionMappingsCompanion Function({
+  Value<String> id,
+  Value<String> conversationId,
+  Value<String> rawMessageId,
+  Value<String> projectedMessageId,
+  Value<String> projectionKind,
+  Value<int> segmentIndex,
+  Value<String?> projectionVersion,
+  Value<int> createdAt,
+  Value<int> rowid,
+});
+
+class $$MessageProjectionMappingsTableTableManager extends RootTableManager<
+    _$AppDatabase,
+    $MessageProjectionMappingsTable,
+    MessageProjectionMapping,
+    $$MessageProjectionMappingsTableFilterComposer,
+    $$MessageProjectionMappingsTableOrderingComposer,
+    $$MessageProjectionMappingsTableCreateCompanionBuilder,
+    $$MessageProjectionMappingsTableUpdateCompanionBuilder> {
+  $$MessageProjectionMappingsTableTableManager(
+      _$AppDatabase db, $MessageProjectionMappingsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          filteringComposer: $$MessageProjectionMappingsTableFilterComposer(
+              ComposerState(db, table)),
+          orderingComposer: $$MessageProjectionMappingsTableOrderingComposer(
+              ComposerState(db, table)),
+          updateCompanionCallback: ({
+            Value<String> id = const Value.absent(),
+            Value<String> conversationId = const Value.absent(),
+            Value<String> rawMessageId = const Value.absent(),
+            Value<String> projectedMessageId = const Value.absent(),
+            Value<String> projectionKind = const Value.absent(),
+            Value<int> segmentIndex = const Value.absent(),
+            Value<String?> projectionVersion = const Value.absent(),
+            Value<int> createdAt = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              MessageProjectionMappingsCompanion(
+            id: id,
+            conversationId: conversationId,
+            rawMessageId: rawMessageId,
+            projectedMessageId: projectedMessageId,
+            projectionKind: projectionKind,
+            segmentIndex: segmentIndex,
+            projectionVersion: projectionVersion,
+            createdAt: createdAt,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String id,
+            required String conversationId,
+            required String rawMessageId,
+            required String projectedMessageId,
+            Value<String> projectionKind = const Value.absent(),
+            Value<int> segmentIndex = const Value.absent(),
+            Value<String?> projectionVersion = const Value.absent(),
+            required int createdAt,
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              MessageProjectionMappingsCompanion.insert(
+            id: id,
+            conversationId: conversationId,
+            rawMessageId: rawMessageId,
+            projectedMessageId: projectedMessageId,
+            projectionKind: projectionKind,
+            segmentIndex: segmentIndex,
+            projectionVersion: projectionVersion,
+            createdAt: createdAt,
+            rowid: rowid,
+          ),
+        ));
+}
+
+class $$MessageProjectionMappingsTableFilterComposer
+    extends FilterComposer<_$AppDatabase, $MessageProjectionMappingsTable> {
+  $$MessageProjectionMappingsTableFilterComposer(super.$state);
+  ColumnFilters<String> get id => $state.composableBuilder(
+      column: $state.table.id,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get projectedMessageId => $state.composableBuilder(
+      column: $state.table.projectedMessageId,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get projectionKind => $state.composableBuilder(
+      column: $state.table.projectionKind,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get segmentIndex => $state.composableBuilder(
+      column: $state.table.segmentIndex,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get projectionVersion => $state.composableBuilder(
+      column: $state.table.projectionVersion,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get createdAt => $state.composableBuilder(
+      column: $state.table.createdAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  $$ConversationsTableFilterComposer get conversationId {
+    final $$ConversationsTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.conversationId,
+        referencedTable: $state.db.conversations,
+        getReferencedColumn: (t) => t.id,
+        builder: (joinBuilder, parentComposers) =>
+            $$ConversationsTableFilterComposer(ComposerState($state.db,
+                $state.db.conversations, joinBuilder, parentComposers)));
+    return composer;
+  }
+
+  $$MessagesTableFilterComposer get rawMessageId {
+    final $$MessagesTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.rawMessageId,
+        referencedTable: $state.db.messages,
+        getReferencedColumn: (t) => t.id,
+        builder: (joinBuilder, parentComposers) =>
+            $$MessagesTableFilterComposer(ComposerState(
+                $state.db, $state.db.messages, joinBuilder, parentComposers)));
+    return composer;
+  }
+}
+
+class $$MessageProjectionMappingsTableOrderingComposer
+    extends OrderingComposer<_$AppDatabase, $MessageProjectionMappingsTable> {
+  $$MessageProjectionMappingsTableOrderingComposer(super.$state);
+  ColumnOrderings<String> get id => $state.composableBuilder(
+      column: $state.table.id,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get projectedMessageId => $state.composableBuilder(
+      column: $state.table.projectedMessageId,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get projectionKind => $state.composableBuilder(
+      column: $state.table.projectionKind,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get segmentIndex => $state.composableBuilder(
+      column: $state.table.segmentIndex,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get projectionVersion => $state.composableBuilder(
+      column: $state.table.projectionVersion,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get createdAt => $state.composableBuilder(
+      column: $state.table.createdAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  $$ConversationsTableOrderingComposer get conversationId {
+    final $$ConversationsTableOrderingComposer composer =
+        $state.composerBuilder(
+            composer: this,
+            getCurrentColumn: (t) => t.conversationId,
+            referencedTable: $state.db.conversations,
+            getReferencedColumn: (t) => t.id,
+            builder: (joinBuilder, parentComposers) =>
+                $$ConversationsTableOrderingComposer(ComposerState($state.db,
+                    $state.db.conversations, joinBuilder, parentComposers)));
+    return composer;
+  }
+
+  $$MessagesTableOrderingComposer get rawMessageId {
+    final $$MessagesTableOrderingComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.rawMessageId,
+        referencedTable: $state.db.messages,
+        getReferencedColumn: (t) => t.id,
+        builder: (joinBuilder, parentComposers) =>
+            $$MessagesTableOrderingComposer(ComposerState(
+                $state.db, $state.db.messages, joinBuilder, parentComposers)));
     return composer;
   }
 }
@@ -9694,6 +10479,9 @@ class $AppDatabaseManager {
       $$ConversationsTableTableManager(_db, _db.conversations);
   $$MessagesTableTableManager get messages =>
       $$MessagesTableTableManager(_db, _db.messages);
+  $$MessageProjectionMappingsTableTableManager get messageProjectionMappings =>
+      $$MessageProjectionMappingsTableTableManager(
+          _db, _db.messageProjectionMappings);
   $$MessageBlocksTableTableManager get messageBlocks =>
       $$MessageBlocksTableTableManager(_db, _db.messageBlocks);
   $$ProvidersTableTableManager get providers =>

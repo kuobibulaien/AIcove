@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 // ignore: depend_on_referenced_packages
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
@@ -13,6 +14,8 @@ import 'package:aicove_flutter/src/core/database/converters/database_converters.
 import 'package:aicove_flutter/src/core/database/database_provider.dart';
 import 'package:aicove_flutter/src/core/models/message_block.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
+import 'package:aicove_flutter/src/features/chat/services/chat_history_store.dart';
+import 'package:aicove_flutter/src/features/chat/services/chat_message_projection_codec.dart';
 import 'package:aicove_flutter/src/features/chat/services/conversation_short_window_store.dart';
 
 class _FakePathProviderPlatform extends PathProviderPlatform {
@@ -69,6 +72,18 @@ String _snapshotFilePath(String rootPath, String conversationId) {
   );
 }
 
+Future<File> _writeTestPng(
+  String filePath, {
+  required int width,
+  required int height,
+}) async {
+  final image = img.Image(width: width, height: height);
+  final bytes = img.encodePng(image);
+  final file = File(filePath);
+  await file.writeAsBytes(bytes, flush: true);
+  return file;
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -86,7 +101,7 @@ void main() {
     }
   });
 
-  test('短列表首屏应返回最近 20 条原始消息', () async {
+  test('无短列表快照时，前台读取不应回退数据库', () async {
     tempDir = await Directory.systemTemp.createTemp('short_window_seed_');
     PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir!.path);
 
@@ -116,6 +131,55 @@ void main() {
     }
 
     final store = container.read(conversationShortWindowStoreProvider);
+    final window = await store
+        .watchWindow(
+          conversationId: 'conv-seed',
+          limit: 20,
+        )
+        .first;
+
+    expect(window.messages, isEmpty);
+    expect(window.hasMoreMessages, isFalse);
+    expect(
+      File(_snapshotFilePath(tempDir!.path, 'conv-seed')).existsSync(),
+      isFalse,
+    );
+  });
+
+  test('显式同步后，短列表首屏应返回最近 20 条原始消息', () async {
+    tempDir = await Directory.systemTemp.createTemp('short_window_seed_sync_');
+    PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir!.path);
+
+    final database = db.AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    final baseTime = DateTime(2026, 3, 22, 10, 0, 0).millisecondsSinceEpoch;
+    await _insertConversation(database, 'conv-seed', baseTime);
+
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(database),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    for (var i = 1; i <= 24; i++) {
+      await _persistMessage(
+        container,
+        'conv-seed',
+        Message(
+          id: 'm$i',
+          role: i.isOdd ? 'user' : 'assistant',
+          content: 'message-$i',
+          createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + i),
+        ),
+      );
+    }
+
+    final store = container.read(conversationShortWindowStoreProvider);
+    await store.syncConversation(
+      'conv-seed',
+      targetMessageCount: 20,
+    );
     final window = await store
         .watchWindow(
           conversationId: 'conv-seed',
@@ -181,6 +245,10 @@ void main() {
     }
 
     final store = container.read(conversationShortWindowStoreProvider);
+    await store.syncConversation(
+      'conv-expand',
+      targetMessageCount: 20,
+    );
     final initialWindow = await store
         .watchWindow(
           conversationId: 'conv-expand',
@@ -327,6 +395,77 @@ void main() {
     expect(window.messages.last.displayText, '第一段。第二段。');
   });
 
+  test('图文混合用户消息应拆成文字和图片两条，且图片成为最后一条消息', () async {
+    tempDir = await Directory.systemTemp.createTemp('short_window_user_mix_');
+    PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir!.path);
+
+    final database = db.AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    final baseTime = DateTime(2026, 3, 22, 11, 22, 0).millisecondsSinceEpoch;
+    await _insertConversation(database, 'conv-user-mix', baseTime);
+
+    final sourceImage = File(p.join(tempDir!.path, 'user_mix.jpg'));
+    await sourceImage.writeAsBytes(<int>[1, 2, 3, 4], flush: true);
+
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(database),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final historyStore = container.read(chatHistoryStoreProvider);
+    final userMessage = Message.fromBlocks(
+      id: 'user-mixed',
+      role: 'user',
+      createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 1),
+      status: 'sending',
+      blocks: <MessageBlock>[
+        ImageBlock(
+          messageId: 'user-mixed',
+          localPath: sourceImage.path,
+        ),
+        TextBlock(
+          messageId: 'user-mixed',
+          content: '先看文字',
+        ),
+      ],
+    );
+
+    await historyStore.appendUserMessage(
+      conversationId: 'conv-user-mix',
+      message: userMessage,
+      displayText: '先看文字',
+    );
+    await historyStore.markMessageStatus(
+      conversationId: 'conv-user-mix',
+      messageId: 'user-mixed',
+      status: 'sent',
+    );
+
+    final window = await container
+        .read(conversationShortWindowStoreProvider)
+        .watchWindow(
+          conversationId: 'conv-user-mix',
+          limit: 20,
+        )
+        .first;
+
+    expect(
+      window.messages.map((message) => message.id).toList(),
+      <String>['user-mixed__proj_00_text', 'user-mixed__proj_01_image'],
+    );
+    expect(window.messages.first.displayText, '先看文字');
+    expect(window.messages.last.displayText, '[图片]');
+    expect(
+        window.messages.every((message) => message.status == 'sent'), isTrue);
+
+    final conversation = await container
+        .read(conversationRepositoryProvider)
+        .getById('conv-user-mix');
+    expect(conversation?.lastMessage, '[图片]');
+  });
+
   test('loadOlderMessages 应保留短列表尾部临时收口消息，只向前补历史页', () async {
     tempDir = await Directory.systemTemp.createTemp('short_window_load_older_');
     PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir!.path);
@@ -357,6 +496,10 @@ void main() {
     }
 
     final store = container.read(conversationShortWindowStoreProvider);
+    await store.syncConversation(
+      'conv-load-older',
+      targetMessageCount: 20,
+    );
     final initialWindow = await store
         .watchWindow(
           conversationId: 'conv-load-older',
@@ -459,6 +602,10 @@ void main() {
     }
 
     final store = container.read(conversationShortWindowStoreProvider);
+    await store.syncConversation(
+      'conv-rebuild',
+      targetMessageCount: 20,
+    );
     await store.upsertMessages(
       conversationId: 'conv-rebuild',
       messages: <Message>[
@@ -501,6 +648,106 @@ void main() {
         .map((raw) => raw['id'] as String)
         .toList(growable: false);
     expect(ids, <String>['m1', 'm2']);
+  });
+
+  test('数据库原始 assistant 应恢复为前端投影消息并同步映射表', () async {
+    tempDir = await Directory.systemTemp.createTemp('short_window_projection_');
+    PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir!.path);
+
+    final database = db.AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    final baseTime = DateTime(2026, 3, 23, 9, 30, 0).millisecondsSinceEpoch;
+    await _insertConversation(database, 'conv-projection', baseTime);
+
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(database),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await _persistMessage(
+      container,
+      'conv-projection',
+      Message(
+        id: 'u1',
+        role: 'user',
+        content: '早上好',
+        createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 1),
+      ),
+    );
+
+    final projectedMessages = <Message>[
+      Message(
+        id: 'a1-text',
+        role: 'assistant',
+        sourceMessageId: 'raw-a1',
+        content: '给你画了一张图',
+        createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 2),
+      ),
+      Message.fromBlocks(
+        id: 'a1-image',
+        role: 'assistant',
+        sourceMessageId: 'raw-a1',
+        blocks: <MessageBlock>[
+          ImageBlock(
+            messageId: 'a1-image',
+            url: 'file:///projection-image.png',
+            prompt: 'sunrise',
+          ),
+        ],
+        createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 3),
+      ),
+    ];
+
+    await _persistMessage(
+      container,
+      'conv-projection',
+      Message(
+        id: 'raw-a1',
+        role: 'assistant',
+        content: '给你画了一张图<image>sunrise</image>',
+        createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 2),
+        rawPayload: ChatMessageProjectionCodec.copyWithProjectedMessages(
+          <String, dynamic>{
+            'rawReplyText': '给你画了一张图<image>sunrise</image>',
+          },
+          projectedMessages,
+        ),
+      ),
+    );
+
+    final store = container.read(conversationShortWindowStoreProvider);
+    await store.syncConversation(
+      'conv-projection',
+      targetMessageCount: 20,
+    );
+    final window = await store
+        .watchWindow(
+          conversationId: 'conv-projection',
+          limit: 20,
+        )
+        .first;
+
+    expect(
+      window.messages.map((message) => message.id).toList(),
+      <String>['u1', 'a1-text', 'a1-image'],
+    );
+
+    final mappings = await container
+        .read(messageProjectionMappingRepositoryProvider)
+        .getByConversation('conv-projection');
+    expect(
+      mappings.map((mapping) => mapping.projectedMessageId).toList(),
+      containsAll(<String>['u1', 'a1-text', 'a1-image']),
+    );
+    expect(
+      mappings
+          .where((mapping) => mapping.rawMessageId == 'raw-a1')
+          .map((mapping) => mapping.projectedMessageId)
+          .toList(),
+      <String>['a1-text', 'a1-image'],
+    );
   });
 
   test('图片和语音消息应落为短列表自有本地文件并可跨重启恢复', () async {
@@ -546,6 +793,10 @@ void main() {
     await _persistMessage(container, 'conv-media', mediaMessage);
 
     final store = container.read(conversationShortWindowStoreProvider);
+    await store.syncConversation(
+      'conv-media',
+      targetMessageCount: 20,
+    );
     final window = await store
         .watchWindow(
           conversationId: 'conv-media',
@@ -584,5 +835,79 @@ void main() {
 
     expect(restartedImage.localPath, equals(imageBlock.localPath));
     expect(restartedAudio.url, equals(audioBlock.url));
+  });
+
+  test('旧短列表快照缺少图片宽高时，应在首次读取前补齐并持久化', () async {
+    tempDir = await Directory.systemTemp.createTemp('short_window_image_dim_');
+    PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir!.path);
+
+    final database = db.AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    final baseTime = DateTime(2026, 3, 23, 12, 30, 0).millisecondsSinceEpoch;
+    await _insertConversation(database, 'conv-image-dim', baseTime);
+
+    final sourceImage = await _writeTestPng(
+      p.join(tempDir!.path, 'source_size.png'),
+      width: 6,
+      height: 3,
+    );
+    final staleMessage = Message.fromBlocks(
+      id: 'msg-image-dim',
+      role: 'assistant',
+      blocks: <MessageBlock>[
+        ImageBlock(
+          messageId: 'msg-image-dim',
+          localPath: sourceImage.path,
+        ),
+      ],
+      createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 1),
+    );
+
+    final snapshotFile =
+        File(_snapshotFilePath(tempDir!.path, 'conv-image-dim'));
+    await snapshotFile.parent.create(recursive: true);
+    await snapshotFile.writeAsString(
+      jsonEncode(<String, dynamic>{
+        'version': 1,
+        'conversationId': 'conv-image-dim',
+        'hasMoreMessages': false,
+        'updatedAt': baseTime,
+        'messages': <Map<String, dynamic>>[
+          ChatMessageProjectionCodec.serializeMessage(staleMessage),
+        ],
+      }),
+      flush: true,
+    );
+
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(database),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final window = await container
+        .read(conversationShortWindowStoreProvider)
+        .watchWindow(
+          conversationId: 'conv-image-dim',
+          limit: 20,
+        )
+        .first;
+    final imageBlock =
+        window.messages.single.blocks!.whereType<ImageBlock>().single;
+
+    expect(imageBlock.width, 6);
+    expect(imageBlock.height, 3);
+    expect(imageBlock.localPath, isNotNull);
+    expect(await File(imageBlock.localPath!).exists(), isTrue);
+
+    final payload =
+        jsonDecode(await snapshotFile.readAsString()) as Map<String, dynamic>;
+    final rawMessage =
+        (payload['messages'] as List<dynamic>).single as Map<String, dynamic>;
+    final rawImage =
+        (rawMessage['blocks'] as List<dynamic>).single as Map<String, dynamic>;
+    expect(rawImage['width'], 6);
+    expect(rawImage['height'], 3);
   });
 }

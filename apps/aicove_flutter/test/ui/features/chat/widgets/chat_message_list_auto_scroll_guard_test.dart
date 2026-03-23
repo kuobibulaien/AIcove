@@ -12,6 +12,7 @@ import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
 import 'package:aicove_flutter/src/core/models/block_status.dart';
 import 'package:aicove_flutter/src/core/models/message_block.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
+import 'package:aicove_flutter/src/ui/features/chat/widgets/animated_message_item.dart';
 import 'package:aicove_flutter/src/ui/features/chat/widgets/chat_message_list.dart';
 import 'package:aicove_flutter/src/ui/features/chat/widgets/chat_message_list_display_cache.dart';
 import 'package:aicove_flutter/src/ui/features/chat/widgets/chat_viewport_controller.dart';
@@ -483,6 +484,20 @@ class _PagingChatListHarnessState extends State<_PagingChatListHarness> {
     });
   }
 
+  void replaceTimeline(
+    List<Message> messages, {
+    bool? isLoadingMore,
+    bool? hasMoreMessages,
+    List<Message>? transientMessages,
+  }) {
+    setState(() {
+      _messages = List<Message>.from(messages);
+      _isLoadingMore = isLoadingMore ?? _isLoadingMore;
+      _hasMoreMessages = hasMoreMessages ?? _hasMoreMessages;
+      _transientMessages = transientMessages ?? const <Message>[];
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return ChatMessageList(
@@ -587,7 +602,6 @@ Widget _buildHostWithMessages({
   required AppSettings settings,
   required List<Message> messages,
   List<Message> transientMessages = const <Message>[],
-  bool allowPersistentViewportBoot = false,
   Future<void> Function()? onLoadMore,
   bool isLoadingMore = false,
   bool hasMoreMessages = true,
@@ -596,8 +610,6 @@ Widget _buildHostWithMessages({
   ChatViewportController? viewportController,
   ValueChanged<int>? onDebugListItemCountChanged,
   ValueChanged<String>? onDebugAutoScrollRequested,
-  ValueChanged<int>? onPersistentViewportVisibleCountResolved,
-  ValueChanged<bool>? onPersistentViewportHasMoreResolved,
 }) {
   return ProviderScope(
     overrides: [
@@ -625,11 +637,6 @@ Widget _buildHostWithMessages({
                 onLoadMore: onLoadMore,
                 isLoadingMore: isLoadingMore,
                 hasMoreMessages: hasMoreMessages,
-                allowPersistentViewportBoot: allowPersistentViewportBoot,
-                onPersistentViewportVisibleCountResolved:
-                    onPersistentViewportVisibleCountResolved,
-                onPersistentViewportHasMoreResolved:
-                    onPersistentViewportHasMoreResolved,
                 onDebugListItemCountChanged: onDebugListItemCountChanged,
                 onDebugAutoScrollRequested: onDebugAutoScrollRequested,
               ),
@@ -644,19 +651,6 @@ Widget _buildHostWithMessages({
 double _distanceToBottom(ScrollController controller) {
   final position = controller.position;
   return position.pixels - position.minScrollExtent;
-}
-
-String _buildFormatSignatureForTest(MessageFormatConfig config) {
-  final activePunctuations = config.effectiveChunkPunctuations.join(',');
-  final filterPunctuations = config.filterPunctuations.join(',');
-  return [
-    config.enableChunking,
-    config.filterPunctuation,
-    activePunctuations,
-    filterPunctuations,
-    config.minSegmentLength,
-    config.protectQuotes,
-  ].join('|');
 }
 
 GlobalKey _extractBubbleGestureKey(WidgetTester tester, String messageId) {
@@ -700,6 +694,22 @@ void main() {
     if (tempDir != null && await tempDir!.exists()) {
       await tempDir!.delete(recursive: true);
     }
+  });
+
+  testWidgets('新消息组件应提供轻量入场动画包装', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: AnimatedMessageItem(
+            child: Text('animated child'),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byType(FadeTransition), findsOneWidget);
+    expect(find.byType(SizeTransition), findsOneWidget);
+    expect(find.text('animated child'), findsOneWidget);
   });
 
   test('持久快照按最近 5 轮问答收口，并保留同轮多模态拆分消息', () async {
@@ -964,6 +974,15 @@ void main() {
       find.byKey(const ValueKey<String>('chat_jump_to_latest_badge')),
     );
     await tester.pump();
+
+    controller = tester.widget<CustomScrollView>(listFinder).controller!;
+    final gapRightAfterTap = _distanceToBottom(controller);
+    expect(
+      gapRightAfterTap,
+      greaterThan(8),
+      reason: '用户主动点回到底部后，首帧应先进入动画，而不是立刻瞬移到底部',
+    );
+
     await tester.pumpAndSettle();
 
     controller = tester.widget<CustomScrollView>(listFinder).controller!;
@@ -1074,10 +1093,70 @@ void main() {
     harnessKey.currentState!.forceScrollToBottomFromSend();
     harnessKey.currentState!.appendUserMessage();
     await tester.pump();
+
+    controller = tester.widget<CustomScrollView>(listFinder).controller!;
+    final gapRightAfterSend = _distanceToBottom(controller);
+    expect(
+      gapRightAfterSend,
+      greaterThan(8),
+      reason: '用户发送后应通过动画回到底部，首帧不应直接瞬移贴底',
+    );
+
     await tester.pumpAndSettle();
 
     controller = tester.widget<CustomScrollView>(listFinder).controller!;
     expect(_distanceToBottom(controller), lessThanOrEqualTo(8));
+  });
+
+  testWidgets('先清空旧轮次再插入新用户消息时，不应继续保留旧 assistant 回复', (tester) async {
+    final harnessKey = GlobalKey<_PagingChatListHarnessState>();
+    final baseTime = DateTime(2026, 1, 2, 9, 0, 0);
+    var latestItemCount = -1;
+    final initialMessages = <Message>[
+      ..._buildInitialMessages(60),
+      Message.text(
+        id: 'old_user',
+        role: 'user',
+        content: '原用户消息',
+        createdAt: baseTime,
+        status: 'sent',
+      ),
+      Message.text(
+        id: 'old_ai',
+        role: 'assistant',
+        content: '旧的回复',
+        createdAt: baseTime.add(const Duration(minutes: 1)),
+        status: 'sent',
+      ),
+    ];
+
+    await tester.pumpWidget(
+      _buildPagingHost(
+        harnessKey,
+        initialMessages: initialMessages,
+        onDebugListItemCountChanged: (count) => latestItemCount = count,
+      ),
+    );
+    await tester.pumpAndSettle();
+    for (var index = 0; index < 20 && latestItemCount <= 0; index++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(latestItemCount, greaterThan(0));
+    harnessKey.currentState!.replaceTimeline(
+      const <Message>[],
+      hasMoreMessages: true,
+    );
+    await tester.pump();
+    await tester.pumpAndSettle();
+    for (var index = 0; index < 20 && latestItemCount > 0; index++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+
+    expect(
+      latestItemCount,
+      0,
+      reason: '重生成截空后，如果后端新消息还没回来，旧 assistant 列表项也必须立即消失',
+    );
   });
 
   testWidgets('贴底状态下，AI 新消息不应自动请求回底', (tester) async {
@@ -1174,6 +1253,222 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(autoScrollReasons, isEmpty);
+  });
+
+  testWidgets('贴底状态下，尾消息分段后最后一段仍应贴着输入框上沿可见', (tester) async {
+    final settings = _buildSettings().copyWith(
+      messageChunkingEnabled: true,
+      messageFormatConfig: const MessageFormatConfig(
+        enableChunking: true,
+        chunkPunctuations: <String>['。'],
+        minSegmentLength: 1,
+      ),
+    );
+    final viewportController = ChatViewportController();
+    final autoScrollReasons = <String>[];
+    final baseMessages = _buildInitialMessages(40);
+    final tailBaseTime = baseMessages.last.createdAt;
+    const bottomOverlayHeight = 188.0;
+    const tailMessageId = 'tail_streaming_message';
+    const bottomChunkText = '第三句。';
+
+    final beforeMessages = <Message>[
+      ...baseMessages,
+      Message.text(
+        id: tailMessageId,
+        role: 'assistant',
+        content: '第一句很长很长，用来让底部消息在输入区升高后更容易被遮住。第二句也会继续拉高尾部区域。第三句。',
+        createdAt: tailBaseTime.add(const Duration(minutes: 1)),
+        status: 'sending',
+      ),
+    ];
+
+    await tester.pumpWidget(
+      _buildHostWithMessages(
+        settings: settings,
+        messages: beforeMessages,
+        bottomOverlayHeight: 0,
+        viewportController: viewportController,
+        onDebugAutoScrollRequested: autoScrollReasons.add,
+      ),
+    );
+    await tester.pumpAndSettle();
+    autoScrollReasons.clear();
+
+    final listFinder = find.byType(CustomScrollView);
+    expect(listFinder, findsOneWidget);
+    final controllerBefore =
+        tester.widget<CustomScrollView>(listFinder).controller!;
+    expect(
+      _distanceToBottom(controllerBefore),
+      lessThanOrEqualTo(24.0),
+      reason: '前置条件：尾消息收尾前，列表应先停留在最新消息附近',
+    );
+
+    final afterMessages = beforeMessages
+        .map((message) => message.id == tailMessageId
+            ? _replaceMessageText(
+                message,
+                '第一句很长很长，用来让底部消息在输入区升高后更容易被遮住。第二句也会继续拉高尾部区域。第三句。',
+                status: 'sent',
+              )
+            : message)
+        .toList(growable: false);
+
+    await tester.pumpWidget(
+      _buildHostWithMessages(
+        settings: settings,
+        messages: afterMessages,
+        bottomOverlayHeight: bottomOverlayHeight,
+        viewportController: viewportController,
+        onDebugAutoScrollRequested: autoScrollReasons.add,
+      ),
+    );
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    final controllerAfter =
+        tester.widget<CustomScrollView>(listFinder).controller!;
+    final bottomChunkFinder = find.byKey(
+      const ValueKey<String>('message_bubble_${tailMessageId}_chunk_2'),
+    );
+    expect(bottomChunkFinder, findsOneWidget);
+
+    final chatListRect = tester.getRect(find.byType(ChatMessageList));
+    final visibleBottomDy = chatListRect.bottom - bottomOverlayHeight;
+    final bottomChunkRect = tester.getRect(bottomChunkFinder);
+
+    expect(
+      _distanceToBottom(controllerAfter),
+      lessThanOrEqualTo(18.0),
+      reason: '尾消息分段后，贴底模式仍应继续守住输入框上沿这个可见底部',
+    );
+    expect(
+      visibleBottomDy - bottomChunkRect.bottom,
+      lessThan(28.0),
+      reason: '最后一段应贴近输入框上沿，而不是继续躲到输入框下面',
+    );
+    expect(
+      find.text(bottomChunkText),
+      findsWidgets,
+      reason: '尾消息分段后，最后一段文本必须仍然处于可见区域',
+    );
+    expect(
+      autoScrollReasons,
+      isEmpty,
+      reason: '这类贴底补偿应在视窗内部完成，不应额外发起显式回底请求',
+    );
+    viewportController.dispose();
+  });
+
+  testWidgets('贴底状态下，中间消息原位增高后仍应保持底部稳定', (tester) async {
+    final settings = _buildSettings();
+    final viewportController = ChatViewportController();
+    final autoScrollReasons = <String>[];
+    final baseMessages = _buildInitialMessages(36);
+    final tailBaseTime = baseMessages.last.createdAt;
+    const chatListKey = ValueKey<String>('follow_latest_in_place_growth');
+
+    final beforeMessages = <Message>[
+      ...baseMessages,
+      Message.text(
+        id: 'turn_msg_a',
+        role: 'assistant',
+        content: '第一句。',
+        createdAt: tailBaseTime.add(const Duration(minutes: 1)),
+        status: 'sent',
+      ),
+      Message.text(
+        id: 'turn_msg_mutating',
+        role: 'assistant',
+        content: '中间占位。',
+        createdAt: tailBaseTime.add(const Duration(minutes: 2)),
+        status: 'sent',
+      ),
+      Message.text(
+        id: 'turn_msg_b',
+        role: 'assistant',
+        content: '第二句。',
+        createdAt: tailBaseTime.add(const Duration(minutes: 3)),
+        status: 'sent',
+      ),
+      Message.text(
+        id: 'turn_msg_c',
+        role: 'assistant',
+        content: '第三句。',
+        createdAt: tailBaseTime.add(const Duration(minutes: 4)),
+        status: 'sent',
+      ),
+    ];
+
+    await tester.pumpWidget(
+      _buildHostWithMessages(
+        settings: settings,
+        messages: beforeMessages,
+        chatListKey: chatListKey,
+        viewportController: viewportController,
+        onDebugAutoScrollRequested: autoScrollReasons.add,
+      ),
+    );
+    await tester.pumpAndSettle();
+    autoScrollReasons.clear();
+
+    final listFinder = find.byType(CustomScrollView);
+    expect(listFinder, findsOneWidget);
+    final controllerBefore = tester.widget<CustomScrollView>(listFinder).controller!;
+    final gapBeforeGrowth = _distanceToBottom(controllerBefore);
+    expect(
+      gapBeforeGrowth,
+      lessThanOrEqualTo(18.0),
+      reason: '前置条件：贴底模式下，首轮布局后列表应停留在最新消息附近',
+    );
+
+    final bottomAnchorFinder = find.text('第三句。');
+    expect(bottomAnchorFinder, findsWidgets);
+    final bottomAnchorDyBefore = tester.getCenter(bottomAnchorFinder.first).dy;
+
+    const expandedMiddleText = '中间占位。\n'
+        '这一段会在原位更新后明显变高，用于模拟流式收尾或语音补齐时，'
+        '同一轮中间消息高度上涨，把后面的正式文本和底部视窗一起往下压的场景。\n'
+        '如果贴底保持失败，底部最新内容就会被抬走，旧消息重新闯回视野。';
+    final afterMessages = beforeMessages
+        .map((message) => message.id == 'turn_msg_mutating'
+            ? _replaceMessageText(message, expandedMiddleText)
+            : message)
+        .toList(growable: false);
+
+    await tester.pumpWidget(
+      _buildHostWithMessages(
+        settings: settings,
+        messages: afterMessages,
+        chatListKey: chatListKey,
+        viewportController: viewportController,
+        onDebugAutoScrollRequested: autoScrollReasons.add,
+      ),
+    );
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    final controllerAfter = tester.widget<CustomScrollView>(listFinder).controller!;
+    final gapAfterGrowth = _distanceToBottom(controllerAfter);
+    final bottomAnchorDyAfter = tester.getCenter(bottomAnchorFinder.first).dy;
+
+    expect(
+      (gapAfterGrowth - gapBeforeGrowth).abs(),
+      lessThan(18.0),
+      reason: '贴底状态下，中间消息原位增高后也应继续稳住底部，不能让底部间距突然变大',
+    );
+    expect(
+      (bottomAnchorDyAfter - bottomAnchorDyBefore).abs(),
+      lessThan(18.0),
+      reason: '中间消息原位更新时，底部最新锚点不应被整体往上抬走',
+    );
+    expect(
+      autoScrollReasons,
+      isEmpty,
+      reason: '这类原位补偿应由列表内部稳定视窗完成，不应额外走显式回底请求',
+    );
+    viewportController.dispose();
   });
 
   testWidgets('空时间线里临时消息变化也不应自动请求回底', (tester) async {
@@ -1517,209 +1812,48 @@ void main() {
     );
   });
 
-  testWidgets('首屏快照切真实时间线时，真实消息未到前不应短暂清空列表', (tester) async {
-    final settings = _buildSettings().copyWith(
-      messageFormatConfig: const MessageFormatConfig(),
-    );
-    var latestItemCount = -1;
+  testWidgets('空消息列表时不应再从旧的首屏缓存恢复消息', (tester) async {
     ChatMessageListDisplayCache.write(
       conversationId: 'conv_test',
       windowSignature: 'viewport_boot_v2',
-      formatSignature: _buildFormatSignatureForTest(
-        settings.messageFormatConfig,
-      ),
-      listItems: const <Map<String, dynamic>>[
-        <String, dynamic>{
-          'type': 'meta',
-          'hasMoreMessages': true,
-          'visibleTurnCount': 5,
-          'lastMessagePreview': '首屏缓存命中',
-          'lastMessageTime': 1234,
-        },
+      formatSignature: 'format-rich',
+      listItems: const <Object>[
         <String, dynamic>{
           'type': 'message',
-          'messageId': 'm_boot',
+          'messageId': 'stale-boot-message',
           'message': <String, dynamic>{
-            'id': 'm_boot',
+            'id': 'stale-boot-message',
             'role': 'assistant',
-            'content': '首屏缓存命中',
+            'content': '旧首屏缓存命中',
             'createdAt': 1234,
             'status': 'sent',
             'blocks': <Map<String, dynamic>>[],
           },
-          'showCorner': false,
-          'showAvatar': true,
         },
-      ].cast<Object>(),
+      ],
       chatImages: const [],
     );
+
+    var latestItemCount = -1;
+    await tester.pumpWidget(
+      _buildHostWithMessages(
+        settings: _buildSettings(),
+        messages: const <Message>[],
+        chatListKey: const ValueKey<String>('empty_list_no_boot_restore'),
+        onDebugListItemCountChanged: (count) => latestItemCount = count,
+      ),
+    );
+    await tester.pumpAndSettle();
+    for (var index = 0; index < 20 && latestItemCount < 0; index++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+
     expect(
-      ChatMessageListDisplayCache.read(
-        conversationId: 'conv_test',
-        windowSignature: 'viewport_boot_v2',
-        formatSignature: _buildFormatSignatureForTest(
-          settings.messageFormatConfig,
-        ),
-      ),
-      isNotNull,
+      latestItemCount,
+      0,
+      reason: '空时间线应保持为空，不能再把旧首屏缓存条目灌回列表',
     );
-
-    await tester.pumpWidget(
-      _buildHostWithMessages(
-        settings: settings,
-        messages: const <Message>[],
-        allowPersistentViewportBoot: true,
-        chatListKey: const ValueKey<String>('boot_list'),
-        onDebugListItemCountChanged: (count) => latestItemCount = count,
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    expect(latestItemCount, greaterThan(0));
-
-    await tester.pumpWidget(
-      _buildHostWithMessages(
-        settings: settings,
-        messages: const <Message>[],
-        allowPersistentViewportBoot: false,
-        chatListKey: const ValueKey<String>('boot_list'),
-        onDebugListItemCountChanged: (count) => latestItemCount = count,
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    expect(latestItemCount, greaterThan(0));
-  });
-
-  testWidgets('恢复持久快照后应回传缓存窗口大小，联动历史分页状态', (tester) async {
-    await ChatMessageListDisplayCache.clearPersistent();
-    final settings = _buildSettings().copyWith(
-      messageFormatConfig: const MessageFormatConfig(),
-    );
-    final liveMessages = List<Message>.generate(5, (index) {
-      return Message.text(
-        id: 'live_$index',
-        role: index.isEven ? 'user' : 'assistant',
-        content: '实时消息 $index',
-        createdAt: DateTime(2026, 3, 18, 12, index),
-        status: 'sent',
-      );
-    });
-    final formatSignature =
-        _buildFormatSignatureForTest(settings.messageFormatConfig);
-    await ChatMessageListDisplayCache.writePersistent(
-      conversationId: 'conv_test',
-      windowSignature: 'viewport_boot_v2',
-      formatSignature: formatSignature,
-      listItems: const <Map<String, dynamic>>[
-        <String, dynamic>{
-          'type': 'meta',
-          'hasMoreMessages': true,
-          'visibleTurnCount': 12,
-          'lastMessagePreview': '缓存窗口',
-          'lastMessageTime': 1234,
-        },
-        <String, dynamic>{
-          'type': 'message',
-          'messageId': 'cached_tail',
-          'message': <String, dynamic>{
-            'id': 'cached_tail',
-            'role': 'assistant',
-            'content': '缓存窗口',
-            'createdAt': 1234,
-            'status': 'sent',
-            'blocks': <Map<String, dynamic>>[],
-          },
-          'showCorner': false,
-          'showAvatar': true,
-        },
-      ],
-    );
-
-    var resolvedVisibleCount = -1;
-    bool? resolvedHasMore;
-    await tester.pumpWidget(
-      _buildHostWithMessages(
-        settings: settings,
-        messages: liveMessages,
-        onPersistentViewportVisibleCountResolved: (count) {
-          resolvedVisibleCount = count;
-        },
-        onPersistentViewportHasMoreResolved: (hasMore) {
-          resolvedHasMore = hasMore;
-        },
-      ),
-    );
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 80));
-
-    expect(resolvedVisibleCount, 12);
-    expect(resolvedHasMore, isTrue);
-  });
-
-  testWidgets('当前尾消息已变化时不应回退到旧的持久快照', (tester) async {
-    await ChatMessageListDisplayCache.clearPersistent();
-    final settings = _buildSettings().copyWith(
-      messageFormatConfig: const MessageFormatConfig(),
-    );
-    final liveMessages = <Message>[
-      Message.text(
-        id: 'u_now',
-        role: 'user',
-        content: '刚发送的新消息',
-        createdAt: DateTime(2026, 3, 19, 9, 0, 0),
-        status: 'sent',
-      ),
-      Message.text(
-        id: 'a_now',
-        role: 'assistant',
-        content: '当前真实尾消息',
-        createdAt: DateTime(2026, 3, 19, 9, 0, 1),
-        status: 'sent',
-      ),
-    ];
-    final formatSignature =
-        _buildFormatSignatureForTest(settings.messageFormatConfig);
-    await ChatMessageListDisplayCache.writePersistent(
-      conversationId: 'conv_test',
-      windowSignature: 'viewport_boot_v2',
-      formatSignature: formatSignature,
-      listItems: const <Map<String, dynamic>>[
-        <String, dynamic>{
-          'type': 'meta',
-          'hasMoreMessages': true,
-          'visibleTurnCount': 5,
-          'lastMessagePreview': '旧的持久快照',
-          'lastMessageTime': 1234,
-        },
-        <String, dynamic>{
-          'type': 'message',
-          'messageId': 'cached_old_tail',
-          'message': <String, dynamic>{
-            'id': 'cached_old_tail',
-            'role': 'assistant',
-            'content': '旧的持久快照',
-            'createdAt': 1234,
-            'status': 'sent',
-            'blocks': <Map<String, dynamic>>[],
-          },
-          'showCorner': false,
-          'showAvatar': true,
-        },
-      ],
-    );
-
-    await tester.pumpWidget(
-      _buildHostWithMessages(
-        settings: settings,
-        messages: liveMessages,
-      ),
-    );
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 80));
-
-    expect(find.textContaining('当前真实尾消息'), findsWidgets);
-    expect(find.textContaining('旧的持久快照'), findsNothing);
+    expect(find.text('旧首屏缓存命中'), findsNothing);
   });
 
   testWidgets('历史分页加载时不应闪回底部，顶部应显示独立 loading overlay', (tester) async {
@@ -2229,82 +2363,6 @@ void main() {
       findsNothing,
       reason: '如果正式消息最终没有接手，旧的临时尾消息不应一直停留在列表里',
     );
-  });
-
-  testWidgets('首屏快照切真实时间线时尾消息一致不应触发 tailChanged 回底', (tester) async {
-    final settings = _buildSettings().copyWith(
-      messageFormatConfig: const MessageFormatConfig(),
-    );
-    final autoScrollReasons = <String>[];
-
-    const createdAtMs = 1234;
-    ChatMessageListDisplayCache.write(
-      conversationId: 'conv_test',
-      windowSignature: 'viewport_boot_v2',
-      formatSignature: _buildFormatSignatureForTest(
-        settings.messageFormatConfig,
-      ),
-      listItems: const <Map<String, dynamic>>[
-        <String, dynamic>{
-          'type': 'meta',
-          'hasMoreMessages': true,
-          'visibleTurnCount': 5,
-          'lastMessagePreview': '首屏缓存命中',
-          'lastMessageTime': createdAtMs,
-        },
-        <String, dynamic>{
-          'type': 'message',
-          'messageId': 'm_boot',
-          'message': <String, dynamic>{
-            'id': 'm_boot',
-            'role': 'assistant',
-            'content': '首屏缓存命中',
-            'createdAt': createdAtMs,
-            'status': 'sent',
-            'blocks': <Map<String, dynamic>>[],
-          },
-          'showCorner': false,
-          'showAvatar': true,
-        },
-      ].cast<Object>(),
-      chatImages: const [],
-    );
-
-    await tester.pumpWidget(
-      _buildHostWithMessages(
-        settings: settings,
-        messages: const <Message>[],
-        allowPersistentViewportBoot: true,
-        chatListKey: const ValueKey<String>('boot_tail'),
-        onDebugAutoScrollRequested: autoScrollReasons.add,
-      ),
-    );
-    await tester.pumpAndSettle();
-    autoScrollReasons.clear();
-
-    await tester.pumpWidget(
-      _buildHostWithMessages(
-        settings: settings,
-        messages: <Message>[
-          Message.text(
-            id: 'm_boot',
-            role: 'assistant',
-            content: '首屏缓存命中',
-            createdAt: DateTime.fromMillisecondsSinceEpoch(createdAtMs),
-            status: 'sent',
-          ),
-        ],
-        allowPersistentViewportBoot: false,
-        chatListKey: const ValueKey<String>('boot_tail'),
-        onDebugAutoScrollRequested: autoScrollReasons.add,
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-
-    expect(
-        autoScrollReasons.where((reason) => reason == 'tailChanged'), isEmpty);
-    expect(tester.takeException(), isNull);
   });
 
   testWidgets('触顶分页时松手后应轻微回弹回边界，不应卡在中间', (tester) async {

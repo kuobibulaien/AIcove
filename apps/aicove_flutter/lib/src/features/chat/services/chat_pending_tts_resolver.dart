@@ -50,12 +50,14 @@ class ChatPendingTtsResolver {
     String ttsText, {
     String? messageId,
     DateTime? createdAt,
+    String? sourceMessageId,
   }) {
     final finalId =
         (messageId ?? '').trim().isEmpty ? genId('msg') : messageId!.trim();
     return Message.fromBlocks(
       id: finalId,
       role: 'assistant',
+      sourceMessageId: sourceMessageId,
       blocks: [
         AudioBlock(
           messageId: finalId,
@@ -77,10 +79,21 @@ class ChatPendingTtsResolver {
     if (messages.isEmpty) return;
     await Future.wait([
       for (final message in messages)
-        resolveSinglePendingMessage(
-          convId: convId,
-          message: message,
-        ),
+        () async {
+          try {
+            await resolveSinglePendingMessage(
+              convId: convId,
+              message: message,
+            );
+          } catch (e) {
+            AppLogger.error('ChatPendingTtsResolver', '并发流式 TTS 回填失败',
+                metadata: {
+                  'convId': convId,
+                  'messageId': message.id,
+                  'error': e.toString(),
+                });
+          }
+        }(),
     ]);
     trace?.note('流式 TTS 占位已原位更新', metadata: {
       'convId': convId,
@@ -100,48 +113,47 @@ class ChatPendingTtsResolver {
     if (ttsText.isEmpty) return;
 
     _ref.read(chatStatusProvider.notifier).state = ChatStatus.generatingVoice;
+    var shouldFallbackToText = false;
     try {
       final audioUrl = await _convertTtsText(ttsText);
       if (audioUrl != null && audioUrl.isNotEmpty) {
-        await _enqueueStoreMutation(() {
-          return _ref.read(chatHistoryStoreProvider).updateMessage(
-                conversationId: convId,
-                message: Message.fromBlocks(
-                  id: message.id,
-                  role: message.role,
-                  blocks: [
-                    AudioBlock(
-                      messageId: message.id,
-                      url: audioUrl,
-                      text: ttsText,
-                      durationSeconds: block?.durationSeconds,
-                      status: BlockStatus.success,
-                    ),
-                  ],
-                  createdAt: message.createdAt,
-                  status: 'sent',
-                ),
-              );
-        });
-        return;
-      }
-      AppLogger.warning('ChatPendingTtsResolver', '流式 TTS 占位生成失败，回退文本补位',
-          metadata: {
-            'messageId': message.id,
-            'textLength': ttsText.length,
-          });
-      await _enqueueStoreMutation(() {
-        return _ref.read(chatHistoryStoreProvider).updateMessage(
-              conversationId: convId,
-              message: Message.text(
-                id: message.id,
-                role: message.role,
-                content: ttsText,
-                createdAt: message.createdAt,
-                status: 'sent',
+        final success = await _updatePendingMessage(
+          convId: convId,
+          message: Message.fromBlocks(
+            id: message.id,
+            role: message.role,
+            sourceMessageId: message.sourceMessageId,
+            blocks: [
+              AudioBlock(
+                messageId: message.id,
+                url: audioUrl,
+                text: ttsText,
+                durationSeconds: block?.durationSeconds,
+                status: BlockStatus.success,
               ),
-            );
-      });
+            ],
+            createdAt: message.createdAt,
+            status: 'sent',
+          ),
+          phase: 'audio_success',
+        );
+        if (success) {
+          return;
+        }
+        AppLogger.warning('ChatPendingTtsResolver', '流式 TTS 原位更新失败，回退文本补位',
+            metadata: {
+              'messageId': message.id,
+              'textLength': ttsText.length,
+            });
+        shouldFallbackToText = true;
+      } else {
+        AppLogger.warning('ChatPendingTtsResolver', '流式 TTS 占位生成失败，回退文本补位',
+            metadata: {
+              'messageId': message.id,
+              'textLength': ttsText.length,
+            });
+        shouldFallbackToText = true;
+      }
     } catch (e) {
       AppLogger.error('ChatPendingTtsResolver', '流式 TTS 占位异常，回退文本补位',
           metadata: {
@@ -149,19 +161,24 @@ class ChatPendingTtsResolver {
             'error': e.toString(),
           });
       _onTtsFallback?.call('convert_error');
-      await _enqueueStoreMutation(() {
-        return _ref.read(chatHistoryStoreProvider).updateMessage(
-              conversationId: convId,
-              message: Message.text(
-                id: message.id,
-                role: message.role,
-                content: ttsText,
-                createdAt: message.createdAt,
-                status: 'sent',
-              ),
-            );
-      });
+      shouldFallbackToText = true;
     }
+    if (!shouldFallbackToText) {
+      return;
+    }
+    await _updatePendingMessage(
+      convId: convId,
+      message: Message.text(
+        id: message.id,
+        role: message.role,
+        sourceMessageId: message.sourceMessageId,
+        content: ttsText,
+        createdAt: message.createdAt,
+        status: 'sent',
+      ),
+      phase: 'text_fallback',
+      notifyFallback: false,
+    );
   }
 
   Future<String?> _convertTtsText(String text) async {
@@ -178,38 +195,52 @@ class ChatPendingTtsResolver {
       },
       id: eventId,
     );
-
-    final completer = Completer<String?>();
-
-    late final StreamSubscription<TtsPlayItem> sub;
-    sub = manager.processedStream.listen((item) {
-      if (item.event.id == eventId) {
-        sub.cancel();
-        if (item.status == TtsPlayItemStatus.completed &&
-            item.audioUrl != null &&
-            item.audioUrl!.isNotEmpty) {
-          completer.complete(item.audioUrl);
-        } else {
-          completer.complete(null);
-        }
-      }
-    });
-
-    final timeout = Timer(_ttsTimeout, () {
-      if (!completer.isCompleted) {
-        sub.cancel();
-        completer.complete(null);
-        AppLogger.warning('ChatPendingTtsResolver', 'TTS 生成超时', metadata: {
-          'eventId': eventId,
-          'textLength': text.length,
-        });
-      }
-    });
-
+    final resultFuture = manager.processedStream.firstWhere(
+      (item) => item.event.id == eventId,
+    );
     await manager.addEvents([event]);
+    try {
+      final item = await resultFuture.timeout(_ttsTimeout);
+      if (item.status == TtsPlayItemStatus.completed &&
+          item.audioUrl != null &&
+          item.audioUrl!.isNotEmpty) {
+        return item.audioUrl;
+      }
+      return null;
+    } on TimeoutException {
+      AppLogger.warning('ChatPendingTtsResolver', 'TTS 生成超时', metadata: {
+        'eventId': eventId,
+        'textLength': text.length,
+      });
+      return null;
+    }
+  }
 
-    final result = await completer.future;
-    timeout.cancel();
-    return result;
+  Future<bool> _updatePendingMessage({
+    required String convId,
+    required Message message,
+    required String phase,
+    bool notifyFallback = true,
+  }) async {
+    try {
+      await _enqueueStoreMutation(() {
+        return _ref.read(chatHistoryStoreProvider).updateMessage(
+              conversationId: convId,
+              message: message,
+            );
+      });
+      return true;
+    } catch (e) {
+      AppLogger.error('ChatPendingTtsResolver', '流式 TTS 占位写回失败', metadata: {
+        'convId': convId,
+        'messageId': message.id,
+        'phase': phase,
+        'error': e.toString(),
+      });
+      if (notifyFallback) {
+        _onTtsFallback?.call('update_error');
+      }
+      return false;
+    }
   }
 }

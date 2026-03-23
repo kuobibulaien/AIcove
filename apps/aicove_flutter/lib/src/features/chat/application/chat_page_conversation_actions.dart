@@ -1,8 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/app_logger.dart';
-import '../../../core/database/database.dart' as db;
-import '../../../core/database/database_provider.dart';
 import '../../plugins/memory/memory_plugin.dart';
 import '../../plugins/plugin_providers.dart';
 import '../../memory/services/memory_service.dart';
@@ -41,23 +39,12 @@ class ChatPageConversationActions {
         memoryService != null &&
         memoryService.config.enabled) {
       try {
-        final allMessages = await _ref
-            .read(messageRepositoryProvider)
-            .getAllByConversationOrdered(
-              conversationId,
-            );
-        final candidateMessageIds = _collectTopicMessageIds(
-          allMessages: allMessages,
-          contextStartMessageId: conversation.contextStartMessageId,
+        await memoryService.ingestConversationTopic(
+          conversationId: conversationId,
           lastMessageId: lastMessageId,
+          contextStartMessageId: conversation.contextStartMessageId,
+          trigger: MemoryIngestTrigger.manual,
         );
-        if (candidateMessageIds.isNotEmpty) {
-          await memoryService.ingestMessages(
-            conversationId: conversationId,
-            candidateMessageIds: candidateMessageIds,
-            trigger: MemoryIngestTrigger.manual,
-          );
-        }
       } catch (error) {
         AppLogger.warning(
           'ChatPageConversationActions',
@@ -165,37 +152,6 @@ class ChatPageConversationActions {
     return _ref.read(conversationsProvider.notifier).deleteConversation(
           conversationId,
         );
-  }
-
-  List<String> _collectTopicMessageIds({
-    required List<db.Message> allMessages,
-    required String? contextStartMessageId,
-    required String lastMessageId,
-  }) {
-    if (allMessages.isEmpty) return const [];
-
-    var startIndex = 0;
-    final trimmedContextStartMessageId = contextStartMessageId?.trim() ?? '';
-    if (trimmedContextStartMessageId.isNotEmpty) {
-      final markerIndex = allMessages.lastIndexWhere(
-        (message) => message.id == trimmedContextStartMessageId,
-      );
-      if (markerIndex >= 0) {
-        startIndex = markerIndex + 1;
-      }
-    }
-
-    final endIndex = allMessages.lastIndexWhere(
-      (message) => message.id == lastMessageId,
-    );
-    if (endIndex < 0 || endIndex < startIndex) {
-      return const [];
-    }
-
-    return allMessages
-        .sublist(startIndex, endIndex + 1)
-        .map((message) => message.id)
-        .toList(growable: false);
   }
 }
 

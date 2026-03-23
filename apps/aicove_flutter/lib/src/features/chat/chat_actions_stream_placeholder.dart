@@ -103,6 +103,7 @@ class _StreamPlaceholderDelivery {
 
   final StringBuffer _rawStreamText = StringBuffer();
   final List<Message> _currentTimelineMessages = <Message>[];
+  final Map<String, Message> _stablePendingAudioMessages = <String, Message>{};
 
   int? _timelineBaseMs;
   int _timelineTick = 0;
@@ -139,6 +140,7 @@ class _StreamPlaceholderDelivery {
     _thinkingPlaceholderElapsed = false;
     _rawStreamText.clear();
     _currentTimelineMessages.clear();
+    _stablePendingAudioMessages.clear();
     _timelineBaseMs = null;
     _timelineTick = 0;
     _dirty = true;
@@ -181,6 +183,7 @@ class _StreamPlaceholderDelivery {
     final previousMessages =
         List<Message>.from(_currentTimelineMessages, growable: false);
     _currentTimelineMessages.clear();
+    _stablePendingAudioMessages.clear();
     _rawStreamText.clear();
     _finalizedRawText = null;
     _receivedDelta = false;
@@ -190,9 +193,51 @@ class _StreamPlaceholderDelivery {
     await _replaceTimelineMessages(
       previousMessages: previousMessages,
       nextMessages: finalMessages,
-      syncTransientProvider: false,
     );
-    _clearTransientTimeline();
+  }
+
+  List<Message> buildFinalTimelineMessages({
+    required List<Message> committedMessages,
+    required String sourceMessageId,
+  }) {
+    final normalizedCommitted = <Message>[
+      for (final message in committedMessages)
+        message.copyWith(sourceMessageId: sourceMessageId),
+    ];
+    if (_currentTimelineMessages.isEmpty) {
+      return normalizedCommitted;
+    }
+
+    final preservedPending = _pendingAudioPlaceholderMessages(
+      sourceMessageId: sourceMessageId,
+    );
+    if (preservedPending.isEmpty) {
+      return normalizedCommitted;
+    }
+
+    final merged = <Message>[];
+    var committedIndex = 0;
+    for (final timelineMessage in _currentTimelineMessages) {
+      if (_isPendingAudioPlaceholderMessage(timelineMessage)) {
+        merged.add(
+          timelineMessage.copyWith(sourceMessageId: sourceMessageId),
+        );
+        continue;
+      }
+      if (committedIndex < normalizedCommitted.length) {
+        merged.add(normalizedCommitted[committedIndex++]);
+      }
+    }
+    if (committedIndex < normalizedCommitted.length) {
+      merged.addAll(normalizedCommitted.skip(committedIndex));
+    }
+    return merged;
+  }
+
+  List<Message> pendingAudioPlaceholderMessages({
+    required String sourceMessageId,
+  }) {
+    return _pendingAudioPlaceholderMessages(sourceMessageId: sourceMessageId);
   }
 
   String _resolveEffectiveFinalText(String finalText) {
@@ -211,6 +256,7 @@ class _StreamPlaceholderDelivery {
     final discardedMessages =
         List<Message>.from(_currentTimelineMessages, growable: false);
     _currentTimelineMessages.clear();
+    _stablePendingAudioMessages.clear();
     _rawStreamText.clear();
     _finalizedRawText = null;
     _receivedDelta = false;
@@ -263,22 +309,27 @@ class _StreamPlaceholderDelivery {
   }
 
   Future<void> _applyState({required bool finalize}) async {
-    if (_disposed) return;
-    final previousMessages =
-        List<Message>.from(_currentTimelineMessages, growable: false);
-    final sourceRaw = finalize
-        ? (_finalizedRawText ?? _rawStreamText.toString())
-        : _rawStreamText.toString();
-    final messages = _materializeTimeline(
-      _buildTimelineDescriptors(sourceRaw, finalize: finalize),
-    );
-    _currentTimelineMessages
-      ..clear()
-      ..addAll(messages);
-    await _replaceTimelineMessages(
-      previousMessages: previousMessages,
-      nextMessages: messages,
-    );
+    await _enqueue(() async {
+      if (_disposed) return;
+      final previousMessages =
+          List<Message>.from(_currentTimelineMessages, growable: false);
+      final sourceRaw = finalize
+          ? (_finalizedRawText ?? _rawStreamText.toString())
+          : _rawStreamText.toString();
+      final messages = _materializeTimeline(
+        _buildTimelineDescriptors(sourceRaw, finalize: finalize),
+      );
+      _currentTimelineMessages
+        ..clear()
+        ..addAll(messages);
+      await _ref.read(conversationShortWindowStoreProvider).replaceMessages(
+            conversationId: convId,
+            removeMessageIds: [
+              for (final message in previousMessages) message.id,
+            ],
+            messages: messages,
+          );
+    });
   }
 
   List<_StreamDescriptor> _buildTimelineDescriptors(
@@ -496,20 +547,65 @@ class _StreamPlaceholderDelivery {
   List<Message> _materializeTimeline(List<_StreamDescriptor> descriptors) {
     final previous =
         List<Message>.from(_currentTimelineMessages, growable: false);
+    final usedPreviousIds = <String>{};
+    final nextStablePendingAudioMessages = <String, Message>{};
+    final pendingAudioOccurrence = <String, int>{};
     final messages = <Message>[];
     for (var index = 0; index < descriptors.length; index++) {
       final descriptor = descriptors[index];
-      final previousMessage = index < previous.length &&
-              _matchesDescriptor(previous[index], descriptor)
-          ? previous[index]
-          : null;
-      messages.add(
-        previousMessage == null
-            ? _createMessage(descriptor)
-            : _rebuildMessage(previousMessage, descriptor),
-      );
+      Message? previousMessage;
+      String? pendingAudioKey;
+      if (descriptor.kind == _StreamDescriptorKind.pendingAudio) {
+        final normalizedText = descriptor.content.trim();
+        final occurrence = pendingAudioOccurrence[normalizedText] ?? 0;
+        pendingAudioOccurrence[normalizedText] = occurrence + 1;
+        pendingAudioKey = '$normalizedText#$occurrence';
+      }
+      if (index < previous.length &&
+          !usedPreviousIds.contains(previous[index].id) &&
+          _matchesDescriptor(previous[index], descriptor)) {
+        previousMessage = previous[index];
+      } else {
+        previousMessage = _findReusablePreviousMessage(
+          previous,
+          descriptor: descriptor,
+          usedPreviousIds: usedPreviousIds,
+        );
+      }
+      previousMessage ??= pendingAudioKey == null
+          ? null
+          : _stablePendingAudioMessages[pendingAudioKey];
+      if (previousMessage != null) {
+        usedPreviousIds.add(previousMessage.id);
+        if (pendingAudioKey != null) {
+          nextStablePendingAudioMessages[pendingAudioKey] = previousMessage;
+        }
+      }
+      final materialized = previousMessage == null
+          ? _createMessage(descriptor)
+          : _rebuildMessage(previousMessage, descriptor);
+      if (pendingAudioKey != null) {
+        nextStablePendingAudioMessages[pendingAudioKey] = materialized;
+      }
+      messages.add(materialized);
     }
+    _stablePendingAudioMessages
+      ..clear()
+      ..addAll(nextStablePendingAudioMessages);
     return messages;
+  }
+
+  Message? _findReusablePreviousMessage(
+    List<Message> previous, {
+    required _StreamDescriptor descriptor,
+    required Set<String> usedPreviousIds,
+  }) {
+    for (final message in previous) {
+      if (usedPreviousIds.contains(message.id)) continue;
+      if (!_matchesDescriptor(message, descriptor)) continue;
+      return message;
+    }
+    return null;
   }
 
   bool _matchesDescriptor(Message message, _StreamDescriptor descriptor) {
@@ -517,7 +613,9 @@ class _StreamPlaceholderDelivery {
     if (blocks == null || blocks.length != 1) return false;
     return switch (descriptor.kind) {
       _StreamDescriptorKind.text => blocks.first is TextBlock,
-      _StreamDescriptorKind.pendingAudio => blocks.first is AudioBlock,
+      _StreamDescriptorKind.pendingAudio => blocks.first is AudioBlock &&
+          ((blocks.first as AudioBlock).text ?? '').trim() ==
+              descriptor.content.trim(),
     };
   }
 
@@ -605,18 +703,8 @@ class _StreamPlaceholderDelivery {
   Future<void> _replaceTimelineMessages({
     required List<Message> previousMessages,
     required List<Message> nextMessages,
-    bool syncTransientProvider = true,
   }) {
     return _enqueue(() async {
-      if (syncTransientProvider) {
-        final notifier =
-            _ref.read(conversationTransientTimelineProvider(convId).notifier);
-        if (nextMessages.isEmpty) {
-          notifier.clear();
-        } else {
-          notifier.setMessages(nextMessages);
-        }
-      }
       await _ref.read(conversationShortWindowStoreProvider).replaceMessages(
             conversationId: convId,
             removeMessageIds: [
@@ -630,7 +718,6 @@ class _StreamPlaceholderDelivery {
   Future<void> _discardTimelineMessages(List<Message> messages) {
     if (messages.isEmpty) return Future<void>.value();
     return _enqueue(() async {
-      _clearTransientTimeline();
       await _ref.read(conversationShortWindowStoreProvider).replaceMessages(
         conversationId: convId,
         removeMessageIds: [
@@ -640,8 +727,23 @@ class _StreamPlaceholderDelivery {
     });
   }
 
-  void _clearTransientTimeline() {
-    _ref.read(conversationTransientTimelineProvider(convId).notifier).clear();
+  List<Message> _pendingAudioPlaceholderMessages({
+    required String sourceMessageId,
+  }) {
+    return <Message>[
+      for (final message in _currentTimelineMessages)
+        if (_isPendingAudioPlaceholderMessage(message))
+          message.copyWith(sourceMessageId: sourceMessageId),
+    ];
+  }
+
+  bool _isPendingAudioPlaceholderMessage(Message message) {
+    final blocks = message.blocks;
+    if (blocks == null || blocks.length != 1) return false;
+    final block = blocks.first;
+    return block is AudioBlock &&
+        (block.url.isEmpty || block.status == BlockStatus.pending) &&
+        (block.text?.trim().isNotEmpty ?? false);
   }
 }
 

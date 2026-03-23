@@ -394,6 +394,29 @@ class MemoryService {
     });
   }
 
+  Future<void> ingestConversationTopic({
+    required String conversationId,
+    required String lastMessageId,
+    String? contextStartMessageId,
+    required MemoryIngestTrigger trigger,
+  }) async {
+    final orderedMessages =
+        await _messageRepository.getAllByConversationOrdered(conversationId);
+    final candidateMessageIds = _collectTopicMessageIds(
+      orderedMessages: orderedMessages,
+      contextStartMessageId: contextStartMessageId,
+      lastMessageId: lastMessageId,
+    );
+    if (candidateMessageIds.isEmpty) {
+      return;
+    }
+    await ingestMessages(
+      conversationId: conversationId,
+      candidateMessageIds: candidateMessageIds,
+      trigger: trigger,
+    );
+  }
+
   Future<void> checkAndTriggerDailySummarization({
     required String conversationId,
     DateTime? disturbanceTime,
@@ -478,6 +501,41 @@ class MemoryService {
       boundaryExclusive = currentUser.createdAt + 1;
     }
     return boundaryExclusive;
+  }
+
+  List<String> _collectTopicMessageIds({
+    required List<db.Message> orderedMessages,
+    required String? contextStartMessageId,
+    required String lastMessageId,
+  }) {
+    if (orderedMessages.isEmpty) return const [];
+
+    var startIndex = 0;
+    final trimmedContextStartMessageId = contextStartMessageId?.trim() ?? '';
+    if (trimmedContextStartMessageId.isNotEmpty) {
+      final markerIndex = orderedMessages.lastIndexWhere(
+        (message) => message.id == trimmedContextStartMessageId,
+      );
+      if (markerIndex >= 0) {
+        startIndex = markerIndex + 1;
+      }
+    }
+
+    final trimmedLastMessageId = lastMessageId.trim();
+    if (trimmedLastMessageId.isEmpty) {
+      return const [];
+    }
+    final endIndex = orderedMessages.lastIndexWhere(
+      (message) => message.id == trimmedLastMessageId,
+    );
+    if (endIndex < 0 || endIndex < startIndex) {
+      return const [];
+    }
+
+    return orderedMessages
+        .sublist(startIndex, endIndex + 1)
+        .map((message) => message.id)
+        .toList(growable: false);
   }
 
   Future<void> runPreFlush({

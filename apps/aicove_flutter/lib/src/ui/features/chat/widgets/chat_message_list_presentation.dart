@@ -1,0 +1,547 @@
+part of 'chat_message_list.dart';
+
+extension _ChatMessageListPresentationX on _ChatMessageListState {
+  void _hydrateInitialListItems([MessageFormatConfig? config]) {
+    final effectiveConfig =
+        config ?? _cachedFormatConfig ?? const MessageFormatConfig();
+    final sourceMessages = _stableMessages;
+    final windowSignature = _buildWindowSignature(
+      sourceMessages,
+      contextStartMessageId: widget.contextStartMessageId,
+    );
+    final formatSignature = _buildFormatSignature(effectiveConfig);
+    final cached = ChatMessageListDisplayCache.read(
+      conversationId: widget.conversationId,
+      windowSignature: windowSignature,
+      formatSignature: formatSignature,
+    );
+    if (cached != null) {
+      _applyDisplayCacheEntry(cached, effectiveConfig);
+      return;
+    }
+
+    _updateListItems(effectiveConfig);
+  }
+
+  void _applyDisplayCacheEntry(
+    ChatMessageListDisplayCacheEntry cached,
+    MessageFormatConfig config,
+  ) {
+    _cachedFormatConfig = config;
+    _cachedListItems = cached.listItems.cast<ChatMessageListItem>();
+    _cachedChatImages = List<ImagePreviewItem>.from(cached.chatImages);
+    _hasHydratedInitialListItems = true;
+    _cleanupBubbleAnchorKeys();
+  }
+
+  void _updateListItems([MessageFormatConfig? config]) {
+    final effectiveConfig =
+        config ?? _cachedFormatConfig ?? const MessageFormatConfig();
+    final stableMessages = _stableMessages;
+    final timelineMessages = _currentTimelineMessages;
+    final windowSignature = _buildWindowSignature(
+      stableMessages,
+      contextStartMessageId: widget.contextStartMessageId,
+    );
+    final formatSignature = _buildFormatSignature(effectiveConfig);
+    if (!_hasTransientTimelineContent) {
+      final cached = ChatMessageListDisplayCache.read(
+        conversationId: widget.conversationId,
+        windowSignature: windowSignature,
+        formatSignature: formatSignature,
+      );
+      if (cached != null) {
+        _applyDisplayCacheEntry(cached, effectiveConfig);
+        return;
+      }
+    }
+
+    _cachedFormatConfig = effectiveConfig;
+    _cachedListItems = buildChatMessageListItems(
+      messages: timelineMessages,
+      config: effectiveConfig,
+      contextStartMessageId: widget.contextStartMessageId,
+    );
+    _cachedChatImages = collectChatMessageListImages(timelineMessages);
+    _hasHydratedInitialListItems = true;
+    if (!_hasTransientTimelineContent) {
+      ChatMessageListDisplayCache.write(
+        conversationId: widget.conversationId,
+        windowSignature: windowSignature,
+        formatSignature: formatSignature,
+        listItems: _cachedListItems.cast<Object>(),
+        chatImages: _cachedChatImages,
+      );
+    }
+    _cleanupBubbleAnchorKeys();
+  }
+
+  String _buildWindowSignature(
+    List<Message> messages, {
+    String? contextStartMessageId,
+  }) {
+    if (messages.isEmpty) return 'empty';
+    final buffer = StringBuffer()
+      ..write(messages.length)
+      ..write('|context=')
+      ..write(contextStartMessageId ?? '');
+    for (final message in messages) {
+      final blocks = message.blocks;
+      buffer
+        ..write('|')
+        ..write(message.id)
+        ..write('@')
+        ..write(message.createdAt.millisecondsSinceEpoch)
+        ..write('#')
+        ..write(message.status ?? 'sent')
+        ..write('#')
+        ..write(message.role)
+        ..write('#')
+        ..write(message.content)
+        ..write('#')
+        ..write(blocks?.length ?? 0);
+      if (blocks != null && blocks.isNotEmpty) {
+        for (final block in blocks) {
+          buffer
+            ..write(':')
+            ..write(block.runtimeType)
+            ..write('=')
+            ..write(block.id);
+        }
+      }
+    }
+    return buffer.toString();
+  }
+
+  String _buildFormatSignature(MessageFormatConfig config) {
+    return buildMessageFormatProjectionSignature(config);
+  }
+
+  GlobalKey _bubbleAnchorKeyFor(String messageId) {
+    return _bubbleAnchorKeys.putIfAbsent(
+      messageId,
+      () => GlobalKey(debugLabel: 'bubble_$messageId'),
+    );
+  }
+
+  String _chunkBubbleAnchorId(String messageId, int chunkIndex) =>
+      '${messageId}_chunk_anchor_$chunkIndex';
+
+  void _cleanupBubbleAnchorKeys() {
+    final aliveIds = <String>{};
+    for (final item in _cachedListItems) {
+      if (item is ChatMessageItem) {
+        aliveIds.add(item.message.id);
+      } else if (item is ChatChunkedMessageItem) {
+        aliveIds.add(
+          _chunkBubbleAnchorId(item.originalMessage.id, item.chunkIndex),
+        );
+      }
+    }
+    _bubbleAnchorKeys.removeWhere((id, _) => !aliveIds.contains(id));
+  }
+
+  SliverChildBuilderDelegate _buildSectionDelegate(
+    BuildContext context,
+    List<ChatMessageListItem> items,
+    ChatActions actions, {
+    required bool reverseForViewport,
+  }) {
+    return SliverChildBuilderDelegate(
+      (context, index) {
+        final item =
+            reverseForViewport ? items[items.length - 1 - index] : items[index];
+        return _buildListItemWidget(
+          context,
+          item,
+          actions,
+        );
+      },
+      childCount: items.length,
+      addAutomaticKeepAlives: false,
+      addRepaintBoundaries: true,
+      findChildIndexCallback: (key) => _findChildIndexForKey(
+        key,
+        items,
+        reverseForViewport: reverseForViewport,
+      ),
+    );
+  }
+
+  Widget _buildListItemWidget(
+    BuildContext context,
+    ChatMessageListItem item,
+    ChatActions actions,
+  ) {
+    final itemKey = ValueKey<String>(_listItemStableKey(item));
+
+    if (item is ChatTimeDividerItem) {
+      return KeyedSubtree(
+        key: itemKey,
+        child: _buildTimeDivider(context, item.time),
+      );
+    }
+    if (item is ChatNewTopicDividerItem) {
+      return KeyedSubtree(
+        key: itemKey,
+        child: _buildNewTopicDivider(context),
+      );
+    }
+    if (item is ChatChunkedMessageItem) {
+      final message = item.originalMessage;
+      final isMe = message.role == 'user';
+      final chunkBubbleId = _chunkBubbleAnchorId(message.id, item.chunkIndex);
+      final chunkMessage = Message(
+        id: '${message.id}_chunk_${item.chunkIndex}',
+        role: message.role,
+        content: item.chunkText,
+        createdAt: message.createdAt,
+        status: message.status,
+      );
+      final bubbleWidget = Padding(
+        padding:
+            const EdgeInsets.symmetric(vertical: _kMessageItemVerticalPadding),
+        child: MessageBubble(
+          isMe: isMe,
+          message: chunkMessage,
+          avatarUrl: isMe ? null : widget.avatarUrl,
+          displayName: isMe ? null : widget.displayName,
+          bubbleAnchorKey: _bubbleAnchorKeyFor(chunkBubbleId),
+          showCorner: item.showCorner,
+          showName: false,
+          showAvatar: item.showAvatar,
+          chatImages: _cachedChatImages,
+          onRetry: null,
+          onLongPress: (bubbleKey) =>
+              _handleMessageLongPress(context, message, isMe, bubbleKey),
+          onMediaLongPress: (mediaKey, block) =>
+              _handleMediaLongPress(context, message, isMe, mediaKey, block),
+        ),
+      );
+
+      final shouldAnimate =
+          item.chunkIndex == 0 && _pendingAnimationIds.contains(message.id);
+      if (shouldAnimate) {
+        _pendingAnimationIds.remove(message.id);
+        return AnimatedMessageItem(
+          key: itemKey,
+          child: bubbleWidget,
+        );
+      }
+      return KeyedSubtree(
+        key: itemKey,
+        child: bubbleWidget,
+      );
+    }
+    if (item is ChatMessageItem) {
+      final message = item.message;
+      final isMe = message.role == 'user';
+      final bubbleWidget = Padding(
+        padding:
+            const EdgeInsets.symmetric(vertical: _kMessageItemVerticalPadding),
+        child: MessageBubble(
+          isMe: isMe,
+          message: message,
+          avatarUrl: isMe ? null : widget.avatarUrl,
+          displayName: isMe ? null : widget.displayName,
+          bubbleAnchorKey: _bubbleAnchorKeyFor(message.id),
+          showCorner: item.showCorner,
+          showName: false,
+          showAvatar: item.showAvatar,
+          chatImages: _cachedChatImages,
+          onRetry: (isMe && message.status == 'failed')
+              ? () => actions.recallFailedMessage(message.id)
+              : null,
+          onLongPress: (bubbleKey) =>
+              _handleMessageLongPress(context, message, isMe, bubbleKey),
+          onMediaLongPress: (mediaKey, block) =>
+              _handleMediaLongPress(context, message, isMe, mediaKey, block),
+        ),
+      );
+
+      final shouldAnimate = _pendingAnimationIds.contains(message.id);
+      if (shouldAnimate) {
+        _pendingAnimationIds.remove(message.id);
+        return AnimatedMessageItem(
+          key: itemKey,
+          child: bubbleWidget,
+        );
+      }
+      return KeyedSubtree(
+        key: itemKey,
+        child: bubbleWidget,
+      );
+    }
+
+    return KeyedSubtree(
+      key: itemKey,
+      child: const SizedBox.shrink(),
+    );
+  }
+
+  Widget _buildJumpToBottomButton(BuildContext context) {
+    final colors = context.moeColors;
+
+    return Tooltip(
+      message: '回到底部',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          key: const ValueKey<String>('chat_jump_to_latest_badge'),
+          onTap: widget.viewportController.onJumpToLatest,
+          customBorder: const CircleBorder(),
+          child: Container(
+            width: _kJumpToBottomButtonSize,
+            height: _kJumpToBottomButtonSize,
+            decoration: MoeG2Decoration(
+              radius: MoeSmoothRadii.lg,
+              color: colors.surface.withValues(alpha: 0.96),
+              border: Border.all(color: colors.borderLight),
+              boxShadow: MoeShadows.soft,
+            ),
+            alignment: Alignment.center,
+            child: Icon(
+              Icons.keyboard_arrow_down_rounded,
+              size: 24,
+              color: colors.accentColor,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLoadingIndicator(BuildContext context) {
+    final colors = context.moeColors;
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: colors.surface.withValues(alpha: 0.94),
+          borderRadius: BorderRadius.circular(999),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x1F000000),
+              blurRadius: 16,
+              offset: Offset(0, 6),
+            ),
+          ],
+        ),
+        child: const SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(strokeWidth: 2.2),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTimeDivider(BuildContext context, DateTime time) {
+    final colors = context.moeColors;
+    final timeStr = _formatChatTime(time);
+
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        decoration: MoeG2Decoration(
+          radius: 12,
+          color: colors.surfaceAlt,
+        ),
+        child: Text(
+          timeStr,
+          style: TextStyle(
+            color: colors.muted,
+            fontSize: 12,
+            fontWeight: MoeFontWeights.normal,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNewTopicDivider(BuildContext context) {
+    final colors = context.moeColors;
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        child: Row(
+          children: [
+            Expanded(
+              child: Container(
+                  height: 0.5, color: colors.muted.withValues(alpha: 0.3)),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Text(
+                '以上为历史话题',
+                style: TextStyle(
+                  color: colors.muted,
+                  fontSize: 11,
+                  fontWeight: MoeFontWeights.normal,
+                ),
+              ),
+            ),
+            Expanded(
+              child: Container(
+                  height: 0.5, color: colors.muted.withValues(alpha: 0.3)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatChatTime(DateTime time) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final targetDay = DateTime(time.year, time.month, time.day);
+
+    final dayDiff = today.difference(targetDay).inDays;
+
+    String prefix;
+    if (dayDiff <= 0) {
+      prefix = '';
+    } else if (dayDiff == 1) {
+      prefix = '昨天 ';
+    } else if (dayDiff == 2) {
+      prefix = '前天 ';
+    } else {
+      const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+      prefix = '${weekdays[time.weekday - 1]} ';
+    }
+
+    final hh = time.hour.toString().padLeft(2, '0');
+    final mm = time.minute.toString().padLeft(2, '0');
+
+    return '$prefix$hh:$mm';
+  }
+
+  Future<void> _handleMessageLongPress(
+    BuildContext context,
+    Message message,
+    bool isMe,
+    GlobalKey bubbleKey,
+  ) async {
+    final actions = ref.read(chatActionsProvider);
+    final enableEnhancedRegenerate = ref
+            .read(appSettingsProvider)
+            .valueOrNull
+            ?.enhancedDialogueSettings
+            .enabled ==
+        true;
+    await showMessageActionMenu(
+      context,
+      targetKey: bubbleKey,
+      isUserMessage: isMe,
+      messageText: message.displayText,
+      showEnhanceRegenerate: enableEnhancedRegenerate,
+      onAction: (action) async {
+        if (!context.mounted) return;
+        switch (action) {
+          case MessageAction.copy:
+            MoeToast.show(context, '已复制到剪贴板');
+            break;
+          case MessageAction.edit:
+            widget.onEditMessage?.call(message);
+            break;
+          case MessageAction.regenerate:
+            widget.onRegenerateMessage?.call(message);
+            break;
+          case MessageAction.enhanceRegenerate:
+            widget.onEnhanceRegenerateMessage?.call(message);
+            break;
+          case MessageAction.quote:
+            ref.read(quotedMessageProvider.notifier).state = QuotedMessage(
+              id: message.id,
+              content: message.displayText,
+              isUser: isMe,
+            );
+            break;
+          case MessageAction.delete:
+            if (message.status == 'sending') {
+              MoeToast.show(context, '发送中的消息暂不可删除');
+              break;
+            }
+            final ok = await showMeoTalkConfirm(
+              context: context,
+              title: '删除消息',
+              message: '确定删除这条消息吗？',
+              hint: '会从当前会话上下文和本地数据库中移除这条消息。',
+              confirmText: '删除',
+              isDanger: true,
+            );
+            if (ok == true && context.mounted) {
+              await actions.deleteMessage(message.id);
+              if (context.mounted) {
+                MoeToast.show(context, '已删除消息');
+              }
+            }
+            break;
+          case MessageAction.save:
+            break;
+        }
+      },
+    );
+  }
+
+  Future<void> _handleMediaLongPress(
+    BuildContext context,
+    Message message,
+    bool isMe,
+    GlobalKey mediaKey,
+    MessageBlock block,
+  ) async {
+    final actions = ref.read(chatActionsProvider);
+    final mediaType = block is AudioBlock ? MediaType.audio : MediaType.image;
+    await showMediaActionMenu(
+      context,
+      targetKey: mediaKey,
+      mediaType: mediaType,
+      allowDelete: true,
+      onAction: (action) async {
+        if (!context.mounted) return;
+        switch (action) {
+          case MessageAction.save:
+            await saveChatMessageListMediaBlock(context, block);
+            break;
+          case MessageAction.quote:
+            final quoteText = block is ImageBlock
+                ? '[图片]'
+                : block is AudioBlock
+                    ? '[语音]'
+                    : '[媒体]';
+            ref.read(quotedMessageProvider.notifier).state = QuotedMessage(
+              id: message.id,
+              content: quoteText,
+              isUser: isMe,
+            );
+            break;
+          case MessageAction.delete:
+            if (message.status == 'sending') {
+              MoeToast.show(context, '发送中的消息暂不可删除');
+              break;
+            }
+            final ok = await showMeoTalkConfirm(
+              context: context,
+              title: '删除消息',
+              message: '确定删除这条消息吗？',
+              hint: '会从当前会话上下文和本地数据库中移除这条消息。',
+              confirmText: '删除',
+              isDanger: true,
+            );
+            if (ok == true && context.mounted) {
+              await actions.deleteMessage(message.id);
+              if (context.mounted) {
+                MoeToast.show(context, '已删除消息');
+              }
+            }
+            break;
+          default:
+            break;
+        }
+      },
+    );
+  }
+}
