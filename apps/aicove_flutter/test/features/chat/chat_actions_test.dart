@@ -663,6 +663,87 @@ class _MultiDeltaStreamingSendService extends _InMemoryHistorySendService {
   }
 }
 
+class _SlowMultiDeltaStreamingSendService extends _InMemoryHistorySendService {
+  _SlowMultiDeltaStreamingSendService(super.ref, this._settings);
+
+  final AppSettings _settings;
+
+  @override
+  Future<ApiConfig> prepareApiConfig({
+    required Conversation conv,
+    required List<Message> history,
+    required String? userText,
+    TraceLogger? trace,
+    String? overrideModel,
+    String? conversationId,
+    TraceContext? traceContext,
+  }) async {
+    return ApiConfig(
+      settings: _settings,
+      modelFullId: overrideModel ?? _settings.defaultModelName,
+      providerApiBase: _settings.apiBaseUrl,
+      providerApiKey: null,
+      customConfig: const <String, dynamic>{},
+      toolPrefs: const <String, dynamic>{},
+      messages: const <Map<String, dynamic>>[],
+      tools: null,
+      enabledPluginIds: null,
+      modelTemperature: null,
+      modelTopP: null,
+      modelContextMessageLimit: null,
+    );
+  }
+
+  @override
+  Future<ApiCallResult> executeApiCall({
+    required ApiConfig config,
+    required String sessionId,
+    required String? userText,
+    String? turnId,
+    TraceLogger? trace,
+    int maxRounds = 5,
+    void Function(String toolName)? onToolExecuting,
+    bool enableStreaming = false,
+    void Function(String delta)? onStreamTextDelta,
+    void Function()? onStreamTextReset,
+    void Function()? onStreamToolCallObserved,
+    void Function()? onStreamingFallback,
+  }) async {
+    onStreamTextDelta?.call('第一段。');
+    await Future<void>.delayed(const Duration(milliseconds: 220));
+    onStreamTextDelta?.call('第二段。');
+    await Future<void>.delayed(const Duration(milliseconds: 220));
+    onStreamTextDelta?.call('第三段。');
+    await Future<void>.delayed(const Duration(milliseconds: 260));
+    return const ApiCallResult(
+      replyText: '第一段。第二段。第三段。',
+      processedText: '第一段。第二段。第三段。',
+      pluginEvents: [],
+      toolResults: <Map<String, dynamic>>[],
+    );
+  }
+
+  @override
+  AssistantMessageBuildResult buildAssistantMessages({
+    required ApiCallResult apiResult,
+    required AppSettings settings,
+  }) {
+    return _buildTestAssistantBuildResult(
+      messages: <Message>[
+        Message(
+          id: 'assistant_result_slow',
+          role: 'assistant',
+          content: apiResult.processedText,
+          createdAt: DateTime.now(),
+          status: 'sent',
+        ),
+      ],
+      lastMessageText: apiResult.processedText,
+      rawReplyText: apiResult.replyText,
+    );
+  }
+}
+
 class _SingleDeltaSlowFinalizeSendService extends _InMemoryHistorySendService {
   _SingleDeltaSlowFinalizeSendService(super.ref, this._settings);
 
@@ -983,6 +1064,97 @@ class _StreamingTtsSendService extends _InMemoryHistorySendService {
       messages: <Message>[
         Message(
           id: 'assistant_stream_tts_result',
+          role: 'assistant',
+          content: apiResult.processedText,
+          createdAt: DateTime.now(),
+          status: 'sent',
+        ),
+      ],
+      lastMessageText: apiResult.processedText,
+      rawReplyText: apiResult.replyText,
+    );
+  }
+}
+
+class _StreamingLeadingTtsSendService extends _InMemoryHistorySendService {
+  _StreamingLeadingTtsSendService(super.ref, this._settings);
+
+  final AppSettings _settings;
+
+  @override
+  Future<ApiConfig> prepareApiConfig({
+    required Conversation conv,
+    required List<Message> history,
+    required String? userText,
+    TraceLogger? trace,
+    String? overrideModel,
+    String? conversationId,
+    TraceContext? traceContext,
+  }) async {
+    return ApiConfig(
+      settings: _settings,
+      modelFullId: overrideModel ?? _settings.defaultModelName,
+      providerApiBase: _settings.apiBaseUrl,
+      providerApiKey: null,
+      customConfig: const <String, dynamic>{},
+      toolPrefs: const <String, dynamic>{},
+      messages: const <Map<String, dynamic>>[],
+      tools: null,
+      enabledPluginIds: null,
+      modelTemperature: null,
+      modelTopP: null,
+      modelContextMessageLimit: null,
+    );
+  }
+
+  @override
+  Future<ApiCallResult> executeApiCall({
+    required ApiConfig config,
+    required String sessionId,
+    required String? userText,
+    String? turnId,
+    TraceLogger? trace,
+    int maxRounds = 5,
+    void Function(String toolName)? onToolExecuting,
+    bool enableStreaming = false,
+    void Function(String delta)? onStreamTextDelta,
+    void Function()? onStreamTextReset,
+    void Function()? onStreamToolCallObserved,
+    void Function()? onStreamingFallback,
+  }) async {
+    onStreamTextDelta?.call('<tts>这是一段语音');
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    onStreamTextDelta?.call('</tts>');
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    onStreamTextDelta?.call('后续正文。');
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    return ApiCallResult(
+      replyText: '<tts>这是一段语音</tts>后续正文。',
+      processedText: '后续正文。',
+      pluginEvents: <PluginEvent>[
+        PluginEvent(
+          pluginId: 'tts',
+          type: 'tts_convert',
+          data: <String, dynamic>{
+            'text': '这是一段语音',
+            'originalText': '这是一段语音',
+          },
+          id: 'evt_stream_leading_tts',
+        ),
+      ],
+      toolResults: <Map<String, dynamic>>[],
+    );
+  }
+
+  @override
+  AssistantMessageBuildResult buildAssistantMessages({
+    required ApiCallResult apiResult,
+    required AppSettings settings,
+  }) {
+    return _buildTestAssistantBuildResult(
+      messages: <Message>[
+        Message(
+          id: 'assistant_stream_leading_tts_result',
           role: 'assistant',
           content: apiResult.processedText,
           createdAt: DateTime.now(),
@@ -3383,10 +3555,106 @@ void main() {
     expect(storedTexts, <String>['第一段。第二段。第三段。']);
   });
 
-  test('send 遇到 TTS 标签时，应先在前端短窗里出现 pending 语音气泡', () async {
+  test('send 流式收尾后应继续复用前端短窗里的文本消息 id', () async {
     final now = DateTime.now();
+    final convId = 'conv_stream_text_ids_reused_${now.microsecondsSinceEpoch}';
     final conv = Conversation(
-      id: 'conv_stream_tts_pending',
+      id: convId,
+      title: 'StreamTextIdsReused',
+      displayName: 'StreamTextIdsReused',
+      createdAt: now,
+      updatedAt: now,
+      messages: const [],
+      lastMessage: '',
+      lastMessageTime: now,
+    );
+    final settings = _buildTestSettings();
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(settings),
+        ),
+        conversationsProvider.overrideWith(
+          () => _FakeConversationsNotifier([conv]),
+        ),
+        activeConversationProvider.overrideWith((ref) {
+          return conv;
+        }),
+        chatSendServiceProvider.overrideWith(
+          (ref) => _SlowMultiDeltaStreamingSendService(ref, settings),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await container.read(appSettingsProvider.future);
+
+    final sendFuture = container.read(chatActionsProvider).send('测试流式文本原位升级');
+    List<String>? streamingTextIds;
+    for (var i = 0; i < 12; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 90));
+      final frontendMessages =
+          await _loadFrontendTimelineMessages(container, conv.id);
+      final streamingTextMessages = frontendMessages.where((message) {
+        if (message.role != 'assistant') return false;
+        if (message.sourceMessageId?.trim().isNotEmpty ?? false) return false;
+        final textBlocks = message.blocks?.whereType<TextBlock>().toList() ??
+            const <TextBlock>[];
+        if (textBlocks.length != 1) return false;
+        final text = textBlocks.single.content.trim();
+        return text == '第一段。' || text == '第二段。' || text == '第三段。';
+      }).toList(growable: false);
+      if (streamingTextMessages.length == 3) {
+        streamingTextIds = streamingTextMessages
+            .map((message) => message.id)
+            .toList(growable: false);
+        break;
+      }
+    }
+    await sendFuture;
+
+    expect(
+      streamingTextIds,
+      isNotNull,
+      reason: '前置条件：流式阶段应先在短窗里产出 3 条文本锚点，才能验证收尾时是否原位升级',
+    );
+
+    final frontendAfterSend =
+        await _loadFrontendTimelineMessages(container, conv.id);
+    final finalizedTextMessages = frontendAfterSend.where((message) {
+      if (message.role != 'assistant') return false;
+      if (!(message.sourceMessageId?.trim().isNotEmpty ?? false)) return false;
+      final textBlocks = message.blocks?.whereType<TextBlock>().toList() ??
+          const <TextBlock>[];
+      if (textBlocks.length != 1) return false;
+      final text = textBlocks.single.content.trim();
+      return text == '第一段。' || text == '第二段。' || text == '第三段。';
+    }).toList(growable: false);
+
+    expect(
+      finalizedTextMessages
+          .map((message) => message.id)
+          .toList(growable: false),
+      streamingTextIds,
+      reason: '流式收尾后，前端短窗里的文本锚点应继续沿用原 id，而不是整组删掉再换成正式消息',
+    );
+    expect(
+      finalizedTextMessages.every((message) => message.status == 'sent'),
+      isTrue,
+      reason: '原位升级后，这批文本消息只应更新为 sent，不应继续残留 sending 状态',
+    );
+  });
+
+  test('send 遇到 TTS 标签时，流式阶段不应先插入 pending 语音条', () async {
+    final now = DateTime.now();
+    final convId = 'conv_stream_tts_pending_${now.microsecondsSinceEpoch}';
+    final conv = Conversation(
+      id: convId,
       title: 'StreamTtsPending',
       displayName: 'StreamTtsPending',
       createdAt: now,
@@ -3438,12 +3706,113 @@ void main() {
     }
     await sendFuture;
 
-    final sawPendingAudio = frontendSnapshots.any((snapshot) {
-      var hasLeadingText = false;
+    final sawPendingAudioDuringStream = frontendSnapshots.any((snapshot) {
+      for (final message in snapshot) {
+        final audioBlocks = message.blocks?.whereType<AudioBlock>().toList() ??
+            const <AudioBlock>[];
+        if (audioBlocks.isEmpty) {
+          continue;
+        }
+        final block = audioBlocks.first;
+        if ((block.text ?? '') == '这是一段语音' &&
+            block.status == BlockStatus.pending &&
+            block.url.isEmpty) {
+          return true;
+        }
+      }
+      return false;
+    });
+
+    expect(
+      sawPendingAudioDuringStream,
+      isFalse,
+      reason: 'pending 语音条不应在流式阶段直接插入，否则会把正文时间线硬顶一下',
+    );
+
+    expect(ttsHandler.lastAppendAfterStreamText, isTrue);
+    expect(
+      ttsHandler.lastPendingStreamTtsMessages,
+      isEmpty,
+      reason: '收尾阶段应改由后补链路自行生成语音占位，不复用流式阶段的 pending 列表',
+    );
+    final frontendAfterSend =
+        await _loadFrontendTimelineMessages(container, conv.id);
+    expect(
+      frontendAfterSend.where((message) {
+        final audioBlock = _firstAudioBlock(message);
+        return audioBlock != null &&
+            (audioBlock.text ?? '') == '这是一段语音' &&
+            audioBlock.status == BlockStatus.pending &&
+            audioBlock.url.isEmpty;
+      }),
+      isEmpty,
+      reason: '在该录制型 handler 场景下，流式阶段不应残留被提前插入的 pending 语音条',
+    );
+  });
+
+  test('send 遇到前置 TTS 标签时，不应让语音占位抢在正文前单独出现', () async {
+    final now = DateTime.now();
+    final convId =
+        'conv_stream_leading_tts_anchor_first_${now.microsecondsSinceEpoch}';
+    final conv = Conversation(
+      id: convId,
+      title: 'StreamLeadingTtsAnchorFirst',
+      displayName: 'StreamLeadingTtsAnchorFirst',
+      createdAt: now,
+      updatedAt: now,
+      messages: const [],
+      lastMessage: '',
+      lastMessageTime: now,
+    );
+    final settings = _buildTestSettings();
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+
+    late _RecordingStreamTtsHandler ttsHandler;
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(settings),
+        ),
+        conversationsProvider.overrideWith(
+          () => _FakeConversationsNotifier([conv]),
+        ),
+        activeConversationProvider.overrideWith((ref) {
+          return conv;
+        }),
+        chatSendServiceProvider.overrideWith(
+          (ref) => _StreamingLeadingTtsSendService(ref, settings),
+        ),
+        chatTtsHandlerProvider.overrideWith((ref) {
+          ttsHandler = _RecordingStreamTtsHandler(ref);
+          return ttsHandler;
+        }),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await container.read(appSettingsProvider.future);
+
+    final sendFuture = container.read(chatActionsProvider).send('测试前置流式 TTS');
+    final frontendSnapshots = <List<Message>>[];
+    for (var i = 0; i < 6; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      frontendSnapshots.add(
+        List<Message>.from(
+          await _loadFrontendTimelineMessages(container, conv.id),
+        ),
+      );
+    }
+    await sendFuture;
+
+    final sawPendingAudioBeforeText = frontendSnapshots.any((snapshot) {
+      var hasAssistantText = false;
       var hasPendingAudio = false;
       for (final message in snapshot) {
-        if (message.displayText == '第一句。') {
-          hasLeadingText = true;
+        if (message.role == 'assistant' && message.displayText == '后续正文。') {
+          hasAssistantText = true;
         }
         final audioBlocks = message.blocks?.whereType<AudioBlock>().toList() ??
             const <AudioBlock>[];
@@ -3456,43 +3825,45 @@ void main() {
           }
         }
       }
-      return hasLeadingText && hasPendingAudio;
+      return hasPendingAudio && !hasAssistantText;
     });
 
     expect(
-      sawPendingAudio,
-      isTrue,
-      reason: 'TTS 在流式中途闭合后，应先以 pending 音频气泡进入前端短窗',
+      sawPendingAudioBeforeText,
+      isFalse,
+      reason: '前置 TTS 不应先单独把 pending 音频插进短窗，否则正文后补时会把尾部列表再顶一次',
     );
 
-    expect(ttsHandler.lastAppendAfterStreamText, isTrue);
-    expect(ttsHandler.lastPendingStreamTtsMessages, hasLength(1));
-    final pendingMessage = ttsHandler.lastPendingStreamTtsMessages.single;
-    expect(pendingMessage.id.trim(), isNotEmpty);
-    expect(
-      pendingMessage.blocks?.whereType<AudioBlock>().single.text,
-      '这是一段语音',
-    );
     final frontendAfterSend =
         await _loadFrontendTimelineMessages(container, conv.id);
+    final textIndex = frontendAfterSend.indexWhere(
+      (message) =>
+          message.role == 'assistant' && message.displayText == '后续正文。',
+    );
+
+    expect(textIndex, greaterThanOrEqualTo(0));
+    expect(ttsHandler.lastAppendAfterStreamText, isTrue);
     expect(
-      frontendAfterSend.any((message) {
-        if (message.id != pendingMessage.id) return false;
+      ttsHandler.lastPendingStreamTtsMessages,
+      isEmpty,
+      reason: '前置 TTS 场景也不应再复用流式 pending 列表',
+    );
+    expect(
+      frontendAfterSend.where((message) {
         final audioBlock = _firstAudioBlock(message);
-        return audioBlock != null &&
-            (audioBlock.text ?? '') == '这是一段语音' &&
-            audioBlock.status == BlockStatus.pending &&
-            audioBlock.url.isEmpty;
+        return audioBlock != null && (audioBlock.text ?? '') == '这是一段语音';
       }),
-      isTrue,
-      reason: '流式收尾后，应继续沿用这条短窗里的语音占位，交给后补链路原位更新',
+      isEmpty,
+      reason: '录制型 handler 下，前置 TTS 不应在流式阶段或收尾阶段硬插语音条',
     );
   });
 
   test('send 收尾后应原位补齐已有流式语音占位，不再重插新消息', () async {
     final now = DateTime.now();
+    final convId =
+        'conv_stream_tts_in_place_fill_${now.microsecondsSinceEpoch}';
     final conv = Conversation(
-      id: 'conv_stream_tts_in_place_fill',
+      id: convId,
       title: 'StreamTtsInPlaceFill',
       displayName: 'StreamTtsInPlaceFill',
       createdAt: now,
@@ -4318,8 +4689,8 @@ void main() {
       streamTextMessageIds: const <String>['stream_text_handoff_anchor'],
     );
 
-    var sawStablePlaceholder = false;
     var sawStableImage = false;
+    var sawAnchorOrPlaceholder = false;
     var sawEmptyGap = false;
     for (var i = 0; i < 35; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -4328,27 +4699,32 @@ void main() {
               const <Message>[];
       final hasStablePlaceholder =
           _collectGeneratingPlaceholderMessages(stableMessages).isNotEmpty;
+      final hasStableAnchor = stableMessages.any(
+        (message) => message.id == 'stream_text_handoff_anchor',
+      );
       final hasStableImage = stableMessages.any(
         (message) =>
             message.blocks?.any((block) => block is ImageBlock) ?? false,
       );
-      if (hasStablePlaceholder) {
-        sawStablePlaceholder = true;
+      if (hasStablePlaceholder || hasStableAnchor) {
+        sawAnchorOrPlaceholder = true;
       }
       if (hasStableImage) {
         sawStableImage = true;
       }
-      if (sawStablePlaceholder && !hasStableImage && !hasStablePlaceholder) {
+      if (sawAnchorOrPlaceholder &&
+          !hasStableImage &&
+          !hasStablePlaceholder &&
+          !hasStableAnchor) {
         sawEmptyGap = true;
       }
     }
 
-    expect(sawStablePlaceholder, isTrue);
     expect(sawStableImage, isTrue);
     expect(
       sawEmptyGap,
       isFalse,
-      reason: '图片占位改为正式时间线同 ID 原地升级后，不应再出现“占位没了、图片还没到”的空窗',
+      reason: '无论是“生成中”占位还是原文本锚点，都不应先被撤掉再等待图片补位',
     );
 
     await Future<void>.delayed(const Duration(milliseconds: 120));

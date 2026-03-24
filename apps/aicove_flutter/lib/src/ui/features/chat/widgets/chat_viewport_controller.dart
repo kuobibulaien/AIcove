@@ -14,24 +14,37 @@ enum ChatViewportMode {
 class ChatViewportController extends ChangeNotifier {
   ChatViewportMode _mode = ChatViewportMode.followLatest;
   int _scrollToBottomRequestSerial = 0;
+  bool _scrollToBottomRequestAnimated = false;
+  bool _pinLatestTail = false;
 
   ChatViewportMode get mode => _mode;
 
   bool get shouldFollowLatest => _mode == ChatViewportMode.followLatest;
   bool get isDetached => _mode == ChatViewportMode.detached;
+  bool get shouldPinLatestTail => shouldFollowLatest && _pinLatestTail;
 
   int get scrollToBottomRequestSerial => _scrollToBottomRequestSerial;
+  bool get scrollToBottomRequestAnimated => _scrollToBottomRequestAnimated;
 
   void onConversationChanged() {
-    _setState(mode: ChatViewportMode.followLatest);
+    _setState(
+      mode: ChatViewportMode.followLatest,
+      pinLatestTail: false,
+    );
   }
 
   void onUserGesture() {
-    _setState(mode: ChatViewportMode.detached);
+    _setState(
+      mode: ChatViewportMode.detached,
+      pinLatestTail: false,
+    );
   }
 
   void onHistoryPagingStarted() {
-    _setState(mode: ChatViewportMode.detached);
+    _setState(
+      mode: ChatViewportMode.detached,
+      pinLatestTail: false,
+    );
   }
 
   void onComposerTapped() {}
@@ -40,6 +53,8 @@ class ChatViewportController extends ChangeNotifier {
     _setState(
       mode: ChatViewportMode.followLatest,
       requestScrollToBottom: true,
+      scrollToBottomAnimated: false,
+      pinLatestTail: true,
     );
   }
 
@@ -47,6 +62,8 @@ class ChatViewportController extends ChangeNotifier {
     _setState(
       mode: ChatViewportMode.followLatest,
       requestScrollToBottom: true,
+      scrollToBottomAnimated: true,
+      pinLatestTail: true,
     );
   }
 
@@ -57,14 +74,20 @@ class ChatViewportController extends ChangeNotifier {
   void _setState({
     ChatViewportMode? mode,
     bool requestScrollToBottom = false,
+    bool scrollToBottomAnimated = false,
+    bool? pinLatestTail,
   }) {
     final nextMode = mode ?? _mode;
+    final nextPinLatestTail = pinLatestTail ?? _pinLatestTail;
     final modeChanged = _mode != nextMode;
-    if (!modeChanged && !requestScrollToBottom) {
+    final pinLatestTailChanged = _pinLatestTail != nextPinLatestTail;
+    if (!modeChanged && !requestScrollToBottom && !pinLatestTailChanged) {
       return;
     }
     _mode = nextMode;
+    _pinLatestTail = nextPinLatestTail;
     if (requestScrollToBottom) {
+      _scrollToBottomRequestAnimated = scrollToBottomAnimated;
       _scrollToBottomRequestSerial += 1;
     }
     notifyListeners();

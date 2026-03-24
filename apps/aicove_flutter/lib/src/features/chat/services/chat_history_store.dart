@@ -594,6 +594,9 @@ class ChatHistoryStore {
     if (messageIds.isEmpty) return;
     final shortWindowStore = _ref.read(conversationShortWindowStoreProvider);
     final projectedMessages = <Message>[];
+    final allFrontendMessages = await shortWindowStore.loadAllMessages(
+      conversationId,
+    );
     for (final id in messageIds) {
       final message = await shortWindowStore.findMessageById(
         id,
@@ -607,26 +610,59 @@ class ChatHistoryStore {
       for (final message in projectedMessages)
         if (_isProjectedFrontendMessage(message)) message.id,
     ];
+    final rawDeleteIds = <String>{
+      for (final id in messageIds)
+        if (!projectedOnlyIds.contains(id)) id,
+    };
+    final projectedDeleteIdsByRaw = <String, Set<String>>{};
+    for (final message in projectedMessages) {
+      if (!_isProjectedFrontendMessage(message)) {
+        continue;
+      }
+      final rawMessageId = message.sourceMessageId?.trim();
+      if (rawMessageId == null || rawMessageId.isEmpty) {
+        continue;
+      }
+      projectedDeleteIdsByRaw
+          .putIfAbsent(rawMessageId, () => <String>{})
+          .add(message.id);
+    }
+    final rawMessageIdsToResync = <String>{};
+    if (projectedDeleteIdsByRaw.isNotEmpty) {
+      final frontendIdsByRaw = <String, Set<String>>{};
+      for (final message in allFrontendMessages) {
+        final rawMessageId = message.sourceMessageId?.trim();
+        if (rawMessageId == null || rawMessageId.isEmpty) {
+          continue;
+        }
+        frontendIdsByRaw
+            .putIfAbsent(rawMessageId, () => <String>{})
+            .add(message.id);
+      }
+      projectedDeleteIdsByRaw.forEach((rawMessageId, deleteIds) {
+        final frontendIds = frontendIdsByRaw[rawMessageId];
+        if (frontendIds != null &&
+            frontendIds.isNotEmpty &&
+            frontendIds.difference(deleteIds).isEmpty) {
+          rawDeleteIds.add(rawMessageId);
+          return;
+        }
+        rawMessageIdsToResync.add(rawMessageId);
+      });
+    }
     if (projectedOnlyIds.isNotEmpty) {
       await shortWindowStore.replaceMessages(
         conversationId: conversationId,
         removeMessageIds: projectedOnlyIds,
       );
-      await _syncRawProjectionFromShortWindow(
-        conversationId: conversationId,
-        rawMessageIds: {
-          for (final message in projectedMessages)
-            if (message.sourceMessageId?.trim().isNotEmpty ?? false)
-              message.sourceMessageId!.trim(),
-        },
-      );
+      if (rawMessageIdsToResync.isNotEmpty) {
+        await _syncRawProjectionFromShortWindow(
+          conversationId: conversationId,
+          rawMessageIds: rawMessageIdsToResync,
+        );
+      }
       await _refreshSummaryFromShortWindow(conversationId);
     }
-
-    final rawDeleteIds = [
-      for (final id in messageIds)
-        if (!projectedOnlyIds.contains(id)) id,
-    ];
     if (rawDeleteIds.isEmpty) {
       return;
     }
@@ -636,11 +672,12 @@ class ChatHistoryStore {
     final now = DateTime.now().millisecondsSinceEpoch;
     final purgeAt = now + 30 * 24 * 60 * 60 * 1000;
 
-    final blocks = await blockRepo.getByMessages(rawDeleteIds);
+    final rawDeleteIdList = rawDeleteIds.toList(growable: false);
+    final blocks = await blockRepo.getByMessages(rawDeleteIdList);
     for (final block in blocks) {
       await blockRepo.softDelete(block.id, now);
     }
-    for (final id in rawDeleteIds) {
+    for (final id in rawDeleteIdList) {
       await msgRepo.softDelete(id, now, purgeAt);
     }
     await _refreshSummary(conversationId);
@@ -660,7 +697,7 @@ class ChatHistoryStore {
 
     await _removeMessagesFromShortWindowByRawIds(
       conversationId: conversationId,
-      rawMessageIds: rawDeleteIds.toSet(),
+      rawMessageIds: rawDeleteIds,
     );
     await _refreshSummaryFromShortWindow(conversationId);
   }

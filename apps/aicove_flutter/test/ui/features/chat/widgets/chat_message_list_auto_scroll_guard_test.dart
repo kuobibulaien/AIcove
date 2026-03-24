@@ -885,7 +885,11 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.text('生成中...'), findsOneWidget);
+    expect(
+      find.text('生成中...'),
+      findsNothing,
+      reason: '语音 pending 占位应保持原语音气泡形态，不再额外注入三点文本占位',
+    );
     expect(find.text('后续文字继续出现'), findsOneWidget);
     expect(
       find.byKey(const ValueKey<String>('message_bubble_temp_voice_pending')),
@@ -1098,14 +1102,110 @@ void main() {
     final gapRightAfterSend = _distanceToBottom(controller);
     expect(
       gapRightAfterSend,
-      greaterThan(8),
-      reason: '用户发送后应通过动画回到底部，首帧不应直接瞬移贴底',
+      lessThanOrEqualTo(8),
+      reason: '用户发送后首帧就应贴近底部，避免列表先上弹再回落',
     );
 
     await tester.pumpAndSettle();
 
     controller = tester.widget<CustomScrollView>(listFinder).controller!;
     expect(_distanceToBottom(controller), lessThanOrEqualTo(8));
+  });
+
+  testWidgets('用户发送后，assistant 等待占位应贴着输入框上沿可见', (tester) async {
+    final settings = _buildSettings();
+    final viewportController = ChatViewportController();
+    final autoScrollReasons = <String>[];
+    final baseMessages = _buildInitialMessages(40);
+    final userTail = Message.text(
+      id: 'user_tail_after_send',
+      role: 'user',
+      content: '你的知识库截至时间',
+      createdAt: baseMessages.last.createdAt.add(const Duration(minutes: 1)),
+      status: 'sent',
+    );
+    final stableMessages = <Message>[
+      ...baseMessages,
+      userTail,
+    ];
+    final thinkingPlaceholder = Message.fromBlocks(
+      id: 'assistant_waiting_after_send',
+      role: 'assistant',
+      blocks: <MessageBlock>[
+        TextBlock(
+          messageId: 'assistant_waiting_after_send',
+          content: '生成中...',
+          status: BlockStatus.streaming,
+        ),
+      ],
+      createdAt: userTail.createdAt.add(const Duration(minutes: 1)),
+      status: 'sending',
+    );
+    const bottomOverlayHeight = 188.0;
+
+    await tester.pumpWidget(
+      _buildHostWithMessages(
+        settings: settings,
+        messages: stableMessages,
+        bottomOverlayHeight: bottomOverlayHeight,
+        viewportController: viewportController,
+        onDebugAutoScrollRequested: autoScrollReasons.add,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    viewportController.onUserSend();
+    await tester.pump();
+    await tester.pumpAndSettle();
+    autoScrollReasons.clear();
+
+    await tester.pumpWidget(
+      _buildHostWithMessages(
+        settings: settings,
+        messages: stableMessages,
+        transientMessages: <Message>[thinkingPlaceholder],
+        bottomOverlayHeight: bottomOverlayHeight,
+        viewportController: viewportController,
+        onDebugAutoScrollRequested: autoScrollReasons.add,
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 340));
+
+    final bubbleFinder = find.byKey(
+      const ValueKey<String>('message_bubble_assistant_waiting_after_send'),
+    );
+    expect(bubbleFinder, findsOneWidget);
+
+    final listFinder = find.byType(CustomScrollView);
+    expect(listFinder, findsOneWidget);
+    final controller = tester.widget<CustomScrollView>(listFinder).controller!;
+    final chatListRect = tester.getRect(find.byType(ChatMessageList));
+    final bubbleRect = tester.getRect(bubbleFinder);
+    final visibleBottomDy = chatListRect.bottom - bottomOverlayHeight;
+
+    expect(
+      _distanceToBottom(controller),
+      lessThanOrEqualTo(8),
+      reason: '用户刚发送完成的这轮里，assistant 等待占位不应再藏到输入框下面',
+    );
+    expect(
+      bubbleRect.bottom,
+      lessThanOrEqualTo(visibleBottomDy + 8),
+      reason: '等待占位的底边应贴近输入框上沿，而不是压到输入框下面',
+    );
+    expect(
+      visibleBottomDy - bubbleRect.bottom,
+      lessThan(40),
+      reason: '等待占位应出现在可见底部附近，避免正文首句出现时再把用户气泡突然顶走',
+    );
+    expect(
+      autoScrollReasons,
+      isEmpty,
+      reason: '这类贴底保持应由列表内部补偿完成，不应额外发起新的回底请求',
+    );
+
+    viewportController.dispose();
   });
 
   testWidgets('先清空旧轮次再插入新用户消息时，不应继续保留旧 assistant 回复', (tester) async {
@@ -1415,7 +1515,8 @@ void main() {
 
     final listFinder = find.byType(CustomScrollView);
     expect(listFinder, findsOneWidget);
-    final controllerBefore = tester.widget<CustomScrollView>(listFinder).controller!;
+    final controllerBefore =
+        tester.widget<CustomScrollView>(listFinder).controller!;
     final gapBeforeGrowth = _distanceToBottom(controllerBefore);
     expect(
       gapBeforeGrowth,
@@ -1449,7 +1550,8 @@ void main() {
     await tester.pump();
     await tester.pumpAndSettle();
 
-    final controllerAfter = tester.widget<CustomScrollView>(listFinder).controller!;
+    final controllerAfter =
+        tester.widget<CustomScrollView>(listFinder).controller!;
     final gapAfterGrowth = _distanceToBottom(controllerAfter);
     final bottomAnchorDyAfter = tester.getCenter(bottomAnchorFinder.first).dy;
 

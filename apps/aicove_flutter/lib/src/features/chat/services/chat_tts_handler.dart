@@ -321,7 +321,7 @@ class ChatTtsHandler {
     }
 
     if (canGenerateTts || hasImageEvents) {
-      _scheduleDeferredStreamSupplements(
+      await _scheduleDeferredStreamSupplements(
         convId: convId,
         replyText: replyText,
         pluginEvents: pluginEvents,
@@ -401,7 +401,7 @@ class ChatTtsHandler {
     });
   }
 
-  void _scheduleDeferredStreamSupplements({
+  Future<void> _scheduleDeferredStreamSupplements({
     required String convId,
     required String replyText,
     required List<PluginEvent> pluginEvents,
@@ -411,68 +411,67 @@ class ChatTtsHandler {
     required bool includeTts,
     required String? sourceMessageId,
     TraceLogger? trace,
-  }) {
-    _runBackgroundTask('post_stream_supplements', () async {
-      final plan = _deliveryPlanner.planPostStreamSupplements(
-        replyText: replyText,
-        pluginEvents: pluginEvents,
-        canGenerateTts: canGenerateTts,
-        includeTts: includeTts,
-        startOrder: startOrder,
-        pendingTtsPlaceholderBuilder: (ttsText) =>
-            _buildPendingTtsPlaceholderMessage(
-          ttsText,
-          sourceMessageId: sourceMessageId,
-        ),
-        stickerMessageBuilder: (segment) => _buildStickerMessageFromSegment(
-          segment,
-          sourceMessageId: sourceMessageId,
-        ),
+  }) async {
+    final plan = _deliveryPlanner.planPostStreamSupplements(
+      replyText: replyText,
+      pluginEvents: pluginEvents,
+      canGenerateTts: canGenerateTts,
+      includeTts: includeTts,
+      startOrder: startOrder,
+      pendingTtsPlaceholderBuilder: (ttsText) =>
+          _buildPendingTtsPlaceholderMessage(
+        ttsText,
+        sourceMessageId: sourceMessageId,
+      ),
+      stickerMessageBuilder: (segment) => _buildStickerMessageFromSegment(
+        segment,
+        sourceMessageId: sourceMessageId,
+      ),
+    );
+
+    if (plan.insertOps.isNotEmpty) {
+      _sortInsertOps(plan.insertOps);
+      await _insertSupplementsAroundStreamText(
+        convId: convId,
+        streamTextMessageIds: streamTextMessageIds,
+        insertOps: plan.insertOps,
+        trace: trace,
       );
+    }
 
-      if (plan.insertOps.isNotEmpty) {
-        _sortInsertOps(plan.insertOps);
-        await _insertSupplementsAroundStreamText(
-          convId: convId,
-          streamTextMessageIds: streamTextMessageIds,
-          insertOps: plan.insertOps,
-          trace: trace,
-        );
-      }
+    for (final pendingMessage in plan.pendingTtsMessages) {
+      _scheduleSinglePendingTtsResolution(
+        convId: convId,
+        message: pendingMessage,
+      );
+    }
 
-      for (final pendingMessage in plan.pendingTtsMessages) {
-        _scheduleSinglePendingTtsResolution(
-          convId: convId,
-          message: pendingMessage,
-        );
-      }
-
-      if (plan.imagePrompts.isNotEmpty) {
-        final imagePlaceholderBaseTime =
-            await _deferredImageDelivery.resolvePlaceholderBaseTime(convId);
-        final deferredImageJobs = <DeferredImageJob>[
-          for (var i = 0; i < plan.imagePrompts.length; i++)
-            DeferredImageJob(
-              messageId: genId('img'),
-              prompt: plan.imagePrompts[i],
-              createdAt:
-                  imagePlaceholderBaseTime.add(Duration(milliseconds: i + 1)),
-              sourceMessageId: sourceMessageId,
-              failureAnchorMessageId: streamTextMessageIds.isNotEmpty
-                  ? streamTextMessageIds.last
-                  : null,
-            ),
-        ];
-        await _deferredImageDelivery.upsertPlaceholders(
-          convId: convId,
-          jobs: deferredImageJobs,
-        );
-        _deferredImageDelivery.scheduleJobs(
-          convId: convId,
-          jobs: deferredImageJobs,
-        );
-      }
-    });
+    if (plan.imagePrompts.isEmpty) {
+      return;
+    }
+    final imagePlaceholderBaseTime =
+        await _deferredImageDelivery.resolvePlaceholderBaseTime(convId);
+    final deferredImageJobs = <DeferredImageJob>[
+      for (var i = 0; i < plan.imagePrompts.length; i++)
+        DeferredImageJob(
+          messageId: genId('img'),
+          prompt: plan.imagePrompts[i],
+          createdAt:
+              imagePlaceholderBaseTime.add(Duration(milliseconds: i + 1)),
+          sourceMessageId: sourceMessageId,
+          failureAnchorMessageId: streamTextMessageIds.isNotEmpty
+              ? streamTextMessageIds.last
+              : null,
+        ),
+    ];
+    await _deferredImageDelivery.upsertPlaceholders(
+      convId: convId,
+      jobs: deferredImageJobs,
+    );
+    _deferredImageDelivery.scheduleJobs(
+      convId: convId,
+      jobs: deferredImageJobs,
+    );
   }
 
   void _schedulePendingStreamTtsResolution({

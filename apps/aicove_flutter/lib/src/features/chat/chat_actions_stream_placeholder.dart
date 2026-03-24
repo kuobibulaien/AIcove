@@ -109,6 +109,7 @@ class _StreamPlaceholderDelivery {
   int _timelineTick = 0;
   Future<void> _queue = Future<void>.value();
   Timer? _flushTimer;
+  DateTime? _scheduledFlushAt;
   Timer? _thinkingPlaceholderTimer;
   bool _dirty = false;
   bool _disposed = false;
@@ -116,6 +117,8 @@ class _StreamPlaceholderDelivery {
   bool _fallbackTriggered = false;
   bool _thinkingPlaceholderElapsed = false;
   String? _finalizedRawText;
+  int _visibleSealedTextCount = 0;
+  DateTime? _nextSealedRevealAt;
 
   Future<void> start() async {
     if (_disposed) return;
@@ -143,6 +146,8 @@ class _StreamPlaceholderDelivery {
     _stablePendingAudioMessages.clear();
     _timelineBaseMs = null;
     _timelineTick = 0;
+    _visibleSealedTextCount = 0;
+    _nextSealedRevealAt = null;
     _dirty = true;
     _restartThinkingPlaceholderTimer();
     unawaited(_discardTimelineMessages(discardedMessages));
@@ -167,11 +172,14 @@ class _StreamPlaceholderDelivery {
 
   Future<void> finalize({required String finalText}) async {
     if (_disposed) return;
-    _finalizedRawText = _resolveEffectiveFinalText(finalText);
+    final effectiveFinalText = _resolveEffectiveFinalText(finalText);
+    _finalizedRawText = effectiveFinalText;
     _fallbackTriggered = false;
+    await _drainSegmentRevealBacklog(sourceRaw: effectiveFinalText);
     _cancelThinkingPlaceholderTimer();
     _flushTimer?.cancel();
     _flushTimer = null;
+    _scheduledFlushAt = null;
     _dirty = false;
     await _applyState(finalize: true);
   }
@@ -190,6 +198,8 @@ class _StreamPlaceholderDelivery {
     _fallbackTriggered = false;
     _timelineBaseMs = null;
     _timelineTick = 0;
+    _visibleSealedTextCount = 0;
+    _nextSealedRevealAt = null;
     await _replaceTimelineMessages(
       previousMessages: previousMessages,
       nextMessages: finalMessages,
@@ -204,6 +214,13 @@ class _StreamPlaceholderDelivery {
       for (final message in committedMessages)
         message.copyWith(sourceMessageId: sourceMessageId),
     ];
+    final timelineProjection = _buildProjectedTimelineMessages(
+      sourceMessageId: sourceMessageId,
+      committedMessages: committedMessages,
+    );
+    if (timelineProjection.isNotEmpty) {
+      return timelineProjection;
+    }
     if (_currentTimelineMessages.isEmpty) {
       return normalizedCommitted;
     }
@@ -234,6 +251,25 @@ class _StreamPlaceholderDelivery {
     return merged;
   }
 
+  List<Message> _buildProjectedTimelineMessages({
+    required String sourceMessageId,
+    required List<Message> committedMessages,
+  }) {
+    if (_currentTimelineMessages.isEmpty) {
+      return const <Message>[];
+    }
+    if (committedMessages
+        .any((message) => !_isPureTextCommittedMessage(message))) {
+      return const <Message>[];
+    }
+    final projection = <Message>[
+      for (final message in _currentTimelineMessages)
+        if (_isPersistableProjectedTimelineMessage(message))
+          message.copyWith(sourceMessageId: sourceMessageId),
+    ];
+    return projection;
+  }
+
   List<Message> pendingAudioPlaceholderMessages({
     required String sourceMessageId,
   }) {
@@ -252,6 +288,7 @@ class _StreamPlaceholderDelivery {
     _cancelThinkingPlaceholderTimer();
     _flushTimer?.cancel();
     _flushTimer = null;
+    _scheduledFlushAt = null;
     _dirty = false;
     final discardedMessages =
         List<Message>.from(_currentTimelineMessages, growable: false);
@@ -263,6 +300,8 @@ class _StreamPlaceholderDelivery {
     _fallbackTriggered = false;
     _timelineBaseMs = null;
     _timelineTick = 0;
+    _visibleSealedTextCount = 0;
+    _nextSealedRevealAt = null;
     await _discardTimelineMessages(discardedMessages);
   }
 
@@ -271,6 +310,7 @@ class _StreamPlaceholderDelivery {
     _cancelThinkingPlaceholderTimer();
     _flushTimer?.cancel();
     _flushTimer = null;
+    _scheduledFlushAt = null;
   }
 
   void _restartThinkingPlaceholderTimer() {
@@ -294,15 +334,35 @@ class _StreamPlaceholderDelivery {
     if (forceNow) {
       _flushTimer?.cancel();
       _flushTimer = null;
+      _scheduledFlushAt = null;
       _flushNow();
       return;
     }
-    _flushTimer ??= Timer(_kFlushInterval, _flushNow);
+    final now = DateTime.now();
+    var targetAt = now.add(_kFlushInterval);
+    final nextRevealAt = _nextSealedRevealAt;
+    if (nextRevealAt != null && nextRevealAt.isBefore(targetAt)) {
+      targetAt = nextRevealAt;
+    }
+    final scheduledAt = _scheduledFlushAt;
+    if (_flushTimer != null &&
+        scheduledAt != null &&
+        !targetAt.isBefore(scheduledAt)) {
+      return;
+    }
+    _flushTimer?.cancel();
+    _scheduledFlushAt = targetAt;
+    final delay = targetAt.difference(now);
+    _flushTimer = Timer(
+      delay.isNegative ? Duration.zero : delay,
+      _flushNow,
+    );
   }
 
   void _flushNow() {
     if (_disposed) return;
     _flushTimer = null;
+    _scheduledFlushAt = null;
     if (!_dirty) return;
     _dirty = false;
     unawaited(_applyState(finalize: false));
@@ -313,9 +373,7 @@ class _StreamPlaceholderDelivery {
       if (_disposed) return;
       final previousMessages =
           List<Message>.from(_currentTimelineMessages, growable: false);
-      final sourceRaw = finalize
-          ? (_finalizedRawText ?? _rawStreamText.toString())
-          : _rawStreamText.toString();
+      final sourceRaw = _finalizedRawText ?? _rawStreamText.toString();
       final messages = _materializeTimeline(
         _buildTimelineDescriptors(sourceRaw, finalize: finalize),
       );
@@ -337,43 +395,145 @@ class _StreamPlaceholderDelivery {
     required bool finalize,
   }) {
     final segments = _extractRawSegments(rawText);
+    final sealedTextDescriptors = <_StreamDescriptor>[];
     final descriptors = <_StreamDescriptor>[];
     _StreamDescriptor? activeText;
+
     for (var index = 0; index < segments.length; index++) {
       final segment = segments[index];
       final hasFollowingBoundary = index < segments.length - 1;
       if (segment.kind == _RawStreamSegmentKind.tts && enableTtsPlaceholders) {
-        final ttsText = segment.content.trim();
-        if (ttsText.isNotEmpty) {
-          descriptors.add(_StreamDescriptor.pendingAudio(ttsText));
-        }
+        continue;
+      }
+      if (segment.kind == _RawStreamSegmentKind.image) {
         continue;
       }
       final described = _describeTextSegment(
         segment.content,
         forceSealTail: finalize || hasFollowingBoundary,
       );
-      descriptors.addAll(described.sealed);
+      sealedTextDescriptors.addAll(described.sealed);
       if (!finalize && !formatConfig.enableChunking && !hasFollowingBoundary) {
         activeText = described.active;
       }
     }
     if (finalize) {
-      return descriptors;
+      _visibleSealedTextCount = sealedTextDescriptors.length;
+      _nextSealedRevealAt = null;
+      return <_StreamDescriptor>[
+        ...sealedTextDescriptors,
+        if (activeText != null) activeText,
+      ];
     }
-    if (activeText != null) {
+
+    final visibleSealedCount =
+        _resolveVisibleSealedTextCount(sealedTextDescriptors.length);
+    final hasHiddenSealed = visibleSealedCount < sealedTextDescriptors.length;
+    if (visibleSealedCount > 0) {
+      descriptors.addAll(sealedTextDescriptors.take(visibleSealedCount));
+    }
+    if (!hasHiddenSealed && activeText != null) {
       descriptors.add(activeText);
-      return descriptors;
     }
-    if (_shouldShowGeneratingPlaceholder(descriptors)) {
+
+    if (hasHiddenSealed) {
+      _scheduleFlush();
+    }
+
+    final hasBufferedContent =
+        sealedTextDescriptors.isNotEmpty || activeText != null;
+    if (_shouldShowGeneratingPlaceholder(
+      descriptors,
+      hasBufferedContent: hasBufferedContent,
+    )) {
       descriptors.add(_StreamDescriptor.generating());
     }
     return descriptors;
   }
 
-  bool _shouldShowGeneratingPlaceholder(List<_StreamDescriptor> descriptors) {
+  bool _shouldShowGeneratingPlaceholder(
+    List<_StreamDescriptor> descriptors, {
+    required bool hasBufferedContent,
+  }) {
     if (descriptors.isNotEmpty) return true;
+    if (hasBufferedContent) return true;
     return _thinkingPlaceholderElapsed || _fallbackTriggered;
+  }
+
+  int _resolveVisibleSealedTextCount(int totalSealedCount) {
+    if (totalSealedCount <= 0) {
+      _visibleSealedTextCount = 0;
+      _nextSealedRevealAt = null;
+      return 0;
+    }
+    if (segmentDelay <= Duration.zero) {
+      _visibleSealedTextCount = totalSealedCount;
+      _nextSealedRevealAt = null;
+      return totalSealedCount;
+    }
+
+    if (_visibleSealedTextCount > totalSealedCount) {
+      _visibleSealedTextCount = totalSealedCount;
+    }
+    final now = DateTime.now();
+    _nextSealedRevealAt ??= now.add(segmentDelay);
+    while (_visibleSealedTextCount < totalSealedCount) {
+      final revealAt = _nextSealedRevealAt;
+      if (revealAt != null && now.isBefore(revealAt)) {
+        break;
+      }
+      _visibleSealedTextCount += 1;
+      if (_visibleSealedTextCount >= totalSealedCount) {
+        _nextSealedRevealAt = null;
+      } else {
+        final base = revealAt ?? now;
+        _nextSealedRevealAt = base.add(segmentDelay);
+      }
+    }
+    return _visibleSealedTextCount;
+  }
+
+  int _countSealedTextDescriptors(String rawText) {
+    if (rawText.trim().isEmpty) return 0;
+    final segments = _extractRawSegments(rawText);
+    var total = 0;
+    for (var index = 0; index < segments.length; index++) {
+      final segment = segments[index];
+      if (segment.kind == _RawStreamSegmentKind.tts && enableTtsPlaceholders) {
+        continue;
+      }
+      if (segment.kind == _RawStreamSegmentKind.image) {
+        continue;
+      }
+      final described = _describeTextSegment(
+        segment.content,
+        forceSealTail: true,
+      );
+      total += described.sealed.length;
+    }
+    return total;
+  }
+
+  Future<void> _drainSegmentRevealBacklog({
+    required String sourceRaw,
+  }) async {
+    if (_disposed || segmentDelay <= Duration.zero) return;
+    final targetSealedCount = _countSealedTextDescriptors(sourceRaw);
+    if (targetSealedCount <= _visibleSealedTextCount) {
+      return;
+    }
+    while (!_disposed && _visibleSealedTextCount < targetSealedCount) {
+      final now = DateTime.now();
+      final revealAt = _nextSealedRevealAt ?? now.add(segmentDelay);
+      _nextSealedRevealAt = revealAt;
+      final wait = revealAt.difference(now);
+      if (wait > Duration.zero) {
+        await Future<void>.delayed(wait);
+      }
+      if (_disposed) return;
+      _dirty = true;
+      await _applyState(finalize: false);
+    }
   }
 
   List<_RawStreamSegment> _extractRawSegments(String rawText) {
@@ -617,6 +777,34 @@ class _StreamPlaceholderDelivery {
           ((blocks.first as AudioBlock).text ?? '').trim() ==
               descriptor.content.trim(),
     };
+  }
+
+  bool _isPureTextCommittedMessage(Message message) {
+    final blocks = message.blocks;
+    if (blocks == null || blocks.isEmpty) {
+      return message.content.trim().isNotEmpty;
+    }
+    return blocks.every((block) => block is TextBlock);
+  }
+
+  bool _isPersistableProjectedTimelineMessage(Message message) {
+    if (_isPendingAudioPlaceholderMessage(message)) {
+      return true;
+    }
+    final textBlocks =
+        message.blocks?.whereType<TextBlock>().toList() ?? const <TextBlock>[];
+    if (textBlocks.length != 1) {
+      return false;
+    }
+    final textBlock = textBlocks.single;
+    final text = textBlock.content.trim();
+    if (text.isEmpty) {
+      return false;
+    }
+    if (text == kGeneratingText && textBlock.status == BlockStatus.streaming) {
+      return false;
+    }
+    return true;
   }
 
   Message _createMessage(_StreamDescriptor descriptor) {

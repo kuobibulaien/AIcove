@@ -347,12 +347,15 @@ class ChatActions {
         streamDelivery.pendingAudioPlaceholderMessages(
       sourceMessageId: rawMessage.id,
     );
+    final finalMessagePreview = buildResult.lastMessageText.trim().isNotEmpty
+        ? buildResult.lastMessageText
+        : finalTimelineMessages.last.displayText;
     await _historyPort.appendAssistantRawMessage(
       conversationId: convId,
       userMessageId: userMsgId,
       rawMessage: rawMessage,
       projectedMessages: finalTimelineMessages,
-      lastMessagePreview: finalTimelineMessages.last.displayText,
+      lastMessagePreview: finalMessagePreview,
       updateShortWindow: false,
     );
     await streamDelivery.commitToMessages(finalMessages: finalTimelineMessages);

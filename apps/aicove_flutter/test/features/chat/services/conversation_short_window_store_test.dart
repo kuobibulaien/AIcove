@@ -750,6 +750,119 @@ void main() {
     );
   });
 
+  test('truncateAfterMessage 删除整条投影 assistant 后重建短窗不应回灌旧投影', () async {
+    tempDir = await Directory.systemTemp.createTemp(
+      'short_window_projection_truncate_',
+    );
+    PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir!.path);
+
+    final database = db.AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    final baseTime = DateTime(2026, 3, 24, 9, 30, 0).millisecondsSinceEpoch;
+    await _insertConversation(database, 'conv-projection-truncate', baseTime);
+
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(database),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await _persistMessage(
+      container,
+      'conv-projection-truncate',
+      Message(
+        id: 'u1',
+        role: 'user',
+        content: '帮我画一张图',
+        createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 1),
+      ),
+    );
+
+    final projectedMessages = <Message>[
+      Message(
+        id: 'a1-text',
+        role: 'assistant',
+        sourceMessageId: 'raw-a1',
+        content: '给你画好了',
+        createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 2),
+      ),
+      Message.fromBlocks(
+        id: 'a1-image',
+        role: 'assistant',
+        sourceMessageId: 'raw-a1',
+        blocks: <MessageBlock>[
+          ImageBlock(
+            messageId: 'a1-image',
+            url: 'file:///projection-image.png',
+            prompt: 'sunrise',
+          ),
+        ],
+        createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 3),
+      ),
+    ];
+
+    await _persistMessage(
+      container,
+      'conv-projection-truncate',
+      Message(
+        id: 'raw-a1',
+        role: 'assistant',
+        content: '给你画好了<image>sunrise</image>',
+        createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 2),
+        rawPayload: ChatMessageProjectionCodec.copyWithProjectedMessages(
+          <String, dynamic>{
+            'rawReplyText': '给你画好了<image>sunrise</image>',
+          },
+          projectedMessages,
+        ),
+      ),
+    );
+
+    final store = container.read(conversationShortWindowStoreProvider);
+    final historyStore = container.read(chatHistoryStoreProvider);
+
+    await store.syncConversation(
+      'conv-projection-truncate',
+      targetMessageCount: 20,
+    );
+    expect(
+      (await historyStore.loadFrontendMessages('conv-projection-truncate'))
+          .map((message) => message.id)
+          .toList(),
+      <String>['u1', 'a1-text', 'a1-image'],
+    );
+
+    await historyStore.truncateAfterMessage(
+      conversationId: 'conv-projection-truncate',
+      anchorMessageId: 'u1',
+    );
+
+    expect(
+      (await historyStore.loadFrontendMessages('conv-projection-truncate'))
+          .map((message) => message.id)
+          .toList(),
+      <String>['u1'],
+    );
+
+    await store.syncConversation(
+      'conv-projection-truncate',
+      targetMessageCount: 20,
+    );
+
+    expect(
+      (await historyStore.loadFrontendMessages('conv-projection-truncate'))
+          .map((message) => message.id)
+          .toList(),
+      <String>['u1'],
+    );
+
+    final rawMessage =
+        await container.read(messageRepositoryProvider).getById('raw-a1');
+    expect(rawMessage, isNotNull);
+    expect(rawMessage!.deletedAt, isNotNull);
+  });
+
   test('图片和语音消息应落为短列表自有本地文件并可跨重启恢复', () async {
     tempDir = await Directory.systemTemp.createTemp('short_window_media_');
     PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir!.path);

@@ -60,7 +60,12 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
         ? _scrollController.position.maxScrollExtent
         : null;
     final shouldStabilizeFollowLatestViewport =
-        _shouldStabilizeFollowLatestViewport();
+        _shouldStabilizeFollowLatestViewport(
+      oldWidget,
+      messagesChanged: messagesChanged,
+      transientMessagesChanged: transientMessagesChanged,
+      didPrependOlderHistory: didPrependOlderHistory,
+    );
     if (_pendingTransientHandoffIds.isNotEmpty &&
         _stableMessagesContainAllIds(
           widget.messages,
@@ -157,6 +162,22 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
       _scheduleFollowLatestViewportStabilization(
         targetDistanceToBottom: 0,
       );
+      if (widget.viewportController.shouldPinLatestTail) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _scheduleFollowLatestViewportStabilization(
+            targetDistanceToBottom: 0,
+            retryFrames: 1,
+          );
+        });
+        Future<void>.delayed(const Duration(milliseconds: 260), () {
+          if (!mounted) return;
+          _scheduleFollowLatestViewportStabilization(
+            targetDistanceToBottom: 0,
+            retryFrames: 1,
+          );
+        });
+      }
     }
 
     final threshold = _latestAnimatedAt;
@@ -458,14 +479,69 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
     _pendingTransientHandoffIds = <String>{};
   }
 
-  bool _shouldStabilizeFollowLatestViewport() {
-    if (!_autoScrollEnabled || _historyPagingLockActive || _isProgrammaticScroll) {
+  bool _shouldStabilizeFollowLatestViewport(
+    ChatMessageList oldWidget, {
+    required bool messagesChanged,
+    required bool transientMessagesChanged,
+    required bool didPrependOlderHistory,
+  }) {
+    if (!_autoScrollEnabled ||
+        _historyPagingLockActive ||
+        _isProgrammaticScroll) {
       return false;
     }
     if (!_scrollController.hasClients) {
       return false;
     }
     final position = _scrollController.position;
-    return position.hasContentDimensions;
+    if (!position.hasContentDimensions) {
+      return false;
+    }
+
+    final bottomOverlayChanged =
+        (widget.bottomOverlayHeight - oldWidget.bottomOverlayHeight).abs() >
+            0.5;
+    if (bottomOverlayChanged) {
+      return true;
+    }
+
+    final timelineChanged = messagesChanged || transientMessagesChanged;
+    if (!timelineChanged || didPrependOlderHistory) {
+      return false;
+    }
+
+    final previousMessages = _mergeTimelineMessages(
+      oldWidget.messages,
+      oldWidget.transientMessages,
+    );
+    final currentMessages = _currentTimelineMessages;
+    if (previousMessages.isEmpty || currentMessages.isEmpty) {
+      return false;
+    }
+
+    final previousTail = previousMessages.last;
+    final currentTail = currentMessages.last;
+    final sameTail = previousTail.id == currentTail.id &&
+        previousTail.createdAt == currentTail.createdAt &&
+        previousTail.role == currentTail.role;
+    if (sameTail) {
+      return true;
+    }
+
+    if (!widget.viewportController.shouldPinLatestTail) {
+      return false;
+    }
+
+    if (currentMessages.length < previousMessages.length) {
+      return false;
+    }
+
+    if (currentTail.createdAt.isAfter(previousTail.createdAt)) {
+      return true;
+    }
+
+    return currentTail.createdAt == previousTail.createdAt &&
+        (currentTail.id != previousTail.id ||
+            currentTail.role != previousTail.role);
   }
 }

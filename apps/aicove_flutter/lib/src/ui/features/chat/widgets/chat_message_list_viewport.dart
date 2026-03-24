@@ -25,7 +25,7 @@ extension _ChatMessageListViewportX on _ChatMessageListState {
     if (shouldRequestScroll) {
       _requestScrollToBottom(
         'viewportController',
-        animated: true,
+        animated: widget.viewportController.scrollToBottomRequestAnimated,
       );
     }
     if (followLatestChanged) {
@@ -350,15 +350,46 @@ extension _ChatMessageListViewportX on _ChatMessageListState {
         return;
       }
 
-      final normalizedTargetDistance = targetDistanceToBottom.isFinite &&
-              targetDistanceToBottom > 0
-          ? targetDistanceToBottom
-          : 0.0;
+      final normalizedTargetDistance =
+          targetDistanceToBottom.isFinite && targetDistanceToBottom > 0
+              ? targetDistanceToBottom
+              : 0.0;
       final targetOffset = position.minScrollExtent + normalizedTargetDistance;
-      if ((position.pixels - targetOffset).abs() <= 0.5) {
+      if ((position.pixels - targetOffset).abs() > 0.5) {
+        _jumpToOffset(targetOffset);
+      }
+      if (retryFrames <= 0) {
         return;
       }
-      _jumpToOffset(targetOffset);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_autoScrollEnabled || _historyPagingLockActive) {
+          return;
+        }
+        if (!_scrollController.hasClients) {
+          _scheduleFollowLatestViewportStabilization(
+            targetDistanceToBottom: targetDistanceToBottom,
+            retryFrames: retryFrames - 1,
+          );
+          return;
+        }
+        final nextPosition = _scrollController.position;
+        if (!nextPosition.hasContentDimensions) {
+          _scheduleFollowLatestViewportStabilization(
+            targetDistanceToBottom: targetDistanceToBottom,
+            retryFrames: retryFrames - 1,
+          );
+          return;
+        }
+        final nextTargetOffset =
+            nextPosition.minScrollExtent + normalizedTargetDistance;
+        if ((nextPosition.pixels - nextTargetOffset).abs() <= 0.5) {
+          return;
+        }
+        _scheduleFollowLatestViewportStabilization(
+          targetDistanceToBottom: targetDistanceToBottom,
+          retryFrames: retryFrames - 1,
+        );
+      });
     });
   }
 

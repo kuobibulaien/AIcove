@@ -219,8 +219,9 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
         ),
       );
 
-      final shouldAnimate =
-          item.chunkIndex == 0 && _pendingAnimationIds.contains(message.id);
+      final shouldAnimate = item.chunkIndex == 0 &&
+          _pendingAnimationIds.contains(message.id) &&
+          _shouldAnimatePendingMessage(message);
       if (shouldAnimate) {
         _pendingAnimationIds.remove(message.id);
         return AnimatedMessageItem(
@@ -259,7 +260,8 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
         ),
       );
 
-      final shouldAnimate = _pendingAnimationIds.contains(message.id);
+      final shouldAnimate = _pendingAnimationIds.contains(message.id) &&
+          _shouldAnimatePendingMessage(message);
       if (shouldAnimate) {
         _pendingAnimationIds.remove(message.id);
         return AnimatedMessageItem(
@@ -309,6 +311,14 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
         ),
       ),
     );
+  }
+
+  bool _shouldAnimatePendingMessage(Message message) {
+    if (widget.viewportController.shouldPinLatestTail &&
+        message.role == 'assistant') {
+      return false;
+    }
+    return true;
   }
 
   Widget _buildLoadingIndicator(BuildContext context) {
