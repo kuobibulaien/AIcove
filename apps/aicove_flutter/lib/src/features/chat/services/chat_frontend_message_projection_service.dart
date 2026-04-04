@@ -35,12 +35,34 @@ class ChatFrontendMessageProjectionService {
     }
 
     if (payload != null) {
+      final supplementInsertOps =
+          ChatMessageProjectionCodec.supplementInsertOps(payload);
+      if (supplementInsertOps.isNotEmpty) {
+        final rebuiltBase = const ChatMessageProcessor().buildAssistantMessages(
+          replyText: ChatMessageProjectionCodec.rawReplyText(payload) ??
+              rawMessage.content,
+          processedText: ChatMessageProjectionCodec.processedText(payload) ?? '',
+          pluginEvents: ChatMessageProjectionCodec.pluginEvents(payload),
+          contents: const [],
+          toolAudioResults: const [],
+          toolCalls: ChatMessageProjectionCodec.toolCalls(payload),
+          rawToolResults: ChatMessageProjectionCodec.rawToolResults(payload),
+        );
+        final rebuilt = _applyStoredSupplementInsertOps(
+          rebuiltBase.messages,
+          supplementInsertOps,
+        );
+        if (rebuilt.isNotEmpty) {
+          return _attachSourceMessageId(rawMessage.id, rebuilt);
+        }
+      }
       final rebuilt = const ChatMessageProcessor().buildAssistantMessages(
         replyText: ChatMessageProjectionCodec.rawReplyText(payload) ??
             rawMessage.content,
         processedText: ChatMessageProjectionCodec.processedText(payload) ?? '',
         pluginEvents: ChatMessageProjectionCodec.pluginEvents(payload),
         contents: ChatMessageProjectionCodec.pluginContents(payload),
+        toolAudioResults: ChatMessageProjectionCodec.toolAudioResults(payload),
         toolCalls: ChatMessageProjectionCodec.toolCalls(payload),
         rawToolResults: ChatMessageProjectionCodec.rawToolResults(payload),
       );
@@ -149,6 +171,128 @@ class ChatFrontendMessageProjectionService {
 
     return projected;
   }
+
+  List<Message> _applyStoredSupplementInsertOps(
+    List<Message> baseMessages,
+    List<StoredSupplementInsertOp> insertOps,
+  ) {
+    if (insertOps.isEmpty) {
+      return baseMessages;
+    }
+    if (baseMessages.isEmpty) {
+      return <Message>[
+        for (final op in insertOps)
+          if (_buildMessageFromStoredSupplementOp(op) case final message?)
+            message,
+      ];
+    }
+
+    final textChunkLengths = <int>[
+      for (final message in baseMessages) _normalizedTextLength(_extractText(message)),
+    ];
+    final slotMessages = <int, List<Message>>{};
+    for (final op in insertOps) {
+      final message = _buildMessageFromStoredSupplementOp(op);
+      if (message == null) {
+        continue;
+      }
+      final slot = _resolveSupplementInsertSlot(
+        textChunkLengths: textChunkLengths,
+        textCharsBefore: op.textCharsBefore,
+        forceAppendToTail: op.forceAppendToTail,
+      );
+      (slotMessages[slot] ??= <Message>[]).add(message);
+    }
+
+    final rebuilt = <Message>[
+      ...?slotMessages[0],
+    ];
+    for (var index = 0; index < baseMessages.length; index += 1) {
+      rebuilt.add(baseMessages[index]);
+      rebuilt.addAll(slotMessages[index + 1] ?? const <Message>[]);
+    }
+    return rebuilt;
+  }
+
+  Message? _buildMessageFromStoredSupplementOp(StoredSupplementInsertOp op) {
+    switch (op.kind) {
+      case 'image':
+        final localPath = op.localPath?.trim();
+        if (localPath == null || localPath.isEmpty) {
+          return null;
+        }
+        return _projectPassthroughMessage(
+          Message.fromBlocks(
+            id: 'img_${localPath.hashCode}_${op.textCharsBefore}',
+            role: 'assistant',
+            blocks: <MessageBlock>[
+              ImageBlock(
+                messageId: 'img_${localPath.hashCode}_${op.textCharsBefore}',
+                localPath: localPath,
+                prompt: op.prompt,
+              ),
+            ],
+            createdAt: DateTime.now(),
+            status: 'sent',
+          ),
+        );
+      case 'audio':
+        final audioUrl = op.audioUrl?.trim();
+        if (audioUrl == null || audioUrl.isEmpty) {
+          return null;
+        }
+        return _projectPassthroughMessage(
+          Message.fromBlocks(
+            id: 'audio_${audioUrl.hashCode}_${op.textCharsBefore}',
+            role: 'assistant',
+            blocks: <MessageBlock>[
+              AudioBlock(
+                messageId: 'audio_${audioUrl.hashCode}_${op.textCharsBefore}',
+                url: audioUrl,
+                text: op.text?.trim().isNotEmpty ?? false ? op.text!.trim() : null,
+              ),
+            ],
+            createdAt: DateTime.now(),
+            status: 'sent',
+          ),
+        );
+    }
+    return null;
+  }
+}
+
+int _normalizedTextLength(String text) =>
+    text.replaceAll(RegExp(r'\s+'), '').length;
+
+String _extractText(Message message) {
+  final blocks = message.blocks;
+  if (blocks != null && blocks.isNotEmpty) {
+    final text =
+        blocks.whereType<TextBlock>().map((block) => block.content).join();
+    if (text.trim().isNotEmpty) {
+      return text;
+    }
+  }
+  return message.content;
+}
+
+int _resolveSupplementInsertSlot({
+  required List<int> textChunkLengths,
+  required int textCharsBefore,
+  required bool forceAppendToTail,
+}) {
+  if (forceAppendToTail) {
+    return textChunkLengths.length;
+  }
+  if (textCharsBefore <= 0) return 0;
+  var cumulative = 0;
+  for (var index = 0; index < textChunkLengths.length; index += 1) {
+    cumulative += textChunkLengths[index];
+    if (textCharsBefore <= cumulative) {
+      return index + 1;
+    }
+  }
+  return textChunkLengths.length;
 }
 
 final chatFrontendMessageProjectionServiceProvider =

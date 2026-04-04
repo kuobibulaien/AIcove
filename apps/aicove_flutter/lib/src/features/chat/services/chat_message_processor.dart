@@ -99,6 +99,7 @@ class ChatMessageProcessor {
     required String processedText,
     required List<PluginEvent> pluginEvents,
     List<PluginContent>? contents,
+    List<ToolAudioResult> toolAudioResults = const [],
     List<ToolCall> toolCalls = const [],
     List<ToolResult> rawToolResults = const [],
   }) {
@@ -107,8 +108,12 @@ class ChatMessageProcessor {
     final imageContents = normalizedContents
         .whereType<PluginImageContent>()
         .toList(growable: false);
+    final audioContents = normalizedContents
+        .whereType<PluginAudioContent>()
+        .toList(growable: false);
     final nonImageContents = normalizedContents
-        .where((content) => content is! PluginImageContent)
+        .where((content) =>
+            content is! PluginImageContent && content is! PluginAudioContent)
         .toList(growable: false);
 
     // 1. 先处理非图片内容（文本/音频等）
@@ -131,6 +136,9 @@ class ChatMessageProcessor {
         // 有多模态标签：按标签位置拆分，保证语序正确
         // TTS 段由 ChatTtsHandler 顺序处理，这里跳过
         final segments = _parseMultimodalSegments(replyText, pluginEvents);
+        var audioContentIndex = 0;
+        var toolAudioIndex = 0;
+        var imageContentIndex = 0;
         for (final segment in segments) {
           if (segment.content.trim().isEmpty) continue;
 
@@ -139,7 +147,25 @@ class ChatMessageProcessor {
               aiMessages.add(_buildTextMessage(segment.content.trim()));
               break;
             case _SegType.tts:
-              // TTS 段不在这里处理，交给 ChatTtsHandler
+              if (audioContentIndex < audioContents.length) {
+                aiMessages.add(
+                  _buildAudioMessageFromPluginContent(
+                    audioContents[audioContentIndex],
+                    text: segment.content.trim(),
+                  ),
+                );
+                audioContentIndex += 1;
+                break;
+              }
+              if (toolAudioIndex < toolAudioResults.length) {
+                aiMessages.add(
+                  _buildAudioMessageFromToolAudioResult(
+                    toolAudioResults[toolAudioIndex],
+                    fallbackText: segment.content.trim(),
+                  ),
+                );
+                toolAudioIndex += 1;
+              }
               break;
             case _SegType.sticker:
               final assetPath = segment.data?['assetPath'] as String?;
@@ -163,12 +189,37 @@ class ChatMessageProcessor {
               }
               break;
             case _SegType.image:
-              // 图片段交给 ChatTtsHandler 直连生成并后补，不在这里直接入库
+              if (imageContentIndex < imageContents.length) {
+                final image = imageContents[imageContentIndex];
+                aiMessages.add(
+                  _buildImageMessage(
+                    PluginImageContent(
+                      image.localPath,
+                      caption: image.caption ?? segment.content.trim(),
+                    ),
+                  ),
+                );
+                imageContentIndex += 1;
+              }
               break;
           }
         }
-        if (imageContents.isNotEmpty) {
-          aiMessages.addAll(_processPluginContents(imageContents));
+        if (imageContentIndex < imageContents.length) {
+          aiMessages.addAll(
+            _processPluginContents(imageContents.skip(imageContentIndex).toList(
+              growable: false,
+            )),
+          );
+        }
+        if (audioContentIndex < audioContents.length) {
+          for (final content in audioContents.skip(audioContentIndex)) {
+            aiMessages.add(_buildAudioMessageFromPluginContent(content));
+          }
+        }
+        if (toolAudioIndex < toolAudioResults.length) {
+          for (final result in toolAudioResults.skip(toolAudioIndex)) {
+            aiMessages.add(_buildAudioMessageFromToolAudioResult(result));
+          }
         }
       } else {
         // 无多模态标签：保持消息完整
@@ -187,6 +238,17 @@ class ChatMessageProcessor {
             if (titles.isNotEmpty) {
               sourceText = '好的，已设置提醒：${titles.join("、")} ✓';
             }
+          }
+        }
+
+        if (toolAudioResults.isNotEmpty) {
+          for (final result in toolAudioResults) {
+            aiMessages.add(_buildAudioMessageFromToolAudioResult(result));
+          }
+        }
+        if (audioContents.isNotEmpty) {
+          for (final content in audioContents) {
+            aiMessages.add(_buildAudioMessageFromPluginContent(content));
           }
         }
 
@@ -572,6 +634,53 @@ class ChatMessageProcessor {
           messageId: msgId,
           localPath: content.localPath,
           prompt: content.caption,
+        ),
+      ],
+      createdAt: DateTime.now(),
+      status: 'sent',
+    );
+  }
+
+  Message _buildAudioMessageFromPluginContent(
+    PluginAudioContent content, {
+    String? text,
+  }) {
+    final msgId = genId('audio');
+    final audioUrl = content.localPath.startsWith('file://')
+        ? content.localPath
+        : 'file://${content.localPath}';
+    return Message.fromBlocks(
+      id: msgId,
+      role: 'assistant',
+      blocks: [
+        AudioBlock(
+          messageId: msgId,
+          url: audioUrl,
+          text: (text?.trim().isNotEmpty ?? false) ? text!.trim() : null,
+          durationSeconds: content.duration?.inSeconds.toDouble(),
+        ),
+      ],
+      createdAt: DateTime.now(),
+      status: 'sent',
+    );
+  }
+
+  Message _buildAudioMessageFromToolAudioResult(
+    ToolAudioResult result, {
+    String? fallbackText,
+  }) {
+    final msgId = genId('audio');
+    final text = result.text.trim().isNotEmpty
+        ? result.text.trim()
+        : fallbackText?.trim();
+    return Message.fromBlocks(
+      id: msgId,
+      role: 'assistant',
+      blocks: [
+        AudioBlock(
+          messageId: msgId,
+          url: result.audioUrl,
+          text: text,
         ),
       ],
       createdAt: DateTime.now(),

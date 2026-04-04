@@ -63,33 +63,22 @@ class TimeAwarenessPlugin extends BasePlugin {
       return null;
     }
 
-    final fields = <SystemReminderField>[
+    final parts = <String>[
       if (_config.includeCurrentTime)
-        SystemReminderField(
-          name: currentDateTimeFieldName,
-          value: _formatDateTime(currentTime),
-        ),
-      SystemReminderField(
-        name: previousUserMessageDateTimeFieldName,
-        value: previousUserMessageTime == null
-            ? 'unknown'
-            : _formatDateTime(previousUserMessageTime),
-      ),
+        '当前时间为${_formatDateTime(currentTime)}',
+      if (previousUserMessageTime != null)
+        '用户上一次发消息的时间为${_formatDateTime(previousUserMessageTime)}',
     ];
+    if (parts.isEmpty) return null;
+    parts.add('自行判断当前与历史对话的关系。');
 
     return SystemReminderPayload(
-      fields: fields,
+      rawContent: '${parts.join('。')}',
     );
   }
 
   String buildSystemReminderFieldGuide() {
-    final parts = <String>[
-      if (_config.includeCurrentTime)
-        '$currentDateTimeFieldName 表示模型发起本次回复时的设备本地时间。',
-      '$previousUserMessageDateTimeFieldName 表示上一条用户消息的发送时间，'
-          '如果值为 unknown，表示当前没有可用的上一条用户消息时间。',
-    ];
-    return parts.join('\n');
+    return '';
   }
 
   @override

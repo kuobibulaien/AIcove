@@ -34,7 +34,7 @@ class AutoReplyIntroCard extends StatelessWidget {
               Text('说明', style: TextStyle(fontSize: 15, fontWeight: MoeFontWeights.emphasis)),
               SizedBox(height: 8),
               Text(
-                '开启后，AI 会在聊天结束或特殊时间主动联系你。所有触发器都会遵守你设置的频率、冷却与免打扰策略，并可在下方查看或自定义。',
+                '开启后，AI 会在聊天结束或特殊时间主动联系你。你还可以打开守护模式，提高小米等国产机型在后台运行时的稳定性。',
                 style: TextStyle(fontSize: 13, height: 1.4),
               ),
             ],

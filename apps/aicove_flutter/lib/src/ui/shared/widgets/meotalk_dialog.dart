@@ -44,13 +44,17 @@ class MeoTalkDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
+    final viewInsets = MediaQuery.viewInsetsOf(context);
 
     return Material(
       type: MaterialType.transparency,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          Container(
+      child: AnimatedPadding(
+        duration: kAnimFast,
+        curve: Curves.easeOutCubic,
+        padding: EdgeInsets.only(bottom: viewInsets.bottom),
+        child: Align(
+          alignment: Alignment.bottomCenter,
+          child: Container(
             width: double.infinity,
             margin: const EdgeInsets.all(16),
             padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
@@ -81,7 +85,7 @@ class MeoTalkDialog extends StatelessWidget {
               ],
             ),
           ),
-        ],
+        ),
       ),
     );
   }

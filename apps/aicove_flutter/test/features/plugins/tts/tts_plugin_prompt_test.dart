@@ -20,8 +20,8 @@ void main() {
 
       expect(prompt, isNotNull);
       expect(prompt, contains('<tts>文本</tts>'));
-      expect(prompt, contains('36 个字'));
-      expect(prompt, contains('语音使用频率：适中'));
+      expect(prompt, contains('不推荐过长'));
+      expect(prompt, contains('建议在表达情感的地方使用语音'));
     });
 
     test('MiniMax 渠道追加语音增强说明', () {

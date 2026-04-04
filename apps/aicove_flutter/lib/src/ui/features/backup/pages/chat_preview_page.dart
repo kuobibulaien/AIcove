@@ -13,7 +13,9 @@ import '../../../shared/widgets/index.dart';
 
 final _chatPreviewMessagesProvider =
     FutureProvider.family<List<Message>, String>((ref, conversationId) {
-  return ref.read(chatHistoryStoreProvider).loadAllMessages(conversationId);
+  return ref
+      .read(chatHistoryStoreProvider)
+      .loadProjectedMessagesFromRawStore(conversationId);
 });
 
 /// 只读聊天预览页面
@@ -28,7 +30,8 @@ class ChatPreviewPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
-    final messagesAsync = ref.watch(_chatPreviewMessagesProvider(conversation.id));
+    final messagesAsync =
+        ref.watch(_chatPreviewMessagesProvider(conversation.id));
 
     return Scaffold(
       appBar: MoeAppBar(
@@ -40,7 +43,8 @@ class ChatPreviewPage extends ConsumerWidget {
           // 只读提示
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+            color: theme.colorScheme.surfaceContainerHighest
+                .withValues(alpha: 0.5),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -129,7 +133,8 @@ class ChatPreviewPage extends ConsumerWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
-        mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+        mainAxisAlignment:
+            isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (!isUser) ...[
@@ -142,7 +147,8 @@ class ChatPreviewPage extends ConsumerWidget {
                       ? AssetImage(conversation.avatarUrl!) as ImageProvider
                       : FileImage(File(conversation.avatarUrl!)))
                   : null,
-              child: conversation.avatarUrl == null || conversation.avatarUrl!.isEmpty
+              child: conversation.avatarUrl == null ||
+                      conversation.avatarUrl!.isEmpty
                   ? Text(
                       conversation.displayName.isNotEmpty
                           ? conversation.displayName[0]
@@ -159,10 +165,14 @@ class ChatPreviewPage extends ConsumerWidget {
             child: Builder(
               builder: (context) {
                 final bubbleBorderRadius = SmoothBorderRadius.only(
-                  topLeft: SmoothRadius(cornerRadius: isUser ? 16 : 4, cornerSmoothing: 0.6),
-                  topRight: SmoothRadius(cornerRadius: isUser ? 4 : 16, cornerSmoothing: 0.6),
-                  bottomLeft: const SmoothRadius(cornerRadius: 16, cornerSmoothing: 0.6),
-                  bottomRight: const SmoothRadius(cornerRadius: 16, cornerSmoothing: 0.6),
+                  topLeft: SmoothRadius(
+                      cornerRadius: isUser ? 16 : 4, cornerSmoothing: 0.6),
+                  topRight: SmoothRadius(
+                      cornerRadius: isUser ? 4 : 16, cornerSmoothing: 0.6),
+                  bottomLeft: const SmoothRadius(
+                      cornerRadius: 16, cornerSmoothing: 0.6),
+                  bottomRight: const SmoothRadius(
+                      cornerRadius: 16, cornerSmoothing: 0.6),
                 );
 
                 return MoeG2ClipRRect.borderRadius(
@@ -171,7 +181,8 @@ class ChatPreviewPage extends ConsumerWidget {
                     constraints: BoxConstraints(
                       maxWidth: MediaQuery.of(context).size.width * 0.7,
                     ),
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 10),
                     decoration: MoeG2Decoration.borderRadius(
                       borderRadius: bubbleBorderRadius,
                       color: isUser
@@ -181,28 +192,29 @@ class ChatPreviewPage extends ConsumerWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                  // 文本内容
-                  Text(
-                    message.displayText,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: isUser
-                          ? theme.colorScheme.onPrimary
-                          : theme.colorScheme.onSurface,
-                    ),
-                  ),
+                        // 文本内容
+                        Text(
+                          message.displayText,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: isUser
+                                ? theme.colorScheme.onPrimary
+                                : theme.colorScheme.onSurface,
+                          ),
+                        ),
 
-                  // 时间戳
-                  const SizedBox(height: 4),
-                  Text(
-                    _formatTime(message.createdAt),
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      fontSize: 10,
-                      color: isUser
-                          ? theme.colorScheme.onPrimary.withValues(alpha: 0.7)
-                          : theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
+                        // 时间戳
+                        const SizedBox(height: 4),
+                        Text(
+                          _formatTime(message.createdAt),
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            fontSize: 10,
+                            color: isUser
+                                ? theme.colorScheme.onPrimary
+                                    .withValues(alpha: 0.7)
+                                : theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 );

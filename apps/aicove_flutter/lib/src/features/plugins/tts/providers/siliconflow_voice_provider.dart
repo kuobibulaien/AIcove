@@ -73,6 +73,16 @@ class SiliconFlowVoiceProvider extends TtsVoiceProvider {
           providerType: VoiceProviderType.siliconFlow,
           source: '硅基流动 · 用户上传',
           promptText: voice.text,
+          bindings: [
+            VoiceChannelBinding(
+              providerId: providerId,
+              providerName: displayName,
+              adapterId: providerId,
+              modelId: voice.model,
+              remoteVoiceId: voice.uri,
+              sourceKind: VoiceBindingSourceKind.imported,
+            ),
+          ],
           siliconFlowVoiceUri: voice.uri,
           siliconFlowModel: voice.model,
         );
@@ -132,6 +142,16 @@ class SiliconFlowVoiceProvider extends TtsVoiceProvider {
         providerType: VoiceProviderType.siliconFlow,
         source: '硅基流动 · 用户上传',
         promptText: request.promptText,
+        bindings: [
+          VoiceChannelBinding(
+            providerId: providerId,
+            providerName: displayName,
+            adapterId: providerId,
+            modelId: result.model,
+            remoteVoiceId: result.uri,
+            sourceKind: VoiceBindingSourceKind.remoteCreated,
+          ),
+        ],
         siliconFlowVoiceUri: result.uri,
         siliconFlowModel: result.model,
       );
@@ -161,7 +181,13 @@ class SiliconFlowVoiceProvider extends TtsVoiceProvider {
     VoicePreset? voice,
   }) async {
     // 获取实际的 URI
-    String? voiceUri = voice?.siliconFlowVoiceUri;
+    String? voiceUri = voice
+        ?.resolveBinding(
+          providerId: providerId,
+          adapterId: providerId,
+        )
+        ?.remoteVoiceId;
+    voiceUri ??= voice?.siliconFlowVoiceUri;
 
     // 如果没有提供 voice 对象，尝试从 voiceId 解析
     if (voiceUri == null) {
@@ -213,6 +239,16 @@ class SiliconFlowVoiceProvider extends TtsVoiceProvider {
         sourceType: VoiceSourceType.preset,
         providerType: VoiceProviderType.siliconFlow,
         source: '硅基流动预置 · ${voice.gender == 'male' ? '男声' : '女声'}',
+        bindings: [
+          VoiceChannelBinding(
+            providerId: providerId,
+            providerName: displayName,
+            adapterId: providerId,
+            modelId: voice.model,
+            remoteVoiceId: voice.voiceParam,
+            sourceKind: VoiceBindingSourceKind.imported,
+          ),
+        ],
         siliconFlowVoiceUri: voice.voiceParam, // 格式: model:voiceId
         siliconFlowModel: voice.model,
         isBuiltIn: false, // 预置音色不是内置音色，可以从列表中移除

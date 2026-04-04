@@ -11,10 +11,14 @@ class _FakeStreamingClient extends http.BaseClient {
   _FakeStreamingClient({
     required this.statusCode,
     required this.responseLines,
+    this.headers = const <String, String>{
+      'content-type': 'text/event-stream',
+    },
   });
 
   final int statusCode;
   final List<String> responseLines;
+  final Map<String, String> headers;
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
@@ -22,9 +26,7 @@ class _FakeStreamingClient extends http.BaseClient {
     return http.StreamedResponse(
       Stream<List<int>>.fromIterable(<List<int>>[payload]),
       statusCode,
-      headers: const <String, String>{
-        'content-type': 'text/event-stream',
-      },
+      headers: headers,
     );
   }
 }
@@ -230,7 +232,8 @@ void main() {
       expect(latest.eventSeq!, greaterThan(0));
     });
 
-    test('supports gemini stream with text/functionCall parts and preserves thoughtSignature',
+    test(
+        'supports gemini stream with text/functionCall parts and preserves thoughtSignature',
         () async {
       final client = AgentApiClient(
         client: _FakeStreamingClient(
@@ -267,13 +270,103 @@ void main() {
       final content = firstCandidate['content'] as Map<String, dynamic>?;
       final parts = content?['parts'] as List?;
       expect(parts, isNotNull);
-      final functionCallPart =
-          parts!.last as Map<String, dynamic>;
+      final functionCallPart = parts!.last as Map<String, dynamic>;
       expect(functionCallPart['thoughtSignature'], 'sig_lookup_weather');
 
       final latest = ApiLogger.entries.value.last;
       expect(latest.url, contains(':streamGenerateContent'));
       expect(latest.url, contains('alt=sse'));
+    });
+
+    test('supports gemini stream when a chunk is a JSON array payload',
+        () async {
+      final client = AgentApiClient(
+        client: _FakeStreamingClient(
+          statusCode: 200,
+          responseLines: const <String>[
+            '[{"candidates":[{"content":{"role":"model","parts":[{"text":"你好"}]}}]},{"candidates":[{"content":{"role":"model","parts":[{"text":"，世界"},{"functionCall":{"name":"lookup_weather","args":{"city":"Shanghai"}},"thoughtSignature":"sig_array"}]}}]}]',
+            '',
+          ],
+        ),
+      );
+
+      final result = await client.sendMessageRichStream(
+        agentId: 'agent_1',
+        sessionId: 'session_1',
+        modelFullId: 'gemini:gemini-2.5-pro',
+        messages: const <Map<String, dynamic>>[],
+        userText: '继续',
+        providerApiBase: 'https://generativelanguage.googleapis.com/v1beta',
+        providerApiKey: 'test-key',
+      );
+
+      expect(result.text, '你好，世界');
+      expect(result.toolCalls, hasLength(1));
+      expect(result.toolCalls.first.name, 'lookup_weather');
+      expect(result.toolCalls.first.arguments['city'], 'Shanghai');
+      expect(result.toolCalls.first.thoughtSignature, 'sig_array');
+    });
+
+    test('supports gemini aiplatform stream with formatted JSON array body',
+        () async {
+      final client = AgentApiClient(
+        client: _FakeStreamingClient(
+          statusCode: 200,
+          headers: const <String, String>{
+            'content-type': 'application/json; charset=UTF-8',
+          },
+          responseLines: const <String>[
+            '[',
+            '  {',
+            '    "candidates": [',
+            '      {',
+            '        "content": {',
+            '          "role": "model",',
+            '          "parts": [',
+            '            {',
+            '              "text": "AI"',
+            '            }',
+            '          ]',
+            '        }',
+            '      }',
+            '    ]',
+            '  },',
+            '  {',
+            '    "candidates": [',
+            '      {',
+            '        "content": {',
+            '          "role": "model",',
+            '          "parts": [',
+            '            {',
+            '              "text": " learns from data."',
+            '            }',
+            '          ]',
+            '        },',
+            '        "finishReason": "STOP"',
+            '      }',
+            '    ]',
+            '  }',
+            ']',
+          ],
+        ),
+      );
+
+      final result = await client.sendMessageRichStream(
+        agentId: 'agent_1',
+        sessionId: 'session_1',
+        modelFullId: 'gemini:gemini-2.5-flash-lite',
+        messages: const <Map<String, dynamic>>[],
+        userText: '继续',
+        providerApiBase: 'https://aiplatform.googleapis.com/v1/publishers/google',
+        providerApiKey: 'test-key',
+      );
+
+      expect(result.text, 'AI learns from data.');
+      expect(result.toolCalls, isEmpty);
+
+      final latest = ApiLogger.entries.value.last;
+      expect(latest.url, contains(':streamGenerateContent'));
+      expect(latest.url, isNot(contains('alt=sse')));
     });
 
     test('supports claude stream with text_delta and input_json_delta',

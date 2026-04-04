@@ -16,8 +16,6 @@ class _FakeAppSettingsNotifier extends AppSettingsNotifier {
   Future<AppSettings> build() async => _settings;
 }
 
-const _deferredWindow = Duration(milliseconds: 450);
-
 const _testSettings = AppSettings(
   ttsEnabled: true,
   defaultModelName: 'alpha-chat',
@@ -118,20 +116,11 @@ void main() {
     debugClearProviderDetailWarmCache();
   });
 
-  testWidgets('模型管理页在转场期先显示轻壳，再挂载供应商列表', (tester) async {
+  testWidgets('模型管理页首帧直接显示供应商列表', (tester) async {
     final container = await _createLoadedContainer();
     addTearDown(container.dispose);
 
     await tester.pumpWidget(_buildTestApp(container, const ModelListPage()));
-    await tester.pump();
-
-    expect(
-      find.byKey(const ValueKey<String>('model_list_deferred_shell')),
-      findsOneWidget,
-    );
-    expect(find.text('Provider A'), findsNothing);
-
-    await tester.pump(_deferredWindow);
     await tester.pump();
 
     expect(
@@ -142,7 +131,7 @@ void main() {
     expect(find.text('Provider B'), findsOneWidget);
   });
 
-  testWidgets('默认模型设置页在转场期先显示轻壳，再挂载模型分组', (tester) async {
+  testWidgets('默认模型设置页首帧直接显示模型分组', (tester) async {
     final container = await _createLoadedContainer();
     addTearDown(container.dispose);
 
@@ -155,24 +144,13 @@ void main() {
       find.byKey(
         const ValueKey<String>('default_model_settings_deferred_shell'),
       ),
-      findsOneWidget,
-    );
-    expect(find.text('Alpha Chat'), findsNothing);
-
-    await tester.pump(_deferredWindow);
-    await tester.pump();
-
-    expect(
-      find.byKey(
-        const ValueKey<String>('default_model_settings_deferred_shell'),
-      ),
       findsNothing,
     );
     expect(find.text('Alpha Chat'), findsWidgets);
     expect(find.text('Beta Chat'), findsWidgets);
   });
 
-  testWidgets('渠道详情页在转场期先显示轻壳，再挂载完整详情', (tester) async {
+  testWidgets('渠道详情页首帧直接显示完整详情', (tester) async {
     final container = await _createLoadedContainer();
     addTearDown(container.dispose);
 
@@ -182,15 +160,6 @@ void main() {
         const ProviderDetailPage(providerId: 'provider_a'),
       ),
     );
-    await tester.pump();
-
-    expect(
-      find.byKey(const ValueKey<String>('provider_detail_deferred_shell')),
-      findsOneWidget,
-    );
-    expect(find.text('基础配置'), findsNothing);
-
-    await tester.pump(_deferredWindow);
     await tester.pump();
 
     expect(
@@ -201,7 +170,7 @@ void main() {
     expect(find.text('高级信息'), findsOneWidget);
   });
 
-  testWidgets('渠道详情页二次进入命中内存缓存时直接显示完整详情', (tester) async {
+  testWidgets('渠道详情页二次进入时仍直接显示完整详情', (tester) async {
     final container = await _createLoadedContainer();
     addTearDown(container.dispose);
 
@@ -211,8 +180,6 @@ void main() {
         const ProviderDetailPage(providerId: 'provider_a'),
       ),
     );
-    await tester.pump();
-    await tester.pump(_deferredWindow);
     await tester.pump();
 
     expect(find.text('基础配置'), findsOneWidget);

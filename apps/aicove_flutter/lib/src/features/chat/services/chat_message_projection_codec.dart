@@ -8,6 +8,26 @@ import '../../plugins/domain/plugin_content.dart';
 import '../domain/message.dart';
 import 'chat_types.dart';
 
+class StoredSupplementInsertOp {
+  const StoredSupplementInsertOp({
+    required this.kind,
+    required this.textCharsBefore,
+    required this.forceAppendToTail,
+    this.localPath,
+    this.prompt,
+    this.audioUrl,
+    this.text,
+  });
+
+  final String kind;
+  final int textCharsBefore;
+  final bool forceAppendToTail;
+  final String? localPath;
+  final String? prompt;
+  final String? audioUrl;
+  final String? text;
+}
+
 class ChatMessageProjectionCodec {
   static const int rawPayloadVersion = 1;
   static const String _versionKey = 'version';
@@ -19,10 +39,10 @@ class ChatMessageProjectionCodec {
   static const String _toolCallsKey = 'toolCalls';
   static const String _rawToolResultsKey = 'rawToolResults';
   static const String _projectedMessagesKey = 'projectedMessages';
+  static const String _supplementInsertOpsKey = 'supplementInsertOps';
 
   static Map<String, dynamic> buildRawAssistantPayload({
     required ApiCallResult apiResult,
-    required List<Message> projectedMessages,
   }) {
     return <String, dynamic>{
       _versionKey: rawPayloadVersion,
@@ -59,7 +79,6 @@ class ChatMessageProjectionCodec {
             'result': result.result,
           },
       ],
-      _projectedMessagesKey: serializeMessages(projectedMessages),
     };
   }
 
@@ -72,6 +91,73 @@ class ChatMessageProjectionCodec {
       ...?rawPayload,
     };
     next[_projectedMessagesKey] = serializeMessages(projectedMessages);
+    return next;
+  }
+
+  static Map<String, dynamic> copyWithPluginContents(
+    Map<String, dynamic>? rawPayload,
+    List<PluginContent> pluginContents,
+  ) {
+    final next = <String, dynamic>{
+      _versionKey: rawPayloadVersion,
+      ...?rawPayload,
+    };
+    next[_pluginContentsKey] = <Map<String, dynamic>>[
+      for (final content in pluginContents)
+        if (_encodePluginContent(content) case final encoded?) encoded,
+    ];
+    return next;
+  }
+
+  static Map<String, dynamic> copyWithToolAudioResults(
+    Map<String, dynamic>? rawPayload,
+    List<ToolAudioResult> toolAudioResults,
+  ) {
+    final next = <String, dynamic>{
+      _versionKey: rawPayloadVersion,
+      ...?rawPayload,
+    };
+    next[_toolAudioResultsKey] = <Map<String, dynamic>>[
+      for (final item in toolAudioResults)
+        <String, dynamic>{
+          'audioUrl': item.audioUrl,
+          'text': item.text,
+        },
+    ];
+    return next;
+  }
+
+  static Map<String, dynamic> removeProjectedMessages(
+    Map<String, dynamic>? rawPayload,
+  ) {
+    final next = <String, dynamic>{
+      _versionKey: rawPayloadVersion,
+      ...?rawPayload,
+    };
+    next.remove(_projectedMessagesKey);
+    return next;
+  }
+
+  static Map<String, dynamic> copyWithSupplementInsertOps(
+    Map<String, dynamic>? rawPayload,
+    List<StoredSupplementInsertOp> insertOps,
+  ) {
+    final next = <String, dynamic>{
+      _versionKey: rawPayloadVersion,
+      ...?rawPayload,
+    };
+    next[_supplementInsertOpsKey] = <Map<String, dynamic>>[
+      for (final op in insertOps)
+        <String, dynamic>{
+          'kind': op.kind,
+          'textCharsBefore': op.textCharsBefore,
+          'forceAppendToTail': op.forceAppendToTail,
+          if (op.localPath != null) 'localPath': op.localPath,
+          if (op.prompt != null) 'prompt': op.prompt,
+          if (op.audioUrl != null) 'audioUrl': op.audioUrl,
+          if (op.text != null) 'text': op.text,
+        },
+    ];
     return next;
   }
 
@@ -127,6 +213,38 @@ class ChatMessageProjectionCodec {
       results.add(ToolAudioResult(audioUrl: audioUrl, text: text));
     }
     return results;
+  }
+
+  static List<StoredSupplementInsertOp> supplementInsertOps(
+    Map<String, dynamic>? rawPayload,
+  ) {
+    final rawList = rawPayload?[_supplementInsertOpsKey];
+    if (rawList is! List) return const <StoredSupplementInsertOp>[];
+    final ops = <StoredSupplementInsertOp>[];
+    for (final item in rawList) {
+      if (item is! Map) continue;
+      final map = Map<String, dynamic>.from(item);
+      final kind = map['kind'] as String?;
+      final textCharsBefore = map['textCharsBefore'];
+      final forceAppendToTail = map['forceAppendToTail'];
+      if (kind == null ||
+          textCharsBefore is! int ||
+          forceAppendToTail is! bool) {
+        continue;
+      }
+      ops.add(
+        StoredSupplementInsertOp(
+          kind: kind,
+          textCharsBefore: textCharsBefore,
+          forceAppendToTail: forceAppendToTail,
+          localPath: map['localPath'] as String?,
+          prompt: map['prompt'] as String?,
+          audioUrl: map['audioUrl'] as String?,
+          text: map['text'] as String?,
+        ),
+      );
+    }
+    return ops;
   }
 
   static List<ToolCall> toolCalls(Map<String, dynamic>? rawPayload) {

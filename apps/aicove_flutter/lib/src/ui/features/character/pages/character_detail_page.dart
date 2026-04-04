@@ -529,7 +529,7 @@ class _CharacterDetailPageState extends ConsumerState<CharacterDetailPage> {
   void _navigateToChat(BuildContext context, Conversation conversation) {
     // 进入聊天页前先把“当前会话”设好，避免新页面首帧先渲染到默认会话再跳到目标会话
     ref.read(activeConversationIdProvider.notifier).state = conversation.id;
-    context.go('/chat/${conversation.id}', extra: conversation);
+    context.push('/chat/${conversation.id}', extra: conversation);
   }
 
   Future<void> _navigateToEdit(

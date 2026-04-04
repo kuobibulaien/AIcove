@@ -219,8 +219,8 @@ class AgentApiClient {
       streaming: streaming,
     );
     if (adapter.name == 'gemini' &&
-        !isVertexExpressEnabled(customConfig) &&
-        streaming) {
+        streaming &&
+        isGoogleGeminiDeveloperApiBaseUrl(baseUrl)) {
       endpoint = _ensureGeminiSseAlt(endpoint);
     }
     return endpoint;
@@ -243,12 +243,15 @@ class AgentApiClient {
     required ProviderAdapter adapter,
     required String endpoint,
     required String apiKey,
+    String? baseUrl,
     Map<String, dynamic>? customConfig,
   }) {
     if (adapter.name == 'gemini') {
       return buildGoogleRequestUri(
         endpoint: endpoint,
-        vertexExpress: isVertexExpressEnabled(customConfig),
+        vertexExpress: isGoogleAiPlatformPublisherBaseUrl(
+          baseUrl ?? endpoint,
+        ),
         apiKey: apiKey,
       );
     }
@@ -302,6 +305,7 @@ class AgentApiClient {
       adapter: adapter,
       endpoint: endpoint,
       apiKey: providerApiKey,
+      baseUrl: baseUrl,
       customConfig: customConfig,
     );
     return (
@@ -572,6 +576,7 @@ class AgentApiClient {
     final headers = _buildChatRequestHeaders(
       adapter: adapter,
       providerApiKey: providerApiKey,
+      baseUrl: requestContext.baseUrl,
       customConfig: customConfig,
       token: token,
       streaming: streaming,
@@ -610,6 +615,7 @@ class AgentApiClient {
   Map<String, String> _buildChatRequestHeaders({
     required ProviderAdapter adapter,
     required String providerApiKey,
+    required String baseUrl,
     Map<String, dynamic>? customConfig,
     String? token,
     bool streaming = false,
@@ -619,7 +625,8 @@ class AgentApiClient {
       ...adapter.buildHeaders(providerApiKey),
       if (streaming) 'Accept': 'text/event-stream',
     };
-    if (adapter.name == 'gemini' && isVertexExpressEnabled(customConfig)) {
+    if (adapter.name == 'gemini' &&
+        isGoogleAiPlatformPublisherBaseUrl(baseUrl)) {
       headers.remove('x-goog-api-key');
     }
     if (allowAuthorizationFallback &&

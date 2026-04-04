@@ -4,7 +4,8 @@ import 'package:aicove_flutter/src/core/api/providers/gemini_adapter.dart';
 
 void main() {
   group('GeminiAdapter', () {
-    test('buildRequestBody should merge multiple system messages', () {
+    test('buildRequestBody should merge system messages and keep user reminder in contents',
+        () {
       final adapter = GeminiAdapter();
 
       final body = adapter.buildRequestBody(
@@ -19,9 +20,9 @@ void main() {
             'content': '上一轮回复',
           },
           {
-            'role': 'system',
+            'role': 'user',
             'content':
-                '<system-reminder>\ncurrent_datetime=2026-03-23 10:30:15 +08:00 (周日)\n</system-reminder>',
+                '<system-reminder>\n当前时间为2026-03-23 10:30:15 +08:00 (周日)。自行判断当前与历史对话的关系。\n</system-reminder>',
           },
           {
             'role': 'user',
@@ -36,20 +37,26 @@ void main() {
           .toString();
 
       expect(systemInstruction, contains('你是贴心助手。'));
-      expect(systemInstruction, contains('<system-reminder>'));
-      expect(
-        systemInstruction,
-        contains('current_datetime=2026-03-23 10:30:15'),
-      );
+      expect(systemInstruction, isNot(contains('<system-reminder>')));
 
       final contents = body['contents'] as List<dynamic>;
-      expect(contents, hasLength(2));
+      expect(contents, hasLength(3));
       expect(
-        (contents.first as Map<String, dynamic>)['role'],
+        (contents[0] as Map<String, dynamic>)['role'],
         'model',
       );
       expect(
-        (contents.last as Map<String, dynamic>)['role'],
+        (contents[1] as Map<String, dynamic>)['role'],
+        'user',
+      );
+      final reminderParts =
+          (contents[1] as Map<String, dynamic>)['parts'] as List;
+      expect(
+        (reminderParts.first as Map<String, dynamic>)['text'].toString(),
+        contains('当前时间为2026-03-23 10:30:15'),
+      );
+      expect(
+        (contents[2] as Map<String, dynamic>)['role'],
         'user',
       );
     });

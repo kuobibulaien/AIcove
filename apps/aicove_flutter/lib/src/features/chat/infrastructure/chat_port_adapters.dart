@@ -17,8 +17,8 @@ class ChatHistoryStoreAdapter implements ChatHistoryPort {
   final ChatHistoryStore _historyStore;
 
   @override
-  Future<List<Message>> loadAllMessages(String conversationId) {
-    return _historyStore.loadFrontendMessages(conversationId);
+  Future<List<Message>> loadRawMessages(String conversationId) {
+    return _historyStore.loadAllRawMessages(conversationId);
   }
 
   @override

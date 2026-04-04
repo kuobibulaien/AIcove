@@ -238,21 +238,26 @@ class TtsService {
 
     final preset = config.selectedVoicePreset;
     String? voiceId;
+    final binding = _resolveAliyunBinding(
+      preset,
+      targetModel: targetModel,
+      isCosyVoice: false,
+    );
 
     // 检查是否已有匹配当前模型的音色ID
-    if (preset?.aliyunVoiceId != null && preset!.aliyunVoiceId!.isNotEmpty) {
+    if (binding != null) {
       // 检查模型是否匹配（音色ID必须与创建时的模型一致）
-      if (_isAliyunVoiceModelMatch(preset.aliyunTargetModel, targetModel)) {
-        voiceId = preset.aliyunVoiceId;
+      if (_isAliyunVoiceModelMatch(binding.modelId, targetModel)) {
+        voiceId = binding.remoteVoiceId;
         AppLogger.info('TTS', '使用已保存的阿里云音色ID', metadata: {
           'voiceId': voiceId,
-          'savedModel': preset.aliyunTargetModel,
+          'savedModel': binding.modelId,
           'targetModel': targetModel,
         });
       } else {
         AppLogger.warning('TTS', '已保存的音色ID与当前模型不匹配，需要重新创建', metadata: {
-          'savedVoiceId': preset.aliyunVoiceId,
-          'savedModel': preset.aliyunTargetModel,
+          'savedVoiceId': binding.remoteVoiceId,
+          'savedModel': binding.modelId,
           'targetModel': targetModel,
         });
       }
@@ -608,7 +613,14 @@ class TtsService {
     }
 
     // 判断使用哪种音色方式
-    final siliconFlowVoiceUri = preset?.siliconFlowVoiceUri;
+    final siliconFlowVoiceUri = preset
+            ?.resolveBinding(
+              providerId: 'siliconflow',
+              adapterId: 'siliconflow',
+              modelId: effectiveModel,
+            )
+            ?.remoteVoiceId ??
+        preset?.siliconFlowVoiceUri;
     final configVoice = config.voice;
 
     // 1. 优先使用音色预设中的硅基流动 URI（用户上传的音色）
@@ -660,6 +672,11 @@ class TtsService {
     final preset = config.selectedVoicePreset;
     final targetModel = model ?? config.model ?? 'cosyvoice-v3-plus';
     String? voiceId;
+    final binding = _resolveAliyunBinding(
+      preset,
+      targetModel: targetModel,
+      isCosyVoice: true,
+    );
 
     // 调试日志：检查当前音色预设的状态
     AppLogger.debug('TTS', 'CosyVoice 音色预设检查', metadata: {
@@ -672,27 +689,27 @@ class TtsService {
     });
 
     // 检查是否已有匹配当前模型的音色ID
-    if (preset?.aliyunVoiceId != null && preset!.aliyunVoiceId!.isNotEmpty) {
-      if (_isAliyunVoiceModelMatch(preset.aliyunTargetModel, targetModel)) {
+    if (binding != null) {
+      if (_isAliyunVoiceModelMatch(binding.modelId, targetModel)) {
         // CosyVoice 还需要检查状态是否为 OK
-        if (preset.aliyunVoiceStatus == 'OK') {
-          voiceId = preset.aliyunVoiceId;
+        if (binding.status == 'OK') {
+          voiceId = binding.remoteVoiceId;
           AppLogger.info('TTS', '使用已保存的阿里云音色ID (CosyVoice)', metadata: {
             'voiceId': voiceId,
-            'savedModel': preset.aliyunTargetModel,
+            'savedModel': binding.modelId,
             'targetModel': targetModel,
           });
         } else {
           AppLogger.warning('TTS', 'CosyVoice 音色状态不是 OK，无法使用', metadata: {
-            'savedVoiceId': preset.aliyunVoiceId,
-            'status': preset.aliyunVoiceStatus,
+            'savedVoiceId': binding.remoteVoiceId,
+            'status': binding.status,
           });
         }
       } else {
         AppLogger.warning('TTS', '已保存的音色ID与当前模型不匹配，需要重新创建 (CosyVoice)',
             metadata: {
-              'savedVoiceId': preset.aliyunVoiceId,
-              'savedModel': preset.aliyunTargetModel,
+              'savedVoiceId': binding.remoteVoiceId,
+              'savedModel': binding.modelId,
               'targetModel': targetModel,
             });
       }
@@ -735,6 +752,11 @@ class TtsService {
     final preset = config.selectedVoicePreset;
     final targetModel = model ?? config.model ?? 'qwen3-tts-flash';
     String? voiceId;
+    final binding = _resolveAliyunBinding(
+      preset,
+      targetModel: targetModel,
+      isCosyVoice: false,
+    );
 
     // 调试日志：检查当前音色预设的状态
     AppLogger.debug('TTS', 'Qwen-TTS 音色预设检查', metadata: {
@@ -746,19 +768,19 @@ class TtsService {
     });
 
     // 检查是否已有匹配当前模型的音色ID
-    if (preset?.aliyunVoiceId != null && preset!.aliyunVoiceId!.isNotEmpty) {
-      if (_isAliyunVoiceModelMatch(preset.aliyunTargetModel, targetModel)) {
-        voiceId = preset.aliyunVoiceId;
+    if (binding != null) {
+      if (_isAliyunVoiceModelMatch(binding.modelId, targetModel)) {
+        voiceId = binding.remoteVoiceId;
         AppLogger.info('TTS', '使用已保存的阿里云音色ID (Qwen-TTS)', metadata: {
           'voiceId': voiceId,
-          'savedModel': preset.aliyunTargetModel,
+          'savedModel': binding.modelId,
           'targetModel': targetModel,
         });
       } else {
         AppLogger.warning('TTS', '已保存的音色ID与当前模型不匹配，需要重新创建 (Qwen-TTS)',
             metadata: {
-              'savedVoiceId': preset.aliyunVoiceId,
-              'savedModel': preset.aliyunTargetModel,
+              'savedVoiceId': binding.remoteVoiceId,
+              'savedModel': binding.modelId,
               'targetModel': targetModel,
             });
       }
@@ -890,10 +912,12 @@ class TtsService {
       });
 
       if (onVoiceCreated != null && preset != null) {
-        final updatedPreset = preset.copyWith(
-          aliyunVoiceId: voiceId,
-          aliyunTargetModel: targetModel,
-          aliyunVoiceStatus: isCosyVoice ? 'DEPLOYING' : 'OK',
+        final updatedPreset = _copyPresetWithAliyunBinding(
+          preset: preset,
+          voiceId: voiceId,
+          targetModel: targetModel,
+          status: isCosyVoice ? 'DEPLOYING' : 'OK',
+          isCosyVoice: isCosyVoice,
         );
         AppLogger.info('TTS', '调用 onVoiceCreated 回调', metadata: {
           'presetId': updatedPreset.id,
@@ -977,10 +1001,12 @@ class TtsService {
 
       // 回调保存音色
       if (onVoiceCreated != null && preset != null) {
-        final updatedPreset = preset.copyWith(
-          aliyunVoiceId: voiceId,
-          aliyunTargetModel: targetModel,
-          aliyunVoiceStatus: 'OK',
+        final updatedPreset = _copyPresetWithAliyunBinding(
+          preset: preset,
+          voiceId: voiceId,
+          targetModel: targetModel,
+          status: 'OK',
+          isCosyVoice: false,
         );
         await onVoiceCreated!(updatedPreset);
       }
@@ -997,6 +1023,65 @@ class TtsService {
     } finally {
       _aliyunVoiceCreateInFlight.remove(cacheKey);
     }
+  }
+
+  VoiceChannelBinding? _resolveAliyunBinding(
+    VoicePreset? preset, {
+    required String targetModel,
+    required bool isCosyVoice,
+  }) {
+    if (preset == null) return null;
+    return preset.resolveBinding(
+      providerId: config.selectedProviderId ?? 'aliyun',
+      adapterId: isCosyVoice ? 'aliyun_cosyvoice' : 'aliyun_qwen',
+      modelId: targetModel,
+    );
+  }
+
+  VoicePreset _copyPresetWithAliyunBinding({
+    required VoicePreset preset,
+    required String voiceId,
+    required String targetModel,
+    required String status,
+    required bool isCosyVoice,
+  }) {
+    final adapterId = isCosyVoice ? 'aliyun_cosyvoice' : 'aliyun_qwen';
+    final nextBinding = VoiceChannelBinding(
+      providerId: config.selectedProviderId ?? 'aliyun',
+      providerName: '阿里云',
+      adapterId: adapterId,
+      modelId: targetModel,
+      remoteVoiceId: voiceId,
+      status: status,
+      sourceKind: VoiceBindingSourceKind.remoteCreated,
+    );
+    final updatedBindings = _upsertChannelBinding(
+      preset.effectiveBindings,
+      nextBinding,
+    );
+    return preset.copyWithBindings(updatedBindings);
+  }
+
+  List<VoiceChannelBinding> _upsertChannelBinding(
+    List<VoiceChannelBinding> bindings,
+    VoiceChannelBinding nextBinding,
+  ) {
+    final next = [...bindings];
+    final index = next.indexWhere((binding) {
+      final sameAdapter = binding.normalizedAdapterId != null &&
+          nextBinding.normalizedAdapterId != null &&
+          binding.normalizedAdapterId == nextBinding.normalizedAdapterId;
+      final sameProvider =
+          binding.normalizedProviderId == nextBinding.normalizedProviderId;
+      return (sameAdapter || sameProvider) &&
+          binding.normalizedModelId == nextBinding.normalizedModelId;
+    });
+    if (index >= 0) {
+      next[index] = nextBinding;
+    } else {
+      next.add(nextBinding);
+    }
+    return next;
   }
 
   /// 检查已保存的阿里云音色模型是否与目标模型匹配

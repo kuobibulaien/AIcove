@@ -5,10 +5,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     final effectiveConfig =
         config ?? _cachedFormatConfig ?? const MessageFormatConfig();
     final sourceMessages = _stableMessages;
-    final windowSignature = _buildWindowSignature(
-      sourceMessages,
-      contextStartMessageId: widget.contextStartMessageId,
-    );
+    final windowSignature = _buildWindowSignature(sourceMessages);
     final formatSignature = _buildFormatSignature(effectiveConfig);
     final cached = ChatMessageListDisplayCache.read(
       conversationId: widget.conversationId,
@@ -31,7 +28,6 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     _cachedListItems = cached.listItems.cast<ChatMessageListItem>();
     _cachedChatImages = List<ImagePreviewItem>.from(cached.chatImages);
     _hasHydratedInitialListItems = true;
-    _cleanupBubbleAnchorKeys();
   }
 
   void _updateListItems([MessageFormatConfig? config]) {
@@ -39,10 +35,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
         config ?? _cachedFormatConfig ?? const MessageFormatConfig();
     final stableMessages = _stableMessages;
     final timelineMessages = _currentTimelineMessages;
-    final windowSignature = _buildWindowSignature(
-      stableMessages,
-      contextStartMessageId: widget.contextStartMessageId,
-    );
+    final windowSignature = _buildWindowSignature(stableMessages);
     final formatSignature = _buildFormatSignature(effectiveConfig);
     if (!_hasTransientTimelineContent) {
       final cached = ChatMessageListDisplayCache.read(
@@ -60,7 +53,6 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     _cachedListItems = buildChatMessageListItems(
       messages: timelineMessages,
       config: effectiveConfig,
-      contextStartMessageId: widget.contextStartMessageId,
     );
     _cachedChatImages = collectChatMessageListImages(timelineMessages);
     _hasHydratedInitialListItems = true;
@@ -73,18 +65,11 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
         chatImages: _cachedChatImages,
       );
     }
-    _cleanupBubbleAnchorKeys();
   }
 
-  String _buildWindowSignature(
-    List<Message> messages, {
-    String? contextStartMessageId,
-  }) {
+  String _buildWindowSignature(List<Message> messages) {
     if (messages.isEmpty) return 'empty';
-    final buffer = StringBuffer()
-      ..write(messages.length)
-      ..write('|context=')
-      ..write(contextStartMessageId ?? '');
+    final buffer = StringBuffer()..write(messages.length);
     for (final message in messages) {
       final blocks = message.blocks;
       buffer
@@ -115,30 +100,6 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
 
   String _buildFormatSignature(MessageFormatConfig config) {
     return buildMessageFormatProjectionSignature(config);
-  }
-
-  GlobalKey _bubbleAnchorKeyFor(String messageId) {
-    return _bubbleAnchorKeys.putIfAbsent(
-      messageId,
-      () => GlobalKey(debugLabel: 'bubble_$messageId'),
-    );
-  }
-
-  String _chunkBubbleAnchorId(String messageId, int chunkIndex) =>
-      '${messageId}_chunk_anchor_$chunkIndex';
-
-  void _cleanupBubbleAnchorKeys() {
-    final aliveIds = <String>{};
-    for (final item in _cachedListItems) {
-      if (item is ChatMessageItem) {
-        aliveIds.add(item.message.id);
-      } else if (item is ChatChunkedMessageItem) {
-        aliveIds.add(
-          _chunkBubbleAnchorId(item.originalMessage.id, item.chunkIndex),
-        );
-      }
-    }
-    _bubbleAnchorKeys.removeWhere((id, _) => !aliveIds.contains(id));
   }
 
   SliverChildBuilderDelegate _buildSectionDelegate(
@@ -190,7 +151,6 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     if (item is ChatChunkedMessageItem) {
       final message = item.originalMessage;
       final isMe = message.role == 'user';
-      final chunkBubbleId = _chunkBubbleAnchorId(message.id, item.chunkIndex);
       final chunkMessage = Message(
         id: '${message.id}_chunk_${item.chunkIndex}',
         role: message.role,
@@ -206,16 +166,15 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
           message: chunkMessage,
           avatarUrl: isMe ? null : widget.avatarUrl,
           displayName: isMe ? null : widget.displayName,
-          bubbleAnchorKey: _bubbleAnchorKeyFor(chunkBubbleId),
           showCorner: item.showCorner,
           showName: false,
           showAvatar: item.showAvatar,
           chatImages: _cachedChatImages,
           onRetry: null,
-          onLongPress: (bubbleKey) =>
-              _handleMessageLongPress(context, message, isMe, bubbleKey),
-          onMediaLongPress: (mediaKey, block) =>
-              _handleMediaLongPress(context, message, isMe, mediaKey, block),
+          onLongPress: (bubbleBox) =>
+              _handleMessageLongPress(context, message, isMe, bubbleBox),
+          onMediaLongPress: (mediaBox, block) =>
+              _handleMediaLongPress(context, message, isMe, mediaBox, block),
         ),
       );
 
@@ -245,7 +204,6 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
           message: message,
           avatarUrl: isMe ? null : widget.avatarUrl,
           displayName: isMe ? null : widget.displayName,
-          bubbleAnchorKey: _bubbleAnchorKeyFor(message.id),
           showCorner: item.showCorner,
           showName: false,
           showAvatar: item.showAvatar,
@@ -253,10 +211,10 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
           onRetry: (isMe && message.status == 'failed')
               ? () => actions.recallFailedMessage(message.id)
               : null,
-          onLongPress: (bubbleKey) =>
-              _handleMessageLongPress(context, message, isMe, bubbleKey),
-          onMediaLongPress: (mediaKey, block) =>
-              _handleMediaLongPress(context, message, isMe, mediaKey, block),
+          onLongPress: (bubbleBox) =>
+              _handleMessageLongPress(context, message, isMe, bubbleBox),
+          onMediaLongPress: (mediaBox, block) =>
+              _handleMediaLongPress(context, message, isMe, mediaBox, block),
         ),
       );
 
@@ -385,7 +343,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 10),
               child: Text(
-                '以上为历史话题',
+                '以上是历史消息',
                 style: TextStyle(
                   color: colors.muted,
                   fontSize: 11,
@@ -432,7 +390,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     BuildContext context,
     Message message,
     bool isMe,
-    GlobalKey bubbleKey,
+    RenderBox bubbleBox,
   ) async {
     final actions = ref.read(chatActionsProvider);
     final enableEnhancedRegenerate = ref
@@ -443,7 +401,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
         true;
     await showMessageActionMenu(
       context,
-      targetKey: bubbleKey,
+      targetBox: bubbleBox,
       isUserMessage: isMe,
       messageText: message.displayText,
       showEnhanceRegenerate: enableEnhancedRegenerate,
@@ -500,14 +458,14 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     BuildContext context,
     Message message,
     bool isMe,
-    GlobalKey mediaKey,
+    RenderBox mediaBox,
     MessageBlock block,
   ) async {
     final actions = ref.read(chatActionsProvider);
     final mediaType = block is AudioBlock ? MediaType.audio : MediaType.image;
     await showMediaActionMenu(
       context,
-      targetKey: mediaKey,
+      targetBox: mediaBox,
       mediaType: mediaType,
       allowDelete: true,
       onAction: (action) async {

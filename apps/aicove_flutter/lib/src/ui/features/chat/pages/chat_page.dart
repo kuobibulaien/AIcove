@@ -18,11 +18,12 @@ import '../../../../features/chat/conversation_providers.dart'
 import '../../../../features/chat/conversation_timeline_providers.dart'
     show
         conversationHasMoreProvider,
+        kConversationInitialVisibleCount,
         conversationMessagesProvider,
         conversationVisibleCountProvider,
         kConversationVisiblePageSize;
 import '../../../../features/chat/services/conversation_short_window_store.dart'
-    show conversationShortWindowStoreProvider;
+    show ConversationTimelineCache, conversationTimelineCacheProvider;
 import '../../../../features/chat/domain/conversation.dart';
 import '../../../../features/chat/domain/message.dart';
 import '../../../../features/chat/presentation/widgets/composer.dart';
@@ -49,6 +50,28 @@ import '../widgets/chat_message_search_content.dart';
 
 const Duration kChatPageImagePrecacheDelay = Duration(milliseconds: 180);
 const Duration kChatPageUnreadClearDelay = Duration(milliseconds: 160);
+
+@visibleForTesting
+Future<int> resolveChatPageLoadMoreVisibleCount({
+  required ConversationTimelineCache store,
+  required String conversationId,
+  required int currentVisibleCount,
+  int pageSize = kConversationVisiblePageSize,
+}) async {
+  final localMessageCount = await store.loadCachedMessageCount(conversationId);
+  if (localMessageCount > currentVisibleCount) {
+    return localMessageCount;
+  }
+
+  final addedCount = await store.loadOlderMessages(
+    conversationId: conversationId,
+    pageSize: pageSize,
+  );
+  if (addedCount <= 0) {
+    return currentVisibleCount;
+  }
+  return currentVisibleCount + addedCount;
+}
 
 @visibleForTesting
 String resolveChatPageAppBarTitle({
@@ -122,12 +145,14 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   late final ChatViewportController _viewportController;
   Timer? _imagePrecacheTimer;
   Timer? _clearUnreadTimer;
-  Timer? _deferredEntryTimer;
   String? _staticBackgroundBlurSource;
   ImageProvider? _staticBackgroundBlurProvider;
   bool _deferredEntryShellActive = false;
-  bool _entrySideEffectsStarted = false;
+  String? _entrySideEffectsConversationId;
+  String? _timelineDisplayCacheConversationId;
+  List<Message> _timelineDisplayCacheMessages = const <Message>[];
   int? _activeFailoverPromptRequestId;
+  late final ModelFailoverPromptController _modelFailoverPromptController;
   final DeferredConversationActivation _conversationActivation =
       DeferredConversationActivation();
 
@@ -137,6 +162,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   void initState() {
     super.initState();
     _viewportController = ChatViewportController();
+    _modelFailoverPromptController =
+        ref.read(modelFailoverPromptProvider.notifier);
     final targetId = widget.conversationId;
     if (targetId == null) return;
     _startEntrySideEffects(targetId);
@@ -152,11 +179,77 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   void _startEntrySideEffects(String conversationId) {
-    if (_entrySideEffectsStarted) return;
-    _entrySideEffectsStarted = true;
+    final normalizedConversationId = conversationId.trim();
+    if (normalizedConversationId.isEmpty) return;
+    if (_entrySideEffectsConversationId == normalizedConversationId) return;
+    _entrySideEffectsConversationId = normalizedConversationId;
     _scheduleConversationActivation(conversationId);
     _scheduleUnreadClear(conversationId);
     _scheduleImagePrecache();
+  }
+
+  void _ensureImplicitConversationEntrySideEffects(String? conversationId) {
+    if (widget.conversationId != null) return;
+    final normalizedConversationId = conversationId?.trim();
+    if (normalizedConversationId == null || normalizedConversationId.isEmpty) {
+      return;
+    }
+    if (_entrySideEffectsConversationId == normalizedConversationId) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_resolveCurrentConversationId() != normalizedConversationId) {
+        return;
+      }
+      _startEntrySideEffects(normalizedConversationId);
+    });
+  }
+
+  String? _resolveCurrentConversationId() {
+    final explicitConversationId = widget.conversationId?.trim();
+    if (explicitConversationId != null && explicitConversationId.isNotEmpty) {
+      return explicitConversationId;
+    }
+    final activeConversationId = ref.read(activeConversationIdProvider)?.trim();
+    if (activeConversationId != null && activeConversationId.isNotEmpty) {
+      return activeConversationId;
+    }
+    return null;
+  }
+
+  List<Message> _resolveMessagesForDisplay({
+    required String? conversationId,
+    required AsyncValue<List<Message>> messagesAsync,
+    required bool isGenerating,
+  }) {
+    final normalizedConversationId = conversationId?.trim();
+    if (normalizedConversationId == null || normalizedConversationId.isEmpty) {
+      _timelineDisplayCacheConversationId = null;
+      _timelineDisplayCacheMessages = const <Message>[];
+      return const <Message>[];
+    }
+
+    if (messagesAsync.hasValue) {
+      final directMessages = messagesAsync.valueOrNull ?? const <Message>[];
+      _timelineDisplayCacheConversationId = normalizedConversationId;
+      _timelineDisplayCacheMessages = directMessages;
+      return directMessages;
+    }
+
+    if (_timelineDisplayCacheConversationId != normalizedConversationId) {
+      return const <Message>[];
+    }
+
+    if (isGenerating) {
+      return _timelineDisplayCacheMessages;
+    }
+
+    return <Message>[
+      for (final message in _timelineDisplayCacheMessages)
+        if (!(message.role == 'assistant' && message.status == 'sending'))
+          message,
+    ];
   }
 
   void _scheduleImagePrecache() {
@@ -773,8 +866,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     super.didUpdateWidget(oldWidget);
     final targetId = widget.conversationId;
     if (targetId != oldWidget.conversationId) {
-      _deferredEntryTimer?.cancel();
-      _entrySideEffectsStarted = false;
+      _entrySideEffectsConversationId = null;
+      _timelineDisplayCacheConversationId = null;
+      _timelineDisplayCacheMessages = const <Message>[];
       _deferredEntryShellActive = false;
       setState(() => _isLoadingMore = false);
       _viewportController.onConversationChanged();
@@ -788,11 +882,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   @override
   void dispose() {
-    ref.read(modelFailoverPromptProvider.notifier).dismiss();
+    _modelFailoverPromptController.dismiss();
     _conversationActivation.clear();
     _imagePrecacheTimer?.cancel();
     _clearUnreadTimer?.cancel();
-    _deferredEntryTimer?.cancel();
     _viewportController.dispose();
     super.dispose();
   }
@@ -805,16 +898,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     setState(() => _isLoadingMore = true);
 
     try {
+      final store = ref.read(conversationTimelineCacheProvider);
       final visibleCountNotifier =
           ref.read(conversationVisibleCountProvider(conversationId).notifier);
-      final addedCount = await ref
-          .read(conversationShortWindowStoreProvider)
-          .loadOlderMessages(
-            conversationId: conversationId,
-            pageSize: kConversationVisiblePageSize,
-          );
-      if (addedCount > 0) {
-        visibleCountNotifier.state += addedCount;
+      final currentVisibleCount = visibleCountNotifier.state;
+      final nextVisibleCount = await resolveChatPageLoadMoreVisibleCount(
+        store: store,
+        conversationId: conversationId,
+        currentVisibleCount: currentVisibleCount,
+      );
+      if (nextVisibleCount > currentVisibleCount) {
+        visibleCountNotifier.state = nextVisibleCount;
       }
     } catch (e) {
       debugPrint('加载更多消息失败: $e');
@@ -842,10 +936,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             ? initial
             : targetConversation ?? initial;
     final currentConversationId = conv?.id ?? targetId;
+    _ensureImplicitConversationEntrySideEffects(currentConversationId);
     final messagesAsync = currentConversationId == null
         ? const AsyncValue.data(<Message>[])
         : ref.watch(conversationMessagesProvider(currentConversationId));
-    final messages = messagesAsync.valueOrNull ?? const <Message>[];
+    final isGenerating = ref.watch(sendingProvider);
+    final messages = _resolveMessagesForDisplay(
+      conversationId: currentConversationId,
+      messagesAsync: messagesAsync,
+      isGenerating: isGenerating,
+    );
     final hasMoreMessages = currentConversationId == null
         ? false
         : ref.watch(conversationHasMoreProvider(currentConversationId));
@@ -992,7 +1092,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   ),
                 );
                 if (ok == true && context.mounted) {
-                  final lastMsgId = messages.last.id;
+                  final lastMsgId = messages.last.sourceMessageIdOrSelf;
                   await ref
                       .read(chatPageConversationActionsProvider)
                       .startNewTopic(
@@ -1194,27 +1294,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                                 _showSendingInProgressToast();
                                 return;
                               }
-                              final resendText =
-                                  await actions.peekTextRegenerate(message.id);
-                              if (resendText == null) {
-                                actions.regenerate(message.id);
-                                return;
-                              }
-                              final canSend = await _preparePlainTextSend();
-                              if (!canSend) return;
-                              final preparedText =
-                                  await actions.prepareTextRegenerate(
-                                message.id,
-                              );
-                              if (!mounted ||
-                                  preparedText == null ||
-                                  preparedText.isEmpty) {
-                                return;
-                              }
-                              _dispatchPlainTextSend(
-                                preparedText,
-                                throughComposer: false,
-                              );
+                              await actions.regenerate(message.id);
                             },
                             onEnhanceRegenerateMessage: (message) {
                               if (ref.read(sendingProvider)) {

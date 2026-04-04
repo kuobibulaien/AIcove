@@ -974,7 +974,7 @@ void main() {
       (runtimeContext['timeAwareness']
               as Map<String, dynamic>)['systemReminderContent']
           .toString(),
-      contains('current_datetime='),
+      contains('当前时间为'),
     );
     expect(
       (runtimeContext['timeAwareness']
@@ -1065,7 +1065,7 @@ void main() {
 
     final reminderIndex = apiConfig.messages.lastIndexWhere((message) {
       final content = (message['content'] ?? '').toString();
-      return (message['role'] ?? '').toString() == 'system' &&
+      return (message['role'] ?? '').toString() == 'user' &&
           content.trimLeft().startsWith('<system-reminder>');
     });
 
@@ -1074,11 +1074,15 @@ void main() {
     expect(apiConfig.messages[reminderIndex + 1]['content'], contains('现在几点了'));
     expect(
       apiConfig.messages[reminderIndex]['content'].toString(),
-      contains('current_datetime='),
+      contains('当前时间为'),
     );
     expect(
       apiConfig.messages[reminderIndex]['content'].toString(),
-      contains('previous_user_message_datetime=2026-03-12 10:00:00'),
+      contains('用户上一次发消息的时间为'),
+    );
+    expect(
+      apiConfig.messages[reminderIndex]['content'].toString(),
+      contains('2026-03-12 10:00:00'),
     );
   });
 
@@ -1148,7 +1152,7 @@ void main() {
 
     final reminderIndex = apiConfig.messages.lastIndexWhere((message) {
       final content = (message['content'] ?? '').toString();
-      return (message['role'] ?? '').toString() == 'system' &&
+      return (message['role'] ?? '').toString() == 'user' &&
           content.trimLeft().startsWith('<system-reminder>');
     });
 

@@ -75,8 +75,7 @@ class SystemReminderService {
   String buildReminderSemanticsPrompt({
     String tagName = defaultTagName,
   }) {
-    return '<$tagName>...</$tagName> 中的内容是系统注入的补充提醒，不是用户消息，'
-        '也不是需要原样复述给用户的文本。你应把它当作高优先级上下文来理解，不要原样复述，也不要把标签或其中内容原样输出给用户。';
+    return '<$tagName> 中的内容是系统补充信息，请据此理解上下文，不要原样复述。';
   }
 
   Map<String, dynamic>? buildReminderMessage({
@@ -86,7 +85,7 @@ class SystemReminderService {
     final wrapped = wrapReminderContent(reminderContent, tagName: tagName);
     if (wrapped.isEmpty) return null;
     return <String, dynamic>{
-      'role': 'system',
+      'role': 'user',
       'content': wrapped,
     };
   }
@@ -95,7 +94,7 @@ class SystemReminderService {
     Map<String, dynamic> message, {
     String tagName = defaultTagName,
   }) {
-    if ((message['role'] ?? '').toString() != 'system') {
+    if ((message['role'] ?? '').toString() != 'user') {
       return false;
     }
     final content = (message['content'] ?? '').toString();

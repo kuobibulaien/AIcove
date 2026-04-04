@@ -60,6 +60,190 @@ enum VoiceProviderType {
   siliconFlow,
 }
 
+/// 渠道绑定来源
+enum VoiceBindingSourceKind {
+  /// 从远端渠道创建得到
+  remoteCreated,
+
+  /// 用户手动填写
+  manual,
+
+  /// 从渠道列表导入
+  imported,
+
+  /// 从旧字段兼容迁移出的运行时绑定
+  legacy,
+}
+
+String? _normalizeModelId(String? modelId) {
+  final trimmed = modelId?.trim();
+  if (trimmed == null || trimmed.isEmpty) return null;
+  return trimmed;
+}
+
+String? _inferVoiceAdapterId({
+  String? providerId,
+  String? modelId,
+}) {
+  final normalizedProviderId = providerId?.trim().toLowerCase();
+  final normalizedModelId = modelId?.trim().toLowerCase();
+  if (normalizedProviderId == null || normalizedProviderId.isEmpty) {
+    return null;
+  }
+  if (normalizedProviderId == 'aliyun') {
+    if (normalizedModelId?.contains('qwen') == true) return 'aliyun_qwen';
+    if (normalizedModelId?.contains('cosyvoice') == true) {
+      return 'aliyun_cosyvoice';
+    }
+  }
+  return normalizedProviderId;
+}
+
+bool _isAliyunBindingCandidate(VoiceChannelBinding binding) {
+  final adapterId = binding.normalizedAdapterId;
+  return binding.normalizedProviderId == 'aliyun' ||
+      adapterId == 'aliyun_qwen' ||
+      adapterId == 'aliyun_cosyvoice';
+}
+
+bool _isSiliconFlowBindingCandidate(VoiceChannelBinding binding) {
+  final adapterId = binding.normalizedAdapterId;
+  return binding.normalizedProviderId == 'siliconflow' ||
+      adapterId == 'siliconflow';
+}
+
+/// 单个音色在某个渠道/模型下的远端绑定
+class VoiceChannelBinding {
+  final String providerId;
+  final String providerName;
+  final String? adapterId;
+  final String? modelId;
+  final String remoteVoiceId;
+  final String? status;
+  final VoiceBindingSourceKind sourceKind;
+
+  const VoiceChannelBinding({
+    required this.providerId,
+    required this.providerName,
+    required this.remoteVoiceId,
+    this.adapterId,
+    this.modelId,
+    this.status,
+    this.sourceKind = VoiceBindingSourceKind.remoteCreated,
+  });
+
+  String get normalizedProviderId => providerId.trim().toLowerCase();
+
+  String? get normalizedAdapterId => adapterId?.trim().toLowerCase();
+
+  String? get normalizedModelId => _normalizeModelId(modelId)?.toLowerCase();
+
+  bool matches({
+    String? providerId,
+    String? adapterId,
+    String? modelId,
+  }) {
+    final expectedProviderId = providerId?.trim().toLowerCase();
+    final expectedAdapterId = adapterId?.trim().toLowerCase();
+    final expectedModelId = _normalizeModelId(modelId)?.toLowerCase();
+
+    if (expectedProviderId != null &&
+        expectedProviderId.isNotEmpty &&
+        normalizedProviderId != expectedProviderId) {
+      final canFallbackToAdapter = expectedAdapterId != null &&
+          expectedAdapterId.isNotEmpty &&
+          normalizedAdapterId != null &&
+          normalizedAdapterId == expectedAdapterId;
+      if (!canFallbackToAdapter) {
+        return false;
+      }
+    }
+    if (expectedAdapterId != null &&
+        expectedAdapterId.isNotEmpty &&
+        normalizedAdapterId != null &&
+        normalizedAdapterId != expectedAdapterId) {
+      return false;
+    }
+    if (expectedModelId != null &&
+        expectedModelId.isNotEmpty &&
+        normalizedModelId != null &&
+        normalizedModelId != expectedModelId) {
+      return false;
+    }
+    return true;
+  }
+
+  int matchScore({
+    String? providerId,
+    String? adapterId,
+    String? modelId,
+  }) {
+    if (!matches(
+      providerId: providerId,
+      adapterId: adapterId,
+      modelId: modelId,
+    )) {
+      return -1;
+    }
+
+    var score = 0;
+    final expectedProviderId = providerId?.trim().toLowerCase();
+    final expectedAdapterId = adapterId?.trim().toLowerCase();
+    final expectedModelId = _normalizeModelId(modelId)?.toLowerCase();
+
+    if (expectedProviderId != null &&
+        expectedProviderId.isNotEmpty &&
+        normalizedProviderId == expectedProviderId) {
+      score += 4;
+    }
+    if (expectedAdapterId != null &&
+        expectedAdapterId.isNotEmpty &&
+        normalizedAdapterId == expectedAdapterId) {
+      score += 3;
+    }
+    if (expectedModelId != null &&
+        expectedModelId.isNotEmpty &&
+        normalizedModelId == expectedModelId) {
+      score += 2;
+    } else if (normalizedModelId == null || normalizedModelId!.isEmpty) {
+      score += 1;
+    }
+    if (status == null || status!.isEmpty || status == 'OK') {
+      score += 1;
+    }
+    return score;
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'providerId': providerId,
+      'providerName': providerName,
+      'adapterId': adapterId,
+      'modelId': modelId,
+      'remoteVoiceId': remoteVoiceId,
+      'status': status,
+      'sourceKind': sourceKind.name,
+    };
+  }
+
+  factory VoiceChannelBinding.fromJson(Map<String, dynamic> json) {
+    final sourceKindName = json['sourceKind'] as String?;
+    final sourceKind = VoiceBindingSourceKind.values.firstWhere(
+      (item) => item.name == sourceKindName,
+      orElse: () => VoiceBindingSourceKind.remoteCreated,
+    );
+    return VoiceChannelBinding(
+      providerId: json['providerId'] as String? ?? '',
+      providerName: json['providerName'] as String? ?? '',
+      adapterId: json['adapterId'] as String?,
+      modelId: json['modelId'] as String?,
+      remoteVoiceId: json['remoteVoiceId'] as String? ?? '',
+      status: json['status'] as String?,
+      sourceKind: sourceKind,
+    );
+  }
+}
+
 /// TTS 模型类型
 enum TtsModelType {
   /// 阿里云 CosyVoice（需要先创建音色，获得 voice_id）
@@ -78,6 +262,7 @@ enum TtsModelType {
 /// - CosyVoice（阿里云）：使用 aliyunVoiceId
 /// - Qwen-TTS（阿里云）：使用 aliyunVoiceId，支持本地文件上传
 /// - IndexTTS-2（硅基流动）：使用 siliconFlowVoiceUri 或系统预置音色
+/// - 多渠道绑定：通过 bindings 挂多个渠道返回的音色 ID
 ///
 /// 2026-01-27: 添加 providerType 标识音色来源渠道
 class VoicePreset {
@@ -111,6 +296,9 @@ class VoicePreset {
   /// 是否为内置音色（内置音色不可删除）
   final bool isBuiltIn;
 
+  /// 多渠道远端绑定列表
+  final List<VoiceChannelBinding> bindings;
+
   // ========== 阿里云音色相关字段 ==========
 
   /// 阿里云音色 ID（CosyVoice 返回 voice_id，Qwen-TTS 返回 voice）
@@ -134,11 +322,110 @@ class VoicePreset {
   /// 本地音频文件路径（用于本地上传模式，文件保存在应用目录中）
   final String? localAudioPath;
 
+  List<VoiceChannelBinding> get effectiveBindings {
+    final merged = <VoiceChannelBinding>[];
+
+    void addBinding(VoiceChannelBinding binding) {
+      final normalizedRemoteVoiceId = binding.remoteVoiceId.trim();
+      if (normalizedRemoteVoiceId.isEmpty) return;
+      final exists = merged.any((item) {
+        final sameProvider =
+            item.normalizedProviderId == binding.normalizedProviderId;
+        final sameAdapter = item.normalizedAdapterId != null &&
+            binding.normalizedAdapterId != null &&
+            item.normalizedAdapterId == binding.normalizedAdapterId;
+        return (sameProvider || sameAdapter) &&
+            item.normalizedModelId == binding.normalizedModelId &&
+            item.remoteVoiceId.trim() == normalizedRemoteVoiceId;
+      });
+      if (!exists) {
+        merged.add(binding);
+      }
+    }
+
+    for (final binding in bindings) {
+      addBinding(binding);
+    }
+
+    if (aliyunVoiceId != null && aliyunVoiceId!.trim().isNotEmpty) {
+      addBinding(
+        VoiceChannelBinding(
+          providerId: 'aliyun',
+          providerName: '阿里云',
+          adapterId: _inferVoiceAdapterId(
+            providerId: 'aliyun',
+            modelId: aliyunTargetModel,
+          ),
+          modelId: aliyunTargetModel,
+          remoteVoiceId: aliyunVoiceId!,
+          status: aliyunVoiceStatus,
+          sourceKind: VoiceBindingSourceKind.legacy,
+        ),
+      );
+    }
+
+    if (siliconFlowVoiceUri != null && siliconFlowVoiceUri!.trim().isNotEmpty) {
+      addBinding(
+        VoiceChannelBinding(
+          providerId: 'siliconflow',
+          providerName: '硅基流动',
+          adapterId: 'siliconflow',
+          modelId: siliconFlowModel,
+          remoteVoiceId: siliconFlowVoiceUri!,
+          sourceKind: VoiceBindingSourceKind.legacy,
+        ),
+      );
+    }
+
+    return List<VoiceChannelBinding>.unmodifiable(merged);
+  }
+
+  VoiceChannelBinding? resolveBinding({
+    String? providerId,
+    String? adapterId,
+    String? modelId,
+  }) {
+    final expectedProviderId = providerId?.trim();
+    final expectedAdapterId = adapterId?.trim().isNotEmpty == true
+        ? adapterId!.trim()
+        : _inferVoiceAdapterId(
+            providerId: expectedProviderId,
+            modelId: modelId,
+          );
+
+    VoiceChannelBinding? best;
+    var bestScore = -1;
+    for (final binding in effectiveBindings) {
+      final score = binding.matchScore(
+        providerId: expectedProviderId,
+        adapterId: expectedAdapterId,
+        modelId: modelId,
+      );
+      if (score > bestScore) {
+        best = binding;
+        bestScore = score;
+      }
+    }
+    return best;
+  }
+
   /// 判断音色是否可用于指定的模型
   ///
   /// [modelId] TTS 模型 ID，如 "cosyvoice-v3-plus"、"FunAudioLLM/CosyVoice2-0.5B"
   /// [providerId] 渠道 ID，用于判断是阿里云还是硅基流动
   bool canUseWithModel(String modelId, {String? providerId}) {
+    final normalizedProviderId = providerId?.trim();
+    final binding = resolveBinding(
+      providerId: normalizedProviderId,
+      modelId: modelId,
+    );
+    if (binding != null) {
+      if (binding.adapterId == 'aliyun_cosyvoice' && binding.status != 'OK') {
+        return false;
+      }
+      return true;
+    }
+
     // 预置音色（渠道提供的固定音色）：只能用于对应渠道的模型
     if (sourceType == VoiceSourceType.preset) {
       if (providerType == VoiceProviderType.siliconFlow) {
@@ -206,6 +493,41 @@ class VoicePreset {
     return hasPromptUrl;
   }
 
+  VoicePreset copyWithBindings(List<VoiceChannelBinding> newBindings) {
+    VoiceChannelBinding? firstAliyunBinding;
+    VoiceChannelBinding? firstSiliconFlowBinding;
+
+    for (final binding in newBindings) {
+      if (firstAliyunBinding == null && _isAliyunBindingCandidate(binding)) {
+        firstAliyunBinding = binding;
+      }
+      if (firstSiliconFlowBinding == null &&
+          _isSiliconFlowBindingCandidate(binding)) {
+        firstSiliconFlowBinding = binding;
+      }
+    }
+
+    return VoicePreset(
+      id: id,
+      name: name,
+      sourceType: sourceType,
+      providerType: providerType,
+      promptAudioUrl: promptAudioUrl,
+      promptText: promptText,
+      emoText: emoText,
+      useEmoText: useEmoText,
+      source: source,
+      isBuiltIn: isBuiltIn,
+      bindings: newBindings,
+      aliyunVoiceId: firstAliyunBinding?.remoteVoiceId,
+      aliyunTargetModel: firstAliyunBinding?.modelId,
+      aliyunVoiceStatus: firstAliyunBinding?.status,
+      siliconFlowVoiceUri: firstSiliconFlowBinding?.remoteVoiceId,
+      siliconFlowModel: firstSiliconFlowBinding?.modelId,
+      localAudioPath: localAudioPath,
+    );
+  }
+
   /// 获取来源渠道的显示名称
   String get providerDisplayName {
     switch (providerType) {
@@ -239,13 +561,15 @@ class VoicePreset {
     this.useEmoText = false,
     this.source,
     this.isBuiltIn = false,
+    List<VoiceChannelBinding>? bindings,
     this.aliyunVoiceId,
     this.aliyunTargetModel,
     this.aliyunVoiceStatus,
     this.siliconFlowVoiceUri,
     this.siliconFlowModel,
     this.localAudioPath,
-  }) : id = id ?? const Uuid().v4();
+  })  : bindings = List<VoiceChannelBinding>.unmodifiable(bindings ?? const []),
+        id = id ?? const Uuid().v4();
 
   VoicePreset copyWith({
     String? id,
@@ -258,6 +582,7 @@ class VoicePreset {
     bool? useEmoText,
     String? source,
     bool? isBuiltIn,
+    List<VoiceChannelBinding>? bindings,
     String? aliyunVoiceId,
     String? aliyunTargetModel,
     String? aliyunVoiceStatus,
@@ -276,6 +601,7 @@ class VoicePreset {
       useEmoText: useEmoText ?? this.useEmoText,
       source: source ?? this.source,
       isBuiltIn: isBuiltIn ?? this.isBuiltIn,
+      bindings: bindings ?? this.bindings,
       aliyunVoiceId: aliyunVoiceId ?? this.aliyunVoiceId,
       aliyunTargetModel: aliyunTargetModel ?? this.aliyunTargetModel,
       aliyunVoiceStatus: aliyunVoiceStatus ?? this.aliyunVoiceStatus,
@@ -297,6 +623,7 @@ class VoicePreset {
       'useEmoText': useEmoText,
       'source': source,
       'isBuiltIn': isBuiltIn,
+      'bindings': bindings.map((e) => e.toJson()).toList(),
       'aliyunVoiceId': aliyunVoiceId,
       'aliyunTargetModel': aliyunTargetModel,
       'aliyunVoiceStatus': aliyunVoiceStatus,
@@ -334,6 +661,13 @@ class VoicePreset {
       promptAudioUrl = _migrateBuiltInNahidaPromptAudioUrl(promptAudioUrl);
     }
 
+    final bindings = (json['bindings'] as List<dynamic>? ?? const <dynamic>[])
+        .whereType<Map>()
+        .map((item) => VoiceChannelBinding.fromJson(
+              item.cast<String, dynamic>(),
+            ))
+        .toList();
+
     return VoicePreset(
       id: presetId,
       name: json['name'] as String? ?? '未命名音色',
@@ -345,6 +679,7 @@ class VoicePreset {
       useEmoText: json['useEmoText'] as bool? ?? false,
       source: json['source'] as String?,
       isBuiltIn: json['isBuiltIn'] as bool? ?? false,
+      bindings: bindings,
       aliyunVoiceId: json['aliyunVoiceId'] as String?,
       aliyunTargetModel: json['aliyunTargetModel'] as String?,
       aliyunVoiceStatus: json['aliyunVoiceStatus'] as String?,

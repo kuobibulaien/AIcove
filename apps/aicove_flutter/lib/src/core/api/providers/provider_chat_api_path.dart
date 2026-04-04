@@ -1,5 +1,7 @@
 library;
 
+import 'google_api_mode.dart';
+
 const kProviderChatApiPathField = 'apiPath';
 const kProviderChatModelPlaceholder = '{model}';
 
@@ -12,6 +14,7 @@ String defaultChatApiPathForProvider(String provider) {
     case 'anthropic':
       return '/messages';
     case 'gemini':
+    case 'vertex':
     case 'google':
       return '/models/$kProviderChatModelPlaceholder:generateContent';
     case 'minimax':
@@ -72,10 +75,6 @@ String buildProviderChatEndpoint({
   );
   if (path.isEmpty) return base;
   if (_looksLikeAbsoluteUrl(path)) return path;
-  if (provider.trim().toLowerCase() == 'gemini' &&
-      _isVertexExpressEnabled(customConfig)) {
-    return _joinGeminiVertexBaseAndPath(base, path);
-  }
   if (base.isEmpty) return path;
   return '$base${path.startsWith('/') ? path : '/$path'}';
 }
@@ -97,7 +96,9 @@ String buildProviderChatPath({
     path = path.replaceAll(kProviderChatModelPlaceholder, trimmedModel);
   }
 
-  if (provider.trim().toLowerCase() == 'gemini') {
+  final normalizedProvider = provider.trim().toLowerCase();
+  if (normalizedProvider == 'gemini' ||
+      isVertexProviderId(normalizedProvider)) {
     if (streaming) {
       if (path.contains(_kGeminiGenerateContentSuffix)) {
         path = path.replaceFirst(
@@ -122,31 +123,6 @@ String buildProviderChatPath({
 
 bool shouldSuggestOpenAiBaseUrlV1(String apiBaseUrl) {
   return !apiBaseUrl.trim().toLowerCase().endsWith('/v1');
-}
-
-bool _isVertexExpressEnabled(Map<String, dynamic>? customConfig) {
-  final raw = customConfig?['vertexExpress'] ?? customConfig?['vertex_express'];
-  if (raw is bool) return raw;
-  final normalized = raw?.toString().trim().toLowerCase();
-  return normalized == 'true' || normalized == '1' || normalized == 'yes';
-}
-
-String _joinGeminiVertexBaseAndPath(String base, String path) {
-  if (base.isEmpty) return path;
-  if (path.startsWith('/publishers/google/models/')) {
-    return '$base$path';
-  }
-  if (base.endsWith('/publishers/google/models') &&
-      path.startsWith('/models/')) {
-    return '$base/${path.substring('/models/'.length)}';
-  }
-  if (base.endsWith('/publishers/google')) {
-    return '$base${path.startsWith('/') ? path : '/$path'}';
-  }
-  if (path.startsWith('/models/')) {
-    return '$base/publishers/google$path';
-  }
-  return '$base${path.startsWith('/') ? path : '/$path'}';
 }
 
 bool _looksLikeAbsoluteUrl(String value) {

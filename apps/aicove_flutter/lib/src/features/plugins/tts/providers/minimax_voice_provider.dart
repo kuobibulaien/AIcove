@@ -70,7 +70,16 @@ class MinimaxVoiceProvider extends TtsVoiceProvider {
           providerType: VoiceProviderType.custom, // MiniMax 暂无专门的枚举
           source: voice.description ?? 'MiniMax 系统音色',
           isBuiltIn: false,
-        )..setMinimaxVoiceId(voice.voiceId);
+          bindings: [
+            VoiceChannelBinding(
+              providerId: providerId,
+              providerName: displayName,
+              adapterId: providerId,
+              remoteVoiceId: voice.voiceId,
+              sourceKind: VoiceBindingSourceKind.imported,
+            ),
+          ],
+        );
       }).toList();
 
       // 转换复刻音色
@@ -81,7 +90,17 @@ class MinimaxVoiceProvider extends TtsVoiceProvider {
           sourceType: VoiceSourceType.url,
           providerType: VoiceProviderType.custom,
           source: 'MiniMax 复刻音色 · ${voice.createdTime ?? ""}',
-        )..setMinimaxVoiceId(voice.voiceId);
+          bindings: [
+            VoiceChannelBinding(
+              providerId: providerId,
+              providerName: displayName,
+              adapterId: providerId,
+              modelId: targetModel,
+              remoteVoiceId: voice.voiceId,
+              sourceKind: VoiceBindingSourceKind.imported,
+            ),
+          ],
+        );
       }).toList();
 
       return VoiceListResult(
@@ -153,7 +172,17 @@ class MinimaxVoiceProvider extends TtsVoiceProvider {
         providerType: VoiceProviderType.custom,
         source: 'MiniMax 复刻',
         promptText: request.promptText,
-      )..setMinimaxVoiceId(result.voiceId);
+        bindings: [
+          VoiceChannelBinding(
+            providerId: providerId,
+            providerName: displayName,
+            adapterId: providerId,
+            modelId: request.targetModel,
+            remoteVoiceId: result.voiceId,
+            sourceKind: VoiceBindingSourceKind.remoteCreated,
+          ),
+        ],
+      );
 
       return VoiceCreateResult(
         voice: voice,
@@ -180,8 +209,12 @@ class MinimaxVoiceProvider extends TtsVoiceProvider {
     required String voiceId,
     VoicePreset? voice,
   }) async {
-    // 从 voice 中获取 MiniMax voice_id
-    String? minimaxVoiceId = voice?.getMinimaxVoiceId();
+    String? minimaxVoiceId = voice
+        ?.resolveBinding(
+          providerId: providerId,
+          adapterId: providerId,
+        )
+        ?.remoteVoiceId;
 
     // 如果是系统音色，不能删除
     if (voiceId.startsWith('minimax_system_')) {
@@ -251,20 +284,5 @@ class MinimaxVoiceProvider extends TtsVoiceProvider {
     }
 
     return sanitized;
-  }
-}
-
-/// VoicePreset 扩展，用于存储 MiniMax 特定的 voice_id
-extension MinimaxVoicePresetExtension on VoicePreset {
-  static final _minimaxVoiceIds = <String, String>{};
-
-  /// 设置 MiniMax voice_id
-  void setMinimaxVoiceId(String voiceId) {
-    _minimaxVoiceIds[id] = voiceId;
-  }
-
-  /// 获取 MiniMax voice_id
-  String? getMinimaxVoiceId() {
-    return _minimaxVoiceIds[id];
   }
 }

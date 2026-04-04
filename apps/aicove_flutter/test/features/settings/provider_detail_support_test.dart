@@ -91,4 +91,23 @@ void main() {
 
     expect(format, ProviderDetailRequestFormat.gemini);
   });
+
+  test('旧 vertex 渠道别名仍固定使用 Gemini 请求格式', () {
+    const provider = ProviderAuth(
+      id: 'vertex',
+      apiBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      apiKeys: <String>[],
+      customConfig: <String, dynamic>{
+        'requestFormat': 'gemini',
+      },
+    );
+
+    final format = resolveProviderDetailRequestFormat(provider);
+    final available = ProviderDetailRequestFormat.forProvider(provider);
+
+    expect(format, ProviderDetailRequestFormat.gemini);
+    expect(available, <ProviderDetailRequestFormat>[
+      ProviderDetailRequestFormat.gemini,
+    ]);
+  });
 }

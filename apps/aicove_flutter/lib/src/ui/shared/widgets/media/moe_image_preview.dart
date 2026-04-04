@@ -248,8 +248,8 @@ class _MoeImagePreviewState extends State<MoeImagePreview>
 
   @override
   Widget build(BuildContext context) {
-    final bgColor =
-        widget.backgroundColor ?? MoeImagePreview.getAdaptiveBackgroundColor(context);
+    final bgColor = widget.backgroundColor ??
+        MoeImagePreview.getAdaptiveBackgroundColor(context);
     final images = widget.images;
     final isSingle = images.length == 1;
 
@@ -263,29 +263,39 @@ class _MoeImagePreviewState extends State<MoeImagePreview>
           onPointerUp: (_) => _pointerCount = max(_pointerCount - 1, 0),
           onPointerCancel: (_) => _pointerCount = max(_pointerCount - 1, 0),
           child: GestureDetector(
-            onVerticalDragStart:
-                _scaleState == PhotoViewScaleState.initial ? _onVerticalDragStart : null,
-            onVerticalDragUpdate:
-                _scaleState == PhotoViewScaleState.initial ? _onVerticalDragUpdate : null,
-            onVerticalDragEnd:
-                _scaleState == PhotoViewScaleState.initial ? _onVerticalDragEnd : null,
+            onVerticalDragStart: _scaleState == PhotoViewScaleState.initial
+                ? _onVerticalDragStart
+                : null,
+            onVerticalDragUpdate: _scaleState == PhotoViewScaleState.initial
+                ? _onVerticalDragUpdate
+                : null,
+            onVerticalDragEnd: _scaleState == PhotoViewScaleState.initial
+                ? _onVerticalDragEnd
+                : null,
             onTap: () => Navigator.of(context).pop(),
             child: Stack(
               fit: StackFit.expand,
               children: [
                 // 背景层
                 AnimatedContainer(
-                  duration: _isDragging ? Duration.zero : const Duration(milliseconds: 200),
+                  duration: _isDragging
+                      ? Duration.zero
+                      : const Duration(milliseconds: 200),
                   color: bgColor.withOpacity(_backgroundOpacity),
                 ),
 
                 // 图片层（单张或画廊 PageView）
                 AnimatedContainer(
-                  duration: _isDragging ? Duration.zero : const Duration(milliseconds: 200),
+                  duration: _isDragging
+                      ? Duration.zero
+                      : const Duration(milliseconds: 200),
                   transform: _photoTransform,
                   transformAlignment: Alignment.center,
                   child: isSingle
-                      ? _buildPhotoView(images.first)
+                      ? PhotoViewGestureDetectorScope(
+                          axis: Axis.vertical,
+                          child: _buildPhotoView(images.first),
+                        )
                       : _buildGalleryPageView(images),
                 ),
 
@@ -304,7 +314,8 @@ class _MoeImagePreviewState extends State<MoeImagePreview>
                           parent: _closeButtonController,
                           curve: Curves.easeOut,
                         )),
-                        child: _CloseButton(onTap: () => Navigator.of(context).pop()),
+                        child: _CloseButton(
+                            onTap: () => Navigator.of(context).pop()),
                       ),
                     ),
                   ),
@@ -347,53 +358,58 @@ class _MoeImagePreviewState extends State<MoeImagePreview>
 
   /// 构建画廊 PageView（左右滑动切换图片）
   Widget _buildGalleryPageView(List<ImagePreviewItem> images) {
-    return PageView.builder(
-      controller: _pageController,
-      itemCount: images.length,
-      // 图片放大后禁用左右滑动，避免和 PhotoView 平移手势冲突
-      physics: _canSwipePage
-          ? const BouncingScrollPhysics()
-          : const NeverScrollableScrollPhysics(),
-      onPageChanged: (index) {
-        setState(() {
-          _currentIndex = index;
-          // 切换页面时重置缩放状态
-          _scaleState = PhotoViewScaleState.initial;
-        });
-      },
-      itemBuilder: (context, index) {
-        final item = images[index];
-        // 只给当前页加 Hero，避免多个 Hero 同 tag 冲突
-        return PhotoView(
-          imageProvider: item.provider,
-          heroAttributes: index == widget.initialIndex
-              ? PhotoViewHeroAttributes(tag: item.heroTag)
-              : null,
-          backgroundDecoration: const BoxDecoration(color: Colors.transparent),
-          minScale: PhotoViewComputedScale.contained * widget.minScale,
-          maxScale: PhotoViewComputedScale.covered * widget.maxScale,
-          initialScale: PhotoViewComputedScale.contained,
-          scaleStateChangedCallback: (state) {
-            if (index == _currentIndex) {
-              setState(() {
-                _scaleState = state;
-              });
-            }
-          },
-          loadingBuilder: (context, event) => Center(
-            child: CircularProgressIndicator(
-              value: event == null
-                  ? null
-                  : event.cumulativeBytesLoaded / (event.expectedTotalBytes ?? 1),
-              color: Colors.white54,
-              strokeWidth: 2,
+    return PhotoViewGestureDetectorScope(
+      axis: Axis.horizontal,
+      child: PageView.builder(
+        controller: _pageController,
+        itemCount: images.length,
+        // 图片放大后禁用左右滑动，避免和 PhotoView 平移手势冲突
+        physics: _canSwipePage
+            ? const BouncingScrollPhysics()
+            : const NeverScrollableScrollPhysics(),
+        onPageChanged: (index) {
+          setState(() {
+            _currentIndex = index;
+            // 切换页面时重置缩放状态
+            _scaleState = PhotoViewScaleState.initial;
+          });
+        },
+        itemBuilder: (context, index) {
+          final item = images[index];
+          // 只给当前页加 Hero，避免多个 Hero 同 tag 冲突
+          return PhotoView(
+            imageProvider: item.provider,
+            heroAttributes: index == widget.initialIndex
+                ? PhotoViewHeroAttributes(tag: item.heroTag)
+                : null,
+            backgroundDecoration:
+                const BoxDecoration(color: Colors.transparent),
+            minScale: PhotoViewComputedScale.contained * widget.minScale,
+            maxScale: PhotoViewComputedScale.covered * widget.maxScale,
+            initialScale: PhotoViewComputedScale.contained,
+            scaleStateChangedCallback: (state) {
+              if (index == _currentIndex) {
+                setState(() {
+                  _scaleState = state;
+                });
+              }
+            },
+            loadingBuilder: (context, event) => Center(
+              child: CircularProgressIndicator(
+                value: event == null
+                    ? null
+                    : event.cumulativeBytesLoaded /
+                        (event.expectedTotalBytes ?? 1),
+                color: Colors.white54,
+                strokeWidth: 2,
+              ),
             ),
-          ),
-          errorBuilder: (context, error, stackTrace) => const Center(
-            child: Icon(Icons.broken_image, color: Colors.white54, size: 64),
-          ),
-        );
-      },
+            errorBuilder: (context, error, stackTrace) => const Center(
+              child: Icon(Icons.broken_image, color: Colors.white54, size: 64),
+            ),
+          );
+        },
+      ),
     );
   }
 }

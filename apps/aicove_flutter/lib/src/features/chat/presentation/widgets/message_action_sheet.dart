@@ -24,13 +24,13 @@ enum MessageAction {
 
 /// 显示消息操作悬浮菜单（在消息上方显示气泡菜单）
 ///
-/// [targetKey] 消息气泡的 GlobalKey，用于定位菜单位置
+/// [targetBox] 消息气泡的 RenderBox，用于定位菜单位置
 /// [isUserMessage] 是否是用户消息，决定显示哪些操作
 /// [messageText] 消息文本内容，用于复制
 /// [onAction] 操作回调
 Future<void> showMessageActionMenu(
   BuildContext context, {
-  required GlobalKey targetKey,
+  required RenderBox targetBox,
   required bool isUserMessage,
   required String messageText,
   bool showEnhanceRegenerate = false,
@@ -79,7 +79,7 @@ Future<void> showMessageActionMenu(
 
   await MoePopupMenu.show(
     context,
-    targetKey: targetKey,
+    targetBox: targetBox,
     items: items,
   );
 }
@@ -89,12 +89,12 @@ enum MediaType { image, audio }
 
 /// 显示媒体消息操作菜单（图片/音频的长按或右键菜单）
 ///
-/// [targetKey] 目标元素的 GlobalKey
+/// [targetBox] 目标元素的 RenderBox
 /// [mediaType] 媒体类型
 /// [onAction] 操作回调
 Future<void> showMediaActionMenu(
   BuildContext context, {
-  required GlobalKey targetKey,
+  required RenderBox targetBox,
   required MediaType mediaType,
   bool allowDelete = false,
   required void Function(MessageAction action) onAction,
@@ -121,7 +121,7 @@ Future<void> showMediaActionMenu(
 
   await MoePopupMenu.show(
     context,
-    targetKey: targetKey,
+    targetBox: targetBox,
     items: items,
   );
 }

@@ -634,22 +634,25 @@ void main() {
         apiBaseUrl: 'https://unit.test/v1beta',
       );
 
-      expect(calledUri.toString(), 'https://unit.test/v1beta/models');
+      expect(
+        calledUri.toString(),
+        'https://unit.test/v1beta/models?pageSize=200',
+      );
       expect(calledHeaders?['x-goog-api-key'], 'gemini-key');
       expect(calledHeaders?.containsKey('Authorization'), isFalse);
       expect(models, <String>['gemini-2.0-flash', 'text-embedding-004']);
     });
 
-    test('Vertex Express previewProvider should use publisherModels list',
-        () async {
+    test('Gemini 通用渠道 previewProvider 应按基础地址直接探测 /models', () async {
       Uri? calledUri;
+      Map<String, String>? calledHeaders;
       final client = MockClient((request) async {
         calledUri = request.url;
+        calledHeaders = Map<String, String>.from(request.headers);
         return http.Response(
           jsonEncode({
-            'publisherModels': [
+            'models': [
               {'name': 'publishers/google/models/gemini-2.5-pro'},
-              {'name': 'publishers/google/models/gemini-2.5-flash'},
             ],
           }),
           200,
@@ -662,25 +665,63 @@ void main() {
         providerId: 'gemini',
         apiKey: 'vertex-key',
         apiBaseUrl: 'https://aiplatform.googleapis.com/v1/publishers/google',
-        customConfig: const {'vertexExpress': true},
+        customConfig: const {
+          'requestFormat': 'gemini',
+        },
       );
 
       expect(
         calledUri.toString(),
-        'https://aiplatform.googleapis.com/v1beta1/publishers/google/models?key=vertex-key&pageSize=200',
+        'https://aiplatform.googleapis.com/v1/publishers/google/models?key=vertex-key&pageSize=200',
       );
+      expect(calledHeaders?.containsKey('x-goog-api-key'), isFalse);
+      expect(models, <String>['gemini-2.5-pro']);
+    });
+
+    test('旧 vertex 渠道别名 previewProvider 应继续走 Gemini models 列表接口', () async {
+      Uri? calledUri;
+      Map<String, String>? calledHeaders;
+      final client = MockClient((request) async {
+        calledUri = request.url;
+        calledHeaders = Map<String, String>.from(request.headers);
+        return http.Response(
+          jsonEncode({
+            'models': [
+              {'name': 'models/gemini-2.5-pro'},
+              {'name': 'models/gemini-2.5-flash'},
+            ],
+          }),
+          200,
+          headers: const {'content-type': 'application/json'},
+        );
+      });
+
+      final api = UiModelsApi(httpClient: client);
+      final models = await api.previewProvider(
+        providerId: 'vertex',
+        apiKey: 'vertex-key',
+        apiBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        customConfig: const {
+          'requestFormat': 'gemini',
+        },
+      );
+
+      expect(
+        calledUri.toString(),
+        'https://generativelanguage.googleapis.com/v1beta/models?pageSize=200',
+      );
+      expect(calledHeaders?['x-goog-api-key'], 'vertex-key');
       expect(models, <String>['gemini-2.5-pro', 'gemini-2.5-flash']);
     });
 
-    test('Vertex Express previewProvider should also work for imported ids',
-        () async {
+    test('带 vertexExpress 标记的 Gemini 渠道 previewProvider 应忽略旧分支', () async {
       Uri? calledUri;
       final client = MockClient((request) async {
         calledUri = request.url;
         return http.Response(
           jsonEncode({
-            'publisherModels': [
-              {'name': 'publishers/google/models/gemini-2.5-pro'},
+            'models': [
+              {'name': 'models/gemini-2.5-pro'},
             ],
           }),
           200,
@@ -692,7 +733,7 @@ void main() {
       final models = await api.previewProvider(
         providerId: 'gemini__2',
         apiKey: 'vertex-key',
-        apiBaseUrl: 'https://aiplatform.googleapis.com/v1/publishers/google',
+        apiBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
         customConfig: const {
           'requestFormat': 'gemini',
           'vertexExpress': true,
@@ -701,7 +742,7 @@ void main() {
 
       expect(
         calledUri.toString(),
-        'https://aiplatform.googleapis.com/v1beta1/publishers/google/models?key=vertex-key&pageSize=200',
+        'https://generativelanguage.googleapis.com/v1beta/models?pageSize=200',
       );
       expect(models, contains('gemini-2.5-pro'));
     });
@@ -726,8 +767,7 @@ void main() {
       expect(models, kMiniMaxDefaultPreviewModels);
     });
 
-    test('Vertex Express importProvider should fall back to built-in models',
-        () async {
+    test('Gemini importProvider 在探测失败时应保留空模型列表，交给手动添加', () async {
       SharedPreferences.setMockInitialValues(<String, Object>{});
       final client = MockClient((request) async {
         return http.Response('unexpected', 500);
@@ -736,11 +776,10 @@ void main() {
       final api = UiModelsApi(httpClient: client);
       final result = await api.importProvider(
         providerId: 'gemini',
-        apiKey: 'vertex-key',
-        apiBaseUrl: 'https://aiplatform.googleapis.com/v1/publishers/google',
+        apiKey: 'gemini-key',
+        apiBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
         customConfig: const {
           'requestFormat': 'gemini',
-          'vertexExpress': true,
         },
       );
 
@@ -748,14 +787,11 @@ void main() {
           (result['providers'] as List).cast<Map<String, dynamic>>();
       final imported =
           providers.firstWhere((provider) => provider['id'] == 'gemini');
-      expect(
-        imported['models'],
-        containsAll(kVertexExpressDefaultModels),
-      );
+      expect(imported['models'], isEmpty);
+      expect(imported['visible_models'], isEmpty);
     });
 
-    test('Vertex Express sendMessageRich should use aiplatform key query',
-        () async {
+    test('旧 vertex 渠道别名 sendMessageRich 应使用 Gemini 开发者接口', () async {
       Uri? calledUri;
       Map<String, String>? calledHeaders;
 
@@ -780,27 +816,70 @@ void main() {
       final result = await client.sendMessageRich(
         agentId: 'a1',
         sessionId: 's1',
-        modelFullId: 'gemini:gemini-2.5-pro',
+        modelFullId: 'vertex:gemini-2.5-pro',
         messages: const <Map<String, dynamic>>[],
         userText: 'hello',
-        providerApiBase: 'https://aiplatform.googleapis.com/v1',
+        providerApiBase: 'https://generativelanguage.googleapis.com/v1beta',
         providerApiKey: 'vertex-key',
         customConfig: const {
           'requestFormat': 'gemini',
-          'vertexExpress': true,
         },
       );
 
       expect(result.text, 'ok');
       expect(
         calledUri.toString(),
-        'https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-pro:generateContent?key=vertex-key',
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent',
       );
-      expect(calledHeaders?.containsKey('x-goog-api-key'), isFalse);
+      expect(calledHeaders?['x-goog-api-key'], 'vertex-key');
     });
 
-    test('Vertex Express sendMessageRichStream should use stream endpoint',
-        () async {
+    test('旧 vertex 渠道别名 sendMessageRichStream 应使用开发者流式端点', () async {
+      Uri? calledUri;
+      Map<String, String>? calledHeaders;
+
+      final client = AgentApiClient(
+        client: _CapturingClient((request) async {
+          calledUri = request.url;
+          calledHeaders = Map<String, String>.from(request.headers);
+          return http.StreamedResponse(
+            Stream<List<int>>.fromIterable(<List<int>>[
+              utf8.encode(
+                'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]}}]}\n\n',
+              ),
+            ]),
+            200,
+            headers: const <String, String>{
+              'content-type': 'text/event-stream',
+            },
+          );
+        }),
+      );
+
+      final result = await client.sendMessageRichStream(
+        agentId: 'a1',
+        sessionId: 's1',
+        modelFullId: 'vertex:gemini-2.5-pro',
+        messages: const <Map<String, dynamic>>[],
+        userText: 'hello',
+        providerApiBase: 'https://generativelanguage.googleapis.com/v1beta',
+        providerApiKey: 'vertex-key',
+        customConfig: const {
+          'requestFormat': 'gemini',
+        },
+      );
+
+      expect(result.text, 'ok');
+      expect(
+        calledUri.toString(),
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse',
+      );
+      expect(calledUri?.queryParameters['alt'], 'sse');
+      expect(calledHeaders?['Accept'], 'text/event-stream');
+      expect(calledHeaders?['x-goog-api-key'], 'vertex-key');
+    });
+
+    test('Gemini 通用渠道流式请求不应自动追加 alt=sse', () async {
       Uri? calledUri;
       Map<String, String>? calledHeaders;
 
@@ -828,11 +907,11 @@ void main() {
         modelFullId: 'gemini:gemini-2.5-pro',
         messages: const <Map<String, dynamic>>[],
         userText: 'hello',
-        providerApiBase: 'https://aiplatform.googleapis.com/v1',
+        providerApiBase:
+            'https://aiplatform.googleapis.com/v1/publishers/google',
         providerApiKey: 'vertex-key',
         customConfig: const {
           'requestFormat': 'gemini',
-          'vertexExpress': true,
         },
       );
 

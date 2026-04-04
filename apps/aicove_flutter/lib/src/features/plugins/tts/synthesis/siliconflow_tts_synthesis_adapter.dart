@@ -35,7 +35,14 @@ class SiliconFlowTtsSynthesisAdapter extends TtsSynthesisAdapter {
       body['speed'] = speed;
     }
 
-    final siliconFlowVoiceUri = preset?.siliconFlowVoiceUri;
+    final siliconFlowVoiceUri = preset
+            ?.resolveBinding(
+              providerId: context.config.selectedProviderId ?? providerId,
+              adapterId: providerId,
+              modelId: effectiveModel,
+            )
+            ?.remoteVoiceId ??
+        preset?.siliconFlowVoiceUri;
     if (_hasText(siliconFlowVoiceUri)) {
       body['voice'] = siliconFlowVoiceUri;
       return body;

@@ -28,13 +28,12 @@ import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/meotalk_dialog.dart';
 import '../../../../ui/shared/widgets/moe_toast.dart';
-import '../../../../ui/shared/widgets/sheets/moe_bottom_sheet.dart';
-import '../../../../ui/shared/widgets/list/moe_list_tile.dart';
 import '../../../../ui/shared/widgets/media/attachment_preview.dart';
 import '../../../settings/app_settings.dart';
 import '../../chat_actions.dart';
 import '../../conversation_providers.dart';
 import '../../domain/conversation.dart';
+import 'composer_model_picker_sheet.dart';
 import 'composer_more_panel.dart';
 
 @visibleForTesting
@@ -1283,7 +1282,6 @@ class _ComposerState extends ConsumerState<Composer> {
       return;
     }
     final loadedSettings = settings;
-    final colors = context.moeColors;
     final models = loadedSettings.modelList;
     if (models.isEmpty) {
       await showMeoTalkAlert(
@@ -1294,68 +1292,21 @@ class _ComposerState extends ConsumerState<Composer> {
       return;
     }
 
-    final currentModel = loadedSettings.defaultModelName;
-    final selected = await showMoeBottomSheet<String>(
-      context: context,
-      title: '选择模型',
-      useRootNavigator: true,
-      builder: (sheetContext) {
-        return ListView(
-          children: [
-            for (final model in models)
-              Builder(
-                builder: (_) {
-                  final modelId = loadedSettings.getRawModelId(model);
-                  final displayName = loadedSettings.getModelDisplayName(model);
-                  final providerId = loadedSettings.getModelProviderId(model);
-                  // 优先显示供应商的显示名称，而非技术 ID
-                  final providerLabel = providerId != null
-                      ? loadedSettings.providers
-                              .where((p) => p.id == providerId)
-                              .map((p) => p.displayName ?? p.id)
-                              .firstOrNull ??
-                          providerId
-                      : null;
-                  final subtitleParts = <String>[
-                    if (providerLabel != null && providerLabel.isNotEmpty)
-                      providerLabel,
-                    if (displayName != modelId) modelId,
-                  ];
-                  return MoeListTile(
-                    leading: Icon(
-                      model == currentModel
-                          ? Icons.radio_button_checked
-                          : Icons.radio_button_unchecked,
-                      color:
-                          model == currentModel ? colors.primary : colors.muted,
-                      size: 20,
-                    ),
-                    title: Text(displayName),
-                    subtitle: subtitleParts.isEmpty
-                        ? null
-                        : Text(subtitleParts.join(' / ')),
-                    trailing: model == currentModel
-                        ? Icon(Icons.check, color: colors.primary, size: 18)
-                        : null,
-                    selected: model == currentModel,
-                    onTap: () => Navigator.of(sheetContext).pop(model),
-                  );
-                },
-              ),
-          ],
-        );
-      },
-    );
-
-    if (selected == null ||
-        selected.trim().isEmpty ||
-        selected == currentModel) {
+    final selected = await showComposerModelPickerSheet(context);
+    if (selected == null || selected.trim().isEmpty) {
       return;
     }
+
+    final latestSettings =
+        ref.read(appSettingsProvider).valueOrNull ?? loadedSettings;
+    if (selected == latestSettings.defaultModelName) {
+      return;
+    }
+
     await ref.read(appSettingsProvider.notifier).setDefaultModelName(selected);
     if (!mounted) return;
-    final selectedLabel = loadedSettings.getModelDisplayName(selected);
-    final selectedProvider = loadedSettings.getModelProviderId(selected);
+    final selectedLabel = latestSettings.getModelDisplayName(selected);
+    final selectedProvider = latestSettings.getModelProviderId(selected);
     final summary = selectedProvider == null || selectedProvider.isEmpty
         ? selectedLabel
         : '$selectedLabel ($selectedProvider)';

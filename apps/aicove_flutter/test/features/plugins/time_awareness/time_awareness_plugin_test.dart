@@ -24,7 +24,7 @@ void main() {
   });
 
   group('TimeAwarenessPlugin 系统提醒数据', () {
-    test('启用后生成语义明确的时间字段', () {
+    test('启用后生成简洁中文时间提示', () {
       final plugin = TimeAwarenessPlugin(
         TimeAwarenessConfig(
           enabled: true,
@@ -36,15 +36,15 @@ void main() {
       );
 
       expect(payload, isNotNull);
-      expect(payload!.fields.map((field) => field.name).toList(), <String>[
-        TimeAwarenessPlugin.currentDateTimeFieldName,
-        TimeAwarenessPlugin.previousUserMessageDateTimeFieldName,
-      ]);
-      expect(payload.fields.first.value, contains('2026-03-23 10:30:15'));
-      expect(payload.fields.last.value, contains('2026-03-22 21:45:30'));
+      final content = payload!.rawContent!;
+      expect(content, contains('当前时间为'));
+      expect(content, contains('2026-03-23 10:30:15'));
+      expect(content, contains('用户上一次发消息的时间为'));
+      expect(content, contains('2026-03-22 21:45:30'));
+      expect(content, contains('自行判断当前与历史对话的关系'));
     });
 
-    test('没有上一条用户消息时 previous_user_message_datetime 为 unknown', () {
+    test('没有上一条用户消息时省略该部分', () {
       final plugin = TimeAwarenessPlugin(
         TimeAwarenessConfig(
           enabled: true,
@@ -56,12 +56,13 @@ void main() {
       );
 
       expect(payload, isNotNull);
-      expect(payload!.fields.last.name,
-          TimeAwarenessPlugin.previousUserMessageDateTimeFieldName);
-      expect(payload.fields.last.value, 'unknown');
+      final content = payload!.rawContent!;
+      expect(content, contains('当前时间为'));
+      expect(content, isNot(contains('用户上一次发消息的时间为')));
+      expect(content, contains('自行判断当前与历史对话的关系'));
     });
 
-    test('关闭当前时间注入后不再生成 current_datetime 字段', () {
+    test('关闭当前时间注入后不再包含当前时间', () {
       final plugin = TimeAwarenessPlugin(
         TimeAwarenessConfig(
           enabled: true,
@@ -75,34 +76,12 @@ void main() {
       );
 
       expect(payload, isNotNull);
-      expect(
-        payload!.fields.map((field) => field.name),
-        isNot(contains(TimeAwarenessPlugin.currentDateTimeFieldName)),
-      );
-      expect(
-        payload.fields.map((field) => field.name),
-        contains(TimeAwarenessPlugin.previousUserMessageDateTimeFieldName),
-      );
+      final content = payload!.rawContent!;
+      expect(content, isNot(contains('当前时间为')));
+      expect(content, contains('用户上一次发消息的时间为'));
     });
 
-    test('可生成 system-reminder 字段含义说明', () {
-      final plugin = TimeAwarenessPlugin(
-        TimeAwarenessConfig(
-          enabled: true,
-        ),
-      );
-
-      final guide = plugin.buildSystemReminderFieldGuide();
-
-      expect(guide, contains(TimeAwarenessPlugin.currentDateTimeFieldName));
-      expect(
-        guide,
-        contains(TimeAwarenessPlugin.previousUserMessageDateTimeFieldName),
-      );
-      expect(guide, contains('unknown'));
-    });
-
-    test('关闭当前时间注入后说明文案不再提及 current_datetime', () {
+    test('关闭当前时间注入且无上一条用户消息时返回 null', () {
       final plugin = TimeAwarenessPlugin(
         TimeAwarenessConfig(
           enabled: true,
@@ -110,14 +89,24 @@ void main() {
         ),
       );
 
+      final payload = plugin.buildSystemReminderPayload(
+        currentTime: DateTime(2026, 3, 23, 10, 30, 15),
+        previousUserMessageTime: null,
+      );
+
+      expect(payload, isNull);
+    });
+
+    test('字段含义说明返回空字符串', () {
+      final plugin = TimeAwarenessPlugin(
+        TimeAwarenessConfig(
+          enabled: true,
+        ),
+      );
+
       final guide = plugin.buildSystemReminderFieldGuide();
 
-      expect(
-          guide, isNot(contains(TimeAwarenessPlugin.currentDateTimeFieldName)));
-      expect(
-        guide,
-        contains(TimeAwarenessPlugin.previousUserMessageDateTimeFieldName),
-      );
+      expect(guide, isEmpty);
     });
   });
 

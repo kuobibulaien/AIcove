@@ -26,6 +26,7 @@ import 'application/chat_send_use_case.dart';
 import 'application/chat_turn_command.dart';
 import 'id_gen.dart' show genId;
 import 'chat_layer_providers.dart';
+import 'services/chat_history_store.dart';
 import 'services/chat_send_service.dart';
 import 'services/chat_types.dart'
     show
@@ -37,7 +38,7 @@ import 'domain/message.dart';
 import '../settings/app_settings.dart';
 import 'conversation_providers.dart';
 import 'services/conversation_short_window_store.dart'
-    show conversationShortWindowStoreProvider;
+    show conversationTimelineCacheProvider;
 import 'chat_providers.dart';
 import '../../core/app_logger.dart';
 import '../../core/models/message_block.dart';
@@ -102,7 +103,7 @@ class ChatActions {
   }
 
   Future<List<Message>> _loadConversationMessages(String convId) {
-    return _historyPort.loadAllMessages(convId);
+    return _historyPort.loadRawMessages(convId);
   }
 
   void _recordTurnTrace(
@@ -233,14 +234,18 @@ class ChatActions {
     }
   }
 
-  Future<void> _markUserMessageAsSent(_GenerationTask task) async {
-    final userMsgId = task.userMsgId;
-    if (userMsgId == null || userMsgId.trim().isEmpty) return;
-
-    await _historyPort.markMessageStatus(
-      conversationId: task.convId,
-      messageId: userMsgId,
-      status: 'sent',
+  Future<void> _restoreFrontendMessagesFromHistory(String convId) async {
+    final timelineCache = _ref.read(conversationTimelineCacheProvider);
+    final currentMessages = await timelineCache.loadCachedMessages(convId);
+    final persistedMessages = await _ref
+        .read(chatHistoryStoreProvider)
+        .loadProjectedMessagesFromRawStore(convId);
+    await timelineCache.replaceMessages(
+      conversationId: convId,
+      removeMessageIds: [
+        for (final message in currentMessages) message.id,
+      ],
+      messages: persistedMessages,
     );
   }
 
@@ -254,8 +259,8 @@ class ChatActions {
         if (message.id.trim().isNotEmpty) message.id.trim(),
     };
     final allMessages = await _ref
-        .read(conversationShortWindowStoreProvider)
-        .loadAllMessages(convId);
+        .read(conversationTimelineCacheProvider)
+        .loadCachedMessages(convId);
     final removeIds = <String>[
       for (final message in allMessages)
         if (message.sourceMessageId == rawMessageId &&
@@ -265,7 +270,7 @@ class ChatActions {
     if (removeIds.isEmpty) {
       return;
     }
-    await _ref.read(conversationShortWindowStoreProvider).replaceMessages(
+    await _ref.read(conversationTimelineCacheProvider).replaceMessages(
           conversationId: convId,
           removeMessageIds: removeIds,
         );
@@ -318,6 +323,34 @@ class ChatActions {
     );
   }
 
+  List<String> _extractProjectedTextMessageIds(List<Message> messages) {
+    return <String>[
+      for (final message in messages)
+        if (!_isPendingAudioPlaceholderMessage(message) &&
+            _messageContainsVisibleText(message))
+          message.id,
+    ];
+  }
+
+  bool _messageContainsVisibleText(Message message) {
+    final blocks = message.blocks;
+    if (blocks != null && blocks.isNotEmpty) {
+      return blocks.whereType<TextBlock>().any(
+            (block) => block.content.trim().isNotEmpty,
+          );
+    }
+    return message.content.trim().isNotEmpty;
+  }
+
+  bool _isPendingAudioPlaceholderMessage(Message message) {
+    final blocks = message.blocks;
+    if (blocks == null || blocks.length != 1) return false;
+    final block = blocks.first;
+    return block is AudioBlock &&
+        (block.url.isEmpty || block.status == BlockStatus.pending) &&
+        (block.text?.trim().isNotEmpty ?? false);
+  }
+
   Future<void> _commitStreamDelivery({
     required _StreamPlaceholderDelivery streamDelivery,
     required String convId,
@@ -331,10 +364,6 @@ class ChatActions {
     final committedMessages = _extractStreamCommittedMessages(
       buildResult.messages,
     );
-    if (committedMessages.isEmpty) {
-      throw StateError('流式收尾缺少可提交的文本锚点消息');
-    }
-
     final rawMessage = buildResult.rawMessage;
     if (rawMessage == null) {
       throw StateError('流式收尾缺少原始 assistant 消息');
@@ -343,10 +372,15 @@ class ChatActions {
       committedMessages: committedMessages,
       sourceMessageId: rawMessage.id,
     );
+    if (finalTimelineMessages.isEmpty) {
+      throw StateError('流式收尾缺少可提交的前端时间线消息');
+    }
     final pendingStreamTtsMessages =
         streamDelivery.pendingAudioPlaceholderMessages(
       sourceMessageId: rawMessage.id,
     );
+    final projectedTextMessageIds =
+        _extractProjectedTextMessageIds(finalTimelineMessages);
     final finalMessagePreview = buildResult.lastMessageText.trim().isNotEmpty
         ? buildResult.lastMessageText
         : finalTimelineMessages.last.displayText;
@@ -372,9 +406,7 @@ class ChatActions {
       pluginEvents: pluginEvents,
       ttsEnabled: ttsEnabled,
       appendAfterStreamText: true,
-      streamTextMessageIds: committedMessages
-          .map((message) => message.id)
-          .toList(growable: false),
+      streamTextMessageIds: projectedTextMessageIds,
       streamPendingTtsMessages: pendingStreamTtsMessages,
       trace: trace,
     );
@@ -448,7 +480,7 @@ class ChatActions {
       }
     }
 
-    await _markUserMessageAsSent(task);
+    await _restoreFrontendMessagesFromHistory(targetConvId);
     _ref.read(analyzerSchedulerProvider).scheduleAnalysis();
     return true;
   }
@@ -534,6 +566,18 @@ class ChatActions {
     if (!_isGenerationCurrent(convId, runId)) return;
 
     _StreamPlaceholderDelivery? streamDelivery;
+    final initialSettings = await _ref.read(appSettingsProvider.future);
+    streamDelivery = _StreamPlaceholderDelivery(
+      _ref,
+      convId: convId,
+      formatConfig: initialSettings.messageFormatConfig,
+      enableTtsPlaceholders: initialSettings.ttsEnabled,
+      segmentDelay: Duration(
+        milliseconds:
+            (initialSettings.streamSegmentDelaySeconds * 1000).round(),
+      ),
+    );
+    await streamDelivery.start();
     var streamCommitted = false;
     var turnSucceeded = false;
     _setGenerationInterruptCleanup(convId, runId, () async {
@@ -553,6 +597,21 @@ class ChatActions {
           streamCommitted = false;
         },
         task: () async {
+          final settings = initialSettings;
+          if (streamDelivery == null) {
+            streamDelivery = _StreamPlaceholderDelivery(
+              _ref,
+              convId: convId,
+              formatConfig: settings.messageFormatConfig,
+              enableTtsPlaceholders: settings.ttsEnabled,
+              segmentDelay: Duration(
+                milliseconds:
+                    (settings.streamSegmentDelaySeconds * 1000).round(),
+              ),
+            );
+            await streamDelivery!.start();
+          }
+
           final turnResult = await _executeTurnCommand(
             command: ChatTurnCommand.streaming(
               conversation: conv,
@@ -562,7 +621,7 @@ class ChatActions {
               traceContext: traceContext,
               trace: trace,
             ),
-            loadSettings: () => _ref.read(appSettingsProvider.future),
+            loadSettings: () async => settings,
             resolveModelsToTry: _resolvePreferredChatModels,
             executeWithFailover: ({
               required modelsToTry,
@@ -577,19 +636,7 @@ class ChatActions {
               execute: execute,
               settings: settings,
             ),
-            prepareStreaming: (settings) async {
-              streamDelivery = _StreamPlaceholderDelivery(
-                _ref,
-                convId: convId,
-                formatConfig: settings.messageFormatConfig,
-                enableTtsPlaceholders: settings.ttsEnabled,
-                segmentDelay: Duration(
-                  milliseconds:
-                      (settings.streamSegmentDelaySeconds * 1000).round(),
-                ),
-              );
-              await streamDelivery!.start();
-            },
+            prepareStreaming: (_) async {},
             onToolExecuting: (toolName) =>
                 _updateStatusForTool(convId, toolName),
             onProcessingResponse: () =>
@@ -605,11 +652,7 @@ class ChatActions {
               );
               final shouldCommitStream =
                   streamDelivery!.canFinalizeWith(finalText: streamFinalText);
-              final committedMessages = shouldCommitStream
-                  ? _extractStreamCommittedMessages(buildResult.messages)
-                  : const <Message>[];
-
-              if (shouldCommitStream && committedMessages.isNotEmpty) {
+              if (shouldCommitStream) {
                 await streamDelivery!.finalize(
                   finalText: streamFinalText,
                 );
@@ -625,18 +668,6 @@ class ChatActions {
                 );
                 streamCommitted = true;
                 return;
-              }
-
-              if (shouldCommitStream && committedMessages.isEmpty) {
-                AppLogger.info(
-                  'ChatActions',
-                  '流式收尾缺少文本锚点，回退到纯多模态补发链路',
-                  metadata: {
-                    'convId': convId,
-                    'pluginEventCount': apiResult.pluginEvents.length,
-                    'rawReplyLength': apiResult.rawReplyText.length,
-                  },
-                );
               }
 
               await streamDelivery!.removePlaceholders();

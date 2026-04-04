@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 
 import '../../../core/api/providers/provider_chat_api_path.dart';
+import '../../../core/api/providers/provider_adapter_factory.dart';
 import '../../../core/database/database.dart';
 import '../../../core/database/repositories/repositories.dart';
 
@@ -119,35 +120,45 @@ Future<String?> _fetchAiReply(
       if (apiPath.trim().isNotEmpty) kProviderChatApiPathField: apiPath.trim(),
       if (vertexExpress) 'vertexExpress': true,
     };
+    final adapter = ProviderAdapterFactory.getAdapter(
+      provider.isEmpty ? 'openai' : provider,
+      customConfig: customConfig,
+      apiBaseUrl: baseUrl,
+    );
+    final requestCustomConfig =
+        ProviderAdapterFactory.sanitizeRequestCustomConfig(customConfig);
     final endpoint = buildProviderChatEndpoint(
-      provider: provider.isEmpty ? 'openai' : provider,
+      provider: adapter.name,
       apiBaseUrl: baseUrl,
       model: modelName,
       customConfig: customConfig,
     );
     final contextMessages = _parseContextSnapshot(contextSnapshot);
 
-    final body = {
-      'model': modelName,
-      'messages': [
+    final body = adapter.buildRequestBody(
+      model: modelName,
+      messages: [
         {'role': 'system', 'content': systemPrompt},
         ...contextMessages,
       ],
-      'temperature': 0.7,
-    };
+      temperature: 0.7,
+      customConfig: requestCustomConfig,
+    );
 
     final response = await http.post(
       Uri.parse(endpoint),
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer $key',
+        ...adapter.buildHeaders(key),
       },
       body: jsonEncode(body),
     );
 
     if (response.statusCode == 200) {
-      final json = jsonDecode(utf8.decode(response.bodyBytes));
-      return json['choices']?[0]?['message']?['content']?.toString();
+      final json =
+          jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+      final result = adapter.parseResponse(json);
+      return result.text;
     } else {
       print('[Background] API Error: ${response.statusCode} ${response.body}');
     }

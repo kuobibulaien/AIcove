@@ -160,7 +160,7 @@ class _LogViewerPageState extends State<LogViewerPage> {
   bool _scrollToBottomScheduled = false;
   bool _isSelectionMode = false;
   DateTime? _hideBeforeTime;
-  int _lastLogCount = 0;
+  int _lastVisibleLogCount = 0;
   LogLevelFilter _levelFilter = LogLevelFilter.all;
   LogTypeFilter _typeFilter = LogTypeFilter.all;
   bool _showRawStreamEvents = false;
@@ -190,6 +190,7 @@ class _LogViewerPageState extends State<LogViewerPage> {
       setState(() {
         _hideBeforeTime = DateTime.fromMillisecondsSinceEpoch(timestamp);
       });
+      _scheduleScrollToBottom();
     }
   }
 
@@ -207,6 +208,9 @@ class _LogViewerPageState extends State<LogViewerPage> {
     final index = prefs.getInt(_logLevelFilterKey) ?? 0;
     if (index >= 0 && index < LogLevelFilter.values.length) {
       setState(() => _levelFilter = LogLevelFilter.values[index]);
+      if (_typeFilter != LogTypeFilter.conversation) {
+        _scheduleScrollToBottom();
+      }
     }
   }
 
@@ -223,6 +227,8 @@ class _LogViewerPageState extends State<LogViewerPage> {
       setState(() => _typeFilter = filter);
       if (filter == LogTypeFilter.conversation) {
         _loadTraceEvents();
+      } else {
+        _scheduleScrollToBottom();
       }
     }
   }
@@ -584,7 +590,6 @@ class _LogViewerPageState extends State<LogViewerPage> {
       levelFilter: _levelFilter,
       typeFilter: _typeFilter,
     );
-
     _syncVisibleLogCount(entries.length);
 
     return LogViewerUnifiedList(
@@ -613,11 +618,11 @@ class _LogViewerPageState extends State<LogViewerPage> {
   }
 
   void _syncVisibleLogCount(int count) {
-    if (count > _lastLogCount) {
-      _lastLogCount = count;
+    if (count > _lastVisibleLogCount) {
+      _lastVisibleLogCount = count;
       _scheduleScrollToBottom();
-    } else if (count < _lastLogCount) {
-      _lastLogCount = count;
+    } else if (count < _lastVisibleLogCount) {
+      _lastVisibleLogCount = count;
     }
   }
 
@@ -657,6 +662,8 @@ class _LogViewerPageState extends State<LogViewerPage> {
                     });
                     if (filter == LogTypeFilter.conversation) {
                       _loadTraceEvents();
+                    } else {
+                      _scheduleScrollToBottom();
                     }
                     _saveTypeFilter(filter);
                   },
@@ -704,6 +711,7 @@ class _LogViewerPageState extends State<LogViewerPage> {
                       _selectedIndices.clear();
                       _isSelectionMode = false;
                     });
+                    _scheduleScrollToBottom();
                     _saveLevelFilter(filter);
                   },
                   child: Container(
@@ -958,7 +966,9 @@ class _LogViewerPageState extends State<LogViewerPage> {
   }
 
   void _scheduleScrollToBottom() {
-    if (_scrollToBottomScheduled) return;
+    if (_typeFilter == LogTypeFilter.conversation || _scrollToBottomScheduled) {
+      return;
+    }
     _scrollToBottomScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       _scrollToBottomScheduled = false;

@@ -1,11 +1,11 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../conversation_timeline_providers.dart';
 import '../domain/message.dart';
 import '../services/chat_history_store.dart';
 
 typedef ChatMessageListPersistentSnapshotWindow = ConversationTurnWindow;
 typedef LoadChatMessageListOlderPage = LoadConversationOlderPage;
+const int kConversationPersistentSnapshotTurnCount = 5;
 
 class ChatMessageListQueries {
   const ChatMessageListQueries(this._ref);
@@ -32,7 +32,7 @@ Future<ChatMessageListPersistentSnapshotWindow>
   required List<Message> currentMessages,
   required bool hasMoreMessages,
   required LoadChatMessageListOlderPage loadOlderPage,
-  int targetTurnCount = kConversationInitialVisibleCount,
+  int targetTurnCount = kConversationPersistentSnapshotTurnCount,
   int fetchPageSize = kConversationTurnWindowFetchPageSize,
   int maxFetchPages = kConversationTurnWindowMaxFetchPages,
 }) {

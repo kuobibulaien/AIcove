@@ -8,6 +8,7 @@ import 'provider_adapter.dart';
 import 'openai_adapter.dart';
 import 'claude_adapter.dart';
 import 'gemini_adapter.dart';
+import 'google_api_mode.dart';
 import 'minimax_adapter.dart';
 import 'minimax_compat.dart';
 import 'zai_compat.dart';
@@ -75,6 +76,7 @@ class ProviderAdapterFactory {
     if (isZaiProvider(providerId: normalized, apiBaseUrl: apiBaseUrl)) {
       return 'openai';
     }
+    if (isVertexProviderId(normalized)) return 'gemini';
     if (normalized == 'anthropic') return 'claude';
     if (normalized == 'google') return 'gemini';
     return normalized;

@@ -87,7 +87,6 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
       TextEditingController(text: ApiFormat.openai.defaultApiPath);
 
   ApiFormat _selectedFormat = ApiFormat.openai;
-  bool _vertexExpressEnabled = false;
   bool _submitting = false;
 
   @override
@@ -102,22 +101,8 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
   void _onFormatChanged(ApiFormat format) {
     setState(() {
       _selectedFormat = format;
-      if (format == ApiFormat.gemini) {
-        _urlCtrl.text =
-            googleSuggestedBaseUrl(vertexExpress: _vertexExpressEnabled);
-      } else {
-        _urlCtrl.text = format.defaultBaseUrl;
-      }
+      _urlCtrl.text = format.defaultBaseUrl;
       _pathCtrl.text = format.defaultApiPath;
-    });
-  }
-
-  void _onVertexExpressChanged(bool enabled) {
-    setState(() {
-      _vertexExpressEnabled = enabled;
-      if (_selectedFormat == ApiFormat.gemini) {
-        _urlCtrl.text = googleSuggestedBaseUrl(vertexExpress: enabled);
-      }
     });
   }
 
@@ -162,23 +147,19 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
       var warningMessage = '';
       List<String> allModels = const <String>[];
       List<String> visibleModels = const <String>[];
+      final customConfig = copyCustomConfigWithProviderChatApiPath(
+        <String, dynamic>{
+          'requestFormat': _selectedFormat.value,
+        },
+        apiPath,
+      );
 
       try {
         final preview = await notifier.previewProviderModels(
           providerId: _selectedFormat.value,
           apiKey: apiKey,
           apiBaseUrl: apiBaseUrl,
-          customConfig: _selectedFormat == ApiFormat.gemini
-              ? copyCustomConfigWithProviderChatApiPath(
-                  <String, dynamic>{
-                    kGoogleVertexExpressField: _vertexExpressEnabled,
-                  },
-                  apiPath,
-                )
-              : copyCustomConfigWithProviderChatApiPath(
-                  const <String, dynamic>{},
-                  apiPath,
-                ),
+          customConfig: customConfig,
         );
         allModels = preview;
         visibleModels = _pickDefaultVisibleModels(preview);
@@ -195,13 +176,7 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
         displayName: displayName.isNotEmpty ? displayName : null,
         allModels: allModels,
         visibleModels: visibleModels,
-        customConfig: {
-          'requestFormat': _selectedFormat.value,
-          if (_selectedFormat == ApiFormat.gemini)
-            kGoogleVertexExpressField: _vertexExpressEnabled,
-          kProviderChatApiPathField:
-              normalizeProviderChatApiPath(apiPath) ?? apiPath,
-        },
+        customConfig: customConfig,
       );
 
       if (!mounted) return;
@@ -418,17 +393,6 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                                 ),
                               ),
                             ),
-                            if (_selectedFormat == ApiFormat.gemini)
-                              MoeSettingsRow(
-                                icon: Icons.cloud_sync_outlined,
-                                label: 'Vertex Express',
-                                subtitle: '开启后默认切到 aiplatform 端点',
-                                trailingType: MoeSettingsRowTrailing.custom,
-                                trailing: MoeSwitch(
-                                  value: _vertexExpressEnabled,
-                                  onChanged: _onVertexExpressChanged,
-                                ),
-                              ),
                           ],
                         ),
                         ValueListenableBuilder<TextEditingValue>(

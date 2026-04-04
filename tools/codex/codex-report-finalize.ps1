@@ -4,7 +4,7 @@ param(
     [string]$DraftFile,
 
     [ValidateSet('claude', 'gemini')]
-    [string]$With = 'gemini',
+    [string]$With,
 
     [ValidateSet('review', 'translate', 'translate-review')]
     [string]$Mode = 'translate',
@@ -26,6 +26,17 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+$polishSettingsPath = Join-Path $PSScriptRoot 'codex-polish-settings.ps1'
+if (-not (Test-Path -LiteralPath $polishSettingsPath -PathType Leaf)) {
+    throw "找不到润色配置脚本: $polishSettingsPath"
+}
+
+. $polishSettingsPath
+
+if ([string]::IsNullOrWhiteSpace($With)) {
+    $With = Get-CodexPolishDefaultProvider
+}
 
 function Resolve-WorkspaceRoot {
     param(
@@ -89,6 +100,126 @@ function Get-PolishRootDirectory {
 
 function Get-ManagedDraftDirectory {
     return (Join-Path (Get-PolishRootDirectory) 'drafts')
+}
+
+function Get-UserHomeDirectory {
+    $candidates = @(
+        $env:USERPROFILE,
+        $HOME,
+        [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
+    )
+
+    foreach ($candidate in $candidates) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            continue
+        }
+
+        if (Test-Path -LiteralPath $candidate -PathType Container) {
+            return (Resolve-Path -LiteralPath $candidate).Path
+        }
+    }
+
+    return ''
+}
+
+function Get-PowerShellExecutablePath {
+    $candidates = New-Object System.Collections.Generic.List[string]
+
+    $currentPwsh = Join-Path $PSHOME 'pwsh.exe'
+    if (Test-Path -LiteralPath $currentPwsh -PathType Leaf) {
+        [void]$candidates.Add($currentPwsh)
+    }
+
+    foreach ($programFilesRoot in @(
+        $env:ProgramFiles,
+        $env:ProgramW6432,
+        ${env:ProgramFiles(x86)},
+        'C:\Program Files',
+        'C:\Program Files (x86)'
+    )) {
+        if ([string]::IsNullOrWhiteSpace($programFilesRoot)) {
+            continue
+        }
+
+        $candidate = Join-Path $programFilesRoot 'PowerShell\7\pwsh.exe'
+        [void]$candidates.Add($candidate)
+    }
+
+    try {
+        $currentProcessPath = (Get-Process -Id $PID -ErrorAction Stop).Path
+        if (-not [string]::IsNullOrWhiteSpace($currentProcessPath)) {
+            [void]$candidates.Add($currentProcessPath)
+        }
+    }
+    catch {
+    }
+
+    try {
+        $pwshCommand = Get-Command pwsh.exe -ErrorAction Stop | Select-Object -First 1
+        if ($null -ne $pwshCommand) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$pwshCommand.Path)) {
+                [void]$candidates.Add([string]$pwshCommand.Path)
+            }
+            elseif (-not [string]::IsNullOrWhiteSpace([string]$pwshCommand.Source)) {
+                [void]$candidates.Add([string]$pwshCommand.Source)
+            }
+        }
+    }
+    catch {
+    }
+
+    foreach ($candidate in ($candidates | Select-Object -Unique)) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            continue
+        }
+
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return (Resolve-Path -LiteralPath $candidate).Path
+        }
+    }
+
+    foreach ($windowsRoot in @($env:WINDIR, 'C:\Windows')) {
+        if ([string]::IsNullOrWhiteSpace($windowsRoot)) {
+            continue
+        }
+
+        $legacyPowerShell = Join-Path $windowsRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        if (Test-Path -LiteralPath $legacyPowerShell -PathType Leaf) {
+            return (Resolve-Path -LiteralPath $legacyPowerShell).Path
+        }
+    }
+
+    throw '找不到可用的 PowerShell 可执行文件。'
+}
+
+function Initialize-ChildProcessEnvironment {
+    $systemDirectory = [Environment]::SystemDirectory
+    $windowsDirectory = ''
+
+    if (-not [string]::IsNullOrWhiteSpace($systemDirectory)) {
+        $windowsDirectory = Split-Path -Path $systemDirectory -Parent
+    }
+
+    if ([string]::IsNullOrWhiteSpace($windowsDirectory) -and (Test-Path -LiteralPath 'C:\Windows' -PathType Container)) {
+        $windowsDirectory = 'C:\Windows'
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($windowsDirectory)) {
+        if ([string]::IsNullOrWhiteSpace($env:SystemRoot)) {
+            $env:SystemRoot = $windowsDirectory
+        }
+
+        if ([string]::IsNullOrWhiteSpace($env:WINDIR)) {
+            $env:WINDIR = $windowsDirectory
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($env:ComSpec) -and -not [string]::IsNullOrWhiteSpace($systemDirectory)) {
+        $commandProcessor = Join-Path $systemDirectory 'cmd.exe'
+        if (Test-Path -LiteralPath $commandProcessor -PathType Leaf) {
+            $env:ComSpec = $commandProcessor
+        }
+    }
 }
 
 function ConvertTo-SafePathSegment {
@@ -157,9 +288,14 @@ function Get-SessionFile {
         return ''
     }
 
+    $userHomeDirectory = Get-UserHomeDirectory
+    if ([string]::IsNullOrWhiteSpace($userHomeDirectory)) {
+        return ''
+    }
+
     $roots = @(
-        (Join-Path $env:USERPROFILE '.codex\sessions'),
-        (Join-Path $env:USERPROFILE '.codex\archived_sessions')
+        (Join-Path $userHomeDirectory '.codex\sessions'),
+        (Join-Path $userHomeDirectory '.codex\archived_sessions')
     )
 
     $matches = @()
@@ -501,44 +637,34 @@ if (-not (Test-Path -LiteralPath $polishScriptPath -PathType Leaf)) {
     throw "找不到润色脚本: $polishScriptPath"
 }
 
+Initialize-ChildProcessEnvironment
+
 function Invoke-PolishCommand {
     param(
         [switch]$PreviewOnly
     )
 
-    $arguments = @(
-        '-NoProfile',
-        '-ExecutionPolicy', 'Bypass',
-        '-File', $polishScriptPath,
-        '-With', $With,
-        '-Mode', $Mode,
-        '-ReportId', $bundleId,
-        '-ProviderTimeoutSeconds', $ProviderTimeoutSeconds
-    )
+    $arguments = @{
+        With = $With
+        Mode = $Mode
+        ReportId = $bundleId
+        ProviderTimeoutSeconds = $ProviderTimeoutSeconds
+    }
 
     if ($PreviewOnly) {
-        $arguments += '-DryRun'
+        $arguments['DryRun'] = $true
     }
 
     $previousLocation = Get-Location
     try {
         Set-Location -LiteralPath $workspaceRoot
-        $output = & pwsh @arguments 2>&1
-        $exitCode = $LASTEXITCODE
+        $output = & $polishScriptPath @arguments 2>&1
     }
     finally {
         Set-Location -LiteralPath $previousLocation
     }
 
     $outputText = ($output | Out-String).Trim()
-    if ($exitCode -ne 0) {
-        if ([string]::IsNullOrWhiteSpace($outputText)) {
-            $outputText = '润色命令失败，但没有返回可读错误。'
-        }
-
-        throw $outputText
-    }
-
     return $outputText
 }
 

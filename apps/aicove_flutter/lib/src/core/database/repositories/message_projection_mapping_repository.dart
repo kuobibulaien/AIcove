@@ -29,6 +29,25 @@ class MessageProjectionMappingRepository {
         .get();
   }
 
+  Future<MessageProjectionMapping?> getByProjectedMessageId(
+    String projectedMessageId, {
+    String? conversationId,
+  }) {
+    final query = _db.select(_db.messageProjectionMappings)
+      ..where((t) => t.projectedMessageId.equals(projectedMessageId));
+    final normalizedConversationId = conversationId?.trim();
+    if (normalizedConversationId != null && normalizedConversationId.isNotEmpty) {
+      query.where((t) => t.conversationId.equals(normalizedConversationId));
+    }
+    query
+      ..orderBy([
+        (t) => OrderingTerm.asc(t.createdAt),
+        (t) => OrderingTerm.asc(t.segmentIndex),
+      ])
+      ..limit(1);
+    return query.getSingleOrNull();
+  }
+
   Future<void> upsert(MessageProjectionMappingsCompanion data) async {
     await _db.into(_db.messageProjectionMappings).insertOnConflictUpdate(data);
   }

@@ -5,9 +5,11 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../../../../features/plugins/plugin_providers.dart';
+import '../../../../features/plugins/tts/tts_available_models.dart';
 import '../../../../features/plugins/tts/providers/tts_voice_provider.dart';
 import '../../../../features/plugins/tts/tts_config.dart';
 import '../../../../features/plugins/tts/tts_provider_context.dart';
+import '../../../../features/settings/app_settings.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/theme/tokens.dart';
@@ -18,12 +20,16 @@ class TtsVoicePresetSection extends StatelessWidget {
   final TtsConfig config;
   final TtsPluginConfigNotifier notifier;
   final TtsProviderContext providerContext;
+  final List<TtsAvailableModelEntry> availableModels;
+  final AppSettings? settings;
 
   const TtsVoicePresetSection({
     super.key,
     required this.config,
     required this.notifier,
     required this.providerContext,
+    required this.availableModels,
+    required this.settings,
   });
 
   @override
@@ -60,13 +66,20 @@ class TtsVoicePresetSection extends StatelessWidget {
               providerId: providerContext.voiceProviderId,
             );
 
+            final providerNames =
+                _resolveAvailableProviderNames(preset, availableModels);
+
             return MoeSettingsRow(
               icon: isSelected ? Icons.check_circle : Icons.mic,
               iconColor: isSelected
                   ? colors.primary
                   : (isAvailable ? null : colors.muted),
               label: preset.name,
-              subtitle: _buildVoicePresetSubtitle(preset, isAvailable),
+              subtitle: _buildVoicePresetSubtitle(
+                preset,
+                isAvailable,
+                providerNames,
+              ),
               trailingType: MoeSettingsRowTrailing.custom,
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -135,6 +148,8 @@ class TtsVoicePresetSection extends StatelessWidget {
                             context: context,
                             notifier: notifier,
                             providerContext: providerContext,
+                            settings: settings,
+                            availableModels: availableModels,
                             colors: colors,
                           ),
                 ),
@@ -256,7 +271,11 @@ class TtsVoicePresetSection extends StatelessWidget {
     );
   }
 
-  String _buildVoicePresetSubtitle(VoicePreset preset, bool isAvailable) {
+  String _buildVoicePresetSubtitle(
+    VoicePreset preset,
+    bool isAvailable,
+    List<String> providerNames,
+  ) {
     final parts = <String>[];
     switch (preset.sourceType) {
       case VoiceSourceType.local:
@@ -280,7 +299,40 @@ class TtsVoicePresetSection extends StatelessWidget {
     if (!isAvailable) {
       parts.add('不可用');
     }
+    if (providerNames.isEmpty) {
+      parts.add('可用渠道: 无');
+    } else {
+      parts.add('可用渠道: ${providerNames.join(' / ')}');
+    }
     return parts.join(' · ');
+  }
+
+  List<String> _resolveAvailableProviderNames(
+    VoicePreset preset,
+    List<TtsAvailableModelEntry> models,
+  ) {
+    if (models.isEmpty) return const [];
+    final seen = <String>{};
+    final matched = <String>[];
+    for (final entry in models) {
+      final binding = preset.resolveBinding(
+        providerId: entry.providerId,
+        adapterId: entry.voiceProviderId,
+        modelId: entry.modelId,
+      );
+      final isAvailable = binding != null
+          ? !(binding.adapterId == 'aliyun_cosyvoice' && binding.status != 'OK')
+          : preset.canUseWithModel(
+              entry.modelId,
+              providerId: entry.voiceProviderId ?? entry.providerId,
+            );
+      if (isAvailable) {
+        if (seen.add(entry.providerId)) {
+          matched.add(entry.providerName);
+        }
+      }
+    }
+    return matched;
   }
 
   void _onVoicePresetTap(
@@ -335,6 +387,8 @@ class TtsVoicePresetSection extends StatelessWidget {
             context: context,
             notifier: notifier,
             providerContext: providerContext,
+            settings: settings,
+            availableModels: availableModels,
             colors: colors,
             preset: preset,
           ),

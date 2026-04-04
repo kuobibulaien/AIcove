@@ -6,8 +6,6 @@ import 'dart:typed_data';
 import 'package:drift/drift.dart' show Value;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image/image.dart' as img;
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
 import '../../../core/database/database.dart' as db;
 import '../../../core/database/converters/database_converters.dart';
@@ -15,18 +13,11 @@ import '../../../core/database/database_provider.dart';
 import '../../../core/models/message_block.dart';
 import '../domain/message.dart';
 import 'chat_frontend_message_projection_service.dart';
-import 'chat_message_projection_codec.dart';
 
-const int kConversationShortWindowSeedMessageCount = 20;
-const int kConversationShortWindowBudgetBytes = 50 * 1024 * 1024;
-const String kConversationShortWindowRootDirectoryName =
-    'conversation_short_windows';
-const String _kConversationShortWindowFileName = 'window.json';
-const String _kConversationShortWindowMediaDirectoryName = 'media';
-const int _kConversationShortWindowFileVersion = 1;
+const int kConversationTimelineSeedMessageCount = 20;
 
-class ConversationShortWindowState {
-  const ConversationShortWindowState({
+class ConversationTimelineWindowState {
+  const ConversationTimelineWindowState({
     required this.messages,
     required this.hasMoreMessages,
   });
@@ -35,25 +26,26 @@ class ConversationShortWindowState {
   final bool hasMoreMessages;
 }
 
-class ConversationShortWindowStore {
-  ConversationShortWindowStore(this._ref);
+/// Frontend-only timeline cache.
+///
+/// 数据库继续保存 raw message；这里仅缓存“已投影好的前端消息窗口”。
+class ConversationTimelineCache {
+  ConversationTimelineCache(this._ref);
 
   final Ref _ref;
-  final Map<String, _ConversationShortWindowSnapshot> _snapshotsByConversation =
-      <String, _ConversationShortWindowSnapshot>{};
+  final Map<String, _ConversationTimelineSnapshot> _snapshotsByConversation =
+      <String, _ConversationTimelineSnapshot>{};
   final Map<String, StreamController<void>> _changeControllers =
       <String, StreamController<void>>{};
   final Map<String, Future<void>> _conversationTasks = <String, Future<void>>{};
-  Future<void> _budgetTask = Future<void>.value();
-  Future<Directory>? _rootDirectoryFuture;
 
-  Stream<ConversationShortWindowState> watchWindow({
+  Stream<ConversationTimelineWindowState> watchWindow({
     required String conversationId,
     required int limit,
   }) async* {
     final normalizedConversationId = conversationId.trim();
     if (normalizedConversationId.isEmpty) {
-      yield const ConversationShortWindowState(
+      yield const ConversationTimelineWindowState(
         messages: <Message>[],
         hasMoreMessages: false,
       );
@@ -73,28 +65,6 @@ class ConversationShortWindowStore {
         limit: normalizedLimit,
       );
     });
-  }
-
-  Future<void> warmupConversations(Iterable<String> conversationIds) async {
-    final uniqueConversationIds = <String>{
-      for (final conversationId in conversationIds)
-        if (conversationId.trim().isNotEmpty) conversationId.trim(),
-    };
-    for (final conversationId in uniqueConversationIds) {
-      try {
-        await _runConversationTask(conversationId, () async {
-          if (_snapshotsByConversation.containsKey(conversationId)) {
-            return;
-          }
-          final snapshot = await _readSnapshotFromDiskUnlocked(conversationId);
-          if (snapshot != null) {
-            _snapshotsByConversation[conversationId] = snapshot;
-          }
-        });
-      } catch (_) {
-        // 预热失败不阻断应用主流程。
-      }
-    }
   }
 
   Future<void> upsertMessage({
@@ -119,7 +89,7 @@ class ConversationShortWindowStore {
     await _runConversationTask(normalizedConversationId, () async {
       final current = await _ensureConversationReadyUnlocked(
         normalizedConversationId,
-        minMessages: kConversationShortWindowSeedMessageCount,
+        minMessages: kConversationTimelineSeedMessageCount,
       );
       final mergedById = <String, Message>{
         for (final message in current.messages) message.id: message,
@@ -128,11 +98,17 @@ class ConversationShortWindowStore {
         mergedById[message.id] = message;
       }
 
+      final normalizedMessages = _normalizeMessages(mergedById.values);
       final next = await _persistSnapshotUnlocked(
-        _ConversationShortWindowSnapshot(
+        _ConversationTimelineSnapshot(
           conversationId: normalizedConversationId,
-          messages: _normalizeMessages(mergedById.values),
+          messages: normalizedMessages,
           hasMoreMessages: current.hasMoreMessages,
+          oldestRawCursor: current.oldestRawCursor ??
+              _estimateOldestRawCursor(normalizedMessages),
+          loadedRawMessageCount: current.loadedRawMessageCount > 0
+              ? current.loadedRawMessageCount
+              : _estimateLoadedRawMessageCount(normalizedMessages),
         ),
       );
       _snapshotsByConversation[normalizedConversationId] = next;
@@ -161,7 +137,7 @@ class ConversationShortWindowStore {
     await _runConversationTask(normalizedConversationId, () async {
       final current = await _ensureConversationReadyUnlocked(
         normalizedConversationId,
-        minMessages: kConversationShortWindowSeedMessageCount,
+        minMessages: kConversationTimelineSeedMessageCount,
       );
       final mergedById = <String, Message>{
         for (final message in current.messages)
@@ -171,11 +147,17 @@ class ConversationShortWindowStore {
         mergedById[message.id] = message;
       }
 
+      final normalizedMessages = _normalizeMessages(mergedById.values);
       final next = await _persistSnapshotUnlocked(
-        _ConversationShortWindowSnapshot(
+        _ConversationTimelineSnapshot(
           conversationId: normalizedConversationId,
-          messages: _normalizeMessages(mergedById.values),
+          messages: normalizedMessages,
           hasMoreMessages: current.hasMoreMessages,
+          oldestRawCursor: current.oldestRawCursor ??
+              _estimateOldestRawCursor(normalizedMessages),
+          loadedRawMessageCount: current.loadedRawMessageCount > 0
+              ? current.loadedRawMessageCount
+              : _estimateLoadedRawMessageCount(normalizedMessages),
         ),
       );
       _snapshotsByConversation[normalizedConversationId] = next;
@@ -185,7 +167,7 @@ class ConversationShortWindowStore {
 
   Future<int> loadOlderMessages({
     required String conversationId,
-    int pageSize = kConversationShortWindowSeedMessageCount,
+    int pageSize = kConversationTimelineSeedMessageCount,
   }) async {
     final normalizedConversationId = conversationId.trim();
     if (normalizedConversationId.isEmpty) {
@@ -196,17 +178,18 @@ class ConversationShortWindowStore {
     return _runConversationTask(normalizedConversationId, () async {
       final current = await _ensureConversationReadyUnlocked(
         normalizedConversationId,
-        minMessages: kConversationShortWindowSeedMessageCount,
+        minMessages: kConversationTimelineSeedMessageCount,
       );
-      if (current.messages.isEmpty || !current.hasMoreMessages) {
+      final oldestCursor = current.oldestRawCursor;
+      if (oldestCursor == null ||
+          current.messages.isEmpty ||
+          !current.hasMoreMessages) {
         return 0;
       }
 
-      final oldestMessage = current.messages.first;
       final olderPage = await _loadOlderPageFromDb(
         normalizedConversationId,
-        beforeCreatedAt: oldestMessage.createdAt,
-        beforeId: oldestMessage.id,
+        beforeCursor: oldestCursor,
         pageSize: normalizedPageSize,
       );
       if (olderPage.messages.isEmpty) {
@@ -229,6 +212,9 @@ class ConversationShortWindowStore {
         current.copyWith(
           messages: nextMessages,
           hasMoreMessages: olderPage.hasMoreMessages,
+          oldestRawCursor: olderPage.oldestRawCursor ?? current.oldestRawCursor,
+          loadedRawMessageCount:
+              current.loadedRawMessageCount + olderPage.loadedRawMessageCount,
         ),
       );
       _snapshotsByConversation[normalizedConversationId] = next;
@@ -237,7 +223,7 @@ class ConversationShortWindowStore {
     });
   }
 
-  Future<void> syncConversation(
+  Future<void> reloadConversationFromRawStore(
     String conversationId, {
     int? targetMessageCount,
   }) async {
@@ -247,12 +233,11 @@ class ConversationShortWindowStore {
     }
 
     await _runConversationTask(normalizedConversationId, () async {
-      final current = _snapshotsByConversation[normalizedConversationId] ??
-          await _readSnapshotFromDiskUnlocked(normalizedConversationId);
+      final current = _snapshotsByConversation[normalizedConversationId];
       final normalizedTargetCount = targetMessageCount == null
           ? _maxInt(
-              kConversationShortWindowSeedMessageCount,
-              current?.messages.length ?? 0,
+              kConversationTimelineSeedMessageCount,
+              current?.loadedRawMessageCount ?? 0,
             )
           : targetMessageCount < 1
               ? 1
@@ -268,20 +253,6 @@ class ConversationShortWindowStore {
     });
   }
 
-  /// Rebuild all known short-window snapshots from database raw messages.
-  ///
-  /// This is used when frontend projection strategy changes and cached
-  /// short-window data must be refreshed consistently.
-  Future<void> rebuildAllFromDb() async {
-    final conversationIds = await _collectRebuildConversationIds();
-    if (conversationIds.isEmpty) {
-      return;
-    }
-    for (final conversationId in conversationIds) {
-      await syncConversation(conversationId);
-    }
-  }
-
   Future<void> clearConversation(String conversationId) async {
     final normalizedConversationId = conversationId.trim();
     if (normalizedConversationId.isEmpty) {
@@ -290,15 +261,16 @@ class ConversationShortWindowStore {
 
     await _runConversationTask(normalizedConversationId, () async {
       _snapshotsByConversation[normalizedConversationId] =
-          _ConversationShortWindowSnapshot(
+          _ConversationTimelineSnapshot(
         conversationId: normalizedConversationId,
         messages: const <Message>[],
         hasMoreMessages: false,
+        oldestRawCursor: null,
+        loadedRawMessageCount: 0,
       );
       await _ref
           .read(messageProjectionMappingRepositoryProvider)
           .deleteByConversation(normalizedConversationId);
-      await _deleteConversationDirectoryUnlocked(normalizedConversationId);
       _notifyConversationChanged(normalizedConversationId);
     });
   }
@@ -307,19 +279,25 @@ class ConversationShortWindowStore {
     return clearConversation(conversationId);
   }
 
-  Future<List<Message>> loadAllMessages(String conversationId) async {
+  Future<List<Message>> loadCachedMessages(String conversationId) async {
     final normalizedConversationId = conversationId.trim();
     if (normalizedConversationId.isEmpty) {
       return const <Message>[];
     }
-    final snapshot = await _ensureConversationReady(
-      normalizedConversationId,
-      minMessages: kConversationShortWindowSeedMessageCount,
-    );
+    final snapshot = await _loadSnapshot(normalizedConversationId);
     return List<Message>.unmodifiable(snapshot.messages);
   }
 
-  Future<Message?> findMessageById(
+  Future<int> loadCachedMessageCount(String conversationId) async {
+    final normalizedConversationId = conversationId.trim();
+    if (normalizedConversationId.isEmpty) {
+      return 0;
+    }
+    final snapshot = await _loadSnapshot(normalizedConversationId);
+    return snapshot.messages.length;
+  }
+
+  Future<Message?> findCachedMessageById(
     String messageId, {
     String? conversationId,
   }) async {
@@ -331,7 +309,7 @@ class ConversationShortWindowStore {
     final normalizedConversationId = conversationId?.trim();
     if (normalizedConversationId != null &&
         normalizedConversationId.isNotEmpty) {
-      final messages = await loadAllMessages(normalizedConversationId);
+      final messages = await loadCachedMessages(normalizedConversationId);
       for (final message in messages) {
         if (message.id == normalizedMessageId) {
           return message;
@@ -357,41 +335,47 @@ class ConversationShortWindowStore {
     _changeControllers.clear();
   }
 
-  Future<ConversationShortWindowState> _resolveWindow(
+  Future<ConversationTimelineWindowState> _resolveWindow(
     String conversationId, {
     required int limit,
   }) async {
-    final snapshot = await _ensureConversationReady(
-      conversationId,
-      minMessages: limit,
-    );
+    final snapshot = await _loadSnapshot(conversationId);
     return _buildWindow(snapshot, limit: limit);
   }
 
-  Future<_ConversationShortWindowSnapshot> _ensureConversationReady(
-    String conversationId, {
-    required int minMessages,
-  }) {
+  Future<_ConversationTimelineSnapshot> _loadSnapshot(String conversationId) {
     return _runConversationTask(
       conversationId,
-      () => _ensureConversationReadyUnlocked(
-        conversationId,
-        minMessages: minMessages,
-      ),
+      () => _loadSnapshotUnlocked(conversationId),
     );
   }
 
-  Future<_ConversationShortWindowSnapshot> _ensureConversationReadyUnlocked(
+  Future<_ConversationTimelineSnapshot> _loadSnapshotUnlocked(
+    String conversationId,
+  ) async {
+    var snapshot = _snapshotsByConversation[conversationId];
+    snapshot ??= await _loadRecentSnapshotFromDb(
+      conversationId,
+      targetCount: kConversationTimelineSeedMessageCount,
+    );
+
+    if (_snapshotNeedsImageDimensionUpgrade(snapshot)) {
+      snapshot = await _persistSnapshotUnlocked(snapshot);
+    }
+
+    _snapshotsByConversation[conversationId] = snapshot;
+    return snapshot;
+  }
+
+  Future<_ConversationTimelineSnapshot> _ensureConversationReadyUnlocked(
     String conversationId, {
     required int minMessages,
   }) async {
     final normalizedMinMessages = minMessages < 1 ? 1 : minMessages;
-    var snapshot = _snapshotsByConversation[conversationId] ??
-        await _readSnapshotFromDiskUnlocked(conversationId);
-    snapshot ??= _ConversationShortWindowSnapshot(
-      conversationId: conversationId,
-      messages: const <Message>[],
-      hasMoreMessages: false,
+    var snapshot = _snapshotsByConversation[conversationId];
+    snapshot ??= await _loadRecentSnapshotFromDb(
+      conversationId,
+      targetCount: kConversationTimelineSeedMessageCount,
     );
 
     if (snapshot.messages.length < normalizedMinMessages &&
@@ -401,32 +385,30 @@ class ConversationShortWindowStore {
         minMessages: normalizedMinMessages,
       );
     }
+
     if (_snapshotNeedsImageDimensionUpgrade(snapshot)) {
-      snapshot = await _persistSnapshotUnlocked(
-        snapshot,
-        allowBudgetEnforcement: false,
-      );
+      snapshot = await _persistSnapshotUnlocked(snapshot);
     }
 
     _snapshotsByConversation[conversationId] = snapshot;
     return snapshot;
   }
 
-  Future<_ConversationShortWindowSnapshot> _expandSnapshotFromDb(
-    _ConversationShortWindowSnapshot snapshot, {
+  Future<_ConversationTimelineSnapshot> _expandSnapshotFromDb(
+    _ConversationTimelineSnapshot snapshot, {
     required int minMessages,
   }) async {
     var current = snapshot;
     while (current.messages.length < minMessages && current.hasMoreMessages) {
-      if (current.messages.isEmpty) {
+      final oldestCursor = current.oldestRawCursor;
+      if (oldestCursor == null || current.messages.isEmpty) {
         current = current.copyWith(hasMoreMessages: false);
         break;
       }
-      final oldestMessage = current.messages.first;
+
       final page = await _loadOlderPageFromDb(
         current.conversationId,
-        beforeCreatedAt: oldestMessage.createdAt,
-        beforeId: oldestMessage.id,
+        beforeCursor: oldestCursor,
         pageSize: _maxInt(5, minMessages - current.messages.length),
       );
       if (page.messages.isEmpty) {
@@ -441,13 +423,16 @@ class ConversationShortWindowStore {
           ],
         ),
         hasMoreMessages: page.hasMoreMessages,
+        oldestRawCursor: page.oldestRawCursor ?? current.oldestRawCursor,
+        loadedRawMessageCount:
+            current.loadedRawMessageCount + page.loadedRawMessageCount,
       );
     }
 
     return _persistSnapshotUnlocked(current);
   }
 
-  Future<_ConversationShortWindowSnapshot> _loadRecentSnapshotFromDb(
+  Future<_ConversationTimelineSnapshot> _loadRecentSnapshotFromDb(
     String conversationId, {
     required int targetCount,
   }) async {
@@ -457,27 +442,28 @@ class ConversationShortWindowStore {
               conversationId,
               limit: normalizedTargetCount + 1,
             );
-    final orderedMessages = await _buildMessagesFromDb(
-      dbMessages.reversed.toList(growable: false),
-    );
-    final hasMoreMessages = orderedMessages.length > normalizedTargetCount;
-    final trimmedMessages = hasMoreMessages
-        ? orderedMessages.sublist(
-            orderedMessages.length - normalizedTargetCount,
-          )
-        : orderedMessages;
+    final hasMoreMessages = dbMessages.length > normalizedTargetCount;
+    final trimmedDbMessages = hasMoreMessages
+        ? dbMessages.take(normalizedTargetCount).toList(growable: false)
+        : dbMessages;
+    final orderedDbMessages =
+        trimmedDbMessages.reversed.toList(growable: false);
+    final orderedMessages = await _buildMessagesFromDb(orderedDbMessages);
 
-    return _ConversationShortWindowSnapshot(
+    return _ConversationTimelineSnapshot(
       conversationId: conversationId,
-      messages: trimmedMessages,
+      messages: orderedMessages,
       hasMoreMessages: hasMoreMessages,
+      oldestRawCursor: _rawCursorFromDbMessage(
+        orderedDbMessages.isEmpty ? null : orderedDbMessages.first,
+      ),
+      loadedRawMessageCount: orderedDbMessages.length,
     );
   }
 
   Future<_OlderPageResult> _loadOlderPageFromDb(
     String conversationId, {
-    required DateTime beforeCreatedAt,
-    required String beforeId,
+    required _RawMessageCursor beforeCursor,
     required int pageSize,
   }) async {
     final normalizedPageSize = pageSize < 1 ? 1 : pageSize;
@@ -485,210 +471,91 @@ class ConversationShortWindowStore {
         await _ref.read(messageRepositoryProvider).getByConversationStable(
               conversationId,
               limit: normalizedPageSize + 1,
-              beforeTime: beforeCreatedAt.millisecondsSinceEpoch,
-              beforeId: beforeId,
+              beforeTime: beforeCursor.createdAt.millisecondsSinceEpoch,
+              beforeId: beforeCursor.messageId,
             );
-    final orderedMessages = await _buildMessagesFromDb(
-      dbMessages.reversed.toList(growable: false),
-    );
-    final hasMoreMessages = orderedMessages.length > normalizedPageSize;
-    final trimmedMessages = hasMoreMessages
-        ? orderedMessages.sublist(orderedMessages.length - normalizedPageSize)
-        : orderedMessages;
+    final hasMoreMessages = dbMessages.length > normalizedPageSize;
+    final trimmedDbMessages = hasMoreMessages
+        ? dbMessages.take(normalizedPageSize).toList(growable: false)
+        : dbMessages;
+    final orderedDbMessages =
+        trimmedDbMessages.reversed.toList(growable: false);
+    final orderedMessages = await _buildMessagesFromDb(orderedDbMessages);
 
     return _OlderPageResult(
-      messages: trimmedMessages,
+      messages: orderedMessages,
       hasMoreMessages: hasMoreMessages,
+      oldestRawCursor: _rawCursorFromDbMessage(
+        orderedDbMessages.isEmpty ? null : orderedDbMessages.first,
+      ),
+      loadedRawMessageCount: orderedDbMessages.length,
     );
   }
 
-  Future<_ConversationShortWindowSnapshot> _persistSnapshotUnlocked(
-    _ConversationShortWindowSnapshot snapshot, {
-    bool allowBudgetEnforcement = true,
-  }) async {
-    final localizedMessages = <Message>[];
-    for (final message in snapshot.messages) {
-      localizedMessages.add(
-        await _localizeMessageForSnapshot(
-          snapshot.conversationId,
-          message,
-        ),
-      );
-    }
-
-    final normalizedSnapshot = _ConversationShortWindowSnapshot(
+  Future<_ConversationTimelineSnapshot> _persistSnapshotUnlocked(
+    _ConversationTimelineSnapshot snapshot,
+  ) async {
+    final upgradedMessages = await _upgradeSnapshotMessages(snapshot.messages);
+    final normalizedMessages = _normalizeMessages(upgradedMessages);
+    final normalizedSnapshot = _ConversationTimelineSnapshot(
       conversationId: snapshot.conversationId,
-      messages: _normalizeMessages(localizedMessages),
-      hasMoreMessages: snapshot.hasMoreMessages && localizedMessages.isNotEmpty,
+      messages: normalizedMessages,
+      hasMoreMessages: snapshot.hasMoreMessages &&
+          (normalizedMessages.isNotEmpty || snapshot.oldestRawCursor != null),
+      oldestRawCursor: snapshot.oldestRawCursor ??
+          _estimateOldestRawCursor(normalizedMessages),
+      loadedRawMessageCount: snapshot.loadedRawMessageCount > 0
+          ? snapshot.loadedRawMessageCount
+          : _estimateLoadedRawMessageCount(normalizedMessages),
     );
-
-    final directory = await _conversationDirectory(snapshot.conversationId);
-    if (!await directory.exists()) {
-      await directory.create(recursive: true);
-    }
-    final file = File(
-      p.join(directory.path, _kConversationShortWindowFileName),
-    );
-    final payload = <String, dynamic>{
-      'version': _kConversationShortWindowFileVersion,
-      'conversationId': normalizedSnapshot.conversationId,
-      'hasMoreMessages': normalizedSnapshot.hasMoreMessages,
-      'updatedAt': DateTime.now().millisecondsSinceEpoch,
-      'messages': <Map<String, dynamic>>[
-        for (final message in normalizedSnapshot.messages)
-          _serializeMessage(message),
-      ],
-    };
-    await file.writeAsString(
-      jsonEncode(payload),
-      flush: true,
-    );
-    await _deleteUnreferencedMediaUnlocked(normalizedSnapshot);
     await _syncProjectionMappingsUnlocked(normalizedSnapshot);
-
-    if (allowBudgetEnforcement) {
-      unawaited(_scheduleBudgetEnforcement());
-    }
     return normalizedSnapshot;
   }
 
-  Future<Message> _localizeMessageForSnapshot(
-    String conversationId,
-    Message message,
+  Future<List<Message>> _upgradeSnapshotMessages(
+    Iterable<Message> messages,
   ) async {
-    final blocks = message.blocks;
-    if (blocks == null || blocks.isEmpty) {
-      return message;
-    }
-
-    final localizedBlocks = <MessageBlock>[];
-    for (final block in blocks) {
-      localizedBlocks.add(
-        await _localizeBlockForSnapshot(
-          conversationId,
-          block,
-        ),
-      );
-    }
-    return message.copyWith(blocks: localizedBlocks);
-  }
-
-  Future<MessageBlock> _localizeBlockForSnapshot(
-    String conversationId,
-    MessageBlock block,
-  ) async {
-    if (block is ImageBlock) {
-      final localizedPath = await _resolveImageLocalPath(
-        conversationId,
-        block,
-      );
-      final dimensions = await _resolveImageDimensions(
-        block,
-        localizedPath: localizedPath,
-      );
-      return ImageBlock(
-        id: block.id,
-        messageId: block.messageId,
-        url: localizedPath == null ? block.url : null,
-        localPath: localizedPath ?? block.localPath,
-        base64: localizedPath == null ? block.base64 : null,
-        width: dimensions?.width ?? block.width,
-        height: dimensions?.height ?? block.height,
-        prompt: block.prompt,
-        status: block.status,
-      );
-    }
-    if (block is AudioBlock) {
-      final localizedUrl = await _resolveAudioSource(
-        conversationId,
-        block,
-      );
-      return AudioBlock(
-        id: block.id,
-        messageId: block.messageId,
-        url: localizedUrl,
-        text: block.text,
-        durationSeconds: block.durationSeconds,
-        status: block.status,
-      );
-    }
-    if (block is FileBlock) {
-      final localizedPath = await _copyLocalMediaFile(
-        conversationId,
-        sourcePath: block.filePath,
-        targetStem: '${block.messageId}_${block.id}_file',
-      );
-      return FileBlock(
-        id: block.id,
-        messageId: block.messageId,
-        fileName: block.fileName,
-        fileSize: block.fileSize,
-        mimeType: block.mimeType,
-        filePath: localizedPath ?? block.filePath,
-        status: block.status,
-      );
-    }
-    if (block is EmojiBlock) {
-      final localizedPath = await _copyLocalMediaFile(
-        conversationId,
-        sourcePath: block.path,
-        targetStem: '${block.messageId}_${block.id}_emoji',
-      );
-      return EmojiBlock(
-        id: block.id,
-        messageId: block.messageId,
-        emojiId: block.emojiId,
-        path: localizedPath ?? block.path,
-        matchedTag: block.matchedTag,
-        originalText: block.originalText,
-        status: block.status,
-      );
-    }
-    return block;
-  }
-
-  Future<String?> _resolveImageLocalPath(
-    String conversationId,
-    ImageBlock block,
-  ) async {
-    final localPath = block.localPath?.trim();
-    if (localPath != null && localPath.isNotEmpty) {
-      return _copyLocalMediaFile(
-        conversationId,
-        sourcePath: localPath,
-        targetStem: '${block.messageId}_${block.id}_image',
-      );
-    }
-
-    final blockUrl = block.url?.trim();
-    if (blockUrl != null && blockUrl.isNotEmpty && _isFileUrl(blockUrl)) {
-      return _copyLocalMediaFile(
-        conversationId,
-        sourcePath: _toFilePath(blockUrl),
-        targetStem: '${block.messageId}_${block.id}_image',
-      );
-    }
-
-    final base64Value = block.base64?.trim();
-    if (base64Value != null && base64Value.isNotEmpty) {
-      try {
-        final bytes = base64Decode(base64Value);
-        return _writeBytesToConversationMedia(
-          conversationId,
-          bytes: bytes,
-          targetStem: '${block.messageId}_${block.id}_image',
-          extension: '.jpg',
-        );
-      } catch (_) {
-        return null;
+    final upgraded = <Message>[];
+    for (final message in messages) {
+      final blocks = message.blocks;
+      if (blocks == null || blocks.isEmpty) {
+        upgraded.add(message);
+        continue;
       }
-    }
 
-    return null;
+      var changed = false;
+      final nextBlocks = <MessageBlock>[];
+      for (final block in blocks) {
+        if (block is ImageBlock && !_hasImageDimensions(block)) {
+          final dimensions = await _resolveImageDimensions(block);
+          if (dimensions != null) {
+            changed = true;
+            nextBlocks.add(
+              ImageBlock(
+                id: block.id,
+                messageId: block.messageId,
+                url: block.url,
+                localPath: block.localPath,
+                base64: block.base64,
+                width: dimensions.width,
+                height: dimensions.height,
+                prompt: block.prompt,
+                status: block.status,
+              ),
+            );
+            continue;
+          }
+        }
+        nextBlocks.add(block);
+      }
+
+      upgraded.add(changed ? message.copyWith(blocks: nextBlocks) : message);
+    }
+    return upgraded;
   }
 
   bool _snapshotNeedsImageDimensionUpgrade(
-    _ConversationShortWindowSnapshot snapshot,
+    _ConversationTimelineSnapshot snapshot,
   ) {
     for (final message in snapshot.messages) {
       final blocks = message.blocks;
@@ -709,410 +576,68 @@ class ConversationShortWindowStore {
   }
 
   Future<({int width, int height})?> _resolveImageDimensions(
-    ImageBlock block, {
-    String? localizedPath,
-  }) async {
+    ImageBlock block,
+  ) async {
     if (_hasImageDimensions(block)) {
       return (width: block.width!, height: block.height!);
     }
 
-    final candidatePaths = <String>{
-      if (localizedPath != null && localizedPath.trim().isNotEmpty)
-        localizedPath.trim(),
-      if (block.localPath != null && block.localPath!.trim().isNotEmpty)
-        block.localPath!.trim(),
-    };
-    for (final path in candidatePaths) {
-      final dimensions = await _decodeImageDimensionsFromPath(path);
-      if (dimensions != null) {
-        return dimensions;
+    final localPath = block.localPath?.trim();
+    if (localPath != null && localPath.isNotEmpty) {
+      final file = File(localPath);
+      if (await file.exists()) {
+        try {
+          final bytes = await file.readAsBytes();
+          final decoded = img.decodeImage(bytes);
+          if (decoded != null) {
+            return (width: decoded.width, height: decoded.height);
+          }
+        } on Object {
+          // ignore
+        }
+      }
+    }
+
+    final blockUrl = block.url?.trim();
+    if (blockUrl != null && blockUrl.startsWith('file://')) {
+      final file = File(Uri.parse(blockUrl).toFilePath());
+      if (await file.exists()) {
+        try {
+          final bytes = await file.readAsBytes();
+          final decoded = img.decodeImage(bytes);
+          if (decoded != null) {
+            return (width: decoded.width, height: decoded.height);
+          }
+        } on Object {
+          // ignore
+        }
       }
     }
 
     final base64Value = block.base64?.trim();
     if (base64Value != null && base64Value.isNotEmpty) {
       try {
-        return _decodeImageDimensions(base64Decode(base64Value));
-      } catch (_) {
-        return null;
+        final bytes = _decodeMaybeDataUrl(base64Value);
+        final decoded = img.decodeImage(Uint8List.fromList(bytes));
+        if (decoded != null) {
+          return (width: decoded.width, height: decoded.height);
+        }
+      } on Object {
+        // ignore
       }
     }
 
     return null;
   }
 
-  Future<({int width, int height})?> _decodeImageDimensionsFromPath(
-    String path,
-  ) async {
-    try {
-      final file = File(path);
-      if (!await file.exists()) {
-        return null;
-      }
-      return _decodeImageDimensions(await file.readAsBytes());
-    } catch (_) {
-      return null;
-    }
-  }
-
-  ({int width, int height})? _decodeImageDimensions(List<int> bytes) {
-    try {
-      final decoded = img.decodeImage(Uint8List.fromList(bytes));
-      if (decoded == null || decoded.width <= 0 || decoded.height <= 0) {
-        return null;
-      }
-      return (
-        width: decoded.width,
-        height: decoded.height,
-      );
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Future<String> _resolveAudioSource(
-    String conversationId,
-    AudioBlock block,
-  ) async {
-    final rawUrl = block.url.trim();
-    if (rawUrl.isEmpty) return rawUrl;
-
-    final dataUrl = _parseDataUrl(rawUrl);
-    if (dataUrl != null) {
-      final ext = _guessExtensionFromMime(
-        dataUrl.mimeType,
-        fallback: '.bin',
-      );
-      return _writeBytesToConversationMedia(
-        conversationId,
-        bytes: dataUrl.bytes,
-        targetStem: '${block.messageId}_${block.id}_audio',
-        extension: ext,
-      );
-    }
-
-    if (_isFileUrl(rawUrl)) {
-      final localizedPath = await _copyLocalMediaFile(
-        conversationId,
-        sourcePath: _toFilePath(rawUrl),
-        targetStem: '${block.messageId}_${block.id}_audio',
-      );
-      return localizedPath ?? rawUrl;
-    }
-
-    if (_looksLikeAbsoluteFilePath(rawUrl)) {
-      final localizedPath = await _copyLocalMediaFile(
-        conversationId,
-        sourcePath: rawUrl,
-        targetStem: '${block.messageId}_${block.id}_audio',
-      );
-      return localizedPath ?? rawUrl;
-    }
-
-    return rawUrl;
-  }
-
-  Future<String?> _copyLocalMediaFile(
-    String conversationId, {
-    required String sourcePath,
-    required String targetStem,
-  }) async {
-    final normalizedSourcePath = sourcePath.trim();
-    if (normalizedSourcePath.isEmpty ||
-        !_looksLikeAbsoluteFilePath(normalizedSourcePath)) {
-      return null;
-    }
-    final sourceFile = File(normalizedSourcePath);
-    if (!await sourceFile.exists()) {
-      return null;
-    }
-
-    final mediaDirectory = await _conversationMediaDirectory(conversationId);
-    if (!await mediaDirectory.exists()) {
-      await mediaDirectory.create(recursive: true);
-    }
-
-    final extension = p.extension(sourceFile.path);
-    final targetPath = p.join(
-      mediaDirectory.path,
-      '$targetStem$extension',
-    );
-    final normalizedTargetPath = _normalizePathKey(targetPath);
-    if (_normalizePathKey(sourceFile.path) == normalizedTargetPath) {
-      return sourceFile.path;
-    }
-
-    final targetFile = File(targetPath);
-    if (await targetFile.exists()) {
-      final sourceLength = await sourceFile.length();
-      final targetLength = await targetFile.length();
-      if (sourceLength == targetLength) {
-        return targetFile.path;
-      }
-      await targetFile.delete();
-    }
-
-    await sourceFile.copy(targetFile.path);
-    return targetFile.path;
-  }
-
-  Future<String> _writeBytesToConversationMedia(
-    String conversationId, {
-    required List<int> bytes,
-    required String targetStem,
-    required String extension,
-  }) async {
-    final mediaDirectory = await _conversationMediaDirectory(conversationId);
-    if (!await mediaDirectory.exists()) {
-      await mediaDirectory.create(recursive: true);
-    }
-
-    final normalizedExtension = extension.isEmpty
-        ? ''
-        : extension.startsWith('.')
-            ? extension
-            : '.$extension';
-    final targetFile = File(
-      p.join(
-        mediaDirectory.path,
-        '$targetStem$normalizedExtension',
-      ),
-    );
-
-    if (await targetFile.exists()) {
-      final existingLength = await targetFile.length();
-      if (existingLength == bytes.length) {
-        return targetFile.path;
-      }
-      await targetFile.delete();
-    }
-
-    await targetFile.writeAsBytes(bytes, flush: true);
-    return targetFile.path;
-  }
-
-  Future<void> _deleteUnreferencedMediaUnlocked(
-    _ConversationShortWindowSnapshot snapshot,
-  ) async {
-    final mediaDirectory = await _conversationMediaDirectory(
-      snapshot.conversationId,
-    );
-    if (!await mediaDirectory.exists()) return;
-
-    final referencedFiles = <String>{
-      for (final message in snapshot.messages)
-        ..._collectReferencedLocalFiles(
-          message,
-          mediaRootPath: mediaDirectory.path,
-        ),
-    };
-
-    await for (final entity in mediaDirectory.list()) {
-      if (entity is! File) continue;
-      final normalizedPath = _normalizePathKey(entity.path);
-      if (referencedFiles.contains(normalizedPath)) {
-        continue;
-      }
-      await entity.delete();
-    }
-  }
-
-  Set<String> _collectReferencedLocalFiles(
-    Message message, {
-    required String mediaRootPath,
-  }) {
-    final files = <String>{};
-    final blocks = message.blocks;
-    if (blocks == null) return files;
-
-    for (final block in blocks) {
-      if (block is ImageBlock) {
-        final localPath = block.localPath?.trim();
-        if (localPath != null &&
-            localPath.isNotEmpty &&
-            _isWithinDirectory(localPath, mediaRootPath)) {
-          files.add(_normalizePathKey(localPath));
-        }
-      } else if (block is AudioBlock) {
-        final audioPath = block.url.trim();
-        if (_looksLikeAbsoluteFilePath(audioPath) &&
-            _isWithinDirectory(audioPath, mediaRootPath)) {
-          files.add(_normalizePathKey(audioPath));
-        }
-      } else if (block is FileBlock) {
-        final filePath = block.filePath.trim();
-        if (_looksLikeAbsoluteFilePath(filePath) &&
-            _isWithinDirectory(filePath, mediaRootPath)) {
-          files.add(_normalizePathKey(filePath));
-        }
-      } else if (block is EmojiBlock) {
-        final emojiPath = block.path.trim();
-        if (_looksLikeAbsoluteFilePath(emojiPath) &&
-            _isWithinDirectory(emojiPath, mediaRootPath)) {
-          files.add(_normalizePathKey(emojiPath));
-        }
+  List<int> _decodeMaybeDataUrl(String value) {
+    if (value.startsWith('data:')) {
+      final commaIndex = value.indexOf(',');
+      if (commaIndex > 0) {
+        return base64Decode(value.substring(commaIndex + 1));
       }
     }
-
-    return files;
-  }
-
-  Future<_ConversationShortWindowSnapshot?> _readSnapshotFromDiskUnlocked(
-    String conversationId,
-  ) async {
-    final file = await _conversationSnapshotFile(conversationId);
-    if (!await file.exists()) {
-      return null;
-    }
-
-    try {
-      final raw = jsonDecode(await file.readAsString());
-      if (raw is! Map) {
-        return null;
-      }
-      return _deserializeSnapshot(
-        Map<String, dynamic>.from(raw),
-        expectedConversationId: conversationId,
-      );
-    } catch (_) {
-      return null;
-    }
-  }
-
-  _ConversationShortWindowSnapshot? _deserializeSnapshot(
-    Map<String, dynamic> raw, {
-    required String expectedConversationId,
-  }) {
-    final conversationId = raw['conversationId'] as String?;
-    if (conversationId == null || conversationId != expectedConversationId) {
-      return null;
-    }
-
-    final rawMessages = raw['messages'];
-    if (rawMessages is! List) {
-      return null;
-    }
-
-    final messages = <Message>[];
-    for (final item in rawMessages) {
-      if (item is! Map) {
-        return null;
-      }
-      final message = _deserializeMessage(Map<String, dynamic>.from(item));
-      if (message == null) {
-        return null;
-      }
-      messages.add(message);
-    }
-
-    return _ConversationShortWindowSnapshot(
-      conversationId: conversationId,
-      messages: _normalizeMessages(messages),
-      hasMoreMessages: raw['hasMoreMessages'] == true,
-    );
-  }
-
-  Future<void> _deleteConversationDirectoryUnlocked(
-    String conversationId,
-  ) async {
-    final directory = await _conversationDirectory(conversationId);
-    if (await directory.exists()) {
-      await directory.delete(recursive: true);
-    }
-  }
-
-  Future<void> _scheduleBudgetEnforcement() {
-    _budgetTask = _budgetTask.catchError((_) {}).then((_) async {
-      try {
-        final rootDirectory = await _rootDirectory();
-        if (!await rootDirectory.exists()) {
-          return;
-        }
-
-        final totalBytes = await _directorySize(rootDirectory);
-        if (totalBytes <= kConversationShortWindowBudgetBytes) {
-          return;
-        }
-
-        final conversationIds = await _listPersistedConversationIds();
-        for (final conversationId in conversationIds) {
-          await _runConversationTask(conversationId, () async {
-            final compacted = await _loadRecentSnapshotFromDb(
-              conversationId,
-              targetCount: kConversationShortWindowSeedMessageCount,
-            );
-            final next = await _persistSnapshotUnlocked(
-              compacted,
-              allowBudgetEnforcement: false,
-            );
-            _snapshotsByConversation[conversationId] = next;
-            _notifyConversationChanged(conversationId);
-          });
-        }
-      } on FileSystemException {
-        return;
-      }
-    });
-    return _budgetTask;
-  }
-
-  Future<List<String>> _listPersistedConversationIds() async {
-    final ids = <String>{
-      ..._snapshotsByConversation.keys,
-    };
-    final rootDirectory = await _rootDirectory();
-    if (!await rootDirectory.exists()) {
-      return ids.toList(growable: false);
-    }
-
-    await for (final entity in rootDirectory.list()) {
-      if (entity is! Directory) continue;
-      final file = File(
-        p.join(entity.path, _kConversationShortWindowFileName),
-      );
-      if (!await file.exists()) continue;
-      try {
-        final raw = jsonDecode(await file.readAsString());
-        if (raw is! Map) continue;
-        final conversationId = raw['conversationId'] as String?;
-        if (conversationId == null || conversationId.trim().isEmpty) {
-          continue;
-        }
-        ids.add(conversationId.trim());
-      } catch (_) {
-        continue;
-      }
-    }
-    return ids.toList(growable: false);
-  }
-
-  Future<List<String>> _collectRebuildConversationIds() async {
-    final ids = <String>{
-      ..._snapshotsByConversation.keys,
-    };
-
-    try {
-      final conversations =
-          await _ref.read(conversationRepositoryProvider).getAll();
-      for (final conversation in conversations) {
-        final normalizedId = conversation.id.trim();
-        if (normalizedId.isNotEmpty) {
-          ids.add(normalizedId);
-        }
-      }
-    } catch (_) {
-      // 若会话仓库读取失败，仍继续尝试使用已缓存/已持久化的会话 ID。
-    }
-
-    final persistedConversationIds = await _listPersistedConversationIds();
-    for (final conversationId in persistedConversationIds) {
-      final normalizedId = conversationId.trim();
-      if (normalizedId.isNotEmpty) {
-        ids.add(normalizedId);
-      }
-    }
-
-    return ids.toList(growable: false);
+    return base64Decode(value);
   }
 
   Future<List<Message>> _buildMessagesFromDb(
@@ -1151,10 +676,11 @@ class ConversationShortWindowStore {
   }
 
   Future<void> _syncProjectionMappingsUnlocked(
-    _ConversationShortWindowSnapshot snapshot,
+    _ConversationTimelineSnapshot snapshot,
   ) async {
     final segmentIndexesByRawMessageId = <String, int>{};
-    final mappings = <db.MessageProjectionMappingsCompanion>[];
+    final mappingsByRawMessageId =
+        <String, List<db.MessageProjectionMappingsCompanion>>{};
     for (final message in snapshot.messages) {
       final rawMessageId = message.sourceMessageId?.trim();
       if (rawMessageId == null || rawMessageId.isEmpty) {
@@ -1165,68 +691,70 @@ class ConversationShortWindowStore {
         (value) => value + 1,
         ifAbsent: () => 0,
       );
-      mappings.add(
-        db.MessageProjectionMappingsCompanion.insert(
-          id: '$rawMessageId::${message.id}',
-          conversationId: snapshot.conversationId,
-          rawMessageId: rawMessageId,
-          projectedMessageId: message.id,
-          projectionKind: Value(_projectionKindFor(message)),
-          segmentIndex: Value(segmentIndex),
-          projectionVersion: const Value(null),
-          createdAt: message.createdAt.millisecondsSinceEpoch,
-        ),
+      mappingsByRawMessageId
+          .putIfAbsent(
+            rawMessageId,
+            () => <db.MessageProjectionMappingsCompanion>[],
+          )
+          .add(
+            db.MessageProjectionMappingsCompanion.insert(
+              id: '$rawMessageId::${message.id}',
+              conversationId: snapshot.conversationId,
+              rawMessageId: rawMessageId,
+              projectedMessageId: message.id,
+              projectionKind: Value(_projectionKindFor(message)),
+              segmentIndex: Value(segmentIndex),
+              projectionVersion: const Value(null),
+              createdAt: message.createdAt.millisecondsSinceEpoch,
+            ),
+          );
+    }
+    final repository = _ref.read(messageProjectionMappingRepositoryProvider);
+    for (final entry in mappingsByRawMessageId.entries) {
+      await repository.replaceForRawMessage(
+        rawMessageId: entry.key,
+        mappings: entry.value,
       );
     }
-    await _ref
-        .read(messageProjectionMappingRepositoryProvider)
-        .replaceForConversation(
-          conversationId: snapshot.conversationId,
-          mappings: mappings,
-        );
   }
 
-  Future<Directory> _rootDirectory() {
-    final existingFuture = _rootDirectoryFuture;
-    if (existingFuture != null) {
-      return existingFuture;
+  _RawMessageCursor? _rawCursorFromDbMessage(db.Message? message) {
+    if (message == null) {
+      return null;
     }
-    final nextFuture = () async {
-      final appDirectory = await getApplicationDocumentsDirectory();
-      final rootDirectory = Directory(
-        p.join(
-          appDirectory.path,
-          kConversationShortWindowRootDirectoryName,
-        ),
-      );
-      if (!await rootDirectory.exists()) {
-        await rootDirectory.create(recursive: true);
+    return _RawMessageCursor(
+      messageId: message.id,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(message.createdAt),
+    );
+  }
+
+  _RawMessageCursor? _estimateOldestRawCursor(Iterable<Message> messages) {
+    for (final message in messages) {
+      final rawMessageId = (message.sourceMessageId?.trim().isNotEmpty ?? false)
+          ? message.sourceMessageId!.trim()
+          : message.id;
+      if (rawMessageId.trim().isEmpty) {
+        continue;
       }
-      return rootDirectory;
-    }();
-    _rootDirectoryFuture = nextFuture;
-    return nextFuture;
+      return _RawMessageCursor(
+        messageId: rawMessageId,
+        createdAt: message.createdAt,
+      );
+    }
+    return null;
   }
 
-  Future<Directory> _conversationDirectory(String conversationId) async {
-    final rootDirectory = await _rootDirectory();
-    return Directory(
-      p.join(rootDirectory.path, _encodeConversationId(conversationId)),
-    );
-  }
-
-  Future<Directory> _conversationMediaDirectory(String conversationId) async {
-    final directory = await _conversationDirectory(conversationId);
-    return Directory(
-      p.join(directory.path, _kConversationShortWindowMediaDirectoryName),
-    );
-  }
-
-  Future<File> _conversationSnapshotFile(String conversationId) async {
-    final directory = await _conversationDirectory(conversationId);
-    return File(
-      p.join(directory.path, _kConversationShortWindowFileName),
-    );
+  int _estimateLoadedRawMessageCount(Iterable<Message> messages) {
+    final rawMessageIds = <String>{};
+    for (final message in messages) {
+      final rawMessageId = (message.sourceMessageId?.trim().isNotEmpty ?? false)
+          ? message.sourceMessageId!.trim()
+          : message.id.trim();
+      if (rawMessageId.isNotEmpty) {
+        rawMessageIds.add(rawMessageId);
+      }
+    }
+    return rawMessageIds.length;
   }
 
   StreamController<void> _controllerFor(String conversationId) {
@@ -1272,37 +800,60 @@ class _OlderPageResult {
   const _OlderPageResult({
     required this.messages,
     required this.hasMoreMessages,
+    required this.oldestRawCursor,
+    required this.loadedRawMessageCount,
   });
 
   final List<Message> messages;
   final bool hasMoreMessages;
+  final _RawMessageCursor? oldestRawCursor;
+  final int loadedRawMessageCount;
 }
 
-class _ConversationShortWindowSnapshot {
-  const _ConversationShortWindowSnapshot({
+class _ConversationTimelineSnapshot {
+  const _ConversationTimelineSnapshot({
     required this.conversationId,
     required this.messages,
     required this.hasMoreMessages,
+    required this.oldestRawCursor,
+    required this.loadedRawMessageCount,
   });
 
   final String conversationId;
   final List<Message> messages;
   final bool hasMoreMessages;
+  final _RawMessageCursor? oldestRawCursor;
+  final int loadedRawMessageCount;
 
-  _ConversationShortWindowSnapshot copyWith({
+  _ConversationTimelineSnapshot copyWith({
     List<Message>? messages,
     bool? hasMoreMessages,
+    _RawMessageCursor? oldestRawCursor,
+    int? loadedRawMessageCount,
   }) {
-    return _ConversationShortWindowSnapshot(
+    return _ConversationTimelineSnapshot(
       conversationId: conversationId,
       messages: messages ?? this.messages,
       hasMoreMessages: hasMoreMessages ?? this.hasMoreMessages,
+      oldestRawCursor: oldestRawCursor ?? this.oldestRawCursor,
+      loadedRawMessageCount:
+          loadedRawMessageCount ?? this.loadedRawMessageCount,
     );
   }
 }
 
-ConversationShortWindowState _buildWindow(
-  _ConversationShortWindowSnapshot snapshot, {
+class _RawMessageCursor {
+  const _RawMessageCursor({
+    required this.messageId,
+    required this.createdAt,
+  });
+
+  final String messageId;
+  final DateTime createdAt;
+}
+
+ConversationTimelineWindowState _buildWindow(
+  _ConversationTimelineSnapshot snapshot, {
   required int limit,
 }) {
   final normalizedLimit = limit < 1 ? 1 : limit;
@@ -1312,63 +863,30 @@ ConversationShortWindowState _buildWindow(
   final visibleMessages = List<Message>.unmodifiable(
     snapshot.messages.sublist(startIndex),
   );
-  return ConversationShortWindowState(
+  return ConversationTimelineWindowState(
     messages: visibleMessages,
     hasMoreMessages: snapshot.hasMoreMessages || startIndex > 0,
   );
 }
 
 List<Message> _normalizeMessages(Iterable<Message> messages) {
-  final deduped = <String, Message>{};
+  final deduped = <String, ({int index, Message message})>{};
+  var index = 0;
   for (final message in messages) {
-    deduped[message.id] = message;
+    deduped[message.id] = (index: index, message: message);
+    index += 1;
   }
-  final normalized = deduped.values.toList(growable: false)
+  final normalizedEntries = deduped.values.toList(growable: false)
     ..sort((left, right) {
-      final byTime = left.createdAt.compareTo(right.createdAt);
+      final byTime = left.message.createdAt.compareTo(right.message.createdAt);
       if (byTime != 0) {
         return byTime;
       }
-      return left.id.compareTo(right.id);
+      return left.index.compareTo(right.index);
     });
-  return normalized;
-}
-
-Map<String, dynamic> _serializeMessage(Message message) {
-  return ChatMessageProjectionCodec.serializeMessage(message);
-}
-
-Message? _deserializeMessage(Map<String, dynamic> raw) {
-  return ChatMessageProjectionCodec.deserializeMessage(raw);
-}
-
-String _encodeConversationId(String conversationId) {
-  return base64UrlEncode(utf8.encode(conversationId)).replaceAll('=', '');
-}
-
-bool _isFileUrl(String value) => value.startsWith('file://');
-
-bool _looksLikeAbsoluteFilePath(String value) {
-  if (value.trim().isEmpty) {
-    return false;
-  }
-  return p.isAbsolute(value);
-}
-
-String _toFilePath(String fileUrl) {
-  return Uri.parse(fileUrl).toFilePath();
-}
-
-bool _isWithinDirectory(String filePath, String directoryPath) {
-  final normalizedFilePath = p.normalize(filePath);
-  final normalizedDirectoryPath = p.normalize(directoryPath);
-  return p.isWithin(normalizedDirectoryPath, normalizedFilePath) ||
-      _normalizePathKey(normalizedFilePath) ==
-          _normalizePathKey(normalizedDirectoryPath);
-}
-
-String _normalizePathKey(String value) {
-  return p.normalize(value).toLowerCase();
+  return <Message>[
+    for (final entry in normalizedEntries) entry.message,
+  ];
 }
 
 int _maxInt(int left, int right) => left > right ? left : right;
@@ -1386,81 +904,9 @@ String _projectionKindFor(Message message) {
   return 'text';
 }
 
-class _DecodedDataUrl {
-  const _DecodedDataUrl({
-    required this.mimeType,
-    required this.bytes,
-  });
-
-  final String mimeType;
-  final List<int> bytes;
-}
-
-_DecodedDataUrl? _parseDataUrl(String value) {
-  if (!value.startsWith('data:')) {
-    return null;
-  }
-  final commaIndex = value.indexOf(',');
-  if (commaIndex <= 'data:'.length) {
-    return null;
-  }
-  final meta = value.substring('data:'.length, commaIndex);
-  final parts = meta.split(';');
-  final mimeType = parts.isNotEmpty && parts.first.trim().isNotEmpty
-      ? parts.first.trim()
-      : 'application/octet-stream';
-  final isBase64 = parts.any((part) => part.toLowerCase() == 'base64');
-  if (!isBase64) {
-    return null;
-  }
-  try {
-    final bytes = base64Decode(value.substring(commaIndex + 1));
-    return _DecodedDataUrl(
-      mimeType: mimeType,
-      bytes: bytes,
-    );
-  } catch (_) {
-    return null;
-  }
-}
-
-String _guessExtensionFromMime(
-  String mimeType, {
-  required String fallback,
-}) {
-  final normalized = mimeType.toLowerCase();
-  if (normalized.contains('png')) return '.png';
-  if (normalized.contains('jpeg') || normalized.contains('jpg')) return '.jpg';
-  if (normalized.contains('webp')) return '.webp';
-  if (normalized.contains('gif')) return '.gif';
-  if (normalized.contains('wav')) return '.wav';
-  if (normalized.contains('mpeg') || normalized.contains('mp3')) return '.mp3';
-  if (normalized.contains('ogg')) return '.ogg';
-  if (normalized.contains('aac')) return '.aac';
-  if (normalized.contains('m4a') || normalized.contains('mp4')) return '.m4a';
-  return fallback.startsWith('.') ? fallback : '.$fallback';
-}
-
-Future<int> _directorySize(Directory directory) async {
-  var total = 0;
-  try {
-    await for (final entity in directory.list(recursive: true)) {
-      if (entity is! File) continue;
-      try {
-        total += await entity.length();
-      } on FileSystemException {
-        continue;
-      }
-    }
-  } on FileSystemException {
-    return total;
-  }
-  return total;
-}
-
-final conversationShortWindowStoreProvider =
-    Provider<ConversationShortWindowStore>((ref) {
-  final store = ConversationShortWindowStore(ref);
+final conversationTimelineCacheProvider =
+    Provider<ConversationTimelineCache>((ref) {
+  final store = ConversationTimelineCache(ref);
   ref.onDispose(store.dispose);
   return store;
 });

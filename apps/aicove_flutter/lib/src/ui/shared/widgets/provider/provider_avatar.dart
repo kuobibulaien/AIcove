@@ -1,13 +1,13 @@
 /// ProviderAvatar - 供应商品牌头像组件
-/// 
+///
 /// 显示 AI 服务供应商的品牌标识。
-/// 
+///
 /// 设计特点：
 /// - 优先显示品牌 Logo（从 assets 加载）
 /// - 无 Logo 时显示名称首字母
 /// - 支持亮/暗色模式
 /// - 圆角矩形外观
-/// 
+///
 /// 使用示例：
 /// ```dart
 /// ProviderAvatar(
@@ -15,7 +15,7 @@
 ///   size: 40,
 /// )
 /// ```
-/// 
+///
 /// 更新记录：
 /// - 2026-01-21: 创建供应商头像组件
 library;
@@ -29,8 +29,10 @@ import '../../effects/smooth_clip.dart';
 enum ProviderAvatarSize {
   /// 小尺寸 (32px) - 列表项
   sm(32, 12, 8),
+
   /// 中尺寸 (40px) - 默认
   md(40, 14, 10),
+
   /// 大尺寸 (56px) - 详情页
   lg(56, 20, 12);
 
@@ -89,6 +91,10 @@ class ProviderAvatar extends StatelessWidget {
     ),
     'gemini': const _ProviderBrand(
       bgColor: Color(0xFF4285F4),
+      fgColor: Colors.white,
+    ),
+    'vertex': const _ProviderBrand(
+      bgColor: Color(0xFF1A73E8),
       fgColor: Colors.white,
     ),
     'google': const _ProviderBrand(
@@ -200,6 +206,7 @@ class ProviderAvatar extends StatelessWidget {
     'claude': 'assets/icons/providers/claude-color.svg',
     'anthropic': 'assets/icons/providers/claude-color.svg',
     'gemini': 'assets/icons/providers/gemini-color.svg',
+    'vertex': 'assets/icons/providers/gemini-color.svg',
     'deepseek': 'assets/icons/providers/deepseek-color.svg',
     'minimax': 'assets/icons/providers/minimax-color.svg',
     'kimi': 'assets/icons/providers/kimi-color.svg',
@@ -245,13 +252,13 @@ class ProviderAvatar extends StatelessWidget {
   /// 获取首字母
   String _getInitials(String name) {
     if (name.isEmpty) return '?';
-    
+
     // 尝试获取英文首字母
     final words = name.split(RegExp(r'[\s\-_]+'));
     if (words.length >= 2) {
       return '${words[0][0]}${words[1][0]}'.toUpperCase();
     }
-    
+
     // 单词或中文，取第一个字符
     return name[0].toUpperCase();
   }
@@ -260,7 +267,8 @@ class ProviderAvatar extends StatelessWidget {
   Widget build(BuildContext context) {
     final brand = _matchBrand(providerName);
     final iconPath = _matchIconPath(providerName);
-    final bgColor = customBgColor ?? brand?.bgColor ?? _generateColor(providerName);
+    final bgColor =
+        customBgColor ?? brand?.bgColor ?? _generateColor(providerName);
     final fgColor = customFgColor ?? brand?.fgColor ?? Colors.white;
     final initials = _getInitials(providerName);
 

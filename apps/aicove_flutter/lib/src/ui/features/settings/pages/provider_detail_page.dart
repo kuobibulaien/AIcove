@@ -17,12 +17,10 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:ui';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../../core/api/providers/google_api_mode.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../../features/settings/provider_detail/provider_detail_actions.dart';
 import '../../../../features/settings/provider_detail/provider_detail_support.dart';
@@ -32,9 +30,6 @@ import '../../../shared/widgets/index.dart';
 import '../widgets/model_row_tile.dart';
 import '../widgets/model_picker_sheet.dart';
 import 'multi_key_manager_page.dart';
-
-const Duration _kProviderDetailDeferredContentWindow =
-    Duration(milliseconds: 420);
 
 /// 供应商详情页
 class ProviderDetailPage extends ConsumerStatefulWidget {
@@ -65,12 +60,10 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
   late FocusNode _keyFocusNode;
 
   Timer? _autoSaveTimer;
-  Timer? _deferredContentTimer;
   String _lastSavedName = '';
   String _lastSavedUrl = '';
   String _lastSavedPath = '';
   String _lastSavedKey = '';
-  bool _deferHeavyContent = true;
   String? _cachedModelEntriesSignature;
   List<_ProviderModelEntry>? _cachedModelEntries;
 
@@ -88,13 +81,11 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
     _pathFocusNode = FocusNode();
     _keyFocusNode = FocusNode();
     _restoreWarmCacheFromLoadedSettings();
-    _scheduleDeferredContentActivation();
   }
 
   @override
   void dispose() {
     _autoSaveTimer?.cancel();
-    _deferredContentTimer?.cancel();
     _pageController.dispose();
     _nameController.dispose();
     _urlController.dispose();
@@ -105,22 +96,6 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
     _pathFocusNode.dispose();
     _keyFocusNode.dispose();
     super.dispose();
-  }
-
-  void _scheduleDeferredContentActivation() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _deferredContentTimer?.cancel();
-      _deferredContentTimer = Timer(
-        _kProviderDetailDeferredContentWindow,
-        _activateHeavyContent,
-      );
-    });
-  }
-
-  void _activateHeavyContent() {
-    if (!mounted || !_deferHeavyContent) return;
-    setState(() => _deferHeavyContent = false);
   }
 
   void _restoreWarmCacheFromLoadedSettings() {
@@ -147,7 +122,6 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
 
     _cachedModelEntriesSignature = signature;
     _cachedModelEntries = cached.modelEntries;
-    _deferHeavyContent = false;
     return true;
   }
 
@@ -460,6 +434,9 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
         resolveProviderDetailRequestFormat(provider, settings: settings);
     final availableFormats =
         ProviderDetailRequestFormat.forProvider(provider, settings: settings);
+    if (availableFormats.length <= 1) {
+      return;
+    }
 
     await showMoeBottomSheet(
       context: context,
@@ -518,15 +495,6 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
         ),
       ),
     );
-  }
-
-  Future<void> _toggleVertexExpress(ProviderAuth provider, bool enabled) async {
-    final nextBaseUrl = googleSuggestedBaseUrl(vertexExpress: enabled);
-    _syncControllerIfNotFocused(_urlController, _urlFocusNode, nextBaseUrl);
-
-    await _actions.setVertexExpressMode(provider, enabled: enabled);
-    if (!mounted) return;
-    MoeToast.show(context, enabled ? '已切到 Vertex Express' : '已切回 Gemini');
   }
 
   Future<void> _onReorderModels(
@@ -639,14 +607,6 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
           );
         }
 
-        if (_deferHeavyContent) {
-          _adoptWarmCacheIfAvailable(provider, settings.modelDisplayNames);
-        }
-
-        if (_deferHeavyContent) {
-          return _buildDeferredContent(colors, provider);
-        }
-
         _syncControllersFromProvider(provider);
         final modelEntries = _resolveModelEntries(
           provider,
@@ -655,151 +615,6 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
 
         return _buildContent(context, provider, colors, modelEntries);
       },
-    );
-  }
-
-  Widget _buildDeferredContent(MoeColors colors, ProviderAuth provider) {
-    final providerName = provider.displayName ?? provider.id;
-
-    return Scaffold(
-      backgroundColor: colors.surface,
-      appBar: const MoeAppBar(
-        title: '渠道详情',
-        showBackButton: true,
-      ),
-      body: ListView(
-        key: const ValueKey<String>('provider_detail_deferred_shell'),
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-        children: [
-          MoeSettingsGroup(
-            margin: EdgeInsets.zero,
-            padding: const EdgeInsets.all(12),
-            children: [
-              Row(
-                children: [
-                  ProviderAvatar(
-                    providerName: providerName,
-                    size: ProviderAvatarSize.lg,
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          providerName,
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: MoeFontWeights.emphasis,
-                            color: colors.text,
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        Container(
-                          width: 144,
-                          height: 12,
-                          decoration: BoxDecoration(
-                            color: colors.surfaceAlt.withValues(alpha: 0.62),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Container(
-                    width: 42,
-                    height: 24,
-                    decoration: BoxDecoration(
-                      color: colors.surfaceAlt.withValues(alpha: 0.62),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          _buildDeferredGroupShell(colors, rowHeights: const [60, 60, 60]),
-          const SizedBox(height: 12),
-          _buildDeferredGroupShell(colors, rowHeights: const [60, 60, 60]),
-          const SizedBox(height: 18),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: colors.text,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Text(
-                '正在准备渠道详情',
-                style: TextStyle(
-                  color: colors.textSecondary,
-                  fontSize: 13,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-      bottomNavigationBar: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-          child: FractionallySizedBox(
-            widthFactor: 0.90,
-            child: Container(
-              height: 80,
-              decoration: MoeG2Decoration(
-                radius: MoeSmoothRadii.xl,
-                color: colors.componentBackground.withValues(alpha: 0.96),
-                border: Border.all(
-                  color: colors.border.withValues(alpha: 0.35),
-                  width: borderWidth,
-                ),
-                boxShadow: MoeShadows.soft,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDeferredGroupShell(
-    MoeColors colors, {
-    required List<double> rowHeights,
-  }) {
-    return MoeSettingsGroup(
-      margin: EdgeInsets.zero,
-      padding: EdgeInsets.zero,
-      children: [
-        for (var index = 0; index < rowHeights.length; index++)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            decoration: BoxDecoration(
-              border: index == rowHeights.length - 1
-                  ? null
-                  : Border(
-                      bottom: BorderSide(
-                        color: colors.borderLight,
-                        width: borderWidth,
-                      ),
-                    ),
-            ),
-            child: Container(
-              height: rowHeights[index] - 28,
-              decoration: BoxDecoration(
-                color: colors.surfaceAlt.withValues(alpha: 0.62),
-                borderRadius: BorderRadius.circular(16),
-              ),
-            ),
-          ),
-      ],
     );
   }
 
@@ -968,6 +783,10 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
   }) {
     final multiKeyEnabled = isProviderMultiKeyEnabled(provider);
     final settings = ref.read(appSettingsProvider).valueOrNull;
+    final requestFormat =
+        resolveProviderDetailRequestFormat(provider, settings: settings);
+    final requestFormatOptions =
+        ProviderDetailRequestFormat.forProvider(provider, settings: settings);
     final showChatApiPath = (settings
                 ?.getProviderModelsByType(provider.id, type: ModelType.chat)
                 .isNotEmpty ??
@@ -1077,27 +896,11 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
                 icon: Icons.swap_horiz_outlined,
                 label: 'API 格式',
                 trailingType: MoeSettingsRowTrailing.text,
-                detailText: resolveProviderDetailRequestFormat(
-                  provider,
-                  settings: ref.read(appSettingsProvider).valueOrNull,
-                ).label,
-                onTap: () => _showRequestFormatSheet(provider),
+                detailText: requestFormat.label,
+                onTap: requestFormatOptions.length > 1
+                    ? () => _showRequestFormatSheet(provider)
+                    : null,
               ),
-              if (resolveProviderDetailRequestFormat(
-                    provider,
-                    settings: ref.read(appSettingsProvider).valueOrNull,
-                  ) ==
-                  ProviderDetailRequestFormat.gemini)
-                MoeSettingsRow(
-                  icon: Icons.cloud_sync_outlined,
-                  label: 'Vertex Express',
-                  subtitle: '开启后默认切到 aiplatform 端点',
-                  trailingType: MoeSettingsRowTrailing.custom,
-                  trailing: MoeSwitch(
-                    value: isProviderDetailVertexExpressMode(provider),
-                    onChanged: (value) => _toggleVertexExpress(provider, value),
-                  ),
-                ),
               MoeSettingsRow(
                 icon: Icons.alt_route_outlined,
                 label: '多 Key 模式',

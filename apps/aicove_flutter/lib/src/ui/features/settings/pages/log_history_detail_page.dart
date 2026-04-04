@@ -16,8 +16,13 @@ import 'log_models.dart';
 /// 历史日志详情页面
 class LogHistoryDetailPage extends StatefulWidget {
   final LogHistoryFile file;
+  final Future<Map<String, dynamic>?> Function(String filePath) loadHistoryFile;
 
-  const LogHistoryDetailPage({super.key, required this.file});
+  const LogHistoryDetailPage({
+    super.key,
+    required this.file,
+    this.loadHistoryFile = LogHistoryService.readHistoryFile,
+  });
 
   @override
   State<LogHistoryDetailPage> createState() => _LogHistoryDetailPageState();
@@ -26,6 +31,7 @@ class LogHistoryDetailPage extends StatefulWidget {
 class _LogHistoryDetailPageState extends State<LogHistoryDetailPage> {
   Map<String, dynamic>? _data;
   bool _isLoading = true;
+  final ScrollController _scrollController = ScrollController();
 
   @override
   void initState() {
@@ -34,13 +40,19 @@ class _LogHistoryDetailPageState extends State<LogHistoryDetailPage> {
   }
 
   Future<void> _loadData() async {
-    final data = await LogHistoryService.readHistoryFile(widget.file.filePath);
+    final data = await widget.loadHistoryFile(widget.file.filePath);
     if (mounted) {
       setState(() {
         _data = data;
         _isLoading = false;
       });
     }
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
   }
 
   @override
@@ -97,6 +109,7 @@ class _LogHistoryDetailPageState extends State<LogHistoryDetailPage> {
     }
 
     return ListView.builder(
+      controller: _scrollController,
       padding: const EdgeInsets.all(12),
       itemCount: entries.length,
       itemBuilder: (context, index) => _buildLogItem(entries[index], index),
@@ -152,7 +165,7 @@ class _LogHistoryDetailPageState extends State<LogHistoryDetailPage> {
       ));
     }
 
-    entries.sort((a, b) => a.time.compareTo(b.time));
+    entries.sort((a, b) => b.time.compareTo(a.time));
     return entries;
   }
 

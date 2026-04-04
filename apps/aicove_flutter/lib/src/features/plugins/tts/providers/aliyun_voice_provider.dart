@@ -67,6 +67,17 @@ class AliyunQwenVoiceProvider extends TtsVoiceProvider {
           sourceType: VoiceSourceType.preset,
           providerType: VoiceProviderType.aliyun,
           source: '已创建 Qwen-TTS 音色 · ${voice.gmtCreate ?? ""}',
+          bindings: [
+            VoiceChannelBinding(
+              providerId: 'aliyun',
+              providerName: '阿里云',
+              adapterId: providerId,
+              modelId: voice.targetModel,
+              remoteVoiceId: voice.voiceId,
+              status: 'OK',
+              sourceKind: VoiceBindingSourceKind.imported,
+            ),
+          ],
           aliyunVoiceId: voice.voiceId,
           aliyunTargetModel: voice.targetModel,
           aliyunVoiceStatus: 'OK', // Qwen-TTS 音色创建后即可用
@@ -138,6 +149,17 @@ class AliyunQwenVoiceProvider extends TtsVoiceProvider {
         source: '阿里云 Qwen-TTS',
         promptAudioUrl: request.audioUrl,
         promptText: request.promptText,
+        bindings: [
+          VoiceChannelBinding(
+            providerId: 'aliyun',
+            providerName: '阿里云',
+            adapterId: providerId,
+            modelId: result.targetModel,
+            remoteVoiceId: result.voiceId,
+            status: 'OK',
+            sourceKind: VoiceBindingSourceKind.remoteCreated,
+          ),
+        ],
         aliyunVoiceId: result.voiceId,
         aliyunTargetModel: result.targetModel,
         aliyunVoiceStatus: 'OK',
@@ -167,8 +189,13 @@ class AliyunQwenVoiceProvider extends TtsVoiceProvider {
     required String voiceId,
     VoicePreset? voice,
   }) async {
-    // 获取实际的阿里云 voice ID
-    String? aliyunVoiceId = voice?.aliyunVoiceId;
+    String? aliyunVoiceId = voice
+        ?.resolveBinding(
+          providerId: 'aliyun',
+          adapterId: providerId,
+        )
+        ?.remoteVoiceId;
+    aliyunVoiceId ??= voice?.aliyunVoiceId;
 
     if (aliyunVoiceId == null || aliyunVoiceId.isEmpty) {
       throw TtsProviderException(
@@ -287,6 +314,17 @@ class AliyunCosyVoiceProvider extends TtsVoiceProvider {
           sourceType: VoiceSourceType.preset,
           providerType: VoiceProviderType.aliyun,
           source: '阿里云 CosyVoice · ${voice.status}',
+          bindings: [
+            VoiceChannelBinding(
+              providerId: 'aliyun',
+              providerName: '阿里云',
+              adapterId: providerId,
+              modelId: voice.targetModel,
+              remoteVoiceId: voice.voiceId,
+              status: voice.status,
+              sourceKind: VoiceBindingSourceKind.imported,
+            ),
+          ],
           aliyunVoiceId: voice.voiceId,
           aliyunTargetModel: voice.targetModel,
           aliyunVoiceStatus: voice.status,
@@ -340,6 +378,17 @@ class AliyunCosyVoiceProvider extends TtsVoiceProvider {
         providerType: VoiceProviderType.aliyun,
         source: '阿里云 CosyVoice',
         promptAudioUrl: request.audioUrl,
+        bindings: [
+          VoiceChannelBinding(
+            providerId: 'aliyun',
+            providerName: '阿里云',
+            adapterId: providerId,
+            modelId: result.targetModel,
+            remoteVoiceId: result.voiceId,
+            status: result.status,
+            sourceKind: VoiceBindingSourceKind.remoteCreated,
+          ),
+        ],
         aliyunVoiceId: result.voiceId,
         aliyunTargetModel: result.targetModel,
         aliyunVoiceStatus: result.status, // DEPLOYING
@@ -370,7 +419,13 @@ class AliyunCosyVoiceProvider extends TtsVoiceProvider {
     required String voiceId,
     VoicePreset? voice,
   }) async {
-    String? aliyunVoiceId = voice?.aliyunVoiceId;
+    String? aliyunVoiceId = voice
+        ?.resolveBinding(
+          providerId: 'aliyun',
+          adapterId: providerId,
+        )
+        ?.remoteVoiceId;
+    aliyunVoiceId ??= voice?.aliyunVoiceId;
 
     if (aliyunVoiceId == null || aliyunVoiceId.isEmpty) {
       throw TtsProviderException(
@@ -402,7 +457,13 @@ class AliyunCosyVoiceProvider extends TtsVoiceProvider {
     required String voiceId,
     VoicePreset? voice,
   }) async {
-    String? aliyunVoiceId = voice?.aliyunVoiceId;
+    String? aliyunVoiceId = voice
+        ?.resolveBinding(
+          providerId: 'aliyun',
+          adapterId: providerId,
+        )
+        ?.remoteVoiceId;
+    aliyunVoiceId ??= voice?.aliyunVoiceId;
 
     if (aliyunVoiceId == null || aliyunVoiceId.isEmpty) {
       return null;
@@ -412,10 +473,29 @@ class AliyunCosyVoiceProvider extends TtsVoiceProvider {
       final service = AliyunVoiceCloneService(apiKey: apiKey);
       final info = await service.queryCosyVoice(aliyunVoiceId);
 
-      // 返回更新后的音色
-      return voice?.copyWith(
+      final existing = voice;
+      if (existing == null) return null;
+      final updatedBindings = existing.effectiveBindings.map((binding) {
+        if (binding.normalizedProviderId == 'aliyun' &&
+            binding.normalizedAdapterId == providerId &&
+            binding.remoteVoiceId == aliyunVoiceId) {
+          return VoiceChannelBinding(
+            providerId: binding.providerId,
+            providerName: binding.providerName,
+            adapterId: binding.adapterId,
+            modelId: binding.modelId,
+            remoteVoiceId: binding.remoteVoiceId,
+            status: info.status,
+            sourceKind: binding.sourceKind,
+          );
+        }
+        return binding;
+      }).toList();
+
+      return existing.copyWith(
         aliyunVoiceStatus: info.status,
         source: '阿里云 CosyVoice · ${info.status}',
+        bindings: updatedBindings,
       );
     } catch (e) {
       // 查询失败时返回 null

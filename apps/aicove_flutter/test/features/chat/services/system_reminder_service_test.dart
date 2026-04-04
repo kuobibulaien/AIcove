@@ -27,8 +27,7 @@ void main() {
       final prompt = service.buildReminderSemanticsPrompt();
 
       expect(prompt, contains('<system-reminder>'));
-      expect(prompt, contains('系统注入'));
-      expect(prompt, contains('不是用户消息'));
+      expect(prompt, contains('系统补充信息'));
       expect(prompt, contains('不要原样复述'));
     });
 
@@ -49,7 +48,7 @@ void main() {
       );
     });
 
-    test('把 reminder system message 插入到最后一条 user 消息前', () {
+    test('把 reminder 消息以 user 角色插入到最后一条 user 消息前', () {
       const service = SystemReminderService();
       final messages = <Map<String, dynamic>>[
         {
@@ -65,19 +64,18 @@ void main() {
       final updated = service.insertReminderBeforeLastUser(
         messages: messages,
         reminderContent:
-            'current_datetime=2026-03-23 10:00\nprevious_user_message_datetime=2026-03-22 21:30',
+            '当前时间为2026-03-23 10:00:00 +08:00 (周一)。用户上一次发消息的时间为2026-03-22 21:30:00 +08:00 (周日)。自行判断当前与历史对话的关系。',
       );
 
       expect(updated, hasLength(3));
       expect(
         updated.map((message) => message['role']).toList(),
-        <String>['assistant', 'system', 'user'],
+        <String>['assistant', 'user', 'user'],
       );
       expect(
         updated[1]['content'],
         '<system-reminder>\n'
-        'current_datetime=2026-03-23 10:00\n'
-        'previous_user_message_datetime=2026-03-22 21:30\n'
+        '当前时间为2026-03-23 10:00:00 +08:00 (周一)。用户上一次发消息的时间为2026-03-22 21:30:00 +08:00 (周日)。自行判断当前与历史对话的关系。\n'
         '</system-reminder>',
       );
       expect(updated[2]['content'], '这一轮新的用户消息');
@@ -95,16 +93,15 @@ void main() {
       final updated = service.insertReminderBeforeLastUser(
         messages: messages,
         reminderContent:
-            'current_datetime=2026-03-23 10:00\nprevious_user_message_datetime=unknown',
+            '当前时间为2026-03-23 10:00:00 +08:00 (周一)。自行判断当前与历史对话的关系。',
       );
 
       expect(updated, hasLength(2));
-      expect(updated.last['role'], 'system');
+      expect(updated.last['role'], 'user');
       expect(
         updated.last['content'],
         '<system-reminder>\n'
-        'current_datetime=2026-03-23 10:00\n'
-        'previous_user_message_datetime=unknown\n'
+        '当前时间为2026-03-23 10:00:00 +08:00 (周一)。自行判断当前与历史对话的关系。\n'
         '</system-reminder>',
       );
     });

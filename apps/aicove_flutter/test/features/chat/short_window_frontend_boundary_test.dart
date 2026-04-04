@@ -1,10 +1,6 @@
-import 'dart:io';
-
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-// ignore: depend_on_referenced_packages
-import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 
 import 'package:aicove_flutter/src/core/database/converters/database_converters.dart';
 import 'package:aicove_flutter/src/core/database/database.dart' as db;
@@ -15,15 +11,6 @@ import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_deferred_image_delivery.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_history_store.dart';
 import 'package:aicove_flutter/src/features/chat/services/conversation_short_window_store.dart';
-
-class _FakePathProviderPlatform extends PathProviderPlatform {
-  _FakePathProviderPlatform(this.rootPath);
-
-  final String rootPath;
-
-  @override
-  Future<String?> getApplicationDocumentsPath() async => rootPath;
-}
 
 final _deferredImageDeliveryProvider = Provider<ChatDeferredImageDelivery>(
   (ref) => ChatDeferredImageDelivery(
@@ -70,24 +57,7 @@ Future<void> _persistMessage(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late PathProviderPlatform previousPathProvider;
-  Directory? tempDir;
-
-  setUp(() {
-    previousPathProvider = PathProviderPlatform.instance;
-  });
-
-  tearDown(() async {
-    PathProviderPlatform.instance = previousPathProvider;
-    if (tempDir != null && await tempDir!.exists()) {
-      await tempDir!.delete(recursive: true);
-    }
-  });
-
-  test('conversationHasImageMessages 只按短列表语义判断', () async {
-    tempDir = await Directory.systemTemp.createTemp('frontend_boundary_');
-    PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir!.path);
-
+  test('conversationHasImageMessages 只按前端时间线缓存语义判断', () async {
     final database = db.AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(database.close);
     final baseTime = DateTime(2026, 3, 23, 9, 0, 0).millisecondsSinceEpoch;
@@ -137,10 +107,7 @@ void main() {
     expect(hasImage, isFalse);
   });
 
-  test('resolvePlaceholderBaseTime 以短列表最后一条消息为准', () async {
-    tempDir = await Directory.systemTemp.createTemp('deferred_image_base_');
-    PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir!.path);
-
+  test('resolvePlaceholderBaseTime 以前端时间线缓存最后一条消息为准', () async {
     final database = db.AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(database.close);
     final baseTime = DateTime(2026, 3, 23, 10, 0, 0).millisecondsSinceEpoch;
@@ -165,7 +132,7 @@ void main() {
     );
 
     final projectedTailTime = DateTime(2099, 1, 1, 0, 0, 0);
-    await container.read(conversationShortWindowStoreProvider).upsertMessage(
+    await container.read(conversationTimelineCacheProvider).upsertMessage(
           conversationId: 'conv_placeholder_base',
           message: Message(
             id: 'proj_1',
@@ -186,10 +153,7 @@ void main() {
     );
   });
 
-  test('loadFrontendMessageById 只按短列表当前投影取消息', () async {
-    tempDir = await Directory.systemTemp.createTemp('frontend_message_id_');
-    PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir!.path);
-
+  test('loadFrontendMessageById 只按前端时间线缓存当前投影取消息', () async {
     final database = db.AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(database.close);
     final baseTime = DateTime(2026, 3, 23, 11, 0, 0).millisecondsSinceEpoch;
@@ -213,7 +177,7 @@ void main() {
       ),
     );
 
-    await container.read(conversationShortWindowStoreProvider).upsertMessage(
+    await container.read(conversationTimelineCacheProvider).upsertMessage(
           conversationId: 'conv_frontend_message',
           message: Message(
             id: 'm1',

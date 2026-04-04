@@ -185,7 +185,7 @@ class ChatPendingTtsResolver {
     final manager = _ttsManager;
     if (manager == null) return null;
 
-    final eventId = DateTime.now().microsecondsSinceEpoch.toString();
+    final eventId = genId('tts_evt');
     final event = PluginEvent(
       pluginId: 'tts',
       type: 'tts_convert',

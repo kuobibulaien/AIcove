@@ -1,31 +1,17 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
-import 'package:path/path.dart' as p;
-// ignore: depend_on_referenced_packages
-import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 
-import 'package:aicove_flutter/src/core/database/database.dart' as db;
 import 'package:aicove_flutter/src/core/database/converters/database_converters.dart';
+import 'package:aicove_flutter/src/core/database/database.dart' as db;
 import 'package:aicove_flutter/src/core/database/database_provider.dart';
 import 'package:aicove_flutter/src/core/models/message_block.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_history_store.dart';
-import 'package:aicove_flutter/src/features/chat/services/chat_message_projection_codec.dart';
 import 'package:aicove_flutter/src/features/chat/services/conversation_short_window_store.dart';
-
-class _FakePathProviderPlatform extends PathProviderPlatform {
-  _FakePathProviderPlatform(this.rootPath);
-
-  final String rootPath;
-
-  @override
-  Future<String?> getApplicationDocumentsPath() async => rootPath;
-}
 
 Future<void> _insertConversation(
   db.AppDatabase database,
@@ -61,17 +47,6 @@ Future<void> _persistMessage(
   }
 }
 
-String _snapshotFilePath(String rootPath, String conversationId) {
-  final encoded =
-      base64UrlEncode(utf8.encode(conversationId)).replaceAll('=', '');
-  return p.join(
-    rootPath,
-    kConversationShortWindowRootDirectoryName,
-    encoded,
-    'window.json',
-  );
-}
-
 Future<File> _writeTestPng(
   String filePath, {
   required int width,
@@ -87,27 +62,18 @@ Future<File> _writeTestPng(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late PathProviderPlatform previousPathProvider;
   Directory? tempDir;
 
-  setUp(() {
-    previousPathProvider = PathProviderPlatform.instance;
-  });
-
   tearDown(() async {
-    PathProviderPlatform.instance = previousPathProvider;
     if (tempDir != null && await tempDir!.exists()) {
       await tempDir!.delete(recursive: true);
     }
   });
 
-  test('无短列表快照时，前台读取不应回退数据库', () async {
-    tempDir = await Directory.systemTemp.createTemp('short_window_seed_');
-    PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir!.path);
-
+  test('无热缓存时应从数据库尾部 raw 消息构建前端时间线', () async {
     final database = db.AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(database.close);
-    final baseTime = DateTime(2026, 3, 22, 10, 0, 0).millisecondsSinceEpoch;
+    final baseTime = DateTime(2026, 4, 2, 10, 0, 0).millisecondsSinceEpoch;
     await _insertConversation(database, 'conv-seed', baseTime);
 
     final container = ProviderContainer(
@@ -130,56 +96,7 @@ void main() {
       );
     }
 
-    final store = container.read(conversationShortWindowStoreProvider);
-    final window = await store
-        .watchWindow(
-          conversationId: 'conv-seed',
-          limit: 20,
-        )
-        .first;
-
-    expect(window.messages, isEmpty);
-    expect(window.hasMoreMessages, isFalse);
-    expect(
-      File(_snapshotFilePath(tempDir!.path, 'conv-seed')).existsSync(),
-      isFalse,
-    );
-  });
-
-  test('显式同步后，短列表首屏应返回最近 20 条原始消息', () async {
-    tempDir = await Directory.systemTemp.createTemp('short_window_seed_sync_');
-    PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir!.path);
-
-    final database = db.AppDatabase.forTesting(NativeDatabase.memory());
-    addTearDown(database.close);
-    final baseTime = DateTime(2026, 3, 22, 10, 0, 0).millisecondsSinceEpoch;
-    await _insertConversation(database, 'conv-seed', baseTime);
-
-    final container = ProviderContainer(
-      overrides: [
-        databaseProvider.overrideWithValue(database),
-      ],
-    );
-    addTearDown(container.dispose);
-
-    for (var i = 1; i <= 24; i++) {
-      await _persistMessage(
-        container,
-        'conv-seed',
-        Message(
-          id: 'm$i',
-          role: i.isOdd ? 'user' : 'assistant',
-          content: 'message-$i',
-          createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + i),
-        ),
-      );
-    }
-
-    final store = container.read(conversationShortWindowStoreProvider);
-    await store.syncConversation(
-      'conv-seed',
-      targetMessageCount: 20,
-    );
+    final store = container.read(conversationTimelineCacheProvider);
     final window = await store
         .watchWindow(
           conversationId: 'conv-seed',
@@ -189,40 +106,17 @@ void main() {
 
     expect(
       window.messages.map((message) => message.id).toList(),
-      <String>[
-        'm5',
-        'm6',
-        'm7',
-        'm8',
-        'm9',
-        'm10',
-        'm11',
-        'm12',
-        'm13',
-        'm14',
-        'm15',
-        'm16',
-        'm17',
-        'm18',
-        'm19',
-        'm20',
-        'm21',
-        'm22',
-        'm23',
-        'm24',
-      ],
+      List<String>.generate(20, (index) => 'm${index + 5}', growable: false),
     );
     expect(window.hasMoreMessages, isTrue);
+    expect(await store.loadCachedMessageCount('conv-seed'), 20);
   });
 
-  test('上滑扩展后应把更多原始消息持久化到短列表文件', () async {
-    tempDir = await Directory.systemTemp.createTemp('short_window_expand_');
-    PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir!.path);
-
+  test('loadOlderMessages 应按 raw 分页扩展前端缓存', () async {
     final database = db.AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(database.close);
-    final baseTime = DateTime(2026, 3, 22, 11, 0, 0).millisecondsSinceEpoch;
-    await _insertConversation(database, 'conv-expand', baseTime);
+    final baseTime = DateTime(2026, 4, 2, 10, 30, 0).millisecondsSinceEpoch;
+    await _insertConversation(database, 'conv-page', baseTime);
 
     final container = ProviderContainer(
       overrides: [
@@ -234,7 +128,7 @@ void main() {
     for (var i = 1; i <= 30; i++) {
       await _persistMessage(
         container,
-        'conv-expand',
+        'conv-page',
         Message(
           id: 'm$i',
           role: i.isOdd ? 'user' : 'assistant',
@@ -244,337 +138,36 @@ void main() {
       );
     }
 
-    final store = container.read(conversationShortWindowStoreProvider);
-    await store.syncConversation(
-      'conv-expand',
-      targetMessageCount: 20,
-    );
-    final initialWindow = await store
-        .watchWindow(
-          conversationId: 'conv-expand',
-          limit: 20,
-        )
-        .first;
-    expect(
-      initialWindow.messages.map((message) => message.id).toList(),
-      <String>[
-        'm11',
-        'm12',
-        'm13',
-        'm14',
-        'm15',
-        'm16',
-        'm17',
-        'm18',
-        'm19',
-        'm20',
-        'm21',
-        'm22',
-        'm23',
-        'm24',
-        'm25',
-        'm26',
-        'm27',
-        'm28',
-        'm29',
-        'm30',
-      ],
-    );
-
-    final expandedWindow = await store
-        .watchWindow(
-          conversationId: 'conv-expand',
-          limit: 25,
-        )
-        .first;
-    expect(
-      expandedWindow.messages.map((message) => message.id).toList(),
-      <String>[
-        'm6',
-        'm7',
-        'm8',
-        'm9',
-        'm10',
-        'm11',
-        'm12',
-        'm13',
-        'm14',
-        'm15',
-        'm16',
-        'm17',
-        'm18',
-        'm19',
-        'm20',
-        'm21',
-        'm22',
-        'm23',
-        'm24',
-        'm25',
-        'm26',
-        'm27',
-        'm28',
-        'm29',
-        'm30',
-      ],
-    );
-    expect(expandedWindow.hasMoreMessages, isTrue);
-
-    final snapshotFile = File(_snapshotFilePath(tempDir!.path, 'conv-expand'));
-    final snapshot = jsonDecode(await snapshotFile.readAsString()) as Map;
-    final rawMessages = (snapshot['messages'] as List).cast<Map>();
-    expect(rawMessages.length, 25);
-  });
-
-  test('replaceMessages 应原位替换流式临时消息而不清空其余短列表', () async {
-    tempDir = await Directory.systemTemp.createTemp('short_window_replace_');
-    PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir!.path);
-
-    final database = db.AppDatabase.forTesting(NativeDatabase.memory());
-    addTearDown(database.close);
-    final baseTime = DateTime(2026, 3, 22, 11, 20, 0).millisecondsSinceEpoch;
-    await _insertConversation(database, 'conv-replace', baseTime);
-
-    final container = ProviderContainer(
-      overrides: [
-        databaseProvider.overrideWithValue(database),
-      ],
-    );
-    addTearDown(container.dispose);
-
-    final store = container.read(conversationShortWindowStoreProvider);
-    await store.upsertMessages(
-      conversationId: 'conv-replace',
-      messages: <Message>[
-        Message(
-          id: 'm1',
-          role: 'user',
-          content: 'user-1',
-          createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 1),
-        ),
-        Message(
-          id: 'temp-1',
-          role: 'assistant',
-          content: '第一段。',
-          createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 2),
-          status: 'sending',
-        ),
-        Message(
-          id: 'temp-2',
-          role: 'assistant',
-          content: '第二段。',
-          createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 3),
-          status: 'sending',
-        ),
-      ],
-    );
-
-    await store.replaceMessages(
-      conversationId: 'conv-replace',
-      removeMessageIds: const <String>['temp-1', 'temp-2'],
-      messages: <Message>[
-        Message(
-          id: 'msg-final',
-          role: 'assistant',
-          content: '第一段。第二段。',
-          createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 4),
-          status: 'sent',
-        ),
-      ],
-    );
-
-    final window = await store
-        .watchWindow(
-          conversationId: 'conv-replace',
-          limit: 20,
-        )
-        .first;
-    expect(
-      window.messages.map((message) => message.id).toList(),
-      <String>['m1', 'msg-final'],
-    );
-    expect(window.messages.last.displayText, '第一段。第二段。');
-  });
-
-  test('图文混合用户消息应拆成文字和图片两条，且图片成为最后一条消息', () async {
-    tempDir = await Directory.systemTemp.createTemp('short_window_user_mix_');
-    PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir!.path);
-
-    final database = db.AppDatabase.forTesting(NativeDatabase.memory());
-    addTearDown(database.close);
-    final baseTime = DateTime(2026, 3, 22, 11, 22, 0).millisecondsSinceEpoch;
-    await _insertConversation(database, 'conv-user-mix', baseTime);
-
-    final sourceImage = File(p.join(tempDir!.path, 'user_mix.jpg'));
-    await sourceImage.writeAsBytes(<int>[1, 2, 3, 4], flush: true);
-
-    final container = ProviderContainer(
-      overrides: [
-        databaseProvider.overrideWithValue(database),
-      ],
-    );
-    addTearDown(container.dispose);
-
-    final historyStore = container.read(chatHistoryStoreProvider);
-    final userMessage = Message.fromBlocks(
-      id: 'user-mixed',
-      role: 'user',
-      createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 1),
-      status: 'sending',
-      blocks: <MessageBlock>[
-        ImageBlock(
-          messageId: 'user-mixed',
-          localPath: sourceImage.path,
-        ),
-        TextBlock(
-          messageId: 'user-mixed',
-          content: '先看文字',
-        ),
-      ],
-    );
-
-    await historyStore.appendUserMessage(
-      conversationId: 'conv-user-mix',
-      message: userMessage,
-      displayText: '先看文字',
-    );
-    await historyStore.markMessageStatus(
-      conversationId: 'conv-user-mix',
-      messageId: 'user-mixed',
-      status: 'sent',
-    );
-
-    final window = await container
-        .read(conversationShortWindowStoreProvider)
-        .watchWindow(
-          conversationId: 'conv-user-mix',
-          limit: 20,
-        )
-        .first;
-
-    expect(
-      window.messages.map((message) => message.id).toList(),
-      <String>['user-mixed__proj_00_text', 'user-mixed__proj_01_image'],
-    );
-    expect(window.messages.first.displayText, '先看文字');
-    expect(window.messages.last.displayText, '[图片]');
-    expect(
-        window.messages.every((message) => message.status == 'sent'), isTrue);
-
-    final conversation = await container
-        .read(conversationRepositoryProvider)
-        .getById('conv-user-mix');
-    expect(conversation?.lastMessage, '[图片]');
-  });
-
-  test('loadOlderMessages 应保留短列表尾部临时收口消息，只向前补历史页', () async {
-    tempDir = await Directory.systemTemp.createTemp('short_window_load_older_');
-    PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir!.path);
-
-    final database = db.AppDatabase.forTesting(NativeDatabase.memory());
-    addTearDown(database.close);
-    final baseTime = DateTime(2026, 3, 22, 11, 25, 0).millisecondsSinceEpoch;
-    await _insertConversation(database, 'conv-load-older', baseTime);
-
-    final container = ProviderContainer(
-      overrides: [
-        databaseProvider.overrideWithValue(database),
-      ],
-    );
-    addTearDown(container.dispose);
-
-    for (var i = 1; i <= 30; i++) {
-      await _persistMessage(
-        container,
-        'conv-load-older',
-        Message(
-          id: 'm$i',
-          role: i.isOdd ? 'user' : 'assistant',
-          content: 'message-$i',
-          createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + i),
-        ),
-      );
-    }
-
-    final store = container.read(conversationShortWindowStoreProvider);
-    await store.syncConversation(
-      'conv-load-older',
-      targetMessageCount: 20,
-    );
-    final initialWindow = await store
-        .watchWindow(
-          conversationId: 'conv-load-older',
-          limit: 20,
-        )
-        .first;
-    expect(initialWindow.messages.first.id, 'm11');
-
-    await store.upsertMessages(
-      conversationId: 'conv-load-older',
-      messages: <Message>[
-        Message(
-          id: 'local-stream-final',
-          role: 'assistant',
-          content: 'stream-final',
-          createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 100),
-          status: 'sent',
-        ),
-      ],
-    );
-
+    final store = container.read(conversationTimelineCacheProvider);
+    await store.reloadConversationFromRawStore('conv-page',
+        targetMessageCount: 20);
     final addedCount = await store.loadOlderMessages(
-      conversationId: 'conv-load-older',
-      pageSize: 5,
+      conversationId: 'conv-page',
+      pageSize: 20,
     );
-    expect(addedCount, 5);
+
+    expect(addedCount, 10);
+    expect(
+      (await store.loadCachedMessages('conv-page'))
+          .map((message) => message.id)
+          .toList(),
+      List<String>.generate(30, (index) => 'm${index + 1}', growable: false),
+    );
 
     final expandedWindow = await store
         .watchWindow(
-          conversationId: 'conv-load-older',
-          limit: 26,
+          conversationId: 'conv-page',
+          limit: 40,
         )
         .first;
-    expect(
-      expandedWindow.messages.map((message) => message.id).toList(),
-      <String>[
-        'm6',
-        'm7',
-        'm8',
-        'm9',
-        'm10',
-        'm11',
-        'm12',
-        'm13',
-        'm14',
-        'm15',
-        'm16',
-        'm17',
-        'm18',
-        'm19',
-        'm20',
-        'm21',
-        'm22',
-        'm23',
-        'm24',
-        'm25',
-        'm26',
-        'm27',
-        'm28',
-        'm29',
-        'm30',
-        'local-stream-final',
-      ],
-    );
-    expect(expandedWindow.hasMoreMessages, isTrue);
+    expect(expandedWindow.hasMoreMessages, isFalse);
   });
 
-  test('短列表重建应回退到数据库原始消息并移除前端临时快照', () async {
-    tempDir = await Directory.systemTemp.createTemp('short_window_rebuild_');
-    PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir!.path);
-
+  test('syncConversation 应按 raw 数据重建并清掉前端临时气泡', () async {
     final database = db.AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(database.close);
-    final baseTime = DateTime(2026, 3, 22, 11, 30, 0).millisecondsSinceEpoch;
-    await _insertConversation(database, 'conv-rebuild', baseTime);
+    final baseTime = DateTime(2026, 4, 2, 11, 0, 0).millisecondsSinceEpoch;
+    await _insertConversation(database, 'conv-sync', baseTime);
 
     final container = ProviderContainer(
       overrides: [
@@ -583,81 +176,107 @@ void main() {
     );
     addTearDown(container.dispose);
 
-    final dbMessages = <Message>[
+    await _persistMessage(
+      container,
+      'conv-sync',
       Message(
-        id: 'm1',
-        role: 'user',
-        content: 'db-user',
+        id: 'raw_1',
+        role: 'assistant',
+        content: 'raw assistant',
         createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 1),
       ),
-      Message(
-        id: 'm2',
+    );
+
+    final store = container.read(conversationTimelineCacheProvider);
+    await store.reloadConversationFromRawStore('conv-sync',
+        targetMessageCount: 20);
+    await store.upsertMessage(
+      conversationId: 'conv-sync',
+      message: Message(
+        id: 'proj_1',
         role: 'assistant',
-        content: 'db-assistant',
+        content: 'frontend only bubble',
+        sourceMessageId: 'raw_1',
         createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 2),
       ),
-    ];
-    for (final message in dbMessages) {
-      await _persistMessage(container, 'conv-rebuild', message);
-    }
-
-    final store = container.read(conversationShortWindowStoreProvider);
-    await store.syncConversation(
-      'conv-rebuild',
-      targetMessageCount: 20,
     );
-    await store.upsertMessages(
-      conversationId: 'conv-rebuild',
+    expect(
+      (await store.loadCachedMessages('conv-sync'))
+          .map((message) => message.id),
+      contains('proj_1'),
+    );
+
+    await store.reloadConversationFromRawStore('conv-sync',
+        targetMessageCount: 20);
+
+    expect(
+      (await store.loadCachedMessages('conv-sync'))
+          .map((message) => message.id)
+          .toList(),
+      <String>['raw_1'],
+    );
+  });
+
+  test('前端缓存改动不应污染 raw 数据库消息', () async {
+    final database = db.AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    final baseTime = DateTime(2026, 4, 2, 11, 30, 0).millisecondsSinceEpoch;
+    await _insertConversation(database, 'conv-separate', baseTime);
+
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(database),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await _persistMessage(
+      container,
+      'conv-separate',
+      Message(
+        id: 'raw_1',
+        role: 'assistant',
+        content: 'raw content',
+        createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 1),
+      ),
+    );
+
+    final store = container.read(conversationTimelineCacheProvider);
+    await store.reloadConversationFromRawStore('conv-separate',
+        targetMessageCount: 20);
+    await store.replaceMessages(
+      conversationId: 'conv-separate',
+      removeMessageIds: const <String>['raw_1'],
       messages: <Message>[
         Message(
-          id: 'stale-segment-1',
+          id: 'proj_1',
           role: 'assistant',
-          content: 'stale-segment',
-          createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 3),
+          content: 'frontend override',
+          sourceMessageId: 'raw_1',
+          createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 2),
         ),
       ],
     );
 
-    final staleWindow = await store
-        .watchWindow(
-          conversationId: 'conv-rebuild',
-          limit: 20,
-        )
-        .first;
     expect(
-      staleWindow.messages.map((message) => message.id).toList(),
-      <String>['m1', 'm2', 'stale-segment-1'],
+      (await store.loadCachedMessages('conv-separate')).single.content,
+      'frontend override',
     );
-
-    await store.rebuildAllFromDb();
-
-    final rebuiltWindow = await store
-        .watchWindow(
-          conversationId: 'conv-rebuild',
-          limit: 20,
-        )
-        .first;
     expect(
-      rebuiltWindow.messages.map((message) => message.id).toList(),
-      <String>['m1', 'm2'],
+      (await container.read(chatHistoryStoreProvider).loadAllRawMessages(
+                'conv-separate',
+              ))
+          .single
+          .content,
+      'raw content',
     );
-
-    final snapshotFile = File(_snapshotFilePath(tempDir!.path, 'conv-rebuild'));
-    final snapshot = jsonDecode(await snapshotFile.readAsString()) as Map;
-    final ids = ((snapshot['messages'] as List).cast<Map>())
-        .map((raw) => raw['id'] as String)
-        .toList(growable: false);
-    expect(ids, <String>['m1', 'm2']);
   });
 
-  test('数据库原始 assistant 应恢复为前端投影消息并同步映射表', () async {
-    tempDir = await Directory.systemTemp.createTemp('short_window_projection_');
-    PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir!.path);
-
+  test('findMessageById 应优先返回当前前端缓存中的投影消息', () async {
     final database = db.AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(database.close);
-    final baseTime = DateTime(2026, 3, 23, 9, 30, 0).millisecondsSinceEpoch;
-    await _insertConversation(database, 'conv-projection', baseTime);
+    final baseTime = DateTime(2026, 4, 2, 12, 0, 0).millisecondsSinceEpoch;
+    await _insertConversation(database, 'conv-find', baseTime);
 
     final container = ProviderContainer(
       overrides: [
@@ -668,98 +287,43 @@ void main() {
 
     await _persistMessage(
       container,
-      'conv-projection',
+      'conv-find',
       Message(
-        id: 'u1',
-        role: 'user',
-        content: '早上好',
+        id: 'raw_1',
+        role: 'assistant',
+        content: 'raw content',
         createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 1),
       ),
     );
 
-    final projectedMessages = <Message>[
-      Message(
-        id: 'a1-text',
+    final store = container.read(conversationTimelineCacheProvider);
+    await store.upsertMessage(
+      conversationId: 'conv-find',
+      message: Message(
+        id: 'proj_1',
         role: 'assistant',
-        sourceMessageId: 'raw-a1',
-        content: '给你画了一张图',
+        content: 'frontend projection',
+        sourceMessageId: 'raw_1',
         createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 2),
       ),
-      Message.fromBlocks(
-        id: 'a1-image',
-        role: 'assistant',
-        sourceMessageId: 'raw-a1',
-        blocks: <MessageBlock>[
-          ImageBlock(
-            messageId: 'a1-image',
-            url: 'file:///projection-image.png',
-            prompt: 'sunrise',
-          ),
-        ],
-        createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 3),
-      ),
-    ];
-
-    await _persistMessage(
-      container,
-      'conv-projection',
-      Message(
-        id: 'raw-a1',
-        role: 'assistant',
-        content: '给你画了一张图<image>sunrise</image>',
-        createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 2),
-        rawPayload: ChatMessageProjectionCodec.copyWithProjectedMessages(
-          <String, dynamic>{
-            'rawReplyText': '给你画了一张图<image>sunrise</image>',
-          },
-          projectedMessages,
-        ),
-      ),
     );
 
-    final store = container.read(conversationShortWindowStoreProvider);
-    await store.syncConversation(
-      'conv-projection',
-      targetMessageCount: 20,
-    );
-    final window = await store
-        .watchWindow(
-          conversationId: 'conv-projection',
-          limit: 20,
-        )
-        .first;
-
-    expect(
-      window.messages.map((message) => message.id).toList(),
-      <String>['u1', 'a1-text', 'a1-image'],
+    final found = await store.findCachedMessageById(
+      'proj_1',
+      conversationId: 'conv-find',
     );
 
-    final mappings = await container
-        .read(messageProjectionMappingRepositoryProvider)
-        .getByConversation('conv-projection');
-    expect(
-      mappings.map((mapping) => mapping.projectedMessageId).toList(),
-      containsAll(<String>['u1', 'a1-text', 'a1-image']),
-    );
-    expect(
-      mappings
-          .where((mapping) => mapping.rawMessageId == 'raw-a1')
-          .map((mapping) => mapping.projectedMessageId)
-          .toList(),
-      <String>['a1-text', 'a1-image'],
-    );
+    expect(found, isNotNull);
+    expect(found!.content, 'frontend projection');
   });
 
-  test('truncateAfterMessage 删除整条投影 assistant 后重建短窗不应回灌旧投影', () async {
-    tempDir = await Directory.systemTemp.createTemp(
-      'short_window_projection_truncate_',
-    );
-    PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir!.path);
+  test('缓存层应补全本地图片尺寸而不回写第二套持久时间线', () async {
+    tempDir = await Directory.systemTemp.createTemp('timeline_image_dim_');
 
     final database = db.AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(database.close);
-    final baseTime = DateTime(2026, 3, 24, 9, 30, 0).millisecondsSinceEpoch;
-    await _insertConversation(database, 'conv-projection-truncate', baseTime);
+    final baseTime = DateTime(2026, 4, 2, 12, 30, 0).millisecondsSinceEpoch;
+    await _insertConversation(database, 'conv-image', baseTime);
 
     final container = ProviderContainer(
       overrides: [
@@ -768,259 +332,34 @@ void main() {
     );
     addTearDown(container.dispose);
 
+    final imageFile = await _writeTestPng(
+      '${tempDir!.path}\\image.png',
+      width: 64,
+      height: 48,
+    );
     await _persistMessage(
       container,
-      'conv-projection-truncate',
-      Message(
-        id: 'u1',
-        role: 'user',
-        content: '帮我画一张图',
+      'conv-image',
+      Message.fromBlocks(
+        id: 'img_1',
+        role: 'assistant',
+        blocks: <MessageBlock>[
+          ImageBlock(
+            messageId: 'img_1',
+            localPath: imageFile.path,
+            prompt: 'test image',
+          ),
+        ],
         createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 1),
       ),
     );
 
-    final projectedMessages = <Message>[
-      Message(
-        id: 'a1-text',
-        role: 'assistant',
-        sourceMessageId: 'raw-a1',
-        content: '给你画好了',
-        createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 2),
-      ),
-      Message.fromBlocks(
-        id: 'a1-image',
-        role: 'assistant',
-        sourceMessageId: 'raw-a1',
-        blocks: <MessageBlock>[
-          ImageBlock(
-            messageId: 'a1-image',
-            url: 'file:///projection-image.png',
-            prompt: 'sunrise',
-          ),
-        ],
-        createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 3),
-      ),
-    ];
+    final messages = await container
+        .read(conversationTimelineCacheProvider)
+        .loadCachedMessages('conv-image');
+    final imageBlock = messages.single.blocks!.single as ImageBlock;
 
-    await _persistMessage(
-      container,
-      'conv-projection-truncate',
-      Message(
-        id: 'raw-a1',
-        role: 'assistant',
-        content: '给你画好了<image>sunrise</image>',
-        createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 2),
-        rawPayload: ChatMessageProjectionCodec.copyWithProjectedMessages(
-          <String, dynamic>{
-            'rawReplyText': '给你画好了<image>sunrise</image>',
-          },
-          projectedMessages,
-        ),
-      ),
-    );
-
-    final store = container.read(conversationShortWindowStoreProvider);
-    final historyStore = container.read(chatHistoryStoreProvider);
-
-    await store.syncConversation(
-      'conv-projection-truncate',
-      targetMessageCount: 20,
-    );
-    expect(
-      (await historyStore.loadFrontendMessages('conv-projection-truncate'))
-          .map((message) => message.id)
-          .toList(),
-      <String>['u1', 'a1-text', 'a1-image'],
-    );
-
-    await historyStore.truncateAfterMessage(
-      conversationId: 'conv-projection-truncate',
-      anchorMessageId: 'u1',
-    );
-
-    expect(
-      (await historyStore.loadFrontendMessages('conv-projection-truncate'))
-          .map((message) => message.id)
-          .toList(),
-      <String>['u1'],
-    );
-
-    await store.syncConversation(
-      'conv-projection-truncate',
-      targetMessageCount: 20,
-    );
-
-    expect(
-      (await historyStore.loadFrontendMessages('conv-projection-truncate'))
-          .map((message) => message.id)
-          .toList(),
-      <String>['u1'],
-    );
-
-    final rawMessage =
-        await container.read(messageRepositoryProvider).getById('raw-a1');
-    expect(rawMessage, isNotNull);
-    expect(rawMessage!.deletedAt, isNotNull);
-  });
-
-  test('图片和语音消息应落为短列表自有本地文件并可跨重启恢复', () async {
-    tempDir = await Directory.systemTemp.createTemp('short_window_media_');
-    PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir!.path);
-
-    final database = db.AppDatabase.forTesting(NativeDatabase.memory());
-    addTearDown(database.close);
-    final baseTime = DateTime(2026, 3, 22, 12, 0, 0).millisecondsSinceEpoch;
-    await _insertConversation(database, 'conv-media', baseTime);
-
-    final sourceImage = File(p.join(tempDir!.path, 'source.jpg'));
-    await sourceImage.writeAsBytes(<int>[1, 2, 3, 4, 5], flush: true);
-
-    final audioBytes = base64Encode(<int>[82, 73, 70, 70, 1, 2, 3, 4]);
-    final mediaMessage = Message.fromBlocks(
-      id: 'msg-media',
-      role: 'assistant',
-      blocks: <MessageBlock>[
-        ImageBlock(
-          messageId: 'msg-media',
-          localPath: sourceImage.path,
-        ),
-        AudioBlock(
-          messageId: 'msg-media',
-          url: 'data:audio/wav;base64,$audioBytes',
-          text: 'hello',
-        ),
-        TextBlock(
-          messageId: 'msg-media',
-          content: 'hello',
-        ),
-      ],
-      createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 1),
-    );
-
-    final container = ProviderContainer(
-      overrides: [
-        databaseProvider.overrideWithValue(database),
-      ],
-    );
-    addTearDown(container.dispose);
-    await _persistMessage(container, 'conv-media', mediaMessage);
-
-    final store = container.read(conversationShortWindowStoreProvider);
-    await store.syncConversation(
-      'conv-media',
-      targetMessageCount: 20,
-    );
-    final window = await store
-        .watchWindow(
-          conversationId: 'conv-media',
-          limit: 20,
-        )
-        .first;
-    final message = window.messages.single;
-    final imageBlock = message.blocks!.whereType<ImageBlock>().single;
-    final audioBlock = message.blocks!.whereType<AudioBlock>().single;
-
-    expect(imageBlock.localPath, isNotNull);
-    expect(imageBlock.localPath, isNot(equals(sourceImage.path)));
-    expect(await File(imageBlock.localPath!).exists(), isTrue);
-    expect(audioBlock.url.startsWith('data:'), isFalse);
-    expect(await File(audioBlock.url).exists(), isTrue);
-
-    final restartedContainer = ProviderContainer(
-      overrides: [
-        databaseProvider.overrideWithValue(database),
-      ],
-    );
-    addTearDown(restartedContainer.dispose);
-    final restartedStore =
-        restartedContainer.read(conversationShortWindowStoreProvider);
-    final restartedWindow = await restartedStore
-        .watchWindow(
-          conversationId: 'conv-media',
-          limit: 20,
-        )
-        .first;
-    final restartedMessage = restartedWindow.messages.single;
-    final restartedImage =
-        restartedMessage.blocks!.whereType<ImageBlock>().single;
-    final restartedAudio =
-        restartedMessage.blocks!.whereType<AudioBlock>().single;
-
-    expect(restartedImage.localPath, equals(imageBlock.localPath));
-    expect(restartedAudio.url, equals(audioBlock.url));
-  });
-
-  test('旧短列表快照缺少图片宽高时，应在首次读取前补齐并持久化', () async {
-    tempDir = await Directory.systemTemp.createTemp('short_window_image_dim_');
-    PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir!.path);
-
-    final database = db.AppDatabase.forTesting(NativeDatabase.memory());
-    addTearDown(database.close);
-    final baseTime = DateTime(2026, 3, 23, 12, 30, 0).millisecondsSinceEpoch;
-    await _insertConversation(database, 'conv-image-dim', baseTime);
-
-    final sourceImage = await _writeTestPng(
-      p.join(tempDir!.path, 'source_size.png'),
-      width: 6,
-      height: 3,
-    );
-    final staleMessage = Message.fromBlocks(
-      id: 'msg-image-dim',
-      role: 'assistant',
-      blocks: <MessageBlock>[
-        ImageBlock(
-          messageId: 'msg-image-dim',
-          localPath: sourceImage.path,
-        ),
-      ],
-      createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 1),
-    );
-
-    final snapshotFile =
-        File(_snapshotFilePath(tempDir!.path, 'conv-image-dim'));
-    await snapshotFile.parent.create(recursive: true);
-    await snapshotFile.writeAsString(
-      jsonEncode(<String, dynamic>{
-        'version': 1,
-        'conversationId': 'conv-image-dim',
-        'hasMoreMessages': false,
-        'updatedAt': baseTime,
-        'messages': <Map<String, dynamic>>[
-          ChatMessageProjectionCodec.serializeMessage(staleMessage),
-        ],
-      }),
-      flush: true,
-    );
-
-    final container = ProviderContainer(
-      overrides: [
-        databaseProvider.overrideWithValue(database),
-      ],
-    );
-    addTearDown(container.dispose);
-
-    final window = await container
-        .read(conversationShortWindowStoreProvider)
-        .watchWindow(
-          conversationId: 'conv-image-dim',
-          limit: 20,
-        )
-        .first;
-    final imageBlock =
-        window.messages.single.blocks!.whereType<ImageBlock>().single;
-
-    expect(imageBlock.width, 6);
-    expect(imageBlock.height, 3);
-    expect(imageBlock.localPath, isNotNull);
-    expect(await File(imageBlock.localPath!).exists(), isTrue);
-
-    final payload =
-        jsonDecode(await snapshotFile.readAsString()) as Map<String, dynamic>;
-    final rawMessage =
-        (payload['messages'] as List<dynamic>).single as Map<String, dynamic>;
-    final rawImage =
-        (rawMessage['blocks'] as List<dynamic>).single as Map<String, dynamic>;
-    expect(rawImage['width'], 6);
-    expect(rawImage['height'], 3);
+    expect(imageBlock.width, 64);
+    expect(imageBlock.height, 48);
   });
 }

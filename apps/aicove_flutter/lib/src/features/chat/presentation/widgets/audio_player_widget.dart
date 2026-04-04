@@ -47,65 +47,121 @@ class AudioPlayerState {
   }
 }
 
+abstract class AudioPlaybackBackend {
+  Stream<PlayerState> get playerStateStream;
+  Stream<Duration> get positionStream;
+  Stream<Duration?> get durationStream;
+  Stream<PlaybackEvent> get playbackEventStream;
+  Duration get position;
+
+  Future<Duration?> setUrl(String url);
+  Future<Duration?> setFilePath(String path);
+  Future<void> play();
+  Future<void> pause();
+  Future<void> seek(Duration position);
+  Future<void> dispose();
+}
+
+class JustAudioPlaybackBackend implements AudioPlaybackBackend {
+  JustAudioPlaybackBackend() : _player = AudioPlayer();
+
+  final AudioPlayer _player;
+
+  @override
+  Stream<PlayerState> get playerStateStream => _player.playerStateStream;
+
+  @override
+  Stream<Duration> get positionStream => _player.positionStream;
+
+  @override
+  Stream<Duration?> get durationStream => _player.durationStream;
+
+  @override
+  Stream<PlaybackEvent> get playbackEventStream => _player.playbackEventStream;
+
+  @override
+  Duration get position => _player.position;
+
+  @override
+  Future<Duration?> setUrl(String url) => _player.setUrl(url);
+
+  @override
+  Future<Duration?> setFilePath(String path) => _player.setFilePath(path);
+
+  @override
+  Future<void> play() => _player.play();
+
+  @override
+  Future<void> pause() => _player.pause();
+
+  @override
+  Future<void> seek(Duration position) => _player.seek(position);
+
+  @override
+  Future<void> dispose() => _player.dispose();
+}
+
 /// 音频播放器控制器
 class AudioPlayerController extends StateNotifier<AudioPlayerState> {
-  final AudioPlayer _player;
+  final AudioPlaybackBackend _player;
   final String audioUrl;
+  final Future<Directory> Function() _temporaryDirectoryProvider;
+  final List<StreamSubscription<Object?>> _subscriptions =
+      <StreamSubscription<Object?>>[];
   bool _completed = false;
-  bool _autoResetOnComplete = true;
   bool _isReady = false; // 标记音频是否已准备就绪
+  bool _hasStartedPlayback = false;
 
-  AudioPlayerController(this.audioUrl)
-      : _player = AudioPlayer(),
+  AudioPlayerController(
+    this.audioUrl, {
+    AudioPlaybackBackend? backend,
+    Future<Directory> Function()? temporaryDirectoryProvider,
+  })  : _player = backend ?? JustAudioPlaybackBackend(),
+        _temporaryDirectoryProvider =
+            temporaryDirectoryProvider ?? getTemporaryDirectory,
         super(const AudioPlayerState()) {
     _init();
   }
 
   void _init() {
     // 监听播放状态
-    _player.playerStateStream.listen((playerState) {
+    _subscriptions.add(_player.playerStateStream.listen((playerState) {
       _completed = playerState.processingState == ProcessingState.completed;
+      if (!mounted) return;
       state = state.copyWith(
         isPlaying: _completed ? false : playerState.playing,
         isLoading: playerState.processingState == ProcessingState.loading ||
             playerState.processingState == ProcessingState.buffering,
       );
-
-      // 播放完成后自动重置到开头，避免 UI 一直停留在“播放中”或无法重播
-      if (playerState.processingState == ProcessingState.completed &&
-          _autoResetOnComplete) {
-        _autoResetOnComplete = false;
-        unawaited(() async {
-          await _player.pause();
-          await _player.seek(Duration.zero);
-        }());
-      }
-    });
+    }));
 
     // 监听播放位置
-    _player.positionStream.listen((position) {
+    _subscriptions.add(_player.positionStream.listen((position) {
+      if (!mounted) return;
       state = state.copyWith(position: position);
-    });
+    }));
 
     // 监听总时长
-    _player.durationStream.listen((duration) {
+    _subscriptions.add(_player.durationStream.listen((duration) {
       if (duration != null) {
+        if (!mounted) return;
         state = state.copyWith(duration: duration);
       }
-    });
+    }));
 
     // 自动加载音频
-    _player.playbackEventStream.listen((_) {},
+    _subscriptions.add(_player.playbackEventStream.listen((_) {},
         onError: (Object e, StackTrace st) {
       AppLogger.error('AudioPlayer', '音频播放流出错', metadata: {
         'error': e.toString(),
       });
+      if (!mounted) return;
       state = state.copyWith(
         isPlaying: false,
         isLoading: false,
         error: '播放出错: $e',
       );
-    });
+    }));
 
     _loadAudio();
   }
@@ -126,7 +182,10 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
     final m = mime.toLowerCase();
     if (m.contains('wav')) return 'wav';
     if (m.contains('ogg')) return 'ogg';
+    if (m.contains('opus')) return 'opus';
     if (m.contains('mpeg') || m.contains('mp3')) return 'mp3';
+    if (m.contains('aac')) return 'aac';
+    if (m.contains('m4a') || m.contains('mp4')) return 'm4a';
     return 'bin';
   }
 
@@ -146,10 +205,29 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
       return 'wav';
     }
     if (startsWithAscii('OggS')) return 'ogg';
+    if (bytes.length >= 12 &&
+        String.fromCharCodes(bytes.sublist(4, 8)) == 'ftyp') {
+      return fallbackExt == 'bin' ? 'm4a' : fallbackExt;
+    }
     if (startsWithAscii('ID3')) return 'mp3';
-    if (bytes.length >= 2 && bytes[0] == 0xFF && (bytes[1] & 0xE0) == 0xE0)
+    if (bytes.length >= 2 && bytes[0] == 0xFF && (bytes[1] & 0xE0) == 0xE0) {
       return 'mp3';
+    }
+    if (bytes.length >= 2 && bytes[0] == 0xFF && (bytes[1] & 0xF6) == 0xF0) {
+      return fallbackExt == 'bin' ? 'aac' : fallbackExt;
+    }
     return fallbackExt;
+  }
+
+  Future<void> _writeBytesAtomically(File file, List<int> bytes) async {
+    final tempFile = File(
+      '${file.path}.${DateTime.now().microsecondsSinceEpoch}.tmp',
+    );
+    await tempFile.writeAsBytes(bytes, flush: true);
+    if (await file.exists()) {
+      await file.delete();
+    }
+    await tempFile.rename(file.path);
   }
 
   Future<String> _writeDataUrlToTempFile(String dataUrl) async {
@@ -177,7 +255,7 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
     final ext = _guessFileExtFromBytes(bytes, fallbackExt: fallbackExt);
     final hash = md5.convert(utf8.encode(dataUrl)).toString();
 
-    final dir = await getTemporaryDirectory();
+    final dir = await _temporaryDirectoryProvider();
     final cacheDir =
         Directory('${dir.path}${Platform.pathSeparator}aicove_audio_cache');
     if (!await cacheDir.exists()) {
@@ -186,8 +264,35 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
 
     final file =
         File('${cacheDir.path}${Platform.pathSeparator}audio_$hash.$ext');
-    if (!await file.exists()) {
-      await file.writeAsBytes(bytes, flush: true);
+    var shouldRewrite = true;
+    if (await file.exists()) {
+      try {
+        final existingSize = await file.length();
+        shouldRewrite = existingSize != bytes.length;
+        if (shouldRewrite) {
+          AppLogger.warning('AudioPlayer', '检测到损坏的语音缓存文件，准备重写', metadata: {
+            'path': file.path,
+            'existingSize': existingSize,
+            'expectedSize': bytes.length,
+          });
+        } else {
+          AppLogger.info('AudioPlayer', '复用已存在的 data url 语音缓存文件', metadata: {
+            'ext': ext,
+            'size': existingSize,
+            'path': file.path,
+          });
+        }
+      } on FileSystemException catch (e) {
+        shouldRewrite = true;
+        AppLogger.warning('AudioPlayer', '读取语音缓存文件失败，准备重写', metadata: {
+          'path': file.path,
+          'error': e.toString(),
+        });
+      }
+    }
+
+    if (shouldRewrite) {
+      await _writeBytesAtomically(file, bytes);
       AppLogger.info('AudioPlayer', '已将 data url 落地为临时文件', metadata: {
         'ext': ext,
         'size': bytes.length,
@@ -218,12 +323,14 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
 
   Future<void> _loadAudio() async {
     try {
+      if (!mounted) return;
       state = state.copyWith(isLoading: true, error: null);
       _isReady = false;
+      _hasStartedPlayback = false;
 
       // 构建完整URL
-      _autoResetOnComplete = true;
       final resolved = await _resolvePlayableSource(audioUrl);
+      if (!mounted) return;
 
       if (_isHttpUrl(resolved)) {
         await _player.setUrl(resolved);
@@ -232,6 +339,7 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
       } else {
         await _player.setUrl(resolved);
       }
+      if (!mounted) return;
 
       // 音频加载完成，标记为就绪
       _isReady = true;
@@ -241,6 +349,7 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
         'error': e.toString(),
       });
       _isReady = false;
+      if (!mounted) return;
       state = state.copyWith(
         isLoading: false,
         error: '加载失败: $e',
@@ -262,8 +371,6 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
       if (state.isPlaying) {
         await _player.pause();
       } else {
-        _autoResetOnComplete = true;
-
         // 如果音频还没准备好，等待加载完成
         if (!_isReady) {
           await _loadAudio();
@@ -279,15 +386,14 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
           _completed = false;
         }
 
-        // 确保从位置0开始播放（首次播放的关键修复）
-        // just_audio 在 setUrl/setFilePath 后，position 可能不是 0
-        final currentPos = _player.position;
-        if (currentPos.inMilliseconds > 100) {
-          // 如果当前位置超过100ms，说明可能有偏移，重置到开头
+        // 首次播放时，无条件归零一次。
+        // 实机上初始偏移可能只有几十毫秒，100ms 阈值会漏掉这种情况。
+        if (!_hasStartedPlayback) {
           await _player.seek(Duration.zero);
         }
 
         await _player.play();
+        _hasStartedPlayback = true;
       }
     } catch (e) {
       state = state.copyWith(error: '播放失败: $e');
@@ -304,7 +410,10 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
 
   @override
   void dispose() {
-    _player.dispose();
+    for (final subscription in _subscriptions) {
+      unawaited(subscription.cancel());
+    }
+    unawaited(_player.dispose());
     super.dispose();
   }
 }

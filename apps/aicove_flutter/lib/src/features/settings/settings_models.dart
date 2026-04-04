@@ -334,6 +334,7 @@ enum ChatBackgroundColor {
 /// 自动回复设置
 class AutoReplySettings {
   final bool enabled;
+  final bool guardModeEnabled;
   final int dailyLimit;
   final int minIntervalMinutes;
   final bool quietHoursEnabled;
@@ -383,6 +384,7 @@ Do not output markdown. Just JSON.''';
 
   const AutoReplySettings({
     this.enabled = false,
+    this.guardModeEnabled = false,
     this.dailyLimit = 3,
     this.minIntervalMinutes = 120,
     this.quietHoursEnabled = true,
@@ -396,6 +398,7 @@ Do not output markdown. Just JSON.''';
 
   AutoReplySettings copyWith({
     bool? enabled,
+    bool? guardModeEnabled,
     int? dailyLimit,
     int? minIntervalMinutes,
     bool? quietHoursEnabled,
@@ -410,6 +413,7 @@ Do not output markdown. Just JSON.''';
   }) {
     return AutoReplySettings(
       enabled: enabled ?? this.enabled,
+      guardModeEnabled: guardModeEnabled ?? this.guardModeEnabled,
       dailyLimit: dailyLimit ?? this.dailyLimit,
       minIntervalMinutes: minIntervalMinutes ?? this.minIntervalMinutes,
       quietHoursEnabled: quietHoursEnabled ?? this.quietHoursEnabled,
@@ -427,6 +431,7 @@ Do not output markdown. Just JSON.''';
 
   Map<String, dynamic> toJson() => {
         'enabled': enabled,
+        'guard_mode_enabled': guardModeEnabled,
         'daily_limit': dailyLimit,
         'min_interval_minutes': minIntervalMinutes,
         'quiet_hours_enabled': quietHoursEnabled,
@@ -461,6 +466,7 @@ Do not output markdown. Just JSON.''';
 
     return AutoReplySettings(
       enabled: json['enabled'] == true,
+      guardModeEnabled: json['guard_mode_enabled'] == true,
       dailyLimit: clampInt(json['daily_limit'] as num?, 1, 10, 3),
       minIntervalMinutes:
           clampInt(json['min_interval_minutes'] as num?, 15, 720, 120),

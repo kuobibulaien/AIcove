@@ -4,36 +4,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:aicove_flutter/src/core/api/providers/google_api_mode.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
-import 'package:aicove_flutter/src/features/chat/services/conversation_short_window_store.dart';
 import 'package:aicove_flutter/src/core/api/providers/zai_compat.dart';
-
-class _SpyConversationShortWindowStore extends ConversationShortWindowStore {
-  _SpyConversationShortWindowStore(super.ref);
-
-  int rebuildAllFromDbCallCount = 0;
-
-  @override
-  Future<void> rebuildAllFromDb() async {
-    rebuildAllFromDbCallCount += 1;
-  }
-}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('message format strategy changed should rebuild short windows',
+  test('message format strategy changed should persist as pure UI config',
       () async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
-    late _SpyConversationShortWindowStore storeSpy;
-    final container = ProviderContainer(
-      overrides: [
-        conversationShortWindowStoreProvider.overrideWith((ref) {
-          storeSpy = _SpyConversationShortWindowStore(ref);
-          return storeSpy;
-        }),
-      ],
-    );
+    final container = ProviderContainer();
     addTearDown(container.dispose);
 
     final settings = await container.read(appSettingsProvider.future);
@@ -44,10 +25,24 @@ void main() {
     );
     await notifier.updateMessageFormatConfig(toggled);
 
-    expect(storeSpy.rebuildAllFromDbCallCount, 1);
+    expect(
+      container
+          .read(appSettingsProvider)
+          .requireValue
+          .messageFormatConfig
+          .toJson(),
+      toggled.toJson(),
+    );
 
     await notifier.updateMessageFormatConfig(toggled);
-    expect(storeSpy.rebuildAllFromDbCallCount, 1);
+    expect(
+      container
+          .read(appSettingsProvider)
+          .requireValue
+          .messageFormatConfig
+          .toJson(),
+      toggled.toJson(),
+    );
   });
 
   test('failed import keeps appSettingsProvider in data state', () async {
@@ -89,9 +84,34 @@ void main() {
     expect(provider.displayName, 'Z.AI');
     expect(provider.apiBaseUrl, kZaiGeneralApiBase);
     expect(provider.enabled, isFalse);
-    expect(provider.visibleModels, <String>['glm-4.7', 'glm-5', 'glm-5-turbo']);
+    expect(provider.visibleModels, <String>['glm-5', 'glm-5-turbo', 'glm-4.7']);
     expect(provider.models, containsAll(kZaiDefaultChatModels));
     expect(provider.customConfig['requestFormat'], 'openai');
+  });
+
+  test('fresh defaults should include built-in Gemini provider', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    final settings = await container.read(appSettingsProvider.future);
+    final provider = settings.providers.firstWhere((p) => p.id == 'gemini');
+
+    expect(provider.displayName, kGoogleGeminiProviderDisplayName);
+    expect(provider.apiBaseUrl, kGeminiDeveloperApiBase);
+    expect(provider.enabled, isFalse);
+    expect(
+      provider.visibleModels,
+      <String>[
+        'gemini-2.5-flash',
+        'gemini-2.5-pro',
+        'gemini-2.5-flash-lite',
+      ],
+    );
+    expect(provider.models, containsAll(kGeminiDeveloperDefaultModels));
+    expect(provider.customConfig['requestFormat'], 'gemini');
+    expect(
+        provider.customConfig.containsKey(kGoogleVertexExpressField), isFalse);
   });
 
   test('legacy store should backfill Z.AI once and allow user deletion',
@@ -185,7 +205,9 @@ void main() {
     );
 
     final settings = container.read(appSettingsProvider).requireValue;
-    final provider = settings.providers.firstWhere((p) => p.id == 'gemini');
+    final provider = settings.providers.firstWhere(
+      (p) => p.apiBaseUrl == 'https://example.invalid/v1beta',
+    );
     expect(provider.models, contains('gemini-2.0-flash'));
     expect(provider.models, contains('text-embedding-004'));
     expect(provider.visibleModels, contains('text-embedding-004'));
@@ -237,6 +259,140 @@ void main() {
     expect(
         provider.visibleModels, <String>['custom-model', 'gemini-2.0-flash']);
     expect(provider.capabilities, containsAll(<String>['chat', 'embedding']));
+  });
+
+  test(
+      'addCustomModel should append model into provider models and visible list',
+      () async {
+    final store = <String, dynamic>{
+      'providers': [
+        {
+          'id': 'openai',
+          'displayName': 'OpenAI',
+          'apiKeys': <String>['dummy-key'],
+          'apiBaseUrl': 'https://api.example.com/v1',
+          'enabled': true,
+          'models': <String>['gpt-4o-mini'],
+          'visible_models': <String>['gpt-4o-mini'],
+          'hidden_models': <String>[],
+          'capabilities': <String>['chat'],
+        },
+      ],
+      'default_model': 'openai:gpt-4o-mini',
+      'default_chat_models': <String>['openai:gpt-4o-mini'],
+      'visible_models': <String>['gpt-4o-mini'],
+    };
+
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'aicove.ui_models.v1': jsonEncode(store),
+    });
+
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    await container.read(appSettingsProvider.future);
+    final notifier = container.read(appSettingsProvider.notifier);
+
+    await notifier.addCustomModel(
+      providerId: 'openai',
+      modelId: 'gpt-5-custom',
+      displayName: 'GPT-5 Custom',
+    );
+
+    final settings = container.read(appSettingsProvider).requireValue;
+    final provider = settings.providers.firstWhere((p) => p.id == 'openai');
+    expect(provider.models, contains('gpt-5-custom'));
+    expect(provider.visibleModels, contains('gpt-5-custom'));
+    expect(
+      settings.getModelDisplayName('openai:gpt-5-custom'),
+      'GPT-5 Custom',
+    );
+  });
+
+  test('legacy Gemini vertexExpress provider should preserve custom baseUrl',
+      () async {
+    final store = <String, dynamic>{
+      'providers': [
+        {
+          'id': 'gemini',
+          'displayName': 'Gemini',
+          'apiKeys': <String>['vertex-key'],
+          'apiBaseUrl': 'https://aiplatform.googleapis.com/v1/publishers/google',
+          'enabled': true,
+          'models': <String>['gemini-2.5-pro'],
+          'visible_models': <String>['gemini-2.5-pro'],
+          'hidden_models': <String>[],
+          'capabilities': <String>['chat'],
+          'custom_config': <String, dynamic>{
+            'requestFormat': 'gemini',
+            'vertexExpress': true,
+          },
+        },
+      ],
+      'default_model': 'gemini:gemini-2.5-pro',
+      'default_chat_models': <String>['gemini:gemini-2.5-pro'],
+      'default_vision_model': 'gemini:gemini-2.5-pro',
+      'model_display_names': <String, String>{
+        'gemini:gemini-2.5-pro': 'Gemini 2.5 Pro',
+      },
+      'model_types': <String, String>{
+        'gemini:gemini-2.5-pro': 'chat',
+      },
+      'auto_reply_settings': <String, dynamic>{
+        'enabled': false,
+        'analyzer_provider': 'gemini',
+        'analyzer_model': 'gemini:gemini-2.5-pro',
+      },
+    };
+
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'aicove.ui_models.v1': jsonEncode(store),
+    });
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    final settings = await container.read(appSettingsProvider.future);
+    final provider = settings.providers.firstWhere((p) => p.id == 'gemini');
+
+    expect(provider.id, 'gemini');
+    expect(provider.displayName, 'Gemini');
+    expect(
+      provider.apiBaseUrl,
+      'https://aiplatform.googleapis.com/v1/publishers/google',
+    );
+    expect(provider.customConfig['requestFormat'], 'gemini');
+    expect(provider.customConfig['vertexExpress'], isTrue);
+    expect(settings.defaultModelName, 'gemini:gemini-2.5-pro');
+    expect(settings.defaultVisionModel, 'gemini:gemini-2.5-pro');
+    expect(settings.defaultChatModels, <String>['gemini:gemini-2.5-pro']);
+
+    final prefs = await SharedPreferences.getInstance();
+    final saved = jsonDecode(prefs.getString('aicove.ui_models.v1')!)
+        as Map<String, dynamic>;
+    final savedProviders =
+        (saved['providers'] as List).cast<Map<String, dynamic>>();
+    final savedProvider = savedProviders.firstWhere(
+      (provider) => provider['id'] == 'gemini',
+    );
+    expect(savedProvider['id'], 'gemini');
+    expect(
+      savedProvider['apiBaseUrl'],
+      'https://aiplatform.googleapis.com/v1/publishers/google',
+    );
+    expect(
+      ((savedProvider['custom_config'] as Map<String, dynamic>)['vertexExpress']),
+      isTrue,
+    );
+    expect(saved['default_model'], 'gemini:gemini-2.5-pro');
+    expect(
+      (saved['auto_reply_settings']
+          as Map<String, dynamic>)['analyzer_provider'],
+      'gemini',
+    );
+    expect(
+      (saved['auto_reply_settings'] as Map<String, dynamic>)['analyzer_model'],
+      'gemini:gemini-2.5-pro',
+    );
   });
 
   test('importing openai provider twice should not overwrite old provider',

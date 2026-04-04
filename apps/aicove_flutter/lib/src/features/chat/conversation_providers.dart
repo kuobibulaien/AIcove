@@ -285,7 +285,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
         updatedAt: DateTime.now(),
       ),
     );
-    await ref.read(conversationShortWindowStoreProvider).clearConversation(id);
+    await ref.read(conversationTimelineCacheProvider).clearConversation(id);
   }
 
   // delete conversation (soft delete to trash)
@@ -303,7 +303,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
     // update in-memory state
     final current = state.value ?? <Conversation>[];
     state = AsyncValue.data(current.where((c) => c.id != id).toList());
-    await ref.read(conversationShortWindowStoreProvider).deleteConversation(id);
+    await ref.read(conversationTimelineCacheProvider).deleteConversation(id);
   }
 }
 

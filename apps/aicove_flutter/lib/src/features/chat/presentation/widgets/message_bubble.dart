@@ -39,10 +39,9 @@ class MessageBubble extends ConsumerWidget {
   final String? avatarUrl; // 仅用于左侧（AI）
   final String? displayName; // 对方名字（仅用于群聊模式）
   final VoidCallback? onRetry; // 重新发送回调
-  final void Function(GlobalKey bubbleKey)? onLongPress; // 长按回调（传递气泡Key用于定位菜单）
-  final void Function(GlobalKey mediaKey, MessageBlock block)?
+  final void Function(RenderBox box)? onLongPress; // 长按回调（传递气泡RenderBox用于定位菜单）
+  final void Function(RenderBox box, MessageBlock block)?
       onMediaLongPress; // 媒体长按/右键回调
-  final GlobalKey? bubbleAnchorKey; // 外部传入稳定锚点，避免流式更新时重复创建 GlobalKey
   final double fontSize; // 字体大小
 
   /// 聊天中所有图片列表（用于画廊模式左右滑动切换），由父组件传入
@@ -67,7 +66,6 @@ class MessageBubble extends ConsumerWidget {
     this.onRetry,
     this.onLongPress,
     this.onMediaLongPress,
-    this.bubbleAnchorKey,
     this.fontSize = _kDefaultFontSize,
     this.chatImages,
     this.showCorner = false,
@@ -85,7 +83,6 @@ class MessageBubble extends ConsumerWidget {
     this.onRetry,
     this.onLongPress,
     this.onMediaLongPress,
-    this.bubbleAnchorKey,
     this.fontSize = _kDefaultFontSize,
     this.chatImages,
     this.showCorner = false,
@@ -199,22 +196,25 @@ class MessageBubble extends ConsumerWidget {
             ))
               Builder(
                 builder: (context) {
-                  final bubbleKey = bubbleAnchorKey ??
-                      GlobalKey(debugLabel: 'bubble_${message.id}');
                   return Listener(
                     onPointerDown: (_useDesktopContextMenu &&
                             onLongPress != null)
                         ? (event) {
                             if ((event.buttons & kSecondaryMouseButton) != 0) {
-                              onLongPress!(bubbleKey);
+                              final box =
+                                  context.findRenderObject() as RenderBox?;
+                              if (box != null) onLongPress!(box);
                             }
                           }
                         : null,
                     child: GestureDetector(
-                      key: bubbleKey,
                       onLongPress:
                           (!_useDesktopContextMenu && onLongPress != null)
-                              ? () => onLongPress!(bubbleKey)
+                              ? () {
+                                  final box =
+                                      context.findRenderObject() as RenderBox?;
+                                  if (box != null) onLongPress!(box);
+                                }
                               : null,
                       child: Container(
                         key: ValueKey<String>('message_bubble_${message.id}'),
@@ -632,22 +632,26 @@ class MessageBubble extends ConsumerWidget {
           const EdgeInsets.symmetric(vertical: _kMediaBlockVerticalPadding),
       child: Builder(
         builder: (context) {
-          final mediaKey = GlobalKey(debugLabel: 'media_${block.id}');
           return Listener(
             onPointerDown: (_useDesktopContextMenu && onMediaLongPress != null)
                 ? (event) {
                     if ((event.buttons & kSecondaryMouseButton) != 0) {
-                      onMediaLongPress!(mediaKey, block);
+                      final box =
+                          context.findRenderObject() as RenderBox?;
+                      if (box != null) onMediaLongPress!(box, block);
                     }
                   }
                 : null,
             child: GestureDetector(
-              key: mediaKey,
               onTap: imageProvider != null
                   ? () => _showImagePreview(context, imageProvider!, heroTag)
                   : null,
               onLongPress: (!_useDesktopContextMenu && onMediaLongPress != null)
-                  ? () => onMediaLongPress!(mediaKey, block)
+                  ? () {
+                      final box =
+                          context.findRenderObject() as RenderBox?;
+                      if (box != null) onMediaLongPress!(box, block);
+                    }
                   : null,
               child: Hero(
                 tag: heroTag,

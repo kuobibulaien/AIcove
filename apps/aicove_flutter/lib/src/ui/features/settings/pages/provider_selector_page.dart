@@ -198,6 +198,8 @@ class _ProviderCard extends ConsumerWidget {
         return Icons.psychology;
       case 'gemini':
         return Icons.auto_awesome;
+      case 'vertex':
+        return Icons.auto_awesome;
       case 'doubao':
         return Icons.coffee;
       default:
@@ -210,6 +212,8 @@ class _ProviderCard extends ConsumerWidget {
       case 'openai':
         return 'OpenAI';
       case 'gemini':
+        return 'Google Gemini';
+      case 'vertex':
         return 'Google Gemini';
       case 'doubao':
         return '豆包 (Doubao)';

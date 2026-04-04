@@ -92,12 +92,14 @@ class _TtsTestSectionState extends ConsumerState<TtsTestSection> {
 
     try {
       // 使用当前配置创建 TTS 服务
-      final apiKey = provider.apiKeys.isNotEmpty ? provider.apiKeys.first : null;
+      final apiKey =
+          provider.apiKeys.isNotEmpty ? provider.apiKeys.first : null;
       final service = TtsService(
         config: config,
         apiKey: apiKey,
         requestUrl: provider.apiBaseUrl,
-        requestFormat: provider.customConfig['requestFormat'] as String? ?? 'openai_tts',
+        requestFormat:
+            provider.customConfig['requestFormat'] as String? ?? 'openai_tts',
         model: config.selectedModelId,
       );
 
@@ -178,7 +180,8 @@ class _TtsTestSectionState extends ConsumerState<TtsTestSection> {
             fillColor: colors.surface,
             borderColor: colors.border,
             focusBorderColor: colors.primary,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           ),
           const SizedBox(height: 16),
 

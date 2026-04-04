@@ -18,7 +18,6 @@ import '../../../../ui/shared/effects/frosted_glass_card.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../core/utils/avatar_helper.dart';
 import '../../../../core/utils/blurred_background_service.dart';
-import '../../../../core/utils/image_preheat_queue.dart';
 import '../../../../core/utils/role_transition_tags.dart';
 import '../../../../features/chat/domain/conversation.dart';
 import '../../../../features/chat/domain/persona_prompt_codec.dart';
@@ -59,17 +58,6 @@ class _HorizontalRoleCardState extends ConsumerState<HorizontalRoleCard> {
         oldWidget.conversation.avatarUrl != widget.conversation.avatarUrl;
     if (!imageChanged) return;
     _scheduleBlurEnsure();
-  }
-
-  /// 获取图片 Provider（用于背景 Hero）
-  /// 使用立绘优先级：characterImage → avatarUrl
-  ImageProvider? _getImageProvider() {
-    final helper = AvatarHelper(
-      avatarUrl: widget.conversation.avatarUrl,
-      characterImage: widget.conversation.characterImage,
-      displayName: widget.conversation.displayName,
-    );
-    return helper.getCharacterProvider();
   }
 
   String? _getBackgroundSource() {
@@ -113,19 +101,6 @@ class _HorizontalRoleCardState extends ConsumerState<HorizontalRoleCard> {
     );
   }
 
-  void _preheatDetailPageImages() {
-    final provider = _getImageProvider();
-    if (provider == null) return;
-
-    // 角色详情页的主图最大宽度约 200（3:4），按这个尺寸预热即可，避免无意义地解码到全屏分辨率。
-    ref.read(imagePreheatQueueProvider).enqueueFromContext(
-          context,
-          provider,
-          priority: ImagePreheatPriority.high,
-          size: const Size(200, 200 * 4 / 3),
-        );
-  }
-
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
@@ -139,7 +114,6 @@ class _HorizontalRoleCardState extends ConsumerState<HorizontalRoleCard> {
         child: Material(
           color: Colors.transparent,
           child: InkWell(
-            onTapDown: (_) => _preheatDetailPageImages(),
             onTap: _navigateToDetail,
             child: Stack(
               fit: StackFit.expand,

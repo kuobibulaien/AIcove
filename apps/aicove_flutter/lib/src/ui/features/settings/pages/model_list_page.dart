@@ -29,8 +29,6 @@ import 'add_provider_sheet.dart';
 import 'default_model_settings_page.dart';
 import 'provider_detail_page.dart';
 
-const Duration _kModelListDeferredContentWindow = Duration(milliseconds: 420);
-
 class ModelListPage extends ConsumerStatefulWidget {
   const ModelListPage({super.key});
 
@@ -42,40 +40,10 @@ class _ModelListPageState extends ConsumerState<ModelListPage> {
   bool _selectMode = false;
   final Set<String> _selected = {};
   final Set<String> _settleKeys = {}; // 正在"落定"动画的项目
-  Timer? _deferredContentTimer;
-  bool _deferHeavyContent = true;
 
   // 本地 providers 列表，用于乐观更新拖拽排序
   // 拖拽时先更新本地状态让 UI 立即响应，再异步保存
   List<ProviderAuth>? _localProviders;
-
-  @override
-  void initState() {
-    super.initState();
-    _scheduleDeferredContentActivation();
-  }
-
-  @override
-  void dispose() {
-    _deferredContentTimer?.cancel();
-    super.dispose();
-  }
-
-  void _scheduleDeferredContentActivation() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _deferredContentTimer?.cancel();
-      _deferredContentTimer = Timer(
-        _kModelListDeferredContentWindow,
-        _activateHeavyContent,
-      );
-    });
-  }
-
-  void _activateHeavyContent() {
-    if (!mounted || !_deferHeavyContent) return;
-    setState(() => _deferHeavyContent = false);
-  }
 
   void _exitSelectMode() {
     setState(() {
@@ -210,149 +178,8 @@ class _ModelListPageState extends ConsumerState<ModelListPage> {
               description: '$e',
             ),
           ),
-          data: (settings) =>
-              _deferHeavyContent && settings.providers.isNotEmpty
-                  ? _buildDeferredContent(settings, colors)
-                  : _buildContent(settings, colors),
+          data: (settings) => _buildContent(settings, colors),
         ),
-      ),
-    );
-  }
-
-  Widget _buildDeferredContent(AppSettings settings, MoeColors colors) {
-    final providers = _localProviders ?? settings.providers;
-    final placeholderCount = providers.length >= 3 ? 3 : 2;
-
-    return ListView(
-      key: const ValueKey<String>('model_list_deferred_shell'),
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-      children: [
-        MoeSettingsGroup(
-          margin: EdgeInsets.zero,
-          padding: EdgeInsets.zero,
-          children: [
-            MoeSettingsRow(
-              iconWidget: SizedBox(
-                width: 32,
-                height: 32,
-                child: DecoratedBox(
-                  decoration: MoeG2Decoration(
-                    radius: 8,
-                    color: colors.primary.withValues(alpha: 0.1),
-                  ),
-                  child: Icon(Icons.tune, color: colors.primary, size: 18),
-                ),
-              ),
-              iconContainerWidth: 40,
-              label: '默认模型设置',
-              subtitle: '聊天模型、图片识别模型',
-              trailingType: MoeSettingsRowTrailing.chevron,
-              onTap: () {
-                Navigator.of(context).push(
-                  ParallaxSlidePageRoute(
-                    page: const DefaultModelSettingsPage(),
-                  ),
-                );
-              },
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        MoeSettingsGroup(
-          margin: EdgeInsets.zero,
-          padding: EdgeInsets.zero,
-          children: [
-            for (var index = 0; index < placeholderCount; index++)
-              _buildShellRow(
-                colors,
-                showDivider: index != placeholderCount - 1,
-              ),
-          ],
-        ),
-        const SizedBox(height: 18),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: colors.text,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Text(
-              '正在准备模型列表',
-              style: TextStyle(
-                color: colors.textSecondary,
-                fontSize: 13,
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildShellRow(MoeColors colors, {required bool showDivider}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      decoration: BoxDecoration(
-        border: showDivider
-            ? Border(
-                bottom: BorderSide(
-                  color: colors.borderLight,
-                  width: borderWidth,
-                ),
-              )
-            : null,
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 28,
-            height: 28,
-            decoration: BoxDecoration(
-              color: colors.surfaceAlt.withValues(alpha: 0.7),
-              borderRadius: BorderRadius.circular(999),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 132,
-                  height: 12,
-                  decoration: BoxDecoration(
-                    color: colors.surfaceAlt.withValues(alpha: 0.7),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Container(
-                  width: 184,
-                  height: 10,
-                  decoration: BoxDecoration(
-                    color: colors.surfaceAlt.withValues(alpha: 0.52),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          Container(
-            width: 52,
-            height: 22,
-            decoration: BoxDecoration(
-              color: colors.primary.withValues(alpha: 0.14),
-              borderRadius: BorderRadius.circular(999),
-            ),
-          ),
-        ],
       ),
     );
   }

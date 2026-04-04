@@ -1,26 +1,27 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'domain/message.dart';
-import 'services/conversation_short_window_store.dart';
 import 'services/chat_history_store.dart';
+import 'services/conversation_short_window_store.dart';
 
 const int kConversationInitialVisibleCount = 20;
 const int kConversationVisiblePageSize = 20;
 
-final conversationVisibleCountProvider = StateProvider.family<int, String>(
+final conversationVisibleCountProvider =
+    StateProvider.autoDispose.family<int, String>(
   (ref, conversationId) => kConversationInitialVisibleCount,
 );
 
 /// Official frontend timeline source.
 ///
-/// Chat page UI must consume the short-window snapshot instead of rebuilding a
-/// separate database-driven timeline.
+/// Chat page UI only reads the frontend timeline cache and never treats the
+/// raw database as a second UI-state source.
 final conversationMessageWindowProvider =
     StreamProvider.autoDispose.family<ConversationMessageWindow, String>(
   (ref, conversationId) {
     final limit = ref.watch(conversationVisibleCountProvider(conversationId));
     return ref
-        .watch(conversationShortWindowStoreProvider)
+        .watch(conversationTimelineCacheProvider)
         .watchWindow(
           conversationId: conversationId,
           limit: limit,

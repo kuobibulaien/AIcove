@@ -653,25 +653,10 @@ double _distanceToBottom(ScrollController controller) {
   return position.pixels - position.minScrollExtent;
 }
 
-GlobalKey _extractBubbleGestureKey(WidgetTester tester, String messageId) {
-  final bubbleFinder =
-      find.byKey(ValueKey<String>('message_bubble_$messageId'));
-  expect(bubbleFinder, findsOneWidget);
-
-  final gestureCandidates = find.ancestor(
-    of: bubbleFinder,
-    matching: find.byType(GestureDetector),
-  );
-  final keys = gestureCandidates
-      .evaluate()
-      .map((e) => e.widget)
-      .whereType<GestureDetector>()
-      .map((w) => w.key)
-      .whereType<GlobalKey>()
-      .toList(growable: false);
-
-  expect(keys, isNotEmpty);
-  return keys.first;
+Element _extractMessageAnchorElement(WidgetTester tester, String messageId) {
+  final anchorFinder = find.byKey(ValueKey<String>('message:$messageId'));
+  expect(anchorFinder, findsOneWidget);
+  return tester.element(anchorFinder);
 }
 
 void main() {
@@ -1852,16 +1837,16 @@ void main() {
     final streamId = harnessKey.currentState!._streamingAssistantId;
     expect(streamId, isNotNull);
 
-    final keyBefore = _extractBubbleGestureKey(tester, streamId!);
+    final anchorBefore = _extractMessageAnchorElement(tester, streamId!);
 
     harnessKey.currentState!.growAssistantStreamingChunk();
     await tester.pump(const Duration(milliseconds: 16));
 
-    final keyAfter = _extractBubbleGestureKey(tester, streamId);
+    final anchorAfter = _extractMessageAnchorElement(tester, streamId);
     expect(
-      identical(keyBefore, keyAfter),
+      identical(anchorBefore, anchorAfter),
       isTrue,
-      reason: '同一消息流式更新时若锚点Key变化，会导致气泡节点反复重建，出现视觉闪烁',
+      reason: '同一消息流式更新时若列表锚点元素变化，会导致气泡节点反复重建，出现视觉闪烁',
     );
   });
 

@@ -16,13 +16,13 @@ import 'core/utils/blurred_background_service.dart';
 import 'core/utils/image_preheat_queue.dart';
 import 'core/utils/svg_preheat.dart';
 import 'core/log_history_service.dart';
+import 'core/services/android_keep_alive_manager.dart';
 import 'core/app_logger.dart';
 import 'core/api_logger.dart';
 import 'features/observability/trace_store.dart';
 import 'features/chat/domain/conversation.dart';
 import 'features/chat/data/auto_reply_service.dart';
 import 'features/chat/providers2.dart';
-import 'features/chat/services/conversation_short_window_store.dart';
 import 'features/chat/services/tts_fallback_notification.dart';
 import 'features/settings/app_settings.dart';
 import 'ui/theme/accent_color_provider.dart';
@@ -43,6 +43,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   bool _recentConversationsWarmupPending = false;
   bool _recentConversationsWarmupScheduled = false;
   bool _blurMigrationRunning = false;
+  bool _keepAliveSyncInFlight = false;
 
   @override
   void initState() {
@@ -57,6 +58,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _requestRecentConversationsWarmup();
+      unawaited(_syncAndroidKeepAliveGuard());
       // 预热供应商 SVG 图标
       preheatProviderSvgIcons();
       // 清理过期日志（7天前的）
@@ -93,6 +95,25 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       // 从后台恢复时，内存 ImageCache 可能已被系统回收；提前把"最近会话"的图片重新解码进缓存，
       // 让用户点进聊天页时尽量不出现"占位→图片跳出来"的闪一下。
       _requestRecentConversationsWarmup();
+      unawaited(_syncAndroidKeepAliveGuard());
+    }
+  }
+
+  Future<void> _syncAndroidKeepAliveGuard() async {
+    if (_keepAliveSyncInFlight || !AndroidKeepAliveManager.isSupported) {
+      return;
+    }
+
+    _keepAliveSyncInFlight = true;
+    try {
+      final settings = await ref.read(appSettingsProvider.future);
+      await AndroidKeepAliveManager.syncWithAutoReplySettings(
+        settings.autoReplySettings,
+      );
+    } catch (_) {
+      // 守护模式同步失败不影响主流程
+    } finally {
+      _keepAliveSyncInFlight = false;
     }
   }
 
@@ -138,7 +159,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
     // 启动预热策略：
     // 1) 联系人列表：继续只预热头像，保证主列表滚动稳定。
-    // 2) 聊天页：改为后台准备每个会话的短列表持久层，而不是进入时现读数据库。
+    // 2) 聊天页：后台预热最近会话的内存热缓存，进入页只消费尾部窗口。
     const contactsAvatarWarmupCount = 12;
 
     final sorted = [...list]..sort(
@@ -158,14 +179,6 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         priority: ImagePreheatPriority.normal,
       );
     }
-    unawaited(
-      ref.read(conversationShortWindowStoreProvider).warmupConversations(
-        <String>[
-          for (final conversation in sorted) conversation.id,
-        ],
-      ),
-    );
-
     unawaited(_migrateConversationBlurBackgrounds(sorted));
   }
 

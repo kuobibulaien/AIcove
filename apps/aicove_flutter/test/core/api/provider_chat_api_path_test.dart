@@ -51,17 +51,49 @@ void main() {
       );
     });
 
-    test('Vertex Express 会自动补 publishers/google 前缀', () {
+    test('Gemini 通用渠道可直接使用 aiplatform 基础地址', () {
       final endpoint = buildProviderChatEndpoint(
         provider: 'gemini',
-        apiBaseUrl: 'https://aiplatform.googleapis.com/v1',
+        apiBaseUrl: 'https://aiplatform.googleapis.com/v1/publishers/google',
         model: 'gemini-2.5-pro',
-        customConfig: const <String, dynamic>{'vertexExpress': true},
       );
 
       expect(
         endpoint,
         'https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-pro:generateContent',
+      );
+    });
+
+    test('旧 vertex 渠道别名在开发者 API 基础地址下仍按 Gemini 路径拼接', () {
+      final endpoint = buildProviderChatEndpoint(
+        provider: 'vertex',
+        apiBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        model: 'gemini-2.5-pro',
+        customConfig: const <String, dynamic>{
+          'requestFormat': 'gemini',
+        },
+      );
+
+      expect(
+        endpoint,
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent',
+      );
+    });
+
+    test('旧 Gemini vertexExpress 配置会忽略 Vertex 分支并继续走开发者 API', () {
+      final endpoint = buildProviderChatEndpoint(
+        provider: 'gemini',
+        apiBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        model: 'gemini-2.5-pro',
+        customConfig: const <String, dynamic>{
+          'requestFormat': 'gemini',
+          'vertexExpress': true,
+        },
+      );
+
+      expect(
+        endpoint,
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent',
       );
     });
 

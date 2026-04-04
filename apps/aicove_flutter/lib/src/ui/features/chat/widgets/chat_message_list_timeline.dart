@@ -40,6 +40,8 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
     }
 
     final messagesChanged = widget.messages != oldWidget.messages;
+    final contextStartChanged =
+        widget.contextStartMessageId != oldWidget.contextStartMessageId;
     final transientMessagesChanged =
         widget.transientMessages != oldWidget.transientMessages;
     final didPrependOlderHistory =
@@ -102,7 +104,7 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
       return;
     }
 
-    if (messagesChanged) {
+    if (messagesChanged || contextStartChanged) {
       _updateListItems(_cachedFormatConfig);
       final skipViewportRestoreForHistoryPaging =
           _historyViewportRestorePending;
@@ -238,7 +240,10 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
     if (item is ChatTimeDividerItem) {
       return 'time:${item.time.millisecondsSinceEpoch}';
     }
-    return 'topic:${widget.contextStartMessageId ?? 'default'}';
+    if (item is ChatNewTopicDividerItem) {
+      return 'topic:${item.associatedMessageId}';
+    }
+    return item.runtimeType.toString();
   }
 
   int? _findChildIndexForKey(
@@ -265,7 +270,89 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
     if (item is ChatChunkedMessageItem) {
       return item.originalMessage.id;
     }
+    if (item is ChatTimeDividerItem) {
+      return item.associatedMessageId;
+    }
+    if (item is ChatNewTopicDividerItem) {
+      return item.associatedMessageId;
+    }
     return null;
+  }
+
+  String? _resolveTopicDividerAnchorMessageId(List<Message> timelineMessages) {
+    final normalizedContextStartMessageId =
+        widget.contextStartMessageId?.trim();
+    if (normalizedContextStartMessageId == null ||
+        normalizedContextStartMessageId.isEmpty) {
+      return null;
+    }
+
+    String? anchorMessageId;
+    for (final message in timelineMessages) {
+      if (message.sourceMessageIdOrSelf == normalizedContextStartMessageId) {
+        anchorMessageId = message.id;
+      }
+    }
+    return anchorMessageId;
+  }
+
+  List<ChatMessageListItem> _decorateItemsWithTopicDivider(
+    List<ChatMessageListItem> items, {
+    required String? anchorMessageId,
+  }) {
+    final strippedItems = items
+        .where((item) => item is! ChatNewTopicDividerItem)
+        .toList(growable: false);
+    if (anchorMessageId == null ||
+        anchorMessageId.isEmpty ||
+        strippedItems.isEmpty) {
+      return strippedItems;
+    }
+
+    var insertionIndex = -1;
+    for (var index = 0; index < strippedItems.length; index++) {
+      if (_messageIdForListItem(strippedItems[index]) == anchorMessageId) {
+        insertionIndex = index;
+      }
+    }
+    if (insertionIndex < 0) {
+      return strippedItems;
+    }
+
+    final decoratedItems = List<ChatMessageListItem>.from(strippedItems);
+    decoratedItems.insert(
+      insertionIndex + 1,
+      ChatNewTopicDividerItem(associatedMessageId: anchorMessageId),
+    );
+    return decoratedItems;
+  }
+
+  _ChatListSections _decorateSectionsWithTopicDivider(
+    _ChatListSections sections,
+    List<Message> timelineMessages,
+  ) {
+    final anchorMessageId = _resolveTopicDividerAnchorMessageId(
+      timelineMessages,
+    );
+    final activeHasAnchor = anchorMessageId != null &&
+        sections.activeItems.any(
+          (item) => _messageIdForListItem(item) == anchorMessageId,
+        );
+    final historyHasAnchor = anchorMessageId != null &&
+        sections.historyItems.any(
+          (item) => _messageIdForListItem(item) == anchorMessageId,
+        );
+
+    return _ChatListSections(
+      historyItems: _decorateItemsWithTopicDivider(
+        sections.historyItems,
+        anchorMessageId: historyHasAnchor ? anchorMessageId : null,
+      ),
+      activeItems: _decorateItemsWithTopicDivider(
+        sections.activeItems,
+        anchorMessageId: activeHasAnchor ? anchorMessageId : null,
+      ),
+    );
   }
 
   int? _resolveActiveBoundaryIndex(List<Message> timelineMessages) {
@@ -327,34 +414,13 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
 
     final historyItems = <ChatMessageListItem>[];
     final activeItems = <ChatMessageListItem>[];
-    final pendingItems = <ChatMessageListItem>[];
-    _ChatListSectionPlacement? lastPlacement;
 
     for (final item in items) {
       final messageId = _messageIdForListItem(item);
-      if (messageId == null) {
-        pendingItems.add(item);
-        continue;
-      }
-      final placement = activeIds.contains(messageId)
-          ? _ChatListSectionPlacement.active
-          : _ChatListSectionPlacement.history;
-      final target = placement == _ChatListSectionPlacement.active
+      final target = messageId != null && activeIds.contains(messageId)
           ? activeItems
           : historyItems;
-      if (pendingItems.isNotEmpty) {
-        target.addAll(pendingItems);
-        pendingItems.clear();
-      }
       target.add(item);
-      lastPlacement = placement;
-    }
-
-    if (pendingItems.isNotEmpty) {
-      final target = lastPlacement == _ChatListSectionPlacement.active
-          ? activeItems
-          : historyItems;
-      target.addAll(pendingItems);
     }
 
     return _ChatListSections(

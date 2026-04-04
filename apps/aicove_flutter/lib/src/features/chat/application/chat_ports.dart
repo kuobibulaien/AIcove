@@ -9,7 +9,7 @@ import '../services/chat_types.dart'
     show ApiCallResult, ApiConfig, AssistantMessageBuildResult;
 
 abstract interface class ChatHistoryPort {
-  Future<List<Message>> loadAllMessages(String conversationId);
+  Future<List<Message>> loadRawMessages(String conversationId);
 
   Future<void> markMessageStatus({
     required String conversationId,

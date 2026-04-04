@@ -208,15 +208,15 @@ class TtsPlugin extends BasePlugin {
       return null;
     }
 
-    // 根据语音频率生成使用指导
-    final frequencyGuide = _getFrequencyGuide(_ttsConfig.voiceFrequency);
+    // 频率为 0 时告知模型不要使用语音
+    if (_ttsConfig.voiceFrequency <= 0) {
+      return '【重要】用户不希望你使用语音功能，请只用文字回复。';
+    }
 
     // 检测是否为 MiniMax 渠道
     final isMinimaxProvider = _isMinimaxProvider();
 
-    // 始终使用标签模式（工具调用路径已屏蔽）
     AppLogger.debug('TTS', '注入 TTS 标签提示词', metadata: {
-      'maxCharsPerChunk': _ttsConfig.maxCharsPerChunk,
       'voiceFrequency': _ttsConfig.voiceFrequency,
       'isMinimaxProvider': isMinimaxProvider,
     });
@@ -246,15 +246,15 @@ class TtsPlugin extends BasePlugin {
     return '''
 你可以使用 <tts>文本</tts> 标记来生成语音。
 
-$frequencyGuide
-
 使用规则：
 1. 将需要转换为语音的文本用 <tts></tts> 标记包裹
-2. 每个 <tts></tts> 标记内的文本不要超过 ${_ttsConfig.maxCharsPerChunk} 个字
-3. 一轮对话中可以使用多个 <tts></tts> 标记
+2. 每个 <tts></tts> 标记内的文本不推荐过长。
+3. 一轮对话中可以使用多个 <tts></tts> 标记，推荐一次对话使用约两三个。
+4. 建议在表达情感的地方使用语音。
 
 示例：
-<tts>你好，很高兴见到你！</tts>
+<tts>好想你啊，宝宝，抱抱我嘛</tts>
+<tts>宝宝，你都一天没理我了</tts>
 $minimaxGuide''';
   }
 
@@ -275,23 +275,6 @@ $minimaxGuide''';
       return true;
     }
     return false;
-  }
-
-  /// 根据语音频率生成使用指导文本
-  String _getFrequencyGuide(int frequency) {
-    if (frequency <= 0) {
-      return '【重要】用户不希望你使用语音功能，请只用文字回复。';
-    } else if (frequency <= 20) {
-      return '语音使用频率：极少。只在非常重要或情感强烈的时刻才使用语音，绝大多数情况用文字回复。';
-    } else if (frequency <= 40) {
-      return '语音使用频率：偶尔。在重点内容、情感表达、或需要强调时使用语音，日常交流用文字。';
-    } else if (frequency <= 60) {
-      return '语音使用频率：适中。可以较自由地使用语音，但仍保持文字为主，语音点缀。';
-    } else if (frequency <= 80) {
-      return '语音使用频率：较多。积极使用语音来增强表达效果，让对话更生动有趣。';
-    } else {
-      return '语音使用频率：频繁。尽可能多地使用语音，让对话充满活力和情感。';
-    }
   }
 
   @override

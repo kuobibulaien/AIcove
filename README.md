@@ -6,7 +6,15 @@
 
 AIcove 是一个跨平台（Android / iOS / Windows / Web）AI 对话客户端，核心思路是让 AI 通过工具调用生成多模态消息（文本、语音、图片、表情包），并能主动触发关怀消息，模拟真实异地伴侣的沟通体验。
 曾用名mygril，可能有部分路径残留。
-**架构特点：** 所有 AI 对话逻辑在 Flutter 客户端完成；后端以认证、数据同步为主，提供备份、云触发器、云记忆、额度管理等云端能力。
+**架构特点：** 项目采用“前端 / 本地后端 / 云端”分离。所有 AI 对话主流程与多模态编排在 Flutter 客户端完成；本文档中的“后端”默认指本地运行的后端 / 本地网关；`cloud_backend/` 专指云端服务，负责认证、数据同步、备份、云触发器、云记忆、额度管理等云能力。
+
+## 架构分层（术语约定）
+
+| 层 | 对应位置 / 部署形态 | 说明 |
+|------|------|------|
+| 前端 | `apps/aicove_flutter/` | Flutter 客户端，负责 UI、本地存储、状态管理、聊天主流程与多模态交付 |
+| 后端 | 本地运行的后端 / 本地网关 | 承接本地接口、开发联调或本地转发；本文档中的“后端”默认指这一层，不用来指代 `cloud_backend/` |
+| 云端 | `cloud_backend/` | 云端服务，负责认证、云同步、备份、云触发器、云记忆、额度管理等能力 |
 
 ## 核心功能
 
@@ -30,7 +38,12 @@ AIcove 是一个跨平台（Android / iOS / Windows / Web）AI 对话客户端�
 - GoRouter（路由）
 - Drift（本地 SQLite ORM）
 
-**后端（Python）**
+**后端（本地）**
+- 指本地运行的后端 / 本地网关角色
+- 用于本地接口承接、开发联调或本地转发
+- 本文档不把 `cloud_backend/` 归类到这一层
+
+**云端（Python）**
 - FastAPI + Uvicorn
 - SQLAlchemy ORM
 - JWT 认证
@@ -53,7 +66,7 @@ AIcove/
 │       ├── docs/                    # 项目文档库（索引见 docs/README.md）
 │       └── test/                    # 测试
 │
-├── cloud_backend/                   # Python 后端（认证/同步/云服务）
+├── cloud_backend/                   # 云端服务（认证/同步/备份/触发器/记忆/额度）
 │   ├── main.py                      # 入口（路由挂载 + Web 静态站点）
 │   ├── auth.py                      # JWT 认证
 │   ├── sync_api_v2.py               # 增量同步 v2
@@ -68,18 +81,20 @@ AIcove/
 └── README.md                        # 本文件
 ```
 
+> 说明：本仓库当前显式包含前端与云端代码；“后端”作为术语指本地后端 / 本地网关，不与 `cloud_backend/` 混用。
+
 ## 快速开始（Windows）
 
-### 1. 一键启动后端 + Web
+### 1. 一键启动云端服务 + Web
 
 ```powershell
-.\start.ps1                  # 自动安装依赖、构建 Web、启动后端
-.\start.ps1 -SkipFlutter     # 跳过 Flutter Web 构建，只启动后端
+.\start.ps1                  # 自动安装依赖、构建 Web、启动云端服务
+.\start.ps1 -SkipFlutter     # 跳过 Flutter Web 构建，只启动云端服务
 .\start.ps1 -Clean           # 清理缓存后重新构建
 ```
 
 启动后：
-- 后端 API：`http://localhost:8000`
+- 云端 API：`http://localhost:8000`
 - Web UI：`http://localhost:8000/app/#/`
 - API 文档：`http://localhost:8000/docs`
 
@@ -91,9 +106,9 @@ flutter pub get
 flutter run                  # 连接手机/模拟器运行
 ```
 
-> 需要后端接口时，保持第 1 步的服务在跑。
+> 需要云端接口时，保持第 1 步的云端服务在跑；如需联调本地后端，请按本地后端的部署方式单独启动。
 
-### 3. 首次部署后端
+### 3. 首次部署云端服务
 
 ```powershell
 cd cloud_backend
@@ -101,7 +116,7 @@ cp .env.example .env         # 编辑 .env 设置 SECRET_KEY
 python main.py               # 或用 Docker：docker-compose up -d
 ```
 
-详细后端文档见 [cloud_backend/README.md](cloud_backend/README.md)。
+详细云端文档见 [cloud_backend/README.md](cloud_backend/README.md)。
 
 ## 资源文档
 
@@ -114,14 +129,15 @@ python main.py               # 或用 Docker：docker-compose up -d
 | [docs/绘图功能/README.md](apps/aicove_flutter/docs/绘图功能/README.md) | 绘图工具说明、配置与排障 |
 | [docs/日志中心全链路监控重构方案_20260302/README.md](apps/aicove_flutter/docs/日志中心全链路监控重构方案_20260302/README.md) | 日志中心全链路监控重构说明 |
 | [docs/界面布局说明.md](apps/aicove_flutter/docs/界面布局说明.md) | 响应式布局设计 |
-| [cloud_backend/README.md](cloud_backend/README.md) | 后端完整文档（API 端点、部署、配置） |
+| [cloud_backend/README.md](cloud_backend/README.md) | 云端服务完整文档（API 端点、部署、配置） |
 
 ---
 
 # 项目宪法（每次写代码都必须遵守；如做不到先停下来问）
 
 ## 0) 只动允许的目录
-- 允许修改：`apps/aicove_flutter/`（前端）、`cloud_backend/`（后端）
+- 允许修改：`apps/aicove_flutter/`（前端）、`cloud_backend/`（云端）
+- 当前仓库未单独收录“本地后端”目录；不要把 `cloud_backend/` 当作本地后端修改
 - 根目录其他文件夹多为参考资料：默认不改
 
 ## 1) 目录地图（像"零件箱 vs 房间"）
@@ -129,7 +145,7 @@ python main.py               # 或用 Docker：docker-compose up -d
   - 主题/颜色：`apps/aicove_flutter/lib/src/ui/theme/`（优先用 tokens，不要页面里手写颜色）
   - 公共组件：`apps/aicove_flutter/lib/src/ui/shared/`（含 widgets, effects, animations）
   - 页面路由：`apps/aicove_flutter/lib/src/ui/features/<feature>/pages/`
-- 后端业务层：`apps/aicove_flutter/lib/src/features/<feature>/`
+- 前端业务层：`apps/aicove_flutter/lib/src/features/<feature>/`
   - 业务模型：`domain/`
   - 数据与服务：`data/`
   - 状态管理：`providers/` 或 `*_providers.dart`
@@ -151,7 +167,7 @@ python main.py               # 或用 Docker：docker-compose up -d
 - UI 不直接发请求：页面只负责展示与触发 action；请求放 data/service/provider
 
 ## 5) API 调用与错误处理
-- 后端 REST：优先走 `apps/aicove_flutter/lib/src/core/api_client.dart`
+- 服务端 REST（本地后端 / 云端）：优先走 `apps/aicove_flutter/lib/src/core/api_client.dart`
 - AI/消息相关：优先看聊天入口 `apps/aicove_flutter/lib/src/features/chat/chat_actions.dart`；架构说明见 `apps/aicove_flutter/docs/API架构说明.md`（以当前实现为准）
 - 错误提示/重试逻辑要统一，别每个页面各写一套
 
@@ -162,5 +178,5 @@ python main.py               # 或用 Docker：docker-compose up -d
 
 ## 7) 交付检查清单（避免基础操作遗漏）
 - 依赖是否安装：`flutter pub get`
-- 后端是否启动（需要接口时）
+- 本地后端 / 云端服务是否已按需启动（需要接口时）
 - 本次改动后至少编译/运行一次；并说明怎么验证（窄/宽屏各看一眼）

@@ -197,6 +197,13 @@ class _AgentApiStreamSupport {
         throw Exception('HTTP ${response.statusCode}: $errBody');
       }
 
+      final responseContentType =
+          response.headers['content-type']?.toLowerCase() ?? '';
+      final usesGeminiJsonBody =
+          isGeminiStream &&
+          responseContentType.contains('application/json') &&
+          !responseContentType.contains('text/event-stream');
+
       final text = StringBuffer();
       final reasoning = StringBuffer();
       final toolAggregator = _StreamingToolCallAggregator();
@@ -273,34 +280,16 @@ class _AgentApiStreamSupport {
         }
       }
 
-      void handleEventPayload(String payload) {
-        final trimmed = payload.trim();
-        if (trimmed.isEmpty) return;
-        if (trimmed == '[DONE]') {
-          _appendStreamEvent(
-            rawStreamEvents,
-            '[DONE]',
-            stats: streamEventStats,
-            preserveOnOverflow: true,
-          );
-          done = true;
-          return;
-        }
-
-        Map<String, dynamic> evt;
-        try {
-          evt = jsonDecode(trimmed) as Map<String, dynamic>;
-          _appendStreamEvent(rawStreamEvents, evt, stats: streamEventStats);
-        } catch (_) {
-          _appendStreamEvent(
-            rawStreamEvents,
-            {
-              '_raw': trimmed,
-              '_parseError': true,
-            },
-            stats: streamEventStats,
-          );
-          return;
+      void handleDecodedEventMap(Map<String, dynamic> evt) {
+        final rootError = evt['error'];
+        if (rootError != null) {
+          final message = rootError is Map
+              ? rootError['message']?.toString() ??
+                  jsonEncode(Map<String, dynamic>.from(
+                    rootError.cast<String, dynamic>(),
+                  ))
+              : rootError.toString();
+          throw Exception('SSE error: $message');
         }
 
         if (isClaudeStream) {
@@ -475,6 +464,53 @@ class _AgentApiStreamSupport {
         }
       }
 
+      void handleEventPayload(String payload) {
+        final trimmed = payload.trim();
+        if (trimmed.isEmpty) return;
+        if (trimmed == '[DONE]') {
+          _appendStreamEvent(
+            rawStreamEvents,
+            '[DONE]',
+            stats: streamEventStats,
+            preserveOnOverflow: true,
+          );
+          done = true;
+          return;
+        }
+
+        dynamic decoded;
+        try {
+          decoded = jsonDecode(trimmed);
+          _appendStreamEvent(rawStreamEvents, decoded, stats: streamEventStats);
+        } catch (_) {
+          _appendStreamEvent(
+            rawStreamEvents,
+            {
+              '_raw': trimmed,
+              '_parseError': true,
+            },
+            stats: streamEventStats,
+          );
+          return;
+        }
+
+        if (decoded is Map) {
+          handleDecodedEventMap(
+            Map<String, dynamic>.from(decoded.cast<String, dynamic>()),
+          );
+          return;
+        }
+
+        if (decoded is List) {
+          for (final item in decoded) {
+            if (item is! Map) continue;
+            handleDecodedEventMap(
+              Map<String, dynamic>.from(item.cast<String, dynamic>()),
+            );
+          }
+        }
+      }
+
       void flushEvent() {
         if (dataLines.isEmpty || done) {
           dataLines.clear();
@@ -485,27 +521,32 @@ class _AgentApiStreamSupport {
         handleEventPayload(payload);
       }
 
-      await for (final line in response.stream
-          .transform(utf8.decoder)
-          .transform(const LineSplitter())) {
-        if (done) break;
-        if (line.isEmpty) {
-          flushEvent();
-          continue;
+      if (usesGeminiJsonBody) {
+        final rawBody = utf8.decode(await response.stream.toBytes());
+        handleEventPayload(rawBody);
+      } else {
+        await for (final line in response.stream
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())) {
+          if (done) break;
+          if (line.isEmpty) {
+            flushEvent();
+            continue;
+          }
+          if (line.startsWith(':')) continue;
+          if (line.startsWith('event:')) continue;
+          if (line.startsWith('data:')) {
+            dataLines.add(line.substring(5).trimLeft());
+            continue;
+          }
+          final trimmedLine = line.trimLeft();
+          if (trimmedLine.startsWith('{') || trimmedLine.startsWith('[')) {
+            dataLines.add(trimmedLine);
+            continue;
+          }
         }
-        if (line.startsWith(':')) continue;
-        if (line.startsWith('event:')) continue;
-        if (line.startsWith('data:')) {
-          dataLines.add(line.substring(5).trimLeft());
-          continue;
-        }
-        final trimmedLine = line.trimLeft();
-        if (trimmedLine.startsWith('{') || trimmedLine.startsWith('[')) {
-          dataLines.add(trimmedLine);
-          continue;
-        }
+        flushEvent();
       }
-      flushEvent();
 
       sw.stop();
       final builtToolCalls = switch (adapterName) {

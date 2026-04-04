@@ -1,7 +1,7 @@
 ﻿[CmdletBinding()]
 param(
     [ValidateSet('claude', 'gemini')]
-    [string]$With = 'gemini',
+    [string]$With,
 
     [ValidateSet('review', 'translate', 'translate-review')]
     [string]$Mode = 'translate',
@@ -31,6 +31,17 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+$polishSettingsPath = Join-Path $PSScriptRoot 'codex-polish-settings.ps1'
+if (-not (Test-Path -LiteralPath $polishSettingsPath -PathType Leaf)) {
+    throw "找不到润色配置脚本: $polishSettingsPath"
+}
+
+. $polishSettingsPath
+
+if ([string]::IsNullOrWhiteSpace($With)) {
+    $With = Get-CodexPolishDefaultProvider
+}
 
 if ($UseLastCodexSession -and -not [string]::IsNullOrWhiteSpace($CodexSessionId)) {
     throw '不能同时传入 -UseLastCodexSession 和 -CodexSessionId。'
@@ -156,6 +167,258 @@ function Get-WorkspacePromptDirectory {
     return (Join-Path (Get-WorkspaceRoot) '.codex-prompts')
 }
 
+function Get-UserHomeDirectory {
+    $candidates = @(
+        $env:USERPROFILE,
+        $HOME,
+        [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
+    )
+
+    foreach ($candidate in $candidates) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            continue
+        }
+
+        if (Test-Path -LiteralPath $candidate -PathType Container) {
+            return (Resolve-Path -LiteralPath $candidate).Path
+        }
+    }
+
+    return ''
+}
+
+function Get-PowerShellExecutablePath {
+    $candidates = New-Object System.Collections.Generic.List[string]
+
+    $currentPwsh = Join-Path $PSHOME 'pwsh.exe'
+    if (Test-Path -LiteralPath $currentPwsh -PathType Leaf) {
+        [void]$candidates.Add($currentPwsh)
+    }
+
+    foreach ($programFilesRoot in @(
+        $env:ProgramFiles,
+        $env:ProgramW6432,
+        ${env:ProgramFiles(x86)},
+        'C:\Program Files',
+        'C:\Program Files (x86)'
+    )) {
+        if ([string]::IsNullOrWhiteSpace($programFilesRoot)) {
+            continue
+        }
+
+        $candidate = Join-Path $programFilesRoot 'PowerShell\7\pwsh.exe'
+        [void]$candidates.Add($candidate)
+    }
+
+    try {
+        $currentProcessPath = (Get-Process -Id $PID -ErrorAction Stop).Path
+        if (-not [string]::IsNullOrWhiteSpace($currentProcessPath)) {
+            [void]$candidates.Add($currentProcessPath)
+        }
+    }
+    catch {
+    }
+
+    try {
+        $pwshCommand = Get-Command pwsh.exe -ErrorAction Stop | Select-Object -First 1
+        if ($null -ne $pwshCommand) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$pwshCommand.Path)) {
+                [void]$candidates.Add([string]$pwshCommand.Path)
+            }
+            elseif (-not [string]::IsNullOrWhiteSpace([string]$pwshCommand.Source)) {
+                [void]$candidates.Add([string]$pwshCommand.Source)
+            }
+        }
+    }
+    catch {
+    }
+
+    foreach ($candidate in ($candidates | Select-Object -Unique)) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            continue
+        }
+
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return (Resolve-Path -LiteralPath $candidate).Path
+        }
+    }
+
+    foreach ($windowsRoot in @($env:WINDIR, 'C:\Windows')) {
+        if ([string]::IsNullOrWhiteSpace($windowsRoot)) {
+            continue
+        }
+
+        $legacyPowerShell = Join-Path $windowsRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        if (Test-Path -LiteralPath $legacyPowerShell -PathType Leaf) {
+            return (Resolve-Path -LiteralPath $legacyPowerShell).Path
+        }
+    }
+
+    throw '找不到可用的 PowerShell 可执行文件。'
+}
+
+function Get-CommandFilePath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$CommandName
+    )
+
+    try {
+        $command = Get-Command $CommandName -ErrorAction Stop | Select-Object -First 1
+    }
+    catch {
+        return ''
+    }
+
+    foreach ($propertyName in @('Path', 'Source', 'Definition')) {
+        $property = $command.PSObject.Properties[$propertyName]
+        if ($null -eq $property) {
+            continue
+        }
+
+        $value = [string]$property.Value
+        if ([string]::IsNullOrWhiteSpace($value)) {
+            continue
+        }
+
+        if (Test-Path -LiteralPath $value -PathType Leaf) {
+            return (Resolve-Path -LiteralPath $value).Path
+        }
+    }
+
+    return ''
+}
+
+function Get-SystemProxyUrl {
+    try {
+        $internetSettings = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction Stop
+    }
+    catch {
+        return ''
+    }
+
+    if ([int]$internetSettings.ProxyEnable -ne 1) {
+        return ''
+    }
+
+    $proxyServer = [string]$internetSettings.ProxyServer
+    if ([string]::IsNullOrWhiteSpace($proxyServer)) {
+        return ''
+    }
+
+    $selectedProxy = $proxyServer.Trim()
+    if ($selectedProxy.Contains('=')) {
+        $proxyEntries = @{}
+        foreach ($entry in ($selectedProxy -split ';')) {
+            if ([string]::IsNullOrWhiteSpace($entry) -or -not $entry.Contains('=')) {
+                continue
+            }
+
+            $parts = $entry.Split('=', 2)
+            $proxyEntries[$parts[0].Trim().ToLowerInvariant()] = $parts[1].Trim()
+        }
+
+        foreach ($scheme in @('https', 'http', 'socks', 'socks5')) {
+            if ($proxyEntries.ContainsKey($scheme) -and -not [string]::IsNullOrWhiteSpace([string]$proxyEntries[$scheme])) {
+                $selectedProxy = [string]$proxyEntries[$scheme]
+                break
+            }
+        }
+    }
+
+    if ($selectedProxy -notmatch '^[a-z][a-z0-9+\-.]*://') {
+        $selectedProxy = "http://$selectedProxy"
+    }
+
+    return $selectedProxy
+}
+
+function Initialize-ChildProcessEnvironment {
+    $systemDirectory = [Environment]::SystemDirectory
+    $windowsDirectory = ''
+
+    if (-not [string]::IsNullOrWhiteSpace($systemDirectory)) {
+        $windowsDirectory = Split-Path -Path $systemDirectory -Parent
+    }
+
+    if ([string]::IsNullOrWhiteSpace($windowsDirectory) -and (Test-Path -LiteralPath 'C:\Windows' -PathType Container)) {
+        $windowsDirectory = 'C:\Windows'
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($windowsDirectory)) {
+        if ([string]::IsNullOrWhiteSpace($env:SystemRoot)) {
+            $env:SystemRoot = $windowsDirectory
+        }
+
+        if ([string]::IsNullOrWhiteSpace($env:WINDIR)) {
+            $env:WINDIR = $windowsDirectory
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($env:ComSpec) -and -not [string]::IsNullOrWhiteSpace($systemDirectory)) {
+        $commandProcessor = Join-Path $systemDirectory 'cmd.exe'
+        if (Test-Path -LiteralPath $commandProcessor -PathType Leaf) {
+            $env:ComSpec = $commandProcessor
+        }
+    }
+
+    $systemProxyUrl = Get-SystemProxyUrl
+    if (-not [string]::IsNullOrWhiteSpace($systemProxyUrl)) {
+        foreach ($proxyVariableName in @('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY')) {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($proxyVariableName))) {
+                Set-Item -Path "Env:$proxyVariableName" -Value $systemProxyUrl
+            }
+        }
+    }
+}
+
+function Get-ProviderNodeLaunchInfo {
+    param(
+        [ValidateSet('claude', 'gemini')]
+        [string]$Provider
+    )
+
+    $providerShimPath = Get-CommandFilePath -CommandName "$Provider.ps1"
+    if ([string]::IsNullOrWhiteSpace($providerShimPath)) {
+        $providerShimPath = Get-CommandFilePath -CommandName "$Provider.cmd"
+    }
+
+    if ([string]::IsNullOrWhiteSpace($providerShimPath)) {
+        throw "找不到 $Provider 的启动脚本，请确认对应 CLI 已正确安装。"
+    }
+
+    $providerBaseDirectory = Split-Path -Path $providerShimPath -Parent
+    $nodeExecutable = Join-Path $providerBaseDirectory 'node.exe'
+    if (-not (Test-Path -LiteralPath $nodeExecutable -PathType Leaf)) {
+        $nodeExecutable = Get-CommandFilePath -CommandName 'node.exe'
+    }
+
+    if ([string]::IsNullOrWhiteSpace($nodeExecutable)) {
+        throw '找不到可用的 node.exe，请确认 Node.js 已正确安装。'
+    }
+
+    $entryScriptRelativePath = switch ($Provider) {
+        'claude' { 'node_modules\@anthropic-ai\claude-code\cli.js' }
+        'gemini' { 'node_modules\@google\gemini-cli\dist\index.js' }
+    }
+
+    $entryScriptPath = Join-Path $providerBaseDirectory $entryScriptRelativePath
+    if (-not (Test-Path -LiteralPath $entryScriptPath -PathType Leaf)) {
+        throw "找不到 $Provider CLI 入口脚本: $entryScriptPath"
+    }
+
+    $prefixArguments = @()
+    if ($Provider -eq 'gemini') {
+        $prefixArguments += '--no-warnings=DEP0040'
+    }
+
+    return [pscustomobject]@{
+        NodeExecutable = (Resolve-Path -LiteralPath $nodeExecutable).Path
+        EntryScriptPath = (Resolve-Path -LiteralPath $entryScriptPath).Path
+        PrefixArguments = $prefixArguments
+    }
+}
+
 function Get-PromptTemplateText {
     param(
         [Parameter(Mandatory = $true)]
@@ -270,8 +533,13 @@ function Get-CodexSessionFile {
         [switch]$UseLastSession
     )
 
-    $sessionRoot = Join-Path $env:USERPROFILE '.codex\sessions'
-    $archivedRoot = Join-Path $env:USERPROFILE '.codex\archived_sessions'
+    $userHomeDirectory = Get-UserHomeDirectory
+    if ([string]::IsNullOrWhiteSpace($userHomeDirectory)) {
+        return ''
+    }
+
+    $sessionRoot = Join-Path $userHomeDirectory '.codex\sessions'
+    $archivedRoot = Join-Path $userHomeDirectory '.codex\archived_sessions'
 
     if ($UseLastSession) {
         $latestSession = Get-ChildItem -LiteralPath $sessionRoot -Recurse -File -ErrorAction SilentlyContinue |
@@ -640,6 +908,8 @@ $rangeDiff
 
 function Build-Prompt {
     param(
+        [ValidateSet('claude', 'gemini')]
+        [string]$Provider,
         [ValidateSet('review', 'translate', 'translate-review')]
         [string]$SelectedMode,
         [string]$ReportText,
@@ -738,8 +1008,10 @@ $DiffText
 "@
     }
 
+    $providerDisplayName = Get-CodexPolishProviderDisplayName -Provider $Provider
+
     return @"
-你是 Gemini，有很强的中文生成能力。你的任务是转述 GPT 晦涩难懂的报告，把这份报告用通俗易懂的语言讲给编码小白。
+你是 $providerDisplayName，有很强的中文生成能力。你的任务是转述 GPT 晦涩难懂的报告，把这份报告用通俗易懂的语言讲给编码小白。
 
 你要尽量做到：
 - 通俗易懂地解释做了什么；如果材料里提到 bug，可以用类比说明原因，尽量避免专有技术名词，也不要用文件名直接当代词。
@@ -773,20 +1045,22 @@ function Invoke-Translator {
         [int]$TimeoutSeconds
     )
 
+    Initialize-ChildProcessEnvironment
+    $providerLaunchInfo = Get-ProviderNodeLaunchInfo -Provider $Provider
+
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $providerLaunchInfo.NodeExecutable
+    $startInfo.WorkingDirectory = (Get-Location).Path
+    foreach ($argument in $providerLaunchInfo.PrefixArguments) {
+        [void]$startInfo.ArgumentList.Add($argument)
+    }
+    [void]$startInfo.ArgumentList.Add($providerLaunchInfo.EntryScriptPath)
+
     if ($Provider -eq 'claude') {
-        $startInfo.FileName = 'claude.cmd'
         [void]$startInfo.ArgumentList.Add('-p')
-        [void]$startInfo.ArgumentList.Add('--output-format')
-        [void]$startInfo.ArgumentList.Add('text')
     }
-    else {
-        $startInfo.FileName = 'gemini.cmd'
-        [void]$startInfo.ArgumentList.Add('--prompt')
-        [void]$startInfo.ArgumentList.Add('.')
-        [void]$startInfo.ArgumentList.Add('--output-format')
-        [void]$startInfo.ArgumentList.Add('text')
-    }
+    [void]$startInfo.ArgumentList.Add('--output-format')
+    [void]$startInfo.ArgumentList.Add('text')
 
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
@@ -915,7 +1189,7 @@ if ($Mode -eq 'translate' -or $Mode -eq 'translate-review') {
     }
 }
 
-$prompt = Build-Prompt -SelectedMode $Mode -ReportText $reportText -DiffText $diffText -BaseBranch $Base -RecentConversationText $recentConversationText
+$prompt = Build-Prompt -Provider $With -SelectedMode $Mode -ReportText $reportText -DiffText $diffText -BaseBranch $Base -RecentConversationText $recentConversationText
 
 if ($DryRun) {
     $preview = @"
@@ -943,7 +1217,7 @@ $prompt
         "dry-run 内容已写入: $OutFile"
     }
 
-    exit 0
+    return
 }
 
 $response = Invoke-Translator -Provider $With -PromptText $prompt -TimeoutSeconds $ProviderTimeoutSeconds

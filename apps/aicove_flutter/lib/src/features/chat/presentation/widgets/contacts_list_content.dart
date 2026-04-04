@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -9,6 +12,30 @@ import '../../domain/conversation.dart';
 import '../../domain/sort_mode.dart';
 import 'character_list_item.dart';
 import '../../../../ui/theme/tokens.dart';
+
+@visibleForTesting
+VoidCallback scheduleConversationTapWarmup(
+  BuildContext context,
+  VoidCallback callback, {
+  Duration delay = const Duration(milliseconds: 80),
+}) {
+  var cancelled = false;
+  Timer? timer;
+
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    if (cancelled) return;
+    timer = Timer(delay, () {
+      if (!cancelled) {
+        callback();
+      }
+    });
+  });
+
+  return () {
+    cancelled = true;
+    timer?.cancel();
+  };
+}
 
 ImageProvider? buildConversationAvatarProvider(Conversation conv) {
   final helper = AvatarHelper(
@@ -250,7 +277,7 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
                         ref.read(activeConversationIdProvider.notifier).state =
                             c.id;
                         // 传入初始会话数据，避免新页面首帧先渲染到顶部/错误位置再跳动
-                        context.go('/chat/${c.id}', extra: c);
+                        context.push('/chat/${c.id}', extra: c);
                       }
                     },
                     // 移除 onEdit 参数 - 编辑功能改到聊天界面

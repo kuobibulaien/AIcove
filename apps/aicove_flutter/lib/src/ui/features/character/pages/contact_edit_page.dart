@@ -1044,7 +1044,8 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
 
       ref.read(activeConversationIdProvider.notifier).state = id;
       if (!mounted) return;
-      context.go('/chat/$id');
+      final conversation = ref.read(resolvedConversationByIdProvider(id));
+      context.replace('/chat/$id', extra: conversation);
     } else {
       _allowAndPop<ContactEditResult>(result);
     }

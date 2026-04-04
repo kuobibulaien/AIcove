@@ -96,5 +96,47 @@ void main() {
       expect(context.requestFormat, 'siliconflow_indextts');
       expect(context.selectedModelId, isNull);
     });
+
+    test('resolveForSelection 会按传入渠道和模型重新解析上下文', () {
+      final settings = _buildSettings(const <ProviderAuth>[
+        ProviderAuth(
+          id: 'provider_minimax',
+          displayName: 'MiniMax 渠道',
+          apiKeys: <String>['test-key'],
+          apiBaseUrl: 'https://api.minimaxi.com/v1',
+          models: <String>['speech-2.8-hd'],
+          visibleModels: <String>['speech-2.8-hd'],
+          customConfig: <String, dynamic>{'requestFormat': 'openai_tts'},
+          capabilities: <String>['tts'],
+        ),
+        ProviderAuth(
+          id: 'provider_sf',
+          displayName: '硅基流动',
+          apiKeys: <String>['sf-key'],
+          apiBaseUrl: 'https://api.siliconflow.cn/v1',
+          models: <String>['IndexTeam/IndexTTS-2'],
+          visibleModels: <String>['IndexTeam/IndexTTS-2'],
+          customConfig: <String, dynamic>{
+            'requestFormat': 'siliconflow_indextts',
+          },
+          capabilities: <String>['tts'],
+        ),
+      ]);
+
+      final context = TtsProviderContext.resolveForSelection(
+        config: TtsConfig(
+          selectedProviderId: 'provider_minimax',
+          selectedModelId: 'speech-2.8-hd',
+        ),
+        settings: settings,
+        providerId: 'provider_sf',
+        modelId: 'IndexTeam/IndexTTS-2',
+      );
+
+      expect(context.providerAuth?.id, 'provider_sf');
+      expect(context.voiceProvider?.providerId, 'siliconflow');
+      expect(context.apiKey, 'sf-key');
+      expect(context.selectedModelId, 'IndexTeam/IndexTTS-2');
+    });
   });
 }

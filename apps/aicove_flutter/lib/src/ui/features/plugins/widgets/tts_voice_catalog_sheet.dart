@@ -90,15 +90,16 @@ class _TtsVoiceCatalogSheetContentState
   bool _isAlreadyAdded(VoicePreset voice) {
     for (final preset in widget.config.voicePresets) {
       if (preset.id == voice.id) return true;
-      if (voice.aliyunVoiceId != null &&
-          voice.aliyunVoiceId!.isNotEmpty &&
-          preset.aliyunVoiceId == voice.aliyunVoiceId) {
-        return true;
-      }
-      if (voice.siliconFlowVoiceUri != null &&
-          voice.siliconFlowVoiceUri!.isNotEmpty &&
-          preset.siliconFlowVoiceUri == voice.siliconFlowVoiceUri) {
-        return true;
+      for (final incomingBinding in voice.effectiveBindings) {
+        for (final existingBinding in preset.effectiveBindings) {
+          if (incomingBinding.normalizedProviderId ==
+                  existingBinding.normalizedProviderId &&
+              incomingBinding.normalizedAdapterId ==
+                  existingBinding.normalizedAdapterId &&
+              incomingBinding.remoteVoiceId == existingBinding.remoteVoiceId) {
+            return true;
+          }
+        }
       }
     }
     return false;
@@ -247,14 +248,14 @@ class _TtsVoiceCatalogSheetContentState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (result.userVoices.isNotEmpty) ...[
+            _buildSectionHeader('$providerName 已创建音色', colors),
+            ...result.userVoices.map((voice) => _buildVoiceItem(voice, colors)),
+          ],
           if (result.presetVoices.isNotEmpty) ...[
             _buildSectionHeader('$providerName 预置音色', colors),
             ...result.presetVoices
                 .map((voice) => _buildVoiceItem(voice, colors)),
-          ],
-          if (result.userVoices.isNotEmpty) ...[
-            _buildSectionHeader('$providerName 已创建音色', colors),
-            ...result.userVoices.map((voice) => _buildVoiceItem(voice, colors)),
           ],
         ],
       ),

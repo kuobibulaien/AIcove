@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:aicove_flutter/src/core/api/agent_api.dart';
+import 'package:aicove_flutter/src/core/app_logger.dart' show TraceLogger;
 import 'package:aicove_flutter/src/core/database/database.dart';
 import 'package:aicove_flutter/src/core/database/database_provider.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
@@ -40,6 +41,8 @@ class _FakeConversationsNotifier extends ConversationsNotifier {
 
 class _RecordingAgentApiClient extends AgentApiClient {
   List<Map<String, dynamic>> capturedMessages = const <Map<String, dynamic>>[];
+  Map<String, dynamic>? capturedCustomConfig;
+  String? capturedProviderApiBase;
 
   @override
   Future<String> sendMessage({
@@ -65,6 +68,43 @@ class _RecordingAgentApiClient extends AgentApiClient {
         'prompt': '30分钟后提醒一下',
       },
     ]);
+  }
+
+  @override
+  Future<SendMessageRichResult> sendMessageRich({
+    required String agentId,
+    required String sessionId,
+    required String modelFullId,
+    required List<Map<String, dynamic>> messages,
+    required String userText,
+    double? temperature,
+    double? topP,
+    String? token,
+    Map<String, dynamic>? toolPrefs,
+    String? providerApiBase,
+    String? providerApiKey,
+    Map<String, dynamic>? customConfig,
+    List<Map<String, dynamic>>? tools,
+    TraceLogger? trace,
+    String? turnId,
+    int? roundIndex,
+    String? traceId,
+  }) async {
+    capturedMessages = messages;
+    capturedCustomConfig = customConfig;
+    capturedProviderApiBase = providerApiBase;
+    return SendMessageRichResult(
+      text: jsonEncode(<Map<String, dynamic>>[
+        <String, dynamic>{
+          'title': '晚点提醒',
+          'delay_minutes': 30,
+          'allow_night': false,
+          'priority': 'medium',
+          'prompt': '30分钟后提醒一下',
+        },
+      ]),
+      toolResults: const <Map<String, dynamic>>[],
+    );
   }
 }
 
@@ -196,15 +236,116 @@ void main() {
     addTearDown(container.dispose);
 
     await container.read(autoReplyTriggersProvider.future);
-    await container.read(contextAnalyzerProvider).analyzeAndSchedule(conversation);
+    await container
+        .read(contextAnalyzerProvider)
+        .analyzeAndSchedule(conversation);
 
     final joined = jsonEncode(fakeAgent.capturedMessages);
     expect(joined, contains('我今晚十点睡觉'));
     expect(joined, contains('那我晚安前再来找你'));
 
-    final triggers = container.read(autoReplyTriggersProvider).valueOrNull ?? [];
+    final triggers =
+        container.read(autoReplyTriggersProvider).valueOrNull ?? [];
     expect(triggers, hasLength(1));
     expect(triggers.single.contextLastUserMessageId, 'msg_user');
+  });
+
+  test('ContextAnalyzer 应透传渠道 customConfig 到直连请求', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+
+    final now = DateTime(2026, 3, 12, 13).millisecondsSinceEpoch;
+    final conversation = chat_domain.Conversation(
+      id: 'conv_gemini',
+      title: 'Gemini 会话',
+      displayName: 'Gemini 会话',
+      createdAt: DateTime.fromMillisecondsSinceEpoch(now),
+      updatedAt: DateTime.fromMillisecondsSinceEpoch(now),
+      messages: const [],
+    );
+    await _insertConversation(db, conversation);
+    await _insertMessage(
+      db,
+      conversation.id,
+      id: 'msg_user_gemini',
+      role: 'user',
+      content: '晚上提醒我喝水',
+      createdAt: now,
+    );
+
+    const settings = AppSettings(
+      ttsEnabled: true,
+      defaultModelName: 'gemini:gemini-2.5-flash',
+      defaultPersonaPrompt: '',
+      modelList: <String>['gemini:gemini-2.5-flash'],
+      allKnownModels: <String>['gemini:gemini-2.5-flash'],
+      modelDisplayNames: <String, String>{},
+      modelTypes: <String, String>{},
+      modelConfigs: <String, ModelConfig>{},
+      apiKey: '',
+      apiBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      imageGenerationEnabled: false,
+      maxFileUploadMB: 10,
+      historyMessageLimit: 100,
+      customModels: <CustomModel>[],
+      providers: <ProviderAuth>[
+        ProviderAuth(
+          id: 'gemini',
+          apiKeys: <String>['gemini-key'],
+          apiBaseUrl: 'https://unit.test/v1beta',
+          customConfig: <String, dynamic>{
+            'requestFormat': 'gemini',
+            'apiPath': '/models/gemini-2.5-flash:generateContent',
+          },
+        ),
+      ],
+      modelProviderMap: <String, String>{
+        'gemini:gemini-2.5-flash': 'gemini',
+      },
+      backendApiKey: '',
+      messageChunkingEnabled: false,
+      messageFormatConfig: MessageFormatConfig(enableChunking: false),
+      textScaleFactor: 1.0,
+      uiScaleFactor: 1.0,
+      imagePreviewScale: 1.0,
+      autoReplySettings: AutoReplySettings(enabled: true),
+      globalBackgroundColor: GlobalBackgroundColor.white,
+      chatBackgroundColor: ChatBackgroundColor.defaultColor,
+      isDarkMode: false,
+      useSystemTheme: true,
+      accentColor: 'FC96AA',
+      hideUserAvatar: true,
+      defaultChatModels: <String>['gemini:gemini-2.5-flash'],
+    );
+
+    final fakeAgent = _RecordingAgentApiClient();
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWith((ref) => db),
+        appSettingsProvider
+            .overrideWith(() => _FakeAppSettingsNotifier(settings)),
+        pluginManagerProvider.overrideWithValue(PluginManager()),
+        conversationsProvider
+            .overrideWith(() => _FakeConversationsNotifier([conversation])),
+        contextAnalyzerProvider.overrideWith(
+          (ref) => ContextAnalyzer(ref, agent: fakeAgent),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await container.read(autoReplyTriggersProvider.future);
+    await container
+        .read(contextAnalyzerProvider)
+        .analyzeAndSchedule(conversation);
+
+    expect(fakeAgent.capturedProviderApiBase, 'https://unit.test/v1beta');
+    expect(
+      fakeAgent.capturedCustomConfig?['apiPath'],
+      '/models/gemini-2.5-flash:generateContent',
+    );
+    expect(fakeAgent.capturedCustomConfig?['requestFormat'], 'gemini');
   });
 
   test('AutoReplyTriggerController 创建手动提醒时应读取数据库里的最后用户消息', () async {
@@ -242,9 +383,12 @@ void main() {
     );
     addTearDown(container.dispose);
 
-    container.read(activeConversationIdProvider.notifier).state = conversation.id;
+    container.read(activeConversationIdProvider.notifier).state =
+        conversation.id;
     await container.read(autoReplyTriggersProvider.future);
-    await container.read(autoReplyTriggersProvider.notifier).createManualTrigger(
+    await container
+        .read(autoReplyTriggersProvider.notifier)
+        .createManualTrigger(
           type: AutoReplyTriggerType.delay,
           nextFireAt: DateTime.fromMillisecondsSinceEpoch(now)
               .add(const Duration(minutes: 30)),
@@ -252,7 +396,8 @@ void main() {
           requireExact: false,
         );
 
-    final triggers = container.read(autoReplyTriggersProvider).valueOrNull ?? [];
+    final triggers =
+        container.read(autoReplyTriggersProvider).valueOrNull ?? [];
     expect(triggers, hasLength(1));
     expect(triggers.single.contextLastUserMessageId, 'msg_last_user');
   });

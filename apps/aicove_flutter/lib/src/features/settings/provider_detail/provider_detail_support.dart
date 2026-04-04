@@ -34,6 +34,9 @@ class ProviderDetailRequestFormat {
     ProviderAuth provider, {
     AppSettings? settings,
   }) {
+    if (isVertexProviderId(provider.id)) {
+      return const <ProviderDetailRequestFormat>[gemini];
+    }
     final current = fromRaw(provider.customConfig['requestFormat']?.toString());
     if (current == ProviderDetailRequestFormat.novelai) {
       return imageFormats;
@@ -61,6 +64,7 @@ class ProviderDetailRequestFormat {
       case 'anthropic':
         return ProviderDetailRequestFormat.claude;
       case 'gemini':
+      case 'vertex':
       case 'google':
         return ProviderDetailRequestFormat.gemini;
       case 'novelai':
@@ -91,17 +95,6 @@ ProviderDetailRequestFormat resolveProviderDetailRequestFormat(
   if (fromId != null && available.contains(fromId)) return fromId;
 
   return available.first;
-}
-
-bool isProviderDetailVertexExpressMode(ProviderAuth provider) {
-  final requestFormat = ProviderDetailRequestFormat.fromRaw(
-    provider.customConfig['requestFormat']?.toString(),
-  );
-  if (requestFormat != null &&
-      requestFormat != ProviderDetailRequestFormat.gemini) {
-    return false;
-  }
-  return isVertexExpressEnabled(provider.customConfig);
 }
 
 String resolveProviderDetailChatProvider(ProviderAuth provider) {

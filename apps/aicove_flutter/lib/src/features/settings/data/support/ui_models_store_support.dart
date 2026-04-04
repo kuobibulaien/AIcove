@@ -128,6 +128,28 @@ Map<String, dynamic> buildDefaultUiModelsStoreData() => <String, dynamic>{
           'capabilities': <String>['chat'],
         },
         {
+          'id': 'gemini',
+          'displayName': kGoogleGeminiProviderDisplayName,
+          'apiKeys': <String>[],
+          'apiBaseUrl': kGeminiDeveloperApiBase,
+          'enabled': false,
+          'models': List<String>.from(kGeminiDeveloperDefaultModels),
+          'visible_models': <String>[
+            'gemini-2.5-flash',
+            'gemini-2.5-pro',
+            'gemini-2.5-flash-lite',
+          ],
+          'hidden_models': <String>[
+            'gemini-2.0-flash',
+            'gemini-2.0-flash-lite',
+            'gemini-3-flash-preview',
+          ],
+          'capabilities': <String>['chat'],
+          'custom_config': <String, dynamic>{
+            'requestFormat': 'gemini',
+          },
+        },
+        {
           'id': 'zai',
           'displayName': 'Z.AI',
           'apiKeys': <String>[],
@@ -189,12 +211,16 @@ Map<String, dynamic> buildDefaultUiModelsStoreData() => <String, dynamic>{
 
 Map<String, dynamic> _defaultAutoReplySettings() => <String, dynamic>{
       'enabled': false,
+      'guard_mode_enabled': false,
       'daily_limit': 3,
       'min_interval_minutes': 120,
       'quiet_hours_enabled': true,
       'quiet_hours_start': '22:00',
       'quiet_hours_end': '08:00',
       'allow_exact_alarm': false,
+      'analyzer_prompt': AutoReplySettings.defaultAnalyzerPrompt,
+      'analyzer_model': null,
+      'analyzer_provider': null,
     };
 
 Map<String, dynamic> _defaultEnhancedDialogueSettings() => <String, dynamic>{
@@ -357,6 +383,7 @@ Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
 
     return <String, dynamic>{
       'enabled': source['enabled'] == true,
+      'guard_mode_enabled': source['guard_mode_enabled'] == true,
       'daily_limit': clampInt(
         source['daily_limit'] as num?,
         1,
@@ -379,6 +406,18 @@ Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
         defaults['quiet_hours_end'] as String,
       ),
       'allow_exact_alarm': source['allow_exact_alarm'] == true,
+      'analyzer_prompt':
+          (source['analyzer_prompt'] as String?)?.trim().isNotEmpty == true
+              ? (source['analyzer_prompt'] as String).trim()
+              : defaults['analyzer_prompt'],
+      'analyzer_model':
+          (source['analyzer_model'] as String?)?.trim().isNotEmpty == true
+              ? (source['analyzer_model'] as String).trim()
+              : null,
+      'analyzer_provider':
+          (source['analyzer_provider'] as String?)?.trim().isNotEmpty == true
+              ? (source['analyzer_provider'] as String).trim()
+              : null,
     };
   }
 
@@ -531,26 +570,26 @@ Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
         }
       }
 
-      final visibleSet = <String>{};
-      final hiddenSet = <String>{};
-
-      for (final model in models) {
-        if (visible.contains(model)) {
-          visibleSet.add(model);
+      final visibleList = <String>[];
+      for (final model in visible) {
+        if (!models.contains(model) || visibleList.contains(model)) {
+          continue;
         }
+        visibleList.add(model);
       }
-      if (visibleSet.isEmpty && models.isNotEmpty) {
-        visibleSet.add(models.first);
+      if (visibleList.isEmpty && models.isNotEmpty) {
+        visibleList.add(models.first);
       }
+
+      final hiddenList = <String>[];
       for (final model in hidden) {
-        if (!visibleSet.contains(model) && models.contains(model)) {
-          hiddenSet.add(model);
+        if (!models.contains(model) ||
+            visibleList.contains(model) ||
+            hiddenList.contains(model)) {
+          continue;
         }
+        hiddenList.add(model);
       }
-
-      final visibleList = visibleSet.toList()
-        ..sort(caseInsensitiveSettingsSort);
-      final hiddenList = hiddenSet.toList()..sort(caseInsensitiveSettingsSort);
       final normalizedCapabilities = deriveProviderCapabilities(
         providerId: id,
         models: models,

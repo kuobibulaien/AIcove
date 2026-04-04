@@ -23,14 +23,14 @@ class ChatPageQueries {
 
   final Ref _ref;
 
-  /// Frontend-only query: follows the current short-window timeline semantics.
+  /// Frontend-only query: follows the current projected timeline cache.
   ///
   /// This is intentionally different from backend context assembly, which reads
   /// raw database history.
   Future<bool> conversationHasImageMessages(String conversationId) async {
     final history = await _ref
-        .read(conversationShortWindowStoreProvider)
-        .loadAllMessages(conversationId);
+        .read(conversationTimelineCacheProvider)
+        .loadCachedMessages(conversationId);
     return history.any((message) => message.images.isNotEmpty);
   }
 

@@ -40,6 +40,19 @@ class Message {
     this.rawPayload,
   });
 
+  /// 返回可用于定位原始持久化消息的稳定 ID。
+  ///
+  /// 前端时间线中的投影消息会把真实 raw message id 放在 [sourceMessageId]，
+  /// 新话题这类需要写“上下文边界”的场景必须优先使用它。
+  String get sourceMessageIdOrSelf {
+    final normalizedSourceMessageId = sourceMessageId?.trim();
+    if (normalizedSourceMessageId != null &&
+        normalizedSourceMessageId.isNotEmpty) {
+      return normalizedSourceMessageId;
+    }
+    return id;
+  }
+
   /// 获取显示文本（智能fallback）
   /// 优先从blocks中提取，否则使用content字段
   /// 对于多模态内容返回占位符文本

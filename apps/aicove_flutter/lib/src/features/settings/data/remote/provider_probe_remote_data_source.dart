@@ -24,6 +24,11 @@ class ProviderProbeRemoteDataSource {
     required String apiBaseUrl,
     Map<String, dynamic>? customConfig,
   }) async {
+    final resolvedProvider = ProviderAdapterFactory.resolveProvider(
+      providerId,
+      customConfig: customConfig,
+      apiBaseUrl: apiBaseUrl,
+    );
     if (isZaiProvider(providerId: providerId, apiBaseUrl: apiBaseUrl)) {
       return _previewZaiProvider(
         providerId: providerId,
@@ -43,11 +48,8 @@ class ProviderProbeRemoteDataSource {
     if (isNovelAiProvider(providerId: providerId, apiBaseUrl: apiBaseUrl)) {
       return kNovelAiDefaultModels;
     }
-    if (isGoogleVertexExpressProvider(
-      providerId: providerId,
-      customConfig: customConfig,
-    )) {
-      return _previewVertexExpressProvider(
+    if (resolvedProvider == 'gemini') {
+      return _previewGeminiProvider(
         providerId: providerId,
         apiKey: apiKey,
         apiBaseUrl: apiBaseUrl,
@@ -100,20 +102,12 @@ class ProviderProbeRemoteDataSource {
         customConfig: customConfig,
         apiBaseUrl: apiBaseUrl,
       );
-      final vertexExpress = isGoogleVertexExpressProvider(
-        providerId: providerId,
-        customConfig: customConfig,
-      );
       final endpoint = buildProviderChatEndpoint(
         provider: adapter.name,
         apiBaseUrl: apiBaseUrl,
         model: modelId,
         customConfig: customConfig,
       );
-      final headers = adapter.buildHeaders(apiKey);
-      if (adapter.name == 'gemini' && vertexExpress) {
-        headers.remove('x-goog-api-key');
-      }
       final requestCustomConfig =
           ProviderAdapterFactory.sanitizeRequestCustomConfig(customConfig);
       final body = adapter.buildRequestBody(
@@ -129,10 +123,17 @@ class ProviderProbeRemoteDataSource {
       final uri = adapter.name == 'gemini'
           ? buildGoogleRequestUri(
               endpoint: endpoint,
-              vertexExpress: vertexExpress,
+              vertexExpress: isGoogleAiPlatformPublisherBaseUrl(apiBaseUrl),
               apiKey: apiKey,
             )
           : Uri.parse(endpoint);
+      final headers = adapter.name == 'gemini'
+          ? _buildGeminiHeaders(
+              adapter: adapter,
+              apiBaseUrl: apiBaseUrl,
+              apiKey: apiKey,
+            )
+          : adapter.buildHeaders(apiKey);
 
       final response = await _post(
         uri,
@@ -153,6 +154,90 @@ class ProviderProbeRemoteDataSource {
     } catch (e) {
       throw Exception('模型测试失败: $e');
     }
+  }
+
+  Future<List<String>> _previewGeminiProvider({
+    required String providerId,
+    required String apiKey,
+    required String apiBaseUrl,
+    Map<String, dynamic>? customConfig,
+  }) async {
+    try {
+      final adapter = ProviderAdapterFactory.getAdapter(
+        providerId,
+        customConfig: customConfig,
+        apiBaseUrl: apiBaseUrl,
+      );
+      final base = (apiBaseUrl.trim().isEmpty
+              ? kGeminiDeveloperApiBase
+              : apiBaseUrl.trim())
+          .replaceAll(RegExp(r'/+$'), '');
+      final models = <String>[];
+      String? pageToken;
+
+      do {
+        final query = <String, String>{
+          'pageSize': '200',
+          if (pageToken != null && pageToken.isNotEmpty) 'pageToken': pageToken,
+        };
+        final uri = buildGooglePublisherModelsListUri(
+          baseUrl: base,
+          apiKey: apiKey,
+        ).replace(
+          queryParameters: <String, String>{
+            ...buildGooglePublisherModelsListUri(
+              baseUrl: base,
+              apiKey: apiKey,
+            ).queryParameters,
+            ...query,
+          },
+        );
+        final response = await JsonHttpClient.getJson(
+          uri: uri,
+          headers: _buildGeminiHeaders(
+            adapter: adapter,
+            apiBaseUrl: apiBaseUrl,
+            apiKey: apiKey,
+          ),
+          timeout: const Duration(seconds: 10),
+          client: _httpClient,
+        );
+        final pageModels = _extractPreviewModels(
+          response.data,
+          providerId: providerId,
+          customConfig: customConfig,
+        );
+        for (final model in pageModels) {
+          if (!models.contains(model)) {
+            models.add(model);
+          }
+        }
+        final nextToken = response.data['nextPageToken']?.toString().trim();
+        pageToken = (nextToken == null || nextToken.isEmpty) ? null : nextToken;
+      } while (pageToken != null);
+
+      if (models.isEmpty) {
+        throw Exception('No models found');
+      }
+
+      return models;
+    } on JsonHttpRequestException catch (e) {
+      throw Exception('Failed to fetch Gemini models: ${e.message}');
+    } catch (e) {
+      throw Exception('Failed to fetch Gemini models: $e');
+    }
+  }
+
+  Map<String, String> _buildGeminiHeaders({
+    required dynamic adapter,
+    required String apiBaseUrl,
+    required String apiKey,
+  }) {
+    final headers = Map<String, String>.from(adapter.buildHeaders(apiKey));
+    if (isGoogleAiPlatformPublisherBaseUrl(apiBaseUrl)) {
+      headers.remove('x-goog-api-key');
+    }
+    return headers;
   }
 
   Future<List<String>> _previewMiniMaxProvider({
@@ -226,60 +311,6 @@ class ProviderProbeRemoteDataSource {
     }
 
     return fallbackModels;
-  }
-
-  Future<List<String>> _previewVertexExpressProvider({
-    required String providerId,
-    required String apiKey,
-    required String apiBaseUrl,
-    Map<String, dynamic>? customConfig,
-  }) async {
-    try {
-      final models = <String>[];
-      String? pageToken;
-
-      do {
-        final baseUri = buildGooglePublisherModelsListUri(
-          baseUrl: apiBaseUrl,
-          apiKey: apiKey,
-        );
-        final query = <String, String>{
-          ...baseUri.queryParameters,
-          'pageSize': '200',
-          if (pageToken != null && pageToken.isNotEmpty) 'pageToken': pageToken,
-        };
-        final uri = baseUri.replace(queryParameters: query);
-        final response = await JsonHttpClient.getJson(
-          uri: uri,
-          headers: const <String, String>{},
-          timeout: const Duration(seconds: 10),
-          client: _httpClient,
-        );
-        final pageModels = _extractPreviewModels(
-          response.data,
-          providerId: providerId,
-          customConfig: customConfig,
-        );
-        for (final model in pageModels) {
-          if (!models.contains(model)) {
-            models.add(model);
-          }
-        }
-
-        final nextToken = response.data['nextPageToken']?.toString().trim();
-        pageToken = (nextToken == null || nextToken.isEmpty) ? null : nextToken;
-      } while (pageToken != null);
-
-      if (models.isEmpty) {
-        throw Exception('No models found');
-      }
-
-      return models;
-    } on JsonHttpRequestException catch (e) {
-      throw Exception('Failed to fetch Vertex models: ${e.message}');
-    } catch (e) {
-      throw Exception('Failed to fetch Vertex models: $e');
-    }
   }
 
   List<String> _extractPreviewModels(

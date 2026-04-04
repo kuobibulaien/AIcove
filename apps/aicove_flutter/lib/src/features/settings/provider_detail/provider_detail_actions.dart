@@ -1,6 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../core/api/providers/google_api_mode.dart';
 import '../../../core/api/providers/provider_chat_api_path.dart';
 import '../app_settings.dart';
 import 'provider_detail_support.dart';
@@ -149,19 +148,6 @@ class ProviderDetailActions {
       apiBaseUrl: provider.apiBaseUrl,
       modelId: modelId,
       customConfig: provider.customConfig,
-    );
-  }
-
-  Future<void> setVertexExpressMode(
-    ProviderAuth provider, {
-    required bool enabled,
-  }) {
-    final customConfig = Map<String, dynamic>.from(provider.customConfig);
-    customConfig[kGoogleVertexExpressField] = enabled;
-    return _notifier.editProvider(
-      providerId: provider.id,
-      apiBaseUrl: googleSuggestedBaseUrl(vertexExpress: enabled),
-      customConfig: customConfig,
     );
   }
 

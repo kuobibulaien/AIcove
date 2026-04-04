@@ -15,8 +15,6 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../features/chat/chat_actions.dart';
 import '../../../../features/chat/application/chat_message_list_queries.dart';
-import '../../../../features/chat/conversation_timeline_providers.dart'
-    show kConversationInitialVisibleCount;
 import '../../../../features/chat/domain/message.dart';
 import '../../../../features/chat/presentation/widgets/message_bubble.dart';
 import '../../../../features/chat/presentation/widgets/message_action_sheet.dart';
@@ -84,7 +82,7 @@ Future<PersistentSnapshotWindow> resolvePersistentSnapshotWindow({
   required List<Message> currentMessages,
   required bool hasMoreMessages,
   required LoadPersistentSnapshotOlderPage loadOlderPage,
-  int targetTurnCount = kConversationInitialVisibleCount,
+  int targetTurnCount = kConversationPersistentSnapshotTurnCount,
 }) {
   return resolveChatMessageListPersistentSnapshotWindow(
     currentMessages: currentMessages,
@@ -259,7 +257,6 @@ class ChatMessageList extends ConsumerStatefulWidget {
 
 class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   final Set<String> _pendingAnimationIds = <String>{};
-  final Map<String, GlobalKey> _bubbleAnchorKeys = <String, GlobalKey>{};
   final GlobalKey _listViewportKey =
       GlobalKey(debugLabel: 'chat_message_list_viewport');
   final Key _centerKey = const ValueKey<String>('chat_message_list_center');
@@ -395,22 +392,26 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
       listItems,
       timelineMessagesForSectioning,
     );
+    final decoratedListSections = _decorateSectionsWithTopicDivider(
+      listSections,
+      timelineMessagesForSectioning,
+    );
     final showHistoryLoadingOverlay = _showHistoryLoadingOverlay;
     final showJumpToBottomButton = _shouldShowJumpToBottomButton();
     final jumpToBottomBottomOffset = (widget.bottomOverlayHeight > 0
             ? widget.bottomOverlayHeight
             : safeBottom) +
         14;
-    final itemCount = listSections.itemCount;
+    final itemCount = decoratedListSections.itemCount;
     final activeDelegate = _buildSectionDelegate(
       context,
-      listSections.activeItems,
+      decoratedListSections.activeItems,
       actions,
       reverseForViewport: false,
     );
     final historyDelegate = _buildSectionDelegate(
       context,
-      listSections.historyItems,
+      decoratedListSections.historyItems,
       actions,
       reverseForViewport: true,
     );

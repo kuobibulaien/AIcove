@@ -2,6 +2,7 @@ import 'package:http/http.dart' as http;
 
 import '../../core/api/providers/google_api_mode.dart';
 import '../../core/api/providers/minimax_compat.dart';
+import '../../core/api/providers/provider_adapter_factory.dart';
 import '../../core/api/providers/zai_compat.dart';
 import 'data/local/ui_models_store_local_data_source.dart';
 import 'data/remote/provider_probe_remote_data_source.dart';
@@ -80,10 +81,12 @@ class UiModelsApi {
         isNovelAiProvider(providerId: providerId, apiBaseUrl: apiBaseUrl) ||
             requestFormat == 'novelai' ||
             requestFormat == 'nai';
-    final isVertexExpress = isGoogleVertexExpressProvider(
-      providerId: providerId,
-      customConfig: customConfig,
-    );
+    final isGemini = ProviderAdapterFactory.resolveProvider(
+          providerId,
+          customConfig: customConfig,
+          apiBaseUrl: apiBaseUrl,
+        ) ==
+        'gemini';
     final isMiniMax = isMiniMaxApiUrl(apiBaseUrl);
     final isZai = isZaiProvider(
       providerId: providerId,
@@ -93,9 +96,7 @@ class UiModelsApi {
     List<String> models;
     if (allModels != null) {
       models = cleanSettingsStrings(allModels);
-      if (isVertexExpress && models.isEmpty) {
-        models = List<String>.from(kVertexExpressDefaultModels);
-      } else if (isMiniMax && models.isEmpty) {
+      if (isMiniMax && models.isEmpty) {
         models = List<String>.from(kMiniMaxDefaultChatModels);
       } else if (isZai && models.isEmpty) {
         models = List<String>.from(kZaiDefaultChatModels);
@@ -111,8 +112,8 @@ class UiModelsApi {
       } catch (e) {
         if (isNovelAi) {
           models = List<String>.from(kNovelAiDefaultModels);
-        } else if (isVertexExpress) {
-          models = List<String>.from(kVertexExpressDefaultModels);
+        } else if (isGemini) {
+          models = const <String>[];
         } else if (isMiniMax) {
           models = List<String>.from(kMiniMaxDefaultChatModels);
         } else if (isZai) {

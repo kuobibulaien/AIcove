@@ -144,6 +144,41 @@ void main() {
         'voice': 'speech:tenant:voice-id',
       });
     });
+
+    test('binding 兼容旧厂商 providerId 时仍优先使用渠道音色', () {
+      final context = TtsSynthesisContext(
+        config: TtsConfig(
+          selectedProviderId: 'provider_sf',
+          model: 'IndexTeam/IndexTTS-2',
+          voicePresets: [
+            VoicePreset(
+              id: 'preset-binding',
+              name: '绑定音色',
+              bindings: const [
+                VoiceChannelBinding(
+                  providerId: 'siliconflow',
+                  providerName: '硅基流动',
+                  adapterId: 'siliconflow',
+                  modelId: 'IndexTeam/IndexTTS-2',
+                  remoteVoiceId: 'speech:binding:voice-id',
+                ),
+              ],
+            ),
+          ],
+          selectedVoicePresetId: 'preset-binding',
+        ),
+        text: 'binding voice',
+        rawUrl: 'https://api.siliconflow.cn/v1',
+        requestFormat: 'siliconflow_indextts',
+      );
+
+      expect(adapter.buildRequestBody(context), {
+        'model': 'IndexTeam/IndexTTS-2',
+        'input': 'binding voice',
+        'response_format': 'mp3',
+        'voice': 'speech:binding:voice-id',
+      });
+    });
   });
 
   group('MinimaxTtsSynthesisAdapter', () {
@@ -236,6 +271,43 @@ void main() {
         'subtitle_enable': false,
         'output_format': 'hex',
       });
+    });
+
+    test('手填 binding 会覆盖 config.voice', () {
+      final context = TtsSynthesisContext(
+        config: TtsConfig(
+          selectedProviderId: 'provider_minimax',
+          model: 'speech-2.8-hd',
+          voice: 'fallback-voice',
+          voicePresets: [
+            VoicePreset(
+              id: 'preset-binding',
+              name: 'MiniMax 绑定',
+              bindings: const [
+                VoiceChannelBinding(
+                  providerId: 'provider_minimax',
+                  providerName: 'MiniMax 渠道',
+                  adapterId: 'minimax',
+                  modelId: 'speech-2.8-hd',
+                  remoteVoiceId: 'custom-voice-id',
+                  sourceKind: VoiceBindingSourceKind.manual,
+                ),
+              ],
+            ),
+          ],
+          selectedVoicePresetId: 'preset-binding',
+        ),
+        text: 'hello',
+        rawUrl: 'https://api.minimaxi.com/v1',
+        providerId: 'minimax',
+        requestFormat: 'openai_tts',
+      );
+
+      final body = adapter.buildRequestBody(context);
+      expect(
+        (body['voice_setting'] as Map<String, dynamic>)['voice_id'],
+        'custom-voice-id',
+      );
     });
   });
 

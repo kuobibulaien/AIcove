@@ -360,7 +360,6 @@ class ChatSendService {
     final createdAt = DateTime.now();
     final rawPayload = ChatMessageProjectionCodec.buildRawAssistantPayload(
       apiResult: apiResult,
-      projectedMessages: projectedMessages,
     );
     final toolBlocks = _buildRawToolBlocks(
       messageId: rawMessageId,

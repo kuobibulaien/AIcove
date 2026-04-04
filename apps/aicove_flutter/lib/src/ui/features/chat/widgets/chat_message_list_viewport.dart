@@ -14,6 +14,15 @@ extension _ChatMessageListViewportX on _ChatMessageListState {
 
   void _handleViewportControllerChanged() {
     if (!mounted) return;
+    final schedulerPhase = SchedulerBinding.instance.schedulerPhase;
+    if (schedulerPhase == SchedulerPhase.persistentCallbacks ||
+        schedulerPhase == SchedulerPhase.midFrameMicrotasks) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _handleViewportControllerChanged();
+      });
+      return;
+    }
     final nextSerial = widget.viewportController.scrollToBottomRequestSerial;
     final shouldRequestScroll =
         nextSerial != _handledViewportScrollRequestSerial;

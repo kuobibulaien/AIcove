@@ -1,12 +1,104 @@
+import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:aicove_flutter/src/core/database/database.dart' as db;
+import 'package:aicove_flutter/src/core/database/database_provider.dart';
 import 'package:aicove_flutter/src/features/chat/conversation_providers.dart';
 import 'package:aicove_flutter/src/features/chat/conversation_timeline_providers.dart';
+import 'package:aicove_flutter/src/features/chat/services/conversation_short_window_store.dart';
 import 'package:aicove_flutter/src/features/observability/trace_models.dart';
 import 'package:aicove_flutter/src/ui/features/chat/pages/chat_page.dart';
 import 'package:aicove_flutter/src/ui/features/chat/pages/deferred_conversation_activation.dart';
+
+class _ChatPageShortWindowHarness {
+  const _ChatPageShortWindowHarness({
+    required this.database,
+    required this.container,
+    required this.conversationId,
+  });
+
+  final db.AppDatabase database;
+  final ProviderContainer container;
+  final String conversationId;
+}
+
+Future<void> _insertConversation(
+  db.AppDatabase database,
+  String conversationId,
+  int timestamp,
+) {
+  return database.into(database.conversations).insert(
+        db.ConversationsCompanion.insert(
+          id: conversationId,
+          title: '测试会话',
+          displayName: '测试会话',
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        ),
+      );
+}
+
+Future<void> _insertMessage(
+  db.AppDatabase database,
+  String conversationId, {
+  required String id,
+  required String role,
+  required String content,
+  required int createdAt,
+}) {
+  return database.into(database.messages).insert(
+        db.MessagesCompanion.insert(
+          id: id,
+          conversationId: conversationId,
+          role: role,
+          content: content,
+          createdAt: createdAt,
+        ),
+      );
+}
+
+Future<_ChatPageShortWindowHarness> _createChatPageShortWindowHarness() async {
+  final database = db.AppDatabase.forTesting(NativeDatabase.memory());
+  final conversationId = 'conv_local_stage';
+  final baseTime = DateTime(2026, 3, 27, 14, 0, 0).millisecondsSinceEpoch;
+  await _insertConversation(database, conversationId, baseTime);
+
+  for (var i = 1; i <= 40; i++) {
+    await _insertMessage(
+      database,
+      conversationId,
+      id: 'm$i',
+      role: i.isOdd ? 'user' : 'assistant',
+      content: 'message-$i',
+      createdAt: baseTime + i,
+    );
+  }
+
+  final container = ProviderContainer(
+    overrides: [
+      databaseProvider.overrideWithValue(database),
+    ],
+  );
+
+  final store = container.read(conversationTimelineCacheProvider);
+  await store.reloadConversationFromRawStore(
+    conversationId,
+    targetMessageCount: kConversationInitialVisibleCount,
+  );
+  final addedCount = await store.loadOlderMessages(
+    conversationId: conversationId,
+    pageSize: 5,
+  );
+  expect(addedCount, 5);
+
+  return _ChatPageShortWindowHarness(
+    database: database,
+    container: container,
+    conversationId: conversationId,
+  );
+}
 
 class _ActivationHarness extends ConsumerStatefulWidget {
   const _ActivationHarness({
@@ -120,7 +212,28 @@ void main() {
     expect(container.read(activeConversationIdProvider), 'conv_b');
   });
 
-  test('退出监听后可见窗口应保留最近一次历史窗口大小', () async {
+  test('聊天页上滑分页时，应先消费会话热缓存，再继续查数据库历史页', () async {
+    final harness = await _createChatPageShortWindowHarness();
+    addTearDown(harness.container.dispose);
+    addTearDown(harness.database.close);
+
+    final store = harness.container.read(conversationTimelineCacheProvider);
+    final firstVisibleCount = await resolveChatPageLoadMoreVisibleCount(
+      store: store,
+      conversationId: harness.conversationId,
+      currentVisibleCount: kConversationInitialVisibleCount,
+    );
+    expect(firstVisibleCount, 25);
+
+    final secondVisibleCount = await resolveChatPageLoadMoreVisibleCount(
+      store: store,
+      conversationId: harness.conversationId,
+      currentVisibleCount: firstVisibleCount,
+    );
+    expect(secondVisibleCount, 40);
+  });
+
+  test('退出监听后可见窗口应回到默认首屏大小，避免重进会话沿用旧窗口值', () async {
     final container = ProviderContainer();
     addTearDown(container.dispose);
 
@@ -132,15 +245,18 @@ void main() {
 
     expect(subscription.read(), kConversationInitialVisibleCount);
     container.read(conversationVisibleCountProvider('conv_a').notifier).state =
-        12;
-    expect(subscription.read(), 12);
+        kConversationInitialVisibleCount + 12;
+    expect(
+      subscription.read(),
+      kConversationInitialVisibleCount + 12,
+    );
 
     subscription.close();
     await container.pump();
 
     expect(
       container.read(conversationVisibleCountProvider('conv_a')),
-      12,
+      kConversationInitialVisibleCount,
     );
   });
 

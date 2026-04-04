@@ -200,11 +200,13 @@ extension ChatActionsActionOps on ChatActions {
     if (conv == null) return;
     final convId = conv.id;
     final messages = await _loadConversationMessages(convId);
-
-    final failedMsg = messages.firstWhere(
-      (m) => m.id == messageId && m.status == 'failed',
-      orElse: () => throw Exception('消息不存在或状态不正确'),
+    final failedMsg = await _resolveCanonicalActionMessage(
+      convId: convId,
+      messageId: messageId,
     );
+    if (failedMsg == null || failedMsg.status != 'failed') {
+      throw Exception('消息不存在或状态不正确');
+    }
 
     final runId = _startGeneration(convId: convId, userMsgId: messageId);
     final traceContext = await _startTurnTrace(
@@ -225,6 +227,7 @@ extension ChatActionsActionOps on ChatActions {
     _setGenerationInterruptCleanup(convId, runId, () async {
       await streamDelivery?.removePlaceholders();
       streamDelivery?.dispose();
+      await _restoreFrontendMessagesFromHistory(convId);
     });
     try {
       await _runWithProviderRefreshRetry<void>(
@@ -249,7 +252,10 @@ extension ChatActionsActionOps on ChatActions {
             ),
             loadSettings: () => _ref.read(appSettingsProvider.future),
             prepareTurn: (settings) async {
-              final msgIndex = messages.indexWhere((m) => m.id == messageId);
+              final msgIndex = _findFirstMessageIndexByIdOrSource(
+                messages,
+                messageId,
+              );
               final rawHistory =
                   msgIndex > 0 ? messages.sublist(0, msgIndex + 1) : messages;
               final history = rawHistory
@@ -421,7 +427,11 @@ extension ChatActionsActionOps on ChatActions {
     final conv = _ref.read(activeConversationProvider);
     if (conv == null) return null;
     final messages = await _loadConversationMessages(conv.id);
-    final userMsg = _findRegenerateSourceUserMessage(messages, aiMessageId);
+    final userMsg = await _findRegenerateSourceUserMessage(
+      conv.id,
+      messages,
+      aiMessageId,
+    );
     if (userMsg == null || !_canReuseTextSendForRegenerate(userMsg)) {
       return null;
     }
@@ -437,11 +447,23 @@ extension ChatActionsActionOps on ChatActions {
     return userText;
   }
 
-  Message? _findRegenerateSourceUserMessage(
+  Future<Message?> _findRegenerateSourceUserMessage(
+    String convId,
     List<Message> messages,
     String aiMessageId,
-  ) {
-    final msgIndex = messages.indexWhere((m) => m.id == aiMessageId);
+  ) async {
+    final targetMessage = await _resolveCanonicalActionMessage(
+      convId: convId,
+      messageId: aiMessageId,
+    );
+    if (targetMessage == null) {
+      return null;
+    }
+
+    final msgIndex = _findFirstMessageIndexByIdOrSource(
+      messages,
+      targetMessage.id,
+    );
     if (msgIndex < 0) return null;
 
     int userMsgIndex = msgIndex - 1;
@@ -449,7 +471,7 @@ extension ChatActionsActionOps on ChatActions {
       userMsgIndex--;
     }
     if (userMsgIndex < 0) return null;
-    return messages[userMsgIndex];
+    return _canonicalizeActionMessage(convId, messages[userMsgIndex]);
   }
 
   bool _canReuseTextSendForRegenerate(Message userMsg) {
@@ -473,7 +495,11 @@ extension ChatActionsActionOps on ChatActions {
     final convId = conv.id;
     final messages = await _loadConversationMessages(convId);
 
-    final userMsg = _findRegenerateSourceUserMessage(messages, aiMessageId);
+    final userMsg = await _findRegenerateSourceUserMessage(
+      convId,
+      messages,
+      aiMessageId,
+    );
     if (userMsg == null) return;
     final userText = userMsg.displayText;
     final traceContext = await _startTurnTrace(
@@ -497,6 +523,7 @@ extension ChatActionsActionOps on ChatActions {
     _setGenerationInterruptCleanup(convId, runId, () async {
       await streamDelivery?.removePlaceholders();
       streamDelivery?.dispose();
+      await _restoreFrontendMessagesFromHistory(convId);
     });
     try {
       await _runWithProviderRefreshRetry<void>(
@@ -682,6 +709,7 @@ extension ChatActionsActionOps on ChatActions {
         status: TraceEventStatus.failed,
         meta: {'error': e.toString()},
       );
+      await _restoreFrontendMessagesFromHistory(convId);
       _setConversationError(convId, e.toString());
     } finally {
       if (!streamCommitted) {
@@ -696,15 +724,14 @@ extension ChatActionsActionOps on ChatActions {
   Future<void> recallFailedMessage(String messageId) async {
     final conv = _ref.read(activeConversationProvider);
     if (conv == null) return;
+    final convId = conv.id;
     final editingNotifier = _ref.read(editingTextProvider.notifier);
     final attachmentNotifier = _ref.read(recalledAttachmentProvider.notifier);
-    final messages = await _loadConversationMessages(conv.id);
-
-    final idx = messages.indexWhere(
-      (m) => m.id == messageId && m.status == 'failed',
+    final failedMsg = await _resolveCanonicalActionMessage(
+      convId: convId,
+      messageId: messageId,
     );
-    if (idx < 0) return;
-    final failedMsg = messages[idx];
+    if (failedMsg == null || failedMsg.status != 'failed') return;
 
     // 将失败消息文本填入输入框
     final text = _extractEditableTextForRecall(failedMsg);
@@ -713,7 +740,7 @@ extension ChatActionsActionOps on ChatActions {
     }
     attachmentNotifier.state = _extractAttachmentForRecall(failedMsg);
 
-    await deleteMessage(messageId);
+    await deleteMessage(failedMsg.id);
   }
 
   String _extractEditableTextForRecall(Message msg) {
@@ -775,19 +802,21 @@ extension ChatActionsActionOps on ChatActions {
     final convId = conv.id;
     final quoted = _ref.read(quotedMessageProvider);
     final quotedNotifier = _ref.read(quotedMessageProvider.notifier);
-    final messages = await _loadConversationMessages(convId);
-
-    final idx = messages.indexWhere((m) => m.id == messageId);
-    if (idx < 0) return;
+    final actionMessage = await _resolveCanonicalActionMessage(
+      convId: convId,
+      messageId: messageId,
+    );
+    if (actionMessage == null) return;
 
     // 如果当前引用的是被删除消息，一并清空引用态
-    if (quoted?.id == messageId) {
+    final deleteId = actionMessage.id;
+    if (quoted?.id == messageId || quoted?.id == deleteId) {
       quotedNotifier.state = null;
     }
 
     await _historyPort.softDeleteMessages(
       convId,
-      [messageId],
+      [deleteId],
       clearContextStartIfDeleted: true,
     );
   }
@@ -798,20 +827,89 @@ extension ChatActionsActionOps on ChatActions {
     if (conv == null) return null;
     final convId = conv.id;
     final attachmentNotifier = _ref.read(recalledAttachmentProvider.notifier);
-    final messages = await _loadConversationMessages(convId);
-
-    final msgIndex = messages.indexWhere((m) => m.id == messageId);
-    if (msgIndex < 0) return null;
-
-    final msg = messages[msgIndex];
+    final msg = await _resolveCanonicalActionMessage(
+      convId: convId,
+      messageId: messageId,
+    );
+    if (msg == null) return null;
     final text = _extractEditableTextForRecall(msg);
     attachmentNotifier.state = _extractAttachmentForRecall(msg);
 
     await _historyPort.truncateFromMessage(
       conversationId: convId,
-      fromMessageId: messageId,
+      fromMessageId: msg.id,
     );
 
     return text;
+  }
+
+  int _findFirstMessageIndexByIdOrSource(
+    List<Message> messages,
+    String messageId,
+  ) {
+    final normalizedMessageId = messageId.trim();
+    if (normalizedMessageId.isEmpty) return -1;
+    return messages.indexWhere((message) {
+      final sourceMessageId = message.sourceMessageId?.trim();
+      return message.id == normalizedMessageId ||
+          (sourceMessageId != null && sourceMessageId == normalizedMessageId);
+    });
+  }
+
+  Future<Message?> _resolveCanonicalActionMessage({
+    required String convId,
+    required String messageId,
+  }) async {
+    final history = await _loadConversationMessages(convId);
+    final directIndex = _findFirstMessageIndexByIdOrSource(history, messageId);
+    if (directIndex >= 0) {
+      return _canonicalizeActionMessage(
+        convId,
+        history[directIndex],
+        history: history,
+      );
+    }
+
+    final historyStore = _ref.read(chatHistoryStoreProvider);
+    final resolved = await historyStore.loadFrontendMessageById(
+      messageId,
+      conversationId: convId,
+    );
+    if (resolved == null) {
+      return null;
+    }
+    return _canonicalizeActionMessage(
+      convId,
+      resolved,
+      history: history,
+    );
+  }
+
+  Future<Message> _canonicalizeActionMessage(
+    String convId,
+    Message message,
+    {List<Message>? history,}
+  ) async {
+    final sourceMessageId = message.sourceMessageId?.trim();
+    if (sourceMessageId == null ||
+        sourceMessageId.isEmpty ||
+        sourceMessageId == message.id) {
+      return message;
+    }
+
+    final resolvedHistory = history ?? await _loadConversationMessages(convId);
+    final sourceIndex = resolvedHistory.indexWhere(
+      (item) => item.id == sourceMessageId,
+    );
+    if (sourceIndex >= 0) {
+      return resolvedHistory[sourceIndex];
+    }
+
+    final rawMessage = await _ref.read(chatHistoryStoreProvider).loadMessageById(
+          sourceMessageId,
+          conversationId: convId,
+          preferProjection: false,
+        );
+    return rawMessage ?? message;
   }
 }

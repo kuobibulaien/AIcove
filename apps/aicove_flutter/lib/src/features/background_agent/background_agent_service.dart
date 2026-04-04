@@ -39,7 +39,7 @@ final backgroundAgentServiceProvider = Provider<BackgroundAgentService>((ref) {
   const runner = ChatSendApiRunner();
   return BackgroundAgentService(
     loadRecentMessages: (conversationId, limit) =>
-        ref.read(chatHistoryStoreProvider).loadRecentMessages(
+        ref.read(chatHistoryStoreProvider).loadRecentProjectedMessages(
               conversationId,
               limit: limit,
             ),

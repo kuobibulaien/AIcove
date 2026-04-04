@@ -14,13 +14,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../features/plugins/plugin_providers.dart';
+import '../../../../features/plugins/tts/tts_available_models.dart';
 import '../../../../features/plugins/tts/tts_config.dart';
 import '../../../../features/plugins/tts/tts_provider_context.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/theme/tokens.dart';
 import 'tts_voice_preset_section.dart';
-
+ 
 /// TTS 设置表单组件
 class TtsSettingsForm extends ConsumerWidget {
   const TtsSettingsForm({super.key});
@@ -35,16 +36,19 @@ class TtsSettingsForm extends ConsumerWidget {
       config: config,
       settings: settings,
     );
+    final ttsModels = buildConfiguredTtsModels(settings);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildModelSection(context, config, notifier, settings),
+        _buildModelSection(context, config, notifier, ttsModels),
         const SizedBox(height: 16),
         TtsVoicePresetSection(
           config: config,
           notifier: notifier,
           providerContext: providerContext,
+          availableModels: ttsModels,
+          settings: settings,
         ),
         const SizedBox(height: 16),
         _buildVoiceFrequencySection(context, config, notifier),
@@ -58,29 +62,8 @@ class TtsSettingsForm extends ConsumerWidget {
     BuildContext context,
     TtsConfig config,
     TtsPluginConfigNotifier notifier,
-    AppSettings? settings,
+    List<TtsAvailableModelEntry> ttsModels,
   ) {
-    final ttsModels = <_TtsModelEntry>[];
-    if (settings != null) {
-      for (final provider in settings.providers) {
-        if (!provider.enabled) continue;
-        for (final modelId in settings.getProviderVisibleModelsByType(
-          provider.id,
-          type: ModelType.tts,
-        )) {
-          final modelRef = settings.buildModelRef(provider.id, modelId);
-          ttsModels.add(
-            _TtsModelEntry(
-              modelId: modelId,
-              providerId: provider.id,
-              providerName: provider.displayName ?? provider.id,
-              displayName: settings.getModelDisplayName(modelRef),
-            ),
-          );
-        }
-      }
-    }
-
     final selectedModelId = config.selectedModelId;
     final selectedProviderId = config.selectedProviderId;
     final hasStoredSelection =
@@ -140,7 +123,7 @@ class TtsSettingsForm extends ConsumerWidget {
 
   void _showTtsModelSelector(
     BuildContext context, {
-    required List<_TtsModelEntry> models,
+    required List<TtsAvailableModelEntry> models,
     required TtsConfig config,
     required TtsPluginConfigNotifier notifier,
   }) {
@@ -395,18 +378,4 @@ class TtsSettingsForm extends ConsumerWidget {
       }
     });
   }
-}
-
-class _TtsModelEntry {
-  final String modelId;
-  final String providerId;
-  final String providerName;
-  final String displayName;
-
-  const _TtsModelEntry({
-    required this.modelId,
-    required this.providerId,
-    required this.providerName,
-    required this.displayName,
-  });
 }

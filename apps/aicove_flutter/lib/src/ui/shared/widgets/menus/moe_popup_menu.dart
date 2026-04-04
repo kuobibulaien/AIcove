@@ -37,16 +37,15 @@ class MoePopupMenuItem {
 /// 悬浮气泡菜单
 class MoePopupMenu {
   /// 显示悬浮菜单
-  /// 
-  /// [targetKey] 目标元素的 GlobalKey，菜单会显示在其上方或下方
+  ///
+  /// [targetBox] 目标元素的 RenderBox，菜单会显示在其上方或下方
   /// [items] 菜单项列表
   static Future<void> show(
     BuildContext context, {
-    required GlobalKey targetKey,
+    required RenderBox targetBox,
     required List<MoePopupMenuItem> items,
   }) async {
-    final box = targetKey.currentContext?.findRenderObject() as RenderBox?;
-    if (box == null) return;
+    final box = targetBox;
 
     final overlay = Overlay.of(context);
     final overlayBox = overlay.context.findRenderObject() as RenderBox?;

@@ -1,8 +1,21 @@
 library;
 
 const kGoogleVertexExpressField = 'vertexExpress';
+const kGoogleVertexProviderId = 'vertex';
+const kGoogleVertexProviderDisplayName = 'Google Gemini';
+const kGoogleVertexProviderSplitMigrationId =
+    'google_vertex_provider_split_20260331';
 const kGeminiDeveloperApiBase =
     'https://generativelanguage.googleapis.com/v1beta';
+const kGoogleGeminiProviderDisplayName = 'Google Gemini';
+const kGeminiDeveloperDefaultModels = <String>[
+  'gemini-2.5-flash',
+  'gemini-2.5-pro',
+  'gemini-2.5-flash-lite',
+  'gemini-2.0-flash',
+  'gemini-2.0-flash-lite',
+  'gemini-3-flash-preview',
+];
 const kVertexExpressApiBase =
     'https://aiplatform.googleapis.com/v1/publishers/google';
 
@@ -22,8 +35,69 @@ bool isVertexExpressEnabled(Map<String, dynamic>? customConfig) {
   return normalized == 'true' || normalized == '1' || normalized == 'yes';
 }
 
+bool isVertexProviderId(String providerId) {
+  final normalized = providerId.trim().toLowerCase();
+  return normalized == kGoogleVertexProviderId ||
+      normalized.startsWith('${kGoogleVertexProviderId}__');
+}
+
+bool isGoogleGeminiDeveloperApiBaseUrl(String? baseUrl) {
+  final trimmed = baseUrl?.trim() ?? '';
+  if (trimmed.isEmpty) return false;
+
+  try {
+    final uri = Uri.parse(trimmed);
+    return uri.host.toLowerCase() == 'generativelanguage.googleapis.com';
+  } catch (_) {
+    return trimmed.toLowerCase().contains('generativelanguage.googleapis.com');
+  }
+}
+
+bool isGoogleAiPlatformPublisherBaseUrl(String? baseUrl) {
+  final trimmed = baseUrl?.trim() ?? '';
+  if (trimmed.isEmpty) return false;
+
+  try {
+    final uri = Uri.parse(trimmed);
+    final host = uri.host.toLowerCase();
+    if (!host.endsWith('aiplatform.googleapis.com')) {
+      return false;
+    }
+    final segments = uri.pathSegments
+        .where((segment) => segment.isNotEmpty)
+        .map((segment) => segment.toLowerCase())
+        .toList(growable: false);
+    final publishersIndex = segments.indexOf('publishers');
+    if (publishersIndex < 0 || publishersIndex + 1 >= segments.length) {
+      return false;
+    }
+    return segments[publishersIndex + 1] == 'google';
+  } catch (_) {
+    final normalized = trimmed.toLowerCase();
+    return normalized.contains('aiplatform.googleapis.com') &&
+        normalized.contains('/publishers/google');
+  }
+}
+
+bool isGeminiProviderId(String providerId) {
+  final normalized = providerId.trim().toLowerCase();
+  return normalized == 'gemini' ||
+      normalized == 'google' ||
+      normalized.startsWith('gemini__') ||
+      normalized.startsWith('google__');
+}
+
+Map<String, dynamic> ensureVertexProviderCustomConfig(
+  Map<String, dynamic>? customConfig,
+) {
+  final next = Map<String, dynamic>.from(customConfig ?? const {});
+  next['requestFormat'] = 'gemini';
+  next[kGoogleVertexExpressField] = true;
+  return next;
+}
+
 String googleSuggestedBaseUrl({required bool vertexExpress}) {
-  return vertexExpress ? kVertexExpressApiBase : kGeminiDeveloperApiBase;
+  return kGeminiDeveloperApiBase;
 }
 
 String normalizeGoogleModelId(
@@ -38,11 +112,9 @@ String normalizeGoogleModelId(
     '',
   );
 
-  if (vertexExpress) {
-    const publisherPrefix = 'publishers/google/models/';
-    if (normalized.startsWith(publisherPrefix)) {
-      return normalized.substring(publisherPrefix.length);
-    }
+  const publisherPrefix = 'publishers/google/models/';
+  if (normalized.startsWith(publisherPrefix)) {
+    return normalized.substring(publisherPrefix.length);
   }
 
   if (normalized.startsWith('models/')) {
@@ -59,25 +131,13 @@ String buildGoogleGenerateContentEndpoint({
   required bool vertexExpress,
 }) {
   final normalizedBase = baseUrl.trim().replaceAll(RegExp(r'/+$'), '');
-  final fallbackModel =
-      vertexExpress ? 'gemini-2.0-flash-001' : 'gemini-2.0-flash';
+  final fallbackModel = 'gemini-2.0-flash';
   final modelId = normalizeGoogleModelId(
     model.trim().isEmpty ? fallbackModel : model,
     vertexExpress: vertexExpress,
   );
   final operation = streaming ? 'streamGenerateContent' : 'generateContent';
-
-  if (!vertexExpress) {
-    return '$normalizedBase/models/$modelId:$operation';
-  }
-
-  if (normalizedBase.endsWith('/publishers/google/models')) {
-    return '$normalizedBase/$modelId:$operation';
-  }
-  if (normalizedBase.endsWith('/publishers/google')) {
-    return '$normalizedBase/models/$modelId:$operation';
-  }
-  return '$normalizedBase/publishers/google/models/$modelId:$operation';
+  return '$normalizedBase/models/$modelId:$operation';
 }
 
 Uri buildGoogleRequestUri({
@@ -86,13 +146,10 @@ Uri buildGoogleRequestUri({
   required String apiKey,
 }) {
   final uri = Uri.parse(endpoint);
-  if (!vertexExpress) return uri;
-
-  final trimmedKey = apiKey.trim();
-  if (trimmedKey.isEmpty) return uri;
-
-  final query = <String, String>{...uri.queryParameters, 'key': trimmedKey};
-  return uri.replace(queryParameters: query);
+  if (!vertexExpress) {
+    return uri;
+  }
+  return _appendGoogleApiKeyQuery(uri, apiKey);
 }
 
 Uri buildGooglePublisherModelsListUri({
@@ -100,39 +157,30 @@ Uri buildGooglePublisherModelsListUri({
   required String apiKey,
 }) {
   final normalizedBase =
-      (baseUrl.trim().isEmpty ? kVertexExpressApiBase : baseUrl.trim());
-  final uri = Uri.parse(normalizedBase);
-  final segments = uri.pathSegments.where((segment) => segment.isNotEmpty);
-  final pathSegments = segments.toList();
-  final publishersIndex = pathSegments.indexOf('publishers');
-  final prefix = publishersIndex >= 0
-      ? pathSegments.sublist(0, publishersIndex)
-      : List<String>.from(pathSegments);
-
-  if (prefix.isEmpty) {
-    prefix.add('v1beta1');
-  } else {
-    final version = prefix.last.toLowerCase();
-    if (version == 'v1' || version == 'v1beta' || version == 'v1beta1') {
-      prefix[prefix.length - 1] = 'v1beta1';
-    } else {
-      prefix.add('v1beta1');
-    }
-  }
-
-  final query = <String, String>{
-    ...uri.queryParameters,
-    if (apiKey.trim().isNotEmpty) 'key': apiKey.trim(),
-  };
-
-  return uri.replace(
+      (baseUrl.trim().isEmpty ? kGeminiDeveloperApiBase : baseUrl.trim());
+  final uri = Uri.parse(normalizedBase.replaceAll(RegExp(r'/+$'), ''));
+  final listUri = uri.replace(
     pathSegments: <String>[
-      ...prefix,
-      'publishers',
-      'google',
-      'models',
+      ...uri.pathSegments.where((segment) => segment.isNotEmpty),
+      'models'
     ],
-    queryParameters: query.isEmpty ? null : query,
+  );
+  if (!isGoogleAiPlatformPublisherBaseUrl(baseUrl)) {
+    return listUri;
+  }
+  return _appendGoogleApiKeyQuery(listUri, apiKey);
+}
+
+Uri _appendGoogleApiKeyQuery(Uri uri, String apiKey) {
+  final trimmedKey = apiKey.trim();
+  if (trimmedKey.isEmpty || uri.queryParameters.containsKey('key')) {
+    return uri;
+  }
+  return uri.replace(
+    queryParameters: <String, String>{
+      ...uri.queryParameters,
+      'key': trimmedKey,
+    },
   );
 }
 

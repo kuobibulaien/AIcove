@@ -44,19 +44,24 @@ class ChatChunkedMessageItem extends ChatMessageListItem {
 }
 
 class ChatTimeDividerItem extends ChatMessageListItem {
-  const ChatTimeDividerItem(this.time);
+  const ChatTimeDividerItem(
+    this.time, {
+    required this.associatedMessageId,
+  });
 
   final DateTime time;
+  final String associatedMessageId;
 }
 
 class ChatNewTopicDividerItem extends ChatMessageListItem {
-  const ChatNewTopicDividerItem();
+  const ChatNewTopicDividerItem({required this.associatedMessageId});
+
+  final String associatedMessageId;
 }
 
 List<ChatMessageListItem> buildChatMessageListItems({
   required List<Message> messages,
   MessageFormatConfig? config,
-  String? contextStartMessageId,
 }) {
   final items = <ChatMessageListItem>[];
   final enableChunking = config?.enableChunking ?? true;
@@ -66,14 +71,24 @@ List<ChatMessageListItem> buildChatMessageListItems({
     var hasTimeDivider = false;
 
     if (index == 0) {
-      items.add(ChatTimeDividerItem(currentMessage.createdAt));
+      items.add(
+        ChatTimeDividerItem(
+          currentMessage.createdAt,
+          associatedMessageId: currentMessage.id,
+        ),
+      );
       hasTimeDivider = true;
     } else {
       final previousMessage = messages[index - 1];
       final timeDiff =
           currentMessage.createdAt.difference(previousMessage.createdAt);
       if (timeDiff.inMinutes >= 20) {
-        items.add(ChatTimeDividerItem(currentMessage.createdAt));
+        items.add(
+          ChatTimeDividerItem(
+            currentMessage.createdAt,
+            associatedMessageId: currentMessage.id,
+          ),
+        );
         hasTimeDivider = true;
       }
     }
@@ -114,10 +129,6 @@ List<ChatMessageListItem> buildChatMessageListItems({
             ),
           );
         }
-        if (contextStartMessageId != null &&
-            currentMessage.id == contextStartMessageId) {
-          items.add(const ChatNewTopicDividerItem());
-        }
         continue;
       }
     }
@@ -132,11 +143,6 @@ List<ChatMessageListItem> buildChatMessageListItems({
         showAvatar: showAvatar,
       ),
     );
-
-    if (contextStartMessageId != null &&
-        currentMessage.id == contextStartMessageId) {
-      items.add(const ChatNewTopicDividerItem());
-    }
   }
 
   return items;

@@ -97,4 +97,19 @@ class TtsProviderContext {
       selectedModelId: _resolveSelectedModelId(config, providerAuth),
     );
   }
+
+  static TtsProviderContext resolveForSelection({
+    required TtsConfig config,
+    required AppSettings? settings,
+    required String providerId,
+    required String modelId,
+  }) {
+    return resolve(
+      config: config.copyWith(
+        selectedProviderId: providerId,
+        selectedModelId: modelId,
+      ),
+      settings: settings,
+    );
+  }
 }

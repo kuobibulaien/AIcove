@@ -9,7 +9,6 @@ import '../../plugins/image/image_plugin.dart';
 import '../../plugins/plugin_providers.dart';
 import '../../../core/app_logger.dart';
 import '../../../core/database/database_provider.dart';
-import '../../../core/models/block_status.dart';
 import '../../../core/models/message_block.dart';
 import 'chat_history_store.dart';
 import 'chat_request_message_builder.dart';
@@ -49,27 +48,13 @@ class ChatDeferredImageDelivery {
 
   Future<DateTime> resolvePlaceholderBaseTime(String convId) async {
     final allMessages = await _ref
-        .read(conversationShortWindowStoreProvider)
-        .loadAllMessages(convId);
+        .read(conversationTimelineCacheProvider)
+        .loadCachedMessages(convId);
     final lastCreatedAt =
         allMessages.isNotEmpty ? allMessages.last.createdAt : DateTime.now();
     final now = DateTime.now();
     if (now.isAfter(lastCreatedAt)) return now;
     return lastCreatedAt.add(const Duration(milliseconds: 1));
-  }
-
-  Future<void> upsertPlaceholders({
-    required String convId,
-    required List<DeferredImageJob> jobs,
-  }) async {
-    for (final job in jobs) {
-      await _upsertPlaceholder(
-        convId: convId,
-        messageId: job.messageId,
-        createdAt: job.createdAt,
-        sourceMessageId: job.sourceMessageId,
-      );
-    }
   }
 
   void scheduleJobs({
@@ -78,97 +63,44 @@ class ChatDeferredImageDelivery {
   }) {
     for (final job in jobs) {
       _runBackgroundTask('deferred_image_${job.messageId}', () async {
-        var keepMessageInTimeline = false;
-        try {
-          final imageResult = await _buildImageMessage(
-            convId: convId,
-            prompt: job.prompt,
-            messageId: job.messageId,
+        final imageResult = await _buildImageMessage(
+          convId: convId,
+          prompt: job.prompt,
+          messageId: job.messageId,
+        );
+        if (imageResult.message != null) {
+          final finalMessage = imageResult.message!.copyWith(
+            createdAt: job.createdAt,
+            sourceMessageId: job.sourceMessageId,
           );
-          if (imageResult.message != null) {
-            final finalMessage = imageResult.message!.copyWith(
-              createdAt: job.createdAt,
-              sourceMessageId: job.sourceMessageId,
-            );
-            await _enqueueStoreMutation(() {
-              return _ref.read(chatHistoryStoreProvider).updateMessage(
-                    conversationId: convId,
-                    message: finalMessage,
-                    lastMessagePreview: finalMessage.displayText,
-                  );
-            });
-            keepMessageInTimeline = true;
-          } else if ((job.failureAnchorMessageId ?? '').trim().isNotEmpty &&
-              imageResult.failurePayload != null) {
-            await _attachHiddenImageContextToMessage(
-              convId: convId,
-              anchorMessageId: job.failureAnchorMessageId!,
-              payload: imageResult.failurePayload!,
-            );
-          } else if (imageResult.failurePayload != null) {
-            AppLogger.warning(
-                'ChatDeferredImageDelivery', '失败图片缺少可挂载锚点，已跳过上下文回写',
-                metadata: {
-                  'convId': convId,
-                  'messageId': job.messageId,
-                  'promptLength': job.prompt.length,
-                });
-          }
-        } finally {
-          if (!keepMessageInTimeline) {
-            await removePlaceholders(
-              convId: convId,
-              messageIds: [job.messageId],
-            );
-          }
+          await _enqueueStoreMutation(() {
+            return _ref.read(chatHistoryStoreProvider).updateMessage(
+                  conversationId: convId,
+                  message: finalMessage,
+                  lastMessagePreview: finalMessage.displayText,
+                );
+          });
+          return;
+        }
+        if ((job.failureAnchorMessageId ?? '').trim().isNotEmpty &&
+            imageResult.failurePayload != null) {
+          await _attachHiddenImageContextToMessage(
+            convId: convId,
+            anchorMessageId: job.failureAnchorMessageId!,
+            payload: imageResult.failurePayload!,
+          );
+          return;
+        }
+        if (imageResult.failurePayload != null) {
+          AppLogger.warning('ChatDeferredImageDelivery', '失败图片缺少可挂载锚点，已跳过上下文回写',
+              metadata: {
+                'convId': convId,
+                'messageId': job.messageId,
+                'promptLength': job.prompt.length,
+              });
         }
       });
     }
-  }
-
-  Future<void> removePlaceholders({
-    required String convId,
-    required Iterable<String> messageIds,
-  }) async {
-    final normalizedIds = <String>[
-      for (final messageId in messageIds)
-        if (messageId.trim().isNotEmpty) messageId.trim(),
-    ];
-    if (normalizedIds.isEmpty) return;
-    await _enqueueStoreMutation(() {
-      return _ref.read(chatHistoryStoreProvider).softDeleteMessages(
-            convId,
-            normalizedIds,
-          );
-    });
-  }
-
-  Future<void> _upsertPlaceholder({
-    required String convId,
-    required String messageId,
-    required DateTime createdAt,
-    String? sourceMessageId,
-  }) async {
-    final placeholder = Message.fromBlocks(
-      id: messageId,
-      role: 'assistant',
-      sourceMessageId: sourceMessageId,
-      blocks: [
-        TextBlock(
-          messageId: messageId,
-          content: '生成中...',
-          status: BlockStatus.streaming,
-        ),
-      ],
-      createdAt: createdAt,
-      status: 'sending',
-    );
-    await _enqueueStoreMutation(() {
-      return _ref.read(chatHistoryStoreProvider).updateMessage(
-            conversationId: convId,
-            message: placeholder,
-          );
-    });
   }
 
   Future<_ImageBuildResult> _buildImageMessage({

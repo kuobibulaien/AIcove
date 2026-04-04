@@ -26,10 +26,11 @@ class ContextAnalyzer {
     final autoReplySettings = settings.autoReplySettings;
     if (!autoReplySettings.enabled) return;
 
-    final recent = await _ref.read(chatHistoryStoreProvider).loadRecentMessages(
-          conversation.id,
-          limit: 10,
-        );
+    final recent =
+        await _ref.read(chatHistoryStoreProvider).loadRecentProjectedMessages(
+              conversation.id,
+              limit: 10,
+            );
     if (recent.isEmpty) return;
 
     // 根据时间增强插件配置决定是否添加时间戳
@@ -142,20 +143,34 @@ Do not output markdown. Just JSON.
       final isolatedSessionId =
           'scheduler_${DateTime.now().millisecondsSinceEpoch}';
 
-      final response = await _agent.sendMessage(
-        agentId: 'scheduler',
-        sessionId: isolatedSessionId,
-        modelFullId: modelFull,
-        messages: messagesJson,
-        userText: '',
-        temperature: 0.3, // Low temp for JSON
-        token: settings.backendApiKey,
-        providerApiBase: apiBase,
-        providerApiKey: apiKey,
-      );
+      final responseText = apiKey != null && apiKey.isNotEmpty
+          ? (await _agent.sendMessageRich(
+              agentId: 'scheduler',
+              sessionId: isolatedSessionId,
+              modelFullId: modelFull,
+              messages: messagesJson,
+              userText: '',
+              temperature: 0.3, // Low temp for JSON
+              token: settings.backendApiKey,
+              providerApiBase: apiBase,
+              providerApiKey: apiKey,
+              customConfig: providerAuth.customConfig,
+            ))
+              .text
+          : await _agent.sendMessage(
+              agentId: 'scheduler',
+              sessionId: isolatedSessionId,
+              modelFullId: modelFull,
+              messages: messagesJson,
+              userText: '',
+              temperature: 0.3, // Low temp for JSON
+              token: settings.backendApiKey,
+              providerApiBase: apiBase,
+              providerApiKey: apiKey,
+            );
 
       await _processResponse(
-        jsonStr: response,
+        jsonStr: responseText,
         conversation: conversation,
         recentMessages: recent,
         settings: settings,

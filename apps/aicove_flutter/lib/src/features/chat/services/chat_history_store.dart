@@ -7,9 +7,12 @@ import '../../../core/database/database.dart' as db;
 import '../../../core/database/database_provider.dart';
 import '../../../core/database/converters/database_converters.dart';
 import '../../../core/models/message_block.dart';
+import '../../plugins/domain/plugin_content.dart';
 import '../domain/message.dart';
 import 'chat_frontend_message_projection_service.dart';
+import 'chat_message_processor.dart';
 import 'chat_message_projection_codec.dart';
+import 'chat_types.dart';
 import 'conversation_short_window_store.dart';
 
 class ConversationMessageWindow {
@@ -152,13 +155,15 @@ class ChatHistoryStore {
 
   db.AppDatabase get _db => _ref.read(databaseProvider);
 
-  Future<List<Message>> loadFrontendMessages(String conversationId) {
+  Future<List<Message>> loadCachedTimelineMessages(String conversationId) {
     return _ref
-        .read(conversationShortWindowStoreProvider)
-        .loadAllMessages(conversationId);
+        .read(conversationTimelineCacheProvider)
+        .loadCachedMessages(conversationId);
   }
 
-  Future<List<Message>> loadAllMessages(String conversationId) async {
+  Future<List<Message>> loadProjectedMessagesFromRawStore(
+    String conversationId,
+  ) async {
     final rawMessages = await loadAllRawMessages(conversationId);
     return _projectRawMessages(rawMessages);
   }
@@ -171,7 +176,7 @@ class ChatHistoryStore {
     return _buildRawMessagesFromDb(dbMessages);
   }
 
-  Future<List<Message>> loadRecentMessages(
+  Future<List<Message>> loadRecentProjectedMessages(
     String conversationId, {
     int limit = 30,
   }) async {
@@ -195,7 +200,7 @@ class ChatHistoryStore {
     if (dbMessage == null ||
         dbMessage.deletedAt != null ||
         dbMessage.replacedBy != null) {
-      return _ref.read(conversationShortWindowStoreProvider).findMessageById(
+      return _ref.read(conversationTimelineCacheProvider).findCachedMessageById(
             messageId,
             conversationId: conversationId,
           );
@@ -226,10 +231,10 @@ class ChatHistoryStore {
     if (normalizedMessageId.isEmpty) {
       return Future.value(null);
     }
-    return _ref.read(conversationShortWindowStoreProvider).findMessageById(
-          normalizedMessageId,
-          conversationId: conversationId,
-        );
+    return _loadBestEffortFrontendMessageById(
+      normalizedMessageId,
+      conversationId: conversationId,
+    );
   }
 
   Future<List<Message>> loadMessagesBefore({
@@ -271,6 +276,7 @@ class ChatHistoryStore {
     required Message message,
     required String displayText,
   }) async {
+    await _clearStaleShortWindowIfConversationEmpty(conversationId);
     await _upsertMessages(
       conversationId: conversationId,
       messages: [message],
@@ -315,7 +321,7 @@ class ChatHistoryStore {
       }
     }
     if (updateShortWindow && shortWindowUpdates.isNotEmpty) {
-      await _ref.read(conversationShortWindowStoreProvider).upsertMessages(
+      await _ref.read(conversationTimelineCacheProvider).upsertMessages(
             conversationId: conversationId,
             messages: shortWindowUpdates,
           );
@@ -330,40 +336,58 @@ class ChatHistoryStore {
     required String lastMessagePreview,
     bool updateShortWindow = true,
   }) async {
-    final persistedRawMessage = rawMessage.copyWith(
-      rawPayload: ChatMessageProjectionCodec.copyWithProjectedMessages(
-        rawMessage.rawPayload,
-        projectedMessages,
-      ),
-    );
-    List<Message> updatedUserMessages = const <Message>[];
     await _db.transaction(() async {
       final msgRepo = _ref.read(messageRepositoryProvider);
       if (userMessageId.trim().isNotEmpty) {
         await msgRepo.updateStatus(userMessageId, 'sent');
-        updatedUserMessages = await _loadFrontendMessagesForMessageId(
-          userMessageId,
-          conversationId: conversationId,
-        );
       }
-      await _upsertSingleMessage(conversationId, persistedRawMessage);
+      await _upsertSingleMessage(
+        conversationId,
+        rawMessage.copyWith(
+          rawPayload: ChatMessageProjectionCodec.removeProjectedMessages(
+            rawMessage.rawPayload,
+          ),
+        ),
+      );
       await _ref.read(conversationRepositoryProvider).updateSummary(
             conversationId,
             lastMessagePreview,
-            persistedRawMessage.createdAt.millisecondsSinceEpoch,
+            rawMessage.createdAt.millisecondsSinceEpoch,
           );
     });
 
-    if (updatedUserMessages.isNotEmpty ||
-        (updateShortWindow && projectedMessages.isNotEmpty)) {
+    if (projectedMessages.isNotEmpty) {
+      await _syncProjectionMappingsForRawMessage(
+        conversationId: conversationId,
+        rawMessageId: rawMessage.id,
+        projectedMessages: projectedMessages,
+      );
+    }
+
+    if (!updateShortWindow) {
+      return;
+    }
+
+    final updatedUserMessages = userMessageId.trim().isEmpty
+        ? const <Message>[]
+        : await _loadFrontendMessagesForMessageId(
+            userMessageId,
+            conversationId: conversationId,
+          );
+
+    if (updatedUserMessages.isNotEmpty || projectedMessages.isNotEmpty) {
       final shortWindowMessages = <Message>[
         ...updatedUserMessages,
-        if (updateShortWindow) ...projectedMessages,
+        ...projectedMessages,
       ];
-      await _ref.read(conversationShortWindowStoreProvider).upsertMessages(
+      await _ref.read(conversationTimelineCacheProvider).upsertMessages(
             conversationId: conversationId,
             messages: shortWindowMessages,
           );
+      await _syncRawSupplementsFromTimeline(
+        conversationId: conversationId,
+        rawMessageIds: {rawMessage.id},
+      );
     }
   }
 
@@ -378,7 +402,7 @@ class ChatHistoryStore {
       message: message,
     );
     if (projectedMessage != null) {
-      await _ref.read(conversationShortWindowStoreProvider).upsertMessage(
+      await _ref.read(conversationTimelineCacheProvider).upsertMessage(
             conversationId: conversationId,
             message: projectedMessage,
           );
@@ -389,7 +413,7 @@ class ChatHistoryStore {
               projectedMessage.createdAt.millisecondsSinceEpoch,
             );
       }
-      await _syncRawProjectionFromShortWindow(
+      await _syncRawSupplementsFromTimeline(
         conversationId: conversationId,
         rawMessageIds: {projectedMessage.sourceMessageId!},
       );
@@ -410,8 +434,8 @@ class ChatHistoryStore {
     required List<ConversationSupplementInsertOp> insertOps,
   }) async {
     if (insertOps.isEmpty) return;
-    final shortWindowStore = _ref.read(conversationShortWindowStoreProvider);
-    final allMessages = await shortWindowStore.loadAllMessages(conversationId);
+    final timelineCache = _ref.read(conversationTimelineCacheProvider);
+    final allMessages = await timelineCache.loadCachedMessages(conversationId);
     final messageById = <String, Message>{
       for (final message in allMessages) message.id: message,
     };
@@ -450,11 +474,15 @@ class ChatHistoryStore {
         for (var i = 0; i < existingAnchorIds.length; i++)
           existingAnchorIds[i]: i,
       };
-      final firstAnchorId = existingAnchorIds.first;
       final anchorMessages = <Message>[
         for (final id in existingAnchorIds)
           if (messageById[id] case final message?) message,
       ];
+      final anchorSourceIds = <String>{
+        for (final anchor in anchorMessages)
+          if (anchor.sourceMessageId?.trim().isNotEmpty ?? false)
+            anchor.sourceMessageId!.trim(),
+      };
       for (final entry in slotMessages.entries) {
         slotMessages[entry.key] = <Message>[
           for (final message in entry.value)
@@ -464,27 +492,46 @@ class ChatHistoryStore {
             ),
         ];
       }
-      var insertedBeforeFirst = false;
+      final slotBuckets = List<List<Message>>.generate(
+        existingAnchorIds.length + 1,
+        (_) => <Message>[],
+      );
+      var currentSlot = 0;
       for (final message in allMessages) {
-        if (!insertedBeforeFirst && message.id == firstAnchorId) {
-          rebuilt.addAll(slotMessages[0] ?? const <Message>[]);
-          insertedBeforeFirst = true;
-        }
-        rebuilt.add(message);
         final order = anchorOrder[message.id];
-        if (order == null) continue;
-        rebuilt.addAll(slotMessages[order + 1] ?? const <Message>[]);
+        if (order != null) {
+          currentSlot = order + 1;
+          continue;
+        }
+        slotBuckets[currentSlot].add(message);
+      }
+      rebuilt.addAll(slotBuckets[0]);
+      rebuilt.addAll(slotMessages[0] ?? const <Message>[]);
+      for (var i = 0; i < existingAnchorIds.length; i++) {
+        final anchorMessage = messageById[existingAnchorIds[i]];
+        if (anchorMessage == null) {
+          continue;
+        }
+        rebuilt.add(anchorMessage);
+        final bucket = slotBuckets[i + 1];
+        final leadingRelatedCount = _countLeadingRelatedMessages(
+          bucket,
+          anchorSourceIds: anchorSourceIds,
+        );
+        rebuilt.addAll(bucket.take(leadingRelatedCount));
+        rebuilt.addAll(slotMessages[i + 1] ?? const <Message>[]);
+        rebuilt.addAll(bucket.skip(leadingRelatedCount));
       }
     }
 
-    await shortWindowStore.replaceMessages(
+    await timelineCache.replaceMessages(
       conversationId: conversationId,
       removeMessageIds: [
         for (final message in allMessages) message.id,
       ],
       messages: rebuilt,
     );
-    await _syncRawProjectionFromShortWindow(
+    await _syncRawSupplementsFromTimeline(
       conversationId: conversationId,
       rawMessageIds: {
         for (final message in rebuilt)
@@ -522,7 +569,7 @@ class ChatHistoryStore {
       conversationId: conversationId,
     );
     if (messages.isNotEmpty) {
-      await _ref.read(conversationShortWindowStoreProvider).upsertMessages(
+      await _ref.read(conversationTimelineCacheProvider).upsertMessages(
             conversationId: conversationId,
             messages: messages,
           );
@@ -546,7 +593,7 @@ class ChatHistoryStore {
       message: message,
     );
     if (projectedMessage != null) {
-      await _ref.read(conversationShortWindowStoreProvider).upsertMessage(
+      await _ref.read(conversationTimelineCacheProvider).upsertMessage(
             conversationId: conversationId,
             message: projectedMessage,
           );
@@ -557,7 +604,7 @@ class ChatHistoryStore {
               projectedMessage.createdAt.millisecondsSinceEpoch,
             );
       }
-      await _syncRawProjectionFromShortWindow(
+      await _syncRawSupplementsFromTimeline(
         conversationId: conversationId,
         rawMessageIds: {projectedMessage.sourceMessageId!},
       );
@@ -566,7 +613,8 @@ class ChatHistoryStore {
 
     await _db.transaction(() async {
       await _upsertSingleMessage(conversationId, message);
-      final frontendMessages = _projectRawMessages(<Message>[message]);
+      final frontendMessages =
+          _projectRawMessagesForFrontendSurface(<Message>[message]);
       final effectiveTailMessage =
           frontendMessages.isNotEmpty ? frontendMessages.last : message;
       if (lastMessagePreview != null || frontendMessages.isNotEmpty) {
@@ -577,8 +625,9 @@ class ChatHistoryStore {
             );
       }
     });
-    final frontendMessages = _projectRawMessages(<Message>[message]);
-    await _ref.read(conversationShortWindowStoreProvider).upsertMessages(
+    final frontendMessages =
+        _projectRawMessagesForFrontendSurface(<Message>[message]);
+    await _ref.read(conversationTimelineCacheProvider).upsertMessages(
           conversationId: conversationId,
           messages: frontendMessages.isNotEmpty
               ? frontendMessages
@@ -592,13 +641,13 @@ class ChatHistoryStore {
     bool clearContextStartIfDeleted = false,
   }) async {
     if (messageIds.isEmpty) return;
-    final shortWindowStore = _ref.read(conversationShortWindowStoreProvider);
+    final timelineCache = _ref.read(conversationTimelineCacheProvider);
     final projectedMessages = <Message>[];
-    final allFrontendMessages = await shortWindowStore.loadAllMessages(
+    final allFrontendMessages = await _loadBestEffortFrontendMessages(
       conversationId,
     );
     for (final id in messageIds) {
-      final message = await shortWindowStore.findMessageById(
+      final message = await _loadBestEffortFrontendMessageById(
         id,
         conversationId: conversationId,
       );
@@ -640,6 +689,16 @@ class ChatHistoryStore {
             .add(message.id);
       }
       projectedDeleteIdsByRaw.forEach((rawMessageId, deleteIds) {
+        final deleteMessages = projectedMessages
+            .where((message) =>
+                message.sourceMessageId == rawMessageId &&
+                deleteIds.contains(message.id))
+            .toList(growable: false);
+        if (deleteMessages
+            .any((message) => !_isSemanticSupplementMessage(message))) {
+          rawDeleteIds.add(rawMessageId);
+          return;
+        }
         final frontendIds = frontendIdsByRaw[rawMessageId];
         if (frontendIds != null &&
             frontendIds.isNotEmpty &&
@@ -651,12 +710,12 @@ class ChatHistoryStore {
       });
     }
     if (projectedOnlyIds.isNotEmpty) {
-      await shortWindowStore.replaceMessages(
+      await timelineCache.replaceMessages(
         conversationId: conversationId,
         removeMessageIds: projectedOnlyIds,
       );
       if (rawMessageIdsToResync.isNotEmpty) {
-        await _syncRawProjectionFromShortWindow(
+        await _syncRawSupplementsFromTimeline(
           conversationId: conversationId,
           rawMessageIds: rawMessageIdsToResync,
         );
@@ -679,6 +738,9 @@ class ChatHistoryStore {
     }
     for (final id in rawDeleteIdList) {
       await msgRepo.softDelete(id, now, purgeAt);
+      await _ref
+          .read(messageProjectionMappingRepositoryProvider)
+          .deleteByRawMessage(id);
     }
     await _refreshSummary(conversationId);
 
@@ -706,12 +768,14 @@ class ChatHistoryStore {
     required String conversationId,
     required String fromMessageId,
   }) async {
-    final allMessages = await loadFrontendMessages(conversationId);
-    final index =
-        allMessages.indexWhere((message) => message.id == fromMessageId);
-    if (index < 0) return;
+    final lookup = await _loadFrontendMessagesForRangeLookup(
+      conversationId: conversationId,
+      anchorMessageId: fromMessageId,
+    );
+    final range = lookup.range;
+    if (range == null) return;
     final ids = [
-      for (final message in allMessages.skip(index)) message.id,
+      for (final message in lookup.messages.skip(range.$1)) message.id,
     ];
     await softDeleteMessages(conversationId, ids);
   }
@@ -720,14 +784,23 @@ class ChatHistoryStore {
     required String conversationId,
     required String anchorMessageId,
   }) async {
-    final allMessages = await loadFrontendMessages(conversationId);
-    final index =
-        allMessages.indexWhere((message) => message.id == anchorMessageId);
-    if (index < 0) return;
+    final lookup = await _loadFrontendMessagesForRangeLookup(
+      conversationId: conversationId,
+      anchorMessageId: anchorMessageId,
+    );
+    final range = lookup.range;
+    if (range == null) return;
+    final anchorMessages = List<Message>.unmodifiable(
+      lookup.messages.sublist(range.$1, range.$2 + 1),
+    );
     final ids = [
-      for (final message in allMessages.skip(index + 1)) message.id,
+      for (final message in lookup.messages.skip(range.$2 + 1)) message.id,
     ];
     await softDeleteMessages(conversationId, ids);
+    await _restoreShortWindowMessagesIfMissing(
+      conversationId: conversationId,
+      messages: anchorMessages,
+    );
   }
 
   Future<void> replaceConversationMessages({
@@ -747,7 +820,7 @@ class ChatHistoryStore {
     required DateTime previewTime,
   }) async {
     if (messages.isEmpty) return;
-    final frontendMessages = _projectRawMessages(messages);
+    final frontendMessages = _projectRawMessagesForFrontendSurface(messages);
     final effectiveTailMessage =
         frontendMessages.isNotEmpty ? frontendMessages.last : messages.last;
     final effectivePreviewTime = frontendMessages.isNotEmpty
@@ -765,10 +838,34 @@ class ChatHistoryStore {
             effectivePreviewTime.millisecondsSinceEpoch,
           );
     });
-    await _ref.read(conversationShortWindowStoreProvider).upsertMessages(
+    await _ref.read(conversationTimelineCacheProvider).upsertMessages(
           conversationId: conversationId,
           messages: frontendMessages.isNotEmpty ? frontendMessages : messages,
         );
+  }
+
+  Future<void> _clearStaleShortWindowIfConversationEmpty(
+    String conversationId,
+  ) async {
+    final messageCount =
+        await _ref.read(messageRepositoryProvider).countByConversation(
+              conversationId,
+            );
+    if (messageCount > 0) {
+      return;
+    }
+    final timelineCache = _ref.read(conversationTimelineCacheProvider);
+    final staleMessages =
+        await timelineCache.loadCachedMessages(conversationId);
+    if (staleMessages.isEmpty) {
+      return;
+    }
+    await timelineCache.replaceMessages(
+      conversationId: conversationId,
+      removeMessageIds: [
+        for (final message in staleMessages) message.id,
+      ],
+    );
   }
 
   Future<void> _upsertSingleMessage(
@@ -825,11 +922,12 @@ class ChatHistoryStore {
       }
     });
 
-    final shortWindowStore = _ref.read(conversationShortWindowStoreProvider);
+    final timelineCache = _ref.read(conversationTimelineCacheProvider);
     final currentFrontendMessages =
-        await shortWindowStore.loadAllMessages(conversationId);
-    final nextFrontendMessages = _projectRawMessages(messages);
-    await shortWindowStore.replaceMessages(
+        await timelineCache.loadCachedMessages(conversationId);
+    final nextFrontendMessages =
+        _projectRawMessagesForFrontendSurface(messages);
+    await timelineCache.replaceMessages(
       conversationId: conversationId,
       removeMessageIds: [
         for (final message in currentFrontendMessages) message.id,
@@ -860,7 +958,7 @@ class ChatHistoryStore {
   Future<void> _refreshSummaryFromShortWindow(String conversationId) async {
     final convRepo = _ref.read(conversationRepositoryProvider);
     final messages =
-        await _ref.read(conversationShortWindowStoreProvider).loadAllMessages(
+        await _ref.read(conversationTimelineCacheProvider).loadCachedMessages(
               conversationId,
             );
     if (messages.isEmpty) {
@@ -893,8 +991,8 @@ class ChatHistoryStore {
       return;
     }
 
-    final shortWindowStore = _ref.read(conversationShortWindowStoreProvider);
-    final currentMessages = await shortWindowStore.loadAllMessages(
+    final timelineCache = _ref.read(conversationTimelineCacheProvider);
+    final currentMessages = await timelineCache.loadCachedMessages(
       conversationId,
     );
     if (currentMessages.isEmpty) {
@@ -911,7 +1009,7 @@ class ChatHistoryStore {
       return;
     }
 
-    await shortWindowStore.replaceMessages(
+    await timelineCache.replaceMessages(
       conversationId: conversationId,
       removeMessageIds: removeMessageIds,
     );
@@ -938,9 +1036,25 @@ class ChatHistoryStore {
   }
 
   List<Message> _projectRawMessages(List<Message> rawMessages) {
-    return _ref
-        .read(chatFrontendMessageProjectionServiceProvider)
-        .projectMessages(rawMessages);
+    final projectionService =
+        _ref.read(chatFrontendMessageProjectionServiceProvider);
+    return <Message>[
+      for (final rawMessage in rawMessages)
+        ..._projectRawMessageForPersistedHistory(
+          rawMessage,
+          projectionService: projectionService,
+        ),
+    ];
+  }
+
+  List<Message> _projectRawMessagesForFrontendSurface(
+      List<Message> rawMessages) {
+    if (rawMessages.isEmpty) {
+      return const <Message>[];
+    }
+    final projectionService =
+        _ref.read(chatFrontendMessageProjectionServiceProvider);
+    return projectionService.projectMessages(rawMessages);
   }
 
   Future<List<Message>> _buildRawMessagesFromDb(
@@ -987,6 +1101,23 @@ class ChatHistoryStore {
         sourceMessageId != message.id;
   }
 
+  bool _isSemanticSupplementMessage(Message message) {
+    final blocks = message.blocks;
+    if (blocks == null || blocks.length != 1) {
+      return false;
+    }
+    final block = blocks.single;
+    if (block is ImageBlock) {
+      return (block.localPath?.trim().isNotEmpty ?? false) ||
+          (block.url?.trim().isNotEmpty ?? false) ||
+          (block.base64?.trim().isNotEmpty ?? false);
+    }
+    if (block is AudioBlock) {
+      return block.url.trim().isNotEmpty;
+    }
+    return false;
+  }
+
   Future<Message?> _normalizeProjectedMessageForFrontendMutation({
     required String conversationId,
     required Message message,
@@ -998,10 +1129,12 @@ class ChatHistoryStore {
       return message;
     }
     final existing = await _ref
-        .read(conversationShortWindowStoreProvider)
-        .findMessageById(message.id, conversationId: conversationId);
+        .read(conversationTimelineCacheProvider)
+        .findCachedMessageById(message.id, conversationId: conversationId);
     final inheritedSourceMessageId = existing?.sourceMessageId?.trim();
-    if (inheritedSourceMessageId == null || inheritedSourceMessageId.isEmpty) {
+    if (inheritedSourceMessageId == null ||
+        inheritedSourceMessageId.isEmpty ||
+        inheritedSourceMessageId == message.id) {
       return null;
     }
     return message.copyWith(sourceMessageId: inheritedSourceMessageId);
@@ -1040,7 +1173,8 @@ class ChatHistoryStore {
         dbMessage.replacedBy == null) {
       final rawMessage = await _buildRawMessageFromDbMessage(dbMessage);
       if (rawMessage != null) {
-        final projectedMessages = _projectRawMessages(<Message>[rawMessage]);
+        final projectedMessages =
+            _projectRawMessagesForFrontendSurface(<Message>[rawMessage]);
         if (projectedMessages.isNotEmpty) {
           return projectedMessages;
         }
@@ -1048,23 +1182,24 @@ class ChatHistoryStore {
       }
     }
 
-    final message =
-        await _ref.read(conversationShortWindowStoreProvider).findMessageById(
-              normalizedMessageId,
-              conversationId: conversationId,
-            );
+    final message = await _ref
+        .read(conversationTimelineCacheProvider)
+        .findCachedMessageById(
+          normalizedMessageId,
+          conversationId: conversationId,
+        );
     return message == null ? const <Message>[] : <Message>[message];
   }
 
-  Future<void> _syncRawProjectionFromShortWindow({
+  Future<void> _syncRawSupplementsFromTimeline({
     required String conversationId,
     required Set<String> rawMessageIds,
   }) async {
     if (rawMessageIds.isEmpty) {
       return;
     }
-    final projectedMessages =
-        await _ref.read(conversationShortWindowStoreProvider).loadAllMessages(
+    final timelineMessages =
+        await _ref.read(conversationTimelineCacheProvider).loadCachedMessages(
               conversationId,
             );
     for (final rawMessageId in rawMessageIds) {
@@ -1076,20 +1211,473 @@ class ChatHistoryStore {
       if (rawMessage == null) {
         continue;
       }
-      final nextProjectedMessages = <Message>[
-        for (final message in projectedMessages)
+      final sourceTimelineMessages = <Message>[
+        for (final message in timelineMessages)
           if (message.sourceMessageId == rawMessageId) message,
       ];
+      final nextPluginContents =
+          _collectSemanticPluginContents(sourceTimelineMessages);
+      final nextToolAudioResults =
+          _collectSemanticToolAudioResults(sourceTimelineMessages);
+      final nextSupplementInsertOps =
+          _collectSupplementInsertOps(sourceTimelineMessages);
       await _upsertSingleMessage(
         conversationId,
         rawMessage.copyWith(
-          rawPayload: ChatMessageProjectionCodec.copyWithProjectedMessages(
-            rawMessage.rawPayload,
-            nextProjectedMessages,
+          rawPayload: ChatMessageProjectionCodec.copyWithSupplementInsertOps(
+            ChatMessageProjectionCodec.copyWithToolAudioResults(
+              ChatMessageProjectionCodec.copyWithPluginContents(
+                ChatMessageProjectionCodec.removeProjectedMessages(
+                  rawMessage.rawPayload,
+                ),
+                nextPluginContents,
+              ),
+              nextToolAudioResults,
+            ),
+            nextSupplementInsertOps,
           ),
         ),
       );
     }
+  }
+
+  Future<List<Message>> _loadBestEffortFrontendMessages(
+    String conversationId,
+  ) async {
+    final frontendMessages = await loadCachedTimelineMessages(conversationId);
+    if (frontendMessages.isNotEmpty) {
+      return frontendMessages;
+    }
+    final rawMessages = await loadAllRawMessages(conversationId);
+    return _projectRawMessagesForFrontendSurface(rawMessages);
+  }
+
+  Future<({List<Message> messages, (int, int)? range})>
+      _loadFrontendMessagesForRangeLookup({
+    required String conversationId,
+    required String anchorMessageId,
+  }) async {
+    final frontendMessages = await _loadBestEffortFrontendMessages(
+      conversationId,
+    );
+    final frontendRange = _findMessageRangeByIdOrSource(
+      frontendMessages,
+      anchorMessageId,
+    );
+    if (frontendRange != null) {
+      return (
+        messages: frontendMessages,
+        range: frontendRange,
+      );
+    }
+
+    final rawMessages = await loadAllRawMessages(conversationId);
+    final projectedMessages =
+        _projectRawMessagesForFrontendSurface(rawMessages);
+    return (
+      messages: projectedMessages,
+      range: _findMessageRangeByIdOrSource(
+        projectedMessages,
+        anchorMessageId,
+      ),
+    );
+  }
+
+  Future<void> _restoreShortWindowMessagesIfMissing({
+    required String conversationId,
+    required List<Message> messages,
+  }) async {
+    if (messages.isEmpty) {
+      return;
+    }
+
+    final timelineCache = _ref.read(conversationTimelineCacheProvider);
+    final currentMessages = await timelineCache.loadCachedMessages(
+      conversationId,
+    );
+    final currentIds = {
+      for (final message in currentMessages) message.id,
+    };
+    final missingMessages = <Message>[
+      for (final message in messages)
+        if (!currentIds.contains(message.id)) message,
+    ];
+    if (missingMessages.isEmpty) {
+      return;
+    }
+
+    await timelineCache.upsertMessages(
+      conversationId: conversationId,
+      messages: missingMessages,
+    );
+  }
+
+  Future<Message?> _loadBestEffortFrontendMessageById(
+    String messageId, {
+    String? conversationId,
+  }) async {
+    final frontendMessage = await _ref
+        .read(conversationTimelineCacheProvider)
+        .findCachedMessageById(
+          messageId,
+          conversationId: conversationId,
+        );
+    if (frontendMessage != null) {
+      return frontendMessage;
+    }
+    if (conversationId != null && conversationId.trim().isNotEmpty) {
+      final rawMessages = await loadAllRawMessages(conversationId);
+      final frontendMessages =
+          _projectRawMessagesForFrontendSurface(rawMessages);
+      for (final message in frontendMessages) {
+        if (message.id == messageId) {
+          return message;
+        }
+      }
+    }
+    final mapping = await _ref
+        .read(messageProjectionMappingRepositoryProvider)
+        .getByProjectedMessageId(
+          messageId,
+          conversationId: conversationId,
+        );
+    if (mapping != null) {
+      final rawMessage = await loadMessageById(
+        mapping.rawMessageId,
+        conversationId: conversationId,
+        preferProjection: false,
+      );
+      if (rawMessage != null) {
+        final projectedMessages =
+            _projectRawMessagesForFrontendSurface(<Message>[rawMessage]);
+        if (projectedMessages.isNotEmpty) {
+          final segmentIndex = mapping.segmentIndex;
+          if (segmentIndex >= 0 && segmentIndex < projectedMessages.length) {
+            return projectedMessages[segmentIndex];
+          }
+          return projectedMessages.last;
+        }
+        return rawMessage;
+      }
+    }
+    return loadMessageById(
+      messageId,
+      conversationId: conversationId,
+    );
+  }
+
+  Future<void> _syncProjectionMappingsForRawMessage({
+    required String conversationId,
+    required String rawMessageId,
+    required List<Message> projectedMessages,
+  }) async {
+    final normalizedRawMessageId = rawMessageId.trim();
+    if (normalizedRawMessageId.isEmpty) {
+      return;
+    }
+    final normalizedProjectedMessages = <Message>[
+      for (final message in projectedMessages)
+        if (message.id.trim().isNotEmpty)
+          message.sourceMessageId == normalizedRawMessageId
+              ? message
+              : message.copyWith(sourceMessageId: normalizedRawMessageId),
+    ];
+    await _ref
+        .read(messageProjectionMappingRepositoryProvider)
+        .replaceForRawMessage(
+      rawMessageId: normalizedRawMessageId,
+      mappings: <db.MessageProjectionMappingsCompanion>[
+        for (var index = 0;
+            index < normalizedProjectedMessages.length;
+            index += 1)
+          db.MessageProjectionMappingsCompanion.insert(
+            id: '$normalizedRawMessageId::${normalizedProjectedMessages[index].id}',
+            conversationId: conversationId,
+            rawMessageId: normalizedRawMessageId,
+            projectedMessageId: normalizedProjectedMessages[index].id,
+            projectionKind: Value(
+              _projectionKindFor(normalizedProjectedMessages[index]),
+            ),
+            segmentIndex: Value(index),
+            projectionVersion: const Value(null),
+            createdAt: normalizedProjectedMessages[index]
+                .createdAt
+                .millisecondsSinceEpoch,
+          ),
+      ],
+    );
+  }
+
+  (int, int)? _findMessageRangeByIdOrSource(
+    List<Message> messages,
+    String messageId,
+  ) {
+    final normalizedMessageId = messageId.trim();
+    if (normalizedMessageId.isEmpty || messages.isEmpty) {
+      return null;
+    }
+
+    var firstIndex = -1;
+    var lastIndex = -1;
+    for (var index = 0; index < messages.length; index++) {
+      final message = messages[index];
+      final sourceMessageId = message.sourceMessageId?.trim();
+      final matches = message.id == normalizedMessageId ||
+          (sourceMessageId != null && sourceMessageId == normalizedMessageId);
+      if (!matches) continue;
+      firstIndex = firstIndex >= 0 ? firstIndex : index;
+      lastIndex = index;
+    }
+
+    if (firstIndex < 0 || lastIndex < 0) {
+      return null;
+    }
+    return (firstIndex, lastIndex);
+  }
+
+  List<Message> _projectRawMessageForPersistedHistory(
+    Message rawMessage, {
+    required ChatFrontendMessageProjectionService projectionService,
+  }) {
+    if (rawMessage.role != 'assistant') {
+      return <Message>[_projectRawPassthroughMessage(rawMessage)];
+    }
+    final projected = projectionService.projectMessage(rawMessage);
+    final collapsed = _collapseAssistantPureTextProjection(
+      rawMessage,
+      projectedMessages: projected,
+    );
+    return collapsed ?? projected;
+  }
+
+  Message _projectRawPassthroughMessage(Message message) {
+    return message.copyWith(
+      sourceMessageId: message.sourceMessageId ?? message.id,
+      rawPayload: null,
+    );
+  }
+
+  List<Message>? _collapseAssistantPureTextProjection(
+    Message rawMessage, {
+    required List<Message> projectedMessages,
+  }) {
+    if (projectedMessages.length <= 1) {
+      return null;
+    }
+    if (_shouldPreserveAssistantProjectionSegments(rawMessage)) {
+      return null;
+    }
+    if (projectedMessages
+        .any((message) => !_isPureTextPersistedMessage(message))) {
+      return null;
+    }
+
+    final rebuilt = _rebuildAssistantMessagesFromPayload(rawMessage);
+    if (rebuilt.length == 1 && _isPureTextPersistedMessage(rebuilt.single)) {
+      return rebuilt;
+    }
+
+    final combinedText =
+        projectedMessages.map(_extractText).map((value) => value.trim()).join();
+    if (combinedText.isEmpty) {
+      return null;
+    }
+
+    return <Message>[
+      Message.text(
+        id: projectedMessages.first.id,
+        role: 'assistant',
+        sourceMessageId: rawMessage.id,
+        content: combinedText,
+        createdAt: projectedMessages.first.createdAt,
+        status: 'sent',
+      ),
+    ];
+  }
+
+  bool _shouldPreserveAssistantProjectionSegments(Message rawMessage) {
+    final payload = rawMessage.rawPayload;
+    if (payload != null) {
+      final hasMultimodalEvents =
+          ChatMessageProjectionCodec.pluginEvents(payload).any((event) =>
+              event.type == 'tts_convert' ||
+              event.type == 'sticker_convert' ||
+              event.type == 'image_generate');
+      if (hasMultimodalEvents) {
+        return true;
+      }
+    }
+
+    final rawReplyText =
+        ChatMessageProjectionCodec.rawReplyText(payload) ?? rawMessage.content;
+    return rawReplyText.contains('<tts>') || rawReplyText.contains('<image>');
+  }
+
+  List<Message> _rebuildAssistantMessagesFromPayload(Message rawMessage) {
+    final payload = rawMessage.rawPayload;
+    if (payload == null) {
+      return const <Message>[];
+    }
+    final rebuilt = const ChatMessageProcessor().buildAssistantMessages(
+      replyText: ChatMessageProjectionCodec.rawReplyText(payload) ??
+          rawMessage.content,
+      processedText: ChatMessageProjectionCodec.processedText(payload) ?? '',
+      pluginEvents: ChatMessageProjectionCodec.pluginEvents(payload),
+      contents: ChatMessageProjectionCodec.pluginContents(payload),
+      toolAudioResults: ChatMessageProjectionCodec.toolAudioResults(payload),
+      toolCalls: ChatMessageProjectionCodec.toolCalls(payload),
+      rawToolResults: ChatMessageProjectionCodec.rawToolResults(payload),
+    );
+    return <Message>[
+      for (final message in rebuilt.messages)
+        message.copyWith(
+          sourceMessageId: rawMessage.id,
+          rawPayload: null,
+        ),
+    ];
+  }
+
+  bool _isPureTextPersistedMessage(Message message) {
+    final blocks = message.blocks;
+    if (blocks == null || blocks.isEmpty) {
+      return message.content.trim().isNotEmpty;
+    }
+    var hasText = false;
+    for (final block in blocks) {
+      if (block is TextBlock) {
+        if (block.content.trim().isNotEmpty) {
+          hasText = true;
+        }
+        continue;
+      }
+      return false;
+    }
+    return hasText;
+  }
+
+  List<PluginContent> _collectSemanticPluginContents(
+    List<Message> messages,
+  ) {
+    final contents = <PluginContent>[];
+    for (final message in messages) {
+      final blocks = message.blocks;
+      if (blocks == null || blocks.length != 1) {
+        continue;
+      }
+      final block = blocks.single;
+      if (block is! ImageBlock) {
+        continue;
+      }
+      final localPath = block.localPath?.trim();
+      if (localPath == null || localPath.isEmpty) {
+        continue;
+      }
+      contents.add(
+        PluginImageContent(
+          localPath,
+          caption: block.prompt,
+        ),
+      );
+    }
+    return contents;
+  }
+
+  List<ToolAudioResult> _collectSemanticToolAudioResults(
+    List<Message> messages,
+  ) {
+    final results = <ToolAudioResult>[];
+    for (final message in messages) {
+      final blocks = message.blocks;
+      if (blocks == null || blocks.length != 1) {
+        continue;
+      }
+      final block = blocks.single;
+      if (block is! AudioBlock) {
+        continue;
+      }
+      final audioUrl = block.url.trim();
+      if (audioUrl.isEmpty || block.status == 'pending') {
+        continue;
+      }
+      results.add(
+        ToolAudioResult(
+          audioUrl: audioUrl,
+          text: block.text?.trim() ?? '',
+        ),
+      );
+    }
+    return results;
+  }
+
+  List<StoredSupplementInsertOp> _collectSupplementInsertOps(
+    List<Message> messages,
+  ) {
+    if (messages.isEmpty) {
+      return const <StoredSupplementInsertOp>[];
+    }
+    final ops = <StoredSupplementInsertOp>[];
+    var textCharsBefore = 0;
+    for (var index = 0; index < messages.length; index += 1) {
+      final message = messages[index];
+      final op = _buildStoredSupplementInsertOp(
+        message,
+        textCharsBefore: textCharsBefore,
+        forceAppendToTail: !_hasLaterTextMessage(messages, index),
+      );
+      if (op != null) {
+        ops.add(op);
+      }
+      textCharsBefore += _normalizedTextLength(_extractText(message));
+    }
+    return ops;
+  }
+
+  StoredSupplementInsertOp? _buildStoredSupplementInsertOp(
+    Message message, {
+    required int textCharsBefore,
+    required bool forceAppendToTail,
+  }) {
+    final blocks = message.blocks;
+    if (blocks == null || blocks.length != 1) {
+      return null;
+    }
+    final block = blocks.single;
+    if (block is ImageBlock) {
+      final localPath = block.localPath?.trim();
+      if (localPath == null || localPath.isEmpty) {
+        return null;
+      }
+      return StoredSupplementInsertOp(
+        kind: 'image',
+        textCharsBefore: textCharsBefore,
+        forceAppendToTail: forceAppendToTail,
+        localPath: localPath,
+        prompt: block.prompt,
+      );
+    }
+    if (block is AudioBlock) {
+      final audioUrl = block.url.trim();
+      if (audioUrl.isEmpty || block.status == 'pending') {
+        return null;
+      }
+      return StoredSupplementInsertOp(
+        kind: 'audio',
+        textCharsBefore: textCharsBefore,
+        forceAppendToTail: forceAppendToTail,
+        audioUrl: audioUrl,
+        text: block.text?.trim(),
+      );
+    }
+    return null;
+  }
+
+  bool _hasLaterTextMessage(List<Message> messages, int index) {
+    for (var cursor = index + 1; cursor < messages.length; cursor += 1) {
+      if (_normalizedTextLength(_extractText(messages[cursor])) > 0) {
+        return true;
+      }
+    }
+    return false;
   }
 }
 
@@ -1107,6 +1695,37 @@ String _extractText(Message message) {
 
 int _normalizedTextLength(String text) =>
     text.replaceAll(RegExp(r'\s+'), '').length;
+
+int _countLeadingRelatedMessages(
+  List<Message> messages, {
+  required Set<String> anchorSourceIds,
+}) {
+  if (messages.isEmpty || anchorSourceIds.isEmpty) {
+    return 0;
+  }
+  var count = 0;
+  for (final message in messages) {
+    final sourceMessageId = message.sourceMessageId?.trim();
+    if (sourceMessageId == null || !anchorSourceIds.contains(sourceMessageId)) {
+      break;
+    }
+    count += 1;
+  }
+  return count;
+}
+
+String _projectionKindFor(Message message) {
+  final blocks = message.blocks;
+  if (blocks != null && blocks.isNotEmpty) {
+    final first = blocks.first;
+    if (first is ImageBlock) return 'image';
+    if (first is AudioBlock) return 'audio';
+    if (first is EmojiBlock) return 'emoji';
+    if (first is FileBlock) return 'file';
+    if (first is ToolBlock) return 'tool';
+  }
+  return 'text';
+}
 
 class ConversationSupplementInsertOp {
   const ConversationSupplementInsertOp({

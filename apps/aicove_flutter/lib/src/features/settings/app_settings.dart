@@ -9,7 +9,6 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/utils/message_formatter.dart';
-import '../chat/services/conversation_short_window_store.dart';
 import 'settings_models.dart';
 import 'ui_models_api.dart';
 
@@ -810,16 +809,25 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     );
     if (provider.id.isEmpty) return;
 
-    // 添加到 visibleModels（不重复添加）
+    final newAllModels = [...provider.models];
+    if (!newAllModels.contains(modelId)) {
+      newAllModels.add(modelId);
+    }
+
     final newVisible = [...provider.visibleModels];
     if (!newVisible.contains(modelId)) {
       newVisible.add(modelId);
     }
 
-    await _commit(() => _api.updateProvider(
-          providerId: providerId,
-          visibleModels: newVisible,
-        ));
+    final newHidden = [...provider.hiddenModels]
+      ..removeWhere((model) => model == modelId);
+
+    await updateProviderModels(
+      providerId: providerId,
+      allModels: newAllModels,
+      visibleModels: newVisible,
+      hiddenModels: newHidden,
+    );
 
     // 如果有显示名称，同时设置
     if (displayName != null && displayName.isNotEmpty) {
@@ -849,25 +857,9 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
   }
 
   Future<void> updateMessageFormatConfig(MessageFormatConfig config) async {
-    final previousConfig =
-        state.valueOrNull?.messageFormatConfig ?? const MessageFormatConfig();
-    final previousSignature =
-        buildMessageFormatProjectionSignature(previousConfig);
-    final nextSignature = buildMessageFormatProjectionSignature(config);
-
     await _commit(
       () => _api.updatePartial({'message_format_config': config.toJson()}),
     );
-
-    if (previousSignature == nextSignature) {
-      return;
-    }
-
-    try {
-      await ref.read(conversationShortWindowStoreProvider).rebuildAllFromDb();
-    } catch (_) {
-      // 分段策略更新不应因短列表刷新失败而回滚设置提交。
-    }
   }
 
   Future<void> setTextScaleFactor(double scale) async {

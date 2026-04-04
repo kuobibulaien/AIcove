@@ -210,6 +210,29 @@ String buildMemorySearchQuery(
       : joined;
 }
 
+List<chat.Message> selectTopicRecentMessagesForMemoryQuery(
+  List<chat.Message> messages, {
+  required String? contextStartMessageId,
+  int limit = 3,
+}) {
+  final normalizedContextStartMessageId = contextStartMessageId?.trim() ?? '';
+  var topicMessages = messages;
+  if (normalizedContextStartMessageId.isNotEmpty) {
+    final markerIndex = messages.lastIndexWhere(
+      (message) =>
+          message.sourceMessageIdOrSelf == normalizedContextStartMessageId,
+    );
+    if (markerIndex >= 0 && markerIndex + 1 < messages.length) {
+      topicMessages = messages.sublist(markerIndex + 1);
+    }
+  }
+
+  if (limit <= 0 || topicMessages.length <= limit) {
+    return topicMessages;
+  }
+  return topicMessages.sublist(topicMessages.length - limit);
+}
+
 class MemoryPlugin extends BasePlugin {
   static const _metadata = PluginMetadata(
     id: 'memory',
@@ -388,11 +411,28 @@ class MemoryPlugin extends BasePlugin {
       });
     }
 
-    final recentMessages =
-        await _ref.read(chatHistoryStoreProvider).loadRecentMessages(
+    final conversation = await _ref
+        .read(conversationRepositoryProvider)
+        .getById(resolvedConversationId);
+    final contextStartMessageId = conversation?.contextStartMessageId;
+    final recentMessages = await (() async {
+      final normalizedContextStartMessageId =
+          contextStartMessageId?.trim() ?? '';
+      if (normalizedContextStartMessageId.isEmpty) {
+        return _ref.read(chatHistoryStoreProvider).loadRecentProjectedMessages(
               resolvedConversationId,
               limit: 3,
             );
+      }
+      final topicMessages = await _ref
+          .read(chatHistoryStoreProvider)
+          .loadCachedTimelineMessages(resolvedConversationId);
+      return selectTopicRecentMessagesForMemoryQuery(
+        topicMessages,
+        contextStartMessageId: normalizedContextStartMessageId,
+        limit: 3,
+      );
+    })();
     final query = buildMemorySearchQuery(
       recentMessages,
       currentUserMessage: userMessage,

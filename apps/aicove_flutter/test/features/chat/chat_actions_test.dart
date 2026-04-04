@@ -25,6 +25,7 @@ import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_request_message_builder.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_history_store.dart';
+import 'package:aicove_flutter/src/features/chat/services/chat_message_projection_codec.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_send_service.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_tts_handler.dart';
 import 'package:aicove_flutter/src/features/chat/services/conversation_short_window_store.dart';
@@ -69,6 +70,27 @@ class _SpyModelFailoverPromptController extends ModelFailoverPromptController {
   }) async {
     requestCalls += 1;
     return ModelFailoverDecision.tryNext;
+  }
+}
+
+class _BlockingModelFailoverPromptController
+    extends ModelFailoverPromptController {
+  int requestCalls = 0;
+
+  @override
+  Future<ModelFailoverDecision> request({
+    required String conversationId,
+    required String failedModelName,
+    required String nextModelName,
+    required String errorMessage,
+  }) {
+    requestCalls += 1;
+    return super.request(
+      conversationId: conversationId,
+      failedModelName: failedModelName,
+      nextModelName: nextModelName,
+      errorMessage: errorMessage,
+    );
   }
 }
 
@@ -179,7 +201,7 @@ Future<List<Message>> _loadFrontendTimelineMessages(
   ProviderContainer container,
   String conversationId,
 ) {
-  return container.read(chatHistoryStoreProvider).loadFrontendMessages(
+  return container.read(chatHistoryStoreProvider).loadCachedTimelineMessages(
         conversationId,
       );
 }
@@ -194,6 +216,7 @@ AssistantMessageBuildResult _buildTestAssistantBuildResult({
   required List<Message> messages,
   required String lastMessageText,
   String? rawReplyText,
+  Map<String, dynamic>? rawPayload,
 }) {
   final rawMessageId =
       'raw_${messages.isNotEmpty ? messages.first.id : 'assistant'}';
@@ -206,6 +229,7 @@ AssistantMessageBuildResult _buildTestAssistantBuildResult({
       id: rawMessageId,
       role: 'assistant',
       content: rawReplyText ?? lastMessageText,
+      rawPayload: rawPayload,
       createdAt: normalizedMessages.isNotEmpty
           ? normalizedMessages.first.createdAt
           : DateTime.now(),
@@ -300,7 +324,7 @@ class _MemoryChatHistoryPort implements ChatHistoryPort {
   final List<Message> _messages;
 
   @override
-  Future<List<Message>> loadAllMessages(String conversationId) async {
+  Future<List<Message>> loadRawMessages(String conversationId) async {
     return List<Message>.from(_messages);
   }
 
@@ -900,6 +924,114 @@ class _DelayedFirstSentenceSendService extends _InMemoryHistorySendService {
   }
 }
 
+class _ThrowAfterFirstSentenceSendService
+    extends _DelayedFirstSentenceSendService {
+  _ThrowAfterFirstSentenceSendService(super.ref, super._settings);
+
+  @override
+  Future<ApiCallResult> executeApiCall({
+    required ApiConfig config,
+    required String sessionId,
+    required String? userText,
+    String? turnId,
+    TraceLogger? trace,
+    int maxRounds = 5,
+    void Function(String toolName)? onToolExecuting,
+    bool enableStreaming = false,
+    void Function(String delta)? onStreamTextDelta,
+    void Function()? onStreamTextReset,
+    void Function()? onStreamToolCallObserved,
+    void Function()? onStreamingFallback,
+  }) async {
+    await Future<void>.delayed(const Duration(milliseconds: 650));
+    onStreamTextDelta?.call('第一句。');
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    throw Exception('模拟重新生成失败');
+  }
+}
+
+class _DelayedMultiSentenceSendService extends _InMemoryHistorySendService {
+  _DelayedMultiSentenceSendService(super.ref, this._settings);
+
+  final AppSettings _settings;
+
+  @override
+  Future<ApiConfig> prepareApiConfig({
+    required Conversation conv,
+    required List<Message> history,
+    required String? userText,
+    TraceLogger? trace,
+    String? overrideModel,
+    String? conversationId,
+    TraceContext? traceContext,
+  }) async {
+    return ApiConfig(
+      settings: _settings,
+      modelFullId: overrideModel ?? _settings.defaultModelName,
+      providerApiBase: _settings.apiBaseUrl,
+      providerApiKey: null,
+      customConfig: const <String, dynamic>{},
+      toolPrefs: const <String, dynamic>{},
+      messages: const <Map<String, dynamic>>[],
+      tools: null,
+      enabledPluginIds: null,
+      modelTemperature: null,
+      modelTopP: null,
+      modelContextMessageLimit: null,
+    );
+  }
+
+  @override
+  Future<ApiCallResult> executeApiCall({
+    required ApiConfig config,
+    required String sessionId,
+    required String? userText,
+    String? turnId,
+    TraceLogger? trace,
+    int maxRounds = 5,
+    void Function(String toolName)? onToolExecuting,
+    bool enableStreaming = false,
+    void Function(String delta)? onStreamTextDelta,
+    void Function()? onStreamTextReset,
+    void Function()? onStreamToolCallObserved,
+    void Function()? onStreamingFallback,
+  }) async {
+    await Future<void>.delayed(const Duration(milliseconds: 650));
+    onStreamTextDelta?.call('第一句。');
+    await Future<void>.delayed(const Duration(milliseconds: 220));
+    onStreamTextDelta?.call('第二句。');
+    await Future<void>.delayed(const Duration(milliseconds: 220));
+    onStreamTextDelta?.call('第三句。');
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    return const ApiCallResult(
+      replyText: '第一句。第二句。第三句。',
+      processedText: '第一句。第二句。第三句。',
+      pluginEvents: [],
+      toolResults: <Map<String, dynamic>>[],
+    );
+  }
+
+  @override
+  AssistantMessageBuildResult buildAssistantMessages({
+    required ApiCallResult apiResult,
+    required AppSettings settings,
+  }) {
+    return _buildTestAssistantBuildResult(
+      messages: <Message>[
+        Message(
+          id: 'assistant_delayed_multi_sentence',
+          role: 'assistant',
+          content: apiResult.processedText,
+          createdAt: DateTime.now(),
+          status: 'sent',
+        ),
+      ],
+      lastMessageText: apiResult.processedText,
+      rawReplyText: apiResult.replyText,
+    );
+  }
+}
+
 class _ChunkBoundarySentenceSendService extends _InMemoryHistorySendService {
   _ChunkBoundarySentenceSendService(super.ref, this._settings);
 
@@ -1445,6 +1577,9 @@ class _StreamingMixedTtsImageTailSendService
       ],
       lastMessageText: apiResult.processedText,
       rawReplyText: apiResult.replyText,
+      rawPayload: ChatMessageProjectionCodec.buildRawAssistantPayload(
+        apiResult: apiResult,
+      ),
     );
   }
 }
@@ -1625,6 +1760,7 @@ class _RecordingStreamTtsHandler extends ChatTtsHandler {
   _RecordingStreamTtsHandler(super.ref);
 
   List<Message> lastPendingStreamTtsMessages = const <Message>[];
+  List<String> lastStreamTextMessageIds = const <String>[];
   bool lastAppendAfterStreamText = false;
 
   @override
@@ -1641,6 +1777,8 @@ class _RecordingStreamTtsHandler extends ChatTtsHandler {
     TraceLogger? trace,
   }) async {
     lastAppendAfterStreamText = appendAfterStreamText;
+    lastStreamTextMessageIds =
+        List<String>.from(streamTextMessageIds ?? const <String>[]);
     lastPendingStreamTtsMessages =
         List<Message>.from(streamPendingTtsMessages ?? const <Message>[]);
   }
@@ -1808,9 +1946,8 @@ class _DelayedInlineImagePlugin extends ImagePlugin {
   }
 }
 
-class _DelayedWatchConversationShortWindowStore
-    extends ConversationShortWindowStore {
-  _DelayedWatchConversationShortWindowStore(
+class _DelayedWatchConversationTimelineCache extends ConversationTimelineCache {
+  _DelayedWatchConversationTimelineCache(
     super.ref, {
     required this.windowDelay,
   });
@@ -1818,7 +1955,7 @@ class _DelayedWatchConversationShortWindowStore
   final Duration windowDelay;
 
   @override
-  Stream<ConversationShortWindowState> watchWindow({
+  Stream<ConversationTimelineWindowState> watchWindow({
     required String conversationId,
     required int limit,
   }) {
@@ -1831,6 +1968,30 @@ class _DelayedWatchConversationShortWindowStore
       await Future<void>.delayed(windowDelay);
       return window;
     });
+  }
+}
+
+class _DelayedReplaceConversationTimelineCache
+    extends ConversationTimelineCache {
+  _DelayedReplaceConversationTimelineCache(
+    super.ref, {
+    required this.replaceDelay,
+  });
+
+  final Duration replaceDelay;
+
+  @override
+  Future<void> replaceMessages({
+    required String conversationId,
+    List<String> removeMessageIds = const <String>[],
+    List<Message> messages = const <Message>[],
+  }) async {
+    await Future<void>.delayed(replaceDelay);
+    return super.replaceMessages(
+      conversationId: conversationId,
+      removeMessageIds: removeMessageIds,
+      messages: messages,
+    );
   }
 }
 
@@ -1986,6 +2147,56 @@ class _RetryOnceProviderRefreshStreamingSendService
   }
 }
 
+class _FailFirstModelStreamingSendService extends _SpyStreamingSendService {
+  _FailFirstModelStreamingSendService(
+    super.ref,
+    super._settings, {
+    required this.failingModel,
+  });
+
+  final String failingModel;
+
+  @override
+  Future<ApiCallResult> executeApiCall({
+    required ApiConfig config,
+    required String sessionId,
+    required String? userText,
+    String? turnId,
+    TraceLogger? trace,
+    int maxRounds = 5,
+    void Function(String toolName)? onToolExecuting,
+    bool enableStreaming = false,
+    void Function(String delta)? onStreamTextDelta,
+    void Function()? onStreamTextReset,
+    void Function()? onStreamToolCallObserved,
+    void Function()? onStreamingFallback,
+  }) async {
+    if (config.modelFullId == failingModel) {
+      executeCalls += 1;
+      lastEnableStreaming = enableStreaming;
+      sawDeltaCallback = onStreamTextDelta != null;
+      sawResetCallback = onStreamTextReset != null;
+      sawToolObservedCallback = onStreamToolCallObserved != null;
+      sawFallbackCallback = onStreamingFallback != null;
+      throw Exception('模拟首个模型失败');
+    }
+    return super.executeApiCall(
+      config: config,
+      sessionId: sessionId,
+      userText: userText,
+      turnId: turnId,
+      trace: trace,
+      maxRounds: maxRounds,
+      onToolExecuting: onToolExecuting,
+      enableStreaming: enableStreaming,
+      onStreamTextDelta: onStreamTextDelta,
+      onStreamTextReset: onStreamTextReset,
+      onStreamToolCallObserved: onStreamToolCallObserved,
+      onStreamingFallback: onStreamingFallback,
+    );
+  }
+}
+
 class _NoopChatTtsHandler extends ChatTtsHandler {
   _NoopChatTtsHandler(super.ref);
 
@@ -2085,8 +2296,9 @@ void main() {
 
     await actions.recallFailedMessage(failed.id);
 
-    final remainingMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
+    final remainingMessages = await container
+        .read(chatHistoryStoreProvider)
+        .loadProjectedMessagesFromRawStore(conv.id);
     expect(remainingMessages, isEmpty);
     expect(container.read(editingTextProvider), failed.displayText);
 
@@ -2229,8 +2441,9 @@ void main() {
     expect(recalledAttachment!.type, AttachmentType.image);
     expect(recalledAttachment.path, imagePath);
 
-    final remainingMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
+    final remainingMessages = await container
+        .read(chatHistoryStoreProvider)
+        .loadProjectedMessagesFromRawStore(conv.id);
     expect(remainingMessages, isEmpty);
 
     final repo = container.read(messageRepositoryProvider);
@@ -2296,8 +2509,9 @@ void main() {
     final previewText = await actions.peekTextRegenerate(aiMsg.id);
     expect(previewText, '这句原话会被重新发送');
 
-    final beforeMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
+    final beforeMessages = await container
+        .read(chatHistoryStoreProvider)
+        .loadProjectedMessagesFromRawStore(conv.id);
     expect(beforeMessages.map((message) => message.id), [
       userMsg.id,
       aiMsg.id,
@@ -2306,8 +2520,9 @@ void main() {
     final preparedText = await actions.prepareTextRegenerate(aiMsg.id);
     expect(preparedText, '这句原话会被重新发送');
 
-    final remainingMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
+    final remainingMessages = await container
+        .read(chatHistoryStoreProvider)
+        .loadProjectedMessagesFromRawStore(conv.id);
     expect(remainingMessages, isEmpty);
 
     final repo = container.read(messageRepositoryProvider);
@@ -2317,6 +2532,159 @@ void main() {
     expect(deletedUser!.deletedAt, isNotNull);
     expect(deletedAi, isNotNull);
     expect(deletedAi!.deletedAt, isNotNull);
+  });
+
+  test('prepareTextRegenerate 支持使用历史投影 assistant id', () async {
+    final now = DateTime.now();
+    final userMsg = Message(
+      id: 'msg_regen_projected_user',
+      role: 'user',
+      content: '这句原话来自分页历史',
+      createdAt: now.subtract(const Duration(seconds: 2)),
+      status: 'sent',
+    );
+    final conv = Conversation(
+      id: 'conv_regen_projected_assistant',
+      title: 'C_REGEN_PROJECTED',
+      displayName: 'C_REGEN_PROJECTED',
+      createdAt: now,
+      updatedAt: now,
+      messages: [userMsg],
+      lastMessage: userMsg.displayText,
+      lastMessageTime: userMsg.createdAt,
+    );
+
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+    await _insertMessage(db, conv.id, userMsg);
+
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        conversationsProvider.overrideWith(
+          () => _FakeConversationsNotifier([conv]),
+        ),
+        activeConversationProvider.overrideWith((ref) {
+          final list = ref.watch(conversationsProvider).valueOrNull;
+          if (list == null || list.isEmpty) return null;
+          return list.first;
+        }),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await container.read(conversationsProvider.future);
+    final assistantBuild = _buildTestAssistantBuildResult(
+      messages: <Message>[
+        Message(
+          id: 'assistant_projected_history_item',
+          role: 'assistant',
+          content: '这是历史分页里的 assistant 投影消息',
+          createdAt: now.subtract(const Duration(seconds: 1)),
+          status: 'sent',
+        ),
+      ],
+      lastMessageText: '这是历史分页里的 assistant 投影消息',
+      rawReplyText: '这是历史分页里的 assistant 投影消息',
+    );
+    await container.read(chatHistoryStoreProvider).appendAssistantRawMessage(
+          conversationId: conv.id,
+          userMessageId: userMsg.id,
+          rawMessage: assistantBuild.rawMessage!,
+          projectedMessages: assistantBuild.messages,
+          lastMessagePreview: assistantBuild.lastMessageText,
+          updateShortWindow: false,
+        );
+
+    final actions = container.read(chatActionsProvider);
+    final previewText =
+        await actions.peekTextRegenerate('assistant_projected_history_item');
+    expect(previewText, '这句原话来自分页历史');
+
+    final preparedText =
+        await actions.prepareTextRegenerate('assistant_projected_history_item');
+    expect(preparedText, '这句原话来自分页历史');
+  });
+
+  test('regenerate 支持使用历史投影 assistant id', () async {
+    final now = DateTime.now();
+    final userMsg = Message(
+      id: 'msg_regen_projected_api_user',
+      role: 'user',
+      content: '请基于这句历史用户消息重新生成',
+      createdAt: now.subtract(const Duration(seconds: 2)),
+      status: 'sent',
+    );
+    final conv = Conversation(
+      id: 'conv_regen_projected_api',
+      title: 'C_REGEN_PROJECTED_API',
+      displayName: 'C_REGEN_PROJECTED_API',
+      createdAt: now,
+      updatedAt: now,
+      messages: [userMsg],
+      lastMessage: userMsg.displayText,
+      lastMessageTime: userMsg.createdAt,
+    );
+    final settings = _buildTestSettings();
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+    await _insertMessage(db, conv.id, userMsg);
+
+    late _SpyStreamingSendService spyService;
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(settings),
+        ),
+        chatTtsHandlerProvider.overrideWith((ref) => _NoopChatTtsHandler(ref)),
+        chatSendServiceProvider.overrideWith((ref) {
+          spyService = _SpyStreamingSendService(ref, settings);
+          return spyService;
+        }),
+        conversationsProvider.overrideWith(
+          () => _FakeConversationsNotifier([conv]),
+        ),
+        activeConversationProvider.overrideWith((ref) {
+          final list = ref.watch(conversationsProvider).valueOrNull;
+          if (list == null || list.isEmpty) return null;
+          return list.first;
+        }),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await container.read(conversationsProvider.future);
+    await container.read(appSettingsProvider.future);
+    final assistantBuild = _buildTestAssistantBuildResult(
+      messages: <Message>[
+        Message(
+          id: 'assistant_projected_history_regenerate',
+          role: 'assistant',
+          content: '这是历史分页里的投影 assistant',
+          createdAt: now.subtract(const Duration(seconds: 1)),
+          status: 'sent',
+        ),
+      ],
+      lastMessageText: '这是历史分页里的投影 assistant',
+      rawReplyText: '这是历史分页里的投影 assistant',
+    );
+    await container.read(chatHistoryStoreProvider).appendAssistantRawMessage(
+          conversationId: conv.id,
+          userMessageId: userMsg.id,
+          rawMessage: assistantBuild.rawMessage!,
+          projectedMessages: assistantBuild.messages,
+          lastMessagePreview: assistantBuild.lastMessageText,
+          updateShortWindow: false,
+        );
+
+    final actions = container.read(chatActionsProvider);
+    await actions.regenerate('assistant_projected_history_regenerate');
+
+    expect(spyService.executeCalls, 1);
+    expect(spyService.lastEnableStreaming, isTrue);
   });
 
   test('prepareTextRegenerate 遇到图文轮次时会返回 null 且保留原消息', () async {
@@ -2386,8 +2754,9 @@ void main() {
     final preparedText = await actions.prepareTextRegenerate(aiMsg.id);
     expect(preparedText, isNull);
 
-    final remainingMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
+    final remainingMessages = await container
+        .read(chatHistoryStoreProvider)
+        .loadProjectedMessagesFromRawStore(conv.id);
     expect(remainingMessages.map((message) => message.id), [
       userMsg.id,
       aiMsg.id,
@@ -2463,8 +2832,9 @@ void main() {
 
     await actions.deleteMessage(aiMsg.id);
 
-    final remainingMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
+    final remainingMessages = await container
+        .read(chatHistoryStoreProvider)
+        .loadProjectedMessagesFromRawStore(conv.id);
     expect(remainingMessages.length, 1);
     expect(remainingMessages.first.id, userMsg.id);
     expect(container.read(quotedMessageProvider), isNull);
@@ -3039,19 +3409,16 @@ void main() {
 
     await actions.send('测试回退后是否保留流式文本');
 
-    final storedMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
+    final storedMessages = await container
+        .read(chatHistoryStoreProvider)
+        .loadProjectedMessagesFromRawStore(conv.id);
     final assistantMessages = storedMessages
         .where((m) => m.role == 'assistant')
         .toList(growable: false);
     expect(
-      assistantMessages.any((m) => m.id == 'assistant_result'),
-      isTrue,
-      reason: '有 delta 后回退到正式交付时，应保留 buildResult 里的原始正文消息',
-    );
-    expect(
       assistantMessages.any((m) => m.displayText.contains('前置流式文本')),
       isTrue,
+      reason: '有 delta 后回退到正式交付时，应保留 buildResult 里的原始正文消息',
     );
     expect(
       assistantMessages
@@ -3137,7 +3504,7 @@ void main() {
     );
   });
 
-  test('send 在开启分段时，约 0.5 秒后应先出现在前端短窗里的生成中占位气泡', () async {
+  test('send 在开启分段时，约 0.5 秒后应先出现在前端时间线缓存里的生成中占位气泡', () async {
     final now = DateTime.now();
     final conv = Conversation(
       id: 'conv_stream_thinking_delay',
@@ -3201,7 +3568,117 @@ void main() {
     await sendFuture;
   });
 
-  test('send 流式文本期间应只写入前端短窗，数据库正式历史保持干净', () async {
+  test('send 在开启分段时，旧生成中占位应原位升级为正文且列表不先缩再顶', () async {
+    final now = DateTime.now();
+    final convId =
+        'conv_stream_placeholder_promote_${now.microsecondsSinceEpoch}';
+    final conv = Conversation(
+      id: convId,
+      title: 'StreamPlaceholderPromote',
+      displayName: 'StreamPlaceholderPromote',
+      createdAt: now,
+      updatedAt: now,
+      messages: const [],
+      lastMessage: '',
+      lastMessageTime: now,
+    );
+    final settings = _buildTestSettings();
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(settings),
+        ),
+        chatSendServiceProvider.overrideWith(
+          (ref) => _DelayedMultiSentenceSendService(ref, settings),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    container.read(activeConversationIdProvider.notifier).state = conv.id;
+    await container.read(conversationsProvider.future);
+    await container.read(appSettingsProvider.future);
+
+    final sendFuture = container.read(chatActionsProvider).send('测试占位原位升级');
+    String? firstPlaceholderId;
+    var sawInPlacePromotion = false;
+    var sawAssistantCountDrop = false;
+    int? previousAssistantCount;
+
+    for (var i = 0; i < 24; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 90));
+      final frontendMessages =
+          await _loadFrontendTimelineMessages(container, conv.id);
+      final assistantMessages = frontendMessages
+          .where((message) => message.role == 'assistant')
+          .toList(growable: false);
+      final generatingMessages =
+          _collectGeneratingPlaceholderMessages(assistantMessages);
+      if (firstPlaceholderId == null && generatingMessages.isNotEmpty) {
+        firstPlaceholderId = generatingMessages.last.id;
+      }
+      if (firstPlaceholderId == null) {
+        continue;
+      }
+      if (previousAssistantCount != null &&
+          assistantMessages.length < previousAssistantCount) {
+        sawAssistantCountDrop = true;
+      }
+      previousAssistantCount = assistantMessages.length;
+
+      Message? promotedMessage;
+      for (final message in assistantMessages) {
+        if (message.id != firstPlaceholderId) continue;
+        if (message.displayText.trim() != '第一句。') continue;
+        if (message.status != 'sent') continue;
+        promotedMessage = message;
+        break;
+      }
+      final hasNextThinkingBubble = generatingMessages.any(
+        (message) => message.id != firstPlaceholderId,
+      );
+      if (promotedMessage != null && hasNextThinkingBubble) {
+        sawInPlacePromotion = true;
+      }
+    }
+
+    await sendFuture;
+
+    expect(
+      firstPlaceholderId,
+      isNotNull,
+      reason: '前置条件：流式阶段应先出现一条生成中占位，才能验证它是否被原位升级。',
+    );
+    expect(
+      sawInPlacePromotion,
+      isTrue,
+      reason: '首句封口后，应由旧生成中气泡原位升级成正文，再在尾部补一个新的生成中气泡。',
+    );
+    expect(
+      sawAssistantCountDrop,
+      isFalse,
+      reason: '占位推进期间，前端时间线缓存消息数不应先减少再增加，否则列表会先缩再顶，产生抽搐。',
+    );
+
+    final finalizedMessages =
+        await _loadFrontendTimelineMessages(container, conv.id);
+    expect(
+      finalizedMessages.any(
+        (message) =>
+            message.id == firstPlaceholderId &&
+            message.displayText.trim() == '第一句。',
+      ),
+      isTrue,
+      reason: '收尾后第一句仍应沿用最初占位的 id，说明流式阶段走的是原位升级，而不是删掉再重插。',
+    );
+  });
+
+  test('send 流式文本期间应只写入前端时间线缓存，数据库正式历史保持干净', () async {
     final now = DateTime.now();
     final conv = Conversation(
       id: 'conv_stream_stable_timeline_only',
@@ -3237,8 +3714,9 @@ void main() {
 
     final sendFuture = container.read(chatActionsProvider).send('测试正式时间线直写');
     await Future<void>.delayed(const Duration(milliseconds: 560));
-    final stableMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
+    final stableMessages = await container
+        .read(chatHistoryStoreProvider)
+        .loadProjectedMessagesFromRawStore(conv.id);
     final frontendMessages =
         await _loadFrontendTimelineMessages(container, conv.id);
     await sendFuture;
@@ -3255,11 +3733,11 @@ void main() {
         (message) => message.role == 'assistant' && message.status == 'sending',
       ),
       isTrue,
-      reason: '流式阶段的 assistant 占位应只挂在前端短窗，等待正式消息落库后再清掉',
+      reason: '流式阶段的 assistant 占位应只挂在前端时间线缓存，等待正式消息落库后再清掉',
     );
   });
 
-  test('send 在打断生成后，应立即清掉临时占位气泡', () async {
+  test('send 在打断生成后，应恢复前端用户消息并清掉临时态消息', () async {
     final now = DateTime.now();
     final conv = Conversation(
       id: 'conv_stream_interrupt_cleanup',
@@ -3296,48 +3774,541 @@ void main() {
     var sendFinished = false;
     final sendFuture = container.read(chatActionsProvider).send('测试打断后立即清占位');
     sendFuture.whenComplete(() => sendFinished = true);
+    try {
+      await Future<void>.delayed(const Duration(milliseconds: 560));
+      final frontendBeforeInterrupt =
+          await _loadFrontendTimelineMessages(container, conv.id);
+      expect(
+        sendFinished,
+        isFalse,
+        reason: '打断前底层请求仍应处于进行中，不能提前自然结束。',
+      );
+      expect(
+        frontendBeforeInterrupt.any(
+          (message) =>
+              message.role == 'user' && message.displayText == '测试打断后立即清占位',
+        ),
+        isTrue,
+        reason: '打断前，前端时间线缓存里至少应保留刚发出的用户消息，后续才能验证中断恢复是否正确。',
+      );
 
-    await Future<void>.delayed(const Duration(milliseconds: 560));
-    final frontendBeforeInterrupt =
+      final stopped = await container
+          .read(chatActionsProvider)
+          .interruptCurrentGeneration();
+      expect(stopped, isTrue);
+
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(
+        sendFinished,
+        isFalse,
+        reason: '此时底层请求尚未自然返回，需要证明占位是在“中断瞬间”被清掉，而不是等请求结束后才消失。',
+      );
+      expect(
+        (await _loadFrontendTimelineMessages(container, conv.id))
+            .map((message) => message.displayText),
+        ['测试打断后立即清占位'],
+        reason: '打断生成后，前端应清掉 assistant 占位，但保留已落库的用户消息。',
+      );
+      expect(
+        (await container
+                .read(chatHistoryStoreProvider)
+                .loadProjectedMessagesFromRawStore(conv.id))
+            .where((message) => message.role == 'assistant'),
+        isEmpty,
+        reason: '打断生成后，正式时间线里也不应残留 assistant 占位。',
+      );
+
+      await sendFuture;
+
+      final storedMessages = await container
+          .read(chatHistoryStoreProvider)
+          .loadProjectedMessagesFromRawStore(conv.id);
+      expect(
+        storedMessages.where((message) => message.role == 'assistant'),
+        isEmpty,
+        reason: '中断后的迟到结果不应再落成 assistant 消息。',
+      );
+      expect(
+        (await _loadFrontendTimelineMessages(container, conv.id))
+            .map((message) => message.displayText),
+        ['测试打断后立即清占位'],
+        reason: '底层请求自然返回后，前端仍应保持和持久历史一致的用户消息。',
+      );
+    } finally {
+      await sendFuture;
+    }
+  });
+
+  test('regenerate 截断到窗口外的原用户消息时，应立即把原用户消息补回前端时间线', () async {
+    final baseTime = DateTime(2026, 4, 1, 12, 0, 0);
+    final targetUser = Message(
+      id: 'msg_regen_window_anchor_user',
+      role: 'user',
+      content: '这句原话在截断后必须立刻回到前端时间线',
+      createdAt: baseTime,
+      status: 'sent',
+    );
+    final targetAssistant = Message(
+      id: 'msg_regen_window_anchor_ai',
+      role: 'assistant',
+      content: '这条回复会被重新生成',
+      createdAt: baseTime.add(const Duration(seconds: 1)),
+      status: 'sent',
+    );
+    final tailMessages = <Message>[
+      for (var index = 0; index < 19; index++)
+        Message(
+          id: 'msg_regen_window_tail_$index',
+          role: index.isEven ? 'user' : 'assistant',
+          content: 'tail-$index',
+          createdAt: baseTime.add(Duration(seconds: index + 2)),
+          status: 'sent',
+        ),
+    ];
+    final allMessages = <Message>[
+      targetUser,
+      targetAssistant,
+      ...tailMessages,
+    ];
+    final conv = Conversation(
+      id: 'conv_regen_window_anchor_restore',
+      title: 'RegenWindowAnchorRestore',
+      displayName: 'RegenWindowAnchorRestore',
+      createdAt: baseTime,
+      updatedAt: allMessages.last.createdAt,
+      messages: allMessages,
+      lastMessage: allMessages.last.displayText,
+      lastMessageTime: allMessages.last.createdAt,
+    );
+    final settings = _buildTestSettings();
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+    for (final message in allMessages) {
+      await _insertMessage(db, conv.id, message);
+    }
+
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(settings),
+        ),
+        chatSendServiceProvider.overrideWith(
+          (ref) => _DelayedFirstSentenceSendService(ref, settings),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    container.read(activeConversationIdProvider.notifier).state = conv.id;
+    await container.read(conversationsProvider.future);
+    await container.read(appSettingsProvider.future);
+    await container
+        .read(conversationTimelineCacheProvider)
+        .reloadConversationFromRawStore(
+          conv.id,
+          targetMessageCount: 20,
+        );
+
+    final frontendBeforeRegenerate =
         await _loadFrontendTimelineMessages(container, conv.id);
     expect(
-      frontendBeforeInterrupt.any(
-        (message) => message.role == 'assistant' && message.status == 'sending',
+      frontendBeforeRegenerate.any((message) => message.id == targetUser.id),
+      isFalse,
+      reason: '前置用户消息要先落在窗口外，才能验证重生成截断时会不会补回。',
+    );
+    expect(
+      frontendBeforeRegenerate.any(
+        (message) => message.id == targetAssistant.id,
       ),
       isTrue,
-      reason: '停止前应先看到生成中占位，才能证明本用例覆盖到了用户反馈的场景',
+      reason: '目标 assistant 需要位于当前前端窗口内，才能触发这条重生成链路。',
     );
 
-    final stopped =
-        await container.read(chatActionsProvider).interruptCurrentGeneration();
+    final regenerateFuture =
+        container.read(chatActionsProvider).regenerate(targetAssistant.id);
+    try {
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+
+      final frontendDuringRegenerate =
+          await _loadFrontendTimelineMessages(container, conv.id);
+      final stableMessageIds = frontendDuringRegenerate
+          .where((message) => message.status != 'sending')
+          .map((message) => message.id)
+          .toList(growable: false);
+      expect(
+        stableMessageIds,
+        [targetUser.id],
+        reason: '重生成开始后，即使原用户消息先前落在窗口外，前端也应立刻只保留这条原用户消息。',
+      );
+
+      final stopped = await container
+          .read(chatActionsProvider)
+          .interruptCurrentGeneration();
+      expect(stopped, isTrue);
+    } finally {
+      await regenerateFuture;
+    }
+  });
+
+  test('regenerate 在打断生成后，应恢复前端消息并保留原用户消息', () async {
+    final now = DateTime.now();
+    final userMsg = Message(
+      id: 'msg_regen_interrupt_user',
+      role: 'user',
+      content: '请基于这句话重新生成',
+      createdAt: now.subtract(const Duration(seconds: 2)),
+      status: 'sent',
+    );
+    final aiMsg = Message(
+      id: 'msg_regen_interrupt_ai',
+      role: 'assistant',
+      content: '这是一条会被替换掉的旧回复',
+      createdAt: now.subtract(const Duration(seconds: 1)),
+      status: 'sent',
+    );
+    final conv = Conversation(
+      id: 'conv_regen_interrupt_cleanup',
+      title: 'RegenInterruptCleanup',
+      displayName: 'RegenInterruptCleanup',
+      createdAt: now,
+      updatedAt: now,
+      messages: [userMsg, aiMsg],
+      lastMessage: aiMsg.displayText,
+      lastMessageTime: aiMsg.createdAt,
+    );
+    final settings = _buildTestSettings();
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+    await _insertMessage(db, conv.id, userMsg);
+    await _insertMessage(db, conv.id, aiMsg);
+
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(settings),
+        ),
+        chatSendServiceProvider.overrideWith(
+          (ref) => _DelayedFirstSentenceSendService(ref, settings),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    container.read(activeConversationIdProvider.notifier).state = conv.id;
+    await container.read(conversationsProvider.future);
+    await container.read(appSettingsProvider.future);
+
+    var regenerateFinished = false;
+    final regenerateFuture =
+        container.read(chatActionsProvider).regenerate(aiMsg.id);
+    regenerateFuture.whenComplete(() => regenerateFinished = true);
+    try {
+      await Future<void>.delayed(const Duration(milliseconds: 560));
+
+      final stopped = await container
+          .read(chatActionsProvider)
+          .interruptCurrentGeneration();
+      expect(stopped, isTrue);
+
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(
+        regenerateFinished,
+        isFalse,
+        reason: '此时底层请求尚未自然返回，需要证明保留用户消息发生在“打断瞬间”',
+      );
+
+      final frontendAfterInterrupt =
+          await _loadFrontendTimelineMessages(container, conv.id);
+      final persistedMessagesAfterInterrupt = await container
+          .read(chatHistoryStoreProvider)
+          .loadProjectedMessagesFromRawStore(conv.id);
+      expect(
+        frontendAfterInterrupt.map((message) => message.id),
+        persistedMessagesAfterInterrupt.map((message) => message.id),
+        reason: '重新生成被打断后，前端时间线应恢复到与持久历史一致。',
+      );
+      expect(
+        frontendAfterInterrupt.any((message) => message.id == userMsg.id),
+        isTrue,
+        reason: '重新生成被打断后，前端时间线仍应保留原用户消息。',
+      );
+      expect(
+        frontendAfterInterrupt.where(
+          (message) =>
+              message.role == 'assistant' && message.status == 'sending',
+        ),
+        isEmpty,
+        reason: '重新生成被打断后，前端时间线不应残留 assistant 流式占位。',
+      );
+      expect(
+        persistedMessagesAfterInterrupt
+            .any((message) => message.id == userMsg.id),
+        isTrue,
+        reason: '重新生成被打断后，持久历史也应保留原用户消息。',
+      );
+
+      final rawMessagesAfterInterrupt = await container
+          .read(chatHistoryStoreProvider)
+          .loadAllRawMessages(conv.id);
+      expect(
+        rawMessagesAfterInterrupt.any((message) => message.id == userMsg.id),
+        isTrue,
+        reason: '重新生成被打断后，后端组装上下文用的原始历史也应保留原用户消息。',
+      );
+
+      await regenerateFuture;
+
+      final frontendMessagesAfterLateReturn =
+          await _loadFrontendTimelineMessages(container, conv.id);
+      final storedMessages = await container
+          .read(chatHistoryStoreProvider)
+          .loadProjectedMessagesFromRawStore(conv.id);
+      expect(
+        frontendMessagesAfterLateReturn.map((message) => message.id),
+        storedMessages.map((message) => message.id),
+        reason: '迟到结果返回后，前端仍应和持久历史保持一致。',
+      );
+      expect(
+        storedMessages.any((message) => message.id == userMsg.id),
+        isTrue,
+        reason: '中断后的迟到结果不应把原用户消息再清掉。',
+      );
+    } finally {
+      await regenerateFuture;
+    }
+  });
+
+  test('regenerate 失败后，应恢复前端消息并保留原用户消息', () async {
+    final now = DateTime.now();
+    final userMsg = Message(
+      id: 'msg_regen_failure_user',
+      role: 'user',
+      content: '这句原话在失败后也应该保留',
+      createdAt: now.subtract(const Duration(seconds: 2)),
+      status: 'sent',
+    );
+    final aiMsg = Message(
+      id: 'msg_regen_failure_ai',
+      role: 'assistant',
+      content: '这是一条将被替换的旧回复',
+      createdAt: now.subtract(const Duration(seconds: 1)),
+      status: 'sent',
+    );
+    final conv = Conversation(
+      id: 'conv_regen_failure_restore',
+      title: 'RegenFailureRestore',
+      displayName: 'RegenFailureRestore',
+      createdAt: now,
+      updatedAt: now,
+      messages: [userMsg, aiMsg],
+      lastMessage: aiMsg.displayText,
+      lastMessageTime: aiMsg.createdAt,
+    );
+    final settings = _buildTestSettings();
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+    await _insertMessage(db, conv.id, userMsg);
+    await _insertMessage(db, conv.id, aiMsg);
+
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(settings),
+        ),
+        chatSendServiceProvider.overrideWith(
+          (ref) => _ThrowAfterFirstSentenceSendService(ref, settings),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    container.read(activeConversationIdProvider.notifier).state = conv.id;
+    await container.read(conversationsProvider.future);
+    await container.read(appSettingsProvider.future);
+
+    await container.read(chatActionsProvider).regenerate(aiMsg.id);
+
+    final frontendMessages =
+        await _loadFrontendTimelineMessages(container, conv.id);
+    final persistedMessages = await container
+        .read(chatHistoryStoreProvider)
+        .loadProjectedMessagesFromRawStore(conv.id);
+    expect(
+      frontendMessages.map((message) => message.id),
+      persistedMessages.map((message) => message.id),
+      reason: '重新生成失败后，前端应恢复为与持久历史一致的时间线。',
+    );
+    expect(
+      frontendMessages.any((message) => message.id == userMsg.id),
+      isTrue,
+      reason: '重新生成失败后，前端仍应保留原用户消息。',
+    );
+    expect(
+      frontendMessages.where(
+        (message) => message.role == 'assistant' && message.status == 'sending',
+      ),
+      isEmpty,
+      reason: '重新生成失败后，前端不应残留旧 assistant 的流式占位。',
+    );
+    expect(
+      persistedMessages.any((message) => message.id == userMsg.id),
+      isTrue,
+      reason: '重新生成失败后，持久历史也应保留原用户消息。',
+    );
+
+    final rawMessages = await container
+        .read(chatHistoryStoreProvider)
+        .loadAllRawMessages(conv.id);
+    expect(
+      rawMessages.any((message) => message.id == userMsg.id),
+      isTrue,
+      reason: '后端组装上下文读取的原始历史，也应保留原用户消息。',
+    );
+  });
+
+  test('regenerate 在模型切换提示里取消后，应恢复前端消息并保留原用户消息', () async {
+    final now = DateTime.now();
+    final userMsg = Message(
+      id: 'msg_regen_failover_cancel_user',
+      role: 'user',
+      content: '这句原话在点取消后也不能丢',
+      createdAt: now.subtract(const Duration(seconds: 2)),
+      status: 'sent',
+    );
+    final aiMsg = Message(
+      id: 'msg_regen_failover_cancel_ai',
+      role: 'assistant',
+      content: '旧回复',
+      createdAt: now.subtract(const Duration(seconds: 1)),
+      status: 'sent',
+    );
+    final settings = _buildTestSettings().copyWith(
+      defaultModelName: 'openai:gpt-4o-mini',
+      defaultChatModels: const <String>[
+        'openai:gpt-4o-mini',
+        'openai:gpt-3.5-turbo',
+      ],
+      modelList: const <String>[
+        'openai:gpt-4o-mini',
+        'openai:gpt-3.5-turbo',
+      ],
+      allKnownModels: const <String>[
+        'openai:gpt-4o-mini',
+        'openai:gpt-3.5-turbo',
+      ],
+      modelProviderMap: const <String, String>{
+        'openai:gpt-4o-mini': 'openai',
+        'gpt-4o-mini': 'openai',
+        'openai:gpt-3.5-turbo': 'openai',
+        'gpt-3.5-turbo': 'openai',
+      },
+    );
+    final conv = Conversation(
+      id: 'conv_regen_failover_cancel',
+      title: 'RegenFailoverCancel',
+      displayName: 'RegenFailoverCancel',
+      createdAt: now,
+      updatedAt: now,
+      messages: [userMsg, aiMsg],
+      lastMessage: aiMsg.displayText,
+      lastMessageTime: aiMsg.createdAt,
+    );
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+    await _insertMessage(db, conv.id, userMsg);
+    await _insertMessage(db, conv.id, aiMsg);
+
+    _BlockingModelFailoverPromptController? failoverController;
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(settings),
+        ),
+        modelFailoverPromptProvider.overrideWith(() {
+          final controller = _BlockingModelFailoverPromptController();
+          failoverController = controller;
+          return controller;
+        }),
+        chatSendServiceProvider.overrideWith(
+          (ref) => _FailFirstModelStreamingSendService(
+            ref,
+            settings,
+            failingModel: 'openai:gpt-4o-mini',
+          ),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    container.read(activeConversationIdProvider.notifier).state = conv.id;
+    await container.read(conversationsProvider.future);
+    await container.read(appSettingsProvider.future);
+
+    final regenerateFuture =
+        container.read(chatActionsProvider).regenerate(aiMsg.id);
+
+    ModelFailoverPromptRequest? pendingRequest;
+    for (var i = 0; i < 40; i++) {
+      pendingRequest = container.read(modelFailoverPromptProvider);
+      if ((failoverController?.requestCalls ?? 0) > 0 &&
+          pendingRequest != null) {
+        break;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+
+    expect(failoverController?.requestCalls, 1);
+    expect(pendingRequest, isNotNull);
+
+    final stopped = await container
+        .read(chatActionsProvider)
+        .interruptCurrentGeneration(convId: conv.id);
     expect(stopped, isTrue);
 
-    await Future<void>.delayed(const Duration(milliseconds: 40));
-    expect(
-      sendFinished,
-      isFalse,
-      reason: '此时底层请求尚未自然返回，需要证明占位是在“中断瞬间”被清掉，而不是等请求结束后才消失',
-    );
-    expect(
-      await _loadFrontendTimelineMessages(container, conv.id),
-      isEmpty,
-      reason: '打断生成后，前端短窗里的发送中占位也应立即清空',
-    );
-    expect(
-      (await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id))
-          .where((message) => message.role == 'assistant'),
-      isEmpty,
-      reason: '打断生成后，正式时间线里也不应残留 assistant 占位',
-    );
+    await regenerateFuture;
 
-    await sendFuture;
-
-    final storedMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
+    final frontendMessages =
+        await _loadFrontendTimelineMessages(container, conv.id);
+    final persistedMessages = await container
+        .read(chatHistoryStoreProvider)
+        .loadProjectedMessagesFromRawStore(conv.id);
     expect(
-      storedMessages.where((message) => message.role == 'assistant'),
+      frontendMessages.map((message) => message.id),
+      persistedMessages.map((message) => message.id),
+      reason: '模型切换提示里点取消后，前端仍应恢复到与持久历史一致的时间线。',
+    );
+    expect(
+      frontendMessages.any((message) => message.id == userMsg.id),
+      isTrue,
+      reason: '模型切换提示里点取消后，前端仍应保留原用户消息。',
+    );
+    expect(
+      frontendMessages.where(
+        (message) => message.role == 'assistant' && message.status == 'sending',
+      ),
       isEmpty,
-      reason: '中断后的迟到结果不应再落成 assistant 消息',
+      reason: '模型切换提示里点取消后，不应残留 assistant 流式占位。',
+    );
+    expect(
+      persistedMessages.any((message) => message.id == userMsg.id),
+      isTrue,
+      reason: '模型切换提示里点取消后，持久历史也应保留原用户消息。',
+    );
+    final rawMessages = await container
+        .read(chatHistoryStoreProvider)
+        .loadAllRawMessages(conv.id);
+    expect(
+      rawMessages.any((message) => message.id == userMsg.id),
+      isTrue,
+      reason: '模型切换提示里点取消后，后端上下文原始历史也应保留原用户消息。',
     );
   });
 
@@ -3400,7 +4371,7 @@ void main() {
     expect(
       leakedPartialText,
       isFalse,
-      reason: '分段模式下，未封口的半句正文应只留在短窗后台缓冲，不能提前露到占位气泡里',
+      reason: '分段模式下，未封口的半句正文应只留在时间线缓存后台缓冲，不能提前露到占位气泡里',
     );
 
     final sawFirstSentenceThenNextThinking = frontendSnapshots.any((snapshot) {
@@ -3467,8 +4438,9 @@ void main() {
 
     await actions.send('测试流式收尾不回退');
 
-    final finalMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
+    final finalMessages = await container
+        .read(chatHistoryStoreProvider)
+        .loadProjectedMessagesFromRawStore(conv.id);
     final finalAssistantMessages = finalMessages
         .where((m) => m.role == 'assistant')
         .where((m) => m.displayText.trim().isNotEmpty)
@@ -3555,7 +4527,7 @@ void main() {
     expect(storedTexts, <String>['第一段。第二段。第三段。']);
   });
 
-  test('send 流式收尾后应继续复用前端短窗里的文本消息 id', () async {
+  test('send 流式收尾后应继续复用前端时间线缓存里的文本消息 id', () async {
     final now = DateTime.now();
     final convId = 'conv_stream_text_ids_reused_${now.microsecondsSinceEpoch}';
     final conv = Conversation(
@@ -3621,7 +4593,7 @@ void main() {
     expect(
       streamingTextIds,
       isNotNull,
-      reason: '前置条件：流式阶段应先在短窗里产出 3 条文本锚点，才能验证收尾时是否原位升级',
+      reason: '前置条件：流式阶段应先在时间线缓存里产出 3 条文本锚点，才能验证收尾时是否原位升级',
     );
 
     final frontendAfterSend =
@@ -3641,7 +4613,7 @@ void main() {
           .map((message) => message.id)
           .toList(growable: false),
       streamingTextIds,
-      reason: '流式收尾后，前端短窗里的文本锚点应继续沿用原 id，而不是整组删掉再换成正式消息',
+      reason: '流式收尾后，前端时间线缓存里的文本锚点应继续沿用原 id，而不是整组删掉再换成正式消息',
     );
     expect(
       finalizedTextMessages.every((message) => message.status == 'sent'),
@@ -3650,7 +4622,94 @@ void main() {
     );
   });
 
-  test('send 遇到 TTS 标签时，流式阶段不应先插入 pending 语音条', () async {
+  test('send 在分段延时模式下，即使时间线缓存写入变慢也不会一次冒出多条消息', () async {
+    final now = DateTime.now();
+    final convId =
+        'conv_stream_delay_no_backlog_burst_${now.microsecondsSinceEpoch}';
+    final conv = Conversation(
+      id: convId,
+      title: 'StreamDelayNoBacklogBurst',
+      displayName: 'StreamDelayNoBacklogBurst',
+      createdAt: now,
+      updatedAt: now,
+      messages: const [],
+      lastMessage: '',
+      lastMessageTime: now,
+    );
+    final settings = _buildTestSettings(streamSegmentDelaySeconds: 0.08);
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(settings),
+        ),
+        conversationTimelineCacheProvider.overrideWith(
+          (ref) => _DelayedReplaceConversationTimelineCache(
+            ref,
+            replaceDelay: const Duration(milliseconds: 220),
+          ),
+        ),
+        chatSendServiceProvider.overrideWith(
+          (ref) => _SlowMultiDeltaStreamingSendService(ref, settings),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    container.read(activeConversationIdProvider.notifier).state = conv.id;
+    await container.read(conversationsProvider.future);
+    await container.read(appSettingsProvider.future);
+
+    final sendFuture = container.read(chatActionsProvider).send('测试逐条 reveal');
+    final revealedCounts = <int>[];
+    for (var i = 0; i < 8; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      final frontendMessages =
+          await _loadFrontendTimelineMessages(container, conv.id);
+      final visibleTexts = frontendMessages.where((message) {
+        if (message.role != 'assistant') return false;
+        final textBlocks = message.blocks?.whereType<TextBlock>().toList() ??
+            const <TextBlock>[];
+        if (textBlocks.length != 1) return false;
+        final text = textBlocks.single.content.trim();
+        if (text == '生成中...' || text.isEmpty) return false;
+        return text == '第一段。' || text == '第二段。' || text == '第三段。';
+      }).length;
+      revealedCounts.add(visibleTexts);
+    }
+    await sendFuture;
+
+    final revealedProgress = <int>[];
+    for (final count in revealedCounts) {
+      if (revealedProgress.isEmpty || revealedProgress.last != count) {
+        revealedProgress.add(count);
+      }
+    }
+
+    expect(
+      revealedProgress,
+      contains(1),
+      reason: '即使时间线缓存写入比设计延时更慢，第一条消息也必须单独露出一次，不能直接跳到 2 条以上。',
+    );
+    expect(
+      revealedProgress,
+      contains(2),
+      reason: '第二条消息也应单独经历一次 reveal，不能和第一条或第三条一起追赶式冒出。',
+    );
+    for (var i = 1; i < revealedProgress.length; i++) {
+      expect(
+        revealedProgress[i] - revealedProgress[i - 1],
+        lessThanOrEqualTo(1),
+        reason: '时间线缓存写入变慢时，分段 reveal 也不应追赶式一次放出多条消息。',
+      );
+    }
+  });
+
+  test('send 遇到 TTS 标签时，应先按语序产出 pending 语音占位并在收尾后继续复用', () async {
     final now = DateTime.now();
     final convId = 'conv_stream_tts_pending_${now.microsecondsSinceEpoch}';
     final conv = Conversation(
@@ -3725,32 +4784,49 @@ void main() {
 
     expect(
       sawPendingAudioDuringStream,
-      isFalse,
-      reason: 'pending 语音条不应在流式阶段直接插入，否则会把正文时间线硬顶一下',
+      isTrue,
+      reason: '原始设计要求是先落语音占位再回填，流式阶段不应把 TTS 全部拖到收尾后才补发。',
     );
 
     expect(ttsHandler.lastAppendAfterStreamText, isTrue);
     expect(
       ttsHandler.lastPendingStreamTtsMessages,
-      isEmpty,
-      reason: '收尾阶段应改由后补链路自行生成语音占位，不复用流式阶段的 pending 列表',
+      hasLength(1),
+      reason: '收尾阶段应继续复用流式阶段已经出现的语音占位，而不是重新晚创建一条。',
     );
     final frontendAfterSend =
         await _loadFrontendTimelineMessages(container, conv.id);
+    final frontendTextIds = frontendAfterSend
+        .where((message) {
+          final textBlocks = message.blocks?.whereType<TextBlock>().toList() ??
+              const <TextBlock>[];
+          if (textBlocks.length != 1) return false;
+          final text = textBlocks.single.content.trim();
+          return text == '第一句。' || text == '第二句。';
+        })
+        .map((message) => message.id)
+        .toList(growable: false);
+    final pendingAudioMessages = frontendAfterSend.where((message) {
+      final audioBlock = _firstAudioBlock(message);
+      return audioBlock != null &&
+          (audioBlock.text ?? '') == '这是一段语音' &&
+          audioBlock.status == BlockStatus.pending &&
+          audioBlock.url.isEmpty;
+    }).toList(growable: false);
+    expect(pendingAudioMessages, hasLength(1));
     expect(
-      frontendAfterSend.where((message) {
-        final audioBlock = _firstAudioBlock(message);
-        return audioBlock != null &&
-            (audioBlock.text ?? '') == '这是一段语音' &&
-            audioBlock.status == BlockStatus.pending &&
-            audioBlock.url.isEmpty;
-      }),
-      isEmpty,
-      reason: '在该录制型 handler 场景下，流式阶段不应残留被提前插入的 pending 语音条',
+      pendingAudioMessages.single.id,
+      ttsHandler.lastPendingStreamTtsMessages.single.id,
+      reason: '录制型 handler 不做真实回填时，前端时间线缓存里应继续保留同一条流式语音占位。',
+    );
+    expect(
+      ttsHandler.lastStreamTextMessageIds,
+      frontendTextIds,
+      reason: '后补锚点必须使用最终时间线里真实存在的文本消息 id，不能再把 buildResult 的新 id 传下去。',
     );
   });
 
-  test('send 遇到前置 TTS 标签时，不应让语音占位抢在正文前单独出现', () async {
+  test('send 遇到前置 TTS 标签时，应允许语音占位先于后续正文按语序出现', () async {
     final now = DateTime.now();
     final convId =
         'conv_stream_leading_tts_anchor_first_${now.microsecondsSinceEpoch}';
@@ -3830,31 +4906,42 @@ void main() {
 
     expect(
       sawPendingAudioBeforeText,
-      isFalse,
-      reason: '前置 TTS 不应先单独把 pending 音频插进短窗，否则正文后补时会把尾部列表再顶一次',
+      isTrue,
+      reason: '当前轮如果本来就是 `<tts>` 在前，语音占位就应该先于后续正文出现，保持原始语序。',
     );
 
     final frontendAfterSend =
         await _loadFrontendTimelineMessages(container, conv.id);
+    final pendingAudioMessages = frontendAfterSend.where((message) {
+      final audioBlock = _firstAudioBlock(message);
+      return audioBlock != null &&
+          (audioBlock.text ?? '') == '这是一段语音' &&
+          audioBlock.status == BlockStatus.pending &&
+          audioBlock.url.isEmpty;
+    }).toList(growable: false);
     final textIndex = frontendAfterSend.indexWhere(
       (message) =>
           message.role == 'assistant' && message.displayText == '后续正文。',
     );
+    final pendingIndex = frontendAfterSend.indexWhere(
+      (message) =>
+          pendingAudioMessages.any((pending) => pending.id == message.id),
+    );
 
     expect(textIndex, greaterThanOrEqualTo(0));
+    expect(pendingAudioMessages, hasLength(1));
+    expect(pendingIndex, greaterThanOrEqualTo(0));
+    expect(pendingIndex, lessThan(textIndex));
     expect(ttsHandler.lastAppendAfterStreamText, isTrue);
     expect(
       ttsHandler.lastPendingStreamTtsMessages,
-      isEmpty,
-      reason: '前置 TTS 场景也不应再复用流式 pending 列表',
+      hasLength(1),
+      reason: '前置 TTS 场景也应沿用流式阶段已经创建好的 pending 占位。',
     );
     expect(
-      frontendAfterSend.where((message) {
-        final audioBlock = _firstAudioBlock(message);
-        return audioBlock != null && (audioBlock.text ?? '') == '这是一段语音';
-      }),
-      isEmpty,
-      reason: '录制型 handler 下，前置 TTS 不应在流式阶段或收尾阶段硬插语音条',
+      pendingAudioMessages.single.id,
+      ttsHandler.lastPendingStreamTtsMessages.single.id,
+      reason: '录制型 handler 下，收尾后应保留同一条前置语音占位，而不是再新建一条。',
     );
   });
 
@@ -3932,7 +5019,7 @@ void main() {
     expect(
       placeholderId,
       isNotNull,
-      reason: '流式阶段应先在前端短窗里产出一条 pending 语音占位，才能覆盖原位补齐场景',
+      reason: '流式阶段应先在前端时间线缓存里产出一条 pending 语音占位，才能覆盖原位补齐场景',
     );
 
     var frontendMessages =
@@ -4098,8 +5185,9 @@ void main() {
 
     await handler.debugWaitForBackgroundTasks();
 
-    final storedMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
+    final storedMessages = await container
+        .read(chatHistoryStoreProvider)
+        .loadProjectedMessagesFromRawStore(conv.id);
     final audioBlocks = storedMessages
         .where((m) => m.id == 'pending_tts_one' || m.id == 'pending_tts_two')
         .map((m) => m.blocks!.whereType<AudioBlock>().single)
@@ -4237,8 +5325,9 @@ void main() {
       streamPendingTtsMessages: <Message>[pendingTts],
     );
 
-    var storedMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
+    var storedMessages = await container
+        .read(chatHistoryStoreProvider)
+        .loadProjectedMessagesFromRawStore(conv.id);
     expect(
       storedMessages.any((m) => m.blocks?.any((b) => b is ImageBlock) ?? false),
       isFalse,
@@ -4248,8 +5337,9 @@ void main() {
     await handler.debugWaitForBackgroundTasks(
         labelPrefix: 'pending_stream_tts');
 
-    storedMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
+    storedMessages = await container
+        .read(chatHistoryStoreProvider)
+        .loadProjectedMessagesFromRawStore(conv.id);
     final updatedTts = storedMessages
         .firstWhere((message) => message.id == 'stream_pending_tts')
         .blocks!
@@ -4265,8 +5355,9 @@ void main() {
 
     await handler.debugWaitForBackgroundTasks();
 
-    storedMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
+    storedMessages = await container
+        .read(chatHistoryStoreProvider)
+        .loadProjectedMessagesFromRawStore(conv.id);
     expect(
       storedMessages.any((m) => m.blocks?.any((b) => b is ImageBlock) ?? false),
       isTrue,
@@ -4335,8 +5426,9 @@ void main() {
       reason: '快速生图 prompt 只应留在后台处理链路里，不应出现在流式可见文本里',
     );
 
-    final storedMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
+    final storedMessages = await container
+        .read(chatHistoryStoreProvider)
+        .loadProjectedMessagesFromRawStore(conv.id);
     final assistantMessages = storedMessages
         .where((message) => message.role == 'assistant')
         .toList(growable: false);
@@ -4414,8 +5506,9 @@ void main() {
       reason: '带属性的 image 标签不应再被宽匹配吞掉',
     );
 
-    final storedMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
+    final storedMessages = await container
+        .read(chatHistoryStoreProvider)
+        .loadProjectedMessagesFromRawStore(conv.id);
     final storedTexts = storedMessages
         .where((message) => message.role == 'assistant')
         .map((message) => message.displayText.trim())
@@ -4512,86 +5605,92 @@ void main() {
     addTearDown(container.dispose);
 
     final handler = container.read(chatTtsHandlerProvider);
-    await handler.deliverSegmentedMessages(
-      convId: conv.id,
-      userMsgId: 'user_post_stream_images_independent',
-      buildResult: const AssistantMessageBuildResult(
-        messages: <Message>[],
-        lastMessageText: '',
-      ),
-      replyText:
-          '第一句。<image>slow landscape</image>第二句。<image>fast portrait</image>第三句。',
-      pluginEvents: <PluginEvent>[
-        PluginEvent(
-          pluginId: 'image',
-          type: 'image_generate',
-          data: const <String, dynamic>{
-            'prompt': 'slow landscape',
-          },
-          id: 'evt_post_stream_image_slow',
+    try {
+      await handler.deliverSegmentedMessages(
+        convId: conv.id,
+        userMsgId: 'user_post_stream_images_independent',
+        buildResult: const AssistantMessageBuildResult(
+          messages: <Message>[],
+          lastMessageText: '',
         ),
-        PluginEvent(
-          pluginId: 'image',
-          type: 'image_generate',
-          data: const <String, dynamic>{
-            'prompt': 'fast portrait',
-          },
-          id: 'evt_post_stream_image_fast',
+        replyText:
+            '第一句。<image>slow landscape</image>第二句。<image>fast portrait</image>第三句。',
+        pluginEvents: <PluginEvent>[
+          PluginEvent(
+            pluginId: 'image',
+            type: 'image_generate',
+            data: const <String, dynamic>{
+              'prompt': 'slow landscape',
+            },
+            id: 'evt_post_stream_image_slow',
+          ),
+          PluginEvent(
+            pluginId: 'image',
+            type: 'image_generate',
+            data: const <String, dynamic>{
+              'prompt': 'fast portrait',
+            },
+            id: 'evt_post_stream_image_fast',
+          ),
+        ],
+        ttsEnabled: false,
+        appendAfterStreamText: true,
+        streamTextMessageIds: const <String>[
+          'stream_text_first_independent',
+          'stream_text_second_independent',
+          'stream_text_third_independent',
+        ],
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+
+      var storedMessages = await container
+          .read(chatHistoryStoreProvider)
+          .loadProjectedMessagesFromRawStore(conv.id);
+      expect(
+        _collectGeneratingPlaceholderMessages(storedMessages),
+        isEmpty,
+        reason: '图片后补不再创建占位消息，慢图阶段也不应额外占一个消息位',
+      );
+      expect(
+        storedMessages.any(
+          (message) => message.blocks?.any((b) => b is ImageBlock) ?? false,
         ),
-      ],
-      ttsEnabled: false,
-      appendAfterStreamText: true,
-      streamTextMessageIds: const <String>[
-        'stream_text_first_independent',
-        'stream_text_second_independent',
-        'stream_text_third_independent',
-      ],
-    );
+        isFalse,
+      );
 
-    await Future<void>.delayed(const Duration(milliseconds: 40));
+      await Future<void>.delayed(const Duration(milliseconds: 120));
 
-    var storedMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
-    expect(
-      _collectGeneratingPlaceholderMessages(storedMessages),
-      hasLength(2),
-      reason: '两个慢图都应先挂出独立占位，不阻塞正文',
-    );
+      storedMessages = await container
+          .read(chatHistoryStoreProvider)
+          .loadProjectedMessagesFromRawStore(conv.id);
+      final imageBlocks = storedMessages
+          .where(
+              (message) => message.blocks?.any((b) => b is ImageBlock) ?? false)
+          .map((message) => message.blocks!.whereType<ImageBlock>().single)
+          .toList(growable: false);
+      expect(imageBlocks, hasLength(1));
+      expect(imageBlocks.single.prompt, 'fast portrait');
+      expect(_collectGeneratingPlaceholderMessages(storedMessages), isEmpty);
 
-    await Future<void>.delayed(const Duration(milliseconds: 120));
+      await Future<void>.delayed(const Duration(milliseconds: 180));
 
-    storedMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
-    final imageBlocks = storedMessages
-        .where(
-            (message) => message.blocks?.any((b) => b is ImageBlock) ?? false)
-        .map((message) => message.blocks!.whereType<ImageBlock>().single)
-        .toList(growable: false);
-    expect(imageBlocks, hasLength(1));
-    expect(imageBlocks.single.prompt, 'fast portrait');
-    expect(
-      _collectGeneratingPlaceholderMessages(storedMessages),
-      hasLength(1),
-      reason: '快图完成后应先单独发出，慢图继续保留占位等待',
-    );
-
-    await Future<void>.delayed(const Duration(milliseconds: 180));
-
-    storedMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
-    final finalImagePrompts = storedMessages
-        .where(
-            (message) => message.blocks?.any((b) => b is ImageBlock) ?? false)
-        .map((message) => message.blocks!.whereType<ImageBlock>().single.prompt)
-        .toList(growable: false);
-    expect(finalImagePrompts,
-        containsAll(<String>['slow landscape', 'fast portrait']));
-    expect(imagePlugin.prompts, <String>['slow landscape', 'fast portrait']);
-    expect(
-      _collectGeneratingPlaceholderMessages(storedMessages),
-      isEmpty,
-      reason: '所有图片完成后，尾部等待占位应全部清掉',
-    );
+      storedMessages = await container
+          .read(chatHistoryStoreProvider)
+          .loadProjectedMessagesFromRawStore(conv.id);
+      final finalImagePrompts = storedMessages
+          .where(
+              (message) => message.blocks?.any((b) => b is ImageBlock) ?? false)
+          .map((message) =>
+              message.blocks!.whereType<ImageBlock>().single.prompt)
+          .toList(growable: false);
+      expect(finalImagePrompts,
+          containsAll(<String>['slow landscape', 'fast portrait']));
+      expect(imagePlugin.prompts, <String>['slow landscape', 'fast portrait']);
+      expect(_collectGeneratingPlaceholderMessages(storedMessages), isEmpty);
+    } finally {
+      await handler.debugWaitForBackgroundTasks(labelPrefix: 'deferred_image_');
+    }
   });
 
   test('后补图片接管占位时，不应先清空临时层再等待稳定时间线补位', () async {
@@ -4638,8 +5737,8 @@ void main() {
         appSettingsProvider.overrideWith(
           () => _FakeAppSettingsNotifier(settings),
         ),
-        conversationShortWindowStoreProvider.overrideWith(
-          (ref) => _DelayedWatchConversationShortWindowStore(
+        conversationTimelineCacheProvider.overrideWith(
+          (ref) => _DelayedWatchConversationTimelineCache(
             ref,
             windowDelay: const Duration(milliseconds: 90),
           ),
@@ -4666,80 +5765,79 @@ void main() {
     addTearDown(stableMessagesSub.close);
 
     final handler = container.read(chatTtsHandlerProvider);
-    await handler.deliverSegmentedMessages(
-      convId: conv.id,
-      userMsgId: 'user_post_stream_image_handoff',
-      buildResult: const AssistantMessageBuildResult(
-        messages: <Message>[],
-        lastMessageText: '',
-      ),
-      replyText: '前置正文。<image>handoff portrait</image>',
-      pluginEvents: <PluginEvent>[
-        PluginEvent(
-          pluginId: 'image',
-          type: 'image_generate',
-          data: const <String, dynamic>{
-            'prompt': 'handoff portrait',
-          },
-          id: 'evt_post_stream_image_handoff',
+    try {
+      await handler.deliverSegmentedMessages(
+        convId: conv.id,
+        userMsgId: 'user_post_stream_image_handoff',
+        buildResult: const AssistantMessageBuildResult(
+          messages: <Message>[],
+          lastMessageText: '',
         ),
-      ],
-      ttsEnabled: false,
-      appendAfterStreamText: true,
-      streamTextMessageIds: const <String>['stream_text_handoff_anchor'],
-    );
+        replyText: '前置正文。<image>handoff portrait</image>',
+        pluginEvents: <PluginEvent>[
+          PluginEvent(
+            pluginId: 'image',
+            type: 'image_generate',
+            data: const <String, dynamic>{
+              'prompt': 'handoff portrait',
+            },
+            id: 'evt_post_stream_image_handoff',
+          ),
+        ],
+        ttsEnabled: false,
+        appendAfterStreamText: true,
+        streamTextMessageIds: const <String>['stream_text_handoff_anchor'],
+      );
 
-    var sawStableImage = false;
-    var sawAnchorOrPlaceholder = false;
-    var sawEmptyGap = false;
-    for (var i = 0; i < 35; i++) {
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-      final stableMessages =
+      var sawStableImage = false;
+      var sawStableAnchor = false;
+      var sawEmptyGap = false;
+      for (var i = 0; i < 80; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        final stableMessages =
+            container.read(conversationMessagesProvider(conv.id)).valueOrNull ??
+                const <Message>[];
+        final hasStableAnchor = stableMessages.any(
+          (message) => message.id == 'stream_text_handoff_anchor',
+        );
+        final hasStableImage = stableMessages.any(
+          (message) =>
+              message.blocks?.any((block) => block is ImageBlock) ?? false,
+        );
+        if (hasStableAnchor) {
+          sawStableAnchor = true;
+        }
+        if (hasStableImage) {
+          sawStableImage = true;
+        }
+        if (sawStableAnchor && !sawStableImage && !hasStableAnchor) {
+          sawEmptyGap = true;
+        }
+      }
+
+      expect(
+        sawEmptyGap,
+        isFalse,
+        reason: '图片后补改成直出最终图后，原文本锚点也不应先消失再等待最终图片补位',
+      );
+
+      await handler.debugWaitForBackgroundTasks(labelPrefix: 'deferred_image_');
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      final finalStableMessages =
           container.read(conversationMessagesProvider(conv.id)).valueOrNull ??
               const <Message>[];
-      final hasStablePlaceholder =
-          _collectGeneratingPlaceholderMessages(stableMessages).isNotEmpty;
-      final hasStableAnchor = stableMessages.any(
-        (message) => message.id == 'stream_text_handoff_anchor',
+      expect(
+        _collectGeneratingPlaceholderMessages(finalStableMessages),
+        isEmpty,
+        reason: '图片升级为最终态后，不应继续残留生成中占位',
       );
-      final hasStableImage = stableMessages.any(
-        (message) =>
-            message.blocks?.any((block) => block is ImageBlock) ?? false,
-      );
-      if (hasStablePlaceholder || hasStableAnchor) {
-        sawAnchorOrPlaceholder = true;
-      }
-      if (hasStableImage) {
-        sawStableImage = true;
-      }
-      if (sawAnchorOrPlaceholder &&
-          !hasStableImage &&
-          !hasStablePlaceholder &&
-          !hasStableAnchor) {
-        sawEmptyGap = true;
-      }
+      expect(imagePlugin.prompts, <String>['handoff portrait']);
+    } finally {
+      await handler.debugWaitForBackgroundTasks(labelPrefix: 'deferred_image_');
     }
-
-    expect(sawStableImage, isTrue);
-    expect(
-      sawEmptyGap,
-      isFalse,
-      reason: '无论是“生成中”占位还是原文本锚点，都不应先被撤掉再等待图片补位',
-    );
-
-    await Future<void>.delayed(const Duration(milliseconds: 120));
-    final finalStableMessages =
-        container.read(conversationMessagesProvider(conv.id)).valueOrNull ??
-            const <Message>[];
-    expect(
-      _collectGeneratingPlaceholderMessages(finalStableMessages),
-      isEmpty,
-      reason: '图片升级为最终态后，不应继续残留生成中占位',
-    );
-    expect(imagePlugin.prompts, <String>['handoff portrait']);
   });
 
-  test('非流式混排遇到 TTS 和慢图时，应先发占位与后续文本，再等待补齐多模态', () async {
+  test('非流式混排遇到 TTS 和慢图时，应先发语音占位与后续文本，图片完成后再直出最终图', () async {
     final now = DateTime.now();
     final conv = Conversation(
       id: 'conv_non_stream_mixed_tts_image',
@@ -4798,14 +5896,157 @@ void main() {
     addTearDown(container.dispose);
 
     final handler = container.read(chatTtsHandlerProvider);
-    await handler.deliverSegmentedMessages(
+    try {
+      await handler.deliverSegmentedMessages(
+        convId: conv.id,
+        userMsgId: 'user_non_stream_mixed_tts_image',
+        buildResult: const AssistantMessageBuildResult(
+          messages: <Message>[],
+          lastMessageText: '',
+        ),
+        replyText: '文本a。<tts>语音段</tts>文本b。<image>slow landscape</image>文本c。',
+        pluginEvents: <PluginEvent>[
+          PluginEvent(
+            pluginId: 'tts',
+            type: 'tts_convert',
+            data: const <String, dynamic>{
+              'text': '语音段',
+              'originalText': '语音段',
+            },
+            id: 'evt_non_stream_mixed_tts',
+          ),
+          PluginEvent(
+            pluginId: 'image',
+            type: 'image_generate',
+            data: const <String, dynamic>{
+              'prompt': 'slow landscape',
+            },
+            id: 'evt_non_stream_mixed_image',
+          ),
+        ],
+        ttsEnabled: true,
+      );
+
+      var storedMessages = await container
+          .read(chatHistoryStoreProvider)
+          .loadProjectedMessagesFromRawStore(conv.id);
+      final assistantMessages = storedMessages
+          .where((message) => message.role == 'assistant')
+          .toList(growable: false);
+      final textAIndex = assistantMessages.indexWhere(
+        (message) => message.displayText.trim() == '文本a。',
+      );
+      final ttsIndex = assistantMessages.indexWhere(
+        (message) =>
+            message.blocks?.whereType<AudioBlock>().any(
+                  (block) => (block.text ?? '') == '语音段',
+                ) ??
+            false,
+      );
+      final textBIndex = assistantMessages.indexWhere(
+        (message) => message.displayText.trim() == '文本b。',
+      );
+      final textCIndex = assistantMessages.indexWhere(
+        (message) => message.displayText.trim() == '文本c。',
+      );
+      expect(textAIndex, greaterThanOrEqualTo(0));
+      expect(ttsIndex, greaterThan(textAIndex));
+      expect(textBIndex, greaterThan(ttsIndex));
+      expect(textCIndex, greaterThan(textBIndex));
+      final pendingAudio =
+          assistantMessages[ttsIndex].blocks!.whereType<AudioBlock>().single;
+      expect(pendingAudio.status, BlockStatus.pending);
+      expect(
+        storedMessages
+            .any((m) => m.blocks?.any((b) => b is ImageBlock) ?? false),
+        isFalse,
+        reason: '慢图完成前不应挡住后续文本，也不应提前落成最终图片',
+      );
+      expect(
+        _collectGeneratingPlaceholderMessages(storedMessages),
+        isEmpty,
+        reason: '图片后补不再创建占位消息，慢图阶段不应额外占一个消息位',
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+
+      storedMessages = await container
+          .read(chatHistoryStoreProvider)
+          .loadProjectedMessagesFromRawStore(conv.id);
+      final updatedAudio =
+          storedMessages[ttsIndex].blocks!.whereType<AudioBlock>().single;
+      expect(updatedAudio.status, BlockStatus.success);
+      expect(updatedAudio.url, isNotEmpty);
+      expect(
+        storedMessages
+            .any((m) => m.blocks?.any((b) => b is ImageBlock) ?? false),
+        isFalse,
+        reason: 'TTS 原位完成后，慢图仍应继续独立等待，不回头阻塞正文',
+      );
+      expect(_collectGeneratingPlaceholderMessages(storedMessages), isEmpty);
+
+      await Future<void>.delayed(const Duration(milliseconds: 220));
+
+      storedMessages = await container
+          .read(chatHistoryStoreProvider)
+          .loadProjectedMessagesFromRawStore(conv.id);
+      final imageIndex = storedMessages.indexWhere(
+        (message) =>
+            message.blocks?.any((block) => block is ImageBlock) ?? false,
+      );
+      expect(imageIndex, greaterThan(textCIndex));
+      expect(imagePlugin.prompts, <String>['slow landscape']);
+      expect(_collectGeneratingPlaceholderMessages(storedMessages), isEmpty);
+    } finally {
+      await handler.debugWaitForBackgroundTasks();
+    }
+  });
+
+  test('非流式文本和 TTS 混排时，也必须按分段延时逐条落消息', () async {
+    final now = DateTime.now();
+    final conv = Conversation(
+      id: 'conv_non_stream_tts_segment_delay',
+      title: 'NonStreamTtsSegmentDelay',
+      displayName: 'NonStreamTtsSegmentDelay',
+      createdAt: now,
+      updatedAt: now,
+      messages: const [],
+      lastMessage: '',
+      lastMessageTime: now,
+    );
+    final settings = _buildTestSettings(streamSegmentDelaySeconds: 0.2);
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+
+    final ttsService = _TrackingDelayedTtsService(
+      delays: const <String, Duration>{
+        '语音段': Duration(milliseconds: 360),
+      },
+    );
+    final ttsManager = TtsPlayerManager(() => ttsService);
+    addTearDown(ttsManager.dispose);
+
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(settings),
+        ),
+        ttsPlayerManagerProvider.overrideWithValue(ttsManager),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final handler = container.read(chatTtsHandlerProvider);
+    final deliveryFuture = handler.deliverSegmentedMessages(
       convId: conv.id,
-      userMsgId: 'user_non_stream_mixed_tts_image',
+      userMsgId: 'user_non_stream_tts_segment_delay',
       buildResult: const AssistantMessageBuildResult(
         messages: <Message>[],
         lastMessageText: '',
       ),
-      replyText: '文本a。<tts>语音段</tts>文本b。<image>slow landscape</image>文本c。',
+      replyText: '文本a。<tts>语音段</tts>文本b。',
       pluginEvents: <PluginEvent>[
         PluginEvent(
           pluginId: 'tts',
@@ -4814,94 +6055,89 @@ void main() {
             'text': '语音段',
             'originalText': '语音段',
           },
-          id: 'evt_non_stream_mixed_tts',
-        ),
-        PluginEvent(
-          pluginId: 'image',
-          type: 'image_generate',
-          data: const <String, dynamic>{
-            'prompt': 'slow landscape',
-          },
-          id: 'evt_non_stream_mixed_image',
+          id: 'evt_non_stream_tts_segment_delay',
         ),
       ],
       ttsEnabled: true,
     );
 
-    var storedMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
-    final assistantMessages = storedMessages
-        .where((message) => message.role == 'assistant')
-        .toList(growable: false);
-    final textAIndex = assistantMessages.indexWhere(
-      (message) => message.displayText.trim() == '文本a。',
-    );
-    final ttsIndex = assistantMessages.indexWhere(
-      (message) =>
-          message.blocks?.whereType<AudioBlock>().any(
-                (block) => (block.text ?? '') == '语音段',
-              ) ??
-          false,
-    );
-    final textBIndex = assistantMessages.indexWhere(
-      (message) => message.displayText.trim() == '文本b。',
-    );
-    final textCIndex = assistantMessages.indexWhere(
-      (message) => message.displayText.trim() == '文本c。',
-    );
-    expect(textAIndex, greaterThanOrEqualTo(0));
-    expect(ttsIndex, greaterThan(textAIndex));
-    expect(textBIndex, greaterThan(ttsIndex));
-    expect(textCIndex, greaterThan(textBIndex));
-    final pendingAudio =
-        assistantMessages[ttsIndex].blocks!.whereType<AudioBlock>().single;
-    expect(pendingAudio.status, BlockStatus.pending);
-    expect(
-      storedMessages.any((m) => m.blocks?.any((b) => b is ImageBlock) ?? false),
-      isFalse,
-      reason: '慢图完成前不应挡住后续文本，也不应提前落成最终图片',
-    );
-    expect(
-      _collectGeneratingPlaceholderMessages(storedMessages),
-      hasLength(1),
-      reason: '慢图应先挂一个普通生成中气泡占位',
-    );
+    Future<List<Message>> loadAssistantMessages() async {
+      final storedMessages = await container
+          .read(chatHistoryStoreProvider)
+          .loadProjectedMessagesFromRawStore(conv.id);
+      return storedMessages
+          .where((message) => message.role == 'assistant')
+          .toList(growable: false);
+    }
 
-    await Future<void>.delayed(const Duration(milliseconds: 120));
+    final snapshots = <List<Message>>[];
+    try {
+      for (var i = 0; i < 24; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+        snapshots.add(await loadAssistantMessages());
+      }
+      await deliveryFuture;
+      await handler.debugWaitForBackgroundTasks(labelPrefix: 'pending_tts_');
 
-    storedMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
-    final updatedAudio =
-        storedMessages[ttsIndex].blocks!.whereType<AudioBlock>().single;
-    expect(updatedAudio.status, BlockStatus.success);
-    expect(updatedAudio.url, isNotEmpty);
-    expect(
-      storedMessages.any((m) => m.blocks?.any((b) => b is ImageBlock) ?? false),
-      isFalse,
-      reason: 'TTS 原位完成后，慢图仍应继续独立等待，不回头阻塞正文',
-    );
-    expect(
-      _collectGeneratingPlaceholderMessages(storedMessages),
-      hasLength(1),
-    );
+      final sawNoAssistantYet = snapshots.any((snapshot) => snapshot.isEmpty);
+      final sawFirstTextOnly = snapshots.any((snapshot) {
+        return snapshot.length == 1 &&
+            snapshot.single.displayText.trim() == '文本a。';
+      });
+      final sawTextThenPending = snapshots.any((snapshot) {
+        if (snapshot.length != 2) return false;
+        if (snapshot.first.displayText.trim() != '文本a。') return false;
+        final audioBlock =
+            snapshot[1].blocks?.whereType<AudioBlock>().singleOrNull;
+        return audioBlock != null &&
+            audioBlock.text == '语音段' &&
+            audioBlock.status == BlockStatus.pending &&
+            audioBlock.url.isEmpty;
+      });
+      final sawTextPendingThenTail = snapshots.any((snapshot) {
+        return snapshot.length == 3 &&
+            snapshot[0].displayText.trim() == '文本a。' &&
+            snapshot[1].displayText.trim() == '[语音]' &&
+            snapshot[2].displayText.trim() == '文本b。';
+      });
 
-    await Future<void>.delayed(const Duration(milliseconds: 220));
+      expect(
+        sawNoAssistantYet,
+        isTrue,
+        reason: '三个点转首条正式消息前，非流式链路也要先走一段分段延时，不能瞬间把正文灌出来。',
+      );
+      expect(
+        sawFirstTextOnly,
+        isTrue,
+        reason: '第一步只应该落第一条文本，语音占位不能和它一起出现。',
+      );
+      expect(
+        sawTextThenPending,
+        isTrue,
+        reason: '第二步应只把语音占位落到原位，后续文本继续等待下一段延时。',
+      );
+      expect(
+        sawTextPendingThenTail,
+        isTrue,
+        reason: '语音占位也应占住原位，等到下一段延时结束后，后续文本才能继续落下。',
+      );
 
-    storedMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
-    final imageIndex = storedMessages.indexWhere(
-      (message) => message.blocks?.any((block) => block is ImageBlock) ?? false,
-    );
-    expect(imageIndex, greaterThan(textCIndex));
-    expect(imagePlugin.prompts, <String>['slow landscape']);
-    expect(
-      _collectGeneratingPlaceholderMessages(storedMessages),
-      isEmpty,
-      reason: '图片补齐后，生成中占位应及时清空',
-    );
+      final assistantMessages = await loadAssistantMessages();
+      final finalAudio =
+          assistantMessages[1].blocks!.whereType<AudioBlock>().single;
+      expect(finalAudio.status, BlockStatus.success);
+      expect(finalAudio.url, isNotEmpty);
+      expect(
+        assistantMessages.map((message) => message.displayText.trim()).toList(),
+        <String>['文本a。', '[语音]', '文本b。'],
+      );
+    } finally {
+      await deliveryFuture;
+      await handler.debugWaitForBackgroundTasks(labelPrefix: 'pending_tts_');
+    }
   });
 
-  test('send 遇到 `<tts>...<image>...文本` 混排时，应先落完后续文本，再用尾部生成中气泡等待慢图', () async {
+  test('send 遇到 `<tts>...<image>...文本` 混排时，应先落完后续文本，再等待慢图直出最终图', () async {
     final now = DateTime.now();
     final conv = Conversation(
       id: 'conv_stream_mixed_tts_image_tail',
@@ -4966,96 +6202,90 @@ void main() {
     await container.read(conversationsProvider.future);
     await container.read(appSettingsProvider.future);
 
-    await container.read(chatActionsProvider).send('测试混合尾部慢图');
-    await Future<void>.delayed(const Duration(milliseconds: 40));
+    try {
+      await container.read(chatActionsProvider).send('测试混合尾部慢图');
+      await Future<void>.delayed(const Duration(milliseconds: 40));
 
-    var storedMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
-    final tailPlaceholders = _collectGeneratingPlaceholderMessages(
-      storedMessages,
-    );
-    expect(tailPlaceholders, hasLength(1));
-    final tailPlaceholder = tailPlaceholders.single;
-    expect(tailPlaceholder.displayText.trim(), '生成中...');
-    expect(tailPlaceholder.status, 'sending');
-    final placeholderTextBlock =
-        tailPlaceholder.blocks!.whereType<TextBlock>().single;
-    expect(placeholderTextBlock.status, BlockStatus.streaming);
+      var storedMessages = await container
+          .read(chatHistoryStoreProvider)
+          .loadProjectedMessagesFromRawStore(conv.id);
+      expect(_collectGeneratingPlaceholderMessages(storedMessages), isEmpty);
 
-    final assistantMessages = storedMessages
-        .where((message) => message.role == 'assistant')
-        .toList(growable: false);
-    expect(
-      assistantMessages.any(
-        (message) => message.displayText.trim() == '文本b文本c。',
-      ),
-      isFalse,
-      reason: '<image> 应该像 `<tts>` 一样切开流式文本边界，避免把前后文本揉成同一个气泡',
-    );
-    final textBIndex = assistantMessages.indexWhere(
-      (message) => message.displayText.trim() == '文本b',
-    );
-    final textCIndex = assistantMessages.indexWhere(
-      (message) => message.displayText.trim() == '文本c。',
-    );
-    expect(textBIndex, greaterThanOrEqualTo(0));
-    expect(textCIndex, greaterThan(textBIndex));
-    expect(
-      assistantMessages.any(
+      final assistantMessages = storedMessages
+          .where((message) => message.role == 'assistant')
+          .toList(growable: false);
+      expect(
+        assistantMessages.any(
+          (message) => message.displayText.trim() == '文本b文本c。',
+        ),
+        isFalse,
+        reason: '<image> 应该像 `<tts>` 一样切开流式文本边界，避免把前后文本揉成同一个气泡',
+      );
+      final textBIndex = assistantMessages.indexWhere(
+        (message) => message.displayText.trim() == '文本b',
+      );
+      final textCIndex = assistantMessages.indexWhere(
+        (message) => message.displayText.trim() == '文本c。',
+      );
+      expect(textBIndex, greaterThanOrEqualTo(0));
+      expect(textCIndex, greaterThan(textBIndex));
+      expect(
+        assistantMessages.any(
+          (message) =>
+              message.blocks?.any((block) => block is ImageBlock) ?? false,
+        ),
+        isFalse,
+        reason: '慢图完成前，数据库里不应突然出现最终图片消息',
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+
+      storedMessages = await container
+          .read(chatHistoryStoreProvider)
+          .loadProjectedMessagesFromRawStore(conv.id);
+      final updatedAudio = storedMessages
+          .where((message) => message.role == 'assistant')
+          .firstWhere((message) =>
+              message.blocks?.whereType<AudioBlock>().any(
+                    (block) => block.text == '语音段',
+                  ) ??
+              false)
+          .blocks!
+          .whereType<AudioBlock>()
+          .single;
+      expect(updatedAudio.status, BlockStatus.success);
+      expect(updatedAudio.url, isNotEmpty);
+      expect(
+        storedMessages
+            .any((m) => m.blocks?.any((b) => b is ImageBlock) ?? false),
+        isFalse,
+        reason: '尾部慢图不应阻塞 TTS 原位完成，也不应在这之前抢先落库',
+      );
+      expect(_collectGeneratingPlaceholderMessages(storedMessages), isEmpty);
+
+      await Future<void>.delayed(const Duration(milliseconds: 220));
+
+      storedMessages = await container
+          .read(chatHistoryStoreProvider)
+          .loadProjectedMessagesFromRawStore(conv.id);
+      final finalAssistantMessages = storedMessages
+          .where((message) => message.role == 'assistant')
+          .toList(growable: false);
+      final finalTextCIndex = finalAssistantMessages.indexWhere(
+        (message) => message.displayText.trim() == '文本c。',
+      );
+      final imageIndex = finalAssistantMessages.indexWhere(
         (message) =>
             message.blocks?.any((block) => block is ImageBlock) ?? false,
-      ),
-      isFalse,
-      reason: '慢图完成前，数据库里不应突然出现最终图片消息',
-    );
-
-    await Future<void>.delayed(const Duration(milliseconds: 120));
-
-    storedMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
-    final updatedAudio = storedMessages
-        .where((message) => message.role == 'assistant')
-        .firstWhere((message) =>
-            message.blocks?.whereType<AudioBlock>().any(
-                  (block) => block.text == '语音段',
-                ) ??
-            false)
-        .blocks!
-        .whereType<AudioBlock>()
-        .single;
-    expect(updatedAudio.status, BlockStatus.success);
-    expect(updatedAudio.url, isNotEmpty);
-    expect(
-      storedMessages.any((m) => m.blocks?.any((b) => b is ImageBlock) ?? false),
-      isFalse,
-      reason: '尾部慢图不应阻塞 TTS 原位完成，也不应在这之前抢先落库',
-    );
-    expect(
-      _collectGeneratingPlaceholderMessages(storedMessages).single.id,
-      tailPlaceholder.id,
-      reason: '慢图仍未完成时，尾部生成中气泡应继续保留原位等待',
-    );
-
-    await Future<void>.delayed(const Duration(milliseconds: 220));
-
-    storedMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
-    final finalAssistantMessages = storedMessages
-        .where((message) => message.role == 'assistant')
-        .toList(growable: false);
-    final finalTextCIndex = finalAssistantMessages.indexWhere(
-      (message) => message.displayText.trim() == '文本c。',
-    );
-    final imageIndex = finalAssistantMessages.indexWhere(
-      (message) => message.blocks?.any((block) => block is ImageBlock) ?? false,
-    );
-    expect(imageIndex, greaterThan(finalTextCIndex));
-    expect(imagePlugin.prompts, <String>['slow landscape']);
-    expect(
-      _collectGeneratingPlaceholderMessages(storedMessages),
-      isEmpty,
-      reason: '慢图完成后，尾部生成中占位应及时让位给最终图片',
-    );
+      );
+      expect(imageIndex, greaterThan(finalTextCIndex));
+      expect(imagePlugin.prompts, <String>['slow landscape']);
+      expect(_collectGeneratingPlaceholderMessages(storedMessages), isEmpty);
+    } finally {
+      await container
+          .read(chatTtsHandlerProvider)
+          .debugWaitForBackgroundTasks(labelPrefix: 'deferred_image_');
+    }
   });
 
   test('send 处理多模态回复时，不应切到消息整理中状态', () async {
@@ -5158,8 +6388,9 @@ void main() {
     await container.read(chatActionsProvider).send('测试仅有语音标签');
     await Future<void>.delayed(const Duration(milliseconds: 160));
 
-    final storedMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
+    final storedMessages = await container
+        .read(chatHistoryStoreProvider)
+        .loadProjectedMessagesFromRawStore(conv.id);
     final assistantMessages = storedMessages
         .where((message) => message.role == 'assistant')
         .toList(growable: false);
@@ -5253,8 +6484,9 @@ void main() {
     await container.read(chatActionsProvider).send('测试仅有多模态标签');
     await Future<void>.delayed(const Duration(milliseconds: 260));
 
-    final storedMessages =
-        await container.read(chatHistoryStoreProvider).loadAllMessages(conv.id);
+    final storedMessages = await container
+        .read(chatHistoryStoreProvider)
+        .loadProjectedMessagesFromRawStore(conv.id);
     final assistantMessages = storedMessages
         .where((message) => message.role == 'assistant')
         .toList(growable: false);

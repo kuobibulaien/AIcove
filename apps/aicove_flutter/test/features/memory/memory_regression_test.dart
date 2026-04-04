@@ -32,6 +32,71 @@ void main() {
       expect(query, contains('我现在最担心的是明天复诊。'));
     });
 
+    test('topic recent messages should exclude chunks before context start',
+        () {
+      final messages = [
+        chat.Message.text(
+          id: 'old_chunk_1',
+          role: 'assistant',
+          sourceMessageId: 'raw_old',
+          content: '旧话题第一段',
+        ),
+        chat.Message.text(
+          id: 'old_chunk_2',
+          role: 'assistant',
+          sourceMessageId: 'raw_old',
+          content: '旧话题第二段',
+        ),
+        chat.Message.text(
+          id: 'new_user',
+          role: 'user',
+          content: '这是新话题的第一句',
+        ),
+        chat.Message.text(
+          id: 'new_assistant',
+          role: 'assistant',
+          sourceMessageId: 'raw_new',
+          content: '这是新话题的回复',
+        ),
+      ];
+
+      final selected = selectTopicRecentMessagesForMemoryQuery(
+        messages,
+        contextStartMessageId: 'raw_old',
+        limit: 3,
+      );
+
+      expect(selected.map((message) => message.id).toList(), [
+        'new_user',
+        'new_assistant',
+      ]);
+    });
+
+    test('topic recent messages should keep only latest items inside topic',
+        () {
+      final messages = [
+        chat.Message.text(id: 'old_user', role: 'user', content: '旧话题'),
+        chat.Message.text(
+          id: 'boundary_chunk',
+          role: 'assistant',
+          sourceMessageId: 'raw_boundary',
+          content: '边界消息',
+        ),
+        chat.Message.text(id: 't1', role: 'user', content: 'topic 1'),
+        chat.Message.text(id: 't2', role: 'assistant', content: 'topic 2'),
+        chat.Message.text(id: 't3', role: 'user', content: 'topic 3'),
+        chat.Message.text(id: 't4', role: 'assistant', content: 'topic 4'),
+      ];
+
+      final selected = selectTopicRecentMessagesForMemoryQuery(
+        messages,
+        contextStartMessageId: 'raw_boundary',
+        limit: 2,
+      );
+
+      expect(selected.map((message) => message.id).toList(), ['t3', 't4']);
+    });
+
     test('explicit target layer should override heuristic downgrade', () {
       final layer = resolveMemoryTargetLayerForTest(
         preferredLayer: 'L2',

@@ -1,4 +1,3 @@
-import '../providers/minimax_voice_provider.dart';
 import 'tts_synthesis_adapter.dart';
 
 class TtsSynthesisFormats {
@@ -101,8 +100,14 @@ class MinimaxTtsSynthesisAdapter extends TtsSynthesisAdapter {
   }
 
   String _resolveVoiceId(TtsSynthesisContext context) {
-    final presetVoiceId =
-        context.config.selectedVoicePreset?.getMinimaxVoiceId()?.trim();
+    final presetVoiceId = context.config.selectedVoicePreset
+        ?.resolveBinding(
+          providerId: context.config.selectedProviderId ?? providerId,
+          adapterId: providerId,
+          modelId: context.model ?? context.config.model,
+        )
+        ?.remoteVoiceId
+        .trim();
     if (presetVoiceId != null && presetVoiceId.isNotEmpty) {
       return presetVoiceId;
     }
