@@ -33,6 +33,7 @@ class ChatMessageProjectionCodec {
   static const String _versionKey = 'version';
   static const String _rawReplyTextKey = 'rawReplyText';
   static const String _processedTextKey = 'processedText';
+  static const String _hiddenThoughtPartsKey = 'hiddenThoughtParts';
   static const String _pluginEventsKey = 'pluginEvents';
   static const String _pluginContentsKey = 'pluginContents';
   static const String _toolAudioResultsKey = 'toolAudioResults';
@@ -48,6 +49,10 @@ class ChatMessageProjectionCodec {
       _versionKey: rawPayloadVersion,
       _rawReplyTextKey: apiResult.rawReplyText,
       _processedTextKey: apiResult.processedText,
+      _hiddenThoughtPartsKey: <Map<String, dynamic>>[
+        for (final part in apiResult.hiddenThoughtParts)
+          Map<String, dynamic>.from(part),
+      ],
       _pluginEventsKey: <Map<String, dynamic>>[
         for (final event in apiResult.pluginEvents) event.toJson(),
       ],
@@ -169,6 +174,19 @@ class ChatMessageProjectionCodec {
   static String? processedText(Map<String, dynamic>? rawPayload) {
     final value = rawPayload?[_processedTextKey];
     return value is String ? value : null;
+  }
+
+  static List<Map<String, dynamic>> hiddenThoughtParts(
+    Map<String, dynamic>? rawPayload,
+  ) {
+    final rawList = rawPayload?[_hiddenThoughtPartsKey];
+    if (rawList is! List) return const <Map<String, dynamic>>[];
+    final parts = <Map<String, dynamic>>[];
+    for (final item in rawList) {
+      if (item is! Map) continue;
+      parts.add(Map<String, dynamic>.from(item));
+    }
+    return parts;
   }
 
   static List<PluginEvent> pluginEvents(Map<String, dynamic>? rawPayload) {

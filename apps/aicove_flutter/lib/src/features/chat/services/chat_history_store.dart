@@ -65,12 +65,9 @@ Future<ConversationTurnWindow> resolveConversationTurnWindow({
     );
   }
 
-  final loadedMessages = List<Message>.from(currentMessages, growable: true)
-    ..sort((a, b) {
-      final byTime = a.createdAt.compareTo(b.createdAt);
-      if (byTime != 0) return byTime;
-      return a.id.compareTo(b.id);
-    });
+  final loadedMessages = _normalizeConversationTurnMessages(
+    currentMessages,
+  ).toList(growable: true);
   var canLoadMore = hasMoreMessages;
   var fetchedPages = 0;
 
@@ -146,6 +143,25 @@ List<Message> _selectRecentTurnWindow(
     messages.sublist(startIndex),
     growable: false,
   );
+}
+
+List<Message> _normalizeConversationTurnMessages(Iterable<Message> messages) {
+  final indexedMessages = <({int index, Message message})>[];
+  var index = 0;
+  for (final message in messages) {
+    indexedMessages.add((index: index, message: message));
+    index += 1;
+  }
+  indexedMessages.sort((left, right) {
+    final byTime = left.message.createdAt.compareTo(right.message.createdAt);
+    if (byTime != 0) {
+      return byTime;
+    }
+    return left.index.compareTo(right.index);
+  });
+  return <Message>[
+    for (final entry in indexedMessages) entry.message,
+  ];
 }
 
 class ChatHistoryStore {
@@ -1532,6 +1548,7 @@ class ChatHistoryStore {
       for (final message in rebuilt.messages)
         message.copyWith(
           sourceMessageId: rawMessage.id,
+          createdAt: rawMessage.createdAt,
           rawPayload: null,
         ),
     ];

@@ -163,6 +163,157 @@ void main() {
     expect(expandedWindow.hasMoreMessages, isFalse);
   });
 
+  test('窗口应按 raw 消息数裁切，而不是按前端投影气泡数裁切', () async {
+    final database = db.AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    final baseTime = DateTime(2026, 4, 2, 10, 45, 0).millisecondsSinceEpoch;
+    await _insertConversation(database, 'conv-projection-window', baseTime);
+
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(database),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await _persistMessage(
+      container,
+      'conv-projection-window',
+      Message.text(
+        id: 'raw_old_user',
+        role: 'user',
+        content: '更早的一条用户消息',
+        createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 1),
+      ),
+    );
+    await _persistMessage(
+      container,
+      'conv-projection-window',
+      Message.text(
+        id: 'raw_mid_ai',
+        role: 'assistant',
+        content: '中间这条助手消息',
+        createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 2),
+      ),
+    );
+    await _persistMessage(
+      container,
+      'conv-projection-window',
+      Message.fromBlocks(
+        id: 'raw_latest_user_mixed',
+        role: 'user',
+        blocks: <MessageBlock>[
+          TextBlock(
+            messageId: 'raw_latest_user_mixed',
+            content: '最新一条用户图文消息',
+          ),
+          ImageBlock(
+            messageId: 'raw_latest_user_mixed',
+            localPath: r'C:\mock\latest_image.png',
+            width: 120,
+            height: 80,
+          ),
+        ],
+        createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 3),
+      ),
+    );
+
+    final store = container.read(conversationTimelineCacheProvider);
+    final window = await store
+        .watchWindow(
+          conversationId: 'conv-projection-window',
+          limit: 2,
+        )
+        .first;
+
+    expect(
+      window.messages.map((message) => message.id).toList(),
+      <String>[
+        'raw_mid_ai',
+        'raw_latest_user_mixed__proj_00_text',
+        'raw_latest_user_mixed__proj_01_image',
+      ],
+      reason: '最近 2 条 raw 消息中，最后一条被前端拆成 2 个气泡时，窗口仍应完整保留这 2 条 raw 的全部投影。',
+    );
+    expect(window.hasMoreMessages, isTrue);
+    expect(
+      await store.loadCachedMessageCount('conv-projection-window'),
+      3,
+      reason: '缓存计数应以 raw 消息数为准，而不是投影后的气泡条数。',
+    );
+  });
+
+  test('loadOlderMessages 返回值应按 raw 消息条数计算，而不是按投影气泡数计算', () async {
+    final database = db.AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    final baseTime = DateTime(2026, 4, 2, 10, 50, 0).millisecondsSinceEpoch;
+    await _insertConversation(database, 'conv-load-older-raw-count', baseTime);
+
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(database),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await _persistMessage(
+      container,
+      'conv-load-older-raw-count',
+      Message.fromBlocks(
+        id: 'raw_old_mixed',
+        role: 'assistant',
+        blocks: <MessageBlock>[
+          TextBlock(
+            messageId: 'raw_old_mixed',
+            content: '更早的一条图文助手消息',
+          ),
+          ImageBlock(
+            messageId: 'raw_old_mixed',
+            localPath: r'C:\mock\older_image.png',
+            width: 96,
+            height: 72,
+          ),
+        ],
+        createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 1),
+      ),
+    );
+    for (var i = 0; i < 20; i++) {
+      await _persistMessage(
+        container,
+        'conv-load-older-raw-count',
+        Message.text(
+          id: 'raw_seed_$i',
+          role: i.isEven ? 'user' : 'assistant',
+          content: 'seed-$i',
+          createdAt: DateTime.fromMillisecondsSinceEpoch(baseTime + 2 + i),
+        ),
+      );
+    }
+
+    final store = container.read(conversationTimelineCacheProvider);
+    await store.reloadConversationFromRawStore(
+      'conv-load-older-raw-count',
+      targetMessageCount: 20,
+    );
+
+    final addedCount = await store.loadOlderMessages(
+      conversationId: 'conv-load-older-raw-count',
+      pageSize: 1,
+    );
+
+    expect(addedCount, 1);
+    expect(
+      (await store.loadCachedMessages('conv-load-older-raw-count'))
+          .map((message) => message.id)
+          .toList(),
+      <String>[
+        'raw_old_mixed__proj_00_text',
+        'raw_old_mixed__proj_01_image',
+        for (var i = 0; i < 20; i++) 'raw_seed_$i',
+      ],
+    );
+  });
+
   test('syncConversation 应按 raw 数据重建并清掉前端临时气泡', () async {
     final database = db.AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(database.close);
@@ -317,7 +468,7 @@ void main() {
     expect(found!.content, 'frontend projection');
   });
 
-  test('缓存层应补全本地图片尺寸而不回写第二套持久时间线', () async {
+  test('本地图片尺寸应在后台补齐，而不阻塞首个时间线窗口返回', () async {
     tempDir = await Directory.systemTemp.createTemp('timeline_image_dim_');
 
     final database = db.AppDatabase.forTesting(NativeDatabase.memory());
@@ -354,12 +505,32 @@ void main() {
       ),
     );
 
-    final messages = await container
-        .read(conversationTimelineCacheProvider)
-        .loadCachedMessages('conv-image');
-    final imageBlock = messages.single.blocks!.single as ImageBlock;
+    final store = container.read(conversationTimelineCacheProvider);
+    final firstWindow = await store
+        .watchWindow(
+          conversationId: 'conv-image',
+          limit: 20,
+        )
+        .first;
+    final firstImageBlock =
+        firstWindow.messages.single.blocks!.single as ImageBlock;
+    expect(firstImageBlock.width, isNull);
+    expect(firstImageBlock.height, isNull);
 
-    expect(imageBlock.width, 64);
-    expect(imageBlock.height, 48);
+    ImageBlock? upgradedImageBlock;
+    for (var i = 0; i < 40; i++) {
+      final cachedMessages = await store.loadCachedMessages('conv-image');
+      final candidate = cachedMessages.single.blocks!.single as ImageBlock;
+      if (candidate.width != null && candidate.height != null) {
+        upgradedImageBlock = candidate;
+        break;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+
+    expect(upgradedImageBlock, isNotNull);
+    final resolvedImageBlock = upgradedImageBlock!;
+    expect(resolvedImageBlock.width, 64);
+    expect(resolvedImageBlock.height, 48);
   });
 }

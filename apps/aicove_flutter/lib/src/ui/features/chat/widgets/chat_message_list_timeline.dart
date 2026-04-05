@@ -24,6 +24,7 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
       _cachedListItems = [];
       _cachedChatImages = [];
       _detachedSplitBoundary = null;
+      _pendingDetachedSplitBoundary = null;
       _historyViewportRestorePending = false;
       _holdListForHistoryPagingEmptyTimeline = false;
       _heldTimelineMessagesForLayout = const <Message>[];
@@ -153,6 +154,7 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
       _holdListForHistoryPagingEmptyTimeline = false;
       _heldTimelineMessagesForLayout = const <Message>[];
       _detachedSplitBoundary = null;
+      _pendingDetachedSplitBoundary = null;
       _pendingAnimationIds.clear();
       _latestAnimatedAt = null;
       return;
@@ -214,20 +216,10 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
     List<Message> stableMessages,
     List<Message> transientMessages,
   ) {
-    if (stableMessages.isEmpty && transientMessages.isEmpty) {
-      return const <Message>[];
-    }
-    final merged = <String, Message>{
-      for (final message in transientMessages) message.id: message,
-      for (final message in stableMessages) message.id: message,
-    };
-    final timeline = merged.values.toList(growable: false)
-      ..sort((a, b) {
-        final byTime = a.createdAt.compareTo(b.createdAt);
-        if (byTime != 0) return byTime;
-        return a.id.compareTo(b.id);
-      });
-    return timeline;
+    return mergeChatTimelineMessagesForDisplay(
+      stableMessages,
+      transientMessages,
+    );
   }
 
   String _listItemStableKey(ChatMessageListItem item) {
@@ -357,10 +349,10 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
 
   int? _resolveActiveBoundaryIndex(List<Message> timelineMessages) {
     if (timelineMessages.isEmpty) return null;
-    if (_detachedSplitBoundary == null) {
+    final boundary = _effectiveDetachedSplitBoundary();
+    if (boundary == null) {
       return timelineMessages.length - 1;
     }
-    final boundary = _detachedSplitBoundary!;
     final exactIndex = timelineMessages.indexWhere(
       (message) => message.id == boundary.messageId,
     );

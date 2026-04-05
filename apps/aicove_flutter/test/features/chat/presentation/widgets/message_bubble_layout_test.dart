@@ -59,7 +59,10 @@ AppSettings _buildSettings({required bool hideUserAvatar}) {
   );
 }
 
-Widget _buildLayoutHost({required bool hideUserAvatar}) {
+Widget _buildLayoutHost({
+  required bool hideUserAvatar,
+  double width = 360,
+}) {
   final settings = _buildSettings(hideUserAvatar: hideUserAvatar);
   return ProviderScope(
     key: ValueKey<String>('scope_hide_user_avatar_$hideUserAvatar'),
@@ -73,7 +76,7 @@ Widget _buildLayoutHost({required bool hideUserAvatar}) {
         home: Scaffold(
           body: Center(
             child: SizedBox(
-              width: 360,
+              width: width,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -97,6 +100,38 @@ Widget _buildLayoutHost({required bool hideUserAvatar}) {
                     showAvatar: true,
                   ),
                 ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+Widget _buildSingleBubbleHost({
+  required bool hideUserAvatar,
+  required double width,
+  required Message message,
+}) {
+  final settings = _buildSettings(hideUserAvatar: hideUserAvatar);
+  return ProviderScope(
+    overrides: [
+      appSettingsProvider
+          .overrideWith(() => _FakeAppSettingsNotifier(settings)),
+    ],
+    child: SkinScope(
+      skin: const MoeTalkSkin(),
+      child: MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.topCenter,
+            child: SizedBox(
+              width: width,
+              child: MessageBubble(
+                isMe: false,
+                message: message,
+                showAvatar: true,
               ),
             ),
           ),
@@ -146,6 +181,24 @@ void main() {
     final withoutUserAvatar = _bubbleMaxWidth(tester, _assistantId);
 
     expect(withoutUserAvatar, greaterThan(withUserAvatar + 20));
+  });
+
+  testWidgets('极窄约束下气泡宽度计算不应因 clamp 上下界倒挂而抛异常', (tester) async {
+    await tester.pumpWidget(
+      _buildSingleBubbleHost(
+        hideUserAvatar: false,
+        width: 100,
+        message: Message.text(
+          id: _assistantId,
+          role: 'assistant',
+          content: '短句',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(_bubbleMaxWidth(tester, _assistantId), lessThanOrEqualTo(100));
   });
 
   testWidgets('图片加 ToolBlock 时不应渲染空文本气泡', (tester) async {

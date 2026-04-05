@@ -721,6 +721,7 @@ class ChatSendApiRunner {
       rawReplyText: rawAssistantText,
       replyText: shouldSuppressStatusText ? '' : finalAssistantText,
       processedText: shouldSuppressStatusText ? '' : pluginResult.processedText,
+      hiddenThoughtParts: lastRich?.hiddenThoughtParts ?? const [],
       pluginEvents: allEvents,
       pluginContents: allContents,
       toolResults: lastRich?.toolResults ?? [],

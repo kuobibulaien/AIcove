@@ -14,12 +14,14 @@ class ApiCallResult {
   final String text;
   final List<Map<String, dynamic>> toolResults;
   final List<ToolCall> toolCalls;
+  final List<Map<String, dynamic>> hiddenThoughtParts;
   final Map<String, dynamic>? rawResponse;
 
   const ApiCallResult({
     required this.text,
     this.toolResults = const [],
     this.toolCalls = const [],
+    this.hiddenThoughtParts = const [],
     this.rawResponse,
   });
 

@@ -201,6 +201,7 @@ class _AgentApiDirectChatSupport {
           text: result.text,
           toolResults: result.toolResults,
           toolCalls: result.toolCalls,
+          hiddenThoughtParts: result.hiddenThoughtParts,
           rawResponse: result.rawResponse,
         );
       }

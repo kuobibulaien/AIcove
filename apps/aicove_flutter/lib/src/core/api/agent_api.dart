@@ -24,12 +24,14 @@ class SendMessageRichResult {
   final String text;
   final List<Map<String, dynamic>> toolResults;
   final List<ToolCall> toolCalls; // AI 请求执行的工具调用
+  final List<Map<String, dynamic>> hiddenThoughtParts;
   final Map<String, dynamic>? rawResponse; // 原始响应（用于两回合工具调用）
 
   const SendMessageRichResult({
     required this.text,
     required this.toolResults,
     this.toolCalls = const [],
+    this.hiddenThoughtParts = const [],
     this.rawResponse,
   });
 

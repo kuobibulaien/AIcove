@@ -71,7 +71,7 @@ class _AlwaysAllowChatPageSendSupport extends ChatPageSendSupport {
 
 AppSettings _buildTestSettings() {
   const defaultModelRef = 'openai:gpt-4o-mini';
-  return AppSettings(
+  return const AppSettings(
     ttsEnabled: true,
     defaultModelName: defaultModelRef,
     defaultPersonaPrompt: '',

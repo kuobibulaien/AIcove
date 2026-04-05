@@ -199,8 +199,7 @@ class _AgentApiStreamSupport {
 
       final responseContentType =
           response.headers['content-type']?.toLowerCase() ?? '';
-      final usesGeminiJsonBody =
-          isGeminiStream &&
+      final usesGeminiJsonBody = isGeminiStream &&
           responseContentType.contains('application/json') &&
           !responseContentType.contains('text/event-stream');
 
@@ -209,6 +208,7 @@ class _AgentApiStreamSupport {
       final toolAggregator = _StreamingToolCallAggregator();
       final anthropicToolAggregator = _AnthropicStreamingToolUseAggregator();
       final geminiToolAggregator = _GeminiStreamingFunctionCallAggregator();
+      final geminiThoughtAggregator = _GeminiStreamingThoughtPartAggregator();
       final textDeltaNormalizer = _StreamingTextDeltaNormalizer();
       var done = false;
       var toolCallsObserved = false;
@@ -261,8 +261,12 @@ class _AgentApiStreamSupport {
           if (rawPart is! Map) continue;
           final part =
               Map<String, dynamic>.from(rawPart.cast<String, dynamic>());
+          final isThoughtPart = _isGeminiThoughtPart(part);
+          if (isThoughtPart) {
+            geminiThoughtAggregator.consumePart(part);
+          }
           final textPart = _extractStreamingText(part['text']);
-          if (textPart.isNotEmpty) {
+          if (!isThoughtPart && textPart.isNotEmpty) {
             emitTextDelta(textPart);
           }
           final rawFunctionCall = part['functionCall'] ?? part['function_call'];
@@ -556,6 +560,10 @@ class _AgentApiStreamSupport {
       };
       final finalText = text.toString();
       final finalReasoning = reasoning.toString();
+      final hiddenThoughtParts = switch (adapterName) {
+        'gemini' => geminiThoughtAggregator.build(),
+        _ => const <Map<String, dynamic>>[],
+      };
       final synthesizedRawResponse = switch (adapterName) {
         'claude' => _buildAnthropicStreamRawResponse(
             text: finalText,
@@ -564,6 +572,7 @@ class _AgentApiStreamSupport {
         'gemini' => _buildGeminiStreamRawResponse(
             text: finalText,
             toolCalls: builtToolCalls,
+            hiddenThoughtParts: hiddenThoughtParts,
           ),
         _ => _buildOpenAiStreamRawResponse(
             text: finalText,
@@ -654,6 +663,7 @@ class _AgentApiStreamSupport {
         text: finalText,
         toolResults: const <Map<String, dynamic>>[],
         toolCalls: builtToolCalls,
+        hiddenThoughtParts: hiddenThoughtParts,
         rawResponse: synthesizedRawResponse,
       );
     } catch (e) {
@@ -800,8 +810,11 @@ class _AgentApiStreamSupport {
   Map<String, dynamic> _buildGeminiStreamRawResponse({
     required String text,
     required List<ToolCall> toolCalls,
+    required List<Map<String, dynamic>> hiddenThoughtParts,
   }) {
-    final parts = <Map<String, dynamic>>[];
+    final parts = <Map<String, dynamic>>[
+      for (final part in hiddenThoughtParts) Map<String, dynamic>.from(part),
+    ];
     if (text.isNotEmpty) {
       parts.add({'text': text});
     }
@@ -1168,6 +1181,54 @@ class _GeminiStreamingFunctionCallAggregator {
   }
 }
 
+class _GeminiStreamingThoughtPartAggregator {
+  final List<Map<String, dynamic>> _parts = <Map<String, dynamic>>[];
+
+  void consumePart(Map<String, dynamic> rawPart) {
+    if (!_isGeminiThoughtPart(rawPart)) return;
+    final part = Map<String, dynamic>.from(rawPart);
+    if (_parts.isNotEmpty && _canMergeTrailingTextPart(_parts.last, part)) {
+      final previousText = (_parts.last['text'] ?? '').toString();
+      final nextText = (part['text'] ?? '').toString();
+      _parts.last['text'] = '$previousText$nextText';
+      return;
+    }
+    _parts.add(part);
+  }
+
+  List<Map<String, dynamic>> build() => <Map<String, dynamic>>[
+        for (final part in _parts) Map<String, dynamic>.from(part),
+      ];
+
+  bool _canMergeTrailingTextPart(
+    Map<String, dynamic> previous,
+    Map<String, dynamic> next,
+  ) {
+    if (previous['text'] is! String || next['text'] is! String) {
+      return false;
+    }
+    if (previous.containsKey('functionCall') ||
+        previous.containsKey('function_call') ||
+        next.containsKey('functionCall') ||
+        next.containsKey('function_call')) {
+      return false;
+    }
+
+    final previousKeys = previous.keys.toSet();
+    final nextKeys = next.keys.toSet();
+    if (previousKeys.length != nextKeys.length ||
+        !previousKeys.containsAll(nextKeys)) {
+      return false;
+    }
+
+    for (final key in previousKeys) {
+      if (key == 'text') continue;
+      if (previous[key] != next[key]) return false;
+    }
+    return true;
+  }
+}
+
 class _StreamingTextDeltaNormalizer {
   String _fullText = '';
 
@@ -1221,4 +1282,10 @@ String _extractStreamingText(dynamic value) {
   }
 
   return '';
+}
+
+bool _isGeminiThoughtPart(Map<String, dynamic> part) {
+  final thought = part['thought'];
+  if (thought is bool) return thought;
+  return thought?.toString().trim().toLowerCase() == 'true';
 }

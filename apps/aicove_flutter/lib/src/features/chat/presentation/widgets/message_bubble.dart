@@ -636,8 +636,7 @@ class MessageBubble extends ConsumerWidget {
             onPointerDown: (_useDesktopContextMenu && onMediaLongPress != null)
                 ? (event) {
                     if ((event.buttons & kSecondaryMouseButton) != 0) {
-                      final box =
-                          context.findRenderObject() as RenderBox?;
+                      final box = context.findRenderObject() as RenderBox?;
                       if (box != null) onMediaLongPress!(box, block);
                     }
                   }
@@ -648,8 +647,7 @@ class MessageBubble extends ConsumerWidget {
                   : null,
               onLongPress: (!_useDesktopContextMenu && onMediaLongPress != null)
                   ? () {
-                      final box =
-                          context.findRenderObject() as RenderBox?;
+                      final box = context.findRenderObject() as RenderBox?;
                       if (box != null) onMediaLongPress!(box, block);
                     }
                   : null,
@@ -861,11 +859,17 @@ class _AvatarAwareBubbleRow extends StatelessWidget {
         final failedReserve = (isMe && hasFailedIndicator)
             ? _AvatarAwareBubbleRow._kFailedIndicatorWidth
             : 0.0;
+        final bubbleWidthUpperBound =
+            constraints.maxWidth > 0 ? constraints.maxWidth : 0.0;
+        final bubbleWidthLowerBound = math.min(
+          _AvatarAwareBubbleRow._kMinBubbleMaxWidth,
+          bubbleWidthUpperBound,
+        );
         final maxBubbleWidth =
             (constraints.maxWidth - leftReserve - rightReserve - failedReserve)
                 .clamp(
-                  _AvatarAwareBubbleRow._kMinBubbleMaxWidth,
-                  constraints.maxWidth,
+                  bubbleWidthLowerBound,
+                  bubbleWidthUpperBound,
                 )
                 .toDouble();
 

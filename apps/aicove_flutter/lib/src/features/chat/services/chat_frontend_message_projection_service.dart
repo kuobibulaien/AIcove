@@ -23,13 +23,13 @@ class ChatFrontendMessageProjectionService {
     final cachedProjected =
         ChatMessageProjectionCodec.projectedMessages(payload);
     if (cachedProjected.isNotEmpty) {
-      return _attachSourceMessageId(rawMessage.id, cachedProjected);
+      return _normalizeProjectionFromRawMessage(rawMessage, cachedProjected);
     }
 
     if (rawMessage.role != 'assistant') {
       final mixedProjection = _projectMixedImageMessage(rawMessage);
       if (mixedProjection.isNotEmpty) {
-        return _attachSourceMessageId(rawMessage.id, mixedProjection);
+        return _normalizeProjectionFromRawMessage(rawMessage, mixedProjection);
       }
       return <Message>[_projectPassthroughMessage(rawMessage)];
     }
@@ -41,7 +41,8 @@ class ChatFrontendMessageProjectionService {
         final rebuiltBase = const ChatMessageProcessor().buildAssistantMessages(
           replyText: ChatMessageProjectionCodec.rawReplyText(payload) ??
               rawMessage.content,
-          processedText: ChatMessageProjectionCodec.processedText(payload) ?? '',
+          processedText:
+              ChatMessageProjectionCodec.processedText(payload) ?? '',
           pluginEvents: ChatMessageProjectionCodec.pluginEvents(payload),
           contents: const [],
           toolAudioResults: const [],
@@ -53,7 +54,7 @@ class ChatFrontendMessageProjectionService {
           supplementInsertOps,
         );
         if (rebuilt.isNotEmpty) {
-          return _attachSourceMessageId(rawMessage.id, rebuilt);
+          return _normalizeProjectionFromRawMessage(rawMessage, rebuilt);
         }
       }
       final rebuilt = const ChatMessageProcessor().buildAssistantMessages(
@@ -67,13 +68,16 @@ class ChatFrontendMessageProjectionService {
         rawToolResults: ChatMessageProjectionCodec.rawToolResults(payload),
       );
       if (rebuilt.messages.isNotEmpty) {
-        return _attachSourceMessageId(rawMessage.id, rebuilt.messages);
+        return _normalizeProjectionFromRawMessage(
+          rawMessage,
+          rebuilt.messages,
+        );
       }
     }
 
     final mixedProjection = _projectMixedImageMessage(rawMessage);
     if (mixedProjection.isNotEmpty) {
-      return _attachSourceMessageId(rawMessage.id, mixedProjection);
+      return _normalizeProjectionFromRawMessage(rawMessage, mixedProjection);
     }
 
     return <Message>[_projectPassthroughMessage(rawMessage)];
@@ -86,14 +90,15 @@ class ChatFrontendMessageProjectionService {
     );
   }
 
-  List<Message> _attachSourceMessageId(
-    String sourceMessageId,
+  List<Message> _normalizeProjectionFromRawMessage(
+    Message rawMessage,
     List<Message> messages,
   ) {
     return <Message>[
       for (final message in messages)
         message.copyWith(
-          sourceMessageId: sourceMessageId,
+          sourceMessageId: rawMessage.id,
+          createdAt: rawMessage.createdAt,
           rawPayload: null,
         ),
     ];
@@ -188,7 +193,8 @@ class ChatFrontendMessageProjectionService {
     }
 
     final textChunkLengths = <int>[
-      for (final message in baseMessages) _normalizedTextLength(_extractText(message)),
+      for (final message in baseMessages)
+        _normalizedTextLength(_extractText(message)),
     ];
     final slotMessages = <int, List<Message>>{};
     for (final op in insertOps) {
@@ -249,7 +255,9 @@ class ChatFrontendMessageProjectionService {
               AudioBlock(
                 messageId: 'audio_${audioUrl.hashCode}_${op.textCharsBefore}',
                 url: audioUrl,
-                text: op.text?.trim().isNotEmpty ?? false ? op.text!.trim() : null,
+                text: op.text?.trim().isNotEmpty ?? false
+                    ? op.text!.trim()
+                    : null,
               ),
             ],
             createdAt: DateTime.now(),

@@ -47,6 +47,37 @@ const double _kHistoryPagingTopFrictionBase = 0.05;
 const double _kJumpToBottomVisibilityThreshold = 120.0;
 const double _kJumpToBottomButtonSize = 44.0;
 
+@visibleForTesting
+List<Message> mergeChatTimelineMessagesForDisplay(
+  List<Message> stableMessages,
+  List<Message> transientMessages,
+) {
+  if (stableMessages.isEmpty && transientMessages.isEmpty) {
+    return const <Message>[];
+  }
+
+  final deduped = <String, ({int index, Message message})>{};
+  var index = 0;
+  for (final message in transientMessages) {
+    deduped[message.id] = (index: index, message: message);
+    index += 1;
+  }
+  for (final message in stableMessages) {
+    deduped[message.id] = (index: index, message: message);
+    index += 1;
+  }
+
+  final timelineEntries = deduped.values.toList(growable: false)
+    ..sort((left, right) {
+      final byTime = left.message.createdAt.compareTo(right.message.createdAt);
+      if (byTime != 0) return byTime;
+      return left.index.compareTo(right.index);
+    });
+  return <Message>[
+    for (final entry in timelineEntries) entry.message,
+  ];
+}
+
 typedef PersistentSnapshotWindow = ChatMessageListPersistentSnapshotWindow;
 typedef LoadPersistentSnapshotOlderPage = LoadChatMessageListOlderPage;
 
@@ -263,6 +294,7 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   DateTime? _latestAnimatedAt;
   List<ChatMessageListItem> _cachedListItems = [];
   _TimelineSplitBoundary? _detachedSplitBoundary;
+  _TimelineSplitBoundary? _pendingDetachedSplitBoundary;
 
   /// 缓存的消息格式化配置（用于检测配置变化）
   MessageFormatConfig? _cachedFormatConfig;

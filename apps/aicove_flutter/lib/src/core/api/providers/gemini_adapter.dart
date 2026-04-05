@@ -128,6 +128,7 @@ class GeminiAdapter implements ProviderAdapter {
   ApiCallResult parseResponse(Map<String, dynamic> response) {
     String text = '';
     final toolCalls = <ToolCall>[];
+    final hiddenThoughtParts = <Map<String, dynamic>>[];
     final candidates = (response['candidates'] as List?) ?? const [];
 
     if (candidates.isNotEmpty) {
@@ -137,6 +138,10 @@ class GeminiAdapter implements ProviderAdapter {
 
       for (final part in parts) {
         if (part is! Map<String, dynamic>) continue;
+        if (_isThoughtPart(part)) {
+          hiddenThoughtParts.add(Map<String, dynamic>.from(part));
+          continue;
+        }
         if (part.containsKey('text')) {
           text += (part['text'] ?? '').toString();
           continue;
@@ -156,6 +161,7 @@ class GeminiAdapter implements ProviderAdapter {
       text: text,
       toolResults: const [],
       toolCalls: toolCalls,
+      hiddenThoughtParts: hiddenThoughtParts,
       rawResponse: response,
     );
   }
@@ -334,5 +340,11 @@ class GeminiAdapter implements ProviderAdapter {
       }
     }
     return <String, dynamic>{};
+  }
+
+  bool _isThoughtPart(Map<String, dynamic> part) {
+    final thought = part['thought'];
+    if (thought is bool) return thought;
+    return thought?.toString().trim().toLowerCase() == 'true';
   }
 }

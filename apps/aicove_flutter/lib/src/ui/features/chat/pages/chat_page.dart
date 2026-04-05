@@ -74,13 +74,51 @@ Future<int> resolveChatPageLoadMoreVisibleCount({
 }
 
 @visibleForTesting
+List<Message> resolveChatPageLoadingFallbackMessages({
+  required String? conversationId,
+  required String? cachedConversationId,
+  required List<Message> cachedMessages,
+  required bool isGenerating,
+  List<Message>? inMemoryTimelineMessages,
+}) {
+  final normalizedConversationId = conversationId?.trim();
+  if (normalizedConversationId == null || normalizedConversationId.isEmpty) {
+    return const <Message>[];
+  }
+
+  final fallbackMessages = cachedConversationId == normalizedConversationId
+      ? cachedMessages
+      : (inMemoryTimelineMessages ?? const <Message>[]);
+  if (isGenerating) {
+    return fallbackMessages;
+  }
+
+  return <Message>[
+    for (final message in fallbackMessages)
+      if (!(message.role == 'assistant' && message.status == 'sending'))
+        message,
+  ];
+}
+
+@visibleForTesting
 String resolveChatPageAppBarTitle({
   required String displayName,
   required String? conversationId,
+  required ChatStatus chatStatus,
   required List<TraceEvent> traceEvents,
 }) {
   final normalizedDisplayName =
       displayName.trim().isEmpty ? '聊天' : displayName.trim();
+  final statusLabel = switch (chatStatus) {
+    ChatStatus.generatingImage ||
+    ChatStatus.generatingVoice ||
+    ChatStatus.toolCalling =>
+      chatStatus.label.trim(),
+    _ => '',
+  };
+  if (statusLabel.isNotEmpty) {
+    return statusLabel;
+  }
   final normalizedConversationId = conversationId?.trim() ?? '';
   if (normalizedConversationId.isEmpty || traceEvents.isEmpty) {
     return normalizedDisplayName;
@@ -222,6 +260,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     required String? conversationId,
     required AsyncValue<List<Message>> messagesAsync,
     required bool isGenerating,
+    List<Message>? inMemoryTimelineMessages,
   }) {
     final normalizedConversationId = conversationId?.trim();
     if (normalizedConversationId == null || normalizedConversationId.isEmpty) {
@@ -238,18 +277,21 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
 
     if (_timelineDisplayCacheConversationId != normalizedConversationId) {
-      return const <Message>[];
+      return resolveChatPageLoadingFallbackMessages(
+        conversationId: normalizedConversationId,
+        cachedConversationId: _timelineDisplayCacheConversationId,
+        cachedMessages: _timelineDisplayCacheMessages,
+        isGenerating: isGenerating,
+        inMemoryTimelineMessages: inMemoryTimelineMessages,
+      );
     }
 
-    if (isGenerating) {
-      return _timelineDisplayCacheMessages;
-    }
-
-    return <Message>[
-      for (final message in _timelineDisplayCacheMessages)
-        if (!(message.role == 'assistant' && message.status == 'sending'))
-          message,
-    ];
+    return resolveChatPageLoadingFallbackMessages(
+      conversationId: normalizedConversationId,
+      cachedConversationId: _timelineDisplayCacheConversationId,
+      cachedMessages: _timelineDisplayCacheMessages,
+      isGenerating: isGenerating,
+    );
   }
 
   void _scheduleImagePrecache() {
@@ -941,10 +983,20 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         ? const AsyncValue.data(<Message>[])
         : ref.watch(conversationMessagesProvider(currentConversationId));
     final isGenerating = ref.watch(sendingProvider);
+    final inMemoryTimelineMessages = currentConversationId == null
+        ? null
+        : ref
+            .read(conversationTimelineCacheProvider)
+            .peekWindow(
+              conversationId: currentConversationId,
+              limit: kConversationInitialVisibleCount,
+            )
+            ?.messages;
     final messages = _resolveMessagesForDisplay(
       conversationId: currentConversationId,
       messagesAsync: messagesAsync,
       isGenerating: isGenerating,
+      inMemoryTimelineMessages: inMemoryTimelineMessages,
     );
     final hasMoreMessages = currentConversationId == null
         ? false
@@ -954,6 +1006,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final sidebarVisible = widget.showToggleButton && !deferEntryShell
         ? ref.watch(sidebarVisibleProvider)
         : false;
+    final chatStatus = ref.watch(chatStatusProvider);
     final settingsAsync =
         deferEntryShell ? null : ref.watch(appSettingsProvider);
     final colors = context.moeColors;
@@ -1036,6 +1089,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     resolveChatPageAppBarTitle(
                       displayName: displayName,
                       conversationId: currentConversationId,
+                      chatStatus: chatStatus,
                       traceEvents: traceEvents,
                     ),
                   );

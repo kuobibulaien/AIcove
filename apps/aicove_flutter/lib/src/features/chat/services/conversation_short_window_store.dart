@@ -38,6 +38,31 @@ class ConversationTimelineCache {
   final Map<String, StreamController<void>> _changeControllers =
       <String, StreamController<void>>{};
   final Map<String, Future<void>> _conversationTasks = <String, Future<void>>{};
+  final Map<String, Future<void>> _snapshotUpgradeTasks =
+      <String, Future<void>>{};
+
+  ConversationTimelineWindowState? peekWindow({
+    required String conversationId,
+    required int limit,
+  }) {
+    final normalizedConversationId = conversationId.trim();
+    if (normalizedConversationId.isEmpty) {
+      return const ConversationTimelineWindowState(
+        messages: <Message>[],
+        hasMoreMessages: false,
+      );
+    }
+
+    final snapshot = _snapshotsByConversation[normalizedConversationId];
+    if (snapshot == null) {
+      return null;
+    }
+    _scheduleSnapshotUpgradeIfNeeded(normalizedConversationId, snapshot);
+    return _buildWindow(
+      snapshot,
+      limit: limit,
+    );
+  }
 
   Stream<ConversationTimelineWindowState> watchWindow({
     required String conversationId,
@@ -207,7 +232,6 @@ class ConversationTimelineCache {
         ...olderPage.messages,
         ...current.messages,
       ]);
-      final addedCount = nextMessages.length - current.messages.length;
       final next = await _persistSnapshotUnlocked(
         current.copyWith(
           messages: nextMessages,
@@ -219,7 +243,7 @@ class ConversationTimelineCache {
       );
       _snapshotsByConversation[normalizedConversationId] = next;
       _notifyConversationChanged(normalizedConversationId);
-      return addedCount < 0 ? 0 : addedCount;
+      return olderPage.loadedRawMessageCount;
     });
   }
 
@@ -294,7 +318,7 @@ class ConversationTimelineCache {
       return 0;
     }
     final snapshot = await _loadSnapshot(normalizedConversationId);
-    return snapshot.messages.length;
+    return snapshot.loadedRawMessageCount;
   }
 
   Future<Message?> findCachedMessageById(
@@ -359,11 +383,8 @@ class ConversationTimelineCache {
       targetCount: kConversationTimelineSeedMessageCount,
     );
 
-    if (_snapshotNeedsImageDimensionUpgrade(snapshot)) {
-      snapshot = await _persistSnapshotUnlocked(snapshot);
-    }
-
     _snapshotsByConversation[conversationId] = snapshot;
+    _scheduleSnapshotUpgradeIfNeeded(conversationId, snapshot);
     return snapshot;
   }
 
@@ -378,7 +399,7 @@ class ConversationTimelineCache {
       targetCount: kConversationTimelineSeedMessageCount,
     );
 
-    if (snapshot.messages.length < normalizedMinMessages &&
+    if (snapshot.loadedRawMessageCount < normalizedMinMessages &&
         snapshot.hasMoreMessages) {
       snapshot = await _expandSnapshotFromDb(
         snapshot,
@@ -386,12 +407,35 @@ class ConversationTimelineCache {
       );
     }
 
-    if (_snapshotNeedsImageDimensionUpgrade(snapshot)) {
-      snapshot = await _persistSnapshotUnlocked(snapshot);
+    _snapshotsByConversation[conversationId] = snapshot;
+    _scheduleSnapshotUpgradeIfNeeded(conversationId, snapshot);
+    return snapshot;
+  }
+
+  void _scheduleSnapshotUpgradeIfNeeded(
+    String conversationId,
+    _ConversationTimelineSnapshot snapshot,
+  ) {
+    if (!_snapshotNeedsImageDimensionUpgrade(snapshot) ||
+        _snapshotUpgradeTasks.containsKey(conversationId)) {
+      return;
     }
 
-    _snapshotsByConversation[conversationId] = snapshot;
-    return snapshot;
+    late final Future<void> task;
+    task = _runConversationTask(conversationId, () async {
+      final current = _snapshotsByConversation[conversationId] ?? snapshot;
+      if (!_snapshotNeedsImageDimensionUpgrade(current)) {
+        return;
+      }
+      final next = await _persistSnapshotUnlocked(current);
+      _snapshotsByConversation[conversationId] = next;
+      _notifyConversationChanged(conversationId);
+    }).whenComplete(() {
+      if (identical(_snapshotUpgradeTasks[conversationId], task)) {
+        _snapshotUpgradeTasks.remove(conversationId);
+      }
+    });
+    _snapshotUpgradeTasks[conversationId] = task;
   }
 
   Future<_ConversationTimelineSnapshot> _expandSnapshotFromDb(
@@ -399,7 +443,8 @@ class ConversationTimelineCache {
     required int minMessages,
   }) async {
     var current = snapshot;
-    while (current.messages.length < minMessages && current.hasMoreMessages) {
+    while (current.loadedRawMessageCount < minMessages &&
+        current.hasMoreMessages) {
       final oldestCursor = current.oldestRawCursor;
       if (oldestCursor == null || current.messages.isEmpty) {
         current = current.copyWith(hasMoreMessages: false);
@@ -409,7 +454,7 @@ class ConversationTimelineCache {
       final page = await _loadOlderPageFromDb(
         current.conversationId,
         beforeCursor: oldestCursor,
-        pageSize: _maxInt(5, minMessages - current.messages.length),
+        pageSize: _maxInt(5, minMessages - current.loadedRawMessageCount),
       );
       if (page.messages.isEmpty) {
         current = current.copyWith(hasMoreMessages: false);
@@ -857,16 +902,59 @@ ConversationTimelineWindowState _buildWindow(
   required int limit,
 }) {
   final normalizedLimit = limit < 1 ? 1 : limit;
-  final startIndex = snapshot.messages.length > normalizedLimit
-      ? snapshot.messages.length - normalizedLimit
-      : 0;
   final visibleMessages = List<Message>.unmodifiable(
-    snapshot.messages.sublist(startIndex),
+    _selectNewestProjectedMessagesByRawWindow(
+      snapshot.messages,
+      rawMessageLimit: normalizedLimit,
+    ),
   );
   return ConversationTimelineWindowState(
     messages: visibleMessages,
-    hasMoreMessages: snapshot.hasMoreMessages || startIndex > 0,
+    hasMoreMessages: snapshot.hasMoreMessages ||
+        snapshot.loadedRawMessageCount > normalizedLimit,
   );
+}
+
+List<Message> _selectNewestProjectedMessagesByRawWindow(
+  List<Message> messages, {
+  required int rawMessageLimit,
+}) {
+  if (messages.isEmpty) {
+    return const <Message>[];
+  }
+
+  final normalizedLimit = rawMessageLimit < 1 ? 1 : rawMessageLimit;
+  final selectedRawIds = <String>{};
+  var firstSelectedIndex = messages.length;
+  for (var index = messages.length - 1; index >= 0; index -= 1) {
+    final rawId = _messageRawSourceId(messages[index]);
+    if (selectedRawIds.add(rawId)) {
+      firstSelectedIndex = index;
+      if (selectedRawIds.length >= normalizedLimit) {
+        break;
+      }
+    } else if (selectedRawIds.isNotEmpty) {
+      firstSelectedIndex = index;
+    }
+  }
+
+  if (selectedRawIds.isEmpty) {
+    return const <Message>[];
+  }
+
+  return <Message>[
+    for (var index = firstSelectedIndex; index < messages.length; index += 1)
+      if (selectedRawIds.contains(_messageRawSourceId(messages[index])))
+        messages[index],
+  ];
+}
+
+String _messageRawSourceId(Message message) {
+  final sourceMessageId = message.sourceMessageId?.trim();
+  if (sourceMessageId != null && sourceMessageId.isNotEmpty) {
+    return sourceMessageId;
+  }
+  return message.id.trim();
 }
 
 List<Message> _normalizeMessages(Iterable<Message> messages) {

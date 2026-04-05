@@ -36,51 +36,22 @@ class MessageRepository {
     int? beforeTime,
     String? beforeId,
   }) async {
-    var query = _db.select(_db.messages)
-      ..where((t) =>
-          t.conversationId.equals(conversationId) &
-          t.deletedAt.isNull() &
-          t.replacedBy.isNull());
-
-    if (beforeTime != null) {
-      final cursorId = beforeId?.trim();
-      query = query
-        ..where((t) {
-          final olderTime = t.createdAt.isSmallerThanValue(beforeTime);
-          if (cursorId == null || cursorId.isEmpty) {
-            return olderTime;
-          }
-          final sameTimeOlderId = t.createdAt.equals(beforeTime) &
-              t.id.isSmallerThanValue(cursorId);
-          return olderTime | sameTimeOlderId;
-        });
-    }
-
-    query
-      ..orderBy([
-        (t) => OrderingTerm.desc(t.createdAt),
-        (t) => OrderingTerm.desc(t.id),
-      ])
-      ..limit(limit);
-
-    return query.get();
+    return _queryStableConversationMessages(
+      conversationId: conversationId,
+      limit: limit,
+      beforeTime: beforeTime,
+      beforeId: beforeId,
+    );
   }
 
   Stream<List<Message>> watchByConversationStable(
     String conversationId, {
     int limit = 50,
   }) {
-    return (_db.select(_db.messages)
-          ..where((t) =>
-              t.conversationId.equals(conversationId) &
-              t.deletedAt.isNull() &
-              t.replacedBy.isNull())
-          ..orderBy([
-            (t) => OrderingTerm.desc(t.createdAt),
-            (t) => OrderingTerm.desc(t.id),
-          ])
-          ..limit(limit))
-        .watch();
+    return _watchStableConversationMessages(
+      conversationId: conversationId,
+      limit: limit,
+    );
   }
 
   /// 在单个会话内搜索消息（按关键词 + 可选时间范围）
@@ -184,35 +155,21 @@ class MessageRepository {
   }
 
   Future<Message?> getLastMessageStable(String conversationId) {
-    return (_db.select(_db.messages)
-          ..where((t) =>
-              t.conversationId.equals(conversationId) &
-              t.deletedAt.isNull() &
-              t.replacedBy.isNull())
-          ..orderBy([
-            (t) => OrderingTerm.desc(t.createdAt),
-            (t) => OrderingTerm.desc(t.id),
-          ])
-          ..limit(1))
-        .getSingleOrNull();
+    return _queryStableConversationMessages(
+      conversationId: conversationId,
+      limit: 1,
+    ).then((messages) => messages.isEmpty ? null : messages.first);
   }
 
   Future<Message?> getLastMessageByRole(
     String conversationId, {
     required String role,
   }) {
-    return (_db.select(_db.messages)
-          ..where((t) =>
-              t.conversationId.equals(conversationId) &
-              t.role.equals(role) &
-              t.deletedAt.isNull() &
-              t.replacedBy.isNull())
-          ..orderBy([
-            (t) => OrderingTerm.desc(t.createdAt),
-            (t) => OrderingTerm.desc(t.id),
-          ])
-          ..limit(1))
-        .getSingleOrNull();
+    return _queryStableConversationMessages(
+      conversationId: conversationId,
+      role: role,
+      limit: 1,
+    ).then((messages) => messages.isEmpty ? null : messages.first);
   }
 
   /// 获取 since 之后创建的消息（用于同步）
@@ -264,16 +221,11 @@ class MessageRepository {
 
   Future<List<Message>> getAllByConversationOrderedStable(
       String conversationId) async {
-    return (_db.select(_db.messages)
-          ..where((t) =>
-              t.conversationId.equals(conversationId) &
-              t.deletedAt.isNull() &
-              t.replacedBy.isNull())
-          ..orderBy([
-            (t) => OrderingTerm.asc(t.createdAt),
-            (t) => OrderingTerm.asc(t.id),
-          ]))
-        .get();
+    return _queryStableConversationMessages(
+      conversationId: conversationId,
+      limit: null,
+      descending: false,
+    );
   }
 
   /// 获取记忆入库候选消息（仅未总结、未删除、未被替换）
@@ -466,6 +418,110 @@ class MessageRepository {
         summarized: const Value(false),
         errorMessage: Value(errorMessage),
       ),
+    );
+  }
+
+  Future<List<Message>> _queryStableConversationMessages({
+    required String conversationId,
+    required int? limit,
+    int? beforeTime,
+    String? beforeId,
+    String? role,
+    bool descending = true,
+  }) async {
+    final query = _buildStableConversationQuery(
+      conversationId: conversationId,
+      limit: limit,
+      beforeTime: beforeTime,
+      beforeId: beforeId,
+      role: role,
+      descending: descending,
+    );
+    final rows = await _db.customSelect(
+      query.sql,
+      variables: query.variables,
+      readsFrom: {_db.messages},
+    ).get();
+    return <Message>[
+      for (final row in rows) _db.messages.map(row.data),
+    ];
+  }
+
+  Stream<List<Message>> _watchStableConversationMessages({
+    required String conversationId,
+    required int limit,
+  }) {
+    final query = _buildStableConversationQuery(
+      conversationId: conversationId,
+      limit: limit,
+    );
+    return _db
+        .customSelect(
+          query.sql,
+          variables: query.variables,
+          readsFrom: {_db.messages},
+        )
+        .watch()
+        .map(
+          (rows) => <Message>[
+            for (final row in rows) _db.messages.map(row.data),
+          ],
+        );
+  }
+
+  ({String sql, List<Variable> variables}) _buildStableConversationQuery({
+    required String conversationId,
+    required int? limit,
+    int? beforeTime,
+    String? beforeId,
+    String? role,
+    bool descending = true,
+  }) {
+    final variables = <Variable>[
+      Variable<String>(conversationId),
+    ];
+    final filters = <String>[
+      'm.conversation_id = ?',
+      'm.deleted_at IS NULL',
+      'm.replaced_by IS NULL',
+    ];
+
+    final normalizedRole = role?.trim();
+    if (normalizedRole != null && normalizedRole.isNotEmpty) {
+      filters.add('m.role = ?');
+      variables.add(Variable<String>(normalizedRole));
+    }
+
+    if (beforeTime != null) {
+      final cursorId = beforeId?.trim();
+      if (cursorId == null || cursorId.isEmpty) {
+        filters.add('m.created_at < ?');
+        variables.add(Variable<int>(beforeTime));
+      } else {
+        filters.add(
+          '(m.created_at < ? OR (m.created_at = ? AND '
+          'm.rowid < (SELECT rowid FROM messages WHERE id = ? LIMIT 1)))',
+        );
+        variables.add(Variable<int>(beforeTime));
+        variables.add(Variable<int>(beforeTime));
+        variables.add(Variable<String>(cursorId));
+      }
+    }
+
+    final direction = descending ? 'DESC' : 'ASC';
+    final sql = StringBuffer()
+      ..writeln('SELECT m.*')
+      ..writeln('FROM messages m')
+      ..writeln('WHERE ${filters.join(' AND ')}')
+      ..writeln('ORDER BY m.created_at $direction, m.rowid $direction');
+    if (limit != null) {
+      sql.writeln('LIMIT ?');
+      variables.add(Variable<int>(limit));
+    }
+
+    return (
+      sql: sql.toString(),
+      variables: variables,
     );
   }
 }

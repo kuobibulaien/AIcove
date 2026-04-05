@@ -307,6 +307,51 @@ void main() {
       expect(result.toolCalls.first.thoughtSignature, 'sig_array');
     });
 
+    test('filters gemini thought parts from visible text but keeps them hidden',
+        () async {
+      final emitted = <String>[];
+      final client = AgentApiClient(
+        client: _FakeStreamingClient(
+          statusCode: 200,
+          responseLines: const <String>[
+            'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"先想想怎么回","thought":true}]}}]}',
+            '',
+            'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"你好呀"}]}}]}',
+            '',
+            'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"，今天想聊些什么？"}]}}]}',
+            '',
+          ],
+        ),
+      );
+
+      final result = await client.sendMessageRichStream(
+        agentId: 'agent_1',
+        sessionId: 'session_1',
+        modelFullId: 'gemini:gemma-4-31b-it',
+        messages: const <Map<String, dynamic>>[],
+        userText: '你好',
+        providerApiBase: 'https://generativelanguage.googleapis.com/v1beta',
+        providerApiKey: 'test-key',
+        onTextDelta: emitted.add,
+      );
+
+      expect(result.text, '你好呀，今天想聊些什么？');
+      expect(emitted, <String>['你好呀', '，今天想聊些什么？']);
+      expect(result.hiddenThoughtParts, hasLength(1));
+      expect(result.hiddenThoughtParts.first['text'], '先想想怎么回');
+      expect(result.hiddenThoughtParts.first['thought'], isTrue);
+
+      final rawCandidates = result.rawResponse?['candidates'] as List?;
+      expect(rawCandidates, isNotNull);
+      final firstCandidate = rawCandidates!.first as Map<String, dynamic>;
+      final content = firstCandidate['content'] as Map<String, dynamic>?;
+      final parts = content?['parts'] as List?;
+      expect(parts, isNotNull);
+      expect((parts!.first as Map<String, dynamic>)['thought'], isTrue);
+      expect((parts.first as Map<String, dynamic>)['text'], '先想想怎么回');
+      expect((parts[1] as Map<String, dynamic>)['text'], '你好呀，今天想聊些什么？');
+    });
+
     test('supports gemini aiplatform stream with formatted JSON array body',
         () async {
       final client = AgentApiClient(
@@ -357,7 +402,8 @@ void main() {
         modelFullId: 'gemini:gemini-2.5-flash-lite',
         messages: const <Map<String, dynamic>>[],
         userText: '继续',
-        providerApiBase: 'https://aiplatform.googleapis.com/v1/publishers/google',
+        providerApiBase:
+            'https://aiplatform.googleapis.com/v1/publishers/google',
         providerApiKey: 'test-key',
       );
 

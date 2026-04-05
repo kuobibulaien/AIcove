@@ -4,7 +4,8 @@ import 'package:aicove_flutter/src/core/api/providers/gemini_adapter.dart';
 
 void main() {
   group('GeminiAdapter', () {
-    test('buildRequestBody should merge system messages and keep user reminder in contents',
+    test(
+        'buildRequestBody should merge system messages and keep user reminder in contents',
         () {
       final adapter = GeminiAdapter();
 
@@ -59,6 +60,40 @@ void main() {
         (contents[2] as Map<String, dynamic>)['role'],
         'user',
       );
+    });
+
+    test('parseResponse should keep thought parts hidden from visible text',
+        () {
+      final adapter = GeminiAdapter();
+
+      final result = adapter.parseResponse(
+        <String, dynamic>{
+          'candidates': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'content': <String, dynamic>{
+                'role': 'model',
+                'parts': <Map<String, dynamic>>[
+                  <String, dynamic>{
+                    'text': '先想一下',
+                    'thought': true,
+                  },
+                  <String, dynamic>{
+                    'text': '你好呀',
+                  },
+                  <String, dynamic>{
+                    'text': '，今天过得怎么样？',
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      );
+
+      expect(result.text, '你好呀，今天过得怎么样？');
+      expect(result.hiddenThoughtParts, hasLength(1));
+      expect(result.hiddenThoughtParts.first['text'], '先想一下');
+      expect(result.hiddenThoughtParts.first['thought'], isTrue);
     });
   });
 }

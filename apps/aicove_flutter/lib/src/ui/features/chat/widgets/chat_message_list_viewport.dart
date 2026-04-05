@@ -42,8 +42,7 @@ extension _ChatMessageListViewportX on _ChatMessageListState {
         _clearDetachedSplitBoundary();
         _resetManualDetachedDistanceToBottom();
       } else {
-        _captureDetachedSplitBoundary();
-        _updateState(() {});
+        _captureDetachedSplitBoundary(rebuild: false);
       }
     }
   }
@@ -140,25 +139,48 @@ extension _ChatMessageListViewportX on _ChatMessageListState {
     _scheduleScrollToBottom(animated: animated);
   }
 
-  void _captureDetachedSplitBoundary() {
-    if (_detachedSplitBoundary != null || _currentTimelineMessages.isEmpty) {
+  _TimelineSplitBoundary? _effectiveDetachedSplitBoundary() {
+    if (_detachedSplitBoundary != null) {
+      return _detachedSplitBoundary;
+    }
+    if (!_autoScrollEnabled) {
+      return _pendingDetachedSplitBoundary;
+    }
+    return null;
+  }
+
+  void _captureDetachedSplitBoundary({bool rebuild = true}) {
+    if (_currentTimelineMessages.isEmpty) {
       return;
     }
     final tail = _currentTimelineMessages.last;
+    final nextBoundary = _TimelineSplitBoundary(
+      messageId: tail.id,
+      createdAt: tail.createdAt,
+    );
+    final currentBoundary = _effectiveDetachedSplitBoundary();
+    if (currentBoundary != null &&
+        currentBoundary.messageId == nextBoundary.messageId &&
+        currentBoundary.createdAt == nextBoundary.createdAt) {
+      return;
+    }
+    if (!rebuild) {
+      _pendingDetachedSplitBoundary = nextBoundary;
+      return;
+    }
     _updateState(() {
-      _detachedSplitBoundary = _TimelineSplitBoundary(
-        messageId: tail.id,
-        createdAt: tail.createdAt,
-      );
+      _detachedSplitBoundary = nextBoundary;
+      _pendingDetachedSplitBoundary = null;
     });
   }
 
   void _clearDetachedSplitBoundary() {
-    if (_detachedSplitBoundary == null) {
+    if (_detachedSplitBoundary == null && _pendingDetachedSplitBoundary == null) {
       return;
     }
     _updateState(() {
       _detachedSplitBoundary = null;
+      _pendingDetachedSplitBoundary = null;
     });
   }
 
@@ -168,7 +190,7 @@ extension _ChatMessageListViewportX on _ChatMessageListState {
   void _lockAutoScrollForHistoryPaging(String reason) {
     if (!_autoScrollEnabled) return;
     _debugAutoScroll('lock:$reason');
-    _captureDetachedSplitBoundary();
+    _captureDetachedSplitBoundary(rebuild: false);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       widget.viewportController.onHistoryPagingStarted();
@@ -504,7 +526,7 @@ extension _ChatMessageListViewportX on _ChatMessageListState {
     _cancelProgrammaticScrollTracking();
     if (!_autoScrollEnabled) return;
     _debugAutoScroll('lock:$reason');
-    _captureDetachedSplitBoundary();
+    _captureDetachedSplitBoundary(rebuild: false);
     widget.viewportController.onUserGesture();
   }
 

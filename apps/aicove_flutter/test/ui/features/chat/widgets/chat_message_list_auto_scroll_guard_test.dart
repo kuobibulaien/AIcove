@@ -225,6 +225,35 @@ class _ChatListHarnessState extends State<_ChatListHarness> {
     });
   }
 
+  void splitStreamingTailIntoSealedChunk() {
+    final streamId = _streamingAssistantId;
+    if (streamId == null) return;
+    final tailIndex = _messages.indexWhere((message) => message.id == streamId);
+    if (tailIndex < 0) return;
+    final tail = _messages[tailIndex];
+    final sealedId =
+        '${streamId}_sealed_${tail.createdAt.microsecondsSinceEpoch}';
+    setState(() {
+      _messages = <Message>[
+        ..._messages.take(tailIndex),
+        Message.text(
+          id: sealedId,
+          role: 'assistant',
+          content: '${tail.displayText}。第一句已封口',
+          createdAt: tail.createdAt.add(const Duration(milliseconds: 1)),
+          status: 'sent',
+        ),
+        Message.text(
+          id: streamId,
+          role: 'assistant',
+          content: '第二句继续生成',
+          createdAt: tail.createdAt.add(const Duration(milliseconds: 2)),
+          status: 'sending',
+        ),
+      ];
+    });
+  }
+
   void resumeAutoScrollFromInputTap() {
     _viewportController.onComposerTapped();
   }
@@ -679,6 +708,43 @@ void main() {
     if (tempDir != null && await tempDir!.exists()) {
       await tempDir!.delete(recursive: true);
     }
+  });
+
+  test('同一时间戳下合并时间线应保留上游输入顺序', () {
+    final createdAt = DateTime(2026, 3, 18, 10, 0, 0);
+    final stableMessages = <Message>[
+      Message.text(
+        id: 'user_02',
+        role: 'user',
+        content: '第二条用户消息',
+        createdAt: createdAt,
+        status: 'sent',
+      ),
+      Message.text(
+        id: 'assistant_01',
+        role: 'assistant',
+        content: '第一条 AI 消息',
+        createdAt: createdAt,
+        status: 'sent',
+      ),
+      Message.text(
+        id: 'user_01',
+        role: 'user',
+        content: '第一条用户消息',
+        createdAt: createdAt,
+        status: 'sent',
+      ),
+    ];
+
+    final merged = mergeChatTimelineMessagesForDisplay(
+      stableMessages,
+      const <Message>[],
+    );
+
+    expect(
+      merged.map((message) => message.id).toList(growable: false),
+      <String>['user_02', 'assistant_01', 'user_01'],
+    );
   });
 
   testWidgets('新消息组件应提供轻量入场动画包装', (tester) async {
@@ -1847,6 +1913,127 @@ void main() {
       identical(anchorBefore, anchorAfter),
       isTrue,
       reason: '同一消息流式更新时若列表锚点元素变化，会导致气泡节点反复重建，出现视觉闪烁',
+    );
+  });
+
+  testWidgets('流式中手势接管时，仍可见的旧消息节点不应被重建', (tester) async {
+    final harnessKey = GlobalKey<_ChatListHarnessState>();
+
+    await tester.pumpWidget(_buildHost(harnessKey));
+    await tester.pumpAndSettle();
+
+    final listFinder = find.byType(CustomScrollView);
+    expect(listFinder, findsOneWidget);
+
+    harnessKey.currentState!.appendAssistantStreamingMessage();
+    await tester.pumpAndSettle();
+
+    const movedMessageId = 'm_39';
+    final anchorBefore = _extractMessageAnchorElement(tester, movedMessageId);
+
+    final gesture = await tester.startGesture(tester.getCenter(listFinder));
+    await gesture.moveBy(const Offset(0, 12));
+    await tester.pump(const Duration(milliseconds: 16));
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    final anchorAfter = _extractMessageAnchorElement(tester, movedMessageId);
+    expect(
+      identical(anchorBefore, anchorAfter),
+      isTrue,
+      reason: '手势接管瞬间若把仍可见的旧消息节点重建掉，用户会直接看到列表闪烁',
+    );
+  });
+
+  testWidgets('流式中手势接管时，旧消息不应在用户位移之外额外跳动', (tester) async {
+    final harnessKey = GlobalKey<_ChatListHarnessState>();
+
+    await tester.pumpWidget(_buildHost(harnessKey));
+    await tester.pumpAndSettle();
+
+    final listFinder = find.byType(CustomScrollView);
+    expect(listFinder, findsOneWidget);
+
+    harnessKey.currentState!.appendAssistantStreamingMessage();
+    await tester.pumpAndSettle();
+
+    final anchorFinder = find.byKey(const ValueKey<String>('message:m_39'));
+    expect(anchorFinder, findsOneWidget);
+    final dyBefore = tester.getCenter(anchorFinder).dy;
+
+    final gesture = await tester.startGesture(tester.getCenter(listFinder));
+    await gesture.moveBy(const Offset(0, 12));
+    await tester.pump(const Duration(milliseconds: 16));
+
+    final dyDuringTakeover = tester.getCenter(anchorFinder).dy;
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(
+      (dyDuringTakeover - dyBefore).abs(),
+      lessThan(28.0),
+      reason: '用户只上滑了很短距离，旧消息若额外跳动太多，肉眼会看到明显闪烁',
+    );
+  });
+
+  testWidgets('流式中手势接管时，当前流式尾消息不应额外跳动', (tester) async {
+    final harnessKey = GlobalKey<_ChatListHarnessState>();
+
+    await tester.pumpWidget(_buildHost(harnessKey));
+    await tester.pumpAndSettle();
+
+    final listFinder = find.byType(CustomScrollView);
+    expect(listFinder, findsOneWidget);
+
+    harnessKey.currentState!.appendAssistantStreamingMessage();
+    await tester.pumpAndSettle();
+
+    final streamId = harnessKey.currentState!._streamingAssistantId;
+    expect(streamId, isNotNull);
+    final anchorFinder = find.byKey(ValueKey<String>('message:$streamId'));
+    expect(anchorFinder, findsOneWidget);
+    final dyBefore = tester.getCenter(anchorFinder).dy;
+
+    final gesture = await tester.startGesture(tester.getCenter(listFinder));
+    await gesture.moveBy(const Offset(0, 12));
+    await tester.pump(const Duration(milliseconds: 16));
+
+    final dyDuringTakeover = tester.getCenter(anchorFinder).dy;
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(
+      (dyDuringTakeover - dyBefore).abs(),
+      lessThan(28.0),
+      reason: '手势接管时，当前正在流式的尾消息如果额外跳动，也会表现成明显闪烁',
+    );
+  });
+
+  testWidgets('流式中手势接管后，新分段 assistant 消息不应再触发入场动画闪动', (tester) async {
+    final harnessKey = GlobalKey<_ChatListHarnessState>();
+
+    await tester.pumpWidget(_buildHost(harnessKey));
+    await tester.pumpAndSettle();
+
+    final listFinder = find.byType(CustomScrollView);
+    expect(listFinder, findsOneWidget);
+
+    harnessKey.currentState!.appendAssistantStreamingMessage();
+    await tester.pumpAndSettle();
+
+    final gesture = await tester.startGesture(tester.getCenter(listFinder));
+    await gesture.moveBy(const Offset(0, 12));
+    await tester.pump(const Duration(milliseconds: 16));
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    harnessKey.currentState!.splitStreamingTailIntoSealedChunk();
+    await tester.pump();
+
+    expect(
+      find.byType(AnimatedMessageItem),
+      findsNothing,
+      reason: '用户已接管列表后，流式继续拆出新 assistant 分段时不应再补一层入场动画，否则会像闪一下',
     );
   });
 

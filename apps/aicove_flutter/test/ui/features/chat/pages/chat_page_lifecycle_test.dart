@@ -5,8 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aicove_flutter/src/core/database/database.dart' as db;
 import 'package:aicove_flutter/src/core/database/database_provider.dart';
+import 'package:aicove_flutter/src/features/chat/chat_providers.dart';
 import 'package:aicove_flutter/src/features/chat/conversation_providers.dart';
 import 'package:aicove_flutter/src/features/chat/conversation_timeline_providers.dart';
+import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/chat/services/conversation_short_window_store.dart';
 import 'package:aicove_flutter/src/features/observability/trace_models.dart';
 import 'package:aicove_flutter/src/ui/features/chat/pages/chat_page.dart';
@@ -61,7 +63,7 @@ Future<void> _insertMessage(
 
 Future<_ChatPageShortWindowHarness> _createChatPageShortWindowHarness() async {
   final database = db.AppDatabase.forTesting(NativeDatabase.memory());
-  final conversationId = 'conv_local_stage';
+  const conversationId = 'conv_local_stage';
   final baseTime = DateTime(2026, 3, 27, 14, 0, 0).millisecondsSinceEpoch;
   await _insertConversation(database, conversationId, baseTime);
 
@@ -260,11 +262,43 @@ void main() {
     );
   });
 
+  test('loading 空窗若页面内缓存缺席，应回退到当前生命周期内的时间线热缓存', () {
+    final now = DateTime(2026, 4, 4, 11, 0, 0);
+    final fallbackMessages = resolveChatPageLoadingFallbackMessages(
+      conversationId: 'conv_a',
+      cachedConversationId: null,
+      cachedMessages: const <Message>[],
+      isGenerating: false,
+      inMemoryTimelineMessages: <Message>[
+        Message(
+          id: 'msg_warm_user',
+          role: 'user',
+          content: '热缓存里的用户消息',
+          createdAt: now,
+          status: 'sent',
+        ),
+        Message(
+          id: 'msg_warm_ai',
+          role: 'assistant',
+          content: '热缓存里的助手消息',
+          createdAt: now.add(const Duration(milliseconds: 1)),
+          status: 'sent',
+        ),
+      ],
+    );
+
+    expect(
+      fallbackMessages.map((message) => message.id).toList(),
+      <String>['msg_warm_user', 'msg_warm_ai'],
+    );
+  });
+
   test('AppBar 标题应跟当前会话最新进行中的 Trace 阶段走', () {
     final now = DateTime(2026, 3, 21, 12, 0, 0);
     final title = resolveChatPageAppBarTitle(
       displayName: 'Arona',
       conversationId: 'conv_a',
+      chatStatus: ChatStatus.idle,
       traceEvents: <TraceEvent>[
         TraceEvent(
           traceId: 'trace_other',
@@ -311,11 +345,38 @@ void main() {
     expect(title, '工具执行中');
   });
 
+  test('AppBar 标题在图片生成中时应优先显示图片生成状态', () {
+    final now = DateTime(2026, 3, 21, 12, 0, 0);
+    final title = resolveChatPageAppBarTitle(
+      displayName: 'Arona',
+      conversationId: 'conv_a',
+      chatStatus: ChatStatus.generatingImage,
+      traceEvents: <TraceEvent>[
+        TraceEvent(
+          traceId: 'trace_a',
+          sessionId: 'conv_a',
+          turnId: 'turn_a',
+          roundIndex: 0,
+          eventSeq: 1,
+          stage: TraceStage.toolExecStarted.value,
+          status: TraceEventStatus.success.value,
+          source: 'ChatActions',
+          startedAt: now,
+          endedAt: now,
+          durationMs: 0,
+        ),
+      ],
+    );
+
+    expect(title, ChatStatus.generatingImage.label);
+  });
+
   test('AppBar 标题在当前会话没有进行中的 Trace 时应回退为角色名', () {
     final now = DateTime(2026, 3, 21, 12, 0, 0);
     final title = resolveChatPageAppBarTitle(
       displayName: 'Arona',
       conversationId: 'conv_a',
+      chatStatus: ChatStatus.idle,
       traceEvents: <TraceEvent>[
         TraceEvent(
           traceId: 'trace_done',

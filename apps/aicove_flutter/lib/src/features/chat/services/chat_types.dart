@@ -72,6 +72,7 @@ class ApiCallResult {
   final String rawReplyText;
   final String replyText;
   final String processedText;
+  final List<Map<String, dynamic>> hiddenThoughtParts;
   final List<PluginEvent> pluginEvents;
   final List<PluginContent> pluginContents;
   final List<Map<String, dynamic>> toolResults;
@@ -83,6 +84,7 @@ class ApiCallResult {
     String? rawReplyText,
     required this.replyText,
     required this.processedText,
+    this.hiddenThoughtParts = const [],
     required this.pluginEvents,
     this.pluginContents = const [],
     required this.toolResults,
