@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Flutter 主动消息链路属于前端应用层与平台后台任务交界。"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "主动消息涉及 Riverpod、持久化状态和后台任务状态恢复。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "改完 Flutter 代码需要执行项目要求的测试与手机运行验证。"}
+{"file": ".trellis/spec/agent-context/index.md", "reason": "主动消息属于 Proactive Agent / 后台投递链路。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "本问题横跨触发器、后台任务、通知、SQLite 和聊天显示。"}

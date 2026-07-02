@@ -1,0 +1,20 @@
+# macOS
+.DS_Store
+
+# 迁移遗留的备份压缩包
+*.zip
+
+# Python
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+
+# 环境变量与密钥（模板除外）
+.env
+.env.*
+!.env.example
+
+# 日志
+*.log

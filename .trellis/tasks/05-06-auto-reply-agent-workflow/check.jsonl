@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/agent-context/index.md", "reason": "Verify new proactive Agent graph and analyzer flow; PRD supersedes the old runtime_instruction node contract for this task."}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Verify Flutter quality expectations."}
+{"file": ".trellis/spec/backend/index.md", "reason": "Verify cloud backend and Agent Context Studio changes."}
+{"file": ".trellis/spec/project/architecture-boundaries.md", "reason": "Verify changes stay inside allowed architecture boundaries."}

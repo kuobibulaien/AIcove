@@ -1,0 +1,139 @@
+/// CharacterTextEditorSheet - 角色文本编辑底部弹窗
+///
+/// 用于角色简介/提示词等长文本编辑，统一复用 MoeBottomSheet 规范。
+///
+/// 更新记录：
+/// - 2026-02-07: 从 ContactEditPage 抽离，统一键盘与返回值处理
+library;
+
+import 'package:flutter/material.dart';
+
+import '../../../../ui/shared/effects/smooth_clip.dart';
+import '../../../../ui/shared/widgets/index.dart';
+import '../../../../ui/theme/tokens.dart';
+
+/// 显示角色文本编辑弹窗，点击“完成”返回编辑结果；取消返回 null。
+Future<String?> showCharacterTextEditorSheet({
+  required BuildContext context,
+  required String title,
+  required String initialValue,
+  required String hint,
+}) async {
+  String draft = initialValue;
+  final statusBarHeight = MediaQuery.paddingOf(context).top;
+
+  return showMoeBottomSheet<String>(
+    context: context,
+    title: title,
+    maxHeight: MediaQuery.sizeOf(context).height - statusBarHeight - 16,
+    titleTrailing: Builder(
+      builder: (sheetContext) {
+        final colors = sheetContext.moeColors;
+        return TextButton(
+          onPressed: () {
+            FocusScope.of(sheetContext).unfocus();
+            Navigator.of(sheetContext).pop(draft);
+          },
+          style: TextButton.styleFrom(
+            minimumSize: const Size(32, 32),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          child: Text(
+            '完成',
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: MoeFontWeights.emphasis,
+              color: colors.primary,
+            ),
+          ),
+        );
+      },
+    ),
+    builder: (sheetContext) {
+      return _CharacterTextEditorBody(
+        initialValue: initialValue,
+        hint: hint,
+        onChanged: (value) => draft = value,
+      );
+    },
+  );
+}
+
+class _CharacterTextEditorBody extends StatefulWidget {
+  const _CharacterTextEditorBody({
+    required this.initialValue,
+    required this.hint,
+    required this.onChanged,
+  });
+
+  final String initialValue;
+  final String hint;
+  final ValueChanged<String> onChanged;
+
+  @override
+  State<_CharacterTextEditorBody> createState() =>
+      _CharacterTextEditorBodyState();
+}
+
+class _CharacterTextEditorBodyState extends State<_CharacterTextEditorBody> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialValue);
+    _controller.addListener(_notifyChanged);
+    widget.onChanged(_controller.text);
+  }
+
+  @override
+  void dispose() {
+    _controller.removeListener(_notifyChanged);
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _notifyChanged() {
+    widget.onChanged(_controller.text);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.moeColors;
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          Expanded(
+            child: Container(
+              decoration: MoeG2Decoration(
+                radius: 10,
+                color: colors.surfaceAlt.withValues(alpha: 0.35),
+                border: Border.all(color: colors.borderLight),
+              ),
+              child: TextField(
+                controller: _controller,
+                maxLines: null,
+                expands: true,
+                textAlignVertical: TextAlignVertical.top,
+                autofocus: true,
+                style: TextStyle(
+                  fontSize: 15,
+                  height: 1.6,
+                  color: colors.text,
+                ),
+                decoration: InputDecoration(
+                  hintText: widget.hint,
+                  hintStyle: TextStyle(color: colors.muted),
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.all(12),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

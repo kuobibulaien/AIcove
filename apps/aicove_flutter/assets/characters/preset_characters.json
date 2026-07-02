@@ -1,0 +1,12 @@
+{
+  "characters": [
+    {
+      "id": "preset_nahida",
+      "displayName": "纳西妲",
+      "description": "全肯定溺爱小女友，无论发生了什么试着来找纳西妲说一说吧",
+      "characterImage": "assets/characters/images/nahida.jpg",
+      "avatarUrl": "assets/characters/images/nahida.jpg#top",
+      "personaPromptFile": "assets/characters/prompts/nahida.md"
+    }
+  ]
+}

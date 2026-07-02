@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/agent-context/index.md", "reason": "Verify proactive analyzer graph and node-library variable changes stay within Agent Context contracts"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Verify Flutter runtime behavior and targeted tests"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Verify Flutter quality checks and regression risk"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Verify backend artifact sync and admin API expectations"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Verify backend test coverage and quality expectations"}

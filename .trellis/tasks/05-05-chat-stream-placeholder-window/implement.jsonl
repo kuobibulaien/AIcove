@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Flutter frontend checklist and task-relevant quality expectations."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Chat short-window cache and projection state must remain display-only and not become raw truth source."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Message/sourceMessageId nullability and structured message model constraints."}
+{"file": ".trellis/spec/project/architecture-boundaries.md", "reason": "Keep UI projection fixes within existing chat_actions/service boundaries."}

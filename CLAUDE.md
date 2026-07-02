@@ -1,0 +1,2 @@
+同AGENTS.md
+准备执行前使用codex命令调用codex对方案进行审核

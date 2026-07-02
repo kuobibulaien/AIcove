@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Flutter frontend quality checklist including required run verification."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Bug fixes in chat main path require regression coverage and flutter run validation."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Verify projection/cache changes stay display-only and do not pollute DB truth source."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Verify sourceMessageId handling keeps nullability semantics explicit."}

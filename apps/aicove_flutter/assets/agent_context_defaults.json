@@ -1,0 +1,1012 @@
+{
+  "version": 1,
+  "source": "cloud_backend/data/agent_context_admin.json",
+  "syncedAt": "2026-05-06T00:37:11Z",
+  "agents": [
+    {
+      "id": "proactive_agent:default",
+      "name": "主动回复 Agent",
+      "agentKind": "proactive",
+      "contactId": null,
+      "modelRef": null,
+      "contextRecipeId": "standard_proactive_recipe:default",
+      "contextProfile": {
+        "scope": "proactive_specialized",
+        "assemblyPermissions": [
+          "role_card",
+          "memory",
+          "conversation_window",
+          "runtime_facts",
+          "tool_policy",
+          "output_contract"
+        ],
+        "tokenBudget": null,
+        "traceAssembly": true
+      },
+      "toolPolicyId": null,
+      "outputContractId": null,
+      "triggerPolicy": {
+        "triggerKind": "silence_window",
+        "source": "local_or_cloud_scheduler",
+        "enabled": true
+      },
+      "assemblyFlow": {
+        "stages": [
+          {
+            "id": "collect_nodes",
+            "name": "收集节点",
+            "enabled": true
+          },
+          {
+            "id": "transform",
+            "name": "上下文变换",
+            "enabled": true
+          },
+          {
+            "id": "budget",
+            "name": "Token 预算",
+            "enabled": true
+          },
+          {
+            "id": "render",
+            "name": "Provider 渲染",
+            "enabled": true
+          },
+          {
+            "id": "output",
+            "name": "输出归一化",
+            "enabled": true
+          }
+        ],
+        "notes": null
+      },
+      "agentGraph": {
+        "nodes": [
+          {
+            "id": "graph:proactive_agent:default:auto_reply.analyzer.default",
+            "nodeId": "auto_reply.analyzer.default",
+            "assetId": "auto_reply.analyzer.default",
+            "nodeType": "prompt",
+            "label": "分析当前状态并决定是否触发主动回复",
+            "enabled": true,
+            "position": {
+              "x": 120.0,
+              "y": 120.0
+            },
+            "slot": "analyzer_prompt",
+            "config": {
+              "source": "builtin_seed",
+              "promptDefaultId": "auto_reply.analyzer.default",
+              "stage": "analyzer",
+              "stageLabel": "Analyzer / trigger decision",
+              "stageOrder": 10
+            }
+          },
+          {
+            "id": "graph:proactive_agent:default:auto_reply.agent.objective",
+            "nodeId": "auto_reply.agent.objective",
+            "assetId": "auto_reply.agent.objective",
+            "nodeType": "prompt",
+            "label": "生成要发给用户的主动回复内容",
+            "enabled": true,
+            "position": {
+              "x": 120.0,
+              "y": 320.0
+            },
+            "slot": "reply_generation_prompt",
+            "config": {
+              "source": "builtin_seed",
+              "promptDefaultId": "auto_reply.agent.objective",
+              "stage": "reply_generation",
+              "stageLabel": "Proactive reply generation",
+              "stageOrder": 20
+            }
+          }
+        ],
+        "edges": [],
+        "stages": [
+          {
+            "id": "analyzer",
+            "label": "Analyzer / trigger decision",
+            "name": "后台分析 / 触发决策",
+            "order": 10,
+            "description": "用于判断是否触发主动关怀的后台分析请求。"
+          },
+          {
+            "id": "reply_generation",
+            "label": "Proactive reply generation",
+            "name": "主动回复生成",
+            "order": 20,
+            "description": "用于生成最终主动回复文本的聊天模型请求。"
+          }
+        ],
+        "entryNodeIds": [
+          "graph:proactive_agent:default:auto_reply.analyzer.default",
+          "graph:proactive_agent:default:auto_reply.agent.objective"
+        ],
+        "outputNodeIds": [
+          "graph:proactive_agent:default:auto_reply.analyzer.default",
+          "graph:proactive_agent:default:auto_reply.agent.objective"
+        ],
+        "viewport": {
+          "x": 0.0,
+          "y": 0.0,
+          "zoom": 1.0
+        }
+      },
+      "deliveryChannel": "background_proactive",
+      "enabled": true
+    },
+    {
+      "id": "memory_agent:default",
+      "name": "记忆 Agent",
+      "agentKind": "memory",
+      "contactId": null,
+      "modelRef": null,
+      "contextRecipeId": "standard_memory_recipe:default",
+      "contextProfile": {
+        "scope": "memory_specialized",
+        "assemblyPermissions": [
+          "memory",
+          "conversation_window",
+          "output_contract"
+        ],
+        "tokenBudget": null,
+        "traceAssembly": true
+      },
+      "toolPolicyId": null,
+      "outputContractId": "memory_writer",
+      "triggerPolicy": {
+        "triggerKind": "event",
+        "source": "conversation_changed",
+        "enabled": true
+      },
+      "assemblyFlow": {
+        "stages": [
+          {
+            "id": "collect_nodes",
+            "name": "收集节点",
+            "enabled": true
+          },
+          {
+            "id": "transform",
+            "name": "上下文变换",
+            "enabled": true
+          },
+          {
+            "id": "budget",
+            "name": "Token 预算",
+            "enabled": true
+          },
+          {
+            "id": "render",
+            "name": "Provider 渲染",
+            "enabled": true
+          },
+          {
+            "id": "output",
+            "name": "输出归一化",
+            "enabled": true
+          }
+        ],
+        "notes": null
+      },
+      "agentGraph": {
+        "nodes": [
+          {
+            "id": "graph:memory_agent:default:memory.summary.default",
+            "nodeId": "memory.summary.default",
+            "assetId": "memory.summary.default",
+            "nodeType": "prompt",
+            "label": "记忆总结默认提示词",
+            "enabled": true,
+            "position": {
+              "x": 120.0,
+              "y": 140.0
+            },
+            "slot": "prompt_defaults",
+            "config": {
+              "source": "builtin_seed",
+              "promptDefaultId": "memory.summary.default"
+            }
+          },
+          {
+            "id": "graph:memory_agent:default:memory.summary.extra_instruction",
+            "nodeId": "memory.summary.extra_instruction",
+            "assetId": "memory.summary.extra_instruction",
+            "nodeType": "prompt",
+            "label": "记忆总结附加说明",
+            "enabled": true,
+            "position": {
+              "x": 380.0,
+              "y": 140.0
+            },
+            "slot": "prompt_defaults",
+            "config": {
+              "source": "builtin_seed",
+              "promptDefaultId": "memory.summary.extra_instruction"
+            }
+          },
+          {
+            "id": "graph:memory_agent:default:memory.summary.role_persona.generic_instruction",
+            "nodeId": "memory.summary.role_persona.generic_instruction",
+            "assetId": "memory.summary.role_persona.generic_instruction",
+            "nodeType": "prompt",
+            "label": "记忆总结角色化通用说明",
+            "enabled": true,
+            "position": {
+              "x": 640.0,
+              "y": 140.0
+            },
+            "slot": "prompt_defaults",
+            "config": {
+              "source": "builtin_seed",
+              "promptDefaultId": "memory.summary.role_persona.generic_instruction"
+            }
+          },
+          {
+            "id": "graph:memory_agent:default:memory.summary.role_persona.context_instruction",
+            "nodeId": "memory.summary.role_persona.context_instruction",
+            "assetId": "memory.summary.role_persona.context_instruction",
+            "nodeType": "prompt",
+            "label": "记忆总结角色化上下文说明",
+            "enabled": true,
+            "position": {
+              "x": 120.0,
+              "y": 300.0
+            },
+            "slot": "prompt_defaults",
+            "config": {
+              "source": "builtin_seed",
+              "promptDefaultId": "memory.summary.role_persona.context_instruction"
+            }
+          },
+          {
+            "id": "graph:memory_agent:default:memory.role_scoped.root",
+            "nodeId": "memory.role_scoped.root",
+            "assetId": "memory.role_scoped.root",
+            "nodeType": "prompt",
+            "label": "记忆插件角色专属 prompt 主模板",
+            "enabled": true,
+            "position": {
+              "x": 380.0,
+              "y": 300.0
+            },
+            "slot": "prompt_defaults",
+            "config": {
+              "source": "builtin_seed",
+              "promptDefaultId": "memory.role_scoped.root"
+            }
+          },
+          {
+            "id": "graph:memory_agent:default:memory.profile_prompt.root",
+            "nodeId": "memory.profile_prompt.root",
+            "assetId": "memory.profile_prompt.root",
+            "nodeType": "prompt",
+            "label": "L1 用户画像主模板",
+            "enabled": true,
+            "position": {
+              "x": 640.0,
+              "y": 300.0
+            },
+            "slot": "prompt_defaults",
+            "config": {
+              "source": "builtin_seed",
+              "promptDefaultId": "memory.profile_prompt.root"
+            }
+          },
+          {
+            "id": "graph:memory_agent:default:memory.merge.prompt",
+            "nodeId": "memory.merge.prompt",
+            "assetId": "memory.merge.prompt",
+            "nodeType": "prompt",
+            "label": "L2 记忆合并提示词",
+            "enabled": true,
+            "position": {
+              "x": 120.0,
+              "y": 460.0
+            },
+            "slot": "prompt_defaults",
+            "config": {
+              "source": "builtin_seed",
+              "promptDefaultId": "memory.merge.prompt"
+            }
+          },
+          {
+            "id": "graph:memory_agent:default:memory.reenrich.default",
+            "nodeId": "memory.reenrich.default",
+            "assetId": "memory.reenrich.default",
+            "nodeType": "prompt",
+            "label": "压缩记忆重新丰富模板",
+            "enabled": true,
+            "position": {
+              "x": 380.0,
+              "y": 460.0
+            },
+            "slot": "prompt_defaults",
+            "config": {
+              "source": "builtin_seed",
+              "promptDefaultId": "memory.reenrich.default"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "id": "edge:graph:memory_agent:default:memory.summary.default:graph:memory_agent:default:memory.summary.extra_instruction",
+            "source": "graph:memory_agent:default:memory.summary.default",
+            "target": "graph:memory_agent:default:memory.summary.extra_instruction",
+            "sourcePort": "out",
+            "targetPort": "in",
+            "enabled": true,
+            "condition": null
+          },
+          {
+            "id": "edge:graph:memory_agent:default:memory.summary.extra_instruction:graph:memory_agent:default:memory.summary.role_persona.generic_instruction",
+            "source": "graph:memory_agent:default:memory.summary.extra_instruction",
+            "target": "graph:memory_agent:default:memory.summary.role_persona.generic_instruction",
+            "sourcePort": "out",
+            "targetPort": "in",
+            "enabled": true,
+            "condition": null
+          },
+          {
+            "id": "edge:graph:memory_agent:default:memory.summary.role_persona.generic_instruction:graph:memory_agent:default:memory.summary.role_persona.context_instruction",
+            "source": "graph:memory_agent:default:memory.summary.role_persona.generic_instruction",
+            "target": "graph:memory_agent:default:memory.summary.role_persona.context_instruction",
+            "sourcePort": "out",
+            "targetPort": "in",
+            "enabled": true,
+            "condition": null
+          },
+          {
+            "id": "edge:graph:memory_agent:default:memory.summary.role_persona.context_instruction:graph:memory_agent:default:memory.role_scoped.root",
+            "source": "graph:memory_agent:default:memory.summary.role_persona.context_instruction",
+            "target": "graph:memory_agent:default:memory.role_scoped.root",
+            "sourcePort": "out",
+            "targetPort": "in",
+            "enabled": true,
+            "condition": null
+          },
+          {
+            "id": "edge:graph:memory_agent:default:memory.role_scoped.root:graph:memory_agent:default:memory.profile_prompt.root",
+            "source": "graph:memory_agent:default:memory.role_scoped.root",
+            "target": "graph:memory_agent:default:memory.profile_prompt.root",
+            "sourcePort": "out",
+            "targetPort": "in",
+            "enabled": true,
+            "condition": null
+          },
+          {
+            "id": "edge:graph:memory_agent:default:memory.profile_prompt.root:graph:memory_agent:default:memory.merge.prompt",
+            "source": "graph:memory_agent:default:memory.profile_prompt.root",
+            "target": "graph:memory_agent:default:memory.merge.prompt",
+            "sourcePort": "out",
+            "targetPort": "in",
+            "enabled": true,
+            "condition": null
+          },
+          {
+            "id": "edge:graph:memory_agent:default:memory.merge.prompt:graph:memory_agent:default:memory.reenrich.default",
+            "source": "graph:memory_agent:default:memory.merge.prompt",
+            "target": "graph:memory_agent:default:memory.reenrich.default",
+            "sourcePort": "out",
+            "targetPort": "in",
+            "enabled": true,
+            "condition": null
+          }
+        ],
+        "stages": [],
+        "entryNodeIds": [
+          "graph:memory_agent:default:memory.summary.default"
+        ],
+        "outputNodeIds": [
+          "graph:memory_agent:default:memory.reenrich.default"
+        ],
+        "viewport": {
+          "x": 0.0,
+          "y": 0.0,
+          "zoom": 1.0
+        }
+      },
+      "deliveryChannel": "memory_writer",
+      "enabled": true
+    }
+  ],
+  "bindings": [
+    {
+      "id": "binding:memory_agent:default:memory.summary.default:1",
+      "agentId": "memory_agent:default",
+      "assetType": "prompt",
+      "assetId": "memory.summary.default",
+      "nodeType": "prompt",
+      "nodeId": "memory.summary.default",
+      "graphNodeId": "graph:memory_agent:default:memory.summary.default",
+      "enabled": true,
+      "priority": 100,
+      "slot": "prompt_defaults",
+      "source": "agent_build_graph"
+    },
+    {
+      "id": "binding:memory_agent:default:memory.summary.extra_instruction:2",
+      "agentId": "memory_agent:default",
+      "assetType": "prompt",
+      "assetId": "memory.summary.extra_instruction",
+      "nodeType": "prompt",
+      "nodeId": "memory.summary.extra_instruction",
+      "graphNodeId": "graph:memory_agent:default:memory.summary.extra_instruction",
+      "enabled": true,
+      "priority": 200,
+      "slot": "prompt_defaults",
+      "source": "agent_build_graph"
+    },
+    {
+      "id": "binding:memory_agent:default:memory.summary.role_persona.generic_instruction:3",
+      "agentId": "memory_agent:default",
+      "assetType": "prompt",
+      "assetId": "memory.summary.role_persona.generic_instruction",
+      "nodeType": "prompt",
+      "nodeId": "memory.summary.role_persona.generic_instruction",
+      "graphNodeId": "graph:memory_agent:default:memory.summary.role_persona.generic_instruction",
+      "enabled": true,
+      "priority": 300,
+      "slot": "prompt_defaults",
+      "source": "agent_build_graph"
+    },
+    {
+      "id": "binding:memory_agent:default:memory.summary.role_persona.context_instruction:4",
+      "agentId": "memory_agent:default",
+      "assetType": "prompt",
+      "assetId": "memory.summary.role_persona.context_instruction",
+      "nodeType": "prompt",
+      "nodeId": "memory.summary.role_persona.context_instruction",
+      "graphNodeId": "graph:memory_agent:default:memory.summary.role_persona.context_instruction",
+      "enabled": true,
+      "priority": 400,
+      "slot": "prompt_defaults",
+      "source": "agent_build_graph"
+    },
+    {
+      "id": "binding:memory_agent:default:memory.role_scoped.root:5",
+      "agentId": "memory_agent:default",
+      "assetType": "prompt",
+      "assetId": "memory.role_scoped.root",
+      "nodeType": "prompt",
+      "nodeId": "memory.role_scoped.root",
+      "graphNodeId": "graph:memory_agent:default:memory.role_scoped.root",
+      "enabled": true,
+      "priority": 500,
+      "slot": "prompt_defaults",
+      "source": "agent_build_graph"
+    },
+    {
+      "id": "binding:memory_agent:default:memory.profile_prompt.root:6",
+      "agentId": "memory_agent:default",
+      "assetType": "prompt",
+      "assetId": "memory.profile_prompt.root",
+      "nodeType": "prompt",
+      "nodeId": "memory.profile_prompt.root",
+      "graphNodeId": "graph:memory_agent:default:memory.profile_prompt.root",
+      "enabled": true,
+      "priority": 600,
+      "slot": "prompt_defaults",
+      "source": "agent_build_graph"
+    },
+    {
+      "id": "binding:memory_agent:default:memory.merge.prompt:7",
+      "agentId": "memory_agent:default",
+      "assetType": "prompt",
+      "assetId": "memory.merge.prompt",
+      "nodeType": "prompt",
+      "nodeId": "memory.merge.prompt",
+      "graphNodeId": "graph:memory_agent:default:memory.merge.prompt",
+      "enabled": true,
+      "priority": 700,
+      "slot": "prompt_defaults",
+      "source": "agent_build_graph"
+    },
+    {
+      "id": "binding:memory_agent:default:memory.reenrich.default:8",
+      "agentId": "memory_agent:default",
+      "assetType": "prompt",
+      "assetId": "memory.reenrich.default",
+      "nodeType": "prompt",
+      "nodeId": "memory.reenrich.default",
+      "graphNodeId": "graph:memory_agent:default:memory.reenrich.default",
+      "enabled": true,
+      "priority": 800,
+      "slot": "prompt_defaults",
+      "source": "agent_build_graph"
+    },
+    {
+      "id": "binding:proactive_agent:default:auto_reply.analyzer.default:1",
+      "agentId": "proactive_agent:default",
+      "assetType": "prompt",
+      "assetId": "auto_reply.analyzer.default",
+      "nodeType": "prompt",
+      "nodeId": "auto_reply.analyzer.default",
+      "graphNodeId": "graph:proactive_agent:default:auto_reply.analyzer.default",
+      "enabled": true,
+      "priority": 100,
+      "slot": "analyzer_prompt",
+      "source": "agent_build_graph",
+      "stage": "analyzer",
+      "stageLabel": "Analyzer / trigger decision",
+      "stageOrder": 10
+    },
+    {
+      "id": "binding:proactive_agent:default:auto_reply.agent.objective:2",
+      "agentId": "proactive_agent:default",
+      "assetType": "prompt",
+      "assetId": "auto_reply.agent.objective",
+      "nodeType": "prompt",
+      "nodeId": "auto_reply.agent.objective",
+      "graphNodeId": "graph:proactive_agent:default:auto_reply.agent.objective",
+      "enabled": true,
+      "priority": 200,
+      "slot": "reply_generation_prompt",
+      "source": "agent_build_graph",
+      "stage": "reply_generation",
+      "stageLabel": "Proactive reply generation",
+      "stageOrder": 20
+    }
+  ],
+  "nodeLibrary": [
+    {
+      "id": "auto_reply.agent.objective",
+      "name": "生成要发给用户的主动回复内容",
+      "assetType": "prompt",
+      "nodeType": "prompt",
+      "nodeId": "auto_reply.agent.objective",
+      "enabled": true,
+      "updatedAt": null,
+      "safeSummary": {
+        "category": "auto_reply",
+        "dartName": "autoReplyAgentObjective",
+        "variables": [
+          "assistant_name"
+        ],
+        "variableContracts": {
+          "assistant_name": {
+            "label": "助手名称",
+            "description": "当前角色/助手显示名称",
+            "usage": "prompt_placeholder",
+            "valueSource": "Chat/runtime settings inject the current assistant or role display name.",
+            "runtimeShape": {
+              "type": "string"
+            },
+            "sampleValue": "小柚"
+          }
+        },
+        "validationWarnings": [
+          "auto_reply.agent.objective 声明变量当前模板未直接使用：assistant_name"
+        ]
+      },
+      "source": "prompt_defaults",
+      "readOnly": true
+    },
+    {
+      "id": "auto_reply.analyzer.default",
+      "name": "分析当前状态并决定是否触发主动回复",
+      "assetType": "prompt",
+      "nodeType": "prompt",
+      "nodeId": "auto_reply.analyzer.default",
+      "enabled": true,
+      "updatedAt": null,
+      "safeSummary": {
+        "category": "auto_reply",
+        "dartName": "autoReplyAnalyzerDefault",
+        "variables": [
+          "state_json",
+          "current_role_persona",
+          "trigger_list"
+        ],
+        "variableContracts": {
+          "state_json": {
+            "label": "运行态 JSON",
+            "description": "主动回复上下文分析器的当前运行状态 JSON",
+            "usage": "runtime_contract",
+            "valueSource": "ContextAnalyzer._buildRuntimeStateJson serializes current proactive runtime state.",
+            "runtimeShape": {
+              "type": "json_string",
+              "runtimeBuilder": "ContextAnalyzer._buildRuntimeStateJson",
+              "fields": {
+                "conversation_id": "string",
+                "current_role_persona": "string, truncated to 600 chars",
+                "trigger_list": "array<trigger_summary>",
+                "device_local_time": "ISO-8601 local DateTime string",
+                "device_timezone_name": "string",
+                "device_timezone_offset": "+HH:MM string",
+                "mode": "active | silent | dormant",
+                "unreplied_count": "int",
+                "last_user_message_id": "string | null",
+                "last_user_at": "ISO-8601 string | null",
+                "last_proactive_at": "ISO-8601 string | null",
+                "silence_until": "ISO-8601 string | null",
+                "pending_auto_trigger_id": "string | null"
+              },
+              "triggerSummaryFields": {
+                "id": "string",
+                "title": "string",
+                "status": "pending | paused | fired | expired | cancelled",
+                "source": "string",
+                "priority": "low | medium | high",
+                "next_fire_at": "ISO-8601 string",
+                "delay_minutes": "int",
+                "allow_night": "bool",
+                "require_exact": "bool",
+                "manual": "bool",
+                "system_reminder": "string, truncated to 220 chars"
+              }
+            },
+            "sampleValue": "{\n  \"conversation_id\": \"conv_demo\",\n  \"current_role_persona\": \"你是一个温柔、耐心、会认真倾听用户的角色。\",\n  \"trigger_list\": [\n    {\n      \"id\": \"trigger_1\",\n      \"title\": \"稍后问候\",\n      \"status\": \"pending\",\n      \"source\": \"aiScheduler\",\n      \"priority\": \"medium\",\n      \"next_fire_at\": \"2026-05-06T21:30:00+08:00\",\n      \"delay_minutes\": 45,\n      \"allow_night\": false,\n      \"require_exact\": false,\n      \"manual\": false,\n      \"system_reminder\": \"距离用户说去吃饭已经过了一段时间，适合轻问一句。\"\n    }\n  ],\n  \"device_local_time\": \"2026-05-06T20:45:00+08:00\",\n  \"device_timezone_name\": \"CST\",\n  \"device_timezone_offset\": \"+08:00\",\n  \"mode\": \"active\",\n  \"unreplied_count\": 1,\n  \"last_user_message_id\": \"msg_user_1\",\n  \"last_user_at\": \"2026-05-06T20:15:00+08:00\",\n  \"last_proactive_at\": null,\n  \"silence_until\": null,\n  \"pending_auto_trigger_id\": \"trigger_1\"\n}",
+            "runtimeSampleValue": "{\n  \"conversation_id\": \"conv_demo\",\n  \"current_role_persona\": \"你是一个温柔、耐心、会认真倾听用户的角色。\",\n  \"trigger_list\": [\n    {\n      \"id\": \"trigger_1\",\n      \"title\": \"稍后问候\",\n      \"status\": \"pending\",\n      \"source\": \"aiScheduler\",\n      \"priority\": \"medium\",\n      \"next_fire_at\": \"2026-05-06T21:30:00+08:00\",\n      \"delay_minutes\": 45,\n      \"allow_night\": false,\n      \"require_exact\": false,\n      \"manual\": false,\n      \"system_reminder\": \"距离用户说去吃饭已经过了一段时间，适合轻问一句。\"\n    }\n  ],\n  \"device_local_time\": \"2026-05-06T20:45:00+08:00\",\n  \"device_timezone_name\": \"CST\",\n  \"device_timezone_offset\": \"+08:00\",\n  \"mode\": \"active\",\n  \"unreplied_count\": 1,\n  \"last_user_message_id\": \"msg_user_1\",\n  \"last_user_at\": \"2026-05-06T20:15:00+08:00\",\n  \"last_proactive_at\": null,\n  \"silence_until\": null,\n  \"pending_auto_trigger_id\": \"trigger_1\"\n}"
+          },
+          "current_role_persona": {
+            "label": "当前角色人设",
+            "description": "当前会话角色的人设正文，不含绘图提示扩展",
+            "usage": "runtime_value",
+            "valueSource": "ContextAnalyzer parses PersonaPromptCodec.userPrompt for the current conversation; drawing metadata is excluded.",
+            "runtimeShape": {
+              "type": "string",
+              "source": "PersonaPromptCodec.userPrompt",
+              "excludes": [
+                "customDrawingPrompt",
+                "drawingToolPresetName",
+                "drawingArtistPresetName"
+              ]
+            },
+            "sampleValue": "你是一个温柔、耐心、会认真倾听用户的角色。"
+          },
+          "trigger_list": {
+            "label": "当前触发器列表",
+            "description": "当前会话待处理触发器的摘要列表，用于主动回复分析器判断是否保持、替换或避免重复创建触发器",
+            "usage": "runtime_value",
+            "valueSource": "ContextAnalyzer._formatTriggerListForPrompt formats active or paused triggers for the current conversation.",
+            "runtimeShape": {
+              "type": "string",
+              "format": "newline bullet list from trigger summaries",
+              "source": "ContextAnalyzer._formatTriggerListForPrompt"
+            },
+            "sampleValue": "- id=trigger_1 | title=稍后问候 | status=pending | next_fire_at=2026-05-06T21:30:00 | priority=medium"
+          }
+        },
+        "validationWarnings": [
+          "auto_reply.analyzer.default 声明变量当前模板未直接使用：current_role_persona"
+        ]
+      },
+      "source": "prompt_defaults",
+      "readOnly": true
+    },
+    {
+      "id": "memory.merge.prompt",
+      "name": "将新发生的事实合并进旧的记忆中",
+      "assetType": "prompt",
+      "nodeType": "prompt",
+      "nodeId": "memory.merge.prompt",
+      "enabled": true,
+      "updatedAt": null,
+      "safeSummary": {
+        "category": "memory",
+        "dartName": "memoryMergePrompt",
+        "variables": [
+          "old_content",
+          "new_fact"
+        ],
+        "variableContracts": {
+          "old_content": {
+            "label": "旧记忆内容",
+            "description": "待合并的旧记忆正文",
+            "usage": "prompt_placeholder",
+            "valueSource": "Memory merge runtime passes the existing memory body.",
+            "runtimeShape": {
+              "type": "string"
+            },
+            "sampleValue": "【熬夜安抚】\n事件：用户半夜失眠来找我聊天"
+          },
+          "new_fact": {
+            "label": "新事实",
+            "description": "准备合并进旧记忆的新事实",
+            "usage": "prompt_placeholder",
+            "valueSource": "Memory merge runtime passes the new fact to merge.",
+            "runtimeShape": {
+              "type": "string"
+            },
+            "sampleValue": "今天凌晨她又说自己睡不着，还提到最近压力很大。"
+          }
+        }
+      },
+      "source": "prompt_defaults",
+      "readOnly": true
+    },
+    {
+      "id": "memory.profile_prompt.root",
+      "name": "格式化用户画像清单（L1记忆）",
+      "assetType": "prompt",
+      "nodeType": "prompt",
+      "nodeId": "memory.profile_prompt.root",
+      "enabled": true,
+      "updatedAt": null,
+      "safeSummary": {
+        "category": "memory",
+        "dartName": "memoryProfilePromptRoot",
+        "variables": [
+          "lines"
+        ],
+        "variableContracts": {
+          "lines": {
+            "label": "多行内容",
+            "description": "通用列表/画像模板中的多行正文",
+            "usage": "formatter_input",
+            "valueSource": "Formatter-specific runtime value passed by the caller.",
+            "runtimeShape": {
+              "type": "string"
+            },
+            "sampleValue": "- 喜欢夜里被轻声安慰\n- 熬夜后容易焦虑"
+          }
+        }
+      },
+      "source": "prompt_defaults",
+      "readOnly": true
+    },
+    {
+      "id": "memory.reenrich.default",
+      "name": "结合最新聊天内容重新丰富被压缩的记忆",
+      "assetType": "prompt",
+      "nodeType": "prompt",
+      "nodeId": "memory.reenrich.default",
+      "enabled": true,
+      "updatedAt": null,
+      "safeSummary": {
+        "category": "memory",
+        "dartName": "memoryReEnrichDefault",
+        "variables": [
+          "compressed_content",
+          "recent_message_context"
+        ],
+        "variableContracts": {
+          "compressed_content": {
+            "label": "压缩记忆内容",
+            "description": "待重新丰富的压缩记忆内容",
+            "usage": "prompt_placeholder",
+            "valueSource": "Memory reenrichment runtime passes the compressed memory text.",
+            "runtimeShape": {
+              "type": "string"
+            },
+            "sampleValue": "失眠安抚"
+          },
+          "recent_message_context": {
+            "label": "最近消息上下文",
+            "description": "用于重新丰富记忆的最近消息片段",
+            "usage": "prompt_placeholder",
+            "valueSource": "Memory reenrichment runtime assembles recent raw message context.",
+            "runtimeShape": {
+              "type": "string"
+            },
+            "sampleValue": "user: 我昨晚又没睡好\nassistant: 要不要我陪你聊一会儿"
+          }
+        }
+      },
+      "source": "prompt_defaults",
+      "readOnly": true
+    },
+    {
+      "id": "memory.role_scoped.root",
+      "name": "向聊天上下文中注入角色专属的各级记忆",
+      "assetType": "prompt",
+      "nodeType": "prompt",
+      "nodeId": "memory.role_scoped.root",
+      "enabled": true,
+      "updatedAt": null,
+      "safeSummary": {
+        "category": "memory",
+        "dartName": "memoryRoleScopedRoot",
+        "variables": [
+          "role_label",
+          "profile_block",
+          "l2_skill_index_block",
+          "l2_skill_detail_block",
+          "recall_block"
+        ],
+        "variableContracts": {
+          "role_label": {
+            "label": "角色标签",
+            "description": "当前记忆所属角色标签",
+            "usage": "prompt_placeholder",
+            "valueSource": "Memory runtime injects the current role label.",
+            "runtimeShape": {
+              "type": "string"
+            },
+            "sampleValue": "小柚"
+          },
+          "profile_block": {
+            "label": "L1 用户画像块",
+            "description": "角色专属记忆库注入的用户画像块，通常自带前导换行",
+            "usage": "prompt_placeholder",
+            "valueSource": "Memory runtime formats profile_lines into an optional block.",
+            "runtimeShape": {
+              "type": "string"
+            },
+            "sampleValue": "\n\n### L1 用户画像\n- 喜欢夜里被轻声安慰"
+          },
+          "l2_skill_index_block": {
+            "label": "L2 技能索引块",
+            "description": "角色专属记忆库注入的 L2 技能索引块",
+            "usage": "prompt_placeholder",
+            "valueSource": "Memory runtime formats l2_skill_index_lines into an optional block.",
+            "runtimeShape": {
+              "type": "string"
+            },
+            "sampleValue": "\n\n### L2 技能索引\n- 熬夜安抚：熬夜 / 焦虑"
+          },
+          "l2_skill_detail_block": {
+            "label": "L2 技能详情块",
+            "description": "角色专属记忆库注入的 L2 命中详情块",
+            "usage": "prompt_placeholder",
+            "valueSource": "Memory runtime formats l2_skill_detail_lines into an optional block.",
+            "runtimeShape": {
+              "type": "string"
+            },
+            "sampleValue": "\n\n### L2 命中详情\n- 事件：用户凌晨一点表达焦虑"
+          },
+          "recall_block": {
+            "label": "L3/L4 回忆块",
+            "description": "角色专属记忆库注入的召回回忆块",
+            "usage": "prompt_placeholder",
+            "valueSource": "Memory runtime formats recall_lines into an optional block.",
+            "runtimeShape": {
+              "type": "string"
+            },
+            "sampleValue": "\n\n### L3/L4 回忆\n- 昨天聊过失眠和压力。"
+          }
+        }
+      },
+      "source": "prompt_defaults",
+      "readOnly": true
+    },
+    {
+      "id": "memory.summary.default",
+      "name": "分析聊天记录并提取有价值的记忆事件",
+      "assetType": "prompt",
+      "nodeType": "prompt",
+      "nodeId": "memory.summary.default",
+      "enabled": true,
+      "updatedAt": null,
+      "safeSummary": {
+        "category": "memory",
+        "dartName": "memorySummaryDefault"
+      },
+      "source": "prompt_defaults",
+      "readOnly": true
+    },
+    {
+      "id": "memory.summary.extra_instruction",
+      "name": "记忆总结时的前置约束与时间保护说明",
+      "assetType": "prompt",
+      "nodeType": "prompt",
+      "nodeId": "memory.summary.extra_instruction",
+      "enabled": true,
+      "updatedAt": null,
+      "safeSummary": {
+        "category": "memory",
+        "dartName": "memorySummaryExtraInstruction"
+      },
+      "source": "prompt_defaults",
+      "readOnly": true
+    },
+    {
+      "id": "memory.summary.role_persona.context_instruction",
+      "name": "包含角色具体人设的记忆总结前置说明",
+      "assetType": "prompt",
+      "nodeType": "prompt",
+      "nodeId": "memory.summary.role_persona.context_instruction",
+      "enabled": true,
+      "updatedAt": null,
+      "safeSummary": {
+        "category": "memory",
+        "dartName": "memorySummaryRolePersonaContextInstruction",
+        "variables": [
+          "conversation_id",
+          "role_name",
+          "self_address",
+          "user_address",
+          "persona_summary_block",
+          "generic_instruction_block"
+        ],
+        "variableContracts": {
+          "conversation_id": {
+            "label": "会话 ID",
+            "description": "当前会话或角色记忆库 ID",
+            "usage": "runtime_value",
+            "valueSource": "Conversation/runtime caller passes the current conversation id.",
+            "runtimeShape": {
+              "type": "string"
+            },
+            "sampleValue": "conv_demo"
+          },
+          "role_name": {
+            "label": "角色名称",
+            "description": "当前角色名称",
+            "usage": "prompt_placeholder",
+            "valueSource": "Conversation role metadata injects the current role name.",
+            "runtimeShape": {
+              "type": "string"
+            },
+            "sampleValue": "小柚"
+          },
+          "self_address": {
+            "label": "助手自称",
+            "description": "角色称呼自己的方式",
+            "usage": "prompt_placeholder",
+            "valueSource": "Persona/runtime formatter injects how the role refers to itself.",
+            "runtimeShape": {
+              "type": "string"
+            },
+            "sampleValue": "我"
+          },
+          "user_address": {
+            "label": "用户称呼",
+            "description": "角色对用户的称呼",
+            "usage": "prompt_placeholder",
+            "valueSource": "Persona/runtime formatter injects how the role addresses the user.",
+            "runtimeShape": {
+              "type": "string"
+            },
+            "sampleValue": "你"
+          },
+          "persona_summary_block": {
+            "label": "人设摘要块",
+            "description": "可选的人设摘要片段（含前导换行）",
+            "usage": "prompt_placeholder",
+            "valueSource": "Persona/memory formatter builds an optional persona summary block.",
+            "runtimeShape": {
+              "type": "string"
+            },
+            "sampleValue": "\n- 角色设定摘要：温柔、细腻、擅长倾听"
+          },
+          "generic_instruction_block": {
+            "label": "通用说明块",
+            "description": "角色记忆总结的通用说明块",
+            "usage": "prompt_placeholder",
+            "valueSource": "Memory summary runtime injects optional generic instruction text.",
+            "runtimeShape": {
+              "type": "string"
+            },
+            "sampleValue": "当前正在整理一个角色专属记忆库：..."
+          }
+        }
+      },
+      "source": "prompt_defaults",
+      "readOnly": true
+    },
+    {
+      "id": "memory.summary.role_persona.generic_instruction",
+      "name": "强制 AI 按照特定角色身份去总结专属记忆",
+      "assetType": "prompt",
+      "nodeType": "prompt",
+      "nodeId": "memory.summary.role_persona.generic_instruction",
+      "enabled": true,
+      "updatedAt": null,
+      "safeSummary": {
+        "category": "memory",
+        "dartName": "memorySummaryRolePersonaGenericInstruction",
+        "variables": [
+          "conversation_id"
+        ],
+        "variableContracts": {
+          "conversation_id": {
+            "label": "会话 ID",
+            "description": "当前会话或角色记忆库 ID",
+            "usage": "runtime_value",
+            "valueSource": "Conversation/runtime caller passes the current conversation id.",
+            "runtimeShape": {
+              "type": "string"
+            },
+            "sampleValue": "conv_demo"
+          }
+        }
+      },
+      "source": "prompt_defaults",
+      "readOnly": true
+    }
+  ]
+}

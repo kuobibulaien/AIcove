@@ -1,0 +1,96 @@
+{
+  "emojis": [
+    {
+      "id": "hug_001",
+      "filename": "hug_001.gif",
+      "tags": ["抱抱", "抱", "拥抱"],
+      "aliases": ["抱抱宝宝", "贴贴", "搂搂", "求抱抱"],
+      "category": "亲密",
+      "emotion": "温柔",
+      "priority": 10,
+      "usageCount": 0,
+      "source": "local"
+    },
+    {
+      "id": "kiss_001",
+      "filename": "kiss_001.gif",
+      "tags": ["亲亲", "吻", "么么"],
+      "aliases": ["香一个", "亲一口", "亲亲宝贝"],
+      "category": "亲密",
+      "emotion": "甜蜜",
+      "priority": 10,
+      "usageCount": 0,
+      "source": "local"
+    },
+    {
+      "id": "angry_001",
+      "filename": "angry_001.gif",
+      "tags": ["生气", "气", "哼"],
+      "aliases": ["不理你", "讨厌", "气死了"],
+      "category": "情绪",
+      "emotion": "生气",
+      "priority": 8,
+      "usageCount": 0,
+      "source": "local"
+    },
+    {
+      "id": "happy_001",
+      "filename": "happy_001.gif",
+      "tags": ["开心", "高兴", "哈哈"],
+      "aliases": ["嘻嘻", "耶", "好开心"],
+      "category": "情绪",
+      "emotion": "开心",
+      "priority": 9,
+      "usageCount": 0,
+      "source": "local"
+    },
+    {
+      "id": "cry_001",
+      "filename": "cry_001.gif",
+      "tags": ["哭", "呜呜", "哭泣"],
+      "aliases": ["哭唧唧", "伤心", "难过"],
+      "category": "情绪",
+      "emotion": "伤心",
+      "priority": 7,
+      "usageCount": 0,
+      "source": "local"
+    },
+    {
+      "id": "shy_001",
+      "filename": "shy_001.gif",
+      "tags": ["害羞", "脸红", "羞涩"],
+      "aliases": ["不好意思", "羞羞", "害羞了"],
+      "category": "情绪",
+      "emotion": "害羞",
+      "priority": 6,
+      "usageCount": 0,
+      "source": "local"
+    }
+  ],
+  "semanticGroups": [
+    {
+      "name": "拥抱类",
+      "keywords": ["抱抱", "贴贴", "抱", "拥抱", "搂", "抱紧"]
+    },
+    {
+      "name": "亲吻类",
+      "keywords": ["亲亲", "么么", "吻", "香", "亲"]
+    },
+    {
+      "name": "生气类",
+      "keywords": ["生气", "哼", "气", "不理你", "讨厌"]
+    },
+    {
+      "name": "开心类",
+      "keywords": ["开心", "高兴", "哈哈", "嘻嘻", "耶"]
+    },
+    {
+      "name": "哭泣类",
+      "keywords": ["哭", "呜呜", "哭泣", "伤心", "难过"]
+    },
+    {
+      "name": "害羞类",
+      "keywords": ["害羞", "脸红", "羞涩", "羞羞"]
+    }
+  ]
+}
