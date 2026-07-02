@@ -34,6 +34,8 @@ These guides help you **ask the right questions before coding**.
 - [ ] Data format changes between layers
 - [ ] Multiple consumers need the same data
 - [ ] You're not sure where to put some logic
+- [ ] You are adding an event kind, JSONL record, RPC payload, or config field
+- [ ] UI / command code starts casting raw payload fields directly
 
 → Read [Cross-Layer Thinking Guide](./cross-layer-thinking-guide.md)
 
@@ -44,8 +46,24 @@ These guides help you **ask the right questions before coding**.
 - [ ] You're adding a new field to multiple places
 - [ ] **You're modifying any constant or config**
 - [ ] **You're creating a new utility/helper function** ← Search first!
+- [ ] Two files read the same untyped payload field with local casts
+- [ ] Multiple branches update the same derived state from `kind` / `action`
 
 → Read [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md)
+
+### When Verifying AI Cross-Review Results
+
+- [ ] Reviewer claims "user input can be malicious" → Check the actual data source (internal manifest? user config? external API?)
+- [ ] Reviewer flags "missing validation" → Is the data from a trusted internal source?
+- [ ] Reviewer says "behavior change" → Read the code comments — is it intentional design?
+- [ ] Reviewer identifies a "bug" in test → Mentally delete the feature being tested — does the test still pass? If yes → tautological test
+
+**Common AI reviewer false-positive patterns**:
+1. **Trust boundary confusion**: Treating internal data (bundled JSON manifests) as untrusted external input
+2. **Ignoring design comments**: Flagging intentional behavior documented in code comments as bugs
+3. **Variable misreading**: Not tracing a variable to its actual definition (e.g., Map keyed by path vs name)
+
+**Verification rule**: Every CRITICAL/WARNING finding must be verified against the actual code before prioritizing. Budget ~35% false-positive rate for AI reviews.
 
 ---
 

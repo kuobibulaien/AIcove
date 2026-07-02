@@ -1,16 +1,51 @@
 # Logging Guidelines
 
-## 记录原则
+> How logging is done in this project.
 
-- 日志用于排查认证、同步、触发器、备份、Agent Context 面板问题。
-- 关键失败要包含模块、操作、资源 id 或请求 id。
-- 长期可复用的排查结论写入文档，临时日志放 `scratch/diagnostics/`。
+---
 
-## 敏感信息
+## Overview
 
-禁止记录：
+<!--
+Document your project's logging conventions here.
 
-- 明文密码、token、API key。
-- 未脱敏的用户隐私、聊天内容、联系人详情。
-- 生产数据库完整路径或连接串。
+Questions to answer:
+- What logging library do you use?
+- What are the log levels and when to use each?
+- What should be logged?
+- What should NOT be logged (PII, secrets)?
+-->
 
+(To be filled by the team)
+
+---
+
+## Log Levels
+
+<!-- When to use each level: debug, info, warn, error -->
+
+(To be filled by the team)
+
+---
+
+## Structured Logging
+
+<!-- Log format, required fields -->
+
+(To be filled by the team)
+
+---
+
+## What to Log
+
+<!-- Important events to log -->
+
+(To be filled by the team)
+
+---
+
+## What NOT to Log
+
+<!-- Sensitive data, PII, secrets -->
+
+(To be filled by the team)

@@ -1,20 +1,51 @@
 # Database Guidelines
 
-## 当前状态
+> Database patterns and conventions for this project.
 
-- 默认数据库是 SQLite，路径通常为 `cloud_backend/data/sync.db`。
-- ORM 使用 SQLAlchemy。
-- Agent Context Studio Phase 1 数据在 `cloud_backend/data/agent_context_admin.json`，不写数据库。
+---
 
-## 数据变更规则
+## Overview
 
-- 改表结构、删数据、批量更新属于高风险操作，必须先确认。
-- 涉及同步 v2、回收站、备份恢复时，先明确兼容策略。
-- 生产环境建议配置加密 key，避免重启后无法解密历史数据。
+<!--
+Document your project's database conventions here.
 
-## 禁止模式
+Questions to answer:
+- What ORM/query library do you use?
+- How are migrations managed?
+- What are the naming conventions for tables/columns?
+- How do you handle transactions?
+-->
 
-- 在未说明迁移方案时直接改模型字段语义。
-- 绕过回收站或同步范围直接删除用户数据。
-- 把包含 PII 的真实数据写入文档、日志或测试 fixtures。
+(To be filled by the team)
 
+---
+
+## Query Patterns
+
+<!-- How should queries be written? Batch operations? -->
+
+(To be filled by the team)
+
+---
+
+## Migrations
+
+<!-- How to create and run migrations -->
+
+(To be filled by the team)
+
+---
+
+## Naming Conventions
+
+<!-- Table names, column names, index names -->
+
+(To be filled by the team)
+
+---
+
+## Common Mistakes
+
+<!-- Database-related mistakes your team has made -->
+
+(To be filled by the team)

@@ -1,19 +1,51 @@
 # Error Handling
 
-## FastAPI 错误
+> How errors are handled in this project.
 
-- API 层优先使用 FastAPI / HTTPException 表达明确状态码。
-- 认证、权限、参数错误要返回可诊断信息，但不能泄露密钥、token、真实用户隐私。
-- 管理 API 与普通用户 API 要保持权限边界。
+---
 
-## 诊断
+## Overview
 
-- 命令报错、测试不过、逻辑漏洞要报告：遇到什么、原计划是什么、建议怎么办。
-- 报告后可以继续修复，但不能吞掉失败。
+<!--
+Document your project's error handling conventions here.
 
-## 禁止模式
+Questions to answer:
+- What error types do you define?
+- How are errors propagated?
+- How are errors logged?
+- How are errors returned to clients?
+-->
 
-- `except Exception: pass`。
-- 把异常详情原样返回给前端，尤其是生产环境路径、密钥、SQL。
-- 为了让接口成功而静默跳过关键数据写入。
+(To be filled by the team)
 
+---
+
+## Error Types
+
+<!-- Custom error classes/types -->
+
+(To be filled by the team)
+
+---
+
+## Error Handling Patterns
+
+<!-- Try-catch patterns, error propagation -->
+
+(To be filled by the team)
+
+---
+
+## API Error Responses
+
+<!-- Standard error response format -->
+
+(To be filled by the team)
+
+---
+
+## Common Mistakes
+
+<!-- Error handling mistakes your team has made -->
+
+(To be filled by the team)

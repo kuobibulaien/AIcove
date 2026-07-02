@@ -1,21 +1,51 @@
-# Backend Quality Guidelines
+# Quality Guidelines
 
-## 验证
+> Code quality standards for backend development.
 
-- 云端改动至少运行相关 Python 检查或启动验证。
-- API 端点变更要更新 README 或专题 API 文档。
-- 安全、数据、权限相关改动要列潜在风险。
+---
 
-## 安全
+## Overview
 
-- 不提交真实 `.env`、密钥、token、生产数据。
-- 生产环境必须限制 CORS、设置强 `SECRET_KEY`、启用 HTTPS。
-- 含敏感数据的网络请求必须先确认。
+<!--
+Document your project's quality standards here.
 
-## 兼容
+Questions to answer:
+- What patterns are forbidden?
+- What linting rules do you enforce?
+- What are your testing requirements?
+- What code review standards apply?
+-->
 
-同步、备份、触发器、记忆、额度接口要优先保持向后兼容；破坏性变更必须先写迁移说明。
+(To be filled by the team)
 
-## Web 管理面板
+---
 
-- 单文件管理面板里的长文本 `textarea` 默认使用固定可视高度和内部滚动，不做输入时自动撑高；长文本编辑区应固定在当前可见布局内，并为编辑框保留底部滚动余量，避免输入时触发外层滚动容器或把光标行贴到页面底部。
+## Forbidden Patterns
+
+<!-- Patterns that should never be used and why -->
+
+(To be filled by the team)
+
+---
+
+## Required Patterns
+
+<!-- Patterns that must always be used -->
+
+(To be filled by the team)
+
+---
+
+## Testing Requirements
+
+<!-- What level of testing is expected -->
+
+(To be filled by the team)
+
+---
+
+## Code Review Checklist
+
+<!-- What reviewers should check -->
+
+(To be filled by the team)
