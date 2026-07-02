@@ -23,12 +23,13 @@ from __future__ import annotations
 
 import argparse
 import re
-import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 
 from common.paths import (
+    DIR_TASKS,
+    DIR_WORKFLOW,
     FILE_JOURNAL_PREFIX,
     get_repo_root,
     get_current_task,
@@ -37,9 +38,15 @@ from common.paths import (
 )
 from common.developer import ensure_developer
 from common.git import run_git
+from common.safe_commit import (
+    print_gitignore_warning,
+    safe_git_add,
+    safe_trellis_paths_to_add,
+)
 from common.tasks import load_task
 from common.config import (
     get_packages,
+    get_session_auto_commit,
     get_session_commit_message,
     get_max_journal_lines,
     is_monorepo,
@@ -314,36 +321,75 @@ def update_index(
 # =============================================================================
 
 def _auto_commit_workspace(repo_root: Path) -> None:
-    """Stage .trellis/workspace and .trellis/tasks, then commit with a configured message."""
-    commit_msg = get_session_commit_message(repo_root)
-    add_result = subprocess.run(
-        ["git", "add", "-A", ".trellis/workspace", ".trellis/tasks"],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-    )
-    if add_result.returncode != 0:
-        print(f"[WARN] git add failed (exit {add_result.returncode}): {add_result.stderr.strip()}", file=sys.stderr)
-        print("[WARN] Please commit .trellis/ changes manually: git add .trellis && git commit", file=sys.stderr)
+    """Stage Trellis-owned workspace + current-task paths and commit.
+
+    Path scope is restricted to specific products: the current developer's
+    journal files + index.md, and ONLY the current task directory (resolved
+    via ``get_current_task``). We never `git add` the whole `.trellis/` tree
+    or iterate over all active task dirs (#303: parallel-window dirty task
+    dirs must not be bundled into the session auto-commit). If `.gitignore`
+    blocks the specific paths we warn + skip — never retry with ``-f``.
+
+    Honors ``session_auto_commit`` in ``.trellis/config.yaml``: when set to
+    ``false``, this function returns immediately without touching git
+    (journal/index files are still written to disk by the caller).
+    """
+    if not get_session_auto_commit(repo_root):
+        print(
+            "[OK] session_auto_commit: false — skipping git stage/commit.",
+            file=sys.stderr,
+        )
         return
-    # Check if there are staged changes
-    result = subprocess.run(
-        ["git", "diff", "--cached", "--quiet", "--", ".trellis/workspace", ".trellis/tasks"],
-        cwd=repo_root,
-    )
-    if result.returncode == 0:
+
+    commit_msg = get_session_commit_message(repo_root)
+    # Resolve the current task so staging is scoped to its dir only. The ref
+    # is ``.trellis/tasks/<name>`` (or under archive/) — pass the bare name.
+    current = get_current_task(repo_root)
+    if current:
+        task_name = Path(current).name
+        paths = safe_trellis_paths_to_add(repo_root, task_name=task_name)
+    else:
+        # Current task unknown (0 or >=2 parallel sessions — exactly the
+        # parallel-window case #303 is about). Do NOT fall back to the wide
+        # `tasks_dir.iterdir()` scan; that would re-leak other tasks' dirty
+        # dirs into the session commit. Stage only the developer's journal/
+        # index and skip every task dir.
+        paths = [
+            p
+            for p in safe_trellis_paths_to_add(repo_root, task_name=None)
+            if not p.startswith(f"{DIR_WORKFLOW}/{DIR_TASKS}/")
+        ]
+    if not paths:
         print("[OK] No workspace changes to commit.", file=sys.stderr)
         return
-    commit_result = subprocess.run(
-        ["git", "commit", "-m", commit_msg],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
+
+    success, _, err = safe_git_add(paths, repo_root)
+    if not success:
+        if err and "ignored by" in err.lower():
+            print_gitignore_warning(paths)
+        else:
+            print(
+                f"[WARN] git add failed: {err.strip() if err else 'unknown error'}",
+                file=sys.stderr,
+            )
+        return
+
+    # Check if there are staged changes for the paths we just staged.
+    rc, _, _ = run_git(
+        ["diff", "--cached", "--quiet", "--", *paths], cwd=repo_root
     )
-    if commit_result.returncode == 0:
+    if rc == 0:
+        print("[OK] No workspace changes to commit.", file=sys.stderr)
+        return
+
+    rc, _, commit_err = run_git(["commit", "-m", commit_msg], cwd=repo_root)
+    if rc == 0:
         print(f"[OK] Auto-committed: {commit_msg}", file=sys.stderr)
     else:
-        print(f"[WARN] Auto-commit failed: {commit_result.stderr.strip()}", file=sys.stderr)
+        print(
+            f"[WARN] Auto-commit failed: {commit_err.strip()}",
+            file=sys.stderr,
+        )
 
 
 def add_session(
