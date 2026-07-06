@@ -1,7 +1,13 @@
 # 后台Agent架构方案
 
 > 创建日期：2026-03-17
-> 状态：设计中
+> 状态：已被吸收（存档参考）
+>
+> ⚠️ **本方案已被 [Agent上下文管理总架构](../Agent上下文管理总架构.md) 吸收，不再单独推进。**
+> 本组文档设想的后台分析能力（记忆总结、触发器规划、日反思、风险识别）在总架构中收敛为统一的
+> `AgentDefinition + ContextProfile + ContextAssembler + OutputPipeline + DeliveryChannel` 口径
+> （对应 Analyzer / Memory 等后台 Agent 类型）。现行设计以总架构为准；本组文档仅保留设计过程与
+> 细节推演，作历史参考。（2026-07-02 文档审计时标注）
 
 ---
 
