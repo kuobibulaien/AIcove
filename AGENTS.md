@@ -1,23 +1,46 @@
+<!-- TRELLIS:START -->
+# Trellis Instructions
+
+These instructions are for AI assistants working in this project.
+
+This project is managed by Trellis. The working knowledge you need lives under `.trellis/`:
+
+- `.trellis/workflow.md` — development phases, when to create tasks, skill routing
+- `.trellis/spec/` — package- and layer-scoped coding guidelines (read before writing code in a given layer)
+- `.trellis/workspace/` — per-developer journals and session traces
+- `.trellis/tasks/` — active and archived tasks (PRDs, research, jsonl context)
+
+If a Trellis command is available on your platform (e.g. `/trellis:finish-work`, `/trellis:continue`), prefer it over manual steps. Not every platform exposes every command.
+
+If you're using Codex or another agent-capable tool, additional project-scoped helpers may live in:
+- `.agents/skills/` — reusable Trellis skills
+- `.codex/agents/` — optional custom subagents
+
+Managed by Trellis. Edits outside this block are preserved; edits inside may be overwritten by a future `trellis update`.
+
+<!-- TRELLIS:END -->
 
 # 开发环境
 
-- Windows / PowerShell 7
-- Flutter 项目，改完代码用 `flutter run --no-resident` 验证，手机已连接
+- macOS / zsh（2026-07 由 Windows 迁移而来；node 经 nvm 安装，用前 `. ~/.nvm/nvm.sh`）
+- Flutter 项目，改完代码用 `flutter run --no-resident` 验证
+- 版本控制：仓库根目录单一 git 仓库，本地为主；构建产物与密钥已由 .gitignore 挡住
 
 # 工作流程
 
-全程中文对话。
+全程中文对话。总路线：**模糊需求 → 分级提问澄清 → prd.md → codex 审方案 → 实现 → codex 审代码 → 沉淀知识**。
 
-1. **先查后动**：改代码前先找相关文档，不确定就调查清楚或直接问用户
-2. **先说再做**：编码前描述方案等批准，需求不明先澄清
-3. **拆大为小**：改动超 3 个文件的任务先分解
-4. **参考先例**：实现功能优先去 GitHub 搜参考代码
+1. **先查后动**：改代码前先找相关文档，不确定就调查清楚；代码和文档能回答的问题不许问用户
+2. **分级提问**（详见 trellis-brainstorm 技能）：只问两类问题——本次目标与验收、难回头的全局架构决策（必须附推荐答案＋理由＋代价）；技术选型与实现方案由 AI 自主设计，写入 prd.md「自主决策」段供用户扫读否决；典型任务 1~3 问收敛
+3. **先说再做**：编码前描述方案等批准；方案获批后、动工前，用 `/codex:review` 请 Codex 审查方案
+4. **拆大为小**：改动超 3 个文件的任务先在 Trellis 建任务分解
 5. **写完必跑**：按根 `README.md` 项目宪法第 7 条交付检查（`flutter pub get` → 编译运行 → 窄/宽屏各验一次）
-6. **收尾检查**：完成后列出潜在问题；发现 bug 先写复现测试再修
+6. **完工必审**：实现完成后用 `/codex:review` 请 Codex 审查代码，问题修完再收尾；review gate 保持关闭，审查手动触发
+7. **收尾检查**：完成后列出潜在问题；发现 bug 先写复现测试再修
 
 ## 确认机制
 
-- **重大变更须确认**：文件结构增删、核心算法、新依赖、API 定义——先提方案问”您同意吗？”，批准后再动
+- **重大变更须确认**：文件结构增删、核心算法、新依赖、API 定义——先提方案问"您同意吗？"，批准后再动
 - **局部优化可自主**：函数内部重构、命名优化等不影响外部调用的可以直接做，报告里说明即可
 
 ## 遇到问题必须停
@@ -33,6 +56,7 @@
 # 项目背景
 
 - 开工前必读：根目录 `README.md`（含项目宪法）
+- 术语口径：`.trellis/spec/project/glossary.md`（词汇表）；重大决策：`.trellis/spec/project/decisions/`（ADR）
 - 涉及前端界面时必读：`apps/aicove_flutter/docs/公共组件总览.md`
 - 文档库总入口：`apps/aicove_flutter/docs/README.md`
 - 云端文档：`cloud_backend/README.md`
@@ -40,10 +64,10 @@
 
 # Trellis 文档系统
 
-项目已接入 Trellis，用 `.trellis/` 管理可渐进加载的项目知识：
+项目已完整接入 Trellis（CLI ＋ 钩子自动注入），`.trellis/` 管理可渐进加载的项目知识：
 
 - `.trellis/workflow.md`：任务生命周期与工作流
-- `.trellis/spec/`：长期有效的项目规范、架构边界、前后端约束
+- `.trellis/spec/`：长期有效的项目规范、架构边界、词汇表与决策卡
 - `.trellis/tasks/`：大任务的 PRD、研究记录、验收标准
 - `.trellis/workspace/`：会话日志、交接与阶段性决策
 
@@ -74,11 +98,4 @@
 
 # MCP 服务
 
-优先使用 MCP 服务。`fast-context` 可做语义搜索：
-
-```
-# 手机端
-fast-context(project_path=”C:\\ide\\aicove\\apps\\aicove_flutter\\lib\\src”, query=”...”, max_results=6)
-# 云端
-fast-context(project_path=”C:\\ide\\aicove\\cloud_backend”, query=”...”, max_results=6)
-```
+`fast-context` 语义搜索原配置在 Windows 机器上，迁移后尚未在本机重新配置——配置好之前不要调用。重配后在此更新调用示例。

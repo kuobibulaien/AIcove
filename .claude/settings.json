@@ -69,5 +69,7 @@
       }
     ]
   },
-  "enabledPlugins": {}
+  "enabledPlugins": {
+    "codex@openai-codex": true
+  }
 }
