@@ -1,1 +1,3 @@
-同AGENTS.md（工作流程含 Codex 审查规则：方案获批后动工前与实现完成后各 `/codex:review` 一次）
+开始任何任务前必须读取并遵守 AGENTS.md 全文；AGENTS.md 是唯一权威规则来源，本文件不重复规则以避免口径漂移。
+
+审查要点提醒：方案获批后动工前、以及实现完成后，各手动执行一次 `/codex:review`（自动 review gate 已关闭）。

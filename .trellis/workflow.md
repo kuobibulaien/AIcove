@@ -184,7 +184,7 @@ Complex task: ask the user if you can create a Trellis task and enter the planni
 - 1.1 Requirement exploration `[required · repeatable]` (`prd.md`; complex tasks also need `design.md` + `implement.md`)
 - 1.2 Research `[optional · repeatable]`
 - 1.3 Configure context `[required · once]` — Claude Code, Cursor, OpenCode, Codex, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi, ZCode, Reasonix (sub-agent-dispatch platforms only; inline platforms skip)
-- 1.4 Activate task `[required · once]` (review gate, then `task.py start`; status → in_progress)
+- 1.4 Activate task `[required · once]` (user approval + manual `/codex:review` of the plan, then `task.py start`; status → in_progress — do not wait for any automatic review gate)
 - 1.5 Completion criteria
 
 <!-- Per-turn breadcrumb: shown throughout Phase 1 (status='planning') -->
@@ -224,7 +224,7 @@ Sub-agent dispatch protocol applies to all platforms and all sub-agents, includi
 
 [workflow-state:in_progress]
 Tools: `trellis-implement` / `trellis-research` are sub-agent types only (Task/Agent tool, NOT Skill; there is no skill by these names). `trellis-update-spec` is a skill. `trellis-check` exists as both; prefer the Agent form when verifying after code changes.
-Flow: `trellis-implement` -> `trellis-check` -> `trellis-update-spec` -> commit (Phase 3.4) -> `/trellis:finish-work`.
+Flow: `trellis-implement` -> `trellis-check` (local pre-check, fixes its own findings) -> `/codex:review` (final independent review, main session, manual) -> `trellis-update-spec` -> commit (Phase 3.4) -> `/trellis:finish-work`.
 Main-session default: dispatch implement/check sub-agents. Sub-agent self-exemption: if already running as `trellis-implement`, do NOT spawn another `trellis-implement` or `trellis-check`; if already running as `trellis-check`, do NOT spawn another `trellis-check` or `trellis-implement`. Dispatch is main session only.
 Dispatch prompt starts with `Active task: <task path from task.py current>`. Read context: jsonl entries -> `prd.md` -> `design.md if present` -> `implement.md if present`.
 [/workflow-state:in_progress]
@@ -437,7 +437,7 @@ Skip this step. Context is loaded directly by the `trellis-before-dev` skill in 
 
 #### 1.4 Activate task `[required · once]`
 
-After artifact review, flip the task status to `in_progress`:
+After the user approves the plan, run a manual `/codex:review` on the planning artifacts (Codex plugin; the automatic review gate is disabled in this project — do not wait for it). Address Codex findings, confirm with the user if they change the plan, then flip the task status to `in_progress`:
 
 ```bash
 python3 ./.trellis/scripts/task.py start <task-dir>
@@ -541,6 +541,8 @@ The check agent's job:
 - Review code changes against `prd.md`, `design.md` if present, and `implement.md` if present
 - Auto-fix issues it finds
 - Run lint and typecheck to verify
+
+Role boundary: `trellis-check` is the implementer's local pre-check and self-fix pass — it is NOT the final review. The final independent review is the manual `/codex:review` run from the main session after 2.2 passes (see AGENTS.md 工作流程第 6 条).
 
 [/Claude Code, Cursor, OpenCode, codex-sub-agent, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi, ZCode, Reasonix, Trae]
 
