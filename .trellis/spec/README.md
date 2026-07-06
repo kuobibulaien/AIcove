@@ -15,9 +15,10 @@
 ## 写入规则
 
 1. 只写长期有效的规则、约定、架构决定和踩坑结论。
-2. 具体任务方案写到 `.trellis/tasks/<task>/prd.md` 或项目 docs，完成后再提炼到 spec。
-3. 已过期内容不要留在 spec，迁到 `apps/aicove_flutter/docs/05_历史归档/` 或 `scratch/`。
-4. 文档使用中文，路径和代码标识保持原文。
+2. 项目词汇表在 `project/glossary.md`，重大架构决策卡（ADR）在 `project/decisions/`——由 domain-modeling 技能在需求梳理时随手维护，格式见 `.claude/skills/domain-modeling/`。
+3. 具体任务方案写到 `.trellis/tasks/<task>/prd.md` 或项目 docs，完成后再提炼到 spec。
+4. 已过期内容不要留在 spec，迁到 `apps/aicove_flutter/docs/05_历史归档/` 或 `scratch/`。
+5. 文档使用中文，路径和代码标识保持原文。
 
 ## 文档库自动更新
 

@@ -329,10 +329,12 @@ Skip when `python3 ./.trellis/scripts/task.py current --source` already points t
 
 #### 1.1 Requirement exploration `[required · repeatable]`
 
-Load the `trellis-brainstorm` skill and explore requirements interactively with the user per the skill's guidance.
+Load the `trellis-brainstorm` skill and explore requirements interactively with the user per the skill's guidance. Also load the `domain-modeling` skill alongside: as terms and hard decisions crystallise during exploration, it writes vocabulary to `.trellis/spec/project/glossary.md` and ADRs to `.trellis/spec/project/decisions/` inline.
 
 The brainstorm skill will guide you to:
-- Ask one question at a time
+- Ask one question at a time, graded per the project's questioning contract: only the task goal/acceptance criteria and hard-to-reverse global decisions (data model, external API, cross-module boundaries, lock-in dependencies, destructive changes) may be asked — always with a recommended answer and rationale
+- Decide implementation-level choices (tech selection, approach, internals) yourself and record them in prd.md's 「自主决策」 section for the user to veto by scanning; do not ask about them
+- Converge once goal, acceptance, and scope boundary are clear: typically 1–3 questions, ~5 max for major tasks
 - Prefer researching over asking the user
 - Prefer offering options over open-ended questions
 - Update `prd.md` immediately after each user answer

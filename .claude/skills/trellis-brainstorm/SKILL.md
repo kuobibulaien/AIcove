@@ -5,11 +5,18 @@ description: "Guides collaborative requirements discovery before implementation.
 
 # Trellis Brainstorm
 
-## Non-Negotiable Interview Contract
+## Non-Negotiable Interview Contract（本项目定制：分级提问）
 
-Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.
+提问的目的是让你充分理解用户的需求，不是把决策抛回给用户。提问前先分级：
 
-Ask the questions one at a time.
+**必问**（一次只问一个，每个都附：推荐答案＋理由＋选别的会付什么代价）：
+
+1. **本次目标与验收**：做什么、做到什么程度算完成——这是用户的领地，不许猜。
+2. **难回头的全局决策**：数据模型、对外 API、跨模块边界、带锁定效应的技术依赖、破坏性变更。判断标准只有一条：改起来费时费力、影响全局的才配问。
+
+**不问，自己定**：技术选型、实现方案、内部结构、库的选用、一切细枝末节。每项自主决策写进 prd.md 的「自主决策」段落（每项一句话理由），用户扫读即可行使否决权，不需要逐条确认；达到 ADR 门槛（难回头＋不记下来后人看不懂＋真有取舍）的另立决策卡到 `.trellis/spec/project/decisions/`。
+
+**收敛标准**：目标、验收标准、范围边界三样清楚就停止提问，直接进入方案设计。典型任务 1~3 个问题，重大任务 5 个左右封顶。不追问细枝末节。
 
 ## Non-Negotiable Evidence Rule
 
@@ -70,6 +77,8 @@ Each question must include:
 
 Do not ask process questions such as whether to search, inspect files, or continue brainstorming. Do the evidence work directly. Ask the user only when the remaining issue is a product decision, preference, scope boundary, or risk tolerance choice.
 
+Apply the graded contract above: if a question is not about the goal/acceptance criteria, and not a hard-to-reverse global decision, do not ask it — decide it yourself and record it in the 「自主决策」 section of `prd.md` with a one-line rationale.
+
 ## Thinking Framework: First Principles Analysis
 
 When requirements are vague, solutions feel over-engineered, or you're about to add complexity "because everyone does" — decompose to fundamental truths before reasoning upward.
@@ -121,6 +130,7 @@ For each component of the current plan:
 - confirmed facts
 - requirements
 - acceptance criteria
+- 自主决策 — implementation choices the AI made autonomously, each with a one-line rationale (user reviews by scanning, vetoes by exception)
 - out of scope
 - open questions that still block planning
 
