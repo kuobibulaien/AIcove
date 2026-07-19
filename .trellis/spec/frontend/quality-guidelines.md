@@ -73,13 +73,28 @@ Questions to answer:
 
 4. **CAS 写回防并发污染。** 后台任务把探测结果写回 DB 时，探测期间行可能已被外部写路径替换。写回必须带乐观锁（where 含 data 原文全等）并校验受影响行数；全部 stale 时重读行按来源精确比较——来源未变（仅其他字段变了）就用新原文重试一次，来源已变才丢弃，否则同来源会被终态标记永久压死。
 
+### 全局设置 Provider 的订阅粒度（2026-07-20 沉淀）
+
+`appSettingsProvider` 是全应用共享的大对象；页面/大型列表整颗 `ref.watch(appSettingsProvider)` 会让任何一个设置字段变化（音量、TTS 开关…）重建整页/整列表。硬规则：
+
+1. **热区 widget（聊天页、消息列表等）只允许字段级订阅**：`ref.watch(appSettingsProvider.select((s) => s.valueOrNull?.某字段))`；一个 widget 用几个字段就写几个 select。正例：[chat_message_list.dart](../../../apps/aicove_flutter/lib/src/ui/features/chat/widgets/chat_message_list.dart) 的 `uiScaleFactor` / `messageFormatConfig`，[chat_page.dart](../../../apps/aicove_flutter/lib/src/ui/features/chat/pages/chat_page.dart) 的 `chatBackgroundColor`。
+2. **select 的字段类型必须有值相等性**。配置类（如 `MessageFormatConfig`）若不实现 `==`/`hashCode`，settings 每次重建新实例时 select 照样触发重建，粒度优化失效。新增配置类必须实现值相等（含 List 字段逐项比较）。
+3. 守卫测试模式：用 `ChatMessageList.onDebugListItemCountChanged` 之类的 build 计数钩子断言「无关字段变化 build 计数不增长、相关字段变化必须增长」。正例：`test/ui/features/chat/widgets/chat_message_list_settings_select_test.dart`。
+
 ---
 
 ## Testing Requirements
 
-<!-- What level of testing is expected -->
+### widget 测试中的真实 IO 必须包 `tester.runAsync`（2026-07-20 沉淀）
 
-(To be filled by the team)
+`testWidgets` 运行在 FakeAsync zone：真实的文件/网络 IO Future **永远不会完成**，`await` 它会让单个用例挂满超时（本项目曾有测试因此每次挂约 10 分钟拖慢全套）。硬规则：
+
+1. 测试体里凡是真实 IO（`Directory.createTemp`、读写文件、`clearPersistent` 之类的持久化清理），必须包在 `await tester.runAsync(() async { ... })` 里。
+2. 被测 widget 内部 fire-and-forget 的 IO 不受影响（没人 await 它），无需处理。
+3. 跑测试统一带 `--timeout 60s`（或按需更短），让挂起用例快速失败而不是拖满默认超时。
+4. 无断言、纯 print 的调试测试不允许提交；调试完即删。
+
+(其余待补充)
 
 ---
 
