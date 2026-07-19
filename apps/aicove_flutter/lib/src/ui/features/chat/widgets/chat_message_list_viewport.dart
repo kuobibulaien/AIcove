@@ -544,7 +544,20 @@ extension _ChatMessageListViewportX on _ChatMessageListState {
     return _manualDetachedDistanceToBottom >= _kJumpToBottomVisibilityThreshold;
   }
 
-  void _updateManualDetachedDistanceToBottom() {
+  /// 把显隐布尔同步进 [_showJumpToBottom]，由 ValueListenableBuilder 局部
+  /// 刷新按钮。ValueNotifier 值不变时不通知，重复调用无副作用。
+  void _syncJumpToBottomVisibility() {
+    _showJumpToBottom.value = _shouldShowJumpToBottomButton();
+  }
+
+  /// 更新 detached 距离并刷新「回到底部」按钮显隐。
+  ///
+  /// [isDragFrame] 为 true 表示这是用户手指拖动的逐帧回调（滑动卡顿主因）：
+  /// 此时**只**更新 notifier 局部刷新按钮，绝不 setState 重建整个列表。
+  /// 非拖动的低频路径（ScrollEnd、方向切换、流式内容稳定化）保留 setState，
+  /// 维持旧有「距离更新顺带触发一次列表稳定化 build」的语义，避免破坏
+  /// 依赖该副作用的滚动 / 流式对齐行为（2026-07-13 卡顿优化）。
+  void _updateManualDetachedDistanceToBottom({bool isDragFrame = false}) {
     if (!_scrollController.hasClients || _isProgrammaticScroll) {
       return;
     }
@@ -568,15 +581,22 @@ extension _ChatMessageListViewportX on _ChatMessageListState {
             (deferredDistance - _manualDetachedDistanceToBottom).abs() <= 0.5) {
           return;
         }
-        _updateState(() {
-          _manualDetachedDistanceToBottom = deferredDistance;
-        });
+        _manualDetachedDistanceToBottom = deferredDistance;
+        _commitJumpToBottomVisibility(isDragFrame: isDragFrame);
       });
       return;
     }
-    _updateState(() {
-      _manualDetachedDistanceToBottom = nextDistance;
-    });
+    _manualDetachedDistanceToBottom = nextDistance;
+    _commitJumpToBottomVisibility(isDragFrame: isDragFrame);
+  }
+
+  /// 拖动帧只走 notifier 局部刷新（切断卡顿主因）；非拖动的低频路径
+  /// 额外触发一次 setState，维持旧的列表稳定化 build 行为。
+  void _commitJumpToBottomVisibility({required bool isDragFrame}) {
+    _syncJumpToBottomVisibility();
+    if (!isDragFrame && mounted) {
+      _updateState(() {});
+    }
   }
 
   void _scheduleHistoryPagingStabilization({int retryFrames = 3}) {
@@ -620,12 +640,12 @@ extension _ChatMessageListViewportX on _ChatMessageListState {
   }
 
   void _resetManualDetachedDistanceToBottom() {
-    if (_manualDetachedDistanceToBottom.abs() <= 0.5) {
-      return;
-    }
-    _updateState(() {
+    if (_manualDetachedDistanceToBottom.abs() > 0.5) {
       _manualDetachedDistanceToBottom = 0;
-    });
+    }
+    // 无论距离是否已归零，都同步一次显隐：切回 followLatest 时 isDetached
+    // 变 false，按钮必须消失（旧实现靠每次 build 重算，新实现改为显式同步）。
+    _syncJumpToBottomVisibility();
   }
 
   void _lockAutoScrollForUserInterruption(String reason) {
@@ -690,7 +710,7 @@ extension _ChatMessageListViewportX on _ChatMessageListState {
         notification.dragDetails != null) {
       _markUserScrollActive();
       _lockAutoScrollForUserInterruption('userDragStart');
-      _updateManualDetachedDistanceToBottom();
+      _updateManualDetachedDistanceToBottom(isDragFrame: true);
       return false;
     }
 
@@ -698,7 +718,7 @@ extension _ChatMessageListViewportX on _ChatMessageListState {
         notification.dragDetails != null) {
       _markUserScrollActive();
       _lockAutoScrollForUserInterruption('userDragUpdate');
-      _updateManualDetachedDistanceToBottom();
+      _updateManualDetachedDistanceToBottom(isDragFrame: true);
       _triggerLoadMoreIfNeeded(
         currentScroll: notification.metrics.pixels,
         maxScrollExtent: notification.metrics.maxScrollExtent,
@@ -711,7 +731,7 @@ extension _ChatMessageListViewportX on _ChatMessageListState {
         notification.dragDetails != null) {
       _markUserScrollActive();
       _lockAutoScrollForUserInterruption('userDragOverscroll');
-      _updateManualDetachedDistanceToBottom();
+      _updateManualDetachedDistanceToBottom(isDragFrame: true);
       _triggerLoadMoreIfNeeded(
         currentScroll: notification.metrics.pixels,
         maxScrollExtent: notification.metrics.maxScrollExtent,

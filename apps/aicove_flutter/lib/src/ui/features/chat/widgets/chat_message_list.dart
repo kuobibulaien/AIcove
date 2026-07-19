@@ -407,6 +407,14 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   bool _didInitialBottomPosition = false;
   double _manualDetachedDistanceToBottom = 0;
 
+  /// 「回到底部」按钮显隐，由 ValueListenableBuilder 局部消费。
+  ///
+  /// 语义与 [_manualDetachedDistanceToBottom] 完全一致（后者仍是唯一距离
+  /// 真源，保留初值/去重/更新时机），这里只是把"是否显示"的布尔结果单独
+  /// 广播出去，让滚动帧只重建这一个按钮而非整个列表——切断拖动逐帧
+  /// setState 重建（滑动卡顿主因，2026-07-13 修复）。
+  final ValueNotifier<bool> _showJumpToBottom = ValueNotifier<bool>(false);
+
   bool _hasHydratedInitialListItems = false;
   bool _showHistoryLoadingOverlay = false;
   DateTime? _historyLoadingOverlayShownAt;
@@ -478,6 +486,7 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     _unbindViewportController(widget.viewportController);
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
+    _showJumpToBottom.dispose();
     _historyLoadingOverlayHideTimer?.cancel();
     _transientHandoffHoldTimer?.cancel();
     _deferredStreamingListUpdateTimer?.cancel();
@@ -535,7 +544,6 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
       timelineMessagesForSectioning,
     );
     final showHistoryLoadingOverlay = _showHistoryLoadingOverlay;
-    final showJumpToBottomButton = _shouldShowJumpToBottomButton();
     final jumpToBottomBottomOffset = (widget.bottomOverlayHeight > 0
             ? widget.bottomOverlayHeight
             : safeBottom) +
@@ -613,12 +621,17 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
               ),
             ),
           ),
-        if (showJumpToBottomButton)
-          Positioned(
-            right: 14,
-            bottom: jumpToBottomBottomOffset,
-            child: _buildJumpToBottomButton(context),
-          ),
+        ValueListenableBuilder<bool>(
+          valueListenable: _showJumpToBottom,
+          builder: (context, show, _) {
+            if (!show) return const SizedBox.shrink();
+            return Positioned(
+              right: 14,
+              bottom: jumpToBottomBottomOffset,
+              child: _buildJumpToBottomButton(context),
+            );
+          },
+        ),
       ],
     );
   }

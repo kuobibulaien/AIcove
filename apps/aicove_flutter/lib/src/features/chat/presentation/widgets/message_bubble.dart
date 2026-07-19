@@ -528,6 +528,14 @@ class MessageBubble extends ConsumerWidget {
       photoDisplaySize = Size(maxW, estimate);
     }
 
+    // 列表内展示按目标显示宽降采样解码，避免原图分辨率 bitmap 进 ImageCache；
+    // 传给 _showImagePreview 的 imageProvider（全屏预览/画廊/Hero）保持原图不受影响。
+    // 有尺寸元数据时用实际显示宽（竖图更省），否则回退到 maxW；cacheWidth
+    // 默认 allowUpscaling=false，小图不会被放大。
+    final photoDecodeWidth =
+        ((photoDisplaySize?.width ?? maxW) * MediaQuery.devicePixelRatioOf(context))
+            .round();
+
     Widget wrapPhoto(Widget child) {
       if (photoDisplaySize == null) {
         return ConstrainedBox(
@@ -599,6 +607,7 @@ class MessageBubble extends ConsumerWidget {
           Image.file(
             File(imgBlock.localPath!),
             fit: BoxFit.contain,
+            cacheWidth: photoDecodeWidth,
             errorBuilder: (_, __, ___) => placeholder(isError: true),
           ),
         );
@@ -608,6 +617,7 @@ class MessageBubble extends ConsumerWidget {
           CachedNetworkImage(
             imageUrl: imgBlock.url!,
             fit: BoxFit.contain,
+            memCacheWidth: photoDecodeWidth,
             fadeInDuration: Duration.zero,
             fadeOutDuration: Duration.zero,
             placeholder: (context, url) => placeholder(),
@@ -620,7 +630,11 @@ class MessageBubble extends ConsumerWidget {
           imageProvider = _MemoryImageProviderCache.fromBytes(dataBytes);
           imageWidget = wrapPhoto(
             Image(
-              image: imageProvider,
+              image: ResizeImage.resizeIfNeeded(
+                photoDecodeWidth,
+                null,
+                imageProvider,
+              ),
               fit: BoxFit.contain,
               errorBuilder: (_, __, ___) => placeholder(isError: true),
             ),
@@ -922,6 +936,10 @@ class _Avatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
+    // 头像仅 42px 显示，按目标像素降采样解码，避免原图（可达数百万像素）
+    // 进 ImageCache 拖慢滚动。
+    final avatarDecodeWidth =
+        (kSize * MediaQuery.devicePixelRatioOf(context)).round();
 
     // 头像大小
     Widget buildFallback() => Center(
@@ -945,6 +963,7 @@ class _Avatar extends StatelessWidget {
           File(_normalizeLocalFilePath(cleanUrl)),
           fit: BoxFit.cover,
           alignment: alignment,
+          cacheWidth: avatarDecodeWidth,
           gaplessPlayback: true,
           errorBuilder: (_, __, ___) => buildFallback(),
         );
@@ -953,7 +972,11 @@ class _Avatar extends StatelessWidget {
       final dataBytes = decodeInlineBase64Image(cleanUrl);
       if (dataBytes != null) {
         return Image(
-          image: _MemoryImageProviderCache.fromBytes(dataBytes),
+          image: ResizeImage.resizeIfNeeded(
+            avatarDecodeWidth,
+            null,
+            _MemoryImageProviderCache.fromBytes(dataBytes),
+          ),
           fit: BoxFit.cover,
           alignment: alignment,
           gaplessPlayback: true,
@@ -967,6 +990,7 @@ class _Avatar extends StatelessWidget {
           cleanUrl,
           fit: BoxFit.cover,
           alignment: alignment,
+          cacheWidth: avatarDecodeWidth,
           gaplessPlayback: true,
           errorBuilder: (_, __, ___) => buildFallback(),
         );
@@ -976,6 +1000,7 @@ class _Avatar extends StatelessWidget {
         imageUrl: cleanUrl,
         fit: BoxFit.cover,
         alignment: alignment,
+        memCacheWidth: avatarDecodeWidth,
         fadeInDuration: Duration.zero,
         fadeOutDuration: Duration.zero,
         placeholder: (context, url) => buildFallback(),
