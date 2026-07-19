@@ -53,6 +53,23 @@ class MessageBlockRepository {
         .write(data);
   }
 
+  /// CAS 语义更新内容块 data：仅当行未软删且 data 与 [expectedData] 原文
+  /// 完全一致时才写入 [newData]。
+  ///
+  /// 返回受影响行数；0 表示行已被外部替换或软删（stale），调用方应放弃写回。
+  Future<int> updateDataIfUnchanged({
+    required String id,
+    required String expectedData,
+    required String newData,
+  }) {
+    return (_db.update(_db.messageBlocks)
+          ..where((t) =>
+              t.id.equals(id) &
+              t.deletedAt.isNull() &
+              t.data.equals(expectedData)))
+        .write(MessageBlocksCompanion(data: Value(newData)));
+  }
+
   /// 软删除内容块
   Future<void> softDelete(String id, int deletedAt) async {
     await (_db.update(_db.messageBlocks)..where((t) => t.id.equals(id)))

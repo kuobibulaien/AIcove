@@ -1,0 +1,3 @@
+{"file": "scratch/diagnostics/聊天首屏加载慢_codex诊断_20260716.md", "reason": "检查实现是否真正消除报告所列根因（自激循环、队列阻塞、主 isolate 解码、不写回 DB）"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "对照前端性能硬约束检查无违反、无回退"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "缓存层→仓储层跨层数据流检查指引"}
