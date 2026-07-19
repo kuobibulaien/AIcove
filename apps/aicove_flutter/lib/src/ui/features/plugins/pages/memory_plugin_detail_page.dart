@@ -94,35 +94,63 @@ class _MemoryPluginDetailPageState
             ],
           ),
           const SizedBox(height: 16),
-          MoeSettingsGroup(
-            title: '嵌入模型（可选）',
-            children: [
-              MoeSettingsRow(
-                icon: Icons.hub_outlined,
-                label: '点击选择模型',
-                subtitle: _modelSubtitle(
-                  config.embeddingProviderId,
-                  config.embeddingModelName,
-                  fallback: '未配置（仍可使用关键词召回）',
-                ),
-                showDivider: false,
-                onTap: () => _showModelPicker(
-                  title: '嵌入模型',
-                  choices: embeddingChoices,
-                  currentChoice: _resolveSelectedChoice(
-                    embeddingChoices,
-                    providerId: config.embeddingProviderId,
-                    modelName: config.embeddingModelName,
+          if (embeddingChoices.isEmpty)
+            MoeSettingsGroup(
+              children: [
+                // 空态下若仍残留失效配置（渠道被禁用/删除），展示并允许一键清除，
+                // 否则用户既看不到当前配置也无法清空它。
+                if (config.embeddingProviderId != null ||
+                    config.embeddingModelName != null)
+                  MoeSettingsRow(
+                    icon: Icons.hub_outlined,
+                    label: '请先导入 embedding 模型渠道',
+                    subtitle: '当前配置已失效：${_modelSubtitle(
+                      config.embeddingProviderId,
+                      config.embeddingModelName,
+                      fallback: '未配置',
+                    )}，点击清除',
+                    showDivider: false,
+                    onTap: () => notifier.setEmbeddingModel(null, null),
+                  )
+                else
+                  const MoeSettingsRow(
+                    icon: Icons.hub_outlined,
+                    label: '请先导入 embedding 模型渠道',
+                    subtitle: '在渠道管理中导入并标记 embedding 模型后可在此选择',
+                    showDivider: false,
                   ),
-                  allowClear: true,
-                  onChanged: (choice) => notifier.setEmbeddingModel(
-                    choice?.providerId,
-                    choice?.modelName,
+              ],
+            )
+          else
+            MoeSettingsGroup(
+              title: 'Embedding 模型',
+              children: [
+                MoeSettingsRow(
+                  icon: Icons.hub_outlined,
+                  label: '点击选择模型',
+                  subtitle: _modelSubtitle(
+                    config.embeddingProviderId,
+                    config.embeddingModelName,
+                    fallback: '未配置（仍可使用关键词召回）',
+                  ),
+                  showDivider: false,
+                  onTap: () => _showModelPicker(
+                    title: 'Embedding 模型',
+                    choices: embeddingChoices,
+                    currentChoice: _resolveSelectedChoice(
+                      embeddingChoices,
+                      providerId: config.embeddingProviderId,
+                      modelName: config.embeddingModelName,
+                    ),
+                    allowClear: true,
+                    onChanged: (choice) => notifier.setEmbeddingModel(
+                      choice?.providerId,
+                      choice?.modelName,
+                    ),
                   ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
         ],
       ],
     );
@@ -142,11 +170,22 @@ class _MemoryPluginDetailPageState
     final result = <_ModelChoice>[];
     for (final provider in appSettings.providers) {
       if (!provider.enabled) continue;
-      final visible =
-          appSettings.getProviderVisibleModelsByType(provider.id, type: type);
-      final fallback =
-          appSettings.getProviderModelsByType(provider.id, type: type);
-      final candidates = visible.isNotEmpty ? visible : fallback;
+      // Embedding 源：包含 hidden_models 中已标记/推断为 embedding 的模型。
+      // 混合渠道里 embedding 常被藏进 hidden（避免出现在对话模型列表），但仍应可选。
+      // Chat 源：优先 visible；若该 type 下 visible 为空再回退全量。
+      final List<String> candidates;
+      if (type == ModelType.embedding) {
+        candidates =
+            appSettings.getProviderModelsByType(provider.id, type: type);
+      } else {
+        final visible = appSettings.getProviderVisibleModelsByType(
+          provider.id,
+          type: type,
+        );
+        final fallback =
+            appSettings.getProviderModelsByType(provider.id, type: type);
+        candidates = visible.isNotEmpty ? visible : fallback;
+      }
       for (final modelName in candidates) {
         result.add(_ModelChoice(
           providerId: provider.id,

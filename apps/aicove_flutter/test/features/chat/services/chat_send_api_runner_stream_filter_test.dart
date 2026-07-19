@@ -334,6 +334,67 @@ class _InlineImageStripPlugin extends BasePlugin {
   }
 }
 
+
+class _StrayImageCloseStreamingClient extends AgentApiClient {
+  _StrayImageCloseStreamingClient(Duration timeout) : super(timeout: timeout);
+
+  @override
+  Future<SendMessageRichResult> sendMessageRich({
+    required String agentId,
+    required String sessionId,
+    required String modelFullId,
+    required List<Map<String, dynamic>> messages,
+    required String userText,
+    double? temperature,
+    double? topP,
+    String? token,
+    Map<String, dynamic>? toolPrefs,
+    String? providerApiBase,
+    String? providerApiKey,
+    Map<String, dynamic>? customConfig,
+    List<Map<String, dynamic>>? tools,
+    TraceLogger? trace,
+    String? turnId,
+    int? roundIndex,
+    String? traceId,
+  }) {
+    throw UnsupportedError('这个测试只应该命中流式调用');
+  }
+
+  @override
+  Future<SendMessageRichResult> sendMessageRichStream({
+    required String agentId,
+    required String sessionId,
+    required String modelFullId,
+    required List<Map<String, dynamic>> messages,
+    required String userText,
+    double? temperature,
+    double? topP,
+    String? token,
+    Map<String, dynamic>? toolPrefs,
+    String? providerApiBase,
+    String? providerApiKey,
+    Map<String, dynamic>? customConfig,
+    List<Map<String, dynamic>>? tools,
+    void Function(String delta)? onTextDelta,
+    void Function()? onToolCallsDetected,
+    TraceLogger? trace,
+    String? turnId,
+    int? roundIndex,
+    String? traceId,
+  }) async {
+    // 开头：真孤立 </image>（跨 chunk）；中段：带属性配对标签；尾部：再一个孤立 </image>。
+    onTextDelta?.call('第一句。</im');
+    onTextDelta?.call('age><image source="history">保留');
+    onTextDelta?.call('这段</image>尾部</image>完');
+
+    return const SendMessageRichResult(
+      text: '第一句。</image><image source="history">保留这段</image>尾部</image>完',
+      toolResults: <Map<String, dynamic>>[],
+    );
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -501,6 +562,45 @@ void main() {
     expect(
       result.processedText,
       '第一句。<image source="history">保留这段</image>第二句。',
+    );
+  });
+
+  test('stream callback 剥离真孤立 </image>，同时保留带属性配对标签', () async {
+    final settings = _buildTestSettings();
+    final config = ApiConfig(
+      settings: settings,
+      modelFullId: 'openai:gpt-3.5-turbo',
+      providerApiBase: 'https://api.openai.com/v1',
+      providerApiKey: 'test-key',
+      customConfig: const <String, dynamic>{},
+      toolPrefs: const <String, dynamic>{},
+      messages: const <Map<String, dynamic>>[
+        <String, dynamic>{
+          'role': 'user',
+          'content': '继续',
+        },
+      ],
+    );
+
+    final runner = ChatSendApiRunner.withAgentClientFactory(
+      agentClientFactory: (timeout) =>
+          _StrayImageCloseStreamingClient(timeout),
+    );
+    final streamedDeltas = <String>[];
+
+    await runner.executeApiCall(
+      config: config,
+      sessionId: 'conv_stream_filter_stray_image_close',
+      userText: '继续',
+      effectivePlugins: const <Plugin>[],
+      enableStreaming: true,
+      onStreamTextDelta: streamedDeltas.add,
+      maxRounds: 1,
+    );
+
+    expect(
+      streamedDeltas.join(),
+      '第一句。<image source="history">保留这段</image>尾部完',
     );
   });
 }

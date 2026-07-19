@@ -225,7 +225,7 @@ class PromptBuiltinDefaults {
 3. 一轮最多输出 1 个 <image>...</image>
 4. 如果只是文字里提到图片，不要输出 <image> 标签
 
-## 提示词规范
+## 提示词规范（NovelAI）
 
 - 推荐顺序：镜头/视角 → 主体人数 → 外貌服装 → 动作表情 → 场景光影 → 自然语言细节 → 质量标签
 - POV/自拍：开头使用 {{{pov}}}，可选 {pov_hands} 或 head out of frame

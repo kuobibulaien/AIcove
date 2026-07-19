@@ -192,7 +192,9 @@ class ChatSendService {
 
     final msgId = genId('msg');
     final size = await file.length();
-    final name = p.basename(trimmed);
+    // 跨平台 basename：Windows 路径用 `\`，POSIX 用 `/`；测试与跨机迁移
+    // 可能混入反斜杠，不能只依赖当前平台 style。
+    final name = p.basename(trimmed.replaceAll('\\', '/'));
     final normalizedText = text?.trim();
     final blocks = <MessageBlock>[
       FileBlock(

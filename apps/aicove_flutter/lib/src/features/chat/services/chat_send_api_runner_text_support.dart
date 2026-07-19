@@ -19,10 +19,9 @@ String _sanitizeAssistantText(String text) {
     (_) => '<image></image>',
   );
 
-  cleaned = cleaned.replaceAll(
-    ChatRequestMessageBuilder.nonVisionImageContextRegex,
-    '',
-  );
+  // 注意：不要在这里剥离 <image source="history">...</image>。
+  // 该标签是内部图片上下文记录，可能出现在模型回显中；展示层 / stripPluginTags
+  // 仅移除无属性的 inline 生图标签，带属性标签必须原样保留。
   cleaned = cleaned.replaceAll(
     RegExp(
       '${RegExp.escape(ChatSendApiRunner._stableDrawImageReviewPrefix)}[^\\r\\n]*(?:\\r?\\n)?',
@@ -281,12 +280,28 @@ bool _isImagePartMap(Map<String, dynamic> part) {
 class _VisibleAssistantStreamFilter {
   static const List<_HiddenStreamTagSpec> _hiddenTagSpecs =
       <_HiddenStreamTagSpec>[
+    // 仅隐藏无属性的 inline 生图标签；带属性的 <image source="history"> 必须
+    // 原样透传（由 _attributedImageDepth 深度计数保证其配对闭标签不被剥离）。
     _HiddenStreamTagSpec(openTagPrefix: '<image>', closeTag: '</image>'),
     _HiddenStreamTagSpec(openTagPrefix: '<think', closeTag: '</think>'),
   ];
 
   String _pending = '';
   String? _activeCloseTag;
+
+  /// 已透传、尚未配对关闭的「带属性 image 开标签」数量。
+  /// 带属性开标签（如 <image source="history">）不进 hidden 状态而是原样透传，
+  /// 其配对的 </image> 必须保留；只有深度为 0 时出现的 </image> 才是真孤立标签。
+  int _attributedImageDepth = 0;
+  static final RegExp _attributedImageOpenPattern =
+      RegExp('<image[\\s/]', caseSensitive: false);
+
+  void _emitVisible(StringBuffer output, String text) {
+    if (text.isEmpty) return;
+    _attributedImageDepth +=
+        _attributedImageOpenPattern.allMatches(text).length;
+    output.write(text);
+  }
 
   bool get _insideHiddenTag => _activeCloseTag != null;
 
@@ -314,7 +329,7 @@ class _VisibleAssistantStreamFilter {
       if (hiddenTagMatch != null) {
         final openIndex = hiddenTagMatch.openIndex;
         if (openIndex > 0) {
-          output.write(_pending.substring(0, openIndex));
+          _emitVisible(output, _pending.substring(0, openIndex));
         }
         final tagEndIndex = _pending.indexOf('>', openIndex);
         if (tagEndIndex < 0) {
@@ -326,14 +341,19 @@ class _VisibleAssistantStreamFilter {
         continue;
       }
 
+      // 关闭标签处理：配对（带属性 open 深度>0）的 </image> 原样保留；
+      // 真正孤立的关闭标签（stray </image> / </think>）剥离。
       final hiddenCloseTagMatch = _findNextHiddenCloseTag(lowerPending);
       if (hiddenCloseTagMatch != null) {
         final closeIndex = hiddenCloseTagMatch.openIndex;
-        if (closeIndex > 0) {
-          output.write(_pending.substring(0, closeIndex));
+        final closeTag = hiddenCloseTagMatch.closeTag;
+        final closeEnd = closeIndex + closeTag.length;
+        _emitVisible(output, _pending.substring(0, closeIndex));
+        if (closeTag == '</image>' && _attributedImageDepth > 0) {
+          _attributedImageDepth--;
+          output.write(_pending.substring(closeIndex, closeEnd));
         }
-        _pending = _pending
-            .substring(closeIndex + hiddenCloseTagMatch.closeTag.length);
+        _pending = _pending.substring(closeEnd);
         continue;
       }
 
@@ -342,13 +362,13 @@ class _VisibleAssistantStreamFilter {
       if (partialPrefixLength > 0) {
         final visibleEnd = _pending.length - partialPrefixLength;
         if (visibleEnd > 0) {
-          output.write(_pending.substring(0, visibleEnd));
+          _emitVisible(output, _pending.substring(0, visibleEnd));
         }
         _pending = _pending.substring(visibleEnd);
         break;
       }
 
-      output.write(_pending);
+      _emitVisible(output, _pending);
       _pending = '';
     }
 
@@ -388,9 +408,15 @@ class _VisibleAssistantStreamFilter {
   int _findTrailingOpenTagPrefixLength(String value) {
     var maxLength = 0;
     for (final spec in _hiddenTagSpecs) {
-      final length = _findTrailingPrefixLength(value, spec.openTagPrefix);
-      if (length > maxLength) {
-        maxLength = length;
+      final openLength = _findTrailingPrefixLength(value, spec.openTagPrefix);
+      if (openLength > maxLength) {
+        maxLength = openLength;
+      }
+      // 关闭标签同样可能被 chunk 切开（如 '</im' + 'age>'），
+      // 不保留会导致孤立闭标签识别不到而漏剥离。
+      final closeLength = _findTrailingPrefixLength(value, spec.closeTag);
+      if (closeLength > maxLength) {
+        maxLength = closeLength;
       }
     }
     return maxLength;

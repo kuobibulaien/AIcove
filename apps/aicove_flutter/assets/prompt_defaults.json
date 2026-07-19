@@ -718,7 +718,7 @@
         "pov",
         "pov_hands"
       ],
-      "template": "你可以使用 <image>英文正向提示词</image> 直接触发图片生成。\n\n## 使用规则\n\n1. 只有真的要生成并发送图片时，才输出 <image>...</image>\n2. <image> 内只能写英文正向提示词，不要写中文、解释、JSON、代码块、负面提示词或参数说明\n3. 一轮最多输出 1 个 <image>...</image>\n4. 如果只是文字里提到图片，不要输出 <image> 标签\n\n## 提示词规范\n\n- 推荐顺序：镜头/视角 → 主体人数 → 外貌服装 → 动作表情 → 场景光影 → 自然语言细节 → 质量标签\n- POV/自拍：开头使用 {{{pov}}}，可选 {pov_hands} 或 head out of frame\n- 多人场景：用 | 分隔基底与各角色描述\n\n质量标签示例：masterpiece, best quality, very aesthetic"
+      "template": "你可以使用 <image>英文正向提示词</image> 直接触发图片生成。\n\n## 使用规则\n\n1. 只有真的要生成并发送图片时，才输出 <image>...</image>\n2. <image> 内只能写英文正向提示词，不要写中文、解释、JSON、代码块、负面提示词或参数说明\n3. 一轮最多输出 1 个 <image>...</image>\n4. 如果只是文字里提到图片，不要输出 <image> 标签\n\n## 提示词规范（NovelAI）\n\n- 推荐顺序：镜头/视角 → 主体人数 → 外貌服装 → 动作表情 → 场景光影 → 自然语言细节 → 质量标签\n- POV/自拍：开头使用 {{{pov}}}，可选 {pov_hands} 或 head out of frame\n- 多人场景：用 | 分隔基底与各角色描述\n\n质量标签示例：masterpiece, best quality, very aesthetic"
     },
     {
       "id": "image.system.default",

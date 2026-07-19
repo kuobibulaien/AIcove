@@ -407,14 +407,31 @@ class ChatHistoryStore {
           );
 
     if (updatedUserMessages.isNotEmpty || projectedMessages.isNotEmpty) {
+      final timelineCache = _ref.read(conversationTimelineCacheProvider);
+      // 映射表已是 replace 语义；短窗时间线也必须清掉同 raw 的旧投影，
+      // 否则流式收尾的多段文本 + 再次 deliver 的正文会叠成 3 条气泡。
+      // 清旧与写新必须在同一次 replaceMessages 内完成：拆成两步会让订阅者
+      // 观察到「同 raw 气泡全部消失」的中间帧，且第二步失败会留下半完成态。
+      final staleIds = <String>[];
+      if (projectedMessages.isNotEmpty) {
+        final cached =
+            await timelineCache.loadCachedMessages(conversationId);
+        staleIds.addAll(<String>[
+          for (final message in cached)
+            if (message.sourceMessageId == rawMessage.id &&
+                projectedMessages.every((keep) => keep.id != message.id))
+              message.id,
+        ]);
+      }
       final shortWindowMessages = <Message>[
         ...updatedUserMessages,
         ...projectedMessages,
       ];
-      await _ref.read(conversationTimelineCacheProvider).upsertMessages(
-            conversationId: conversationId,
-            messages: shortWindowMessages,
-          );
+      await timelineCache.replaceMessages(
+        conversationId: conversationId,
+        removeMessageIds: staleIds,
+        messages: shortWindowMessages,
+      );
       await _syncRawSupplementsFromTimeline(
         conversationId: conversationId,
         rawMessageIds: {rawMessage.id},
@@ -1620,19 +1637,21 @@ class ChatHistoryStore {
   bool _shouldPreserveAssistantProjectionSegments(Message rawMessage) {
     final payload = rawMessage.rawPayload;
     if (payload != null) {
-      final hasMultimodalEvents =
+      // TTS / 表情包需要保留“文字-多媒体-文字”多段投影。
+      // image_generate 的后补图不要求保留纯文本拆段；否则快速生图标签两侧文本
+      // 会被落成多条气泡（第一句。/ 第二句。），而期望是合并后的正文。
+      final hasSegmentPreservingEvents =
           ChatMessageProjectionCodec.pluginEvents(payload).any((event) =>
-              event.type == 'tts_convert' ||
-              event.type == 'sticker_convert' ||
-              event.type == 'image_generate');
-      if (hasMultimodalEvents) {
+              event.type == 'tts_convert' || event.type == 'sticker_convert');
+      if (hasSegmentPreservingEvents) {
         return true;
       }
     }
 
     final rawReplyText =
         ChatMessageProjectionCodec.rawReplyText(payload) ?? rawMessage.content;
-    return rawReplyText.contains('<tts>') || rawReplyText.contains('<image>');
+    // 仅 TTS 标签需要强制保留分段；<image> 无论是否带属性都不阻止纯文本折叠。
+    return rawReplyText.contains('<tts>');
   }
 
   List<Message> _rebuildAssistantMessagesFromPayload(Message rawMessage) {
