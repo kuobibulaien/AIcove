@@ -71,5 +71,14 @@
   },
   "enabledPlugins": {
     "codex@openai-codex": true
+  },
+  "permissions": {
+    "allow": [
+      "Bash(grok-codex-agent:*)",
+      "Bash(mktemp:*)",
+      "Bash(cat:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)"
+    ]
   }
 }
