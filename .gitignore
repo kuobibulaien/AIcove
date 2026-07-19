@@ -18,3 +18,4 @@ node_modules/
 
 # 日志
 *.log
+scratch/aicove_data_backup_*/

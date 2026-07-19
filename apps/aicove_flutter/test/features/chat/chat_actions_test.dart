@@ -18,7 +18,7 @@ import 'package:aicove_flutter/src/core/models/block_status.dart';
 import 'package:aicove_flutter/src/core/services/attachment_picker_service.dart';
 import 'package:aicove_flutter/src/features/chat/chat_actions.dart';
 import 'package:aicove_flutter/src/features/chat/chat_layer_providers.dart';
-import 'package:aicove_flutter/src/features/chat/data/auto_reply_trigger.dart';
+import 'package:aicove_flutter/src/features/auto_reply/data/auto_reply_trigger.dart';
 import 'package:aicove_flutter/src/features/chat/application/chat_ports.dart';
 import 'package:aicove_flutter/src/features/chat/conversation_providers.dart';
 import 'package:aicove_flutter/src/features/chat/conversation_timeline_providers.dart';
