@@ -123,11 +123,17 @@ class MessageBubble extends ConsumerWidget {
     // 检测消息是否发送失败
     final isFailed = isMe && message.status == 'failed';
 
-    // 获取用户头像和隐藏设置
-    final settingsAsync = ref.watch(appSettingsProvider);
-    final settings = settingsAsync.valueOrNull;
-    final userAvatar = isMe ? settings?.userAvatar : null;
-    final hideUserAvatar = settings?.hideUserAvatar ?? true;
+    // 获取用户头像和隐藏设置（字段级订阅：无关设置变化不重建气泡）
+    final userAvatar = isMe
+        ? ref.watch(
+            appSettingsProvider.select((s) => s.valueOrNull?.userAvatar))
+        : null;
+    final hideUserAvatar = ref.watch(appSettingsProvider
+            .select((s) => s.valueOrNull?.hideUserAvatar)) ??
+        true;
+    final imagePreviewScale = ref.watch(appSettingsProvider
+            .select((s) => s.valueOrNull?.imagePreviewScale)) ??
+        1.0;
 
     final failedIndicator = isFailed
         ? GestureDetector(
@@ -190,7 +196,7 @@ class MessageBubble extends ConsumerWidget {
 
             // Render image/sticker blocks separately without bubble
             ..._buildMediaBlocksOnly(context, blocks,
-                imagePreviewScale: settings?.imagePreviewScale ?? 1.0),
+                imagePreviewScale: imagePreviewScale),
             // Render non-image blocks in bubble (text, audio, etc.)
             if (_shouldShowBubble(
               blocks,

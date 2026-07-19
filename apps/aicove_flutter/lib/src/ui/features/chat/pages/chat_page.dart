@@ -1008,8 +1008,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         ? ref.watch(sidebarVisibleProvider)
         : false;
     final chatStatus = ref.watch(chatStatusProvider);
-    final settingsAsync =
-        deferEntryShell ? null : ref.watch(appSettingsProvider);
+    // 字段级订阅：页面只关心聊天背景色，设置里其他字段变化不再重建整页
+    final chatBackgroundColorSetting = deferEntryShell
+        ? null
+        : ref.watch(appSettingsProvider
+            .select((settings) => settings.valueOrNull?.chatBackgroundColor));
     final colors = context.moeColors;
 
     // 监听模型切换确认请求，弹公共确认框
@@ -1029,15 +1032,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     });
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final chatBgColor = settingsAsync == null
-        ? (isDark ? colors.bgMain : colors.surface)
-        : settingsAsync.maybeWhen(
-            data: (settings) {
-              if (isDark) return colors.bgMain;
-              return settings.chatBackgroundColor.color ?? colors.surface;
-            },
-            orElse: () => isDark ? colors.bgMain : colors.surface,
-          );
+    final chatBgColor = isDark
+        ? colors.bgMain
+        : (chatBackgroundColorSetting?.color ?? colors.surface);
     final hasCustomBackground =
         (conv?.chatBackgroundImage?.trim().isNotEmpty ?? false);
     final extendBehindAppBar = hasCustomBackground;

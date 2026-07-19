@@ -502,14 +502,12 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   @override
   Widget build(BuildContext context) {
     final actions = ref.watch(chatActionsProvider);
-    final settingsAsync = ref.watch(appSettingsProvider);
-    final uiScale = settingsAsync
-        .maybeWhen(
-          data: (settings) => settings.uiScaleFactor
-              .clamp(kMinUiScaleFactor, kMaxUiScaleFactor),
-          orElse: () => 1.0,
-        )
-        .toDouble();
+    // 字段级订阅：设置里无关字段变化不再重建整颗消息列表
+    final uiScale = ref.watch(appSettingsProvider.select(
+      (settings) => (settings.valueOrNull?.uiScaleFactor ?? 1.0)
+          .clamp(kMinUiScaleFactor, kMaxUiScaleFactor)
+          .toDouble(),
+    ));
     final keyboardInset = MediaQuery.viewInsetsOf(context).bottom / uiScale;
     final safeBottom = MediaQuery.paddingOf(context).bottom / uiScale;
     final fallbackBottomPadding = safeBottom + 70 + keyboardInset;
@@ -518,10 +516,11 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
         : fallbackBottomPadding;
 
     // 获取消息格式化配置（用于分段显示）
-    final formatConfig = settingsAsync.maybeWhen(
-      data: (settings) => settings.messageFormatConfig,
-      orElse: () => const MessageFormatConfig(),
-    );
+    final formatConfig = ref.watch(appSettingsProvider.select(
+      (settings) =>
+          settings.valueOrNull?.messageFormatConfig ??
+          const MessageFormatConfig(),
+    ));
 
     // 检测配置变化，需要重新构建列表项
     if (_hasHydratedInitialListItems && _cachedFormatConfig != formatConfig) {

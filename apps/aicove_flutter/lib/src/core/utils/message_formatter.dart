@@ -81,6 +81,18 @@ class MessageChunkPunctuationSet {
           (json['punctuations'] as List<dynamic>?)?.cast<String>() ?? const [],
     );
   }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is MessageChunkPunctuationSet &&
+        other.id == id &&
+        other.name == name &&
+        _listContentEquals(other.punctuations, punctuations);
+  }
+
+  @override
+  int get hashCode => Object.hash(id, name, Object.hashAll(punctuations));
 }
 
 const List<MessageChunkPunctuationSet> _kDefaultChunkPunctuationSets = [
@@ -151,6 +163,34 @@ class MessageFormatConfig {
   MessageChunkPunctuationSet? get activeChunkPunctuationSet =>
       _findSetById(chunkPunctuationSets, activeChunkPunctuationSetId);
 
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is MessageFormatConfig &&
+        other.enableChunking == enableChunking &&
+        other.filterPunctuation == filterPunctuation &&
+        _listContentEquals(other.chunkPunctuations, chunkPunctuations) &&
+        _listContentEquals(other.chunkPunctuationSets, chunkPunctuationSets) &&
+        other.activeChunkPunctuationSetId == activeChunkPunctuationSetId &&
+        _listContentEquals(other.filterPunctuations, filterPunctuations) &&
+        other.stickerProbability == stickerProbability &&
+        other.minSegmentLength == minSegmentLength &&
+        other.protectQuotes == protectQuotes;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        enableChunking,
+        filterPunctuation,
+        Object.hashAll(chunkPunctuations),
+        Object.hashAll(chunkPunctuationSets),
+        activeChunkPunctuationSetId,
+        Object.hashAll(filterPunctuations),
+        stickerProbability,
+        minSegmentLength,
+        protectQuotes,
+      );
+
   List<String> get effectiveChunkPunctuations {
     final active = activeChunkPunctuationSet;
     if (active == null) return chunkPunctuations;
@@ -177,9 +217,17 @@ class MessageFormatConfig {
       activeChunkPunctuationSetId ?? this.activeChunkPunctuationSetId,
       sets,
     );
+    // 不变量：copyWith 不隐式改写未涉及的字段——只有调用方显式切换了集合或
+    // 激活 id 时，才用激活集合同步 chunkPunctuations；否则 copyWith() 必须
+    // 与原实例值相等（select 粒度优化依赖该契约）。
+    final setsTouched =
+        chunkPunctuationSets != null || activeChunkPunctuationSetId != null;
     final activePunctuations = _findSetById(sets, activeSetId)?.punctuations;
     final resolvedChunkPunctuations = _sanitizePunctuations(
-      chunkPunctuations ?? activePunctuations ?? this.chunkPunctuations,
+      chunkPunctuations ??
+          (setsTouched
+              ? (activePunctuations ?? this.chunkPunctuations)
+              : this.chunkPunctuations),
     );
 
     return MessageFormatConfig(
@@ -239,11 +287,16 @@ class MessageFormatConfig {
     final activePunctuations =
         _findSetById(sets, resolvedActiveSetId)?.punctuations ??
             rawChunkPunctuations;
+    // 不变量：序列化里显式带了 chunkPunctuations 就原样恢复（保证
+    // fromJson(toJson()) 值相等）；缺省时才落到激活集合。
+    final hasExplicitChunkPunctuations = json['chunkPunctuations'] != null;
 
     return MessageFormatConfig(
       enableChunking: json['enableChunking'] as bool? ?? true,
       filterPunctuation: json['filterPunctuation'] as bool? ?? false,
-      chunkPunctuations: activePunctuations,
+      chunkPunctuations: hasExplicitChunkPunctuations
+          ? rawChunkPunctuations
+          : activePunctuations,
       chunkPunctuationSets: sets,
       activeChunkPunctuationSetId: resolvedActiveSetId,
       filterPunctuations: _sanitizePunctuations(
@@ -567,4 +620,13 @@ class MessageFormatter {
 
   static bool _endsWithPeriod(String s) =>
       s.isNotEmpty && _periodPuncts.contains(s[s.length - 1]);
+}
+
+bool _listContentEquals<T>(List<T> a, List<T> b) {
+  if (identical(a, b)) return true;
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
 }
