@@ -104,14 +104,13 @@ List<Message> _buildMessages({int historyCount = 14}) {
 }
 
 class _Host extends StatefulWidget {
-  const _Host({super.key, this.bottomOverlayHeight = 0});
-  final double bottomOverlayHeight;
+  const _Host({super.key});
   @override
   State<_Host> createState() => _HostState();
 }
 
 class _HostState extends State<_Host> {
-  late double bottomOverlayHeight = widget.bottomOverlayHeight;
+  double bottomOverlayHeight = 0;
   int listBuildCount = 0;
 
   void setOverlay(double value) => setState(() => bottomOverlayHeight = value);

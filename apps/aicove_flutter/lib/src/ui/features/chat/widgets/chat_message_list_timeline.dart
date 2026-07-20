@@ -563,7 +563,25 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
     }
     if (!_scrollController.hasClients) return;
     if (!_scrollController.position.hasContentDimensions) return;
+    // 与 didUpdateWidget 稳底路径同款的多帧重试级联：通道增高的布局在
+    // 下一帧才生效，单次调度会留残差（流末尾无后续信号兜底）。
     _scheduleFollowLatestViewportStabilization(targetDistanceToBottom: 0);
+    if (widget.viewportController.shouldPinLatestTail) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _scheduleFollowLatestViewportStabilization(
+          targetDistanceToBottom: 0,
+          retryFrames: 1,
+        );
+      });
+      Future<void>.delayed(const Duration(milliseconds: 260), () {
+        if (!mounted) return;
+        _scheduleFollowLatestViewportStabilization(
+          targetDistanceToBottom: 0,
+          retryFrames: 1,
+        );
+      });
+    }
   }
 
   bool _shouldStabilizeFollowLatestViewport(
