@@ -705,35 +705,6 @@ extension _ChatMessageListViewportX on _ChatMessageListState {
     });
   }
 
-  /// 纯渲染层 extent 变化（表情/图片解码长高、字体加载、视口尺寸变化）不产生
-  /// didUpdateWidget，follow-latest 的稳定化收不到信号；框架在这类变化后的
-  /// 帧后 microtask 合并派发 ScrollMetricsNotification，这里当场重锚——
-  /// 挂普通 post-frame 不保证有下一帧（框架不会为其请求新帧），直接
-  /// jumpTo 自会请求新帧，也免去 stale callback 的失效机制。
-  /// 去重＝latest state wins：读执行时最新 min，距离阈值提供幂等短路；
-  /// jumpTo 只改 pixels 不改内容尺寸，不会自激再派发。
-  bool _handleScrollMetricsNotification(
-      ScrollMetricsNotification notification) {
-    // 只认主列表自己的 viewport，防未来嵌套滚动（代码块/媒体控件）误触。
-    if (notification.depth != 0) return false;
-    if (!mounted) return false;
-    if (!_autoScrollEnabled) return false;
-    if (!_didInitialBottomPosition) return false;
-    // 历史恢复优先契约：pending 与 lock 都要挡（与 detached 补偿守卫对齐）。
-    if (_historyPagingLockActive) return false;
-    if (_historyViewportRestorePending) return false;
-    if (_isProgrammaticScroll) return false;
-    if (_isUserScrollActive) return false;
-    if (!_scrollController.hasClients) return false;
-    final position = _scrollController.position;
-    if (!position.hasContentDimensions) return false;
-    if ((position.pixels - position.minScrollExtent).abs() <= 0.5) return false;
-    _debugAutoScroll('request:metricsReanchor');
-    widget.onDebugAutoScrollRequested?.call('metricsReanchor');
-    _jumpToOffset(position.minScrollExtent);
-    return false;
-  }
-
   bool _handleScrollNotification(ScrollNotification notification) {
     if (notification is ScrollStartNotification &&
         notification.dragDetails != null) {
