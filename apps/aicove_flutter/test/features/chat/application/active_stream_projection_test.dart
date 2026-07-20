@@ -112,10 +112,10 @@ void main() {
     });
   });
 
-  test('policy 默认关闭新通道（B5：默认 false 落地）', () {
+  test('policy 默认启用活跃流通道（2026-07-20 翻默认；off 为回滚面）', () {
     expect(
       container.read(streamProjectionPolicyProvider).useActiveStreamChannel,
-      isFalse,
+      isTrue,
     );
   });
 

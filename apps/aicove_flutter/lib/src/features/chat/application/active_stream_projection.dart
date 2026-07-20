@@ -72,11 +72,12 @@ class ActiveStreamProjection {
 
 /// 新旧投影通道的切换开关（design §2.8）。
 ///
-/// 默认 false＝旧全量 transient 路径；测试用 ProviderScope override 做 on/off 对照；
-/// 全链路对照通过后再单独翻默认值（独立可 revert 的小改动）。
+/// 默认 true＝活跃流通道（2026-07-20 完成翻默认前置矩阵后启用）；
+/// 旧全量 transient 路径保留为回滚面：override 为 false 即整组回退
+///（机制分流＋UI 接线均受此门控）。
 class StreamProjectionPolicy {
   final bool useActiveStreamChannel;
-  const StreamProjectionPolicy({this.useActiveStreamChannel = false});
+  const StreamProjectionPolicy({this.useActiveStreamChannel = true});
 }
 
 final streamProjectionPolicyProvider = Provider<StreamProjectionPolicy>(
