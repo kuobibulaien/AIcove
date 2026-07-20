@@ -41,7 +41,7 @@
 ## 7. 全量回归与运行验收
 
 - [x] 终验（干净 worktree @ HEAD）：analyze 0 error；全量 613 测试全绿。
-- [x] `flutter run --no-resident -d macos` 编译运行通过（宽屏桌面即宽屏面）；窄屏由 360px 视口 widget 套件覆盖。**Waiver：Android 真机流式贴底/滑动手感验收因设备不在场未做——残余风险＝真机帧时序与桌面差异，设备到位后与 07-13 一并补验；回退方案＝policy override off（整组回滚面）。**
+- [x] 编译关卡：本机无 Xcode（macOS run 不可用，历史已知），以 `flutter build apk --debug` 通过（Gradle assembleDebug ✓）；窄屏由 360px 视口 widget 套件覆盖，宽屏语义无本任务改动面（未动布局断点）。**Waiver：Android 真机流式贴底/滑动手感验收因设备不在场未做——残余风险＝真机帧时序与桌面差异，设备到位后与 07-13 一并补验；回退方案＝policy override off（整组回滚面）。**
 
 ## 8. 审查与收尾
 
