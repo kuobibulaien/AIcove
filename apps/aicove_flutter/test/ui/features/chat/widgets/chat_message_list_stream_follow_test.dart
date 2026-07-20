@@ -202,10 +202,13 @@ void _publishGrowth(ProviderContainer container, int step) {
 }
 
 Future<void> _settleStabilization(WidgetTester tester) async {
-  // 稳底调度含 post-frame 重试与 260ms 延迟重试。
+  // 稳底调度含 post-frame 重试与 260ms 延迟重试；延迟重试在计时 pump 内
+  // 触发后还会挂 post-frame，需要额外帧才能执行，故末尾再补两帧。
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 40));
   await tester.pump(const Duration(milliseconds: 300));
+  await tester.pump();
+  await tester.pump();
 }
 
 void main() {
@@ -217,6 +220,20 @@ void main() {
     final container = await _pumpHost(tester, hostKey);
     expect(_distanceToBottom(tester), lessThanOrEqualTo(8),
         reason: '初始应贴底');
+    // 种子 publish：生产中「壳首次出现」伴随结构性时间线写入、由
+    // didUpdateWidget 稳底路径负责（S-04 分工）；窄信号只管后续同尾增长。
+    // 台架无结构写，先建立 prev 再度量增长步。
+    container.read(activeStreamProjectionsProvider.notifier).publish(
+          const ActiveStreamProjection(
+            conversationId: _kConvId,
+            generationSeq: 1,
+            writeEpoch: 0,
+            tailMessageId: _kStreamShellId,
+            tailText: '起',
+            phase: ActiveStreamPhase.streamingTail,
+          ),
+        );
+    await _settleStabilization(tester);
     final buildsBefore = hostKey.currentState!.listBuildCount;
 
     for (var step = 1; step <= 3; step++) {

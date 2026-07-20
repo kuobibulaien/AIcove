@@ -563,25 +563,25 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
     }
     if (!_scrollController.hasClients) return;
     if (!_scrollController.position.hasContentDimensions) return;
-    // 与 didUpdateWidget 稳底路径同款的多帧重试级联：通道增高的布局在
-    // 下一帧才生效，单次调度会留残差（流末尾无后续信号兜底）。
+    // 多帧重试级联：通道增高的布局在下一帧才生效，且实测存在迟于重试链的
+    // 布局增量（首轮 ~14px 残差）。本信号仅在「贴底跟随＋同尾文本增长」时
+    // 触发，跟随语义已成立，故帧后与 260ms 长尾重试均无条件——流末尾没有
+    // 后续信号兜底，长尾重试负责收敛最后一截。
     _scheduleFollowLatestViewportStabilization(targetDistanceToBottom: 0);
-    if (widget.viewportController.shouldPinLatestTail) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        _scheduleFollowLatestViewportStabilization(
-          targetDistanceToBottom: 0,
-          retryFrames: 1,
-        );
-      });
-      Future<void>.delayed(const Duration(milliseconds: 260), () {
-        if (!mounted) return;
-        _scheduleFollowLatestViewportStabilization(
-          targetDistanceToBottom: 0,
-          retryFrames: 1,
-        );
-      });
-    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _scheduleFollowLatestViewportStabilization(
+        targetDistanceToBottom: 0,
+        retryFrames: 1,
+      );
+    });
+    Future<void>.delayed(const Duration(milliseconds: 260), () {
+      if (!mounted) return;
+      _scheduleFollowLatestViewportStabilization(
+        targetDistanceToBottom: 0,
+        retryFrames: 1,
+      );
+    });
   }
 
   bool _shouldStabilizeFollowLatestViewport(

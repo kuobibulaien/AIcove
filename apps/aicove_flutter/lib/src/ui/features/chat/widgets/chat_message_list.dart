@@ -480,10 +480,41 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     if (_autoScrollEnabled && _hasTimelineContent) {
       _requestScrollToBottom('initState');
     }
+    _subscribeActiveStreamTailSignal();
+  }
+
+  /// G2.1 活跃流通道窄信号（07-20 design v2 §2.7）：通道尾文本增长只调度
+  /// 视口稳底，不重建列表。用 listenManual 显式长驻订阅——本 widget 在纯
+  /// delta 期间不 rebuild，build 期 ref.listen 的订阅在该场景下不可靠
+  ///（实测首次变化后失联）。policy off 不建立订阅（B-01 严格回滚面）。
+  void _subscribeActiveStreamTailSignal() {
+    if (!_streamChannelEnabled) return;
+    _tailSignalSub?.close();
+    _tailSignalSub = ref.listenManual<(String?, int, ActiveStreamPhase)?>(
+      activeStreamProjectionsProvider.select((projections) {
+        final projection = projections[widget.conversationId];
+        return projection == null
+            ? null
+            : (
+                projection.tailMessageId,
+                projection.tailText.length,
+                projection.phase,
+              );
+      }),
+      (previous, next) {
+        // 仅处理「同一尾、同相位、文本增长」：新壳/换尾属结构事件，
+        // 由时间线写入触发的 didUpdateWidget 稳底路径负责（S-04）。
+        if (previous == null || next == null) return;
+        if (previous.$1 != next.$1 || previous.$3 != next.$3) return;
+        if (next.$2 <= previous.$2) return;
+        _onActiveStreamTailChanged();
+      },
+    );
   }
 
   @override
   void dispose() {
+    _tailSignalSub?.close();
     _unbindViewportController(widget.viewportController);
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
@@ -497,6 +528,9 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   @override
   void didUpdateWidget(covariant ChatMessageList oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.conversationId != widget.conversationId) {
+      _subscribeActiveStreamTailSignal();
+    }
     _handleDidUpdateWidget(oldWidget);
   }
 
@@ -504,32 +538,11 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   bool get _streamChannelEnabled =>
       ref.read(streamProjectionPolicyProvider).useActiveStreamChannel;
 
+  ProviderSubscription<(String?, int, ActiveStreamPhase)?>? _tailSignalSub;
+
   @override
   Widget build(BuildContext context) {
     final actions = ref.watch(chatActionsProvider);
-    // G2.1 活跃流通道窄信号：通道尾文本增长只调度视口稳底，不重建列表
-    //（07-20 design v2 §2.7）。policy off 时不建立任何通道监听（B-01：
-    // off 必须是严格回滚面）；policy 为应用生命周期常量，条件挂载安全。
-    if (_streamChannelEnabled) {
-      ref.listen<(String?, int, ActiveStreamPhase)?>(
-          activeStreamProjectionsProvider.select((projections) {
-        final projection = projections[widget.conversationId];
-        return projection == null
-            ? null
-            : (
-                projection.tailMessageId,
-                projection.tailText.length,
-                projection.phase,
-              );
-      }), (previous, next) {
-        // 仅处理「同一尾、同相位、文本增长」：新壳/换尾属结构事件，
-        // 由时间线写入触发的 didUpdateWidget 稳底路径负责（S-04）。
-        if (previous == null || next == null) return;
-        if (previous.$1 != next.$1 || previous.$3 != next.$3) return;
-        if (next.$2 <= previous.$2) return;
-        _onActiveStreamTailChanged();
-      });
-    }
     // 字段级订阅：设置里无关字段变化不再重建整颗消息列表
     final uiScale = ref.watch(appSettingsProvider.select(
       (settings) => (settings.valueOrNull?.uiScaleFactor ?? 1.0)
