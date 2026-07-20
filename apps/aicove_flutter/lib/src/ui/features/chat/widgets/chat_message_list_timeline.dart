@@ -552,6 +552,20 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
     _pendingTransientHandoffIds = <String>{};
   }
 
+  /// G2.1 窄信号处理：活跃流通道文本增长导致气泡局部增高时，
+  /// 在贴底状态下调度既有视口稳底——守卫条件与 didUpdateWidget 稳底一致，
+  /// detached/分页/程序滚动语义不变。
+  void _onActiveStreamTailChanged() {
+    if (!_autoScrollEnabled ||
+        _historyPagingLockActive ||
+        _isProgrammaticScroll) {
+      return;
+    }
+    if (!_scrollController.hasClients) return;
+    if (!_scrollController.position.hasContentDimensions) return;
+    _scheduleFollowLatestViewportStabilization(targetDistanceToBottom: 0);
+  }
+
   bool _shouldStabilizeFollowLatestViewport(
     ChatMessageList oldWidget, {
     required bool messagesChanged,

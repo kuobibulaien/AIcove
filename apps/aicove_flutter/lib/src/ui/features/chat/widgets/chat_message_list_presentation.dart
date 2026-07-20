@@ -241,23 +241,36 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
       final bubbleWidget = Padding(
         padding:
             const EdgeInsets.symmetric(vertical: _kMessageItemVerticalPadding),
-        child: MessageBubble(
-          isMe: isMe,
-          message: message,
-          avatarUrl: isMe ? null : widget.avatarUrl,
-          displayName: isMe ? null : widget.displayName,
-          showCorner: item.showCorner,
-          showName: false,
-          showAvatar: item.showAvatar,
-          chatImages: _cachedChatImages,
-          onRetry: (isMe && message.status == 'failed')
-              ? () => actions.recallFailedMessage(message.id)
-              : null,
-          onLongPress: (bubbleBox) =>
-              _handleMessageLongPress(context, message, isMe, bubbleBox),
-          onMediaLongPress: (mediaBox, block) =>
-              _handleMediaLongPress(context, message, isMe, mediaBox, block),
-        ),
+        // G2.1 活跃流通道：仅活跃尾气泡的 Consumer 命中通道并随文本增长重建；
+        // 其他气泡 select 恒 null 不重建。策略关闭时通道 map 为空，天然旁路。
+        child: Consumer(builder: (context, ref, _) {
+          final live = ref.watch(activeStreamProjectionsProvider.select(
+            (projections) {
+              final projection = projections[widget.conversationId];
+              return projection != null &&
+                      projection.tailMessageId == message.id
+                  ? projection
+                  : null;
+            },
+          ));
+          return MessageBubble(
+            isMe: isMe,
+            message: resolveActiveStreamTailMessage(message, live),
+            avatarUrl: isMe ? null : widget.avatarUrl,
+            displayName: isMe ? null : widget.displayName,
+            showCorner: item.showCorner,
+            showName: false,
+            showAvatar: item.showAvatar,
+            chatImages: _cachedChatImages,
+            onRetry: (isMe && message.status == 'failed')
+                ? () => actions.recallFailedMessage(message.id)
+                : null,
+            onLongPress: (bubbleBox) =>
+                _handleMessageLongPress(context, message, isMe, bubbleBox),
+            onMediaLongPress: (mediaBox, block) =>
+                _handleMediaLongPress(context, message, isMe, mediaBox, block),
+          );
+        }),
       );
 
       final shouldAnimate = _pendingAnimationIds.contains(message.id) &&

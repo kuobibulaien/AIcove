@@ -14,6 +14,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../features/chat/chat_actions.dart';
+import '../../../../features/chat/application/active_stream_projection.dart';
 import '../../../../features/chat/application/chat_message_list_queries.dart';
 import '../../../../features/chat/domain/message.dart';
 import '../../../../features/chat/presentation/widgets/message_bubble.dart';
@@ -502,6 +503,17 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   @override
   Widget build(BuildContext context) {
     final actions = ref.watch(chatActionsProvider);
+    // G2.1 活跃流通道窄信号：通道尾变化只调度视口稳底，不重建列表（07-20 design v2 §2.7）。
+    ref.listen<int?>(activeStreamProjectionsProvider.select((projections) {
+      final projection = projections[widget.conversationId];
+      return projection == null
+          ? null
+          : Object.hash(projection.tailMessageId, projection.tailText.length,
+              projection.phase);
+    }), (previous, next) {
+      if (next == null || previous == next) return;
+      _onActiveStreamTailChanged();
+    });
     // 字段级订阅：设置里无关字段变化不再重建整颗消息列表
     final uiScale = ref.watch(appSettingsProvider.select(
       (settings) => (settings.valueOrNull?.uiScaleFactor ?? 1.0)
