@@ -4,6 +4,8 @@
 > v2：按 codex 方案审查（`scratch/diagnostics/方案审查_entry-anchor_20260720.md`）修订四项必须项
 > （B1 帧调度陷阱→改直接跳转；B2 depth 过滤＋执行时守卫；B3 补 `_historyViewportRestorePending`；
 > B4 测试具体化为同 state 受控异步长高）。
+> v3（2026-07-21）：裁决与 4 个 auto_scroll_guard 守卫的语义冲突——重锚收窄到「入场收敛窗」，
+> 详见「§冲突裁决（v3）」；同时修正两个测试用例的基建缺陷（惯性甩飞／结构性追加混入刺激）。
 
 ## 现象与复现
 
@@ -30,6 +32,40 @@
 4. `programmatic` 期间跳过的通知由既有动画完成后的 distance follow-up 兜底收敛（有专项回归锁住）。
 
 detached（用户上滑）路径不受影响：`shouldFollowLatest=false` 直接短路，沿用既有像素补偿机制。handler 不 `setState`、不改变 follow/detached 模式。
+
+## 冲突裁决（v3）：重锚收窄到「入场收敛窗」
+
+**冲突现场**：v2 的 handler 对「贴底＋位移>0.5」一律重锚，打挂 4 个 auto_scroll_guard 守卫
+（「贴底状态下 AI 新消息/临时流式消息/空时间线临时消息不应自动请求回底」＋「流式更新气泡锚点 Key 稳定」）。
+根因：**消息追加与纯渲染层长高在 ScrollMetrics 层完全同构**（都是 active sliver 向 min 侧扩展），
+指标层不可区分；而产品既有裁决（`_shouldStabilizeFollowLatestViewport`）明确规定贴底时新 AI 消息
+**不**拉底（读稳定哲学），只有同尾流式增长、输入区高度变化、pinLatestTail（用户刚发送）等才稳底。
+
+**裁决**：本任务只治 PRD 目标句所写的「**进入会话**后的渲染层收敛」，不越权接管结构性变化后的锚定：
+
+1. 新增布尔窗 `_entryRenderConvergenceActive`（入场收敛窗）：
+   - **开窗**：`_didInitialBottomPosition` 置位（初始置底完成）时；
+   - **关窗（一次性，切会话前不再开）**：① 首次**实质性**时间线结构变化——合并时间线的
+     `length`/首尾消息 id 变化、历史 prepend、`contextStartMessageId` 变化（**identity 变化但内容
+     等同的刷新不关窗**，防真机上「入库回流的同内容列表」把窗口误关导致修复失效）；
+     ② 用户手势接管（`_lockAutoScrollForUserInterruption`）；③ 历史分页锁（`_lockAutoScrollForHistoryPaging`）；
+   - **复位**：conversationId 变化时随 `_didInitialBottomPosition` 一起复位，下次初始置底重新开窗。
+2. handler 守卫链在 `_didInitialBottomPosition` 之后追加 `_entryRenderConvergenceActive`。
+   窗内的位移**定义上**只能来自纯渲染层（尚未发生过结构变化），可安全重锚；窗外的 extent 演变
+   全部让位给既有稳定化路径（结构写稳底、G2.1 通道稳底、detached 补偿）。
+3. 窗内与既有稳底重叠的场景（如入场后立刻输入区升高）：稳底 post-frame 先执行、
+   metrics 通知 microtask 后到，届时距离≤0.5 幂等短路，无双跳、无日志污染（守卫已验证）。
+
+**代价（如实声明）**：窗口关闭后发生的纯渲染层长高（如进入很久后收到的新表情消息在贴底时解码）
+不再由本机制纠正——该场景归属既有语义：新消息本就不拉底（守卫锁定），pinLatestTail 发送链路有
+post-frame＋260ms 长尾重试兜底。此为按产品裁决主动选择的边界，非遗漏。
+
+**测试基建修正（v3）**：
+- 「跨帧多次长高」用例改为**同一条尾消息的两个 EmojiBlock 分批放行**（原设计用追加新消息制造第二次长高，
+  既与裁决冲突，又踩中 `tester.drag`/追加后的测试基建问题）；
+- 「用户拖动脱离」用例改用手工手势（分步 move＋静置>100ms 再抬手）压掉速度采样，杜绝
+  `tester.drag` 惯性 fling 把列表甩出 cacheExtent 导致表情组件被虚拟化回收（此前 finder=0 的真凶）；
+- 新增负向用例锁裁决：窗口关闭（结构性追加）后，后续渲染层长高不得再触发 metricsReanchor。
 
 ## 非目标
 

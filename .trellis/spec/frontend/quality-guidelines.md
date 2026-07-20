@@ -81,6 +81,16 @@ Questions to answer:
 2. **select 的字段类型必须有值相等性**。配置类（如 `MessageFormatConfig`）若不实现 `==`/`hashCode`，settings 每次重建新实例时 select 照样触发重建，粒度优化失效。新增配置类必须实现值相等（含 List 字段逐项比较）。
 3. 守卫测试模式：用 `ChatMessageList.onDebugListItemCountChanged` 之类的 build 计数钩子断言「无关字段变化 build 计数不增长、相关字段变化必须增长」。正例：`test/ui/features/chat/widgets/chat_message_list_settings_select_test.dart`。
 
+### 流式投影双通道契约（2026-07-21 沉淀，任务 07-20-stream-active-bubble）
+
+流式期间 UI 投影分两条通道，禁止回退到「每 flush 全量替换时间线」的旧模式：
+
+1. **结构转移走时间线**（增量 diff 写：removed=id 差集、upsert=新 id/视觉变化；空 diff 不触 cache）：占位出现/钉底、壳出现/换 id、chunk seal、揭示放行、pendingAudio、finalize、reset/interrupt。窗口通知数必须与结构转移数同阶（守卫：characterization 载荷 spy 与 100 delta 用例）。
+2. **活跃尾文本增长走瞬态通道**（`activeStreamProjectionsProvider`，单 owner map）：`(generationSeq=runId, writeEpoch)` 字典序 CAS，旧流 publish/clear 均不得影响新流；`tailText` 只能取自物化管线的 active descriptor（已 sanitize），禁止另建第二套解析；顺序契约＝先写时间线后 publish、reset/remove 先 clear 再撤壳。
+3. **消费端**：气泡在列表 presentation 层包 Consumer select 按 (conversationId, tailMessageId) 命中；列表用 `listenManual` 长驻窄信号（仅同尾同相位文本增长触发）只调度视口稳底——纯 delta 期间不 rebuild widget 的场景**禁止依赖 build 期 `ref.listen`** 做旁路副作用（首个变化后可能失联，实测踩坑）。
+4. **首次出现 vs 增长的分工**：壳首次出现是结构事件，由 didUpdateWidget 稳底路径负责；窄信号只管增长步。窄信号稳底必须带多帧＋长尾（260ms）重试——布局下一帧生效且流末尾无后续信号，实测单次调度留 ~14px 残差。
+5. **开关语义**：`streamProjectionPolicyProvider` off＝严格回滚面——机制分流、气泡 Consumer、列表订阅整组关闭，off 子树与旧实现一致（守卫：settings_select「off 下通道发布不重建/不上屏」）。基线测试必须显式钉 policy，不得依赖全局默认。
+
 ---
 
 ## Testing Requirements
