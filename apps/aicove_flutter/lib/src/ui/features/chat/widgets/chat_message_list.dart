@@ -500,20 +500,36 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     _handleDidUpdateWidget(oldWidget);
   }
 
+  /// G2.1 活跃流通道开关（应用生命周期常量；off＝严格回滚面）。
+  bool get _streamChannelEnabled =>
+      ref.read(streamProjectionPolicyProvider).useActiveStreamChannel;
+
   @override
   Widget build(BuildContext context) {
     final actions = ref.watch(chatActionsProvider);
-    // G2.1 活跃流通道窄信号：通道尾变化只调度视口稳底，不重建列表（07-20 design v2 §2.7）。
-    ref.listen<int?>(activeStreamProjectionsProvider.select((projections) {
-      final projection = projections[widget.conversationId];
-      return projection == null
-          ? null
-          : Object.hash(projection.tailMessageId, projection.tailText.length,
-              projection.phase);
-    }), (previous, next) {
-      if (next == null || previous == next) return;
-      _onActiveStreamTailChanged();
-    });
+    // G2.1 活跃流通道窄信号：通道尾文本增长只调度视口稳底，不重建列表
+    //（07-20 design v2 §2.7）。policy off 时不建立任何通道监听（B-01：
+    // off 必须是严格回滚面）；policy 为应用生命周期常量，条件挂载安全。
+    if (_streamChannelEnabled) {
+      ref.listen<(String?, int, ActiveStreamPhase)?>(
+          activeStreamProjectionsProvider.select((projections) {
+        final projection = projections[widget.conversationId];
+        return projection == null
+            ? null
+            : (
+                projection.tailMessageId,
+                projection.tailText.length,
+                projection.phase,
+              );
+      }), (previous, next) {
+        // 仅处理「同一尾、同相位、文本增长」：新壳/换尾属结构事件，
+        // 由时间线写入触发的 didUpdateWidget 稳底路径负责（S-04）。
+        if (previous == null || next == null) return;
+        if (previous.$1 != next.$1 || previous.$3 != next.$3) return;
+        if (next.$2 <= previous.$2) return;
+        _onActiveStreamTailChanged();
+      });
+    }
     // 字段级订阅：设置里无关字段变化不再重建整颗消息列表
     final uiScale = ref.watch(appSettingsProvider.select(
       (settings) => (settings.valueOrNull?.uiScaleFactor ?? 1.0)
@@ -582,41 +598,48 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
 
     return Stack(
       children: [
-        NotificationListener<ScrollNotification>(
-          onNotification: _handleScrollNotification,
-          child: ScrollConfiguration(
-            behavior: const _ChatMessageListScrollBehavior(),
-            child: CustomScrollView(
-              key: _listViewportKey,
-              controller: _scrollController,
-              reverse: true,
-              center: _centerKey,
-              physics: const _ChatHistoryPagingScrollPhysics(
-                parent: AlwaysScrollableScrollPhysics(),
+        // ScrollMetricsNotification 不是 ScrollNotification 子类，须独立监听；
+        // 覆盖「纯渲染层长高（表情/图片解码、字体、视口尺寸变化）不经
+        // didUpdateWidget、follow-latest 稳定化收不到信号」的重锚缺口
+        // （07-20-chat-entry-bottom-anchor）。
+        NotificationListener<ScrollMetricsNotification>(
+          onNotification: _handleScrollMetricsNotification,
+          child: NotificationListener<ScrollNotification>(
+            onNotification: _handleScrollNotification,
+            child: ScrollConfiguration(
+              behavior: const _ChatMessageListScrollBehavior(),
+              child: CustomScrollView(
+                key: _listViewportKey,
+                controller: _scrollController,
+                reverse: true,
+                center: _centerKey,
+                physics: const _ChatHistoryPagingScrollPhysics(
+                  parent: AlwaysScrollableScrollPhysics(),
+                ),
+                cacheExtent: 500,
+                slivers: [
+                  SliverPadding(
+                    padding: EdgeInsets.only(
+                      left: 4,
+                      right: 4,
+                      bottom: listBottomPadding,
+                    ),
+                    sliver: SliverList(delegate: activeDelegate),
+                  ),
+                  SliverToBoxAdapter(
+                    key: _centerKey,
+                    child: const SizedBox.shrink(),
+                  ),
+                  SliverPadding(
+                    padding: const EdgeInsets.only(
+                      left: 4,
+                      right: 4,
+                      top: 10,
+                    ),
+                    sliver: SliverList(delegate: historyDelegate),
+                  ),
+                ],
               ),
-              cacheExtent: 500,
-              slivers: [
-                SliverPadding(
-                  padding: EdgeInsets.only(
-                    left: 4,
-                    right: 4,
-                    bottom: listBottomPadding,
-                  ),
-                  sliver: SliverList(delegate: activeDelegate),
-                ),
-                SliverToBoxAdapter(
-                  key: _centerKey,
-                  child: const SizedBox.shrink(),
-                ),
-                SliverPadding(
-                  padding: const EdgeInsets.only(
-                    left: 4,
-                    right: 4,
-                    top: 10,
-                  ),
-                  sliver: SliverList(delegate: historyDelegate),
-                ),
-              ],
             ),
           ),
         ),

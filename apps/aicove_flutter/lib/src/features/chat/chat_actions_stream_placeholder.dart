@@ -534,8 +534,9 @@ class _StreamPlaceholderDelivery {
       _ref
           .read(activeStreamProjectionsProvider.notifier)
           .clear(convId, generationSeq: generationSeq);
-    } catch (_) {
-      // ProviderContainer 销毁等场景：通道随 container 消亡，无需清理。
+    } on StateError catch (_) {
+      // 仅降级 container 已销毁场景（ref 失效）：通道随 container 消亡。
+      // 其他异常照常抛出，避免掩盖幽灵通道（审查 S-05）。
     }
   }
 

@@ -857,10 +857,9 @@ void main() {
 
       final finalAssistant = _assistantRealText(probe.snapshots.last);
       expect(
-        finalAssistant.any((m) => m.displayText.contains(fullText) ||
-            m.displayText.contains('字0')),
+        finalAssistant.any((m) => m.displayText.contains(fullText)),
         isTrue,
-        reason: '现状：finalize 后终态应包含流式累积正文。',
+        reason: '现状：finalize 后终态应包含完整流式正文（不接受只剩首 delta）。',
       );
     });
   });
@@ -1009,7 +1008,6 @@ void main() {
       // Find first snapshot with generating placeholder and whether real text
       // coexists / replaces it later.
       var sawPlaceholderAlone = false;
-      var sawPlaceholderWithOrAfterReal = false;
       String? firstPlaceholderId;
       final placeholderIds = <String>{};
       var maxPlaceholderCount = 0;
@@ -1028,7 +1026,6 @@ void main() {
         if (reals.isEmpty) {
           sawPlaceholderAlone = true;
         } else {
-          sawPlaceholderWithOrAfterReal = true;
         }
       }
 
@@ -1081,12 +1078,8 @@ void main() {
             ' observed=${probe.transientReplaceCalls}',
       );
       expect(firstPlaceholderId, isNotNull);
-      // 钉底阶段可能与真实段共存（分段模式 seal 后尾随生成中）。
-      expect(
-        sawPlaceholderAlone || sawPlaceholderWithOrAfterReal,
-        isTrue,
-        reason: '现状：占位至少在某一阶段可见（单独或与 seal 共存）。',
-      );
+      // 注：sawPlaceholderAlone 已在上文单独断言；此处不再重复
+      //（原「A||B」在 A 已恒真时无信息量，见审查 S-06）。
     });
   });
 
@@ -1503,14 +1496,8 @@ void main() {
         reason: '现状：finalize 后无占位。',
       );
 
-      // If mid-stream had separate seals, lock that observation.
-      if (midSealedTexts.contains('甲。')) {
-        expect(
-          midSealedTexts.contains('甲。'),
-          isTrue,
-          reason: '现状：分段开启时流中可按句 seal 为独立气泡。',
-        );
-      }
+      // 流中按句 seal 的节奏与可见性由 J 组（segment reveal pacing）
+      // 专项锁定；此处不做时机敏感断言（原条件自证恒真，见审查 S-06）。
 
       // Persisted raw projection: single assistant raw body (existing contract).
       final stored = await harness.container
@@ -2603,7 +2590,8 @@ void main() {
       );
     });
 
-    test('分段模式 ON：seal 序列不回退，窗口变更不高于 OFF 基线', () async {
+    test('分段模式 ON：终态含全部 seal 段，窗口变更不高于 OFF 基线（中间序列留 T-02 矩阵）',
+        () async {
       final deltas = <_StreamStep>[
         const _DeltaStep('第一句。'),
         const _DelayStep(Duration(milliseconds: 260)),

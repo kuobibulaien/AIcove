@@ -146,7 +146,8 @@ Message resolveActiveStreamTailMessage(
 ) {
   if (live == null ||
       live.phase != ActiveStreamPhase.streamingTail ||
-      live.tailText.isEmpty) {
+      live.tailText.isEmpty ||
+      live.tailMessageId != message.id) {
     return message;
   }
   final blocks = message.blocks;

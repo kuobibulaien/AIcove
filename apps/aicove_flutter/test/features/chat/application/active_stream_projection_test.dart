@@ -1,7 +1,10 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:aicove_flutter/src/core/models/block_status.dart';
+import 'package:aicove_flutter/src/core/models/message_block.dart';
 import 'package:aicove_flutter/src/features/chat/application/active_stream_projection.dart';
+import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 
 ActiveStreamProjection _proj({
   String conversationId = 'conv_a',
@@ -126,5 +129,97 @@ void main() {
     expect(hits, 0, reason: 'conv_b 的更新不应触发 conv_a 的 select 订阅');
     notifier.publish(_proj(conversationId: 'conv_a', tailText: 'x'));
     expect(hits, 1);
+  });
+
+  group('resolveActiveStreamTailMessage（S-02 防御边界）', () {
+    Message textMessage(String id, String content) => Message.fromBlocks(
+          id: id,
+          role: 'assistant',
+          blocks: <MessageBlock>[
+            TextBlock(messageId: id, content: content),
+          ],
+          createdAt: DateTime(2026, 1, 1),
+          status: 'sending',
+        );
+
+    test('命中：单 TextBlock 壳被替换为通道文本', () {
+      final msg = textMessage('msg_tail', '壳');
+      final out = resolveActiveStreamTailMessage(
+        msg,
+        _proj(tailMessageId: 'msg_tail', tailText: '实时文本'),
+      );
+      expect(out.content, '实时文本');
+      expect((out.blocks!.single as TextBlock).content, '实时文本');
+      expect(out.id, msg.id);
+    });
+
+    test('id 不匹配原样返回（helper 自身校验，不依赖调用点 selector）', () {
+      final msg = textMessage('msg_other', '壳');
+      final out = resolveActiveStreamTailMessage(
+        msg,
+        _proj(tailMessageId: 'msg_tail', tailText: '实时文本'),
+      );
+      expect(identical(out, msg), isTrue);
+    });
+
+    test('thinking 相位 / 空文本 / null 均原样返回', () {
+      final msg = textMessage('msg_tail', '壳');
+      expect(
+        identical(
+          resolveActiveStreamTailMessage(
+            msg,
+            _proj(
+              tailMessageId: 'msg_tail',
+              phase: ActiveStreamPhase.thinking,
+            ),
+          ),
+          msg,
+        ),
+        isTrue,
+      );
+      expect(
+        identical(
+          resolveActiveStreamTailMessage(
+            msg,
+            _proj(tailMessageId: 'msg_tail', tailText: ''),
+          ),
+          msg,
+        ),
+        isTrue,
+      );
+      expect(identical(resolveActiveStreamTailMessage(msg, null), msg), isTrue);
+    });
+
+    test('多块 / 非文本块原样返回', () {
+      final multi = Message.fromBlocks(
+        id: 'msg_tail',
+        role: 'assistant',
+        blocks: <MessageBlock>[
+          TextBlock(messageId: 'msg_tail', content: '壳'),
+          TextBlock(messageId: 'msg_tail', content: '第二块'),
+        ],
+        createdAt: DateTime(2026, 1, 1),
+        status: 'sending',
+      );
+      final audio = Message.fromBlocks(
+        id: 'msg_tail',
+        role: 'assistant',
+        blocks: <MessageBlock>[
+          AudioBlock(
+            messageId: 'msg_tail',
+            url: '',
+            text: '语音',
+            status: BlockStatus.pending,
+          ),
+        ],
+        createdAt: DateTime(2026, 1, 1),
+        status: 'sending',
+      );
+      final live = _proj(tailMessageId: 'msg_tail', tailText: '实时文本');
+      expect(identical(resolveActiveStreamTailMessage(multi, live), multi),
+          isTrue);
+      expect(identical(resolveActiveStreamTailMessage(audio, live), audio),
+          isTrue);
+    });
   });
 }

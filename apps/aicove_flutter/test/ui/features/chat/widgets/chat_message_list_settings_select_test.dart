@@ -8,6 +8,7 @@ import 'package:aicove_flutter/src/core/models/message_block.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
+import 'package:aicove_flutter/src/features/chat/application/active_stream_projection.dart';
 import 'package:aicove_flutter/src/features/settings/settings_models.dart';
 import 'package:aicove_flutter/src/ui/features/chat/widgets/chat_message_list.dart';
 import 'package:aicove_flutter/src/ui/features/chat/widgets/chat_message_list_display_cache.dart';
@@ -251,5 +252,37 @@ void main() {
     const def = MessageFormatConfig();
     expect(def.copyWith(), equals(def));
     expect(MessageFormatConfig.fromJson(def.toJson()), equals(def));
+  });
+
+  testWidgets('policy off（默认）：活跃流通道发布不触发列表重建（B-01 严格回滚面）',
+      (tester) async {
+    final buildCount = await pumpList(tester);
+    final before = buildCount();
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(ChatMessageList)),
+    );
+    expect(
+      container.read(streamProjectionPolicyProvider).useActiveStreamChannel,
+      isFalse,
+      reason: '本用例锁定默认 off 行为',
+    );
+
+    container.read(activeStreamProjectionsProvider.notifier).publish(
+          const ActiveStreamProjection(
+            conversationId: 'conv_select_test',
+            generationSeq: 1,
+            writeEpoch: 0,
+            tailMessageId: 'assistant_text_block',
+            tailText: '不应上屏的通道文本',
+            phase: ActiveStreamPhase.streamingTail,
+          ),
+        );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(buildCount(), before,
+        reason: 'off 下列表未挂通道监听/Consumer，通道发布不得引起重建');
+    expect(find.text('不应上屏的通道文本'), findsNothing,
+        reason: 'off 下气泡不订阅通道，壳内容不被替换');
   });
 }
