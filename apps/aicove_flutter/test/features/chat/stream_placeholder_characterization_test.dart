@@ -26,6 +26,7 @@ import 'package:aicove_flutter/src/core/models/block_status.dart';
 import 'package:aicove_flutter/src/core/models/message_block.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
 import 'package:aicove_flutter/src/features/chat/chat_actions.dart';
+import 'package:aicove_flutter/src/features/chat/application/active_stream_projection.dart';
 import 'package:aicove_flutter/src/features/chat/conversation_providers.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
@@ -653,6 +654,7 @@ Future<_Harness> _buildHarness({
   /// activeConversationIdProvider can switch (A→B→A).
   bool switchableActiveConversation = false,
   List<Conversation>? extraConversations,
+  List<Override> extraOverrides = const <Override>[],
 }) async {
   final now = DateTime.now();
   final conv = Conversation(
@@ -679,6 +681,7 @@ Future<_Harness> _buildHarness({
   _RecordingStreamTtsHandler? ttsHandler;
 
   final overrides = <Override>[
+    ...extraOverrides,
     databaseProvider.overrideWithValue(db),
     appSettingsProvider.overrideWith(
       () => _FakeAppSettingsNotifier(settings),
@@ -2469,6 +2472,182 @@ void main() {
           .map((m) => m.displayText)
           .join();
       expect(finalJoined.contains('爆发'), isTrue);
+    });
+  });
+
+  group('G2.1) active-stream channel ON — on/off 对照', () {
+    List<Override> channelOn() => <Override>[
+          streamProjectionPolicyProvider.overrideWithValue(
+            const StreamProjectionPolicy(useActiveStreamChannel: true),
+          ),
+        ];
+
+    test('非分段 10 delta：窗口通知坍缩为结构量级，正文经通道实时上屏', () async {
+      const deltaCount = 10;
+      final deltas = <_StreamStep>[];
+      for (var i = 0; i < deltaCount; i++) {
+        deltas.add(_DeltaStep('字$i'));
+        if (i < deltaCount - 1) {
+          deltas.add(const _DelayStep(Duration(milliseconds: 200)));
+        }
+      }
+      deltas.add(const _DelayStep(Duration(milliseconds: 220)));
+      final fullText = List.generate(deltaCount, (i) => '字$i').join();
+      final settings = _buildTestSettings(enableChunking: false);
+      final harness = await _buildHarness(
+        convId: 'g21_on_nochunk_${DateTime.now().microsecondsSinceEpoch}',
+        settings: settings,
+        script: deltas,
+        replyText: fullText,
+        extraOverrides: channelOn(),
+      );
+      addTearDown(harness.dispose);
+
+      harness.startSend(text: 'G2.1 on');
+      // 流中采样：通道文本增长、窗口壳滞后（文本增长不进时间线）。
+      var sawChannelGrowth = false;
+      var sawStaleShell = false;
+      var lastChannelLen = -1;
+      for (var i = 0; i < 20; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 110));
+        final projections =
+            harness.container.read(activeStreamProjectionsProvider);
+        final live = projections[harness.conv.id];
+        if (live != null && live.phase == ActiveStreamPhase.streamingTail) {
+          if (lastChannelLen >= 0 && live.tailText.length > lastChannelLen) {
+            sawChannelGrowth = true;
+          }
+          lastChannelLen = live.tailText.length;
+          final timeline = await harness.loadTimeline();
+          final tailInWindow = timeline
+              .where((m) => m.id == live.tailMessageId)
+              .toList(growable: false);
+          if (tailInWindow.isNotEmpty &&
+              tailInWindow.single.content.length <
+                  live.tailText.length) {
+            sawStaleShell = true;
+          }
+        }
+      }
+      await harness.awaitActiveSend();
+      final probe = await harness.probeNow();
+
+      expect(sawChannelGrowth, isTrue,
+          reason: '通道 tailText 应随 flush 增长（实时上屏经通道）');
+      expect(sawStaleShell, isTrue,
+          reason: '窗口壳消息文本应滞后于通道（文本增长不触发时间线写入）');
+      // OFF 基线为 11-16（A 组）；ON 只剩结构转移：用户消息、占位/壳出现、
+      // finalize seal、commit 替换等，量级应显著低于 OFF 下限。
+      expect(probe.windowChangeCount, lessThanOrEqualTo(8),
+          reason: 'ON 模式窗口变更应为结构量级'
+              ' observed=${probe.windowChangeCount}');
+      expect(probe.windowChangeCount, greaterThanOrEqualTo(2));
+      // 终态一致：完整正文已在窗口，通道条目已清。
+      final finalTimeline = probe.snapshots.last;
+      expect(
+        finalTimeline.any((m) =>
+            m.role == 'assistant' && m.content.contains(fullText)),
+        isTrue,
+        reason: 'finalize 后完整正文应写入窗口',
+      );
+      expect(
+        harness.container.read(activeStreamProjectionsProvider),
+        isEmpty,
+        reason: '流结束后通道 map 应无残留条目（B3 回收契约）',
+      );
+    });
+
+    test('ON + 真实 interrupt：通道条目清空，无幽灵尾', () async {
+      final deltas = <_StreamStep>[
+        const _DeltaStep('中断前文本'),
+        const _DelayStep(Duration(milliseconds: 400)),
+        const _DeltaStep('更多内容'),
+        const _DelayStep(Duration(milliseconds: 2000)),
+      ];
+      final settings = _buildTestSettings(enableChunking: false);
+      final harness = await _buildHarness(
+        convId: 'g21_on_interrupt_${DateTime.now().microsecondsSinceEpoch}',
+        settings: settings,
+        script: deltas,
+        replyText: '中断前文本更多内容',
+        extraOverrides: channelOn(),
+      );
+      addTearDown(harness.dispose);
+
+      harness.startSend(text: 'G2.1 interrupt');
+      // 等通道出现活跃尾。
+      var live = false;
+      for (var i = 0; i < 20 && !live; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        final projections =
+            harness.container.read(activeStreamProjectionsProvider);
+        live = projections[harness.conv.id]?.phase ==
+            ActiveStreamPhase.streamingTail;
+      }
+      expect(live, isTrue, reason: '中断前应观察到活跃尾通道条目');
+
+      final stopped = await harness.interrupt();
+      expect(stopped, isTrue);
+      await harness.awaitActiveSend(settle: const Duration(milliseconds: 200));
+
+      expect(
+        harness.container.read(activeStreamProjectionsProvider),
+        isEmpty,
+        reason: 'interrupt 后通道条目应被清空（design v2 §2.5）',
+      );
+      final timeline = await harness.loadTimeline();
+      expect(
+        timeline.where((m) => m.role == 'assistant' && m.status == 'sending'),
+        isEmpty,
+        reason: 'interrupt 后窗口不应残留 sending 幽灵尾',
+      );
+    });
+
+    test('分段模式 ON：seal 序列不回退，窗口变更不高于 OFF 基线', () async {
+      final deltas = <_StreamStep>[
+        const _DeltaStep('第一句。'),
+        const _DelayStep(Duration(milliseconds: 260)),
+        const _DeltaStep('第二句。'),
+        const _DelayStep(Duration(milliseconds: 260)),
+        const _DeltaStep('第三句。'),
+        const _DelayStep(Duration(milliseconds: 260)),
+      ];
+      final settings = _buildTestSettings(
+        enableChunking: true,
+        minSegmentLength: 1,
+      );
+      final harness = await _buildHarness(
+        convId: 'g21_on_chunk_${DateTime.now().microsecondsSinceEpoch}',
+        settings: settings,
+        script: deltas,
+        replyText: '第一句。第二句。第三句。',
+        extraOverrides: channelOn(),
+      );
+      addTearDown(harness.dispose);
+
+      final probe = await harness.runSend(
+        text: 'G2.1 chunk on',
+        sampleInterval: const Duration(milliseconds: 100),
+        sampleTicks: 14,
+      );
+
+      final finalTimeline = probe.snapshots.last;
+      final assistantTexts = [
+        for (final m in finalTimeline)
+          if (m.role == 'assistant') m.content,
+      ].join('|');
+      expect(assistantTexts, contains('第一句。'));
+      expect(assistantTexts, contains('第二句。'));
+      expect(assistantTexts, contains('第三句。'));
+      // B 组 OFF 基线 3-10；ON 不应更差。
+      expect(probe.windowChangeCount, lessThanOrEqualTo(10),
+          reason: '分段模式 ON 的窗口变更不应高于 OFF 基线'
+              ' observed=${probe.windowChangeCount}');
+      expect(
+        harness.container.read(activeStreamProjectionsProvider),
+        isEmpty,
+        reason: '流结束后通道无残留',
+      );
     });
   });
 }
