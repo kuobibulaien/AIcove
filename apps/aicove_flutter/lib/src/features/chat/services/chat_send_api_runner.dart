@@ -18,7 +18,6 @@ import '../../../core/utils/mime_utils.dart';
 import '../../settings/settings_models.dart';
 import '../../observability/trace_models.dart';
 import '../../observability/trace_store.dart';
-import 'chat_request_message_builder.dart';
 import 'chat_tool_fallback_parser.dart';
 import 'chat_types.dart';
 import 'stream_monitor_service.dart';

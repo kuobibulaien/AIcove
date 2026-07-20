@@ -87,6 +87,7 @@ class _StreamPlaceholderDelivery {
   _StreamPlaceholderDelivery(
     this._ref, {
     required this.convId,
+    required this.generationSeq,
     required this.formatConfig,
     required this.enableTtsPlaceholders,
     this.segmentDelay = Duration.zero,
@@ -99,9 +100,17 @@ class _StreamPlaceholderDelivery {
 
   final Ref _ref;
   final String convId;
+
+  /// ChatActions 分配的 runId（跨 delivery 实例全局单调），
+  /// 活跃流通道 CAS 的主身份（07-20 任务 design v2 §2.1）。
+  final int generationSeq;
   final MessageFormatConfig formatConfig;
   final bool enableTtsPlaceholders;
   final Duration segmentDelay;
+
+  /// G2.1 活跃流通道开关；false＝旧全量 transient 路径（默认）。
+  late final bool _useActiveStreamChannel =
+      _ref.read(streamProjectionPolicyProvider).useActiveStreamChannel;
 
   final StringBuffer _rawStreamText = StringBuffer();
   final List<Message> _currentTimelineMessages = <Message>[];
@@ -147,6 +156,8 @@ class _StreamPlaceholderDelivery {
     final discardedMessages =
         List<Message>.from(_currentTimelineMessages, growable: false);
     _writeEpoch += 1;
+    // 先使当前代通道失效，再撤壳（design v2 §2.5）。
+    _clearActiveStreamProjection();
     _fallbackTriggered = false;
     _fallbackObserved = false;
     _receivedDelta = false;
@@ -205,6 +216,7 @@ class _StreamPlaceholderDelivery {
     final previousMessages =
         List<Message>.from(_currentTimelineMessages, growable: false);
     _writeEpoch += 1;
+    _clearActiveStreamProjection();
     _currentTimelineMessages.clear();
     _stablePendingAudioMessages.clear();
     _rawStreamText.clear();
@@ -298,6 +310,7 @@ class _StreamPlaceholderDelivery {
 
   Future<void> removePlaceholders() async {
     _writeEpoch += 1;
+    _clearActiveStreamProjection();
     _cancelThinkingPlaceholderTimer();
     _flushTimer?.cancel();
     _flushTimer = null;
@@ -322,6 +335,7 @@ class _StreamPlaceholderDelivery {
   void dispose() {
     _disposed = true;
     _writeEpoch += 1;
+    _clearActiveStreamProjection();
     _cancelThinkingPlaceholderTimer();
     _flushTimer?.cancel();
     _flushTimer = null;
@@ -395,25 +409,134 @@ class _StreamPlaceholderDelivery {
       final previousMessages =
           List<Message>.from(_currentTimelineMessages, growable: false);
       final sourceRaw = _finalizedRawText ?? _rawStreamText.toString();
-      final messages = _materializeTimeline(
-        _buildTimelineDescriptors(sourceRaw, finalize: finalize),
-      );
-      final shouldNotifyTimeline =
-          !_streamTimelineMessagesVisuallyEqual(previousMessages, messages);
+      final descriptors = _buildTimelineDescriptors(sourceRaw, finalize: finalize);
+      final messages = _materializeTimeline(descriptors);
+      if (!_useActiveStreamChannel) {
+        // 旧路径：视觉变化即全量替换（policy off，行为与改造前逐字节一致）。
+        final shouldNotifyTimeline =
+            !_streamTimelineMessagesVisuallyEqual(previousMessages, messages);
+        _currentTimelineMessages
+          ..clear()
+          ..addAll(messages);
+        if (!shouldNotifyTimeline) return;
+        await _ref
+            .read(conversationTimelineCacheProvider)
+            .replaceMessagesTransient(
+              conversationId: convId,
+              removeMessageIds: [
+                for (final message in previousMessages) message.id,
+              ],
+              messages: messages,
+            );
+        return;
+      }
+      // 新路径（design v2 §2.2/2.3/2.5）：结构增量写时间线，活跃尾文本走通道。
+      final tail = _locateActiveTail(descriptors, messages);
       _currentTimelineMessages
         ..clear()
         ..addAll(messages);
-      if (!shouldNotifyTimeline) return;
-      await _ref
-          .read(conversationTimelineCacheProvider)
-          .replaceMessagesTransient(
-            conversationId: convId,
-            removeMessageIds: [
-              for (final message in previousMessages) message.id,
-            ],
-            messages: messages,
-          );
+      final previousById = {
+        for (final message in previousMessages) message.id: message,
+      };
+      final nextIds = {for (final message in messages) message.id};
+      final removedIds = [
+        for (final message in previousMessages)
+          if (!nextIds.contains(message.id)) message.id,
+      ];
+      final upserts = <Message>[];
+      for (final message in messages) {
+        final previous = previousById[message.id];
+        if (previous == null) {
+          upserts.add(message);
+          continue;
+        }
+        final isActiveTailText = tail != null &&
+            tail.phase == ActiveStreamPhase.streamingTail &&
+            message.id == tail.tailMessageId;
+        if (isActiveTailText) {
+          // 活跃尾：仅结构面变化（状态/块形）才升级壳；文本增长只走通道。
+          if (!_tailShellVisuallyEqual(previous, message)) {
+            upserts.add(message);
+          }
+        } else if (!_streamTimelineMessageVisuallyEqual(previous, message)) {
+          upserts.add(message);
+        }
+      }
+      if (removedIds.isNotEmpty || upserts.isNotEmpty) {
+        await _ref
+            .read(conversationTimelineCacheProvider)
+            .replaceMessagesTransient(
+              conversationId: convId,
+              removeMessageIds: removedIds,
+              messages: upserts,
+            );
+      }
+      if (_disposed || writeEpoch != _writeEpoch) return;
+      // 先写时间线再 publish（design v2 §2.5 交接顺序）。
+      final channel = _ref.read(activeStreamProjectionsProvider.notifier);
+      if (tail != null) {
+        channel.publish(ActiveStreamProjection(
+          conversationId: convId,
+          generationSeq: generationSeq,
+          writeEpoch: writeEpoch,
+          tailMessageId: tail.tailMessageId,
+          tailText: tail.tailText,
+          phase: tail.phase,
+        ));
+      } else {
+        channel.clear(convId, generationSeq: generationSeq);
+      }
     });
+  }
+
+  /// 定位当前物化序列里的活跃尾：非分段模式的增长文本或「生成中」占位。
+  ({String tailMessageId, String tailText, ActiveStreamPhase phase})?
+      _locateActiveTail(
+    List<_StreamDescriptor> descriptors,
+    List<Message> messages,
+  ) {
+    // 注意：生成中占位被钉在序列尾部，活跃文本（若有）在它之前——
+    // 活跃文本优先（streamingTail），仅有占位时报 thinking。
+    String? thinkingMessageId;
+    for (var index = descriptors.length - 1; index >= 0; index--) {
+      final descriptor = descriptors[index];
+      if (descriptor.kind != _StreamDescriptorKind.text) continue;
+      final isGenerating = descriptor.content == kGeneratingText &&
+          descriptor.textStatus == BlockStatus.streaming;
+      if (isGenerating) {
+        thinkingMessageId ??= messages[index].id;
+        continue;
+      }
+      if (descriptor.messageStatus == 'sending') {
+        return (
+          tailMessageId: messages[index].id,
+          tailText: descriptor.content,
+          phase: ActiveStreamPhase.streamingTail,
+        );
+      }
+      // 已 seal 的文本段：不再向前找活跃文本（活跃段只会在 seal 段之后）。
+      break;
+    }
+    if (thinkingMessageId != null) {
+      return (
+        tailMessageId: thinkingMessageId,
+        tailText: '',
+        phase: ActiveStreamPhase.thinking,
+      );
+    }
+    return null;
+  }
+
+  /// 清除本代活跃流通道条目（CAS：旧代 clear 不伤新流）。
+  void _clearActiveStreamProjection() {
+    try {
+      if (!_useActiveStreamChannel) return;
+      _ref
+          .read(activeStreamProjectionsProvider.notifier)
+          .clear(convId, generationSeq: generationSeq);
+    } catch (_) {
+      // ProviderContainer 销毁等场景：通道随 container 消亡，无需清理。
+    }
   }
 
   List<_StreamDescriptor> _buildTimelineDescriptors(
@@ -1179,4 +1302,26 @@ bool streamTextEndsWithChunkBoundary(
     }
   }
   return false;
+}
+
+/// 活跃尾「壳面」比较：忽略文本内容增长（文本走通道），
+/// 其余任何变化（状态/时间/块形/错误）都视为结构转移。
+bool _tailShellVisuallyEqual(Message left, Message right) {
+  if (left.id != right.id ||
+      left.role != right.role ||
+      left.sourceMessageId != right.sourceMessageId ||
+      left.createdAt != right.createdAt ||
+      left.status != right.status) {
+    return false;
+  }
+  final leftBlocks = left.blocks ?? const <MessageBlock>[];
+  final rightBlocks = right.blocks ?? const <MessageBlock>[];
+  if (leftBlocks.length != 1 || rightBlocks.length != 1) return false;
+  final leftBlock = leftBlocks.single;
+  final rightBlock = rightBlocks.single;
+  return leftBlock is TextBlock &&
+      rightBlock is TextBlock &&
+      leftBlock.status == rightBlock.status &&
+      leftBlock.modelId == rightBlock.modelId &&
+      leftBlock.errorMessage == rightBlock.errorMessage;
 }

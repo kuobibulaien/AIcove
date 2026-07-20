@@ -20,6 +20,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../auto_reply/data/analyzer_scheduler.dart';
 import '../auto_reply/data/auto_reply_trigger.dart';
 import 'data/enhanced_dialogue_service.dart';
+import 'application/active_stream_projection.dart';
 import 'application/chat_ports.dart';
 import 'application/chat_send_use_case.dart';
 import 'application/chat_turn_command.dart';
@@ -583,6 +584,7 @@ class ChatActions {
     streamDelivery = _StreamPlaceholderDelivery(
       _ref,
       convId: convId,
+      generationSeq: runId,
       formatConfig: initialSettings.messageFormatConfig,
       enableTtsPlaceholders: initialSettings.ttsEnabled,
       segmentDelay: Duration(
@@ -615,6 +617,7 @@ class ChatActions {
             streamDelivery = _StreamPlaceholderDelivery(
               _ref,
               convId: convId,
+              generationSeq: runId,
               formatConfig: settings.messageFormatConfig,
               enableTtsPlaceholders: settings.ttsEnabled,
               segmentDelay: Duration(

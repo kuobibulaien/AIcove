@@ -269,6 +269,7 @@ extension ChatActionsActionOps on ChatActions {
               streamDelivery = _StreamPlaceholderDelivery(
                 _ref,
                 convId: convId,
+                generationSeq: runId,
                 formatConfig: settings.messageFormatConfig,
                 enableTtsPlaceholders: settings.ttsEnabled,
                 segmentDelay: Duration(
@@ -612,6 +613,7 @@ extension ChatActionsActionOps on ChatActions {
               streamDelivery = _StreamPlaceholderDelivery(
                 _ref,
                 convId: convId,
+                generationSeq: runId,
                 formatConfig: settings.messageFormatConfig,
                 enableTtsPlaceholders: settings.ttsEnabled,
                 segmentDelay: Duration(

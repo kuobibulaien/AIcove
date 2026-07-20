@@ -1,5 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/models/message_block.dart';
+import '../domain/message.dart';
+
 /// 流式活跃尾投影（G2.1 瞬态通道，任务 07-20-stream-active-bubble）。
 ///
 /// 仅供 UI 渲染流式期间的活跃尾文本与「生成中」占位——
@@ -132,3 +135,27 @@ final activeStreamProjectionsProvider = NotifierProvider<
     ActiveStreamProjectionsNotifier, Map<String, ActiveStreamProjection>>(
   ActiveStreamProjectionsNotifier.new,
 );
+
+/// 把活跃尾壳消息替换为通道实时文本（仅 UI 渲染层使用）。
+///
+/// 命中条件：通道处于 streamingTail、文本非空、壳消息恰为单 TextBlock。
+/// 不命中时原样返回，绝不修改持久层或模型上下文。
+Message resolveActiveStreamTailMessage(
+  Message message,
+  ActiveStreamProjection? live,
+) {
+  if (live == null ||
+      live.phase != ActiveStreamPhase.streamingTail ||
+      live.tailText.isEmpty) {
+    return message;
+  }
+  final blocks = message.blocks;
+  if (blocks == null || blocks.length != 1) return message;
+  final block = blocks.single;
+  if (block is! TextBlock) return message;
+  if (block.content == live.tailText) return message;
+  return message.copyWith(
+    content: live.tailText,
+    blocks: <MessageBlock>[block.copyWith(content: live.tailText)],
+  );
+}
