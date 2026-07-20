@@ -598,48 +598,41 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
 
     return Stack(
       children: [
-        // ScrollMetricsNotification 不是 ScrollNotification 子类，须独立监听；
-        // 覆盖「纯渲染层长高（表情/图片解码、字体、视口尺寸变化）不经
-        // didUpdateWidget、follow-latest 稳定化收不到信号」的重锚缺口
-        // （07-20-chat-entry-bottom-anchor）。
-        NotificationListener<ScrollMetricsNotification>(
-          onNotification: _handleScrollMetricsNotification,
-          child: NotificationListener<ScrollNotification>(
-            onNotification: _handleScrollNotification,
-            child: ScrollConfiguration(
-              behavior: const _ChatMessageListScrollBehavior(),
-              child: CustomScrollView(
-                key: _listViewportKey,
-                controller: _scrollController,
-                reverse: true,
-                center: _centerKey,
-                physics: const _ChatHistoryPagingScrollPhysics(
-                  parent: AlwaysScrollableScrollPhysics(),
-                ),
-                cacheExtent: 500,
-                slivers: [
-                  SliverPadding(
-                    padding: EdgeInsets.only(
-                      left: 4,
-                      right: 4,
-                      bottom: listBottomPadding,
-                    ),
-                    sliver: SliverList(delegate: activeDelegate),
-                  ),
-                  SliverToBoxAdapter(
-                    key: _centerKey,
-                    child: const SizedBox.shrink(),
-                  ),
-                  SliverPadding(
-                    padding: const EdgeInsets.only(
-                      left: 4,
-                      right: 4,
-                      top: 10,
-                    ),
-                    sliver: SliverList(delegate: historyDelegate),
-                  ),
-                ],
+        NotificationListener<ScrollNotification>(
+          onNotification: _handleScrollNotification,
+          child: ScrollConfiguration(
+            behavior: const _ChatMessageListScrollBehavior(),
+            child: CustomScrollView(
+              key: _listViewportKey,
+              controller: _scrollController,
+              reverse: true,
+              center: _centerKey,
+              physics: const _ChatHistoryPagingScrollPhysics(
+                parent: AlwaysScrollableScrollPhysics(),
               ),
+              cacheExtent: 500,
+              slivers: [
+                SliverPadding(
+                  padding: EdgeInsets.only(
+                    left: 4,
+                    right: 4,
+                    bottom: listBottomPadding,
+                  ),
+                  sliver: SliverList(delegate: activeDelegate),
+                ),
+                SliverToBoxAdapter(
+                  key: _centerKey,
+                  child: const SizedBox.shrink(),
+                ),
+                SliverPadding(
+                  padding: const EdgeInsets.only(
+                    left: 4,
+                    right: 4,
+                    top: 10,
+                  ),
+                  sliver: SliverList(delegate: historyDelegate),
+                ),
+              ],
             ),
           ),
         ),

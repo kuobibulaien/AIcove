@@ -235,7 +235,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
         child: bubbleWidget,
       );
     }
-  Widget _buildPlainChatBubble(
+  Widget buildPlainChatBubble(
     BuildContext context,
     Message message,
     bool isMe,
@@ -271,7 +271,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
         // 文本增长重建，其余气泡 select 恒 null；policy off 时不包 Consumer、
         // 不建订阅，气泡子树与改造前一致（B-01：off＝严格回滚面）。
         child: !_streamChannelEnabled
-            ? _buildPlainChatBubble(context, message, isMe, item, actions)
+            ? buildPlainChatBubble(context, message, isMe, item, actions)
             : Consumer(builder: (context, ref, _) {
                 final live = ref.watch(activeStreamProjectionsProvider.select(
                   (projections) {
@@ -282,7 +282,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
                         : null;
                   },
                 ));
-                return _buildPlainChatBubble(
+                return buildPlainChatBubble(
                   context,
                   resolveActiveStreamTailMessage(message, live),
                   isMe,
