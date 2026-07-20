@@ -279,6 +279,16 @@ class _ScriptedStreamingSendService extends ChatSendService {
     required this.replyText,
     this.processedText,
     this.pluginEvents = const <PluginEvent>[],
+    /// Optional: per-execute-call scripts (1-based call order → 0-index).
+    /// Used by retry/new-delivery characterization (G). Falls back to [script].
+    this.scriptsByCall,
+    this.replyTextsByCall,
+    this.processedTextsByCall,
+    /// Optional: per-sessionId scripts for concurrent multi-conversation (I).
+    /// Takes priority over [scriptsByCall] / [script] when session matches.
+    this.scriptsBySession,
+    this.replyTextsBySession,
+    this.processedTextsBySession,
   });
 
   final AppSettings _settings;
@@ -286,10 +296,56 @@ class _ScriptedStreamingSendService extends ChatSendService {
   final String replyText;
   final String? processedText;
   final List<PluginEvent> pluginEvents;
+  final List<List<_StreamStep>>? scriptsByCall;
+  final List<String>? replyTextsByCall;
+  final List<String?>? processedTextsByCall;
+  final Map<String, List<_StreamStep>>? scriptsBySession;
+  final Map<String, String>? replyTextsBySession;
+  final Map<String, String?>? processedTextsBySession;
 
   int executeCalls = 0;
   int resetCalls = 0;
   int deltaCalls = 0;
+  final List<String> executeSessionIds = <String>[];
+
+  List<_StreamStep> _resolveScript(String sessionId, int callIndex) {
+    final bySession = scriptsBySession;
+    if (bySession != null && bySession.containsKey(sessionId)) {
+      return bySession[sessionId]!;
+    }
+    final byCall = scriptsByCall;
+    if (byCall != null && byCall.isNotEmpty) {
+      final i = callIndex.clamp(0, byCall.length - 1);
+      return byCall[i];
+    }
+    return script;
+  }
+
+  String _resolveReplyText(String sessionId, int callIndex) {
+    final bySession = replyTextsBySession;
+    if (bySession != null && bySession.containsKey(sessionId)) {
+      return bySession[sessionId]!;
+    }
+    final byCall = replyTextsByCall;
+    if (byCall != null && byCall.isNotEmpty) {
+      final i = callIndex.clamp(0, byCall.length - 1);
+      return byCall[i];
+    }
+    return replyText;
+  }
+
+  String? _resolveProcessedText(String sessionId, int callIndex) {
+    final bySession = processedTextsBySession;
+    if (bySession != null && bySession.containsKey(sessionId)) {
+      return bySession[sessionId];
+    }
+    final byCall = processedTextsByCall;
+    if (byCall != null && byCall.isNotEmpty) {
+      final i = callIndex.clamp(0, byCall.length - 1);
+      return byCall[i];
+    }
+    return processedText;
+  }
 
   @override
   Future<List<Message>> loadConversationMessagesFromStore({
@@ -355,7 +411,13 @@ class _ScriptedStreamingSendService extends ChatSendService {
     void Function()? onStreamingFallback,
   }) async {
     executeCalls += 1;
-    for (final step in script) {
+    final callIndex = executeCalls - 1;
+    executeSessionIds.add(sessionId);
+    final steps = _resolveScript(sessionId, callIndex);
+    final resolvedReply = _resolveReplyText(sessionId, callIndex);
+    final resolvedProcessed =
+        _resolveProcessedText(sessionId, callIndex) ?? resolvedReply;
+    for (final step in steps) {
       switch (step) {
         case _DeltaStep(:final text):
           deltaCalls += 1;
@@ -370,8 +432,8 @@ class _ScriptedStreamingSendService extends ChatSendService {
       }
     }
     return ApiCallResult(
-      replyText: replyText,
-      processedText: processedText ?? replyText,
+      replyText: resolvedReply,
+      processedText: resolvedProcessed,
       pluginEvents: pluginEvents,
       toolResults: const <Map<String, dynamic>>[],
     );
@@ -485,6 +547,11 @@ class _Harness {
   final StreamSubscription<ConversationTimelineWindowState> _sub;
   final List<ConversationTimelineWindowState> _emissions;
 
+  Future<void>? _activeSend;
+
+  /// In-flight send future started by [startSend], if any.
+  Future<void>? get activeSend => _activeSend;
+
   Future<_WindowProbe> runSend({
     String text = 'characterization',
     Duration sampleInterval = const Duration(milliseconds: 60),
@@ -520,6 +587,48 @@ class _Harness {
     );
   }
 
+  /// Start send without awaiting completion (for mid-stream interrupt / sample).
+  void startSend({String text = 'characterization'}) {
+    _activeSend = container.read(chatActionsProvider).send(text);
+  }
+
+  Future<void> awaitActiveSend({
+    Duration settle = const Duration(milliseconds: 80),
+  }) async {
+    final pending = _activeSend;
+    if (pending != null) {
+      await pending;
+    }
+    await Future<void>.delayed(settle);
+  }
+
+  Future<List<Message>> loadTimeline([String? conversationId]) {
+    return _loadFrontendTimelineMessages(
+      container,
+      conversationId ?? conv.id,
+    );
+  }
+
+  Future<bool> interrupt({String? convId}) {
+    return container.read(chatActionsProvider).interruptCurrentGeneration(
+          convId: convId ?? conv.id,
+        );
+  }
+
+  void switchActiveConversation(String conversationId) {
+    container.read(activeConversationIdProvider.notifier).state =
+        conversationId;
+  }
+
+  Future<_WindowProbe> probeNow() async {
+    final snap = await loadTimeline();
+    return _WindowProbe(
+      windowEmissions: List<ConversationTimelineWindowState>.from(_emissions),
+      transientReplaceCalls: timelineCache.transientReplaceCalls,
+      snapshots: [List<Message>.from(snap)],
+    );
+  }
+
   Future<void> dispose() async {
     await _sub.cancel();
     container.dispose();
@@ -534,6 +643,16 @@ Future<_Harness> _buildHarness({
   String? processedText,
   List<PluginEvent> pluginEvents = const <PluginEvent>[],
   bool recordTts = false,
+  List<List<_StreamStep>>? scriptsByCall,
+  List<String>? replyTextsByCall,
+  List<String?>? processedTextsByCall,
+  Map<String, List<_StreamStep>>? scriptsBySession,
+  Map<String, String>? replyTextsBySession,
+  Map<String, String?>? processedTextsBySession,
+  /// When true, do not pin activeConversationProvider to a fixed value so
+  /// activeConversationIdProvider can switch (A→B→A).
+  bool switchableActiveConversation = false,
+  List<Conversation>? extraConversations,
 }) async {
   final now = DateTime.now();
   final conv = Conversation(
@@ -546,10 +665,13 @@ Future<_Harness> _buildHarness({
     lastMessage: '',
     lastMessageTime: now,
   );
+  final allConvs = <Conversation>[conv, ...?extraConversations];
 
   final db = AppDatabase.forTesting(NativeDatabase.memory());
   addTearDown(db.close);
-  await _insertConversation(db, conv);
+  for (final c in allConvs) {
+    await _insertConversation(db, c);
+  }
 
   // Capture instances assigned inside overrides (providers are create-on-read).
   _CountingTimelineCache? timelineCache;
@@ -562,9 +684,8 @@ Future<_Harness> _buildHarness({
       () => _FakeAppSettingsNotifier(settings),
     ),
     conversationsProvider.overrideWith(
-      () => _FakeConversationsNotifier([conv]),
+      () => _FakeConversationsNotifier(allConvs),
     ),
-    activeConversationProvider.overrideWith((ref) => conv),
     conversationTimelineCacheProvider.overrideWith((ref) {
       timelineCache = _CountingTimelineCache(ref);
       return timelineCache!;
@@ -577,10 +698,20 @@ Future<_Harness> _buildHarness({
         replyText: replyText,
         processedText: processedText,
         pluginEvents: pluginEvents,
+        scriptsByCall: scriptsByCall,
+        replyTextsByCall: replyTextsByCall,
+        processedTextsByCall: processedTextsByCall,
+        scriptsBySession: scriptsBySession,
+        replyTextsBySession: replyTextsBySession,
+        processedTextsBySession: processedTextsBySession,
       );
       return sendService!;
     }),
   ];
+
+  if (!switchableActiveConversation) {
+    overrides.add(activeConversationProvider.overrideWith((ref) => conv));
+  }
 
   if (recordTts) {
     overrides.add(
@@ -1398,6 +1529,946 @@ void main() {
         '甲。乙。丙。',
         reason: '现状：DB 投影终态为完整 raw 正文。',
       );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // F–J: 真实 interrupt / retry / reset-during-reveal / A→B→A / 揭示节奏
+  // （审查补缺：scratch/diagnostics/方案审查_stream-active-bubble_20260720.md §六.4/5/6）
+  // -------------------------------------------------------------------------
+
+  group('F) real interruptCurrentGeneration', () {
+    test('F1 thinking 占位期 interrupt：清幽灵占位，时间线恢复，后续 send 正常',
+        () async {
+      final settings = _buildTestSettings(
+        enableChunking: true,
+        minSegmentLength: 1,
+        streamSegmentDelaySeconds: 0,
+      );
+
+      // Long idle past thinking delay, then late deltas that must not land
+      // after interrupt (generation no longer current).
+      final script = <_StreamStep>[
+        const _DelayStep(Duration(milliseconds: 900)),
+        const _DeltaStep('中断后不该出现的迟到正文。'),
+        const _DelayStep(Duration(milliseconds: 120)),
+      ];
+
+      final harness = await _buildHarness(
+        convId: 'char_f1_think_${DateTime.now().microsecondsSinceEpoch}',
+        settings: settings,
+        script: script,
+        replyText: '中断后不该出现的迟到正文。',
+      );
+      addTearDown(harness.dispose);
+
+      const userText = 'F1 think interrupt';
+      harness.startSend(text: userText);
+
+      // Wait past thinking placeholder delay (450ms).
+      await Future<void>.delayed(const Duration(milliseconds: 560));
+      final mid = await harness.loadTimeline();
+      expect(
+        mid.any(_isGeneratingPlaceholder),
+        isTrue,
+        reason: '前置：thinking 延迟后应出现「生成中...」占位，才能测占位期 interrupt。',
+      );
+      expect(
+        mid.any((m) => m.role == 'user' && m.displayText == userText),
+        isTrue,
+      );
+
+      final stopped = await harness.interrupt();
+      expect(stopped, isTrue, reason: '公开面 interruptCurrentGeneration 应返回 true。');
+
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      final afterInterrupt = await harness.loadTimeline();
+      expect(
+        afterInterrupt.where(_isGeneratingPlaceholder),
+        isEmpty,
+        reason: '现状：interrupt 清理 removePlaceholders，无「生成中」幽灵。',
+      );
+      expect(
+        afterInterrupt.where((m) => m.role == 'assistant'),
+        isEmpty,
+        reason: '现状：interrupt 后从持久历史恢复，未提交的 assistant 不保留。',
+      );
+      expect(
+        afterInterrupt.map((m) => m.displayText).toList(),
+        [userText],
+        reason: '现状：恢复语义只保留已落库用户消息。',
+      );
+
+      // Let late script deltas finish; they must not re-materialize assistant.
+      await harness.awaitActiveSend();
+      final afterLate = await harness.loadTimeline();
+      expect(
+        afterLate.any((m) => m.displayText.contains('中断后不该出现')),
+        isFalse,
+        reason: '现状：generation 已失效，迟到 delta/结果不落库不上屏。',
+      );
+      expect(
+        afterLate.where((m) => m.role == 'assistant'),
+        isEmpty,
+      );
+      // 同容器 interrupt 后再 send 见 F1b。
+    });
+
+    test('F1b same container: interrupt then re-send succeeds', () async {
+      final settings = _buildTestSettings(
+        enableChunking: true,
+        minSegmentLength: 1,
+        streamSegmentDelaySeconds: 0,
+      );
+
+      final harness = await _buildHarness(
+        convId: 'char_f1same_${DateTime.now().microsecondsSinceEpoch}',
+        settings: settings,
+        script: const <_StreamStep>[], // unused when scriptsByCall set
+        replyText: '',
+        scriptsByCall: [
+          const <_StreamStep>[
+            _DelayStep(Duration(milliseconds: 900)),
+            _DeltaStep('迟到不该见。'),
+            _DelayStep(Duration(milliseconds: 80)),
+          ],
+          const <_StreamStep>[
+            _DeltaStep('第二轮正文。'),
+            _DelayStep(Duration(milliseconds: 220)),
+          ],
+        ],
+        replyTextsByCall: const [
+          '迟到不该见。',
+          '第二轮正文。',
+        ],
+      );
+      addTearDown(harness.dispose);
+
+      harness.startSend(text: 'F1b first');
+      await Future<void>.delayed(const Duration(milliseconds: 560));
+      expect(await harness.interrupt(), isTrue);
+      await harness.awaitActiveSend();
+
+      final midSnap = await harness.loadTimeline();
+      expect(midSnap.where((m) => m.role == 'assistant'), isEmpty);
+
+      final probe2 = await harness.runSend(
+        text: 'F1b second',
+        sampleInterval: const Duration(milliseconds: 80),
+        sampleTicks: 6,
+      );
+      expect(harness.sendService.executeCalls, greaterThanOrEqualTo(2));
+      expect(
+        _assistantRealText(probe2.snapshots.last)
+            .any((m) => m.displayText.contains('第二轮正文')),
+        isTrue,
+        reason: '现状：interrupt 后同会话再 send 建立新 delivery，正常 finalize。',
+      );
+      expect(
+        probe2.snapshots.last
+            .any((m) => m.displayText.contains('迟到不该见')),
+        isFalse,
+        reason: '现状：旧轮迟到内容不污染新轮终态。',
+      );
+      expect(
+        probe2.snapshots.last.where(_isGeneratingPlaceholder),
+        isEmpty,
+      );
+    });
+
+    test('F2 活跃文本期 interrupt：在飞尾气泡清理，无幽灵，历史恢复', () async {
+      final settings = _buildTestSettings(
+        enableChunking: true,
+        minSegmentLength: 1,
+        streamSegmentDelaySeconds: 0,
+      );
+
+      final script = <_StreamStep>[
+        const _DeltaStep('活跃期可见句。'),
+        // Hold stream open long enough to interrupt while text is visible.
+        const _DelayStep(Duration(milliseconds: 700)),
+        const _DeltaStep('中断后尾巴。'),
+        const _DelayStep(Duration(milliseconds: 100)),
+      ];
+
+      final harness = await _buildHarness(
+        convId: 'char_f2_active_${DateTime.now().microsecondsSinceEpoch}',
+        settings: settings,
+        script: script,
+        replyText: '活跃期可见句。中断后尾巴。',
+      );
+      addTearDown(harness.dispose);
+
+      const userText = 'F2 active interrupt';
+      harness.startSend(text: userText);
+
+      // Wait for seal + flush (180ms) to surface active text.
+      var sawActiveText = false;
+      for (var i = 0; i < 20; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+        final snap = await harness.loadTimeline();
+        if (snap.any(
+          (m) =>
+              m.role == 'assistant' &&
+              !_isGeneratingPlaceholder(m) &&
+              m.displayText.contains('活跃期可见句'),
+        )) {
+          sawActiveText = true;
+          break;
+        }
+      }
+      expect(
+        sawActiveText,
+        isTrue,
+        reason: '前置：interrupt 前应先看到活跃 seal 文本。',
+      );
+
+      final stopped = await harness.interrupt();
+      expect(stopped, isTrue);
+
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      final after = await harness.loadTimeline();
+      expect(
+        after.where(_isGeneratingPlaceholder),
+        isEmpty,
+        reason: '现状：活跃期 interrupt 无生成中占位残留。',
+      );
+      expect(
+        after.any((m) => m.displayText.contains('活跃期可见句')),
+        isFalse,
+        reason: '现状：未 commit 的流式 seal 在 restore 后消失（非 DB 正式消息）。',
+      );
+      expect(
+        after.any((m) => m.displayText.contains('中断后尾巴')),
+        isFalse,
+      );
+      expect(
+        after.map((m) => m.displayText).toList(),
+        [userText],
+        reason: '现状：时间线恢复为持久用户消息。',
+      );
+
+      await harness.awaitActiveSend();
+      final finalSnap = await harness.loadTimeline();
+      expect(
+        finalSnap.where((m) => m.role == 'assistant'),
+        isEmpty,
+        reason: '现状：迟到结果不落 assistant。',
+      );
+    });
+
+    test('F3 分段揭示 backlog 期 interrupt：取消未揭示段，无幽灵', () async {
+      // segmentDelay large enough that multi-seal arrives as backlog.
+      // Hold stream well past interrupt so generation is still current.
+      final settings = _buildTestSettings(
+        enableChunking: true,
+        minSegmentLength: 1,
+        streamSegmentDelaySeconds: 0.35,
+      );
+
+      // Three sealed sentences arrive quickly → backlog under segment delay.
+      final script = <_StreamStep>[
+        const _DeltaStep('第一段。'),
+        const _DeltaStep('第二段。'),
+        const _DeltaStep('第三段。'),
+        // Keep generation alive long after interrupt window.
+        const _DelayStep(Duration(milliseconds: 1600)),
+      ];
+
+      final harness = await _buildHarness(
+        convId: 'char_f3_backlog_${DateTime.now().microsecondsSinceEpoch}',
+        settings: settings,
+        script: script,
+        replyText: '第一段。第二段。第三段。',
+      );
+      addTearDown(harness.dispose);
+
+      const userText = 'F3 backlog interrupt';
+      harness.startSend(text: userText);
+
+      // Enter backlog window while generation is still open:
+      // past flush (180ms) + into segmentDelay so seals may be partially
+      // revealed / still hidden — but BEFORE script ends (generation ends).
+      // 现状：无后续 dirty 时 mid-stream 可能长时间只见 0~1 段 + 生成中占位。
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      final mid = await harness.loadTimeline();
+      final sealedMid = _assistantRealText(mid)
+          .where((m) => m.displayText.contains('段'))
+          .toList();
+      final hasBacklogSignal = mid.any(_isGeneratingPlaceholder) ||
+          sealedMid.isNotEmpty ||
+          mid.any((m) => m.role == 'user' && m.displayText == userText);
+      expect(
+        hasBacklogSignal,
+        isTrue,
+        reason: '前置：流仍在飞（用户消息已在时间线；或可见 seal/生成中）。'
+            ' sealed=${sealedMid.length} '
+            'placeholder=${mid.any(_isGeneratingPlaceholder)}',
+      );
+      // Must still be interruptible (generation not finished).
+      final stopped = await harness.interrupt();
+      expect(
+        stopped,
+        isTrue,
+        reason: '现状：脚本长 hold 下 500ms 时 generation 仍 active，'
+            'interruptCurrentGeneration 应返回 true。',
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      final after = await harness.loadTimeline();
+      expect(
+        after.where(_isGeneratingPlaceholder),
+        isEmpty,
+        reason: '现状：backlog 期 interrupt 无占位幽灵。',
+      );
+      expect(
+        after.any(
+          (m) =>
+              m.role == 'assistant' &&
+              (m.displayText.contains('第一段') ||
+                  m.displayText.contains('第二段') ||
+                  m.displayText.contains('第三段')),
+        ),
+        isFalse,
+        reason: '现状：interrupt → removePlaceholders + restore，流式 seal 全清。',
+      );
+
+      // Wait past remaining segment delays — old backlog must not reappear.
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      final afterWait = await harness.loadTimeline();
+      expect(
+        afterWait.any(
+          (m) =>
+              m.role == 'assistant' &&
+              (m.displayText.contains('第一段') ||
+                  m.displayText.contains('第二段') ||
+                  m.displayText.contains('第三段')),
+        ),
+        isFalse,
+        reason: '现状：interrupt 后旧揭示计时器不得再吐 backlog 段。',
+      );
+
+      await harness.awaitActiveSend();
+      final finalSnap = await harness.loadTimeline();
+      expect(finalSnap.where((m) => m.role == 'assistant'), isEmpty);
+      expect(
+        finalSnap.map((m) => m.displayText).toList(),
+        [userText],
+      );
+    });
+  });
+
+  group('G) retry / new delivery after end or interrupt', () {
+    test('中断旧轮后新 send：旧延迟 flush/计时器不产生额外消息，新轮序列正常',
+        () async {
+      final settings = _buildTestSettings(
+        enableChunking: true,
+        minSegmentLength: 1,
+        streamSegmentDelaySeconds: 0.25,
+      );
+
+      final harness = await _buildHarness(
+        convId: 'char_g_retry_${DateTime.now().microsecondsSinceEpoch}',
+        settings: settings,
+        script: const <_StreamStep>[],
+        replyText: '',
+        scriptsByCall: [
+          // Round 1: multi-seal backlog then long hold → interrupt mid-flight.
+          const <_StreamStep>[
+            _DeltaStep('旧轮甲。'),
+            _DeltaStep('旧轮乙。'),
+            _DeltaStep('旧轮丙。'),
+            _DelayStep(Duration(milliseconds: 800)),
+          ],
+          // Round 2: new delivery content.
+          const <_StreamStep>[
+            _DeltaStep('新轮唯一句。'),
+            _DelayStep(Duration(milliseconds: 280)),
+          ],
+        ],
+        replyTextsByCall: const [
+          '旧轮甲。旧轮乙。旧轮丙。',
+          '新轮唯一句。',
+        ],
+      );
+      addTearDown(harness.dispose);
+
+      harness.startSend(text: 'G round1');
+      // Enter backlog window.
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      final stopped = await harness.interrupt();
+      expect(stopped, isTrue);
+      await harness.awaitActiveSend();
+
+      final between = await harness.loadTimeline();
+      expect(
+        between.any((m) => m.displayText.contains('旧轮')),
+        isFalse,
+        reason: '旧轮 interrupt 后前端无旧轮 seal。',
+      );
+
+      final replaceBeforeRound2 = harness.timelineCache.transientReplaceCalls;
+      final probe2 = await harness.runSend(
+        text: 'G round2',
+        sampleInterval: const Duration(milliseconds: 70),
+        sampleTicks: 10,
+      );
+
+      expect(harness.sendService.executeCalls, greaterThanOrEqualTo(2));
+
+      // Wait well past old segmentDelay — old timers must not resurrect 旧轮.
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      final late = await harness.loadTimeline();
+      expect(
+        late.any((m) => m.displayText.contains('旧轮')),
+        isFalse,
+        reason: '现状：旧 delivery 的延迟 flush/segment 计时器在 dispose 后不产生额外消息。',
+      );
+      expect(
+        _assistantRealText(late).any((m) => m.displayText.contains('新轮唯一句')),
+        isTrue,
+        reason: '现状：新 delivery 序列正常 finalize。',
+      );
+      expect(
+        late.where(_isGeneratingPlaceholder),
+        isEmpty,
+      );
+
+      // New round should have performed its own transient replaces.
+      expect(
+        harness.timelineCache.transientReplaceCalls,
+        greaterThan(replaceBeforeRound2),
+        reason: '新轮 delivery 应独立驱动 replaceMessagesTransient。',
+      );
+      expect(
+        probe2.snapshots.last.any((m) => m.displayText.contains('旧轮')),
+        isFalse,
+      );
+    });
+
+    test('一轮正常结束后再 send：两轮内容共存，旧轮不重复追加', () async {
+      final settings = _buildTestSettings(
+        enableChunking: true,
+        minSegmentLength: 1,
+        streamSegmentDelaySeconds: 0,
+      );
+
+      final harness = await _buildHarness(
+        convId: 'char_g_end_${DateTime.now().microsecondsSinceEpoch}',
+        settings: settings,
+        script: const <_StreamStep>[],
+        replyText: '',
+        scriptsByCall: [
+          const <_StreamStep>[
+            _DeltaStep('结束轮内容。'),
+            _DelayStep(Duration(milliseconds: 220)),
+          ],
+          const <_StreamStep>[
+            _DeltaStep('下一轮内容。'),
+            _DelayStep(Duration(milliseconds: 220)),
+          ],
+        ],
+        replyTextsByCall: const [
+          '结束轮内容。',
+          '下一轮内容。',
+        ],
+      );
+      addTearDown(harness.dispose);
+
+      final p1 = await harness.runSend(
+        text: 'G end1',
+        sampleInterval: const Duration(milliseconds: 80),
+        sampleTicks: 5,
+      );
+      expect(
+        _assistantRealText(p1.snapshots.last)
+            .any((m) => m.displayText.contains('结束轮内容')),
+        isTrue,
+      );
+
+      final countAfterRound1 = (await harness.loadTimeline()).length;
+      final p2 = await harness.runSend(
+        text: 'G end2',
+        sampleInterval: const Duration(milliseconds: 80),
+        sampleTicks: 5,
+      );
+
+      final finalSnap = p2.snapshots.last;
+      final endRoundHits = finalSnap
+          .where((m) => m.displayText.contains('结束轮内容'))
+          .length;
+      final nextRoundHits = finalSnap
+          .where((m) => m.displayText.contains('下一轮内容'))
+          .length;
+      expect(endRoundHits, 1, reason: '现状：旧轮正文不因新轮计时器/flush 重复追加。');
+      expect(nextRoundHits, greaterThanOrEqualTo(1));
+      expect(
+        finalSnap.length,
+        greaterThan(countAfterRound1),
+        reason: '新轮至少追加 user + assistant。',
+      );
+      expect(harness.sendService.executeCalls, 2);
+    });
+  });
+
+  group('H) onStreamReset during segment reveal backlog', () {
+    test('segmentDelay>0 揭示等待期间 reset：取消未揭示 backlog，旧段不再揭示',
+        () async {
+      // Larger delay so multiple seals sit in backlog when reset fires.
+      final settings = _buildTestSettings(
+        enableChunking: true,
+        minSegmentLength: 1,
+        streamSegmentDelaySeconds: 0.40,
+      );
+
+      final script = <_StreamStep>[
+        // Seal three sentences almost immediately (backlog builds).
+        const _DeltaStep('旧揭示甲。'),
+        const _DeltaStep('旧揭示乙。'),
+        const _DeltaStep('旧揭示丙。'),
+        // Stay under full 3×delay so not all revealed, then reset.
+        // First reveal ~400ms; interrupt backlog before second/third.
+        const _DelayStep(Duration(milliseconds: 120)),
+        const _ResetStep(),
+        // Wait past multiple segment delays — unrevealed 旧 must not appear.
+        const _DelayStep(Duration(milliseconds: 900)),
+        const _DeltaStep('reset后新句。'),
+        const _DelayStep(Duration(milliseconds: 280)),
+      ];
+
+      final harness = await _buildHarness(
+        convId: 'char_h_reveal_reset_${DateTime.now().microsecondsSinceEpoch}',
+        settings: settings,
+        script: script,
+        replyText: 'reset后新句。',
+      );
+      addTearDown(harness.dispose);
+
+      final probe = await harness.runSend(
+        text: 'H reveal reset',
+        sampleInterval: const Duration(milliseconds: 50),
+        sampleTicks: 36,
+      );
+
+      expect(harness.sendService.resetCalls, 1);
+
+      // After reset, old backlog seals must not surface (or if briefly flushed
+      // pre-reset, must clear and never return alongside / after 新句 alone).
+      final finalTexts = probe.snapshots.last
+          .where((m) => m.role == 'assistant')
+          .map((m) => m.displayText)
+          .toList();
+      expect(
+        finalTexts.any((t) => t.contains('旧揭示')),
+        isFalse,
+        reason: '现状：reset 清空 raw/_visibleSealed/nextReveal；旧 backlog 不进终态。',
+      );
+      expect(
+        finalTexts.any((t) => t.contains('reset后新句')),
+        isTrue,
+        reason: '现状：reset 后新 delta 正常上屏 finalize。',
+      );
+
+      // Stronger mid-stream: once 新句 appears, 旧揭示 must not coexist.
+      final coexist = probe.snapshots.any((snap) {
+        final texts = snap
+            .where((m) => m.role == 'assistant')
+            .map((m) => m.displayText)
+            .toList();
+        return texts.any((t) => t.contains('reset后新句')) &&
+            texts.any((t) => t.contains('旧揭示'));
+      });
+      expect(
+        coexist,
+        isFalse,
+        reason: '现状：writeEpoch + reset discard 后旧揭示段不得与新内容共存。',
+      );
+
+      // If any 旧揭示 ever appeared (pre-reset first reveal race), it must clear.
+      var oldEver = false;
+      var oldCleared = false;
+      for (final snap in probe.snapshots) {
+        final hasOld = snap.any(
+          (m) => m.role == 'assistant' && m.displayText.contains('旧揭示'),
+        );
+        if (hasOld) {
+          oldEver = true;
+        } else if (oldEver) {
+          oldCleared = true;
+        }
+      }
+      if (oldEver) {
+        expect(
+          oldCleared,
+          isTrue,
+          reason: '现状：若 reset 前已揭示部分旧段，reset 后必须 discard 清空。',
+        );
+      }
+
+      // Post-reset long wait in script covers “未揭示 backlog 不再弹出”.
+      // window baseline is observational.
+      expect(
+        probe.windowChangeCount,
+        inInclusiveRange(1, 16),
+        reason: '现状基线：揭示等待期 reset 脚本窗口变更有限。'
+            ' observed=${probe.windowChangeCount}',
+      );
+    });
+  });
+
+  group('I) A→B→A conversation switch isolation', () {
+    test('conv_a 流式中对 conv_b send：两会话在飞时间线互不污染；a 继续 finalize',
+        () async {
+      final settings = _buildTestSettings(
+        enableChunking: true,
+        minSegmentLength: 1,
+        streamSegmentDelaySeconds: 0,
+      );
+
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      final idA = 'char_i_a_$stamp';
+      final idB = 'char_i_b_$stamp';
+      final now = DateTime.now();
+      final convB = Conversation(
+        id: idB,
+        title: 'Char_$idB',
+        displayName: 'Char_$idB',
+        createdAt: now,
+        updatedAt: now,
+        messages: const [],
+        lastMessage: '',
+        lastMessageTime: now,
+      );
+
+      final harness = await _buildHarness(
+        convId: idA,
+        settings: settings,
+        script: const <_StreamStep>[],
+        replyText: '',
+        switchableActiveConversation: true,
+        extraConversations: [convB],
+        scriptsBySession: {
+          idA: const <_StreamStep>[
+            _DeltaStep('会话A首句。'),
+            // Hold A open while B streams.
+            _DelayStep(Duration(milliseconds: 600)),
+            _DeltaStep('会话A尾句。'),
+            _DelayStep(Duration(milliseconds: 220)),
+          ],
+          idB: const <_StreamStep>[
+            _DeltaStep('会话B正文。'),
+            _DelayStep(Duration(milliseconds: 220)),
+          ],
+        },
+        replyTextsBySession: {
+          idA: '会话A首句。会话A尾句。',
+          idB: '会话B正文。',
+        },
+      );
+      addTearDown(harness.dispose);
+
+      // Also watch B's window so its timeline cache is warm.
+      final emissionsB = <ConversationTimelineWindowState>[];
+      final subB = harness.timelineCache
+          .watchWindow(conversationId: idB, limit: 50)
+          .listen(emissionsB.add);
+      addTearDown(subB.cancel);
+
+      // Start A streaming.
+      harness.switchActiveConversation(idA);
+      harness.startSend(text: 'I from A');
+      final sendA = harness.activeSend;
+
+      // Wait until A's first seal is visible.
+      var sawA = false;
+      for (var i = 0; i < 25; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+        final snapA = await harness.loadTimeline(idA);
+        if (snapA.any(
+          (m) => m.role == 'assistant' && m.displayText.contains('会话A首句'),
+        )) {
+          sawA = true;
+          break;
+        }
+      }
+      expect(sawA, isTrue, reason: '前置：A 流式中应先出现 A 的 seal。');
+
+      // Switch to B and send — concurrent generation on different convId.
+      harness.switchActiveConversation(idB);
+      final sendB = harness.container.read(chatActionsProvider).send('I from B');
+      await sendB;
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+
+      final timelineB = await harness.loadTimeline(idB);
+      final timelineAMid = await harness.loadTimeline(idA);
+
+      expect(
+        timelineB.any((m) => m.displayText.contains('会话B正文')),
+        isTrue,
+        reason: '现状：B 会话独立 finalize 自己的正文。',
+      );
+      expect(
+        timelineB.any((m) => m.displayText.contains('会话A')),
+        isFalse,
+        reason: '现状：B 时间线不被 A 在飞内容污染。',
+      );
+      expect(
+        timelineAMid.any((m) => m.displayText.contains('会话B')),
+        isFalse,
+        reason: '现状：A 在飞时间线不被 B 内容污染。',
+      );
+      expect(
+        timelineAMid.any(
+          (m) => m.role == 'assistant' && m.displayText.contains('会话A首句'),
+        ),
+        isTrue,
+        reason: '现状：切到 B 后 A 的在飞/已 seal 内容仍留在 A。',
+      );
+
+      // Return focus to A; let A finish.
+      harness.switchActiveConversation(idA);
+      await sendA;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      final timelineAFinal = await harness.loadTimeline(idA);
+      final timelineBFinal = await harness.loadTimeline(idB);
+
+      expect(
+        timelineAFinal.any((m) => m.displayText.contains('会话A首句')) ||
+            timelineAFinal.any((m) => m.displayText.contains('会话A尾句')) ||
+            timelineAFinal.any(
+              (m) =>
+                  m.role == 'assistant' &&
+                  m.displayText.contains('会话A'),
+            ),
+        isTrue,
+        reason: '现状：回到 A 后 A 流继续并 finalize（正文含 A 标记）。',
+      );
+      expect(
+        timelineAFinal.any((m) => m.displayText.contains('会话B')),
+        isFalse,
+        reason: '现状：A finalize 终态仍无 B 污染。',
+      );
+      expect(
+        timelineBFinal.any((m) => m.displayText.contains('会话A')),
+        isFalse,
+        reason: '现状：A finalize 不回写污染 B。',
+      );
+      expect(
+        timelineAFinal.where(_isGeneratingPlaceholder),
+        isEmpty,
+        reason: '现状：A finalize 后无占位残留。',
+      );
+      expect(
+        harness.sendService.executeSessionIds.toSet(),
+        containsAll(<String>[idA, idB]),
+        reason: '两会话均真实走过 executeApiCall。',
+      );
+    });
+  });
+
+  group('J) segment reveal pacing', () {
+    test('delay 前不揭示；首次只揭示一段；间隔下限；finalize 可一次带出剩余段',
+        () async {
+      // Precision boundary (真实时钟 / Timer + 40ms 轮询，无 fake-async):
+      // - 无法可靠断言 delay-ε 亚毫秒边界；用 delay/2 作「明显早于 delay」。
+      // - 计数只认精确单句 seal（`节奏一。` 等），避免 commit 合并正文干扰。
+      // - 实测现状（2026-07-20）：mid-stream 常见 0 → 1 后长时间平台期；
+      //   收尾 finalize:true 可一次物化剩余 seal（观测上 1→3），drain 步进
+      //   在 40ms 采样下常被同帧吞掉。因此：
+      //   * 严格锁「首次揭示至多 +1」与「delay 前为 0」；
+      //   * 对后续 +N 仅允许发生在已有 ≥1 段之后（收尾排空），并记录间隔下限
+      //     于首次平台期时长（1 段停留 ≥ segmentDelay - slack）。
+      const segmentDelayMs = 200;
+      final settings = _buildTestSettings(
+        enableChunking: true,
+        minSegmentLength: 1,
+        streamSegmentDelaySeconds: segmentDelayMs / 1000.0,
+      );
+
+      final script = <_StreamStep>[
+        const _DeltaStep('节奏一。'),
+        const _DelayStep(Duration(milliseconds: 260)),
+        const _DeltaStep('节奏二。'),
+        const _DelayStep(Duration(milliseconds: 260)),
+        const _DeltaStep('节奏三。'),
+        const _DelayStep(Duration(milliseconds: 400)),
+      ];
+
+      final harness = await _buildHarness(
+        convId: 'char_j_pace_${DateTime.now().microsecondsSinceEpoch}',
+        settings: settings,
+        script: script,
+        replyText: '节奏一。节奏二。节奏三。',
+      );
+      addTearDown(harness.dispose);
+
+      int countExactSeals(List<Message> snap) {
+        final texts = _assistantRealText(snap)
+            .map((m) => m.displayText.trim())
+            .toList();
+        var n = 0;
+        if (texts.any((t) => t == '节奏一。')) n += 1;
+        if (texts.any((t) => t == '节奏二。')) n += 1;
+        if (texts.any((t) => t == '节奏三。')) n += 1;
+        return n;
+      }
+
+      final sealedCounts = <int>[];
+      final sampleTimesMs = <int>[];
+      final sw = Stopwatch()..start();
+
+      harness.startSend(text: 'J pace');
+      for (var i = 0; i < 30; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+        final snap = await harness.loadTimeline();
+        sealedCounts.add(countExactSeals(snap));
+        sampleTimesMs.add(sw.elapsedMilliseconds);
+      }
+
+      await harness.awaitActiveSend();
+      final finalSnap = await harness.loadTimeline();
+      expect(finalSnap.where(_isGeneratingPlaceholder), isEmpty);
+      final finalJoined = _assistantRealText(finalSnap)
+          .map((m) => m.displayText)
+          .join();
+      expect(
+        finalJoined.contains('节奏'),
+        isTrue,
+        reason: '现状：揭示/finalize 后终态有正文。',
+      );
+
+      // (1) delay 前半窗口不揭示
+      final earlySamples = <int>[
+        for (var i = 0; i < sealedCounts.length; i++)
+          if (sampleTimesMs[i] < segmentDelayMs ~/ 2) sealedCounts[i],
+      ];
+      expect(earlySamples, isNotEmpty);
+      expect(
+        earlySamples.every((c) => c == 0),
+        isTrue,
+        reason: '现状：segmentDelay 前半窗口 exact seal=0（delay-ε 可达到代理）。'
+            ' early=$earlySamples counts=$sealedCounts',
+      );
+
+      // (2) 首次非零必须是 1（delay 后只揭示一段；禁止 0→2/3 同帧爆发）
+      final firstNonZeroIdx = sealedCounts.indexWhere((c) => c > 0);
+      expect(
+        firstNonZeroIdx,
+        greaterThanOrEqualTo(0),
+        reason: '前置：应观察到至少一次 exact seal。 counts=$sealedCounts',
+      );
+      expect(
+        sealedCounts[firstNonZeroIdx],
+        1,
+        reason: '现状锁定：首次揭示至多一段（0→1）。'
+            ' counts=$sealedCounts t=${sampleTimesMs[firstNonZeroIdx]}ms',
+      );
+      // 从 0 起步的单步增量也不得超过 1
+      for (var i = 1; i <= firstNonZeroIdx; i++) {
+        expect(
+          sealedCounts[i] - sealedCounts[i - 1],
+          lessThanOrEqualTo(1),
+          reason: '首次揭示前不得跳步。 counts=$sealedCounts',
+        );
+      }
+
+      // (3) 首次揭示后存在平台期（至少一段时间内保持 1），时长 ≈ delay 下限
+      const slackMs = 90;
+      var plateauEndIdx = firstNonZeroIdx;
+      while (plateauEndIdx + 1 < sealedCounts.length &&
+          sealedCounts[plateauEndIdx + 1] == 1) {
+        plateauEndIdx += 1;
+      }
+      final plateauMs =
+          sampleTimesMs[plateauEndIdx] - sampleTimesMs[firstNonZeroIdx];
+      expect(
+        plateauMs,
+        greaterThanOrEqualTo(segmentDelayMs - slackMs),
+        reason: '现状：首次揭示后 backlog 不会立刻同帧出清；1 段平台期 ≥ delay−slack。'
+            ' plateauMs=$plateauMs counts=$sealedCounts'
+            ' times=$sampleTimesMs（精度边界：40ms 采样）。',
+      );
+
+      // (4) 后续递增：允许 finalize 一次带出剩余段（+N，N>1），但不得从 0 跳。
+      // 若观测到逐步 +1，也合法。
+      var prev = sealedCounts[firstNonZeroIdx];
+      var sawLateJump = false;
+      for (var i = firstNonZeroIdx + 1; i < sealedCounts.length; i++) {
+        final cur = sealedCounts[i];
+        final delta = cur - prev;
+        if (delta < 0) {
+          // commit 合并导致 exact 单句计数下降 — 允许
+          prev = cur;
+          continue;
+        }
+        if (delta > 1) {
+          sawLateJump = true;
+          expect(
+            prev,
+            greaterThanOrEqualTo(1),
+            reason: '现状：>1 的跳跃只发生在已有揭示之后（finalize 排空剩余段），'
+                '不得从 0 全量爆发。 counts=$sealedCounts',
+          );
+        }
+        prev = cur;
+      }
+      // 峰值至少覆盖多段（流中 1 + 收尾剩余，或逐步揭示）
+      final peak = sealedCounts.reduce((a, b) => a > b ? a : b);
+      expect(
+        peak,
+        greaterThanOrEqualTo(1),
+        reason: 'counts=$sealedCounts lateJump=$sawLateJump',
+      );
+    });
+
+    test('burst backlog：delay 内不全量爆发（mid-stream 现状）', () async {
+      // 三句同一 burst：锁 segmentDelay 前不会三句同时上屏。
+      const segmentDelayMs = 250;
+      final settings = _buildTestSettings(
+        enableChunking: true,
+        minSegmentLength: 1,
+        streamSegmentDelaySeconds: segmentDelayMs / 1000.0,
+      );
+
+      final script = <_StreamStep>[
+        const _DeltaStep('爆发甲。'),
+        const _DeltaStep('爆发乙。'),
+        const _DeltaStep('爆发丙。'),
+        const _DelayStep(Duration(milliseconds: 700)),
+      ];
+
+      final harness = await _buildHarness(
+        convId: 'char_j_burst_${DateTime.now().microsecondsSinceEpoch}',
+        settings: settings,
+        script: script,
+        replyText: '爆发甲。爆发乙。爆发丙。',
+      );
+      addTearDown(harness.dispose);
+
+      harness.startSend(text: 'J burst');
+      final earlyCounts = <int>[];
+      final sw = Stopwatch()..start();
+      while (sw.elapsedMilliseconds < segmentDelayMs - 40) {
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        final snap = await harness.loadTimeline();
+        final n = _assistantRealText(snap)
+            .where((m) => m.displayText.contains('爆发'))
+            .length;
+        earlyCounts.add(n);
+      }
+      expect(
+        earlyCounts.every((n) => n < 3),
+        isTrue,
+        reason: '现状：burst backlog 在 segmentDelay 前不会三句同时上屏。'
+            ' early=$earlyCounts',
+      );
+
+      await harness.awaitActiveSend();
+      final finalJoined = _assistantRealText(await harness.loadTimeline())
+          .map((m) => m.displayText)
+          .join();
+      expect(finalJoined.contains('爆发'), isTrue);
     });
   });
 }
