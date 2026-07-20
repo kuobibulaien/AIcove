@@ -98,6 +98,10 @@ void main() {
         overrides: [
           appSettingsProvider
               .overrideWith(() => _FakeAppSettingsNotifier(_baseSettings)),
+          // 本文件锁定 policy off（严格回滚面）行为，不随全局默认漂移。
+          streamProjectionPolicyProvider.overrideWithValue(
+            const StreamProjectionPolicy(useActiveStreamChannel: false),
+          ),
         ],
         child: SkinScope(
           skin: const MoeTalkSkin(),
