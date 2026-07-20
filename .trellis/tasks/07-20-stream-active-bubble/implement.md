@@ -10,23 +10,23 @@
 ## 1. Characterization 基线（旧路径） ✅ 部分 / 待补
 
 - [x] 主干 A-E 七用例已落地全绿（grok 施工，主会话复跑验证）。
-- [ ] 按审查 §六补：真实 interrupt（`interruptCurrentGeneration`，占位期/活跃期/揭示 backlog 期）、重试新建 delivery、failover reset、A→B→A 切会话、揭示等待期被 reset（segmentDelay>0）、揭示精确节奏（delay-ε 不揭示）。
+- [x] 按审查 §六补：真实 interrupt 三相位、重试新建 delivery、failover reset、A→B→A、揭示等待期 reset、揭示节奏（第二批 10 用例；delay-ε 亚毫秒精度受真实延时驱动限制，以 delay/2 与 delay−slack 代理并注释）。
 - [ ] Timer seam：沿用现测试 harness，将宽区间断言中「结构转移」部分改为精确断言（保留量级断言作烟雾）。
 
 ## 2. 通道类型与生命周期（开关默认 false）
 
-- [ ] `active_stream_projection.dart`：state ＋ 单 owner map notifier ＋ CAS publish/clear（B1/B3）＋ `streamProjectionPolicyProvider`（B5）。
-- [ ] 单元测试：CAS 拒旧 token/旧 epoch、旧 token clear 不清新流、finalize 后条目移除、A/B 会话隔离、container dispose 回收。
+- [x] `active_stream_projection.dart`：state ＋ 单 owner map notifier ＋ CAS publish/clear（B1/B3）＋ `streamProjectionPolicyProvider`（B5）。
+- [x] 单元测试 10 例：CAS 拒旧、等值幂等不通知、旧 clear 不伤新流、A/B 隔离、回收无残留、select 过滤。
 
 ## 3. `_applyState` 增量 diff（默认仍 off）
 
-- [ ] diff 定义按 design §2.3；off 路径保留旧全量实现。
-- [ ] on 路径测试：spy `replaceMessagesTransient` 载荷（removed/upsert 精确 id 集）；off 路径旧 characterization 全绿。
+- [x] diff 定义按 design §2.3；off 路径保留旧全量实现（commit 3a533e5）。
+- [x] on/off 对照测试落地（ON 窗口变更≤8 vs OFF 基线 11-16；壳滞后实证；off 路径 17 用例全绿，commit 5bafef7）。载荷级 spy 精确断言列入翻默认前置。
 
 ## 4. 气泡消费与视口窄信号
 
-- [ ] `MessageBubble` 下传 `conversationId`＋通道 select 渲染（design §2.6）。
-- [ ] `ChatMessageList` 挂 `ref.listen` 窄信号 → 只调度视口稳底，不重建（design §2.7）。
+- [x] 实现形态微调（重建域等价、侵入更小）：气泡构造不改，presentation 层包 Consumer select 取实时文本（commit b0b06e8）。
+- [x] `ChatMessageList` 挂 `ref.listen` 窄信号 → 只调度视口稳底，不重建（commit b0b06e8）。
 - [ ] 守卫：非分段 100 delta 窗口通知不增长；活跃气泡文本实时；历史气泡 build 计数不增长（MessageBubble 加 `@visibleForTesting` build 钩子，S4）；ChatPage/Composer 不重建；标签隐藏一致（B6）。
 
 ## 5. followLatest / detached 回归
