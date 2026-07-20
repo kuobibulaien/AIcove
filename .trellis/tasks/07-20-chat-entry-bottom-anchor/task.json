@@ -3,7 +3,7 @@
   "name": "chat-entry-bottom-anchor",
   "title": "聊天页进入时未锚定到底部（最后一条消息被输入框遮挡）",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
