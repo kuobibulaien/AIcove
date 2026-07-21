@@ -91,6 +91,16 @@ Questions to answer:
 4. **首次出现 vs 增长的分工**：壳首次出现是结构事件，由 didUpdateWidget 稳底路径负责；窄信号只管增长步。窄信号稳底必须带多帧＋长尾（260ms）重试——布局下一帧生效且流末尾无后续信号，实测单次调度留 ~14px 残差。
 5. **开关语义**：`streamProjectionPolicyProvider` off＝严格回滚面——机制分流、气泡 Consumer、列表订阅整组关闭，off 子树与旧实现一致（守卫：settings_select「off 下通道发布不重建/不上屏」）。基线测试必须显式钉 policy，不得依赖全局默认。
 
+### 纯渲染层长高与入场收敛窗（2026-07-21 沉淀，任务 07-20-chat-entry-bottom-anchor）
+
+进入会话后表情/图片异步解码长高、字体加载、视口尺寸变化等**纯渲染层 extent 变化不产生 didUpdateWidget**，follow-latest 的稳定化收不到信号，列表会停在「差一段」的位置。修复契约：
+
+1. **唯一正统信号是 `ScrollMetricsNotification`**：它**不是** `ScrollNotification` 子类，必须独立挂 `NotificationListener`；框架在帧后 microtask 合并派发，此时挂普通 post-frame **不保证有下一帧**——处理器须当场 `jumpTo`（自会请求新帧），不做 debounce（latest state wins＋距离阈值幂等短路；jumpTo 只改 pixels 不改内容尺寸，不自激）。
+2. **消息追加与纯渲染层长高在 metrics 层完全同构，不可无差别重锚。** 贴底时新 AI 消息不拉底是既有产品裁决（auto_scroll_guard 锁定；只有同尾可行动布局变化、输入区高度变化、pinLatestTail 才稳底）。重锚必须收窄到**入场收敛窗**：初始置底开窗；首次实质性结构变化/用户手势/历史分页锁一次性关窗；切会话复位重开。窗内位移定义上只能来自纯渲染层。
+3. **关窗判据＝有序消息 ID 全序列逐位比较**（codex 审查 R1：只比 length/首尾 id 会漏判等长中间替换/重排）；**列表实例变化但 ID 结构等同的刷新不得关窗**——真机上入库回流常发同内容新实例列表，误关则修复失效。contextStart 类 nullable 锚点先 trim 规范化再比较。
+4. **动画期的结构性长高用生命周期事实静默，禁止用帧时间戳猜时长**（codex 审查 R2：`currentSystemFrameTimeStamp` 是引擎裸时间戳——warm-up 帧跳变、不随 `timeDilation` 缩放、长帧穿透固定余量）。正例：`AnimatedMessageItem.onFinished`＋serial 对账；完成回调须经 post-frame＋`scheduleMicrotask` 延迟失效，才能存活过完成帧自身的 metrics 通知（通知的 microtask 在布局期入队，早于 post-frame 里再入队的 microtask）。
+5. 实现与测试全貌见 [chat_message_list_viewport.dart](../../../apps/aicove_flutter/lib/src/ui/features/chat/widgets/chat_message_list_viewport.dart) 的 `_handleScrollMetricsNotification` 与 `test/ui/features/chat/widgets/chat_message_list_metrics_reanchor_test.dart`（10 用例：核心重锚/多次长高/脱离/分页/视口/负向锁裁决/R1 正反判据/空时间线动画/programmatic follow-up）。
+
 ---
 
 ## Testing Requirements
@@ -103,6 +113,14 @@ Questions to answer:
 2. 被测 widget 内部 fire-and-forget 的 IO 不受影响（没人 await 它），无需处理。
 3. 跑测试统一带 `--timeout 60s`（或按需更短），让挂起用例快速失败而不是拖满默认超时。
 4. 无断言、纯 print 的调试测试不允许提交；调试完即删。
+
+### finder 默认 skipOffstage 会漏掉「已构建未上台」的组件（2026-07-21 沉淀）
+
+`find.byType`/`find.byWidgetPredicate` 默认 `skipOffstage: true`，沿 `debugVisitOnstageChildren` 遍历——**滚动列表 cacheExtent 区（已构建未绘制）的子项与高度为 0 的子项（如入场动画 `SizeTransition` 卡在第 0 帧）都会被判为 offstage 而「隐身」**，finder 返回 0 但组件和其中的图片解码链路其实全程健在。曾造成两个测试用例被误判为「组件消失」并长时间排障。硬规则：
+
+1. 断言「组件是否存在/尺寸如何」而非「是否可见」时，finder 显式传 `skipOffstage: false`。
+2. 诊断输出（dump 树内组件清单）同样要 `skipOffstage: false`，否则 dump 本身也会漏报。
+3. `tester.drag` 松手带惯性速度（bouncing 物理会 fling 出 cacheExtent 使组件真被回收）；需要精确位移时用手工手势：分步 `moveBy`＋静置超过速度采样窗（>100ms）再 `up()`，抬手速度≈0。
 
 (其余待补充)
 

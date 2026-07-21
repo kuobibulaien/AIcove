@@ -45,12 +45,20 @@ detached（用户上滑）路径不受影响：`shouldFollowLatest=false` 直接
 
 1. 新增布尔窗 `_entryRenderConvergenceActive`（入场收敛窗）：
    - **开窗**：`_didInitialBottomPosition` 置位（初始置底完成）时；
-   - **关窗（一次性，切会话前不再开）**：① 首次**实质性**时间线结构变化——合并时间线的
-     `length`/首尾消息 id 变化、历史 prepend、`contextStartMessageId` 变化（**identity 变化但内容
-     等同的刷新不关窗**，防真机上「入库回流的同内容列表」把窗口误关导致修复失效）；
+   - **关窗（一次性，切会话前不再开）**：① 首次**实质性**时间线结构变化——按**有序消息 ID
+     全序列**逐位比较（审查 R1：只比 length/首尾 id 会漏判等长中间替换/重排），任一位置 ID
+     不同、增删、历史 prepend、`contextStartMessageId`（trim 规范化，审查 S2）变化均关窗；
+     **列表实例变化但 ID 结构等同的刷新不关窗**（防真机上「入库回流的同内容新实例列表」把
+     窗口误关导致修复失效；同 ID 流式增长同理不关窗）；
      ② 用户手势接管（`_lockAutoScrollForUserInterruption`）；③ 历史分页锁（`_lockAutoScrollForHistoryPaging`）；
-   - **复位**：conversationId 变化时随 `_didInitialBottomPosition` 一起复位，下次初始置底重新开窗。
-2. handler 守卫链在 `_didInitialBottomPosition` 之后追加 `_entryRenderConvergenceActive`。
+   - **复位**：conversationId 变化时随 `_didInitialBottomPosition` 一起复位（含入场动画静默
+     serial，审查 S4），下次初始置底重新开窗。
+2. handler 守卫链在 `_didInitialBottomPosition` 之后追加 `_entryRenderConvergenceActive`，
+   再追加**入场动画静默**：空会话首条消息经 didUpdateWidget 到达时，窗口会开在其入场动画
+   结束之前，动画期的 extent 增长是结构性来源——以 `AnimatedMessageItem.onFinished` 的
+   **动画完成事实**静默（serial 对账；完成回调经 post-frame＋microtask 延迟失效，恰好排在
+   完成帧自身的 metrics 通知之后）。不用帧时间戳猜时长（审查 R2：warm-up 帧跳变、
+   timeDilation、长帧都会失真）。
    窗内的位移**定义上**只能来自纯渲染层（尚未发生过结构变化），可安全重锚；窗外的 extent 演变
    全部让位给既有稳定化路径（结构写稳底、G2.1 通道稳底、detached 补偿）。
 3. 窗内与既有稳底重叠的场景（如入场后立刻输入区升高）：稳底 post-frame 先执行、
@@ -60,12 +68,19 @@ detached（用户上滑）路径不受影响：`shouldFollowLatest=false` 直接
 不再由本机制纠正——该场景归属既有语义：新消息本就不拉底（守卫锁定），pinLatestTail 发送链路有
 post-frame＋260ms 长尾重试兜底。此为按产品裁决主动选择的边界，非遗漏。
 
-**测试基建修正（v3）**：
+**测试基建修正（v3，含审查 R3 整改）**：
 - 「跨帧多次长高」用例改为**同一条尾消息的两个 EmojiBlock 分批放行**（原设计用追加新消息制造第二次长高，
-  既与裁决冲突，又踩中 `tester.drag`/追加后的测试基建问题）；
-- 「用户拖动脱离」用例改用手工手势（分步 move＋静置>100ms 再抬手）压掉速度采样，杜绝
-  `tester.drag` 惯性 fling 把列表甩出 cacheExtent 导致表情组件被虚拟化回收（此前 finder=0 的真凶）；
-- 新增负向用例锁裁决：窗口关闭（结构性追加）后，后续渲染层长高不得再触发 metricsReanchor。
+  既与裁决冲突，又踩中 finder 默认 skipOffstage 的可见性坑）；
+- 「用户拖动脱离」「历史分页」用例改用手工手势（分步 move＋静置>100ms 再抬手）压掉速度采样，杜绝
+  `tester.drag` 惯性 fling 把列表甩出 cacheExtent 导致表情组件被虚拟化回收；分页用例改短历史（3 条），
+  保证门控表情全程已构建、长高刺激真实发生并断言高度>100（审查 R3a：原版刺激为空是假覆盖）；
+- finder 一律 `skipOffstage: false`：cacheExtent 区（已构建未绘制）与入场动画 0 高帧的组件会被默认
+  finder 判为 offstage 而「隐身」，此前 finder=0 的疑案真凶即此，组件与解码链路全程健在；
+- 新增负向用例锁裁决：窗口关闭（结构性追加）后，后续渲染层长高不得再触发 metricsReanchor；
+- 新增 R1 正反判据用例：同 ID 新实例刷新不关窗（刷新后解码仍重锚）／等长中间换 ID 必须关窗；
+- 新增 R2 专项：空时间线首条临时消息的入场动画全程（含单个 300ms 长帧跨越动画完成点）无重锚；
+- 新增 R3b 专项：脱离后点回底、动画飞行中解码长高被 programmatic 守卫跳过，动画完成后的
+  distance follow-up 兜底收敛到底（锁 PRD v2 验收第 3 条的时序契约）。
 
 ## 非目标
 
@@ -75,12 +90,12 @@ post-frame＋260ms 长尾重试兜底。此为按产品裁决主动选择的边�
 
 ## 验收标准（v2，按审查 B4 具体化）
 
-- [ ] **复现测试先行**（同一 widget/state 的受控异步长高，不得靠 pumpWidget 换数据触发 didUpdateWidget 旧路径）：尾部放真实 EmojiBlock（asset 分支），用 `DefaultAssetBundle` 包可控 bundle——manifest 立即返回、目标 PNG 的 `loadBuffer` 由 Completer 延迟；首次布局后先断言初始置底完成且表情高度≈0，再 complete，同 state 后续帧长高；核心断言 `position.pixels` `closeTo(minScrollExtent, 0.5)`，按明确帧数 pump，不得用无条件 `pumpAndSettle()` 掩盖帧调度缺陷（修复前该测试必须红）。
-- [ ] **连续长高收敛**：两到三次受控长高（多个延迟 Completer 分批 complete），用 `onDebugAutoScrollRequested`（reason=metricsReanchor）记录执行计数——跨帧 min 再变化允许再次执行、最终贴执行时最新 min（同时验证去重不吞最后一次、无通知风暴）。
-- [ ] **守卫交叉回归**：用户 dragStart 后完成解码不拉底；`_historyViewportRestorePending`/paging lock 期间不拉底（覆盖「加载锁先释放、旧历史稍后 prepend」时序，扩展既有 auto_scroll_guard 基线用例）；programmatic 动画中尺寸变化最终仍收敛（由动画完成后 distance follow-up 兜底，锁时序）；视口尺寸变化（模拟键盘）follow-latest 时贴底、detached 时不贴底。
-- [ ] 既有测试全绿：`chat_message_list_auto_scroll_guard_test.dart` 等 `test/ui/features/chat/` 相关套件。
-- [ ] `flutter analyze` 本任务文件 0 新增告警。
-- [ ] 真机验收：进入「测试」会话（尾部含表情包），最后一条消息完整可见紧贴输入框；退出重进 3 次一致；上滑后新消息到达不强拉（detached 语义不变）。
+- [x] **复现测试先行**（同一 widget/state 的受控异步长高，不得靠 pumpWidget 换数据触发 didUpdateWidget 旧路径）：尾部放真实 EmojiBlock（asset 分支），用 `DefaultAssetBundle` 包可控 bundle——manifest 立即返回、目标 PNG 的 `loadBuffer` 由 Completer 延迟；首次布局后先断言初始置底完成且表情高度≈0，再 complete，同 state 后续帧长高；核心断言 `position.pixels` `closeTo(minScrollExtent, 0.5)`，按明确帧数 pump，不得用无条件 `pumpAndSettle()` 掩盖帧调度缺陷（修复前该测试必须红）。
+- [x] **连续长高收敛**：两到三次受控长高（多个延迟 Completer 分批 complete），用 `onDebugAutoScrollRequested`（reason=metricsReanchor）记录执行计数——跨帧 min 再变化允许再次执行、最终贴执行时最新 min（同时验证去重不吞最后一次、无通知风暴）。
+- [x] **守卫交叉回归**：用户 dragStart 后完成解码不拉底；`_historyViewportRestorePending`/paging lock 期间不拉底（覆盖「加载锁先释放、旧历史稍后 prepend」时序，扩展既有 auto_scroll_guard 基线用例）；programmatic 动画中尺寸变化最终仍收敛（由动画完成后 distance follow-up 兜底，锁时序）；视口尺寸变化（模拟键盘）follow-latest 时贴底、detached 时不贴底。
+- [x] 既有测试全绿：`chat_message_list_auto_scroll_guard_test.dart` 等 `test/ui/features/chat/` 相关套件。
+- [x] `flutter analyze` 本任务文件 0 新增告警。
+- [x] 真机验收：进入「测试」会话（尾部含表情包），最后一条消息完整可见紧贴输入框；退出重进 3 次一致；上滑后新消息到达不强拉（detached 语义不变）。
 
 ## 自主决策（AI 设计，供扫读否决）
 
