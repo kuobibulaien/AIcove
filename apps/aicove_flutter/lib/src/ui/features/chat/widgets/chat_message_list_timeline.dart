@@ -20,6 +20,8 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
           ? _currentTimelineMessages.last.createdAt
           : null;
       _didInitialBottomPosition = false;
+      _entryRenderConvergenceActive = false;
+      _activeEntranceAnimationSerial = null;
       _cachedFormatConfig = null;
       _cachedListItems = [];
       _cachedChatImages = [];
@@ -49,6 +51,27 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
         widget.transientMessages != oldWidget.transientMessages;
     final didPrependOlderHistory =
         messagesChanged && _didPrependOlderHistory(oldWidget);
+    // 入场收敛窗关窗判定（v3 裁决＋审查 R1/S2）：实质性＝「有序消息 ID
+    // 序列变化」——任一位置 ID 不同（含等长中间替换/重排）、增删、历史
+    // prepend、contextStart（规范化后）变化均关窗；列表实例变化但 ID 结构
+    // 等同的刷新（DB 回流新实例、同 ID 流式增长）不关窗，否则真机上窗口
+    // 会在表情解码完成前被误关，入场重锚失效。O(n) 比较仅在 identity
+    // 已变化时执行。
+    if (_entryRenderConvergenceActive &&
+        (messagesChanged || transientMessagesChanged || contextStartChanged)) {
+      final previousTimeline = _mergeTimelineMessages(
+        oldWidget.messages,
+        oldWidget.transientMessages,
+      );
+      final nextTimeline = _currentTimelineMessages;
+      final materialTimelineChange = didPrependOlderHistory ||
+          _normalizedContextStartId(widget.contextStartMessageId) !=
+              _normalizedContextStartId(oldWidget.contextStartMessageId) ||
+          _timelineIdSequenceChanged(previousTimeline, nextTimeline);
+      if (materialTimelineChange) {
+        _entryRenderConvergenceActive = false;
+      }
+    }
     final recoveringFromHeldEmptyTimeline = messagesChanged &&
         oldWidget.messages.isEmpty &&
         widget.messages.isNotEmpty &&
@@ -245,6 +268,28 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
       stableMessages,
       transientMessages,
     );
+  }
+
+  /// contextStartMessageId 规范化（审查 S2）：与 topic divider 消费语义对齐，
+  /// trim 后空串视同 null，避免 null↔''/空白漂移被误判为实质变化。
+  String? _normalizedContextStartId(String? raw) {
+    final trimmed = raw?.trim();
+    if (trimmed == null || trimmed.isEmpty) return null;
+    return trimmed;
+  }
+
+  /// 有序消息 ID 序列是否变化（审查 R1）：任一位置 ID 不同即为实质性
+  /// 结构变化——覆盖增删、prepend、交接换 ID、等长中间替换与重排；
+  /// 同 ID 新实例/内容增长不算（那是刷新或流式增长，不关入场收敛窗）。
+  bool _timelineIdSequenceChanged(
+    List<Message> previous,
+    List<Message> next,
+  ) {
+    if (previous.length != next.length) return true;
+    for (var i = 0; i < previous.length; i++) {
+      if (previous[i].id != next[i].id) return true;
+    }
+    return false;
   }
 
   String _listItemStableKey(ChatMessageListItem item) {
@@ -853,9 +898,8 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
     if (!_scrollController.hasClients) return false;
     final position = _scrollController.position;
     if (!position.hasContentDimensions) return false;
-    final currentTail = _currentTimelineMessages.isEmpty
-        ? null
-        : _currentTimelineMessages.last;
+    final currentTail =
+        _currentTimelineMessages.isEmpty ? null : _currentTimelineMessages.last;
     if (currentTail == null) return false;
     final blocks = currentTail.blocks;
     if (blocks == null) return false;

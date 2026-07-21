@@ -406,6 +406,25 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
 
   /// 首次进入会话时，确保列表定位到最新消息
   bool _didInitialBottomPosition = false;
+
+  /// 入场收敛窗（07-20-chat-entry-bottom-anchor v3 裁决）：
+  /// 初始置底完成后开窗，窗内 ScrollMetricsNotification 位移只可能来自
+  /// 纯渲染层长高（表情/图片解码、字体加载、视口尺寸变化），metricsReanchor
+  /// 可安全重锚。首次实质性时间线结构变化（有序消息 ID 全序列任一位置
+  /// 变化、历史 prepend、规范化后的 contextStart 变化；列表实例变化但
+  /// ID 结构等同的刷新不算）、用户手势接管或历史分页锁即一次性关窗——
+  /// 结构性变化后的锚定归既有稳定化路径裁决（贴底时新 AI 消息不拉底等
+  /// 语义，由 auto_scroll_guard 守卫锁定）。conversationId 切换时随初始
+  /// 置底标记一起复位，下次进入重新开窗。
+  bool _entryRenderConvergenceActive = false;
+
+  /// 入场动画生命周期静默（审查 R2）：入场动画期间的 extent 增长是
+  /// 结构性来源，metricsReanchor 须静默让路。以「最近一次创建的入场动画
+  /// 是否已结束」的事实信号为准（AnimatedMessageItem.onFinished），
+  /// 不用帧时间戳猜时长——warm-up 帧跳变、timeDilation、长帧都会失真。
+  /// serial 对账防旧动画的完成回调清掉新动画的静默。
+  int _entranceAnimationSerial = 0;
+  int? _activeEntranceAnimationSerial;
   double _manualDetachedDistanceToBottom = 0;
 
   /// 「回到底部」按钮显隐，由 ValueListenableBuilder 局部消费。
@@ -611,41 +630,48 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
 
     return Stack(
       children: [
-        NotificationListener<ScrollNotification>(
-          onNotification: _handleScrollNotification,
-          child: ScrollConfiguration(
-            behavior: const _ChatMessageListScrollBehavior(),
-            child: CustomScrollView(
-              key: _listViewportKey,
-              controller: _scrollController,
-              reverse: true,
-              center: _centerKey,
-              physics: const _ChatHistoryPagingScrollPhysics(
-                parent: AlwaysScrollableScrollPhysics(),
+        // ScrollMetricsNotification 不是 ScrollNotification 子类，须独立监听；
+        // 覆盖「纯渲染层长高（表情/图片解码、字体、视口尺寸变化）不经
+        // didUpdateWidget、follow-latest 稳定化收不到信号」的重锚缺口
+        // （07-20-chat-entry-bottom-anchor）。
+        NotificationListener<ScrollMetricsNotification>(
+          onNotification: _handleScrollMetricsNotification,
+          child: NotificationListener<ScrollNotification>(
+            onNotification: _handleScrollNotification,
+            child: ScrollConfiguration(
+              behavior: const _ChatMessageListScrollBehavior(),
+              child: CustomScrollView(
+                key: _listViewportKey,
+                controller: _scrollController,
+                reverse: true,
+                center: _centerKey,
+                physics: const _ChatHistoryPagingScrollPhysics(
+                  parent: AlwaysScrollableScrollPhysics(),
+                ),
+                cacheExtent: 500,
+                slivers: [
+                  SliverPadding(
+                    padding: EdgeInsets.only(
+                      left: 4,
+                      right: 4,
+                      bottom: listBottomPadding,
+                    ),
+                    sliver: SliverList(delegate: activeDelegate),
+                  ),
+                  SliverToBoxAdapter(
+                    key: _centerKey,
+                    child: const SizedBox.shrink(),
+                  ),
+                  SliverPadding(
+                    padding: const EdgeInsets.only(
+                      left: 4,
+                      right: 4,
+                      top: 10,
+                    ),
+                    sliver: SliverList(delegate: historyDelegate),
+                  ),
+                ],
               ),
-              cacheExtent: 500,
-              slivers: [
-                SliverPadding(
-                  padding: EdgeInsets.only(
-                    left: 4,
-                    right: 4,
-                    bottom: listBottomPadding,
-                  ),
-                  sliver: SliverList(delegate: activeDelegate),
-                ),
-                SliverToBoxAdapter(
-                  key: _centerKey,
-                  child: const SizedBox.shrink(),
-                ),
-                SliverPadding(
-                  padding: const EdgeInsets.only(
-                    left: 4,
-                    right: 4,
-                    top: 10,
-                  ),
-                  sliver: SliverList(delegate: historyDelegate),
-                ),
-              ],
             ),
           ),
         ),

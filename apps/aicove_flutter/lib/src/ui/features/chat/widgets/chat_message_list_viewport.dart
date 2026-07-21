@@ -200,6 +200,7 @@ extension _ChatMessageListViewportX on _ChatMessageListState {
       widget.isLoadingMore || _isLoadingTriggered;
 
   void _lockAutoScrollForHistoryPaging(String reason) {
+    _entryRenderConvergenceActive = false;
     if (!_autoScrollEnabled) return;
     _debugAutoScroll('lock:$reason');
     _captureDetachedSplitBoundary(rebuild: false);
@@ -220,6 +221,7 @@ extension _ChatMessageListViewportX on _ChatMessageListState {
       if (!position.hasContentDimensions) return;
       _jumpToOffset(position.minScrollExtent);
       _didInitialBottomPosition = true;
+      _entryRenderConvergenceActive = true;
     });
   }
 
@@ -650,6 +652,7 @@ extension _ChatMessageListViewportX on _ChatMessageListState {
 
   void _lockAutoScrollForUserInterruption(String reason) {
     _cancelProgrammaticScrollTracking();
+    _entryRenderConvergenceActive = false;
     if (!_autoScrollEnabled) return;
     _debugAutoScroll('lock:$reason');
     _captureDetachedSplitBoundary(rebuild: false);
@@ -703,6 +706,67 @@ extension _ChatMessageListViewportX on _ChatMessageListState {
         _historyLoadingOverlayHideTimer = null;
       });
     });
+  }
+
+  /// 记录入场动画开始，返回 serial 供完成回调对账（审查 R2）。
+  int _markEntranceAnimationStarted() {
+    _activeEntranceAnimationSerial = ++_entranceAnimationSerial;
+    return _entranceAnimationSerial;
+  }
+
+  /// 入场动画结束（完成或被回收）。完成帧自身的布局增长通知仍会在
+  /// 帧后 microtask 到达，静默必须存活过它——post-frame 再入 microtask，
+  /// 恰好排在该通知之后（通知的 microtask 在布局期入队，先于本回调）。
+  void _handleEntranceAnimationFinished(int serial) {
+    if (_activeEntranceAnimationSerial != serial) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      scheduleMicrotask(() {
+        if (!mounted) return;
+        if (_activeEntranceAnimationSerial == serial) {
+          _activeEntranceAnimationSerial = null;
+        }
+      });
+    });
+  }
+
+  /// 纯渲染层 extent 变化（表情/图片解码长高、字体加载、视口尺寸变化）不产生
+  /// didUpdateWidget，follow-latest 的稳定化收不到信号；框架在这类变化后的
+  /// 帧后 microtask 合并派发 ScrollMetricsNotification，这里当场重锚——
+  /// 挂普通 post-frame 不保证有下一帧（框架不会为其请求新帧），直接
+  /// jumpTo 自会请求新帧，也免去 stale callback 的失效机制。
+  /// 去重＝latest state wins：读执行时最新 min，距离阈值提供幂等短路；
+  /// jumpTo 只改 pixels 不改内容尺寸，不会自激再派发。
+  ///
+  /// 作用域＝入场收敛窗（v3 裁决）：消息追加与纯渲染层长高在 metrics 层
+  /// 完全同构、不可区分，而贴底时新 AI 消息**不**拉底是既有产品裁决
+  /// （auto_scroll_guard 守卫锁定）。故本 handler 只在
+  /// [_entryRenderConvergenceActive]（初始置底后、首次结构变化/手势/分页前）
+  /// 生效——窗内位移定义上只能来自纯渲染层；窗外让位给既有稳定化路径。
+  bool _handleScrollMetricsNotification(
+      ScrollMetricsNotification notification) {
+    // 只认主列表自己的 viewport，防未来嵌套滚动（代码块/媒体控件）误触。
+    if (notification.depth != 0) return false;
+    if (!mounted) return false;
+    if (!_autoScrollEnabled) return false;
+    if (!_didInitialBottomPosition) return false;
+    if (!_entryRenderConvergenceActive) return false;
+    // 入场动画期的 extent 增长是结构性来源（空会话首条消息经 didUpdateWidget
+    // 到达时，窗口会开在其入场动画结束之前），以动画完成事实静默让路
+    // （审查 R2：不用帧时间戳猜时长）。
+    if (_activeEntranceAnimationSerial != null) return false;
+    // 历史恢复优先契约：pending 与 lock 都要挡（与 detached 补偿守卫对齐）。
+    if (_historyPagingLockActive) return false;
+    if (_historyViewportRestorePending) return false;
+    if (_isProgrammaticScroll) return false;
+    if (_isUserScrollActive) return false;
+    if (!_scrollController.hasClients) return false;
+    final position = _scrollController.position;
+    if (!position.hasContentDimensions) return false;
+    if ((position.pixels - position.minScrollExtent).abs() <= 0.5) return false;
+    _debugAutoScroll('request:metricsReanchor');
+    widget.onDebugAutoScrollRequested?.call('metricsReanchor');
+    _jumpToOffset(position.minScrollExtent);
+    return false;
   }
 
   bool _handleScrollNotification(ScrollNotification notification) {

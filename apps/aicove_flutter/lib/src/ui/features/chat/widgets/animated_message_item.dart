@@ -13,10 +13,20 @@ import 'package:flutter/material.dart';
 class AnimatedMessageItem extends StatefulWidget {
   final Widget child;
 
+  /// 入场动画结束（完成，或未完成即被回收）时回调一次。
+  /// 列表用它结束 metricsReanchor 的入场静默——入场期的 extent 增长是
+  /// 结构性来源，须以动画生命周期事实为准，不能用帧时间戳猜时长
+  /// （warm-up 帧跳变、timeDilation、长帧都会失真）。
+  final VoidCallback? onFinished;
+
   const AnimatedMessageItem({
     super.key,
     required this.child,
+    this.onFinished,
   });
+
+  /// 入场动画时长。
+  static const Duration kDuration = Duration(milliseconds: 220);
 
   @override
   State<AnimatedMessageItem> createState() => _AnimatedMessageItemState();
@@ -24,12 +34,14 @@ class AnimatedMessageItem extends StatefulWidget {
 
 class _AnimatedMessageItemState extends State<AnimatedMessageItem>
     with SingleTickerProviderStateMixin {
-  static const _kDuration = Duration(milliseconds: 220);
+  bool _notifiedFinished = false;
 
   late final AnimationController _controller = AnimationController(
     vsync: this,
-    duration: _kDuration,
-  )..forward();
+    duration: AnimatedMessageItem.kDuration,
+  )
+    ..addStatusListener(_handleAnimationStatus)
+    ..forward();
   late final CurvedAnimation _curve = CurvedAnimation(
     parent: _controller,
     curve: Curves.easeOutCubic,
@@ -43,8 +55,21 @@ class _AnimatedMessageItemState extends State<AnimatedMessageItem>
     end: Offset.zero,
   ).animate(_curve);
 
+  void _handleAnimationStatus(AnimationStatus status) {
+    if (status == AnimationStatus.completed) {
+      _notifyFinished();
+    }
+  }
+
+  void _notifyFinished() {
+    if (_notifiedFinished) return;
+    _notifiedFinished = true;
+    widget.onFinished?.call();
+  }
+
   @override
   void dispose() {
+    _notifyFinished();
     _controller.dispose();
     super.dispose();
   }

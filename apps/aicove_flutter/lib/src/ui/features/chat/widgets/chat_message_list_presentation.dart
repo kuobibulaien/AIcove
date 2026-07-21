@@ -225,8 +225,10 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
           _shouldAnimatePendingMessage(message);
       if (shouldAnimate) {
         _pendingAnimationIds.remove(message.id);
+        final animationSerial = _markEntranceAnimationStarted();
         return AnimatedMessageItem(
           key: itemKey,
+          onFinished: () => _handleEntranceAnimationFinished(animationSerial),
           child: bubbleWidget,
         );
       }
@@ -235,31 +237,31 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
         child: bubbleWidget,
       );
     }
-  Widget buildPlainChatBubble(
-    BuildContext context,
-    Message message,
-    bool isMe,
-    ChatMessageItem item,
-    ChatActions actions,
-  ) {
-    return MessageBubble(
-      isMe: isMe,
-      message: message,
-      avatarUrl: isMe ? null : widget.avatarUrl,
-      displayName: isMe ? null : widget.displayName,
-      showCorner: item.showCorner,
-      showName: false,
-      showAvatar: item.showAvatar,
-      chatImages: _cachedChatImages,
-      onRetry: (isMe && message.status == 'failed')
-          ? () => actions.recallFailedMessage(message.id)
-          : null,
-      onLongPress: (bubbleBox) =>
-          _handleMessageLongPress(context, message, isMe, bubbleBox),
-      onMediaLongPress: (mediaBox, block) =>
-          _handleMediaLongPress(context, message, isMe, mediaBox, block),
-    );
-  }
+    Widget buildPlainChatBubble(
+      BuildContext context,
+      Message message,
+      bool isMe,
+      ChatMessageItem item,
+      ChatActions actions,
+    ) {
+      return MessageBubble(
+        isMe: isMe,
+        message: message,
+        avatarUrl: isMe ? null : widget.avatarUrl,
+        displayName: isMe ? null : widget.displayName,
+        showCorner: item.showCorner,
+        showName: false,
+        showAvatar: item.showAvatar,
+        chatImages: _cachedChatImages,
+        onRetry: (isMe && message.status == 'failed')
+            ? () => actions.recallFailedMessage(message.id)
+            : null,
+        onLongPress: (bubbleBox) =>
+            _handleMessageLongPress(context, message, isMe, bubbleBox),
+        onMediaLongPress: (mediaBox, block) =>
+            _handleMediaLongPress(context, message, isMe, mediaBox, block),
+      );
+    }
 
     if (item is ChatMessageItem) {
       final message = item.message;
@@ -296,8 +298,10 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
           _shouldAnimatePendingMessage(message);
       if (shouldAnimate) {
         _pendingAnimationIds.remove(message.id);
+        final animationSerial = _markEntranceAnimationStarted();
         return AnimatedMessageItem(
           key: itemKey,
+          onFinished: () => _handleEntranceAnimationFinished(animationSerial),
           child: bubbleWidget,
         );
       }
