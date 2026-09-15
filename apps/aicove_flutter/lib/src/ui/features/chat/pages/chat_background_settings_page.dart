@@ -2,9 +2,14 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:aicove_flutter/src/ui/theme/moe_interaction_theme.dart';
+
 import 'package:figma_squircle/figma_squircle.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../features/chat/application/chat_page_conversation_actions.dart';
+import '../../../shared/widgets/index.dart';
 
 import '../../../../core/utils/blurred_background_service.dart';
 import '../../../../core/utils/data_image.dart';
@@ -30,24 +35,23 @@ class ChatBackgroundSettingsResult {
   });
 }
 
-const Duration _kChatBackgroundDeferredPreviewWindow =
-    Duration(milliseconds: 420);
+const Duration _kChatBackgroundDeferredPreviewWindow = Duration(
+  milliseconds: 420,
+);
 
-class ChatBackgroundSettingsPage extends StatefulWidget {
+class ChatBackgroundSettingsPage extends ConsumerStatefulWidget {
   final Conversation conversation;
 
-  const ChatBackgroundSettingsPage({
-    super.key,
-    required this.conversation,
-  });
+  const ChatBackgroundSettingsPage({super.key, required this.conversation});
 
   @override
-  State<ChatBackgroundSettingsPage> createState() =>
+  ConsumerState<ChatBackgroundSettingsPage> createState() =>
       _ChatBackgroundSettingsPageState();
 }
 
 class _ChatBackgroundSettingsPageState
-    extends State<ChatBackgroundSettingsPage> {
+    extends ConsumerState<ChatBackgroundSettingsPage>
+    with MoeAutoSaveState<ChatBackgroundSettingsPage> {
   static const double _defaultMaskOpacity = 0.8;
   static const double _defaultBlurSigma = 0.0;
 
@@ -66,8 +70,9 @@ class _ChatBackgroundSettingsPageState
   void initState() {
     super.initState();
     final initialRaw = widget.conversation.chatBackgroundImage?.trim();
-    _backgroundImage =
-        (initialRaw == null || initialRaw.isEmpty) ? null : initialRaw;
+    _backgroundImage = (initialRaw == null || initialRaw.isEmpty)
+        ? null
+        : initialRaw;
     _maskOpacity =
         (widget.conversation.chatBackgroundMaskOpacity ?? _defaultMaskOpacity)
             .clamp(0.0, 1.0);
@@ -75,6 +80,11 @@ class _ChatBackgroundSettingsPageState
         (widget.conversation.chatBackgroundBlurSigma ?? _defaultBlurSigma)
             .clamp(0.0, 30.0);
     _scheduleDeferredPreviewActivation();
+    autoSave.configure(
+      save: _save,
+      snapshot: () =>
+          moeAutoSaveSignature([_backgroundImage, _maskOpacity, _blurSigma]),
+    );
   }
 
   @override
@@ -106,8 +116,9 @@ class _ChatBackgroundSettingsPageState
     if (!mounted || !_deferHeavyPreview) return;
 
     final raw = _backgroundImage?.trim();
-    final decodedBytes =
-        raw == null || raw.isEmpty ? null : decodeDataImage(raw);
+    final decodedBytes = raw == null || raw.isEmpty
+        ? null
+        : decodeDataImage(raw);
 
     setState(() {
       _backgroundBytes = decodedBytes;
@@ -123,7 +134,7 @@ class _ChatBackgroundSettingsPageState
       type: FileType.image,
       withData: true,
     );
-    if (picked == null || picked.files.isEmpty) return;
+    if (!mounted || picked == null || picked.files.isEmpty) return;
     final file = picked.files.first;
     final bytes = file.bytes;
     if (bytes == null || bytes.isEmpty) return;
@@ -150,19 +161,20 @@ class _ChatBackgroundSettingsPageState
     });
   }
 
-  void _save() {
+  Future<void> _save() async {
     final raw = _backgroundImage?.trim();
     final hasBackground = raw != null && raw.isNotEmpty;
-    Navigator.of(context).pop(
-      ChatBackgroundSettingsResult(
-        backgroundImage: hasBackground ? raw : null,
-        clearBackgroundImage: !hasBackground,
-        maskOpacity: hasBackground ? _maskOpacity : null,
-        clearMaskOpacity: !hasBackground,
-        blurSigma: hasBackground ? _blurSigma : null,
-        clearBlurSigma: !hasBackground,
-      ),
-    );
+    await ref
+        .read(chatPageConversationActionsProvider)
+        .applyConversationEdits(
+          widget.conversation.id,
+          chatBackgroundImage: hasBackground ? raw : null,
+          clearChatBackgroundImage: !hasBackground,
+          chatBackgroundMaskOpacity: hasBackground ? _maskOpacity : null,
+          clearChatBackgroundMaskOpacity: !hasBackground,
+          chatBackgroundBlurSigma: hasBackground ? _blurSigma : null,
+          clearChatBackgroundBlurSigma: !hasBackground,
+        );
   }
 
   // ─── 背景图片构建 ───
@@ -172,27 +184,35 @@ class _ChatBackgroundSettingsPageState
     if (raw == null || raw.isEmpty) return null;
 
     if (_backgroundBytes != null) {
-      return Image.memory(_backgroundBytes!,
-          fit: BoxFit.cover,
-          gaplessPlayback: true,
-          errorBuilder: (_, __, ___) => const SizedBox.shrink());
+      return Image.memory(
+        _backgroundBytes!,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+      );
     }
 
     if (raw.startsWith('data:image')) return null;
 
     if (raw.startsWith('http://') || raw.startsWith('https://')) {
-      return Image.network(raw,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => const SizedBox.shrink());
+      return Image.network(
+        raw,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+      );
     }
     if (raw.startsWith('assets/') || raw.startsWith('packages/')) {
-      return Image.asset(raw,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => const SizedBox.shrink());
-    }
-    return Image.file(File(raw),
+      return Image.asset(
+        raw,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => const SizedBox.shrink());
+        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+      );
+    }
+    return Image.file(
+      File(raw),
+      fit: BoxFit.cover,
+      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+    );
   }
 
   // ─── UI ───
@@ -201,16 +221,27 @@ class _ChatBackgroundSettingsPageState
   Widget build(BuildContext context) {
     final colors = context.moeColors;
 
-    return Scaffold(
-      backgroundColor: colors.surface,
-      body: Column(
-        children: [
-          // ── 上方：聊天界面缩略预览 ──
-          Expanded(child: _buildPreviewArea(colors)),
-
-          // ── 下方：底部弹窗风格设置面板 ──
-          _buildSettingsSheet(colors),
-        ],
+    return autoSavePage(
+      MoePageScaffold(
+        backgroundColor: colors.surface,
+        body: LayoutBuilder(
+          builder: (context, constraints) {
+            if (constraints.maxHeight < 850) {
+              return ListView(
+                children: [
+                  SizedBox(height: 440, child: _buildPreviewArea(colors)),
+                  _buildSettingsSheet(colors),
+                ],
+              );
+            }
+            return Column(
+              children: [
+                Expanded(child: _buildPreviewArea(colors)),
+                _buildSettingsSheet(colors),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
@@ -222,8 +253,12 @@ class _ChatBackgroundSettingsPageState
 
     return Container(
       color: colors.surface,
-      padding:
-          EdgeInsets.only(top: topPadding + 8, left: 24, right: 24, bottom: 12),
+      padding: EdgeInsets.only(
+        top: topPadding + 8,
+        left: 24,
+        right: 24,
+        bottom: 12,
+      ),
       child: Column(
         children: [
           // 真正的返回 / 保存按钮行
@@ -241,7 +276,7 @@ class _ChatBackgroundSettingsPageState
     return Row(
       children: [
         IconButton(
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: () => Navigator.of(context).maybePop(),
           icon: Icon(Icons.arrow_back, color: colors.text),
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
@@ -252,16 +287,6 @@ class _ChatBackgroundSettingsPageState
             style: TextStyle(
               color: colors.text,
               fontSize: 17,
-              fontWeight: MoeFontWeights.emphasis,
-            ),
-          ),
-        ),
-        TextButton(
-          onPressed: _save,
-          child: Text(
-            '保存',
-            style: TextStyle(
-              color: colors.accentColor,
               fontWeight: MoeFontWeights.emphasis,
             ),
           ),
@@ -277,8 +302,9 @@ class _ChatBackgroundSettingsPageState
     }
 
     final darkMode = _previewDark;
-    final fallbackColor =
-        darkMode ? const Color(0xFF151A22) : const Color(0xFFF5F7FA);
+    final fallbackColor = darkMode
+        ? const Color(0xFF151A22)
+        : const Color(0xFFF5F7FA);
     final textColor = darkMode ? Colors.white : const Color(0xFF1E2A3A);
     final mutedColor = darkMode ? Colors.white54 : Colors.black38;
     final image = _buildBackgroundImage();
@@ -322,8 +348,9 @@ class _ChatBackgroundSettingsPageState
                   height: 44,
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   decoration: BoxDecoration(
-                    color:
-                        Colors.black.withValues(alpha: darkMode ? 0.2 : 0.08),
+                    color: Colors.black.withValues(
+                      alpha: darkMode ? 0.2 : 0.08,
+                    ),
                   ),
                   child: Row(
                     children: [
@@ -361,7 +388,9 @@ class _ChatBackgroundSettingsPageState
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 10),
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
@@ -369,7 +398,9 @@ class _ChatBackgroundSettingsPageState
                         Center(
                           child: Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 2),
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
                             decoration: BoxDecoration(
                               color: Colors.black.withValues(alpha: 0.08),
                               borderRadius: BorderRadius.circular(8),
@@ -420,8 +451,9 @@ class _ChatBackgroundSettingsPageState
                   height: 42,
                   padding: const EdgeInsets.symmetric(horizontal: 10),
                   decoration: BoxDecoration(
-                    color:
-                        Colors.black.withValues(alpha: darkMode ? 0.18 : 0.05),
+                    color: Colors.black.withValues(
+                      alpha: darkMode ? 0.18 : 0.05,
+                    ),
                   ),
                   child: Row(
                     children: [
@@ -444,8 +476,11 @@ class _ChatBackgroundSettingsPageState
                         ),
                       ),
                       const SizedBox(width: 8),
-                      Icon(Icons.arrow_upward_rounded,
-                          size: 18, color: mutedColor),
+                      Icon(
+                        Icons.arrow_upward_rounded,
+                        size: 18,
+                        color: mutedColor,
+                      ),
                     ],
                   ),
                 ),
@@ -459,8 +494,10 @@ class _ChatBackgroundSettingsPageState
                   onPressed: _pickBackgroundImage,
                   icon: const Icon(Icons.add_photo_alternate_outlined),
                   label: const Text('选择背景图片'),
-                  style: OutlinedButton.styleFrom(
-                    backgroundColor: colors.surface.withValues(alpha: 0.85),
+                  style: withoutHoverFeedback(
+                    OutlinedButton.styleFrom(
+                      backgroundColor: colors.surface.withValues(alpha: 0.85),
+                    ),
                   ),
                 ),
               ),
@@ -471,8 +508,9 @@ class _ChatBackgroundSettingsPageState
   }
 
   Widget _buildDeferredMiniature(MoeColors colors) {
-    final fallbackColor =
-        _previewDark ? const Color(0xFF151A22) : const Color(0xFFF5F7FA);
+    final fallbackColor = _previewDark
+        ? const Color(0xFF151A22)
+        : const Color(0xFFF5F7FA);
     final cardColor = _previewDark
         ? Colors.white.withValues(alpha: 0.10)
         : Colors.white.withValues(alpha: 0.72);
@@ -612,7 +650,8 @@ class _ChatBackgroundSettingsPageState
     return IgnorePointer(
       child: Opacity(
         key: const ValueKey<String>(
-            'chat_background_settings_static_blur_layer'),
+          'chat_background_settings_static_blur_layer',
+        ),
         opacity: opacity,
         child: layer,
       ),
@@ -662,11 +701,11 @@ class _ChatBackgroundSettingsPageState
   }) {
     final bg = isMe
         ? (darkMode
-            ? const Color(0xFF5A91E2).withValues(alpha: 0.72)
-            : const Color(0xFF74A7F2).withValues(alpha: 0.8))
+              ? const Color(0xFF5A91E2).withValues(alpha: 0.72)
+              : const Color(0xFF74A7F2).withValues(alpha: 0.8))
         : (darkMode
-            ? Colors.black.withValues(alpha: 0.28)
-            : Colors.white.withValues(alpha: 0.78));
+              ? Colors.black.withValues(alpha: 0.28)
+              : Colors.white.withValues(alpha: 0.78));
     final fg = darkMode ? Colors.white : const Color(0xFF2A3240);
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 200),
@@ -744,8 +783,10 @@ class _ChatBackgroundSettingsPageState
                           Expanded(
                             child: OutlinedButton.icon(
                               onPressed: _pickBackgroundImage,
-                              icon: const Icon(Icons.photo_library_outlined,
-                                  size: 18),
+                              icon: const Icon(
+                                Icons.photo_library_outlined,
+                                size: 18,
+                              ),
                               label: const Text('更换图片'),
                             ),
                           ),
@@ -774,8 +815,10 @@ class _ChatBackgroundSettingsPageState
                       onSelectionChanged: (s) =>
                           setState(() => _previewDark = s.first),
                       showSelectedIcon: false,
-                      style: SegmentedButton.styleFrom(
-                        visualDensity: VisualDensity.compact,
+                      style: withoutHoverFeedback(
+                        SegmentedButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                        ),
                       ),
                     ),
 
@@ -783,8 +826,10 @@ class _ChatBackgroundSettingsPageState
 
                     // ── 遮罩强度 ──
                     _buildLabel(
-                        colors, '遮罩强度  ${(_maskOpacity * 100).round()}%'),
-                    Slider(
+                      colors,
+                      '遮罩强度  ${(_maskOpacity * 100).round()}%',
+                    ),
+                    MoeSlider(
                       value: _maskOpacity,
                       min: 0.0,
                       max: 1.0,
@@ -796,7 +841,7 @@ class _ChatBackgroundSettingsPageState
 
                     // ── 模糊度 ──
                     _buildLabel(colors, '模糊度  ${_blurSigma.round()}'),
-                    Slider(
+                    MoeSlider(
                       value: _blurSigma,
                       min: 0.0,
                       max: 30.0,

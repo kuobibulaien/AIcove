@@ -4,7 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../chat_providers.dart' show chatStatusProvider, ChatStatus;
 import '../domain/message.dart';
-import '../domain/persona_prompt_codec.dart';
+import '../../plugins/image/drawing_preset_provider.dart';
+import '../../plugins/image/image_config.dart';
 import '../../plugins/image/image_plugin.dart';
 import '../../plugins/plugin_providers.dart';
 import '../../../core/app_logger.dart';
@@ -60,6 +61,7 @@ class ChatDeferredImageDelivery {
   void scheduleJobs({
     required String convId,
     required List<DeferredImageJob> jobs,
+    Map<String, dynamic>? drawingSnapshot,
   }) {
     for (final job in jobs) {
       _runBackgroundTask('deferred_image_${job.messageId}', () async {
@@ -67,6 +69,7 @@ class ChatDeferredImageDelivery {
           convId: convId,
           prompt: job.prompt,
           messageId: job.messageId,
+          drawingSnapshot: drawingSnapshot,
         );
         if (imageResult.message != null) {
           final finalMessage = imageResult.message!.copyWith(
@@ -107,9 +110,10 @@ class ChatDeferredImageDelivery {
     required String convId,
     required String prompt,
     required String messageId,
+    Map<String, dynamic>? drawingSnapshot,
   }) async {
     final pluginManager = _ref.read(pluginManagerProvider);
-    final imagePlugin = pluginManager.getPlugin('image') as ImagePlugin?;
+    var imagePlugin = pluginManager.getPlugin('image') as ImagePlugin?;
     if (imagePlugin == null || !imagePlugin.enabled) {
       return _ImageBuildResult.failure(
         ChatRequestMessageBuilder.buildImageContextPayload(
@@ -123,12 +127,23 @@ class ChatDeferredImageDelivery {
     }
 
     _ref.read(chatStatusProvider.notifier).state = ChatStatus.generatingImage;
-    final roleArtistPresetName =
-        await _resolveConversationArtistPresetBinding(convId);
-    final result = await imagePlugin.generateInlineImage(
-      prompt: prompt,
-      roleArtistPresetName: roleArtistPresetName,
-    );
+    try {
+      final ImageConfig config;
+      if (drawingSnapshot != null) {
+        config = ImageConfig.fromJson(drawingSnapshot);
+      } else {
+        final conversation = await _ref.read(conversationRepositoryProvider).getById(convId);
+        if (conversation == null) throw StateError('绘图所属角色不存在');
+        config = (await _ref.read(drawingPresetCatalogProvider.notifier)
+            .resolveForPersona(conversation.personaPrompt)).config;
+      }
+      imagePlugin = ImagePlugin(config, _ref, isRequestSnapshot: true);
+    } catch (e) {
+      return _ImageBuildResult.failure(ChatRequestMessageBuilder.buildImageContextPayload(
+        role: 'assistant', status: 'failed', rawPrompt: prompt,
+        reason: e.toString(), imagePresent: false));
+    }
+    final result = await imagePlugin.generateInlineImage(prompt: prompt);
     if (!result.success ||
         result.localPath == null ||
         result.localPath!.isEmpty) {
@@ -155,41 +170,18 @@ class ChatDeferredImageDelivery {
         id: messageId,
         role: 'assistant',
         blocks: [
+          for (final path in result.localPaths.isEmpty ? [result.localPath!] : result.localPaths)
           ImageBlock(
             messageId: messageId,
-            localPath: result.localPath!,
+            localPath: path,
             prompt: result.prompt ?? result.rawPrompt ?? prompt,
+            generationSnapshot: result.generationSnapshot,
           ),
         ],
         createdAt: DateTime.now(),
         status: 'sent',
       ),
     );
-  }
-
-  Future<String?> _resolveConversationArtistPresetBinding(String convId) async {
-    final normalizedConvId = convId.trim();
-    if (normalizedConvId.isEmpty) return null;
-    try {
-      final conversation = await _ref
-          .read(conversationRepositoryProvider)
-          .getById(normalizedConvId);
-      if (conversation == null) return null;
-      final personaPrompt = conversation.personaPrompt.trim();
-      if (personaPrompt.isEmpty) return null;
-      final personaParts = PersonaPromptCodec.parse(personaPrompt);
-      final value = personaParts.drawingArtistPresetName?.trim();
-      if (value == null || value.isEmpty) {
-        return null;
-      }
-      return value;
-    } catch (e) {
-      AppLogger.warning('ChatDeferredImageDelivery', '读取会话画师串绑定失败', metadata: {
-        'convId': normalizedConvId,
-        'error': e.toString(),
-      });
-      return null;
-    }
   }
 
   Future<void> _attachHiddenImageContextToMessage({

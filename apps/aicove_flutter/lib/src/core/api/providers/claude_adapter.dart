@@ -5,6 +5,7 @@
 library;
 
 import 'dart:convert';
+import 'dart:math';
 
 import 'provider_adapter.dart';
 
@@ -44,19 +45,23 @@ class ClaudeAdapter implements ProviderAdapter {
     double? topP,
     Map<String, dynamic>? customConfig,
     List<Map<String, dynamic>>? tools,
+    ProviderChatRequestOptions? requestOptions,
   }) {
     final systemMessages = <String>[];
     final chatMessages = <Map<String, dynamic>>[];
+    final useSystemPrompt = requestOptions?.useSystemPrompt ?? true;
+    var reachedChat = false;
 
     for (final msg in messages) {
       final role = (msg['role'] ?? '').toString();
       final content = msg['content'];
 
-      if (role == 'system') {
+      if (role == 'system' && useSystemPrompt && !reachedChat) {
         if (content is String) {
           systemMessages.add(content);
         }
       } else {
+        reachedChat = true;
         final normalizedContent = _normalizeContent(content);
         if (normalizedContent == null) {
           continue;
@@ -66,6 +71,13 @@ class ClaudeAdapter implements ProviderAdapter {
           'content': normalizedContent,
         });
       }
+    }
+    final mergedChatMessages = _mergeConsecutiveRoles(chatMessages);
+    if (mergedChatMessages.isEmpty) {
+      mergedChatMessages.add(<String, dynamic>{
+        'role': 'user',
+        'content': '\u200b',
+      });
     }
 
     // 转换 OpenAI 格式的 tools 为 Anthropic 格式
@@ -81,15 +93,113 @@ class ClaudeAdapter implements ProviderAdapter {
       }).toList();
     }
 
-    return {
+    final body = <String, dynamic>{
       'model': model,
-      'messages': chatMessages,
+      'messages': mergedChatMessages,
       if (systemMessages.isNotEmpty) 'system': systemMessages.join('\n\n'),
       'max_tokens': customConfig?['max_tokens'] ?? 4096,
       if (temperature != null) 'temperature': temperature,
       if (topP != null) 'top_p': topP,
       if (anthropicTools != null) 'tools': anthropicTools,
       ...?customConfig,
+    };
+    _applyRequestOptions(body, requestOptions);
+    return body;
+  }
+
+  List<Map<String, dynamic>> _mergeConsecutiveRoles(
+    List<Map<String, dynamic>> messages,
+  ) {
+    final merged = <Map<String, dynamic>>[];
+    for (final message in messages) {
+      if (merged.isEmpty || merged.last['role'] != message['role']) {
+        merged.add(Map<String, dynamic>.from(message));
+        continue;
+      }
+      final previousContent = merged.last['content'];
+      final currentContent = message['content'];
+      if (previousContent is String && currentContent is String) {
+        merged.last['content'] = '$previousContent\n\n$currentContent';
+      } else {
+        final parts = <dynamic>[];
+        if (previousContent is List) {
+          parts.addAll(previousContent);
+        } else if (previousContent != null) {
+          parts.add(previousContent);
+        }
+        if (currentContent is List) {
+          parts.addAll(currentContent);
+        } else if (currentContent != null) {
+          parts.add(currentContent);
+        }
+        merged.last['content'] = parts;
+      }
+    }
+    return merged;
+  }
+
+  void _applyRequestOptions(
+    Map<String, dynamic> body,
+    ProviderChatRequestOptions? options,
+  ) {
+    if (options == null) return;
+    if (options.temperature != null) {
+      body['temperature'] = options.temperature;
+    }
+    if (options.topP != null) body['top_p'] = options.topP;
+    if ((options.topK ?? 0) > 0) body['top_k'] = options.topK;
+    if (options.maxOutputTokens != null) {
+      body['max_tokens'] = options.maxOutputTokens;
+    }
+    _applyThinking(body, options);
+  }
+
+  static const _budgetTokensByLevel = <ThinkingLevel, int>{
+    ThinkingLevel.minimal: 1024,
+    ThinkingLevel.low: 2048,
+    ThinkingLevel.medium: 8192,
+    ThinkingLevel.high: 16384,
+  };
+
+  /// Claude 4.6+ 用 adaptive + `output_config.effort`；4.5 及更早用
+  /// `budget_tokens`（须 ≥1024 且 < max_tokens，否则跳过不发）。
+  void _applyThinking(
+    Map<String, dynamic> body,
+    ProviderChatRequestOptions options,
+  ) {
+    final level = options.thinkingLevel;
+    if (level == null || level.isAuto) return;
+    final scheme = options.thinkingScheme ?? ThinkingScheme.claudeEffort;
+
+    if (level.isOff) {
+      body['thinking'] = {'type': 'disabled'};
+      final outputConfig = body['output_config'];
+      if (outputConfig is Map) {
+        final copy = Map<String, dynamic>.from(outputConfig)..remove('effort');
+        if (copy.isEmpty) {
+          body.remove('output_config');
+        } else {
+          body['output_config'] = copy;
+        }
+      }
+      return;
+    }
+
+    if (scheme == ThinkingScheme.claudeBudget) {
+      final maxTokens = body['max_tokens'];
+      final maxTokensInt = maxTokens is int ? maxTokens : null;
+      final wanted = _budgetTokensByLevel[level] ?? _budgetTokensByLevel[ThinkingLevel.high]!;
+      final budget = maxTokensInt == null ? wanted : min(wanted, maxTokensInt - 1);
+      if (budget < 1024) return;
+      body['thinking'] = {'type': 'enabled', 'budget_tokens': budget};
+      return;
+    }
+
+    body['thinking'] = {'type': 'adaptive'};
+    final existing = body['output_config'];
+    body['output_config'] = {
+      if (existing is Map) ...Map<String, dynamic>.from(existing),
+      'effort': level.name,
     };
   }
 
@@ -223,6 +333,10 @@ class ClaudeAdapter implements ProviderAdapter {
       final text = part['text']?.toString();
       if (text == null || text.trim().isEmpty) return null;
       return {'type': 'text', 'text': text};
+    }
+
+    if (type == 'file') {
+      throw UnsupportedError('当前 Claude 接口不支持音频或视频附件，请切换聊天模型。');
     }
 
     if (type == 'image_url') {

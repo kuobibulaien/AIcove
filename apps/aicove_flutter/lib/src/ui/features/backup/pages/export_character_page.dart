@@ -1,4 +1,3 @@
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -38,7 +37,7 @@ class _ExportCharacterPageState extends ConsumerState<ExportCharacterPage> {
     final selectedIds = ref.watch(selectedConversationsProvider);
     final exportProgress = ref.watch(exportProgressProvider);
 
-    return Scaffold(
+    return MoePageScaffold(
       appBar: MoeAppBar(
         title: '选择角色',
         showBackButton: true,
@@ -162,16 +161,11 @@ class _ExportCharacterPageState extends ConsumerState<ExportCharacterPage> {
                   const SizedBox(width: 12),
 
                   // 头像
-                  CircleAvatar(
-                    radius: 24,
-                    backgroundImage: conv.avatarUrl != null && conv.avatarUrl!.isNotEmpty
-                        ? (conv.avatarUrl!.startsWith('assets/')
-                            ? AssetImage(conv.avatarUrl!) as ImageProvider
-                            : FileImage(File(conv.avatarUrl!)))
-                        : null,
-                    child: conv.avatarUrl == null || conv.avatarUrl!.isEmpty
-                        ? Text(conv.displayName.isNotEmpty ? conv.displayName[0] : '?')
-                        : null,
+                  MoeAvatar(
+                    name: conv.displayName,
+                    avatarUrl: conv.avatarUrl,
+                    characterImage: conv.characterImage,
+                    size: 48,
                   ),
                   const SizedBox(width: 12),
 
@@ -263,6 +257,7 @@ class _ExportCharacterPageState extends ConsumerState<ExportCharacterPage> {
   }
 
   Future<void> _startExport() async {
+    if (!mounted || _isExporting) return;
     final selectedIds = ref.read(selectedConversationsProvider);
     if (selectedIds.isEmpty) return;
 
@@ -276,6 +271,7 @@ class _ExportCharacterPageState extends ConsumerState<ExportCharacterPage> {
         conversationIds: selectedIds.toList(),
         options: options,
         onProgress: (progress) {
+          if (!mounted) return;
           ref.read(exportProgressProvider.notifier).state = progress;
         },
       );

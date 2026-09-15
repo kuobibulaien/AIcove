@@ -9,11 +9,7 @@ class SyncResult {
   final String? error;
   final int syncedCount;
 
-  SyncResult({
-    required this.success,
-    this.error,
-    this.syncedCount = 0,
-  });
+  SyncResult({required this.success, this.error, this.syncedCount = 0});
 
   factory SyncResult.success({int count = 0}) =>
       SyncResult(success: true, syncedCount: count);
@@ -27,10 +23,7 @@ class SyncRepository {
   final ApiClient apiClient;
   final LocalSyncDatabase localDb;
 
-  SyncRepository({
-    required this.apiClient,
-    required this.localDb,
-  });
+  SyncRepository({required this.apiClient, required this.localDb});
 
   // ============ 联系人同步 ============
 
@@ -69,7 +62,9 @@ class SyncRepository {
       // 4. 更新同步时间
       await localDb.updateLastSyncTime('contacts', DateTime.now());
 
-      return SyncResult.success(count: unsyncedContacts.length + contacts.length);
+      return SyncResult.success(
+        count: unsyncedContacts.length + contacts.length,
+      );
     } catch (e) {
       print('❌ 联系人同步失败: $e');
       return SyncResult.failure(e.toString());
@@ -79,13 +74,18 @@ class SyncRepository {
   // ============ 消息同步 ============
 
   /// 同步消息
-  Future<SyncResult> syncMessages({String? contactId, int batchSize = 100}) async {
+  Future<SyncResult> syncMessages({
+    String? contactId,
+    int batchSize = 100,
+  }) async {
     try {
       int totalSynced = 0;
 
       // 1. 上传本地未同步的消息（分批）
       while (true) {
-        final unsyncedMessages = await localDb.getUnsyncedMessages(limit: batchSize);
+        final unsyncedMessages = await localDb.getUnsyncedMessages(
+          limit: batchSize,
+        );
         if (unsyncedMessages.isEmpty) break;
 
         final uploadData = unsyncedMessages.map((m) => m.toJson()).toList();

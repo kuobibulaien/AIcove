@@ -1,3 +1,4 @@
+import '../../../../core/sync/cloud_local_write.dart';
 import 'dart:convert';
 
 import 'package:flutter/services.dart' show rootBundle;
@@ -15,7 +16,8 @@ class UiModelsStoreLocalDataSource {
 
   Future<Map<String, dynamic>> fetchAll() async {
     final prefs = await SharedPreferences.getInstance();
-    return _loadStore(prefs);
+    final result = await _loadStore(prefs);
+    return result;
   }
 
   Future<Map<String, dynamic>> updatePartial(
@@ -42,24 +44,27 @@ class UiModelsStoreLocalDataSource {
   }) async {
     final prefs = await SharedPreferences.getInstance();
     final current = await _loadStore(prefs);
-    final modelTypes = (current['model_types'] as Map? ??
-            const <String, dynamic>{})
-        .map((key, value) => MapEntry(key.toString(), value?.toString() ?? ''));
+    final modelTypes =
+        (current['model_types'] as Map? ?? const <String, dynamic>{}).map(
+          (key, value) => MapEntry(key.toString(), value?.toString() ?? ''),
+        );
     final providers = _copyProviders(current);
-    final requestFormat =
-        customConfig?['requestFormat']?.toString().trim().toLowerCase();
+    final requestFormat = customConfig?['requestFormat']
+        ?.toString()
+        .trim()
+        .toLowerCase();
     final isNovelAi =
         isNovelAiProvider(providerId: providerId, apiBaseUrl: apiBaseUrl) ||
-            requestFormat == 'novelai' ||
-            requestFormat == 'nai';
+        requestFormat == 'novelai' ||
+        requestFormat == 'nai';
 
     var visible = cleanSettingsStrings(
       visibleModels ?? (model != null ? [model] : models.take(3)),
     );
     var hidden = cleanSettingsStrings(hiddenModels);
     if (isNovelAi) {
-      visible = normalizeNovelAiModels(visible);
-      hidden = normalizeNovelAiModels(hidden);
+      visible = normalizeNovelAiModelIds(visible);
+      hidden = normalizeNovelAiModelIds(hidden);
     }
     visible = visible.where((m) => models.contains(m)).toList();
     hidden = hidden
@@ -86,13 +91,14 @@ class UiModelsStoreLocalDataSource {
     final normalizedApiBaseUrl = isNovelAi
         ? normalizeNovelAiBaseUrl(apiBaseUrl)
         : (apiBaseUrl.trim().isEmpty
-            ? 'https://api.openai.com/v1'
-            : apiBaseUrl.trim());
+              ? 'https://api.openai.com/v1'
+              : apiBaseUrl.trim());
 
     final entry = <String, dynamic>{
       'id': providerId,
-      'displayName':
-          displayName?.trim().isEmpty == true ? null : displayName?.trim(),
+      'displayName': displayName?.trim().isEmpty == true
+          ? null
+          : displayName?.trim(),
       'apiKeys': apiKey.trim().isEmpty ? <String>[] : <String>[apiKey.trim()],
       'apiBaseUrl': normalizedApiBaseUrl,
       'enabled': true,
@@ -150,29 +156,33 @@ class UiModelsStoreLocalDataSource {
     }
 
     final provider = providers[index];
-    final currentModelTypes = (current['model_types'] as Map? ??
-            const <String, dynamic>{})
-        .map((key, value) => MapEntry(key.toString(), value?.toString() ?? ''));
+    final currentModelTypes =
+        (current['model_types'] as Map? ?? const <String, dynamic>{}).map(
+          (key, value) => MapEntry(key.toString(), value?.toString() ?? ''),
+        );
 
     if (displayName != null) {
-      provider['displayName'] =
-          displayName.trim().isEmpty ? null : displayName.trim();
+      provider['displayName'] = displayName.trim().isEmpty
+          ? null
+          : displayName.trim();
     }
     if (apiBaseUrl != null && apiBaseUrl.trim().isNotEmpty) {
       final nextBase = apiBaseUrl.trim();
-      final mergedRequestFormat = (customConfig?['requestFormat'] ??
-              (provider['custom_config'] is Map
-                  ? (provider['custom_config'] as Map)['requestFormat']
-                  : null))
-          ?.toString()
-          .trim()
-          .toLowerCase();
+      final mergedRequestFormat =
+          (customConfig?['requestFormat'] ??
+                  (provider['custom_config'] is Map
+                      ? (provider['custom_config'] as Map)['requestFormat']
+                      : null))
+              ?.toString()
+              .trim()
+              .toLowerCase();
       final isNovelAi =
           isNovelAiProvider(providerId: providerId, apiBaseUrl: nextBase) ||
-              mergedRequestFormat == 'novelai' ||
-              mergedRequestFormat == 'nai';
-      provider['apiBaseUrl'] =
-          isNovelAi ? normalizeNovelAiBaseUrl(nextBase) : nextBase;
+          mergedRequestFormat == 'novelai' ||
+          mergedRequestFormat == 'nai';
+      provider['apiBaseUrl'] = isNovelAi
+          ? normalizeNovelAiBaseUrl(nextBase)
+          : nextBase;
     }
     if (apiKeys != null) {
       provider['apiKeys'] = cleanSettingsStrings(apiKeys);
@@ -183,21 +193,43 @@ class UiModelsStoreLocalDataSource {
     if (customConfig != null) {
       provider['custom_config'] = customConfig;
     }
+    final providerRequestFormat =
+        (provider['custom_config'] is Map
+                ? (provider['custom_config'] as Map)['requestFormat']
+                : null)
+            ?.toString()
+            .trim()
+            .toLowerCase();
+    final providerIsNovelAi =
+        isNovelAiProvider(
+          providerId: providerId,
+          apiBaseUrl: (provider['apiBaseUrl'] as String? ?? '').trim(),
+        ) ||
+        providerRequestFormat == 'novelai' ||
+        providerRequestFormat == 'nai';
     if (allModels != null) {
-      final cleaned = cleanSettingsStrings(allModels)
-        ..sort(caseInsensitiveSettingsSort);
-      provider['models'] = cleaned;
+      final cleaned = cleanSettingsStrings(allModels);
+      // NovelAI 目录顺序表达默认优先级，不能被通用字母排序打乱。
+      provider['models'] = providerIsNovelAi
+          ? normalizeNovelAiModels(cleaned)
+          : (cleaned..sort(caseInsensitiveSettingsSort));
     }
     if (visibleModels != null) {
       final models = cleanSettingsStrings(provider['models']);
-      provider['visible_models'] = cleanSettingsStrings(visibleModels)
+      final visible = providerIsNovelAi
+          ? normalizeNovelAiModelIds(visibleModels)
+          : cleanSettingsStrings(visibleModels);
+      provider['visible_models'] = visible
           .where((m) => models.contains(m))
           .toList();
     }
     if (hiddenModels != null) {
       final models = cleanSettingsStrings(provider['models']);
       final visible = cleanSettingsStrings(provider['visible_models']);
-      provider['hidden_models'] = cleanSettingsStrings(hiddenModels)
+      final hidden = providerIsNovelAi
+          ? normalizeNovelAiModelIds(hiddenModels)
+          : cleanSettingsStrings(hiddenModels);
+      provider['hidden_models'] = hidden
           .where((m) => models.contains(m) && !visible.contains(m))
           .toList();
     }
@@ -304,7 +336,9 @@ class UiModelsStoreLocalDataSource {
         prefs,
         await _applyLocalKeys(buildDefaultUiModelsStoreData()),
       );
-      await prefs.setString(kUiModelsStoreKey, jsonEncode(defaults));
+      await cloudLocalWrite(
+        () => prefs.setString(kUiModelsStoreKey, jsonEncode(defaults)),
+      );
       return normalizeUiModelsStoreData(defaults);
     }
 
@@ -317,7 +351,9 @@ class UiModelsStoreLocalDataSource {
       final normalized = normalizeUiModelsStoreData(withKeys);
       final normalizedJson = jsonEncode(normalized);
       if (normalizedJson != raw) {
-        await prefs.setString(kUiModelsStoreKey, normalizedJson);
+        await cloudLocalWrite(
+          () => prefs.setString(kUiModelsStoreKey, normalizedJson),
+        );
       }
       return normalized;
     } catch (_) {
@@ -328,7 +364,9 @@ class UiModelsStoreLocalDataSource {
         prefs,
         await _applyLocalKeys(buildDefaultUiModelsStoreData()),
       );
-      await prefs.setString(kUiModelsStoreKey, jsonEncode(defaults));
+      await cloudLocalWrite(
+        () => prefs.setString(kUiModelsStoreKey, jsonEncode(defaults)),
+      );
       return normalizeUiModelsStoreData(defaults);
     }
   }
@@ -347,7 +385,9 @@ class UiModelsStoreLocalDataSource {
           await _applyLocalKeys(Map<String, dynamic>.from(decoded)),
         );
         final normalized = normalizeUiModelsStoreData(withKeys);
-        await prefs.setString(kUiModelsStoreKey, jsonEncode(normalized));
+        await cloudLocalWrite(
+          () => prefs.setString(kUiModelsStoreKey, jsonEncode(normalized)),
+        );
         return normalized;
       } catch (_) {
         // Ignore invalid legacy payload.
@@ -381,10 +421,8 @@ class UiModelsStoreLocalDataSource {
       final nextAutoReplySettings = autoReplySettings is Map<String, dynamic>
           ? Map<String, dynamic>.from(autoReplySettings)
           : autoReplySettings is Map
-              ? Map<String, dynamic>.from(
-                  autoReplySettings.cast<String, dynamic>(),
-                )
-              : <String, dynamic>{};
+          ? Map<String, dynamic>.from(autoReplySettings.cast<String, dynamic>())
+          : <String, dynamic>{};
       nextAutoReplySettings.putIfAbsent(
         'allow_ai_set_reminders',
         () => legacyEnabled,
@@ -429,13 +467,32 @@ class UiModelsStoreLocalDataSource {
       data['applied_migrations'] = appliedMigrations;
     }
 
+    if (!appliedMigrations.contains(kFishAudioProviderBackfillMigrationId)) {
+      final hasFishAudio = providers.any((provider) {
+        if (provider is! Map) return false;
+        return provider['id']?.toString().trim() == 'fish_audio';
+      });
+      if (!hasFishAudio) {
+        final fishDefault = defaultProviders.firstWhere(
+          (provider) => provider['id'] == 'fish_audio',
+          orElse: () => <String, dynamic>{},
+        );
+        if (fishDefault.isNotEmpty) {
+          providers.add(Map<String, dynamic>.from(fishDefault));
+        }
+      }
+      appliedMigrations.add(kFishAudioProviderBackfillMigrationId);
+      data['applied_migrations'] = appliedMigrations;
+    }
+
     for (final provider in providers) {
       if (provider is! Map) continue;
       final id = provider['id'] as String?;
       if (id == null) continue;
 
       final existingKeys = provider['apiKeys'];
-      final hasKey = existingKeys is List &&
+      final hasKey =
+          existingKeys is List &&
           existingKeys.isNotEmpty &&
           existingKeys.any((k) => k?.toString().trim().isNotEmpty == true);
 
@@ -465,6 +522,10 @@ class UiModelsStoreLocalDataSource {
       }
     }
 
+    // NovelAI V5 Full 默认模型一次性迁移：只升级缺失/历史内置默认值，
+    // 保护明确的 V3 / Furry V3 / V4 / 自定义默认值与渠道其他配置。
+    applyNovelAiV5FullDefaultMigration(data);
+
     return data;
   }
 
@@ -487,7 +548,11 @@ class UiModelsStoreLocalDataSource {
     Map<String, dynamic> data,
   ) async {
     final normalized = normalizeUiModelsStoreData(data);
-    await prefs.setString(kUiModelsStoreKey, jsonEncode(normalized));
+    if (!await cloudLocalWrite(
+      () => prefs.setString(kUiModelsStoreKey, jsonEncode(normalized)),
+    )) {
+      throw StateError('设置写入失败');
+    }
     return normalized;
   }
 }

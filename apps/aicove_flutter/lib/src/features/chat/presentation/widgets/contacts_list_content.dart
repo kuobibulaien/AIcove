@@ -1,17 +1,19 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
+import 'package:aicove_flutter/src/ui/theme/moe_interaction_theme.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import 'package:aicove_flutter/src/core/utils/image_preheat_queue.dart';
 import 'package:aicove_flutter/src/core/utils/avatar_helper.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import '../../providers2.dart';
+import '../../application/chat_page_queries.dart';
 import '../../domain/conversation.dart';
 import '../../domain/sort_mode.dart';
 import 'character_list_item.dart';
 import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/widgets/moe_adaptive_shell.dart';
 
 @visibleForTesting
 VoidCallback scheduleConversationTapWarmup(
@@ -89,6 +91,9 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
   }
 
   void _scheduleVisibleListWarmup(List<Conversation> filtered) {
+    // 根联系人页可在聊天转场下继续挂载，不能让它的预读抢当前会话的冷读。
+    // 在build中订阅路由状态，返回联系人页后仍有机会开始预读。
+    if (ModalRoute.of(context)?.isCurrent == false) return;
     final targets =
         filtered.take(_kListWarmupConversationCount).toList(growable: false);
     if (targets.isEmpty) return;
@@ -106,7 +111,14 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _warmupScheduled = false;
       if (!mounted || _pendingWarmupTargets.isEmpty) return;
+      if (ModalRoute.of(context)?.isCurrent == false) {
+        _lastWarmupFingerprint = '';
+        return;
+      }
 
+      unawaited(ref.read(chatPageQueriesProvider).warmEntryMessages(
+            _pendingWarmupTargets.map((conversation) => conversation.id),
+          ));
       final queue = ref.read(imagePreheatQueueProvider);
       final configuration = createLocalImageConfiguration(context);
       for (final conv in _pendingWarmupTargets) {
@@ -180,7 +192,8 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
         }
         // 当前选中的会话，用于高亮联系人卡片（仅在宽屏模式下启用）
         // 窄屏模式下（onContactTap == null）不高亮任何卡片
-        final activeId = widget.onContactTap != null
+        final activeId = widget.onContactTap != null ||
+                (MoeWorkspace.maybeOf(context)?.isWide ?? false)
             ? ref.watch(activeConversationIdProvider)
             : null;
         final highlightId = activeId ??
@@ -244,9 +257,9 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
                                 ),
                                 TextButton(
                                   onPressed: () => Navigator.pop(context, true),
-                                  style: TextButton.styleFrom(
+                                  style: withoutHoverFeedback(TextButton.styleFrom(
                                     foregroundColor: Colors.red,
-                                  ),
+                                  )),
                                   child: const Text('删除'),
                                 ),
                               ],
@@ -277,7 +290,8 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
                         ref.read(activeConversationIdProvider.notifier).state =
                             c.id;
                         // 传入初始会话数据，避免新页面首帧先渲染到顶部/错误位置再跳动
-                        context.push('/chat/${c.id}', extra: c);
+                        MoeWorkspace.openLocation(context, '/chat/${c.id}',
+                            extra: c);
                       }
                     },
                     // 移除 onEdit 参数 - 编辑功能改到聊天界面

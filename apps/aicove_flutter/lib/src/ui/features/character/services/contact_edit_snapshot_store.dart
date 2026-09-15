@@ -127,6 +127,7 @@ class ContactEditSnapshotStore {
   static final ContactEditSnapshotStore instance = ContactEditSnapshotStore._();
 
   Directory? _cacheDir;
+  int _tmpFileSeq = 0;
   final Map<String, ContactEditSnapshot> _memoryCache = {};
   final Map<String, Future<ContactEditSnapshot?>> _inFlightReads = {};
 
@@ -188,12 +189,22 @@ class ContactEditSnapshotStore {
     await file.parent.create(recursive: true);
 
     final payload = jsonEncode(snapshot.toJson());
-    final tempFile = File('${file.path}.tmp');
+    // 并发写同一快照时各自使用独立临时文件，避免共享 .tmp 路径互相删除/改名。
+    final tempFile = File(
+      '${file.path}.${DateTime.now().microsecondsSinceEpoch}.${_tmpFileSeq++}.tmp',
+    );
     await tempFile.writeAsString(payload, flush: true);
-    if (await file.exists()) {
-      await file.delete();
+    try {
+      // POSIX 上 rename 原子替换目标；Windows 目标已存在时会抛异常。
+      await tempFile.rename(file.path);
+    } on FileSystemException {
+      try {
+        await file.delete();
+      } on PathNotFoundException {
+        // 并发写入者已删除目标文件
+      }
+      await tempFile.rename(file.path);
     }
-    await tempFile.rename(file.path);
 
     _memoryCache[normalizedId] = snapshot;
   }

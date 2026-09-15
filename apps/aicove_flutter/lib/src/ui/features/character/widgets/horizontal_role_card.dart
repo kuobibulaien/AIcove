@@ -1,7 +1,7 @@
 /// HorizontalRoleCard - 横向角色卡片组件
 ///
 /// 从 role_card_page.dart 提取，显示左图右文风格的角色卡片。
-/// 使用 ExpandingPageRoute 实现无缝展开动画。
+/// 点击直接进入对应角色的聊天界面。
 ///
 /// 更新记录：
 /// - 2025-12-31: 从 role_card_page.dart 提取
@@ -12,7 +12,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../ui/theme/tokens.dart';
-import '../../../../ui/shared/animations/expanding_page_route.dart';
 import '../../../../ui/shared/animations/hero_rect_tweens.dart';
 import '../../../../ui/shared/effects/frosted_glass_card.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
@@ -21,7 +20,7 @@ import '../../../../core/utils/blurred_background_service.dart';
 import '../../../../core/utils/role_transition_tags.dart';
 import '../../../../features/chat/domain/conversation.dart';
 import '../../../../features/chat/domain/persona_prompt_codec.dart';
-import '../pages/character_detail_page.dart';
+import '../services/open_role_chat.dart';
 
 /// 横向角色卡片 - 左图右文风格 + 背景 Hero 动效
 class HorizontalRoleCard extends ConsumerStatefulWidget {
@@ -84,22 +83,7 @@ class _HorizontalRoleCardState extends ConsumerState<HorizontalRoleCard> {
     });
   }
 
-  /// 导航到详情页（使用 ExpandingPageRoute 无缝展开）
-  void _navigateToDetail() {
-    final sourceRect = getSourceRect(context);
-    Navigator.of(context).push(
-      ExpandingPageRoute(
-        page: CharacterDetailPage(
-          conversationId: widget.conversation.id,
-          initialConversation: widget.conversation,
-          heroId: widget.heroId,
-        ),
-        sourceRect: sourceRect,
-        sourceRadius: 16,
-        targetRadius: 0,
-      ),
-    );
-  }
+  void _navigateToChat() => openRoleChat(context, ref, widget.conversation);
 
   @override
   Widget build(BuildContext context) {
@@ -114,7 +98,7 @@ class _HorizontalRoleCardState extends ConsumerState<HorizontalRoleCard> {
         child: Material(
           color: Colors.transparent,
           child: InkWell(
-            onTap: _navigateToDetail,
+            onTap: _navigateToChat,
             child: Stack(
               fit: StackFit.expand,
               children: [

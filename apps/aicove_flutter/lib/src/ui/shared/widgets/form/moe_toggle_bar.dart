@@ -28,15 +28,12 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../theme/tokens.dart';
-import '../../effects/smooth_clip.dart';
+import '../buttons/moe_button_surface.dart';
+import '../moe_floating_surface.dart';
 
 /// 切换项配置
 class MoeToggleItem<T> {
-  const MoeToggleItem({
-    required this.value,
-    required this.label,
-    this.icon,
-  });
+  const MoeToggleItem({required this.value, required this.label, this.icon});
 
   final T value;
   final String label;
@@ -69,21 +66,19 @@ class MoeToggleBar<T> extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
 
-    return Container(
-      height: 40,
+    return MoeFloatingSurface(
+      radius: 20,
       padding: const EdgeInsets.all(3),
-      decoration: MoeG2Decoration(
-        radius: 20,
-        color: colors.surface,
-        border: Border.all(color: colors.border, width: 1),
-      ),
-      child: Row(
-        mainAxisSize: expanded ? MainAxisSize.max : MainAxisSize.min,
-        children: items.map((item) {
-          final isSelected = value == item.value;
-          final child = _buildItem(context, item, isSelected, colors);
-          return expanded ? Expanded(child: child) : child;
-        }).toList(),
+      child: SizedBox(
+        height: 34,
+        child: Row(
+          mainAxisSize: expanded ? MainAxisSize.max : MainAxisSize.min,
+          children: items.map((item) {
+            final isSelected = value == item.value;
+            final child = _buildItem(context, item, isSelected, colors);
+            return expanded ? Expanded(child: child) : child;
+          }).toList(),
+        ),
       ),
     );
   }
@@ -101,13 +96,11 @@ class MoeToggleBar<T> extends StatelessWidget {
           onChanged(item.value);
         }
       },
-      child: AnimatedContainer(
-        duration: kAnimFast,
+      child: MoeButtonSurface(
         padding: const EdgeInsets.symmetric(horizontal: 14),
-        decoration: MoeG2Decoration(
-          radius: 17,
-          color: isSelected ? colors.focus : Colors.transparent,
-        ),
+        radius: 17,
+        tintColor: isSelected ? colors.focus : Colors.transparent,
+        shadows: const [],
         alignment: Alignment.center,
         child: item.icon != null
             ? Row(
@@ -116,15 +109,17 @@ class MoeToggleBar<T> extends StatelessWidget {
                   Icon(
                     item.icon,
                     size: 16,
-                    color: isSelected ? Colors.white : colors.muted,
+                    color: isSelected ? colors.text : colors.muted,
                   ),
                   const SizedBox(width: 6),
                   Text(
                     item.label,
                     style: TextStyle(
                       fontSize: 13,
-                      color: isSelected ? Colors.white : colors.textSecondary,
-                      fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
+                      color: isSelected ? colors.text : colors.textSecondary,
+                      fontWeight: isSelected
+                          ? MoeFontWeights.emphasis
+                          : MoeFontWeights.normal,
                     ),
                   ),
                 ],
@@ -133,8 +128,10 @@ class MoeToggleBar<T> extends StatelessWidget {
                 item.label,
                 style: TextStyle(
                   fontSize: 13,
-                  color: isSelected ? Colors.white : colors.textSecondary,
-                  fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
+                  color: isSelected ? colors.text : colors.textSecondary,
+                  fontWeight: isSelected
+                      ? MoeFontWeights.emphasis
+                      : MoeFontWeights.normal,
                 ),
               ),
       ),

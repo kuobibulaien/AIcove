@@ -103,7 +103,8 @@ class _PromptNodeSnapshot {
 
   int get attentionCount => prompts
       .where(
-          (prompt) => _attentionStatuses.contains(_usageFor(prompt.id).status))
+        (prompt) => _attentionStatuses.contains(_usageFor(prompt.id).status),
+      )
       .length;
 
   String effectiveTemplateFor(_PromptDefaultNode prompt) {
@@ -268,21 +269,6 @@ const _runtimeUsages = <String, _RuntimePromptUsage>{
     summary: '用于合并多个标签说明时的前置说明。',
     status: _RuntimePromptStatus.active,
   ),
-  'multimodal.vision.system': _RuntimePromptUsage(
-    area: '多模态理解',
-    summary: '用于图片理解辅助模型。',
-    status: _RuntimePromptStatus.active,
-  ),
-  'multimodal.audio.system': _RuntimePromptUsage(
-    area: '多模态理解',
-    summary: '用于音频理解辅助模型。',
-    status: _RuntimePromptStatus.active,
-  ),
-  'multimodal.video.system': _RuntimePromptUsage(
-    area: '多模态理解',
-    summary: '用于视频理解辅助模型。',
-    status: _RuntimePromptStatus.active,
-  ),
   'chat.draw_image.stable_review_instruction': _RuntimePromptUsage(
     area: '聊天绘图',
     summary: '用于绘图结果稳定性审核。',
@@ -311,9 +297,9 @@ class PromptNodeManagementPageEnhanced extends StatefulWidget {
     AssetBundle? assetBundle,
     AgentContextDefaultsLoader? defaultsLoader,
     AppDatabase? database,
-  })  : _assetBundle = assetBundle,
-        _defaultsLoader = defaultsLoader,
-        _database = database;
+  }) : _assetBundle = assetBundle,
+       _defaultsLoader = defaultsLoader,
+       _database = database;
 
   final AssetBundle? _assetBundle;
   final AgentContextDefaultsLoader? _defaultsLoader;
@@ -340,21 +326,24 @@ class _PromptNodeManagementPageEnhancedState
 
   Future<_PromptNodeSnapshot> _loadSnapshot() async {
     final assetBundle = widget._assetBundle ?? rootBundle;
-    final rawPromptDefaults =
-        await assetBundle.loadString('assets/prompt_defaults.json');
+    final rawPromptDefaults = await assetBundle.loadString(
+      'assets/prompt_defaults.json',
+    );
     final promptDocument = _readObject(jsonDecode(rawPromptDefaults));
-    final prompts = _readObjectList(promptDocument['prompts'])
-        .map(_PromptDefaultNode.fromJson)
-        .toList(growable: false)
-      ..sort((a, b) {
-        final category = a.category.compareTo(b.category);
-        if (category != 0) return category;
-        return a.id.compareTo(b.id);
-      });
+    final prompts =
+        _readObjectList(
+            promptDocument['prompts'],
+          ).map(_PromptDefaultNode.fromJson).toList(growable: false)
+          ..sort((a, b) {
+            final category = a.category.compareTo(b.category);
+            if (category != 0) return category;
+            return a.id.compareTo(b.id);
+          });
 
-    final defaults = await (widget._defaultsLoader ??
-            AgentContextDefaultsLoader(bundle: widget._assetBundle))
-        .load();
+    final defaults =
+        await (widget._defaultsLoader ??
+                AgentContextDefaultsLoader(bundle: widget._assetBundle))
+            .load();
 
     // Build agent-to-contact mapping
     final agentsByContactId = <String, List<SyncedAgentContextDefinition>>{};
@@ -372,16 +361,18 @@ class _PromptNodeManagementPageEnhancedState
           node.nodeId,
           () => <_PromptGraphLink>[],
         );
-        links.add(_PromptGraphLink(
-          agentId: agent.id,
-          agentName: agent.name,
-          stageLabel: _readString(
-            node.config['stageLabel'],
-            fallback: _readString(node.config['stage']),
+        links.add(
+          _PromptGraphLink(
+            agentId: agent.id,
+            agentName: agent.name,
+            stageLabel: _readString(
+              node.config['stageLabel'],
+              fallback: _readString(node.config['stage']),
+            ),
+            slot: node.slot ?? '',
+            contactId: agent.contactId,
           ),
-          slot: node.slot ?? '',
-          contactId: agent.contactId,
-        ));
+        );
       }
     }
 
@@ -389,11 +380,13 @@ class _PromptNodeManagementPageEnhancedState
     final contactRows = await _database.select(_database.conversations).get();
     final contacts = contactRows
         .where((row) => row.deletedAt == null)
-        .map((row) => _ContactInfo(
-              id: row.id,
-              name: row.displayName,
-              avatarUrl: row.avatarUrl,
-            ))
+        .map(
+          (row) => _ContactInfo(
+            id: row.id,
+            name: row.displayName,
+            avatarUrl: row.avatarUrl,
+          ),
+        )
         .toList(growable: false);
 
     return _PromptNodeSnapshot(
@@ -407,7 +400,7 @@ class _PromptNodeManagementPageEnhancedState
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
-    return Scaffold(
+    return MoePageScaffold(
       backgroundColor: colors.surface,
       appBar: const MoeAppBar(title: '提示词节点（增强版）', showBackButton: true),
       body: FutureBuilder<_PromptNodeSnapshot>(
@@ -478,15 +471,17 @@ class _PromptNodeManagementPageEnhancedState
                   prompt: prompts[index],
                   graphLinks: _selectedContactId != null
                       ? data.linksForContact(
-                          prompts[index].id, _selectedContactId)
+                          prompts[index].id,
+                          _selectedContactId,
+                        )
                       : data.graphLinksByPromptId[prompts[index].id] ??
-                          const <_PromptGraphLink>[],
+                            const <_PromptGraphLink>[],
                   effectiveTemplate: data.effectiveTemplateFor(prompts[index]),
                   selectedContactId: _selectedContactId,
                   contactName: _selectedContactId != null
                       ? data.contacts
-                          .firstWhere((c) => c.id == _selectedContactId)
-                          .name
+                            .firstWhere((c) => c.id == _selectedContactId)
+                            .name
                       : null,
                 ),
                 if (index != prompts.length - 1) const SizedBox(height: 10),
@@ -512,25 +507,31 @@ class _PromptNodeManagementPageEnhancedState
         return snapshot.prompts;
       case _PromptNodeFilter.graph:
         return snapshot.prompts
-            .where((prompt) =>
-                snapshot.graphLinksByPromptId.containsKey(prompt.id))
+            .where(
+              (prompt) => snapshot.graphLinksByPromptId.containsKey(prompt.id),
+            )
             .toList(growable: false);
       case _PromptNodeFilter.graphMissing:
         return snapshot.prompts
-            .where((prompt) =>
-                !snapshot.graphLinksByPromptId.containsKey(prompt.id))
+            .where(
+              (prompt) => !snapshot.graphLinksByPromptId.containsKey(prompt.id),
+            )
             .toList(growable: false);
       case _PromptNodeFilter.attention:
         return snapshot.prompts
-            .where((prompt) =>
-                _attentionStatuses.contains(_usageFor(prompt.id).status))
+            .where(
+              (prompt) =>
+                  _attentionStatuses.contains(_usageFor(prompt.id).status),
+            )
             .toList(growable: false);
       case _PromptNodeFilter.contactSpecific:
         if (_selectedContactId == null) return const [];
         return snapshot.prompts
-            .where((prompt) => snapshot
-                .linksForContact(prompt.id, _selectedContactId)
-                .isNotEmpty)
+            .where(
+              (prompt) => snapshot
+                  .linksForContact(prompt.id, _selectedContactId)
+                  .isNotEmpty,
+            )
             .toList(growable: false);
     }
   }
@@ -617,25 +618,24 @@ class _ContactChip extends StatelessWidget {
     final colors = context.moeColors;
     return GestureDetector(
       onTap: onTap,
-      child: Container(
+      child: MoeButtonSurface(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: MoeG2Decoration(
-          radius: 8,
-          color: isSelected
-              ? colors.primary.withValues(alpha: 0.15)
-              : colors.surface,
-          border: Border.all(
-            color: isSelected ? colors.primary : colors.border,
-            width: isSelected ? 1.5 : 1,
-          ),
+        radius: 8,
+        tintColor: isSelected
+            ? colors.primary.withValues(alpha: 0.15)
+            : colors.surface,
+        border: Border.all(
+          color: isSelected ? colors.primary : colors.border,
+          width: isSelected ? 1.5 : 1,
         ),
         child: Text(
           label,
           style: TextStyle(
             color: isSelected ? colors.primary : colors.text,
             fontSize: 13,
-            fontWeight:
-                isSelected ? MoeFontWeights.emphasis : FontWeight.normal,
+            fontWeight: isSelected
+                ? MoeFontWeights.emphasis
+                : FontWeight.normal,
           ),
         ),
       ),
@@ -678,9 +678,13 @@ class _SummaryPanel extends StatelessWidget {
               runSpacing: 8,
               children: [
                 _MetricChip(
-                    label: '内置提示词', value: '${snapshot.prompts.length}'),
+                  label: '内置提示词',
+                  value: '${snapshot.prompts.length}',
+                ),
                 _MetricChip(
-                    label: 'Agent Build', value: '${snapshot.graphNodeCount}'),
+                  label: 'Agent Build',
+                  value: '${snapshot.graphNodeCount}',
+                ),
                 _MetricChip(label: '图外运行', value: '$graphMissing'),
                 _MetricChip(label: '关注项', value: '${snapshot.attentionCount}'),
                 _MetricChip(label: '联系人', value: '${snapshot.contacts.length}'),
@@ -703,10 +707,7 @@ class _SummaryPanel extends StatelessWidget {
 }
 
 class _MetricChip extends StatelessWidget {
-  const _MetricChip({
-    required this.label,
-    required this.value,
-  });
+  const _MetricChip({required this.label, required this.value});
 
   final String label;
   final String value;
@@ -786,8 +787,10 @@ class _PromptNodeCard extends StatelessWidget {
         child: Theme(
           data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
           child: ExpansionTile(
-            tilePadding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+            tilePadding: const EdgeInsets.symmetric(
+              horizontal: 14,
+              vertical: 4,
+            ),
             childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
             iconColor: colors.textSecondary,
             collapsedIconColor: colors.muted,
@@ -826,10 +829,7 @@ class _PromptNodeCard extends StatelessWidget {
                   ),
                   _StatusChip(label: '默认只读', color: colors.muted),
                   if (selectedContactId != null && graphLinks.isNotEmpty)
-                    _StatusChip(
-                      label: '联系人专用',
-                      color: colors.primary,
-                    ),
+                    _StatusChip(label: '联系人专用', color: colors.primary),
                 ],
               ),
             ),
@@ -856,23 +856,19 @@ class _PromptNodeCard extends StatelessWidget {
                       ? '该联系人使用的 Agent Build 节点'
                       : 'Agent Build',
                   body: graphLinks
-                      .map((link) => [
-                            link.agentName,
-                            link.stageLabel,
-                            if (link.slot.isNotEmpty) link.slot,
-                          ].where((part) => part.isNotEmpty).join(' / '))
+                      .map(
+                        (link) => [
+                          link.agentName,
+                          link.stageLabel,
+                          if (link.slot.isNotEmpty) link.slot,
+                        ].where((part) => part.isNotEmpty).join(' / '),
+                      )
                       .join('\n'),
                 ),
               if (prompt.variables.isNotEmpty)
-                _DetailBlock(
-                  title: '变量',
-                  body: prompt.variables.join(', '),
-                ),
+                _DetailBlock(title: '变量', body: prompt.variables.join(', ')),
               if (prompt.description.isNotEmpty)
-                _DetailBlock(
-                  title: '说明',
-                  body: prompt.description,
-                ),
+                _DetailBlock(title: '说明', body: prompt.description),
               if (prompt.dartName.isNotEmpty)
                 _DetailBlock(
                   title: 'Dart 常量',
@@ -1032,11 +1028,7 @@ class _ContextPreviewSheet extends StatelessWidget {
           ),
           child: SelectableText(
             previewText,
-            style: TextStyle(
-              color: colors.text,
-              fontSize: 13,
-              height: 1.5,
-            ),
+            style: TextStyle(color: colors.text, fontSize: 13, height: 1.5),
           ),
         ),
         const SizedBox(height: 12),
@@ -1045,8 +1037,9 @@ class _ContextPreviewSheet extends StatelessWidget {
           decoration: MoeG2Decoration(
             radius: 8,
             color: colors.dialogWarning.withValues(alpha: 0.1),
-            border:
-                Border.all(color: colors.dialogWarning.withValues(alpha: 0.3)),
+            border: Border.all(
+              color: colors.dialogWarning.withValues(alpha: 0.3),
+            ),
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1152,10 +1145,7 @@ class _RuntimeStatusChip extends StatelessWidget {
 }
 
 class _StatusChip extends StatelessWidget {
-  const _StatusChip({
-    required this.label,
-    required this.color,
-  });
+  const _StatusChip({required this.label, required this.color});
 
   final String label;
   final Color color;

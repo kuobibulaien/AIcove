@@ -21,7 +21,7 @@ import '../../../../features/settings/app_settings.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/theme/tokens.dart';
 import 'tts_voice_preset_section.dart';
- 
+
 /// TTS 设置表单组件
 class TtsSettingsForm extends ConsumerWidget {
   const TtsSettingsForm({super.key});
@@ -68,7 +68,8 @@ class TtsSettingsForm extends ConsumerWidget {
     final selectedProviderId = config.selectedProviderId;
     final hasStoredSelection =
         selectedModelId != null && selectedModelId.isNotEmpty;
-    final selectedEntry = ttsModels
+    final selectedEntry =
+        ttsModels
             .where(
               (entry) =>
                   entry.modelId == selectedModelId &&
@@ -86,32 +87,27 @@ class TtsSettingsForm extends ConsumerWidget {
       margin: EdgeInsets.zero,
       children: [
         MoeSettingsRow(
-          icon: Icons.graphic_eq,
           label: '选择模型',
           trailingType: MoeSettingsRowTrailing.text,
           detailText: selectedEntry != null
               ? selectedEntry.displayName
               : (ttsModels.isEmpty
-                  ? '无可用模型'
-                  : (hasStoredSelection ? '当前模型已不可用' : '未选择')),
+                    ? '无可用模型'
+                    : (hasStoredSelection ? '当前模型已不可用' : '未选择')),
           onTap: ttsModels.isEmpty
               ? () {
-                  MoeToast.warning(
-                    context,
-                    '暂无语音模型，请先在渠道管理里显示并标记语音标签',
-                  );
+                  MoeToast.warning(context, '暂无语音模型，请先在渠道管理里显示并标记语音标签');
                 }
               : () => _showTtsModelSelector(
-                    context,
-                    models: ttsModels,
-                    config: config,
-                    notifier: notifier,
-                  ),
+                  context,
+                  models: ttsModels,
+                  config: config,
+                  notifier: notifier,
+                ),
           showDivider: selectedEntry != null,
         ),
         if (selectedEntry != null)
           MoeSettingsRow(
-            icon: Icons.cloud_outlined,
             label: '所属渠道',
             trailingType: MoeSettingsRowTrailing.text,
             detailText: selectedEntry.providerName,
@@ -132,10 +128,11 @@ class TtsSettingsForm extends ConsumerWidget {
       title: '选择 TTS 模型',
       description: '从已配置的语音合成模型中选择',
       actions: models.map((entry) {
-        final isSelected = entry.modelId == config.selectedModelId &&
+        final isSelected =
+            entry.modelId == config.selectedModelId &&
             entry.providerId == config.selectedProviderId;
         return MoeSheetAction(
-          icon: isSelected ? Icons.check_circle : Icons.graphic_eq,
+          icon: isSelected ? Icons.check_circle : null,
           label: entry.displayName,
           subtitle: entry.providerName,
           onTap: () {
@@ -183,8 +180,6 @@ class TtsSettingsForm extends ConsumerWidget {
             children: [
               Row(
                 children: [
-                  Icon(Icons.tune, color: colors.primary, size: 20),
-                  const SizedBox(width: 8),
                   Text(
                     levels[currentLevel].$2,
                     style: TextStyle(
@@ -222,23 +217,14 @@ class TtsSettingsForm extends ConsumerWidget {
                 style: TextStyle(color: colors.muted, fontSize: 12),
               ),
               const SizedBox(height: 16),
-              SliderTheme(
-                data: SliderTheme.of(context).copyWith(
-                  activeTrackColor: colors.primary,
-                  inactiveTrackColor: colors.border,
-                  thumbColor: colors.primary,
-                  overlayColor: colors.primary.withValues(alpha: 0.2),
-                  trackHeight: 4,
-                ),
-                child: Slider(
-                  value: frequency.toDouble(),
-                  min: 0,
-                  max: 100,
-                  divisions: 5,
-                  onChanged: (value) {
-                    notifier.setVoiceFrequency(value.toInt());
-                  },
-                ),
+              MoeSlider(
+                value: frequency.toDouble(),
+                min: 0,
+                max: 100,
+                divisions: 5,
+                onChanged: (value) {
+                  notifier.setVoiceFrequency(value.toInt());
+                },
               ),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -274,7 +260,6 @@ class TtsSettingsForm extends ConsumerWidget {
       margin: EdgeInsets.zero,
       children: [
         MoeSettingsRow(
-          icon: Icons.speed,
           label: '语速',
           subtitle: '0.5 ~ 2.0，默认 1.0',
           trailingType: MoeSettingsRowTrailing.text,
@@ -282,7 +267,6 @@ class TtsSettingsForm extends ConsumerWidget {
           onTap: () => _showSpeedInputDialog(context, config, notifier, colors),
         ),
         MoeSettingsRow(
-          icon: Icons.text_fields,
           label: '每段最大字数',
           subtitle: '超过会自动拆分',
           trailingType: MoeSettingsRowTrailing.text,
@@ -301,40 +285,19 @@ class TtsSettingsForm extends ConsumerWidget {
     TtsPluginConfigNotifier notifier,
     MoeColors colors,
   ) {
-    final controller = TextEditingController(
-      text: config.speed?.toString() ?? '1.0',
-    );
-
-    showMeoTalkDialog(
+    showMoeAutoSaveTextEditor(
       context: context,
       title: '设置语速',
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            '语速范围 0.5 ~ 2.0',
-            style: TextStyle(color: colors.muted, fontSize: 13),
-          ),
-          const SizedBox(height: 16),
-          MoeTextField(
-            controller: controller,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            hint: '1.0',
-            autofocus: true,
-          ),
-        ],
-      ),
-      confirmText: '确定',
-    ).then((confirmed) {
-      if (confirmed != true) return;
-      final speed = double.tryParse(controller.text);
-      if (speed != null && speed >= 0.5 && speed <= 2.0) {
-        notifier.setSpeed(speed);
-      } else {
-        if (!context.mounted) return;
-        MoeToast.warning(context, '请输入 0.5 ~ 2.0 之间的数字');
-      }
-    });
+      initialValue: config.speed?.toString() ?? '1.0',
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      onSave: (text) async {
+        final value = double.tryParse(text);
+        if (value == null || value < 0.5 || value > 2.0 || !value.isFinite) {
+          throw const FormatException('请输入 0.5 ~ 2.0 之间的数字');
+        }
+        await notifier.setSpeed(value);
+      },
+    );
   }
 
   void _showMaxCharsInputDialog(
@@ -343,39 +306,18 @@ class TtsSettingsForm extends ConsumerWidget {
     TtsPluginConfigNotifier notifier,
     MoeColors colors,
   ) {
-    final controller = TextEditingController(
-      text: config.maxCharsPerChunk.toString(),
-    );
-
-    showMeoTalkDialog(
+    showMoeAutoSaveTextEditor(
       context: context,
       title: '设置每段最大字数',
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            '超过此字数会自动拆分为多段语音',
-            style: TextStyle(color: colors.muted, fontSize: 13),
-          ),
-          const SizedBox(height: 16),
-          MoeTextField(
-            controller: controller,
-            keyboardType: TextInputType.number,
-            hint: '20',
-            autofocus: true,
-          ),
-        ],
-      ),
-      confirmText: '确定',
-    ).then((confirmed) {
-      if (confirmed != true) return;
-      final maxChars = int.tryParse(controller.text);
-      if (maxChars != null && maxChars > 0) {
-        notifier.setMaxCharsPerChunk(maxChars);
-      } else {
-        if (!context.mounted) return;
-        MoeToast.warning(context, '请输入大于 0 的整数');
-      }
-    });
+      initialValue: config.maxCharsPerChunk.toString(),
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      onSave: (text) async {
+        final value = int.tryParse(text);
+        if (value == null || value <= 0) {
+          throw const FormatException('请输入大于 0 的整数');
+        }
+        await notifier.setMaxCharsPerChunk(value);
+      },
+    );
   }
 }

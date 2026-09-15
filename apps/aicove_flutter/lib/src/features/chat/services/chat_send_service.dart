@@ -15,11 +15,12 @@ import '../../../core/app_logger.dart';
 import '../../../core/api/providers/provider_adapter.dart'
     show ToolCall, ToolResult;
 import '../../../core/models/message_block.dart';
-import '../../../core/services/multimodal_assistant_service.dart';
 import '../../../core/utils/mime_utils.dart';
 import '../../plugins/domain/plugin.dart' show PluginEvent;
 import '../../plugins/domain/plugin_content.dart';
 import '../../plugins/plugin_providers.dart';
+import '../../plugins/tts/tts_plugin.dart';
+import '../../plugins/tts/voice_preset_application.dart';
 import 'chat_history_store.dart';
 import 'chat_message_projection_codec.dart';
 import 'chat_message_processor.dart';
@@ -45,9 +46,6 @@ class ChatSendService {
   );
 
   static const String _logTag = 'ChatSendService';
-  static String get visionDescriptionSystemPrompt =>
-      MultimodalAssistantService.visionDescriptionSystemPrompt;
-
   static bool isVisionModel(String modelId) {
     return inferChatModelCapabilities(modelId)
         .contains(ChatModelCapability.vision);
@@ -56,7 +54,6 @@ class ChatSendService {
   /// 构建图片消息发送时的模型调用链。
   ///
   /// 图片消息始终由聊天模型链负责主回复；
-  /// 视觉辅助模型只参与图片预处理，不作为前台回复模型。
   List<String> buildImageSendModelRefs(AppSettings settings) {
     final chatModels = settings.defaultChatModels.isNotEmpty
         ? settings.defaultChatModels
@@ -71,13 +68,6 @@ class ChatSendService {
       final fallback = settings.defaultModelName.trim();
       if (fallback.isNotEmpty) normalizedChatModels.add(fallback);
     }
-    if (settings.preferVisionAssistant &&
-        !hasVisionAssistant(settings.defaultVisionModel)) {
-      AppLogger.warning(
-        _logTag,
-        'prefer_vision_assistant 已开启，但 defaultVisionModel 未配置，图片将仅复用已有提示词',
-      );
-    }
     return normalizedChatModels;
   }
 
@@ -85,44 +75,11 @@ class ChatSendService {
     required AppSettings settings,
     required String modelRef,
   }) {
-    if (settings.preferVisionAssistant &&
-        hasVisionAssistant(settings.defaultVisionModel)) {
-      return true;
-    }
     return !settings.hasChatModelCapability(
       modelRef,
       ChatModelCapability.vision,
     );
   }
-
-  static bool hasVisionAssistant(String? modelRef) {
-    final normalized = modelRef?.trim();
-    return normalized != null && normalized.isNotEmpty;
-  }
-
-  /// 在聊天模型不支持视觉时，为图片解析可发送给模型的文字描述。
-  ///
-  /// 优先复用图片块里已有的生图提示词；
-  /// 若不存在，再调用视觉辅助模型回退。
-  static Future<String?> resolveImageDescriptionForNonVision({
-    required ImageBlock imageBlock,
-    required Future<String?> Function() translateWithVision,
-    String? cachedDescription,
-    void Function(String description)? onDescriptionResolved,
-  }) =>
-      ChatRequestMessageBuilder.resolveImageDescriptionForNonVision(
-        imageBlock: imageBlock,
-        translateWithVision: translateWithVision,
-        cachedDescription: cachedDescription,
-        onDescriptionResolved: onDescriptionResolved,
-      );
-
-  static List<Map<String, dynamic>> buildVisionTranslationMessages({
-    required Map<String, dynamic> imagePart,
-  }) =>
-      MultimodalAssistantService.buildImageAssistantMessages(
-        imagePart: imagePart,
-      );
 
   /// 构造非视觉模型下的图片上下文文本。
   static String? buildNonVisionImageMessageText({
@@ -299,6 +256,7 @@ class ChatSendService {
       );
     }
 
+    final voiceRequest = await _ref.read(voicePresetApplicationProvider).forRole(conv);
     final pluginManager = _ref.read(pluginManagerProvider);
     const pluginContextBuilder = ChatPluginContextBuilder();
     final effectivePlugins = pluginContextBuilder.getEffectivePlugins(
@@ -309,7 +267,8 @@ class ChatSendService {
     var currentText = normalizedReply;
     final allEvents = <PluginEvent>[];
     final allContents = <PluginContent>[];
-    for (final plugin in effectivePlugins) {
+    for (final registered in effectivePlugins) {
+      final plugin = registered is TtsPlugin ? TtsPlugin.forRequest(voiceRequest) : registered;
       try {
         final result = await plugin.processResponse(currentText);
         currentText = result.processedText;
@@ -587,13 +546,11 @@ class ChatSendService {
   List<Message> prepareHistory({
     required Conversation conv,
     required Message userMsg,
-    required int limit,
   }) {
     final all = [...conv.messages, userMsg];
     return _sliceContextWindow(
       allMessages: all,
       contextStartId: conv.contextStartMessageId,
-      limit: limit,
     );
   }
 
@@ -616,7 +573,6 @@ class ChatSendService {
   Future<List<Message>> prepareHistoryFromStore({
     required Conversation conv,
     required Message userMsg,
-    required int limit,
   }) async {
     final all = await loadConversationMessagesFromStore(
       conv: conv,
@@ -625,28 +581,23 @@ class ChatSendService {
     return _sliceContextWindow(
       allMessages: all,
       contextStartId: conv.contextStartMessageId,
-      limit: limit,
     );
   }
 
   List<Message> _sliceContextWindow({
     required List<Message> allMessages,
     required String? contextStartId,
-    required int limit,
   }) {
     var contextWindow = allMessages;
     if (contextStartId != null && contextStartId.isNotEmpty) {
       final markerIndex =
           allMessages.lastIndexWhere((m) => m.id == contextStartId);
-      if (markerIndex >= 0 && markerIndex + 1 < allMessages.length) {
+      if (markerIndex >= 0) {
         contextWindow = allMessages.sublist(markerIndex + 1);
       }
     }
 
-    if (limit <= 0 || contextWindow.length <= limit) {
-      return contextWindow;
-    }
-    return contextWindow.sublist(contextWindow.length - limit);
+    return contextWindow;
   }
 }
 

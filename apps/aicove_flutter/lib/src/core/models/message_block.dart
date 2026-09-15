@@ -1,6 +1,11 @@
+import '../media/media_asset.dart';
+import 'image_generation_snapshot.dart';
+export 'image_generation_snapshot.dart';
 import 'package:uuid/uuid.dart';
 import 'block_type.dart';
 import 'block_status.dart';
+
+part 'chat_record_block.dart';
 
 const _uuid = Uuid();
 
@@ -126,6 +131,7 @@ class TextBlock extends MessageBlock {
         );
 
   factory TextBlock.fromJson(Map<String, dynamic> json) {
+    if (json['chatRecord'] is Map) return ChatRecordBlock.fromJson(json);
     return TextBlock(
       id: json['id'] as String,
       messageId: json['messageId'] as String,
@@ -211,6 +217,9 @@ class ImageBlock extends MessageBlock {
   /// Base64编码的图片
   final String? base64;
 
+  String? get mediaId => mediaIdFromReference(localPath) ??
+      mediaIdFromReference(url) ?? mediaIdFromReference(base64);
+
   /// 图片宽度
   final int? width;
 
@@ -219,6 +228,8 @@ class ImageBlock extends MessageBlock {
 
   /// 生成图片的提示词（如果是AI生成）
   final String? prompt;
+
+  final ImageGenerationSnapshot? generationSnapshot;
 
   ImageBlock({
     super.id,
@@ -229,7 +240,9 @@ class ImageBlock extends MessageBlock {
     this.width,
     this.height,
     this.prompt,
+    this.generationSnapshot,
     super.status,
+    super.createdAt,
   })  : assert(url != null || localPath != null || base64 != null,
             'At least one of url, localPath, or base64 must be provided'),
         super(
@@ -238,6 +251,7 @@ class ImageBlock extends MessageBlock {
 
   factory ImageBlock.fromJson(Map<String, dynamic> json) {
     return ImageBlock(
+      createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? ''),
       id: json['id'] as String,
       messageId: json['messageId'] as String,
       url: json['url'] as String?,
@@ -246,6 +260,7 @@ class ImageBlock extends MessageBlock {
       width: json['width'] as int?,
       height: json['height'] as int?,
       prompt: json['prompt'] as String?,
+      generationSnapshot: ImageGenerationSnapshot.tryRead(json['generationSnapshot']),
       status: BlockStatus.values.firstWhere(
         (e) => e.name == json['status'],
         orElse: () => BlockStatus.success,
@@ -265,6 +280,7 @@ class ImageBlock extends MessageBlock {
         'width': width,
         'height': height,
         'prompt': prompt,
+        if (generationSnapshot != null) 'generationSnapshot': generationSnapshot!.toJson(),
         'createdAt': createdAt.toIso8601String(),
       };
 }

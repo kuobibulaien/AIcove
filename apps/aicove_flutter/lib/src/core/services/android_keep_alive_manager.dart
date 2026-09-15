@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 
 import '../../features/settings/app_settings.dart';
@@ -11,6 +10,7 @@ const MethodChannel _keepAliveChannel =
 
 class AndroidKeepAliveStatus {
   final bool guardEnabled;
+  final bool generationActive;
   final bool serviceRunning;
   final bool batteryOptimizationIgnored;
   final bool canScheduleExactAlarms;
@@ -25,6 +25,7 @@ class AndroidKeepAliveStatus {
 
   const AndroidKeepAliveStatus({
     required this.guardEnabled,
+    required this.generationActive,
     required this.serviceRunning,
     required this.batteryOptimizationIgnored,
     required this.canScheduleExactAlarms,
@@ -43,6 +44,7 @@ class AndroidKeepAliveStatus {
 
     return AndroidKeepAliveStatus(
       guardEnabled: map['guardEnabled'] == true,
+      generationActive: map['generationActive'] == true,
       serviceRunning: map['serviceRunning'] == true,
       batteryOptimizationIgnored: map['batteryOptimizationIgnored'] == true,
       canScheduleExactAlarms: map['canScheduleExactAlarms'] == true,
@@ -73,8 +75,24 @@ class AndroidKeepAliveStatus {
   }
 }
 
+class AndroidGenerationKeepAliveLease {
+  AndroidGenerationKeepAliveLease._(this._id);
+
+  final int _id;
+  bool _released = false;
+
+  Future<void> release() async {
+    if (_released) return;
+    _released = true;
+    await AndroidKeepAliveManager._releaseGenerationLease(_id);
+  }
+}
+
 class AndroidKeepAliveManager {
-  static bool get isSupported => !kIsWeb && Platform.isAndroid;
+  static int _nextGenerationLeaseId = 0;
+  static final Set<int> _activeGenerationLeaseIds = <int>{};
+
+  static bool get isSupported => Platform.isAndroid;
 
   static Future<AndroidKeepAliveStatus?> getStatus() async {
     if (!isSupported) return null;
@@ -109,6 +127,38 @@ class AndroidKeepAliveManager {
     if (!needsUpdate) return;
 
     await setGuardEnabled(desiredEnabled);
+  }
+
+  /// 在聊天生成期间临时提升 Android 进程优先级，并保持 CPU 可运行。
+  ///
+  /// 每个调用方必须在生成结束或中断时释放返回的租约。多个并行生成会共享
+  /// 同一个原生前台服务，只有最后一个租约释放后才结束“生成中”状态。
+  static Future<AndroidGenerationKeepAliveLease?>
+      acquireGenerationLease() async {
+    if (!isSupported) return null;
+
+    final leaseId = ++_nextGenerationLeaseId;
+    _activeGenerationLeaseIds.add(leaseId);
+    try {
+      await _keepAliveChannel.invokeMethod<void>(
+        'setGenerationActive',
+        {'active': true},
+      );
+      return AndroidGenerationKeepAliveLease._(leaseId);
+    } catch (_) {
+      _activeGenerationLeaseIds.remove(leaseId);
+      rethrow;
+    }
+  }
+
+  static Future<void> _releaseGenerationLease(int leaseId) async {
+    if (!_activeGenerationLeaseIds.remove(leaseId)) return;
+    if (_activeGenerationLeaseIds.isNotEmpty || !isSupported) return;
+
+    await _keepAliveChannel.invokeMethod<void>(
+      'setGenerationActive',
+      {'active': false},
+    );
   }
 
   static Future<bool> openNotificationSettings() =>

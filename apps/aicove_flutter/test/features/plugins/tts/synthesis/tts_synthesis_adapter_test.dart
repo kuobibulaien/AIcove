@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:aicove_flutter/src/features/plugins/tts/synthesis/configurable_tts_synthesis_adapter.dart';
 import 'package:aicove_flutter/src/features/plugins/tts/synthesis/minimax_tts_synthesis_adapter.dart';
 import 'package:aicove_flutter/src/features/plugins/tts/synthesis/openai_compatible_tts_synthesis_adapter.dart';
 import 'package:aicove_flutter/src/features/plugins/tts/synthesis/siliconflow_tts_synthesis_adapter.dart';
@@ -388,6 +389,133 @@ void main() {
       } finally {
         await server.close(force: true);
       }
+    });
+
+    test('Fish Audio URL 会走通用适配器 /v1/tts 并附带 model 请求头', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final requestReceived = Completer<void>();
+      late String requestPath;
+      late String authorization;
+      late String modelHeader;
+      late Map<String, dynamic> requestBody;
+
+      unawaited(server.listen((request) async {
+        requestPath = request.uri.path;
+        authorization = request.headers.value('authorization') ?? '';
+        modelHeader = request.headers.value('model') ?? '';
+        final bodyText = await utf8.decoder.bind(request).join();
+        requestBody = jsonDecode(bodyText) as Map<String, dynamic>;
+        request.response.statusCode = 200;
+        request.response.headers.contentType = ContentType('audio', 'mpeg');
+        request.response.add([0xFF, 0xFB, 0x90, 0x64]); // dummy mp3 bytes
+        await request.response.close();
+        if (!requestReceived.isCompleted) {
+          requestReceived.complete();
+        }
+      }).asFuture<void>());
+
+      final service = TtsService(
+        config: TtsConfig(
+          selectedProviderId: 'fish_audio',
+          model: 's2.1-pro-free',
+          voice: '6ce7ea8ada884bf3889fa7c7fb206691',
+        ),
+        apiKey: 'sk-fish-test',
+        requestUrl:
+            'http://${server.address.address}:${server.port}/v1',
+        requestFormat: 'fish_audio',
+      );
+
+      try {
+        final result = await service.convert('fish audio test');
+        await requestReceived.future;
+
+        expect(requestPath, '/v1/tts');
+        expect(authorization, 'Bearer sk-fish-test');
+        expect(modelHeader, 's2.1-pro-free');
+        expect(requestBody, {
+          'text': 'fish audio test',
+          'reference_id': '6ce7ea8ada884bf3889fa7c7fb206691',
+          'format': 'mp3',
+        });
+        expect(result.success, isTrue);
+        expect(result.audioUrl, startsWith('data:audio/mpeg;base64,'));
+      } finally {
+        await server.close(force: true);
+      }
+    });
+  });
+
+  group('ConfigurableTtsSynthesisAdapter', () {
+    const adapter = ConfigurableTtsSynthesisAdapter();
+
+    test('Fish Audio 内置模板生成正确的 Header、路径与 Body 字段', () {
+      final context = TtsSynthesisContext(
+        config: TtsConfig(
+          model: 's2.1-pro-free',
+          voice: '6ce7ea8ada884bf3889fa7c7fb206691',
+        ),
+        text: '你好世界',
+        rawUrl: 'https://api.fish.audio/v1',
+        requestFormat: 'fish_audio',
+        apiKey: 'sk-fish-demo',
+      );
+
+      expect(adapter.supports(context), isTrue);
+      expect(
+        adapter.buildSpeechUri(context).toString(),
+        'https://api.fish.audio/v1/tts',
+      );
+      final headers = adapter.buildHeaders(context);
+      expect(headers['Authorization'], 'Bearer sk-fish-demo');
+      expect(headers['model'], 's2.1-pro-free');
+      expect(adapter.buildRequestBody(context), {
+        'text': '你好世界',
+        'reference_id': '6ce7ea8ada884bf3889fa7c7fb206691',
+        'format': 'mp3',
+      });
+    });
+
+    test('自定义 tts_template 声明式配置正确生效', () {
+      final context = TtsSynthesisContext(
+        config: TtsConfig(
+          model: 'custom-voice-model',
+          voice: 'voice-123',
+          speed: 1.25,
+        ),
+        text: '自定义文本',
+        rawUrl: 'https://custom-tts.ai/api',
+        requestFormat: 'custom_rest',
+        apiKey: 'custom-token',
+        customConfig: {
+          'tts_template': {
+            'path': '/v2/speech/generate',
+            'headers': {
+              'X-Custom-Auth': '{apiKey}',
+              'X-Voice-Model': '{model}',
+            },
+            'body': {
+              'prompt': '{text}',
+              'speaker_id': '{voice}',
+              'rate': '{speed}',
+            },
+          },
+        },
+      );
+
+      expect(adapter.supports(context), isTrue);
+      expect(
+        adapter.buildSpeechUri(context).toString(),
+        'https://custom-tts.ai/api/v2/speech/generate',
+      );
+      final headers = adapter.buildHeaders(context);
+      expect(headers['X-Custom-Auth'], 'custom-token');
+      expect(headers['X-Voice-Model'], 'custom-voice-model');
+      expect(adapter.buildRequestBody(context), {
+        'prompt': '自定义文本',
+        'speaker_id': 'voice-123',
+        'rate': 1.25,
+      });
     });
   });
 }

@@ -1,7 +1,7 @@
 /// MoeActionSheet - iOS 风格底部操作菜单
-/// 
+///
 /// 用于显示一组操作选项，类似 iOS 的 ActionSheet。
-/// 
+///
 /// 设计特点：
 /// - 底部弹出，带圆角
 /// - 顶部拖动指示器
@@ -9,7 +9,7 @@
 /// - 操作项列表（支持图标、文字、危险操作）
 /// - 底部取消按钮（可选）
 /// - iOS 风格无水波纹交互
-/// 
+///
 /// 使用示例：
 /// ```dart
 /// await showMoeActionSheet(
@@ -21,7 +21,7 @@
 ///   ],
 /// );
 /// ```
-/// 
+///
 /// 更新记录：
 /// - 2025-12-31: 创建底部操作菜单组件
 library;
@@ -29,6 +29,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../theme/tokens.dart';
+import '../moe_floating_surface.dart';
 import '../../effects/smooth_clip.dart';
 
 /// 操作项定义
@@ -112,121 +113,131 @@ class MoeActionSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final sheetBgColor = isDark ? colors.surface : Colors.white;
 
+    final media = MediaQuery.of(context);
     return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 主体卡片
-            MoeG2ClipRRect(
-              radius: 14,
-              child: Container(
-                color: sheetBgColor,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // 顶部拖动指示器
-                    Container(
-                      margin: const EdgeInsets.only(top: 8, bottom: 4),
-                      width: 36,
-                      height: 4,
-                      decoration: MoeG2Decoration(
-                        radius: 2,
-                        color: colors.muted.withValues(alpha: 0.3),
-                      ),
-                    ),
-
-                  // 标题区域
-                  if (title != null || description != null)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-                      child: Column(
-                        children: [
-                          if (title != null)
-                            Text(
-                              title!,
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: MoeFontWeights.emphasis,
-                                color: colors.muted,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                          if (description != null) ...[
-                            const SizedBox(height: 4),
-                            Text(
-                              description!,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: colors.muted.withValues(alpha: 0.8),
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-
-                  // 分隔线
-                  if (title != null || description != null)
-                    Divider(height: 1, color: colors.borderLight),
-
-                  // 操作项列表
-                  ...actions.asMap().entries.map((entry) {
-                    final index = entry.key;
-                    final action = entry.value;
-                    final isLast = index == actions.length - 1;
-
-                    return Column(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight:
+              (media.size.height -
+                      media.padding.vertical -
+                      media.viewInsets.bottom)
+                  .clamp(0.0, double.infinity) *
+              0.9,
+        ),
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // 主体卡片
+                MoeFloatingSurface(
+                  baseline: MoeMaterialBaseline.background,
+                  radius: 14,
+                  child: SizedBox(
+                    child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        _ActionItem(
-                          action: action,
-                          enableHaptics: enableHaptics,
-                          onTap: () {
-                            Navigator.pop(context);
-                            action.onTap();
-                          },
-                        ),
-                        if (!isLast)
-                          Divider(
-                            height: 1,
-                            color: colors.borderLight,
-                            indent: action.icon != null ? 52 : 16,
+                        // 顶部拖动指示器
+                        Container(
+                          margin: const EdgeInsets.only(top: 8, bottom: 4),
+                          width: 36,
+                          height: 4,
+                          decoration: MoeG2Decoration(
+                            radius: 2,
+                            color: colors.muted.withValues(alpha: 0.3),
                           ),
-                      ],
-                    );
-                  }),
-                  ],
-                ),
-              ),
-            ),
+                        ),
 
-            // 取消按钮
-            if (showCancelButton) ...[
-              const SizedBox(height: 8),
-              MoeG2ClipRRect(
-                radius: 14,
-                child: Container(
-                  width: double.infinity,
-                  color: sheetBgColor,
-                  child: _ActionItem(
-                    action: MoeSheetAction(
-                      label: cancelText,
-                      onTap: () {},
+                        // 标题区域
+                        if (title != null || description != null)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                            child: Column(
+                              children: [
+                                if (title != null)
+                                  Text(
+                                    title!,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: MoeFontWeights.emphasis,
+                                      color: colors.muted,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                if (description != null) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    description!,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: colors.muted.withValues(
+                                        alpha: 0.8,
+                                      ),
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+
+                        // 分隔线
+                        if (title != null || description != null)
+                          Divider(height: 1, color: colors.borderLight),
+
+                        // 操作项列表
+                        ...actions.asMap().entries.map((entry) {
+                          final index = entry.key;
+                          final action = entry.value;
+                          final isLast = index == actions.length - 1;
+
+                          return Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              _ActionItem(
+                                action: action,
+                                enableHaptics: enableHaptics,
+                                onTap: () {
+                                  Navigator.pop(context);
+                                  action.onTap();
+                                },
+                              ),
+                              if (!isLast)
+                                Divider(
+                                  height: 1,
+                                  color: colors.borderLight,
+                                  indent: action.icon != null ? 52 : 16,
+                                ),
+                            ],
+                          );
+                        }),
+                      ],
                     ),
-                    enableHaptics: enableHaptics,
-                    isCancelButton: true,
-                    onTap: () => Navigator.pop(context),
                   ),
                 ),
-              ),
-            ],
-          ],
+
+                // 取消按钮
+                if (showCancelButton) ...[
+                  const SizedBox(height: 8),
+                  MoeFloatingSurface(
+                    baseline: MoeMaterialBaseline.background,
+                    radius: 14,
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: _ActionItem(
+                        action: MoeSheetAction(label: cancelText, onTap: () {}),
+                        enableHaptics: enableHaptics,
+                        isCancelButton: true,
+                        onTap: () => Navigator.pop(context),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -298,11 +309,7 @@ class _ActionItemState extends State<_ActionItem> {
             if (action.icon != null) ...[
               SizedBox(
                 width: 36,
-                child: Icon(
-                  action.icon,
-                  size: 22,
-                  color: textColor,
-                ),
+                child: Icon(action.icon, size: 22, color: textColor),
               ),
               const SizedBox(width: 12),
             ],
@@ -329,10 +336,7 @@ class _ActionItemState extends State<_ActionItem> {
                     const SizedBox(height: 2),
                     Text(
                       action.subtitle!,
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: colors.muted,
-                      ),
+                      style: TextStyle(fontSize: 13, color: colors.muted),
                     ),
                   ],
                 ],

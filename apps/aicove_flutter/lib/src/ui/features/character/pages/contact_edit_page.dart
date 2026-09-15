@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import '../../../shared/animations/parallax_slide_page_route.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -12,18 +14,16 @@ import '../../../../features/chat/domain/conversation.dart';
 import '../../../../features/chat/domain/persona_prompt_codec.dart';
 import '../../../../features/chat/presentation/widgets/contact_edit_dialog.dart';
 import '../../../../features/chat/providers2.dart';
-import '../../../../features/plugins/image/image_config.dart';
 import '../../../../features/plugins/plugin_providers.dart';
 import '../../../../ui/features/settings/pages/chat_plugin_settings_page.dart';
 import '../widgets/avatar_name_section.dart';
+import 'contact_memory_page.dart';
 import '../services/contact_edit_snapshot_store.dart';
 
+import '../widgets/background_info_section.dart';
+import '../widgets/character_plugins_section.dart';
 import '../widgets/character_text_editor_sheet.dart';
-import '../widgets/chat_background_section.dart';
-import '../widgets/drawing_prompt_section.dart';
-import '../widgets/plugin_voice_section.dart';
-import '../widgets/preset_recipe_section.dart';
-import '../widgets/prompt_section.dart';
+import '../widgets/wallpaper_section.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/index.dart';
 
@@ -33,12 +33,6 @@ enum EditMode {
   create,
   editConversation,
   editTemplate,
-}
-
-enum _ExitAction {
-  discard,
-  save,
-  cancel,
 }
 
 const Duration _kContactEditDeferredVisualWindow = Duration(milliseconds: 420);
@@ -61,14 +55,15 @@ class ContactEditPage extends ConsumerStatefulWidget {
   ConsumerState<ContactEditPage> createState() => _ContactEditPageState();
 }
 
-class _ContactEditPageState extends ConsumerState<ContactEditPage> {
+class _ContactEditPageState extends ConsumerState<ContactEditPage>
+    with MoeAutoSaveState<ContactEditPage> {
   late final TextEditingController _nameCtrl;
   late final TextEditingController _descCtrl;
   late final TextEditingController _personaCtrl;
   late final TextEditingController _customDrawingPromptCtrl;
-  late String _selectedToolPresetName;
-  late bool _followGlobalArtistPreset;
-  String? _selectedArtistPresetName;
+  String? _drawingPresetId;
+  late PersonaPromptParts _legacyDrawingParts;
+  bool _drawingBindingChanged = false;
   late final TextEditingController _selfAddressCtrl;
   late final TextEditingController _addressUserCtrl;
   late final TextEditingController _avatarCtrl;
@@ -79,18 +74,16 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
   late Set<String> _selectedPluginIds;
   String? _boundVoiceId;
   String? _selectedRecipeId;
-  Timer? _autoSaveDebounce;
-  bool _isAutoSaving = false;
-  bool _autoSaveQueued = false;
-  String? _lastAutoSavedSignature;
-  bool _allowNativePop = false;
   String? _scheduledBlurSource;
   Timer? _deferredVisualsTimer;
   bool _deferHeavyVisuals = true;
+  bool _backgroundInfoExpanded = false;
 
-  bool get _enableAutoSave => false;
+  bool get _enableAutoSave => widget.editMode != EditMode.create;
   List<TextEditingController> get _autoSaveControllers => [
         _nameCtrl,
+        _avatarCtrl,
+        _refImageCtrl,
         _descCtrl,
         _personaCtrl,
         _customDrawingPromptCtrl,
@@ -104,11 +97,8 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     super.initState();
     final conv = _resolveInitialConversation();
     final personaParts = PersonaPromptCodec.parse(conv.personaPrompt);
-    final imageConfig = ref.read(imagePluginConfigProvider);
-    final fallbackToolPresetName = imageConfig.selectedSystemPromptPresetName ??
-        (imageConfig.systemPromptPresets.isNotEmpty
-            ? imageConfig.systemPromptPresets.first.name
-            : '');
+    _legacyDrawingParts = personaParts;
+    _drawingPresetId = personaParts.drawingPresetId;
 
     _nameCtrl = TextEditingController(text: conv.displayName);
     _descCtrl = TextEditingController(text: conv.description ?? '');
@@ -116,23 +106,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     _customDrawingPromptCtrl = TextEditingController(
       text: personaParts.customDrawingPrompt,
     );
-    _selectedToolPresetName = _pickValidToolPresetName(
-          personaParts.drawingToolPresetName,
-          imageConfig,
-        ) ??
-        fallbackToolPresetName;
-    final initialArtistBinding = personaParts.drawingArtistPresetName;
-    if (PersonaPromptCodec.isArtistPresetDisabledBinding(
-        initialArtistBinding)) {
-      _followGlobalArtistPreset = false;
-      _selectedArtistPresetName = null;
-    } else {
-      _selectedArtistPresetName = _pickValidArtistPresetName(
-        initialArtistBinding,
-        imageConfig,
-      );
-      _followGlobalArtistPreset = _selectedArtistPresetName == null;
-    }
     _selfAddressCtrl = TextEditingController(text: conv.selfAddress ?? '');
     _addressUserCtrl = TextEditingController(text: conv.addressUser ?? '');
     _avatarCtrl = TextEditingController(text: conv.avatarUrl ?? '');
@@ -164,11 +137,18 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     _selectedRecipeId = conv.recipeId;
 
     if (_enableAutoSave) {
-      for (final controller in _autoSaveControllers) {
-        controller.addListener(_onAutoSaveFieldChanged);
-      }
+      autoSave.configure(
+        save: () async {
+          final result = _buildEditResult();
+          if (result.displayName.trim().isEmpty) {
+            throw const FormatException('请输入角色名称');
+          }
+          await _applyResult(widget.conversation.id, result);
+        },
+        snapshot: () => _buildEditSignature(_buildEditResult()),
+        fields: _autoSaveControllers,
+      );
     }
-    _lastAutoSavedSignature = _buildEditSignature(_buildEditResult());
     if (widget.initialSnapshot != null) {
       _deferHeavyVisuals = false;
       _chatBackgroundBytes = _decodeInitialBackgroundBytes();
@@ -184,12 +164,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
   @override
   void dispose() {
     _deferredVisualsTimer?.cancel();
-    _autoSaveDebounce?.cancel();
-    if (_enableAutoSave) {
-      for (final controller in _autoSaveControllers) {
-        controller.removeListener(_onAutoSaveFieldChanged);
-      }
-    }
     _nameCtrl.dispose();
     _descCtrl.dispose();
     _personaCtrl.dispose();
@@ -227,7 +201,8 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
       enabledPlugins: snapshot.enabledPlugins == null
           ? null
           : List<String>.from(snapshot.enabledPlugins!),
-      updatedAt: DateTime.fromMillisecondsSinceEpoch(snapshot.sourceUpdatedAtMs),
+      updatedAt:
+          DateTime.fromMillisecondsSinceEpoch(snapshot.sourceUpdatedAtMs),
     );
   }
 
@@ -282,21 +257,24 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
 
-    return PopScope(
-      canPop: _allowNativePop,
-      onPopInvokedWithResult: (didPop, _) async {
-        if (didPop) return;
-        await _handleBack();
-      },
-      child: Scaffold(
-        backgroundColor: colors.surface,
+    return autoSavePage(
+      MoePageScaffold(
+        backgroundColor: colors.surfaceAlt,
+        appBar: MoeAppBar(
+          title: widget.editMode == EditMode.create ? '新建角色' : '编辑角色',
+          showBackButton: true,
+          leading: IconButton(
+              icon: const Icon(Icons.arrow_back),
+              tooltip: '返回',
+              onPressed: () => unawaited(_handleBack())),
+          actions: _buildNavActions(colors),
+        ),
         body: Stack(
           children: [
-            // 1. 模糊背景（固定不动）
-            // 进入角色编辑页时，背景应首帧直接显示静态高斯模糊图；
-            // 仅保留表单内容的延后挂载，避免出现“先空背景、后补模糊图”的等待感。
+            // 纯色背景与固定标题栏首帧呈现，较重的表单仍延后挂载。
+            // 设置壁纸后本页与聊天页共用同一张背景图。
             Positioned.fill(
-              child: _buildBlurredBackground(colors),
+              child: _buildPageBackground(colors),
             ),
 
             // 2. 可滚动内容区
@@ -318,17 +296,9 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
       physics: const BouncingScrollPhysics(),
       child: Column(
         children: [
-          SafeArea(
-            bottom: false,
-            child: Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: _buildNavBar(colors),
-            ),
-          ),
-
           const SizedBox(height: 24),
 
-          // 立绘 + 名称（合并区域）
+          // 角色立绘 + 名称
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: AvatarNameSection(
@@ -342,118 +312,77 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
 
           const SizedBox(height: 16),
 
-          // 角色描述
+          // 壁纸（聊天页与本页共用）
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: ReadonlyEditCard(
-              icon: Icons.notes,
-              title: '角色描述',
-              content: _descCtrl.text,
-              placeholder: '暂无描述',
-              onEdit: () => _openFullScreenEditor(
-                title: '编辑描述',
-                controller: _descCtrl,
-                hint: '一句话介绍这个角色（可选）',
-              ),
+            child: WallpaperSection(
+              imageBytes: _chatBackgroundBytes,
+              rawValue: _chatBackgroundCtrl.text,
+              onPick: _pickChatBackgroundImage,
+              onClear: _clearChatBackgroundImage,
             ),
           ),
 
           const SizedBox(height: 16),
 
-          // 提示词
+          // 插件列表：允许后才展开对应绑定
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: PromptPreviewCard(
-              personaCtrl: _personaCtrl,
-              onEdit: () => _openFullScreenEditor(
-                title: '编辑提示词',
+            child: CharacterPluginsSection(
+              selectedPluginIds: _selectedPluginIds,
+              boundVoiceId: _boundVoiceId,
+              voicePresets: voicePresets,
+              drawingPersonaPrompt: _drawingPersonaPrompt(),
+              selectedRecipeId: _selectedRecipeId,
+              memoryDocAvailable:
+                  widget.editMode == EditMode.editConversation,
+              onOpenMemoryDoc: _openMemoryDoc,
+              onPluginIdsChanged: (newIds) {
+                setState(() => _selectedPluginIds = newIds);
+                _scheduleAutoSave();
+              },
+              onVoiceChanged: (voiceId) {
+                setState(() {
+                  _boundVoiceId = voiceId;
+                  // 绑定音色后自动启用 TTS 插件
+                  if (voiceId != null) {
+                    _selectedPluginIds.add('tts');
+                  }
+                });
+                _scheduleAutoSave();
+              },
+              onDrawingPresetChanged: (id) {
+                setState(() {
+                  _drawingPresetId = id;
+                  _drawingBindingChanged = true;
+                });
+                _scheduleAutoSave();
+              },
+              onRecipeChanged: (recipeId) {
+                setState(() => _selectedRecipeId = recipeId);
+                _scheduleAutoSave();
+              },
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // 背景信息补充：人设提示词 + 角色专属绘图要求
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: BackgroundInfoSection(
+              expanded: _backgroundInfoExpanded,
+              onToggle: () => setState(
+                  () => _backgroundInfoExpanded = !_backgroundInfoExpanded),
+              personaText: _personaCtrl.text,
+              drawingText: _customDrawingPromptCtrl.text,
+              onEditPersona: () => _openFullScreenEditor(
+                title: '编辑人设提示词',
                 controller: _personaCtrl,
                 hint: '详细描述角色的性格、说话方式、行为边界和世界观...',
               ),
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
-          // 插件 + 音色 + 聊天背景
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Column(
-              children: [
-                PluginVoiceSection(
-                  selectedPluginIds: _selectedPluginIds,
-                  boundVoiceId: _boundVoiceId,
-                  voicePresets: voicePresets,
-                  onPluginIdsChanged: (newIds) {
-                    setState(() => _selectedPluginIds = newIds);
-                    _scheduleAutoSave();
-                  },
-                  onVoiceChanged: (voiceId) {
-                    setState(() {
-                      _boundVoiceId = voiceId;
-                      // 绑定音色后自动启用 TTS 插件
-                      if (voiceId != null) {
-                        _selectedPluginIds.add('tts');
-                      }
-                    });
-                    _scheduleAutoSave();
-                  },
-                ),
-                const SizedBox(height: 16),
-                PresetRecipeSection(
-                  selectedRecipeId: _selectedRecipeId,
-                  onRecipeChanged: (recipeId) {
-                    setState(() => _selectedRecipeId = recipeId);
-                    _scheduleAutoSave();
-                  },
-                ),
-                const SizedBox(height: 16),
-                ChatBackgroundSection(
-                  chatBackgroundCtrl: _chatBackgroundCtrl,
-                  chatBackgroundBytes: _chatBackgroundBytes,
-                  onPick: _pickChatBackgroundImage,
-                  onClear: _clearChatBackgroundImage,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // 专属绘图提示（工具提示词预设 + 个性化绘图提示词）
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: DrawingPromptSection(
-              customDrawingPromptCtrl: _customDrawingPromptCtrl,
-              followsGlobalArtistPreset: _followGlobalArtistPreset,
-              selectedToolPresetName: _selectedToolPresetName,
-              selectedArtistPresetName: _selectedArtistPresetName,
-              onToolPresetChanged: (name) {
-                setState(() => _selectedToolPresetName = name);
-                _scheduleAutoSave();
-              },
-              onArtistPresetFollowGlobal: () {
-                setState(() {
-                  _followGlobalArtistPreset = true;
-                  _selectedArtistPresetName = null;
-                });
-                _scheduleAutoSave();
-              },
-              onArtistPresetDisable: () {
-                setState(() {
-                  _followGlobalArtistPreset = false;
-                  _selectedArtistPresetName = null;
-                });
-                _scheduleAutoSave();
-              },
-              onArtistPresetSelected: (name) {
-                setState(() {
-                  _followGlobalArtistPreset = false;
-                  _selectedArtistPresetName = name;
-                });
-                _scheduleAutoSave();
-              },
-              onEdit: () => _openFullScreenEditor(
-                title: '编辑个性化绘图提示',
+              onEditDrawing: () => _openFullScreenEditor(
+                title: '编辑绘图要求',
                 controller: _customDrawingPromptCtrl,
                 hint:
                     '可在此设定男女主外貌标签优先使用 Danbooru，也可用自然语言描述，以及对生图的要求。\n\n示例：女主纳西妲，danbooru标签"nahida_(genshin_impact)",男主danbooru标签"aether_(genshin_impact)"，默认生图视角为男主第一视角，少数情况使用第三视角出现男主全身。',
@@ -468,42 +397,115 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     );
   }
 
+  String _drawingPersonaPrompt() {
+    return PersonaPromptCodec.compose(
+      userPrompt: '',
+      drawingPresetId: _drawingPresetId,
+      drawingToolPresetName: _drawingBindingChanged
+          ? null
+          : _legacyDrawingParts.drawingToolPresetName,
+      drawingArtistPresetName: _drawingBindingChanged
+          ? null
+          : _legacyDrawingParts.drawingArtistPresetName,
+    );
+  }
+
+  void _openMemoryDoc() {
+    Navigator.of(context).push(ParallaxSlidePageRoute(
+      page: ContactMemoryPage(
+        ownerId: widget.conversation.id,
+        displayName: _nameCtrl.text.trim(),
+      ),
+    ));
+  }
+
+  /// 页面背景：上传壁纸后与聊天页共用同一张图，叠加蒙层保证内容可读。
+  Widget _buildPageBackground(MoeColors colors) {
+    final raw = _chatBackgroundCtrl.text.trim();
+    final image = _deferHeavyVisuals ? null : _resolveWallpaperImage(raw);
+    if (image == null) {
+      return ColoredBox(color: colors.surfaceAlt);
+    }
+    final maskOpacity =
+        (widget.conversation.chatBackgroundMaskOpacity ?? 0.8)
+            .clamp(0.0, 1.0);
+    return ColoredBox(
+      color: colors.surfaceAlt,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          image,
+          IgnorePointer(
+            child: ColoredBox(
+              color: colors.surfaceAlt.withValues(alpha: maskOpacity),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget? _resolveWallpaperImage(String raw) {
+    if (raw.isEmpty) return null;
+
+    final bytes = _chatBackgroundBytes ?? decodeDataImage(raw);
+    if (bytes != null) {
+      return Image.memory(
+        bytes,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+      );
+    }
+    if (raw.startsWith('data:image')) return null;
+    if (raw.startsWith('http://') || raw.startsWith('https://')) {
+      return Image.network(
+        raw,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+      );
+    }
+    if (raw.startsWith('assets/') || raw.startsWith('packages/')) {
+      return Image.asset(
+        raw,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+      );
+    }
+    return Image.file(
+      File(raw),
+      fit: BoxFit.cover,
+      gaplessPlayback: true,
+      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+    );
+  }
+
   Widget _buildDeferredShell(MoeColors colors) {
     return SingleChildScrollView(
       physics: const NeverScrollableScrollPhysics(),
       child: Column(
         children: [
-          SafeArea(
-            bottom: false,
-            child: Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: _buildNavBar(colors),
-            ),
-          ),
           const SizedBox(height: 24),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: _buildShellCard(colors, height: 176),
+            child: _buildShellCard(colors, height: 320),
           ),
           const SizedBox(height: 16),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: _buildShellCard(colors, height: 120),
+            child: _buildShellCard(colors, height: 60),
           ),
           const SizedBox(height: 16),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: _buildShellCard(colors, height: 132),
+            child: _buildShellCard(colors, height: 384),
           ),
           const SizedBox(height: 16),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: _buildShellCard(colors, height: 216),
-          ),
-          const SizedBox(height: 16),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: _buildShellCard(colors, height: 188),
+            child: _buildShellCard(colors, height: 60),
           ),
           const SizedBox(height: 20),
           Row(
@@ -537,127 +539,23 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     return Container(
       height: height,
       decoration: BoxDecoration(
-        color: colors.surfaceAlt.withValues(alpha: 0.6),
+        // 与真实卡片（ContactEditCard / MoeSettingsGroup）同色，避免骨架屏闪出第三种背景色
+        color: colors.componentBackground,
         border: Border.all(color: colors.borderLight, width: borderWidth),
         borderRadius: BorderRadius.circular(18),
       ),
     );
   }
 
-  // ==================== 模糊背景 ====================
-
-  Widget _buildBlurredBackground(MoeColors colors) {
-    final source = _getBackgroundSource();
-    if (source == null) {
-      return Container(color: colors.surface);
-    }
-    _scheduleBlurEnsure();
-
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        _buildGradientFallback(colors, isDark),
-        ValueListenableBuilder<int>(
-          valueListenable: BlurredBackgroundService.ticker,
-          builder: (context, _, __) {
-            final provider = BlurredBackgroundService.getBlurProvider(source);
-            return AnimatedSwitcher(
-              duration: const Duration(milliseconds: 300),
-              child: _buildBlurLayer(source, provider),
-            );
-          },
-        ),
-        Container(
-          color: isDark
-              ? Colors.black.withValues(alpha: 0.25)
-              : Colors.white.withValues(alpha: 0.22),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildBlurLayer(String source, ImageProvider? provider) {
-    final blurAsset = BlurredBackgroundService.deriveBlurAssetPath(source);
-
-    if (blurAsset != null) {
-      return SizedBox.expand(
-        key: ValueKey('asset:$blurAsset'),
-        child: Image.asset(
-          blurAsset,
-          fit: BoxFit.cover,
-          gaplessPlayback: true,
-          filterQuality: FilterQuality.medium,
-          errorBuilder: (_, __, ___) => provider == null
-              ? const SizedBox.shrink(key: ValueKey('empty'))
-              : _buildBlurImage(provider, key: ValueKey('file:$source')),
-        ),
-      );
-    }
-
-    if (provider == null) {
-      return const SizedBox.shrink(key: ValueKey('empty'));
-    }
-
-    return _buildBlurImage(provider, key: ValueKey('file:$source'));
-  }
-
-  Widget _buildBlurImage(ImageProvider provider, {required Key key}) {
-    return SizedBox.expand(
-      key: key,
-      child: Image(
-        image: provider,
-        fit: BoxFit.cover,
-        gaplessPlayback: true,
-        filterQuality: FilterQuality.medium,
-      ),
-    );
-  }
-
-  Widget _buildGradientFallback(MoeColors colors, bool isDark) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            colors.surface,
-            colors.primary.withValues(alpha: isDark ? 0.18 : 0.1),
-            isDark ? const Color(0xFF12161C) : Colors.white,
-          ],
-        ),
-      ),
-    );
-  }
-
   // ==================== 自动保存 ====================
 
-  void _onAutoSaveFieldChanged() {
-    _scheduleAutoSave();
-  }
+  void _scheduleAutoSave() => autoSave.changed();
 
-  void _scheduleAutoSave() {
-    if (!_enableAutoSave) return;
-    _autoSaveDebounce?.cancel();
-    _autoSaveDebounce = Timer(const Duration(milliseconds: 450), () {
-      unawaited(_saveCurrentIfNeeded());
-    });
-  }
-
-  Future<void> _flushAutoSave() async {
-    if (!_enableAutoSave) return;
-    _autoSaveDebounce?.cancel();
-    while (_isAutoSaving) {
-      _autoSaveQueued = true;
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-    }
-    await _saveCurrentIfNeeded();
-  }
+  Future<bool> _flushAutoSave() => autoSave.flush();
 
   String _buildEditSignature(ContactEditResult result) {
     final plugins = result.enabledPlugins?.join(',') ?? '__all__';
-    return [
+    return moeAutoSaveSignature([
       result.displayName,
       result.avatarUrl ?? '',
       result.characterImage ?? '',
@@ -668,6 +566,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
       result.description ?? '',
       result.personaPrompt,
       plugins,
+      result.recipeId ?? '',
       '${result.clearAvatarUrl}',
       '${result.clearCharacterImage}',
       '${result.clearChatBackgroundImage}',
@@ -676,58 +575,18 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
       '${result.clearVoiceFile}',
       '${result.clearDescription}',
       '${result.clearEnabledPlugins}',
-    ].join('|');
-  }
-
-  Future<void> _saveCurrentIfNeeded() async {
-    if (!_enableAutoSave || !mounted) return;
-    final result = _buildEditResult();
-    if (result.displayName.trim().isEmpty) return;
-
-    final signature = _buildEditSignature(result);
-    if (signature == _lastAutoSavedSignature) return;
-
-    if (_isAutoSaving) {
-      _autoSaveQueued = true;
-      return;
-    }
-
-    _isAutoSaving = true;
-    try {
-      await _applyResult(widget.conversation.id, result);
-      _lastAutoSavedSignature = signature;
-    } finally {
-      _isAutoSaving = false;
-      if (_autoSaveQueued) {
-        _autoSaveQueued = false;
-        unawaited(_saveCurrentIfNeeded());
-      }
-    }
+      '${result.clearRecipeId}',
+    ]);
   }
 
   // ==================== 导航栏 ====================
-
-  Widget _buildNavBar(MoeColors colors) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Row(
-        children: [
-          _buildCircleButton(
-            icon: Icons.arrow_back,
-            onTap: () => unawaited(_handleBack()),
-          ),
-          const Spacer(),
-          ..._buildNavActions(colors),
-        ],
-      ),
-    );
-  }
 
   List<Widget> _buildNavActions(MoeColors colors) {
     switch (widget.editMode) {
       case EditMode.create:
         return [
-          _buildCircleButton(icon: Icons.check, onTap: _onSave),
+          _buildCircleButton(
+              icon: Icons.check, onTap: _onSave, tooltip: '创建角色'),
         ];
       case EditMode.editConversation:
         return [
@@ -735,8 +594,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
             icon: Icons.more_horiz,
             onTap: () => _showMoreMenu(colors),
           ),
-          const SizedBox(width: 8),
-          _buildCircleButton(icon: Icons.check, onTap: _onSave),
         ];
       case EditMode.editTemplate:
         return [
@@ -745,8 +602,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
             onTap: _onSaveAsNewTemplate,
             tooltip: '另存为',
           ),
-          const SizedBox(width: 8),
-          _buildCircleButton(icon: Icons.check, onTap: _onSaveTemplate),
         ];
     }
   }
@@ -770,80 +625,21 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     required VoidCallback onTap,
     String? tooltip,
   }) {
-    final button = Material(
-      color: Colors.black38,
-      shape: const CircleBorder(),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Container(
-          width: 44,
-          height: 44,
-          alignment: Alignment.center,
-          child: Icon(icon, color: Colors.white, size: 22),
-        ),
-      ),
+    return IconButton(
+      tooltip: tooltip ?? (icon == Icons.check ? '保存' : '更多'),
+      icon: Icon(icon, color: context.moeColors.primary),
+      onPressed: onTap,
     );
-    if (tooltip != null) {
-      return Tooltip(message: tooltip, child: button);
-    }
-    return button;
   }
 
   // ==================== 退出处理 ====================
 
   Future<void> _handleBack() async {
-    final action = await _confirmExitAction();
-    if (!mounted || action == _ExitAction.cancel) return;
-
-    if (action == _ExitAction.save) {
-      await _saveCurrentAndExit();
-      return;
-    }
-
-    _allowAndPop();
-  }
-
-  bool _hasUnsavedChanges() {
-    final baseline = _lastAutoSavedSignature;
-    if (baseline == null) return false;
-    final current = _buildEditSignature(_buildEditResult());
-    return current != baseline;
-  }
-
-  Future<_ExitAction> _confirmExitAction() async {
-    if (!_hasUnsavedChanges()) return _ExitAction.discard;
-
-    final result = await showMeoTalkDialog(
-      context: context,
-      title: '退出编辑',
-      content: const Text('当前有未保存的修改，是否先保存？'),
-      cancelText: '不保存',
-      confirmText: '保存',
-    );
-
-    if (result == null) return _ExitAction.cancel;
-    return result ? _ExitAction.save : _ExitAction.discard;
-  }
-
-  Future<void> _saveCurrentAndExit() async {
-    switch (widget.editMode) {
-      case EditMode.create:
-      case EditMode.editConversation:
-        await _onSave();
-        return;
-      case EditMode.editTemplate:
-        await _onSaveTemplate();
-        return;
-    }
+    FocusScope.of(context).unfocus();
+    if (await autoSave.flush() && mounted) Navigator.of(context).pop();
   }
 
   void _allowAndPop<T extends Object?>([T? result]) {
-    if (!_allowNativePop) {
-      setState(() {
-        _allowNativePop = true;
-      });
-    }
     Navigator.of(context).pop<T>(result);
   }
 
@@ -858,6 +654,9 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
       context: context,
       title: title,
       initialValue: controller.text,
+      onChanged: (value) {
+        if (mounted) controller.text = value;
+      },
       hint: hint,
     );
 
@@ -962,20 +761,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
 
   // ==================== 保存逻辑 ====================
 
-  String? _pickValidToolPresetName(String? value, ImageConfig config) {
-    final name = value?.trim();
-    if (name == null || name.isEmpty) return null;
-    final exists = config.systemPromptPresets.any((p) => p.name == name);
-    return exists ? name : null;
-  }
-
-  String? _pickValidArtistPresetName(String? value, ImageConfig config) {
-    final name = value?.trim();
-    if (name == null || name.isEmpty) return null;
-    final exists = config.artistPresets.any((p) => p.name == name);
-    return exists ? name : null;
-  }
-
   ContactEditResult _buildEditResult() {
     final name = _nameCtrl.text.trim();
     final avatar =
@@ -998,11 +783,13 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     final personaPrompt = PersonaPromptCodec.compose(
       userPrompt: _personaCtrl.text.trim(),
       customDrawingPrompt: _customDrawingPromptCtrl.text.trim(),
-      drawingToolPresetName: _selectedToolPresetName,
-      drawingArtistPresetName: _followGlobalArtistPreset
+      drawingPresetId: _drawingPresetId,
+      drawingToolPresetName: _drawingBindingChanged
           ? null
-          : (_selectedArtistPresetName ??
-              PersonaPromptCodec.artistPresetDisabledBinding),
+          : _legacyDrawingParts.drawingToolPresetName,
+      drawingArtistPresetName: _drawingBindingChanged
+          ? null
+          : _legacyDrawingParts.drawingArtistPresetName,
     );
     final voiceFile = (_boundVoiceId == null || _boundVoiceId!.trim().isEmpty)
         ? null
@@ -1065,6 +852,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
   }
 
   Future<void> _applyResult(String id, ContactEditResult result) async {
+    await ref.read(conversationsProvider.future);
     await ref.read(conversationsProvider.notifier).applyContactEdit(
           id,
           displayName: result.displayName,
@@ -1109,20 +897,9 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage> {
     }
   }
 
-  Future<void> _onSaveTemplate() async {
-    if (!_validateForm()) return;
-    final result = _buildEditResult();
-
-    await _applyResult(widget.conversation.id, result);
-
-    if (!mounted) return;
-    MoeToast.success(context, '角色卡已保存');
-    _allowAndPop();
-  }
-
   Future<void> _onSaveAsNewTemplate() async {
     if (_enableAutoSave) {
-      await _flushAutoSave();
+      if (!await _flushAutoSave()) return;
     }
     if (!_validateForm()) return;
     final result = _buildEditResult();

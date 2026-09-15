@@ -26,6 +26,8 @@ library;
 
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/buttons/moe_button_surface.dart';
+import '../../../theme/tokens.dart';
 import 'package:flutter/services.dart';
 import 'package:photo_view/photo_view.dart';
 
@@ -248,7 +250,8 @@ class _MoeImagePreviewState extends State<MoeImagePreview>
 
   @override
   Widget build(BuildContext context) {
-    final bgColor = widget.backgroundColor ??
+    final bgColor =
+        widget.backgroundColor ??
         MoeImagePreview.getAdaptiveBackgroundColor(context);
     final images = widget.images;
     final isSingle = images.length == 1;
@@ -307,15 +310,19 @@ class _MoeImagePreviewState extends State<MoeImagePreview>
                     child: FadeTransition(
                       opacity: _closeButtonController,
                       child: SlideTransition(
-                        position: Tween<Offset>(
-                          begin: const Offset(0, -0.5),
-                          end: Offset.zero,
-                        ).animate(CurvedAnimation(
-                          parent: _closeButtonController,
-                          curve: Curves.easeOut,
-                        )),
+                        position:
+                            Tween<Offset>(
+                              begin: const Offset(0, -0.5),
+                              end: Offset.zero,
+                            ).animate(
+                              CurvedAnimation(
+                                parent: _closeButtonController,
+                                curve: Curves.easeOut,
+                              ),
+                            ),
                         child: _CloseButton(
-                            onTap: () => Navigator.of(context).pop()),
+                          onTap: () => Navigator.of(context).pop(),
+                        ),
                       ),
                     ),
                   ),
@@ -382,8 +389,9 @@ class _MoeImagePreviewState extends State<MoeImagePreview>
             heroAttributes: index == widget.initialIndex
                 ? PhotoViewHeroAttributes(tag: item.heroTag)
                 : null,
-            backgroundDecoration:
-                const BoxDecoration(color: Colors.transparent),
+            backgroundDecoration: const BoxDecoration(
+              color: Colors.transparent,
+            ),
             minScale: PhotoViewComputedScale.contained * widget.minScale,
             maxScale: PhotoViewComputedScale.covered * widget.maxScale,
             initialScale: PhotoViewComputedScale.contained,
@@ -399,7 +407,7 @@ class _MoeImagePreviewState extends State<MoeImagePreview>
                 value: event == null
                     ? null
                     : event.cumulativeBytesLoaded /
-                        (event.expectedTotalBytes ?? 1),
+                          (event.expectedTotalBytes ?? 1),
                 color: Colors.white54,
                 strokeWidth: 2,
               ),
@@ -496,16 +504,14 @@ class _CloseButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.black45,
-      shape: const CircleBorder(),
-      clipBehavior: Clip.antiAlias,
+    return MoeButtonSurface(
+      radius: 999,
       child: InkWell(
         onTap: onTap,
         customBorder: const CircleBorder(),
-        child: const Padding(
-          padding: EdgeInsets.all(10),
-          child: Icon(Icons.close, color: Colors.white, size: 22),
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Icon(Icons.close, color: context.moeColors.text, size: 22),
         ),
       ),
     );

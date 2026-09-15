@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers2.dart';
 import '../../domain/conversation.dart';
@@ -48,12 +49,19 @@ class Sidebar extends ConsumerWidget {
                     radius: 8,
                     child: InkWell(
                       onTap: () async {
-                        final id = await ref.read(conversationsProvider.notifier).createNew();
-                        ref.read(activeConversationIdProvider.notifier).state = id;
+                        final id = await ref
+                            .read(conversationsProvider.notifier)
+                            .createNew();
+                        ref.read(activeConversationIdProvider.notifier).state =
+                            id;
                       },
-                      child: Container(
+                      child: MoeButtonSurface(
                         padding: const EdgeInsets.all(8),
-                        child: const Icon(Icons.add, color: Colors.white, size: 26),
+                        child: Icon(
+                          Icons.add,
+                          color: context.moeColors.text,
+                          size: 26,
+                        ),
                       ),
                     ),
                   ),
@@ -76,9 +84,9 @@ class Sidebar extends ConsumerWidget {
                 }
                 // 隐藏滚动条但保留滚动功能
                 return ScrollConfiguration(
-                  behavior: ScrollConfiguration.of(context).copyWith(
-                    scrollbars: false,
-                  ),
+                  behavior: ScrollConfiguration.of(
+                    context,
+                  ).copyWith(scrollbars: false),
                   child: ListView.builder(
                     padding: EdgeInsets.zero, // 去除默认内边距，贴靠分割线
                     itemCount: list.length,

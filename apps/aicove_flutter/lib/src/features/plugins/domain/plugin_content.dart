@@ -1,3 +1,4 @@
+import '../../../core/models/image_generation_snapshot.dart';
 import 'package:flutter/widgets.dart';
 
 /// 插件返回的内容基类
@@ -16,21 +17,26 @@ class PluginTextContent extends PluginContent {
 class PluginImageContent extends PluginContent {
   /// 本地文件路径
   final String localPath;
-  
+
   /// 可选的图片说明
   final String? caption;
-  
-  const PluginImageContent(this.localPath, {this.caption});
+
+  final ImageGenerationSnapshot? generationSnapshot;
+  const PluginImageContent(
+    this.localPath, {
+    this.caption,
+    this.generationSnapshot,
+  });
 }
 
 /// 音频内容
 class PluginAudioContent extends PluginContent {
   /// 本地文件路径
   final String localPath;
-  
+
   /// 音频时长（可选）
   final Duration? duration;
-  
+
   const PluginAudioContent(this.localPath, {this.duration});
 }
 

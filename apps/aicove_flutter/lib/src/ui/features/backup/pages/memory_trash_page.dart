@@ -30,7 +30,7 @@ class MemoryTrashPage extends ConsumerWidget {
     final trashAsync = ref.watch(trashMemoriesProvider);
     final colors = context.moeColors;
 
-    return Scaffold(
+    return MoePageScaffold(
       appBar: MoeAppBar(
         title: '记忆回收站',
         showBackButton: true,

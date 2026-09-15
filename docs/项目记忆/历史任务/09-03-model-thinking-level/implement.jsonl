@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/09-03-model-thinking-level/research/codebase-survey.md", "reason": "现状调研：reasoningEffort 链路、会话/模型持久化、发送链路注入点、UI 入口，全部带 file:line 锚点"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "本任务跨 DB→domain→service→adapter→UI 五层，改动前必读"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Drift 加列与迁移惯例"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "会话档位写入与 provider 刷新方式"}

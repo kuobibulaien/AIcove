@@ -1,12 +1,23 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -X utf8 hooks/memory.py start --agent codex",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -X utf8 .codex/hooks/inject-workflow-state.py",
-            "timeout": 15
+            "command": "python3 -X utf8 hooks/memory.py prompt --agent codex",
+            "timeout": 10
           }
         ]
       }

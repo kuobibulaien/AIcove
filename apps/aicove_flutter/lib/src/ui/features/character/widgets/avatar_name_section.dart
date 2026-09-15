@@ -13,6 +13,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/form/moe_input_decoration.dart';
 
 import '../../../../core/utils/avatar_helper.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
@@ -41,8 +42,7 @@ class AvatarNameSection extends StatelessWidget {
     final imageWidth = screenWidth * 0.5;
 
     final helper = AvatarHelper(
-      avatarUrl:
-          avatarCtrl.text.trim().isEmpty ? null : avatarCtrl.text.trim(),
+      avatarUrl: avatarCtrl.text.trim().isEmpty ? null : avatarCtrl.text.trim(),
       characterImage:
           refImageCtrl.text.trim().isEmpty ? null : refImageCtrl.text.trim(),
       displayName: nameCtrl.text,
@@ -103,22 +103,23 @@ class AvatarNameSection extends StatelessWidget {
             fontWeight: MoeFontWeights.emphasis,
             color: colors.text,
           ),
-          decoration: InputDecoration(
+          decoration: MoeInputDecoration(
             hintText: '输入角色名称',
             hintStyle: TextStyle(
               fontSize: 22,
               fontWeight: MoeFontWeights.normal,
               color: colors.muted,
             ),
-            border: InputBorder.none,
             contentPadding: const EdgeInsets.symmetric(vertical: 8),
           ),
         ),
         const SizedBox(height: 8),
 
         // 操作按钮
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+        Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 8,
+          runSpacing: 8,
           children: [
             OutlinedButton.icon(
               onPressed: onPickCharacterImage,
@@ -126,7 +127,6 @@ class AvatarNameSection extends StatelessWidget {
               label: Text(hasCharacterImage ? '更换立绘' : '上传立绘'),
             ),
             if (hasCharacterImage) ...[
-              const SizedBox(width: 8),
               OutlinedButton.icon(
                 onPressed: onClearCharacterImage,
                 icon: const Icon(Icons.close),

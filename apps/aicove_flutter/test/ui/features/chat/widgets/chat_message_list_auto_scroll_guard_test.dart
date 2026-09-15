@@ -51,7 +51,7 @@ AppSettings _buildSettings() {
     apiBaseUrl: 'https://api.openai.com/v1',
     imageGenerationEnabled: false,
     maxFileUploadMB: 10,
-    historyMessageLimit: 100,
+    contextWindowTokens: 272000,
     customModels: <CustomModel>[],
     providers: <ProviderAuth>[],
     modelProviderMap: <String, String>{},
@@ -686,6 +686,19 @@ Element _extractMessageAnchorElement(WidgetTester tester, String messageId) {
   final anchorFinder = find.byKey(ValueKey<String>('message:$messageId'));
   expect(anchorFinder, findsOneWidget);
   return tester.element(anchorFinder);
+}
+
+Future<void> _waitForScrollIdle(
+  WidgetTester tester,
+  ScrollController controller,
+) async {
+  // 手势优先后不再由分页 jumpTo 截断回弹；只等待滚动，不等待无限 loading 动画。
+  for (var frame = 0;
+      frame < 120 && controller.position.isScrollingNotifier.value;
+      frame++) {
+    await tester.pump(const Duration(milliseconds: 16));
+  }
+  expect(controller.position.isScrollingNotifier.value, isFalse);
 }
 
 void main() {
@@ -2316,6 +2329,7 @@ void main() {
         findsOneWidget);
 
     var controller = tester.widget<CustomScrollView>(listFinder).controller!;
+    await _waitForScrollIdle(tester, controller);
     final gapWhileLoading = _distanceToBottom(controller);
     final offsetWhileLoading = controller.offset;
     final distanceToTopWhileLoading =
@@ -2810,6 +2824,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 120));
     final baselineController =
         tester.widget<CustomScrollView>(listFinder).controller!;
+    await _waitForScrollIdle(tester, baselineController);
     final offsetBeforeRecovery = baselineController.offset;
     final distanceToTopBeforeRecovery =
         (baselineController.position.maxScrollExtent -
@@ -3086,8 +3101,7 @@ void main() {
     viewportController.dispose();
   });
 
-  testWidgets('贴底状态下尾消息图片从无尺寸升级到有尺寸时应触发稳底且不被抬走',
-      (tester) async {
+  testWidgets('贴底状态下尾消息图片从无尺寸升级到有尺寸时应触发稳底且不被抬走', (tester) async {
     final settings = _buildSettings();
     final viewportController = ChatViewportController();
     final autoScrollReasons = <String>[];

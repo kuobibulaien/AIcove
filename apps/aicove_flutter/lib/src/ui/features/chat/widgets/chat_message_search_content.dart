@@ -9,10 +9,7 @@ import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/theme/tokens.dart';
 
 class ChatMessageSearchContent extends ConsumerStatefulWidget {
-  const ChatMessageSearchContent({
-    super.key,
-    required this.conversationId,
-  });
+  const ChatMessageSearchContent({super.key, required this.conversationId});
 
   final String conversationId;
 
@@ -66,13 +63,14 @@ class _ChatMessageSearchContentState
     });
 
     try {
-      final rows =
-          await ref.read(chatPageQueriesProvider).searchConversationMessages(
-                conversationId: widget.conversationId,
-                keyword: keyword,
-                date: date,
-                limit: 200,
-              );
+      final rows = await ref
+          .read(chatPageQueriesProvider)
+          .searchConversationMessages(
+            conversationId: widget.conversationId,
+            keyword: keyword,
+            date: date,
+            limit: 200,
+          );
       if (!mounted || seq != _searchSeq) return;
       setState(() {
         _loading = false;
@@ -105,14 +103,6 @@ class _ChatMessageSearchContentState
     _scheduleSearch();
   }
 
-  void _clearKeyword() {
-    setState(() {
-      _searchCtrl.clear();
-      _keyword = '';
-    });
-    _scheduleSearch();
-  }
-
   String _formatDay(DateTime date) {
     final y = date.year.toString().padLeft(4, '0');
     final m = date.month.toString().padLeft(2, '0');
@@ -137,21 +127,11 @@ class _ChatMessageSearchContentState
       children: [
         Padding(
           padding: const EdgeInsets.all(16),
-          child: MoeTextField(
+          child: MoeSearchField(
+            padding: EdgeInsets.zero,
             controller: _searchCtrl,
+            hintText: '输入关键词（可选）',
             autofocus: true,
-            hint: '输入关键词（可选）',
-            prefixIcon: Icons.search,
-            suffix: _searchCtrl.text.isNotEmpty
-                ? IconButton(
-                    icon: const Icon(Icons.clear, size: 20),
-                    onPressed: _clearKeyword,
-                  )
-                : null,
-            borderColor: colors.borderLight,
-            focusBorderColor: colors.primary,
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             onChanged: (value) {
               setState(() => _keyword = value);
               _scheduleSearch();
@@ -175,8 +155,10 @@ class _ChatMessageSearchContentState
                 color: Colors.transparent,
                 child: ListTile(
                   dense: true,
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 0,
+                  ),
                   title: const Text('日期'),
                   subtitle: Text(date == null ? '全部' : _formatDay(date)),
                   trailing: Row(
@@ -208,130 +190,116 @@ class _ChatMessageSearchContentState
           child: _loading
               ? const Center(child: MoeLoadingIndicator())
               : (_error != null)
-                  ? MoeEmptyState(
-                      icon: Icons.error_outline,
-                      title: '搜索失败',
-                      description: _error!,
-                    )
-                  : (keyword.isEmpty && date == null)
-                      ? const MoeEmptyState(
-                          icon: Icons.search,
-                          title: '请输入关键词或选择日期',
-                        )
-                      : (_results.isEmpty)
-                          ? const MoeEmptyState(
-                              icon: Icons.search_off,
-                              title: '未找到匹配的聊天记录',
-                            )
-                          : Column(
+              ? MoeEmptyState(
+                  icon: Icons.error_outline,
+                  title: '搜索失败',
+                  description: _error!,
+                )
+              : (keyword.isEmpty && date == null)
+              ? const MoeEmptyState(icon: Icons.search, title: '请输入关键词或选择日期')
+              : (_results.isEmpty)
+              ? const MoeEmptyState(icon: Icons.search_off, title: '未找到匹配的聊天记录')
+              : Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              '共 ${_results.length} 条（最多显示 200 条）',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: colors.muted,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: ListView.separated(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
+                        itemCount: _results.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 8),
+                        itemBuilder: (context, index) {
+                          final message = _results[index];
+                          final roleLabel = message.role == 'user'
+                              ? 'Me'
+                              : 'TA';
+                          final text = message.content.trim().isEmpty
+                              ? '[Non-text message]'
+                              : message.content.trim();
+
+                          return Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: MoeG2Decoration(
+                              radius: 8,
+                              color: colors.surfaceAlt,
+                              border: Border.all(
+                                color: colors.borderLight,
+                                width: borderWidth,
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Padding(
-                                  padding:
-                                      const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          '共 ${_results.length} 条（最多显示 200 条）',
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            color: colors.muted,
-                                          ),
+                                Row(
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 2,
+                                      ),
+                                      decoration: MoeG2Decoration(
+                                        radius: 999,
+                                        color: colors.muted.withValues(
+                                          alpha: 0.12,
                                         ),
                                       ),
-                                    ],
-                                  ),
-                                ),
-                                Expanded(
-                                  child: ListView.separated(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 16,
-                                      vertical: 8,
+                                      child: Text(
+                                        roleLabel,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: colors.text,
+                                          fontWeight: MoeFontWeights.emphasis,
+                                        ),
+                                      ),
                                     ),
-                                    itemCount: _results.length,
-                                    separatorBuilder: (_, __) =>
-                                        const SizedBox(height: 8),
-                                    itemBuilder: (context, index) {
-                                      final message = _results[index];
-                                      final roleLabel =
-                                          message.role == 'user' ? 'Me' : 'TA';
-                                      final text =
-                                          message.content.trim().isEmpty
-                                              ? '[Non-text message]'
-                                              : message.content.trim();
-
-                                      return Container(
-                                        padding: const EdgeInsets.all(12),
-                                        decoration: MoeG2Decoration(
-                                          radius: 8,
-                                          color: colors.surfaceAlt,
-                                          border: Border.all(
-                                            color: colors.borderLight,
-                                            width: borderWidth,
-                                          ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        _formatTime(message.createdAt),
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: colors.muted,
                                         ),
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Row(
-                                              children: [
-                                                Container(
-                                                  padding: const EdgeInsets
-                                                      .symmetric(
-                                                    horizontal: 8,
-                                                    vertical: 2,
-                                                  ),
-                                                  decoration: MoeG2Decoration(
-                                                    radius: 999,
-                                                    color:
-                                                        colors.muted.withValues(
-                                                      alpha: 0.12,
-                                                    ),
-                                                  ),
-                                                  child: Text(
-                                                    roleLabel,
-                                                    style: TextStyle(
-                                                      fontSize: 12,
-                                                      color: colors.text,
-                                                      fontWeight: MoeFontWeights
-                                                          .emphasis,
-                                                    ),
-                                                  ),
-                                                ),
-                                                const SizedBox(width: 8),
-                                                Expanded(
-                                                  child: Text(
-                                                    _formatTime(
-                                                      message.createdAt,
-                                                    ),
-                                                    style: TextStyle(
-                                                      fontSize: 12,
-                                                      color: colors.muted,
-                                                    ),
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                            const SizedBox(height: 8),
-                                            Text(
-                                              text,
-                                              maxLines: 3,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: TextStyle(
-                                                fontSize: 13,
-                                                color: colors.text,
-                                                height: 1.35,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      );
-                                    },
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  text,
+                                  maxLines: 3,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: colors.text,
+                                    height: 1.35,
                                   ),
                                 ),
                               ],
                             ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
         ),
       ],
     );

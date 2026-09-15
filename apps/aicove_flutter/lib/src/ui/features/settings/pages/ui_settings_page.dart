@@ -1,6 +1,7 @@
+import 'package:aicove_flutter/src/ui/theme/moe_interaction_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart'
-    show TargetPlatform, defaultTargetPlatform, kIsWeb;
+    show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import '../../../../ui/theme/tokens.dart';
@@ -9,6 +10,8 @@ import '../../../../core/utils/message_formatter.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
+import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
+import 'profile_page.dart';
 
 /// 预设颜色列表
 const _presetColors = [
@@ -21,29 +24,22 @@ const _presetColors = [
   Color(0xFF81C784), // 草绿
 ];
 
-bool get _isWindowsDesktop =>
-    !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+bool get _isWindowsDesktop => defaultTargetPlatform == TargetPlatform.windows;
 
 /// 界面设置页面
-///
-/// 使用 MoeSettingsGroup 统一样式重构
 class UiSettingsPage extends ConsumerWidget {
   const UiSettingsPage({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final settingsAsync = ref.watch(appSettingsProvider);
-    final colors = context.moeColors;
 
-    return Scaffold(
-      appBar: const MoeAppBar(
-        title: '界面设置',
-        showBackButton: true,
-      ),
+    return MoePageScaffold(
+      appBar: const MoeAppBar(title: '界面设置', showBackButton: true),
       body: settingsAsync.when(
         loading: () => const Center(child: MoeLoadingIndicator()),
         error: (e, _) => Center(child: Text('加载设置失败: $e')),
-        data: (settings) => _buildContent(context, ref, settings, colors),
+        data: (settings) => _buildContent(context, ref, settings),
       ),
     );
   }
@@ -52,234 +48,309 @@ class UiSettingsPage extends ConsumerWidget {
     BuildContext context,
     WidgetRef ref,
     AppSettings settings,
-    MoeColors colors,
   ) {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        // ========== 主题色设置 ==========
-        _buildSectionTitle(context, '主题色'),
-        const SizedBox(height: 12),
-        MoeSettingsGroup(
-          margin: EdgeInsets.zero,
-          children: [
-            _buildAccentColorPicker(context, ref, settings, colors),
-          ],
-        ),
-
-        const SizedBox(height: 24),
-
-        // ========== 深色模式设置 ==========
-        _buildSectionTitle(context, '深色模式'),
-        const SizedBox(height: 12),
-        MoeSettingsGroup(
-          margin: EdgeInsets.zero,
-          children: [
-            MoeSettingsRow(
-              icon: Icons.dark_mode_outlined,
-              label: '深色模式',
-              subtitle: settings.useSystemTheme ? '当前跟随系统设置' : '手动控制',
-              trailingType: MoeSettingsRowTrailing.switchControl,
-              switchValue: settings.isDarkMode,
-              onSwitchChanged: (value) {
-                ref
-                    .read(appSettingsProvider.notifier)
-                    .setDarkModeAndSystemTheme(
-                      isDark: value,
-                      useSystem: false,
-                    );
-              },
+    final colors = context.moeColors;
+    final chunkConfig = settings.messageFormatConfig;
+    final activeSet =
+        chunkConfig.activeChunkPunctuationSet ??
+        (chunkConfig.chunkPunctuationSets.isNotEmpty
+            ? chunkConfig.chunkPunctuationSets.first
+            : null);
+    final activeSetName = activeSet == null
+        ? null
+        : _displaySetName(
+            activeSet,
+            chunkConfig.chunkPunctuationSets.indexWhere(
+              (item) => item.id == activeSet.id,
             ),
-            MoeSettingsRow(
-              icon: Icons.sync,
-              label: '跟随系统',
-              subtitle: '自动切换浅色/深色模式',
-              trailingType: MoeSettingsRowTrailing.switchControl,
-              switchValue: settings.useSystemTheme,
-              onSwitchChanged: (value) {
-                ref.read(appSettingsProvider.notifier).setUseSystemTheme(value);
-              },
-            ),
-          ],
-        ),
+          );
 
-        const SizedBox(height: 24),
-
-        // ========== 全局字体大小设置 ==========
-        _buildSectionTitle(context, '字体大小'),
-        const SizedBox(height: 12),
-        MoeSettingsGroup(
-          margin: EdgeInsets.zero,
-          children: [
-            _buildTextScaleSlider(context, ref, settings, colors),
-          ],
-        ),
-
-        const SizedBox(height: 24),
-
-        // ========== 全局界面缩放设置 ==========
-        _buildSectionTitle(context, '界面缩放'),
-        const SizedBox(height: 12),
-        MoeSettingsGroup(
-          margin: EdgeInsets.zero,
-          children: [
-            _buildUiScaleSlider(context, ref, settings, colors),
-          ],
-        ),
-
-        if (_isWindowsDesktop) ...[
-          const SizedBox(height: 24),
-
-          // ========== Windows 窗口按钮设置 ==========
-          _buildSectionTitle(context, '窗口按钮'),
-          const SizedBox(height: 12),
+    return MoeSettingsContent(
+      child: ListView(
+        padding: MoeSettingsLayout.verticalListPadding,
+        children: [
           MoeSettingsGroup(
-            margin: EdgeInsets.zero,
             children: [
-              _buildWindowControlsSidePicker(context, ref, settings),
+              MoeSettingsRow(
+                label: '个人资料',
+                onTap: () => Navigator.of(
+                  context,
+                ).push(ParallaxSlidePageRoute(page: const ProfilePage())),
+              ),
+            ],
+          ),
+
+          // ========== 外观：主题色 / 深色模式 ==========
+          MoeSettingsGroup(
+            title: '外观',
+            children: [
+              _buildAccentColorPicker(context, ref, colors),
+              _divider(colors),
+              MoeSettingsRow(
+                label: '深色模式',
+                subtitle: settings.useSystemTheme ? '当前跟随系统设置' : '手动控制',
+                trailingType: MoeSettingsRowTrailing.switchControl,
+                switchValue: settings.isDarkMode,
+                onSwitchChanged: (value) {
+                  ref
+                      .read(appSettingsProvider.notifier)
+                      .setDarkModeAndSystemTheme(
+                        isDark: value,
+                        useSystem: false,
+                      );
+                },
+              ),
+              MoeSettingsRow(
+                label: '跟随系统',
+                subtitle: '自动切换浅色/深色模式',
+                trailingType: MoeSettingsRowTrailing.switchControl,
+                switchValue: settings.useSystemTheme,
+                onSwitchChanged: (value) {
+                  ref
+                      .read(appSettingsProvider.notifier)
+                      .setUseSystemTheme(value);
+                },
+              ),
+            ],
+          ),
+
+          // ========== 材质等级 ==========
+          MoeSettingsGroup(
+            title: '材质等级',
+            children: [_buildMaterialPicker(context, ref, settings, colors)],
+          ),
+
+          // ========== 显示：字体 / 缩放 / 窗口按钮 ==========
+          MoeSettingsGroup(
+            title: '显示',
+            children: [
+              _buildScaleSlider(
+                colors: colors,
+                label: '字体大小',
+                value: settings.textScaleFactor.clamp(
+                  kMinTextScaleFactor,
+                  kMaxTextScaleFactor,
+                ),
+                min: kMinTextScaleFactor,
+                max: kMaxTextScaleFactor,
+                divisions: 14, // 0.05 步长：(1.5-0.8)/0.05 = 14
+                onChanged: (value) => ref
+                    .read(appSettingsProvider.notifier)
+                    .setTextScaleFactor(value),
+                onValueTap: () => _showScaleInputDialog(
+                  context,
+                  title: '输入字体缩放值',
+                  hint: '范围 $kMinTextScaleFactor ~ $kMaxTextScaleFactor',
+                  min: kMinTextScaleFactor,
+                  max: kMaxTextScaleFactor,
+                  current: settings.textScaleFactor.clamp(
+                    kMinTextScaleFactor,
+                    kMaxTextScaleFactor,
+                  ),
+                  onSave: (value) => ref
+                      .read(appSettingsProvider.notifier)
+                      .setTextScaleFactor(value),
+                ),
+              ),
+              _divider(colors),
+              _buildScaleSlider(
+                colors: colors,
+                label: '界面缩放',
+                value: settings.uiScaleFactor.clamp(
+                  kMinUiScaleFactor,
+                  kMaxUiScaleFactor,
+                ),
+                min: kMinUiScaleFactor,
+                max: kMaxUiScaleFactor,
+                divisions: 7, // 0.05 步长：(1.20-0.85)/0.05 = 7
+                note: '用于微调整体界面大小（推荐 0.95~1.05）',
+                onChanged: (value) => ref
+                    .read(appSettingsProvider.notifier)
+                    .setUiScaleFactor(value),
+                onValueTap: () => _showScaleInputDialog(
+                  context,
+                  title: '输入界面缩放值',
+                  hint: '范围 $kMinUiScaleFactor ~ $kMaxUiScaleFactor',
+                  min: kMinUiScaleFactor,
+                  max: kMaxUiScaleFactor,
+                  current: settings.uiScaleFactor.clamp(
+                    kMinUiScaleFactor,
+                    kMaxUiScaleFactor,
+                  ),
+                  onSave: (value) => ref
+                      .read(appSettingsProvider.notifier)
+                      .setUiScaleFactor(value),
+                ),
+              ),
+              if (_isWindowsDesktop) ...[
+                _divider(colors),
+                _buildWindowControlsSidePicker(context, ref, settings, colors),
+              ],
+            ],
+          ),
+
+          // ========== 聊天：背景色 / 图片预览 / 气泡 ==========
+          MoeSettingsGroup(
+            title: '聊天',
+            children: [
+              _buildBackgroundColorPicker(context, ref, settings, colors),
+              _divider(colors),
+              _buildScaleSlider(
+                colors: colors,
+                label: '图片预览大小',
+                value: settings.imagePreviewScale.clamp(
+                  kMinImagePreviewScale,
+                  kMaxImagePreviewScale,
+                ),
+                min: kMinImagePreviewScale,
+                max: kMaxImagePreviewScale,
+                divisions: 20, // 0.05 步长：(1.5-0.5)/0.05 = 20
+                note: '调整聊天中图片和表情包的显示大小',
+                onChanged: (value) => ref
+                    .read(appSettingsProvider.notifier)
+                    .setImagePreviewScale(value),
+                onValueTap: () => _showScaleInputDialog(
+                  context,
+                  title: '输入图片预览缩放值',
+                  hint: '范围 $kMinImagePreviewScale ~ $kMaxImagePreviewScale',
+                  min: kMinImagePreviewScale,
+                  max: kMaxImagePreviewScale,
+                  current: settings.imagePreviewScale.clamp(
+                    kMinImagePreviewScale,
+                    kMaxImagePreviewScale,
+                  ),
+                  onSave: (value) => ref
+                      .read(appSettingsProvider.notifier)
+                      .setImagePreviewScale(value),
+                ),
+              ),
+              _divider(colors),
+              MoeSettingsRow(
+                label: '语音消息气泡',
+                subtitle: settings.expandAudioText ? '默认展开文字' : '收回文字',
+                trailingType: MoeSettingsRowTrailing.switchControl,
+                switchValue: settings.expandAudioText,
+                onSwitchChanged: (value) {
+                  ref
+                      .read(appSettingsProvider.notifier)
+                      .setExpandAudioText(value);
+                },
+              ),
+              MoeSettingsRow(
+                label: '隐藏用户头像',
+                subtitle: '隐藏后消息气泡将贴着屏幕边缘',
+                trailingType: MoeSettingsRowTrailing.switchControl,
+                switchValue: settings.hideUserAvatar,
+                onSwitchChanged: (value) {
+                  ref
+                      .read(appSettingsProvider.notifier)
+                      .setHideUserAvatar(value);
+                },
+              ),
+            ],
+          ),
+
+          // ========== 消息分段 ==========
+          MoeSettingsGroup(
+            title: '消息分段',
+            children: [
+              MoeSettingsRow(
+                label: '启用消息分段',
+                subtitle: '按标点符号自动分段显示 AI 回复',
+                trailingType: MoeSettingsRowTrailing.switchControl,
+                switchValue: chunkConfig.enableChunking,
+                onSwitchChanged: (value) async {
+                  await ref
+                      .read(appSettingsProvider.notifier)
+                      .updateMessageFormatConfig(
+                        chunkConfig.copyWith(enableChunking: value),
+                      );
+                },
+              ),
+              MoeSettingsRow(
+                label: '过滤句末标点',
+                subtitle: '移除分段后末尾的标点符号',
+                trailingType: MoeSettingsRowTrailing.switchControl,
+                switchValue: chunkConfig.filterPunctuation,
+                onSwitchChanged: (value) async {
+                  await ref
+                      .read(appSettingsProvider.notifier)
+                      .updateMessageFormatConfig(
+                        chunkConfig.copyWith(filterPunctuation: value),
+                      );
+                },
+              ),
+              if (chunkConfig.enableChunking)
+                MoeSettingsRow(
+                  label: '分段标点',
+                  trailingType: MoeSettingsRowTrailing.text,
+                  detailText: activeSetName ?? '',
+                  onTap: () => _showPunctuationSheet(context),
+                ),
             ],
           ),
         ],
-
-        const SizedBox(height: 24),
-
-        // ========== 聊天背景色设置 ==========
-        _buildSectionTitle(context, '聊天背景色'),
-        const SizedBox(height: 12),
-        MoeSettingsGroup(
-          margin: EdgeInsets.zero,
-          children: [
-            _buildBackgroundColorPicker(context, ref, settings, colors),
-          ],
-        ),
-
-        const SizedBox(height: 24),
-
-        // ========== 聊天界面设置 ==========
-        _buildSectionTitle(context, '聊天界面'),
-        const SizedBox(height: 12),
-        MoeSettingsGroup(
-          margin: EdgeInsets.zero,
-          children: [
-            _buildImagePreviewScaleSlider(context, ref, settings, colors),
-            MoeSettingsRow(
-              icon: Icons.account_circle_outlined,
-              label: '隐藏用户头像',
-              subtitle: '隐藏后消息气泡将贴着屏幕边缘',
-              trailingType: MoeSettingsRowTrailing.switchControl,
-              switchValue: settings.hideUserAvatar,
-              onSwitchChanged: (value) {
-                ref.read(appSettingsProvider.notifier).setHideUserAvatar(value);
-              },
-            ),
-          ],
-        ),
-
-        const SizedBox(height: 24),
-
-        // ========== 消息分段设置 ==========
-        _buildSectionTitle(context, '消息分段'),
-        const SizedBox(height: 12),
-        MoeSettingsGroup(
-          margin: EdgeInsets.zero,
-          children: [
-            MoeSettingsRow(
-              icon: Icons.segment,
-              label: '启用消息分段',
-              subtitle: '按标点符号自动分段显示 AI 回复',
-              trailingType: MoeSettingsRowTrailing.switchControl,
-              switchValue: settings.messageFormatConfig.enableChunking,
-              onSwitchChanged: (value) async {
-                final newConfig = settings.messageFormatConfig
-                    .copyWith(enableChunking: value);
-                await ref
-                    .read(appSettingsProvider.notifier)
-                    .updateMessageFormatConfig(newConfig);
-              },
-            ),
-            MoeSettingsRow(
-              icon: Icons.filter_alt_outlined,
-              label: '过滤句末标点',
-              subtitle: '移除分段后末尾的标点符号',
-              trailingType: MoeSettingsRowTrailing.switchControl,
-              switchValue: settings.messageFormatConfig.filterPunctuation,
-              onSwitchChanged: (value) async {
-                final newConfig = settings.messageFormatConfig
-                    .copyWith(filterPunctuation: value);
-                await ref
-                    .read(appSettingsProvider.notifier)
-                    .updateMessageFormatConfig(newConfig);
-              },
-            ),
-          ],
-        ),
-        if (settings.messageFormatConfig.enableChunking) ...[
-          const SizedBox(height: 12),
-          _buildChunkPunctuationEditor(context, ref, settings, colors),
-        ],
-
-        const SizedBox(height: 32),
-      ],
+      ),
     );
   }
 
-  /// 构建分区标题
-  Widget _buildSectionTitle(BuildContext context, String title) {
+  /// 分组内自定义块之间的分割线，与 MoeSettingsRow 的行间分割线一致。
+  Widget _divider(MoeColors colors) =>
+      Divider(height: 0.5, thickness: 0.5, color: colors.divider);
+
+  /// 分组内自定义块的标题（与设置行标题一致）。
+  Widget _blockLabel(MoeColors colors, String label) {
     return Text(
-      title,
-      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            fontWeight: MoeFontWeights.emphasis,
-          ),
+      label,
+      style: TextStyle(
+        fontSize: 15,
+        fontWeight: MoeFontWeights.emphasis,
+        color: colors.text,
+      ),
     );
   }
 
-  /// 主题色选择器（点击展开色板弹窗）
+  /// 主题色选择块：预设色板 + 自定义取色
   Widget _buildAccentColorPicker(
     BuildContext context,
     WidgetRef ref,
-    AppSettings settings,
     MoeColors colors,
   ) {
     final currentColor = ref.watch(accentColorProvider);
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 预设颜色 + 自定义按钮
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
+          Row(
             children: [
-              ..._presetColors.map((color) {
-                final isSelected =
-                    (currentColor.value & 0xFFFFFF) == (color.value & 0xFFFFFF);
-                return GestureDetector(
-                  onTap: () => ref.setAccentColor(color),
-                  child: Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: color,
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: isSelected ? colors.text : Colors.transparent,
-                        width: 2,
-                      ),
-                    ),
-                    child: isSelected
-                        ? const Icon(Icons.check, color: Colors.white, size: 18)
-                        : null,
-                  ),
-                );
-              }),
+              _blockLabel(colors, '主题色'),
+              const Spacer(),
+              Container(
+                width: 20,
+                height: 20,
+                decoration: BoxDecoration(
+                  color: currentColor,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: colors.borderLight),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              for (final color in _presetColors)
+                _buildColorSwatch(context, ref, colors, color, currentColor),
               // 自定义颜色按钮
               GestureDetector(
                 onTap: () => _showColorPickerDialog(context, ref, currentColor),
                 child: Container(
-                  width: 40,
-                  height: 40,
+                  width: 34,
+                  height: 34,
                   decoration: BoxDecoration(
                     gradient: const SweepGradient(
                       colors: [
@@ -289,103 +360,284 @@ class UiSettingsPage extends ConsumerWidget {
                         Colors.cyan,
                         Colors.blue,
                         Colors.purple,
-                        Colors.red
+                        Colors.red,
                       ],
                     ),
                     shape: BoxShape.circle,
-                    border: Border.all(color: colors.border, width: 1),
+                    border: Border.all(color: colors.borderLight),
                   ),
-                  child:
-                      const Icon(Icons.colorize, color: Colors.white, size: 18),
+                  child: const Icon(
+                    Icons.colorize,
+                    color: Colors.white,
+                    size: 16,
+                  ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          Text(
-            '点击预设颜色快速切换，或点击彩色按钮自定义',
-            style: TextStyle(fontSize: 12, color: colors.textSecondary),
-          ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildColorSwatch(
+    BuildContext context,
+    WidgetRef ref,
+    MoeColors colors,
+    Color color,
+    Color currentColor,
+  ) {
+    final isSelected =
+        (currentColor.toARGB32() & 0xFFFFFF) == (color.toARGB32() & 0xFFFFFF);
+    final checkColor = color.computeLuminance() > 0.55
+        ? Colors.black87
+        : Colors.white;
+    return GestureDetector(
+      onTap: () => ref.setAccentColor(color),
+      child: Container(
+        width: 34,
+        height: 34,
+        decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: isSelected ? colors.text : colors.borderLight,
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: isSelected
+            ? Icon(Icons.check_rounded, color: checkColor, size: 16)
+            : null,
       ),
     );
   }
 
   /// 显示颜色选择器弹窗
   void _showColorPickerDialog(
-      BuildContext context, WidgetRef ref, Color currentColor) {
+    BuildContext context,
+    WidgetRef ref,
+    Color currentColor,
+  ) {
     var pickerColor = currentColor;
-    showDialog(
+    showMoeBottomSheet<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('选择主题色'),
-        content: SingleChildScrollView(
+      title: '选择主题色',
+      showCloseButton: true,
+      isDismissible: false,
+      enableDrag: false,
+      builder: (context) => MoeAutoSaveForm(
+        snapshot: () => pickerColor.toARGB32(),
+        save: () => ref
+            .read(appSettingsProvider.notifier)
+            .setAccentColor(
+              pickerColor
+                  .toARGB32()
+                  .toRadixString(16)
+                  .padLeft(8, '0')
+                  .substring(2)
+                  .toUpperCase(),
+            ),
+        builder: (context, update) => SingleChildScrollView(
           child: ColorPicker(
             pickerColor: pickerColor,
-            onColorChanged: (color) => pickerColor = color,
+            onColorChanged: (color) => update(() => pickerColor = color),
             enableAlpha: false,
             hexInputBar: true,
             labelTypes: const [],
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () {
-              ref.setAccentColor(pickerColor);
-              Navigator.of(context).pop();
-            },
-            child: const Text('确定'),
-          ),
-        ],
       ),
     );
   }
 
-  /// 全局字体大小滑块（支持点击数字手动输入）
-  Widget _buildTextScaleSlider(
+  /// 材质等级三选一（纯色／模糊／玻璃）+ 玻璃厚度档位滑块
+  Widget _buildMaterialPicker(
     BuildContext context,
     WidgetRef ref,
     AppSettings settings,
     MoeColors colors,
   ) {
-    const minScale = kMinTextScaleFactor;
-    const maxScale = kMaxTextScaleFactor;
-    final scale = settings.textScaleFactor.clamp(minScale, maxScale).toDouble();
+    final thickness = MoeGlassThickness.fromSigma(settings.glassBlurSigma);
+    final frostedBlurPercent =
+        (settings.glassBlurSigma / kMaxGlassBlurSigma * 100)
+            .clamp(10, 100)
+            .toDouble();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SegmentedButton<MoeSurfaceMaterial>(
+            expandedInsets: EdgeInsets.zero,
+            showSelectedIcon: false,
+            segments: [
+              for (final material in MoeSurfaceMaterial.values)
+                ButtonSegment(value: material, label: Text(material.label)),
+            ],
+            selected: {settings.surfaceMaterial},
+            onSelectionChanged: (selection) =>
+                _setSurfaceMaterial(context, ref, selection.first),
+            style: withoutHoverFeedback(
+              SegmentedButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+          ),
+          if (settings.surfaceMaterial == MoeSurfaceMaterial.liquid) ...[
+            const SizedBox(height: 4),
+            MoeSlider(
+              key: const ValueKey('glass-thickness-slider'),
+              value: settings.glassBlurSigma
+                  .clamp(kMinGlassBlurSigma, kMaxGlassBlurSigma)
+                  .toDouble(),
+              min: kMinGlassBlurSigma,
+              max: kMaxGlassBlurSigma,
+              label: thickness.label,
+              semanticFormatterCallback: (value) =>
+                  MoeGlassThickness.fromSigma(value).label,
+              onChanged: (value) async {
+                try {
+                  await ref
+                      .read(appSettingsProvider.notifier)
+                      .setGlassBlurSigma(value);
+                } catch (_) {
+                  if (context.mounted) {
+                    MoeToast.error(context, '玻璃厚度未保存，请重试');
+                  }
+                }
+              },
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  for (final level in MoeGlassThickness.values)
+                    Text(
+                      level.label,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: level == thickness
+                            ? colors.accentColor
+                            : colors.textSecondary,
+                        fontWeight: level == thickness
+                            ? MoeFontWeights.emphasis
+                            : FontWeight.normal,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+          if (settings.surfaceMaterial == MoeSurfaceMaterial.frosted) ...[
+            const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    '模糊度',
+                    style: TextStyle(fontSize: 13, color: colors.textSecondary),
+                  ),
+                  Text(
+                    '${frostedBlurPercent.round()}%',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: colors.accentColor,
+                      fontWeight: MoeFontWeights.emphasis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            MoeSlider(
+              key: const ValueKey('frosted-blur-slider'),
+              value: frostedBlurPercent,
+              min: 10,
+              max: 100,
+              label: '${frostedBlurPercent.round()}%',
+              semanticFormatterCallback: (value) => '模糊度 ${value.round()}%',
+              onChanged: (value) async {
+                try {
+                  await ref
+                      .read(appSettingsProvider.notifier)
+                      .setGlassBlurSigma(value / 100 * kMaxGlassBlurSigma);
+                } catch (_) {
+                  if (context.mounted) {
+                    MoeToast.error(context, '模糊度未保存，请重试');
+                  }
+                }
+              },
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    '10%',
+                    style: TextStyle(fontSize: 13, color: colors.textSecondary),
+                  ),
+                  Text(
+                    '100%',
+                    style: TextStyle(fontSize: 13, color: colors.textSecondary),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 
+  Future<void> _setSurfaceMaterial(
+    BuildContext context,
+    WidgetRef ref,
+    MoeSurfaceMaterial material,
+  ) async {
+    try {
+      await ref.read(appSettingsProvider.notifier).setSurfaceMaterial(material);
+    } catch (_) {
+      if (context.mounted) {
+        MoeToast.error(context, '材质设置未保存，请重试');
+      }
+    }
+  }
+
+  /// 数值滑块块：标题 + 可点击数值 + 滑块 + 可选说明
+  Widget _buildScaleSlider({
+    required MoeColors colors,
+    required String label,
+    required double value,
+    required double min,
+    required double max,
+    required int divisions,
+    required ValueChanged<double> onChanged,
+    required VoidCallback onValueTap,
+    String? note,
+  }) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             children: [
-              Icon(Icons.format_size, size: 20, color: colors.textSecondary),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  '全局字体大小',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: MoeFontWeights.emphasis,
-                    color: colors.text,
-                  ),
-                ),
-              ),
-              // 点击可手动输入
+              Expanded(child: _blockLabel(colors, label)),
               GestureDetector(
-                onTap: () => _showScaleInputDialog(context, ref, scale, colors),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: MoeG2Decoration(
-                    radius: 6,
-                    color: colors.accentColor.withValues(alpha: 0.15),
+                onTap: onValueTap,
+                child: MoeButtonSurface(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
                   ),
+                  radius: 6,
+                  tintColor: colors.accentColor.withValues(alpha: 0.15),
                   child: Text(
-                    scale.toStringAsFixed(2),
+                    value.toStringAsFixed(2),
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: MoeFontWeights.emphasis,
@@ -396,29 +648,15 @@ class UiSettingsPage extends ConsumerWidget {
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Text('较小',
-                  style: TextStyle(fontSize: 12, color: colors.textSecondary)),
-              Expanded(
-                child: Slider(
-                  value: scale,
-                  min: minScale,
-                  max: maxScale,
-                  divisions: 14, // 0.05 步长：(1.5-0.8)/0.05 = 14
-                  activeColor: colors.accentColor,
-                  onChanged: (value) {
-                    ref
-                        .read(appSettingsProvider.notifier)
-                        .setTextScaleFactor(value);
-                  },
-                ),
-              ),
-              Text('较大',
-                  style: TextStyle(fontSize: 12, color: colors.textSecondary)),
-            ],
+          MoeSlider(
+            value: value,
+            min: min,
+            max: max,
+            divisions: divisions,
+            onChanged: onChanged,
           ),
+          if (note != null)
+            Text(note, style: TextStyle(fontSize: 12, color: colors.muted)),
         ],
       ),
     );
@@ -426,376 +664,81 @@ class UiSettingsPage extends ConsumerWidget {
 
   /// 弹窗手动输入缩放值
   void _showScaleInputDialog(
-    BuildContext context,
-    WidgetRef ref,
-    double currentScale,
-    MoeColors colors,
-  ) {
-    final controller =
-        TextEditingController(text: currentScale.toStringAsFixed(2));
-    showDialog(
+    BuildContext context, {
+    required String title,
+    required String hint,
+    required double min,
+    required double max,
+    required double current,
+    required Future<void> Function(double) onSave,
+  }) {
+    showMoeAutoSaveTextEditor(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('输入字体缩放值'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: controller,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                hintText: '范围 0.80 ~ 1.50',
-                border: OutlineInputBorder(),
-              ),
-              autofocus: true,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '1.00 为默认大小，0.80 最小，1.50 最大',
-              style: TextStyle(fontSize: 12, color: colors.muted),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () {
-              final value = double.tryParse(controller.text);
-              if (value != null) {
-                ref.read(appSettingsProvider.notifier).setTextScaleFactor(
-                      value.clamp(kMinTextScaleFactor, kMaxTextScaleFactor),
-                    );
-              }
-              Navigator.of(context).pop();
-            },
-            child: const Text('确定'),
-          ),
-        ],
-      ),
+      title: title,
+      initialValue: current.toStringAsFixed(2),
+      hint: hint,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      onSave: (text) async {
+        final value = double.tryParse(text);
+        if (value == null || !value.isFinite || value < min || value > max) {
+          throw const FormatException('请输入范围内的数值');
+        }
+        await onSave(value);
+      },
     );
   }
 
-  /// 全局界面缩放滑块（作用于布局和组件大小）
-  Widget _buildUiScaleSlider(
-    BuildContext context,
-    WidgetRef ref,
-    AppSettings settings,
-    MoeColors colors,
-  ) {
-    const minScale = kMinUiScaleFactor;
-    const maxScale = kMaxUiScaleFactor;
-    final scale = settings.uiScaleFactor.clamp(minScale, maxScale).toDouble();
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Icon(Icons.zoom_out_map, size: 20, color: colors.textSecondary),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  '全局界面缩放',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: MoeFontWeights.emphasis,
-                    color: colors.text,
-                  ),
-                ),
-              ),
-              GestureDetector(
-                onTap: () =>
-                    _showUiScaleInputDialog(context, ref, scale, colors),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: MoeG2Decoration(
-                    radius: 6,
-                    color: colors.accentColor.withValues(alpha: 0.15),
-                  ),
-                  child: Text(
-                    scale.toStringAsFixed(2),
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: MoeFontWeights.emphasis,
-                      color: colors.accentColor,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Text('较小',
-                  style: TextStyle(fontSize: 12, color: colors.textSecondary)),
-              Expanded(
-                child: Slider(
-                  value: scale,
-                  min: minScale,
-                  max: maxScale,
-                  divisions: 7, // 0.05 步长：(1.20-0.85)/0.05 = 7
-                  activeColor: colors.accentColor,
-                  onChanged: (value) {
-                    ref
-                        .read(appSettingsProvider.notifier)
-                        .setUiScaleFactor(value);
-                  },
-                ),
-              ),
-              Text('较大',
-                  style: TextStyle(fontSize: 12, color: colors.textSecondary)),
-            ],
-          ),
-          const SizedBox(height: 2),
-          Text(
-            '用于微调整体界面大小（推荐 0.95~1.05）',
-            style: TextStyle(fontSize: 12, color: colors.muted),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 弹窗手动输入界面缩放值
-  void _showUiScaleInputDialog(
-    BuildContext context,
-    WidgetRef ref,
-    double currentScale,
-    MoeColors colors,
-  ) {
-    final controller =
-        TextEditingController(text: currentScale.toStringAsFixed(2));
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('输入界面缩放值'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: controller,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                hintText: '范围 0.85 ~ 1.20',
-                border: OutlineInputBorder(),
-              ),
-              autofocus: true,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '1.00 为默认大小，建议在 0.95 ~ 1.05 间微调',
-              style: TextStyle(fontSize: 12, color: colors.muted),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () {
-              final value = double.tryParse(controller.text);
-              if (value != null) {
-                ref.read(appSettingsProvider.notifier).setUiScaleFactor(
-                      value.clamp(kMinUiScaleFactor, kMaxUiScaleFactor),
-                    );
-              }
-              Navigator.of(context).pop();
-            },
-            child: const Text('确定'),
-          ),
-        ],
-      ),
-    );
-  }
-
+  /// Windows 窗口按钮位置（仿 Mac 三点）
   Widget _buildWindowControlsSidePicker(
     BuildContext context,
     WidgetRef ref,
     AppSettings settings,
-  ) {
-    return MoeSettingsRow(
-      icon: Icons.more_horiz,
-      label: '仿 Mac 三点位置',
-      subtitle: '控制窗口关闭、最小化、最大化按钮',
-      trailingType: MoeSettingsRowTrailing.custom,
-      trailing: SegmentedButton<WindowControlButtonSide>(
-        segments: const [
-          ButtonSegment(
-            value: WindowControlButtonSide.left,
-            label: Text('左'),
-          ),
-          ButtonSegment(
-            value: WindowControlButtonSide.right,
-            label: Text('右'),
-          ),
-        ],
-        selected: {settings.windowsWindowControlsSide},
-        onSelectionChanged: (selection) {
-          ref
-              .read(appSettingsProvider.notifier)
-              .setWindowsWindowControlsSide(selection.first);
-        },
-        showSelectedIcon: false,
-        style: SegmentedButton.styleFrom(
-          visualDensity: VisualDensity.compact,
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        ),
-      ),
-    );
-  }
-
-  /// 图片预览大小滑块
-  Widget _buildImagePreviewScaleSlider(
-    BuildContext context,
-    WidgetRef ref,
-    AppSettings settings,
     MoeColors colors,
   ) {
-    const minScale = kMinImagePreviewScale;
-    const maxScale = kMaxImagePreviewScale;
-    final scale =
-        settings.imagePreviewScale.clamp(minScale, maxScale).toDouble();
-
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Icon(Icons.photo_size_select_large,
-                  size: 20, color: colors.textSecondary),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  '图片预览大小',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: MoeFontWeights.emphasis,
-                    color: colors.text,
-                  ),
-                ),
-              ),
-              GestureDetector(
-                onTap: () => _showImagePreviewScaleInputDialog(
-                    context, ref, scale, colors),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: MoeG2Decoration(
-                    radius: 6,
-                    color: colors.accentColor.withValues(alpha: 0.15),
-                  ),
-                  child: Text(
-                    scale.toStringAsFixed(2),
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: MoeFontWeights.emphasis,
-                      color: colors.accentColor,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Text('较小',
-                  style: TextStyle(fontSize: 12, color: colors.textSecondary)),
-              Expanded(
-                child: Slider(
-                  value: scale,
-                  min: minScale,
-                  max: maxScale,
-                  divisions: 20, // 0.05 步长：(1.5-0.5)/0.05 = 20
-                  activeColor: colors.accentColor,
-                  onChanged: (value) {
-                    ref
-                        .read(appSettingsProvider.notifier)
-                        .setImagePreviewScale(value);
-                  },
-                ),
-              ),
-              Text('较大',
-                  style: TextStyle(fontSize: 12, color: colors.textSecondary)),
-            ],
-          ),
+          _blockLabel(colors, '窗口按钮位置'),
           const SizedBox(height: 2),
           Text(
-            '调整聊天中图片和表情包的显示大小',
-            style: TextStyle(fontSize: 12, color: colors.muted),
+            '窗口关闭、最小化、最大化按钮所在侧',
+            style: TextStyle(fontSize: 13, color: colors.muted),
           ),
-        ],
-      ),
-    );
-  }
-
-  /// 弹窗手动输入图片预览缩放值
-  void _showImagePreviewScaleInputDialog(
-    BuildContext context,
-    WidgetRef ref,
-    double currentScale,
-    MoeColors colors,
-  ) {
-    final controller =
-        TextEditingController(text: currentScale.toStringAsFixed(2));
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('输入图片预览缩放值'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: controller,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                hintText: '范围 0.50 ~ 1.50',
-                border: OutlineInputBorder(),
+          const SizedBox(height: 10),
+          SegmentedButton<WindowControlButtonSide>(
+            expandedInsets: EdgeInsets.zero,
+            segments: const [
+              ButtonSegment(
+                value: WindowControlButtonSide.left,
+                label: Text('左'),
               ),
-              autofocus: true,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '1.00 为默认大小，0.50 最小，1.50 最大',
-              style: TextStyle(fontSize: 12, color: colors.muted),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () {
-              final value = double.tryParse(controller.text);
-              if (value != null) {
-                ref.read(appSettingsProvider.notifier).setImagePreviewScale(
-                      value.clamp(kMinImagePreviewScale, kMaxImagePreviewScale),
-                    );
-              }
-              Navigator.of(context).pop();
+              ButtonSegment(
+                value: WindowControlButtonSide.right,
+                label: Text('右'),
+              ),
+            ],
+            selected: {settings.windowsWindowControlsSide},
+            onSelectionChanged: (selection) {
+              ref
+                  .read(appSettingsProvider.notifier)
+                  .setWindowsWindowControlsSide(selection.first);
             },
-            child: const Text('确定'),
+            showSelectedIcon: false,
+            style: withoutHoverFeedback(
+              SegmentedButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
           ),
         ],
       ),
     );
   }
 
-  /// 聊天背景色选择器（自定义内容）
+  /// 聊天背景色选择块
   Widget _buildBackgroundColorPicker(
     BuildContext context,
     WidgetRef ref,
@@ -803,61 +746,116 @@ class UiSettingsPage extends ConsumerWidget {
     MoeColors colors,
   ) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-      child: Row(
-        children: ChatBackgroundColor.values.map((option) {
-          final isSelected = settings.chatBackgroundColor == option;
-          // 默认色使用全局背景色预览
-          final displayColor = option.color ?? colors.surface;
-          return Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: GestureDetector(
-                onTap: () {
-                  ref
-                      .read(appSettingsProvider.notifier)
-                      .setChatBackgroundColor(option);
-                },
-                child: Container(
-                  height: 72,
-                  decoration: MoeG2Decoration(
-                    radius: 10,
-                    color: displayColor,
-                    border: Border.all(
-                      color: isSelected ? colors.accentColor : colors.border,
-                      width: isSelected ? 2.5 : 1,
-                    ),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      if (isSelected)
-                        Icon(Icons.check_circle,
-                            color: colors.accentColor, size: 28),
-                      const SizedBox(height: 4),
-                      Text(
-                        option.label,
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: isSelected
-                              ? MoeFontWeights.emphasis
-                              : MoeFontWeights.normal,
-                          color: colors.text,
-                        ),
-                      ),
-                    ],
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _blockLabel(colors, '聊天背景色'),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              for (final option in ChatBackgroundColor.values)
+                Expanded(
+                  child: _buildBackgroundColorTile(
+                    context,
+                    ref,
+                    settings,
+                    colors,
+                    option,
                   ),
                 ),
-              ),
-            ),
-          );
-        }).toList(),
+            ],
+          ),
+        ],
       ),
     );
   }
 
-  /// 分段标点编辑器
-  Widget _buildChunkPunctuationEditor(
+  Widget _buildBackgroundColorTile(
+    BuildContext context,
+    WidgetRef ref,
+    AppSettings settings,
+    MoeColors colors,
+    ChatBackgroundColor option,
+  ) {
+    final isSelected = settings.chatBackgroundColor == option;
+    // 默认色使用全局背景色预览
+    final displayColor = option.color ?? colors.surface;
+    return GestureDetector(
+      onTap: () {
+        ref.read(appSettingsProvider.notifier).setChatBackgroundColor(option);
+      },
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 3),
+            child: Container(
+              height: 44,
+              decoration: MoeG2Decoration(
+                radius: 12,
+                color: displayColor,
+                border: Border.all(
+                  color: isSelected ? colors.accentColor : colors.borderLight,
+                  width: isSelected ? 2 : 1,
+                ),
+              ),
+              child: isSelected
+                  ? Center(
+                      child: Icon(
+                        Icons.check_rounded,
+                        color: colors.accentColor,
+                        size: 20,
+                      ),
+                    )
+                  : null,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2),
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                option.label,
+                maxLines: 1,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: isSelected
+                      ? MoeFontWeights.emphasis
+                      : MoeFontWeights.normal,
+                  color: isSelected ? colors.text : colors.textSecondary,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 分段标点管理弹层
+  void _showPunctuationSheet(BuildContext context) {
+    showMoeBottomSheet<void>(
+      context: context,
+      title: '分段标点',
+      showCloseButton: true,
+      builder: (context) => Consumer(
+        builder: (context, ref, _) {
+          final settings = ref.watch(appSettingsProvider).valueOrNull;
+          final colors = context.moeColors;
+          if (settings == null) {
+            return const SizedBox(
+              height: 200,
+              child: Center(child: MoeLoadingIndicator()),
+            );
+          }
+          return _buildPunctuationSheetBody(context, ref, settings, colors);
+        },
+      ),
+    );
+  }
+
+  Widget _buildPunctuationSheetBody(
     BuildContext context,
     WidgetRef ref,
     AppSettings settings,
@@ -865,7 +863,8 @@ class UiSettingsPage extends ConsumerWidget {
   ) {
     final config = settings.messageFormatConfig;
     final sets = config.chunkPunctuationSets;
-    final activeSet = config.activeChunkPunctuationSet ??
+    final activeSet =
+        config.activeChunkPunctuationSet ??
         (sets.isNotEmpty
             ? sets.first
             : const MessageChunkPunctuationSet(
@@ -873,132 +872,90 @@ class UiSettingsPage extends ConsumerWidget {
                 name: '默认',
                 punctuations: <String>[],
               ));
-    final activeIndex = sets.indexWhere((item) => item.id == activeSet.id);
-    final activeName = _displaySetName(activeSet, activeIndex);
 
-    return MoeSettingsGroup(
-      margin: EdgeInsets.zero,
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '标点集合',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: MoeFontWeights.emphasis,
+              color: colors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 8),
+          for (var i = 0; i < sets.length; i++)
+            _buildPunctuationSetRow(
+              context,
+              ref,
+              settings,
+              colors,
+              sets,
+              sets[i],
+              i,
+            ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: ActionChip(
+              label: const Text('另存为集合'),
+              onPressed: () =>
+                  _showSaveAsSetDialog(context, ref, settings, activeSet),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            '当前标点',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: MoeFontWeights.emphasis,
+              color: colors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              Text(
-                '分段标点',
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: MoeFontWeights.emphasis,
-                  color: colors.text,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '当前集合：$activeName',
-                style: TextStyle(fontSize: 13, color: colors.muted),
-              ),
-              const SizedBox(height: 12),
-              Column(
-                children: [
-                  for (var i = 0; i < sets.length; i++)
-                    _buildPunctuationSetRow(
-                      context,
-                      ref,
-                      settings,
-                      colors,
-                      sets,
-                      sets[i],
-                      i,
-                    ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: MoeG2Decoration(
-                  radius: 8,
-                  color: colors.surfaceAlt,
-                  border: Border.all(color: colors.borderLight),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.info_outline, size: 16, color: colors.muted),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        activeSet.punctuations.isEmpty
-                            ? '当前集合为空：只在换行或超过3个连续空格时分段'
-                            : '当前标点：${activeSet.punctuations.join(" ")}',
-                        style: TextStyle(
-                            fontSize: 13, color: colors.textSecondary),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (var i = 0; i < activeSet.punctuations.length; i++)
-                    InputChip(
-                      label: Text(activeSet.punctuations[i]),
-                      onPressed: () => _editPunctuationToken(
-                        context,
-                        ref,
-                        settings,
-                        activeSet,
-                        i,
-                      ),
-                      onDeleted: () => _deletePunctuationToken(
-                        context,
-                        ref,
-                        settings,
-                        activeSet,
-                        i,
-                      ),
-                      deleteIconColor: colors.muted,
-                    ),
-                  ActionChip(
-                    avatar: const Icon(Icons.add, size: 16),
-                    label: const Text('新增标点'),
-                    onPressed: () => _addPunctuationToken(
-                      context,
-                      ref,
-                      settings,
-                      activeSet,
-                    ),
+              for (var i = 0; i < activeSet.punctuations.length; i++)
+                InputChip(
+                  label: Text(activeSet.punctuations[i]),
+                  onPressed: () => _editPunctuationToken(
+                    context,
+                    ref,
+                    settings,
+                    activeSet,
+                    i,
                   ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  ActionChip(
-                    label: const Text('另存为集合'),
-                    onPressed: () =>
-                        _showSaveAsSetDialog(context, ref, settings, activeSet),
+                  onDeleted: () => _deletePunctuationToken(
+                    context,
+                    ref,
+                    settings,
+                    activeSet,
+                    i,
                   ),
-                  ActionChip(
-                    label: const Text('重命名当前集合'),
-                    onPressed: () => _showRenameSetDialog(
-                      context,
-                      ref,
-                      settings,
-                      activeSet,
-                      activeIndex,
-                    ),
-                  ),
-                ],
+                  deleteIconColor: colors.muted,
+                ),
+              ActionChip(
+                avatar: const Icon(Icons.add, size: 16),
+                label: const Text('新增标点'),
+                onPressed: () =>
+                    _addPunctuationToken(context, ref, settings, activeSet),
               ),
             ],
           ),
-        ),
-      ],
+          if (activeSet.punctuations.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                '当前集合为空：只在换行或超过3个连续空格时分段',
+                style: TextStyle(fontSize: 13, color: colors.muted),
+              ),
+            ),
+        ],
+      ),
     );
   }
 
@@ -1017,35 +974,70 @@ class UiSettingsPage extends ConsumerWidget {
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: ChoiceChip(
-              label: Text(label),
-              selected: selected,
-              onSelected: (_) => _updateChunkPunctuationSets(
-                context,
-                ref,
-                settings,
-                sets,
-                set.id,
-              ),
+      child: GestureDetector(
+        onTap: () =>
+            _updateChunkPunctuationSets(context, ref, settings, sets, set.id),
+        child: Container(
+          decoration: MoeG2Decoration(
+            radius: 12,
+            color: selected
+                ? colors.accentColor.withValues(alpha: 0.10)
+                : colors.surfaceAlt,
+            border: Border.all(
+              color: selected ? colors.accentColor : colors.borderLight,
             ),
           ),
-          IconButton(
-            icon: const Icon(Icons.edit_outlined, size: 18),
-            tooltip: '重命名',
-            onPressed: () =>
-                _showRenameSetDialog(context, ref, settings, set, index),
+          child: Row(
+            children: [
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 0, 10),
+                  child: Row(
+                    children: [
+                      if (selected) ...[
+                        Icon(
+                          Icons.check_rounded,
+                          size: 16,
+                          color: colors.accentColor,
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                      Flexible(
+                        child: Text(
+                          label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: selected
+                                ? MoeFontWeights.emphasis
+                                : MoeFontWeights.normal,
+                            color: colors.text,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.edit_outlined, size: 18),
+                tooltip: '重命名',
+                visualDensity: VisualDensity.compact,
+                onPressed: () =>
+                    _showRenameSetDialog(context, ref, settings, set, index),
+              ),
+              IconButton(
+                icon: const Icon(Icons.delete_outline, size: 18),
+                tooltip: '删除集合',
+                visualDensity: VisualDensity.compact,
+                onPressed: sets.length <= 1
+                    ? null
+                    : () => _deleteSet(context, ref, settings, set.id),
+              ),
+            ],
           ),
-          IconButton(
-            icon: const Icon(Icons.delete_outline, size: 18),
-            tooltip: '删除集合',
-            onPressed: sets.length <= 1
-                ? null
-                : () => _deleteSet(context, ref, settings, set.id),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -1132,7 +1124,7 @@ class UiSettingsPage extends ConsumerWidget {
                 Navigator.of(dialogContext).pop();
               }
             },
-            child: const Text('保存'),
+            child: const Text('添加'),
           ),
         ],
       ),
@@ -1146,46 +1138,24 @@ class UiSettingsPage extends ConsumerWidget {
     MessageChunkPunctuationSet target,
     int index,
   ) async {
-    final controller = TextEditingController(text: target.name ?? '');
-    await showDialog<void>(
+    await showMoeAutoSaveTextEditor(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('重命名集合'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(
-            hintText: '可留空',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () async {
-              final name = controller.text.trim();
-              final sets = List<MessageChunkPunctuationSet>.from(
-                  settings.messageFormatConfig.chunkPunctuationSets);
-              sets[index] =
-                  sets[index].copyWith(name: name.isEmpty ? null : name);
-              await _updateChunkPunctuationSets(
-                context,
-                ref,
-                settings,
-                sets,
-                settings.messageFormatConfig.activeChunkPunctuationSetId,
-                successText: '集合名称已更新',
-              );
-              if (dialogContext.mounted) {
-                Navigator.of(dialogContext).pop();
-              }
-            },
-            child: const Text('保存'),
-          ),
-        ],
-      ),
+      title: '重命名集合',
+      initialValue: target.name ?? '',
+      onSave: (text) async {
+        final current = ref.read(appSettingsProvider).requireValue;
+        final sets = [...current.messageFormatConfig.chunkPunctuationSets];
+        final i = sets.indexWhere((set) => set.id == target.id);
+        if (i < 0) throw const FormatException('此集合已不存在');
+        sets[i] = sets[i].copyWith(
+          name: text.trim().isEmpty ? null : text.trim(),
+        );
+        await ref
+            .read(appSettingsProvider.notifier)
+            .updateMessageFormatConfig(
+              current.messageFormatConfig.copyWith(chunkPunctuationSets: sets),
+            );
+      },
     );
   }
 
@@ -1221,7 +1191,7 @@ class UiSettingsPage extends ConsumerWidget {
               }
               Navigator.of(dialogContext).pop();
             },
-            child: const Text('保存'),
+            child: const Text('添加'),
           ),
         ],
       ),
@@ -1235,10 +1205,7 @@ class UiSettingsPage extends ConsumerWidget {
     AppSettings settings,
     MessageChunkPunctuationSet activeSet,
   ) async {
-    final token = await _showPunctuationInputDialog(
-      context,
-      title: '新增标点',
-    );
+    final token = await _showPunctuationInputDialog(context, title: '新增标点');
     if (!context.mounted) return;
     if (token == null) return;
     if (activeSet.punctuations.contains(token)) {
@@ -1249,7 +1216,8 @@ class UiSettingsPage extends ConsumerWidget {
     }
 
     final sets = List<MessageChunkPunctuationSet>.from(
-        settings.messageFormatConfig.chunkPunctuationSets);
+      settings.messageFormatConfig.chunkPunctuationSets,
+    );
     final index = sets.indexWhere((item) => item.id == activeSet.id);
     if (index < 0) return;
 
@@ -1272,35 +1240,33 @@ class UiSettingsPage extends ConsumerWidget {
     MessageChunkPunctuationSet activeSet,
     int tokenIndex,
   ) async {
-    final oldToken = activeSet.punctuations[tokenIndex];
-    final token = await _showPunctuationInputDialog(
-      context,
+    await showMoeAutoSaveTextEditor(
+      context: context,
       title: '编辑标点',
-      initialValue: oldToken,
-    );
-    if (!context.mounted) return;
-    if (token == null || token == oldToken) return;
-    if (activeSet.punctuations.contains(token)) {
-      if (context.mounted) {
-        MoeToast.warning(context, '该标点已存在');
-      }
-      return;
-    }
-
-    final sets = List<MessageChunkPunctuationSet>.from(
-        settings.messageFormatConfig.chunkPunctuationSets);
-    final index = sets.indexWhere((item) => item.id == activeSet.id);
-    if (index < 0) return;
-    final nextPunctuations = List<String>.from(sets[index].punctuations);
-    nextPunctuations[tokenIndex] = token;
-    sets[index] = sets[index].copyWith(punctuations: nextPunctuations);
-    await _updateChunkPunctuationSets(
-      context,
-      ref,
-      settings,
-      sets,
-      activeSet.id,
-      successText: '标点已更新',
+      initialValue: activeSet.punctuations[tokenIndex],
+      onSave: (text) async {
+        final token = text.trim();
+        if (token.isEmpty) throw const FormatException('标点不能为空');
+        final current = ref.read(appSettingsProvider).requireValue;
+        final sets = [...current.messageFormatConfig.chunkPunctuationSets];
+        final i = sets.indexWhere((set) => set.id == activeSet.id);
+        if (i < 0 || tokenIndex >= sets[i].punctuations.length) {
+          throw const FormatException('此标点已不存在');
+        }
+        final tokens = [...sets[i].punctuations];
+        if (tokens.asMap().entries.any(
+          (entry) => entry.key != tokenIndex && entry.value == token,
+        )) {
+          throw const FormatException('该标点已存在');
+        }
+        tokens[tokenIndex] = token;
+        sets[i] = sets[i].copyWith(punctuations: tokens);
+        await ref
+            .read(appSettingsProvider.notifier)
+            .updateMessageFormatConfig(
+              current.messageFormatConfig.copyWith(chunkPunctuationSets: sets),
+            );
+      },
     );
   }
 
@@ -1312,7 +1278,8 @@ class UiSettingsPage extends ConsumerWidget {
     int tokenIndex,
   ) async {
     final sets = List<MessageChunkPunctuationSet>.from(
-        settings.messageFormatConfig.chunkPunctuationSets);
+      settings.messageFormatConfig.chunkPunctuationSets,
+    );
     final index = sets.indexWhere((item) => item.id == activeSet.id);
     if (index < 0) return;
     final nextPunctuations = List<String>.from(sets[index].punctuations)
@@ -1345,8 +1312,9 @@ class UiSettingsPage extends ConsumerWidget {
     final nextSets = currentSets.where((item) => item.id != setId).toList();
     final currentActiveId =
         settings.messageFormatConfig.activeChunkPunctuationSetId;
-    final nextActiveId =
-        currentActiveId == setId ? nextSets.first.id : currentActiveId;
+    final nextActiveId = currentActiveId == setId
+        ? nextSets.first.id
+        : currentActiveId;
     await _updateChunkPunctuationSets(
       context,
       ref,

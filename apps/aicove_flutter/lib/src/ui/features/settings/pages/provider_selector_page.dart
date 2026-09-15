@@ -15,7 +15,7 @@ class ProviderSelectorPage extends ConsumerWidget {
     final providerInfoAsync = ref.watch(providerInfoProvider);
     final colors = context.moeColors;
 
-    return Scaffold(
+    return MoePageScaffold(
       appBar: MoeAppBar(
         title: '选择提供商和模型',
         showBackButton: true,

@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aicove_flutter/src/core/api/providers/gemini_adapter.dart';
+import 'package:aicove_flutter/src/core/api/providers/provider_adapter.dart';
 
 void main() {
   group('GeminiAdapter', () {
@@ -94,6 +95,46 @@ void main() {
       expect(result.hiddenThoughtParts, hasLength(1));
       expect(result.hiddenThoughtParts.first['text'], '先想一下');
       expect(result.hiddenThoughtParts.first['thought'], isTrue);
+    });
+
+    test('use_sysprompt false keeps every system node in ordered contents', () {
+      final body = GeminiAdapter().buildRequestBody(
+        model: 'gemini-2.0-flash',
+        messages: const <Map<String, dynamic>>[
+          {'role': 'system', 'content': 'first system'},
+          {'role': 'user', 'content': 'question'},
+          {'role': 'system', 'content': 'late system'},
+        ],
+        requestOptions: const ProviderChatRequestOptions(
+          useSystemPrompt: false,
+          temperature: 1,
+          topP: 0.98,
+          topK: 64,
+          frequencyPenalty: 0.1,
+          presencePenalty: 0.2,
+          seed: 42,
+          maxOutputTokens: 30000,
+        ),
+        customConfig: const <String, dynamic>{
+          'generationConfig': <String, dynamic>{
+            'topK': 1,
+            'maxOutputTokens': 1,
+          },
+        },
+      );
+
+      expect(body.containsKey('systemInstruction'), isFalse);
+      final contents = body['contents'] as List<dynamic>;
+      expect(contents.map((item) => item['role']),
+          <dynamic>['user', 'user', 'user']);
+      final generationConfig = body['generationConfig'] as Map<String, dynamic>;
+      expect(generationConfig, containsPair('temperature', 1));
+      expect(generationConfig, containsPair('topP', 0.98));
+      expect(generationConfig, containsPair('topK', 64));
+      expect(generationConfig, containsPair('frequencyPenalty', 0.1));
+      expect(generationConfig, containsPair('presencePenalty', 0.2));
+      expect(generationConfig, containsPair('seed', 42));
+      expect(generationConfig, containsPair('maxOutputTokens', 30000));
     });
   });
 }

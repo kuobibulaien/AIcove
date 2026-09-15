@@ -51,7 +51,7 @@ class _DiaryListPageState extends ConsumerState<DiaryListPage> {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
 
-    return Scaffold(
+    return MoePageScaffold(
       backgroundColor: colors.surface,
       appBar: AppBar(
         backgroundColor: colors.headerColor,

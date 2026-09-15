@@ -196,6 +196,7 @@ class ChatMessageProcessor {
                     PluginImageContent(
                       image.localPath,
                       caption: image.caption ?? segment.content.trim(),
+                      generationSnapshot: image.generationSnapshot,
                     ),
                   ),
                 );
@@ -525,7 +526,7 @@ class ChatMessageProcessor {
         case PluginImageContent(:final localPath, :final caption):
           messages.add(
             _buildImageMessage(
-              PluginImageContent(localPath, caption: caption),
+              PluginImageContent(localPath, caption: caption, generationSnapshot: content.generationSnapshot),
             ),
           );
 
@@ -634,6 +635,7 @@ class ChatMessageProcessor {
           messageId: msgId,
           localPath: content.localPath,
           prompt: content.caption,
+          generationSnapshot: content.generationSnapshot,
         ),
       ],
       createdAt: DateTime.now(),

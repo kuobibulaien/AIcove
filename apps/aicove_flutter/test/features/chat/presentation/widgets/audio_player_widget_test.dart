@@ -1,9 +1,23 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' as ui;
 
+import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/chat/presentation/widgets/audio_player_widget.dart';
+import 'package:aicove_flutter/src/features/chat/presentation/widgets/message_bubble.dart';
+import 'package:aicove_flutter/src/features/settings/app_settings.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
+import 'package:aicove_flutter/src/ui/theme/skin_provider.dart';
+import 'package:aicove_flutter/src/ui/theme/skins/moetalk_skin.dart';
+import 'package:aicove_flutter/src/ui/theme/tokens.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:aicove_flutter/src/core/models/block_status.dart';
+import 'package:aicove_flutter/src/core/models/message_block.dart';
 import 'package:just_audio/just_audio.dart';
 
 class _FakeAudioPlaybackBackend implements AudioPlaybackBackend {
@@ -97,6 +111,16 @@ class _FakeAudioPlaybackBackend implements AudioPlaybackBackend {
         updatePosition: completedPosition,
       ),
     );
+  }
+
+  void emitLoading() {
+    _playerStateController.add(
+      PlayerState(false, ProcessingState.loading),
+    );
+  }
+
+  void emitError(Object error) {
+    _playbackEventController.addError(error);
   }
 
   void _emitReady() {
@@ -198,8 +222,163 @@ String _buildDataUrl(String mimeType, List<int> bytes) {
   return 'data:$mimeType;base64,${base64Encode(bytes)}';
 }
 
+class _FakeAppSettingsNotifier extends AppSettingsNotifier {
+  _FakeAppSettingsNotifier(this._settings);
+
+  final AppSettings _settings;
+
+  @override
+  Future<AppSettings> build() async => _settings;
+}
+
+void _expectNoButtonMaterialInAudioSubtree() {
+  for (final type in <Type>[
+    MoeButtonSurface,
+    MoeFloatingSurface,
+    BackdropFilter,
+  ]) {
+    expect(
+      find.descendant(
+        of: find.byType(AudioPlayerWidget),
+        matching: find.byType(type),
+      ),
+      findsNothing,
+    );
+  }
+}
+
+Widget _buildPlayerHost({
+  required AudioBlock block,
+  required Color textColor,
+  required AudioPlaybackBackend backend,
+  required bool dark,
+  required MoeSurfaceMaterial material,
+}) {
+  final colors = dark ? MoeColors.dark() : MoeColors.light();
+  return ProviderScope(
+    overrides: [
+      audioPlayerControllerProvider.overrideWith(
+        (ref, url) => AudioPlayerController(url, backend: backend),
+      ),
+    ],
+    child: MaterialApp(
+      theme: ThemeData(
+        brightness: dark ? Brightness.dark : Brightness.light,
+        extensions: <ThemeExtension<dynamic>>[colors],
+      ),
+      home: MoeGlassTheme(
+        enabled: material != MoeSurfaceMaterial.solid,
+        useLiquidGlass: material == MoeSurfaceMaterial.liquid,
+        blurSigma: 16,
+        child: Scaffold(
+          body: Center(
+            child: AudioPlayerWidget(block: block, textColor: textColor),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  testWidgets('重生成语音替换URL后使用新控制器和新时长，旧控制器释放', (tester) async {
+    final oldBackend = _FakeAudioPlaybackBackend(duration: const Duration(seconds: 8));
+    final newBackend = _FakeAudioPlaybackBackend(duration: const Duration(seconds: 3));
+    final controllers = <String, AudioPlayerController>{};
+    final block = ValueNotifier<AudioBlock>(AudioBlock(id: 'audio', messageId: 'm',
+        url: 'https://example.invalid/old.wav', text: '原文', durationSeconds: 8));
+    addTearDown(block.dispose);
+    await tester.pumpWidget(ProviderScope(overrides: [
+      audioPlayerControllerProvider.overrideWith((ref, url) {
+        return controllers[url] = AudioPlayerController(url,
+            backend: url.endsWith('old.wav') ? oldBackend : newBackend);
+      }),
+    ], child: MaterialApp(home: Scaffold(body: ValueListenableBuilder<AudioBlock>(
+        valueListenable: block, builder: (context, value, child) => AudioPlayerWidget(
+          key: const ValueKey('same-bubble'), block: value, textColor: Colors.black))))));
+    await tester.pumpAndSettle();
+    expect(find.text('8"'), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+    await tester.pump();
+    expect(oldBackend.playCalls, 1);
+    block.value = AudioBlock(id: 'audio', messageId: 'm',
+        url: 'https://example.invalid/new.wav', text: '原文');
+    await tester.pumpAndSettle();
+    expect(find.text('3"'), findsOneWidget);
+    expect(find.text('8"'), findsNothing);
+    expect(controllers['https://example.invalid/old.wav']!.mounted, false);
+    expect(newBackend.setUrlCalls, ['https://example.invalid/new.wav']);
+    await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+    await tester.pump();
+    expect(newBackend.playCalls, 1);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
+  });
+
+  for (final width in <double>[390, 1200]) {
+    testWidgets('流中语音原位回填后立即可点击播放（${width}px）', (tester) async {
+      tester.view.physicalSize = Size(width, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final backend = _FakeAudioPlaybackBackend(
+        duration: const Duration(seconds: 2),
+      );
+      final block = ValueNotifier<AudioBlock>(AudioBlock(
+        messageId: 'stream_audio',
+        url: '',
+        text: '流中语音',
+        status: BlockStatus.pending,
+      ));
+      addTearDown(block.dispose);
+      await tester.pumpWidget(ProviderScope(
+        overrides: [
+          audioPlayerControllerProvider.overrideWith((ref, url) {
+            return AudioPlayerController(url, backend: backend);
+          }),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: Column(
+              children: [
+                ValueListenableBuilder<AudioBlock>(
+                  valueListenable: block,
+                  builder: (context, value, child) => AudioPlayerWidget(
+                    key: const ValueKey('stream_audio'),
+                    block: value,
+                    textColor: Colors.black,
+                  ),
+                ),
+                const Text('生成中...'),
+              ],
+            ),
+          ),
+        ),
+      ));
+      expect(find.byIcon(Icons.play_arrow_rounded), findsNothing);
+      expect(backend.setUrlCalls, isEmpty);
+
+      block.value = AudioBlock(
+        messageId: 'stream_audio',
+        url: 'https://example.com/audio.mp3',
+        text: '流中语音',
+        status: BlockStatus.success,
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+      await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+      await tester.pump();
+      expect(backend.playCalls, 1);
+      expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+      expect(find.text('生成中...'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    });
+  }
 
   group('AudioPlayerController', () {
     test('播放完成后不应立即 pause+seek 回卷，应在下次播放时再从头开始', () async {
@@ -327,5 +506,382 @@ void main() {
 
       expect(backend.setFilePathCalls.single, endsWith('.m4a'));
     });
+  });
+
+  group('语音气泡播放图标不接材质', () {
+    const audioUrl = 'https://example.com/voice.mp3';
+    const customColor = Color(0xFF345678);
+
+    tearDown(() => MoeLiquidGlassService.setMockState());
+
+    AudioBlock readyBlock() => AudioBlock(
+      messageId: 'm',
+      url: audioUrl,
+      text: '语音',
+      durationSeconds: 3,
+      status: BlockStatus.success,
+    );
+
+    for (final dark in <bool>[false, true]) {
+      for (final material in MoeSurfaceMaterial.values) {
+        for (final width in <double>[360, 1000]) {
+          testWidgets(
+            '播放图标无独立材质且用传入颜色 ${material.label}/${dark ? '深色' : '浅色'}/${width.toInt()}px',
+            (tester) async {
+              tester.view.physicalSize = Size(width, 400);
+              tester.view.devicePixelRatio = 1;
+              addTearDown(tester.view.resetPhysicalSize);
+              addTearDown(tester.view.resetDevicePixelRatio);
+              MoeLiquidGlassService.setMockState(available: false);
+              final backend = _FakeAudioPlaybackBackend(
+                duration: const Duration(seconds: 3),
+              );
+              await tester.pumpWidget(
+                _buildPlayerHost(
+                  block: readyBlock(),
+                  textColor: customColor,
+                  backend: backend,
+                  dark: dark,
+                  material: material,
+                ),
+              );
+              await tester.pump();
+              await tester.pump();
+              _expectNoButtonMaterialInAudioSubtree();
+              final iconFinder = find.byIcon(Icons.play_arrow_rounded);
+              expect(iconFinder, findsOneWidget);
+              expect(tester.widget<Icon>(iconFinder).color, customColor);
+              expect(tester.getSize(iconFinder), const Size(24, 24));
+            },
+          );
+        }
+      }
+    }
+
+    testWidgets('点击 24x24 框边角可播放、再点击暂停，图标随状态切换', (tester) async {
+      tester.view.physicalSize = const Size(360, 400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      MoeLiquidGlassService.setMockState(available: false);
+      final backend = _FakeAudioPlaybackBackend(
+        duration: const Duration(seconds: 3),
+      );
+      await tester.pumpWidget(
+        _buildPlayerHost(
+          block: readyBlock(),
+          textColor: Colors.white,
+          backend: backend,
+          dark: true,
+          material: MoeSurfaceMaterial.frosted,
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      final playFinder = find.byIcon(Icons.play_arrow_rounded);
+      expect(tester.widget<Icon>(playFinder).color, Colors.white);
+      final playRect = tester.getRect(playFinder);
+      await tester.tapAt(playRect.topLeft + const Offset(1, 1));
+      await tester.pump();
+      await tester.pump();
+      expect(backend.playCalls, 1);
+
+      final pauseFinder = find.byIcon(Icons.pause_rounded);
+      expect(pauseFinder, findsOneWidget);
+      expect(tester.widget<Icon>(pauseFinder).color, Colors.white);
+      final pauseRect = tester.getRect(pauseFinder);
+      await tester.tapAt(pauseRect.topLeft + const Offset(1, 1));
+      await tester.pump();
+      await tester.pump();
+      expect(backend.pauseCalls, 1);
+      expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+      _expectNoButtonMaterialInAudioSubtree();
+    });
+
+    testWidgets('加载态为 24x24 占位且无材质', (tester) async {
+      MoeLiquidGlassService.setMockState(available: false);
+      final backend = _FakeAudioPlaybackBackend(
+        duration: const Duration(seconds: 3),
+      );
+      await tester.pumpWidget(
+        _buildPlayerHost(
+          block: readyBlock(),
+          textColor: customColor,
+          backend: backend,
+          dark: false,
+          material: MoeSurfaceMaterial.frosted,
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      backend.emitLoading();
+      await tester.pump();
+      await tester.pump();
+      expect(find.byIcon(Icons.play_arrow_rounded), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byType(AudioPlayerWidget),
+          matching: find.byType(CircularProgressIndicator),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byType(AudioPlayerWidget),
+          matching: find.byWidgetPredicate(
+            (w) => w is SizedBox && w.width == 24 && w.height == 24,
+          ),
+        ),
+        findsOneWidget,
+      );
+      _expectNoButtonMaterialInAudioSubtree();
+    });
+
+    testWidgets('错误态重试图标 24x24 同色，点击触发 reload', (tester) async {
+      MoeLiquidGlassService.setMockState(available: false);
+      final backend = _FakeAudioPlaybackBackend(
+        duration: const Duration(seconds: 3),
+      );
+      await tester.pumpWidget(
+        _buildPlayerHost(
+          block: readyBlock(),
+          textColor: customColor,
+          backend: backend,
+          dark: false,
+          material: MoeSurfaceMaterial.frosted,
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      backend.emitError(StateError('boom'));
+      await tester.pump();
+      await tester.pump();
+      final refreshFinder = find.byIcon(Icons.refresh_rounded);
+      expect(refreshFinder, findsOneWidget);
+      expect(tester.widget<Icon>(refreshFinder).color, customColor);
+      expect(tester.getSize(refreshFinder), const Size(24, 24));
+      _expectNoButtonMaterialInAudioSubtree();
+      final callsBefore = backend.setUrlCalls.length;
+      await tester.tap(refreshFinder);
+      await tester.pump();
+      await tester.pump();
+      expect(backend.setUrlCalls.length, greaterThan(callsBefore));
+    });
+
+    testWidgets('pending 无 URL 占位同样无材质', (tester) async {
+      MoeLiquidGlassService.setMockState(available: false);
+      await tester.pumpWidget(
+        _buildPlayerHost(
+          block: AudioBlock(
+            messageId: 'm',
+            url: '',
+            text: '语音',
+            durationSeconds: 3,
+            status: BlockStatus.pending,
+          ),
+          textColor: customColor,
+          backend: _FakeAudioPlaybackBackend(),
+          dark: false,
+          material: MoeSurfaceMaterial.frosted,
+        ),
+      );
+      await tester.pump();
+      expect(
+        find.descendant(
+          of: find.byType(AudioPlayerWidget),
+          matching: find.byType(CircularProgressIndicator),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byType(AudioPlayerWidget),
+          matching: find.byWidgetPredicate(
+            (w) => w is SizedBox && w.width == 24 && w.height == 24,
+          ),
+        ),
+        findsOneWidget,
+      );
+      _expectNoButtonMaterialInAudioSubtree();
+    });
+  });
+
+  group('语音气泡一体图标预览', () {
+    const capture = bool.fromEnvironment('WRITE_AUDIO_BUBBLE_PREVIEW');
+
+    setUpAll(() async {
+      if (!capture) return;
+      for (final entry in <String, String>{
+        'AudioBubblePreview': '/System/Library/Fonts/STHeiti Medium.ttc',
+        'MaterialIcons':
+            '${Platform.environment['FLUTTER_ROOT']}/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf',
+      }.entries) {
+        final loader = FontLoader(entry.key)
+          ..addFont(File(entry.value).readAsBytes().then(ByteData.sublistView));
+        await loader.load();
+      }
+    });
+
+    tearDown(() => MoeLiquidGlassService.setMockState());
+
+    Message voiceMessage(String id, String role, String url, double secs) =>
+        Message.fromBlocks(
+          id: id,
+          role: role,
+          blocks: <MessageBlock>[
+            AudioBlock(
+              messageId: id,
+              url: url,
+              text: '语音消息',
+              durationSeconds: secs,
+              status: BlockStatus.success,
+            ),
+          ],
+        );
+
+    for (final dark in <bool>[false, true]) {
+      for (final width in <double>[360, 1000]) {
+        testWidgets(
+          '气泡内图标 ${width.toInt()}px ${dark ? '深色' : '浅色'}',
+          (tester) async {
+            tester.view.physicalSize = Size(width, 420);
+            tester.view.devicePixelRatio = 1;
+            addTearDown(tester.view.resetPhysicalSize);
+            addTearDown(tester.view.resetDevicePixelRatio);
+            MoeLiquidGlassService.setMockState(available: false);
+
+            const readyUrl = 'https://example.com/ready.mp3';
+            const playingUrl = 'https://example.com/playing.mp3';
+            const errorUrl = 'https://example.com/error.mp3';
+            final backends = <String, _FakeAudioPlaybackBackend>{
+              readyUrl: _FakeAudioPlaybackBackend(
+                duration: const Duration(seconds: 3),
+              ),
+              playingUrl: _FakeAudioPlaybackBackend(
+                duration: const Duration(seconds: 12),
+              ),
+              errorUrl: _FakeAudioPlaybackBackend(
+                duration: const Duration(seconds: 30),
+              ),
+            };
+            final fallbackBackend = _FakeAudioPlaybackBackend();
+            final settings = mapUiModelsToAppSettings(
+              const <String, dynamic>{},
+            ).copyWith(expandAudioText: false);
+            final colors = dark ? MoeColors.dark() : MoeColors.light();
+            final boundaryKey = GlobalKey();
+
+            await tester.pumpWidget(
+              ProviderScope(
+                overrides: [
+                  appSettingsProvider.overrideWith(
+                    () => _FakeAppSettingsNotifier(settings),
+                  ),
+                  audioPlayerControllerProvider.overrideWith(
+                    (ref, url) => AudioPlayerController(
+                      url,
+                      backend: backends[url] ?? fallbackBackend,
+                    ),
+                  ),
+                ],
+                child: SkinScope(
+                  skin: const MoeTalkSkin(),
+                  child: MaterialApp(
+                    theme: ThemeData(
+                      brightness: dark ? Brightness.dark : Brightness.light,
+                      fontFamily: capture ? 'AudioBubblePreview' : null,
+                      extensions: <ThemeExtension<dynamic>>[colors],
+                    ),
+                    home: MoeGlassTheme(
+                      enabled: true,
+                      useLiquidGlass: false,
+                      blurSigma: 16,
+                      child: Scaffold(
+                        backgroundColor: colors.bgMain,
+                        body: RepaintBoundary(
+                          key: boundaryKey,
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                MessageBubble(
+                                  isMe: false,
+                                  message: voiceMessage(
+                                    'a1',
+                                    'assistant',
+                                    readyUrl,
+                                    3,
+                                  ),
+                                  showAvatar: false,
+                                ),
+                                const SizedBox(height: 12),
+                                MessageBubble(
+                                  isMe: true,
+                                  message: voiceMessage(
+                                    'u1',
+                                    'user',
+                                    playingUrl,
+                                    12,
+                                  ),
+                                  showAvatar: false,
+                                ),
+                                const SizedBox(height: 12),
+                                MessageBubble(
+                                  isMe: false,
+                                  message: voiceMessage(
+                                    'a2',
+                                    'assistant',
+                                    errorUrl,
+                                    30,
+                                  ),
+                                  showAvatar: false,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+            await tester.pump();
+            await tester.pump();
+            unawaited(backends[playingUrl]!.play());
+            backends[errorUrl]!.emitError(StateError('加载失败'));
+            await tester.pump();
+            await tester.pump();
+
+            expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+            expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+            expect(find.byIcon(Icons.refresh_rounded), findsOneWidget);
+            _expectNoButtonMaterialInAudioSubtree();
+            expect(tester.takeException(), isNull);
+
+            if (capture) {
+              await tester.runAsync(() async {
+                final boundary =
+                    boundaryKey.currentContext!.findRenderObject()
+                        as RenderRepaintBoundary;
+                final image = await boundary.toImage(pixelRatio: 2);
+                final data = await image.toByteData(
+                  format: ui.ImageByteFormat.png,
+                );
+                final file = File(
+                  '../../scratch/audio-bubble-integrated-20260916/audio-bubble-${width.toInt()}-${dark ? 'dark' : 'light'}.png',
+                );
+                await file.parent.create(recursive: true);
+                await file.writeAsBytes(data!.buffer.asUint8List());
+                image.dispose();
+              });
+            }
+          },
+        );
+      }
+    }
   });
 }

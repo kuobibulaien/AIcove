@@ -110,10 +110,7 @@ class SyncNotifier extends StateNotifier<SyncState> {
 
       print('✅ 全量同步完成: $counts');
     } catch (e) {
-      state = state.copyWith(
-        isSyncing: false,
-        error: '同步失败: ${e.toString()}',
-      );
+      state = state.copyWith(isSyncing: false, error: '同步失败: ${e.toString()}');
       print('❌ 同步失败: $e');
     }
   }

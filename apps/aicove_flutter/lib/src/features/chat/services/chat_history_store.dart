@@ -1,5 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'package:crypto/crypto.dart';
+import '../application/chat_edit.dart';
+import '../application/chat_media_regeneration.dart';
 
 import 'package:drift/drift.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -172,6 +176,105 @@ class ChatHistoryStore {
 
   db.AppDatabase get _db => _ref.read(databaseProvider);
 
+  Future<({List<db.Message> messages, String version, String? boundary})>
+      _editRevision(String conversationId) async {
+    final conversation =
+        await _ref.read(conversationRepositoryProvider).getById(conversationId);
+    if (conversation == null || conversation.deletedAt != null) {
+      throw StateError('会话已不存在，未更改历史');
+    }
+    final messages = await _ref
+        .read(messageRepositoryProvider)
+        .getAllByConversationOrderedStable(conversationId);
+    final blocks = await _ref
+        .read(messageBlockRepositoryProvider)
+        .getByMessages(messages.map((m) => m.id).toList());
+    blocks.sort((a, b) => a.id.compareTo(b.id));
+    final version = sha256
+        .convert(utf8.encode(jsonEncode([
+          conversation.contextStartMessageId,
+          messages.map((m) => m.toJson()).toList(),
+          blocks.map((b) => b.toJson()).toList(),
+        ])))
+        .toString();
+    return (
+      messages: messages,
+      version: version,
+      boundary: conversation.contextStartMessageId
+    );
+  }
+
+  int _editAnchorIndex(
+      List<db.Message> messages, String messageId, String? boundary) {
+    final index =
+        messages.indexWhere((m) => m.id == messageId && m.role == 'user');
+    if (index < 0) throw StateError('原用户消息已变化，请重新选择编辑');
+    if (boundary != null && boundary.isNotEmpty) {
+      final boundaryIndex = messages.indexWhere((m) => m.id == boundary);
+      if (boundaryIndex < 0 || index <= boundaryIndex) {
+        throw StateError('暂不支持编辑旧话题，请在当前话题重新发送');
+      }
+    }
+    return index;
+  }
+
+  Future<ChatEditDraft> prepareEdit(String conversationId, String messageId) {
+    return _db.transaction(() async {
+      final revision = await _editRevision(conversationId);
+      final index =
+          _editAnchorIndex(revision.messages, messageId, revision.boundary);
+      final original =
+          await _buildRawMessageFromDbMessage(revision.messages[index]);
+      return ChatEditDraft(
+          conversationId: conversationId,
+          messageId: messageId,
+          historyVersion: revision.version,
+          originalMessage: original);
+    });
+  }
+
+  /// 唯一提交点：只按DB raw顺序截断；缓存/映射不是分支依据。
+  Future<void> commitEdit(ChatEditDraft draft, Message replacement) async {
+    for (final block in replacement.blocks ?? const <MessageBlock>[]) {
+      final path = block is ImageBlock
+          ? block.localPath
+          : block is FileBlock
+              ? block.filePath
+              : null;
+      if (path != null && (path.trim().isEmpty || !await File(path).exists())) {
+        throw StateError('附件已不存在，原历史和编辑草稿均保留');
+      }
+    }
+    await _db.transaction(() async {
+      final revision = await _editRevision(draft.conversationId);
+      if (revision.version != draft.historyVersion) {
+        throw StateError('聊天记录已变化，未提交修改；请取消后重新编辑');
+      }
+      final index = _editAnchorIndex(
+          revision.messages, draft.messageId, revision.boundary);
+      final repo = _ref.read(messageRepositoryProvider);
+      if (replacement.role != 'user' ||
+          await repo.getById(replacement.id) != null) {
+        throw StateError('新消息无效，未更改历史');
+      }
+      final ids = revision.messages.skip(index).map((m) => m.id).toList();
+      final now = DateTime.now().millisecondsSinceEpoch;
+      await _ref
+          .read(messageBlockRepositoryProvider)
+          .softDeleteByMessages(ids, now);
+      await repo.softDeleteMany(
+          ids, now, now + const Duration(days: 30).inMilliseconds);
+      await _ref
+          .read(messageProjectionMappingRepositoryProvider)
+          .deleteByRawMessages(ids);
+      await _upsertSingleMessage(draft.conversationId, replacement);
+      await _ref.read(conversationRepositoryProvider).updateSummary(
+          draft.conversationId,
+          replacement.displayText,
+          replacement.createdAt.millisecondsSinceEpoch);
+    });
+  }
+
   Future<List<Message>> loadCachedTimelineMessages(String conversationId) {
     return _ref
         .read(conversationTimelineCacheProvider)
@@ -252,6 +355,23 @@ class ChatHistoryStore {
       return projectedMessages.first;
     }
     return rawMessage;
+  }
+
+  Future<bool> isRawMessageActive({
+    required String conversationId,
+    required String messageId,
+  }) async {
+    final normalizedConversationId = conversationId.trim();
+    final normalizedMessageId = messageId.trim();
+    if (normalizedConversationId.isEmpty || normalizedMessageId.isEmpty) {
+      return false;
+    }
+    final message =
+        await _ref.read(messageRepositoryProvider).getById(normalizedMessageId);
+    return message != null &&
+        message.conversationId == normalizedConversationId &&
+        message.deletedAt == null &&
+        message.replacedBy == null;
   }
 
   Future<Message?> loadFrontendMessageById(
@@ -414,8 +534,7 @@ class ChatHistoryStore {
       // 观察到「同 raw 气泡全部消失」的中间帧，且第二步失败会留下半完成态。
       final staleIds = <String>[];
       if (projectedMessages.isNotEmpty) {
-        final cached =
-            await timelineCache.loadCachedMessages(conversationId);
+        final cached = await timelineCache.loadCachedMessages(conversationId);
         staleIds.addAll(<String>[
           for (final message in cached)
             if (message.sourceMessageId == rawMessage.id &&
@@ -628,6 +747,138 @@ class ChatHistoryStore {
       );
       await _refreshSummaryFromShortWindow(conversationId);
     }
+  }
+
+  Future<MediaRegenerationTarget> loadMediaRegenerationTarget({
+    required String conversationId,
+    required String messageId,
+    required String blockId,
+  }) async {
+    final message = await loadFrontendMessageById(messageId,
+        conversationId: conversationId);
+    if (message == null ||
+        message.id != messageId ||
+        message.role != 'assistant' ||
+        message.status == 'sending' ||
+        _ref
+            .read(conversationTimelineCacheProvider)
+            .isMessageHidden(conversationId, message) ||
+        !await isRawMessageActive(
+            conversationId: conversationId,
+            messageId: message.sourceMessageIdOrSelf)) {
+      throw StateError('原消息已失效，无法重新生成媒体');
+    }
+    final block = message.blocks?.where((b) => b.id == blockId).firstOrNull;
+    if (block == null ||
+        !MediaRegenerationTarget.canRegenerate(message, block)) {
+      throw StateError('此媒体缺少生成原文或尚未完成，无法重新生成');
+    }
+    final raw = await loadMessageById(message.sourceMessageIdOrSelf,
+        conversationId: conversationId, preferProjection: false);
+    if (raw == null || raw.role != 'assistant') {
+      throw StateError('原消息已失效，无法重新生成媒体');
+    }
+    return MediaRegenerationTarget(
+        message: message,
+        block: block,
+        rawRevision: _mediaRegenerationRevision(raw));
+  }
+
+  String _mediaRegenerationRevision(Message raw) => sha256
+      .convert(utf8.encode(jsonEncode([
+        raw.content,
+        raw.status,
+        raw.rawPayload,
+        for (final block in raw.blocks ?? <MessageBlock>[])
+          (block.toJson()
+            ..remove('createdAt')
+            ..remove('width')
+            ..remove('height'))
+      ])))
+      .toString();
+
+  /// Commit only after generation succeeds. Persist before publishing to the UI.
+  Future<void> replaceGeneratedMedia({
+    required String conversationId,
+    required MediaRegenerationTarget target,
+    required GeneratedChatMedia result,
+  }) async {
+    result
+        .replace(target.block); // Validate type and metadata before any write.
+    late Message replacement;
+    await _db.transaction(() async {
+      final current = await loadMediaRegenerationTarget(
+          conversationId: conversationId,
+          messageId: target.message.id,
+          blockId: target.block.id);
+      if (current.rawRevision != target.rawRevision ||
+          !MediaRegenerationTarget.sameSource(current.block, target.block)) {
+        throw StateError('原消息已改变，未覆盖现有媒体');
+      }
+      replacement = current.message.copyWith(blocks: [
+        for (final block in current.message.blocks!)
+          if (block.id == current.block.id) result.replace(block) else block,
+      ]);
+      final rawId = current.message.sourceMessageIdOrSelf;
+      final raw = (await loadMessageById(rawId,
+          conversationId: conversationId, preferProjection: false))!;
+      if (_isProjectedFrontendMessage(current.message)) {
+        // Rebuild all siblings from the persisted raw payload, not the short
+        // viewport window, so replacing old media cannot drop other parts.
+        final siblings = _projectRawMessagesForFrontendSurface([raw]);
+        if (!siblings.any((m) => m.id == current.message.id)) {
+          throw StateError('原媒体尚未保存完成，请稍后重试');
+        }
+        final next = [
+          for (final sibling in siblings)
+            if (sibling.id == current.message.id) replacement else sibling
+        ];
+        final updatedRaw =
+            _replaceRawMediaAttachment(raw, siblings, current, result);
+        await _upsertSingleMessage(
+            conversationId, _rawWithFrontendMessages(updatedRaw, next));
+      } else {
+        await _upsertSingleMessage(
+            conversationId, raw.copyWith(blocks: replacement.blocks));
+      }
+    });
+    await _ref
+        .read(conversationTimelineCacheProvider)
+        .upsertMessage(conversationId: conversationId, message: replacement);
+  }
+
+  Message _replaceRawMediaAttachment(Message raw, List<Message> siblings,
+      MediaRegenerationTarget target, GeneratedChatMedia result) {
+    bool matches(MessageBlock block) =>
+        MediaRegenerationTarget.sameSource(block, target.block);
+    final candidates = (raw.blocks ?? <MessageBlock>[]).where(matches).toList();
+    if (candidates.isEmpty) return raw;
+
+    // Repeated uses of one source are distinct media occurrences.
+    var occurrence = 0;
+    for (final sibling in siblings) {
+      final blocks = (sibling.id == target.message.id
+              ? target.message.blocks
+              : sibling.blocks) ??
+          <MessageBlock>[];
+      for (final block in blocks) {
+        if (sibling.id == target.message.id && block.id == target.block.id) {
+          if (occurrence >= candidates.length) {
+            throw StateError('原媒体来源已改变，未覆盖现有媒体');
+          }
+          final original = candidates[occurrence];
+          return raw.copyWith(blocks: [
+            for (final rawBlock in raw.blocks!)
+              if (rawBlock.id == original.id)
+                result.replace(rawBlock)
+              else
+                rawBlock,
+          ]);
+        }
+        if (matches(block)) occurrence++;
+      }
+    }
+    throw StateError('原媒体来源已改变，未覆盖现有媒体');
   }
 
   Future<void> updateMessage({
@@ -963,19 +1214,25 @@ class ChatHistoryStore {
     final msgRepo = _ref.read(messageRepositoryProvider);
     final blockRepo = _ref.read(messageBlockRepositoryProvider);
 
-    await msgRepo.upsert(MessageConverter.toCompanion(message, conversationId));
-    await blockRepo.deleteByMessage(message.id);
-
-    final blocks = message.blocks;
-    if (blocks == null || blocks.isEmpty) {
-      return;
-    }
-
-    for (var index = 0; index < blocks.length; index++) {
-      await blockRepo.upsert(
-        MessageBlockConverter.toCompanion(blocks[index], message.id, index),
+    // 补写调用方不一定有外层事务：消息与所有内容块必须原子替换。
+    // 已有外层事务时使用嵌套事务，外层失败仍会回滚本次写入。
+    await _db.transaction(() async {
+      await msgRepo.upsert(
+        MessageConverter.toCompanion(message, conversationId),
       );
-    }
+      await blockRepo.deleteByMessage(message.id);
+
+      final blocks = message.blocks;
+      if (blocks == null || blocks.isEmpty) {
+        return;
+      }
+
+      for (var index = 0; index < blocks.length; index++) {
+        await blockRepo.upsert(
+          MessageBlockConverter.toCompanion(blocks[index], message.id, index),
+        );
+      }
+    });
   }
 
   Future<void> _replaceConversationMessages({
@@ -1193,7 +1450,7 @@ class ChatHistoryStore {
       final markerIndex = allMessages.lastIndexWhere(
         (message) => message.id == normalizedContextStartId,
       );
-      if (markerIndex >= 0 && markerIndex + 1 < allMessages.length) {
+      if (markerIndex >= 0) {
         contextWindow = allMessages.sublist(markerIndex + 1);
       }
     }
@@ -1284,6 +1541,16 @@ class ChatHistoryStore {
     return message == null ? const <Message>[] : <Message>[message];
   }
 
+  Future<void> syncRawSupplementsFromTimeline({
+    required String conversationId,
+    required Set<String> rawMessageIds,
+  }) {
+    return _syncRawSupplementsFromTimeline(
+      conversationId: conversationId,
+      rawMessageIds: rawMessageIds,
+    );
+  }
+
   Future<void> _syncRawSupplementsFromTimeline({
     required String conversationId,
     required Set<String> rawMessageIds,
@@ -1308,53 +1575,54 @@ class ChatHistoryStore {
         for (final message in timelineMessages)
           if (message.sourceMessageId == rawMessageId) message,
       ];
-      final normalizedTimelineMessages = _normalizeProjectedMessagesForStorage(
-        rawMessageId: rawMessage.id,
-        rawCreatedAt: rawMessage.createdAt,
-        messages: sourceTimelineMessages,
-      );
-      final nextPluginContents =
-          _collectSemanticPluginContents(sourceTimelineMessages);
-      final nextToolAudioResults =
-          _collectSemanticToolAudioResults(sourceTimelineMessages);
-      final nextSupplementInsertOps =
-          _collectSupplementInsertOps(sourceTimelineMessages);
-      final normalizedRawPayload =
-          ChatMessageProjectionCodec.copyWithSupplementInsertOps(
-        ChatMessageProjectionCodec.copyWithToolAudioResults(
-          ChatMessageProjectionCodec.copyWithPluginContents(
-            ChatMessageProjectionCodec.removeProjectedMessages(
-              rawMessage.rawPayload,
-            ),
-            nextPluginContents,
-          ),
-          nextToolAudioResults,
-        ),
-        nextSupplementInsertOps,
-      );
-      final rebuiltProjection = _normalizeProjectedMessagesForStorage(
-        rawMessageId: rawMessage.id,
-        rawCreatedAt: rawMessage.createdAt,
-        messages: _projectRawMessagesForFrontendSurface(<Message>[
-          rawMessage.copyWith(rawPayload: normalizedRawPayload),
-        ]),
-      );
-      final nextRawPayload = _areStoredProjectedMessagesEquivalent(
-        normalizedTimelineMessages,
-        rebuiltProjection,
-      )
-          ? normalizedRawPayload
-          : ChatMessageProjectionCodec.copyWithProjectedMessages(
-              normalizedRawPayload,
-              normalizedTimelineMessages,
-            );
-      await _upsertSingleMessage(
-        conversationId,
-        rawMessage.copyWith(
-          rawPayload: nextRawPayload,
-        ),
-      );
+      await _upsertSingleMessage(conversationId,
+          _rawWithFrontendMessages(rawMessage, sourceTimelineMessages));
     }
+  }
+
+  Message _rawWithFrontendMessages(
+      Message rawMessage, List<Message> sourceTimelineMessages) {
+    final normalizedTimelineMessages = _normalizeProjectedMessagesForStorage(
+      rawMessageId: rawMessage.id,
+      rawCreatedAt: rawMessage.createdAt,
+      messages: sourceTimelineMessages,
+    );
+    final nextPluginContents =
+        _collectSemanticPluginContents(sourceTimelineMessages);
+    final nextToolAudioResults =
+        _collectSemanticToolAudioResults(sourceTimelineMessages);
+    final nextSupplementInsertOps =
+        _collectSupplementInsertOps(sourceTimelineMessages);
+    final normalizedRawPayload =
+        ChatMessageProjectionCodec.copyWithSupplementInsertOps(
+      ChatMessageProjectionCodec.copyWithToolAudioResults(
+        ChatMessageProjectionCodec.copyWithPluginContents(
+          ChatMessageProjectionCodec.removeProjectedMessages(
+            rawMessage.rawPayload,
+          ),
+          nextPluginContents,
+        ),
+        nextToolAudioResults,
+      ),
+      nextSupplementInsertOps,
+    );
+    final rebuiltProjection = _normalizeProjectedMessagesForStorage(
+      rawMessageId: rawMessage.id,
+      rawCreatedAt: rawMessage.createdAt,
+      messages: _projectRawMessagesForFrontendSurface(<Message>[
+        rawMessage.copyWith(rawPayload: normalizedRawPayload),
+      ]),
+    );
+    final nextRawPayload = _areStoredProjectedMessagesEquivalent(
+      normalizedTimelineMessages,
+      rebuiltProjection,
+    )
+        ? normalizedRawPayload
+        : ChatMessageProjectionCodec.copyWithProjectedMessages(
+            normalizedRawPayload,
+            normalizedTimelineMessages,
+          );
+    return rawMessage.copyWith(rawPayload: nextRawPayload);
   }
 
   List<Message> _normalizeProjectedMessagesForStorage({
@@ -1718,6 +1986,7 @@ class ChatHistoryStore {
         PluginImageContent(
           localPath,
           caption: block.prompt,
+          generationSnapshot: block.generationSnapshot,
         ),
       );
     }
@@ -1795,6 +2064,7 @@ class ChatHistoryStore {
         forceAppendToTail: forceAppendToTail,
         localPath: localPath,
         prompt: block.prompt,
+        generationSnapshot: block.generationSnapshot,
       );
     }
     if (block is AudioBlock) {

@@ -30,6 +30,9 @@ Future<void> showTtsVoicePresetEditorSheet({
   return showMoeBottomSheet(
     context: context,
     title: preset == null ? '自定义音色' : '编辑音色',
+    showCloseButton: true,
+    isDismissible: false,
+    enableDrag: false,
     builder: (sheetContext) => _TtsVoicePresetEditorSheetContent(
       parentContext: context,
       notifier: notifier,
@@ -67,7 +70,8 @@ class _TtsVoicePresetEditorSheetContent extends StatefulWidget {
 }
 
 class _TtsVoicePresetEditorSheetContentState
-    extends State<_TtsVoicePresetEditorSheetContent> {
+    extends State<_TtsVoicePresetEditorSheetContent>
+    with MoeAutoSaveState<_TtsVoicePresetEditorSheetContent> {
   late final TextEditingController _nameController;
   late final TextEditingController _audioUrlController;
   late final TextEditingController _promptTextController;
@@ -77,6 +81,7 @@ class _TtsVoicePresetEditorSheetContentState
   String? _selectedBindingProviderId;
   String? _selectedBindingModelId;
   String? _localAudioPath;
+  String? _savedLocalPath;
   String? _localAudioFileName;
   bool _submitting = false;
 
@@ -131,19 +136,35 @@ class _TtsVoicePresetEditorSheetContentState
     super.initState();
     final preset = widget.preset;
     _nameController = TextEditingController(text: preset?.name ?? '');
-    _audioUrlController =
-        TextEditingController(text: preset?.promptAudioUrl ?? '');
-    _promptTextController =
-        TextEditingController(text: preset?.promptText ?? '');
+    _audioUrlController = TextEditingController(
+      text: preset?.promptAudioUrl ?? '',
+    );
+    _promptTextController = TextEditingController(
+      text: preset?.promptText ?? '',
+    );
     _manualVoiceIdController = TextEditingController();
     _bindings = [
-      ...(preset?.effectiveBindings ?? const <VoiceChannelBinding>[])
+      ...(preset?.effectiveBindings ?? const <VoiceChannelBinding>[]),
     ];
     _localAudioPath = preset?.localAudioPath;
+    _savedLocalPath = _localAudioPath;
     _localAudioFileName = _extractFileName(_localAudioPath);
     final initialEntry = _resolveInitialBindingEntry();
     _selectedBindingProviderId = initialEntry?.providerId;
     _selectedBindingModelId = initialEntry?.modelId;
+    if (_isEdit && !_isBuiltIn) {
+      autoSave.configure(
+        save: _save,
+        snapshot: () => moeAutoSaveSignature([
+          _nameController.text,
+          _audioUrlController.text,
+          _promptTextController.text,
+          _localAudioPath,
+          for (final b in _bindings) b.toJson(),
+        ]),
+        fields: [_nameController, _audioUrlController, _promptTextController],
+      );
+    }
   }
 
   @override
@@ -239,10 +260,11 @@ class _TtsVoicePresetEditorSheetContentState
       title: '选择渠道模型',
       description: '只显示已配置 key 的 TTS 模型',
       actions: widget.availableModels.map((entry) {
-        final isSelected = entry.providerId == _selectedBindingProviderId &&
+        final isSelected =
+            entry.providerId == _selectedBindingProviderId &&
             entry.modelId == _selectedBindingModelId;
         return MoeSheetAction(
-          icon: isSelected ? Icons.check_circle : Icons.graphic_eq,
+          icon: isSelected ? Icons.check_circle : null,
           label: entry.displayName,
           subtitle: entry.providerName,
           onTap: () {
@@ -369,7 +391,9 @@ class _TtsVoicePresetEditorSheetContentState
       providerId: entry.providerId,
       providerName: entry.providerName,
       adapterId:
-          bindingContext?.voiceProviderId ?? entry.voiceProviderId ?? entry.providerId,
+          bindingContext?.voiceProviderId ??
+          entry.voiceProviderId ??
+          entry.providerId,
       modelId: entry.modelId,
       remoteVoiceId: manualVoiceId,
       sourceKind: VoiceBindingSourceKind.manual,
@@ -394,10 +418,12 @@ class _TtsVoicePresetEditorSheetContentState
   void _upsertBinding(VoiceChannelBinding binding) {
     final next = [..._bindings];
     final index = next.indexWhere((item) {
-      final sameAdapter = item.normalizedAdapterId != null &&
+      final sameAdapter =
+          item.normalizedAdapterId != null &&
           binding.normalizedAdapterId != null &&
           item.normalizedAdapterId == binding.normalizedAdapterId;
-      final sameProvider = item.normalizedProviderId == binding.normalizedProviderId;
+      final sameProvider =
+          item.normalizedProviderId == binding.normalizedProviderId;
       return (sameAdapter || sameProvider) &&
           (item.modelId ?? '') == (binding.modelId ?? '');
     });
@@ -444,7 +470,9 @@ class _TtsVoicePresetEditorSheetContentState
       providerId: entry.providerId,
       providerName: entry.providerName,
       adapterId:
-          bindingContext.voiceProviderId ?? entry.voiceProviderId ?? entry.providerId,
+          bindingContext.voiceProviderId ??
+          entry.voiceProviderId ??
+          entry.providerId,
       modelId: entry.modelId,
       remoteVoiceId: remoteVoiceId,
       status: remoteVoice.aliyunVoiceStatus,
@@ -455,12 +483,18 @@ class _TtsVoicePresetEditorSheetContentState
   Future<void> _save() async {
     final name = _nameController.text.trim();
     if (name.isEmpty) {
-      MoeToast.warning(widget.parentContext, '请输入音色名称');
-      return;
+      if (!_isEdit) {
+        MoeToast.warning(widget.parentContext, '请输入音色名称');
+        return;
+      }
+      throw const FormatException('请输入音色名称');
     }
     if (!_hasReferenceAudio && _bindings.isEmpty) {
-      MoeToast.warning(widget.parentContext, '请至少提供参考音频或添加一个渠道音色 ID');
-      return;
+      if (!_isEdit) {
+        MoeToast.warning(widget.parentContext, '请至少提供参考音频或添加一个渠道音色 ID');
+        return;
+      }
+      throw const FormatException('请至少提供参考音频或添加一个渠道音色 ID');
     }
 
     setState(() {
@@ -471,16 +505,18 @@ class _TtsVoicePresetEditorSheetContentState
       final existing = widget.preset;
       final audioUrl = _audioUrlController.text.trim();
       final promptText = _promptTextController.text.trim();
-      final originalLocalPath = existing?.localAudioPath;
+      final originalLocalPath = _savedLocalPath;
+      final localPath = _localAudioPath;
 
       final fallbackSourceType = _hasLocalFile
           ? VoiceSourceType.local
           : (_hasUrlInput
-              ? VoiceSourceType.url
-              : (existing?.sourceType ?? VoiceSourceType.url));
+                ? VoiceSourceType.url
+                : (existing?.sourceType ?? VoiceSourceType.url));
 
       var preset = VoicePreset(
         id: existing?.id,
+        synthesis: existing?.synthesis,
         name: name,
         sourceType: fallbackSourceType,
         providerType: existing?.providerType ?? VoiceProviderType.custom,
@@ -490,7 +526,7 @@ class _TtsVoicePresetEditorSheetContentState
         useEmoText: existing?.useEmoText ?? false,
         source: existing?.source,
         isBuiltIn: existing?.isBuiltIn ?? false,
-        localAudioPath: _hasLocalFile ? _localAudioPath : null,
+        localAudioPath: _hasLocalFile ? localPath : null,
       );
       preset = preset.copyWithBindings(_bindings);
 
@@ -501,19 +537,18 @@ class _TtsVoicePresetEditorSheetContentState
         await widget.notifier.selectVoicePreset(preset.id);
       }
 
+      _savedLocalPath = localPath;
       if (originalLocalPath != null &&
           originalLocalPath.isNotEmpty &&
-          originalLocalPath != _localAudioPath) {
+          originalLocalPath != localPath) {
         _deleteFileIfNeeded(originalLocalPath);
       }
 
-      if (!mounted) return;
-      MoeToast.success(
-        widget.parentContext,
-        _isEdit ? '已保存音色与渠道绑定' : '已添加音色',
-      );
+      if (!mounted || _isEdit) return;
+      MoeToast.success(widget.parentContext, _isEdit ? '已保存音色与渠道绑定' : '已添加音色');
       Navigator.of(context).pop();
     } catch (e) {
+      if (_isEdit) rethrow;
       final message = e is TtsProviderException ? e.message : '保存失败: $e';
       if (!mounted) return;
       MoeToast.error(widget.parentContext, message);
@@ -533,268 +568,264 @@ class _TtsVoicePresetEditorSheetContentState
     final selectedContext = _selectedBindingContext;
     final selectedCapabilities = _selectedBindingCapabilities;
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildSectionTitle('音色名称', colors),
-          const SizedBox(height: 8),
-          MoeTextField(
-            controller: _nameController,
-            hint: '如：温柔女声',
-            enabled: !_isBuiltIn && !_submitting,
-          ),
-          const SizedBox(height: 16),
-          _buildSectionTitle('基础素材', colors),
-          const SizedBox(height: 4),
-          Text(
-            '这份参考音频会被多个渠道复用；没有素材也能先保存手填的渠道音色 ID。',
-            style: TextStyle(color: colors.muted, fontSize: 12),
-          ),
-          const SizedBox(height: 8),
-          MoeTextField(
-            controller: _audioUrlController,
-            hint: 'https://example.com/voice.mp3',
-            enabled: !_isBuiltIn && !_submitting && !_hasLocalFile,
-            onChanged: (_) => setState(() {}),
-          ),
-          const SizedBox(height: 8),
-          if (!_hasUrlInput && !_isBuiltIn)
-            GestureDetector(
-              onTap: _submitting ? null : _pickLocalFile,
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: MoeG2Decoration(
+    return autoSavePage(
+      SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildSectionTitle('音色名称', colors),
+            const SizedBox(height: 8),
+            MoeTextField(
+              controller: _nameController,
+              hint: '如：温柔女声',
+              enabled: !_isBuiltIn && !_submitting,
+            ),
+            const SizedBox(height: 16),
+            _buildSectionTitle('基础素材', colors),
+            const SizedBox(height: 4),
+            Text(
+              '这份参考音频会被多个渠道复用；没有素材也能先保存手填的渠道音色 ID。',
+              style: TextStyle(color: colors.muted, fontSize: 12),
+            ),
+            const SizedBox(height: 8),
+            MoeTextField(
+              controller: _audioUrlController,
+              hint: 'https://example.com/voice.mp3',
+              enabled: !_isBuiltIn && !_submitting && !_hasLocalFile,
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 8),
+            if (!_hasUrlInput && !_isBuiltIn)
+              GestureDetector(
+                onTap: _submitting ? null : _pickLocalFile,
+                child: MoeButtonSurface(
+                  padding: const EdgeInsets.all(12),
                   radius: 8,
-                  color: colors.muted.withValues(alpha: 0.1),
+                  tintColor: colors.muted.withValues(alpha: 0.1),
                   border: Border.all(
                     color: colors.muted.withValues(alpha: 0.2),
                   ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.upload_file, color: colors.muted, size: 20),
-                    const SizedBox(width: 8),
-                    Text(
-                      '选择本地音频文件',
-                      style: TextStyle(
-                        color: colors.textSecondary,
-                        fontSize: 14,
+                  child: Row(
+                    children: [
+                      Text(
+                        '选择本地音频文件',
+                        style: TextStyle(
+                          color: colors.textSecondary,
+                          fontSize: 14,
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          if (_hasLocalFile) ...[
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: MoeG2Decoration(
-                radius: 8,
-                color: colors.primary.withValues(alpha: 0.1),
-                border: Border.all(
-                  color: colors.primary.withValues(alpha: 0.3),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.audio_file, color: colors.primary, size: 20),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      _localAudioFileName ?? '本地文件',
-                      style: TextStyle(color: colors.text, fontSize: 14),
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                    ],
                   ),
-                  if (!_isBuiltIn)
-                    GestureDetector(
-                      onTap: _submitting
-                          ? null
-                          : () {
-                              _deleteFileIfNeeded(
-                                _localAudioPath,
-                                keepIfOriginal: true,
-                              );
-                              setState(() {
-                                _localAudioPath = null;
-                                _localAudioFileName = null;
-                              });
-                            },
-                      child: Padding(
-                        padding: const EdgeInsets.all(4),
-                        child: Icon(Icons.close, color: colors.muted, size: 18),
-                      ),
-                    ),
-                ],
+                ),
               ),
-            ),
-          ],
-          const SizedBox(height: 16),
-          _buildSectionTitle('参考文本（选填）', colors),
-          const SizedBox(height: 4),
-          Text(
-            '与参考音频对应的文本。部分渠道在在线创建音色时会要求必填。',
-            style: TextStyle(color: colors.muted, fontSize: 12),
-          ),
-          const SizedBox(height: 8),
-          MoeTextField(
-            controller: _promptTextController,
-            hint: '输入音频中说的话...',
-            maxLines: 2,
-            enabled: !_isBuiltIn && !_submitting,
-          ),
-          const SizedBox(height: 16),
-          _buildSectionTitle('渠道绑定', colors),
-          const SizedBox(height: 4),
-          Text(
-            '先选渠道模型，再在线生成对应音色，或手动填写该渠道的音色 ID。',
-            style: TextStyle(color: colors.muted, fontSize: 12),
-          ),
-          const SizedBox(height: 8),
-          if (widget.availableModels.isEmpty)
-            _buildInfoCard(
-              icon: Icons.key_off_outlined,
-              text: '当前没有可用渠道。请先在模型设置里配置带 API Key 的 TTS 模型。',
-              color: colors.muted,
-            )
-          else ...[
-            GestureDetector(
-              onTap:
-                  _isBuiltIn || _submitting ? null : _showBindingModelSelector,
-              child: Container(
+            if (_hasLocalFile) ...[
+              const SizedBox(height: 8),
+              Container(
                 padding: const EdgeInsets.all(12),
                 decoration: MoeG2Decoration(
                   radius: 8,
-                  color: colors.muted.withValues(alpha: 0.08),
+                  color: colors.primary.withValues(alpha: 0.1),
                   border: Border.all(
-                    color: colors.muted.withValues(alpha: 0.18),
+                    color: colors.primary.withValues(alpha: 0.3),
                   ),
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.hub_outlined, color: colors.primary, size: 18),
-                    const SizedBox(width: 8),
                     Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            selectedEntry?.providerName ?? '选择渠道模型',
-                            style: TextStyle(
-                              color: colors.text,
-                              fontSize: 14,
-                              fontWeight: MoeFontWeights.emphasis,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            selectedEntry == null
-                                ? '仅显示已配置 key 的 TTS 模型'
-                                : selectedEntry.displayName,
-                            style: TextStyle(
-                              color: colors.muted,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
+                      child: Text(
+                        _localAudioFileName ?? '本地文件',
+                        style: TextStyle(color: colors.text, fontSize: 14),
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    Icon(Icons.chevron_right, color: colors.muted, size: 20),
+                    if (!_isBuiltIn)
+                      GestureDetector(
+                        onTap: _submitting
+                            ? null
+                            : () {
+                                _deleteFileIfNeeded(
+                                  _localAudioPath,
+                                  keepIfOriginal: true,
+                                );
+                                setState(() {
+                                  _localAudioPath = null;
+                                  _localAudioFileName = null;
+                                });
+                              },
+                        child: MoeButtonSurface(
+                          radius: 999,
+                          child: Padding(
+                            padding: const EdgeInsets.all(4),
+                            child: Icon(
+                              Icons.close,
+                              color: colors.muted,
+                              size: 18,
+                            ),
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),
+            ],
+            const SizedBox(height: 16),
+            _buildSectionTitle('参考文本（选填）', colors),
+            const SizedBox(height: 4),
+            Text(
+              '与参考音频对应的文本。部分渠道在在线创建音色时会要求必填。',
+              style: TextStyle(color: colors.muted, fontSize: 12),
             ),
-            if (selectedEntry != null) ...[
-              const SizedBox(height: 12),
-              _buildInfoCard(
-                icon: Icons.info_outline,
-                text: _buildBindingCapabilityText(
-                  entry: selectedEntry,
-                  capabilities: selectedCapabilities,
-                  bindingContext: selectedContext,
-                ),
-                color: colors.primary,
-              ),
-            ],
-            if (selectedCapabilities?.hasExpirationPolicy == true &&
-                selectedCapabilities?.expirationDescription != null) ...[
-              const SizedBox(height: 12),
-              _buildInfoCard(
-                icon: Icons.schedule_outlined,
-                text: selectedCapabilities!.expirationDescription!,
-                color: colors.primary,
-              ),
-            ],
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             MoeTextField(
-              controller: _manualVoiceIdController,
-              hint: '手动填写渠道音色 ID',
+              controller: _promptTextController,
+              hint: '输入音频中说的话...',
+              maxLines: 2,
               enabled: !_isBuiltIn && !_submitting,
             ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: MoeSecondaryButton(
-                    label: '生成渠道音色',
-                    icon: Icons.auto_awesome,
-                    enabled: _canCreateBinding,
-                    onPressed: _canCreateBinding
-                        ? _createBindingForSelectedChannel
-                        : null,
+            const SizedBox(height: 16),
+            _buildSectionTitle('渠道绑定', colors),
+            const SizedBox(height: 4),
+            Text(
+              '先选渠道模型，再在线生成对应音色，或手动填写该渠道的音色 ID。',
+              style: TextStyle(color: colors.muted, fontSize: 12),
+            ),
+            const SizedBox(height: 8),
+            if (widget.availableModels.isEmpty)
+              _buildInfoCard(
+                text: '当前没有可用渠道。请先在模型设置里配置带 API Key 的 TTS 模型。',
+                color: colors.muted,
+              )
+            else ...[
+              GestureDetector(
+                onTap: _isBuiltIn || _submitting
+                    ? null
+                    : _showBindingModelSelector,
+                child: MoeButtonSurface(
+                  padding: const EdgeInsets.all(12),
+                  radius: 8,
+                  tintColor: colors.muted.withValues(alpha: 0.08),
+                  border: Border.all(
+                    color: colors.muted.withValues(alpha: 0.18),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              selectedEntry?.providerName ?? '选择渠道模型',
+                              style: TextStyle(
+                                color: colors.text,
+                                fontSize: 14,
+                                fontWeight: MoeFontWeights.emphasis,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              selectedEntry == null
+                                  ? '仅显示已配置 key 的 TTS 模型'
+                                  : selectedEntry.displayName,
+                              style: TextStyle(
+                                color: colors.muted,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(Icons.chevron_right, color: colors.muted, size: 20),
+                    ],
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: MoePrimaryButton(
-                    label: '手填音色 ID',
-                    icon: Icons.edit_outlined,
-                    enabled: !_isBuiltIn && !_submitting,
-                    onPressed:
-                        _isBuiltIn || _submitting ? null : _addManualBinding,
+              ),
+              if (selectedEntry != null) ...[
+                const SizedBox(height: 12),
+                _buildInfoCard(
+                  text: _buildBindingCapabilityText(
+                    entry: selectedEntry,
+                    capabilities: selectedCapabilities,
+                    bindingContext: selectedContext,
                   ),
+                  color: colors.primary,
                 ),
               ],
-            ),
+              if (selectedCapabilities?.hasExpirationPolicy == true &&
+                  selectedCapabilities?.expirationDescription != null) ...[
+                const SizedBox(height: 12),
+                _buildInfoCard(
+                  text: selectedCapabilities!.expirationDescription!,
+                  color: colors.primary,
+                ),
+              ],
+              const SizedBox(height: 12),
+              MoeTextField(
+                controller: _manualVoiceIdController,
+                hint: '手动填写渠道音色 ID',
+                enabled: !_isBuiltIn && !_submitting,
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: MoeSecondaryButton(
+                      label: '生成渠道音色',
+                      enabled: _canCreateBinding,
+                      onPressed: _canCreateBinding
+                          ? _createBindingForSelectedChannel
+                          : null,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: MoePrimaryButton(
+                      label: '手填音色 ID',
+                      enabled: !_isBuiltIn && !_submitting,
+                      onPressed: _isBuiltIn || _submitting
+                          ? null
+                          : _addManualBinding,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 16),
+            _buildBindingsSection(colors),
+            const SizedBox(height: 24),
+            if (_isBuiltIn)
+              MoePrimaryButton(
+                label: '关闭',
+                onPressed: () => Navigator.of(context).pop(),
+              )
+            else if (!_isEdit)
+              Row(
+                children: [
+                  Expanded(
+                    child: MoeSecondaryButton(
+                      label: '取消',
+                      onPressed: _submitting
+                          ? null
+                          : () {
+                              if (!_isEdit) {
+                                _deleteFileIfNeeded(_localAudioPath);
+                              }
+                              Navigator.of(context).pop();
+                            },
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: MoePrimaryButton(
+                      label: _submitting ? '添加中...' : '添加',
+                      onPressed: _submitting ? null : _save,
+                    ),
+                  ),
+                ],
+              ),
           ],
-          const SizedBox(height: 16),
-          _buildBindingsSection(colors),
-          const SizedBox(height: 24),
-          if (_isBuiltIn)
-            MoePrimaryButton(
-              label: '关闭',
-              onPressed: () => Navigator.of(context).pop(),
-            )
-          else
-            Row(
-              children: [
-                Expanded(
-                  child: MoeSecondaryButton(
-                    label: '取消',
-                    onPressed: _submitting
-                        ? null
-                        : () {
-                            if (!_isEdit) {
-                              _deleteFileIfNeeded(_localAudioPath);
-                            }
-                            Navigator.of(context).pop();
-                          },
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: MoePrimaryButton(
-                    label: _submitting ? '保存中...' : (_isEdit ? '保存' : '添加'),
-                    onPressed: _submitting ? null : _save,
-                  ),
-                ),
-              ],
-            ),
-        ],
+        ),
       ),
     );
   }
@@ -802,7 +833,6 @@ class _TtsVoicePresetEditorSheetContentState
   Widget _buildBindingsSection(MoeColors colors) {
     if (_bindings.isEmpty) {
       return _buildInfoCard(
-        icon: Icons.link_off_outlined,
         text: '当前还没有渠道音色绑定。你可以先保存基础素材，之后再回来补渠道 ID。',
         color: colors.muted,
       );
@@ -820,15 +850,11 @@ class _TtsVoicePresetEditorSheetContentState
             decoration: MoeG2Decoration(
               radius: 8,
               color: colors.primary.withValues(alpha: 0.08),
-              border: Border.all(
-                color: colors.primary.withValues(alpha: 0.16),
-              ),
+              border: Border.all(color: colors.primary.withValues(alpha: 0.16)),
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.link, color: colors.primary, size: 18),
-                const SizedBox(width: 8),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -869,12 +895,15 @@ class _TtsVoicePresetEditorSheetContentState
                 if (!_isBuiltIn)
                   GestureDetector(
                     onTap: _submitting ? null : () => _removeBinding(binding),
-                    child: Padding(
-                      padding: const EdgeInsets.all(4),
-                      child: Icon(
-                        Icons.delete_outline,
-                        color: colors.muted,
-                        size: 18,
+                    child: MoeButtonSurface(
+                      radius: 999,
+                      child: Padding(
+                        padding: const EdgeInsets.all(4),
+                        child: Icon(
+                          Icons.delete_outline,
+                          color: colors.muted,
+                          size: 18,
+                        ),
                       ),
                     ),
                   ),
@@ -941,11 +970,7 @@ class _TtsVoicePresetEditorSheetContentState
     );
   }
 
-  Widget _buildInfoCard({
-    required IconData icon,
-    required String text,
-    required Color color,
-  }) {
+  Widget _buildInfoCard({required String text, required Color color}) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(12),
@@ -956,13 +981,8 @@ class _TtsVoicePresetEditorSheetContentState
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: color, size: 18),
-          const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              text,
-              style: TextStyle(color: color, fontSize: 12),
-            ),
+            child: Text(text, style: TextStyle(color: color, fontSize: 12)),
           ),
         ],
       ),
@@ -975,7 +995,7 @@ class _TtsVoicePresetEditorSheetContentState
   }
 
   void _deleteFileIfNeeded(String? path, {bool keepIfOriginal = false}) {
-    if (path == null || path.isEmpty) return;
+    if (path == null || path.isEmpty || path == _savedLocalPath) return;
     if (keepIfOriginal && path == widget.preset?.localAudioPath) {
       return;
     }

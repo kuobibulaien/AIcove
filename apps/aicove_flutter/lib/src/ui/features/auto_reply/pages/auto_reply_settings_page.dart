@@ -3,14 +3,9 @@
 /// 管理 AI 主动回复的各项设置。
 ///
 /// 重构记录：
-/// - 2025-12-31: 拆分为多个组件文件，主页面精简至约280行
-///   - 提取 AutoReplyIntroCard 介绍卡片
-///   - 提取 DailyLimitCard 每日限制卡片
-///   - 提取 IntervalCard 间隔卡片
-///   - 提取 QuietHoursCard 免打扰卡片
-///   - 提取 AnalyzerModelCard 模型选择卡片
-///   - 提取 AnalyzerPromptCard 提示词卡片
-///   - 对话框改用底部弹窗 (MoeBottomSheet)
+/// - 2025-12-31: 拆分为多个组件文件，对话框改用底部弹窗 (MoeBottomSheet)
+/// - 2026-09-15: 重写为 MoeSettingsGroup/MoeSettingsRow 分组式设置页；
+///   历史日志移入独立页面，Android 保活合并为一张可点击检查清单
 library;
 
 import 'dart:async';
@@ -21,17 +16,15 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../../../../core/services/android_keep_alive_manager.dart';
 import '../../../../ui/theme/tokens.dart';
-import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../../features/auto_reply/data/auto_reply_trigger.dart';
 import '../../../../features/auto_reply/data/auto_reply_trigger_controller.dart';
-import '../../../../features/auto_reply/data/auto_reply_trigger_storage.dart';
 import '../../../../features/auto_reply/presentation/widgets/auto_reply_trigger_form.dart';
-import '../widgets/auto_reply_history_log_card.dart';
 import '../widgets/auto_reply_settings_cards.dart';
 import '../widgets/auto_reply_dialogs.dart';
+import 'auto_reply_history_log_page.dart';
 import 'auto_reply_trigger_list_page.dart';
 
 class AutoReplySettingsPage extends ConsumerStatefulWidget {
@@ -48,17 +41,13 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage>
   bool _initialized = false;
   bool _saving = false;
   bool _loadingKeepAliveStatus = false;
-  bool _loadingHistoryLogs = false;
   AndroidKeepAliveStatus? _keepAliveStatus;
-  List<AutoReplyTriggerLog> _historyLogs = const <AutoReplyTriggerLog>[];
-  final AutoReplyTriggerStorage _triggerStorage = AutoReplyTriggerStorage();
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     unawaited(_refreshKeepAliveStatus(silent: true));
-    unawaited(_loadHistoryLogs(silent: true));
   }
 
   @override
@@ -71,7 +60,6 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_refreshKeepAliveStatus(silent: true));
-      unawaited(_loadHistoryLogs(silent: true));
     }
   }
 
@@ -81,8 +69,10 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage>
     _initialized = true;
   }
 
-  Future<void> _persist(AutoReplySettings next,
-      {bool showToast = false}) async {
+  Future<void> _persist(
+    AutoReplySettings next, {
+    bool showToast = false,
+  }) async {
     setState(() {
       _draft = next;
       _saving = true;
@@ -115,8 +105,11 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage>
     }
   }
 
-  void _updateDraft(AutoReplySettings next,
-      {bool saveImmediately = true, bool showToast = false}) {
+  void _updateDraft(
+    AutoReplySettings next, {
+    bool saveImmediately = true,
+    bool showToast = false,
+  }) {
     setState(() => _draft = next);
     if (saveImmediately) {
       _persist(next, showToast: showToast);
@@ -152,27 +145,6 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage>
     }
   }
 
-  Future<void> _loadHistoryLogs({bool silent = false}) async {
-    if (mounted) {
-      setState(() => _loadingHistoryLogs = true);
-    }
-    try {
-      final logs = await _triggerStorage.loadLogs();
-      if (!mounted) return;
-      setState(() {
-        _historyLogs = logs;
-      });
-    } catch (e) {
-      if (mounted && !silent) {
-        MoeToast.error(context, '读取历史日志失败: $e');
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _loadingHistoryLogs = false);
-      }
-    }
-  }
-
   Future<bool> _ensureNotificationPermission() async {
     if (!AndroidKeepAliveManager.isSupported) return true;
     const permission = Permission.notification;
@@ -200,10 +172,7 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage>
     }
 
     await _persist(
-      draft.copyWith(
-        enabled: enabled,
-        guardModeEnabled: enabled,
-      ),
+      draft.copyWith(enabled: enabled, guardModeEnabled: enabled),
       showToast: true,
     );
 
@@ -221,10 +190,10 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage>
         final reason = !status.notificationPermissionGranted
             ? '主动回复已开启，但通知权限没开；守护通知可能只会出现在系统任务管理器里。'
             : !status.notificationsEnabled
-                ? '主动回复已开启，但系统把 AIcove 的通知总开关关掉了；守护通知不会出现在通知栏。'
-                : !status.guardNotificationChannelEnabled
-                    ? '主动回复已开启，但“AI 守护模式”通知渠道被关闭了；请到通知设置里重新打开。'
-                    : '主动回复已开启，但系统暂时还没把守护通知展示出来，您可以点“刷新状态”再看一眼。';
+            ? '主动回复已开启，但系统把 AIcove 的通知总开关关掉了；守护通知不会出现在通知栏。'
+            : !status.guardNotificationChannelEnabled
+            ? '主动回复已开启，但“AI 守护模式”通知渠道被关闭了；请到通知设置里重新打开。'
+            : '主动回复已开启，但系统暂时还没把守护通知展示出来，您可以在「后台运行」里刷新状态再看一眼。';
         MoeToast.warning(context, reason);
         return;
       }
@@ -242,10 +211,7 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage>
     AutoReplySettings draft,
     bool enabled,
   ) async {
-    await _persist(
-      draft.copyWith(allowExactAlarm: enabled),
-      showToast: true,
-    );
+    await _persist(draft.copyWith(allowExactAlarm: enabled), showToast: true);
 
     if (!mounted || !enabled || !AndroidKeepAliveManager.isSupported) return;
 
@@ -259,6 +225,16 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage>
         MoeToast.warning(context, '未能直接打开精准提醒设置，请手动到系统设置里放行。');
       }
     }
+  }
+
+  Future<void> _handleNotificationTap() async {
+    final status = _keepAliveStatus;
+    if (status != null && !status.notificationPermissionGranted) {
+      await _ensureNotificationPermission();
+      await _refreshKeepAliveStatus(silent: true);
+      return;
+    }
+    await _handleOpenNotificationSettings();
   }
 
   Future<void> _handleRequestBatteryWhitelist() async {
@@ -303,33 +279,31 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage>
     }
   }
 
+  Future<void> _handleOpenExactAlarmSettings() async {
+    final opened = await AndroidKeepAliveManager.openExactAlarmSettings();
+    if (!mounted) return;
+    if (opened) {
+      MoeToast.info(context, '请在系统页面允许精准提醒，返回后状态会自动刷新。');
+    } else {
+      MoeToast.warning(context, '未能直接打开精准提醒设置，请手动到系统设置里放行。');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    ref.listen<AutoReplyTriggerEvent?>(
-      autoReplyTriggerEventProvider,
-      (previous, next) {
-        if (next == null || !mounted) return;
-        MoeToast.info(context, _eventMessage(next));
-        ref.read(autoReplyTriggerEventProvider.notifier).state = null;
-        unawaited(_loadHistoryLogs(silent: true));
-      },
-    );
+    ref.listen<AutoReplyTriggerEvent?>(autoReplyTriggerEventProvider, (
+      previous,
+      next,
+    ) {
+      if (next == null || !mounted) return;
+      MoeToast.info(context, _eventMessage(next));
+      ref.read(autoReplyTriggerEventProvider.notifier).state = null;
+    });
 
     final settingsAsync = ref.watch(appSettingsProvider);
-    final colors = context.moeColors;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('主动回复设置'),
-        backgroundColor: colors.headerColor,
-        foregroundColor: colors.headerContentColor,
-        elevation: 0,
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(borderWidth),
-          child: Container(height: borderWidth, color: colors.borderLight),
-        ),
-      ),
-      backgroundColor: colors.surface,
+    return MoePageScaffold(
+      appBar: const MoeAppBar(title: '主动回复', showBackButton: true),
       body: settingsAsync.when(
         loading: () => const Center(child: MoeLoadingIndicator()),
         error: (e, _) => Center(
@@ -339,396 +313,242 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage>
             description: '$e',
           ),
         ),
-        data: (settings) {
-          _ensureDraft(settings);
-          final draft = _draft ?? settings.autoReplySettings;
-          return Column(
-            children: [
-              if (_saving)
-                const LinearProgressIndicator(minHeight: 2)
-              else
-                const SizedBox(height: 2),
-              Expanded(
-                child: ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: [
-                    const AutoReplyIntroCard(),
-                    const SizedBox(height: 12),
-                    _buildActionButtons(colors),
-                    const SizedBox(height: 16),
-                    AutoReplyHistoryLogCard(
-                      logs: _historyLogs,
-                      loading: _loadingHistoryLogs,
-                      onRefresh: () => _loadHistoryLogs(),
-                    ),
-                    const SizedBox(height: 16),
-                    _buildEnabledSwitch(draft, colors),
-                    const SizedBox(height: 16),
-                    _buildReminderToolsSwitch(draft, colors),
-                    if (!draft.enabled) _buildDisabledHint(colors),
-                    if (draft.enabled) ...[
-                      const SizedBox(height: 16),
-                      _buildKeepAliveCard(draft, colors),
-                      const SizedBox(height: 16),
-                      DailyLimitCard(
-                        draft: draft,
-                        onChanged: (value, {bool immediate = false}) {
-                          final next =
-                              (_draft ?? draft).copyWith(dailyLimit: value);
-                          if (immediate) {
-                            _persist(next);
-                          } else {
-                            setState(() => _draft = next);
-                          }
-                        },
-                      ),
-                      const SizedBox(height: 16),
-                      IntervalCard(
-                        draft: draft,
-                        onChanged: (value, {bool immediate = false}) {
-                          final next = (_draft ?? draft)
-                              .copyWith(minIntervalMinutes: value);
-                          if (immediate) {
-                            _persist(next);
-                          } else {
-                            setState(() => _draft = next);
-                          }
-                        },
-                      ),
-                      const SizedBox(height: 16),
-                      QuietHoursCard(
-                        draft: draft,
-                        onEnabledChanged: (value) => _updateDraft(
-                            draft.copyWith(quietHoursEnabled: value)),
-                        onPickTime: (isStart) => _pickTime(draft, isStart),
-                      ),
-                      const SizedBox(height: 16),
-                      _buildExactAlarmSwitch(draft, colors),
-                      const SizedBox(height: 16),
-                      AnalyzerModelCard(
-                        draft: draft,
-                        settings: settings,
-                        onTap: () => _showModelPicker(draft, settings),
-                      ),
-                      const SizedBox(height: 16),
-                      AnalyzerPromptCard(
-                        draft: draft,
-                        onEdit: () => _showEditPromptSheet(draft),
-                        onReset: () {
-                          final next = draft.copyWith(
-                            analyzerPrompt:
-                                AutoReplySettings.defaultAnalyzerPrompt,
-                          );
-                          _updateDraft(next, showToast: true);
-                        },
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ],
-          );
-        },
+        data: (settings) => _buildContent(settings),
       ),
     );
   }
 
-  Widget _buildKeepAliveCard(AutoReplySettings draft, MoeColors colors) {
-    if (!AndroidKeepAliveManager.isSupported) {
-      return MoeG2ClipRRect(
-        radius: MoeSmoothRadii.sm,
-        child: Material(
-          color: colors.panel,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _buildContent(AppSettings settings) {
+    _ensureDraft(settings);
+    final draft = _draft ?? settings.autoReplySettings;
+    final pendingCount =
+        ref
+            .watch(autoReplyTriggersProvider)
+            .valueOrNull
+            ?.where(
+              (t) => t.isActive || t.status == AutoReplyTriggerStatus.paused,
+            )
+            .length ??
+        0;
+
+    return MoeSettingsContent(
+      child: Column(
+        children: [
+          if (_saving)
+            const LinearProgressIndicator(minHeight: 2)
+          else
+            const SizedBox(height: 2),
+          Expanded(
+            child: ListView(
+              padding: MoeSettingsLayout.verticalListPadding,
               children: [
-                Row(
+                // ===== 总开关 =====
+                MoeSettingsGroup(
+                  titleFirst: true,
                   children: [
-                    Icon(Icons.phone_android_outlined, color: colors.primary),
-                    const SizedBox(width: 8),
-                    const Expanded(
-                      child: Text(
-                        '通知栏前台保活',
-                        style: TextStyle(fontWeight: MoeFontWeights.emphasis),
+                    MoeSettingsRow(
+                      label: '主动回复',
+                      subtitle: draft.enabled
+                          ? '开启中，AI 会在合适的时机主动联系你'
+                          : '关闭后，AI 只在你发消息时回应',
+                      trailingType: MoeSettingsRowTrailing.switchControl,
+                      switchValue: draft.enabled,
+                      onSwitchChanged: (value) =>
+                          _handleEnabledChanged(draft, value),
+                    ),
+                    MoeSettingsRow(
+                      label: '允许 AI 设定提醒',
+                      subtitle: !draft.enabled
+                          ? '需先开启主动回复；开启后 AI 才能在聊天里管理提醒'
+                          : draft.allowAiSetReminders
+                          ? 'AI 可在聊天中创建、查询和删除提醒'
+                          : 'AI 不会再替你设置或管理提醒',
+                      trailingType: MoeSettingsRowTrailing.switchControl,
+                      switchValue: draft.allowAiSetReminders,
+                      onSwitchChanged: (value) => _updateDraft(
+                        draft.copyWith(allowAiSetReminders: value),
+                        showToast: true,
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  '当前平台不支持 Android 通知栏前台保活。主动回复仍会正常保存和调度，但后台稳定性说明仅适用于 Android。',
-                  style: TextStyle(
-                    fontSize: 13,
-                    height: 1.4,
-                    color: colors.textSecondary,
-                  ),
+                AutoReplySectionFooter(
+                  draft.enabled
+                      ? '后台 Agent 会分析对话状态，自动排程并发送主动消息${AndroidKeepAliveManager.isSupported ? '，同时启用通知栏前台保活' : ''}。'
+                      : '关闭后后台 Agent 不再排程主动消息；已创建的触发器会保留但不会发送。',
                 ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
+                const SizedBox(height: MoeSettingsLayout.sectionGap),
 
-    final status = _keepAliveStatus;
-    final deviceLabel = status?.deviceLabel;
-    final isXiaomi = status?.isXiaomi == true;
-    final guardRunning = status?.serviceRunning == true;
-    final notificationPermissionReady =
-        status?.notificationPermissionGranted == true;
-    final notificationsReady = status?.notificationsEnabled == true;
-    final guardChannelReady = status?.guardNotificationChannelEnabled != false;
-    final notificationVisible = status?.notificationVisibleInDrawer == true;
-    final batteryReady = status?.batteryOptimizationIgnored == true;
-    final exactReady = status?.canScheduleExactAlarms == true;
-    final startError = (status?.lastStartError ?? '').trim();
-    final keepAliveSubtitle = guardRunning
-        ? notificationVisible
-            ? '主动回复开启后，应用已挂载到通知栏前台服务；系统回收后也会尽量自恢复。'
-            : '守护服务已经启动，但通知目前没有出现在通知栏；通常是通知权限、应用通知总开关或守护渠道被关闭。'
-        : '主动回复一开启就会尝试拉起前台服务；如果通知栏还没出现，通常是通知权限或系统限制导致。';
-    final tipText = !notificationPermissionReady
-        ? '当前没拿到通知权限，Android 13 及以上系统里，前台服务通知可能只会出现在任务管理器，不会进通知栏。'
-        : !notificationsReady
-            ? '系统把 AIcove 的应用通知总开关关掉了，守护通知不会出现在通知栏。'
-            : !guardChannelReady
-                ? '“AI 守护模式”这个通知渠道被关闭了；即使守护服务启动，通知也可能被系统直接隐藏。'
-                : isXiaomi
-                    ? '检测到小米设备，建议按“通知 -> 电池无限制 -> 自启动 -> 后台保护”的顺序全部放开。'
-                    : '建议至少放开通知、电池优化和后台保护，这样主动回复在后台会更稳。';
-
-    return MoeG2ClipRRect(
-      radius: MoeSmoothRadii.sm,
-      child: Material(
-        color: colors.panel,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.shield_moon_outlined, color: colors.primary),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text(
-                      '通知栏前台保活',
-                      style: TextStyle(fontWeight: MoeFontWeights.emphasis),
-                    ),
-                  ),
-                  if (_loadingKeepAliveStatus)
-                    SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation(colors.primary),
+                // ===== 触发器 =====
+                MoeSettingsGroup(
+                  title: '触发器',
+                  children: [
+                    MoeSettingsRow(
+                      label: '待触发',
+                      subtitle: '已排程、尚未发送的主动消息',
+                      trailingType: MoeSettingsRowTrailing.text,
+                      detailText: pendingCount > 0 ? '$pendingCount 条' : '无',
+                      onTap: () => Navigator.of(context).push(
+                        ParallaxSlidePageRoute(
+                          page: const AutoReplyTriggerListPage(),
+                        ),
                       ),
                     ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Text(
-                deviceLabel?.isNotEmpty == true
-                    ? '当前设备：$deviceLabel'
-                    : 'Android 上可用，适合国产机型后台保活。',
-                style: TextStyle(fontSize: 13, color: colors.textSecondary),
-              ),
-              const SizedBox(height: 12),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: MoeG2Decoration(
-                  radius: 10,
-                  color: colors.surfaceAlt,
-                  border: Border.all(color: colors.borderLight),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(
-                      guardRunning
-                          ? Icons.notifications_active_outlined
-                          : Icons.notifications_paused_outlined,
-                      size: 18,
-                      color: guardRunning ? colors.primary : colors.muted,
+                    MoeSettingsRow(
+                      label: '新建触发',
+                      subtitle: '手动创建一条到点发送的主动消息',
+                      onTap: () =>
+                          showCreateAutoReplyTriggerSheet(context, ref),
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        keepAliveSubtitle,
-                        style: TextStyle(
-                          fontSize: 13,
-                          height: 1.4,
-                          color: colors.textSecondary,
+                    MoeSettingsRow(
+                      label: '历史记录',
+                      subtitle: '后台 Agent 决策与触发发送日志',
+                      onTap: () => Navigator.of(context).push(
+                        ParallaxSlidePageRoute(
+                          page: const AutoReplyHistoryLogPage(),
                         ),
                       ),
                     ),
                   ],
                 ),
-              ),
-              if (startError.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  decoration: MoeG2Decoration(
-                    radius: 10,
-                    color: colors.toastError.withValues(alpha: 0.08),
-                    border: Border.all(
-                      color: colors.toastError.withValues(alpha: 0.25),
-                    ),
+
+                if (draft.enabled) ...[
+                  const SizedBox(height: MoeSettingsLayout.sectionGap),
+
+                  // ===== 频率与免打扰 =====
+                  MoeSettingsGroup(
+                    title: '频率与免打扰',
+                    children: [
+                      AutoReplySliderTile(
+                        label: '每日上限',
+                        valueText: '${draft.dailyLimit} 次/天',
+                        value: draft.dailyLimit.toDouble(),
+                        min: 1,
+                        max: 6,
+                        divisions: 5,
+                        hint: '超过后当天不再主动发消息，建议 1~5 次',
+                        onChanged: (value) => setState(
+                          () => _draft = (_draft ?? draft).copyWith(
+                            dailyLimit: value.round(),
+                          ),
+                        ),
+                        onChangeEnd: (value) => _persist(
+                          (_draft ?? draft).copyWith(dailyLimit: value.round()),
+                        ),
+                      ),
+                      AutoReplySliderTile(
+                        label: '最短间隔',
+                        valueText: _formatInterval(draft.minIntervalMinutes),
+                        value: draft.minIntervalMinutes.toDouble(),
+                        min: 30,
+                        max: 360,
+                        divisions: 11,
+                        hint: '两条主动消息之间的冷却时间',
+                        onChanged: (value) => setState(
+                          () => _draft = (_draft ?? draft).copyWith(
+                            minIntervalMinutes: value.round(),
+                          ),
+                        ),
+                        onChangeEnd: (value) => _persist(
+                          (_draft ?? draft).copyWith(
+                            minIntervalMinutes: value.round(),
+                          ),
+                        ),
+                      ),
+                      MoeSettingsRow(
+                        label: '夜间免打扰',
+                        subtitle: draft.quietHoursEnabled
+                            ? '${draft.quietHoursStart} ~ ${draft.quietHoursEnd} 不发送'
+                            : '关闭后夜间也可能收到主动消息',
+                        trailingType: MoeSettingsRowTrailing.switchControl,
+                        switchValue: draft.quietHoursEnabled,
+                        onSwitchChanged: (value) => _updateDraft(
+                          draft.copyWith(quietHoursEnabled: value),
+                        ),
+                      ),
+                      if (draft.quietHoursEnabled) ...[
+                        MoeSettingsRow(
+                          label: '开始时间',
+                          trailingType: MoeSettingsRowTrailing.text,
+                          detailText: draft.quietHoursStart,
+                          onTap: () => _pickTime(draft, true),
+                        ),
+                        MoeSettingsRow(
+                          label: '结束时间',
+                          trailingType: MoeSettingsRowTrailing.text,
+                          detailText: draft.quietHoursEnd,
+                          onTap: () => _pickTime(draft, false),
+                        ),
+                      ],
+                      MoeSettingsRow(
+                        label: '更准时的提醒',
+                        subtitle: _exactAlarmSubtitle(draft),
+                        trailingType: MoeSettingsRowTrailing.switchControl,
+                        switchValue: draft.allowExactAlarm,
+                        onSwitchChanged: (value) =>
+                            _handleExactAlarmChanged(draft, value),
+                      ),
+                    ],
                   ),
-                  child: Text(
-                    '最近一次守护启动失败：$startError',
-                    style: TextStyle(
-                      fontSize: 13,
-                      height: 1.4,
-                      color: colors.textSecondary,
-                    ),
+                  const SizedBox(height: MoeSettingsLayout.sectionGap),
+
+                  // ===== 后台 Agent =====
+                  MoeSettingsGroup(
+                    title: '后台 Agent',
+                    children: [
+                      MoeSettingsRow(
+                        label: '独立模型',
+                        subtitle: '主动回复由独立后台 Agent 负责，可用便宜的小模型',
+                        trailingType: MoeSettingsRowTrailing.text,
+                        detailText: _analyzerModelLabel(draft),
+                        onTap: () => _showModelPicker(draft, settings),
+                      ),
+                      MoeSettingsRow(
+                        label: '分析提示词',
+                        subtitle: '后台 Agent 判断何时主动发消息所用的提示词',
+                        trailingType: MoeSettingsRowTrailing.text,
+                        detailText:
+                            draft.analyzerPrompt ==
+                                AutoReplySettings.defaultAnalyzerPrompt
+                            ? '默认'
+                            : '已自定义',
+                        onTap: () => _showEditPromptSheet(draft),
+                      ),
+                      if (draft.analyzerPrompt !=
+                          AutoReplySettings.defaultAnalyzerPrompt)
+                        MoeSettingsRow(
+                          label: '恢复默认提示词',
+                          labelColor: context.moeColors.primary,
+                          trailingType: MoeSettingsRowTrailing.none,
+                          onTap: () => _updateDraft(
+                            draft.copyWith(
+                              analyzerPrompt:
+                                  AutoReplySettings.defaultAnalyzerPrompt,
+                            ),
+                            showToast: true,
+                          ),
+                        ),
+                    ],
                   ),
-                ),
+
+                  // ===== Android 后台运行 =====
+                  if (AndroidKeepAliveManager.isSupported) ...[
+                    const SizedBox(height: MoeSettingsLayout.sectionGap),
+                    AutoReplyKeepAliveSection(
+                      status: _keepAliveStatus,
+                      loading: _loadingKeepAliveStatus,
+                      onRefresh: _refreshKeepAliveStatus,
+                      onNotificationTap: _handleNotificationTap,
+                      onBatteryTap: _handleRequestBatteryWhitelist,
+                      onAutoStartTap: _handleOpenAutoStartSettings,
+                      onBackgroundProtectionTap:
+                          _handleOpenBackgroundProtectionSettings,
+                      onExactAlarmTap: _handleOpenExactAlarmSettings,
+                    ),
+                  ],
+                ],
+                const SizedBox(height: MoeSettingsLayout.sectionGap),
               ],
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _buildStatusPill(
-                    colors: colors,
-                    icon: Icons.shield_outlined,
-                    label: guardRunning ? '守护服务已运行' : '守护服务待启动',
-                    active: guardRunning,
-                  ),
-                  _buildStatusPill(
-                    colors: colors,
-                    icon: Icons.notifications_outlined,
-                    label: notificationPermissionReady ? '通知权限已开' : '通知权限未开',
-                    active: notificationPermissionReady,
-                  ),
-                  _buildStatusPill(
-                    colors: colors,
-                    icon: Icons.notifications_none_outlined,
-                    label: notificationsReady ? '应用通知已开' : '应用通知已关',
-                    active: notificationsReady,
-                  ),
-                  _buildStatusPill(
-                    colors: colors,
-                    icon: Icons.mark_chat_read_outlined,
-                    label: notificationVisible ? '守护通知可见' : '守护通知被隐藏',
-                    active: notificationVisible,
-                  ),
-                  _buildStatusPill(
-                    colors: colors,
-                    icon: Icons.tune_outlined,
-                    label: guardChannelReady ? '守护渠道已开' : '守护渠道已关',
-                    active: guardChannelReady,
-                  ),
-                  _buildStatusPill(
-                    colors: colors,
-                    icon: Icons.battery_saver_outlined,
-                    label: batteryReady ? '电池已无限制' : '电池仍受限',
-                    active: batteryReady,
-                  ),
-                  _buildStatusPill(
-                    colors: colors,
-                    icon: Icons.alarm_on_outlined,
-                    label: exactReady ? '精准提醒已授权' : '精准提醒未授权',
-                    active: exactReady,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: MoeG2Decoration(
-                  radius: 10,
-                  color: colors.surfaceAlt,
-                  border: Border.all(color: colors.borderLight),
-                ),
-                child: Text(
-                  tipText,
-                  style: TextStyle(
-                      fontSize: 13, height: 1.4, color: colors.textSecondary),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: [
-                  MoePrimaryButton(
-                    label: '电池白名单',
-                    icon: Icons.battery_5_bar_outlined,
-                    onPressed: _handleRequestBatteryWhitelist,
-                  ),
-                  MoeSecondaryButton(
-                    label: '通知设置',
-                    icon: Icons.notifications_active_outlined,
-                    onPressed: _handleOpenNotificationSettings,
-                  ),
-                  MoeSecondaryButton(
-                    label: '自启动设置',
-                    icon: Icons.restart_alt_outlined,
-                    onPressed: _handleOpenAutoStartSettings,
-                  ),
-                  MoeSecondaryButton(
-                    label: '后台保护',
-                    icon: Icons.security_outlined,
-                    onPressed: _handleOpenBackgroundProtectionSettings,
-                  ),
-                  MoeSecondaryButton(
-                    label: '刷新状态',
-                    icon: Icons.refresh,
-                    onPressed: _loadingKeepAliveStatus
-                        ? null
-                        : () => _refreshKeepAliveStatus(),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStatusPill({
-    required MoeColors colors,
-    required IconData icon,
-    required String label,
-    required bool active,
-  }) {
-    final activeColor = active ? colors.toastSuccess : colors.muted;
-    final backgroundColor = active
-        ? colors.toastSuccess.withValues(alpha: 0.12)
-        : colors.surfaceAlt;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: MoeG2Decoration(
-        radius: 10,
-        color: backgroundColor,
-        border: Border.all(
-          color: active
-              ? colors.toastSuccess.withValues(alpha: 0.25)
-              : colors.borderLight,
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 16, color: activeColor),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: MoeFontWeights.emphasis,
-              color: active ? colors.text : colors.textSecondary,
             ),
           ),
         ],
@@ -736,107 +556,36 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage>
     );
   }
 
-  Widget _buildActionButtons(MoeColors colors) {
-    return Wrap(
-      spacing: 12,
-      runSpacing: 12,
-      children: [
-        MoeSecondaryButton(
-          label: '查看待触发提醒',
-          icon: Icons.list_alt_outlined,
-          onPressed: () {
-            Navigator.of(context).push(
-              ParallaxSlidePageRoute(page: const AutoReplyTriggerListPage()),
-            );
-          },
-        ),
-        MoePrimaryButton(
-          label: '创建自定义触发',
-          icon: Icons.flash_on,
-          onPressed: () => showCreateAutoReplyTriggerSheet(context, ref),
-        ),
-      ],
-    );
+  String _formatInterval(int minutes) {
+    if (minutes < 60) return '$minutes 分钟';
+    if (minutes % 60 == 0) return '${minutes ~/ 60} 小时';
+    return '${(minutes / 60).toStringAsFixed(1)} 小时';
   }
 
-  Widget _buildEnabledSwitch(AutoReplySettings draft, MoeColors colors) {
-    return MoeSettingsRow(
-      icon: Icons.chat_bubble_outline,
-      label: '允许后台 Agent 主动发消息',
-      subtitle: draft.enabled
-          ? '后台 Agent 会自动排程提醒，并直接挂载通知栏前台保活'
-          : '关闭后只保留普通聊天回应，不再主动发消息',
-      trailingType: MoeSettingsRowTrailing.switchControl,
-      switchValue: draft.enabled,
-      onSwitchChanged: (value) => _handleEnabledChanged(draft, value),
-      showDivider: false,
-    );
-  }
-
-  Widget _buildReminderToolsSwitch(
-    AutoReplySettings draft,
-    MoeColors colors,
-  ) {
-    final subtitle = !draft.enabled
-        ? '总开关关闭时不会生效；打开后，AI 才能在对话里创建和管理提醒'
-        : draft.allowAiSetReminders
-            ? 'AI 可在聊天中创建、查询、搜索和删除提醒'
-            : '关闭后，AI 不会再替你设置或管理提醒';
-
-    return MoeSettingsRow(
-      icon: Icons.alarm_add_outlined,
-      label: '允许 AI 设定提醒',
-      subtitle: subtitle,
-      trailingType: MoeSettingsRowTrailing.switchControl,
-      switchValue: draft.allowAiSetReminders,
-      onSwitchChanged: (value) => _updateDraft(
-        draft.copyWith(allowAiSetReminders: value),
-        showToast: true,
-      ),
-      showDivider: false,
-    );
-  }
-
-  Widget _buildDisabledHint(MoeColors colors) {
-    return Container(
-      margin: const EdgeInsets.only(top: 12),
-      padding: const EdgeInsets.all(12),
-      decoration: MoeG2Decoration(
-        radius: 12,
-        color: colors.surface,
-        border: Border.all(color: colors.borderLight),
-      ),
-      child: Text(
-        '关闭后后台 Agent 不会再排程主动消息，也不会挂载通知栏前台保活。需要时再重新打开即可。',
-        style: TextStyle(fontSize: 13, color: colors.textSecondary),
-      ),
-    );
-  }
-
-  Widget _buildExactAlarmSwitch(AutoReplySettings draft, MoeColors colors) {
+  String _exactAlarmSubtitle(AutoReplySettings draft) {
+    if (!AndroidKeepAliveManager.isSupported) {
+      return '仅 Android 生效，可减少高优先级提醒的延迟';
+    }
     final status = _keepAliveStatus;
-    final subtitle = !AndroidKeepAliveManager.isSupported
-        ? '仅 Android 生效，开启后可减少高优先级提醒延迟'
-        : status?.canScheduleExactAlarms == true
-            ? '系统已允许精准提醒，高优先级触发会更准时'
-            : draft.allowExactAlarm
-                ? '已开启，但系统还没授权，请到系统设置里放行'
-                : '需要系统授权，能减小延迟但更耗电';
+    if (status?.canScheduleExactAlarms == true) {
+      return '系统已授权精准提醒，高优先级触发更准时';
+    }
+    return draft.allowExactAlarm
+        ? '已开启，但系统还没授权，可在「后台运行」里放行'
+        : '需要系统授权，能减少延迟但更耗电';
+  }
 
-    return MoeSettingsRow(
-      icon: Icons.access_time,
-      label: '尝试使用精准提醒',
-      subtitle: subtitle,
-      trailingType: MoeSettingsRowTrailing.switchControl,
-      switchValue: draft.allowExactAlarm,
-      onSwitchChanged: (value) => _handleExactAlarmChanged(draft, value),
-      showDivider: false,
-    );
+  String _analyzerModelLabel(AutoReplySettings draft) {
+    final model = draft.analyzerModel;
+    if (model == null || model.isEmpty) return '跟随对话模型';
+    final provider = draft.analyzerProvider;
+    return provider == null || provider.isEmpty ? model : '$model ($provider)';
   }
 
   Future<void> _pickTime(AutoReplySettings draft, bool isStart) async {
-    final initial =
-        _parseTime(isStart ? draft.quietHoursStart : draft.quietHoursEnd);
+    final initial = _parseTime(
+      isStart ? draft.quietHoursStart : draft.quietHoursEnd,
+    );
     final picked = await showTimePicker(
       context: context,
       initialTime: initial,
@@ -859,7 +608,9 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage>
   }
 
   Future<void> _showModelPicker(
-      AutoReplySettings draft, AppSettings settings) async {
+    AutoReplySettings draft,
+    AppSettings settings,
+  ) async {
     final result = await showAnalyzerModelPicker(
       context: context,
       draft: draft,
@@ -870,19 +621,27 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage>
     final next = result.model == null
         ? draft.copyWith(clearAnalyzerModel: true, clearAnalyzerProvider: true)
         : draft.copyWith(
-            analyzerModel: result.model, analyzerProvider: result.provider);
+            analyzerModel: result.model,
+            analyzerProvider: result.provider,
+          );
     _updateDraft(next, showToast: true);
   }
 
   Future<void> _showEditPromptSheet(AutoReplySettings draft) async {
-    final result = await showEditPromptSheet(
+    await showMoeAutoSaveTextEditor(
       context: context,
-      currentPrompt: draft.analyzerPrompt,
+      title: '编辑 AI 分析提示词',
+      initialValue: draft.analyzerPrompt,
+      maxLines: 12,
+      onSave: (text) async {
+        if (text.trim().isEmpty) throw const FormatException('提示词不能为空');
+        final next = (_draft ?? draft).copyWith(analyzerPrompt: text.trim());
+        await ref
+            .read(appSettingsProvider.notifier)
+            .updateAutoReplySettings(next);
+        if (mounted) setState(() => _draft = next);
+      },
     );
-    if (result != null && result.trim().isNotEmpty) {
-      final next = draft.copyWith(analyzerPrompt: result.trim());
-      _updateDraft(next, showToast: true);
-    }
   }
 
   String _eventMessage(AutoReplyTriggerEvent event) {

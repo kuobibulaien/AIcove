@@ -1,17 +1,19 @@
 /// 联系人列表次级标题栏组件
-/// 
+///
 /// 遵循 DRY 原则：从 ContactsPage 和 SplitChatPage 抽取的公共组件
-/// 
+///
 /// 包含：
 /// - 未读消息计数
 /// - 排序模式按钮
 /// - 升序/降序切换按钮
-/// 
+///
 /// 更新记录：
 /// - 2025-12-06: 从 ContactsPage/SplitChatPage 抽取，消除代码重复
 /// - 2025-12-06: 接入皮肤系统
 library;
+
 import 'package:flutter/material.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../ui/theme/skin_provider.dart';
 import '../../../../ui/theme/tokens.dart';
@@ -25,10 +27,7 @@ class ContactsSubHeader extends ConsumerWidget {
   /// 搜索关键字（用于过滤计数）
   final String searchQuery;
 
-  const ContactsSubHeader({
-    super.key,
-    this.searchQuery = '',
-  });
+  const ContactsSubHeader({super.key, this.searchQuery = ''});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -37,7 +36,7 @@ class ContactsSubHeader extends ConsumerWidget {
     final sortMode = ref.watch(sortModeProvider);
     final isAscending = ref.watch(sortAscendingProvider);
     final listAsync = ref.watch(conversationsProvider);
-    
+
     // 计算未读消息总数（累加每个会话的 unreadCount）
     final count = listAsync.maybeWhen(
       data: (list) {
@@ -78,20 +77,21 @@ class ContactsSubHeader extends ConsumerWidget {
             message: '排序方式',
             child: GestureDetector(
               onTap: () => _showSortDialog(context, ref, sortMode),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: MoeG2Decoration(
-                  radius: 4,
-                  color: colors.surface,
-                  border: Border.all(color: colors.divider),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.02),
-                      offset: const Offset(0, 1),
-                      blurRadius: 1,
-                    ),
-                  ],
+              child: MoeButtonSurface(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
                 ),
+                radius: 4,
+                tintColor: Colors.transparent,
+                border: Border.all(color: colors.divider),
+                shadows: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.02),
+                    offset: const Offset(0, 1),
+                    blurRadius: 1,
+                  ),
+                ],
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -124,14 +124,13 @@ class ContactsSubHeader extends ConsumerWidget {
                 color: Colors.transparent,
                 child: InkWell(
                   onTap: () {
-                    ref.read(sortAscendingProvider.notifier).state = !isAscending;
+                    ref.read(sortAscendingProvider.notifier).state =
+                        !isAscending;
                   },
-                  child: Container(
+                  child: MoeButtonSurface(
                     padding: const EdgeInsets.all(4),
-                    decoration: MoeG2Decoration(
-                      radius: 4,
-                      border: Border.all(color: colors.divider),
-                    ),
+                    radius: 4,
+                    border: Border.all(color: colors.divider),
                     child: Icon(
                       isAscending ? Icons.arrow_upward : Icons.arrow_downward,
                       size: 16,
@@ -147,7 +146,11 @@ class ContactsSubHeader extends ConsumerWidget {
     );
   }
 
-  void _showSortDialog(BuildContext context, WidgetRef ref, SortMode currentMode) {
+  void _showSortDialog(
+    BuildContext context,
+    WidgetRef ref,
+    SortMode currentMode,
+  ) {
     showDialog(
       context: context,
       builder: (context) => MomotalkSortDialog(
@@ -155,7 +158,8 @@ class ContactsSubHeader extends ConsumerWidget {
         onModeChanged: (mode) {
           ref.read(sortModeProvider.notifier).state = mode;
           // 切换模式时重置排序方向
-          ref.read(sortAscendingProvider.notifier).state = mode == SortMode.name;
+          ref.read(sortAscendingProvider.notifier).state =
+              mode == SortMode.name;
           Navigator.of(context).pop();
         },
       ),

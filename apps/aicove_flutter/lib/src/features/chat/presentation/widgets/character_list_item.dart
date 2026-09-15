@@ -5,7 +5,7 @@
 library;
 
 import 'package:flutter/material.dart';
-import 'package:aicove_flutter/src/core/utils/avatar_helper.dart';
+import '../../../../ui/shared/widgets/moe_avatar.dart';
 import '../../../../ui/theme/skin_provider.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
@@ -57,20 +57,29 @@ class CharacterListItem extends StatelessWidget {
     final skin = context.skin;
     final colors = context.moeColors;
 
-    final bgColor = isActive ? colors.surfaceAlt : colors.surface;
+    final bgColor = isActive ? colors.primary : Colors.transparent;
     final borderColor = colors.borderLight;
-    final titleColor = colors.text;
-    final subtitleColor = colors.muted;
-    final timeColor = colors.muted;
+    final titleColor = isActive ? Colors.white : colors.text;
+    final subtitleColor =
+        isActive ? Colors.white.withValues(alpha: 0.82) : colors.muted;
+    final timeColor = subtitleColor;
 
     return Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
         onTapDown: onTapDown,
+        onLongPress: onEdit,
+        canRequestFocus: false,
+        splashFactory: NoSplash.splashFactory,
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+        hoverColor: Colors.transparent,
+        focusColor: Colors.transparent,
+        overlayColor: WidgetStateProperty.all(Colors.transparent),
         child: Container(
           // 左右内边距，保证卡片内容居中
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           decoration: BoxDecoration(
             color: bgColor,
             border: Border(
@@ -81,22 +90,10 @@ class CharacterListItem extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // 左侧头像
-              Container(
-                width: 56,
-                height: 56,
-                decoration: MoeG2Decoration(
-                  radius: radiusBubble.x,
-                  color: colors.surface, // 使用主题背景色，自动适配深浅模式
-                  border: Border.all(
-                    color: colors.borderLight, // 添加细微描边，增强边界感
-                    width: 0.5,
-                  ),
-                ),
-                child: MoeG2ClipRRect(
-                  radius: radiusBubble.x,
-                  child: _buildAvatarContent(conversation),
-                ),
-              ),
+              MoeAvatar(
+                  name: conversation.displayName,
+                  avatarUrl: conversation.avatarUrl,
+                  characterImage: conversation.characterImage),
               const SizedBox(width: 12),
               // 中间：名称 + 最后一条消息
               Expanded(
@@ -125,7 +122,7 @@ class CharacterListItem extends StatelessWidget {
                             child: Icon(
                               Icons.push_pin,
                               size: 14,
-                              color: colors.focus,
+                              color: isActive ? Colors.white : colors.muted,
                             ),
                           ),
                       ],
@@ -149,7 +146,7 @@ class CharacterListItem extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              fontSize: 13,
+                              fontSize: 14,
                               color: subtitleColor,
                               height: 1.3,
                             ),
@@ -182,16 +179,16 @@ class CharacterListItem extends StatelessWidget {
                           const BoxConstraints(minWidth: 20, minHeight: 20),
                       decoration: MoeG2Decoration(
                         radius: 10,
-                        color: Color(0xFFFF4D4F),
+                        color: isActive ? Colors.white : colors.primary,
                       ),
                       child: Center(
                         child: Text(
                           conversation.unreadCount > 99
                               ? '99+'
                               : '${conversation.unreadCount}',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 11,
-                            color: Colors.white,
+                            color: isActive ? colors.primary : Colors.white,
                             fontWeight: MoeFontWeights.emphasis,
                             height: 1.2,
                           ),
@@ -206,13 +203,4 @@ class CharacterListItem extends StatelessWidget {
       ),
     );
   }
-}
-
-Widget _buildAvatarContent(Conversation conversation) {
-  final helper = AvatarHelper(
-    avatarUrl: conversation.avatarUrl,
-    characterImage: conversation.characterImage,
-    displayName: conversation.displayName,
-  );
-  return helper.buildAvatarWidget();
 }

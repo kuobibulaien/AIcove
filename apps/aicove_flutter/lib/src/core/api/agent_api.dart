@@ -12,7 +12,8 @@ import 'image_providers/image_provider_adapter_factory.dart';
 import 'providers/google_api_mode.dart';
 import 'providers/provider_chat_api_path.dart';
 import 'providers/provider_adapter_factory.dart';
-import 'providers/provider_adapter.dart' show ProviderAdapter, ToolCall;
+import 'providers/provider_adapter.dart'
+    show ProviderAdapter, ProviderChatRequestOptions, ToolCall;
 import '../../features/observability/trace_models.dart';
 import '../../features/observability/trace_store.dart';
 
@@ -548,6 +549,7 @@ class AgentApiClient {
     String? providerApiBase,
     Map<String, dynamic>? customConfig,
     List<Map<String, dynamic>>? tools,
+    ProviderChatRequestOptions? requestOptions,
     bool streaming = false,
     bool allowAuthorizationFallback = false,
   }) {
@@ -569,6 +571,7 @@ class AgentApiClient {
       topP: topP,
       customConfig: requestCustomConfig,
       tools: tools,
+      requestOptions: requestOptions,
     );
     if (streaming && adapter.name != 'gemini') {
       payload['stream'] = true;
@@ -793,6 +796,7 @@ class AgentApiClient {
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
     List<Map<String, dynamic>>? tools, // 原生 Tool Calling 工具定义
+    ProviderChatRequestOptions? requestOptions,
     TraceLogger? trace, // 可选的追踪日志器
     String? turnId,
     int? roundIndex,
@@ -812,6 +816,7 @@ class AgentApiClient {
       providerApiKey: providerApiKey,
       customConfig: customConfig,
       tools: tools,
+      requestOptions: requestOptions,
       trace: trace,
       turnId: turnId,
       roundIndex: roundIndex,
@@ -838,6 +843,7 @@ class AgentApiClient {
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
     List<Map<String, dynamic>>? tools,
+    ProviderChatRequestOptions? requestOptions,
     void Function(String delta)? onTextDelta,
     void Function()? onToolCallsDetected,
     TraceLogger? trace,
@@ -859,6 +865,7 @@ class AgentApiClient {
       providerApiKey: providerApiKey,
       customConfig: customConfig,
       tools: tools,
+      requestOptions: requestOptions,
       onTextDelta: onTextDelta,
       onToolCallsDetected: onToolCallsDetected,
       trace: trace,

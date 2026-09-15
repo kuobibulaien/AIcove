@@ -4,6 +4,7 @@ import '../../../core/app_logger.dart' show TraceLogger;
 import '../../observability/trace_models.dart' show TraceContext;
 import '../../settings/app_settings.dart';
 import '../application/chat_ports.dart';
+import '../application/chat_edit.dart';
 import '../domain/conversation.dart';
 import '../domain/message.dart';
 import '../services/chat_history_store.dart';
@@ -11,10 +12,18 @@ import '../services/chat_send_service.dart';
 import '../services/chat_types.dart'
     show ApiCallResult, ApiConfig, AssistantMessageBuildResult;
 
-class ChatHistoryStoreAdapter implements ChatHistoryPort {
+class ChatHistoryStoreAdapter implements ChatHistoryPort, ChatEditPort {
   const ChatHistoryStoreAdapter(this._historyStore);
 
   final ChatHistoryStore _historyStore;
+
+  @override
+  Future<ChatEditDraft> prepareEdit(String conversationId, String messageId) =>
+      _historyStore.prepareEdit(conversationId, messageId);
+
+  @override
+  Future<void> commitEdit(ChatEditDraft draft, Message replacement) =>
+      _historyStore.commitEdit(draft, replacement);
 
   @override
   Future<List<Message>> loadRawMessages(String conversationId) {
@@ -144,12 +153,10 @@ class ChatSendServiceAdapter implements ChatSendPort {
   Future<List<Message>> prepareHistoryFromStore({
     required Conversation conv,
     required Message userMsg,
-    required int limit,
   }) {
     return _sendService.prepareHistoryFromStore(
       conv: conv,
       userMsg: userMsg,
-      limit: limit,
     );
   }
 

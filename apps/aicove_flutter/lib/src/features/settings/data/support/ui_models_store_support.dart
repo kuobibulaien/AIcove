@@ -11,11 +11,28 @@ const kUiModelsLegacyStoreKeys = <String>[
   'mygril.ui_models.v1',
 ];
 
+/// NovelAI 文生图生产模型 ID。
+/// NovelAI 没有稳定的图片模型列表端点，目录随客户端版本受控维护；
+/// 顺序同时表达默认优先级：New（V5）在前，Legacy 在后。
+const kNovelAiV5FullModelId = 'nai-diffusion-5-full';
+
 const kNovelAiDefaultModels = <String>[
-  'nai-diffusion-4-5-curated',
+  kNovelAiV5FullModelId,
+  'nai-diffusion-5-curated',
   'nai-diffusion-4-5-full',
+  'nai-diffusion-4-5-curated',
+  'nai-diffusion-4-full',
+  'nai-diffusion-4-curated-preview',
   'nai-diffusion-3',
+  'nai-diffusion-furry-3',
 ];
+
+/// 既有 NovelAI 渠道升级到 V5 Full 默认模型的一次性迁移 id。
+const kNovelAiV5FullDefaultMigrationId = 'novelai_v5_full_default_20260821';
+
+/// 追加内置 Fish Audio 渠道的迁移 id。
+const kFishAudioProviderBackfillMigrationId =
+    'builtin_provider_fish_audio_20260904';
 
 const _novelAiModelAliases = <String, String>{
   // Older local presets used this id, but NovelAI now expects "curated".
@@ -26,219 +43,227 @@ const _novelAiModelAliases = <String, String>{
 /// 首次初始化时提供 DeepSeek 测试配置，删除后不再自动恢复。
 /// API Key 从 assets/local_keys.json 读取，不硬编码在代码中。
 Map<String, dynamic> buildDefaultUiModelsStoreData() => <String, dynamic>{
-      'providers': [
-        {
-          'id': 'deepseek',
-          'displayName': 'DeepSeek',
-          'apiKeys': <String>[],
-          'apiBaseUrl': 'https://api.deepseek.com/v1',
-          'enabled': true,
-          'models': <String>['deepseek-reasoner', 'deepseek-chat'],
-          'visible_models': <String>['deepseek-reasoner', 'deepseek-chat'],
-          'hidden_models': <String>[],
-          'capabilities': <String>['chat'],
-        },
-        {
-          'id': 'openrouter',
-          'displayName': 'OpenRouter',
-          'apiKeys': <String>[],
-          'apiBaseUrl': 'https://openrouter.ai/api/v1',
-          'enabled': false,
-          'models': <String>[],
-          'visible_models': <String>[],
-          'hidden_models': <String>[],
-          'capabilities': <String>['chat'],
-        },
-        {
-          'id': 'minimax',
-          'displayName': 'MiniMax',
-          'apiKeys': <String>[],
-          'apiBaseUrl': 'https://api.minimaxi.com/v1',
-          'enabled': true,
-          'models': <String>[
-            'speech-2.8-hd',
-            'speech-2.8-turbo',
-            'speech-2.6-hd',
-            'speech-2.6-turbo',
-            'speech-02-hd',
-            'speech-02-turbo',
-          ],
-          'visible_models': <String>[
-            'speech-2.8-hd',
-            'speech-2.8-turbo',
-          ],
-          'hidden_models': <String>[],
-          'capabilities': <String>['tts'],
-        },
-        {
-          'id': 'kimi',
-          'displayName': 'Kimi',
-          'apiKeys': <String>[],
-          'apiBaseUrl': 'https://api.moonshot.cn/v1',
-          'enabled': true,
-          'models': <String>[],
-          'visible_models': <String>[],
-          'hidden_models': <String>[],
-          'capabilities': <String>['chat'],
-        },
-        {
-          'id': 'aliyun',
-          'displayName': '阿里云',
-          'apiKeys': <String>[],
-          'apiBaseUrl': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-          'enabled': true,
-          'models': <String>[
-            'cosyvoice-v3-plus',
-            'qwen3-tts-vc-realtime-2026-01-15',
-          ],
-          'visible_models': <String>[
-            'cosyvoice-v3-plus',
-            'qwen3-tts-vc-realtime-2026-01-15',
-          ],
-          'hidden_models': <String>[],
-          'capabilities': <String>['tts'],
-        },
-        {
-          'id': 'novelai',
-          'displayName': 'NovelAI',
-          'apiKeys': <String>[],
-          'apiBaseUrl': 'https://image.novelai.net',
-          'enabled': false,
-          'models': <String>[
-            'nai-diffusion-4-5-curated',
-            'nai-diffusion-4-5-full',
-            'nai-diffusion-3',
-          ],
-          'visible_models': <String>['nai-diffusion-4-5-curated'],
-          'hidden_models': <String>[],
-          'capabilities': <String>['image'],
-          'customConfig': <String, dynamic>{
-            'requestFormat': 'novelai',
-            'defaultImageModel': 'nai-diffusion-4-5-full',
-          },
-        },
-        {
-          'id': 'siliconflow',
-          'displayName': '硅基流动',
-          'apiKeys': <String>[],
-          'apiBaseUrl': 'https://api.siliconflow.cn/v1',
-          'enabled': false,
-          'models': <String>[],
-          'visible_models': <String>[],
-          'hidden_models': <String>[],
-          'capabilities': <String>['chat'],
-        },
-        {
-          'id': 'gemini',
-          'displayName': kGoogleGeminiProviderDisplayName,
-          'apiKeys': <String>[],
-          'apiBaseUrl': kGeminiDeveloperApiBase,
-          'enabled': false,
-          'models': List<String>.from(kGeminiDeveloperDefaultModels),
-          'visible_models': <String>[
-            'gemini-2.5-flash',
-            'gemini-2.5-pro',
-            'gemini-2.5-flash-lite',
-          ],
-          'hidden_models': <String>[
-            'gemini-2.0-flash',
-            'gemini-2.0-flash-lite',
-            'gemini-3-flash-preview',
-          ],
-          'capabilities': <String>['chat'],
-          'custom_config': <String, dynamic>{
-            'requestFormat': 'gemini',
-          },
-        },
-        {
-          'id': 'zai',
-          'displayName': 'Z.AI',
-          'apiKeys': <String>[],
-          'apiBaseUrl': kZaiGeneralApiBase,
-          'enabled': false,
-          'models': List<String>.from(kZaiDefaultChatModels),
-          'visible_models': <String>['glm-5', 'glm-5-turbo', 'glm-4.7'],
-          'hidden_models': <String>[
-            'glm-4.7-flash',
-            'glm-4.7-flashx',
-            'glm-4.6',
-            'glm-4.5',
-            'glm-4.5-air',
-          ],
-          'capabilities': <String>['chat'],
-          'custom_config': <String, dynamic>{
-            'requestFormat': 'openai',
-          },
-        },
-        {
-          'id': 'volcengine',
-          'displayName': '火山引擎',
-          'apiKeys': <String>[],
-          'apiBaseUrl': 'https://ark.cn-beijing.volces.com/api/v3',
-          'enabled': false,
-          'models': <String>[],
-          'visible_models': <String>[],
-          'hidden_models': <String>[],
-          'capabilities': <String>['chat'],
-        },
-      ],
+  'providers': [
+    {
+      'id': 'deepseek',
+      'displayName': 'DeepSeek',
+      'apiKeys': <String>[],
+      'apiBaseUrl': 'https://api.deepseek.com/v1',
+      'enabled': true,
+      'models': <String>['deepseek-reasoner', 'deepseek-chat'],
       'visible_models': <String>['deepseek-reasoner', 'deepseek-chat'],
-      'default_model': 'deepseek-reasoner',
-      'model_display_names': <String, String>{
-        'deepseek-chat': 'DeepSeek Chat',
-        'deepseek-reasoner': 'DeepSeek Reasoner',
+      'hidden_models': <String>[],
+      'capabilities': <String>['chat'],
+    },
+    {
+      'id': 'openrouter',
+      'displayName': 'OpenRouter',
+      'apiKeys': <String>[],
+      'apiBaseUrl': 'https://openrouter.ai/api/v1',
+      'enabled': false,
+      'models': <String>[],
+      'visible_models': <String>[],
+      'hidden_models': <String>[],
+      'capabilities': <String>['chat'],
+    },
+    {
+      'id': 'minimax',
+      'displayName': 'MiniMax',
+      'apiKeys': <String>[],
+      'apiBaseUrl': 'https://api.minimaxi.com/v1',
+      'enabled': true,
+      'models': <String>[
+        'speech-2.8-hd',
+        'speech-2.8-turbo',
+        'speech-2.6-hd',
+        'speech-2.6-turbo',
+        'speech-02-hd',
+        'speech-02-turbo',
+      ],
+      'visible_models': <String>['speech-2.8-hd', 'speech-2.8-turbo'],
+      'hidden_models': <String>[],
+      'capabilities': <String>['tts'],
+    },
+    {
+      'id': 'kimi',
+      'displayName': 'Kimi',
+      'apiKeys': <String>[],
+      'apiBaseUrl': 'https://api.moonshot.cn/v1',
+      'enabled': true,
+      'models': <String>[],
+      'visible_models': <String>[],
+      'hidden_models': <String>[],
+      'capabilities': <String>['chat'],
+    },
+    {
+      'id': 'aliyun',
+      'displayName': '阿里云',
+      'apiKeys': <String>[],
+      'apiBaseUrl': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      'enabled': true,
+      'models': <String>[
+        'cosyvoice-v3-plus',
+        'qwen3-tts-vc-realtime-2026-01-15',
+      ],
+      'visible_models': <String>[
+        'cosyvoice-v3-plus',
+        'qwen3-tts-vc-realtime-2026-01-15',
+      ],
+      'hidden_models': <String>[],
+      'capabilities': <String>['tts'],
+    },
+    {
+      'id': 'fish_audio',
+      'displayName': 'Fish Audio',
+      'apiKeys': <String>[],
+      'apiBaseUrl': 'https://api.fish.audio/v1',
+      'enabled': false,
+      'models': <String>['s2.1-pro-free', 's2.1-pro'],
+      'visible_models': <String>['s2.1-pro-free', 's2.1-pro'],
+      'hidden_models': <String>[],
+      'capabilities': <String>['tts'],
+      'custom_config': <String, dynamic>{'requestFormat': 'fish_audio'},
+    },
+    {
+      'id': 'novelai',
+      'displayName': 'NovelAI',
+      'apiKeys': <String>[],
+      'apiBaseUrl': 'https://image.novelai.net',
+      'enabled': false,
+      'models': List<String>.from(kNovelAiDefaultModels),
+      'visible_models': <String>[
+        kNovelAiV5FullModelId,
+        'nai-diffusion-5-curated',
+      ],
+      'hidden_models': <String>[],
+      'capabilities': <String>['image'],
+      'custom_config': <String, dynamic>{
+        'requestFormat': 'novelai',
+        'defaultImageModel': kNovelAiV5FullModelId,
       },
-      'backend_api_key': '',
-      'applied_migrations': <String>[kZaiProviderBackfillMigrationId],
-      'image_generation_enabled': false,
-      'history_message_limit': 100,
-      'message_chunking_enabled': false,
-      'message_format_config': null,
-      'stream_segment_delay_seconds': 0.0,
-      'text_scale_factor': 1.0,
-      'ui_scale_factor': 1.0,
-      'windows_window_controls_side': WindowControlButtonSide.left.value,
-      'auto_reply_settings': _defaultAutoReplySettings(),
-      'enhanced_dialogue_settings': _defaultEnhancedDialogueSettings(),
-      'call_flow_settings': _defaultCallFlowSettings(),
-      'chat_background_color': 'default',
-      'is_dark_mode': false,
-      'use_system_theme': true,
-      'hide_user_avatar': true,
-      'user_avatar': null,
-      'user_name': null,
-      'prefer_vision_assistant': false,
-      'skip_vision_compat_dialog': false,
-    };
+    },
+    {
+      'id': 'siliconflow',
+      'displayName': '硅基流动',
+      'apiKeys': <String>[],
+      'apiBaseUrl': 'https://api.siliconflow.cn/v1',
+      'enabled': false,
+      'models': <String>[],
+      'visible_models': <String>[],
+      'hidden_models': <String>[],
+      'capabilities': <String>['chat'],
+    },
+    {
+      'id': 'gemini',
+      'displayName': kGoogleGeminiProviderDisplayName,
+      'apiKeys': <String>[],
+      'apiBaseUrl': kGeminiDeveloperApiBase,
+      'enabled': false,
+      'models': List<String>.from(kGeminiDeveloperDefaultModels),
+      'visible_models': <String>[
+        'gemini-2.5-flash',
+        'gemini-2.5-pro',
+        'gemini-2.5-flash-lite',
+      ],
+      'hidden_models': <String>[
+        'gemini-2.0-flash',
+        'gemini-2.0-flash-lite',
+        'gemini-3-flash-preview',
+      ],
+      'capabilities': <String>['chat'],
+      'custom_config': <String, dynamic>{'requestFormat': 'gemini'},
+    },
+    {
+      'id': 'zai',
+      'displayName': 'Z.AI',
+      'apiKeys': <String>[],
+      'apiBaseUrl': kZaiGeneralApiBase,
+      'enabled': false,
+      'models': List<String>.from(kZaiDefaultChatModels),
+      'visible_models': <String>['glm-5', 'glm-5-turbo', 'glm-4.7'],
+      'hidden_models': <String>[
+        'glm-4.7-flash',
+        'glm-4.7-flashx',
+        'glm-4.6',
+        'glm-4.5',
+        'glm-4.5-air',
+      ],
+      'capabilities': <String>['chat'],
+      'custom_config': <String, dynamic>{'requestFormat': 'openai'},
+    },
+    {
+      'id': 'volcengine',
+      'displayName': '火山引擎',
+      'apiKeys': <String>[],
+      'apiBaseUrl': 'https://ark.cn-beijing.volces.com/api/v3',
+      'enabled': false,
+      'models': <String>[],
+      'visible_models': <String>[],
+      'hidden_models': <String>[],
+      'capabilities': <String>['chat'],
+    },
+  ],
+  'visible_models': <String>['deepseek-reasoner', 'deepseek-chat'],
+  'default_model': 'deepseek-reasoner',
+  'model_display_names': <String, String>{
+    'deepseek-chat': 'DeepSeek Chat',
+    'deepseek-reasoner': 'DeepSeek Reasoner',
+  },
+  'backend_api_key': '',
+  'applied_migrations': <String>[
+    kZaiProviderBackfillMigrationId,
+    kNovelAiV5FullDefaultMigrationId,
+    kFishAudioProviderBackfillMigrationId,
+  ],
+  'image_generation_enabled': true,
+  'context_window_tokens': 272000,
+  'message_chunking_enabled': false,
+  'message_format_config': null,
+  'stream_segment_delay_seconds': 0.0,
+  'text_scale_factor': 1.0,
+  'ui_scale_factor': 1.0,
+  'windows_window_controls_side': WindowControlButtonSide.left.value,
+  'auto_reply_settings': _defaultAutoReplySettings(),
+  'enhanced_dialogue_settings': _defaultEnhancedDialogueSettings(),
+  'call_flow_settings': _defaultCallFlowSettings(),
+  'chat_background_color': 'default',
+  'is_dark_mode': false,
+  'use_system_theme': true,
+  'hide_user_avatar': true,
+  'expand_audio_text': true,
+  'user_avatar': null,
+  'user_name': null,
+  'skip_vision_compat_dialog': false,
+};
 
 Map<String, dynamic> _defaultAutoReplySettings() => <String, dynamic>{
-      'enabled': false,
-      'guard_mode_enabled': false,
-      'daily_limit': 3,
-      'min_interval_minutes': 120,
-      'quiet_hours_enabled': true,
-      'quiet_hours_start': '22:00',
-      'quiet_hours_end': '08:00',
-      'allow_exact_alarm': false,
-      'allow_ai_set_reminders': true,
-      'analyzer_prompt': AutoReplySettings.defaultAnalyzerPrompt,
-      'analyzer_model': null,
-      'analyzer_provider': null,
-    };
+  'enabled': false,
+  'guard_mode_enabled': false,
+  'daily_limit': 3,
+  'min_interval_minutes': 120,
+  'quiet_hours_enabled': true,
+  'quiet_hours_start': '22:00',
+  'quiet_hours_end': '08:00',
+  'allow_exact_alarm': false,
+  'allow_ai_set_reminders': true,
+  'analyzer_prompt': AutoReplySettings.defaultAnalyzerPrompt,
+  'analyzer_model': null,
+  'analyzer_provider': null,
+};
 
 Map<String, dynamic> _defaultEnhancedDialogueSettings() => <String, dynamic>{
-      'enabled': false,
-      'system_prompt': PromptBuiltinDefaults.enhancedDialogueSystemDefault,
-      'bootstrap_user_message':
-          PromptBuiltinDefaults.enhancedDialogueBootstrapUserDefault,
-      'recent_rounds': 3,
-    };
+  'enabled': false,
+  'system_prompt': PromptBuiltinDefaults.enhancedDialogueSystemDefault,
+  'bootstrap_user_message':
+      PromptBuiltinDefaults.enhancedDialogueBootstrapUserDefault,
+  'recent_rounds': 3,
+};
 
 Map<String, dynamic> _defaultCallFlowSettings() => <String, dynamic>{
-      'mode': 'auto',
-      'model_timeout_seconds': 120,
-      'tool_timeout_seconds': 30,
-    };
+  'mode': 'auto',
+  'model_timeout_seconds': 120,
+  'tool_timeout_seconds': 30,
+};
 
 bool isNovelAiProvider({
   required String providerId,
@@ -272,7 +297,28 @@ String normalizeNovelAiModelId(String modelId) {
   return _novelAiModelAliases[trimmed] ?? trimmed;
 }
 
+/// 受控目录优先：目录内模型按目录顺序前置，未知模型保持原顺序追加。
+/// NovelAI 目录顺序表达默认优先级，通用字母排序会破坏它，禁止对
+/// NovelAI 模型使用字母排序。
 List<String> normalizeNovelAiModels(Iterable<String> models) {
+  final fixed = <String>[];
+  for (final model in models) {
+    final normalized = normalizeNovelAiModelId(model);
+    if (normalized.isEmpty || fixed.contains(normalized)) continue;
+    fixed.add(normalized);
+  }
+  final result = <String>[];
+  for (final catalog in kNovelAiDefaultModels) {
+    if (fixed.contains(catalog)) result.add(catalog);
+  }
+  for (final model in fixed) {
+    if (!kNovelAiDefaultModels.contains(model)) result.add(model);
+  }
+  return result;
+}
+
+/// 仅做确定性别名规范化与去重，保持原有顺序（用于可见/隐藏等用户顺序）。
+List<String> normalizeNovelAiModelIds(Iterable<String> models) {
   final normalized = <String>[];
   for (final model in models) {
     final fixed = normalizeNovelAiModelId(model);
@@ -280,6 +326,96 @@ List<String> normalizeNovelAiModels(Iterable<String> models) {
     normalized.add(fixed);
   }
   return normalized;
+}
+
+/// NovelAI V5 Full 默认模型一次性迁移（通过 `applied_migrations` 保证幂等）。
+///
+/// 对每个被识别为 NovelAI 的 provider（id / base URL / requestFormat）：
+/// - 受控目录前置合并进模型列表，未知模型保持原顺序；
+/// - V5 Full 放到可见模型首位，保留其余可见值；
+/// - 默认值缺失或属于历史内置默认（V4.5 Curated / V4.5 Full / 旧
+///   V4.5 Curated Preview 别名）时升级为 V5 Full；明确的 V3、Furry V3、
+///   V4 与未知自定义默认值保持原样；
+/// - Token、base URL、启用状态、capabilities 与未知 custom_config 字段不变。
+bool applyNovelAiV5FullDefaultMigration(Map<String, dynamic> data) {
+  final applied = cleanSettingsStrings(data['applied_migrations']);
+  if (applied.contains(kNovelAiV5FullDefaultMigrationId)) return false;
+  applied.add(kNovelAiV5FullDefaultMigrationId);
+  data['applied_migrations'] = applied;
+
+  final providers = data['providers'];
+  if (providers is! List) return true;
+
+  for (var index = 0; index < providers.length; index += 1) {
+    final entry = providers[index];
+    if (entry is! Map) continue;
+    final provider = Map<String, dynamic>.from(entry.cast<String, dynamic>());
+    final id = (provider['id'] as String? ?? '').trim();
+    final apiBaseUrl = (provider['apiBaseUrl'] as String? ?? '').trim();
+    final customConfig = provider['custom_config'] is Map
+        ? Map<String, dynamic>.from(
+            provider['custom_config'] as Map<dynamic, dynamic>,
+          )
+        : <String, dynamic>{};
+    final requestFormat = customConfig['requestFormat']
+        ?.toString()
+        .trim()
+        .toLowerCase();
+    final isNovelAi =
+        isNovelAiProvider(providerId: id, apiBaseUrl: apiBaseUrl) ||
+        requestFormat == 'novelai' ||
+        requestFormat == 'nai';
+    if (!isNovelAi) continue;
+
+    // 受控目录前置合并，未知模型保持原顺序；可见但未在模型列表中的模型也保留。
+    final currentDefault =
+        customConfig['defaultImageModel']?.toString().trim() ?? '';
+    final normalizedDefault = normalizeNovelAiModelId(currentDefault);
+    final models = cleanSettingsStrings(provider['models']);
+    final merged = <String>[...kNovelAiDefaultModels];
+    for (final model in models) {
+      final fixed = normalizeNovelAiModelId(model);
+      if (fixed.isEmpty || merged.contains(fixed)) continue;
+      merged.add(fixed);
+    }
+    for (final model in cleanSettingsStrings(provider['visible_models'])) {
+      final fixed = normalizeNovelAiModelId(model);
+      if (fixed.isEmpty || merged.contains(fixed)) continue;
+      merged.add(fixed);
+    }
+    if (normalizedDefault.isNotEmpty && !merged.contains(normalizedDefault)) {
+      merged.add(normalizedDefault);
+    }
+    provider['models'] = merged;
+
+    final isHistoricalDefault =
+        normalizedDefault.isEmpty ||
+        normalizedDefault == 'nai-diffusion-4-5-curated' ||
+        normalizedDefault == 'nai-diffusion-4-5-full';
+
+    // V5 Full 放到可见模型首位，保留其余可见值。
+    final visible = cleanSettingsStrings(provider['visible_models']);
+    final visibleFixed = <String>[kNovelAiV5FullModelId];
+    // 非历史显式默认必须继续可被运行时选中；运行时只从可见图片模型中
+    // 接受 defaultImageModel，不能只保留配置字符串。
+    if (!isHistoricalDefault && normalizedDefault.isNotEmpty) {
+      visibleFixed.add(normalizedDefault);
+    }
+    for (final model in visible) {
+      final fixed = normalizeNovelAiModelId(model);
+      if (fixed.isEmpty || visibleFixed.contains(fixed)) continue;
+      visibleFixed.add(fixed);
+    }
+    provider['visible_models'] = visibleFixed;
+
+    // 缺失或历史内置默认值升级为 V5 Full；明确选择保持原样。
+    if (isHistoricalDefault) {
+      customConfig['defaultImageModel'] = kNovelAiV5FullModelId;
+    }
+    provider['custom_config'] = customConfig;
+    providers[index] = provider;
+  }
+  return true;
 }
 
 List<String> cleanSettingsStrings(dynamic source) {
@@ -350,9 +486,9 @@ List<String> deriveProviderCapabilities({
 }
 
 Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
-  int normalizeHistoryMessageLimit(num? value) {
-    final limit = value?.toInt() ?? 100;
-    return limit > 0 ? limit : 100;
+  int normalizeContextWindowTokens(num? value) {
+    final limit = value?.toInt() ?? 272000;
+    return limit > 0 ? limit : 272000;
   }
 
   Map<String, dynamic> normalizeAutoReplySettings(dynamic source) {
@@ -407,16 +543,16 @@ Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
       'allow_ai_set_reminders': source['allow_ai_set_reminders'] != false,
       'analyzer_prompt':
           (source['analyzer_prompt'] as String?)?.trim().isNotEmpty == true
-              ? (source['analyzer_prompt'] as String).trim()
-              : defaults['analyzer_prompt'],
+          ? (source['analyzer_prompt'] as String).trim()
+          : defaults['analyzer_prompt'],
       'analyzer_model':
           (source['analyzer_model'] as String?)?.trim().isNotEmpty == true
-              ? (source['analyzer_model'] as String).trim()
-              : null,
+          ? (source['analyzer_model'] as String).trim()
+          : null,
       'analyzer_provider':
           (source['analyzer_provider'] as String?)?.trim().isNotEmpty == true
-              ? (source['analyzer_provider'] as String).trim()
-              : null,
+          ? (source['analyzer_provider'] as String).trim()
+          : null,
     };
   }
 
@@ -498,10 +634,10 @@ Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
       var apiBaseUrl =
           (provider['apiBaseUrl'] as String? ?? 'https://api.openai.com/v1')
               .trim();
-      final enabled =
-          provider['enabled'] is bool ? provider['enabled'] as bool : true;
-      final models = cleanSettingsStrings(provider['models'])
-        ..sort(caseInsensitiveSettingsSort);
+      final enabled = provider['enabled'] is bool
+          ? provider['enabled'] as bool
+          : true;
+      final models = cleanSettingsStrings(provider['models']);
       final visible = cleanSettingsStrings(provider['visible_models']);
       final hidden = cleanSettingsStrings(provider['hidden_models']);
       final capabilities = cleanSettingsStrings(provider['capabilities']);
@@ -530,30 +666,32 @@ Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
         customConfig.remove('tts_models');
       }
 
-      final requestFormat =
-          customConfig['requestFormat']?.toString().trim().toLowerCase();
+      final requestFormat = customConfig['requestFormat']
+          ?.toString()
+          .trim()
+          .toLowerCase();
       final isNovelAi =
           isNovelAiProvider(providerId: id, apiBaseUrl: apiBaseUrl) ||
-              requestFormat == 'novelai' ||
-              requestFormat == 'nai';
+          requestFormat == 'novelai' ||
+          requestFormat == 'nai';
       if (isNovelAi) {
         apiBaseUrl = normalizeNovelAiBaseUrl(apiBaseUrl);
-        final fixedModels = normalizeNovelAiModels(models)
-          ..sort(caseInsensitiveSettingsSort);
+        final fixedModels = normalizeNovelAiModels(models);
         models
           ..clear()
           ..addAll(fixedModels);
 
-        final fixedVisible = normalizeNovelAiModels(visible);
+        final fixedVisible = normalizeNovelAiModelIds(visible);
         visible
           ..clear()
           ..addAll(fixedVisible.where((m) => models.contains(m)));
-        final fixedHidden = normalizeNovelAiModels(hidden);
+        final fixedHidden = normalizeNovelAiModelIds(hidden);
         hidden
           ..clear()
           ..addAll(
-            fixedHidden
-                .where((m) => models.contains(m) && !visible.contains(m)),
+            fixedHidden.where(
+              (m) => models.contains(m) && !visible.contains(m),
+            ),
           );
 
         customConfig['requestFormat'] = 'novelai';
@@ -567,6 +705,8 @@ Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
         } else if (models.isNotEmpty) {
           customConfig['defaultImageModel'] = models.first;
         }
+      } else {
+        models.sort(caseInsensitiveSettingsSort);
       }
 
       final visibleList = <String>[];
@@ -589,16 +729,18 @@ Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
         }
         hiddenList.add(model);
       }
-      final normalizedCapabilities = deriveProviderCapabilities(
-        providerId: id,
-        models: models,
-        modelTypes: modelTypes,
-        fallbackCapabilities: capabilities,
-      );
-      final contextMessageLimit =
-          (provider['context_message_limit'] as num?)?.toInt();
-      final maxContextTokens =
-          (provider['max_context_tokens'] as num?)?.toInt();
+      final normalizedCapabilities = isNovelAi && capabilities.isNotEmpty
+          ? capabilities
+          : deriveProviderCapabilities(
+              providerId: id,
+              models: models,
+              modelTypes: modelTypes,
+              fallbackCapabilities: capabilities,
+            );
+      final contextMessageLimit = (provider['context_message_limit'] as num?)
+          ?.toInt();
+      final maxContextTokens = (provider['max_context_tokens'] as num?)
+          ?.toInt();
 
       normalizedProviders.add({
         'id': id,
@@ -633,14 +775,19 @@ Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
 
   data['providers'] = normalizedProviders;
   data['visible_models'] = visibleUnion..sort(caseInsensitiveSettingsSort);
-  data['auto_reply_settings'] =
-      normalizeAutoReplySettings(data['auto_reply_settings']);
-  data['enhanced_dialogue_settings'] =
-      normalizeEnhancedDialogueSettings(data['enhanced_dialogue_settings']);
-  data['call_flow_settings'] =
-      normalizeCallFlowSettings(data['call_flow_settings']);
-  data['history_message_limit'] =
-      normalizeHistoryMessageLimit(data['history_message_limit'] as num?);
+  data['auto_reply_settings'] = normalizeAutoReplySettings(
+    data['auto_reply_settings'],
+  );
+  data['enhanced_dialogue_settings'] = normalizeEnhancedDialogueSettings(
+    data['enhanced_dialogue_settings'],
+  );
+  data['call_flow_settings'] = normalizeCallFlowSettings(
+    data['call_flow_settings'],
+  );
+  data.remove('history_message_limit'); // 退役的条数设置不转换成 token。
+  data['context_window_tokens'] = normalizeContextWindowTokens(
+    data['context_window_tokens'] as num?,
+  );
   data['stream_segment_delay_seconds'] =
       ((data['stream_segment_delay_seconds'] as num?)?.toDouble() ?? 0.0)
           .clamp(0.0, 5.0)
@@ -648,6 +795,5 @@ Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
   data['windows_window_controls_side'] = WindowControlButtonSide.fromValue(
     data['windows_window_controls_side']?.toString(),
   ).value;
-  data['prefer_vision_assistant'] = data['prefer_vision_assistant'] == true;
   return data;
 }

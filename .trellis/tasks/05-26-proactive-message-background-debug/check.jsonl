@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/frontend/index.md", "reason": "检查 Flutter 分层与验证要求。"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查测试、分析和手机运行验证结果。"}
-{"file": ".trellis/spec/agent-context/index.md", "reason": "检查主动消息后台投递契约是否满足。"}

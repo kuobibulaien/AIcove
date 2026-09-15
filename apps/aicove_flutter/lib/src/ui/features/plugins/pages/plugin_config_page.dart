@@ -18,13 +18,18 @@ class PluginConfigPage extends StatefulWidget {
   State<PluginConfigPage> createState() => _PluginConfigPageState();
 }
 
-class _PluginConfigPageState extends State<PluginConfigPage> {
+class _PluginConfigPageState extends State<PluginConfigPage>
+    with MoeAutoSaveState<PluginConfigPage> {
   late Map<String, dynamic> _currentConfig;
 
   @override
   void initState() {
     super.initState();
     _currentConfig = Map.from(widget.plugin.getConfig());
+    autoSave.configure(
+      save: _saveConfig,
+      snapshot: () => moeAutoSaveSignature(_currentConfig),
+    );
   }
 
   void _handleConfigChange(Map<String, dynamic> newConfig) {
@@ -34,75 +39,40 @@ class _PluginConfigPageState extends State<PluginConfigPage> {
   }
 
   Future<void> _saveConfig() async {
-    try {
-      // 验证所有字段
-      bool allValid = true;
-      for (final entry in widget.plugin.metadata.configSchema.entries) {
-        final value = _currentConfig[entry.key];
-        if (!entry.value.validate(value)) {
-          allValid = false;
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('配置项 "${entry.value.label}" 验证失败')),
-            );
-          }
-          return;
-        }
-      }
-
-      if (allValid) {
-        widget.onConfigChanged(_currentConfig);
-        
-        // 触发插件配置变更回调
-        await widget.plugin.onConfigChanged(_currentConfig);
-        
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('配置已保存')),
-          );
-          Navigator.pop(context);
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('保存失败: $e')),
-        );
+    final config = Map<String, dynamic>.from(_currentConfig);
+    for (final entry in widget.plugin.metadata.configSchema.entries) {
+      if (!entry.value.validate(config[entry.key])) {
+        throw FormatException('请检查${entry.value.label}');
       }
     }
+    await widget.plugin.onConfigChanged(config);
+    widget.onConfigChanged(config);
   }
 
   @override
   Widget build(BuildContext context) {
     final hasSchema = widget.plugin.metadata.configSchema.isNotEmpty;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('${widget.plugin.name} 设置'),
-        actions: [
-          if (hasSchema)
-            IconButton(
-              icon: const Icon(Icons.check),
-              onPressed: _saveConfig,
-            ),
-        ],
-      ),
-      body: hasSchema
-          ? ConfigFormWidget(
-              schema: widget.plugin.metadata.configSchema,
-              values: _currentConfig,
-              onChanged: _handleConfigChange,
-            )
-          : const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.settings_outlined, size: 64, color: Colors.grey),
-                  SizedBox(height: 16),
-                  Text('此插件无可配置项', style: TextStyle(color: Colors.grey)),
-                ],
+    return autoSavePage(
+      MoePageScaffold(
+        appBar: AppBar(title: Text('${widget.plugin.name} 设置')),
+        body: hasSchema
+            ? ConfigFormWidget(
+                schema: widget.plugin.metadata.configSchema,
+                values: _currentConfig,
+                onChanged: _handleConfigChange,
+              )
+            : const Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.settings_outlined, size: 64, color: Colors.grey),
+                    SizedBox(height: 16),
+                    Text('此插件无可配置项', style: TextStyle(color: Colors.grey)),
+                  ],
+                ),
               ),
-            ),
+      ),
     );
   }
 }

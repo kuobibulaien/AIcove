@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'package:crypto/crypto.dart';
 
 import 'package:http/http.dart' as http;
 
@@ -8,6 +10,7 @@ import '../../../core/utils/mime_utils.dart';
 import 'providers/tts_provider_factory.dart';
 import 'aliyun_qwen_tts_websocket.dart';
 import 'aliyun_voice_clone_service.dart';
+import 'synthesis/configurable_tts_synthesis_adapter.dart';
 import 'synthesis/minimax_tts_synthesis_adapter.dart';
 import 'synthesis/openai_compatible_tts_synthesis_adapter.dart';
 import 'synthesis/siliconflow_tts_synthesis_adapter.dart';
@@ -30,12 +33,15 @@ class TtsService {
       SiliconFlowTtsSynthesisAdapter();
   static const TtsSynthesisAdapter _minimaxSynthesisAdapter =
       MinimaxTtsSynthesisAdapter();
+  static const TtsSynthesisAdapter _configurableSynthesisAdapter =
+      ConfigurableTtsSynthesisAdapter();
 
   final TtsConfig config;
   final String? apiKey;
   final String requestUrl;
   final String requestFormat; // 请求格式标识
   final String? model; // 用户选择的模型
+  final Map<String, dynamic> customConfig;
 
   /// 音色创建回调，用于保存自动创建的阿里云音色
   final Future<void> Function(VoicePreset updatedPreset)? onVoiceCreated;
@@ -52,8 +58,18 @@ class TtsService {
     required this.requestUrl,
     this.requestFormat = 'openai_tts',
     this.model,
+    this.customConfig = const <String, dynamic>{},
     this.onVoiceCreated,
   });
+
+  /// Hash keeps account credentials out of cache keys logged by callers.
+  String get voiceCacheScope => sha256
+      .convert(
+        utf8.encode(
+          jsonEncode([config.selectedProviderId, requestUrl, apiKey]),
+        ),
+      )
+      .toString();
 
   /// 单次文本转换为语音（同步接口）
   ///
@@ -70,6 +86,34 @@ class TtsService {
     }
 
     final effectiveFormat = _resolveRequestFormat(url);
+    final preset = config.selectedVoicePreset;
+    final localPath = preset?.localAudioPath;
+    if (effectiveFormat == 'siliconflow_indextts' &&
+        localPath != null &&
+        localPath.isNotEmpty &&
+        (preset?.synthesis?.voiceId?.trim().isEmpty ?? true)) {
+      final file = File(localPath);
+      if (!await file.exists()) throw TtsException('参考音频文件不存在，请重新选择');
+      if (await file.length() > 20 * 1024 * 1024)
+        throw TtsException('参考音频不能超过20MB');
+      final bytes = await file.readAsBytes();
+      final audio =
+          'data:${MimeUtils.resolveAudioMimeType('', bytes)};base64,${base64Encode(bytes)}';
+      final material = VoicePreset.fromJson({
+        ...preset!.toJson(),
+        'localAudioPath': null,
+        'promptAudioUrl': audio,
+      });
+      return TtsService(
+        config: config.copyWith(voicePresets: [material]),
+        apiKey: apiKey,
+        requestUrl: requestUrl,
+        requestFormat: requestFormat,
+        model: model,
+        customConfig: customConfig,
+        onVoiceCreated: onVoiceCreated,
+      ).convert(text);
+    }
     final synthesisContext = _buildSynthesisContext(
       text: trimmed,
       rawUrl: url,
@@ -102,23 +146,27 @@ class TtsService {
     int? headersReceivedMs;
 
     // 详细日志：记录完整请求信息
-    AppLogger.info('TTS', '【请求详情】TTS 请求准备发送', metadata: {
-      'url': speechUri.toString(),
-      'method': 'POST',
-      'headers': headers
-          .map((k, v) => MapEntry(k, k == 'Authorization' ? 'Bearer ***' : v)),
-      'requestFormat': effectiveFormat,
-      'configuredRequestFormat': requestFormat,
-      if (synthesisContext.providerId != null)
-        'resolvedProviderId': synthesisContext.providerId,
-      'timeoutSeconds': timeout.inSeconds,
-      'selectedVoicePresetId': config.selectedVoicePresetId,
-      'selectedVoicePresetName': config.selectedVoicePreset?.name,
-      'effectivePromptAudioUrl': config.effectivePromptAudioUrl,
-      'effectivePromptText': config.effectivePromptText,
-      'requestBody（完整）': requestBody,
-      'requestBodyJson': requestBodyJson,
-    });
+    AppLogger.info(
+      'TTS',
+      '【请求详情】TTS 请求准备发送',
+      metadata: {
+        'url': speechUri.toString(),
+        'method': 'POST',
+        'headers': headers.map(
+          (k, v) => MapEntry(k, k == 'Authorization' ? 'Bearer ***' : v),
+        ),
+        'requestFormat': effectiveFormat,
+        'configuredRequestFormat': requestFormat,
+        if (synthesisContext.providerId != null)
+          'resolvedProviderId': synthesisContext.providerId,
+        'timeoutSeconds': timeout.inSeconds,
+        'selectedVoicePresetId': config.selectedVoicePresetId,
+        'selectedVoicePresetName': config.selectedVoicePreset?.name,
+        'hasReferenceAudio': config.effectivePromptAudioUrl?.isNotEmpty == true,
+        'referenceTextLength': config.effectivePromptText?.length ?? 0,
+        'requestBodyBytes': utf8.encode(requestBodyJson).length,
+      },
+    );
 
     try {
       final client = http.Client();
@@ -155,23 +203,26 @@ class TtsService {
 
       // 详细日志：记录响应信息
       final contentType = resp.headers['content-type'] ?? '';
-      final isAudio = contentType.contains('audio/') ||
+      final isAudio =
+          contentType.contains('audio/') ||
           contentType.contains('application/octet-stream');
 
-      AppLogger.info('TTS', '【响应详情】TTS 收到响应', metadata: {
-        'statusCode': resp.statusCode,
-        'contentType': contentType,
-        'isAudioResponse': isAudio,
-        'responseBodyLength': resp.bodyBytes.length,
-        'elapsedMs': sw.elapsedMilliseconds,
-        'headersReceivedMs': headersReceivedMs,
-        'responseBody（非音频时）': isAudio ? '(音频数据，已省略)' : resp.body,
-      });
+      AppLogger.info(
+        'TTS',
+        '【响应详情】TTS 收到响应',
+        metadata: {
+          'statusCode': resp.statusCode,
+          'contentType': contentType,
+          'isAudioResponse': isAudio,
+          'responseBodyLength': resp.bodyBytes.length,
+          'elapsedMs': sw.elapsedMilliseconds,
+          'headersReceivedMs': headersReceivedMs,
+          'responseBody（非音频时）': isAudio ? '(音频数据，已省略)' : resp.body,
+        },
+      );
 
       if (resp.statusCode != 200) {
-        throw TtsException(
-          'TTS 请求失败: ${resp.statusCode} - ${resp.body}',
-        );
+        throw TtsException('TTS 请求失败: ${resp.statusCode} - ${resp.body}');
       }
 
       // 如果是音频数据，转换为 Data URL
@@ -181,18 +232,24 @@ class TtsService {
           throw TtsException('TTS 返回的音频数据为空');
         }
 
-        final mimeType =
-            MimeUtils.resolveAudioMimeType(contentType, audioBytes);
+        final mimeType = MimeUtils.resolveAudioMimeType(
+          contentType,
+          audioBytes,
+        );
 
         // 转换为 Data URL
         final base64Audio = base64Encode(audioBytes);
         final dataUrl = 'data:$mimeType;base64,$base64Audio';
 
-        AppLogger.info('TTS', 'TTS 音频生成成功', metadata: {
-          'audioSize': audioBytes.length,
-          'mimeType': mimeType,
-          'responseContentType': contentType,
-        });
+        AppLogger.info(
+          'TTS',
+          'TTS 音频生成成功',
+          metadata: {
+            'audioSize': audioBytes.length,
+            'mimeType': mimeType,
+            'responseContentType': contentType,
+          },
+        );
 
         return TtsConvertResult(
           audioUrl: dataUrl,
@@ -208,19 +265,24 @@ class TtsService {
       rethrow;
     } on TimeoutException catch (e) {
       sw.stop();
-      AppLogger.error('TTS', 'TTS 请求超时', metadata: {
-        'error': e.toString(),
-        'stage': stage,
-        if (headersReceivedMs != null) 'headersReceivedMs': headersReceivedMs,
-        'elapsedMs': sw.elapsedMilliseconds,
-      });
+      AppLogger.error(
+        'TTS',
+        'TTS 请求超时',
+        metadata: {
+          'error': e.toString(),
+          'stage': stage,
+          if (headersReceivedMs != null) 'headersReceivedMs': headersReceivedMs,
+          'elapsedMs': sw.elapsedMilliseconds,
+        },
+      );
       throw TtsException('TTS 请求超时，请稍后重试');
     } catch (e) {
       sw.stop();
-      AppLogger.error('TTS', 'TTS 请求异常', metadata: {
-        'error': e.toString(),
-        'elapsedMs': sw.elapsedMilliseconds,
-      });
+      AppLogger.error(
+        'TTS',
+        'TTS 请求异常',
+        metadata: {'error': e.toString(), 'elapsedMs': sw.elapsedMilliseconds},
+      );
       throw TtsException('TTS 请求异常: $e');
     }
   }
@@ -249,17 +311,25 @@ class TtsService {
       // 检查模型是否匹配（音色ID必须与创建时的模型一致）
       if (_isAliyunVoiceModelMatch(binding.modelId, targetModel)) {
         voiceId = binding.remoteVoiceId;
-        AppLogger.info('TTS', '使用已保存的阿里云音色ID', metadata: {
-          'voiceId': voiceId,
-          'savedModel': binding.modelId,
-          'targetModel': targetModel,
-        });
+        AppLogger.info(
+          'TTS',
+          '使用已保存的阿里云音色ID',
+          metadata: {
+            'voiceId': voiceId,
+            'savedModel': binding.modelId,
+            'targetModel': targetModel,
+          },
+        );
       } else {
-        AppLogger.warning('TTS', '已保存的音色ID与当前模型不匹配，需要重新创建', metadata: {
-          'savedVoiceId': binding.remoteVoiceId,
-          'savedModel': binding.modelId,
-          'targetModel': targetModel,
-        });
+        AppLogger.warning(
+          'TTS',
+          '已保存的音色ID与当前模型不匹配，需要重新创建',
+          metadata: {
+            'savedVoiceId': binding.remoteVoiceId,
+            'savedModel': binding.modelId,
+            'targetModel': targetModel,
+          },
+        );
       }
     }
 
@@ -292,11 +362,15 @@ class TtsService {
       throw TtsException('WebSocket TTS 需要配置音色，请在音色管理中添加音色并确保已创建音色 ID');
     }
 
-    AppLogger.info('TTS', '使用 WebSocket 进行语音合成', metadata: {
-      'model': targetModel,
-      'voiceId': voiceId,
-      'textLength': text.length,
-    });
+    AppLogger.info(
+      'TTS',
+      '使用 WebSocket 进行语音合成',
+      metadata: {
+        'model': targetModel,
+        'voiceId': voiceId,
+        'textLength': text.length,
+      },
+    );
 
     try {
       final wsService = AliyunQwenTtsWebSocket(
@@ -318,23 +392,24 @@ class TtsService {
       }
 
       // 将 PCM 转换为 WAV（添加 WAV 头）
-      final wavBytes = _pcmToWav(pcmBytes,
-          sampleRate: 24000, channels: 1, bitsPerSample: 16);
+      final wavBytes = _pcmToWav(
+        pcmBytes,
+        sampleRate: 24000,
+        channels: 1,
+        bitsPerSample: 16,
+      );
 
       // 转换为 Data URL
       final base64Audio = base64Encode(wavBytes);
       final dataUrl = 'data:audio/wav;base64,$base64Audio';
 
-      AppLogger.info('TTS', 'WebSocket TTS 音频生成成功', metadata: {
-        'pcmSize': pcmBytes.length,
-        'wavSize': wavBytes.length,
-      });
-
-      return TtsConvertResult(
-        audioUrl: dataUrl,
-        text: text,
-        success: true,
+      AppLogger.info(
+        'TTS',
+        'WebSocket TTS 音频生成成功',
+        metadata: {'pcmSize': pcmBytes.length, 'wavSize': wavBytes.length},
       );
+
+      return TtsConvertResult(audioUrl: dataUrl, text: text, success: true);
     } on AliyunTtsWebSocketException catch (e) {
       throw TtsException('WebSocket TTS 失败: ${e.message}');
     }
@@ -452,9 +527,11 @@ class TtsService {
         results.add(result);
       } catch (e) {
         // 单条失败不影响整体结果，记录日志并返回失败条目
-        AppLogger.warning('TTS', '单条 TTS 转换失败', metadata: {
-          'error': e.toString(),
-        });
+        AppLogger.warning(
+          'TTS',
+          '单条 TTS 转换失败',
+          metadata: {'error': e.toString()},
+        );
         results.add(
           TtsConvertResult(
             audioUrl: '',
@@ -534,18 +611,25 @@ class TtsService {
       config: config,
       text: text,
       rawUrl: rawUrl,
-      providerId: resolution.voiceProvider?.providerId,
+      providerId:
+          resolution.voiceProvider?.providerId ?? config.selectedProviderId,
       requestFormat: effectiveFormat,
       model: model,
       apiKey: apiKey,
+      customConfig: customConfig,
     );
   }
 
   TtsSynthesisAdapter? _resolveSynthesisAdapter(TtsSynthesisContext context) {
-    final normalizedProviderId =
-        TtsSynthesisAdapter.normalizeIdentifier(context.providerId);
+    final normalizedProviderId = TtsSynthesisAdapter.normalizeIdentifier(
+      context.providerId,
+    );
     if (normalizedProviderId == _minimaxSynthesisAdapter.providerId) {
       return _minimaxSynthesisAdapter;
+    }
+
+    if (_configurableSynthesisAdapter.supports(context)) {
+      return _configurableSynthesisAdapter;
     }
 
     if (_siliconFlowSynthesisAdapter.supports(context)) {
@@ -562,7 +646,9 @@ class TtsService {
   /// 构建请求体（根据 requestFormat 选择不同格式）
   /// 阿里云格式需要异步处理（可能需要自动创建音色）
   Future<Map<String, dynamic>> _buildRequestBodyAsync(
-      String text, String effectiveFormat) async {
+    String text,
+    String effectiveFormat,
+  ) async {
     switch (effectiveFormat) {
       case 'openai_tts':
         return _buildOpenAiTtsBody(text);
@@ -613,7 +699,8 @@ class TtsService {
     }
 
     // 判断使用哪种音色方式
-    final siliconFlowVoiceUri = preset
+    final siliconFlowVoiceUri =
+        preset
             ?.resolveBinding(
               providerId: 'siliconflow',
               adapterId: 'siliconflow',
@@ -653,7 +740,7 @@ class TtsService {
         {
           'audio': promptAudioUrl,
           if (promptText != null && promptText.isNotEmpty) 'text': promptText,
-        }
+        },
       ];
     } else {
       // 没有配置任何音色，使用默认的系统预置音色
@@ -668,7 +755,8 @@ class TtsService {
   ///
   /// 如果音色有公网 URL 但没有 aliyunVoiceId，会自动创建音色
   Future<Map<String, dynamic>> _buildAliyunCosyVoiceBodyAsync(
-      String text) async {
+    String text,
+  ) async {
     final preset = config.selectedVoicePreset;
     final targetModel = model ?? config.model ?? 'cosyvoice-v3-plus';
     String? voiceId;
@@ -679,14 +767,18 @@ class TtsService {
     );
 
     // 调试日志：检查当前音色预设的状态
-    AppLogger.debug('TTS', 'CosyVoice 音色预设检查', metadata: {
-      'presetId': preset?.id,
-      'presetName': preset?.name,
-      'aliyunVoiceId': preset?.aliyunVoiceId,
-      'aliyunTargetModel': preset?.aliyunTargetModel,
-      'aliyunVoiceStatus': preset?.aliyunVoiceStatus,
-      'targetModel': targetModel,
-    });
+    AppLogger.debug(
+      'TTS',
+      'CosyVoice 音色预设检查',
+      metadata: {
+        'presetId': preset?.id,
+        'presetName': preset?.name,
+        'aliyunVoiceId': preset?.aliyunVoiceId,
+        'aliyunTargetModel': preset?.aliyunTargetModel,
+        'aliyunVoiceStatus': preset?.aliyunVoiceStatus,
+        'targetModel': targetModel,
+      },
+    );
 
     // 检查是否已有匹配当前模型的音色ID
     if (binding != null) {
@@ -694,24 +786,35 @@ class TtsService {
         // CosyVoice 还需要检查状态是否为 OK
         if (binding.status == 'OK') {
           voiceId = binding.remoteVoiceId;
-          AppLogger.info('TTS', '使用已保存的阿里云音色ID (CosyVoice)', metadata: {
-            'voiceId': voiceId,
-            'savedModel': binding.modelId,
-            'targetModel': targetModel,
-          });
-        } else {
-          AppLogger.warning('TTS', 'CosyVoice 音色状态不是 OK，无法使用', metadata: {
-            'savedVoiceId': binding.remoteVoiceId,
-            'status': binding.status,
-          });
-        }
-      } else {
-        AppLogger.warning('TTS', '已保存的音色ID与当前模型不匹配，需要重新创建 (CosyVoice)',
+          AppLogger.info(
+            'TTS',
+            '使用已保存的阿里云音色ID (CosyVoice)',
             metadata: {
-              'savedVoiceId': binding.remoteVoiceId,
+              'voiceId': voiceId,
               'savedModel': binding.modelId,
               'targetModel': targetModel,
-            });
+            },
+          );
+        } else {
+          AppLogger.warning(
+            'TTS',
+            'CosyVoice 音色状态不是 OK，无法使用',
+            metadata: {
+              'savedVoiceId': binding.remoteVoiceId,
+              'status': binding.status,
+            },
+          );
+        }
+      } else {
+        AppLogger.warning(
+          'TTS',
+          '已保存的音色ID与当前模型不匹配，需要重新创建 (CosyVoice)',
+          metadata: {
+            'savedVoiceId': binding.remoteVoiceId,
+            'savedModel': binding.modelId,
+            'targetModel': targetModel,
+          },
+        );
       }
     }
 
@@ -734,9 +837,7 @@ class TtsService {
 
     return {
       'model': targetModel,
-      'input': {
-        'text': text,
-      },
+      'input': {'text': text},
       'parameters': {
         'voice': voiceId,
         if (config.speed != null) 'rate': config.speed,
@@ -759,30 +860,41 @@ class TtsService {
     );
 
     // 调试日志：检查当前音色预设的状态
-    AppLogger.debug('TTS', 'Qwen-TTS 音色预设检查', metadata: {
-      'presetId': preset?.id,
-      'presetName': preset?.name,
-      'aliyunVoiceId': preset?.aliyunVoiceId,
-      'aliyunTargetModel': preset?.aliyunTargetModel,
-      'targetModel': targetModel,
-    });
+    AppLogger.debug(
+      'TTS',
+      'Qwen-TTS 音色预设检查',
+      metadata: {
+        'presetId': preset?.id,
+        'presetName': preset?.name,
+        'aliyunVoiceId': preset?.aliyunVoiceId,
+        'aliyunTargetModel': preset?.aliyunTargetModel,
+        'targetModel': targetModel,
+      },
+    );
 
     // 检查是否已有匹配当前模型的音色ID
     if (binding != null) {
       if (_isAliyunVoiceModelMatch(binding.modelId, targetModel)) {
         voiceId = binding.remoteVoiceId;
-        AppLogger.info('TTS', '使用已保存的阿里云音色ID (Qwen-TTS)', metadata: {
-          'voiceId': voiceId,
-          'savedModel': binding.modelId,
-          'targetModel': targetModel,
-        });
+        AppLogger.info(
+          'TTS',
+          '使用已保存的阿里云音色ID (Qwen-TTS)',
+          metadata: {
+            'voiceId': voiceId,
+            'savedModel': binding.modelId,
+            'targetModel': targetModel,
+          },
+        );
       } else {
-        AppLogger.warning('TTS', '已保存的音色ID与当前模型不匹配，需要重新创建 (Qwen-TTS)',
-            metadata: {
-              'savedVoiceId': binding.remoteVoiceId,
-              'savedModel': binding.modelId,
-              'targetModel': targetModel,
-            });
+        AppLogger.warning(
+          'TTS',
+          '已保存的音色ID与当前模型不匹配，需要重新创建 (Qwen-TTS)',
+          metadata: {
+            'savedVoiceId': binding.remoteVoiceId,
+            'savedModel': binding.modelId,
+            'targetModel': targetModel,
+          },
+        );
       }
     }
 
@@ -836,26 +948,34 @@ class TtsService {
     required bool isCosyVoice,
   }) async {
     // 生成缓存 key：音频URL + 目标模型
-    final cacheKey = '${audioUrl}_$targetModel';
+    final cacheKey = '${voiceCacheScope}_${audioUrl}_$targetModel';
 
     // 检查缓存
     if (_aliyunVoiceCache.containsKey(cacheKey)) {
-      AppLogger.info('TTS', '使用缓存的阿里云音色', metadata: {
-        'cacheKey': cacheKey,
-        'voiceId': _aliyunVoiceCache[cacheKey],
-      });
+      AppLogger.info(
+        'TTS',
+        '使用缓存的阿里云音色',
+        metadata: {
+          'cacheKey': cacheKey,
+          'voiceId': _aliyunVoiceCache[cacheKey],
+        },
+      );
       return _aliyunVoiceCache[cacheKey];
     }
 
     // 并发去重：同一份音色（audioUrl + targetModel）同一时刻只创建一次
     final inFlight = _aliyunVoiceCreateInFlight[cacheKey];
     if (inFlight != null) {
-      AppLogger.info('TTS', '等待进行中的阿里云音色创建', metadata: {
-        'cacheKey': cacheKey,
-        'audioUrl': audioUrl,
-        'targetModel': targetModel,
-        'isCosyVoice': isCosyVoice,
-      });
+      AppLogger.info(
+        'TTS',
+        '等待进行中的阿里云音色创建',
+        metadata: {
+          'cacheKey': cacheKey,
+          'audioUrl': audioUrl,
+          'targetModel': targetModel,
+          'isCosyVoice': isCosyVoice,
+        },
+      );
       return await inFlight;
     }
 
@@ -863,11 +983,15 @@ class TtsService {
     _aliyunVoiceCreateInFlight[cacheKey] = completer.future;
 
     // 创建新音色
-    AppLogger.info('TTS', '自动创建阿里云音色', metadata: {
-      'audioUrl': audioUrl,
-      'targetModel': targetModel,
-      'isCosyVoice': isCosyVoice,
-    });
+    AppLogger.info(
+      'TTS',
+      '自动创建阿里云音色',
+      metadata: {
+        'audioUrl': audioUrl,
+        'targetModel': targetModel,
+        'isCosyVoice': isCosyVoice,
+      },
+    );
 
     try {
       final service = AliyunVoiceCloneService(apiKey: apiKey!);
@@ -882,10 +1006,11 @@ class TtsService {
         voiceId = result.voiceId;
 
         // CosyVoice 需要等待审核，这里先返回 ID，后续请求可能会失败
-        AppLogger.info('TTS', 'CosyVoice 音色已创建，等待审核', metadata: {
-          'voiceId': voiceId,
-          'status': result.status,
-        });
+        AppLogger.info(
+          'TTS',
+          'CosyVoice 音色已创建，等待审核',
+          metadata: {'voiceId': voiceId, 'status': result.status},
+        );
       } else {
         final result = await service.createQwenVoiceFromUrl(
           audioUrl: audioUrl,
@@ -895,21 +1020,27 @@ class TtsService {
         );
         voiceId = result.voiceId;
 
-        AppLogger.info('TTS', 'Qwen-TTS 音色创建成功', metadata: {
-          'voiceId': voiceId,
-        });
+        AppLogger.info(
+          'TTS',
+          'Qwen-TTS 音色创建成功',
+          metadata: {'voiceId': voiceId},
+        );
       }
 
       // 缓存音色 ID
       _aliyunVoiceCache[cacheKey] = voiceId;
 
       // 回调保存音色（如果有）
-      AppLogger.info('TTS', '准备保存音色ID到预设', metadata: {
-        'voiceId': voiceId,
-        'presetId': preset?.id,
-        'presetName': preset?.name,
-        'hasOnVoiceCreated': onVoiceCreated != null,
-      });
+      AppLogger.info(
+        'TTS',
+        '准备保存音色ID到预设',
+        metadata: {
+          'voiceId': voiceId,
+          'presetId': preset?.id,
+          'presetName': preset?.name,
+          'hasOnVoiceCreated': onVoiceCreated != null,
+        },
+      );
 
       if (onVoiceCreated != null && preset != null) {
         final updatedPreset = _copyPresetWithAliyunBinding(
@@ -919,25 +1050,34 @@ class TtsService {
           status: isCosyVoice ? 'DEPLOYING' : 'OK',
           isCosyVoice: isCosyVoice,
         );
-        AppLogger.info('TTS', '调用 onVoiceCreated 回调', metadata: {
-          'presetId': updatedPreset.id,
-          'aliyunVoiceId': updatedPreset.aliyunVoiceId,
-        });
+        AppLogger.info(
+          'TTS',
+          '调用 onVoiceCreated 回调',
+          metadata: {
+            'presetId': updatedPreset.id,
+            'aliyunVoiceId': updatedPreset.aliyunVoiceId,
+          },
+        );
         await onVoiceCreated!(updatedPreset);
       } else {
-        AppLogger.warning('TTS', '无法保存音色ID：preset 或 onVoiceCreated 为空',
-            metadata: {
-              'presetIsNull': preset == null,
-              'onVoiceCreatedIsNull': onVoiceCreated == null,
-            });
+        AppLogger.warning(
+          'TTS',
+          '无法保存音色ID：preset 或 onVoiceCreated 为空',
+          metadata: {
+            'presetIsNull': preset == null,
+            'onVoiceCreatedIsNull': onVoiceCreated == null,
+          },
+        );
       }
 
       if (!completer.isCompleted) completer.complete(voiceId);
       return voiceId;
     } catch (e, st) {
-      AppLogger.warning('TTS', '自动创建阿里云音色失败', metadata: {
-        'error': e.toString(),
-      });
+      AppLogger.warning(
+        'TTS',
+        '自动创建阿里云音色失败',
+        metadata: {'error': e.toString()},
+      );
       final ex = TtsException('自动创建阿里云音色失败: $e');
       if (!completer.isCompleted) completer.completeError(ex, st);
       throw ex;
@@ -953,33 +1093,40 @@ class TtsService {
     required String targetModel,
   }) async {
     // 生成缓存 key：本地文件路径 + 目标模型
-    final cacheKey = 'local_${localPath}_$targetModel';
+    final cacheKey = '${voiceCacheScope}_local_${localPath}_$targetModel';
 
     // 检查缓存
     if (_aliyunVoiceCache.containsKey(cacheKey)) {
-      AppLogger.info('TTS', '使用缓存的阿里云音色（本地文件）', metadata: {
-        'cacheKey': cacheKey,
-        'voiceId': _aliyunVoiceCache[cacheKey],
-      });
+      AppLogger.info(
+        'TTS',
+        '使用缓存的阿里云音色（本地文件）',
+        metadata: {
+          'cacheKey': cacheKey,
+          'voiceId': _aliyunVoiceCache[cacheKey],
+        },
+      );
       return _aliyunVoiceCache[cacheKey];
     }
 
     // 并发去重
     final inFlight = _aliyunVoiceCreateInFlight[cacheKey];
     if (inFlight != null) {
-      AppLogger.info('TTS', '等待进行中的阿里云音色创建（本地文件）', metadata: {
-        'cacheKey': cacheKey,
-      });
+      AppLogger.info(
+        'TTS',
+        '等待进行中的阿里云音色创建（本地文件）',
+        metadata: {'cacheKey': cacheKey},
+      );
       return await inFlight;
     }
 
     final completer = Completer<String?>();
     _aliyunVoiceCreateInFlight[cacheKey] = completer.future;
 
-    AppLogger.info('TTS', '从本地文件自动创建阿里云音色', metadata: {
-      'localPath': localPath,
-      'targetModel': targetModel,
-    });
+    AppLogger.info(
+      'TTS',
+      '从本地文件自动创建阿里云音色',
+      metadata: {'localPath': localPath, 'targetModel': targetModel},
+    );
 
     try {
       final service = AliyunVoiceCloneService(apiKey: apiKey!);
@@ -992,9 +1139,11 @@ class TtsService {
 
       final voiceId = result.voiceId;
 
-      AppLogger.info('TTS', 'Qwen-TTS 音色创建成功（本地文件）', metadata: {
-        'voiceId': voiceId,
-      });
+      AppLogger.info(
+        'TTS',
+        'Qwen-TTS 音色创建成功（本地文件）',
+        metadata: {'voiceId': voiceId},
+      );
 
       // 缓存音色 ID
       _aliyunVoiceCache[cacheKey] = voiceId;
@@ -1014,9 +1163,11 @@ class TtsService {
       if (!completer.isCompleted) completer.complete(voiceId);
       return voiceId;
     } catch (e, st) {
-      AppLogger.warning('TTS', '从本地文件创建阿里云音色失败', metadata: {
-        'error': e.toString(),
-      });
+      AppLogger.warning(
+        'TTS',
+        '从本地文件创建阿里云音色失败',
+        metadata: {'error': e.toString()},
+      );
       final ex = TtsException('从本地文件创建阿里云音色失败: $e');
       if (!completer.isCompleted) completer.completeError(ex, st);
       throw ex;
@@ -1068,7 +1219,8 @@ class TtsService {
   ) {
     final next = [...bindings];
     final index = next.indexWhere((binding) {
-      final sameAdapter = binding.normalizedAdapterId != null &&
+      final sameAdapter =
+          binding.normalizedAdapterId != null &&
           nextBinding.normalizedAdapterId != null &&
           binding.normalizedAdapterId == nextBinding.normalizedAdapterId;
       final sameProvider =
@@ -1164,7 +1316,8 @@ class TtsService {
           audioUrl = audio['url'] as String?;
         }
         // 兼容 output 中的多种字段命名
-        audioUrl ??= output['file_url'] as String? ??
+        audioUrl ??=
+            output['file_url'] as String? ??
             output['audio_url'] as String? ??
             output['url'] as String?;
       }
@@ -1174,11 +1327,7 @@ class TtsService {
       throw TtsException('TTS 响应中未找到音频地址: ${jsonEncode(data)}');
     }
 
-    return TtsConvertResult(
-      audioUrl: audioUrl,
-      text: '',
-      success: true,
-    );
+    return TtsConvertResult(audioUrl: audioUrl, text: '', success: true);
   }
 
   TtsConvertResult? _tryParseEmbeddedAudio(Map<String, dynamic> data) {
@@ -1210,9 +1359,7 @@ class TtsService {
     final format = extraInfo is Map<String, dynamic>
         ? extraInfo['audio_format'] as String?
         : null;
-    final mimeType = MimeUtils.guessAudioMimeType(
-      'audio.${format ?? 'mp3'}',
-    );
+    final mimeType = MimeUtils.guessAudioMimeType('audio.${format ?? 'mp3'}');
     final base64Audio = base64Encode(audioBytes);
 
     return TtsConvertResult(

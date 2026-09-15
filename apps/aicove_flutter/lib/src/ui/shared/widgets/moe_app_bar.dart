@@ -1,54 +1,20 @@
-/// MoeAppBar - 统一的 AppBar 样式组件
-///
-/// 遵循 DRY 原则：封装可换肤的 AppBar 样式
-///
-/// 特性：
-/// - 从 SkinConfig 读取装饰样式
-/// - 支持皮肤切换
-/// - 统一的标题样式（粗体、20号字）
-///
-/// 更新记录：
-/// - 2025-12-06: 从多个页面抽取公共 AppBar 样式
-/// - 2025-12-06: 接入皮肤系统
-library;
-
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import '../../theme/skin_provider.dart';
 import '../../theme/tokens.dart';
+import 'desktop_window_frame.dart';
+import 'moe_adaptive_shell.dart';
+import 'moe_chat_header.dart';
+import 'moe_floating_surface.dart';
 
-/// MoeTalk 风格 AppBar
-///
-/// 用法：
-/// ```dart
-/// Scaffold(
-///   appBar: MoeAppBar(
-///     title: '设置',
-///     actions: [...],
-///   ),
-///   body: ...,
-/// )
-/// ```
+/// Shared Telegram-style header with pane-aware native window controls.
 class MoeAppBar extends StatelessWidget implements PreferredSizeWidget {
-  /// 标题文本
   final String title;
-
-  /// 是否显示返回按钮（默认 false，用于一级页面）
   final bool showBackButton;
-
-  /// 自定义 leading 组件（优先级高于 showBackButton）
   final Widget? leading;
-
-  /// leading 区域宽度
   final double? leadingWidth;
-
-  /// 右侧操作按钮
   final List<Widget>? actions;
-
-  /// 标题是否居中
   final bool centerTitle;
-
-  /// 标题左侧内边距（当有 leading 时生效）
   final double titleLeftPadding;
 
   const MoeAppBar({
@@ -59,137 +25,135 @@ class MoeAppBar extends StatelessWidget implements PreferredSizeWidget {
     this.leadingWidth,
     this.actions,
     this.centerTitle = false,
-    this.titleLeftPadding = 12,
+    this.titleLeftPadding = 20,
   });
 
+  /// Pushed pages share the chat header's floating pills; root pages keep the
+  /// flat bar.
+  bool get _floating => showBackButton || leading != null;
+
   @override
-  Size get preferredSize => const Size.fromHeight(kToolbarHeight + borderWidth);
+  Size get preferredSize => Size.fromHeight(
+    _floating
+        ? telegramChatHeaderHeight + telegramChatHeaderVerticalInset * 2
+        : kToolbarHeight + borderWidth,
+  );
 
   @override
   Widget build(BuildContext context) {
-    final skin = context.skin;
+    final changes = MoeWorkspace.navigationChangesOf(context);
+    return changes == null
+        ? _buildBar(context)
+        : ValueListenableBuilder<int>(
+            valueListenable: changes,
+            builder: (context, _, _) => _buildBar(context),
+          );
+  }
+
+  Widget _buildBar(BuildContext context) {
     final colors = context.moeColors;
-    final decoration = skin.appBarDecoration(colors);
-
-    // 计算 leading 相关配置
-    // 无自定义 leading 且不显示返回按钮时：设置 leadingWidth=0 消除左侧空白
-    final hasLeading = leading != null || showBackButton;
-    final effectiveLeadingWidth = leadingWidth ?? (hasLeading ? null : 0);
-
-    // 状态栏样式：颜色与 AppBar 同步
-    final appBarColor = decoration.color ?? colors.headerColor;
-    final systemOverlayStyle = SystemUiOverlayStyle(
-      statusBarColor: appBarColor,
-      statusBarIconBrightness: Brightness.light, // 粉色背景用白色图标
-      statusBarBrightness: Brightness.dark, // iOS: 状态栏内容为浅色
-    );
-
-    return AppBar(
-      systemOverlayStyle: systemOverlayStyle,
-      backgroundColor: appBarColor,
-      foregroundColor: colors.headerContentColor,
-      elevation: 0,
-      leadingWidth: effectiveLeadingWidth,
-      // titleSpacing 默认会额外“挤”出一段空白；我们统一用 title 的 Padding 控制间距，避免重复叠加。
-      titleSpacing: 0,
-      leading: leading,
-      automaticallyImplyLeading: showBackButton,
-      bottom: PreferredSize(
-        preferredSize: Size.fromHeight(skin.borderWidth),
-        child: Container(
-          height: skin.borderWidth,
-          decoration: BoxDecoration(
-            color: colors.divider,
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.04),
-                offset: const Offset(0, 1),
-                blurRadius: 0,
-              ),
-            ],
+    final workspace = MoeWorkspace.maybeOf(context);
+    final immersive = workspace?.isWide == true && workspace?.isDetail == true;
+    final effectiveBackButton =
+        showBackButton && MoeWorkspace.showsBackButton(context);
+    final effectiveLeading = showBackButton && !effectiveBackButton
+        ? null
+        : leading;
+    final hasLeading = effectiveLeading != null || effectiveBackButton;
+    final nativeInset =
+        isDesktop &&
+            Platform.isMacOS &&
+            MoeWorkspace.ownsWindowControls(context)
+        ? 88.0
+        : 0.0;
+    if (_floating) {
+      return MoeChatHeader(
+        showBackButton: hasLeading,
+        leading: effectiveLeading,
+        nativeInset: nativeInset,
+        toolbarHeight: telegramChatHeaderHeight,
+        title: Padding(
+          padding: EdgeInsets.only(left: centerTitle ? 0 : 8),
+          child: Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: centerTitle ? TextAlign.center : TextAlign.start,
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+              color: colors.headerContentColor,
+            ),
           ),
         ),
+        actions: actions ?? const [],
+      );
+    }
+    final control =
+        effectiveLeading ??
+        (effectiveBackButton ? const BackButton() : const SizedBox.shrink());
+    return AppBar(
+      backgroundColor: Colors.transparent,
+      flexibleSpace: immersive || MoeSurfaceGroup.contains(context)
+          ? null
+          : MoeFloatingSurface(
+              radius: 0,
+              shadows: const [],
+              border: BorderSide.none,
+              solidColor: colors.headerColor,
+              child: const SizedBox.expand(),
+            ),
+      foregroundColor: colors.headerContentColor,
+      systemOverlayStyle: Theme.of(context).brightness == Brightness.dark
+          ? SystemUiOverlayStyle.light
+          : SystemUiOverlayStyle.dark,
+      elevation: 0,
+      scrolledUnderElevation: 0,
+      surfaceTintColor: Colors.transparent,
+      titleSpacing: 0,
+      leadingWidth: nativeInset + (hasLeading ? leadingWidth ?? 48 : 0),
+      leading: Padding(
+        padding: EdgeInsets.only(left: nativeInset),
+        child: control,
       ),
+      automaticallyImplyLeading: false,
       title: Padding(
-        // 有 leading（含系统返回按钮）时不再额外加左 padding，避免“返回箭头和标题之间空一段”。
-        // centerTitle=true 时也不加 padding，保证视觉居中。
         padding: EdgeInsets.only(
-          left: (centerTitle || hasLeading) ? 0 : titleLeftPadding,
+          left: centerTitle || hasLeading ? 0 : titleLeftPadding,
         ),
         child: Text(
           title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           style: TextStyle(
-            fontWeight: MoeFontWeights.emphasis,
-            fontSize: 20,
+            fontSize: 18,
+            fontWeight: FontWeight.w600,
             color: colors.headerContentColor,
-            letterSpacing: 0.8,
           ),
         ),
       ),
       centerTitle: centerTitle,
       actions: actions,
+      bottom: PreferredSize(
+        preferredSize: const Size.fromHeight(borderWidth),
+        child: Container(
+          height: borderWidth,
+          color: immersive ? Colors.transparent : colors.divider,
+        ),
+      ),
     );
   }
 }
 
-/// MoeAppBar 的简化版本，用于详情页（较小标题）
 class MoeDetailAppBar extends StatelessWidget implements PreferredSizeWidget {
   final String title;
   final List<Widget>? actions;
-
-  const MoeDetailAppBar({
-    super.key,
-    required this.title,
-    this.actions,
-  });
-
+  const MoeDetailAppBar({super.key, required this.title, this.actions});
   @override
-  Size get preferredSize => const Size.fromHeight(kToolbarHeight + borderWidth);
-
+  Size get preferredSize => const Size.fromHeight(
+    telegramChatHeaderHeight + telegramChatHeaderVerticalInset * 2,
+  );
   @override
-  Widget build(BuildContext context) {
-    final skin = context.skin;
-    final colors = context.moeColors;
-    final decoration = skin.appBarDecoration(colors);
-
-    // 状态栏样式：颜色与 AppBar 同步
-    final appBarColor = decoration.color ?? colors.headerColor;
-    final systemOverlayStyle = SystemUiOverlayStyle(
-      statusBarColor: appBarColor,
-      statusBarIconBrightness: Brightness.light,
-      statusBarBrightness: Brightness.dark,
-    );
-
-    return AppBar(
-      systemOverlayStyle: systemOverlayStyle,
-      backgroundColor: appBarColor,
-      foregroundColor: colors.headerContentColor,
-      elevation: 0,
-      bottom: PreferredSize(
-        preferredSize: Size.fromHeight(skin.borderWidth),
-        child: Container(
-          height: skin.borderWidth,
-          decoration: BoxDecoration(
-            color: colors.divider,
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.04),
-                offset: const Offset(0, 1),
-                blurRadius: 0,
-              ),
-            ],
-          ),
-        ),
-      ),
-      titleTextStyle: TextStyle(
-        fontSize: 18,
-        fontWeight: MoeFontWeights.emphasis,
-        color: colors.headerContentColor,
-        letterSpacing: 0.8,
-      ),
-      title: Text(title),
-      centerTitle: false,
-      actions: actions,
-    );
-  }
+  Widget build(BuildContext context) =>
+      MoeAppBar(title: title, showBackButton: true, actions: actions);
 }

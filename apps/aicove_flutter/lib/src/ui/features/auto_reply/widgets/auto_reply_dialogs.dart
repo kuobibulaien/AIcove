@@ -8,7 +8,6 @@ library;
 
 import 'package:flutter/material.dart';
 
-import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../features/settings/app_settings.dart';
@@ -107,74 +106,17 @@ Future<ModelOption?> showAnalyzerModelPicker({
   );
 }
 
-/// 显示编辑提示词底部弹窗
-Future<String?> showEditPromptSheet({
-  required BuildContext context,
-  required String currentPrompt,
-}) async {
-  final controller = TextEditingController(text: currentPrompt);
-
-  final result = await showMoeBottomSheet<String>(
-    context: context,
-    title: '编辑 AI 分析提示词',
-    showCloseButton: true,
-    maxHeight: MediaQuery.sizeOf(context).height * 0.9,
-    builder: (context) {
-      final colors = context.moeColors;
-      // 键盘处理由 MoeBottomSheet 统一处理，内部使用固定 padding
-      return Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            Expanded(
-              child: Container(
-                decoration: MoeG2Decoration(
-                  radius: 8,
-                  color: colors.surfaceAlt,
-                  border: Border.all(color: colors.borderLight),
-                ),
-                child: TextField(
-                  controller: controller,
-                  maxLines: null,
-                  expands: true,
-                  textAlignVertical: TextAlignVertical.top,
-                  decoration: const InputDecoration(
-                    hintText: '请输入提示词...',
-                    border: InputBorder.none,
-                    contentPadding: EdgeInsets.all(12),
-                  ),
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontFamily: 'monospace',
-                    color: colors.text,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: MoeSecondaryButton(
-                    label: '取消',
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: MoePrimaryButton(
-                    label: '保存',
-                    onPressed: () => Navigator.pop(context, controller.text),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      );
-    },
-  );
-
-  controller.dispose();
+/// 编辑提示词后自动返回最新内容。
+Future<String?> showEditPromptSheet(
+    {required BuildContext context, required String currentPrompt}) async {
+  var result = currentPrompt;
+  await showMoeAutoSaveTextEditor(
+      context: context,
+      title: '编辑 AI 分析提示词',
+      initialValue: currentPrompt,
+      maxLines: 12,
+      onSave: (value) async {
+        result = value;
+      });
   return result;
 }

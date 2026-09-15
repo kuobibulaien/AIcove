@@ -1,0 +1,196 @@
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
+import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
+import 'package:aicove_flutter/src/ui/theme/moe_frosted_material.dart';
+import 'package:aicove_flutter/src/ui/theme/tokens.dart';
+import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
+
+void main() {
+  test('blurSigmaForSetting maps the 10..100% range onto the Cupertino recipe', () {
+    expect(MoeFrostedMaterial.blurSigmaForSetting(0), 3);
+    expect(MoeFrostedMaterial.blurSigmaForSetting(3.2), 3);
+    expect(MoeFrostedMaterial.blurSigmaForSetting(16), 15);
+    expect(MoeFrostedMaterial.blurSigmaForSetting(32), 30);
+    expect(MoeFrostedMaterial.blurSigmaForSetting(100), 30);
+    expect(MoeFrostedMaterial.blurSigmaForSetting(-8), 3);
+  });
+
+  for (final brightness in Brightness.values) {
+    testWidgets('frosted strength pixels track Cupertino popup $brightness', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(240, 180);
+      addTearDown(tester.view.reset);
+      final key = GlobalKey();
+
+      Future<ByteData> render(Widget surface) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: ThemeData(brightness: brightness),
+            home: RepaintBoundary(
+              key: key,
+              child: Stack(
+                children: [
+                  const Positioned.fill(
+                    child: CustomPaint(painter: _Backdrop()),
+                  ),
+                  Positioned(
+                    left: 20,
+                    top: 20,
+                    width: 200,
+                    height: 140,
+                    child: surface,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final boundary =
+            key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+        final image = (await tester.runAsync(() => boundary.toImage()))!;
+        final bytes = (await tester.runAsync(
+          () => image.toByteData(format: ui.ImageByteFormat.rawRgba),
+        ))!;
+        image.dispose();
+        expect(tester.takeException(), isNull);
+        return bytes;
+      }
+
+      const content = Center(
+        child: SizedBox.square(
+          dimension: 10,
+          child: ColoredBox(color: Colors.red),
+        ),
+      );
+      final regionChecksums = <double, int>{};
+      final strengths = {0.0: 3.0, 3.2: 3.0, 16.0: 15.0, 32.0: 30.0};
+      for (final MapEntry(key: sigma, value: expectedSigma)
+          in strengths.entries) {
+        final reference = await render(
+          CupertinoPopupSurface(blurSigma: expectedSigma, child: content),
+        );
+        for (final baseline in [
+          MoeMaterialBaseline.none,
+          MoeMaterialBaseline.background,
+          MoeMaterialBaseline.text,
+        ]) {
+          for (final liquid in [false, true]) {
+            final actual = await render(
+              MoeGlassTheme(
+                enabled: true,
+                blurSigma: sigma,
+                child: liquid
+                    ? MoeLiquidGlass(
+                        radius: 28,
+                        baseline: baseline,
+                        border: BorderSide.none,
+                        shadows: const [],
+                        child: content,
+                      )
+                    : MoeFloatingSurface(
+                        baseline: baseline,
+                        border: BorderSide.none,
+                        shadows: const [],
+                        child: content,
+                      ),
+              ),
+            );
+            var checksum = 0;
+            // Exclude the host's intentionally different corner and border shape.
+            for (var y = 55; y < 125; y++) {
+              for (var x = 55; x < 185; x++) {
+                final offset = (y * 240 + x) * 4;
+                checksum += actual.getUint32(offset);
+                for (var c = 0; c < 4; c++) {
+                  expect(
+                    actual.getUint8(offset + c),
+                    closeTo(reference.getUint8(offset + c), 1),
+                    reason:
+                        'Cupertino parity at $x,$y, sigma=$sigma, liquid=$liquid',
+                  );
+                }
+              }
+            }
+            if (baseline == MoeMaterialBaseline.none && !liquid) {
+              regionChecksums[sigma] = checksum;
+            }
+          }
+        }
+      }
+      expect(regionChecksums[0], regionChecksums[3.2]);
+      expect(regionChecksums[0], isNot(regionChecksums[16]));
+      expect(regionChecksums[0], isNot(regionChecksums[32]));
+      expect(regionChecksums[3.2], isNot(regionChecksums[16]));
+    });
+  }
+
+  testWidgets(
+    'frosted keeps the blur floor at every strength and solid removes all filters',
+    (tester) async {
+      for (final enabled in [true, false]) {
+        for (final sigma in [0.0, 3.2, 32.0]) {
+          await tester.pumpWidget(
+            MaterialApp(
+              home: MoeGlassTheme(
+                enabled: enabled,
+                blurSigma: sigma,
+                child: const MoeFloatingSurface(child: Text('Content')),
+              ),
+            ),
+          );
+          expect(
+            find.byType(BackdropFilter),
+            enabled ? findsOneWidget : findsNothing,
+          );
+          expect(tester.takeException(), isNull);
+        }
+      }
+    },
+  );
+
+  testWidgets('frosted still degrades under reduce transparency', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: MoeGlassTheme(
+          enabled: true,
+          blurSigma: 32,
+          child: GlassAccessibilityScope(
+            reduceTransparency: true,
+            child: MoeFloatingSurface(child: Text('Content')),
+          ),
+        ),
+      ),
+    );
+    expect(find.byType(BackdropFilter), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+}
+
+class _Backdrop extends CustomPainter {
+  const _Backdrop();
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (var x = 0.0; x < size.width; x += 16) {
+      canvas.drawRect(
+        Rect.fromLTWH(x, 0, 16, size.height),
+        Paint()
+          ..color = (x / 16).round().isEven
+              ? const Color(0xFF35A795)
+              : const Color(0xFFE27291),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_Backdrop oldDelegate) => false;
+}

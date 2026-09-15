@@ -5,54 +5,12 @@
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "startup",
+        "matcher": "startup|clear|compact",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/session-start.py",
-            "timeout": 30
-          }
-        ]
-      },
-      {
-        "matcher": "clear",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 .claude/hooks/session-start.py",
-            "timeout": 30
-          }
-        ]
-      },
-      {
-        "matcher": "compact",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 .claude/hooks/session-start.py",
-            "timeout": 30
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Task",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 .claude/hooks/inject-subagent-context.py",
-            "timeout": 30
-          }
-        ]
-      },
-      {
-        "matcher": "Agent",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 .claude/hooks/inject-subagent-context.py",
-            "timeout": 30
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/hooks/memory.py start --agent claude",
+            "timeout": 10
           }
         ]
       }
@@ -62,8 +20,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/inject-workflow-state.py",
-            "timeout": 15
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/hooks/memory.py prompt --agent claude",
+            "timeout": 10
           }
         ]
       }
@@ -72,6 +30,7 @@
   "enabledPlugins": {
     "codex@openai-codex": true
   },
+  "enabledMcpjsonServers": ["dart"],
   "permissions": {
     "allow": [
       "Bash(grok-codex-agent:*)",

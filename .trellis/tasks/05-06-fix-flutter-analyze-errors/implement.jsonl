@@ -1,5 +1,0 @@
-{"file": ".trellis/spec/frontend/index.md", "reason": "Flutter frontend checklist and links for scoped analyzer fixes."}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Quality expectations for analyzer/test fixes."}
-{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Dart type-safety guidance for stale API and callback signature repairs."}
-{"file": ".trellis/spec/agent-context/index.md", "reason": "ContextAnalyzer belongs to the Agent/Analyzer domain and tests must align with current runtime contracts."}
-{"file": ".trellis/spec/project/architecture-boundaries.md", "reason": "Keep fixes within existing project boundaries and avoid unrelated architecture drift."}

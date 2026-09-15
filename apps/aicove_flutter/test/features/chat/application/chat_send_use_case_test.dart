@@ -18,7 +18,6 @@ class _FakeChatSendPort implements ChatSendPort {
   final AppSettings settings;
 
   int prepareHistoryFromStoreCalls = 0;
-  int? lastPrepareHistoryLimit;
   Conversation? lastPrepareHistoryConversation;
   Message? lastPrepareHistoryUserMessage;
   List<Message> historyFromStore = const <Message>[];
@@ -142,12 +141,10 @@ class _FakeChatSendPort implements ChatSendPort {
   Future<List<Message>> prepareHistoryFromStore({
     required Conversation conv,
     required Message userMsg,
-    required int limit,
   }) async {
     prepareHistoryFromStoreCalls += 1;
     lastPrepareHistoryConversation = conv;
     lastPrepareHistoryUserMessage = userMsg;
-    lastPrepareHistoryLimit = limit;
     return historyFromStore;
   }
 }
@@ -169,7 +166,7 @@ AppSettings _fakeSettings({
     apiBaseUrl: 'https://api.openai.com/v1',
     imageGenerationEnabled: false,
     maxFileUploadMB: 10,
-    historyMessageLimit: 42,
+    contextWindowTokens: 272000,
     customModels: const <CustomModel>[],
     providers: const <ProviderAuth>[
       ProviderAuth(
@@ -321,7 +318,6 @@ void main() {
       expect(port.prepareHistoryFromStoreCalls, 1);
       expect(port.lastPrepareHistoryConversation, same(conversation));
       expect(port.lastPrepareHistoryUserMessage, same(userMessage));
-      expect(port.lastPrepareHistoryLimit, settings.historyMessageLimit);
       expect(port.prepareApiConfigHistories.single.map((m) => m.id).toList(),
           <String>['history_1']);
     });
@@ -545,6 +541,28 @@ void main() {
         ContextProfile.backgroundAnalyzer
             .canAssemble(AgentContextAssemblyPermission.sillyTavernPreset),
         isFalse,
+      );
+    });
+
+    test('bound preset id becomes the ChatAgent context recipe id', () {
+      final now = DateTime(2026, 8, 27);
+      final conversation = Conversation(
+        id: 'conv_bound_recipe',
+        title: 'Chat',
+        displayName: 'Chat',
+        recipeId: 'st_preset_aaaaaaaaaaaaaaaaaaaaaaaa',
+        createdAt: now,
+        updatedAt: now,
+      );
+
+      expect(
+        StandardChatAgentIds.contextRecipeIdForConversation(conversation),
+        conversation.recipeId,
+      );
+      expect(
+        StandardChatAgentIds.definitionForConversation(conversation)
+            .contextRecipeId,
+        conversation.recipeId,
       );
     });
   });

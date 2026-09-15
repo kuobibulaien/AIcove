@@ -1,0 +1,685 @@
+{
+  "date": "2026-09-06",
+  "scope": "offline .aicove four-domain audit; synthetic data only; no production changes",
+  "summary": {
+    "total": 61,
+    "failure": 28,
+    "error": 10,
+    "success": 23
+  },
+  "checks": {
+    "new_tests_analyze": "no issues",
+    "scoped_analyze": "9 existing info; no errors or warnings",
+    "pub_get": "passed",
+    "android_debug_build": "passed; not installed",
+    "flutter_run_macos": "blocked: xcrun cannot find xcodebuild",
+    "physical_device_import_export": "not performed"
+  },
+  "files": [
+    {
+      "path": "lib/src/features/backup/backup_providers.dart",
+      "sha256": "d6de24f8ead98bc60f87948a89ef66b289d97f5b3512326e8428b54cffce4694",
+      "lines": 174
+    },
+    {
+      "path": "lib/src/features/backup/models/export_format.dart",
+      "sha256": "094c13a98b51dbd1b355262a6f1203b8e3f491baecf3a8c2566b9365e206e00f",
+      "lines": 351
+    },
+    {
+      "path": "lib/src/features/backup/data/conversation_exporter.dart",
+      "sha256": "7475e6ba72ba701333967c159a7aa7ac7df0adb2399c7415bd9a1d7f2a7c5770",
+      "lines": 482
+    },
+    {
+      "path": "lib/src/features/backup/data/conversation_importer.dart",
+      "sha256": "6bae46a40c3cd817216c6a9036b91b91e222752aafb18b02df3e674a14d70941",
+      "lines": 624
+    },
+    {
+      "path": "lib/src/ui/features/backup/pages/export_scope_page.dart",
+      "sha256": "e9511261aed40f3fce9330ed586633df934e1ffbdb704da61b7aebfaec741709",
+      "lines": 188
+    },
+    {
+      "path": "lib/src/ui/features/backup/pages/data_management_page.dart",
+      "sha256": "074da7416f2380cca053c62576df7c1c447c74c9b87a5111ad5b6aa272690444",
+      "lines": 354
+    },
+    {
+      "path": "lib/src/ui/features/backup/pages/memory_trash_page.dart",
+      "sha256": "baef5453995fe4b37adc621c2d2e3a6d5f5c335c56ae1d124508bd7a3d5e12ea",
+      "lines": 263
+    },
+    {
+      "path": "lib/src/ui/features/backup/pages/export_character_page.dart",
+      "sha256": "11491ba4530a8c81f184b1f7bb653d07bd7aed3a925e69bc466ccca54016dd02",
+      "lines": 346
+    },
+    {
+      "path": "lib/src/ui/features/backup/pages/import_file_page.dart",
+      "sha256": "93a62903e2b74eeaa10ab164f4dfaeed3452eb52800b1f153e72c2f48c4d10b5",
+      "lines": 270
+    },
+    {
+      "path": "lib/src/ui/features/backup/pages/chat_preview_page.dart",
+      "sha256": "c6dd19e985129f51b71ff2fa81a57837937cc6e0dab837e378c03b83945e5e8b",
+      "lines": 252
+    },
+    {
+      "path": "lib/src/ui/features/backup/pages/import_preview_page.dart",
+      "sha256": "d91eeb1a2b966a2cc87fc17d50bb2f973a35763abbb5ded6c0874f0e25a7da48",
+      "lines": 673
+    },
+    {
+      "path": "test/features/backup/data_transfer_audit_test.dart",
+      "sha256": "51ecbb157e83695030a7edf5da5ba7ad82d6cfc0c8ea65ed9af9eb70801f8e40",
+      "lines": 572
+    },
+    {
+      "path": "test/ui/features/backup/import_state_audit_test.dart",
+      "sha256": "ca6e7755f9cfe6d0c1595527bb279bc7013d26d694abef1da62b2b7f11af8cf0",
+      "lines": 118
+    },
+    {
+      "path": "test/ui/features/backup/frontend_backup_audit_test.dart",
+      "sha256": "3e520992e4a177ff3832bd4764615c0d92cd6a8bdd2106a3d850b632fb603654",
+      "lines": 146
+    },
+    {
+      "path": "test/ui/features/backup/frontend_import_lifecycle_audit_test.dart",
+      "sha256": "2483e63f430b0d89ddd8dd0c62e480e00a744ea2c4589d025333986bc4b1dbfa",
+      "lines": 54
+    },
+    {
+      "path": "lib/src/core/database/database.dart",
+      "sha256": "5614886adc471e3de19c8138da28a8981c668ff81e982731b1d92adecd8aabe0",
+      "lines": 638
+    },
+    {
+      "path": "lib/src/features/chat/services/chat_message_projection_codec.dart",
+      "sha256": "9f01a11f38cd150ffd6b60028e966224435835c0d30a776e775ecda8f7a7109b",
+      "lines": 445
+    },
+    {
+      "path": "lib/src/features/memory/data/markdown_contact_memory_store.dart",
+      "sha256": "9655ff6be16af6b945f2e5ff7bc7e85ef423e1f9a7f0b9f9fbec0465039f5423",
+      "lines": 190
+    }
+  ],
+  "anchors": {
+    "lib/src/features/backup/data/conversation_exporter.dart": [
+      {
+        "line": 45,
+        "declaration": "Future<ExportResult> exportConversations({"
+      },
+      {
+        "line": 331,
+        "declaration": "Map<String, dynamic> _buildConversationJson("
+      },
+      {
+        "line": 359,
+        "declaration": "Map<String, dynamic> _buildMessageJson("
+      }
+    ],
+    "lib/src/features/backup/data/conversation_importer.dart": [
+      {
+        "line": 38,
+        "declaration": "Future<ImportPreview> preview(File file) async {"
+      },
+      {
+        "line": 144,
+        "declaration": "Future<ImportResult> import({"
+      },
+      {
+        "line": 460,
+        "declaration": "Future<Directory> _extractToTempDir(File file) async {"
+      },
+      {
+        "line": 485,
+        "declaration": "Future<String?> _copyImportedFile("
+      },
+      {
+        "line": 505,
+        "declaration": "Future<void> _importConversation("
+      },
+      {
+        "line": 554,
+        "declaration": "Future<void> _importMessage("
+      }
+    ],
+    "lib/src/ui/features/backup/pages/export_character_page.dart": [
+      {
+        "line": 265,
+        "declaration": "Future<void> _startExport() async {"
+      }
+    ],
+    "lib/src/ui/features/backup/pages/import_preview_page.dart": [
+      {
+        "line": 33,
+        "declaration": "void initState() {"
+      },
+      {
+        "line": 431,
+        "declaration": "Future<void> _startImport() async {"
+      },
+      {
+        "line": 481,
+        "declaration": "void _showConflictDialog(List<ImportConflict> conflicts) {"
+      },
+      {
+        "line": 559,
+        "declaration": "void initState() {"
+      }
+    ],
+    "test/ui/features/backup/import_state_audit_test.dart": [
+      {
+        "line": 17,
+        "declaration": "Future<ImportResult> import("
+      }
+    ],
+    "test/ui/features/backup/frontend_backup_audit_test.dart": [
+      {
+        "line": 43,
+        "declaration": "Future<ExportResult> exportConversations("
+      }
+    ]
+  },
+  "results": [
+    {
+      "name": "T01 card-only export must not include private chat",
+      "errors": [
+        {
+          "message": "Expected: empty\n  Actual: [\n            {\n              'id': 'm',\n              'source_message_id': null,\n              'conversation_id': 'a',\n              'role': 'assistant',\n              'content': '秘密聊天',\n              'status': 'sent',\n              'created_at': 2000,\n              'blocks': []\n            }\n          ]\n",
+          "stack": "package:matcher                                           expect\npackage:flutter_test/src/widget_tester.dart 473:18        expect\ntest/features/backup/data_transfer_audit_test.dart 143:5  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "T02 card-only import must not write chat",
+      "errors": [
+        {
+          "message": "Expected: empty\n  Actual: [\n            Message:Message(id: m, conversationId: a, role: assistant, content: 秘密聊天, status: sent, summarized: false, summarizedAt: null, replacedBy: null, sourceMessageId: m, rawPayload: null, conflictOf: null, deletedAt: null, purgeAt: null, createdAt: 2000)\n          ]\n",
+          "stack": "package:matcher                                           expect\npackage:flutter_test/src/widget_tester.dart 473:18        expect\ntest/features/backup/data_transfer_audit_test.dart 147:5  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "T03 no selected scopes must not write any data",
+      "errors": [
+        {
+          "message": "Expected: empty\n  Actual: [\n            Conversation:Conversation(id: a, title: 角色, displayName: 角色, avatarUrl: null, characterImage: null, chatBackgroundImage: null, chatBackgroundMaskOpacity: null, chatBackgroundBlurSigma: null, blurredBackground: null, selfAddress: null, addressUser: null, voiceFile: null, personaPrompt: 人物设定, defaultProvider: null, sessionProvider: null, isPinned: false, isFavorite: false, isMuted: false, notificationSound: true, enabledPlugins: null, recipeId: null, thinkingLevels: null, lastMessage: 秘密聊天, lastMessageTime: 2000, unreadCount: 0, parentConversationId: null, forkFromMessageId: null, conflictOf: null, contextStartMessageId: null, deletedAt: null, purgeAt: null, createdAt: 1000, updatedAt: 2000)\n          ]\n",
+          "stack": "package:matcher                                           expect\npackage:flutter_test/src/widget_tester.dart 473:18        expect\ntest/features/backup/data_transfer_audit_test.dart 153:5  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "T04 round trip preserves session_provider",
+      "errors": [
+        {
+          "message": "Expected: 'provider/model'\n  Actual: <null>\n   Which: not an <Instance of 'String'>\n",
+          "stack": "package:matcher                                           expect\npackage:flutter_test/src/widget_tester.dart 473:18        expect\ntest/features/backup/data_transfer_audit_test.dart 179:7  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "T04 round trip preserves enabled_plugins",
+      "errors": [
+        {
+          "message": "Expected: '[\"memory\"]'\n  Actual: <null>\n   Which: not an <Instance of 'String'>\n",
+          "stack": "package:matcher                                           expect\npackage:flutter_test/src/widget_tester.dart 473:18        expect\ntest/features/backup/data_transfer_audit_test.dart 179:7  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "T04 round trip preserves recipe_id",
+      "errors": [
+        {
+          "message": "Expected: 'recipe-a'\n  Actual: <null>\n   Which: not an <Instance of 'String'>\n",
+          "stack": "package:matcher                                           expect\npackage:flutter_test/src/widget_tester.dart 473:18        expect\ntest/features/backup/data_transfer_audit_test.dart 179:7  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "T04 round trip preserves thinking_levels",
+      "errors": [
+        {
+          "message": "Expected: '{\"provider/model\":\"high\"}'\n  Actual: <null>\n   Which: not an <Instance of 'String'>\n",
+          "stack": "package:matcher                                           expect\npackage:flutter_test/src/widget_tester.dart 473:18        expect\ntest/features/backup/data_transfer_audit_test.dart 179:7  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "T04 round trip preserves chat_background_blur_sigma",
+      "errors": [
+        {
+          "message": "Expected: <12.0>\n  Actual: <null>\n",
+          "stack": "package:matcher                                           expect\npackage:flutter_test/src/widget_tester.dart 473:18        expect\ntest/features/backup/data_transfer_audit_test.dart 179:7  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "T04 round trip preserves context_start_message_id",
+      "errors": [
+        {
+          "message": "Expected: 'm'\n  Actual: <null>\n   Which: not an <Instance of 'String'>\n",
+          "stack": "package:matcher                                           expect\npackage:flutter_test/src/widget_tester.dart 473:18        expect\ntest/features/backup/data_transfer_audit_test.dart 179:7  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "T05 asset avatar and remote poster survive round trip",
+      "errors": [
+        {
+          "message": "Expected: ['assets/characters/Arona.webp', 'https://example.invalid/poster.png']\n  Actual: [null, null]\n   Which: at location [0] is <null> instead of 'assets/characters/Arona.webp'\n",
+          "stack": "package:matcher                                           expect\npackage:flutter_test/src/widget_tester.dart 473:18        expect\ntest/features/backup/data_transfer_audit_test.dart 189:5  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "T06 raw payload survives round trip",
+      "errors": [
+        {
+          "message": "Expected: '{\"reasoningContent\":\"thinking\",\"custom\":\"raw-evidence\"}'\n  Actual: <null>\n   Which: not an <Instance of 'String'>\n",
+          "stack": "package:matcher                                           expect\npackage:flutter_test/src/widget_tester.dart 473:18        expect\ntest/features/backup/data_transfer_audit_test.dart 198:5  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "T07 legacy memories survive memory-inclusive round trip",
+      "errors": [
+        {
+          "message": "Expected: ['喜欢安静']\n  Actual: MappedListIterable<Memory, String>:[]\n   Which: at location [0] is MappedListIterable<Memory, String>:[] which shorter than expected\n",
+          "stack": "package:matcher                                           expect\npackage:flutter_test/src/widget_tester.dart 473:18        expect\ntest/features/backup/data_transfer_audit_test.dart 208:5  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "T08 Markdown core and archived events survive round trip",
+      "errors": [
+        {
+          "message": "Expected: ['喜欢安静', true, ['一起散步']]\n  Actual: ['', false, []]\n   Which: at location [0] is '' instead of '喜欢安静'\n",
+          "stack": "package:matcher                                           expect\npackage:flutter_test/src/widget_tester.dart 473:18        expect\ntest/features/backup/data_transfer_audit_test.dart 229:5  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "T09 merge applies explicitly selected character settings",
+      "errors": [
+        {
+          "message": "Expected: true\n  Actual: <false>\n",
+          "stack": "package:matcher                                           expect\npackage:flutter_test/src/widget_tester.dart 473:18        expect\ntest/features/backup/data_transfer_audit_test.dart 247:5  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "T10 replace failure leaves original chat intact",
+      "errors": [
+        {
+          "message": "Expected: 'must survive'\n  Actual: <null>\n   Which: not an <Instance of 'String'>\n",
+          "stack": "package:matcher                                           expect\npackage:flutter_test/src/widget_tester.dart 473:18        expect\ntest/features/backup/data_transfer_audit_test.dart 262:5  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "T11 malformed second message rolls back first and conversation",
+      "errors": [
+        {
+          "message": "Expected: empty\n  Actual: [\n            Message:Message(id: first, conversationId: a, role: user, content: partial, status: sent, summarized: false, summarizedAt: null, replacedBy: null, sourceMessageId: first, rawPayload: null, conflictOf: null, deletedAt: null, purgeAt: null, createdAt: 1788638966818)\n          ]\n",
+          "stack": "package:matcher                                           expect\npackage:flutter_test/src/widget_tester.dart 473:18        expect\ntest/features/backup/data_transfer_audit_test.dart 275:5  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "T12 colliding global message id must not steal another character chat",
+      "errors": [
+        {
+          "message": "Expected: 'b'\n  Actual: 'a'\n   Which: is different.\n          Expected: b\n            Actual: a\n                    ^\n           Differ at offset 0\n",
+          "stack": "package:matcher                                           expect\npackage:flutter_test/src/widget_tester.dart 473:18        expect\ntest/features/backup/data_transfer_audit_test.dart 286:5  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "T13 same-day exports must not overwrite previous backup",
+      "errors": [
+        {
+          "message": "Expected: [\n            80,\n            75,\n            3,\n            4,\n            20,\n            0,\n            0,\n            8,\n            8,\n            0,\n            45,\n            33,\n            38,\n            93,\n            118,\n            8,\n            38,\n            178,\n            22,\n            1,\n            0,\n            0,\n            85,\n            2,\n            ...\n          ]\n  Actual: [\n            80,\n            75,\n            3,\n            4,\n            20,\n            0,\n            0,\n            8,\n            8,\n            0,\n            45,\n            33,\n            38,\n            93,\n            118,\n            8,\n            38,\n            178,\n            22,\n            1,\n            0,\n            0,\n            85,\n            2,\n            ...\n          ]\n   Which: at location [340] is <114> instead of <85>\na later export must preserve the old backup bytes\n",
+          "stack": "package:matcher                                           expect\npackage:flutter_test/src/widget_tester.dart 473:18        expect\ntest/features/backup/data_transfer_audit_test.dart 296:5  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "T14 preview must not write outside extraction directory",
+      "errors": [
+        {
+          "message": "Expected: 'unchanged'\n  Actual: 'overwritten'\n   Which: is different.\n          Expected: unchanged\n            Actual: overwritte ...\n                    ^\n           Differ at offset 0\n",
+          "stack": "package:matcher                                           expect\npackage:flutter_test/src/widget_tester.dart 473:18        expect\ntest/features/backup/data_transfer_audit_test.dart 313:5  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "T15 missing declared attachment must not silently succeed",
+      "errors": [
+        {
+          "message": "Expected: throws anything\n  Actual: <Instance of 'Future<ImportResult>'>\n   Which: emitted <Instance of 'ImportResult'>\n",
+          "stack": "package:matcher                                            expectLater\npackage:flutter_test/src/widget_tester.dart 507:8          expectLater\ntest/features/backup/data_transfer_audit_test.dart 332:11  main.<fn>\n===== asynchronous gap ===========================\ndart:async                                                 _CustomZone.registerUnaryCallback\ntest/features/backup/data_transfer_audit_test.dart 316:32  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "U01 memory-only preview selects available scopes width=360.0",
+      "errors": [
+        {
+          "message": "Test failed. See exception logs above.\nThe test description was: U01 memory-only preview selects available scopes width=360.0",
+          "stack": ""
+        }
+      ],
+      "result": "error"
+    },
+    {
+      "name": "T16 includeVideo must copy local video and thumbnail",
+      "errors": [
+        {
+          "message": "Expected: <2>\n  Actual: <0>\n",
+          "stack": "package:matcher                                           expect\npackage:flutter_test/src/widget_tester.dart 473:18        expect\ntest/features/backup/data_transfer_audit_test.dart 343:5  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "backup scope size=Size(320.0, 568.0) scale=1.2",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "T17 included local image and audio physically restore",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "T18 same timestamp chat order survives round trip",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "import ignores late picker result invalid=false",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "T19 repeated merge is idempotent",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "U01 memory-only preview selects available scopes width=1000.0",
+      "errors": [
+        {
+          "message": "Test failed. See exception logs above.\nThe test description was: U01 memory-only preview selects available scopes width=1000.0",
+          "stack": ""
+        }
+      ],
+      "result": "error"
+    },
+    {
+      "name": "T20 createNew maps message block and linked message ids",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "import ignores late picker result invalid=true",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "T22 topic handoff summary survives round trip",
+      "errors": [
+        {
+          "message": "Expected: ['承接摘要']\n  Actual: MappedListIterable<QueryRow, String>:[]\n   Which: at location [0] is MappedListIterable<QueryRow, String>:[] which shorter than expected\n",
+          "stack": "package:matcher                                           expect\npackage:flutter_test/src/widget_tester.dart 473:18        expect\ntest/features/backup/data_transfer_audit_test.dart 403:5  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "T23 basic card and legacy settings round trip",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "T24 unknown ids must not produce a successful empty export",
+      "errors": [
+        {
+          "message": "Expected: throws anything\n  Actual: <Instance of 'Future<ExportResult>'>\n   Which: emitted <Instance of 'ExportResult'>\n",
+          "stack": "package:matcher                                            expectLater\npackage:flutter_test/src/widget_tester.dart 507:8          expectLater\ntest/features/backup/data_transfer_audit_test.dart 440:11  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "T25 reference path must not read outside archive",
+      "errors": [
+        {
+          "message": "Expected: not contains 'synthetic-private'\n  Actual: ['synthetic-private', 'legitimate']\nmetadata cannot import files outside extraction root\n",
+          "stack": "package:matcher                                           expect\npackage:flutter_test/src/widget_tester.dart 473:18        expect\ntest/features/backup/data_transfer_audit_test.dart 468:5  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "U02 incompatible preview must not invoke import",
+      "errors": [
+        {
+          "message": "Test failed. See exception logs above.\nThe test description was: U02 incompatible preview must not invoke import",
+          "stack": ""
+        }
+      ],
+      "result": "error"
+    },
+    {
+      "name": "T26 card-only export must not include unselected private settings",
+      "errors": [
+        {
+          "message": "Expected: false\n  Actual: <true>\n",
+          "stack": "package:matcher                                           expect\npackage:flutter_test/src/widget_tester.dart 473:18        expect\ntest/features/backup/data_transfer_audit_test.dart 478:5  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "T27 merge applies selected persona changes",
+      "errors": [
+        {
+          "message": "Expected: '新设定'\n  Actual: '人物设定'\n   Which: is different.\n          Expected: 新设定\n            Actual: 人物设定\n                    ^\n           Differ at offset 0\n",
+          "stack": "package:matcher                                           expect\npackage:flutter_test/src/widget_tester.dart 473:18        expect\ntest/features/backup/data_transfer_audit_test.dart 489:5  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "T28 block id collision must not steal another character attachment",
+      "errors": [
+        {
+          "message": "Expected: 'other'\n  Actual: 'm'\n   Which: is different.\n          Expected: other\n            Actual: m\n                    ^\n           Differ at offset 0\n",
+          "stack": "package:matcher                                           expect\npackage:flutter_test/src/widget_tester.dart 473:18        expect\ntest/features/backup/data_transfer_audit_test.dart 510:5  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "U03 import progress after disposal must be safe",
+      "errors": [
+        {
+          "message": "Test failed. See exception logs above.\nThe test description was: U03 import progress after disposal must be safe",
+          "stack": ""
+        }
+      ],
+      "result": "error"
+    },
+    {
+      "name": "T29 excluded image and audio bytes do not enter archive",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "T30 selected conversation isolation and conflict skip",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "T31 corrupt ZIP must not change database",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "T32 supplement image stored in raw payload enters backup",
+      "errors": [
+        {
+          "message": "Expected: <1>\n  Actual: <0>\n",
+          "stack": "package:matcher                                           expect\npackage:flutter_test/src/widget_tester.dart 473:18        expect\ntest/features/backup/data_transfer_audit_test.dart 561:5  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "U04 old file conflict choices must not carry into a new preview",
+      "errors": [
+        {
+          "message": "Test failed. See exception logs above.\nThe test description was: U04 old file conflict choices must not carry into a new preview",
+          "stack": ""
+        }
+      ],
+      "result": "error"
+    },
+    {
+      "name": "T21 future version is rejected without database changes",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "backup export size=Size(320.0, 568.0) scale=1.2",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "backup preview size=Size(320.0, 568.0) scale=1.2",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "backup import size=Size(320.0, 568.0) scale=1.2",
+      "errors": [
+        {
+          "message": "Test failed. See exception logs above.\nThe test description was: backup import size=Size(320.0, 568.0) scale=1.2",
+          "stack": ""
+        }
+      ],
+      "result": "error"
+    },
+    {
+      "name": "backup scope size=Size(320.0, 568.0) scale=1.8",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "backup export size=Size(320.0, 568.0) scale=1.8",
+      "errors": [
+        {
+          "message": "Test failed. See exception logs above.\nThe test description was: backup export size=Size(320.0, 568.0) scale=1.8",
+          "stack": ""
+        }
+      ],
+      "result": "error"
+    },
+    {
+      "name": "backup preview size=Size(320.0, 568.0) scale=1.8",
+      "errors": [
+        {
+          "message": "Test failed. See exception logs above.\nThe test description was: backup preview size=Size(320.0, 568.0) scale=1.8",
+          "stack": ""
+        }
+      ],
+      "result": "error"
+    },
+    {
+      "name": "backup import size=Size(320.0, 568.0) scale=1.8",
+      "errors": [
+        {
+          "message": "Test failed. See exception logs above.\nThe test description was: backup import size=Size(320.0, 568.0) scale=1.8",
+          "stack": ""
+        }
+      ],
+      "result": "error"
+    },
+    {
+      "name": "backup scope size=Size(1000.0, 768.0) scale=1.2",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "backup export size=Size(1000.0, 768.0) scale=1.2",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "backup preview size=Size(1000.0, 768.0) scale=1.2",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "backup import size=Size(1000.0, 768.0) scale=1.2",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "backup scope size=Size(1000.0, 768.0) scale=1.8",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "backup export size=Size(1000.0, 768.0) scale=1.8",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "backup preview size=Size(1000.0, 768.0) scale=1.8",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "backup import size=Size(1000.0, 768.0) scale=1.8",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "export progress remains safe after page disposal",
+      "errors": [
+        {
+          "message": "Test failed. See exception logs above.\nThe test description was: export progress remains safe after page disposal",
+          "stack": ""
+        }
+      ],
+      "result": "error"
+    }
+  ]
+}

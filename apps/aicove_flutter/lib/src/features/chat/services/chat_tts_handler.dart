@@ -24,8 +24,11 @@ import '../../settings/app_settings.dart' show appSettingsProvider;
 import '../../plugins/domain/plugin.dart';
 import '../../plugins/plugin_providers.dart';
 import '../../plugins/tts/tts_player_manager.dart';
+import '../../plugins/tts/voice_request.dart';
 import '../../../core/models/message_block.dart';
 import '../../../core/app_logger.dart';
+import '../../observability/frontend_diagnostics_provider.dart';
+import '../../../core/services/android_keep_alive_manager.dart';
 import 'chat_message_processor.dart';
 import 'chat_history_store.dart';
 import 'chat_deferred_image_delivery.dart';
@@ -139,7 +142,21 @@ class ChatTtsHandler {
   void _runBackgroundTask(String label, Future<void> Function() task) {
     late final Future<void> future;
     future = (() async {
+      AndroidGenerationKeepAliveLease? keepAliveLease;
       try {
+        try {
+          keepAliveLease =
+              await AndroidKeepAliveManager.acquireGenerationLease();
+        } catch (e) {
+          AppLogger.warning(
+            'ChatTtsHandler',
+            '后台多模态任务启动临时守护失败，将继续执行',
+            metadata: {
+              'label': label,
+              'error': e.toString(),
+            },
+          );
+        }
         await task();
       } catch (e) {
         AppLogger.error('ChatTtsHandler', '后台多模态任务失败', metadata: {
@@ -147,6 +164,18 @@ class ChatTtsHandler {
           'error': e.toString(),
         });
       } finally {
+        try {
+          await keepAliveLease?.release();
+        } catch (e) {
+          AppLogger.warning(
+            'ChatTtsHandler',
+            '后台多模态任务释放临时守护失败',
+            metadata: {
+              'label': label,
+              'error': e.toString(),
+            },
+          );
+        }
         _backgroundTasks.remove(future);
         if (_backgroundTasks.isEmpty) {
           final currentStatus = _ref.read(chatStatusProvider);
@@ -199,11 +228,29 @@ class ChatTtsHandler {
     bool appendAfterStreamText = false,
     List<String>? streamTextMessageIds,
     List<Message>? streamPendingTtsMessages,
+    bool streamTtsResolutionManaged = false,
     TraceLogger? trace,
   }) async {
+    final request = VoiceRequest.forEvents(pluginEvents);
+    if (request != null && !identical(request, VoiceRequest.current)) {
+      return request.run(() => deliverSegmentedMessages(
+        convId: convId, userMsgId: userMsgId, buildResult: buildResult,
+        replyText: replyText, pluginEvents: pluginEvents, ttsEnabled: ttsEnabled,
+        appendAfterStreamText: appendAfterStreamText, streamTextMessageIds: streamTextMessageIds,
+        streamPendingTtsMessages: streamPendingTtsMessages,
+        streamTtsResolutionManaged: streamTtsResolutionManaged, trace: trace));
+    }
     final hasTtsEvents = pluginEvents.any((e) => e.type == 'tts_convert');
     final hasImageEvents = pluginEvents.any((e) => e.type == 'image_generate');
     final sourceMessageId = buildResult.rawMessage?.id;
+    final diagnostics = _ref.read(frontendDiagnosticsProvider);
+    final diagnosticContext = diagnostics.forTurn(userMsgId);
+    if (sourceMessageId != null) {
+      diagnostics.bindMessage(sourceMessageId, diagnosticContext);
+    }
+    for (final message in buildResult.messages) {
+      diagnostics.bindMessage(message.id, diagnosticContext);
+    }
 
     // 检查是否有工具音频（路径 A：speak 工具产生的音频）
     final hasToolAudio = buildResult.messages.any(
@@ -223,6 +270,7 @@ class ChatTtsHandler {
         hasImageEvents: hasImageEvents,
         streamTextMessageIds: streamTextMessageIds,
         streamPendingTtsMessages: streamPendingTtsMessages,
+        streamTtsResolutionManaged: streamTtsResolutionManaged,
         sourceMessageId: sourceMessageId,
         trace: trace,
       );
@@ -282,37 +330,40 @@ class ChatTtsHandler {
     required bool hasImageEvents,
     required List<String>? streamTextMessageIds,
     required List<Message>? streamPendingTtsMessages,
+    required bool streamTtsResolutionManaged,
     required String? sourceMessageId,
     TraceLogger? trace,
   }) async {
-    final pendingStreamTts = streamPendingTtsMessages
+    final pendingStreamTts =
+        streamPendingTtsMessages
             ?.where(ChatPendingTtsResolver.isPendingPlaceholder)
             .toList(growable: false) ??
         const <Message>[];
+    final hasStreamTts = streamPendingTtsMessages?.isNotEmpty ?? false;
 
-    final ids = streamTextMessageIds
+    final ids =
+        streamTextMessageIds
             ?.where((id) => id.trim().isNotEmpty)
             .toList(growable: false) ??
         const <String>[];
     if (ids.isEmpty) {
       final supplements = _extractNonTextMessages(
         buildResult.messages,
-        includeEmoji: pendingStreamTts.isNotEmpty ? true : !canGenerateTts,
+        includeEmoji: hasStreamTts ? true : !canGenerateTts,
       );
       await _deliverSupplementMessages(
         convId: convId,
         messages: supplements,
         trace: trace,
       );
-      if (pendingStreamTts.isNotEmpty) {
+      if (pendingStreamTts.isNotEmpty && !streamTtsResolutionManaged) {
         _schedulePendingStreamTtsResolution(
           convId: convId,
           messages: pendingStreamTts,
           trace: trace,
         );
       }
-      final shouldGenerateDeferredTts =
-          canGenerateTts && pendingStreamTts.isEmpty;
+      final shouldGenerateDeferredTts = canGenerateTts && !hasStreamTts;
       if (shouldGenerateDeferredTts || hasImageEvents) {
         _runBackgroundTask('post_stream_no_anchor_supplements', () {
           return _deliverWithMultimodalSegments(
@@ -358,13 +409,13 @@ class ChatTtsHandler {
         canGenerateTts: canGenerateTts,
         streamTextMessageIds: ids,
         startOrder: insertOps.length,
-        includeTts: pendingStreamTts.isEmpty,
+        includeTts: !hasStreamTts,
         sourceMessageId: sourceMessageId,
         trace: trace,
       );
     }
 
-    if (pendingStreamTts.isNotEmpty) {
+    if (pendingStreamTts.isNotEmpty && !streamTtsResolutionManaged) {
       _schedulePendingStreamTtsResolution(
         convId: convId,
         messages: pendingStreamTts,
@@ -499,6 +550,31 @@ class ChatTtsHandler {
     _deferredImageDelivery.scheduleJobs(
       convId: convId,
       jobs: deferredImageJobs,
+      drawingSnapshot: _drawingSnapshot(pluginEvents),
+    );
+  }
+
+  Map<String, dynamic>? _drawingSnapshot(List<PluginEvent> events) {
+    final raw = events.where((e) => e.type == 'image_generate')
+        .map((e) => e.data['drawingConfig']).whereType<Map>().firstOrNull;
+    return raw == null ? null : Map<String, dynamic>.from(raw);
+  }
+
+  Future<void> resolvePendingStreamMessage({
+    required String convId,
+    required Message message,
+    void Function(String audioUrl, double? durationSeconds)? onAudioResolved,
+    void Function(String text)? onTextFallback,
+    bool persistResult = true,
+    bool Function()? shouldApplyResult,
+  }) {
+    return _pendingTtsResolver.resolveSinglePendingMessage(
+      convId: convId,
+      message: message,
+      onAudioResolved: onAudioResolved,
+      onTextFallback: onTextFallback,
+      persistResult: persistResult,
+      shouldApplyResult: shouldApplyResult,
     );
   }
 
@@ -848,6 +924,7 @@ class ChatTtsHandler {
       _deferredImageDelivery.scheduleJobs(
         convId: convId,
         jobs: scheduledJobs,
+        drawingSnapshot: _drawingSnapshot(pluginEvents),
       );
     }
 

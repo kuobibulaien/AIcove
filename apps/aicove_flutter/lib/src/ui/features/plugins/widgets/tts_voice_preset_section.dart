@@ -44,17 +44,9 @@ class TtsVoicePresetSection extends StatelessWidget {
       children: [
         ..._buildCapabilityNotices(context, providerContext.capabilities),
         if (selectedModelId == null)
-          _buildHintRow(
-            context,
-            icon: Icons.warning_amber_outlined,
-            text: '请先选择 TTS 模型',
-          )
+          _buildHintRow(context, text: '请先选择 TTS 模型')
         else if (presets.isEmpty)
-          _buildHintRow(
-            context,
-            icon: Icons.info_outline,
-            text: '暂无音色，点击「获取」导入渠道音色，或点击「自定义」创建自己的音色',
-          )
+          _buildHintRow(context, text: '暂无音色，点击「获取」导入渠道音色，或点击「自定义」创建自己的音色')
         else
           ...presets.asMap().entries.map((entry) {
             final index = entry.key;
@@ -66,14 +58,14 @@ class TtsVoicePresetSection extends StatelessWidget {
               providerId: providerContext.voiceProviderId,
             );
 
-            final providerNames =
-                _resolveAvailableProviderNames(preset, availableModels);
+            final providerNames = _resolveAvailableProviderNames(
+              preset,
+              availableModels,
+            );
 
             return MoeSettingsRow(
-              icon: isSelected ? Icons.check_circle : Icons.mic,
-              iconColor: isSelected
-                  ? colors.primary
-                  : (isAvailable ? null : colors.muted),
+              icon: isSelected ? Icons.check_circle : null,
+              iconColor: colors.primary,
               label: preset.name,
               subtitle: _buildVoicePresetSubtitle(
                 preset,
@@ -86,17 +78,17 @@ class TtsVoicePresetSection extends StatelessWidget {
                 children: [
                   if (!preset.isBuiltIn)
                     GestureDetector(
-                      onTap: () => _confirmDeleteLocalVoice(
-                        context,
-                        preset,
-                        notifier,
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(8),
-                        child: Icon(
-                          Icons.delete_outline,
-                          size: 20,
-                          color: colors.muted,
+                      onTap: () =>
+                          _confirmDeleteLocalVoice(context, preset, notifier),
+                      child: MoeButtonSurface(
+                        radius: 999,
+                        child: Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: Icon(
+                            Icons.delete_outline,
+                            size: 20,
+                            color: colors.muted,
+                          ),
                         ),
                       ),
                     ),
@@ -117,41 +109,41 @@ class TtsVoicePresetSection extends StatelessWidget {
               Expanded(
                 child: MoeSecondaryButton(
                   label: '获取',
-                  icon: Icons.cloud_download_outlined,
-                  enabled: selectedModelId != null &&
+                  enabled:
+                      selectedModelId != null &&
                       providerContext.hasVoiceProvider,
-                  onPressed: selectedModelId == null ||
+                  onPressed:
+                      selectedModelId == null ||
                           !providerContext.hasVoiceProvider
                       ? null
                       : () => showTtsVoiceCatalogSheet(
-                            context: context,
-                            config: config,
-                            providerContext: providerContext,
-                            onVoiceSelected: (voice) async {
-                              await notifier.addVoicePreset(voice);
-                              await notifier.selectVoicePreset(voice.id);
-                              if (!context.mounted) return;
-                              MoeToast.success(context, '已添加「${voice.name}」');
-                            },
-                          ),
+                          context: context,
+                          config: config,
+                          providerContext: providerContext,
+                          onVoiceSelected: (voice) async {
+                            await notifier.addVoicePreset(voice);
+                            await notifier.selectVoicePreset(voice.id);
+                            if (!context.mounted) return;
+                            MoeToast.success(context, '已添加「${voice.name}」');
+                          },
+                        ),
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: MoePrimaryButton(
                   label: '自定义',
-                  icon: Icons.add,
                   enabled: selectedModelId != null,
                   onPressed: selectedModelId == null
                       ? null
                       : () => showTtsVoicePresetEditorSheet(
-                            context: context,
-                            notifier: notifier,
-                            providerContext: providerContext,
-                            settings: settings,
-                            availableModels: availableModels,
-                            colors: colors,
-                          ),
+                          context: context,
+                          notifier: notifier,
+                          providerContext: providerContext,
+                          settings: settings,
+                          availableModels: availableModels,
+                          colors: colors,
+                        ),
                 ),
               ),
             ],
@@ -174,7 +166,6 @@ class TtsVoicePresetSection extends StatelessWidget {
         _buildBanner(
           context,
           color: colors.muted,
-          icon: Icons.info_outline,
           text: '当前渠道暂未接入专门的音色适配器，暂时只能手动维护音色素材',
         ),
       );
@@ -185,7 +176,6 @@ class TtsVoicePresetSection extends StatelessWidget {
         _buildBanner(
           context,
           color: Colors.orange,
-          icon: Icons.schedule_outlined,
           text: '当前渠道创建音色后需要审核，审核通过后才可正式使用',
         ),
       );
@@ -197,7 +187,6 @@ class TtsVoicePresetSection extends StatelessWidget {
         _buildBanner(
           context,
           color: colors.primary,
-          icon: Icons.timelapse_outlined,
           text: capabilities!.expirationDescription!,
         ),
       );
@@ -208,7 +197,6 @@ class TtsVoicePresetSection extends StatelessWidget {
         _buildBanner(
           context,
           color: colors.muted,
-          icon: Icons.key_off_outlined,
           text: '当前渠道还没填 API Key，暂时只能先保存本地音色素材',
         ),
       );
@@ -220,7 +208,6 @@ class TtsVoicePresetSection extends StatelessWidget {
   Widget _buildBanner(
     BuildContext context, {
     required Color color,
-    required IconData icon,
     required String text,
   }) {
     return Padding(
@@ -234,13 +221,8 @@ class TtsVoicePresetSection extends StatelessWidget {
         ),
         child: Row(
           children: [
-            Icon(icon, color: color, size: 18),
-            const SizedBox(width: 8),
             Expanded(
-              child: Text(
-                text,
-                style: TextStyle(color: color, fontSize: 12),
-              ),
+              child: Text(text, style: TextStyle(color: color, fontSize: 12)),
             ),
           ],
         ),
@@ -248,18 +230,12 @@ class TtsVoicePresetSection extends StatelessWidget {
     );
   }
 
-  Widget _buildHintRow(
-    BuildContext context, {
-    required IconData icon,
-    required String text,
-  }) {
+  Widget _buildHintRow(BuildContext context, {required String text}) {
     final colors = context.moeColors;
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Row(
         children: [
-          Icon(icon, color: colors.muted, size: 18),
-          const SizedBox(width: 8),
           Expanded(
             child: Text(
               text,
@@ -381,7 +357,6 @@ class TtsVoicePresetSection extends StatelessWidget {
             },
           ),
         MoeSheetAction(
-          icon: Icons.visibility,
           label: '查看详情',
           onTap: () => showTtsVoicePresetEditorSheet(
             context: context,
@@ -395,7 +370,6 @@ class TtsVoicePresetSection extends StatelessWidget {
         ),
         if (!preset.isBuiltIn)
           MoeSheetAction(
-            icon: Icons.delete_outline,
             label: '删除',
             isDestructive: true,
             onTap: () => _confirmDeleteLocalVoice(context, preset, notifier),

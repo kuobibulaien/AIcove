@@ -8,13 +8,11 @@ import 'package:aicove_flutter/src/ui/shared/effects/smooth_clip.dart';
 
 import '../../../../ui/theme/tokens.dart';
 import '../../../../core/utils/data_image.dart';
-import '../../../../ui/shared/widgets/image_crop_dialog.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../settings/app_settings.dart';
 import '../../../../ui/features/settings/pages/log_viewer_page.dart';
 import '../../../../ui/features/debug/pages/ui_gallery_page.dart';
-
 
 /// 个人中心内容组件（无 AppBar，可复用）
 class ProfileContent extends ConsumerStatefulWidget {
@@ -25,15 +23,6 @@ class ProfileContent extends ConsumerStatefulWidget {
 }
 
 class _ProfileContentState extends ConsumerState<ProfileContent> {
-  final TextEditingController _nameController = TextEditingController();
-  bool _isEditingName = false;
-
-  @override
-  void dispose() {
-    _nameController.dispose();
-    super.dispose();
-  }
-
   Future<void> _pickImage() async {
     // 与"添加角色"一致：使用 FilePicker 获取字节并存为 data:image/... 的数据URL
     // 这样可以避免 Android 上 content:// 或云盘返回的无效路径导致的 PlatformException
@@ -55,7 +44,8 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
           barrierColor: Colors.black,
           transitionDuration: kAnim,
           reverseTransitionDuration: kAnim,
-          pageBuilder: (context, animation, secondaryAnimation) => ImageCropDialog(
+          pageBuilder: (context, animation, secondaryAnimation) =>
+              ImageCropDialog(
             imageBytes: file.bytes!,
             fileName: file.name,
           ),
@@ -72,7 +62,7 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
               parent: animation,
               curve: Curves.easeOutCubic,
             ));
-            
+
             return FadeTransition(
               opacity: fadeAnimation,
               child: ScaleTransition(
@@ -99,20 +89,20 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
     }
   }
 
-  Future<void> _saveName() async {
-    final name = _nameController.text.trim();
-    if (name.isNotEmpty) {
-      final settings = ref.read(appSettingsProvider.notifier);
-      await settings.setUserName(name);
-      setState(() {
-        _isEditingName = false;
-      });
-    }
+  Future<void> _editName() async {
+    await showMoeAutoSaveTextEditor(
+        context: context,
+        title: '个人名称',
+        initialValue: ref.read(appSettingsProvider).valueOrNull?.userName ?? '',
+        onSave: (text) async {
+          if (text.trim().isEmpty) throw const FormatException('名称不能为空');
+          await ref.read(appSettingsProvider.notifier).setUserName(text.trim());
+        });
   }
 
   Widget _buildAvatarImage(String? url) {
     if (url == null || url.trim().isEmpty) {
-      return const Icon(Icons.person, size: 60, color: moeMuted);
+      return const SizedBox.expand();
     }
     final trimmed = url.trim();
 
@@ -122,7 +112,7 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
       return Image.memory(
         dataBytes,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => const Icon(Icons.person, size: 60, color: moeMuted),
+        errorBuilder: (_, __, ___) => const SizedBox.expand(),
       );
     }
 
@@ -131,23 +121,25 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
       return Image.file(
         File(trimmed),
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => const Icon(Icons.person, size: 60, color: moeMuted),
+        errorBuilder: (_, __, ___) => const SizedBox.expand(),
       );
     }
 
     // 3) 资产或网络
-    final isNetwork = trimmed.startsWith('http://') || trimmed.startsWith('https://');
-    if (!isNetwork && (trimmed.startsWith('assets/') || !trimmed.contains('://'))) {
+    final isNetwork =
+        trimmed.startsWith('http://') || trimmed.startsWith('https://');
+    if (!isNetwork &&
+        (trimmed.startsWith('assets/') || !trimmed.contains('://'))) {
       return Image.asset(
         trimmed,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => const Icon(Icons.person, size: 60, color: moeMuted),
+        errorBuilder: (_, __, ___) => const SizedBox.expand(),
       );
     }
     return Image.network(
       trimmed,
       fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) => const Icon(Icons.person, size: 60, color: moeMuted),
+      errorBuilder: (_, __, ___) => const SizedBox.expand(),
     );
   }
 
@@ -157,10 +149,6 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
     final settings = settingsAsync.valueOrNull;
     final userName = settings?.userName ?? '未设置';
     final userAvatar = settings?.userAvatar;
-
-    if (!_isEditingName) {
-      _nameController.text = settings?.userName ?? '';
-    }
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
@@ -209,67 +197,23 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
           const SizedBox(height: 24),
 
           // 名称区域（自适应，避免小屏溢出）
-          if (_isEditingName)
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _nameController,
-                    autofocus: true,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: MoeFontWeights.emphasis,
-                    ),
-                    decoration: const InputDecoration(
-                      hintText: '输入名称',
-                      border: OutlineInputBorder(),
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
-                    ),
-                    onSubmitted: (_) => _saveName(),
-                  ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                userName,
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: MoeFontWeights.emphasis,
                 ),
-                const SizedBox(width: 8),
-                IconButton(
-                  icon: const Icon(Icons.check, color: moePrimary),
-                  onPressed: _saveName,
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close, color: moeMuted),
-                  onPressed: () {
-                    setState(() {
-                      _isEditingName = false;
-                      _nameController.text = settings?.userName ?? '';
-                    });
-                  },
-                ),
-              ],
-            )
-          else
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  userName,
-                  style: const TextStyle(
-                    fontSize: 24,
-                    fontWeight: MoeFontWeights.emphasis,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                IconButton(
-                  icon: const Icon(Icons.edit, size: 20, color: moeMuted),
-                  onPressed: () {
-                    setState(() {
-                      _isEditingName = true;
-                    });
-                  },
-                ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                icon: const Icon(Icons.edit, size: 20, color: moeMuted),
+                onPressed: _editName,
+              ),
+            ],
+          ),
 
           const SizedBox(height: 48),
 
@@ -282,11 +226,7 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
                 icon: Icons.person_outline,
                 label: '个人信息',
                 subtitle: userName,
-                onTap: () {
-                  setState(() {
-                    _isEditingName = true;
-                  });
-                },
+                onTap: _editName,
               ),
               MoeSettingsRow(
                 icon: Icons.photo_library_outlined,
@@ -302,7 +242,8 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
                     context: context,
                     applicationName: 'AIcove',
                     applicationVersion: '1.0.0',
-                    applicationIcon: const Icon(Icons.chat_bubble_outline, size: 48),
+                    applicationIcon:
+                        const Icon(Icons.chat_bubble_outline, size: 48),
                     children: const [
                       Text('一款简单顺手的聊天应用'),
                     ],
@@ -314,7 +255,7 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
                 label: '查看日志',
                 subtitle: '查看系统运行日志',
                 onTap: () {
-                  Navigator.of(context).push(
+                  MoeWorkspace.navigatorOf(context).push(
                     ParallaxSlidePageRoute(page: const LogViewerPage()),
                   );
                 },
@@ -324,7 +265,7 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
                 label: 'UI 组件库',
                 subtitle: '查看所有公共组件样式',
                 onTap: () {
-                  Navigator.of(context).push(
+                  MoeWorkspace.navigatorOf(context).push(
                     ParallaxSlidePageRoute(page: const UiGalleryPage()),
                   );
                 },

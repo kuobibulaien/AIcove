@@ -31,6 +31,26 @@ void main() {
     expect(afterFailure.providerApiKeyItemId, 'mk_2');
     expect(afterFailure.providerApiKeyItemIndex, 1);
   });
+
+  test('模型默认思考档位从 ModelConfig 读出', () async {
+    final builder = _NoMcpChatRequestConfigBuilder();
+
+    final withLevel = await builder.buildRequestConfig(
+      _buildSettings(
+        roundRobinIndex: 0,
+        firstStatus: 'normal',
+        modelConfigs: const <String, ModelConfig>{
+          'openai:gpt-4o-mini': ModelConfig(thinkingLevel: ThinkingLevel.high),
+        },
+      ),
+    );
+    expect(withLevel.modelThinkingLevel, ThinkingLevel.high);
+
+    final without = await builder.buildRequestConfig(
+      _buildSettings(roundRobinIndex: 0, firstStatus: 'normal'),
+    );
+    expect(without.modelThinkingLevel, isNull);
+  });
 }
 
 class _NoMcpChatRequestConfigBuilder extends ChatRequestConfigBuilder {
@@ -41,6 +61,7 @@ class _NoMcpChatRequestConfigBuilder extends ChatRequestConfigBuilder {
 AppSettings _buildSettings({
   required int roundRobinIndex,
   required String firstStatus,
+  Map<String, ModelConfig> modelConfigs = const <String, ModelConfig>{},
 }) {
   return AppSettings(
     ttsEnabled: false,
@@ -51,12 +72,12 @@ AppSettings _buildSettings({
     allKnownModels: const <String>['openai:gpt-4o-mini'],
     modelDisplayNames: const <String, String>{},
     modelTypes: const <String, String>{},
-    modelConfigs: const <String, ModelConfig>{},
+    modelConfigs: modelConfigs,
     apiKey: '',
     apiBaseUrl: 'https://api.example.com/v1',
     imageGenerationEnabled: false,
     maxFileUploadMB: 10,
-    historyMessageLimit: 20,
+    contextWindowTokens: 272000,
     customModels: const <CustomModel>[],
     providers: <ProviderAuth>[
       ProviderAuth(

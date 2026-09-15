@@ -1,16 +1,19 @@
 import 'dart:async';
+import 'features/sync/providers/cloud_sync_provider.dart';
 
-import 'package:flutter/cupertino.dart';
+import 'package:aicove_flutter/src/ui/theme/moe_interaction_theme.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'ui/theme/tokens.dart';
+import 'ui/shared/animations/parallax_slide_page_route.dart';
 import 'ui/shared/widgets/desktop_window_frame.dart';
 import 'ui/features/home/pages/main_page.dart';
 import 'ui/features/chat/pages/chat_page.dart';
-import 'ui/features/chat/pages/split_chat_page.dart';
+import 'ui/shared/widgets/moe_adaptive_shell.dart';
 import 'ui/features/character/pages/contact_edit_page.dart';
 import 'core/utils/blurred_background_service.dart';
 import 'core/utils/image_preheat_queue.dart';
@@ -38,6 +41,8 @@ class MyApp extends ConsumerStatefulWidget {
 
 class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   // GoRouter 只创建一次，避免设置变更时路由重置
+  final _detailNavigatorKey = GlobalKey<NavigatorState>();
+  final _detailObserver = MoeDetailStackObserver();
   late final GoRouter _router = _createRouter();
 
   // App 启动/恢复时的“预热重试”定时器（当会话列表还没加载出来时使用）
@@ -59,6 +64,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     // App 启动后，尽早预热"最近会话"的图片（避免用户一打开就点进聊天导致闪烁）
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      ref.read(cloudSyncProvider);
       _requestRecentConversationsWarmup();
       unawaited(_syncAndroidKeepAliveGuard());
       // 预热供应商 SVG 图标
@@ -83,6 +89,8 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   @override
   void dispose() {
     _recentConversationsWarmupRetryTimer?.cancel();
+    _router.dispose();
+    _detailObserver.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -94,6 +102,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       // 日志已改为实时存储，无需在后台保存
     }
     if (state == AppLifecycleState.resumed) {
+      unawaited(ref.read(cloudSyncProvider.notifier).synchronize());
       // 从后台恢复时，内存 ImageCache 可能已被系统回收；提前把"最近会话"的图片重新解码进缓存，
       // 让用户点进聊天页时尽量不出现"占位→图片跳出来"的闪一下。
       _requestRecentConversationsWarmup();
@@ -288,54 +297,59 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   GoRouter _createRouter() {
     return GoRouter(
       routes: [
-        GoRoute(
-          path: '/',
-          pageBuilder: (context, state) {
-            // 自适应：小屏显示主页（带底部导航），大屏双栏
-            final width = MediaQuery.sizeOf(context).width;
-            final child = width < layoutBreakpoint
-                ? const MainPage()
-                : const SplitChatPage();
-
-            return CupertinoPage(
-              key: state.pageKey,
-              child: child,
-            );
-          },
+        ShellRoute(
+          navigatorKey: _detailNavigatorKey,
+          observers: [_detailObserver],
+          builder: (context, state, child) => MoeAdaptiveShell(
+            navigatorKey: _detailNavigatorKey,
+            observer: _detailObserver,
+            primary: const MainPage(),
+            detail: child,
+          ),
           routes: [
             GoRoute(
-              path: 'chat/:id',
-              pageBuilder: (context, state) {
-                final id = state.pathParameters['id'];
-                final initialConversation = state.extra is Conversation
-                    ? state.extra as Conversation
-                    : null;
-                return CupertinoPage(
-                  key: state.pageKey,
-                  child: ChatPage(
-                      conversationId: id,
-                      initialConversation: initialConversation),
-                );
-              },
-            ),
-            GoRoute(
-              path: 'contact/new',
-              pageBuilder: (context, state) {
-                // 创建临时空白对话对象
-                final now = DateTime.now();
-                final tempConv = Conversation(
-                  id: 'temp',
-                  title: '新角色',
-                  displayName: '',
-                  createdAt: now,
-                  updatedAt: now,
-                );
-                return CupertinoPage(
-                  key: state.pageKey,
-                  child: ContactEditPage(
-                      conversation: tempConv, editMode: EditMode.create),
-                );
-              },
+              path: '/',
+              pageBuilder: (context, state) => NoTransitionPage(
+                key: state.pageKey,
+                child: const MoeWorkspacePlaceholder(),
+              ),
+              routes: [
+                GoRoute(
+                  path: 'chat/:id',
+                  pageBuilder: (context, state) {
+                    final id = state.pathParameters['id'];
+                    final initialConversation = state.extra is Conversation
+                        ? state.extra as Conversation
+                        : null;
+                    return ParallaxSlidePage(
+                      dimPreviousPage: false,
+                      key: state.pageKey,
+                      child: ChatPage(
+                          conversationId: id,
+                          initialConversation: initialConversation),
+                    );
+                  },
+                ),
+                GoRoute(
+                  path: 'contact/new',
+                  pageBuilder: (context, state) {
+                    // 创建临时空白对话对象
+                    final now = DateTime.now();
+                    final tempConv = Conversation(
+                      id: 'temp',
+                      title: '新角色',
+                      displayName: '',
+                      createdAt: now,
+                      updatedAt: now,
+                    );
+                    return ParallaxSlidePage(
+                      key: state.pageKey,
+                      child: ContactEditPage(
+                          conversation: tempConv, editMode: EditMode.create),
+                    );
+                  },
+                ),
+              ],
             ),
           ],
         ),
@@ -351,24 +365,21 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     // Initialize AutoReplyService to listen for triggers
     ref.watch(autoReplyServiceProvider);
 
-    // 读取全局背景色设置（浅色模式下生效）
-    final globalBgColor = settingsAsync.maybeWhen(
-      data: (s) => s.globalBackgroundColor.color,
-      orElse: () => moeSurface,
-    );
-
     // 创建浅色主题
-    final lightTheme = _buildTheme(
-        isDark: false, accent: accentColor, globalBgColor: globalBgColor);
+    final lightTheme = _buildTheme(isDark: false, accent: accentColor);
 
-    // 创建暗色主题
-    final darkTheme = _buildTheme(isDark: true, accent: accentColor);
+    // 创建暗色主题：默认粉红在暗色模式下自动转为协调舒适的薰衣草紫
+    final darkAccent = accentColor == const Color(0xFFFC96AA)
+        ? moeAccentDark
+        : accentColor;
+    final darkTheme = _buildTheme(isDark: true, accent: darkAccent);
 
-    return settingsAsync.when(
-      loading: () => MaterialApp(
+    return MoeLiquidGlassService.wrapApp(
+      child: settingsAsync.when(
+        loading: () => MaterialApp(
         debugShowCheckedModeBanner: false,
-        theme: lightTheme,
-        darkTheme: darkTheme,
+        theme: withMoeInteractionTheme(lightTheme),
+        darkTheme: withMoeInteractionTheme(darkTheme),
         themeMode: ThemeMode.system,
         localizationsDelegates: const [
           GlobalMaterialLocalizations.delegate,
@@ -386,8 +397,8 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       ),
       error: (_, __) => MaterialApp(
         debugShowCheckedModeBanner: false,
-        theme: lightTheme,
-        darkTheme: darkTheme,
+        theme: withMoeInteractionTheme(lightTheme),
+        darkTheme: withMoeInteractionTheme(darkTheme),
         themeMode: ThemeMode.system,
         localizationsDelegates: const [
           GlobalMaterialLocalizations.delegate,
@@ -413,8 +424,8 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
           child: MaterialApp.router(
             debugShowCheckedModeBanner: false,
             title: 'AIcove',
-            theme: lightTheme,
-            darkTheme: darkTheme,
+            theme: withMoeInteractionTheme(lightTheme),
+            darkTheme: withMoeInteractionTheme(darkTheme),
             themeMode: themeMode,
             localizationsDelegates: const [
               GlobalMaterialLocalizations.delegate,
@@ -429,8 +440,8 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
             routerConfig: _router,
             // 桌面端包裹自定义标题栏
             builder: (context, child) {
-              // 将设置页的 1.0 映射为历史默认观感（约 1.2x）
-              const baselineScale = 1.2;
+              // 用户字号缩放直接作用于统一的基础排版。
+              const baselineScale = 1.0;
               final textScale = settings.textScaleFactor
                       .clamp(kMinTextScaleFactor, kMaxTextScaleFactor)
                       .toDouble() *
@@ -442,12 +453,22 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
                 data: MediaQuery.of(context).copyWith(
                   textScaler: TextScaler.linear(textScale),
                 ),
-                child: DesktopWindowFrame(
-                  windowControlsOnRight: settings.windowsWindowControlsSide ==
-                      WindowControlButtonSide.right,
-                  child: _GlobalUiScale(
-                    scale: uiScale,
-                    child: child ?? const SizedBox.shrink(),
+                child: MoeGlassTheme(
+                  enabled: settings.glassEffectEnabled,
+                  blurSigma: settings.glassBlurSigma
+                      .clamp(kMinGlassBlurSigma, kMaxGlassBlurSigma)
+                      .toDouble(),
+                  useLiquidGlass: settings.useLiquidGlass,
+                  child: DesktopWindowFrame(
+                    windowControlsOnRight: settings.windowsWindowControlsSide ==
+                        WindowControlButtonSide.right,
+                    child: _GlobalUiScale(
+                      scale: uiScale,
+                      child: TooltipVisibility(
+                        visible: false,
+                        child: child ?? const SizedBox.shrink(),
+                      ),
+                    ),
                   ),
                 ),
               );
@@ -455,12 +476,13 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
           ),
         );
       },
-    );
+    ),
+  );
   }
 
   /// 构建主题（浅色或暗色）
   ThemeData _buildTheme(
-      {required bool isDark, required Color accent, Color? globalBgColor}) {
+      {required bool isDark, required Color accent}) {
     // Material3 的默认组件（ElevatedButton、Switch、ProgressIndicator 等）主要跟随 colorScheme.primary。
     // 这里用用户选择的主题色作为 seed/primary，避免"主题粉色但按钮仍是蓝色"的割裂感。
     final seed = accent;
@@ -470,6 +492,13 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       primary: seed,
       // MoeTalk 仍然用自定义 surface/onSurface 来保持整体灰阶风格一致
       surface: isDark ? moePanelDark : moePanel,
+      surfaceDim: isDark ? moePanelDark : moePanel,
+      surfaceBright: isDark ? moePanelDark : moePanel,
+      surfaceContainerLowest: isDark ? moePanelDark : moePanel,
+      surfaceContainerLow: isDark ? moePanelDark : moePanel,
+      surfaceContainer: isDark ? moePanelDark : moePanel,
+      surfaceContainerHigh: isDark ? moePanelDark : moePanel,
+      surfaceContainerHighest: isDark ? moePanelDark : moePanel,
       onSurface: isDark ? moeTextDark : moeText,
     );
 
@@ -515,20 +544,35 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       colorScheme: scheme,
       useMaterial3: true,
       scaffoldBackgroundColor:
-          isDark ? moeSurfaceDark : (globalBgColor ?? moeSurface),
+          isDark ? moeSurfaceDark : moeSurface,
       // 跨平台字体回退栈（Web 优先使用 Noto Sans SC，已在 index.html 预加载）
       fontFamilyFallback: const [
         // 首选：Google Fonts 中文字体（Web 平台必需）
         'Noto Sans SC',
         // Apple 平台
-        'SF Pro Rounded', 'SF Pro Text', 'SF Pro Display', 'PingFang SC',
+        'SF Pro Text', 'SF Pro Display', 'PingFang SC',
         'Hiragino Sans GB',
         // Windows
         'Segoe UI', 'Microsoft YaHei',
         // Android/Linux
         'Roboto',
       ],
-      textTheme: boldText,
+      textTheme: boldText.copyWith(
+        bodyLarge: baseText.bodyLarge,
+        bodyMedium: baseText.bodyMedium,
+        bodySmall: baseText.bodySmall,
+        labelMedium: baseText.labelMedium,
+        labelSmall: baseText.labelSmall,
+      ),
+      listTileTheme: const ListTileThemeData(minVerticalPadding: 12),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: isDark ? moeSurfaceAltDark : moeSurfaceAlt,
+        visualDensity: VisualDensity.standard,
+        border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide.none),
+      ),
       // 全局分割线样式：1px 细线、无额外上下留白（颜色更柔和）
       dividerTheme: DividerThemeData(
         color: isDark ? moeDividerColorDark : moeDividerColor,
@@ -536,27 +580,29 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         space: 0,
       ),
       appBarTheme: AppBarTheme(
-        backgroundColor: accent,
-        foregroundColor: isDark ? moeTextDark : moeHeaderContentLight,
+        backgroundColor: isDark ? moeSurfaceDark : moeSurface,
+        foregroundColor: isDark ? moeTextDark : moeText,
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
         // 统一去掉标题左侧的默认空白：避免返回按钮和标题之间出现“多出来的一段间距”。
         // 个别页面需要特殊间距时，可在该页面的 AppBar 里单独覆盖 titleSpacing。
         titleSpacing: 0,
         titleTextStyle: boldText.titleLarge?.copyWith(
-          color: isDark ? moeTextDark : moeHeaderContentLight,
+          color: isDark ? moeTextDark : moeText,
         ),
       ),
       // 全局底部弹窗主题：减少视觉复杂度
-      bottomSheetTheme: const BottomSheetThemeData(
+      bottomSheetTheme: BottomSheetThemeData(
         elevation: 0,
         modalElevation: 0,
+        modalBarrierColor: isDark ? null : Colors.transparent,
       ),
       // 添加自定义主题扩展（使用当前主题色）
       extensions: <ThemeExtension<dynamic>>[
         isDark
             ? MoeColors.dark(accentColor: accent)
-            : MoeColors.light(
-                accentColor: accent, globalBgColor: globalBgColor),
+            : MoeColors.light(accentColor: accent),
       ],
     );
   }

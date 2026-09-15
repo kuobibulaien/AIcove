@@ -338,45 +338,61 @@ class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
     MoeToast.show(context, '已新增 $added 个 Key');
   }
 
-  Future<void> _editKey(
-    ProviderAuth provider,
-    List<ProviderMultiKeyItem> items,
-    ProviderMultiKeyItem target,
-  ) async {
-    final result = await _showMultiKeyFormSheet(
-      title: '编辑 Key',
-      confirmText: '保存',
-      initialAlias: target.alias,
-      initialKey: target.key,
-    );
-    if (result == null || !mounted) return;
-
-    final newKey = result.key.trim();
-    if (newKey.isEmpty) {
-      MoeToast.show(context, 'Key 不能为空', type: ToastType.error);
-      return;
-    }
-    final duplicated = items.any((item) =>
-        item.id != target.id &&
-        item.key.trim().toLowerCase() == newKey.toLowerCase());
-    if (duplicated) {
-      MoeToast.show(context, 'Key 已存在', type: ToastType.warning);
-      return;
-    }
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final next = items.map((item) {
-      if (item.id != target.id) return item;
-      final alias = result.alias?.trim() ?? '';
-      return item.copyWith(
-        key: newKey,
-        alias: alias,
-        clearAlias: alias.isEmpty,
-        updatedAt: now,
-      );
-    }).toList();
-    await _saveItems(provider, next);
-    if (!mounted) return;
-    MoeToast.show(context, '已保存');
+  Future<void> _editKey(ProviderAuth provider, List<ProviderMultiKeyItem> items,
+      ProviderMultiKeyItem target) async {
+    final key = TextEditingController(text: target.key);
+    final alias = TextEditingController(text: target.alias ?? '');
+    await showMoeBottomSheet<void>(
+        context: context,
+        title: '编辑 Key',
+        showCloseButton: true,
+        isDismissible: false,
+        enableDrag: false,
+        builder: (context) => MoeAutoSaveForm(
+              disposeFields: true,
+              fields: [key, alias],
+              snapshot: () => moeAutoSaveSignature([key.text, alias.text]),
+              save: () async {
+                final value = key.text.trim();
+                final name = alias.text.trim();
+                if (value.isEmpty) throw const FormatException('Key 不能为空');
+                final current = ref
+                    .read(appSettingsProvider)
+                    .requireValue
+                    .providers
+                    .where((p) => p.id == provider.id)
+                    .firstOrNull;
+                if (current == null) throw const FormatException('渠道已不存在');
+                final entries = providerMultiKeyItemsFromProvider(current);
+                if (entries.any((item) =>
+                    item.id != target.id &&
+                    item.key.trim().toLowerCase() == value.toLowerCase())) {
+                  throw const FormatException('Key 已存在');
+                }
+                if (!entries.any((item) => item.id == target.id)) {
+                  throw const FormatException('Key 已不存在');
+                }
+                await _saveItems(
+                    current,
+                    entries
+                        .map((item) => item.id == target.id
+                            ? item.copyWith(
+                                key: value,
+                                alias: name,
+                                clearAlias: name.isEmpty,
+                                updatedAt:
+                                    DateTime.now().millisecondsSinceEpoch)
+                            : item)
+                        .toList());
+              },
+              builder: (context, update) => Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    MoeTextField(controller: alias, label: '备注'),
+                    const SizedBox(height: 12),
+                    MoeTextField(controller: key, label: 'API Key'),
+                  ])),
+            ));
   }
 
   Future<void> _deleteKey(
@@ -420,12 +436,12 @@ class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
     final colors = context.moeColors;
 
     return settingsAsync.when(
-      loading: () => Scaffold(
+      loading: () => MoePageScaffold(
         backgroundColor: colors.surface,
         appBar: const MoeAppBar(title: '多 Key 管理', showBackButton: true),
         body: const Center(child: MoeLoadingIndicator()),
       ),
-      error: (e, _) => Scaffold(
+      error: (e, _) => MoePageScaffold(
         backgroundColor: colors.surface,
         appBar: const MoeAppBar(title: '多 Key 管理', showBackButton: true),
         body: MoeEmptyState(title: '加载失败', description: e.toString()),
@@ -441,7 +457,7 @@ class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
           ),
         );
         if (provider.id.isEmpty) {
-          return const Scaffold(
+          return const MoePageScaffold(
             appBar: MoeAppBar(title: '多 Key 管理', showBackButton: true),
             body: MoeEmptyState(title: '渠道不存在'),
           );
@@ -458,7 +474,7 @@ class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
         final strategy =
             providerMultiKeyStrategyLabel(providerMultiKeyStrategy(provider));
 
-        return Scaffold(
+        return MoePageScaffold(
           backgroundColor: colors.surface,
           appBar: MoeAppBar(
             title: '多 Key 管理',

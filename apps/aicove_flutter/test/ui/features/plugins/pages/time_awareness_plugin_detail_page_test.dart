@@ -10,28 +10,29 @@ import 'package:aicove_flutter/src/ui/features/plugins/pages/time_awareness_plug
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('时间感知详情页默认开启且可关闭', (tester) async {
+  testWidgets('时间感知详情页无全局开关，注入项可直接配置', (tester) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
 
     await tester.pumpWidget(
       const ProviderScope(
-        child: MaterialApp(
-          home: TimeAwarenessPluginDetailPage(),
-        ),
+        child: MaterialApp(home: TimeAwarenessPluginDetailPage()),
       ),
     );
 
     await tester.pumpAndSettle();
 
-    expect(find.text('启用时间感知'), findsOneWidget);
+    // 全局开关已移除：没有「启用时间感知」，注入项直接可见
+    expect(find.text('启用时间感知'), findsNothing);
     expect(find.text('历史消息时间戳'), findsOneWidget);
     expect(find.text('当前时间注入'), findsOneWidget);
 
-    final switchesBefore =
-        tester.widgetList<Switch>(find.byType(Switch)).toList();
-    expect(switchesBefore.first.value, isTrue);
+    final switchesBefore = tester
+        .widgetList<Switch>(find.byType(Switch))
+        .toList();
+    expect(switchesBefore, hasLength(2));
+    expect(switchesBefore.every((s) => s.value), isTrue);
 
-    await tester.tap(find.text('启用时间感知'));
+    await tester.tap(find.text('历史消息时间戳'));
     await tester.pumpAndSettle();
 
     final prefs = await SharedPreferences.getInstance();
@@ -39,8 +40,8 @@ void main() {
     expect(raw, isNotNull);
 
     final saved = jsonDecode(raw!) as Map<String, dynamic>;
-    expect(saved['enabled'], isFalse);
-    expect(find.text('历史消息时间戳'), findsNothing);
-    expect(find.text('当前时间注入'), findsNothing);
+    expect(saved['includeMessageTimestamp'], isFalse);
+    expect(saved['enabled'], isTrue);
+    expect(find.text('当前时间注入'), findsOneWidget);
   });
 }

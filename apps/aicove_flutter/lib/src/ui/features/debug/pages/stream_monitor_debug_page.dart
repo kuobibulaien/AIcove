@@ -94,7 +94,7 @@ class _StreamMonitorDebugPageState extends State<StreamMonitorDebugPage> {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
 
-    return Scaffold(
+    return MoePageScaffold(
       backgroundColor: colors.surface,
       appBar: const MoeAppBar(title: '流式监控', showBackButton: true),
       body: ValueListenableBuilder<StreamMonitorSnapshot>(
@@ -126,6 +126,7 @@ class _StreamMonitorDebugPageState extends State<StreamMonitorDebugPage> {
               ),
               const SizedBox(height: 12),
               MoeSettingsGroup(
+                margin: const EdgeInsets.symmetric(horizontal: 16),
                 children: [
                   MoeSettingsRow(
                     icon: Icons.flag_outlined,
@@ -155,8 +156,8 @@ class _StreamMonitorDebugPageState extends State<StreamMonitorDebugPage> {
                     icon: Icons.memory_outlined,
                     label: '最近模型',
                     trailingType: MoeSettingsRowTrailing.text,
-                    detailText: snapshot.lastModelFullId?.trim().isNotEmpty ==
-                            true
+                    detailText:
+                        snapshot.lastModelFullId?.trim().isNotEmpty == true
                         ? snapshot.lastModelFullId!
                         : '-',
                     showDivider: false,
@@ -165,6 +166,7 @@ class _StreamMonitorDebugPageState extends State<StreamMonitorDebugPage> {
               ),
               const SizedBox(height: 12),
               MoeSettingsGroup(
+                margin: const EdgeInsets.symmetric(horizontal: 16),
                 children: [
                   MoeSettingsRow(
                     icon: Icons.event_outlined,
@@ -239,8 +241,10 @@ class _StreamMonitorDebugPageState extends State<StreamMonitorDebugPage> {
                     if (reasons.isEmpty)
                       Text(
                         '暂无回退记录',
-                        style:
-                            TextStyle(fontSize: 12, color: colors.textSecondary),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: colors.textSecondary,
+                        ),
                       )
                     else
                       Wrap(

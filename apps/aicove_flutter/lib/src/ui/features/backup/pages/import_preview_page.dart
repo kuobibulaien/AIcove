@@ -34,9 +34,11 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
     super.initState();
     // 初始化选中所有会话
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(importSelectedConversationsProvider.notifier).selectAll(
-            widget.preview.conversations.map((c) => c.id).toList(),
-          );
+      if (!mounted) return;
+      ref.read(importConflictResolutionsProvider.notifier).clear();
+      ref
+          .read(importSelectedConversationsProvider.notifier)
+          .selectAll(widget.preview.conversations.map((c) => c.id).toList());
     });
   }
 
@@ -46,11 +48,8 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
     final selectedConvIds = ref.watch(importSelectedConversationsProvider);
     final importProgress = ref.watch(importProgressProvider);
 
-    return Scaffold(
-      appBar: MoeAppBar(
-        title: '导入预览',
-        showBackButton: true,
-      ),
+    return MoePageScaffold(
+      appBar: const MoeAppBar(title: '导入预览', showBackButton: true),
       body: Column(
         children: [
           Expanded(
@@ -104,6 +103,7 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
     final preview = widget.preview;
 
     return MoeSettingsGroup(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
       children: [
         Padding(
           padding: const EdgeInsets.all(16),
@@ -180,10 +180,7 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
               color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
-          Text(
-            value,
-            style: theme.textTheme.bodySmall,
-          ),
+          Text(value, style: theme.textTheme.bodySmall),
         ],
       ),
     );
@@ -222,9 +219,9 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
   Widget _buildSectionTitle(BuildContext context, String title) {
     return Text(
       title,
-      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-            fontWeight: MoeFontWeights.emphasis,
-          ),
+      style: Theme.of(
+        context,
+      ).textTheme.titleSmall?.copyWith(fontWeight: MoeFontWeights.emphasis),
     );
   }
 
@@ -232,6 +229,7 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
     final availableScopes = widget.preview.includedScopes;
 
     return MoeSettingsGroup(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
       children: [
         if (availableScopes.contains(SyncScope.characterCards))
           _buildScopeItem(
@@ -299,17 +297,16 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
           value: isAllSelected,
           onChanged: (value) {
             if (value == true) {
-              ref.read(importSelectedConversationsProvider.notifier).selectAll(allIds);
+              ref
+                  .read(importSelectedConversationsProvider.notifier)
+                  .selectAll(allIds);
             } else {
               ref.read(importSelectedConversationsProvider.notifier).clear();
             }
           },
         ),
         const SizedBox(width: 8),
-        Text(
-          '全选',
-          style: theme.textTheme.bodyMedium,
-        ),
+        Text('全选', style: theme.textTheme.bodyMedium),
         const Spacer(),
         Text(
           '已选 ${selectedIds.length}/${allIds.length}',
@@ -336,7 +333,9 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
           color: theme.cardColor,
           child: InkWell(
             onTap: () {
-              ref.read(importSelectedConversationsProvider.notifier).toggle(conv.id);
+              ref
+                  .read(importSelectedConversationsProvider.notifier)
+                  .toggle(conv.id);
             },
             child: Padding(
               padding: const EdgeInsets.all(12),
@@ -345,16 +344,13 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
                   MoeCheckbox(
                     value: isSelected,
                     onChanged: (value) {
-                      ref.read(importSelectedConversationsProvider.notifier).toggle(conv.id);
+                      ref
+                          .read(importSelectedConversationsProvider.notifier)
+                          .toggle(conv.id);
                     },
                   ),
                   const SizedBox(width: 12),
-                  CircleAvatar(
-                    radius: 20,
-                    child: Text(
-                      conv.displayName.isNotEmpty ? conv.displayName[0] : '?',
-                    ),
-                  ),
+                  MoeAvatar(name: conv.displayName, size: 40),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
@@ -396,9 +392,7 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
           children: [
             MoeG2ClipRRect(
               radius: 4,
-              child: LinearProgressIndicator(
-                value: progress.progress,
-              ),
+              child: LinearProgressIndicator(value: progress.progress),
             ),
             const SizedBox(height: 8),
             Text(
@@ -415,7 +409,10 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
 
   Widget _buildImportButton(BuildContext context, Set<String> selectedIds) {
     final selectedScopes = ref.watch(importScopesProvider);
-    final canImport = selectedIds.isNotEmpty && selectedScopes.isNotEmpty;
+    final canImport =
+        widget.preview.isCompatible &&
+        selectedIds.isNotEmpty &&
+        selectedScopes.isNotEmpty;
 
     return SafeArea(
       child: Padding(
@@ -429,6 +426,7 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
   }
 
   Future<void> _startImport() async {
+    if (!mounted || _isImporting || !widget.preview.isCompatible) return;
     final selectedIds = ref.read(importSelectedConversationsProvider);
     final selectedScopes = ref.read(importScopesProvider);
 
@@ -446,6 +444,7 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
         selectedConversationIds: selectedIds.toList(),
         conflictResolutions: conflictResolutions,
         onProgress: (progress) {
+          if (!mounted) return;
           ref.read(importProgressProvider.notifier).state = progress;
         },
       );
@@ -485,6 +484,7 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
       builder: (context) => _ConflictDialog(
         conflicts: conflicts,
         onResolved: (resolutions) {
+          if (!mounted) return;
           // 保存解决方案并重试
           for (final entry in resolutions.entries) {
             ref
@@ -543,10 +543,7 @@ class _ConflictDialog extends StatefulWidget {
   final List<ImportConflict> conflicts;
   final void Function(Map<String, ImportConflictResolution>) onResolved;
 
-  const _ConflictDialog({
-    required this.conflicts,
-    required this.onResolved,
-  });
+  const _ConflictDialog({required this.conflicts, required this.onResolved});
 
   @override
   State<_ConflictDialog> createState() => _ConflictDialogState();
@@ -559,7 +556,8 @@ class _ConflictDialogState extends State<_ConflictDialog> {
   void initState() {
     super.initState();
     _resolutions = {
-      for (final c in widget.conflicts) c.id: ImportConflictResolution.createNew,
+      for (final c in widget.conflicts)
+        c.id: ImportConflictResolution.createNew,
     };
   }
 
@@ -570,10 +568,7 @@ class _ConflictDialogState extends State<_ConflictDialog> {
     return AlertDialog(
       title: Row(
         children: [
-          Icon(
-            LucideIcons.alertTriangle,
-            color: theme.colorScheme.error,
-          ),
+          Icon(LucideIcons.alertTriangle, color: theme.colorScheme.error),
           const SizedBox(width: 8),
           const Text('发现重复角色'),
         ],
@@ -583,10 +578,7 @@ class _ConflictDialogState extends State<_ConflictDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              '以下角色已存在于本地，请选择处理方式：',
-              style: theme.textTheme.bodyMedium,
-            ),
+            Text('以下角色已存在于本地，请选择处理方式：', style: theme.textTheme.bodyMedium),
             const SizedBox(height: 16),
             ...widget.conflicts.map((conflict) {
               return Card(
@@ -658,16 +650,19 @@ class _ConflictDialogState extends State<_ConflictDialog> {
   ) {
     final isSelected = _resolutions[conflictId] == resolution;
 
-    return ChoiceChip(
-      label: Text(label),
-      selected: isSelected,
-      onSelected: (selected) {
-        if (selected) {
-          setState(() {
-            _resolutions[conflictId] = resolution;
-          });
-        }
-      },
+    return MoeButtonSurface(
+      radius: 999,
+      child: ChoiceChip(
+        label: Text(label),
+        selected: isSelected,
+        onSelected: (selected) {
+          if (selected) {
+            setState(() {
+              _resolutions[conflictId] = resolution;
+            });
+          }
+        },
+      ),
     );
   }
 }

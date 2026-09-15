@@ -1,0 +1,18 @@
+{
+  "name": "SillyTavern Default Shape",
+  "temperature": 0.85,
+  "top_p": 0.92,
+  "prompts": [
+    {"name":"Main Prompt","identifier":"main","role":"system","system_prompt":true,"marker":false,"content":"Write {{char}}'s next reply to {{user}}."},
+    {"name":"World Info Before","identifier":"worldInfoBefore","system_prompt":true,"marker":true},
+    {"name":"Character Description","identifier":"charDescription","system_prompt":true,"marker":true},
+    {"name":"Scenario","identifier":"scenario","system_prompt":true,"marker":true},
+    {"name":"Chat History","identifier":"chatHistory","system_prompt":true,"marker":true},
+    {"name":"Jailbreak","identifier":"jailbreak","role":"system","system_prompt":true,"marker":false,"content":"Stay in character."}
+  ],
+  "prompt_order": [
+    {"character_id":100000,"order":[{"identifier":"main","enabled":true},{"identifier":"chatHistory","enabled":true}]},
+    {"character_id":100001,"order":[{"identifier":"main","enabled":true},{"identifier":"worldInfoBefore","enabled":true},{"identifier":"charDescription","enabled":true},{"identifier":"scenario","enabled":true},{"identifier":"chatHistory","enabled":true},{"identifier":"jailbreak","enabled":true}]}
+  ],
+  "extensions": {"regex_scripts":[{"scriptName":"disabled-until-authorized","findRegex":"/foo/g","replaceString":"bar"}]}
+}

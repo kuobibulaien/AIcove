@@ -10,12 +10,14 @@ class PersonaPromptParts {
   final String customDrawingPrompt;
   final String? drawingToolPresetName;
   final String? drawingArtistPresetName;
+  final String? drawingPresetId;
 
   const PersonaPromptParts({
     required this.userPrompt,
     required this.customDrawingPrompt,
     this.drawingToolPresetName,
     this.drawingArtistPresetName,
+    this.drawingPresetId,
   });
 }
 
@@ -27,6 +29,8 @@ class PersonaPromptParts {
 class PersonaPromptCodec {
   static const String artistPresetDisabledBinding =
       '__AICOVE_DRAWING_ARTIST_PRESET_DISABLED__';
+  static const String _presetStartMarker = '<<AICOVE_DRAWING_PRESET_ID_START>>';
+  static const String _presetEndMarker = '<<AICOVE_DRAWING_PRESET_ID_END>>';
   static const String _drawingStartMarker = '<<AICOVE_DRAWING_PROMPT_START>>';
   static const String _drawingEndMarker = '<<AICOVE_DRAWING_PROMPT_END>>';
   static const String _toolPresetStartMarker =
@@ -69,7 +73,10 @@ class PersonaPromptCodec {
     );
     remaining = artistPresetExtract.remaining;
 
+    final presetExtract = _extractMarkedBlock(remaining, _presetStartMarker, _presetEndMarker);
+    remaining = presetExtract.remaining;
     return PersonaPromptParts(
+      drawingPresetId: presetExtract.value,
       userPrompt: remaining.trim(),
       customDrawingPrompt: drawingExtract.value ?? '',
       drawingToolPresetName: toolPresetExtract.value,
@@ -82,14 +89,17 @@ class PersonaPromptCodec {
     String? customDrawingPrompt,
     String? drawingToolPresetName,
     String? drawingArtistPresetName,
+    String? drawingPresetId,
   }) {
     final user = userPrompt.trim();
     final drawing = (customDrawingPrompt ?? '').trim();
     final toolPreset = (drawingToolPresetName ?? '').trim();
     final artistPreset = (drawingArtistPresetName ?? '').trim();
 
+    final preset = (drawingPresetId ?? '').trim();
     final segments = <String>[
       if (user.isNotEmpty) user,
+      if (preset.isNotEmpty) '$_presetStartMarker\n$preset\n$_presetEndMarker',
       if (drawing.isNotEmpty)
         '$_drawingStartMarker\n$drawing\n$_drawingEndMarker',
       if (toolPreset.isNotEmpty)

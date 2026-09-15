@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 
 import '../../../../../features/observability/trace_models.dart';
 import '../../../../../features/observability/trace_query_service.dart';
@@ -55,7 +56,8 @@ class LogViewerTraceConversationView extends StatelessWidget {
       orElse: () => turns.first,
     );
     final events = TraceQueryService.buildTimelineEvents(
-        eventsForTurn(activeTurn.traceId));
+      eventsForTurn(activeTurn.traceId),
+    );
     final resolvedSelectedEvent = events.isEmpty
         ? null
         : events.firstWhere(
@@ -97,11 +99,7 @@ class LogViewerTraceConversationView extends StatelessWidget {
             onSelectTurn: onSelectTurn,
           ),
         ),
-        VerticalDivider(
-          width: 1,
-          thickness: 0.5,
-          color: colors.borderLight,
-        ),
+        VerticalDivider(width: 1, thickness: 0.5, color: colors.borderLight),
         Expanded(
           flex: 4,
           child: TraceTimelinePanel(
@@ -111,11 +109,7 @@ class LogViewerTraceConversationView extends StatelessWidget {
             isLoading: traceLoading,
           ),
         ),
-        VerticalDivider(
-          width: 1,
-          thickness: 0.5,
-          color: colors.borderLight,
-        ),
+        VerticalDivider(width: 1, thickness: 0.5, color: colors.borderLight),
         Expanded(
           flex: 5,
           child: TracePayloadPanel(
@@ -172,9 +166,16 @@ class _TraceTurnDropdown extends StatelessWidget {
                     InkWell(
                       onTap: () => Navigator.of(context).pop(),
                       borderRadius: BorderRadius.circular(20),
-                      child: Padding(
-                        padding: const EdgeInsets.all(4.0),
-                        child: Icon(Icons.close, color: colors.muted, size: 20),
+                      child: MoeButtonSurface(
+                        radius: 999,
+                        child: Padding(
+                          padding: const EdgeInsets.all(4.0),
+                          child: Icon(
+                            Icons.close,
+                            color: colors.muted,
+                            size: 20,
+                          ),
+                        ),
                       ),
                     ),
                   ],
@@ -278,8 +279,8 @@ class _TraceTurnItem extends StatelessWidget {
     final statusColor = turn.status == TraceEventStatus.failed.value
         ? Colors.red
         : (turn.status == TraceEventStatus.running.value
-            ? Colors.orange
-            : Colors.green);
+              ? Colors.orange
+              : Colors.green);
     final zhStatus = statusToZh(turn.status);
 
     return GestureDetector(
@@ -315,8 +316,10 @@ class _TraceTurnItem extends StatelessWidget {
                   ),
                 ),
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 7,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: statusColor.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(12),
@@ -335,20 +338,14 @@ class _TraceTurnItem extends StatelessWidget {
             const SizedBox(height: 6),
             Text(
               '${turn.roundCount}轮请求 · ${turn.toolCallCount}次工具调用 · 耗时${formatDurationLabel(turn.totalDurationMs)}',
-              style: TextStyle(
-                color: colors.textSecondary,
-                fontSize: 10,
-              ),
+              style: TextStyle(color: colors.textSecondary, fontSize: 10),
             ),
             const SizedBox(height: 2),
             Text(
               'ID: ${turn.turnId.length > 24 ? '${turn.turnId.substring(0, 24)}...' : turn.turnId}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: colors.muted,
-                fontSize: 10,
-              ),
+              style: TextStyle(color: colors.muted, fontSize: 10),
             ),
           ],
         ),

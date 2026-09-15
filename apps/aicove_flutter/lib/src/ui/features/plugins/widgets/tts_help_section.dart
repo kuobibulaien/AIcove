@@ -33,8 +33,6 @@ class TtsHelpSection extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(Icons.help_outline, color: colors.primary, size: 20),
-              const SizedBox(width: 8),
               Text(
                 '使用说明',
                 style: TextStyle(

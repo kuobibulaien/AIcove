@@ -1,10 +1,10 @@
 /// MoeWidgets - 公共组件统一导出
-/// 
+///
 /// 使用方式：
 /// ```dart
 /// import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 /// ```
-/// 
+///
 /// 更新记录：
 /// - 2025-12-31: 创建组件统一导出文件
 /// - 2025-12-31: 添加列表、反馈组件
@@ -12,15 +12,18 @@ library;
 
 // === 按钮组件 ===
 export 'buttons/moe_primary_button.dart';
+export 'buttons/moe_button_surface.dart';
 export 'buttons/moe_secondary_button.dart';
 export 'buttons/moe_icon_button.dart';
 export 'buttons/moe_tile_button.dart';
 
 // === 表单组件 ===
 export 'form/moe_text_field.dart';
+export 'form/moe_input_decoration.dart';
 export 'form/moe_switch.dart';
 export 'form/moe_checkbox.dart';
 export 'form/moe_toggle_bar.dart';
+export 'form/moe_slider.dart';
 
 // === 列表组件 ===
 export 'list/moe_settings_group.dart';
@@ -60,3 +63,14 @@ export 'meotalk_dialog.dart';
 export 'image_crop_dialog.dart';
 export 'settings_drawer_panel.dart';
 export 'settings_drawer_wrapper.dart';
+
+export 'moe_adaptive_shell.dart';
+export 'moe_floating_surface.dart';
+export 'moe_liquid_glass.dart';
+export 'moe_chat_header.dart';
+export 'moe_chat_wallpaper.dart';
+export 'moe_avatar.dart';
+export 'moe_search_field.dart';
+export 'form/moe_auto_save.dart';
+
+export 'moe_page_scaffold.dart';

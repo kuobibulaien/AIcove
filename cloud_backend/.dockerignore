@@ -1,0 +1,9 @@
+.env
+.env.*
+data/
+tests/
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.aicove-cloud

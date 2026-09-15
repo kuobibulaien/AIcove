@@ -1,6 +1,0 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
-{"file": ".trellis/spec/frontend/index.md", "reason": "Flutter prompt node management UI must follow frontend layer rules"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Prompt node page uses Moe UI components and responsive layout"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Flutter verification requirements for this task"}
-{"file": ".trellis/spec/agent-context/index.md", "reason": "Prompt defaults and Agent Build node semantics"}
-{"file": ".trellis/spec/project/documentation.md", "reason": "Documentation update rules for durable behavior changes"}

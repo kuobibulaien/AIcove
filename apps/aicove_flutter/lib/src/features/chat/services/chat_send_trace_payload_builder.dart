@@ -9,9 +9,7 @@ class ChatSendTracePayloadBuilder {
 
   List<Map<String, dynamic>> buildSystemAssemblyEntries({
     required String personaPrompt,
-    required bool includeInternalImageRule,
-    required String internalImageContextRule,
-    String? tagSemanticsPrompt,
+    String handoffPrompt = '',
     required PluginPromptBuildResult pluginPromptBuild,
   }) {
     final entries = <Map<String, dynamic>>[];
@@ -38,18 +36,7 @@ class ChatSendTracePayloadBuilder {
       label: '角色人设',
       content: personaPrompt,
     );
-    if (includeInternalImageRule) {
-      addEntry(
-        source: 'internal.imageContextRule',
-        label: '内部图片上下文规则',
-        content: internalImageContextRule,
-      );
-    }
-    addEntry(
-      source: 'promptTags.semantics',
-      label: '标签说明汇总',
-      content: tagSemanticsPrompt ?? '',
-    );
+    addEntry(source: 'context.topicHandoff', label: '新话题内容摘要（非格式指令）', content: handoffPrompt);
     for (final promptEntry in pluginPromptBuild.entries) {
       if (!promptEntry.injected) continue;
       addEntry(
@@ -115,10 +102,11 @@ class ChatSendTracePayloadBuilder {
     required int toolsCount,
     required bool systemReminderInjected,
     String? systemReminderContent,
+    Map<String, dynamic>? presetAssembly,
   }) {
     final finalSystemPrompt = [
-      for (final entry in systemAssemblyEntries)
-        (entry['content'] ?? '').toString().trim(),
+      for (final message in finalMessages)
+        if (message['role'] == 'system') (message['content'] ?? '').toString().trim(),
     ].where((content) => content.isNotEmpty).join('\n\n');
 
     return <String, dynamic>{
@@ -133,6 +121,8 @@ class ChatSendTracePayloadBuilder {
       'systemReminderInjected': systemReminderInjected,
       if (systemReminderContent != null && systemReminderContent.isNotEmpty)
         'systemReminderContent': systemReminderContent,
+      if (presetAssembly != null && presetAssembly.isNotEmpty)
+        'sillyTavernPreset': presetAssembly,
       'finalMessageRoles': <String>[
         for (final message in finalMessages) (message['role'] ?? '').toString(),
       ],

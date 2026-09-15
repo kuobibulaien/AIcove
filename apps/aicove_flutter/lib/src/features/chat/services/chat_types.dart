@@ -6,14 +6,21 @@
 /// - 2025-12-31: 从 chat_actions.dart 提取
 library;
 
+import '../domain/runtime_context_port.dart';
+
 import 'dart:async';
 import '../domain/conversation.dart';
 import '../domain/message.dart';
 import '../../plugins/domain/plugin.dart';
+import '../../plugins/image/image_config.dart';
+import '../../plugins/tts/voice_request.dart';
+import '../../plugins/domain/handlers/ai_tool.dart';
 import '../../plugins/domain/plugin_content.dart';
 import '../../settings/app_settings.dart';
+import '../../agent_context/domain/silly_tavern_preset.dart'
+    show SillyTavernRegexScript;
 import '../../../core/api/providers/provider_adapter.dart'
-    show ToolCall, ToolResult;
+    show ProviderChatRequestOptions, ToolCall, ToolResult;
 import '../../observability/trace_models.dart' show TraceContext;
 
 const String _kProviderRefreshDependencyChangedMessage =
@@ -98,6 +105,7 @@ class ApiCallResult {
 
 /// API 配置参数
 class ApiConfig {
+  final RuntimeContextPort? runtimeContext;
   final AppSettings settings;
   final String modelFullId;
   final String providerApiBase;
@@ -110,15 +118,25 @@ class ApiConfig {
   final Map<String, dynamic> toolPrefs;
   final List<Map<String, dynamic>> messages;
   final List<Map<String, dynamic>>? tools;
+
+  /// 与发给模型的 schema 同时生成，闭包固定本次请求的联系人。
+  final List<AITool>? boundTools;
   final Set<String>? enabledPluginIds;
   final double? modelTemperature;
   final double? modelTopP;
   final int? modelContextMessageLimit;
+  final ProviderChatRequestOptions? providerRequestOptions;
+  final List<SillyTavernRegexScript> presetRegexScripts;
+  final bool presetRegexAuthorized;
+  final bool? presetStreamResponse;
   final TraceContext? traceContext;
   final String? boundImageToolPresetName;
   final String? boundImageArtistPresetName;
+  final ImageConfig? drawingConfig;
+  final VoiceRequest? voiceRequest;
 
   const ApiConfig({
+    this.runtimeContext,
     required this.settings,
     required this.modelFullId,
     required this.providerApiBase,
@@ -131,13 +149,20 @@ class ApiConfig {
     required this.toolPrefs,
     required this.messages,
     this.tools,
+    this.boundTools,
     this.enabledPluginIds,
     this.modelTemperature,
     this.modelTopP,
     this.modelContextMessageLimit,
+    this.providerRequestOptions,
+    this.presetRegexScripts = const <SillyTavernRegexScript>[],
+    this.presetRegexAuthorized = false,
+    this.presetStreamResponse,
     this.traceContext,
     this.boundImageToolPresetName,
     this.boundImageArtistPresetName,
+    this.drawingConfig,
+    this.voiceRequest,
   });
 
   double? get effectiveTemperature => modelTemperature ?? settings.temperature;

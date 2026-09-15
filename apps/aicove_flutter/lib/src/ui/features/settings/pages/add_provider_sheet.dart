@@ -16,7 +16,6 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:figma_squircle/figma_squircle.dart';
 
 import '../../../../core/api/providers/google_api_mode.dart';
 import '../../../../core/api/providers/provider_chat_api_path.dart';
@@ -45,17 +44,29 @@ class ApiFormat {
   );
 
   static const openai = ApiFormat._(
-      'openai', 'OpenAI', 'https://api.openai.com/v1', '/chat/completions');
+    'openai',
+    'OpenAI',
+    'https://api.openai.com/v1',
+    '/chat/completions',
+  );
   static const claude = ApiFormat._(
-      'claude', 'Claude', 'https://api.anthropic.com/v1', '/messages');
+    'claude',
+    'Claude',
+    'https://api.anthropic.com/v1',
+    '/messages',
+  );
   static const gemini = ApiFormat._(
     'gemini',
     'Gemini',
     kGeminiDeveloperApiBase,
     '/models/{model}:generateContent',
   );
-  static const novelai =
-      ApiFormat._('novelai', 'NovelAI', 'https://image.novelai.net', '');
+  static const novelai = ApiFormat._(
+    'novelai',
+    'NovelAI',
+    'https://image.novelai.net',
+    '',
+  );
 
   static const chatFormats = <ApiFormat>[openai, claude, gemini];
   static const imageFormats = <ApiFormat>[openai, novelai];
@@ -83,8 +94,9 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
   final _displayCtrl = TextEditingController();
   final _keyCtrl = TextEditingController();
   final _urlCtrl = TextEditingController(text: ApiFormat.openai.defaultBaseUrl);
-  final _pathCtrl =
-      TextEditingController(text: ApiFormat.openai.defaultApiPath);
+  final _pathCtrl = TextEditingController(
+    text: ApiFormat.openai.defaultApiPath,
+  );
 
   ApiFormat _selectedFormat = ApiFormat.openai;
   bool _submitting = false;
@@ -148,9 +160,7 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
       List<String> allModels = const <String>[];
       List<String> visibleModels = const <String>[];
       final customConfig = copyCustomConfigWithProviderChatApiPath(
-        <String, dynamic>{
-          'requestFormat': _selectedFormat.value,
-        },
+        <String, dynamic>{'requestFormat': _selectedFormat.value},
         apiPath,
       );
 
@@ -215,19 +225,14 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
     final viewInsets = MediaQuery.of(context).viewInsets;
     final screenHeight = MediaQuery.of(context).size.height;
 
-    const sheetBorderRadius = SmoothBorderRadius.vertical(
-      top: SmoothRadius(cornerRadius: 24, cornerSmoothing: 0.6),
-    );
-
     // 涓嶆妸鏁翠釜 sheet 寰€涓婇《锛氬彧鍦ㄥ唴閮ㄥ唴瀹瑰尯缁欓敭鐩樿浣嶏紝瑙傛劅鏇村儚"杈撳叆鍖烘姮璧?銆?
-    return MoeG2ClipRRect.borderRadius(
-      borderRadius: sheetBorderRadius,
+    return MoeFloatingSurface(
+      baseline: MoeMaterialBaseline.background,
+      radius: 24,
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       child: Container(
         constraints: BoxConstraints(maxHeight: screenHeight * 0.85),
-        decoration: MoeG2Decoration.borderRadius(
-          borderRadius: sheetBorderRadius,
-          color: colors.bgMain,
-        ),
+
         child: SafeArea(
           child: AnimatedPadding(
             duration: kAnimFast,
@@ -249,8 +254,10 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
 
                 // 鏍囬
                 Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 8,
+                  ),
                   child: Row(
                     children: [
                       Text(
@@ -290,8 +297,10 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                             MoeToggleBar<ApiFormat>(
                               value: _selectedFormat,
                               items: ApiFormat.chatFormats
-                                  .map((f) =>
-                                      MoeToggleItem(value: f, label: f.label))
+                                  .map(
+                                    (f) =>
+                                        MoeToggleItem(value: f, label: f.label),
+                                  )
                                   .toList(),
                               onChanged: _onFormatChanged,
                             ),
@@ -316,12 +325,15 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                                   controller: _displayCtrl,
                                   textAlign: TextAlign.end,
                                   style: TextStyle(
-                                      fontSize: 14, color: colors.text),
-                                  decoration: InputDecoration(
+                                    fontSize: 14,
+                                    color: colors.text,
+                                  ),
+                                  decoration: MoeInputDecoration(
                                     hintText: '\u53ef\u7559\u7a7a',
                                     hintStyle: TextStyle(
-                                        color: colors.muted, fontSize: 14),
-                                    border: InputBorder.none,
+                                      color: colors.muted,
+                                      fontSize: 14,
+                                    ),
                                     isDense: true,
                                     contentPadding: EdgeInsets.zero,
                                   ),
@@ -339,12 +351,15 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                                   obscureText: false,
                                   textAlign: TextAlign.end,
                                   style: TextStyle(
-                                      fontSize: 14, color: colors.text),
-                                  decoration: InputDecoration(
+                                    fontSize: 14,
+                                    color: colors.text,
+                                  ),
+                                  decoration: MoeInputDecoration(
                                     hintText: '\u5fc5\u586b',
                                     hintStyle: TextStyle(
-                                        color: colors.muted, fontSize: 14),
-                                    border: InputBorder.none,
+                                      color: colors.muted,
+                                      fontSize: 14,
+                                    ),
                                     isDense: true,
                                     contentPadding: EdgeInsets.zero,
                                   ),
@@ -361,11 +376,14 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                                   controller: _urlCtrl,
                                   textAlign: TextAlign.end,
                                   style: TextStyle(
-                                      fontSize: 14, color: colors.text),
-                                  decoration: InputDecoration(
+                                    fontSize: 14,
+                                    color: colors.text,
+                                  ),
+                                  decoration: MoeInputDecoration(
                                     hintStyle: TextStyle(
-                                        color: colors.muted, fontSize: 14),
-                                    border: InputBorder.none,
+                                      color: colors.muted,
+                                      fontSize: 14,
+                                    ),
                                     isDense: true,
                                     contentPadding: EdgeInsets.zero,
                                   ),
@@ -382,11 +400,14 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                                   controller: _pathCtrl,
                                   textAlign: TextAlign.end,
                                   style: TextStyle(
-                                      fontSize: 14, color: colors.text),
-                                  decoration: InputDecoration(
+                                    fontSize: 14,
+                                    color: colors.text,
+                                  ),
+                                  decoration: MoeInputDecoration(
                                     hintStyle: TextStyle(
-                                        color: colors.muted, fontSize: 14),
-                                    border: InputBorder.none,
+                                      color: colors.muted,
+                                      fontSize: 14,
+                                    ),
                                     isDense: true,
                                     contentPadding: EdgeInsets.zero,
                                   ),
@@ -407,14 +428,18 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                               child: Container(
                                 width: double.infinity,
                                 padding: const EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 10),
+                                  horizontal: 12,
+                                  vertical: 10,
+                                ),
                                 decoration: MoeG2Decoration(
                                   radius: MoeRadii.md,
-                                  color:
-                                      colors.surfaceAlt.withValues(alpha: 0.72),
+                                  color: colors.surfaceAlt.withValues(
+                                    alpha: 0.72,
+                                  ),
                                   border: Border.all(
-                                    color:
-                                        colors.border.withValues(alpha: 0.45),
+                                    color: colors.border.withValues(
+                                      alpha: 0.45,
+                                    ),
                                     width: 1,
                                   ),
                                 ),

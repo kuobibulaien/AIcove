@@ -1,5 +1,10 @@
 import 'package:uuid/uuid.dart';
 import '../../../core/prompts/prompt_builtin_defaults.g.dart';
+import 'voice_synthesis_settings.dart';
+
+export 'voice_synthesis_settings.dart';
+
+const _unchangedSynthesis = Object();
 
 const _legacyBrokenNahidaPromptAudioUrl =
     'https://cdn.jsdelivr.net/gh/kuobibulaien/voicenxd.MP3';
@@ -82,10 +87,7 @@ String? _normalizeModelId(String? modelId) {
   return trimmed;
 }
 
-String? _inferVoiceAdapterId({
-  String? providerId,
-  String? modelId,
-}) {
+String? _inferVoiceAdapterId({String? providerId, String? modelId}) {
   final normalizedProviderId = providerId?.trim().toLowerCase();
   final normalizedModelId = modelId?.trim().toLowerCase();
   if (normalizedProviderId == null || normalizedProviderId.isEmpty) {
@@ -139,11 +141,7 @@ class VoiceChannelBinding {
 
   String? get normalizedModelId => _normalizeModelId(modelId)?.toLowerCase();
 
-  bool matches({
-    String? providerId,
-    String? adapterId,
-    String? modelId,
-  }) {
+  bool matches({String? providerId, String? adapterId, String? modelId}) {
     final expectedProviderId = providerId?.trim().toLowerCase();
     final expectedAdapterId = adapterId?.trim().toLowerCase();
     final expectedModelId = _normalizeModelId(modelId)?.toLowerCase();
@@ -151,7 +149,8 @@ class VoiceChannelBinding {
     if (expectedProviderId != null &&
         expectedProviderId.isNotEmpty &&
         normalizedProviderId != expectedProviderId) {
-      final canFallbackToAdapter = expectedAdapterId != null &&
+      final canFallbackToAdapter =
+          expectedAdapterId != null &&
           expectedAdapterId.isNotEmpty &&
           normalizedAdapterId != null &&
           normalizedAdapterId == expectedAdapterId;
@@ -174,11 +173,7 @@ class VoiceChannelBinding {
     return true;
   }
 
-  int matchScore({
-    String? providerId,
-    String? adapterId,
-    String? modelId,
-  }) {
+  int matchScore({String? providerId, String? adapterId, String? modelId}) {
     if (!matches(
       providerId: providerId,
       adapterId: adapterId,
@@ -297,7 +292,10 @@ class VoicePreset {
   /// 是否为内置音色（内置音色不可删除）
   final bool isBuiltIn;
 
-  /// 多渠道远端绑定列表
+  /// 完整预设的唯一合成配置。null 表示旧音色尚待确认渠道与模型。
+  final VoiceSynthesisSettings? synthesis;
+
+  /// 旧版多渠道远端绑定，保留原始数据用于转换与回滚。
   final List<VoiceChannelBinding> bindings;
 
   // ========== 阿里云音色相关字段 ==========
@@ -332,7 +330,8 @@ class VoicePreset {
       final exists = merged.any((item) {
         final sameProvider =
             item.normalizedProviderId == binding.normalizedProviderId;
-        final sameAdapter = item.normalizedAdapterId != null &&
+        final sameAdapter =
+            item.normalizedAdapterId != null &&
             binding.normalizedAdapterId != null &&
             item.normalizedAdapterId == binding.normalizedAdapterId;
         return (sameProvider || sameAdapter) &&
@@ -427,6 +426,14 @@ class VoicePreset {
       return true;
     }
 
+    final isFishAudio =
+        (normalizedProviderId?.toLowerCase().contains('fish') ?? false) ||
+        modelId.toLowerCase().contains('s2.1') ||
+        modelId.toLowerCase().contains('fish');
+    if (isFishAudio) {
+      return true;
+    }
+
     // 预置音色（渠道提供的固定音色）：只能用于对应渠道的模型
     if (sourceType == VoiceSourceType.preset) {
       if (providerType == VoiceProviderType.siliconFlow) {
@@ -461,7 +468,8 @@ class VoicePreset {
     final hasPromptUrl = promptAudioUrl != null && promptAudioUrl!.isNotEmpty;
 
     // 判断是否为硅基流动模型
-    final isSiliconFlowModel = modelId.contains('FunAudioLLM') ||
+    final isSiliconFlowModel =
+        modelId.contains('FunAudioLLM') ||
         modelId.contains('IndexTeam') ||
         modelId.contains('CosyVoice2');
     if (isSiliconFlowModel) {
@@ -523,6 +531,7 @@ class VoicePreset {
       source: source,
       isBuiltIn: isBuiltIn,
       bindings: newBindings,
+      synthesis: synthesis,
       aliyunVoiceId: firstAliyunBinding?.remoteVoiceId,
       aliyunTargetModel: firstAliyunBinding?.modelId,
       aliyunVoiceStatus: firstAliyunBinding?.status,
@@ -566,14 +575,15 @@ class VoicePreset {
     this.source,
     this.isBuiltIn = false,
     List<VoiceChannelBinding>? bindings,
+    this.synthesis,
     this.aliyunVoiceId,
     this.aliyunTargetModel,
     this.aliyunVoiceStatus,
     this.siliconFlowVoiceUri,
     this.siliconFlowModel,
     this.localAudioPath,
-  })  : bindings = List<VoiceChannelBinding>.unmodifiable(bindings ?? const []),
-        id = id ?? const Uuid().v4();
+  }) : bindings = List<VoiceChannelBinding>.unmodifiable(bindings ?? const []),
+       id = id ?? const Uuid().v4();
 
   VoicePreset copyWith({
     String? id,
@@ -587,6 +597,7 @@ class VoicePreset {
     String? source,
     bool? isBuiltIn,
     List<VoiceChannelBinding>? bindings,
+    Object? synthesis = _unchangedSynthesis,
     String? aliyunVoiceId,
     String? aliyunTargetModel,
     String? aliyunVoiceStatus,
@@ -606,6 +617,9 @@ class VoicePreset {
       source: source ?? this.source,
       isBuiltIn: isBuiltIn ?? this.isBuiltIn,
       bindings: bindings ?? this.bindings,
+      synthesis: identical(synthesis, _unchangedSynthesis)
+          ? this.synthesis
+          : synthesis as VoiceSynthesisSettings?,
       aliyunVoiceId: aliyunVoiceId ?? this.aliyunVoiceId,
       aliyunTargetModel: aliyunTargetModel ?? this.aliyunTargetModel,
       aliyunVoiceStatus: aliyunVoiceStatus ?? this.aliyunVoiceStatus,
@@ -628,6 +642,7 @@ class VoicePreset {
       'source': source,
       'isBuiltIn': isBuiltIn,
       'bindings': bindings.map((e) => e.toJson()).toList(),
+      if (synthesis != null) 'synthesis': synthesis!.toJson(),
       'aliyunVoiceId': aliyunVoiceId,
       'aliyunTargetModel': aliyunTargetModel,
       'aliyunVoiceStatus': aliyunVoiceStatus,
@@ -659,17 +674,18 @@ class VoicePreset {
     }
 
     final presetId = json['id'] as String?;
-    String? promptAudioUrl =
-        _migratePromptAudioUrl(json['promptAudioUrl'] as String?);
+    String? promptAudioUrl = _migratePromptAudioUrl(
+      json['promptAudioUrl'] as String?,
+    );
     if (presetId == 'built_in_nahida') {
       promptAudioUrl = _migrateBuiltInNahidaPromptAudioUrl(promptAudioUrl);
     }
 
     final bindings = (json['bindings'] as List<dynamic>? ?? const <dynamic>[])
         .whereType<Map>()
-        .map((item) => VoiceChannelBinding.fromJson(
-              item.cast<String, dynamic>(),
-            ))
+        .map(
+          (item) => VoiceChannelBinding.fromJson(item.cast<String, dynamic>()),
+        )
         .toList();
 
     return VoicePreset(
@@ -684,6 +700,11 @@ class VoicePreset {
       source: json['source'] as String?,
       isBuiltIn: json['isBuiltIn'] as bool? ?? false,
       bindings: bindings,
+      synthesis: json['synthesis'] is Map
+          ? VoiceSynthesisSettings.fromJson(
+              (json['synthesis'] as Map).cast<String, dynamic>(),
+            )
+          : null,
       aliyunVoiceId: json['aliyunVoiceId'] as String?,
       aliyunTargetModel: json['aliyunTargetModel'] as String?,
       aliyunVoiceStatus: json['aliyunVoiceStatus'] as String?,
@@ -695,16 +716,16 @@ class VoicePreset {
 
   /// 内置默认音色
   static VoicePreset get defaultPreset => VoicePreset(
-        id: 'built_in_nahida',
-        name: '纳西妲（仿）',
-        sourceType: VoiceSourceType.url,
-        providerType: VoiceProviderType.custom,
-        promptAudioUrl: _defaultNahidaPromptAudioUrl,
-        promptText:
-            '要准备睡下午觉了哦，躺过来吧。嗯，我们一起睡午觉吧。晚安，亲爱的，晚安吻的话，等你睡完觉我就亲你，怎么样。那要快点睡觉哦。嗯？想抱着我睡？一直都是可以哟，但是你要答应我好好睡觉。嗯~就是这样，闭眼睡觉觉吧。',
-        source: 'b站 月下专属人类 UID:1838261330',
-        isBuiltIn: true,
-      );
+    id: 'built_in_nahida',
+    name: '纳西妲（仿）',
+    sourceType: VoiceSourceType.url,
+    providerType: VoiceProviderType.custom,
+    promptAudioUrl: _defaultNahidaPromptAudioUrl,
+    promptText:
+        '要准备睡下午觉了哦，躺过来吧。嗯，我们一起睡午觉吧。晚安，亲爱的，晚安吻的话，等你睡完觉我就亲你，怎么样。那要快点睡觉哦。嗯？想抱着我睡？一直都是可以哟，但是你要答应我好好睡觉。嗯~就是这样，闭眼睡觉觉吧。',
+    source: 'b站 月下专属人类 UID:1838261330',
+    isBuiltIn: true,
+  );
 }
 
 /// TTS 插件配置
@@ -718,7 +739,8 @@ class TtsConfig {
   static const String voiceFrequencyPlaceholder = '{voice_frequency}';
   static const String minimaxGuidePlaceholder = '{minimax_guide}';
 
-  /// 是否启用 TTS 插件
+  /// 全局常开：持久化读取时恒为 true；是否启用由角色/会话的插件选择决定。
+  /// 构造时仍可传 false，用于请求快照等“本次不启用”的内部场景。
   final bool enabled;
 
   /// 选中的 TTS 渠道 ID（对应 ProviderAuth.id）
@@ -748,8 +770,11 @@ class TtsConfig {
   /// 音色预设列表
   final List<VoicePreset> voicePresets;
 
-  /// 当前选中的音色预设 ID
+  /// 旧界面选择，仅用于旧数据兼容及请求快照。
   final String? selectedVoicePresetId;
+
+  final int presetSchemaVersion;
+  final String? defaultVoicePresetId;
 
   /// 语速 (0.5 ~ 2.0)
   final double? speed;
@@ -777,14 +802,16 @@ class TtsConfig {
     this.useEmoText = false,
     List<VoicePreset>? voicePresets,
     String? selectedVoicePresetId,
+    this.presetSchemaVersion = 0,
+    this.defaultVoicePresetId,
     this.speed,
     this.maxCharsPerChunk = 20,
     this.voiceFrequency = 60, // 默认"正常"档位
     String? systemPromptTemplate,
-  })  : voicePresets = voicePresets ?? [VoicePreset.defaultPreset],
-        selectedVoicePresetId = selectedVoicePresetId ?? 'built_in_nahida',
-        systemPromptTemplate =
-            systemPromptTemplate ?? defaultSystemPromptTemplate;
+  }) : voicePresets = voicePresets ?? [VoicePreset.defaultPreset],
+       selectedVoicePresetId = selectedVoicePresetId ?? 'built_in_nahida',
+       systemPromptTemplate =
+           systemPromptTemplate ?? defaultSystemPromptTemplate;
 
   static const String defaultSystemPromptTemplate =
       PromptBuiltinDefaults.ttsSystemDefault;
@@ -801,6 +828,8 @@ class TtsConfig {
     bool? useEmoText,
     List<VoicePreset>? voicePresets,
     String? selectedVoicePresetId,
+    int? presetSchemaVersion,
+    Object? defaultVoicePresetId = _unchangedSynthesis,
     double? speed,
     int? maxCharsPerChunk,
     int? voiceFrequency,
@@ -819,6 +848,10 @@ class TtsConfig {
       voicePresets: voicePresets ?? this.voicePresets,
       selectedVoicePresetId:
           selectedVoicePresetId ?? this.selectedVoicePresetId,
+      presetSchemaVersion: presetSchemaVersion ?? this.presetSchemaVersion,
+      defaultVoicePresetId: identical(defaultVoicePresetId, _unchangedSynthesis)
+          ? this.defaultVoicePresetId
+          : defaultVoicePresetId as String?,
       speed: speed ?? this.speed,
       maxCharsPerChunk: maxCharsPerChunk ?? this.maxCharsPerChunk,
       voiceFrequency: voiceFrequency ?? this.voiceFrequency,
@@ -839,6 +872,8 @@ class TtsConfig {
       'useEmoText': useEmoText,
       'voicePresets': voicePresets.map((e) => e.toJson()).toList(),
       'selectedVoicePresetId': selectedVoicePresetId,
+      'presetSchemaVersion': presetSchemaVersion,
+      'defaultVoicePresetId': defaultVoicePresetId,
       'speed': speed,
       'maxCharsPerChunk': maxCharsPerChunk,
       'voiceFrequency': voiceFrequency,
@@ -848,19 +883,21 @@ class TtsConfig {
 
   factory TtsConfig.fromJson(Map<String, dynamic> json) {
     // 解析存储的音色列表
-    var presets = (json['voicePresets'] as List<dynamic>?)
+    var presets =
+        (json['voicePresets'] as List<dynamic>?)
             ?.map((e) => VoicePreset.fromJson(e as Map<String, dynamic>))
             .toList() ??
         [];
 
     // 确保内置音色存在（如果被删除了就加回来）
     final hasBuiltIn = presets.any((p) => p.id == 'built_in_nahida');
-    if (!hasBuiltIn) {
+    if (!hasBuiltIn && (json['presetSchemaVersion'] as int? ?? 0) == 0) {
       presets = [VoicePreset.defaultPreset, ...presets];
     }
 
     return TtsConfig(
-      enabled: json['enabled'] as bool? ?? false,
+      // 全局开关已移除，忽略旧存储值
+      enabled: true,
       selectedProviderId: json['selectedProviderId'] as String?,
       selectedModelId: json['selectedModelId'] as String?,
       model: json['model'] as String?,
@@ -871,6 +908,8 @@ class TtsConfig {
       useEmoText: json['useEmoText'] as bool? ?? false,
       voicePresets: presets,
       selectedVoicePresetId: json['selectedVoicePresetId'] as String?,
+      presetSchemaVersion: json['presetSchemaVersion'] as int? ?? 0,
+      defaultVoicePresetId: json['defaultVoicePresetId'] as String?,
       speed: (json['speed'] as num?)?.toDouble(),
       maxCharsPerChunk: json['maxCharsPerChunk'] as int? ?? 20,
       voiceFrequency: json['voiceFrequency'] as int? ?? 60, // 默认"正常"档位

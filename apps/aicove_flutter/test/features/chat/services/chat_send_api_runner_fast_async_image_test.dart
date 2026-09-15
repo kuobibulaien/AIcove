@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 
 import 'package:aicove_flutter/src/core/api/agent_api.dart';
+import 'package:aicove_flutter/src/features/agent_context/domain/silly_tavern_preset.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_send_api_runner.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_types.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/base_plugin.dart';
@@ -146,6 +147,48 @@ class _ImagePlaceholderFollowupClient extends http.BaseClient {
     return _jsonResponse(
       500,
       <String, dynamic>{'error': 'unexpected extra round'},
+    );
+  }
+
+  Future<http.StreamedResponse> _jsonResponse(int code, Object body) async {
+    final bytes = utf8.encode(jsonEncode(body));
+    return http.StreamedResponse(
+      Stream<List<int>>.value(bytes),
+      code,
+      headers: const <String, String>{
+        'content-type': 'application/json',
+      },
+    );
+  }
+}
+
+class _SingleReplyClient extends http.BaseClient {
+  _SingleReplyClient(this.reply);
+
+  final String reply;
+  Map<String, dynamic>? lastRequestBody;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    if (request is! http.Request) {
+      return _jsonResponse(
+        500,
+        <String, dynamic>{'error': 'unsupported request type'},
+      );
+    }
+    lastRequestBody = jsonDecode(request.body) as Map<String, dynamic>;
+    return _jsonResponse(
+      200,
+      <String, dynamic>{
+        'choices': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'message': <String, dynamic>{
+              'role': 'assistant',
+              'content': reply,
+            },
+          },
+        ],
+      },
     );
   }
 
@@ -308,7 +351,7 @@ AppSettings _buildFastModeSettings() {
     apiBaseUrl: 'https://api.openai.com/v1',
     imageGenerationEnabled: true,
     maxFileUploadMB: 10,
-    historyMessageLimit: 100,
+    contextWindowTokens: 272000,
     customModels: <CustomModel>[],
     providers: <ProviderAuth>[
       ProviderAuth(
@@ -358,7 +401,7 @@ AppSettings _buildStableFollowupSettings() {
     apiBaseUrl: 'https://api.openai.com/v1',
     imageGenerationEnabled: true,
     maxFileUploadMB: 10,
-    historyMessageLimit: 100,
+    contextWindowTokens: 272000,
     customModels: <CustomModel>[],
     providers: <ProviderAuth>[
       ProviderAuth(
@@ -531,5 +574,61 @@ void main() {
     );
     expect(result.replyText, '');
     expect(result.processedText, '');
+  });
+
+  test('preset display regex only changes projection and preserves raw reply',
+      () async {
+    final fakeHttpClient = _SingleReplyClient('RAW SECRET');
+    final config = ApiConfig(
+      settings: _buildStableFollowupSettings(),
+      modelFullId: 'openai:gpt-4o-mini',
+      providerApiBase: 'https://api.openai.com/v1',
+      providerApiKey: 'test-key',
+      customConfig: const <String, dynamic>{},
+      toolPrefs: const <String, dynamic>{},
+      messages: const <Map<String, dynamic>>[
+        <String, dynamic>{'role': 'user', 'content': '继续'},
+      ],
+      tools: const <Map<String, dynamic>>[],
+      presetRegexAuthorized: true,
+      presetStreamResponse: false,
+      presetRegexScripts: const <SillyTavernRegexScript>[
+        SillyTavernRegexScript(
+          id: 'display-only',
+          name: 'display only',
+          source: 'standard',
+          disabled: false,
+          runOnEdit: false,
+          findRegex: '/SECRET/g',
+          replaceString: 'VISIBLE',
+          trimStrings: <String>[],
+          placements: <int>[2],
+          substituteRegex: 0,
+          minDepth: null,
+          maxDepth: null,
+          markdownOnly: false,
+          promptOnly: false,
+        ),
+      ],
+    );
+    final runner = ChatSendApiRunner.withAgentClientFactory(
+      agentClientFactory: (timeout) => AgentApiClient(
+        client: fakeHttpClient,
+        timeout: timeout,
+      ),
+    );
+
+    final result = await runner.executeApiCall(
+      config: config,
+      sessionId: 'conv_regex_projection',
+      userText: '继续',
+      effectivePlugins: const <Plugin>[],
+      enableStreaming: true,
+    );
+
+    expect(fakeHttpClient.lastRequestBody?['stream'], isFalse);
+    expect(result.rawReplyText, 'RAW SECRET');
+    expect(result.replyText, 'RAW VISIBLE');
+    expect(result.processedText, 'RAW VISIBLE');
   });
 }

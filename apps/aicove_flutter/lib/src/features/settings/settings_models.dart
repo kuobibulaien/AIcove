@@ -7,9 +7,13 @@
 library;
 
 import 'package:flutter/material.dart';
+import '../../core/api/thinking/thinking_level.dart';
 import '../../core/utils/message_formatter.dart';
 import '../../core/utils/token_estimator.dart';
 import '../../core/prompts/prompt_builtin_defaults.g.dart';
+import '../../ui/theme/tokens.dart';
+
+export '../../core/api/thinking/thinking_level.dart' show ThinkingLevel;
 
 /// 模型类型枚举
 enum ModelType {
@@ -400,8 +404,9 @@ class AutoReplySettings {
       allowExactAlarm: allowExactAlarm ?? this.allowExactAlarm,
       allowAiSetReminders: allowAiSetReminders ?? this.allowAiSetReminders,
       analyzerPrompt: analyzerPrompt ?? this.analyzerPrompt,
-      analyzerModel:
-          clearAnalyzerModel ? null : (analyzerModel ?? this.analyzerModel),
+      analyzerModel: clearAnalyzerModel
+          ? null
+          : (analyzerModel ?? this.analyzerModel),
       analyzerProvider: clearAnalyzerProvider
           ? null
           : (analyzerProvider ?? this.analyzerProvider),
@@ -409,19 +414,19 @@ class AutoReplySettings {
   }
 
   Map<String, dynamic> toJson() => {
-        'enabled': enabled,
-        'guard_mode_enabled': guardModeEnabled,
-        'daily_limit': dailyLimit,
-        'min_interval_minutes': minIntervalMinutes,
-        'quiet_hours_enabled': quietHoursEnabled,
-        'quiet_hours_start': quietHoursStart,
-        'quiet_hours_end': quietHoursEnd,
-        'allow_exact_alarm': allowExactAlarm,
-        'allow_ai_set_reminders': allowAiSetReminders,
-        'analyzer_prompt': analyzerPrompt,
-        'analyzer_model': analyzerModel,
-        'analyzer_provider': analyzerProvider,
-      };
+    'enabled': enabled,
+    'guard_mode_enabled': guardModeEnabled,
+    'daily_limit': dailyLimit,
+    'min_interval_minutes': minIntervalMinutes,
+    'quiet_hours_enabled': quietHoursEnabled,
+    'quiet_hours_start': quietHoursStart,
+    'quiet_hours_end': quietHoursEnd,
+    'allow_exact_alarm': allowExactAlarm,
+    'allow_ai_set_reminders': allowAiSetReminders,
+    'analyzer_prompt': analyzerPrompt,
+    'analyzer_model': analyzerModel,
+    'analyzer_provider': analyzerProvider,
+  };
 
   factory AutoReplySettings.fromJson(Map<String, dynamic> json) {
     String normalizeTime(String? value, String fallback) {
@@ -456,11 +461,17 @@ class AutoReplySettings {
       enabled: json['enabled'] == true,
       guardModeEnabled: json['guard_mode_enabled'] == true,
       dailyLimit: clampInt(json['daily_limit'] as num?, 1, 10, 3),
-      minIntervalMinutes:
-          clampInt(json['min_interval_minutes'] as num?, 15, 720, 120),
+      minIntervalMinutes: clampInt(
+        json['min_interval_minutes'] as num?,
+        15,
+        720,
+        120,
+      ),
       quietHoursEnabled: json['quiet_hours_enabled'] != false,
-      quietHoursStart:
-          normalizeTime(json['quiet_hours_start'] as String?, '22:00'),
+      quietHoursStart: normalizeTime(
+        json['quiet_hours_start'] as String?,
+        '22:00',
+      ),
       quietHoursEnd: normalizeTime(json['quiet_hours_end'] as String?, '08:00'),
       allowExactAlarm: json['allow_exact_alarm'] == true,
       allowAiSetReminders: json['allow_ai_set_reminders'] != false,
@@ -506,11 +517,11 @@ class EnhancedDialogueSettings {
   }
 
   Map<String, dynamic> toJson() => {
-        'enabled': enabled,
-        'system_prompt': systemPrompt,
-        'bootstrap_user_message': bootstrapUserMessage,
-        'recent_rounds': recentRounds,
-      };
+    'enabled': enabled,
+    'system_prompt': systemPrompt,
+    'bootstrap_user_message': bootstrapUserMessage,
+    'recent_rounds': recentRounds,
+  };
 
   factory EnhancedDialogueSettings.fromJson(Map<String, dynamic> json) {
     int normalizeRounds(num? value) {
@@ -589,11 +600,8 @@ class CallFlowSettings {
   }) {
     return CallFlowSettings(
       mode: mode ?? this.mode,
-      modelTimeoutSeconds:
-          (modelTimeoutSeconds ?? this.modelTimeoutSeconds).clamp(
-        minModelTimeoutSeconds,
-        maxModelTimeoutSeconds,
-      ),
+      modelTimeoutSeconds: (modelTimeoutSeconds ?? this.modelTimeoutSeconds)
+          .clamp(minModelTimeoutSeconds, maxModelTimeoutSeconds),
       toolTimeoutSeconds: (toolTimeoutSeconds ?? this.toolTimeoutSeconds).clamp(
         minToolTimeoutSeconds,
         maxToolTimeoutSeconds,
@@ -602,10 +610,10 @@ class CallFlowSettings {
   }
 
   Map<String, dynamic> toJson() => {
-        'mode': mode.value,
-        'model_timeout_seconds': modelTimeoutSeconds,
-        'tool_timeout_seconds': toolTimeoutSeconds,
-      };
+    'mode': mode.value,
+    'model_timeout_seconds': modelTimeoutSeconds,
+    'tool_timeout_seconds': toolTimeoutSeconds,
+  };
 
   factory CallFlowSettings.fromJson(Map<String, dynamic> json) {
     int clampInt(num? value, int min, int max, int fallback) {
@@ -652,21 +660,20 @@ class CustomModel {
   });
 
   Map<String, dynamic> toJson() => {
-        'name': name,
-        'displayName': displayName,
-        'apiKey': apiKey,
-        'apiBaseUrl': apiBaseUrl,
-        'provider': provider,
-      };
+    'name': name,
+    'displayName': displayName,
+    'apiKey': apiKey,
+    'apiBaseUrl': apiBaseUrl,
+    'provider': provider,
+  };
 
   factory CustomModel.fromJson(Map<String, dynamic> json) => CustomModel(
-        name: (json['name'] as String?) ?? '',
-        displayName: json['displayName'] as String?,
-        apiKey: (json['apiKey'] as String?) ?? '',
-        apiBaseUrl:
-            (json['apiBaseUrl'] as String?) ?? 'https://api.openai.com/v1',
-        provider: (json['provider'] as String?) ?? 'openai',
-      );
+    name: (json['name'] as String?) ?? '',
+    displayName: json['displayName'] as String?,
+    apiKey: (json['apiKey'] as String?) ?? '',
+    apiBaseUrl: (json['apiBaseUrl'] as String?) ?? 'https://api.openai.com/v1',
+    provider: (json['provider'] as String?) ?? 'openai',
+  );
 }
 
 /// 提供商认证配置
@@ -735,48 +742,46 @@ class ProviderAuth {
     bool clearTopP = false,
     bool clearContextMessageLimit = false,
     bool clearMaxContextTokens = false,
-  }) =>
-      ProviderAuth(
-        id: id ?? this.id,
-        displayName: displayName ?? this.displayName,
-        apiKeys: apiKeys ?? this.apiKeys,
-        apiBaseUrl: apiBaseUrl ?? this.apiBaseUrl,
-        enabled: enabled ?? this.enabled,
-        models: models ?? this.models,
-        visibleModels: visibleModels ?? this.visibleModels,
-        hiddenModels: hiddenModels ?? this.hiddenModels,
-        capabilities: capabilities ?? this.capabilities,
-        customConfig: customConfig ?? this.customConfig,
-        disableToolCalling: disableToolCalling ?? this.disableToolCalling,
-        temperature:
-            clearTemperature ? null : (temperature ?? this.temperature),
-        topP: clearTopP ? null : (topP ?? this.topP),
-        contextMessageLimit: clearContextMessageLimit
-            ? null
-            : (contextMessageLimit ?? this.contextMessageLimit),
-        maxContextTokens: clearMaxContextTokens
-            ? null
-            : (maxContextTokens ?? this.maxContextTokens),
-      );
+  }) => ProviderAuth(
+    id: id ?? this.id,
+    displayName: displayName ?? this.displayName,
+    apiKeys: apiKeys ?? this.apiKeys,
+    apiBaseUrl: apiBaseUrl ?? this.apiBaseUrl,
+    enabled: enabled ?? this.enabled,
+    models: models ?? this.models,
+    visibleModels: visibleModels ?? this.visibleModels,
+    hiddenModels: hiddenModels ?? this.hiddenModels,
+    capabilities: capabilities ?? this.capabilities,
+    customConfig: customConfig ?? this.customConfig,
+    disableToolCalling: disableToolCalling ?? this.disableToolCalling,
+    temperature: clearTemperature ? null : (temperature ?? this.temperature),
+    topP: clearTopP ? null : (topP ?? this.topP),
+    contextMessageLimit: clearContextMessageLimit
+        ? null
+        : (contextMessageLimit ?? this.contextMessageLimit),
+    maxContextTokens: clearMaxContextTokens
+        ? null
+        : (maxContextTokens ?? this.maxContextTokens),
+  );
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'displayName': displayName,
-        'apiKeys': apiKeys,
-        'apiBaseUrl': apiBaseUrl,
-        'enabled': enabled,
-        'models': models,
-        'visible_models': visibleModels,
-        'hidden_models': hiddenModels,
-        'capabilities': capabilities,
-        'custom_config': customConfig,
-        'disable_tool_calling': disableToolCalling,
-        if (temperature != null) 'temperature': temperature,
-        if (topP != null) 'top_p': topP,
-        if (contextMessageLimit != null)
-          'context_message_limit': contextMessageLimit,
-        if (maxContextTokens != null) 'max_context_tokens': maxContextTokens,
-      };
+    'id': id,
+    'displayName': displayName,
+    'apiKeys': apiKeys,
+    'apiBaseUrl': apiBaseUrl,
+    'enabled': enabled,
+    'models': models,
+    'visible_models': visibleModels,
+    'hidden_models': hiddenModels,
+    'capabilities': capabilities,
+    'custom_config': customConfig,
+    'disable_tool_calling': disableToolCalling,
+    if (temperature != null) 'temperature': temperature,
+    if (topP != null) 'top_p': topP,
+    if (contextMessageLimit != null)
+      'context_message_limit': contextMessageLimit,
+    if (maxContextTokens != null) 'max_context_tokens': maxContextTokens,
+  };
 
   factory ProviderAuth.fromJson(Map<String, dynamic> json) {
     List<String> clean(Iterable<dynamic>? source) =>
@@ -788,8 +793,9 @@ class ProviderAuth {
     final models = clean((json['models'] as List?)?.cast<dynamic>());
     final visible = clean((json['visible_models'] as List?)?.cast<dynamic>());
     final hidden = clean((json['hidden_models'] as List?)?.cast<dynamic>());
-    final capabilities =
-        clean((json['capabilities'] as List?)?.cast<dynamic>());
+    final capabilities = clean(
+      (json['capabilities'] as List?)?.cast<dynamic>(),
+    );
     final customConfig =
         (json['custom_config'] as Map?)?.cast<String, dynamic>() ?? {};
 
@@ -841,6 +847,9 @@ class ModelConfig {
   /// 最大上下文 Token 数，null 表示使用硬编码表或兜底值
   final int? maxContextTokens;
 
+  /// 模型默认思考档位，null 表示未设置（走预设 / 软件默认）
+  final ThinkingLevel? thinkingLevel;
+
   const ModelConfig({
     this.disableToolCalling = false,
     this.temperature,
@@ -848,6 +857,7 @@ class ModelConfig {
     this.contextMessageLimit,
     this.chatCapabilities,
     this.maxContextTokens,
+    this.thinkingLevel,
   });
 
   /// 是否为默认配置（全部为默认值时可删除以节省空间）
@@ -857,7 +867,8 @@ class ModelConfig {
       topP == null &&
       contextMessageLimit == null &&
       chatCapabilities == null &&
-      maxContextTokens == null;
+      maxContextTokens == null &&
+      thinkingLevel == null;
 
   ModelConfig copyWith({
     bool? disableToolCalling,
@@ -871,47 +882,52 @@ class ModelConfig {
     bool clearChatCapabilities = false,
     int? maxContextTokens,
     bool clearMaxContextTokens = false,
-  }) =>
-      ModelConfig(
-        disableToolCalling: disableToolCalling ?? this.disableToolCalling,
-        temperature:
-            clearTemperature ? null : (temperature ?? this.temperature),
-        topP: clearTopP ? null : (topP ?? this.topP),
-        contextMessageLimit: clearContextMessageLimit
-            ? null
-            : (contextMessageLimit ?? this.contextMessageLimit),
-        chatCapabilities: clearChatCapabilities
-            ? null
-            : (chatCapabilities != null
-                ? ChatModelCapability.normalizeValues(chatCapabilities)
-                : this.chatCapabilities),
-        maxContextTokens: clearMaxContextTokens
-            ? null
-            : (maxContextTokens ?? this.maxContextTokens),
-      );
+    ThinkingLevel? thinkingLevel,
+    bool clearThinkingLevel = false,
+  }) => ModelConfig(
+    disableToolCalling: disableToolCalling ?? this.disableToolCalling,
+    temperature: clearTemperature ? null : (temperature ?? this.temperature),
+    topP: clearTopP ? null : (topP ?? this.topP),
+    contextMessageLimit: clearContextMessageLimit
+        ? null
+        : (contextMessageLimit ?? this.contextMessageLimit),
+    chatCapabilities: clearChatCapabilities
+        ? null
+        : (chatCapabilities != null
+              ? ChatModelCapability.normalizeValues(chatCapabilities)
+              : this.chatCapabilities),
+    maxContextTokens: clearMaxContextTokens
+        ? null
+        : (maxContextTokens ?? this.maxContextTokens),
+    thinkingLevel: clearThinkingLevel
+        ? null
+        : (thinkingLevel ?? this.thinkingLevel),
+  );
 
   Map<String, dynamic> toJson() => {
-        'disable_tool_calling': disableToolCalling,
-        if (temperature != null) 'temperature': temperature,
-        if (topP != null) 'top_p': topP,
-        if (contextMessageLimit != null)
-          'context_message_limit': contextMessageLimit,
-        if (chatCapabilities != null) 'chat_capabilities': chatCapabilities,
-        if (maxContextTokens != null) 'max_context_tokens': maxContextTokens,
-      };
+    'disable_tool_calling': disableToolCalling,
+    if (temperature != null) 'temperature': temperature,
+    if (topP != null) 'top_p': topP,
+    if (contextMessageLimit != null)
+      'context_message_limit': contextMessageLimit,
+    if (chatCapabilities != null) 'chat_capabilities': chatCapabilities,
+    if (maxContextTokens != null) 'max_context_tokens': maxContextTokens,
+    if (thinkingLevel != null) 'thinking_level': thinkingLevel!.storageValue,
+  };
 
   factory ModelConfig.fromJson(Map<String, dynamic> json) => ModelConfig(
-        disableToolCalling: (json['disable_tool_calling'] as bool?) ?? false,
-        temperature: (json['temperature'] as num?)?.toDouble(),
-        topP: (json['top_p'] as num?)?.toDouble(),
-        contextMessageLimit: json['context_message_limit'] as int?,
-        chatCapabilities: json.containsKey('chat_capabilities')
-            ? ChatModelCapability.normalizeValues(
-                (json['chat_capabilities'] as List? ?? const <dynamic>[]),
-              )
-            : null,
-        maxContextTokens: json['max_context_tokens'] as int?,
-      );
+    disableToolCalling: (json['disable_tool_calling'] as bool?) ?? false,
+    temperature: (json['temperature'] as num?)?.toDouble(),
+    topP: (json['top_p'] as num?)?.toDouble(),
+    contextMessageLimit: json['context_message_limit'] as int?,
+    chatCapabilities: json.containsKey('chat_capabilities')
+        ? ChatModelCapability.normalizeValues(
+            (json['chat_capabilities'] as List? ?? const <dynamic>[]),
+          )
+        : null,
+    maxContextTokens: json['max_context_tokens'] as int?,
+    thinkingLevel: ThinkingLevel.tryParse(json['thinking_level']),
+  );
 }
 
 /// 全局字体缩放上下限
@@ -962,9 +978,11 @@ class AppSettings {
   final Map<String, ModelConfig> modelConfigs;
   final String apiKey;
   final String apiBaseUrl;
+
+  /// 全局常开：持久化读取时恒为 true；是否启用由角色/会话的插件选择决定。
   final bool imageGenerationEnabled;
   final int maxFileUploadMB;
-  final int historyMessageLimit;
+  final int contextWindowTokens;
   final List<CustomModel> customModels;
   final List<ProviderAuth> providers;
   final Map<String, String> modelProviderMap;
@@ -995,14 +1013,25 @@ class AppSettings {
   final String accentColor;
   final bool hideUserAvatar;
 
+  /// 语音消息气泡是否默认展开显示文字
+  final bool expandAudioText;
+
+  /// 是否启用玻璃材质（背景模糊）效果
+  final bool glassEffectEnabled;
+
+  /// 玻璃厚度的兼容存储值（sigma）；界面与渲染映射为三个档位。
+  final double glassBlurSigma;
+
+  /// 是否使用液态玻璃材质（透镜物理折射，关闭时为常规平整毛玻璃）
+  final bool useLiquidGlass;
+
+  MoeSurfaceMaterial get surfaceMaterial => MoeSurfaceMaterial.fromFlags(
+    enabled: glassEffectEnabled,
+    liquid: useLiquidGlass,
+  );
+
   /// 默认聊天模型列表（有序，第一个为首选，失败后自动轮询下一个）
   final List<String> defaultChatModels;
-
-  /// 默认图片识别模型（单选，用于 sendWithImage）
-  final String? defaultVisionModel;
-
-  /// 图片发送时是否优先走视觉辅助模型
-  final bool preferVisionAssistant;
 
   /// 是否跳过视觉兼容性提示弹窗（用户勾选"不再提醒"后为 true）
   final bool skipVisionCompatDialog;
@@ -1027,7 +1056,7 @@ class AppSettings {
     required this.apiBaseUrl,
     required this.imageGenerationEnabled,
     required this.maxFileUploadMB,
-    required this.historyMessageLimit,
+    required this.contextWindowTokens,
     required this.customModels,
     required this.providers,
     required this.modelProviderMap,
@@ -1045,9 +1074,11 @@ class AppSettings {
     required this.useSystemTheme,
     required this.accentColor,
     this.hideUserAvatar = true,
+    this.expandAudioText = true,
+    this.glassEffectEnabled = true,
+    this.glassBlurSigma = kDefaultGlassBlurSigma,
+    this.useLiquidGlass = true,
     this.defaultChatModels = const <String>[],
-    this.defaultVisionModel,
-    this.preferVisionAssistant = false,
     this.skipVisionCompatDialog = false,
     this.enhancedDialogueSettings = const EnhancedDialogueSettings(),
     this.callFlowSettings = const CallFlowSettings(),
@@ -1070,7 +1101,7 @@ class AppSettings {
     String? apiBaseUrl,
     bool? imageGenerationEnabled,
     int? maxFileUploadMB,
-    int? historyMessageLimit,
+    int? contextWindowTokens,
     List<CustomModel>? customModels,
     List<ProviderAuth>? providers,
     Map<String, String>? modelProviderMap,
@@ -1088,66 +1119,67 @@ class AppSettings {
     bool? useSystemTheme,
     String? accentColor,
     bool? hideUserAvatar,
+    bool? expandAudioText,
+    bool? glassEffectEnabled,
+    double? glassBlurSigma,
+    bool? useLiquidGlass,
     List<String>? defaultChatModels,
-    String? defaultVisionModel,
-    bool? preferVisionAssistant,
     bool? skipVisionCompatDialog,
     EnhancedDialogueSettings? enhancedDialogueSettings,
     CallFlowSettings? callFlowSettings,
     double? streamSegmentDelaySeconds,
     String? userAvatar,
     String? userName,
-  }) =>
-      AppSettings(
-        ttsEnabled: ttsEnabled ?? this.ttsEnabled,
-        defaultModelName: defaultModelName ?? this.defaultModelName,
-        temperature: temperature ?? this.temperature,
-        defaultPersonaPrompt: defaultPersonaPrompt ?? this.defaultPersonaPrompt,
-        modelList: modelList ?? this.modelList,
-        allKnownModels: allKnownModels ?? this.allKnownModels,
-        modelDisplayNames: modelDisplayNames ?? this.modelDisplayNames,
-        modelTypes: modelTypes ?? this.modelTypes,
-        modelConfigs: modelConfigs ?? this.modelConfigs,
-        apiKey: apiKey ?? this.apiKey,
-        apiBaseUrl: apiBaseUrl ?? this.apiBaseUrl,
-        imageGenerationEnabled:
-            imageGenerationEnabled ?? this.imageGenerationEnabled,
-        maxFileUploadMB: maxFileUploadMB ?? this.maxFileUploadMB,
-        historyMessageLimit: historyMessageLimit ?? this.historyMessageLimit,
-        customModels: customModels ?? this.customModels,
-        providers: providers ?? this.providers,
-        modelProviderMap: modelProviderMap ?? this.modelProviderMap,
-        backendApiKey: backendApiKey ?? this.backendApiKey,
-        messageChunkingEnabled:
-            messageChunkingEnabled ?? this.messageChunkingEnabled,
-        messageFormatConfig: messageFormatConfig ?? this.messageFormatConfig,
-        textScaleFactor: textScaleFactor ?? this.textScaleFactor,
-        uiScaleFactor: uiScaleFactor ?? this.uiScaleFactor,
-        imagePreviewScale: imagePreviewScale ?? this.imagePreviewScale,
-        windowsWindowControlsSide:
-            windowsWindowControlsSide ?? this.windowsWindowControlsSide,
-        autoReplySettings: autoReplySettings ?? this.autoReplySettings,
-        globalBackgroundColor:
-            globalBackgroundColor ?? this.globalBackgroundColor,
-        chatBackgroundColor: chatBackgroundColor ?? this.chatBackgroundColor,
-        isDarkMode: isDarkMode ?? this.isDarkMode,
-        useSystemTheme: useSystemTheme ?? this.useSystemTheme,
-        accentColor: accentColor ?? this.accentColor,
-        hideUserAvatar: hideUserAvatar ?? this.hideUserAvatar,
-        defaultChatModels: defaultChatModels ?? this.defaultChatModels,
-        defaultVisionModel: defaultVisionModel ?? this.defaultVisionModel,
-        preferVisionAssistant:
-            preferVisionAssistant ?? this.preferVisionAssistant,
-        skipVisionCompatDialog:
-            skipVisionCompatDialog ?? this.skipVisionCompatDialog,
-        enhancedDialogueSettings:
-            enhancedDialogueSettings ?? this.enhancedDialogueSettings,
-        callFlowSettings: callFlowSettings ?? this.callFlowSettings,
-        streamSegmentDelaySeconds:
-            streamSegmentDelaySeconds ?? this.streamSegmentDelaySeconds,
-        userAvatar: userAvatar ?? this.userAvatar,
-        userName: userName ?? this.userName,
-      );
+  }) => AppSettings(
+    ttsEnabled: ttsEnabled ?? this.ttsEnabled,
+    defaultModelName: defaultModelName ?? this.defaultModelName,
+    temperature: temperature ?? this.temperature,
+    defaultPersonaPrompt: defaultPersonaPrompt ?? this.defaultPersonaPrompt,
+    modelList: modelList ?? this.modelList,
+    allKnownModels: allKnownModels ?? this.allKnownModels,
+    modelDisplayNames: modelDisplayNames ?? this.modelDisplayNames,
+    modelTypes: modelTypes ?? this.modelTypes,
+    modelConfigs: modelConfigs ?? this.modelConfigs,
+    apiKey: apiKey ?? this.apiKey,
+    apiBaseUrl: apiBaseUrl ?? this.apiBaseUrl,
+    imageGenerationEnabled:
+        imageGenerationEnabled ?? this.imageGenerationEnabled,
+    maxFileUploadMB: maxFileUploadMB ?? this.maxFileUploadMB,
+    contextWindowTokens: contextWindowTokens ?? this.contextWindowTokens,
+    customModels: customModels ?? this.customModels,
+    providers: providers ?? this.providers,
+    modelProviderMap: modelProviderMap ?? this.modelProviderMap,
+    backendApiKey: backendApiKey ?? this.backendApiKey,
+    messageChunkingEnabled:
+        messageChunkingEnabled ?? this.messageChunkingEnabled,
+    messageFormatConfig: messageFormatConfig ?? this.messageFormatConfig,
+    textScaleFactor: textScaleFactor ?? this.textScaleFactor,
+    uiScaleFactor: uiScaleFactor ?? this.uiScaleFactor,
+    imagePreviewScale: imagePreviewScale ?? this.imagePreviewScale,
+    windowsWindowControlsSide:
+        windowsWindowControlsSide ?? this.windowsWindowControlsSide,
+    autoReplySettings: autoReplySettings ?? this.autoReplySettings,
+    globalBackgroundColor: globalBackgroundColor ?? this.globalBackgroundColor,
+    chatBackgroundColor: chatBackgroundColor ?? this.chatBackgroundColor,
+    isDarkMode: isDarkMode ?? this.isDarkMode,
+    useSystemTheme: useSystemTheme ?? this.useSystemTheme,
+    accentColor: accentColor ?? this.accentColor,
+    hideUserAvatar: hideUserAvatar ?? this.hideUserAvatar,
+    expandAudioText: expandAudioText ?? this.expandAudioText,
+    glassEffectEnabled: glassEffectEnabled ?? this.glassEffectEnabled,
+    glassBlurSigma: glassBlurSigma ?? this.glassBlurSigma,
+    useLiquidGlass: useLiquidGlass ?? this.useLiquidGlass,
+    defaultChatModels: defaultChatModels ?? this.defaultChatModels,
+    skipVisionCompatDialog:
+        skipVisionCompatDialog ?? this.skipVisionCompatDialog,
+    enhancedDialogueSettings:
+        enhancedDialogueSettings ?? this.enhancedDialogueSettings,
+    callFlowSettings: callFlowSettings ?? this.callFlowSettings,
+    streamSegmentDelaySeconds:
+        streamSegmentDelaySeconds ?? this.streamSegmentDelaySeconds,
+    userAvatar: userAvatar ?? this.userAvatar,
+    userName: userName ?? this.userName,
+  );
 
   bool _isKnownProviderId(String providerId) {
     for (final provider in providers) {
@@ -1236,10 +1268,7 @@ class AppSettings {
     return null;
   }
 
-  List<String> getProviderModelsByType(
-    String providerId, {
-    ModelType? type,
-  }) {
+  List<String> getProviderModelsByType(String providerId, {ModelType? type}) {
     final provider = getProvider(providerId);
     if (provider == null || !provider.enabled) {
       return const <String>[];
@@ -1334,7 +1363,7 @@ class AppSettings {
     );
     final supportsToolCalling =
         hasChatModelCapability(modelId, ChatModelCapability.tools) &&
-            !isModelToolCallingDisabled(modelId);
+        !isModelToolCallingDisabled(modelId);
     return supportsVision && supportsToolCalling
         ? EffectiveImageGenerationRoute.stable
         : EffectiveImageGenerationRoute.fast;

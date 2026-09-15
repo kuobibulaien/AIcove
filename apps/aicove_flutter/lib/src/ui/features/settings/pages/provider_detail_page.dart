@@ -13,11 +13,12 @@ library;
 
 export 'multi_key_manager_page.dart' show MultiKeyManagerPage;
 
-import 'dart:async';
 import 'dart:collection';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/form/moe_input_decoration.dart';
+import 'package:aicove_flutter/src/ui/shared/animations/parallax_slide_page_route.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -25,18 +26,15 @@ import '../../../../features/settings/app_settings.dart';
 import '../../../../features/settings/provider_detail/provider_detail_actions.dart';
 import '../../../../features/settings/provider_detail/provider_detail_support.dart';
 import '../../../theme/tokens.dart';
-import '../../../shared/effects/smooth_clip.dart';
 import '../../../shared/widgets/index.dart';
 import '../widgets/model_row_tile.dart';
 import '../widgets/model_picker_sheet.dart';
+import '../widgets/model_test_sheet.dart';
 import 'multi_key_manager_page.dart';
 
 /// 供应商详情页
 class ProviderDetailPage extends ConsumerStatefulWidget {
-  const ProviderDetailPage({
-    super.key,
-    required this.providerId,
-  });
+  const ProviderDetailPage({super.key, required this.providerId});
 
   /// 供应商 ID
   final String providerId;
@@ -45,7 +43,8 @@ class ProviderDetailPage extends ConsumerStatefulWidget {
   ConsumerState<ProviderDetailPage> createState() => _ProviderDetailPageState();
 }
 
-class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
+class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage>
+    with MoeAutoSaveState<ProviderDetailPage> {
   int _tabIndex = 0;
   final PageController _pageController = PageController();
 
@@ -59,7 +58,7 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
   late FocusNode _pathFocusNode;
   late FocusNode _keyFocusNode;
 
-  Timer? _autoSaveTimer;
+  bool _autoSaveReady = false;
   String _lastSavedName = '';
   String _lastSavedUrl = '';
   String _lastSavedPath = '';
@@ -85,7 +84,6 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
 
   @override
   void dispose() {
-    _autoSaveTimer?.cancel();
     _pageController.dispose();
     _nameController.dispose();
     _urlController.dispose();
@@ -110,10 +108,7 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
     ProviderAuth provider,
     Map<String, String> displayNames,
   ) {
-    final signature = _buildProviderDetailWarmSignature(
-      provider,
-      displayNames,
-    );
+    final signature = _buildProviderDetailWarmSignature(provider, displayNames);
     final cached = _ProviderDetailWarmCache.read(
       providerId: provider.id,
       signature: signature,
@@ -130,6 +125,7 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
   }
 
   void _syncControllersFromProvider(ProviderAuth provider) {
+    if (_autoSaveReady && (autoSave.pending || autoSave.saving)) return;
     final desiredName = provider.displayName ?? '';
     final desiredUrl = provider.apiBaseUrl;
     final desiredPath = resolveProviderDetailChatApiPath(provider);
@@ -144,6 +140,29 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
     _lastSavedUrl = desiredUrl.trim();
     _lastSavedPath = desiredPath.trim();
     _lastSavedKey = desiredKey.trim();
+    autoSave.configure(
+      snapshot: () => moeAutoSaveSignature([
+        _nameController.text,
+        _urlController.text,
+        _pathController.text,
+        _keyController.text,
+      ]),
+      fields: [
+        _nameController,
+        _urlController,
+        _pathController,
+        _keyController,
+      ],
+      save: () async {
+        final current = ref
+            .read(appSettingsProvider)
+            .valueOrNull
+            ?.getProvider(widget.providerId);
+        if (current == null) throw const FormatException('渠道不存在');
+        await _autoSave(current);
+      },
+    );
+    _autoSaveReady = true;
   }
 
   void _syncControllerIfNotFocused(
@@ -160,25 +179,7 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
     );
   }
 
-  void _scheduleAutoSave(ProviderAuth provider) {
-    _autoSaveTimer?.cancel();
-
-    final multiKeyEnabled = isProviderMultiKeyEnabled(provider);
-    final name = _nameController.text.trim();
-    final url = _urlController.text.trim();
-    final path = _pathController.text.trim();
-    final key = _keyController.text.trim();
-    final hasChanges = name != _lastSavedName ||
-        url != _lastSavedUrl ||
-        path != _lastSavedPath ||
-        (!multiKeyEnabled && key != _lastSavedKey);
-
-    if (!hasChanges) return;
-
-    _autoSaveTimer = Timer(const Duration(milliseconds: 650), () async {
-      await _autoSave(provider);
-    });
-  }
+  void _scheduleAutoSave(ProviderAuth provider) => autoSave.changed();
 
   Future<void> _autoSave(ProviderAuth provider) async {
     final multiKeyEnabled = isProviderMultiKeyEnabled(provider);
@@ -186,29 +187,25 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
     final url = _urlController.text.trim();
     final path = _pathController.text.trim();
     final key = _keyController.text.trim();
-    final hasChanges = name != _lastSavedName ||
+    final hasChanges =
+        name != _lastSavedName ||
         url != _lastSavedUrl ||
         path != _lastSavedPath ||
         (!multiKeyEnabled && key != _lastSavedKey);
 
     if (!hasChanges) return;
 
-    try {
-      await _actions.autoSaveProvider(
-        provider: provider,
-        displayName: name,
-        apiBaseUrl: url,
-        apiPath: path,
-        apiKey: key,
-      );
-      _lastSavedName = name;
-      _lastSavedUrl = url;
-      _lastSavedPath = path;
-      _lastSavedKey = key;
-    } catch (e) {
-      if (!mounted) return;
-      MoeToast.show(context, '自动保存失败: $e', type: ToastType.error);
-    }
+    await _actions.autoSaveProvider(
+      provider: provider,
+      displayName: name,
+      apiBaseUrl: url,
+      apiPath: path,
+      apiKey: key,
+    );
+    _lastSavedName = name;
+    _lastSavedUrl = url;
+    _lastSavedPath = path;
+    _lastSavedKey = key;
   }
 
   void _onTabChanged(int index) {
@@ -225,169 +222,18 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
   }
 
   Future<void> _testConnection(ProviderAuth provider) async {
-    final models = provider.visibleModels;
-    if (models.isEmpty) {
+    if (provider.visibleModels.isEmpty) {
       MoeToast.show(context, '当前渠道没有可用模型', type: ToastType.error);
       return;
     }
 
-    final displayNames =
-        ref.read(appSettingsProvider).value?.modelDisplayNames ?? {};
     final apiKey = _actions.resolvePrimaryApiKey(provider);
     if (apiKey.isEmpty) {
       MoeToast.show(context, '请先配置可用 API Key', type: ToastType.error);
       return;
     }
 
-    // 每个模型的测试状态：null=空闲, true=成功, false=失败
-    // 用 Map<String, _TestState> 管理
-    final testStates = <String, _ModelTestState>{};
-    // 待测试队列
-    final queue = <String>[];
-    var isTesting = false;
-
-    await showMoeBottomSheet(
-      context: context,
-      title: '测试模型',
-      builder: (sheetContext) {
-        return StatefulBuilder(
-          builder: (sheetContext, setSheetState) {
-            // 按顺序执行队列中的测试
-            Future<void> processQueue() async {
-              if (isTesting) return;
-              isTesting = true;
-              while (queue.isNotEmpty) {
-                final modelId = queue.removeAt(0);
-                setSheetState(() {
-                  testStates[modelId] = _ModelTestState.loading;
-                });
-                try {
-                  await _actions.testModel(
-                    provider: provider,
-                    apiKey: apiKey,
-                    modelId: modelId,
-                  );
-                  setSheetState(() {
-                    testStates[modelId] = _ModelTestState.success;
-                  });
-                } catch (_) {
-                  setSheetState(() {
-                    testStates[modelId] = _ModelTestState.failure;
-                  });
-                }
-              }
-              isTesting = false;
-            }
-
-            final colors = sheetContext.moeColors;
-
-            return Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // 全选按钮
-                Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      GestureDetector(
-                        onTap: () {
-                          // 把所有未测试/未排队的模型加入队列
-                          for (final m in models) {
-                            final st = testStates[m];
-                            if (st == null && !queue.contains(m)) {
-                              queue.add(m);
-                              setSheetState(() {
-                                testStates[m] = _ModelTestState.queued;
-                              });
-                            }
-                          }
-                          processQueue();
-                        },
-                        child: Text(
-                          '全部测试',
-                          style: TextStyle(
-                              fontSize: 13,
-                              color: colors.primary,
-                              fontWeight: FontWeight.w500),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                // 模型列表
-                ListView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
-                  itemCount: models.length,
-                  itemBuilder: (context, index) {
-                    final modelId = models[index];
-                    final displayName = displayNames[modelId];
-                    final state = testStates[modelId];
-
-                    return ListTile(
-                      dense: true,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      title: Text(
-                        displayName?.isNotEmpty == true
-                            ? displayName!
-                            : modelId,
-                        style: TextStyle(fontSize: 14, color: colors.text),
-                      ),
-                      subtitle: displayName?.isNotEmpty == true
-                          ? Text(modelId,
-                              style:
-                                  TextStyle(fontSize: 11, color: colors.muted))
-                          : null,
-                      trailing: _buildTestStateIcon(state, colors),
-                      onTap: () {
-                        // 空闲或已有结果时，点击（重新）加入队列
-                        if (state == null ||
-                            state == _ModelTestState.success ||
-                            state == _ModelTestState.failure) {
-                          queue.add(modelId);
-                          setSheetState(() {
-                            testStates[modelId] = _ModelTestState.queued;
-                          });
-                          processQueue();
-                        }
-                      },
-                    );
-                  },
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Widget _buildTestStateIcon(_ModelTestState? state, MoeColors colors) {
-    switch (state) {
-      case null:
-        return const SizedBox(width: 24, height: 24);
-      case _ModelTestState.queued:
-        return Icon(Icons.schedule, size: 20, color: colors.muted);
-      case _ModelTestState.loading:
-        return SizedBox(
-          width: 20,
-          height: 20,
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            color: colors.primary,
-          ),
-        );
-      case _ModelTestState.success:
-        return const Icon(Icons.check_circle,
-            size: 20, color: Color(0xFF4CAF50));
-      case _ModelTestState.failure:
-        return const Icon(Icons.cancel, size: 20, color: Color(0xFFE53935));
-    }
+    await showModelTestSheet(context, ref, provider: provider, apiKey: apiKey);
   }
 
   Future<void> _deleteProvider(ProviderAuth provider) async {
@@ -420,8 +266,8 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
 
   Future<void> _openMultiKeyManager(ProviderAuth provider) async {
     await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => MultiKeyManagerPage(providerId: provider.id),
+      ParallaxSlidePageRoute(
+        page: MultiKeyManagerPage(providerId: provider.id),
       ),
     );
     if (!mounted) return;
@@ -430,10 +276,14 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
 
   Future<void> _showRequestFormatSheet(ProviderAuth provider) async {
     final settings = ref.read(appSettingsProvider).valueOrNull;
-    var selected =
-        resolveProviderDetailRequestFormat(provider, settings: settings);
-    final availableFormats =
-        ProviderDetailRequestFormat.forProvider(provider, settings: settings);
+    var selected = resolveProviderDetailRequestFormat(
+      provider,
+      settings: settings,
+    );
+    final availableFormats = ProviderDetailRequestFormat.forProvider(
+      provider,
+      settings: settings,
+    );
     if (availableFormats.length <= 1) {
       return;
     }
@@ -441,7 +291,23 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
     await showMoeBottomSheet(
       context: context,
       title: 'API 格式',
-      builder: (context) => StatefulBuilder(
+      showCloseButton: true,
+      isDismissible: false,
+      enableDrag: false,
+      builder: (context) => MoeAutoSaveForm(
+        snapshot: () => selected,
+        save: () async {
+          final format = selected;
+          final nextPath = defaultProviderDetailChatApiPathForFormat(format);
+          await _actions.updateRequestFormat(provider, format, nextPath);
+          if (!mounted) return;
+          _syncControllerIfNotFocused(
+            _pathController,
+            _pathFocusNode,
+            nextPath,
+          );
+          _lastSavedPath = nextPath;
+        },
         builder: (context, setSheetState) => Padding(
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
           child: Column(
@@ -463,33 +329,6 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
                 },
               ),
               const SizedBox(height: 24),
-              MoePrimaryButton(
-                label: '保存',
-                onPressed: () async {
-                  final current = resolveProviderDetailRequestFormat(provider,
-                      settings: settings);
-                  if (current == selected) {
-                    Navigator.of(this.context).pop();
-                    return;
-                  }
-                  final nextPath =
-                      defaultProviderDetailChatApiPathForFormat(selected);
-                  _syncControllerIfNotFocused(
-                    _pathController,
-                    _pathFocusNode,
-                    nextPath,
-                  );
-                  await _actions.updateRequestFormat(
-                    provider,
-                    selected,
-                    nextPath,
-                  );
-                  _lastSavedPath = nextPath;
-                  if (!mounted) return;
-                  Navigator.of(this.context).pop();
-                  MoeToast.show(this.context, '已更新 API 格式');
-                },
-              ),
             ],
           ),
         ),
@@ -498,7 +337,10 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
   }
 
   Future<void> _onReorderModels(
-      ProviderAuth provider, int oldIndex, int newIndex) async {
+    ProviderAuth provider,
+    int oldIndex,
+    int newIndex,
+  ) async {
     if (oldIndex == newIndex) return;
 
     final visible = _resolveModelEntries(
@@ -579,12 +421,12 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
     final colors = context.moeColors;
 
     return settingsAsync.when(
-      loading: () => Scaffold(
+      loading: () => MoePageScaffold(
         backgroundColor: colors.surface,
         appBar: const MoeAppBar(title: '渠道详情', showBackButton: true),
         body: const Center(child: MoeLoadingIndicator()),
       ),
-      error: (e, _) => Scaffold(
+      error: (e, _) => MoePageScaffold(
         backgroundColor: colors.surface,
         appBar: const MoeAppBar(title: '渠道详情', showBackButton: true),
         body: MoeEmptyState(title: '加载失败', description: e.toString()),
@@ -601,7 +443,7 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
         );
 
         if (provider.id.isEmpty) {
-          return const Scaffold(
+          return const MoePageScaffold(
             appBar: MoeAppBar(title: '供应商详情'),
             body: MoeEmptyState(title: '供应商不存在'),
           );
@@ -635,140 +477,154 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
     final modelsBottomPadding =
         bottomBarBaseHeight + MoeButtonSizes.md + MoeSpacing.sm + MoeSpacing.xl;
 
-    return Scaffold(
-      backgroundColor: colors.surface,
-      // 让内容区域延伸到屏幕底部，这样底部控件才是真“悬浮”在列表上方，而不是用一整块背景把列表截断
-      extendBody: true,
-      // 固定底部切换框：键盘弹出时不把底部顶上去（与 kelivo 行为一致）
-      resizeToAvoidBottomInset: false,
-      appBar: MoeAppBar(
-        title: '渠道详情',
-        showBackButton: true,
-        actions: [
-          IconButton(
-            icon: Icon(Icons.speed_outlined, color: colors.text),
-            tooltip: '测试模型',
-            onPressed: () => _testConnection(provider),
-          ),
-          IconButton(
-            icon: Icon(Icons.delete_outline, color: colors.text),
-            tooltip: '删除',
-            onPressed: () => _deleteProvider(provider),
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          const SizedBox(height: 8),
-          // 顶部信息卡片 - 仍然使用 MoeSettingsGroup 包装以保持一致性
-          MoeSettingsGroup(
-            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            padding: const EdgeInsets.all(12),
-            children: [
-              Row(
+    return autoSavePage(
+      MoePageScaffold(
+        backgroundColor: colors.surface,
+        // 让内容区域延伸到屏幕底部，这样底部控件才是真“悬浮”在列表上方，而不是用一整块背景把列表截断
+        extendBody: true,
+        // 固定底部切换框：键盘弹出时不把底部顶上去（与 kelivo 行为一致）
+        resizeToAvoidBottomInset: false,
+        appBar: MoeAppBar(
+          title: '渠道详情',
+          showBackButton: true,
+          actions: [
+            IconButton(
+              icon: Icon(Icons.speed_outlined, color: colors.text),
+              tooltip: '测试模型',
+              onPressed: () => _testConnection(provider),
+            ),
+            IconButton(
+              icon: Icon(Icons.delete_outline, color: colors.text),
+              tooltip: '删除',
+              onPressed: () => _deleteProvider(provider),
+            ),
+          ],
+        ),
+        body: Column(
+          children: [
+            const SizedBox(height: 8),
+            // 顶部信息卡片 - 仍然使用 MoeSettingsGroup 包装以保持一致性
+            MoeSettingsGroup(
+              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              padding: const EdgeInsets.all(12),
+              children: [
+                Row(
+                  children: [
+                    ProviderAvatar(
+                      providerName: provider.displayName ?? provider.id,
+                      size: ProviderAvatarSize.lg,
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            provider.displayName ?? provider.id,
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: MoeFontWeights.emphasis,
+                              color: colors.text,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          CapabilityChips(
+                            capabilities: provider.capabilities,
+                            size: CapabilityChipSize.md,
+                          ),
+                        ],
+                      ),
+                    ),
+                    MoeSwitch(
+                      value: provider.enabled,
+                      onChanged: (_) => _toggleEnabled(provider),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 8),
+
+            // 内容区
+            Expanded(
+              child: PageView(
+                controller: _pageController,
+                onPageChanged: _onPageChanged,
                 children: [
-                  ProviderAvatar(
-                    providerName: provider.displayName ?? provider.id,
-                    size: ProviderAvatarSize.lg,
+                  _buildConfigTab(
+                    context,
+                    provider,
+                    colors,
+                    bottomPadding: configBottomPadding,
                   ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                  _buildModelsTab(
+                    context,
+                    provider,
+                    colors,
+                    modelEntries,
+                    bottomPadding: modelsBottomPadding,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        // 底部导航栏：透明背景悬浮
+        bottomNavigationBar: SafeArea(
+          top: false,
+          child: Padding(
+            padding: bottomBarPadding,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // 「获取 / 自定义模型」属于二级模型界面：只在模型 Tab 显示
+                if (_tabIndex == 1) ...[
+                  FractionallySizedBox(
+                    widthFactor: 0.90,
+                    child: Row(
                       children: [
-                        Text(
-                          provider.displayName ?? provider.id,
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: MoeFontWeights.emphasis,
-                            color: colors.text,
+                        Expanded(
+                          child: _ActionButton(
+                            icon: Icons.cloud_download_outlined,
+                            label: '获取',
+                            colors: colors,
+                            onTap: () => showModelPickerSheet(
+                              context,
+                              ref,
+                              providerId: provider.id,
+                            ),
                           ),
                         ),
-                        const SizedBox(height: 6),
-                        CapabilityChips(
-                          capabilities: provider.capabilities,
-                          size: CapabilityChipSize.md,
+                        const SizedBox(width: MoeSpacing.sm),
+                        Expanded(
+                          child: _ActionButton(
+                            icon: Icons.add,
+                            label: '自定义模型',
+                            colors: colors,
+                            isPrimary: true,
+                            onTap: () => _showAddCustomModelDialog(provider),
+                          ),
                         ),
                       ],
                     ),
                   ),
-                  MoeSwitch(
-                    value: provider.enabled,
-                    onChanged: (_) => _toggleEnabled(provider),
-                  ),
+                  const SizedBox(height: MoeSpacing.sm),
                 ],
-              ),
-            ],
-          ),
 
-          const SizedBox(height: 8),
-
-          // 内容区
-          Expanded(
-            child: PageView(
-              controller: _pageController,
-              onPageChanged: _onPageChanged,
-              children: [
-                _buildConfigTab(context, provider, colors,
-                    bottomPadding: configBottomPadding),
-                _buildModelsTab(context, provider, colors, modelEntries,
-                    bottomPadding: modelsBottomPadding),
+                // 底部切换框：使用公共组件 MoeBottomTabs（高度与 kelivo 一致）
+                MoeBottomTabs(
+                  index: _tabIndex,
+                  leftIcon: Icons.settings_outlined,
+                  leftLabel: '配置',
+                  rightIcon: Icons.list_alt_outlined,
+                  rightLabel: '模型',
+                  onSelect: _onTabChanged,
+                  height: bottomTabsHeight,
+                  widthFactor: bottomTabsWidthFactor,
+                ),
               ],
             ),
-          ),
-        ],
-      ),
-      // 底部导航栏：透明背景悬浮
-      bottomNavigationBar: SafeArea(
-        top: false,
-        child: Padding(
-          padding: bottomBarPadding,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // 「获取 / 自定义模型」属于二级模型界面：只在模型 Tab 显示
-              if (_tabIndex == 1) ...[
-                FractionallySizedBox(
-                  widthFactor: 0.90,
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: _ActionButton(
-                          icon: Icons.cloud_download_outlined,
-                          label: '获取',
-                          colors: colors,
-                          onTap: () => showModelPickerSheet(context, ref,
-                              providerId: provider.id),
-                        ),
-                      ),
-                      const SizedBox(width: MoeSpacing.sm),
-                      Expanded(
-                        child: _ActionButton(
-                          icon: Icons.add,
-                          label: '自定义模型',
-                          colors: colors,
-                          isPrimary: true,
-                          onTap: () => _showAddCustomModelDialog(provider),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: MoeSpacing.sm),
-              ],
-
-              // 底部切换框：使用公共组件 MoeBottomTabs（高度与 kelivo 一致）
-              MoeBottomTabs(
-                index: _tabIndex,
-                leftIcon: Icons.settings_outlined,
-                leftLabel: '配置',
-                rightIcon: Icons.list_alt_outlined,
-                rightLabel: '模型',
-                onSelect: _onTabChanged,
-                height: bottomTabsHeight,
-                widthFactor: bottomTabsWidthFactor,
-              ),
-            ],
           ),
         ),
       ),
@@ -783,11 +639,16 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
   }) {
     final multiKeyEnabled = isProviderMultiKeyEnabled(provider);
     final settings = ref.read(appSettingsProvider).valueOrNull;
-    final requestFormat =
-        resolveProviderDetailRequestFormat(provider, settings: settings);
-    final requestFormatOptions =
-        ProviderDetailRequestFormat.forProvider(provider, settings: settings);
-    final showChatApiPath = (settings
+    final requestFormat = resolveProviderDetailRequestFormat(
+      provider,
+      settings: settings,
+    );
+    final requestFormatOptions = ProviderDetailRequestFormat.forProvider(
+      provider,
+      settings: settings,
+    );
+    final showChatApiPath =
+        (settings
                 ?.getProviderModelsByType(provider.id, type: ModelType.chat)
                 .isNotEmpty ??
             false) ||
@@ -800,21 +661,71 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
       child: Column(
         children: [
           MoeSettingsGroup(
+            margin: const EdgeInsets.symmetric(horizontal: 16),
             title: '基础配置',
             children: [
               MoeSettingsRow(
-                icon: Icons.badge_outlined,
                 label: '显示名称',
                 trailingType: MoeSettingsRowTrailing.custom,
-                trailing: SizedBox(
-                  width: 180,
-                  child: TextField(
-                    controller: _nameController,
-                    focusNode: _nameFocusNode,
+                expandTrailing: true,
+                trailing: TextField(
+                  controller: _nameController,
+                  focusNode: _nameFocusNode,
+                  style: TextStyle(fontSize: 14, color: colors.text),
+                  textAlign: TextAlign.end,
+                  decoration: const MoeInputDecoration(
+                    isDense: true,
+                    contentPadding: EdgeInsets.zero,
+                    hintText: '未设置',
+                  ),
+                  onChanged: (_) => _scheduleAutoSave(provider),
+                ),
+              ),
+              MoeSettingsRow(
+                label: '基础 URL',
+                trailingType: MoeSettingsRowTrailing.custom,
+                expandTrailing: true,
+                trailing: TextField(
+                  controller: _urlController,
+                  focusNode: _urlFocusNode,
+                  style: TextStyle(fontSize: 14, color: colors.text),
+                  textAlign: TextAlign.end,
+                  decoration: const MoeInputDecoration(
+                    isDense: true,
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                  onChanged: (_) => _scheduleAutoSave(provider),
+                ),
+              ),
+              if (showChatApiPath)
+                MoeSettingsRow(
+                  label: 'API 路径',
+                  trailingType: MoeSettingsRowTrailing.custom,
+                  expandTrailing: true,
+                  trailing: TextField(
+                    controller: _pathController,
+                    focusNode: _pathFocusNode,
                     style: TextStyle(fontSize: 14, color: colors.text),
                     textAlign: TextAlign.end,
-                    decoration: const InputDecoration(
-                      border: InputBorder.none,
+                    decoration: const MoeInputDecoration(
+                      isDense: true,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                    onChanged: (_) => _scheduleAutoSave(provider),
+                  ),
+                ),
+              if (!multiKeyEnabled)
+                MoeSettingsRow(
+                  label: 'API Key',
+                  trailingType: MoeSettingsRowTrailing.custom,
+                  expandTrailing: true,
+                  trailing: TextField(
+                    controller: _keyController,
+                    focusNode: _keyFocusNode,
+                    style: TextStyle(fontSize: 14, color: colors.text),
+                    textAlign: TextAlign.end,
+                    obscureText: false,
+                    decoration: const MoeInputDecoration(
                       isDense: true,
                       contentPadding: EdgeInsets.zero,
                       hintText: '未设置',
@@ -822,78 +733,13 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
                     onChanged: (_) => _scheduleAutoSave(provider),
                   ),
                 ),
-              ),
-              MoeSettingsRow(
-                icon: Icons.link_outlined,
-                label: '基础 URL',
-                trailingType: MoeSettingsRowTrailing.custom,
-                trailing: SizedBox(
-                  width: 200,
-                  child: TextField(
-                    controller: _urlController,
-                    focusNode: _urlFocusNode,
-                    style: TextStyle(fontSize: 14, color: colors.text),
-                    textAlign: TextAlign.end,
-                    decoration: const InputDecoration(
-                      border: InputBorder.none,
-                      isDense: true,
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                    onChanged: (_) => _scheduleAutoSave(provider),
-                  ),
-                ),
-              ),
-              if (showChatApiPath)
-                MoeSettingsRow(
-                  icon: Icons.route_outlined,
-                  label: 'API 路径',
-                  trailingType: MoeSettingsRowTrailing.custom,
-                  trailing: SizedBox(
-                    width: 220,
-                    child: TextField(
-                      controller: _pathController,
-                      focusNode: _pathFocusNode,
-                      style: TextStyle(fontSize: 14, color: colors.text),
-                      textAlign: TextAlign.end,
-                      decoration: const InputDecoration(
-                        border: InputBorder.none,
-                        isDense: true,
-                        contentPadding: EdgeInsets.zero,
-                      ),
-                      onChanged: (_) => _scheduleAutoSave(provider),
-                    ),
-                  ),
-                ),
-              if (!multiKeyEnabled)
-                MoeSettingsRow(
-                  icon: Icons.key_outlined,
-                  label: 'API Key',
-                  trailingType: MoeSettingsRowTrailing.custom,
-                  trailing: SizedBox(
-                    width: 180,
-                    child: TextField(
-                      controller: _keyController,
-                      focusNode: _keyFocusNode,
-                      style: TextStyle(fontSize: 14, color: colors.text),
-                      textAlign: TextAlign.end,
-                      obscureText: false,
-                      decoration: const InputDecoration(
-                        border: InputBorder.none,
-                        isDense: true,
-                        contentPadding: EdgeInsets.zero,
-                        hintText: '未设置',
-                      ),
-                      onChanged: (_) => _scheduleAutoSave(provider),
-                    ),
-                  ),
-                ),
             ],
           ),
           MoeSettingsGroup(
+            margin: const EdgeInsets.symmetric(horizontal: 16),
             title: '高级信息',
             children: [
               MoeSettingsRow(
-                icon: Icons.swap_horiz_outlined,
                 label: 'API 格式',
                 trailingType: MoeSettingsRowTrailing.text,
                 detailText: requestFormat.label,
@@ -902,7 +748,6 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
                     : null,
               ),
               MoeSettingsRow(
-                icon: Icons.alt_route_outlined,
                 label: '多 Key 模式',
                 trailingType: MoeSettingsRowTrailing.custom,
                 trailing: MoeSwitch(
@@ -912,27 +757,10 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
               ),
               if (multiKeyEnabled)
                 MoeSettingsRow(
-                  icon: Icons.manage_accounts_outlined,
                   label: '多 Key 管理',
                   trailingType: MoeSettingsRowTrailing.chevron,
                   onTap: () => _openMultiKeyManager(provider),
                 ),
-              MoeSettingsRow(
-                icon: Icons.category_outlined,
-                label: '能力标签',
-                trailingType: MoeSettingsRowTrailing.custom,
-                trailing: CapabilityChips(
-                  capabilities: provider.capabilities,
-                  size: CapabilityChipSize.sm,
-                ),
-                subtitle: '按已加载模型自动生成',
-              ),
-              MoeSettingsRow(
-                icon: Icons.fingerprint,
-                label: 'ID',
-                trailingType: MoeSettingsRowTrailing.text,
-                detailText: provider.id,
-              ),
             ],
           ),
         ],
@@ -975,8 +803,10 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 20),
                   child: Center(
-                    child: Text('暂无模型',
-                        style: TextStyle(color: colors.muted, fontSize: 14)),
+                    child: Text(
+                      '暂无模型',
+                      style: TextStyle(color: colors.muted, fontSize: 14),
+                    ),
                   ),
                 ),
               ],
@@ -1001,10 +831,7 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
                         final scale = lerpDouble(1.0, 0.98, t) ?? 1.0;
                         return Transform.scale(
                           scale: scale,
-                          child: Opacity(
-                            opacity: 0.95,
-                            child: child,
-                          ),
+                          child: Opacity(opacity: 0.95, child: child),
                         );
                       },
                       child: child,
@@ -1049,19 +876,20 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage> {
       return cached.modelEntries;
     }
 
-    final entries = provider.visibleModels
-        .map(
-          (modelId) => _ProviderModelEntry(
-            modelId: modelId,
-            displayName: displayNames[modelId] ?? '',
-          ),
-        )
-        .toList(growable: false)
-      ..sort((a, b) {
-        final nameA = a.sortName;
-        final nameB = b.sortName;
-        return nameA.compareTo(nameB);
-      });
+    final entries =
+        provider.visibleModels
+            .map(
+              (modelId) => _ProviderModelEntry(
+                modelId: modelId,
+                displayName: displayNames[modelId] ?? '',
+              ),
+            )
+            .toList(growable: false)
+          ..sort((a, b) {
+            final nameA = a.sortName;
+            final nameB = b.sortName;
+            return nameA.compareTo(nameB);
+          });
 
     _cachedModelEntriesSignature = signature;
     _cachedModelEntries = List<_ProviderModelEntry>.unmodifiable(entries);
@@ -1097,10 +925,7 @@ String _buildProviderDetailWarmSignature(
 }
 
 class _ProviderModelEntry {
-  const _ProviderModelEntry({
-    required this.modelId,
-    required this.displayName,
-  });
+  const _ProviderModelEntry({required this.modelId, required this.displayName});
 
   final String modelId;
   final String displayName;
@@ -1182,36 +1007,32 @@ class _ActionButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
-      child: Container(
+      child: MoeButtonSurface(
         height: MoeButtonSizes.md,
-        decoration: MoeG2Decoration(
-          radius: MoeSmoothRadii.md,
-          color: isPrimary ? colors.primary : colors.componentBackground,
-          border: Border.all(
-            color: isPrimary ? colors.primary : colors.border,
-            width: 1,
-          ),
-          boxShadow: MoeShadows.soft,
+        radius: MoeSmoothRadii.md,
+        tintColor: isPrimary ? colors.primary : Colors.transparent,
+        border: Border.all(
+          color: isPrimary ? colors.primary : colors.border,
+          width: 1,
         ),
+        shadows: MoeShadows.soft,
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
               icon,
               size: 18,
-              color:
-                  isPrimary ? colors.headerContentColor : colors.textSecondary,
+              color: isPrimary ? colors.text : colors.textSecondary,
             ),
             const SizedBox(width: 6),
             Text(
               label,
               style: TextStyle(
                 fontSize: 14,
-                color: isPrimary
-                    ? colors.headerContentColor
-                    : colors.textSecondary,
-                fontWeight:
-                    isPrimary ? MoeFontWeights.emphasis : MoeFontWeights.normal,
+                color: isPrimary ? colors.text : colors.textSecondary,
+                fontWeight: isPrimary
+                    ? MoeFontWeights.emphasis
+                    : MoeFontWeights.normal,
               ),
             ),
           ],
@@ -1220,6 +1041,3 @@ class _ActionButton extends StatelessWidget {
     );
   }
 }
-
-/// 模型测试状态
-enum _ModelTestState { queued, loading, success, failure }

@@ -2,7 +2,7 @@ import '../../../core/prompts/prompt_builtin_defaults.g.dart';
 
 /// 表情包插件配置
 class StickerConfig {
-  /// 是否启用表情包插件
+  /// 全局常开：持久化读取时恒为 true；是否启用由角色/会话的插件选择决定。
   final bool enabled;
 
   /// 系统提示词模板
@@ -17,10 +17,7 @@ class StickerConfig {
     this.systemPromptTemplate = defaultSystemPromptTemplate,
   });
 
-  StickerConfig copyWith({
-    bool? enabled,
-    String? systemPromptTemplate,
-  }) {
+  StickerConfig copyWith({bool? enabled, String? systemPromptTemplate}) {
     return StickerConfig(
       enabled: enabled ?? this.enabled,
       systemPromptTemplate: systemPromptTemplate ?? this.systemPromptTemplate,
@@ -28,16 +25,15 @@ class StickerConfig {
   }
 
   Map<String, dynamic> toJson() {
-    return {
-      'enabled': enabled,
-      'systemPromptTemplate': systemPromptTemplate,
-    };
+    return {'enabled': enabled, 'systemPromptTemplate': systemPromptTemplate};
   }
 
   factory StickerConfig.fromJson(Map<String, dynamic> json) {
     return StickerConfig(
-      enabled: json['enabled'] as bool? ?? true,
-      systemPromptTemplate: json['systemPromptTemplate'] as String? ??
+      // 全局开关已移除，忽略旧存储值
+      enabled: true,
+      systemPromptTemplate:
+          json['systemPromptTemplate'] as String? ??
           defaultSystemPromptTemplate,
     );
   }

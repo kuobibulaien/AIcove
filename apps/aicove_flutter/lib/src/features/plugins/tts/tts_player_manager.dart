@@ -2,6 +2,7 @@ import 'dart:async';
 
 import '../domain/plugin.dart';
 import 'tts_service.dart';
+import 'voice_request.dart';
 import '../../../core/app_logger.dart';
 
 /// TtsService 获取器类型定义
@@ -66,40 +67,46 @@ class TtsPlayerManager {
           : (original != null && original.isNotEmpty ? original : null);
 
       if (text == null || text.isEmpty) {
-        AppLogger.warning('TTS', '事件缺少可用文本，直接失败', metadata: {
-          'eventId': event.id,
-        });
-        _emitProcessedItem(TtsPlayItem(
-          id: event.id,
-          text: '',
-          event: event,
-          status: TtsPlayItemStatus.failed,
-          error: 'empty_text',
-        ));
+        AppLogger.warning(
+          'TTS',
+          '事件缺少可用文本，直接失败',
+          metadata: {'eventId': event.id},
+        );
+        _emitProcessedItem(
+          TtsPlayItem(
+            id: event.id,
+            text: '',
+            event: event,
+            status: TtsPlayItemStatus.failed,
+            error: 'empty_text',
+          ),
+        );
         continue;
       }
 
       if (_activeItems.containsKey(event.id)) {
-        AppLogger.warning('TTS', '重复的 TTS 事件已忽略', metadata: {
-          'eventId': event.id,
-        });
+        AppLogger.warning(
+          'TTS',
+          '重复的 TTS 事件已忽略',
+          metadata: {'eventId': event.id},
+        );
         continue;
       }
 
       _cancelledItemIds.remove(event.id);
-      final item = TtsPlayItem(
-        id: event.id,
-        text: text,
-        event: event,
-      );
+      final item = TtsPlayItem(id: event.id, text: text, event: event);
       _activeItems[event.id] = item;
       _currentItem ??= item;
 
-      AppLogger.info('TTS', '提交并发转换事件', metadata: {
-        'eventId': event.id,
-        'textLen': text.length,
-        'inFlightCount': _activeItems.length,
-      });
+      AppLogger.info(
+        'TTS',
+        '提交并发转换事件',
+        metadata: {
+          'eventId': event.id,
+          'textLen': text.length,
+          'inFlightCount': _activeItems.length,
+        },
+      );
       _updateState(TtsPlayState.converting);
       unawaited(_processItem(item));
     }
@@ -110,20 +117,27 @@ class TtsPlayerManager {
     try {
       item.status = TtsPlayItemStatus.converting;
 
-      final ttsService = _serviceGetter();
+      final request = VoiceRequest.forEvent(item.event);
+      if (request?.error != null) throw StateError(request!.error!);
+      final ttsService = request == null ? _serviceGetter() : request.service;
       if (ttsService == null) {
         throw Exception('TTS 服务未初始化，请检查插件配置');
       }
 
-      AppLogger.info('TTS', '开始转换，检查服务配置', metadata: {
-        'eventId': item.id,
-        'requestUrl': ttsService.requestUrl,
-        'requestFormat': ttsService.requestFormat,
-        'hasApiKey': ttsService.apiKey?.isNotEmpty == true,
-        'model': ttsService.model,
-        'textToConvert':
-            item.text.length > 50 ? '${item.text.substring(0, 50)}...' : item.text,
-      });
+      AppLogger.info(
+        'TTS',
+        '开始转换，检查服务配置',
+        metadata: {
+          'eventId': item.id,
+          'requestUrl': ttsService.requestUrl,
+          'requestFormat': ttsService.requestFormat,
+          'hasApiKey': ttsService.apiKey?.isNotEmpty == true,
+          'model': ttsService.model,
+          'textToConvert': item.text.length > 50
+              ? '${item.text.substring(0, 50)}...'
+              : item.text,
+        },
+      );
 
       final result = await ttsService.convert(item.text);
       if (_cancelledItemIds.contains(item.id)) return;
@@ -140,10 +154,11 @@ class TtsPlayerManager {
       if (_cancelledItemIds.contains(item.id)) return;
       item.status = TtsPlayItemStatus.failed;
       item.error = e.toString();
-      AppLogger.error('TTS', '处理任务失败', metadata: {
-        'eventId': item.id,
-        'error': e.toString(),
-      });
+      AppLogger.error(
+        'TTS',
+        '处理任务失败',
+        metadata: {'eventId': item.id, 'error': e.toString()},
+      );
       _emitProcessedItem(item);
     } finally {
       _activeItems.remove(item.id);

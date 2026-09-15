@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:aicove_flutter/src/ui/shared/animations/parallax_slide_page_route.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../features/plugins/image/image_config.dart';
@@ -52,12 +53,9 @@ class _InlineImagePromptPageState extends ConsumerState<InlineImagePromptPage> {
     final config = ref.watch(imagePluginConfigProvider);
     final notifier = ref.read(imagePluginConfigProvider.notifier);
 
-    return Scaffold(
+    return MoePageScaffold(
       backgroundColor: colors.surface,
-      appBar: const MoeAppBar(
-        title: '快速链路提示词模板',
-        showBackButton: true,
-      ),
+      appBar: const MoeAppBar(title: '快速链路提示词模板', showBackButton: true),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(
           MoeSpacing.md,
@@ -105,7 +103,6 @@ class _InlineImagePromptPageState extends ConsumerState<InlineImagePromptPage> {
             for (var i = 0; i < config.fastPromptPresets.length; i++)
               _slotRow(context, config, notifier, i, selectedName),
             MoeSettingsRow(
-              icon: Icons.add_circle_outline,
               label: '添加预设',
               subtitle: '复制当前选中预设的内容',
               trailingType: MoeSettingsRowTrailing.none,
@@ -157,23 +154,19 @@ class _InlineImagePromptPageState extends ConsumerState<InlineImagePromptPage> {
       children: [
         GestureDetector(
           onTap: () => setState(() => _previewExpanded = !_previewExpanded),
-          child: Container(
+          child: MoeButtonSurface(
             padding: const EdgeInsets.symmetric(
               horizontal: MoeSpacing.md,
               vertical: MoeSpacing.sm,
             ),
-            decoration: BoxDecoration(
-              color: colors.componentBackground,
-              borderRadius: _previewExpanded
-                  ? const BorderRadius.vertical(
-                      top: Radius.circular(MoeSmoothRadii.sm),
-                    )
-                  : BorderRadius.circular(MoeSmoothRadii.sm),
-            ),
+            tintColor: Colors.transparent,
+            borderRadius: _previewExpanded
+                ? const BorderRadius.vertical(
+                    top: Radius.circular(MoeSmoothRadii.sm),
+                  )
+                : BorderRadius.circular(MoeSmoothRadii.sm),
             child: Row(
               children: [
-                Icon(Icons.preview_outlined, size: 20, color: colors.text),
-                const SizedBox(width: MoeSpacing.xs),
                 Expanded(
                   child: Text(
                     '当前生效内容预览',
@@ -281,19 +274,16 @@ class _InlineImagePromptPageState extends ConsumerState<InlineImagePromptPage> {
       description: config.buildInlinePresetPreview(preset, max: 90),
       actions: [
         MoeSheetAction(
-          icon: Icons.edit_note_outlined,
           label: '编辑',
           onTap: () => _openEditor(context, preset.name),
         ),
         if (!isFirst)
           MoeSheetAction(
-            icon: Icons.drive_file_rename_outline,
             label: '重命名',
             onTap: () => _renameSlot(context, config, notifier, preset),
           ),
         if (!isFirst)
           MoeSheetAction(
-            icon: Icons.delete_outline,
             label: '删除',
             isDestructive: true,
             onTap: () => _deleteSlot(config, notifier, preset),
@@ -304,8 +294,8 @@ class _InlineImagePromptPageState extends ConsumerState<InlineImagePromptPage> {
 
   void _openEditor(BuildContext context, String presetName) {
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => _InlinePromptEditorPage(presetName: presetName),
+      ParallaxSlidePageRoute(
+        page: _InlinePromptEditorPage(presetName: presetName),
       ),
     );
   }
@@ -316,31 +306,40 @@ class _InlineImagePromptPageState extends ConsumerState<InlineImagePromptPage> {
     ImagePluginConfigNotifier notifier,
     DrawingPromptPreset preset,
   ) async {
-    final name = await _showNameDialog(
+    var currentName = preset.name;
+    await showMoeAutoSaveTextEditor(
       context: context,
       title: '重命名预设',
-      hintText: '输入新名称',
-      initial: preset.name,
-    );
-    if (!mounted || name == null) return;
-    if (config.fastPromptPresets
-        .any((p) => p.name == name && p.name != preset.name)) {
-      MoeToast.warning(this.context, '已存在同名预设');
-      return;
-    }
-    final updated = config.fastPromptPresets
-        .map((p) => p.name == preset.name
-            ? DrawingPromptPreset(name: name, content: p.content)
-            : p)
-        .toList();
-    await notifier.updateConfig(
-      config.copyWith(
-        fastPromptPresets: updated,
-        selectedFastPromptPresetName:
-            config.selectedFastPromptPresetName == preset.name
+      initialValue: currentName,
+      onSave: (text) async {
+        final name = text.trim();
+        if (name.isEmpty) throw const FormatException('预设名称不能为空');
+        if (name == currentName) return;
+        final current = ref.read(imagePluginConfigProvider);
+        final original = current.fastPromptPresets
+            .where((p) => p.name == currentName)
+            .firstOrNull;
+        if (original == null) throw const FormatException('预设已不存在');
+        if (current.fastPromptPresets.any((p) => p.name == name)) {
+          throw const FormatException('已存在同名预设');
+        }
+        await notifier.updateConfig(
+          current.copyWith(
+            fastPromptPresets: current.fastPromptPresets
+                .map(
+                  (p) => p.name == currentName
+                      ? DrawingPromptPreset(name: name, content: p.content)
+                      : p,
+                )
+                .toList(),
+            selectedFastPromptPresetName:
+                current.selectedFastPromptPresetName == currentName
                 ? name
-                : config.selectedFastPromptPresetName,
-      ),
+                : current.selectedFastPromptPresetName,
+          ),
+        );
+        currentName = name;
+      },
     );
   }
 
@@ -349,14 +348,16 @@ class _InlineImagePromptPageState extends ConsumerState<InlineImagePromptPage> {
     ImagePluginConfigNotifier notifier,
     DrawingPromptPreset preset,
   ) async {
-    final updated =
-        config.fastPromptPresets.where((p) => p.name != preset.name).toList();
+    final updated = config.fastPromptPresets
+        .where((p) => p.name != preset.name)
+        .toList();
     final wasSelected = config.selectedFastPromptPresetName == preset.name;
     await notifier.updateConfig(
       config.copyWith(
         fastPromptPresets: updated,
-        selectedFastPromptPresetName:
-            wasSelected && updated.isNotEmpty ? updated.first.name : null,
+        selectedFastPromptPresetName: wasSelected && updated.isNotEmpty
+            ? updated.first.name
+            : null,
         clearSelectedFastPromptPreset: wasSelected && updated.isEmpty,
       ),
     );
@@ -410,10 +411,9 @@ class _InlinePromptEditorPage extends ConsumerStatefulWidget {
 }
 
 class _InlinePromptEditorPageState
-    extends ConsumerState<_InlinePromptEditorPage> {
+    extends ConsumerState<_InlinePromptEditorPage>
+    with MoeAutoSaveState<_InlinePromptEditorPage> {
   late final TextEditingController _controller;
-  bool _dirty = false;
-  bool _allowNativePop = false;
 
   @override
   void initState() {
@@ -422,6 +422,11 @@ class _InlinePromptEditorPageState
     final text = _loadText(config);
     _controller = TextEditingController(text: text);
     _controller.addListener(_onChanged);
+    autoSave.configure(
+      save: _save,
+      snapshot: () => _controller.text,
+      fields: [_controller],
+    );
   }
 
   @override
@@ -441,13 +446,7 @@ class _InlinePromptEditorPageState
     return preset.content;
   }
 
-  void _onChanged() {
-    final saved = _loadText(ref.read(imagePluginConfigProvider));
-    final dirty = saved.trim() != _controller.text.trim();
-    if (dirty != _dirty) {
-      setState(() => _dirty = dirty);
-    }
-  }
+  void _onChanged() => autoSave.changed();
 
   Future<void> _save() async {
     final config = ref.read(imagePluginConfigProvider);
@@ -462,47 +461,14 @@ class _InlinePromptEditorPageState
       return p;
     }).toList();
     await notifier.updateConfig(config.copyWith(fastPromptPresets: updated));
-    setState(() => _dirty = false);
-    if (mounted) MoeToast.success(context, '已保存');
-  }
-
-  Future<void> _handleBack() async {
-    if (!_dirty) {
-      _allowAndPop();
-      return;
-    }
-    final result = await showMeoTalkDialog(
-      context: context,
-      title: '未保存的修改',
-      content: const Text('当前有未保存的修改，是否保存？'),
-      cancelText: '不保存',
-      confirmText: '保存',
-    );
-    if (!mounted || result == null) return;
-    if (result) {
-      await _save();
-    }
-    _allowAndPop();
-  }
-
-  void _allowAndPop() {
-    if (!_allowNativePop) {
-      setState(() => _allowNativePop = true);
-    }
-    Navigator.of(context).pop();
   }
 
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
 
-    return PopScope(
-      canPop: _allowNativePop,
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        _handleBack();
-      },
-      child: Scaffold(
+    return autoSavePage(
+      MoePageScaffold(
         backgroundColor: colors.surface,
         appBar: MoeAppBar(
           title: '编辑「${widget.presetName}」',
@@ -536,10 +502,6 @@ class _InlinePromptEditorPageState
               ],
             ),
             const SizedBox(height: MoeSpacing.md),
-            MoePrimaryButton(
-              label: '保存',
-              onPressed: _save,
-            ),
           ],
         ),
       ),

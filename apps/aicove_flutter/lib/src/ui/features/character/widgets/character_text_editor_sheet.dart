@@ -7,57 +7,40 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/form/moe_input_decoration.dart';
 
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/theme/tokens.dart';
 
-/// 显示角色文本编辑弹窗，点击“完成”返回编辑结果；取消返回 null。
+/// 修改即时回调；关闭时返回最后一次编辑内容。
 Future<String?> showCharacterTextEditorSheet({
   required BuildContext context,
   required String title,
   required String initialValue,
   required String hint,
+  ValueChanged<String>? onChanged,
 }) async {
   String draft = initialValue;
   final statusBarHeight = MediaQuery.paddingOf(context).top;
 
-  return showMoeBottomSheet<String>(
+  await showMoeBottomSheet<void>(
     context: context,
     title: title,
+    showCloseButton: true,
     maxHeight: MediaQuery.sizeOf(context).height - statusBarHeight - 16,
-    titleTrailing: Builder(
-      builder: (sheetContext) {
-        final colors = sheetContext.moeColors;
-        return TextButton(
-          onPressed: () {
-            FocusScope.of(sheetContext).unfocus();
-            Navigator.of(sheetContext).pop(draft);
-          },
-          style: TextButton.styleFrom(
-            minimumSize: const Size(32, 32),
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          ),
-          child: Text(
-            '完成',
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: MoeFontWeights.emphasis,
-              color: colors.primary,
-            ),
-          ),
-        );
-      },
-    ),
     builder: (sheetContext) {
       return _CharacterTextEditorBody(
         initialValue: initialValue,
         hint: hint,
-        onChanged: (value) => draft = value,
+        onChanged: (value) {
+          draft = value;
+          onChanged?.call(value);
+        },
       );
     },
   );
+  return draft;
 }
 
 class _CharacterTextEditorBody extends StatefulWidget {
@@ -84,7 +67,6 @@ class _CharacterTextEditorBodyState extends State<_CharacterTextEditorBody> {
     super.initState();
     _controller = TextEditingController(text: widget.initialValue);
     _controller.addListener(_notifyChanged);
-    widget.onChanged(_controller.text);
   }
 
   @override
@@ -123,10 +105,9 @@ class _CharacterTextEditorBodyState extends State<_CharacterTextEditorBody> {
                   height: 1.6,
                   color: colors.text,
                 ),
-                decoration: InputDecoration(
+                decoration: MoeInputDecoration(
                   hintText: widget.hint,
                   hintStyle: TextStyle(color: colors.muted),
-                  border: InputBorder.none,
                   contentPadding: const EdgeInsets.all(12),
                 ),
               ),

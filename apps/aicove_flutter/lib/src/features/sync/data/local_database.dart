@@ -26,9 +26,14 @@ class LocalSyncDatabase {
   }
 
   /// 插入或更新联系人
-  Future<void> upsertContact(ContactSync contact, {bool isSynced = false}) async {
+  Future<void> upsertContact(
+    ContactSync contact, {
+    bool isSynced = false,
+  }) async {
     final now = contact.updatedAt.millisecondsSinceEpoch;
-    await _db.into(_db.conversations).insertOnConflictUpdate(
+    await _db
+        .into(_db.conversations)
+        .insertOnConflictUpdate(
           ConversationsCompanion(
             id: Value(contact.contactId),
             title: Value(contact.name),
@@ -37,9 +42,11 @@ class LocalSyncDatabase {
             createdAt: Value(now),
             updatedAt: Value(now),
             deletedAt: Value(contact.isDeleted ? now : null),
-            purgeAt: Value(contact.isDeleted
-                ? now + const Duration(days: 7).inMilliseconds
-                : null),
+            purgeAt: Value(
+              contact.isDeleted
+                  ? now + const Duration(days: 7).inMilliseconds
+                  : null,
+            ),
           ),
         );
   }
@@ -59,9 +66,11 @@ class LocalSyncDatabase {
             createdAt: Value(now),
             updatedAt: Value(now),
             deletedAt: Value(contact.isDeleted ? now : null),
-            purgeAt: Value(contact.isDeleted
-                ? now + const Duration(days: 7).inMilliseconds
-                : null),
+            purgeAt: Value(
+              contact.isDeleted
+                  ? now + const Duration(days: 7).inMilliseconds
+                  : null,
+            ),
           ),
           mode: InsertMode.insertOrReplace,
         );
@@ -83,9 +92,14 @@ class LocalSyncDatabase {
   }
 
   /// 插入消息
-  Future<void> insertMessage(MessageSync message, {bool isSynced = false}) async {
+  Future<void> insertMessage(
+    MessageSync message, {
+    bool isSynced = false,
+  }) async {
     final createdAt = message.createdAt.millisecondsSinceEpoch;
-    await _db.into(_db.messages).insertOnConflictUpdate(
+    await _db
+        .into(_db.messages)
+        .insertOnConflictUpdate(
           MessagesCompanion(
             id: Value(message.messageId),
             conversationId: Value(message.contactId),
@@ -93,9 +107,11 @@ class LocalSyncDatabase {
             content: Value(message.content),
             createdAt: Value(createdAt),
             deletedAt: Value(message.isDeleted ? createdAt : null),
-            purgeAt: Value(message.isDeleted
-                ? createdAt + const Duration(days: 7).inMilliseconds
-                : null),
+            purgeAt: Value(
+              message.isDeleted
+                  ? createdAt + const Duration(days: 7).inMilliseconds
+                  : null,
+            ),
           ),
         );
   }
@@ -114,9 +130,11 @@ class LocalSyncDatabase {
             content: Value(message.content),
             createdAt: Value(createdAt),
             deletedAt: Value(message.isDeleted ? createdAt : null),
-            purgeAt: Value(message.isDeleted
-                ? createdAt + const Duration(days: 7).inMilliseconds
-                : null),
+            purgeAt: Value(
+              message.isDeleted
+                  ? createdAt + const Duration(days: 7).inMilliseconds
+                  : null,
+            ),
           ),
           mode: InsertMode.insertOrReplace,
         );

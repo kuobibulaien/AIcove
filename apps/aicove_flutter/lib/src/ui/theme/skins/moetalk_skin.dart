@@ -9,59 +9,60 @@
 /// 更新记录：
 /// - 2025-12-06: 从 tokens.dart 迁移，作为默认皮肤实现
 library;
+
 import 'package:flutter/material.dart';
 import '../skin_config.dart';
 import '../tokens.dart';
 
 class MoeTalkSkin extends SkinConfig {
   const MoeTalkSkin() : super();
-  
+
   // ===== 基础信息 =====
-  
+
   @override
   String get id => 'moetalk';
-  
+
   @override
   String get displayName => 'MoeTalk';
-  
+
   @override
   String get description => '简约蓝色风格，经典 MoeTalk 外观';
-  
+
   // ===== 颜色方案 =====
-  
+
   @override
   MoeColors get lightColors => MoeColors.light();
-  
+
   @override
   MoeColors get darkColors => MoeColors.dark();
-  
+
   // ===== 形状参数 =====
-  
+
   @override
   double get cardRadius => 10.0;
-  
+
   @override
   double get bubbleRadius => 12.0;
-  
+
   @override
   double get buttonRadius => 8.0;
-  
+
   @override
   double get borderWidth => 0.5;
-  
+
   @override
   double get avatarRadius => 64.0;
-  
+
   // ===== 特效配置 =====
-  
+
   @override
   bool get useBlurEffect => false;
-  
+
   @override
   double get blurSigma => 0;
-  
+
   // ===== 装饰工厂方法 =====
-  
+
   @override
   BoxDecoration appBarDecoration(MoeColors colors) {
     return BoxDecoration(
@@ -71,7 +72,7 @@ class MoeTalkSkin extends SkinConfig {
       ),
     );
   }
-  
+
   @override
   BoxDecoration cardDecoration(MoeColors colors) {
     return BoxDecoration(
@@ -79,7 +80,7 @@ class MoeTalkSkin extends SkinConfig {
       border: Border.all(color: colors.border, width: borderWidth),
     );
   }
-  
+
   @override
   BoxDecoration panelDecoration(MoeColors colors) {
     return BoxDecoration(
@@ -89,7 +90,7 @@ class MoeTalkSkin extends SkinConfig {
       ),
     );
   }
-  
+
   @override
   BoxDecoration toastDecoration(Color bgColor) {
     return BoxDecoration(
@@ -103,7 +104,7 @@ class MoeTalkSkin extends SkinConfig {
       ],
     );
   }
-  
+
   @override
   BoxDecoration bubbleDecoration(MoeColors colors, {required bool isMe}) {
     return BoxDecoration(
@@ -114,7 +115,7 @@ class MoeTalkSkin extends SkinConfig {
       ),
     );
   }
-  
+
   @override
   BoxDecoration bottomNavDecoration(MoeColors colors) {
     return BoxDecoration(
@@ -124,7 +125,7 @@ class MoeTalkSkin extends SkinConfig {
       ),
     );
   }
-  
+
   @override
   BoxDecoration inputDecoration(MoeColors colors) {
     return BoxDecoration(

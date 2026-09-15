@@ -1,3 +1,4 @@
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
@@ -30,7 +31,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(
+    await tester.pumpWidget(_scope(
       MaterialApp(
         home: ChatBackgroundSettingsPage(
           conversation: buildConversation(
@@ -39,7 +40,7 @@ void main() {
           ),
         ),
       ),
-    );
+    ));
 
     expect(find.text('正在准备背景预览'), findsOneWidget);
     expect(
@@ -67,7 +68,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(
+    await tester.pumpWidget(_scope(
       MaterialApp(
         home: ChatBackgroundSettingsPage(
           conversation: buildConversation(
@@ -76,7 +77,7 @@ void main() {
           ),
         ),
       ),
-    );
+    ));
 
     expect(find.text('正在准备背景预览'), findsOneWidget);
     expect(find.byType(ImageFiltered), findsNothing);
@@ -93,3 +94,5 @@ void main() {
     expect(find.byType(ImageFiltered), findsNothing);
   });
 }
+
+Widget _scope(Widget child) => ProviderScope(child: child);

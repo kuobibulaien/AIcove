@@ -47,6 +47,9 @@ class ChatRequestConfig {
   /// Model-level context message limit override.
   final int? modelContextMessageLimit;
 
+  /// Model-level default thinking level; null when unset.
+  final ThinkingLevel? modelThinkingLevel;
+
   const ChatRequestConfig({
     required this.modelRef,
     required this.modelFullId,
@@ -61,6 +64,7 @@ class ChatRequestConfig {
     this.modelTemperature,
     this.modelTopP,
     this.modelContextMessageLimit,
+    this.modelThinkingLevel,
   });
 }
 
@@ -353,6 +357,7 @@ class ChatRequestConfigBuilder {
       modelTemperature: modelConfig.temperature,
       modelTopP: modelConfig.topP,
       modelContextMessageLimit: modelConfig.contextMessageLimit,
+      modelThinkingLevel: modelConfig.thinkingLevel,
     );
   }
 }

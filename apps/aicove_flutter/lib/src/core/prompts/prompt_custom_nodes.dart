@@ -1,3 +1,4 @@
+import '../sync/cloud_local_write.dart';
 import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
@@ -83,7 +84,7 @@ class PromptCustomNodeStore {
 
   Future<void> clearForTesting({SharedPreferences? preferences}) async {
     final prefs = preferences ?? await SharedPreferences.getInstance();
-    await prefs.remove(storageKey);
+    await cloudLocalWrite(() => prefs.remove(storageKey));
   }
 
   static PromptCustomNode _normalize(PromptCustomNode node) {
@@ -139,12 +140,12 @@ class PromptCustomNodeStore {
     SharedPreferences prefs,
     List<PromptCustomNode> nodes,
   ) async {
-    await prefs.setString(
+    await cloudLocalWrite(() => prefs.setString(
       storageKey,
       jsonEncode(<Map<String, Object?>>[
         for (final node in nodes) node.toJson(),
       ]),
-    );
+    ));
   }
 }
 

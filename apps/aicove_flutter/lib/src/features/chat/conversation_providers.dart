@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:drift/drift.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/api/thinking/thinking_level.dart';
 import '../../core/utils/blurred_background_service.dart';
 import 'domain/conversation.dart';
 import 'id_gen.dart';
@@ -281,6 +282,26 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
                   : (enabledPlugins ?? c.enabledPlugins),
               updatedAt: DateTime.now(),
             ));
+  }
+
+  /// 设置会话内某个模型的思考档位；[level] 为 null 表示清除该模型的覆盖。
+  Future<void> setConversationThinkingLevel(
+    String id, {
+    required String modelRef,
+    required ThinkingLevel? level,
+  }) async {
+    await updateOne(
+      id,
+      (c) {
+        final next = Map<String, ThinkingLevel>.from(c.thinkingLevels);
+        if (level == null) {
+          next.remove(modelRef);
+        } else {
+          next[modelRef] = level;
+        }
+        return c.copyWith(thinkingLevels: next, updatedAt: DateTime.now());
+      },
+    );
   }
 
   // (注释已丢失)

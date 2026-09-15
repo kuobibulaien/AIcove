@@ -13,13 +13,16 @@ import '../../../../ui/shared/widgets/menus/moe_popup_menu.dart';
 
 /// 消息操作类型
 enum MessageAction {
+  select, // 多选并导出图片
   copy, // 复制
   edit, // 编辑（用户消息）
   regenerate, // 重新生成（AI消息）
+  regenerateMedia, // 仅重新生成当前图片或语音
   enhanceRegenerate, // 增强生成（AI消息）
   delete, // 删除单条消息
   quote, // 引用回复
   save, // 保存（图片/音频）
+  toggleAudioText, // 切换语音转文字展开/收回
 }
 
 /// 显示消息操作悬浮菜单（在消息上方显示气泡菜单）
@@ -31,12 +34,23 @@ enum MessageAction {
 Future<void> showMessageActionMenu(
   BuildContext context, {
   required RenderBox targetBox,
+  Offset? globalPosition,
   required bool isUserMessage,
   required String messageText,
+  bool allowSelect = false,
   bool showEnhanceRegenerate = false,
+  bool regenerateAudio = false,
+  bool showTranscribe = false,
+  bool isAudioTextExpanded = false,
   required void Function(MessageAction action) onAction,
 }) async {
   final items = <MoePopupMenuItem>[
+    if (allowSelect)
+      MoePopupMenuItem(
+        icon: Icons.checklist_rounded,
+        label: '多选',
+        onTap: () => onAction(MessageAction.select),
+      ),
     MoePopupMenuItem(
       icon: Icons.copy_rounded,
       label: '复制',
@@ -45,6 +59,14 @@ Future<void> showMessageActionMenu(
         onAction(MessageAction.copy);
       },
     ),
+    if (showTranscribe)
+      MoePopupMenuItem(
+        icon: isAudioTextExpanded
+            ? Icons.subtitles_off_outlined
+            : Icons.subtitles_outlined,
+        label: isAudioTextExpanded ? '隐藏文字' : '转文字',
+        onTap: () => onAction(MessageAction.toggleAudioText),
+      ),
     MoePopupMenuItem(
       icon: Icons.format_quote_rounded,
       label: '引用',
@@ -56,19 +78,12 @@ Future<void> showMessageActionMenu(
         label: '编辑',
         onTap: () => onAction(MessageAction.edit),
       )
-    else ...[
+    else if (showEnhanceRegenerate)
       MoePopupMenuItem(
-        icon: Icons.refresh_rounded,
-        label: '重新生成',
-        onTap: () => onAction(MessageAction.regenerate),
+        icon: Icons.auto_awesome_rounded,
+        label: '增强生成',
+        onTap: () => onAction(MessageAction.enhanceRegenerate),
       ),
-      if (showEnhanceRegenerate)
-        MoePopupMenuItem(
-          icon: Icons.auto_awesome_rounded,
-          label: '增强生成',
-          onTap: () => onAction(MessageAction.enhanceRegenerate),
-        ),
-    ],
     MoePopupMenuItem(
       icon: Icons.delete_outline_rounded,
       label: '删除',
@@ -77,9 +92,29 @@ Future<void> showMessageActionMenu(
     ),
   ];
 
+  if (!isUserMessage) {
+    items.insert(
+      1,
+      MoePopupMenuItem(
+        icon: Icons.refresh_rounded,
+        label: regenerateAudio ? '重新生成语音' : '重新生成',
+        width: regenerateAudio ? 88 : 56,
+        onTap: () => onAction(
+          regenerateAudio
+              ? MessageAction.regenerateMedia
+              : MessageAction.regenerate,
+        ),
+      ),
+    );
+  }
+
+  // Hiding the IME can leave the editor focused. Clear its focus history before
+  // the menu route takes focus, so closing the menu cannot reopen the keyboard.
+  FocusManager.instance.primaryFocus?.unfocus();
   await MoePopupMenu.show(
     context,
     targetBox: targetBox,
+    globalPosition: globalPosition,
     items: items,
   );
 }
@@ -95,11 +130,20 @@ enum MediaType { image, audio }
 Future<void> showMediaActionMenu(
   BuildContext context, {
   required RenderBox targetBox,
+  Offset? globalPosition,
   required MediaType mediaType,
+  bool allowSelect = false,
   bool allowDelete = false,
+  bool allowRegenerate = false,
   required void Function(MessageAction action) onAction,
 }) async {
   final items = <MoePopupMenuItem>[
+    if (allowSelect)
+      MoePopupMenuItem(
+        icon: Icons.checklist_rounded,
+        label: '多选',
+        onTap: () => onAction(MessageAction.select),
+      ),
     MoePopupMenuItem(
       icon: Icons.save_alt_rounded,
       label: '保存',
@@ -119,9 +163,24 @@ Future<void> showMediaActionMenu(
       ),
   ];
 
+  if (allowRegenerate) {
+    items.insert(
+      1,
+      MoePopupMenuItem(
+        icon: Icons.refresh_rounded,
+        label: mediaType == MediaType.image ? '重新生成图片' : '重新生成语音',
+        width: 88,
+        onTap: () => onAction(MessageAction.regenerateMedia),
+      ),
+    );
+  }
+
+  // Media menus follow the same editor focus policy as text message menus.
+  FocusManager.instance.primaryFocus?.unfocus();
   await MoePopupMenu.show(
     context,
     targetBox: targetBox,
+    globalPosition: globalPosition,
     items: items,
   );
 }

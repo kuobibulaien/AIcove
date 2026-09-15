@@ -7,6 +7,7 @@ import '../database.dart' as db;
 import '../../../features/chat/domain/conversation.dart' as domain;
 import '../../../features/chat/domain/message.dart' as domain;
 import '../../../core/models/message_block.dart';
+import '../../api/thinking/thinking_level.dart';
 
 /// 会话转换器
 class ConversationConverter {
@@ -35,6 +36,14 @@ class ConversationConverter {
       enabledPlugins:
           Value(c.enabledPlugins != null ? jsonEncode(c.enabledPlugins) : null),
       recipeId: Value(c.recipeId),
+      thinkingLevels: Value(
+        c.thinkingLevels.isEmpty
+            ? null
+            : jsonEncode({
+                for (final e in c.thinkingLevels.entries)
+                  e.key: e.value.storageValue,
+              }),
+      ),
       contextStartMessageId: Value(c.contextStartMessageId),
       lastMessage: Value(c.lastMessage),
       lastMessageTime: Value(c.lastMessageTime?.millisecondsSinceEpoch),
@@ -71,6 +80,7 @@ class ConversationConverter {
           ? (jsonDecode(c.enabledPlugins!) as List).cast<String>()
           : null,
       recipeId: c.recipeId,
+      thinkingLevels: decodeThinkingLevels(c.thinkingLevels),
       contextStartMessageId: c.contextStartMessageId,
       lastMessage: c.lastMessage,
       lastMessageTime: c.lastMessageTime != null
@@ -152,5 +162,22 @@ class MessageBlockConverter {
     if (b is ToolBlock) return 'tool';
     if (b is ThinkingBlock) return 'thinking';
     return 'unknown';
+  }
+}
+
+/// 解析会话表 `thinking_levels` JSON；非法内容一律当作未设置。
+Map<String, ThinkingLevel> decodeThinkingLevels(String? raw) {
+  if (raw == null || raw.isEmpty) return const {};
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) return const {};
+    final result = <String, ThinkingLevel>{};
+    for (final entry in decoded.entries) {
+      final level = ThinkingLevel.tryParse(entry.value);
+      if (level != null) result[entry.key.toString()] = level;
+    }
+    return result;
+  } catch (_) {
+    return const {};
   }
 }

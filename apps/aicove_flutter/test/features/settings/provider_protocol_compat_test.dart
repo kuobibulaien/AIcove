@@ -6,6 +6,7 @@ import 'package:aicove_flutter/src/core/api/agent_api.dart';
 import 'package:aicove_flutter/src/core/api_logger.dart';
 import 'package:aicove_flutter/src/core/api/providers/minimax_compat.dart';
 import 'package:aicove_flutter/src/core/api/providers/zai_compat.dart';
+import 'package:aicove_flutter/src/features/settings/data/support/ui_models_store_support.dart';
 import 'package:aicove_flutter/src/features/settings/ui_models_api.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -83,6 +84,8 @@ void main() {
       final parameters =
           requestBody?['parameters'] as Map<String, dynamic>? ?? const {};
       expect(requestBody?['model'], 'nai-diffusion-4-5-full');
+      expect(parameters['params_version'], 3);
+      expect(parameters['scale'], 5.0);
       expect(parameters['v4_prompt'], isNotNull);
       expect(parameters['v4_negative_prompt'], isNotNull);
       expect(parameters['qualityToggle'], isNull);
@@ -221,6 +224,341 @@ void main() {
 
       final parameters =
           requestBody?['parameters'] as Map<String, dynamic>? ?? const {};
+      expect(parameters['params_version'], 3);
+      expect(parameters['scale'], 5.0);
+      expect(parameters['qualityToggle'], true);
+      expect(parameters['legacy'], false);
+      expect(parameters['legacy_v3_extend'], false);
+      expect(parameters['noise_schedule'], 'karras');
+      expect(parameters['sm'], false);
+      expect(parameters['sm_dyn'], false);
+      expect(parameters['v4_prompt'], isNull);
+      expect(parameters['v4_negative_prompt'], isNull);
+    });
+
+    test('NovelAI preview should return exact catalog order with zero requests',
+        () async {
+      var requestCount = 0;
+      final client = MockClient((request) async {
+        requestCount += 1;
+        return http.Response('unexpected network call', 500);
+      });
+
+      final api = UiModelsApi(httpClient: client);
+      final models = await api.previewProvider(
+        providerId: 'novelai',
+        apiKey: 'nai-key',
+        apiBaseUrl: 'https://image.novelai.net',
+        customConfig: const {'requestFormat': 'novelai'},
+      );
+
+      expect(requestCount, 0);
+      expect(models, kNovelAiDefaultModels);
+      expect(models.first, 'nai-diffusion-5-full');
+    });
+
+    test('NovelAI V5 Full should build minimal structured v5 payload',
+        () async {
+      Map<String, dynamic>? requestBody;
+
+      final client = AgentApiClient(
+        client: _CapturingClient((request) async {
+          if (request is http.Request) {
+            requestBody = jsonDecode(request.body) as Map<String, dynamic>;
+          }
+          return _jsonResponse({
+            'image': base64Encode(
+              Uint8List.fromList(<int>[0x89, 0x50, 0x4E, 0x47, 0x00]),
+            ),
+          });
+        }),
+      );
+
+      final result = await client.generateImage(
+        provider: 'novelai',
+        model: 'nai-diffusion-5-full',
+        prompt: '1girl, solo',
+        negativePrompt: 'lowres',
+        width: 832,
+        height: 1216,
+        providerApiBase: 'https://image.novelai.net',
+        providerApiKey: 'test-key',
+      );
+
+      expect(result.images, hasLength(1));
+      final parameters =
+          requestBody?['parameters'] as Map<String, dynamic>? ?? const {};
+      expect(requestBody?['model'], 'nai-diffusion-5-full');
+      expect(parameters['params_version'], 4);
+      expect(parameters['scale'], 7.0);
+      expect(parameters['steps'], 23);
+      expect(parameters['sampler'], 'k_euler_ancestral');
+      expect(parameters['v4_prompt'], isNotNull);
+      expect(parameters['v4_negative_prompt'], isNotNull);
+      expect(
+        ((parameters['v4_prompt'] as Map<String, dynamic>)['caption']
+            as Map<String, dynamic>)['base_caption'],
+        '1girl, solo',
+      );
+      expect(parameters['qualityToggle'], isNull);
+      expect(parameters['ucPreset'], isNull);
+      expect(parameters['legacy'], isNull);
+      expect(parameters['legacy_v3_extend'], isNull);
+      expect(parameters['noise_schedule'], isNull);
+      expect(parameters['sm'], isNull);
+      expect(parameters['sm_dyn'], isNull);
+      expect(parameters['dynamic_thresholding'], isNull);
+      expect(parameters['autoSmea'], isNull);
+    });
+
+    test('NovelAI V5 Curated should build the same minimal structured payload',
+        () async {
+      Map<String, dynamic>? requestBody;
+
+      final client = AgentApiClient(
+        client: _CapturingClient((request) async {
+          if (request is http.Request) {
+            requestBody = jsonDecode(request.body) as Map<String, dynamic>;
+          }
+          return _jsonResponse({
+            'image': base64Encode(
+              Uint8List.fromList(<int>[0x89, 0x50, 0x4E, 0x47, 0x00]),
+            ),
+          });
+        }),
+      );
+
+      await client.generateImage(
+        provider: 'novelai',
+        model: 'nai-diffusion-5-curated',
+        prompt: '1girl, solo',
+        providerApiBase: 'https://image.novelai.net',
+        providerApiKey: 'test-key',
+      );
+
+      final parameters =
+          requestBody?['parameters'] as Map<String, dynamic>? ?? const {};
+      expect(requestBody?['model'], 'nai-diffusion-5-curated');
+      expect(parameters['params_version'], 4);
+      expect(parameters['scale'], 7.0);
+      expect(parameters['steps'], 23);
+      expect(parameters['sampler'], 'k_euler_ancestral');
+      expect(parameters['v4_prompt'], isNotNull);
+      expect(parameters['v4_negative_prompt'], isNotNull);
+      expect(parameters['qualityToggle'], isNull);
+      expect(parameters['legacy'], isNull);
+    });
+
+    test('NovelAI empty model should use V5 Full as API fallback', () async {
+      Map<String, dynamic>? requestBody;
+
+      final client = AgentApiClient(
+        client: _CapturingClient((request) async {
+          if (request is http.Request) {
+            requestBody = jsonDecode(request.body) as Map<String, dynamic>;
+          }
+          return _jsonResponse({
+            'image': base64Encode(
+              Uint8List.fromList(<int>[0x89, 0x50, 0x4E, 0x47, 0x00]),
+            ),
+          });
+        }),
+      );
+
+      await client.generateImage(
+        provider: 'novelai',
+        model: '',
+        prompt: '1girl, solo',
+        providerApiBase: 'https://image.novelai.net',
+        providerApiKey: 'test-key',
+      );
+
+      final parameters =
+          requestBody?['parameters'] as Map<String, dynamic>? ?? const {};
+      expect(requestBody?['model'], 'nai-diffusion-5-full');
+      expect(parameters['params_version'], 4);
+      expect(parameters['scale'], 7.0);
+      expect(parameters['v4_prompt'], isNotNull);
+    });
+
+    test('NovelAI V5 explicit generation arguments should win over defaults',
+        () async {
+      Map<String, dynamic>? requestBody;
+
+      final client = AgentApiClient(
+        client: _CapturingClient((request) async {
+          if (request is http.Request) {
+            requestBody = jsonDecode(request.body) as Map<String, dynamic>;
+          }
+          return _jsonResponse({
+            'image': base64Encode(
+              Uint8List.fromList(<int>[0x89, 0x50, 0x4E, 0x47, 0x00]),
+            ),
+          });
+        }),
+      );
+
+      await client.generateImage(
+        provider: 'novelai',
+        model: 'nai-diffusion-5-full',
+        prompt: '1girl, solo',
+        steps: 30,
+        guidanceScale: 8.5,
+        sampler: 'ddim',
+        seed: 12345,
+        providerApiBase: 'https://image.novelai.net',
+        providerApiKey: 'test-key',
+      );
+
+      final parameters =
+          requestBody?['parameters'] as Map<String, dynamic>? ?? const {};
+      expect(parameters['params_version'], 4);
+      expect(parameters['steps'], 30);
+      expect(parameters['scale'], 8.5);
+      expect(parameters['sampler'], 'ddim');
+      expect(parameters['seed'], 12345);
+    });
+
+    test('NovelAI V5 image_parameters should not override protected core keys',
+        () async {
+      Map<String, dynamic>? requestBody;
+
+      final client = AgentApiClient(
+        client: _CapturingClient((request) async {
+          if (request is http.Request) {
+            requestBody = jsonDecode(request.body) as Map<String, dynamic>;
+          }
+          return _jsonResponse({
+            'image': base64Encode(
+              Uint8List.fromList(<int>[0x89, 0x50, 0x4E, 0x47, 0x00]),
+            ),
+          });
+        }),
+      );
+
+      await client.generateImage(
+        provider: 'novelai',
+        model: 'nai-diffusion-5-full',
+        prompt: '1girl, solo',
+        negativePrompt: 'lowres',
+        width: 832,
+        height: 1216,
+        providerApiBase: 'https://image.novelai.net',
+        providerApiKey: 'test-key',
+        customConfig: const {
+          'requestFormat': 'novelai',
+          'image_parameters': {
+            'params_version': 3,
+            'scale': 3.0,
+            'sampler': 'ddim',
+            'v4_prompt': {
+              'caption': {'base_caption': 'broken'},
+            },
+            'v4_negative_prompt': {
+              'caption': {'base_caption': 'also broken'},
+            },
+            'qualityToggle': true,
+            'legacy': true,
+            'sm': true,
+            'sm_dyn': true,
+            'new_toggle': true,
+          },
+        },
+      );
+
+      final parameters =
+          requestBody?['parameters'] as Map<String, dynamic>? ?? const {};
+      expect(parameters['params_version'], 4);
+      expect(parameters['scale'], 7.0);
+      expect(parameters['sampler'], 'k_euler_ancestral');
+      expect(
+        ((parameters['v4_prompt'] as Map<String, dynamic>)['caption']
+            as Map<String, dynamic>)['base_caption'],
+        '1girl, solo',
+      );
+      expect(parameters['qualityToggle'], isNull);
+      expect(parameters['legacy'], isNull);
+      expect(parameters['sm'], isNull);
+      expect(parameters['sm_dyn'], isNull);
+      expect(
+        ((parameters['v4_negative_prompt'] as Map<String, dynamic>)['caption']
+            as Map<String, dynamic>)['base_caption'],
+        'lowres',
+      );
+      expect(parameters['new_toggle'], isTrue);
+    });
+
+    test('NovelAI model enum errors should not fall back to another model',
+        () async {
+      for (final model in <String>[
+        'nai-diffusion-5-full',
+        'nai-diffusion-4-5-full',
+        'nai-diffusion-3',
+      ]) {
+        var requestCount = 0;
+        String? requestedModel;
+        final client = AgentApiClient(
+          client: _CapturingClient((request) async {
+            requestCount += 1;
+            if (request is http.Request) {
+              final body = jsonDecode(request.body) as Map<String, dynamic>;
+              requestedModel = body['model'] as String?;
+            }
+            return _jsonResponse(
+              {'message': 'model must be a valid enum value'},
+              statusCode: 400,
+            );
+          }),
+        );
+
+        await expectLater(
+          client.generateImage(
+            provider: 'novelai',
+            model: model,
+            prompt: '1girl, solo',
+            providerApiBase: 'https://image.novelai.net',
+            providerApiKey: 'test-key',
+          ),
+          throwsA(isA<Exception>()),
+        );
+
+        expect(requestCount, 1, reason: '$model 不应跨模型重试');
+        expect(requestedModel, model, reason: '请求必须保留所选模型');
+      }
+    });
+
+    test('NovelAI Furry V3 should stay on the legacy branch', () async {
+      Map<String, dynamic>? requestBody;
+
+      final client = AgentApiClient(
+        client: _CapturingClient((request) async {
+          if (request is http.Request) {
+            requestBody = jsonDecode(request.body) as Map<String, dynamic>;
+          }
+          return _jsonResponse({
+            'image': base64Encode(
+              Uint8List.fromList(<int>[0x89, 0x50, 0x4E, 0x47, 0x00]),
+            ),
+          });
+        }),
+      );
+
+      await client.generateImage(
+        provider: 'novelai',
+        model: 'nai-diffusion-furry-3',
+        prompt: '1girl, solo',
+        negativePrompt: 'lowres',
+        width: 832,
+        height: 1216,
+        providerApiBase: 'https://image.novelai.net',
+        providerApiKey: 'test-key',
+      );
+
+      final parameters =
+          requestBody?['parameters'] as Map<String, dynamic>? ?? const {};
+      expect(requestBody?['model'], 'nai-diffusion-furry-3');
+      expect(parameters['params_version'], 3);
+      expect(parameters['scale'], 5.0);
       expect(parameters['qualityToggle'], true);
       expect(parameters['legacy'], false);
       expect(parameters['legacy_v3_extend'], false);

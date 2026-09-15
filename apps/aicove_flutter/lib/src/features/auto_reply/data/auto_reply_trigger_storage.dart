@@ -1,3 +1,4 @@
+import '../../../core/sync/cloud_local_write.dart';
 import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
@@ -40,7 +41,7 @@ class AutoReplyTriggerStorage {
   Future<void> saveTriggers(List<AutoReplyTrigger> triggers) async {
     final prefs = await SharedPreferences.getInstance();
     final payload = jsonEncode(triggers.map((e) => e.toJson()).toList());
-    await prefs.setString(_triggerStoreKey, payload);
+    await cloudLocalWrite(() => prefs.setString(_triggerStoreKey, payload));
   }
 
   Future<List<AutoReplyTriggerLog>> loadLogs() async {
@@ -66,11 +67,11 @@ class AutoReplyTriggerStorage {
     final trimmed = updated.take(keep).toList();
     final prefs = await SharedPreferences.getInstance();
     final payload = jsonEncode(trimmed.map((e) => e.toJson()).toList());
-    await prefs.setString(_triggerLogStoreKey, payload);
+    await cloudLocalWrite(() => prefs.setString(_triggerLogStoreKey, payload));
   }
 
   Future<void> clearLogs() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_triggerLogStoreKey);
+    await cloudLocalWrite(() => prefs.remove(_triggerLogStoreKey));
   }
 }

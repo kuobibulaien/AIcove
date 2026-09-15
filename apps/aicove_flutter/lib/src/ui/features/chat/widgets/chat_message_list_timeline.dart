@@ -15,6 +15,12 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
     }
 
     if (oldWidget.conversationId != widget.conversationId) {
+      _invalidateViewportFollow();
+      _cancelProgrammaticScrollTracking();
+      _pressedPointers.clear();
+      _isUserScrollActive = false;
+      _historyViewportRestoreSerial += 1;
+      _renderedActiveBoundary = null;
       _pendingAnimationIds.clear();
       _latestAnimatedAt = _currentTimelineMessages.isNotEmpty
           ? _currentTimelineMessages.last.createdAt
@@ -24,20 +30,22 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
       _activeEntranceAnimationSerial = null;
       _cachedFormatConfig = null;
       _cachedListItems = [];
+      _entrySplitItemKey = null;
       _cachedChatImages = [];
       _detachedSplitBoundary = null;
       _pendingDetachedSplitBoundary = null;
       _historyViewportRestorePending = false;
-      _invalidateDetachedExtentRestore();
       _holdListForHistoryPagingEmptyTimeline = false;
       _heldTimelineMessagesForLayout = const <Message>[];
       _hasHydratedInitialListItems = false;
-      _cancelDeferredStreamingListUpdate();
       _showHistoryLoadingOverlay =
           widget.isLoadingMore && widget.hasMoreMessages;
       _historyLoadingOverlayShownAt =
           _showHistoryLoadingOverlay ? DateTime.now() : null;
-      _hydrateInitialListItems();
+      _hydrateInitialListItems(
+        ref.read(appSettingsProvider).valueOrNull?.messageFormatConfig,
+      );
+      _prepareTailFirstEntryLayout();
       if (_autoScrollEnabled) {
         _requestScrollToBottom('conversationChanged');
       }
@@ -131,19 +139,7 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
     }
 
     if (messagesChanged || contextStartChanged) {
-      final shouldDeferListUpdate = _shouldDeferStreamingListUpdate(
-        oldWidget,
-        messagesChanged: messagesChanged,
-        transientMessagesChanged: transientMessagesChanged,
-        contextStartChanged: contextStartChanged,
-        didPrependOlderHistory: didPrependOlderHistory,
-      );
-      if (shouldDeferListUpdate) {
-        _deferStreamingListUpdate(_cachedFormatConfig);
-      } else {
-        _cancelDeferredStreamingListUpdate();
-        _updateListItemsWithDetachedExtentGuard(_cachedFormatConfig);
-      }
+      _updateListItems(_cachedFormatConfig);
       final skipViewportRestoreForHistoryPaging =
           _historyViewportRestorePending;
       if (shouldPreserveHistoryViewport &&
@@ -159,18 +155,7 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
         _historyViewportRestorePending = false;
       }
     } else if (timelineOverlayChanged) {
-      if (_shouldDeferStreamingListUpdate(
-        oldWidget,
-        messagesChanged: messagesChanged,
-        transientMessagesChanged: transientMessagesChanged,
-        contextStartChanged: contextStartChanged,
-        didPrependOlderHistory: didPrependOlderHistory,
-      )) {
-        _deferStreamingListUpdate(_cachedFormatConfig);
-      } else {
-        _cancelDeferredStreamingListUpdate();
-        _updateListItemsWithDetachedExtentGuard(_cachedFormatConfig);
-      }
+      _updateListItems(_cachedFormatConfig);
     }
 
     if (!didPrependOlderHistory &&
@@ -211,25 +196,25 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
     _heldTimelineMessagesForLayout = const <Message>[];
 
     if (shouldStabilizeFollowLatestViewport) {
+      // 布局期同帧贴底为主，只保留合并过且可失效的帧后兜底。
+      _endAnchor.arm();
       _scheduleFollowLatestViewportStabilization(
         targetDistanceToBottom: 0,
       );
-      if (widget.viewportController.shouldPinLatestTail) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          _scheduleFollowLatestViewportStabilization(
-            targetDistanceToBottom: 0,
-            retryFrames: 1,
-          );
-        });
-        Future<void>.delayed(const Duration(milliseconds: 260), () {
-          if (!mounted) return;
-          _scheduleFollowLatestViewportStabilization(
-            targetDistanceToBottom: 0,
-            retryFrames: 1,
-          );
-        });
-      }
+    } else if (messagesChanged || transientMessagesChanged) {
+      // 不跟随的结构变化（贴底时新 AI 消息不拉底等裁决）不得被上一帧
+      // 残留的 armed 状态抢成贴底。
+      _endAnchor.disarm();
+    }
+
+    // 首批历史从异步窗口到达，不是新收到的消息。否则全部气泡从零高
+    // 展开，初始贴底会测到尚未展开的尾部，随后又被动画期守卫阻止补位。
+    // 只认显式加载边界：已加载的空会话随后收到的新消息仍保留入场动画。
+    if (oldWidget.isInitialLoading && !widget.isInitialLoading) {
+      _prepareTailFirstEntryLayout();
+      _pendingAnimationIds.clear();
+      _latestAnimatedAt = sourceMessages.last.createdAt;
+      return;
     }
 
     final threshold = _latestAnimatedAt;
@@ -248,7 +233,10 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
       _latestAnimatedAt = newestTime;
       if (_autoScrollEnabled) {
         _updateState(() {
-          _pendingAnimationIds.addAll(newMessages.map((m) => m.id));
+          // 跟随时免动画的消息不能留下待播资格，否则切到手势后，
+          // 下一次分段刷新会给已经显示的旧气泡补播展开动画。
+          _pendingAnimationIds.addAll(
+              newMessages.where(_shouldAnimatePendingMessage).map((m) => m.id));
         });
       } else {
         _pendingAnimationIds.removeAll(newMessages.map((m) => m.id));
@@ -408,7 +396,9 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
     return _ChatListSections(
       historyItems: _decorateItemsWithTopicDivider(
         sections.historyItems,
-        anchorMessageId: historyHasAnchor ? anchorMessageId : null,
+        // 入场分界可落在同一消息的两个显示分段之间，分界线只跟最后一段。
+        anchorMessageId:
+            historyHasAnchor && !activeHasAnchor ? anchorMessageId : null,
       ),
       activeItems: _decorateItemsWithTopicDivider(
         sections.activeItems,
@@ -417,7 +407,40 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
     );
   }
 
+  void _prepareTailFirstEntryLayout() {
+    final messages = _currentTimelineMessages;
+    if (messages.isEmpty ||
+        _cachedListItems.isEmpty ||
+        messages.any((message) => message.status == 'sending')) {
+      return;
+    }
+    final start = resolveChatMessageListActiveBoundaryIndex(messages);
+    if (start == null) return;
+    final activeIds = messages.skip(start).map((message) => message.id).toSet();
+    final activeCount = _cachedListItems
+        .where(
+          (item) => activeIds.contains(_messageIdForListItem(item)),
+        )
+        .length;
+    // 小窗口沿用原分区；长回复才需要避免从组头走到组尾的 O(n) 排版。
+    if (activeCount > 12) {
+      _entrySplitItemKey = _listItemStableKey(_cachedListItems.last);
+    }
+  }
+
+  int _entrySplitIndex(List<ChatMessageListItem> items) {
+    final key = _entrySplitItemKey;
+    if (key == null) return -1;
+    return items.lastIndexWhere((item) => _listItemStableKey(item) == key);
+  }
+
   int? _resolveActiveBoundaryIndex(List<Message> timelineMessages) {
+    final entryIndex = _entrySplitIndex(_cachedListItems);
+    if (entryIndex >= 0) {
+      final id = _messageIdForListItem(_cachedListItems[entryIndex]);
+      final index = timelineMessages.indexWhere((message) => message.id == id);
+      if (index >= 0) return index;
+    }
     final boundary = _effectiveDetachedSplitBoundary();
     return resolveChatMessageListActiveBoundaryIndex(
       timelineMessages,
@@ -439,6 +462,15 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
       );
     }
 
+    final entryIndex = _entrySplitIndex(items);
+    if (entryIndex >= 0) {
+      return _ChatListSections(
+        historyItems: items.sublist(0, entryIndex),
+        activeItems: items.sublist(entryIndex),
+      );
+    }
+    // 原入场项已被删除/窗口淘汰或分段设置改变，回到正常消息分区。
+    _entrySplitItemKey = null;
     final boundaryIndex = _resolveActiveBoundaryIndex(timelineMessages);
     if (boundaryIndex == null) {
       return const _ChatListSections(
@@ -601,32 +633,13 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
   /// 在贴底状态下调度既有视口稳底——守卫条件与 didUpdateWidget 稳底一致，
   /// detached/分页/程序滚动语义不变。
   void _onActiveStreamTailChanged() {
-    if (!_autoScrollEnabled ||
-        _historyPagingLockActive ||
-        _isProgrammaticScroll) {
-      return;
-    }
+    if (!_canFollowLatest) return;
     if (!_scrollController.hasClients) return;
     if (!_scrollController.position.hasContentDimensions) return;
-    // 多帧重试级联：通道增高的布局在下一帧才生效，且实测存在迟于重试链的
-    // 布局增量（首轮 ~14px 残差）。本信号仅在「贴底跟随＋同尾文本增长」时
-    // 触发，跟随语义已成立，故帧后与 260ms 长尾重试均无条件——流末尾没有
-    // 后续信号兜底，长尾重试负责收敛最后一截。
+    // 同帧布局修正已经覆盖真实增长，不再为每个 delta 排队多帧和
+    // 260ms jumpTo；这类旧回调会在用户切换控制权后重新抢占视口。
+    _endAnchor.arm();
     _scheduleFollowLatestViewportStabilization(targetDistanceToBottom: 0);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _scheduleFollowLatestViewportStabilization(
-        targetDistanceToBottom: 0,
-        retryFrames: 1,
-      );
-    });
-    Future<void>.delayed(const Duration(milliseconds: 260), () {
-      if (!mounted) return;
-      _scheduleFollowLatestViewportStabilization(
-        targetDistanceToBottom: 0,
-        retryFrames: 1,
-      );
-    });
   }
 
   bool _shouldStabilizeFollowLatestViewport(
@@ -635,11 +648,7 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
     required bool transientMessagesChanged,
     required bool didPrependOlderHistory,
   }) {
-    if (!_autoScrollEnabled ||
-        _historyPagingLockActive ||
-        _isProgrammaticScroll) {
-      return false;
-    }
+    if (!_canFollowLatest) return false;
     if (!_scrollController.hasClients) {
       return false;
     }
@@ -749,170 +758,5 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
       }
     }
     return null;
-  }
-
-  bool _shouldDeferStreamingListUpdate(
-    ChatMessageList oldWidget, {
-    required bool messagesChanged,
-    required bool transientMessagesChanged,
-    required bool contextStartChanged,
-    required bool didPrependOlderHistory,
-  }) {
-    if (!_isUserScrollActive ||
-        _isProgrammaticScroll ||
-        contextStartChanged ||
-        didPrependOlderHistory ||
-        (!messagesChanged && !transientMessagesChanged)) {
-      return false;
-    }
-    return _hasStreamingTimelineMessage(
-          _mergeTimelineMessages(
-            oldWidget.messages,
-            oldWidget.transientMessages,
-          ),
-        ) ||
-        _hasStreamingTimelineMessage(_currentTimelineMessages);
-  }
-
-  bool _hasStreamingTimelineMessage(List<Message> messages) {
-    for (final message in messages) {
-      if (message.status == 'sending') return true;
-      final blocks = message.blocks;
-      if (blocks == null) continue;
-      for (final block in blocks) {
-        if (block is TextBlock && block.status == BlockStatus.streaming) {
-          return true;
-        }
-        if (block is AudioBlock && block.status == BlockStatus.pending) {
-          return true;
-        }
-        // 图片块尺寸未交付视为「流式中」：避免尾图 width/height 从 null→真实值
-        // 的几何阶跃在用户拖拽中同步触发 _updateListItems 造成视口跳变。
-        // 收尾尺寸注入帧因此也走 _shouldDeferStreamingListUpdate 的延迟保护，
-        // 配合 _scheduleDetachedActiveExtentRestore 在松手 idle 后做像素补偿。
-        if (block is ImageBlock && !_imageBlockHasDimensions(block)) {
-          return true;
-        }
-      }
-    }
-    return false;
-  }
-
-  bool _imageBlockHasDimensions(ImageBlock block) {
-    final width = block.width;
-    final height = block.height;
-    return width != null && width > 0 && height != null && height > 0;
-  }
-
-  void _deferStreamingListUpdate(MessageFormatConfig? config) {
-    _hasDeferredStreamingListUpdate = true;
-    _deferredStreamingListUpdateConfig = config;
-    _deferredStreamingListUpdateTimer?.cancel();
-    _deferredStreamingListUpdateTimer = Timer(
-      _kStreamingScrollUpdateDeferDuration,
-      _flushDeferredStreamingListUpdate,
-    );
-  }
-
-  void _cancelDeferredStreamingListUpdate() {
-    _deferredStreamingListUpdateTimer?.cancel();
-    _deferredStreamingListUpdateTimer = null;
-    _hasDeferredStreamingListUpdate = false;
-    _deferredStreamingListUpdateConfig = null;
-  }
-
-  void _flushDeferredStreamingListUpdate() {
-    if (!_hasDeferredStreamingListUpdate || !mounted) {
-      _cancelDeferredStreamingListUpdate();
-      return;
-    }
-    if (_isUserScrollActive) {
-      _deferredStreamingListUpdateTimer?.cancel();
-      _deferredStreamingListUpdateTimer = Timer(
-        _kStreamingScrollUpdateDeferDuration,
-        _flushDeferredStreamingListUpdate,
-      );
-      return;
-    }
-    final config = _deferredStreamingListUpdateConfig;
-    _cancelDeferredStreamingListUpdate();
-    final schedulerPhase = SchedulerBinding.instance.schedulerPhase;
-    if (schedulerPhase == SchedulerPhase.persistentCallbacks ||
-        schedulerPhase == SchedulerPhase.transientCallbacks ||
-        schedulerPhase == SchedulerPhase.midFrameMicrotasks) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        _updateState(() {
-          _updateListItemsWithDetachedExtentGuard(config);
-        });
-      });
-      return;
-    }
-    _updateState(() {
-      _updateListItemsWithDetachedExtentGuard(config);
-    });
-  }
-
-  /// 在 _updateListItems 重建前后安排 detached extent 像素补偿（仅 detached 模式 +
-  /// 尾项含未交付/尺寸变化的 ImageBlock 时）。捕获紧贴重建前、补偿挂下一帧。
-  /// 守卫由 _scheduleDetachedActiveExtentRestore / _applyDetachedActiveExtentRestore
-  /// 二次校验（history>detached、conversation 校验、程序化滚动跳过）。
-  void _updateListItemsWithDetachedExtentGuard(MessageFormatConfig? config) {
-    final shouldGuard = _shouldGuardDetachedExtentRestore();
-    if (!shouldGuard) {
-      _updateListItems(config);
-      return;
-    }
-    if (!_scrollController.hasClients) {
-      _updateListItems(config);
-      return;
-    }
-    final position = _scrollController.position;
-    if (!position.hasContentDimensions) {
-      _updateListItems(config);
-      return;
-    }
-    final previousMin = position.minScrollExtent;
-    final previousPixels = position.pixels;
-    final conversationId = widget.conversationId;
-    _updateListItems(config);
-    _scheduleDetachedActiveExtentRestore(
-      previousMin: previousMin,
-      previousPixels: previousPixels,
-      conversationId: conversationId,
-    );
-  }
-
-  /// 是否需要为本次重建挂 detached extent 补偿：
-  /// - detached（_autoScrollEnabled==false）；
-  /// - 非历史分页/历史补偿进行中（history > detached 优先级）；
-  /// - 尾项（old/new）含 ImageBlock 且其尺寸从缺失→有值或数值变化（复用
-  ///   _tailHasActionableLayoutChange 的几何判定，避免纯文本/状态切换误触发）。
-  bool _shouldGuardDetachedExtentRestore() {
-    if (_autoScrollEnabled) return false;
-    if (_historyViewportRestorePending ||
-        _historyPagingLockActive ||
-        _isProgrammaticScroll) {
-      return false;
-    }
-    if (!_scrollController.hasClients) return false;
-    final position = _scrollController.position;
-    if (!position.hasContentDimensions) return false;
-    final currentTail =
-        _currentTimelineMessages.isEmpty ? null : _currentTimelineMessages.last;
-    if (currentTail == null) return false;
-    final blocks = currentTail.blocks;
-    if (blocks == null) return false;
-    var hasImage = false;
-    for (final block in blocks) {
-      if (block is ImageBlock) {
-        hasImage = true;
-        break;
-      }
-    }
-    if (!hasImage) return false;
-    // 尾项含图即守卫：无论尺寸是否已到位，重建后都按 newMin delta 补偿；
-    // delta≤0.5 时 _applyDetachedActiveExtentRestore 自身会短路。
-    return true;
   }
 }

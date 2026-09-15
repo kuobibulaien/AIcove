@@ -1,11 +1,11 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 import 'package:flutter/services.dart';
 
 import '../../../../features/observability/trace_models.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
-import '../../../../ui/shared/widgets/moe_toast.dart';
 import '../../../../ui/theme/tokens.dart';
 import 'log_formatters.dart' show tryFormatJson, stageToZh;
 
@@ -35,14 +35,18 @@ class _TracePayloadPanelState extends State<TracePayloadPanel> {
     super.didUpdateWidget(oldWidget);
     final oldEvent = oldWidget.selectedEvent;
     final newEvent = widget.selectedEvent;
-    final changed = oldEvent?.traceId != newEvent?.traceId ||
+    final changed =
+        oldEvent?.traceId != newEvent?.traceId ||
         oldEvent?.eventSeq != newEvent?.eventSeq;
     if (changed) {
       _initialTabResolved = false;
       final root = _resolvePayloadRoot(widget.payloadEnvelope);
       final sections = _buildSections(root, newEvent);
-      setState(() => _tabIndex =
-          sections.isEmpty ? 0 : _tabIndex.clamp(0, sections.length - 1));
+      setState(
+        () => _tabIndex = sections.isEmpty
+            ? 0
+            : _tabIndex.clamp(0, sections.length - 1),
+      );
     }
   }
 
@@ -62,8 +66,10 @@ class _TracePayloadPanelState extends State<TracePayloadPanel> {
           children: [
             Icon(Icons.touch_app_outlined, size: 40, color: colors.muted),
             const SizedBox(height: 8),
-            Text('请选择一个事件查看详情',
-                style: TextStyle(color: colors.textSecondary, fontSize: 13)),
+            Text(
+              '请选择一个事件查看详情',
+              style: TextStyle(color: colors.textSecondary, fontSize: 13),
+            ),
           ],
         ),
       );
@@ -177,10 +183,12 @@ class _TracePayloadPanelState extends State<TracePayloadPanel> {
   }
 
   Future<void> _copyAllSections(List<_PayloadSection> sections) async {
-    final copyable = sections.where((section) {
-      final content = section.content.trim();
-      return content.isNotEmpty && content != '(空)';
-    }).toList(growable: false);
+    final copyable = sections
+        .where((section) {
+          final content = section.content.trim();
+          return content.isNotEmpty && content != '(空)';
+        })
+        .toList(growable: false);
     if (copyable.isEmpty) {
       MoeToast.info(context, '当前事件暂无可复制内容');
       return;
@@ -208,27 +216,26 @@ class _TracePayloadPanelState extends State<TracePayloadPanel> {
     required VoidCallback onTap,
   }) {
     final colors = context.moeColors;
-    final textColor = selected ? Colors.white : colors.text;
+    final textColor = colors.text;
 
     return GestureDetector(
       onTap: onTap,
-      child: Container(
+      child: MoeButtonSurface(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-        decoration: BoxDecoration(
-          color: selected ? colors.primary : colors.surface,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: selected ? colors.primary : colors.borderLight,
-            width: borderWidth,
-          ),
+        tintColor: selected ? colors.primary : Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: selected ? colors.primary : colors.borderLight,
+          width: borderWidth,
         ),
         child: Text(
           label,
           style: TextStyle(
             color: textColor,
             fontSize: 11,
-            fontWeight:
-                selected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
+            fontWeight: selected
+                ? MoeFontWeights.emphasis
+                : MoeFontWeights.normal,
           ),
         ),
       ),
@@ -249,14 +256,21 @@ class _TracePayloadPanelState extends State<TracePayloadPanel> {
     Map<String, dynamic> payload,
     TraceEvent? event,
   ) {
-    final rawRequestValue = _readByKeys(
-        payload, const ['rawRequestBody', 'requestBody', 'request']);
-    final rawReplyValue =
-        _readByKeys(payload, const ['rawAiResponse', 'reply', 'finalReply']);
+    final rawRequestValue = _readByKeys(payload, const [
+      'rawRequestBody',
+      'requestBody',
+      'request',
+    ]);
+    final rawReplyValue = _readByKeys(payload, const [
+      'rawAiResponse',
+      'reply',
+      'finalReply',
+    ]);
     final rawReplyContent = _stringifyPayload(rawReplyValue);
     final deliveredReplyValue = _readByKeys(payload, const ['finalReply']);
     final deliveredReplyContent = _stringifyPayload(deliveredReplyValue);
-    final requestBody = _decodeJsonMap(rawRequestValue) ??
+    final requestBody =
+        _decodeJsonMap(rawRequestValue) ??
         _decodeJsonMap(_readByKeys(payload, const ['requestBody'])) ??
         _decodeJsonMap(_readByKeys(payload, const ['request']));
 
@@ -281,10 +295,7 @@ class _TracePayloadPanelState extends State<TracePayloadPanel> {
         label: '系统提示词',
         content: _extractSystemPrompts(payload, requestBody),
       ),
-      _PayloadSection(
-        label: '工具清单',
-        content: _extractToolCatalog(requestBody),
-      ),
+      _PayloadSection(label: '工具清单', content: _extractToolCatalog(requestBody)),
       _PayloadSection(
         label: '上下文',
         content: _stringifyPayload(
@@ -298,10 +309,11 @@ class _TracePayloadPanelState extends State<TracePayloadPanel> {
       _PayloadSection(
         label: '响应体',
         content: _stringifyPayload(
-          _readByKeys(
-            payload,
-            const ['rawResponseBody', 'responseBody', 'response'],
-          ),
+          _readByKeys(payload, const [
+            'rawResponseBody',
+            'responseBody',
+            'response',
+          ]),
         ),
       ),
       _PayloadSection(
@@ -316,16 +328,10 @@ class _TracePayloadPanelState extends State<TracePayloadPanel> {
           _readByKeys(payload, const ['rawToolResults', 'toolResults']),
         ),
       ),
-      _PayloadSection(
-        label: '最终回复',
-        content: rawReplyContent,
-      ),
+      _PayloadSection(label: '最终回复', content: rawReplyContent),
       if (deliveredReplyContent != '(空)' &&
           deliveredReplyContent != rawReplyContent)
-        _PayloadSection(
-          label: '最终交付文本',
-          content: deliveredReplyContent,
-        ),
+        _PayloadSection(label: '最终交付文本', content: deliveredReplyContent),
     ].where((section) => !section.isEmpty).toList(growable: false);
 
     if (sections.isNotEmpty) {
@@ -406,20 +412,14 @@ class _TracePayloadPanelState extends State<TracePayloadPanel> {
         final map = message.cast<String, dynamic>();
         final role = map['role']?.toString() ?? '';
         if (role != 'system') continue;
-        systems.add({
-          'index': i,
-          'content': map['content'],
-        });
+        systems.add({'index': i, 'content': map['content']});
       }
     }
 
     void collectTopLevelSystem(dynamic rawSystem, String source) {
       final text = _extractSystemText(rawSystem);
       if (text == null || text.isEmpty) return;
-      systems.add({
-        'source': source,
-        'content': text,
-      });
+      systems.add({'source': source, 'content': text});
     }
 
     collectFromMessages(requestBody?['messages']);
@@ -578,18 +578,21 @@ class _TracePayloadPanelState extends State<TracePayloadPanel> {
       }
     }
 
-    final directError = _readByKeys(
-      payload,
-      const ['error', 'errorMessage', 'exception', 'exceptionMessage'],
-    );
+    final directError = _readByKeys(payload, const [
+      'error',
+      'errorMessage',
+      'exception',
+      'exceptionMessage',
+    ]);
     if (directError != null && directError.toString().trim().isNotEmpty) {
       errorInfo['error'] = directError;
     }
 
-    final rawResponseValue = _readByKeys(
-      payload,
-      const ['rawResponseBody', 'responseBody', 'response'],
-    );
+    final rawResponseValue = _readByKeys(payload, const [
+      'rawResponseBody',
+      'responseBody',
+      'response',
+    ]);
     final rawResponseMap = _decodeJsonMap(rawResponseValue);
     if (rawResponseMap != null && rawResponseMap.isNotEmpty) {
       final vendorError = _firstNonEmptyValue([

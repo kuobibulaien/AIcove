@@ -1,3 +1,4 @@
+import 'package:aicove_flutter/src/ui/shared/widgets/moe_page_scaffold.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../ui/theme/tokens.dart';
@@ -7,15 +8,18 @@ import '../../../../ui/shared/widgets/list/moe_settings_row.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../settings/pages/log_viewer_page.dart';
 import 'ui_gallery_page.dart';
+import 'diagnostic_access_page.dart';
 import 'tool_prompts_page.dart';
 import 'prompt_node_management_page_enhanced.dart';
+import 'prompt_node_management_page.dart';
+import '../../backup/pages/data_management_page.dart';
 import 'enhanced_dialogue_page.dart';
 import 'network_diagnostic_page.dart';
 import 'call_flow_management_page.dart';
 import 'message_segmentation_debug_page.dart';
 import 'stream_monitor_debug_page.dart';
 
-/// 调试中心 - 整合日志、组件库、工具提示词管理
+/// 调试中心 - 整合日志、组件库、提示词节点与数据管理
 class DebugCenterPage extends StatelessWidget {
   const DebugCenterPage({super.key});
 
@@ -23,7 +27,7 @@ class DebugCenterPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
 
-    return Scaffold(
+    return MoePageScaffold(
       backgroundColor: colors.surface,
       appBar: const MoeAppBar(title: '调试中心', showBackButton: true),
       body: ListView(
@@ -35,10 +39,19 @@ class DebugCenterPage extends StatelessWidget {
               MoeSettingsRow(
                 icon: Icons.article_outlined,
                 label: '日志中心',
-                subtitle: 'API 日志、系统日志',
+                subtitle: '前端响应、模型对话、应用异常',
                 trailingType: MoeSettingsRowTrailing.chevron,
                 onTap: () => Navigator.of(context).push(
                   ParallaxSlidePageRoute(page: const LogViewerPage()),
+                ),
+              ),
+              MoeSettingsRow(
+                icon: Icons.download_outlined,
+                label: '诊断导出与电脑读取',
+                subtitle: 'Release 可用，一键导出或连接 Agent',
+                trailingType: MoeSettingsRowTrailing.chevron,
+                onTap: () => Navigator.of(context).push(
+                  ParallaxSlidePageRoute(page: const DiagnosticAccessPage()),
                 ),
               ),
               MoeSettingsRow(
@@ -57,6 +70,15 @@ class DebugCenterPage extends StatelessWidget {
                 trailingType: MoeSettingsRowTrailing.chevron,
                 onTap: () => Navigator.of(context).push(
                   ParallaxSlidePageRoute(page: const ToolPromptsPage()),
+                ),
+              ),
+              MoeSettingsRow(
+                icon: Icons.account_tree_outlined,
+                label: '提示词节点',
+                subtitle: '核对内置提示词与 Agent Build 节点',
+                trailingType: MoeSettingsRowTrailing.chevron,
+                onTap: () => Navigator.of(context).push(
+                  ParallaxSlidePageRoute(page: const PromptNodeManagementPage()),
                 ),
               ),
               MoeSettingsRow(
@@ -103,6 +125,15 @@ class DebugCenterPage extends StatelessWidget {
                 trailingType: MoeSettingsRowTrailing.chevron,
                 onTap: () => Navigator.of(context).push(
                   ParallaxSlidePageRoute(page: const StreamMonitorDebugPage()),
+                ),
+              ),
+              MoeSettingsRow(
+                icon: Icons.cloud_sync_outlined,
+                label: '数据管理',
+                subtitle: '备份、导入导出、云同步',
+                trailingType: MoeSettingsRowTrailing.chevron,
+                onTap: () => Navigator.of(context).push(
+                  ParallaxSlidePageRoute(page: const DataManagementPage()),
                 ),
               ),
               MoeSettingsRow(

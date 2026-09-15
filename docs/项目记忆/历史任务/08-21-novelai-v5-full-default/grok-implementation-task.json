@@ -1,0 +1,17 @@
+{
+  "goal": "Active task: .trellis/tasks/08-21-novelai-v5-full-default. Implement the approved NovelAI V5 Full upgrade in the Flutter client. Read the task PRD, design, implement plan, research note, README, frontend spec index, and the existing image provider document before editing. The controlled text-to-image catalog must be exactly V5 Full, V5 Curated, V4.5 Full, V4.5 Curated, V4 Full, V4 Curated Preview, Anime V3, Furry V3. Fresh settings and API empty-model fallback use V5 Full. Add an idempotent migration that upgrades missing or historical V4.5 defaults while preserving explicit V3, Furry V3, V4, and custom defaults plus all credentials and unknown config. Preserve canonical catalog order through normalization. V5 Full and Curated use params_version 4, default scale 7, 23 steps, Euler Ancestral, and structured v4_prompt/v4_negative_prompt. Protect all core fields from image_parameters overrides. Remove cross-model enum retry for all NovelAI models but retain deterministic alias normalization. Update focused tests and the provider document. Do not access tokens or call the real NovelAI API.",
+  "scope": {
+    "description": "You are not alone in this repository. Preserve all pre-existing changes and do not touch unrelated files, Trellis task artifacts, credentials, commits, remotes, deployments, or production services. Implement only the six allowlisted files. Run dart format on changed Dart files and run the two focused Flutter test files from apps/aicove_flutter. The detailed acceptance scenarios are in .trellis/tasks/08-21-novelai-v5-full-default/grok-implementation-task.md and are mandatory, including zero-network preview, exact ordering, persisted fresh defaults, migration preservation/idempotence/multiple providers/post-migration user changes, V5 Full and Curated bodies, protected overrides, one-request enum errors for V5/V4.5/V3, and Furry V3 legacy behavior.",
+    "allowWrite": [
+      "apps/aicove_flutter/lib/src/features/settings/data/support/ui_models_store_support.dart",
+      "apps/aicove_flutter/lib/src/features/settings/data/local/ui_models_store_local_data_source.dart",
+      "apps/aicove_flutter/lib/src/core/api/agent_image_api_support.dart",
+      "apps/aicove_flutter/test/features/settings/provider_protocol_compat_test.dart",
+      "apps/aicove_flutter/test/features/settings/app_settings_notifier_test.dart",
+      "apps/aicove_flutter/docs/04_功能模块规范/绘图功能/图片渠道适配说明_20260306.md"
+    ]
+  },
+  "acceptance": {
+    "description": "All approved PRD requirements are implemented without touching baseline user changes. Focused settings tests pass, existing V4.5/V3 behavior stays green, model preview performs zero HTTP calls, persisted migration is idempotent and preserves protected fields and explicit non-historical defaults, both V5 variants build the minimal protected V5 payload, and enum errors never trigger a second model request. Return changed files, test results, remaining concerns, and the resumable run id."
+  }
+}

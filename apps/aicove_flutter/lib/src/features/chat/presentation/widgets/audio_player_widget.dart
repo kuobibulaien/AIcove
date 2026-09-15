@@ -13,6 +13,8 @@ import '../../../../core/models/message_block.dart';
 import '../../../../core/config.dart';
 import '../../../../core/models/block_status.dart';
 import '../../../../core/app_logger.dart';
+import '../../../observability/frontend_diagnostics_port.dart';
+import '../../../observability/frontend_diagnostics_provider.dart';
 
 /// 音频播放器状态管理
 class AudioPlayerState {
@@ -116,52 +118,65 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
     this.audioUrl, {
     AudioPlaybackBackend? backend,
     Future<Directory> Function()? temporaryDirectoryProvider,
-  })  : _player = backend ?? JustAudioPlaybackBackend(),
-        _temporaryDirectoryProvider =
-            temporaryDirectoryProvider ?? getTemporaryDirectory,
-        super(const AudioPlayerState()) {
+  }) : _player = backend ?? JustAudioPlaybackBackend(),
+       _temporaryDirectoryProvider =
+           temporaryDirectoryProvider ?? getTemporaryDirectory,
+       super(const AudioPlayerState()) {
     _init();
   }
 
   void _init() {
     // 监听播放状态
-    _subscriptions.add(_player.playerStateStream.listen((playerState) {
-      _completed = playerState.processingState == ProcessingState.completed;
-      if (!mounted) return;
-      state = state.copyWith(
-        isPlaying: _completed ? false : playerState.playing,
-        isLoading: playerState.processingState == ProcessingState.loading ||
-            playerState.processingState == ProcessingState.buffering,
-      );
-    }));
+    _subscriptions.add(
+      _player.playerStateStream.listen((playerState) {
+        _completed = playerState.processingState == ProcessingState.completed;
+        if (!mounted) return;
+        state = state.copyWith(
+          isPlaying: _completed ? false : playerState.playing,
+          isLoading:
+              playerState.processingState == ProcessingState.loading ||
+              playerState.processingState == ProcessingState.buffering,
+        );
+      }),
+    );
 
     // 监听播放位置
-    _subscriptions.add(_player.positionStream.listen((position) {
-      if (!mounted) return;
-      state = state.copyWith(position: position);
-    }));
+    _subscriptions.add(
+      _player.positionStream.listen((position) {
+        if (!mounted) return;
+        state = state.copyWith(position: position);
+      }),
+    );
 
     // 监听总时长
-    _subscriptions.add(_player.durationStream.listen((duration) {
-      if (duration != null) {
-        if (!mounted) return;
-        state = state.copyWith(duration: duration);
-      }
-    }));
+    _subscriptions.add(
+      _player.durationStream.listen((duration) {
+        if (duration != null) {
+          if (!mounted) return;
+          state = state.copyWith(duration: duration);
+        }
+      }),
+    );
 
     // 自动加载音频
-    _subscriptions.add(_player.playbackEventStream.listen((_) {},
+    _subscriptions.add(
+      _player.playbackEventStream.listen(
+        (_) {},
         onError: (Object e, StackTrace st) {
-      AppLogger.error('AudioPlayer', '音频播放流出错', metadata: {
-        'error': e.toString(),
-      });
-      if (!mounted) return;
-      state = state.copyWith(
-        isPlaying: false,
-        isLoading: false,
-        error: '播放出错: $e',
-      );
-    }));
+          AppLogger.error(
+            'AudioPlayer',
+            '音频播放流出错',
+            metadata: {'error': e.toString()},
+          );
+          if (!mounted) return;
+          state = state.copyWith(
+            isPlaying: false,
+            isLoading: false,
+            error: '播放出错: $e',
+          );
+        },
+      ),
+    );
 
     _loadAudio();
   }
@@ -189,8 +204,10 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
     return 'bin';
   }
 
-  String _guessFileExtFromBytes(List<int> bytes,
-      {required String fallbackExt}) {
+  String _guessFileExtFromBytes(
+    List<int> bytes, {
+    required String fallbackExt,
+  }) {
     bool startsWithAscii(String s) {
       if (bytes.length < s.length) return false;
       for (var i = 0; i < s.length; i++) {
@@ -256,48 +273,55 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
     final hash = md5.convert(utf8.encode(dataUrl)).toString();
 
     final dir = await _temporaryDirectoryProvider();
-    final cacheDir =
-        Directory('${dir.path}${Platform.pathSeparator}aicove_audio_cache');
+    final cacheDir = Directory(
+      '${dir.path}${Platform.pathSeparator}aicove_audio_cache',
+    );
     if (!await cacheDir.exists()) {
       await cacheDir.create(recursive: true);
     }
 
-    final file =
-        File('${cacheDir.path}${Platform.pathSeparator}audio_$hash.$ext');
+    final file = File(
+      '${cacheDir.path}${Platform.pathSeparator}audio_$hash.$ext',
+    );
     var shouldRewrite = true;
     if (await file.exists()) {
       try {
         final existingSize = await file.length();
         shouldRewrite = existingSize != bytes.length;
         if (shouldRewrite) {
-          AppLogger.warning('AudioPlayer', '检测到损坏的语音缓存文件，准备重写', metadata: {
-            'path': file.path,
-            'existingSize': existingSize,
-            'expectedSize': bytes.length,
-          });
+          AppLogger.warning(
+            'AudioPlayer',
+            '检测到损坏的语音缓存文件，准备重写',
+            metadata: {
+              'path': file.path,
+              'existingSize': existingSize,
+              'expectedSize': bytes.length,
+            },
+          );
         } else {
-          AppLogger.info('AudioPlayer', '复用已存在的 data url 语音缓存文件', metadata: {
-            'ext': ext,
-            'size': existingSize,
-            'path': file.path,
-          });
+          AppLogger.info(
+            'AudioPlayer',
+            '复用已存在的 data url 语音缓存文件',
+            metadata: {'ext': ext, 'size': existingSize, 'path': file.path},
+          );
         }
       } on FileSystemException catch (e) {
         shouldRewrite = true;
-        AppLogger.warning('AudioPlayer', '读取语音缓存文件失败，准备重写', metadata: {
-          'path': file.path,
-          'error': e.toString(),
-        });
+        AppLogger.warning(
+          'AudioPlayer',
+          '读取语音缓存文件失败，准备重写',
+          metadata: {'path': file.path, 'error': e.toString()},
+        );
       }
     }
 
     if (shouldRewrite) {
       await _writeBytesAtomically(file, bytes);
-      AppLogger.info('AudioPlayer', '已将 data url 落地为临时文件', metadata: {
-        'ext': ext,
-        'size': bytes.length,
-        'path': file.path,
-      });
+      AppLogger.info(
+        'AudioPlayer',
+        '已将 data url 落地为临时文件',
+        metadata: {'ext': ext, 'size': bytes.length, 'path': file.path},
+      );
     }
 
     return file.path;
@@ -345,15 +369,14 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
       _isReady = true;
       state = state.copyWith(isLoading: false);
     } catch (e) {
-      AppLogger.error('AudioPlayer', '音频加载失败', metadata: {
-        'error': e.toString(),
-      });
+      AppLogger.error(
+        'AudioPlayer',
+        '音频加载失败',
+        metadata: {'error': e.toString()},
+      );
       _isReady = false;
       if (!mounted) return;
-      state = state.copyWith(
-        isLoading: false,
-        error: '加载失败: $e',
-      );
+      state = state.copyWith(isLoading: false, error: '加载失败: $e');
     }
   }
 
@@ -421,8 +444,8 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
 /// Provider工厂：为每个音频URL创建独立的控制器
 final audioPlayerControllerProvider = StateNotifierProvider.autoDispose
     .family<AudioPlayerController, AudioPlayerState, String>(
-  (ref, audioUrl) => AudioPlayerController(audioUrl),
-);
+      (ref, audioUrl) => AudioPlayerController(audioUrl),
+    );
 
 /// 音频播放器组件
 class AudioPlayerWidget extends ConsumerWidget {
@@ -444,12 +467,54 @@ class AudioPlayerWidget extends ConsumerWidget {
       return _PendingAudioBubble(block: block, textColor: textColor);
     }
 
+    final diagnostics = ref.read(frontendDiagnosticsProvider);
+    final operation =
+        diagnostics.forMessage(block.messageId) ??
+        FrontendDiagnosticContext(operationId: 'audio_${block.messageId}');
+    diagnostics.bindMessage(block.messageId, operation);
+    diagnostics.record(
+      operation,
+      FrontendStage.audioAvailable,
+      messageId: block.messageId,
+      once: true,
+    );
+    ref.listen<AudioPlayerState>(audioPlayerControllerProvider(block.url), (
+      previous,
+      next,
+    ) {
+      if (next.error != null && previous?.error != next.error) {
+        diagnostics.record(
+          operation,
+          FrontendStage.audioFailed,
+          messageId: block.messageId,
+        );
+      }
+      if (next.isPlaying &&
+          !next.isLoading &&
+          (previous?.isPlaying != true || previous?.isLoading == true)) {
+        diagnostics.record(
+          operation,
+          FrontendStage.audioPlaying,
+          messageId: block.messageId,
+        );
+      }
+    });
     final state = ref.watch(audioPlayerControllerProvider(block.url));
-    final controller =
-        ref.read(audioPlayerControllerProvider(block.url).notifier);
+    if (!state.isLoading && state.error == null) {
+      diagnostics.record(
+        operation,
+        FrontendStage.audioReady,
+        messageId: block.messageId,
+        once: true,
+      );
+    }
+    final controller = ref.read(
+      audioPlayerControllerProvider(block.url).notifier,
+    );
 
     // 优先使用 block 中的 durationSeconds，如果没有则尝试使用 state 中的 duration
-    final double durationSec = block.durationSeconds ??
+    final double durationSec =
+        block.durationSeconds ??
         (state.duration.inSeconds > 0
             ? state.duration.inSeconds.toDouble()
             : 2.0);
@@ -469,13 +534,17 @@ class AudioPlayerWidget extends ConsumerWidget {
       child: Row(
         children: [
           // 播放/暂停按钮
-          _buildPlayButton(state, controller, textColor),
+          _buildPlayButton(state, controller, textColor, () {
+            diagnostics.record(
+              operation,
+              FrontendStage.audioPlayRequested,
+              messageId: block.messageId,
+            );
+          }),
           const SizedBox(width: 8),
 
           // 音频波形可视化
-          Expanded(
-            child: _buildWaveform(state, textColor, barCount),
-          ),
+          Expanded(child: _buildWaveform(state, textColor, barCount)),
 
           const SizedBox(width: 8),
 
@@ -506,6 +575,7 @@ class AudioPlayerWidget extends ConsumerWidget {
     AudioPlayerState state,
     AudioPlayerController controller,
     Color color,
+    VoidCallback onPlaybackIntent,
   ) {
     // 统一按钮和加载指示器的大小，防止状态切换时闪烁 (UI Consistency)
     const double size = 24.0;
@@ -530,16 +600,17 @@ class AudioPlayerWidget extends ConsumerWidget {
     if (state.error != null) {
       return GestureDetector(
         onTap: controller.reload,
-        child: Icon(
-          Icons.refresh_rounded,
-          color: color.withValues(alpha: 0.9),
-          size: size,
-        ),
+        behavior: HitTestBehavior.opaque,
+        child: Icon(Icons.refresh_rounded, color: color, size: size),
       );
     }
 
     return GestureDetector(
-      onTap: controller.togglePlayPause,
+      onTap: () {
+        onPlaybackIntent();
+        unawaited(controller.togglePlayPause());
+      },
+      behavior: HitTestBehavior.opaque,
       child: Icon(
         state.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
         color: color,
@@ -573,10 +644,8 @@ class _AnimatedWaveformState extends State<_AnimatedWaveform>
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
-      duration: kAnimLong,
-      vsync: this,
-    )..repeat();
+    _controller = AnimationController(duration: kAnimLong, vsync: this)
+      ..repeat();
 
     // 初始化随机种子，让波形看起来更自然
     _generateSeeds();
@@ -633,7 +702,8 @@ class _AnimatedWaveformState extends State<_AnimatedWaveform>
                 final offset = index / widget.barCount;
                 final wave = sin((progress + offset) * 2 * pi);
                 // 归一化到 0.3 ~ 1.0
-                heightFactor = 0.3 +
+                heightFactor =
+                    0.3 +
                     ((wave + 1) / 2) *
                         0.7 *
                         _randomSeeds[index % _randomSeeds.length];
@@ -648,8 +718,9 @@ class _AnimatedWaveformState extends State<_AnimatedWaveform>
                 height: height * heightFactor,
                 decoration: MoeG2Decoration(
                   radius: 1.5,
-                  color: widget.color
-                      .withValues(alpha: widget.isPlaying ? 0.9 : 0.6),
+                  color: widget.color.withValues(
+                    alpha: widget.isPlaying ? 0.9 : 0.6,
+                  ),
                 ),
               );
             }),
@@ -664,10 +735,7 @@ class _AnimatedWaveformState extends State<_AnimatedWaveform>
 class _PendingAudioBubble extends StatelessWidget {
   final AudioBlock block;
   final Color textColor;
-  const _PendingAudioBubble({
-    required this.block,
-    required this.textColor,
-  });
+  const _PendingAudioBubble({required this.block, required this.textColor});
 
   @override
   Widget build(BuildContext context) {

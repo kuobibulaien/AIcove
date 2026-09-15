@@ -5,8 +5,20 @@ import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
 
+import '../../core/app_logger.dart';
+import 'frontend_diagnostics_port.dart';
 import 'trace_models.dart';
 import 'trace_store.dart';
+
+class TraceExportAdapter implements TraceExportPort {
+  const TraceExportAdapter();
+
+  @override
+  Future<String?> exportTurn(String traceId) async {
+    final file = await TraceExportService.exportTrace(traceId: traceId);
+    return file?.readAsString();
+  }
+}
 
 class TraceExportService {
   static const String _logDirName = 'logs';
@@ -20,6 +32,7 @@ class TraceExportService {
     Directory? debugLogDir,
   }) async {
     final store = traceStore ?? TraceStore.instance;
+    await store.waitForPendingWrites();
     final events = await store.readEventsByTraceId(traceId);
     if (events.isEmpty) return null;
 
@@ -46,6 +59,11 @@ class TraceExportService {
           redactSensitive ? _redactSensitive(event.toJson()) : event.toJson(),
       ],
       'apiLogs': apiLogs,
+      'appLogs': await _loadAppLogsForTurn(
+        first,
+        redactSensitive: redactSensitive,
+        debugLogDir: debugLogDir,
+      ),
       'tracePayloads': tracePayloads,
     };
 
@@ -58,6 +76,63 @@ class TraceExportService {
       flush: true,
     );
     return file;
+  }
+
+  static Future<List<Map<String, dynamic>>> _loadAppLogsForTurn(
+      TraceEvent first,
+      {required bool redactSensitive,
+      Directory? debugLogDir}) async {
+    // 等待诊断微任务入内存；文件队列尚未写完时由内存补齐。
+    await Future<void>.delayed(Duration.zero);
+    final logDir = await _resolveLogDir(debugLogDir: debugLogDir);
+    final candidates = <String, Map<String, dynamic>>{};
+    void add(Map<String, dynamic> log) {
+      candidates[jsonEncode(log)] = log;
+    }
+
+    if (await logDir.exists()) {
+      await for (final file in logDir.list()) {
+        if (file is! File ||
+            !file.path.split(Platform.pathSeparator).last.startsWith('app_') ||
+            !file.path.endsWith('.jsonl')) {
+          continue;
+        }
+        for (final line in await file.readAsLines()) {
+          try {
+            add((jsonDecode(line) as Map).cast<String, dynamic>());
+          } catch (_) {/* 跳过损坏行。 */}
+        }
+      }
+    }
+    for (final log in AppLogger.entries.value) {
+      add(log.toJson());
+    }
+    Map metadata(Map<String, dynamic> log) =>
+        log['metadata'] is Map ? log['metadata'] as Map : const {};
+    bool related(Map<String, dynamic> log) {
+      final meta = metadata(log);
+      final explicitTrace = log['traceId'] ?? meta['traceId'];
+      if (explicitTrace is String && explicitTrace.isNotEmpty) {
+        return explicitTrace == first.traceId;
+      }
+      return meta['conversationId'] == first.sessionId &&
+          meta['turnId'] == first.turnId;
+    }
+
+    final operationIds = candidates.values
+        .where(related)
+        .map((log) => metadata(log)['operationId'])
+        .whereType<String>()
+        .toSet();
+    final logs = candidates.values
+        .where((log) =>
+            related(log) || operationIds.contains(metadata(log)['operationId']))
+        .toList()
+      ..sort((a, b) =>
+          (a['time'] ?? '').toString().compareTo((b['time'] ?? '').toString()));
+    return logs
+        .map((log) => redactSensitive ? _redactSensitive(log) : log)
+        .toList();
   }
 
   static Future<List<Map<String, dynamic>>> _loadApiLogsForTurn({
@@ -162,9 +237,38 @@ class TraceExportService {
         output[entry.key] = '***';
         continue;
       }
-      output[entry.key] = _redactAny(value);
+      output[entry.key] = value is String && _isDiagnosticStructure(key, value)
+          ? value
+          : _redactAny(value);
     }
     return output;
+  }
+
+  // 电话号码兜底规则不能吞掉系统生成的关联编号和标准时间戳。
+  // 严格限定字段和格式；不能仅凭字段叫 id/time 就放行任意字符串。
+  static bool _isDiagnosticStructure(String key, String value) {
+    if (key == 'traceid' && RegExp(r'^tr_\d{13,20}$').hasMatch(value)) {
+      return true;
+    }
+    if (const {'operationid', 'parentoperationid', 'pageinstanceid'}
+            .contains(key) &&
+        RegExp(r'^ui_\d{13,20}_\d{1,10}$').hasMatch(value)) {
+      return true;
+    }
+    if (key == 'apprunid' &&
+        RegExp(r'^run_\d{13,20}_\d{1,10}$').hasMatch(value)) {
+      return true;
+    }
+    if (const {'messageid', 'turnid', 'sourcemessageid'}.contains(key) &&
+        RegExp(r'^(?:msg|raw_msg|tts_evt)_\d{13,20}_\d{1,10}$')
+            .hasMatch(value)) {
+      return true;
+    }
+    return const {'time', 'startedat', 'endedat', 'createdat', 'exportedat'}
+            .contains(key) &&
+        RegExp(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$')
+            .hasMatch(value) &&
+        DateTime.tryParse(value) != null;
   }
 
   static dynamic _redactAny(dynamic value) {

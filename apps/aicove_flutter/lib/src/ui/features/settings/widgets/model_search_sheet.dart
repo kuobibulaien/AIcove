@@ -1,13 +1,13 @@
 /// ModelSearchSheet - 模型搜索弹窗
-/// 
+///
 /// 从 model_list_page.dart 提取，用于搜索模型。
-/// 
+///
 /// 设计特点：
 /// - 底部弹窗样式
 /// - 实时搜索过滤
 /// - 显示模型归属的渠道
 /// - 支持切换可见性
-/// 
+///
 /// 更新记录：
 /// - 2025-12-31: 从 model_list_page.dart 提取
 library;
@@ -58,23 +58,11 @@ class _ModelSearchContentState extends State<_ModelSearchContent> {
         // 搜索框
         Padding(
           padding: const EdgeInsets.all(16),
-          child: MoeTextField(
+          child: MoeSearchField(
+            padding: EdgeInsets.zero,
             controller: _searchCtrl,
+            hintText: '搜索模型ID或备注...',
             autofocus: true,
-            hint: '搜索模型ID或备注...',
-            prefixIcon: Icons.search,
-            suffix: _searchCtrl.text.isNotEmpty
-                ? IconButton(
-                    icon: const Icon(Icons.clear, size: 20),
-                    onPressed: () {
-                      setState(() {
-                        _searchCtrl.clear();
-                        _searchQuery = '';
-                      });
-                    },
-                  )
-                : null,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             onChanged: (value) {
               setState(() {
                 _searchQuery = value.toLowerCase().trim();
@@ -106,10 +94,7 @@ class _ModelSearchContentState extends State<_ModelSearchContent> {
                 separatorBuilder: (_, __) => const SizedBox(height: 8),
                 itemBuilder: (context, index) {
                   final result = searchResults[index];
-                  return _SearchResultRow(
-                    result: result,
-                    ref: widget.ref,
-                  );
+                  return _SearchResultRow(result: result, ref: widget.ref);
                 },
               );
             },
@@ -142,13 +127,15 @@ class _ModelSearchContentState extends State<_ModelSearchContent> {
         if (_searchQuery.isEmpty ||
             modelId.toLowerCase().contains(_searchQuery) ||
             (displayName?.toLowerCase().contains(_searchQuery) ?? false)) {
-          results.add(_ModelSearchResult(
-            modelId: modelId,
-            displayName: displayName,
-            providerId: provider.id,
-            providerName: provider.displayName ?? provider.id,
-            isVisible: isVisible,
-          ));
+          results.add(
+            _ModelSearchResult(
+              modelId: modelId,
+              displayName: displayName,
+              providerId: provider.id,
+              providerName: provider.displayName ?? provider.id,
+              isVisible: isVisible,
+            ),
+          );
         }
       }
     }
@@ -185,10 +172,7 @@ class _SearchResultRow extends StatelessWidget {
   final _ModelSearchResult result;
   final WidgetRef ref;
 
-  const _SearchResultRow({
-    required this.result,
-    required this.ref,
-  });
+  const _SearchResultRow({required this.result, required this.ref});
 
   @override
   Widget build(BuildContext context) {

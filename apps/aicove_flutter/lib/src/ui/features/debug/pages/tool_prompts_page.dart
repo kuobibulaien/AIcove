@@ -1,11 +1,11 @@
+import 'package:aicove_flutter/src/ui/shared/widgets/moe_page_scaffold.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/services/prompt_tag_semantics_service.dart';
-import '../../../../core/services/system_reminder_service.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/moe_app_bar.dart';
-import '../../../../ui/shared/widgets/moe_toast.dart';
+import '../../../shared/widgets/form/moe_auto_save.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../features/plugins/image/image_plugin.dart';
 import '../../../../features/plugins/plugin_providers.dart';
@@ -77,47 +77,37 @@ class ToolPromptsPage extends ConsumerStatefulWidget {
   ConsumerState<ToolPromptsPage> createState() => _ToolPromptsPageState();
 }
 
-class _ToolPromptsPageState extends ConsumerState<ToolPromptsPage> {
-  /// 全局 dirty 卡片集合，各卡片通过回调注册/注销
-  final Set<String> _dirtyPluginIds = {};
+class _ToolPromptsPageState extends ConsumerState<ToolPromptsPage>
+    with WidgetsBindingObserver {
+  final _cards = <String, GlobalKey<_PluginPromptCardState>>{};
+  bool _leaving = false;
 
-  void _onDirtyChanged(String pluginId, bool dirty) {
-    setState(() {
-      if (dirty) {
-        _dirtyPluginIds.add(pluginId);
-      } else {
-        _dirtyPluginIds.remove(pluginId);
-      }
-    });
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
   }
 
-  bool get _hasUnsaved => _dirtyPluginIds.isNotEmpty;
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
 
-  /// 弹窗询问用户是否放弃未保存修改
-  Future<bool> _confirmDiscardOrSave() async {
-    final colors = context.moeColors;
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: colors.panel,
-        title: Text('未保存的修改', style: TextStyle(color: colors.text)),
-        content: Text(
-          '你有未保存的提示词修改，离开后将丢失这些更改。',
-          style: TextStyle(color: colors.textSecondary),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop('cancel'),
-            child: Text('取消', style: TextStyle(color: colors.muted)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop('discard'),
-            child: Text('放弃修改', style: TextStyle(color: colors.dialogWarning)),
-          ),
-        ],
-      ),
-    );
-    return result == 'discard';
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) _flushCards();
+  }
+
+  Future<bool> _flushCards() async {
+    var saved = true;
+    for (final key in _cards.values) {
+      if (key.currentState != null &&
+          !await key.currentState!.autoSave.flush()) {
+        saved = false;
+      }
+    }
+    return saved;
   }
 
   @override
@@ -127,16 +117,19 @@ class _ToolPromptsPageState extends ConsumerState<ToolPromptsPage> {
     final tagSemanticsSummary = _buildTagSemanticsSummary(ref);
 
     return PopScope(
-      canPop: !_hasUnsaved,
+      canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
-        if (didPop) return;
+        if (didPop || _leaving) return;
+        _leaving = true;
+        FocusScope.of(context).unfocus();
         final navigator = Navigator.of(context);
-        final discard = await _confirmDiscardOrSave();
-        if (discard && mounted) {
+        final saved = await _flushCards();
+        if (saved && mounted) {
           navigator.pop();
         }
+        _leaving = false;
       },
-      child: Scaffold(
+      child: MoePageScaffold(
         backgroundColor: colors.surface,
         appBar: const MoeAppBar(title: '工具提示词管理', showBackButton: true),
         body: ListView(
@@ -146,8 +139,9 @@ class _ToolPromptsPageState extends ConsumerState<ToolPromptsPage> {
             if (entries.isNotEmpty) const SizedBox(height: 12),
             for (var index = 0; index < entries.length; index++) ...[
               _PluginPromptCard(
+                key: _cards.putIfAbsent(entries[index].pluginId,
+                    () => GlobalKey<_PluginPromptCardState>()),
                 entry: entries[index],
-                onDirtyChanged: _onDirtyChanged,
               ),
               if (index != entries.length - 1) const SizedBox(height: 12),
             ],
@@ -265,24 +259,11 @@ class _ToolPromptsPageState extends ConsumerState<ToolPromptsPage> {
     final pluginManager = ref.watch(pluginManagerProvider);
     final promptTagSemanticsService =
         ref.watch(promptTagSemanticsServiceProvider);
-    final systemReminderService = ref.watch(systemReminderServiceProvider);
     final timePlugin =
         pluginManager.getPlugin('time_awareness') as TimeAwarenessPlugin?;
     final ttsPlugin = pluginManager.getPlugin('tts') as TtsPlugin?;
     final imagePlugin = pluginManager.getPlugin('image') as ImagePlugin?;
-    final systemReminderPrompt = () {
-      if (timePlugin == null || !timePlugin.enabled) {
-        return '';
-      }
-      final parts = <String>[
-        systemReminderService.buildReminderSemanticsPrompt(),
-        timePlugin.buildSystemReminderFieldGuide(),
-      ];
-      return parts
-          .map((part) => part.trim())
-          .where((part) => part.isNotEmpty)
-          .join('\n');
-    }();
+    final systemReminderPrompt = timePlugin?.buildTagSemanticsPrompt() ?? '';
     final snapshot = promptTagSemanticsService.buildSnapshot(
       <PromptTagSemanticsEntry>[
         if (systemReminderPrompt.isNotEmpty)
@@ -304,14 +285,14 @@ class _ToolPromptsPageState extends ConsumerState<ToolPromptsPage> {
             prompt: imagePlugin!.buildTagSemanticsPrompt()!,
           ),
       ],
+      leadIn: '',
     );
     return _TagSemanticsSummaryEntry(
       promptText: snapshot.mergedPrompt,
       tagNames: <String>[
         for (final entry in snapshot.activeEntries) entry.tagName,
       ],
-      description:
-          '汇总当前会实际注入到 system prompt 的标签说明。图片部分展示的是全局基础模板，角色专属追加规则会在真实会话里再拼上。',
+      description: '预览全局启用插件的标签说明。实际请求还会按角色开关、绑定预设和历史内容筛选。',
     );
   }
 }
@@ -453,27 +434,40 @@ class _PluginPromptCard extends StatefulWidget {
   final _PluginPromptEntry entry;
 
   /// 当 dirty 状态变化时通知父页面
-  final void Function(String pluginId, bool dirty) onDirtyChanged;
 
   const _PluginPromptCard({
+    super.key,
     required this.entry,
-    required this.onDirtyChanged,
   });
 
   @override
   State<_PluginPromptCard> createState() => _PluginPromptCardState();
 }
 
-class _PluginPromptCardState extends State<_PluginPromptCard> {
+class _PluginPromptCardState extends State<_PluginPromptCard>
+    with
+        MoeAutoSaveState<_PluginPromptCard>,
+        AutomaticKeepAliveClientMixin<_PluginPromptCard> {
+  @override
+  bool get wantKeepAlive => true;
   late TextEditingController _controller;
   bool _expanded = false;
-  bool _saving = false;
-  bool _dirty = false;
+  bool get _dirty => autoSave.pending;
 
   @override
   void initState() {
     super.initState();
     _controller = TextEditingController(text: widget.entry.promptText);
+    autoSave.configure(
+        save: () => widget.entry.onSave(_controller.text),
+        snapshot: () => _controller.text,
+        fields: [_controller]);
+    autoSave.addListener(() {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() {});
+      });
+    });
   }
 
   @override
@@ -491,78 +485,15 @@ class _PluginPromptCardState extends State<_PluginPromptCard> {
     super.dispose();
   }
 
-  void _setDirty(bool value) {
-    if (_dirty == value) return;
-    setState(() => _dirty = value);
-    widget.onDirtyChanged(widget.entry.pluginId, value);
-  }
-
-  Future<void> _save() async {
-    setState(() => _saving = true);
-    try {
-      await widget.entry.onSave(_controller.text);
-      _setDirty(false);
-      if (mounted) {
-        MoeToast.show(context, '${widget.entry.pluginName} 提示词已保存');
-      }
-    } catch (e) {
-      if (mounted) MoeToast.warning(context, '保存失败: $e');
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
-  }
-
-  /// 收起卡片时，如果有未保存修改则弹窗确认
   Future<void> _handleCollapse() async {
-    if (!_dirty) {
-      setState(() => _expanded = false);
-      return;
-    }
-
-    final colors = context.moeColors;
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: colors.panel,
-        title: Text('未保存的修改', style: TextStyle(color: colors.text)),
-        content: Text(
-          '「${widget.entry.pluginName}」的提示词已修改但未保存，你要怎么做？',
-          style: TextStyle(color: colors.textSecondary),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop('cancel'),
-            child: Text('继续编辑', style: TextStyle(color: colors.muted)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop('discard'),
-            child: Text('放弃修改', style: TextStyle(color: colors.dialogWarning)),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop('save'),
-            child: const Text('保存'),
-          ),
-        ],
-      ),
-    );
-
-    if (!mounted) return;
-
-    if (result == 'save') {
-      await _save();
-      if (mounted) setState(() => _expanded = false);
-    } else if (result == 'discard') {
-      _controller.text = widget.entry.promptText;
-      _setDirty(false);
-      setState(() => _expanded = false);
-    }
-    // 'cancel' or null: 保持展开
+    if (await autoSave.flush() && mounted) setState(() => _expanded = false);
   }
 
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
     final entry = widget.entry;
+    super.build(context);
 
     return MoeG2ClipRRect(
       radius: 12,
@@ -814,54 +745,18 @@ class _PluginPromptCardState extends State<_PluginPromptCard> {
                     hintText: entry.editable ? '输入系统提示词...' : '当前项为只读说明',
                     hintStyle: TextStyle(color: colors.muted, fontSize: 13),
                   ),
-                  onChanged: entry.editable
-                      ? (_) {
-                          final nowDirty =
-                              _controller.text != widget.entry.promptText;
-                          if (nowDirty != _dirty) _setDirty(nowDirty);
-                        }
-                      : null,
                 ),
               ),
 
-              // 保存按钮
-              if (entry.editable)
+              if (autoSave.error != null)
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 8, 14, 14),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      if (_dirty)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: Text(
-                            '有未保存的修改',
-                            style: TextStyle(
-                                fontSize: 11, color: colors.dialogWarning),
-                          ),
-                        ),
-                      SizedBox(
-                        height: 32,
-                        child: FilledButton.icon(
-                          onPressed: _saving ? null : _save,
-                          icon: _saving
-                              ? const SizedBox(
-                                  width: 14,
-                                  height: 14,
-                                  child:
-                                      CircularProgressIndicator(strokeWidth: 2),
-                                )
-                              : const Icon(Icons.save_outlined, size: 16),
-                          label:
-                              const Text('保存', style: TextStyle(fontSize: 13)),
-                          style: FilledButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+                    padding: const EdgeInsets.all(14),
+                    child: Row(children: [
+                      const Expanded(child: Text('自动保存失败，修改已保留。')),
+                      TextButton(
+                          onPressed: () => autoSave.flush(),
+                          child: const Text('重试')),
+                    ])),
             ],
           ],
         ),

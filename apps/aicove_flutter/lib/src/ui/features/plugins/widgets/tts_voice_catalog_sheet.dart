@@ -229,8 +229,6 @@ class _TtsVoiceCatalogSheetContentState
           ),
           child: Row(
             children: [
-              Icon(Icons.info_outline, color: colors.muted, size: 18),
-              const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   '$providerName 暂无可用音色',
@@ -254,8 +252,9 @@ class _TtsVoiceCatalogSheetContentState
           ],
           if (result.presetVoices.isNotEmpty) ...[
             _buildSectionHeader('$providerName 预置音色', colors),
-            ...result.presetVoices
-                .map((voice) => _buildVoiceItem(voice, colors)),
+            ...result.presetVoices.map(
+              (voice) => _buildVoiceItem(voice, colors),
+            ),
           ],
         ],
       ),
@@ -282,10 +281,11 @@ class _TtsVoiceCatalogSheetContentState
     final canDelete = _canDeleteRemoteVoice(voice);
 
     return MoeSettingsRow(
-      icon: alreadyAdded ? Icons.check_circle : Icons.mic,
-      iconColor: alreadyAdded ? colors.primary : colors.textSecondary,
+      icon: alreadyAdded ? Icons.check_circle : null,
+      iconColor: colors.primary,
       label: voice.name,
-      subtitle: voice.source ??
+      subtitle:
+          voice.source ??
           (voice.sourceType == VoiceSourceType.preset ? '预置音色' : '远端音色'),
       trailingType: canDelete || !alreadyAdded
           ? MoeSettingsRowTrailing.custom
@@ -297,22 +297,25 @@ class _TtsVoiceCatalogSheetContentState
                 if (canDelete)
                   GestureDetector(
                     onTap: isDeleting ? null : () => _confirmDeleteVoice(voice),
-                    child: Padding(
-                      padding: const EdgeInsets.all(8),
-                      child: isDeleting
-                          ? SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
+                    child: MoeButtonSurface(
+                      radius: 999,
+                      child: Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: isDeleting
+                            ? SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: colors.muted,
+                                ),
+                              )
+                            : Icon(
+                                Icons.delete_outline,
+                                size: 20,
                                 color: colors.muted,
                               ),
-                            )
-                          : Icon(
-                              Icons.delete_outline,
-                              size: 20,
-                              color: colors.muted,
-                            ),
+                      ),
                     ),
                   ),
                 if (!alreadyAdded)
@@ -321,12 +324,15 @@ class _TtsVoiceCatalogSheetContentState
                       Navigator.of(context).pop();
                       widget.onVoiceSelected(voice);
                     },
-                    child: Padding(
-                      padding: const EdgeInsets.all(8),
-                      child: Icon(
-                        Icons.add_circle_outline,
-                        size: 20,
-                        color: colors.primary,
+                    child: MoeButtonSurface(
+                      radius: 999,
+                      child: Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: Icon(
+                          Icons.add_circle_outline,
+                          size: 20,
+                          color: colors.primary,
+                        ),
                       ),
                     ),
                   ),

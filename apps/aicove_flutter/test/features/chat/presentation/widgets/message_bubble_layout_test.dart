@@ -1,3 +1,4 @@
+import 'package:aicove_flutter/src/core/media/cloud_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -39,7 +40,7 @@ AppSettings _buildSettings({required bool hideUserAvatar}) {
     apiBaseUrl: 'https://api.openai.com/v1',
     imageGenerationEnabled: false,
     maxFileUploadMB: 10,
-    historyMessageLimit: 100,
+    contextWindowTokens: 272000,
     customModels: const <CustomModel>[],
     providers: const <ProviderAuth>[],
     modelProviderMap: const <String, String>{},
@@ -152,6 +153,14 @@ double _bubbleMaxWidth(WidgetTester tester, String messageId) {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  testWidgets('synced stickers use the media resolver instead of a filesystem URI', (tester) async {
+    final message = Message.fromBlocks(id: 'cloud-sticker', role: 'assistant', blocks: [
+      EmojiBlock(messageId: 'cloud-sticker', emojiId: 'sticker', path: 'aicove-media://${'a' * 64}'),
+    ]);
+    await tester.pumpWidget(_buildSingleBubbleHost(hideUserAvatar: true, width: 360, message: message));
+    expect(find.byType(CloudImage), findsOneWidget);
+  });
 
   testWidgets('双头像模式下，左右消息气泡最大宽度应一致', (tester) async {
     await tester.pumpWidget(_buildLayoutHost(hideUserAvatar: false));

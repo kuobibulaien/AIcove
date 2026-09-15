@@ -7,13 +7,16 @@
 /// - 2026-01-18: 网络图片改用 CachedNetworkImageProvider 磁盘缓存
 library;
 
+import '../../../../core/media/cloud_image.dart';
+import '../../../../core/media/media_asset.dart';
+
 import 'dart:collection';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/gestures.dart' show kSecondaryMouseButton;
 import 'package:flutter/material.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:aicove_flutter/src/core/utils/data_image.dart';
@@ -22,10 +25,16 @@ import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../core/models/message_block.dart';
 import '../../../../core/models/block_status.dart';
-import '../../../../ui/shared/widgets/media/moe_image_preview.dart';
 import '../../domain/message.dart';
 import '../../../settings/app_settings.dart';
 import 'audio_player_widget.dart';
+import 'chat_record_bubble.dart';
+import 'incremental_message_text.dart';
+
+/// 语音消息转文字单条展开状态覆盖（null 表示跟随全局设置）
+final audioMessageTextExpandedProvider = StateProvider.family<bool?, String>(
+  (ref, messageId) => null,
+);
 
 /// 消息气泡组件（支持多模态）
 /// 遵循单一职责原则(S)：只负责消息的UI渲染
@@ -36,14 +45,18 @@ class MessageBubble extends ConsumerWidget {
   static const double _kMediaBlockVerticalPadding = 2.0;
   static const double _kRichBlockVerticalPadding = 4.0;
 
+  static const double avatarBubbleGap = 8;
+
+  final Widget Function(Widget child)? selectionWrapper;
   final bool isMe;
   final Message message; // 使用完整的Message对象
   final String? avatarUrl; // 仅用于左侧（AI）
   final String? displayName; // 对方名字（仅用于群聊模式）
   final VoidCallback? onRetry; // 重新发送回调
-  final void Function(RenderBox box)? onLongPress; // 长按回调（传递气泡RenderBox用于定位菜单）
-  final void Function(RenderBox box, MessageBlock block)?
-      onMediaLongPress; // 媒体长按/右键回调
+  final void Function(RenderBox box, Offset globalPosition)?
+  onLongPress; // 长按回调（传递气泡RenderBox用于定位菜单）
+  final void Function(RenderBox box, MessageBlock block, Offset globalPosition)?
+  onMediaLongPress; // 媒体长按/右键回调
   final double fontSize; // 字体大小
 
   /// 聊天中所有图片列表（用于画廊模式左右滑动切换），由父组件传入
@@ -58,6 +71,7 @@ class MessageBubble extends ConsumerWidget {
 
   /// 是否显示头像（连续消息组中只有第一条为 true）
   final bool showAvatar;
+  final bool hideContactAvatar;
 
   const MessageBubble({
     super.key,
@@ -73,6 +87,8 @@ class MessageBubble extends ConsumerWidget {
     this.showCorner = false,
     this.showName = false,
     this.showAvatar = true,
+    this.selectionWrapper,
+    this.hideContactAvatar = false,
   });
 
   /// 向后兼容：纯文本构造函数
@@ -90,14 +106,16 @@ class MessageBubble extends ConsumerWidget {
     this.showCorner = false,
     this.showName = false,
     this.showAvatar = true,
+    this.selectionWrapper,
+    this.hideContactAvatar = false,
   }) : message = Message.text(
-          id: DateTime.now().millisecondsSinceEpoch.toString(),
-          role: isMe ? 'user' : 'assistant',
-          content: text,
-        );
+         id: DateTime.now().millisecondsSinceEpoch.toString(),
+         role: isMe ? 'user' : 'assistant',
+         content: text,
+       );
 
   bool get _useDesktopContextMenu =>
-      !kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
+      Platform.isWindows || Platform.isMacOS || Platform.isLinux;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -126,31 +144,39 @@ class MessageBubble extends ConsumerWidget {
     // 获取用户头像和隐藏设置（字段级订阅：无关设置变化不重建气泡）
     final userAvatar = isMe
         ? ref.watch(
-            appSettingsProvider.select((s) => s.valueOrNull?.userAvatar))
+            appSettingsProvider.select((s) => s.valueOrNull?.userAvatar),
+          )
         : null;
-    final hideUserAvatar = ref.watch(appSettingsProvider
-            .select((s) => s.valueOrNull?.hideUserAvatar)) ??
+    final hideUserAvatar =
+        ref.watch(
+          appSettingsProvider.select((s) => s.valueOrNull?.hideUserAvatar),
+        ) ??
         true;
-    final imagePreviewScale = ref.watch(appSettingsProvider
-            .select((s) => s.valueOrNull?.imagePreviewScale)) ??
+    final imagePreviewScale =
+        ref.watch(
+          appSettingsProvider.select((s) => s.valueOrNull?.imagePreviewScale),
+        ) ??
         1.0;
+    final globalExpandAudio =
+        ref.watch(
+          appSettingsProvider.select((s) => s.valueOrNull?.expandAudioText),
+        ) ??
+        true;
+    final localExpandAudio = ref.watch(
+      audioMessageTextExpandedProvider(message.id),
+    );
+    final isAudioTextExpanded = localExpandAudio ?? globalExpandAudio;
 
     final failedIndicator = isFailed
         ? GestureDetector(
             onTap: onRetry,
-            child: Container(
+            child: const MoeButtonSurface(
               width: 20,
               height: 20,
-              margin: const EdgeInsets.only(top: 9, right: 4),
-              decoration: const BoxDecoration(
-                color: Colors.red,
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.priority_high,
-                color: Colors.white,
-                size: 14,
-              ),
+              margin: EdgeInsets.only(top: 9, right: 4),
+              tintColor: Colors.red,
+              radius: 999,
+              child: Icon(Icons.priority_high, color: Colors.red, size: 14),
             ),
           )
         : null;
@@ -159,6 +185,7 @@ class MessageBubble extends ConsumerWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child: _AvatarAwareBubbleRow(
         debugId: message.id,
+        selectionWrapper: hasVisibleContent(message) ? selectionWrapper : null,
         isMe: isMe,
         hideUserAvatar: hideUserAvatar,
         showLeftSlot: !isMe,
@@ -168,13 +195,19 @@ class MessageBubble extends ConsumerWidget {
         leftSlot: _AvatarSlot(
           showAvatar: showAvatar,
           isUser: false,
-          avatar: _Avatar(avatarUrl: avatarUrl),
+          avatar: Visibility(
+            visible: !hideContactAvatar,
+            maintainSize: true,
+            maintainAnimation: true,
+            maintainState: true,
+            child: _Avatar(avatarUrl: avatarUrl),
+          ),
           gapOnLeft: false,
         ),
         rightSlot: _AvatarSlot(
           showAvatar: showAvatar,
           isUser: true,
-          avatar: _Avatar(avatarUrl: userAvatar, isUser: true),
+          avatar: _Avatar(avatarUrl: userAvatar),
           gapOnLeft: true,
         ),
         bubbleChild: Column(
@@ -195,8 +228,11 @@ class MessageBubble extends ConsumerWidget {
               ),
 
             // Render image/sticker blocks separately without bubble
-            ..._buildMediaBlocksOnly(context, blocks,
-                imagePreviewScale: imagePreviewScale),
+            ..._buildMediaBlocksOnly(
+              context,
+              blocks,
+              imagePreviewScale: imagePreviewScale,
+            ),
             // Render non-image blocks in bubble (text, audio, etc.)
             if (_shouldShowBubble(
               blocks,
@@ -205,31 +241,35 @@ class MessageBubble extends ConsumerWidget {
               Builder(
                 builder: (context) {
                   return Listener(
-                    onPointerDown: (_useDesktopContextMenu &&
-                            onLongPress != null)
+                    onPointerDown:
+                        (_useDesktopContextMenu && onLongPress != null)
                         ? (event) {
                             if ((event.buttons & kSecondaryMouseButton) != 0) {
                               final box =
                                   context.findRenderObject() as RenderBox?;
-                              if (box != null) onLongPress!(box);
+                              if (box != null) {
+                                onLongPress!(box, event.position);
+                              }
                             }
                           }
                         : null,
                     child: GestureDetector(
-                      onLongPress:
-                          (!_useDesktopContextMenu && onLongPress != null)
-                              ? () {
-                                  final box =
-                                      context.findRenderObject() as RenderBox?;
-                                  if (box != null) onLongPress!(box);
-                                }
-                              : null,
+                      onLongPressStart: (onLongPress != null)
+                          ? (details) {
+                              final box =
+                                  context.findRenderObject() as RenderBox?;
+                              if (box != null) {
+                                onLongPress!(box, details.globalPosition);
+                              }
+                            }
+                          : null,
                       child: Container(
                         key: ValueKey<String>('message_bubble_${message.id}'),
                         margin: const EdgeInsets.symmetric(vertical: 0),
                         padding: const EdgeInsets.symmetric(
-                            horizontal: _kBubbleHorizontalPadding,
-                            vertical: _kBubbleVerticalPadding),
+                          horizontal: _kBubbleHorizontalPadding,
+                          vertical: _kBubbleVerticalPadding,
+                        ),
                         decoration: MoeG2Decoration(
                           radius: bubbleRadius,
                           color: bubbleColor,
@@ -242,6 +282,7 @@ class MessageBubble extends ConsumerWidget {
                                 fg,
                                 allowStreamingPlaceholder:
                                     allowStreamingPlaceholder,
+                                isAudioTextExpanded: isAudioTextExpanded,
                               )
                             : Builder(
                                 builder: (context) {
@@ -289,21 +330,30 @@ class MessageBubble extends ConsumerWidget {
       return true;
     }
     // 只要存在可视化内容块才显示气泡，避免 ToolBlock 等内部块形成空壳气泡。
-    return blocks.any((block) => _isBubbleRenderableBlock(
-          block,
-          allowStreamingPlaceholder: allowStreamingPlaceholder,
-        ));
+    return blocks.any(
+      (block) => isRenderableBlock(
+        block,
+        allowStreamingPlaceholder: allowStreamingPlaceholder,
+      ),
+    );
   }
 
   /// Build only image and sticker blocks without bubble wrapper
   List<Widget> _buildMediaBlocksOnly(
-      BuildContext context, List<MessageBlock> blocks,
-      {double imagePreviewScale = 1.0}) {
+    BuildContext context,
+    List<MessageBlock> blocks, {
+    double imagePreviewScale = 1.0,
+  }) {
     final widgets = <Widget>[];
     for (final block in blocks) {
       if (block is ImageBlock || block is EmojiBlock) {
-        widgets.add(_buildMediaImage(context, block,
-            imagePreviewScale: imagePreviewScale));
+        widgets.add(
+          _buildMediaImage(
+            context,
+            block,
+            imagePreviewScale: imagePreviewScale,
+          ),
+        );
       }
     }
     return widgets;
@@ -315,16 +365,19 @@ class MessageBubble extends ConsumerWidget {
     List<MessageBlock> blocks,
     Color textColor, {
     required bool allowStreamingPlaceholder,
+    required bool isAudioTextExpanded,
   }) {
     // Filter to only non-image and non-sticker blocks
     final nonMediaBlocks = blocks
         .where((block) => block is! ImageBlock && block is! EmojiBlock)
         .toList();
     final filteredBlocks = nonMediaBlocks
-        .where((block) => _isBubbleRenderableBlock(
-              block,
-              allowStreamingPlaceholder: allowStreamingPlaceholder,
-            ))
+        .where(
+          (block) => isRenderableBlock(
+            block,
+            allowStreamingPlaceholder: allowStreamingPlaceholder,
+          ),
+        )
         .toList();
 
     if (filteredBlocks.isEmpty) {
@@ -342,12 +395,27 @@ class MessageBubble extends ConsumerWidget {
           textColor,
           isLast: isLast,
           allowStreamingPlaceholder: allowStreamingPlaceholder,
+          isAudioTextExpanded: isAudioTextExpanded,
         );
       }),
     );
   }
 
-  bool _isBubbleRenderableBlock(
+  static bool hasVisibleContent(Message message) {
+    final blocks = message.blocks ?? const <MessageBlock>[];
+    return blocks.isEmpty ||
+        blocks.any(
+          (block) =>
+              block is ImageBlock ||
+              block is EmojiBlock ||
+              isRenderableBlock(
+                block,
+                allowStreamingPlaceholder: message.status == 'sending',
+              ),
+        );
+  }
+
+  static bool isRenderableBlock(
     MessageBlock block, {
     required bool allowStreamingPlaceholder,
   }) {
@@ -369,7 +437,11 @@ class MessageBubble extends ConsumerWidget {
     Color textColor, {
     required bool isLast,
     required bool allowStreamingPlaceholder,
+    required bool isAudioTextExpanded,
   }) {
+    if (block is ChatRecordBlock) {
+      return ChatRecordBubble(record: block, textColor: textColor);
+    }
     if (block is TextBlock) {
       // streaming 状态统一显示三点闪动，避免模型首段返回过快时看不到“加载中”反馈。
       if (allowStreamingPlaceholder && block.status == BlockStatus.streaming) {
@@ -394,7 +466,11 @@ class MessageBubble extends ConsumerWidget {
     } else if (block is FileBlock) {
       return _buildFileBlock(context, block, textColor);
     } else if (block is AudioBlock) {
-      return _buildAudioBlock(block, textColor);
+      return _buildAudioBlock(
+        block,
+        textColor,
+        isExpanded: isAudioTextExpanded,
+      );
     } else if (block is CodeBlock) {
       return _buildCodeBlock(block, textColor);
     } else if (block is ThinkingBlock) {
@@ -407,7 +483,10 @@ class MessageBubble extends ConsumerWidget {
   }
 
   Widget _buildFileBlock(
-      BuildContext context, FileBlock block, Color textColor) {
+    BuildContext context,
+    FileBlock block,
+    Color textColor,
+  ) {
     final colors = context.moeColors;
     final subtitleColor = textColor.withValues(alpha: 0.75);
     final sizeText = _formatBytes(block.fileSize);
@@ -420,7 +499,9 @@ class MessageBubble extends ConsumerWidget {
           radius: 10,
           color: colors.surfaceAlt.withValues(alpha: 0.35),
           border: Border.all(
-              color: colors.borderLight.withValues(alpha: 0.6), width: 0.5),
+            color: colors.borderLight.withValues(alpha: 0.6),
+            width: 0.5,
+          ),
         ),
         child: Row(
           children: [
@@ -447,7 +528,9 @@ class MessageBubble extends ConsumerWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                        color: subtitleColor, fontSize: fontSize - 0.5),
+                      color: subtitleColor,
+                      fontSize: fontSize - 0.5,
+                    ),
                   ),
                 ],
               ),
@@ -472,9 +555,13 @@ class MessageBubble extends ConsumerWidget {
     ImageBlock block, {
     required double maxWidth,
     required double maxHeight,
+    MediaAsset? mediaAsset,
   }) {
-    final rawWidth = block.width?.toDouble();
-    final rawHeight = block.height?.toDouble();
+    final hasBlockSize = (block.width ?? 0) > 0 && (block.height ?? 0) > 0;
+    final rawWidth = (hasBlockSize ? block.width : mediaAsset?.width)
+        ?.toDouble();
+    final rawHeight = (hasBlockSize ? block.height : mediaAsset?.height)
+        ?.toDouble();
     if (rawWidth == null ||
         rawHeight == null ||
         rawWidth <= 0 ||
@@ -488,17 +575,17 @@ class MessageBubble extends ConsumerWidget {
     if (!scale.isFinite || scale <= 0) {
       return null;
     }
-    return Size(
-      rawWidth * scale,
-      rawHeight * scale,
-    );
+    return Size(rawWidth * scale, rawHeight * scale);
   }
 
   /// 统一渲染图片/表情包块
   /// ImageBlock → 等比缩放，最长边贴合最大尺寸（仿微信策略）
   /// EmojiBlock → BoxFit.contain 完整显示（表情包，小尺寸，无裁剪）
-  Widget _buildMediaImage(BuildContext context, MessageBlock block,
-      {double imagePreviewScale = 1.0}) {
+  Widget _buildMediaImage(
+    BuildContext context,
+    MessageBlock block, {
+    double imagePreviewScale = 1.0,
+  }) {
     final skin = context.skin;
     final radius = skin.bubbleRadius;
     final isSticker = block is EmojiBlock;
@@ -520,11 +607,7 @@ class MessageBubble extends ConsumerWidget {
     Widget imageWidget;
     final photoConstraints = BoxConstraints(maxWidth: maxW, maxHeight: maxH);
     var photoDisplaySize = block is ImageBlock
-        ? _resolveImageDisplaySize(
-            block,
-            maxWidth: maxW,
-            maxHeight: maxH,
-          )
+        ? _resolveImageDisplaySize(block, maxWidth: maxW, maxHeight: maxH)
         : null;
     // 照片无尺寸时（生成中/延迟交付）补一个保守的估算尺寸，让占位与成图同高，
     // 消除「无尺寸 ConstrainedBox(高 maxH*0.55) → 有尺寸 SizedBox」的高度跳变。
@@ -539,15 +622,13 @@ class MessageBubble extends ConsumerWidget {
     // 有尺寸元数据时用实际显示宽（竖图更省），否则回退到 maxW；cacheWidth
     // 默认 allowUpscaling=false，小图不会被放大。
     final photoDecodeWidth =
-        ((photoDisplaySize?.width ?? maxW) * MediaQuery.devicePixelRatioOf(context))
+        ((photoDisplaySize?.width ?? maxW) *
+                MediaQuery.devicePixelRatioOf(context))
             .round();
 
     Widget wrapPhoto(Widget child) {
       if (photoDisplaySize == null) {
-        return ConstrainedBox(
-          constraints: photoConstraints,
-          child: child,
-        );
+        return ConstrainedBox(constraints: photoConstraints, child: child);
       }
       return SizedBox(
         width: photoDisplaySize.width,
@@ -558,25 +639,25 @@ class MessageBubble extends ConsumerWidget {
 
     // 统一的占位/错误态
     Widget placeholder({bool isError = false}) => Container(
-          width: isSticker ? null : photoDisplaySize?.width ?? maxW,
-          height: isSticker ? null : photoDisplaySize?.height ?? maxH * 0.55,
-          constraints: isSticker
-              ? BoxConstraints(maxWidth: maxW * 0.7, maxHeight: maxH * 0.7)
-              : null,
-          color: Colors.grey.shade200,
-          child: Center(
-            child: isError
-                ? Icon(
-                    isSticker ? Icons.emoji_emotions : Icons.broken_image,
-                    color: Colors.grey,
-                  )
-                : const SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-          ),
-        );
+      width: isSticker ? null : photoDisplaySize?.width ?? maxW,
+      height: isSticker ? null : photoDisplaySize?.height ?? maxH * 0.55,
+      constraints: isSticker
+          ? BoxConstraints(maxWidth: maxW * 0.7, maxHeight: maxH * 0.7)
+          : null,
+      color: Colors.grey.shade200,
+      child: Center(
+        child: isError
+            ? Icon(
+                isSticker ? Icons.emoji_emotions : Icons.broken_image,
+                color: Colors.grey,
+              )
+            : const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+      ),
+    );
 
     // 根据 block 类型提取 ImageProvider 并构建 imageWidget
     if (isSticker) {
@@ -594,7 +675,14 @@ class MessageBubble extends ConsumerWidget {
           imageProvider = FileImage(File(_normalizeLocalFilePath(path)));
         }
       }
-      imageWidget = imageProvider != null
+      final mediaId = mediaIdFromReference(path);
+      imageWidget = mediaId != null
+          ? SizedBox(
+              width: maxW,
+              height: maxH,
+              child: CloudImage(mediaId: mediaId, cacheWidth: photoDecodeWidth),
+            )
+          : imageProvider != null
           ? ConstrainedBox(
               constraints: BoxConstraints(maxWidth: maxW, maxHeight: maxH),
               child: Image(
@@ -607,7 +695,27 @@ class MessageBubble extends ConsumerWidget {
     } else {
       // 照片：用 ConstrainedBox 限制最大尺寸，图片等比缩放（仿微信）
       final imgBlock = block as ImageBlock;
-      if (imgBlock.localPath != null && imgBlock.localPath!.isNotEmpty) {
+      if (imgBlock.mediaId != null) {
+        imageWidget = CloudImage(
+          mediaId: imgBlock.mediaId!,
+          cacheWidth: photoDecodeWidth,
+          frameBuilder: (context, asset, child) {
+            final size =
+                _resolveImageDisplaySize(
+                  imgBlock,
+                  maxWidth: maxW,
+                  maxHeight: maxH,
+                  mediaAsset: asset,
+                ) ??
+                photoDisplaySize!;
+            return SizedBox(
+              width: size.width,
+              height: size.height,
+              child: child,
+            );
+          },
+        );
+      } else if (imgBlock.localPath != null && imgBlock.localPath!.isNotEmpty) {
         imageProvider = FileImage(File(imgBlock.localPath!));
         imageWidget = wrapPhoto(
           Image.file(
@@ -656,8 +764,9 @@ class MessageBubble extends ConsumerWidget {
     final heroTag = isSticker ? 'sticker_${block.id}' : 'image_${block.id}';
 
     return Padding(
-      padding:
-          const EdgeInsets.symmetric(vertical: _kMediaBlockVerticalPadding),
+      padding: const EdgeInsets.symmetric(
+        vertical: _kMediaBlockVerticalPadding,
+      ),
       child: Builder(
         builder: (context) {
           return Listener(
@@ -665,7 +774,9 @@ class MessageBubble extends ConsumerWidget {
                 ? (event) {
                     if ((event.buttons & kSecondaryMouseButton) != 0) {
                       final box = context.findRenderObject() as RenderBox?;
-                      if (box != null) onMediaLongPress!(box, block);
+                      if (box != null) {
+                        onMediaLongPress!(box, block, event.position);
+                      }
                     }
                   }
                 : null,
@@ -673,10 +784,12 @@ class MessageBubble extends ConsumerWidget {
               onTap: imageProvider != null
                   ? () => _showImagePreview(context, imageProvider!, heroTag)
                   : null,
-              onLongPress: (!_useDesktopContextMenu && onMediaLongPress != null)
-                  ? () {
+              onLongPressStart: (onMediaLongPress != null)
+                  ? (details) {
                       final box = context.findRenderObject() as RenderBox?;
-                      if (box != null) onMediaLongPress!(box, block);
+                      if (box != null) {
+                        onMediaLongPress!(box, block, details.globalPosition);
+                      }
                     }
                   : null,
               child: Hero(
@@ -692,17 +805,16 @@ class MessageBubble extends ConsumerWidget {
 
   /// 显示图片全屏预览（支持画廊模式左右滑动切换）
   void _showImagePreview(
-      BuildContext context, ImageProvider imageProvider, String heroTag) {
+    BuildContext context,
+    ImageProvider imageProvider,
+    String heroTag,
+  ) {
     final images = chatImages;
     if (images != null && images.length > 1) {
       // 画廊模式：在列表中找到当前图片的索引
       int index = images.indexWhere((item) => item.heroTag == heroTag);
       if (index < 0) index = 0;
-      MoeImagePreview.showGallery(
-        context,
-        images: images,
-        initialIndex: index,
-      );
+      MoeImagePreview.showGallery(context, images: images, initialIndex: index);
     } else {
       // 单张预览
       MoeImagePreview.show(context, imageProvider, heroTag: heroTag);
@@ -710,10 +822,38 @@ class MessageBubble extends ConsumerWidget {
   }
 
   /// 渲染音频块
-  Widget _buildAudioBlock(AudioBlock block, Color textColor) {
-    return AudioPlayerWidget(
-      block: block,
-      textColor: textColor,
+  Widget _buildAudioBlock(
+    AudioBlock block,
+    Color textColor, {
+    required bool isExpanded,
+  }) {
+    final audioText = block.text?.trim();
+    final hasText = audioText != null && audioText.isNotEmpty;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        AudioPlayerWidget(block: block, textColor: textColor),
+        if (isExpanded && hasText) ...[
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.only(top: 6),
+            decoration: BoxDecoration(
+              border: Border(
+                top: BorderSide(
+                  color: textColor.withValues(alpha: 0.15),
+                  width: 0.5,
+                ),
+              ),
+            ),
+            child: _buildMessageText(
+              audioText,
+              TextStyle(color: textColor, height: 1.42, fontSize: fontSize),
+            ),
+          ),
+        ],
+      ],
     );
   }
 
@@ -771,10 +911,10 @@ class MessageBubble extends ConsumerWidget {
   }
 
   Widget _buildMessageText(String text, TextStyle style) {
-    return Text(
-      text,
-      style: style,
-    );
+    if (text.length >= 512 && text.contains('\n')) {
+      return IncrementalMessageText(text, style: style);
+    }
+    return Text(text, style: style);
   }
 
   /// 渲染错误块
@@ -795,8 +935,10 @@ class MessageBubble extends ConsumerWidget {
           Expanded(
             child: Text(
               block.message,
-              style:
-                  TextStyle(color: Colors.red.shade900, fontSize: fontSize + 1),
+              style: TextStyle(
+                color: Colors.red.shade900,
+                fontSize: fontSize + 1,
+              ),
             ),
           ),
         ],
@@ -809,7 +951,7 @@ class MessageBubble extends ConsumerWidget {
 ///
 /// showAvatar=false 时仍保留同宽占位，确保连续消息对齐不抖动。
 class _AvatarSlot extends StatelessWidget {
-  static const double _kAvatarGap = 8.0;
+  static const double _kAvatarGap = MessageBubble.avatarBubbleGap;
   static const double fallbackWidth = _Avatar.kSize + _kAvatarGap;
 
   final bool showAvatar;
@@ -849,6 +991,7 @@ class _AvatarAwareBubbleRow extends StatelessWidget {
   static const double _kMinBubbleMaxWidth = 120.0;
   static const double _kFailedIndicatorWidth = 24.0; // 20 + 右侧间距 4
 
+  final Widget Function(Widget child)? selectionWrapper;
   final String debugId;
   final bool isMe;
   final bool hideUserAvatar;
@@ -862,6 +1005,7 @@ class _AvatarAwareBubbleRow extends StatelessWidget {
 
   const _AvatarAwareBubbleRow({
     required this.debugId,
+    this.selectionWrapper,
     required this.isMe,
     required this.hideUserAvatar,
     required this.showLeftSlot,
@@ -882,24 +1026,20 @@ class _AvatarAwareBubbleRow extends StatelessWidget {
         final failedReserve = (isMe && hasFailedIndicator)
             ? _AvatarAwareBubbleRow._kFailedIndicatorWidth
             : 0.0;
-        final bubbleWidthUpperBound =
-            constraints.maxWidth > 0 ? constraints.maxWidth : 0.0;
+        final bubbleWidthUpperBound = constraints.maxWidth > 0
+            ? constraints.maxWidth
+            : 0.0;
         final bubbleWidthLowerBound = math.min(
           _AvatarAwareBubbleRow._kMinBubbleMaxWidth,
           bubbleWidthUpperBound,
         );
         final maxBubbleWidth =
             (constraints.maxWidth - leftReserve - rightReserve - failedReserve)
-                .clamp(
-                  bubbleWidthLowerBound,
-                  bubbleWidthUpperBound,
-                )
+                .clamp(bubbleWidthLowerBound, bubbleWidthUpperBound)
                 .toDouble();
 
         Widget bubbleArea = ConstrainedBox(
-          key: ValueKey<String>(
-            'message_bubble_constraints_$debugId',
-          ),
+          key: ValueKey<String>('message_bubble_constraints_$debugId'),
           constraints: BoxConstraints(maxWidth: maxBubbleWidth),
           child: bubbleChild,
         );
@@ -908,14 +1048,11 @@ class _AvatarAwareBubbleRow extends StatelessWidget {
           bubbleArea = Row(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              failedIndicator!,
-              bubbleArea,
-            ],
+            children: [failedIndicator!, bubbleArea],
           );
         }
 
-        return Row(
+        final row = Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (showLeftSlot) leftSlot,
@@ -928,6 +1065,7 @@ class _AvatarAwareBubbleRow extends StatelessWidget {
             if (showRightSlot) rightSlot,
           ],
         );
+        return selectionWrapper?.call(row) ?? row;
       },
     );
   }
@@ -937,26 +1075,24 @@ class _Avatar extends StatelessWidget {
   static const double kSize = 42.0;
 
   final String? avatarUrl;
-  final bool isUser;
-  const _Avatar({required this.avatarUrl, this.isUser = false});
+  const _Avatar({required this.avatarUrl});
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
     // 头像仅 42px 显示，按目标像素降采样解码，避免原图（可达数百万像素）
     // 进 ImageCache 拖慢滚动。
-    final avatarDecodeWidth =
-        (kSize * MediaQuery.devicePixelRatioOf(context)).round();
+    final avatarDecodeWidth = (kSize * MediaQuery.devicePixelRatioOf(context))
+        .round();
 
-    // 头像大小
-    Widget buildFallback() => Center(
-        child: Icon(isUser ? Icons.person : Icons.face,
-            color: colors.muted, size: 22));
+    // 缺省、加载中和加载失败时保持空白头像。
+    Widget buildFallback() => const SizedBox.expand();
 
     Widget buildImage(String url) {
       final trimmed = url.trim();
       // 解析对齐标记（如 #top），并获取清理后的路径和对齐方式
-      final alignment =
-          trimmed.contains('#top') ? Alignment.topCenter : Alignment.center;
+      final alignment = trimmed.contains('#top')
+          ? Alignment.topCenter
+          : Alignment.center;
       final cleanUrl = trimmed.split('#').first;
       final isNetwork =
           cleanUrl.startsWith('http://') || cleanUrl.startsWith('https://');
@@ -1129,9 +1265,7 @@ class _TypingDotsIndicatorState extends State<TypingDotsIndicator>
         crossAxisAlignment: CrossAxisAlignment.center,
         children: List.generate(3, (index) {
           return Padding(
-            padding: EdgeInsets.only(
-              right: index < 2 ? widget.spacing : 0,
-            ),
+            padding: EdgeInsets.only(right: index < 2 ? widget.spacing : 0),
             child: AnimatedBuilder(
               animation: _controller,
               builder: (context, child) {
@@ -1141,12 +1275,10 @@ class _TypingDotsIndicatorState extends State<TypingDotsIndicator>
                 // 活跃区间 [0, 0.4]，其余时间静止
                 final active = t < 0.4;
                 // 只使用透明度变化实现从左到右闪动，不缩放
-                final opacity =
-                    active ? 0.4 + 0.6 * math.sin(t / 0.4 * math.pi) : 0.4;
-                return Opacity(
-                  opacity: opacity,
-                  child: child,
-                );
+                final opacity = active
+                    ? 0.4 + 0.6 * math.sin(t / 0.4 * math.pi)
+                    : 0.4;
+                return Opacity(opacity: opacity, child: child);
               },
               child: Container(
                 width: widget.dotSize,

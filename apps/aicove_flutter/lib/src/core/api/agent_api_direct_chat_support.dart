@@ -22,13 +22,15 @@ class _AgentApiDirectChatSupport {
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
     List<Map<String, dynamic>>? tools,
+    ProviderChatRequestOptions? requestOptions,
     TraceLogger? trace,
     String? turnId,
     int? roundIndex,
     String? traceId,
   }) async {
-    final logger =
-        trace ?? AppLogger.startTrace('API调用', source: 'AgentApiClient');
+    final logger = trace ??
+        AppLogger.startTrace('API调用',
+            source: 'AgentApiClient', traceId: traceId);
 
     final trimmedBase = providerApiBase?.trim();
     final trimmedKey = providerApiKey?.trim();
@@ -51,6 +53,7 @@ class _AgentApiDirectChatSupport {
       providerApiBase: trimmedBase,
       customConfig: customConfig,
       tools: tools,
+      requestOptions: requestOptions,
     );
     final provider = preparedRequest.provider;
     final model = preparedRequest.model;

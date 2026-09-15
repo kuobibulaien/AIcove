@@ -1,3 +1,7 @@
+import 'dart:io';
+import 'dart:ui' as ui;
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
 import 'package:aicove_flutter/src/ui/features/settings/pages/default_model_settings_page.dart';
@@ -41,7 +45,7 @@ const _testSettings = AppSettings(
   apiBaseUrl: 'https://api.openai.com/v1',
   imageGenerationEnabled: false,
   maxFileUploadMB: 10,
-  historyMessageLimit: 100,
+  contextWindowTokens: 272000,
   customModels: <CustomModel>[],
   providers: <ProviderAuth>[
     ProviderAuth(
@@ -86,8 +90,6 @@ const _testSettings = AppSettings(
   accentColor: 'FC96AA',
   hideUserAvatar: false,
   defaultChatModels: <String>['provider_a:alpha-chat'],
-  defaultVisionModel: 'provider_a:alpha-chat',
-  preferVisionAssistant: false,
 );
 
 Future<ProviderContainer> _createLoadedContainer() async {
@@ -111,6 +113,47 @@ Widget _buildTestApp(ProviderContainer container, Widget child) {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUpAll(() async {
+    if (!const bool.fromEnvironment('WRITE_MODEL_QA')) return;
+    final font = FontLoader('ModelCapture');
+    font.addFont(File('/System/Library/Fonts/STHeiti Medium.ttc').readAsBytes().then(ByteData.sublistView));
+    await font.load();
+    final icons = FontLoader('MaterialIcons');
+    icons.addFont(File('build/unit_test_assets/fonts/MaterialIcons-Regular.otf').readAsBytes().then(ByteData.sublistView));
+    await icons.load();
+  });
+  for (final width in [390.0, 1000.0]) {
+    testWidgets('default models has no assistant section at $width', (tester) async {
+      await tester.binding.setSurfaceSize(Size(width, 720));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final container = await _createLoadedContainer();
+      addTearDown(container.dispose);
+      final capture = GlobalKey();
+      await tester.pumpWidget(UncontrolledProviderScope(container: container, child: MaterialApp(
+        theme: ThemeData(fontFamily: const bool.fromEnvironment('WRITE_MODEL_QA') ? 'ModelCapture' : null),
+        home: RepaintBoundary(key: capture, child: const DefaultModelSettingsPage()),
+      )));
+      await tester.pumpAndSettle();
+      expect(find.text('多模态辅助模型'), findsNothing);
+      expect(find.text('优先使用辅助模型'), findsNothing);
+      expect(find.text('默认聊天模型'), findsOneWidget);
+      expect(find.text('上下文窗口'), findsOneWidget);
+      expect(find.text('Alpha Chat'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      if (const bool.fromEnvironment('WRITE_MODEL_QA')) {
+        await tester.runAsync(() async {
+          final boundary = capture.currentContext!.findRenderObject() as RenderRepaintBoundary;
+          final image = await boundary.toImage(pixelRatio: 1.5);
+          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+          final file = File('../../.codex-temp/context-window/default-models-${width.toInt()}.png');
+          await file.parent.create(recursive: true);
+          await file.writeAsBytes(bytes!.buffer.asUint8List());
+          image.dispose();
+        });
+      }
+    });
+  }
 
   setUp(() {
     debugClearProviderDetailWarmCache();

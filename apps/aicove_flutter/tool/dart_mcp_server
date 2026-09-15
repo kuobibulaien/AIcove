@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Shared stdio entry point for every project harness. Keep stdout protocol-only.
+set -euo pipefail
+tool_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd "$tool_dir/.."
+exec "$tool_dir/flutterw" --dart mcp-server "$@"

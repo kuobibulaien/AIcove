@@ -1,8 +1,11 @@
 library;
 
 import 'dart:async';
+import '../domain/context_window_policy.dart';
+import '../../../core/media/media_resolver.dart';
 import 'dart:convert';
 import 'dart:io';
+import '../../../core/models/image_generation_snapshot.dart';
 
 import '../../plugins/domain/handlers/ai_tool.dart';
 import '../../plugins/domain/plugin.dart';
@@ -18,6 +21,7 @@ import '../../../core/utils/mime_utils.dart';
 import '../../settings/settings_models.dart';
 import '../../observability/trace_models.dart';
 import '../../observability/trace_store.dart';
+import '../../agent_context/domain/silly_tavern_regex_processor.dart';
 import 'chat_tool_fallback_parser.dart';
 import 'chat_types.dart';
 import 'stream_monitor_service.dart';
@@ -40,6 +44,8 @@ class ChatSendApiRunner {
 
   static const ChatToolFallbackParser _fallbackParser =
       ChatToolFallbackParser();
+  static const SillyTavernRegexProcessor _presetRegexProcessor =
+      SillyTavernRegexProcessor();
   static const String _logTag = 'ChatSendService';
   static const int _maxFastFollowupRounds = 1;
   static const String _stableDrawImageReviewPrefix =
@@ -74,6 +80,7 @@ class ChatSendApiRunner {
     void Function()? onStreamingFallback,
     TraceContext? traceContext,
   }) async {
+    availableTools ??= config.boundTools;
     final flowSettings = config.settings.callFlowSettings;
     final effectiveImageRoute =
         config.settings.resolveEffectiveImageGenerationRoute(
@@ -127,7 +134,7 @@ class ChatSendApiRunner {
 
     var currentMessages = List<Map<String, dynamic>>.from(config.messages);
     SendMessageRichResult? lastRich;
-    var shouldAttemptStreaming = enableStreaming;
+    var shouldAttemptStreaming = config.presetStreamResponse ?? enableStreaming;
     final executedFallbackCallSignatures = <String>{};
     var executedAnyTool = false;
     var lastRoundIndex = 1;
@@ -204,6 +211,8 @@ class ChatSendApiRunner {
       if (!supportsVision) {
         currentMessages = _sanitizeMessagesForNonVisionModel(currentMessages);
       }
+      currentMessages = await resolveModelMedia(currentMessages);
+      currentMessages = await config.runtimeContext?.prepare(currentMessages) ?? currentMessages;
       lastRoundIndex = round;
       final roundTrace = apiCallTrace?.startChild('第 $round 轮 API 调用');
       roundTrace?.note('请求', metadata: {
@@ -227,69 +236,100 @@ class ChatSendApiRunner {
             providerApiKey: config.providerApiKey,
             customConfig: config.customConfig,
             tools: config.tools,
+            requestOptions: config.providerRequestOptions,
             trace: roundTrace,
             turnId: effectiveTurnId,
             roundIndex: round,
             traceId: traceContext?.traceId,
           );
 
-      if (shouldAttemptStreaming) {
-        final streamTextFilter = _VisibleAssistantStreamFilter();
-        unawaited(StreamMonitorService.recordAttempt(
-          modelFullId: config.modelFullId,
-          round: round,
-        ));
+      for (var recovery = 0; ; recovery++) {
         try {
-          lastRich = await agent.sendMessageRichStream(
-            agentId: 'default',
-            sessionId: sessionId,
-            modelFullId: config.modelFullId,
-            messages: currentMessages,
-            userText: round == 1 ? (userText ?? '') : '',
-            temperature: config.effectiveTemperature,
-            topP: config.modelTopP,
-            token: config.settings.backendApiKey,
-            toolPrefs: config.toolPrefs,
-            providerApiBase: config.providerApiBase,
-            providerApiKey: config.providerApiKey,
-            customConfig: config.customConfig,
-            tools: config.tools,
-            onTextDelta: (delta) {
-              if (onStreamTextDelta == null || delta.isEmpty) return;
-              final visibleDelta = streamTextFilter.consume(delta);
-              if (visibleDelta.isEmpty) return;
-              onStreamTextDelta(visibleDelta);
-            },
-            onToolCallsDetected: onStreamToolCallObserved,
-            trace: roundTrace,
-            turnId: effectiveTurnId,
-            roundIndex: round,
-            traceId: traceContext?.traceId,
-          );
-          unawaited(StreamMonitorService.recordSuccess(
-            modelFullId: config.modelFullId,
-            round: round,
-          ));
-        } catch (e) {
-          shouldAttemptStreaming = false;
+          if (shouldAttemptStreaming) {
+            final streamTextFilter = _VisibleAssistantStreamFilter();
+            unawaited(
+              StreamMonitorService.recordAttempt(
+                modelFullId: config.modelFullId,
+                round: round,
+              ),
+            );
+            try {
+              lastRich = await agent.sendMessageRichStream(
+                agentId: 'default',
+                sessionId: sessionId,
+                modelFullId: config.modelFullId,
+                messages: currentMessages,
+                userText: round == 1 ? (userText ?? '') : '',
+                temperature: config.effectiveTemperature,
+                topP: config.modelTopP,
+                token: config.settings.backendApiKey,
+                toolPrefs: config.toolPrefs,
+                providerApiBase: config.providerApiBase,
+                providerApiKey: config.providerApiKey,
+                customConfig: config.customConfig,
+                tools: config.tools,
+                requestOptions: config.providerRequestOptions,
+                onTextDelta: (delta) {
+                  if (onStreamTextDelta == null || delta.isEmpty) return;
+                  final visibleDelta = streamTextFilter.consume(delta);
+                  if (visibleDelta.isEmpty) return;
+                  onStreamTextDelta(visibleDelta);
+                },
+                onToolCallsDetected: onStreamToolCallObserved,
+                trace: roundTrace,
+                turnId: effectiveTurnId,
+                roundIndex: round,
+                traceId: traceContext?.traceId,
+              );
+              unawaited(
+                StreamMonitorService.recordSuccess(
+                  modelFullId: config.modelFullId,
+                  round: round,
+                ),
+              );
+            } catch (e) {
+              if (isContextOverflow(e)) rethrow;
+              shouldAttemptStreaming = false;
+              onStreamingFallback?.call();
+              final failureReason = StreamMonitorService.classifyError(e);
+              unawaited(
+                StreamMonitorService.recordFallback(
+                  modelFullId: config.modelFullId,
+                  error: e,
+                  reason: failureReason,
+                  round: round,
+                ),
+              );
+              AppLogger.warning(
+                _logTag,
+                '流式调用失败，回退整段响应',
+                metadata: {
+                  'round': round,
+                  'model': config.modelFullId,
+                  'reason': failureReason.value,
+                  'error': e.toString(),
+                },
+              );
+              lastRich = await sendRichNonStream();
+            }
+          } else {
+            lastRich = await sendRichNonStream();
+          }
+
+          break;
+        } catch (error) {
+          if (recovery >= 1 ||
+              config.runtimeContext == null ||
+              !isContextOverflow(error)) {
+            rethrow;
+          }
+          // 只重试当前模型请求；工具执行在这个循环之外。
           onStreamingFallback?.call();
-          final failureReason = StreamMonitorService.classifyError(e);
-          unawaited(StreamMonitorService.recordFallback(
-            modelFullId: config.modelFullId,
-            error: e,
-            reason: failureReason,
-            round: round,
-          ));
-          AppLogger.warning(_logTag, '流式调用失败，回退整段响应', metadata: {
-            'round': round,
-            'model': config.modelFullId,
-            'reason': failureReason.value,
-            'error': e.toString(),
-          });
-          lastRich = await sendRichNonStream();
+          currentMessages = await config.runtimeContext!.prepare(
+            currentMessages,
+            force: true,
+          );
         }
-      } else {
-        lastRich = await sendRichNonStream();
       }
 
       roundTrace?.note('响应', metadata: {
@@ -634,6 +674,13 @@ class ChatSendApiRunner {
       );
     }
 
+    final presetRegexResult = await _presetRegexProcessor.applyToDisplayText(
+      text: finalAssistantText,
+      scripts: config.presetRegexScripts,
+      authorized: config.presetRegexAuthorized,
+    );
+    finalAssistantText = presetRegexResult.text;
+
     apiCallTrace?.note('完成', metadata: {
       'textLength': finalAssistantText.length,
       'toolResults': lastRich?.toolResults.length ?? 0,
@@ -661,7 +708,14 @@ class ChatSendApiRunner {
         stage: TraceStage.finalReplyReady.value,
         source: 'ChatSendApiRunner',
         payload: {
-          'rawAiResponse': finalAssistantText,
+          'rawAiResponse': rawAssistantText,
+          'regexDisplayText': finalAssistantText,
+          'regex': <String, dynamic>{
+            'declared': config.presetRegexScripts.length,
+            'authorized': config.presetRegexAuthorized,
+            'warnings': presetRegexResult.warnings,
+            'trace': presetRegexResult.traces,
+          },
           'finalReply': pluginResult.processedText,
         },
       );
@@ -674,7 +728,7 @@ class ChatSendApiRunner {
         source: 'ChatSendApiRunner',
         payloadRef: finalPayloadRef,
         meta: {
-          'rawReplyLength': finalAssistantText.length,
+          'rawReplyLength': rawAssistantText.length,
           'finalReplyLength': pluginResult.processedText.length,
         },
       );
@@ -693,7 +747,7 @@ class ChatSendApiRunner {
       turnId: effectiveTurnId,
       roundIndex: lastRoundIndex,
       eventType: 'final_response',
-      rawAiResponse: finalAssistantText,
+      rawAiResponse: rawAssistantText,
       finalReply: pluginResult.processedText,
       stage: TraceStage.finalReplyReady.value,
       stageStatus: TraceEventStatus.success.value,

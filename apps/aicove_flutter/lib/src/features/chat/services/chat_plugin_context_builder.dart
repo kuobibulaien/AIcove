@@ -4,6 +4,7 @@ import '../../plugins/domain/handlers/ai_tool.dart';
 import '../../plugins/domain/plugin.dart';
 import '../../plugins/plugin_manager.dart';
 import '../../plugins/memory/memory_plugin.dart';
+import '../../plugins/image/image_plugin.dart';
 import '../../../core/app_logger.dart';
 import 'chat_types.dart' show isProviderRefreshTimingError;
 
@@ -114,6 +115,10 @@ class ChatPluginContextBuilder {
     required String userMessage,
     required bool supportsToolCalling,
     String? conversationId,
+    bool? useFastImageRoute,
+    String? customDrawingPrompt,
+    bool hasInternalImageContext = false,
+    bool hasImageFailureReminder = false,
     Set<String> excludedPluginIds = const <String>{},
     Duration retryDelay = const Duration(milliseconds: 120),
     int maxRetryAttempts = 1,
@@ -143,6 +148,10 @@ class ChatPluginContextBuilder {
           userMessage: userMessage,
           supportsToolCalling: supportsToolCalling,
           conversationId: conversationId,
+          useFastImageRoute: useFastImageRoute,
+          customDrawingPrompt: customDrawingPrompt,
+          hasInternalImageContext: hasInternalImageContext,
+          hasImageFailureReminder: hasImageFailureReminder,
           retryDelay: retryDelay,
           maxRetryAttempts: maxRetryAttempts,
         );
@@ -184,12 +193,24 @@ class ChatPluginContextBuilder {
     required String userMessage,
     required bool supportsToolCalling,
     String? conversationId,
+    required bool? useFastImageRoute,
+    required String? customDrawingPrompt,
+    required bool hasInternalImageContext,
+    required bool hasImageFailureReminder,
     required Duration retryDelay,
     required int maxRetryAttempts,
   }) async {
     var attempt = 0;
     while (true) {
       try {
+        if (plugin is ImagePlugin && useFastImageRoute != null) {
+          return plugin.buildRequestSystemPrompt(
+            useFastRoute: useFastImageRoute,
+            customDrawingPrompt: customDrawingPrompt,
+            hasInternalImageContext: hasInternalImageContext,
+            hasFailureReminder: hasImageFailureReminder,
+          );
+        }
         return plugin is MemoryPlugin
             ? await plugin.getSystemPrompt(
                 userMessage: userMessage,
@@ -239,6 +260,7 @@ class ChatPluginContextBuilder {
   /// 其他错误保持原行为（记录告警并跳过该插件）。
   Future<List<AITool>> collectPluginToolsWithRetry(
     List<Plugin> plugins, {
+    String? conversationId,
     Duration retryDelay = const Duration(milliseconds: 120),
     int maxRetryAttempts = 1,
   }) async {
@@ -247,7 +269,9 @@ class ChatPluginContextBuilder {
       var attempt = 0;
       while (true) {
         try {
-          tools.addAll(plugin.getTools());
+          tools.addAll(plugin is MemoryPlugin
+              ? await plugin.getToolsForConversation(conversationId)
+              : plugin.getTools());
           break;
         } catch (e) {
           final retryable = isProviderRefreshTimingError(e);

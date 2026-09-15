@@ -6,11 +6,13 @@ services:
     container_name: aicove-sync
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
-      - SECRET_KEY=${SECRET_KEY:-change-this-secret-key}
+      - SECRET_KEY=${SECRET_KEY:?Set SECRET_KEY in .env}
+      - SYNC_V3_ENCRYPTION_KEY=${SYNC_V3_ENCRYPTION_KEY:?Set SYNC_V3_ENCRYPTION_KEY in .env}
+      - SYNC_V3_BLOB_DIR=/app/data/sync3-blobs
       - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/sync.db}
-      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
       - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-10080}
     volumes:
       - ./data:/app/data

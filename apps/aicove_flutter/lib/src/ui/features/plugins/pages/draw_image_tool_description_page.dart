@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:aicove_flutter/src/ui/shared/animations/parallax_slide_page_route.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../features/plugins/image/image_config.dart';
@@ -75,7 +76,9 @@ class _DrawImageToolDescriptionPageState
   }
 
   bool _blocksEqual(
-      DrawImageToolDescriptionBlocks a, DrawImageToolDescriptionBlocks b) {
+    DrawImageToolDescriptionBlocks a,
+    DrawImageToolDescriptionBlocks b,
+  ) {
     return a.toolDescription == b.toolDescription &&
         a.promptDescription == b.promptDescription &&
         a.negativePromptDescription == b.negativePromptDescription &&
@@ -91,12 +94,9 @@ class _DrawImageToolDescriptionPageState
     final config = ref.watch(imagePluginConfigProvider);
     final notifier = ref.read(imagePluginConfigProvider.notifier);
 
-    return Scaffold(
+    return MoePageScaffold(
       backgroundColor: colors.surface,
-      appBar: const MoeAppBar(
-        title: '稳定链路提示词模板',
-        showBackButton: true,
-      ),
+      appBar: const MoeAppBar(title: '稳定链路提示词模板', showBackButton: true),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(
           MoeSpacing.md,
@@ -146,7 +146,6 @@ class _DrawImageToolDescriptionPageState
             for (var i = 0; i < config.systemPromptPresets.length; i++)
               _slotRow(context, config, notifier, i, selectedName),
             MoeSettingsRow(
-              icon: Icons.add_circle_outline,
               label: '添加预设',
               subtitle: '复制当前选中预设的内容',
               trailingType: MoeSettingsRowTrailing.none,
@@ -184,7 +183,8 @@ class _DrawImageToolDescriptionPageState
       ),
       onTap: () {
         notifier.updateConfig(
-            config.copyWith(selectedSystemPromptPresetName: preset.name));
+          config.copyWith(selectedSystemPromptPresetName: preset.name),
+        );
       },
       showDivider: true,
     );
@@ -202,22 +202,19 @@ class _DrawImageToolDescriptionPageState
       children: [
         GestureDetector(
           onTap: () => setState(() => _previewExpanded = !_previewExpanded),
-          child: Container(
+          child: MoeButtonSurface(
             padding: const EdgeInsets.symmetric(
               horizontal: MoeSpacing.md,
               vertical: MoeSpacing.sm,
             ),
-            decoration: BoxDecoration(
-              color: colors.componentBackground,
-              borderRadius: _previewExpanded
-                  ? const BorderRadius.vertical(
-                      top: Radius.circular(MoeSmoothRadii.sm))
-                  : BorderRadius.circular(MoeSmoothRadii.sm),
-            ),
+            tintColor: Colors.transparent,
+            borderRadius: _previewExpanded
+                ? const BorderRadius.vertical(
+                    top: Radius.circular(MoeSmoothRadii.sm),
+                  )
+                : BorderRadius.circular(MoeSmoothRadii.sm),
             child: Row(
               children: [
-                Icon(Icons.preview_outlined, size: 20, color: colors.text),
-                const SizedBox(width: MoeSpacing.xs),
                 Expanded(
                   child: Text(
                     '当前生效内容预览',
@@ -236,8 +233,11 @@ class _DrawImageToolDescriptionPageState
                 AnimatedRotation(
                   turns: _previewExpanded ? 0.5 : 0,
                   duration: const Duration(milliseconds: 200),
-                  child: Icon(Icons.keyboard_arrow_down,
-                      size: 20, color: colors.muted),
+                  child: Icon(
+                    Icons.keyboard_arrow_down,
+                    size: 20,
+                    color: colors.muted,
+                  ),
                 ),
               ],
             ),
@@ -248,11 +248,16 @@ class _DrawImageToolDescriptionPageState
           secondChild: Container(
             width: double.infinity,
             padding: const EdgeInsets.fromLTRB(
-                MoeSpacing.md, 0, MoeSpacing.md, MoeSpacing.md),
+              MoeSpacing.md,
+              0,
+              MoeSpacing.md,
+              MoeSpacing.md,
+            ),
             decoration: BoxDecoration(
               color: colors.componentBackground,
               borderRadius: const BorderRadius.vertical(
-                  bottom: Radius.circular(MoeSmoothRadii.sm)),
+                bottom: Radius.circular(MoeSmoothRadii.sm),
+              ),
             ),
             child: SelectableText(
               previewText,
@@ -296,9 +301,7 @@ class _DrawImageToolDescriptionPageState
 
   void _openEditor(BuildContext context, String presetName) {
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => _PresetEditorPage(presetName: presetName),
-      ),
+      ParallaxSlidePageRoute(page: _PresetEditorPage(presetName: presetName)),
     );
   }
 
@@ -349,21 +352,18 @@ class _DrawImageToolDescriptionPageState
       actions: [
         // 所有槽位都能编辑
         MoeSheetAction(
-          icon: Icons.edit_note_outlined,
           label: '编辑',
           onTap: () => _openEditor(context, preset.name),
         ),
         // 非默认才能重命名
         if (!isFirst)
           MoeSheetAction(
-            icon: Icons.drive_file_rename_outline,
             label: '重命名',
             onTap: () => _renameSlot(context, config, notifier, preset),
           ),
         // 非默认才能删除
         if (!isFirst)
           MoeSheetAction(
-            icon: Icons.delete_outline,
             label: '删除',
             isDestructive: true,
             onTap: () => _deleteSlot(config, notifier, preset),
@@ -378,31 +378,40 @@ class _DrawImageToolDescriptionPageState
     ImagePluginConfigNotifier notifier,
     DrawingPromptPreset preset,
   ) async {
-    final name = await _showNameDialog(
+    var currentName = preset.name;
+    await showMoeAutoSaveTextEditor(
       context: context,
       title: '重命名预设',
-      hintText: '输入新名称',
-      initial: preset.name,
-    );
-    if (!mounted || name == null) return;
-    if (config.systemPromptPresets
-        .any((p) => p.name == name && p.name != preset.name)) {
-      MoeToast.warning(this.context, '已存在同名预设');
-      return;
-    }
-    final updated = config.systemPromptPresets
-        .map((p) => p.name == preset.name
-            ? DrawingPromptPreset(name: name, content: p.content)
-            : p)
-        .toList();
-    await notifier.updateConfig(
-      config.copyWith(
-        systemPromptPresets: updated,
-        selectedSystemPromptPresetName:
-            config.selectedSystemPromptPresetName == preset.name
+      initialValue: currentName,
+      onSave: (text) async {
+        final name = text.trim();
+        if (name.isEmpty) throw const FormatException('预设名称不能为空');
+        if (name == currentName) return;
+        final current = ref.read(imagePluginConfigProvider);
+        final original = current.systemPromptPresets
+            .where((p) => p.name == currentName)
+            .firstOrNull;
+        if (original == null) throw const FormatException('预设已不存在');
+        if (current.systemPromptPresets.any((p) => p.name == name)) {
+          throw const FormatException('已存在同名预设');
+        }
+        await notifier.updateConfig(
+          current.copyWith(
+            systemPromptPresets: current.systemPromptPresets
+                .map(
+                  (p) => p.name == currentName
+                      ? DrawingPromptPreset(name: name, content: p.content)
+                      : p,
+                )
+                .toList(),
+            selectedSystemPromptPresetName:
+                current.selectedSystemPromptPresetName == currentName
                 ? name
-                : config.selectedSystemPromptPresetName,
-      ),
+                : current.selectedSystemPromptPresetName,
+          ),
+        );
+        currentName = name;
+      },
     );
   }
 
@@ -411,8 +420,9 @@ class _DrawImageToolDescriptionPageState
     ImagePluginConfigNotifier notifier,
     DrawingPromptPreset preset,
   ) async {
-    final updated =
-        config.systemPromptPresets.where((p) => p.name != preset.name).toList();
+    final updated = config.systemPromptPresets
+        .where((p) => p.name != preset.name)
+        .toList();
     final wasSelected = config.selectedSystemPromptPresetName == preset.name;
     await notifier.updateConfig(
       config.copyWith(
@@ -473,16 +483,21 @@ class _PresetEditorPage extends ConsumerStatefulWidget {
   ConsumerState<_PresetEditorPage> createState() => _PresetEditorPageState();
 }
 
-class _PresetEditorPageState extends ConsumerState<_PresetEditorPage> {
+class _PresetEditorPageState extends ConsumerState<_PresetEditorPage>
+    with MoeAutoSaveState<_PresetEditorPage> {
   late final TextEditingController _toolDescCtrl;
   late final TextEditingController _promptCtrl;
   late final TextEditingController _negativeCtrl;
   late final TextEditingController _widthCtrl;
   late final TextEditingController _heightCtrl;
-  bool _dirty = false;
 
-  List<TextEditingController> get _allControllers =>
-      [_toolDescCtrl, _promptCtrl, _negativeCtrl, _widthCtrl, _heightCtrl];
+  List<TextEditingController> get _allControllers => [
+    _toolDescCtrl,
+    _promptCtrl,
+    _negativeCtrl,
+    _widthCtrl,
+    _heightCtrl,
+  ];
 
   @override
   void initState() {
@@ -491,13 +506,20 @@ class _PresetEditorPageState extends ConsumerState<_PresetEditorPage> {
     final blocks = _loadBlocks(config);
     _toolDescCtrl = TextEditingController(text: blocks.toolDescription);
     _promptCtrl = TextEditingController(text: blocks.promptDescription);
-    _negativeCtrl =
-        TextEditingController(text: blocks.negativePromptDescription);
+    _negativeCtrl = TextEditingController(
+      text: blocks.negativePromptDescription,
+    );
     _widthCtrl = TextEditingController(text: blocks.widthDescription);
     _heightCtrl = TextEditingController(text: blocks.heightDescription);
     for (final c in _allControllers) {
       c.addListener(_onChanged);
     }
+    autoSave.configure(
+      save: _save,
+      snapshot: () =>
+          moeAutoSaveSignature([for (final c in _allControllers) c.text]),
+      fields: _allControllers,
+    );
   }
 
   @override
@@ -530,17 +552,7 @@ class _PresetEditorPageState extends ConsumerState<_PresetEditorPage> {
     );
   }
 
-  void _onChanged() {
-    final config = ref.read(imagePluginConfigProvider);
-    final saved = _loadBlocks(config);
-    final editing = _editingBlocks();
-    final dirty = saved.toolDescription != editing.toolDescription ||
-        saved.promptDescription != editing.promptDescription ||
-        saved.negativePromptDescription != editing.negativePromptDescription ||
-        saved.widthDescription != editing.widthDescription ||
-        saved.heightDescription != editing.heightDescription;
-    if (dirty != _dirty) setState(() => _dirty = dirty);
-  }
+  void _onChanged() => autoSave.changed();
 
   Future<void> _save() async {
     final config = ref.read(imagePluginConfigProvider);
@@ -552,51 +564,17 @@ class _PresetEditorPageState extends ConsumerState<_PresetEditorPage> {
       }
       return p;
     }).toList();
-    await notifier
-        .updateConfig(config.copyWith(systemPromptPresets: updatedPresets));
-    setState(() => _dirty = false);
-    if (mounted) MoeToast.success(context, '已保存');
-  }
-
-  bool _allowNativePop = false;
-
-  Future<void> _handleBack() async {
-    if (!_dirty) {
-      _allowAndPop();
-      return;
-    }
-    final result = await showMeoTalkDialog(
-      context: context,
-      title: '未保存的修改',
-      content: const Text('当前有未保存的修改，是否保存？'),
-      cancelText: '不保存',
-      confirmText: '保存',
+    await notifier.updateConfig(
+      config.copyWith(systemPromptPresets: updatedPresets),
     );
-    if (!mounted || result == null) return; // 用户取消（点遮罩关闭）
-    if (result) {
-      await _save();
-    }
-    _allowAndPop();
-  }
-
-  void _allowAndPop() {
-    if (!_allowNativePop) {
-      setState(() => _allowNativePop = true);
-    }
-    Navigator.of(context).pop();
   }
 
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
 
-    return PopScope(
-      canPop: _allowNativePop,
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        _handleBack();
-      },
-      child: Scaffold(
+    return autoSavePage(
+      MoePageScaffold(
         backgroundColor: colors.surface,
         appBar: MoeAppBar(
           title: '编辑「${widget.presetName}」',

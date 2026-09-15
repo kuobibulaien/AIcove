@@ -1,3 +1,4 @@
+import '../../core/sync/cloud_local_write.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class DirectConfig {
@@ -22,29 +23,34 @@ const _kDirectModel = 'direct.model';
 Future<DirectConfig> loadDirectConfig() async {
   final prefs = await SharedPreferences.getInstance();
   final enabled = prefs.getBool(_kDirectEnabled) ?? true; // 默认开启（KISS）
-  final apiBase = prefs.getString(_kDirectApiBase) ?? 'https://api.openai.com/v1';
+  final apiBase =
+      prefs.getString(_kDirectApiBase) ?? 'https://api.openai.com/v1';
   final apiKey = prefs.getString(_kDirectApiKey) ?? '';
   final model = prefs.getString(_kDirectModel) ?? 'gpt-4o-mini';
-  return DirectConfig(enabled: enabled, apiBase: apiBase, apiKey: apiKey, model: model);
+  return DirectConfig(
+    enabled: enabled,
+    apiBase: apiBase,
+    apiKey: apiKey,
+    model: model,
+  );
 }
 
 Future<void> setDirectEnabled(bool v) async {
   final prefs = await SharedPreferences.getInstance();
-  await prefs.setBool(_kDirectEnabled, v);
+  await cloudLocalWrite(() => prefs.setBool(_kDirectEnabled, v));
 }
 
 Future<void> setDirectApiBase(String v) async {
   final prefs = await SharedPreferences.getInstance();
-  await prefs.setString(_kDirectApiBase, v.trim());
+  await cloudLocalWrite(() => prefs.setString(_kDirectApiBase, v.trim()));
 }
 
 Future<void> setDirectApiKey(String v) async {
   final prefs = await SharedPreferences.getInstance();
-  await prefs.setString(_kDirectApiKey, v.trim());
+  await cloudLocalWrite(() => prefs.setString(_kDirectApiKey, v.trim()));
 }
 
 Future<void> setDirectModel(String v) async {
   final prefs = await SharedPreferences.getInstance();
-  await prefs.setString(_kDirectModel, v.trim());
+  await cloudLocalWrite(() => prefs.setString(_kDirectModel, v.trim()));
 }
-

@@ -1,10 +1,11 @@
 /// 自定义底部导航栏
-/// 
+///
 /// 更新记录：
 /// - 2025-12-06: 接入皮肤系统
 library;
+
 import 'package:flutter/material.dart';
-import '../../../../ui/theme/skin_provider.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 import '../../../../ui/theme/tokens.dart';
 
 /// 自定义底部导航栏
@@ -23,29 +24,32 @@ class CustomBottomNav extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final itemCount = items.length;
-    final skin = context.skin;
     final colors = context.moeColors;
 
-    return Container(
-      height: 64,
-      decoration: skin.bottomNavDecoration(colors),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: List.generate(itemCount, (index) {
-          final item = items[index];
-          final isSelected = index == currentIndex;
-          return Expanded(
-            child: _NavItem(
-              icon: isSelected ? item.activeIcon : item.icon,
-              label: item.label,
-              isSelected: isSelected,
-              onTap: () => onTap(index),
-              colors: colors,
-            ),
-          );
-        }),
+    final content = SafeArea(
+      top: false,
+      child: SizedBox(
+        height: 62,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: List.generate(itemCount, (index) {
+            final item = items[index];
+            final isSelected = index == currentIndex;
+            return Expanded(
+              child: _NavItem(
+                icon: isSelected ? item.activeIcon : item.icon,
+                label: item.label,
+                isSelected: isSelected,
+                onTap: () => onTap(index),
+                colors: colors,
+              ),
+            );
+          }),
+        ),
       ),
     );
+    if (MoeSurfaceGroup.contains(context)) return content;
+    return MoeFloatingSurface(radius: 0, shadows: const [], child: content);
   }
 }
 
@@ -67,29 +71,28 @@ class _NavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      splashColor: Colors.transparent,
-      highlightColor: Colors.transparent,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            icon,
-            size: 24,
-            color: isSelected ? colors.primary : colors.muted,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
-              color: isSelected ? colors.primary : colors.muted,
+    return Semantics(
+      selected: isSelected,
+      button: true,
+      label: label,
+      child: InkWell(
+        onTap: onTap,
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+        child: Center(
+          child: MoeButtonSurface(
+            width: 44,
+            height: 44,
+            radius: 999,
+            child: Center(
+              child: Icon(
+                icon,
+                size: 24,
+                color: isSelected ? colors.primary : colors.muted,
+              ),
             ),
           ),
-        ],
+        ),
       ),
     );
   }

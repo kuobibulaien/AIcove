@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+export 'moe_glass_theme.dart';
+export 'moe_liquid_glass_service.dart';
+
 // ===== 主题色预设 =====
 
 /// 主题色枚举 - 用于全局 AppBar、主按钮等强调色
@@ -10,7 +13,7 @@ enum MoeAccentColor {
   pink('pink', '粉红', Color(0xFFFC96AA), Color(0xFFF8869D)),
 
   /// 淡蓝色（清爽风格）
-  blue('blue', '淡蓝', Color(0xFF4A90E2), Color(0xFF3A7BD5)),
+  blue('blue', '淡蓝', Color(0xFF3390EC), Color(0xFF3A7BD5)),
 
   /// 薄荷绿
   mint('mint', '薄荷', Color(0xFF4ECDC4), Color(0xFF44A08D)),
@@ -44,29 +47,29 @@ enum MoeAccentColor {
   }
 }
 
-// MoeTalk 风格 Token（来自 MoeTalk 官方 CSS）
+// 统一界面 Token；保留历史符号名，默认外观参考 Telegram。
 
 // ===== 浅色模式 =====
-const moePrimary = Color(0xFF4A90E2); // Momotalk User Bubble Blue
+const moePrimary = Color(0xFF3390EC); // 强调蓝色
 const moeSurface = Color(0xFFFFFFFF); // 表面背景色（全局纯白）
-const moeSurfaceAlt = Color(0xFFE8EDF2); // 次级表面背景色（略深）
-const moePanel = Colors.white; // 容器背景（卡片/聊天面板）
-const moeBgMain = Color(0xFFFFFFFF); // 主背景色（与 surface 统一）
-const moeText = Color(0xFF222529); // 主文本颜色
-const moeTextSecondary = Color(0xFF454E59); // 次要文本颜色（时间戳等）
-const moeMuted = Color(0xFF7A8591); // 弱化文本颜色
+const moeSurfaceAlt = moeSurface; // 次级表面沿用统一基础色
+const moePanel = moeSurface; // 容器背景（卡片/聊天面板）
+const moeBgMain = moeSurface; // 主背景色（与 surface 统一）
+const moeText = Color(0xFF222222); // 主文本颜色
+const moeTextSecondary = Color(0xFF707579); // 次要文本颜色（时间戳等）
+const moeMuted = Color(0xFF8A8A8A); // 弱化文本颜色
 const moeBorder = Color(0xFFDAE1E5); // 分割线颜色
 const moeBorderLight = Color(0xFFE6E9EB); // 淡色边框
 // 更柔和的分割线颜色（比 moeBorderLight 更浅一档）
 const moeDividerColor = Color(0xFFEDF1F4);
-const moeFocus = Color(0xFF4A90E2); // 聚焦/按钮颜色
+const moeFocus = Color(0xFF3390EC); // 聚焦/按钮颜色
 
 // ===== 暗色模式 =====
 const moePrimaryDark = Color(0xFF6BA1D8); // 主色调蓝色（暗色版，稍微降低亮度）
 const moeSurfaceDark = Color(0xFF1C1C1C); // 表面背景色（深色背景）
-const moeSurfaceAltDark = Color(0xFF232830); // 次级表面背景色（略深）
-const moePanelDark = Color(0xFF333333); // 容器背景（卡片/聊天面板）
-const moeBgMainDark = Color(0xFF1C1C1C); // 主背景色
+const moeSurfaceAltDark = moeSurfaceDark; // 次级表面沿用统一基础色
+const moePanelDark = moeSurfaceDark; // 容器背景（卡片/聊天面板）
+const moeBgMainDark = moeSurfaceDark; // 主背景色
 const moeTextDark = Color(0xFFE5E8EB); // 主文本颜色（浅色文字）
 const moeTextSecondaryDark = Color(0xFFADB5BD); // 次要文本颜色
 const moeMutedDark = Color(0xFF8B95A1); // 弱化文本颜色
@@ -85,17 +88,19 @@ const double bottomBarHeight = 56.0; // Material Design标准底部导航条高�
 const moeHeaderPink = Color(0xFFFC96AA); // Momotalk Pink Header
 const moeHeaderContentLight = Color(0xFFFFFFFF); // Header text color (on pink)
 
-const moeHeaderGradientStart =
-    Color(0xFFFC96AA); // 标题栏渐变起点（已弃用，使用 MoeAccentColor）
-const moeHeaderGradientEnd =
-    Color(0xFFF8869D); // 标题栏渐变终点（已弃用，使用 MoeAccentColor）
+const moeHeaderGradientStart = Color(
+  0xFFFC96AA,
+); // 标题栏渐变起点（已弃用，使用 MoeAccentColor）
+const moeHeaderGradientEnd = Color(
+  0xFFF8869D,
+); // 标题栏渐变终点（已弃用，使用 MoeAccentColor）
 
 // 气泡 - MoeTalk 配色（浅色模式）
 const moeBubbleLeftBg = Color(0xFF4D5B75); // AI 消息背景（深蓝灰色）
 const moeBubbleLeftBorder = Color(0xFF4D5B75); // 边框同色
 const moeBubbleLeftFg = Color(0xFFFFFFFF); // 文字白色
-const moeBubbleRightBg = moePrimary; // 用户消息背景（主蓝色）
-const moeBubbleRightBorder = moePrimary;
+const moeBubbleRightBg = Color(0xFF4A90E2); // 用户消息背景（主蓝色）
+const moeBubbleRightBorder = Color(0xFF4A90E2);
 
 // 气泡 - 暗色模式
 const moeBubbleLeftBgDark = Color(0xFF3A4555); // AI 消息背景（暗色）
@@ -106,7 +111,7 @@ const moeBubbleRightBorderDark = moePrimaryDark;
 
 // 强调色
 const moeAccent = Color(0xFFFC879B);
-const moeAccentDark = Color(0xFFFC879B); // 暗色模式强调色保持一致
+const moeAccentDark = Color(0xFFB39DDB); // 暗色模式强调色（薰衣草紫，避免黑配高饱和粉刺眼）
 
 // Toast 语义色 - 浅色模式
 const moeToastSuccess = Color(0xFF4CAF50); // 成功（绿）
@@ -142,6 +147,13 @@ final moeTalkColorScheme = ColorScheme.fromSeed(
   brightness: Brightness.light,
   primary: moePrimary,
   surface: moePanel,
+  surfaceDim: moePanel,
+  surfaceBright: moePanel,
+  surfaceContainerLowest: moePanel,
+  surfaceContainerLow: moePanel,
+  surfaceContainer: moePanel,
+  surfaceContainerHigh: moePanel,
+  surfaceContainerHighest: moePanel,
   onSurface: moeText,
 );
 
@@ -150,20 +162,73 @@ final moeTalkColorSchemeDark = ColorScheme.fromSeed(
   brightness: Brightness.dark,
   primary: moePrimaryDark,
   surface: moePanelDark,
+  surfaceDim: moePanelDark,
+  surfaceBright: moePanelDark,
+  surfaceContainerLowest: moePanelDark,
+  surfaceContainerLow: moePanelDark,
+  surfaceContainer: moePanelDark,
+  surfaceContainerHigh: moePanelDark,
+  surfaceContainerHighest: moePanelDark,
   onSurface: moeTextDark,
 );
 
 // 公共阴影
 final cardShadow = [
   BoxShadow(
-      color: Colors.black.withValues(alpha: 0.06),
-      blurRadius: 8,
-      offset: const Offset(0, 2)),
+    color: Colors.black.withValues(alpha: 0.06),
+    blurRadius: 8,
+    offset: const Offset(0, 2),
+  ),
 ];
 
 // 响应式断点（统一管理窄屏/宽屏切换阈值，KISS/DRY）
-// 说明：小于该宽度使用 MainPage（窄屏），否则使用 SplitChatPage（宽屏）
-const double layoutBreakpoint = 768.0; // 原 900，改小以适配更窄窗口
+// 同一导航栈按可用宽度切换单栏与主从双栏。
+const double layoutBreakpoint = 900.0;
+
+const double telegramPrimaryWidth = 360;
+const double telegramPrimaryMinWidth = 320;
+const double telegramPrimaryMaxWidth = 440;
+const double telegramDetailMinWidth = 460;
+const double telegramWorkspaceInset = 12;
+const double telegramPrimaryRadius = 28;
+const double telegramCompactTitleBarHeight = 40;
+const double telegramChatHeaderHeight = 48;
+const double telegramChatHeaderVerticalInset = 6;
+const double telegramChatHeaderGap = 8;
+const double telegramChatHeaderAvatarSize = 32;
+const double telegramChatHeaderTitleSize = 16;
+const double telegramChatHeaderStatusSize = 11;
+const telegramChatBackground = moeSurface;
+const telegramChatBackgroundDark = moeSurfaceDark;
+
+// === 玻璃材质效果常量 ===
+/// 毛玻璃模糊默认值（逻辑像素 sigma）
+const double kDefaultGlassBlurSigma = 16.0;
+const double kMinGlassBlurSigma = 0.0;
+const double kMaxGlassBlurSigma = 32.0;
+
+/// Per-component minimums; floating controls intentionally have no baseline.
+@immutable
+class MoeMaterialBaseline {
+  const MoeMaterialBaseline({this.blurFactor = 0, this.tintOpacity = 0})
+    : assert(blurFactor >= 0 && blurFactor <= 1),
+      assert(tintOpacity >= 0 && tintOpacity <= 1);
+
+  static const none = MoeMaterialBaseline();
+  static const background = MoeMaterialBaseline(
+    blurFactor: 0.1,
+    tintOpacity: 0.1,
+  );
+  static const text = MoeMaterialBaseline(blurFactor: 0.25, tintOpacity: 0.25);
+
+  final double blurFactor;
+  final double tintOpacity;
+
+  double blurSigma(double sigma) =>
+      kMaxGlassBlurSigma *
+      (blurFactor +
+          (1 - blurFactor) * (sigma / kMaxGlassBlurSigma).clamp(0.0, 1.0));
+}
 
 // ===== 主题扩展 - 让整个应用响应暗色模式 =====
 class MoeColors extends ThemeExtension<MoeColors> {
@@ -191,6 +256,48 @@ class MoeColors extends ThemeExtension<MoeColors> {
   final Color dialogOverlay;
   final Color headerColor;
   final Color headerContentColor;
+
+  /// 悬浮控制面板底色（玻璃材质）
+  final Color glassSurface;
+
+  /// Blend from the component minimum to the existing light/dark tint token.
+  Color glassTintForSigma(
+    double sigma, {
+    MoeMaterialBaseline baseline = MoeMaterialBaseline.none,
+  }) => surface.withValues(
+    alpha:
+        baseline.tintOpacity +
+        (1 - baseline.tintOpacity) *
+            glassSurface.a *
+            (sigma / kMaxGlassBlurSigma).clamp(0.0, 1.0),
+  );
+
+  /// Subtle theme-aware backing painted above text-bearing materials.
+  Color get textMaterialTint => surface.withValues(alpha: 0.06);
+
+  /// 悬浮面板细边框
+  final Color glassBorder;
+
+  /// 悬浮面板阴影颜色
+  final Color glassShadow;
+
+  BorderSide get floatingBorder => BorderSide(
+    color: glassBorder.withValues(alpha: glassBorder.a * 0.55),
+    width: 0.6,
+  );
+
+  List<BoxShadow> get floatingShadows => [
+    BoxShadow(
+      color: glassShadow.withValues(alpha: glassShadow.a * 0.55),
+      blurRadius: 16,
+      offset: const Offset(0, 4),
+    ),
+    BoxShadow(
+      color: glassShadow.withValues(alpha: glassShadow.a * 0.35),
+      blurRadius: 3,
+      offset: const Offset(0, 1),
+    ),
+  ];
 
   /// 主题强调色（用于 AppBar、主按钮等）
   final Color accentColor;
@@ -229,6 +336,9 @@ class MoeColors extends ThemeExtension<MoeColors> {
     required this.dialogOverlay,
     required this.headerColor,
     required this.headerContentColor,
+    required this.glassSurface,
+    required this.glassBorder,
+    required this.glassShadow,
     required this.accentColor,
     required this.componentBackground,
     required this.toastSuccess,
@@ -265,10 +375,13 @@ class MoeColors extends ThemeExtension<MoeColors> {
       dialogCancel: moeDialogCancel,
       dialogAccentLine: moeDialogAccentLine,
       dialogOverlay: moeDialogOverlay,
-      headerColor: color,
-      headerContentColor: moeHeaderContentLight,
+      headerColor: moeSurface,
+      headerContentColor: moeText,
+      glassSurface: Colors.white.withValues(alpha: 0.36),
+      glassBorder: Colors.white.withValues(alpha: 0.55),
+      glassShadow: Colors.black.withValues(alpha: 0.06),
       accentColor: color,
-      componentBackground: Colors.white,
+      componentBackground: moePanel,
       toastSuccess: moeToastSuccess,
       toastError: moeToastError,
       toastWarning: moeToastWarning,
@@ -278,11 +391,12 @@ class MoeColors extends ThemeExtension<MoeColors> {
 
   // 暗色主题
   static MoeColors dark({Color? accentColor}) {
-    final color = accentColor ?? const Color(0xFFFC96AA);
+    final color = accentColor ?? moeAccentDark;
     // 暗色模式下稍微降低饱和度
     final hsl = HSLColor.fromColor(color);
-    final darkColor =
-        hsl.withLightness((hsl.lightness * 0.9).clamp(0.0, 1.0)).toColor();
+    final darkColor = hsl
+        .withLightness((hsl.lightness * 0.9).clamp(0.0, 1.0))
+        .toColor();
     return MoeColors(
       // primary/focus 代表"全局强调色"（按钮/选中态等），应跟随用户选择的主题色
       primary: darkColor,
@@ -307,8 +421,11 @@ class MoeColors extends ThemeExtension<MoeColors> {
       dialogCancel: moeDialogCancelDark,
       dialogAccentLine: moeDialogAccentLineDark,
       dialogOverlay: moeDialogOverlayDark,
-      headerColor: darkColor,
+      headerColor: moeSurfaceDark,
       headerContentColor: moeTextDark,
+      glassSurface: const Color(0xFF202020).withValues(alpha: 0.30),
+      glassBorder: Colors.white.withValues(alpha: 0.14),
+      glassShadow: Colors.black.withValues(alpha: 0.16),
       accentColor: darkColor,
       componentBackground: moePanelDark,
       toastSuccess: moeToastSuccessDark,
@@ -344,6 +461,9 @@ class MoeColors extends ThemeExtension<MoeColors> {
     Color? dialogOverlay,
     Color? headerColor,
     Color? headerContentColor,
+    Color? glassSurface,
+    Color? glassBorder,
+    Color? glassShadow,
     Color? accentColor,
     Color? componentBackground,
     Color? toastSuccess,
@@ -376,6 +496,9 @@ class MoeColors extends ThemeExtension<MoeColors> {
       dialogOverlay: dialogOverlay ?? this.dialogOverlay,
       headerColor: headerColor ?? this.headerColor,
       headerContentColor: headerContentColor ?? this.headerContentColor,
+      glassSurface: glassSurface ?? this.glassSurface,
+      glassBorder: glassBorder ?? this.glassBorder,
+      glassShadow: glassShadow ?? this.glassShadow,
       accentColor: accentColor ?? this.accentColor,
       componentBackground: componentBackground ?? this.componentBackground,
       toastSuccess: toastSuccess ?? this.toastSuccess,
@@ -402,24 +525,42 @@ class MoeColors extends ThemeExtension<MoeColors> {
       divider: Color.lerp(divider, other.divider, t)!,
       focus: Color.lerp(focus, other.focus, t)!,
       bubbleLeftBg: Color.lerp(bubbleLeftBg, other.bubbleLeftBg, t)!,
-      bubbleLeftBorder:
-          Color.lerp(bubbleLeftBorder, other.bubbleLeftBorder, t)!,
+      bubbleLeftBorder: Color.lerp(
+        bubbleLeftBorder,
+        other.bubbleLeftBorder,
+        t,
+      )!,
       bubbleLeftFg: Color.lerp(bubbleLeftFg, other.bubbleLeftFg, t)!,
       bubbleRightBg: Color.lerp(bubbleRightBg, other.bubbleRightBg, t)!,
-      bubbleRightBorder:
-          Color.lerp(bubbleRightBorder, other.bubbleRightBorder, t)!,
+      bubbleRightBorder: Color.lerp(
+        bubbleRightBorder,
+        other.bubbleRightBorder,
+        t,
+      )!,
       accent: Color.lerp(accent, other.accent, t)!,
       dialogWarning: Color.lerp(dialogWarning, other.dialogWarning, t)!,
       dialogCancel: Color.lerp(dialogCancel, other.dialogCancel, t)!,
-      dialogAccentLine:
-          Color.lerp(dialogAccentLine, other.dialogAccentLine, t)!,
+      dialogAccentLine: Color.lerp(
+        dialogAccentLine,
+        other.dialogAccentLine,
+        t,
+      )!,
       dialogOverlay: Color.lerp(dialogOverlay, other.dialogOverlay, t)!,
       headerColor: Color.lerp(headerColor, other.headerColor, t)!,
-      headerContentColor:
-          Color.lerp(headerContentColor, other.headerContentColor, t)!,
+      headerContentColor: Color.lerp(
+        headerContentColor,
+        other.headerContentColor,
+        t,
+      )!,
+      glassSurface: Color.lerp(glassSurface, other.glassSurface, t)!,
+      glassBorder: Color.lerp(glassBorder, other.glassBorder, t)!,
+      glassShadow: Color.lerp(glassShadow, other.glassShadow, t)!,
       accentColor: Color.lerp(accentColor, other.accentColor, t)!,
-      componentBackground:
-          Color.lerp(componentBackground, other.componentBackground, t)!,
+      componentBackground: Color.lerp(
+        componentBackground,
+        other.componentBackground,
+        t,
+      )!,
       toastSuccess: Color.lerp(toastSuccess, other.toastSuccess, t)!,
       toastError: Color.lerp(toastError, other.toastError, t)!,
       toastWarning: Color.lerp(toastWarning, other.toastWarning, t)!,
@@ -551,39 +692,39 @@ class MoeShadows {
 
   /// 轻微阴影（卡片、按钮）
   static List<BoxShadow> get soft => [
-        BoxShadow(
-          color: Colors.black.withValues(alpha: 0.04),
-          blurRadius: 4,
-          offset: const Offset(0, 1),
-        ),
-      ];
+    BoxShadow(
+      color: Colors.black.withValues(alpha: 0.04),
+      blurRadius: 4,
+      offset: const Offset(0, 1),
+    ),
+  ];
 
   /// 普通阴影（浮动元素）
   static List<BoxShadow> get card => [
-        BoxShadow(
-          color: Colors.black.withValues(alpha: 0.06),
-          blurRadius: 8,
-          offset: const Offset(0, 2),
-        ),
-      ];
+    BoxShadow(
+      color: Colors.black.withValues(alpha: 0.06),
+      blurRadius: 8,
+      offset: const Offset(0, 2),
+    ),
+  ];
 
   /// 强调阴影（弹窗、悬浮按钮）
   static List<BoxShadow> get elevated => [
-        BoxShadow(
-          color: Colors.black.withValues(alpha: 0.1),
-          blurRadius: 16,
-          offset: const Offset(0, 4),
-        ),
-      ];
+    BoxShadow(
+      color: Colors.black.withValues(alpha: 0.1),
+      blurRadius: 16,
+      offset: const Offset(0, 4),
+    ),
+  ];
 
   /// 深度阴影（模态框）
   static List<BoxShadow> get modal => [
-        BoxShadow(
-          color: Colors.black.withValues(alpha: 0.15),
-          blurRadius: 24,
-          offset: const Offset(0, 8),
-        ),
-      ];
+    BoxShadow(
+      color: Colors.black.withValues(alpha: 0.15),
+      blurRadius: 24,
+      offset: const Offset(0, 8),
+    ),
+  ];
 }
 
 // === 按钮尺寸预设 ===
@@ -617,4 +758,26 @@ class MoeInputSizes {
 
   /// 大输入框高度
   static const double lg = 52;
+}
+
+class MoeSettingsLayout {
+  MoeSettingsLayout._();
+
+  static const double maxContentWidth = 760;
+  static const double insetFraction = 0.04;
+  static const double minInset = 12;
+  static const double maxInset = 32;
+  static const double cardRadius = 20;
+  static const double sectionGap = 16;
+  static const EdgeInsets verticalListPadding = EdgeInsets.only(
+    top: 16,
+    bottom: 24,
+  );
+  static const EdgeInsets contentPadding = EdgeInsets.all(16);
+
+  static double insetFor(double panelWidth) =>
+      (panelWidth * insetFraction).clamp(minInset, maxInset);
+
+  static double contentWidthFor(double panelWidth) =>
+      (panelWidth - 2 * insetFor(panelWidth)).clamp(0.0, maxContentWidth);
 }

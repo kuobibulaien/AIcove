@@ -277,6 +277,7 @@ class PromptBuiltinDefaults {
 2. 每个 <tts></tts> 标记内的文本不要超过 {max_chars_per_chunk} 个字
 3. 一轮对话中可以使用多个 <tts></tts> 标记
 4. 建议在关键句子或回复的重要部分使用语音
+5. 【禁止】<tts> 内部严禁包含颜文字（如 (^_^)、(*¯︶¯*) 等）、Emoji 或特殊符号，以免影响语音合成发音
 
 示例：
 <tts>你好，很高兴见到你！</tts>
@@ -436,12 +437,6 @@ Rules:
 
   static const String promptTagSemanticsLeadIn = r'''以下是当前会话启用的特殊标签说明。请理解这些标签的含义和规则，但不要把这些说明原样复述给用户。''';
 
-  static const String multimodalVisionSystem = r'''你是图片解释助手。只输出客观、简洁的图片描述。''';
-
-  static const String multimodalAudioSystem = r'''你是音频解析助手。请根据输入音频输出严格 JSON，对象字段固定为 {"transcript":"尽量完整的转写，没有则留空字符串","summary":"一句话概括音频核心内容","notable_events":["重要声音事件，最多5条"]}。要求：只输出 JSON，不要 Markdown，不要额外解释。''';
-
-  static const String multimodalVideoSystem = r'''你是视频解析助手。请根据输入视频输出严格 JSON，对象字段固定为 {"summary":"一句话概括视频核心内容","transcript":"能提取到的语音转写，没有则留空字符串","timeline":[{"t":"00:00-00:05","event":"关键事件"}]}。timeline 最多 5 条。要求：只输出 JSON，不要 Markdown，不要额外解释。''';
-
   static const String chatDrawImageStableReviewInstruction = r'''__AICOVE_DRAW_IMAGE_REVIEW__以下图片是你刚刚通过 draw_image 生成的候选图，尚未发给用户。请先检查图片内容是否符合用户要求。若图片画得不好、肢体有错误、结构异常，或明显不符合需求，你可以调整提示词后再次调用 draw_image 返工。只有当你决定把这张图发给用户时，才在正文里输出空标签 <image></image>；如果暂时不要发，就不要输出占位符。''';
 
   static const String diaryGenerateDefault = r'''你现在是「{assistant_name}」，请以第一人称视角写一篇今天的日记。
@@ -507,9 +502,6 @@ Rules:
     'memory.profile_prompt.root',
     'system_reminder.semantics',
     'prompt_tag_semantics.lead_in',
-    'multimodal.vision.system',
-    'multimodal.audio.system',
-    'multimodal.video.system',
     'chat.draw_image.stable_review_instruction',
     'diary.generate.default',
     'memory.merge.prompt',
@@ -574,12 +566,6 @@ Rules:
         return systemReminderSemantics;
       case 'prompt_tag_semantics.lead_in':
         return promptTagSemanticsLeadIn;
-      case 'multimodal.vision.system':
-        return multimodalVisionSystem;
-      case 'multimodal.audio.system':
-        return multimodalAudioSystem;
-      case 'multimodal.video.system':
-        return multimodalVideoSystem;
       case 'chat.draw_image.stable_review_instruction':
         return chatDrawImageStableReviewInstruction;
       case 'diary.generate.default':

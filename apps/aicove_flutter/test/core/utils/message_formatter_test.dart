@@ -21,7 +21,9 @@ void main() {
 
     test('nbsp spaces after punctuation should split', () {
       final chunks = MessageFormatter.formatAndChunkText(
-          '你好...\u00A0\u00A0\u00A0\u00A0世界', cfg);
+        '你好...\u00A0\u00A0\u00A0\u00A0世界',
+        cfg,
+      );
       expect(chunks, ['你好...', '世界']);
     });
 
@@ -32,10 +34,14 @@ void main() {
 
     test('conservative mode should only split when spaces exceed 3', () {
       final conservativeCfg = cfg.copyWith(chunkPunctuations: const []);
-      final threeSpaces =
-          MessageFormatter.formatAndChunkText('你好   世界', conservativeCfg);
-      final fourSpaces =
-          MessageFormatter.formatAndChunkText('你好    世界', conservativeCfg);
+      final threeSpaces = MessageFormatter.formatAndChunkText(
+        '你好   世界',
+        conservativeCfg,
+      );
+      final fourSpaces = MessageFormatter.formatAndChunkText(
+        '你好    世界',
+        conservativeCfg,
+      );
       expect(threeSpaces, ['你好   世界']);
       expect(fourSpaces, ['你好', '世界']);
     });
@@ -45,6 +51,38 @@ void main() {
     test('should not split inside Chinese double quotes', () {
       final chunks = MessageFormatter.formatAndChunkText('“你好。世界。”', cfg);
       expect(chunks, ['“你好。世界。”']);
+    });
+
+    test('long repeated dialogue preserves chunks and quoted punctuation', () {
+      const sentence = '这一段旁白，“引号内的第一句。第二句。”旁白继续。';
+      final chunks = MessageFormatter.formatAndChunkText(
+        List.filled(1500, sentence).join(),
+        cfg,
+      );
+      expect(chunks, List.filled(1500, sentence));
+    });
+
+    test('restores kaomojis inside quotes and outside quotes', () {
+      const text = '他说“你好(^_^)。继续。”旁白。然后(^_^)结束。';
+      expect(MessageFormatter.formatAndChunkText(text, cfg), [
+        '他说“你好(^_^)。继续。”旁白。',
+        '然后(^_^)结束。',
+      ]);
+    });
+
+    test('literal quote tokens do not alias generated placeholders', () {
+      const text = '原文\x00QTE0\x00和\x00QTE999999999999999999999\x00原文，“甲。乙。”旁白。';
+      expect(MessageFormatter.formatAndChunkText(text, cfg), [text]);
+    });
+
+    test('quote protection can be disabled', () {
+      expect(
+        MessageFormatter.formatAndChunkText(
+          '“你好。世界。”',
+          cfg.copyWith(protectQuotes: false),
+        ),
+        ['“你好。', '世界。”'],
+      );
     });
 
     test('should not split inside Chinese single quotes', () {
@@ -60,7 +98,7 @@ void main() {
           {
             'id': 'set_a',
             'name': 'A',
-            'punctuations': ['。', '！']
+            'punctuations': ['。', '！'],
           },
           {'id': 'set_b', 'name': 'B', 'punctuations': []},
         ],

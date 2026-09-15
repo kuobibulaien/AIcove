@@ -1,0 +1,20 @@
+name: lucide_icons
+description: AIcove compatibility copy of lucide_icons 0.257.0.
+version: 0.257.0+flutter344
+publish_to: none
+homepage: https://lucide.dev
+repository: https://github.com/lucide-icons/lucide
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+  flutter: '>=3.22.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  fonts:
+    - family: Lucide
+      fonts:
+        - asset: assets/lucide.ttf

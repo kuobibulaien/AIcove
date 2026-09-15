@@ -72,6 +72,46 @@ void main() {
       flush: true,
     );
 
+    final appFile = File('${temp.path}/app_2026-03-02.jsonl');
+    await appFile.writeAsString([
+      {
+        'time': '2026-03-02T12:00:00',
+        'source': 'FrontendDiagnostics',
+        'message': '提交发送',
+        'metadata': {
+          'operationId': 'ui_1772424000000000_1',
+          'parentOperationId': 'ui_1772424000000000_0',
+          'appRunId': 'run_1772424000000000_123',
+          'sourceMessageId': 'raw_msg_1772424000000000_0',
+        }
+      },
+      {
+        'time': '2026-03-02T12:00:01',
+        'source': 'FrontendDiagnostics',
+        'message': '已关联本轮对话',
+        'traceId': context.traceId,
+        'metadata': {
+          'operationId': 'ui_1772424000000000_1',
+          'authorization': 'Bearer secret'
+        }
+      },
+      {
+        'time': '2026-03-02T12:00:02',
+        'source': 'FrontendDiagnostics',
+        'traceId': 'another_retry_trace',
+        'metadata': {
+          'turnId': 'msg_1',
+          'conversationId': 'conv_1',
+          'operationId': 'another_op'
+        },
+      },
+      {
+        'time': '2026-03-02T12:00:02',
+        'source': 'Other',
+        'metadata': {'turnId': 'msg_1', 'conversationId': 'other_conversation'}
+      },
+    ].map(jsonEncode).join('\n'));
+
     final exportFile = await TraceExportService.exportTrace(
       traceId: context.traceId,
       traceStore: store,
@@ -85,7 +125,18 @@ void main() {
         jsonDecode(await exportFile.readAsString()) as Map<String, dynamic>;
     expect(exported['traceId'], context.traceId);
     expect((exported['events'] as List).isNotEmpty, isTrue);
+    expect((exported['events'] as List).first['traceId'], context.traceId,
+        reason: '脱敏不能抹掉系统生成的关联编号');
+    expect((exported['appLogs'] as List).first['time'], '2026-03-02T12:00:00');
     expect((exported['apiLogs'] as List).length, 1);
+    expect(exported['appLogs'], hasLength(2));
+    expect((exported['appLogs'] as List).first['metadata']['operationId'],
+        'ui_1772424000000000_1');
+    final firstMetadata = (exported['appLogs'] as List).first['metadata'];
+    expect(firstMetadata['parentOperationId'], 'ui_1772424000000000_0');
+    expect(firstMetadata['appRunId'], 'run_1772424000000000_123');
+    expect(firstMetadata['sourceMessageId'], 'raw_msg_1772424000000000_0');
+    expect(jsonEncode(exported['appLogs']), isNot(contains('Bearer secret')));
     expect((exported['tracePayloads'] as List).length, 1);
     final tracePayload =
         (exported['tracePayloads'] as List).first as Map<String, dynamic>;

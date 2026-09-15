@@ -1,6 +1,6 @@
-import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -12,7 +12,6 @@ import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
 import 'package:aicove_flutter/src/features/chat/application/active_stream_projection.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
-import 'package:aicove_flutter/src/features/settings/settings_models.dart';
 import 'package:aicove_flutter/src/ui/features/chat/widgets/chat_message_list.dart';
 import 'package:aicove_flutter/src/ui/features/chat/widgets/chat_message_list_display_cache.dart';
 import 'package:aicove_flutter/src/ui/features/chat/widgets/chat_viewport_controller.dart';
@@ -52,7 +51,7 @@ AppSettings _buildSettings() {
     apiBaseUrl: 'https://api.openai.com/v1',
     imageGenerationEnabled: false,
     maxFileUploadMB: 10,
-    historyMessageLimit: 100,
+    contextWindowTokens: 272000,
     customModels: <CustomModel>[],
     providers: <ProviderAuth>[],
     modelProviderMap: <String, String>{},
@@ -112,6 +111,16 @@ class _Host extends StatefulWidget {
 class _HostState extends State<_Host> {
   double bottomOverlayHeight = 0;
   int listBuildCount = 0;
+  final viewportController = ChatViewportController();
+  List<Message> messages = _buildMessages();
+
+  void setMessages(List<Message> value) => setState(() => messages = value);
+
+  @override
+  void dispose() {
+    viewportController.dispose();
+    super.dispose();
+  }
 
   void setOverlay(double value) => setState(() => bottomOverlayHeight = value);
 
@@ -119,11 +128,11 @@ class _HostState extends State<_Host> {
   Widget build(BuildContext context) {
     return ChatMessageList(
       conversationId: _kConvId,
-      messages: _buildMessages(),
+      messages: messages,
       displayName: '测试AI',
       avatarUrl: null,
       bottomOverlayHeight: bottomOverlayHeight,
-      viewportController: ChatViewportController(),
+      viewportController: viewportController,
       onDebugListItemCountChanged: (_) => listBuildCount++,
     );
   }
@@ -131,8 +140,13 @@ class _HostState extends State<_Host> {
 
 Future<ProviderContainer> _pumpHost(
   WidgetTester tester,
-  GlobalKey<_HostState> hostKey,
-) async {
+  GlobalKey<_HostState> hostKey, {
+  double width = 360,
+}) async {
+  tester.view.devicePixelRatio = 1;
+  tester.view.physicalSize = Size(width, 640);
+  addTearDown(tester.view.resetDevicePixelRatio);
+  addTearDown(tester.view.resetPhysicalSize);
   final tempDir = await tester.runAsync(() async {
     final dir = await Directory.systemTemp.createTemp('stream_follow_test');
     PathProviderPlatform.instance = _FakePathProviderPlatform(dir.path);
@@ -160,7 +174,7 @@ Future<ProviderContainer> _pumpHost(
           home: Scaffold(
             body: Center(
               child: SizedBox(
-                width: 360,
+                width: width,
                 height: 520,
                 child: _Host(key: hostKey),
               ),
@@ -178,9 +192,9 @@ Future<ProviderContainer> _pumpHost(
 }
 
 double _distanceToBottom(WidgetTester tester) {
-  final controller =
-      tester.widget<CustomScrollView>(find.byType(CustomScrollView))
-          .controller!;
+  final controller = tester
+      .widget<CustomScrollView>(find.byType(CustomScrollView))
+      .controller!;
   final position = controller.position;
   return position.pixels - position.minScrollExtent;
 }
@@ -202,8 +216,7 @@ void _publishGrowth(ProviderContainer container, int step) {
 }
 
 Future<void> _settleStabilization(WidgetTester tester) async {
-  // 稳底调度含 post-frame 重试与 260ms 延迟重试；延迟重试在计时 pump 内
-  // 触发后还会挂 post-frame，需要额外帧才能执行，故末尾再补两帧。
+  // 布局修正及帧后兜底收敛；额外推进 300ms，检测旧延迟补位是否复活。
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 40));
   await tester.pump(const Duration(milliseconds: 300));
@@ -214,12 +227,90 @@ Future<void> _settleStabilization(WidgetTester tester) async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('S1 贴底跟随：通道驱动气泡增高仍贴底，且列表不重建、实时文本上屏',
-      (tester) async {
+  for (final width in <double>[360, 1000]) {
+    for (final scenario in [
+      (copyTimeline: false, delayedRebuild: false),
+      (copyTimeline: true, delayedRebuild: false),
+      (copyTimeline: false, delayedRebuild: true),
+      (copyTimeline: true, delayedRebuild: true),
+    ]) {
+      testWidgets('发送前切换尾部分区不应让已显示气泡跳动（${width}px，$scenario）', (tester) async {
+        final hostKey = GlobalKey<_HostState>();
+        await _pumpHost(tester, hostKey, width: width);
+        final host = hostKey.currentState!;
+        final completedTail = host.messages.last;
+        host.setMessages([
+          ...host.messages.take(host.messages.length - 1),
+          Message.fromBlocks(
+            id: completedTail.id,
+            role: completedTail.role,
+            blocks: completedTail.blocks!,
+            createdAt: completedTail.createdAt,
+            status: 'sent',
+          ),
+        ]);
+        await tester.pumpAndSettle();
+        final tail = find.byKey(
+          const ValueKey<String>('message_bubble_$_kStreamShellId'),
+        );
+        final before = tester.getRect(tail);
+        final rowBottom = tester
+            .getRect(find.byKey(const ValueKey('message:$_kStreamShellId')))
+            .bottom;
+
+        // 正式发送先通知视口，再异步写入消息；期间页面可能因发送状态
+        // 重建，但时间线仍是旧的。必须量已绘制气泡，不能只看帖后 pixels。
+        host.viewportController.onUserSend();
+        if (scenario.delayedRebuild) {
+          await tester.pump(const Duration(milliseconds: 16));
+        }
+        host.setMessages(scenario.copyTimeline
+            ? List<Message>.of(host.messages)
+            : host.messages);
+        await tester.pump();
+        final firstFrameTop = tester.getRect(tail).top;
+        await tester.pump(const Duration(milliseconds: 16));
+        final secondFrameTop = tester.getRect(tail).top;
+        await tester.pumpAndSettle();
+        expect(firstFrameTop, closeTo(before.top, 0.5),
+            reason: '尚未追加消息，首帧不能挪动旧内容；'
+                '发送前=${before.top}，首帧=$firstFrameTop，次帧=$secondFrameTop');
+        expect(secondFrameTop, closeTo(before.top, 0.5));
+
+        // 分区对齐后继续追加用户消息与 AI 尾壳；下一轮发送也不能失去跟随。
+        for (var turn = 0; turn < 2; turn++) {
+          host.viewportController.onUserSend();
+          for (final role in ['user', 'assistant']) {
+            final id = '${role}_send_$turn';
+            host.setMessages([
+              ...host.messages,
+              Message.text(
+                id: id,
+                role: role,
+                content: '$role 第 $turn 轮消息',
+                createdAt: host.messages.last.createdAt
+                    .add(const Duration(seconds: 1)),
+                status: 'sent',
+              ),
+            ]);
+            await tester.pumpAndSettle();
+            expect(_distanceToBottom(tester), lessThanOrEqualTo(0.5));
+            expect(
+              // 气泡可短于 42px 头像；用含头像的整行检查底部对齐。
+              tester.getRect(find.byKey(ValueKey('message:$id'))).bottom,
+              closeTo(rowBottom, 0.5),
+              reason: '第 $turn 轮 $role 消息应继续对齐输入框上沿',
+            );
+          }
+        }
+      });
+    }
+  }
+
+  testWidgets('S1 贴底跟随：通道驱动气泡增高仍贴底，且列表不重建、实时文本上屏', (tester) async {
     final hostKey = GlobalKey<_HostState>();
     final container = await _pumpHost(tester, hostKey);
-    expect(_distanceToBottom(tester), lessThanOrEqualTo(8),
-        reason: '初始应贴底');
+    expect(_distanceToBottom(tester), lessThanOrEqualTo(8), reason: '初始应贴底');
     // 种子 publish：生产中「壳首次出现」伴随结构性时间线写入、由
     // didUpdateWidget 稳底路径负责（S-04 分工）；窄信号只管后续同尾增长。
     // 台架无结构写，先建立 prev 再度量增长步。
@@ -247,6 +338,189 @@ void main() {
     expect(find.textContaining('实时增长的流式正文第3轮'), findsOneWidget,
         reason: '活跃气泡应渲染通道实时文本');
   });
+
+  testWidgets('S1b 贴底跟随：增高生效的那一帧渲染树里尾气泡就已在视口内（无错帧）', (tester) async {
+    final hostKey = GlobalKey<_HostState>();
+    final container = await _pumpHost(tester, hostKey);
+    container.read(activeStreamProjectionsProvider.notifier).publish(
+          const ActiveStreamProjection(
+            conversationId: _kConvId,
+            generationSeq: 1,
+            writeEpoch: 0,
+            tailMessageId: _kStreamShellId,
+            tailText: '起',
+            phase: ActiveStreamPhase.streamingTail,
+          ),
+        );
+    await _settleStabilization(tester);
+
+    final viewportBottom =
+        tester.getBottomLeft(find.byType(CustomScrollView)).dy;
+    for (var step = 1; step <= 3; step++) {
+      // 每轮增长 6 行，单轮增量必须明显超过列表 bottom padding（70px），
+      // 否则尾气泡只是吃掉 padding 余量、本就不会出视口，测试失去区分力。
+      _publishGrowth(container, step * 6);
+      // 只 pump 一帧：帖后 jumpTo 此时只改了 offset，渲染树仍是这一帧的
+      // 布局结果；若靶底靠帖后补位，尾气泡底边会落在视口之外（错帧）。
+      await tester.pump();
+      final bubble = find.byKey(
+        const ValueKey<String>('message_bubble_$_kStreamShellId'),
+      );
+      expect(bubble, findsOneWidget);
+      expect(tester.getBottomLeft(bubble).dy, lessThanOrEqualTo(viewportBottom),
+          reason: '第$step轮增高的首帧渲染结果里尾气泡不得被推出视口底部');
+    }
+    // 继续推进时间，确保首帧之后也没有旧补位把画面拉走。
+    await _settleStabilization(tester);
+  });
+
+  for (final width in <double>[360, 1000]) {
+    testWidgets('S2a $width px：按下即让路，持续拖动时文字增长但画面只跟手', (tester) async {
+      final hostKey = GlobalKey<_HostState>();
+      final container = await _pumpHost(tester, hostKey, width: width);
+      _publishGrowth(container, 1);
+      await _settleStabilization(tester);
+      final list = find.byType(CustomScrollView);
+      expect(tester.getSize(list).width, width);
+      final controller = tester.widget<CustomScrollView>(list).controller!;
+      final anchor = find.byKey(
+        const ValueKey<String>('message_bubble_$_kStreamShellId'),
+      );
+      final before = tester.getTopLeft(anchor).dy;
+      final gesture = await tester.startGesture(tester.getCenter(list));
+      // 尚未达到拖动阈值，生成也不得把手指下面的内容拉走。
+      _publishGrowth(container, 2);
+      await tester.pump();
+      expect(tester.getTopLeft(anchor).dy, closeTo(before, 0.5));
+
+      await gesture.moveBy(const Offset(0, 40));
+      await tester.pump();
+      final builds = hostKey.currentState!.listBuildCount;
+      for (var step = 3; step <= 8; step++) {
+        final top = tester.getTopLeft(anchor).dy;
+        final pixels = controller.position.pixels;
+        _publishGrowth(container, step);
+        await gesture.moveBy(const Offset(0, 8));
+        await tester.pump(const Duration(milliseconds: 16));
+        expect(find.textContaining('实时增长的流式正文第$step轮', skipOffstage: false),
+            findsOneWidget,
+            reason: '不能通过冻结文字来伪装跟手');
+        expect(controller.position.pixels - pixels, closeTo(8, 0.5));
+        expect(tester.getTopLeft(anchor).dy - top, closeTo(8, 0.5),
+            reason: '增长帧中画面位移只能来自手指');
+      }
+      expect(hostKey.currentState!.listBuildCount, builds,
+          reason: '拖动与纯文本增长不得重建整个列表');
+      await gesture.up();
+      await _settleStabilization(tester);
+      expect(hostKey.currentState!.viewportController.isDetached, isTrue);
+      final stoppedTop = tester.getTopLeft(anchor).dy;
+      _publishGrowth(container, 9);
+      await _settleStabilization(tester);
+      expect(tester.getTopLeft(anchor).dy, closeTo(stoppedTop, 0.5),
+          reason: '松手后不自动恢复跟随');
+    });
+
+    testWidgets('S2c $width px：拖动期间分段换尾实时上屏且旧消息不跳', (tester) async {
+      final hostKey = GlobalKey<_HostState>();
+      final container = await _pumpHost(tester, hostKey, width: width);
+      hostKey.currentState!.viewportController.onUserSend();
+      _publishGrowth(container, 1);
+      await _settleStabilization(tester);
+      final user = find.byKey(const ValueKey<String>('message_bubble_m_13'));
+      final originalElement = tester.element(user);
+      final gesture = await tester
+          .startGesture(tester.getCenter(find.byType(CustomScrollView)));
+      await gesture.moveBy(const Offset(0, 40));
+      await tester.pump();
+      expect(identical(tester.element(user), originalElement), isTrue,
+          reason: '从发送跟随转手势不能把用户消息挪到另一棵 sliver');
+      final top = tester.getTopLeft(user).dy;
+      final host = hostKey.currentState!;
+      final shell = host.messages.last;
+      host.setMessages([
+        ...host.messages.take(host.messages.length - 1),
+        Message.fromBlocks(
+            id: shell.id,
+            role: 'assistant',
+            blocks: [TextBlock(messageId: shell.id, content: _growingText(1))],
+            createdAt: shell.createdAt,
+            status: 'sent'),
+        Message.fromBlocks(
+            id: 'next_shell',
+            role: 'assistant',
+            blocks: [TextBlock(messageId: 'next_shell', content: '新分段壳')],
+            createdAt: shell.createdAt.add(const Duration(seconds: 1)),
+            status: 'sending'),
+      ]);
+      container.read(activeStreamProjectionsProvider.notifier).publish(
+          const ActiveStreamProjection(
+              conversationId: _kConvId,
+              generationSeq: 1,
+              writeEpoch: 2,
+              tailMessageId: 'next_shell',
+              tailText: '新分段继续生成',
+              phase: ActiveStreamPhase.streamingTail));
+      await tester.pump();
+      expect(
+          find.textContaining('新分段继续生成', skipOffstage: false), findsOneWidget,
+          reason: '换尾不能等松手才显示，否则下一段生成又被冻住');
+      expect(tester.getTopLeft(user).dy, closeTo(top, 0.5));
+      expect(identical(tester.element(user), originalElement), isTrue);
+      await gesture.up();
+      await _settleStabilization(tester);
+      expect(host.viewportController.isDetached, isTrue);
+    });
+
+    testWidgets('S2b $width px：回底动画期间生成不停，再次按下立即取消旧跟随', (tester) async {
+      final hostKey = GlobalKey<_HostState>();
+      final container = await _pumpHost(tester, hostKey, width: width);
+      _publishGrowth(container, 1);
+      await _settleStabilization(tester);
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, 220));
+      await _settleStabilization(tester);
+      _publishGrowth(container, 3);
+      await tester.pump();
+      await tester
+          .tap(find.byKey(const ValueKey<String>('chat_jump_to_latest_badge')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 32));
+      expect(_distanceToBottom(tester), greaterThan(8), reason: '必须是动画回底，不是瞬移');
+      _publishGrowth(container, 4);
+      await tester.pump(const Duration(milliseconds: 16));
+      final list = find.byType(CustomScrollView);
+      final controller = tester.widget<CustomScrollView>(list).controller!;
+      final gesture = await tester.startGesture(tester.getCenter(list));
+      final pixels = controller.position.pixels;
+      for (var step = 5; step <= 8; step++) {
+        _publishGrowth(container, step);
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(controller.position.pixels, closeTo(pixels, 0.5),
+            reason: '旧重试与增长不得取消手指按住产生的 hold');
+      }
+      await gesture.moveBy(const Offset(0, 40));
+      await tester.pump();
+      await gesture.up();
+      await _settleStabilization(tester);
+      expect(hostKey.currentState!.viewportController.isDetached, isTrue);
+      await tester
+          .tap(find.byKey(const ValueKey<String>('chat_jump_to_latest_badge')));
+      for (var step = 9; step <= 20; step++) {
+        _publishGrowth(container, step);
+        await tester.pump(const Duration(milliseconds: 32));
+      }
+      await _settleStabilization(tester);
+      expect(_distanceToBottom(tester), lessThanOrEqualTo(0.5));
+      _publishGrowth(container, 21);
+      await tester.pump();
+      final anchor =
+          find.byKey(const ValueKey<String>('message_bubble_$_kStreamShellId'));
+      expect(tester.getBottomLeft(anchor).dy,
+          lessThanOrEqualTo(tester.getBottomLeft(list).dy),
+          reason: '回底后恢复同帧自然增长');
+      await _settleStabilization(tester);
+    });
+  }
 
   testWidgets('S2 detached 阅读：通道增高不移动锚点、不强制回底', (tester) async {
     final hostKey = GlobalKey<_HostState>();
@@ -278,11 +552,118 @@ void main() {
     expect(_distanceToBottom(tester), greaterThan(40),
         reason: 'detached 下通道增高不得强制回底');
     final anchorAfter = find.textContaining(anchorText!);
-    expect(anchorAfter.evaluate().isNotEmpty, isTrue,
-        reason: '锚点历史气泡应仍在屏上');
+    expect(anchorAfter.evaluate().isNotEmpty, isTrue, reason: '锚点历史气泡应仍在屏上');
     expect((tester.getTopLeft(anchorAfter.first).dy - anchorDy!).abs(),
         lessThanOrEqualTo(2),
         reason: 'detached 阅读画面（历史气泡屏幕位置）不得被通道增高移动');
+  });
+
+  testWidgets('S2f 多指按住时增长不拉动，最后一指释放且未拖动才恢复跟随', (tester) async {
+    final hostKey = GlobalKey<_HostState>();
+    final container = await _pumpHost(tester, hostKey);
+    _publishGrowth(container, 1);
+    await _settleStabilization(tester);
+    final list = find.byType(CustomScrollView);
+    final position = tester.widget<CustomScrollView>(list).controller!.position;
+    final first = await tester.startGesture(tester.getCenter(list), pointer: 1);
+    final second = await tester
+        .startGesture(tester.getCenter(list) + const Offset(40, 0), pointer: 2);
+    final before = position.pixels;
+    _publishGrowth(container, 6);
+    await tester.pump();
+    await first.up();
+    await _settleStabilization(tester);
+    expect(position.pixels, closeTo(before, 0.5));
+    await second.cancel();
+    await _settleStabilization(tester);
+    expect(hostKey.currentState!.viewportController.shouldFollowLatest, isTrue);
+    expect(_distanceToBottom(tester), lessThanOrEqualTo(0.5));
+  });
+
+  testWidgets('S2g 回底动画中滚轮立即接管，不被动画完成回调拉走', (tester) async {
+    final hostKey = GlobalKey<_HostState>();
+    final container = await _pumpHost(tester, hostKey, width: 1000);
+    _publishGrowth(container, 1);
+    await _settleStabilization(tester);
+    final list = find.byType(CustomScrollView);
+    await tester.drag(list, const Offset(0, 250));
+    await _settleStabilization(tester);
+    await tester
+        .tap(find.byKey(const ValueKey<String>('chat_jump_to_latest_badge')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 32));
+    await tester.sendEventToBinding(PointerScrollEvent(
+        position: tester.getCenter(list), scrollDelta: const Offset(0, -80)));
+    await tester.pump();
+    expect(hostKey.currentState!.viewportController.isDetached, isTrue);
+    final position = tester.widget<CustomScrollView>(list).controller!.position;
+    final before = position.pixels;
+    _publishGrowth(container, 3);
+    await _settleStabilization(tester);
+    expect(position.pixels, closeTo(before, 0.5));
+  });
+
+  testWidgets('S2d 流式增高不能截断或改变松手后的惯性轨迹', (tester) async {
+    Future<List<double>> trajectory({required bool grow}) async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      final hostKey = GlobalKey<_HostState>();
+      final container = await _pumpHost(tester, hostKey);
+      _publishGrowth(container, 1);
+      await _settleStabilization(tester);
+      final list = find.byType(CustomScrollView);
+      await tester.fling(list, const Offset(0, 100), 500);
+      final position =
+          tester.widget<CustomScrollView>(list).controller!.position;
+      final start = position.pixels;
+      expect(position.isScrollingNotifier.value, isTrue);
+      final samples = <double>[];
+      for (var frame = 0; frame < 10; frame++) {
+        if (grow) _publishGrowth(container, frame + 2);
+        await tester.pump(const Duration(milliseconds: 16));
+        samples.add(position.pixels - start);
+        expect(position.isScrollingNotifier.value, isTrue,
+            reason: '流式布局不能 jumpTo 截断惯性');
+      }
+      await tester.pump(const Duration(seconds: 2));
+      await _settleStabilization(tester);
+      return samples;
+    }
+
+    final baseline = await trajectory(grow: false);
+    final streaming = await trajectory(grow: true);
+    for (var frame = 0; frame < baseline.length; frame++) {
+      expect(streaming[frame], closeTo(baseline[frame], 0.5),
+          reason: '第$frame帧：相同手势的惯性不能被生成改变');
+    }
+  });
+
+  testWidgets('S2e 阅读中图片尺寸改变不能在帧后搬动画面', (tester) async {
+    final hostKey = GlobalKey<_HostState>();
+    await _pumpHost(tester, hostKey);
+    final host = hostKey.currentState!;
+    Message photo(int height) => Message.fromBlocks(
+        id: _kStreamShellId,
+        role: 'assistant',
+        blocks: [
+          ImageBlock(
+              messageId: _kStreamShellId, url: '', width: 400, height: height)
+        ],
+        createdAt: host.messages.last.createdAt,
+        status: 'sent');
+    host.setMessages([...host.messages.take(14), photo(100)]);
+    await _settleStabilization(tester);
+    final gesture = await tester
+        .startGesture(tester.getCenter(find.byType(CustomScrollView)));
+    await gesture.moveBy(const Offset(0, 80));
+    await tester.pump(const Duration(milliseconds: 100));
+    await gesture.up();
+    await _settleStabilization(tester);
+    final anchor = find.byKey(const ValueKey<String>('message_bubble_m_13'));
+    final before = tester.getTopLeft(anchor).dy;
+    host.setMessages([...host.messages.take(14), photo(600)]);
+    await _settleStabilization(tester);
+    expect(tester.getTopLeft(anchor).dy, closeTo(before, 0.5),
+        reason: '固定 center 的活跃区向下长高，不需要按 minExtent 做像素补偿');
   });
 
   testWidgets('S3 历史分页加载中：通道增高不得触发回底争抢', (tester) async {

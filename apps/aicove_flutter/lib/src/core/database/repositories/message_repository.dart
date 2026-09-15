@@ -1,11 +1,20 @@
 import 'package:drift/drift.dart';
 import '../database.dart';
+import '../../media/embedded_media_store.dart';
 
 /// 消息 Repository
 class MessageRepository {
   final AppDatabase _db;
 
-  MessageRepository(this._db);
+  MessageRepository(this._db, {EmbeddedMediaStore? mediaStore})
+      : _mediaStore = mediaStore ?? EmbeddedMediaStore.shared;
+  final EmbeddedMediaStore _mediaStore;
+
+  Future<MessagesCompanion> _compact(MessagesCompanion data) async {
+    final raw = data.rawPayload;
+    if (!raw.present || raw.value == null) return data;
+    return data.copyWith(rawPayload: Value(await _mediaStore.compactJson(raw.value!)));
+  }
 
   /// 获取会话的消息（分页，不含已删除）
   Future<List<Message>> getByConversation(
@@ -43,6 +52,22 @@ class MessageRepository {
       beforeId: beforeId,
     );
   }
+
+  /// 仅供前端时间线读取。已有显示快照时，SQLite 只返回该快照，
+  /// 避免把同一音频的 raw/补充副本跨 isolate 搬运。原始行不修改。
+  /// 无法反序列化快照的调用方必须通过 getById 回退完整 raw。
+  Future<List<Message>> getByConversationForDisplay(
+    String conversationId, {
+    int limit = 50,
+    int? beforeTime,
+    String? beforeId,
+  }) => _queryStableConversationMessages(
+    conversationId: conversationId,
+    limit: limit,
+    beforeTime: beforeTime,
+    beforeId: beforeId,
+    displayOnly: true,
+  );
 
   Stream<List<Message>> watchByConversationStable(
     String conversationId, {
@@ -101,18 +126,20 @@ class MessageRepository {
 
   /// 创建消息
   Future<void> insert(MessagesCompanion data) async {
-    await _db.into(_db.messages).insert(data);
+    await _db.into(_db.messages).insert(await _compact(data));
   }
 
   /// 创建或更新消息（upsert）
   Future<void> upsert(MessagesCompanion data) async {
-    await _db.into(_db.messages).insertOnConflictUpdate(data);
+    await _db.into(_db.messages).insertOnConflictUpdate(await _compact(data));
   }
 
   /// 批量创建消息
   Future<void> insertAll(List<MessagesCompanion> messages) async {
+    final compact = <MessagesCompanion>[];
+    for (final message in messages) { compact.add(await _compact(message)); }
     await _db.batch((batch) {
-      batch.insertAll(_db.messages, messages);
+      batch.insertAll(_db.messages, compact);
     });
   }
 
@@ -442,6 +469,7 @@ class MessageRepository {
     String? beforeId,
     String? role,
     bool descending = true,
+    bool displayOnly = false,
   }) async {
     final query = _buildStableConversationQuery(
       conversationId: conversationId,
@@ -450,6 +478,7 @@ class MessageRepository {
       beforeId: beforeId,
       role: role,
       descending: descending,
+      displayOnly: displayOnly,
     );
     final rows = await _db.customSelect(
       query.sql,
@@ -490,6 +519,7 @@ class MessageRepository {
     String? beforeId,
     String? role,
     bool descending = true,
+    bool displayOnly = false,
   }) {
     final variables = <Variable>[
       Variable<String>(conversationId),
@@ -523,8 +553,19 @@ class MessageRepository {
     }
 
     final direction = descending ? 'DESC' : 'ASC';
+    final columns = displayOnly
+        ? _db.messages.$columns.map((column) {
+            if (column.$name != 'raw_payload') return 'm.${column.$name}';
+            return "CASE WHEN json_valid(m.raw_payload) THEN "
+                "CASE WHEN json_type(m.raw_payload, '\$.projectedMessages') = 'array' "
+                "AND json_array_length(m.raw_payload, '\$.projectedMessages') > 0 "
+                "THEN json_object('__aicoveDisplayRead', 1, 'projectedMessages', "
+                "json_extract(m.raw_payload, '\$.projectedMessages')) "
+                "ELSE m.raw_payload END ELSE m.raw_payload END AS raw_payload";
+          }).join(', ')
+        : 'm.*';
     final sql = StringBuffer()
-      ..writeln('SELECT m.*')
+      ..writeln('SELECT $columns')
       ..writeln('FROM messages m')
       ..writeln('WHERE ${filters.join(' AND ')}')
       ..writeln('ORDER BY m.created_at $direction, m.rowid $direction');

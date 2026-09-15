@@ -10,6 +10,15 @@ class UnifiedLogEntry {
   final LogLevel? level;
   final bool isApiLog;
   final bool isConversation; // 是否为 AI 对话日志
+  final bool isFrontend;
+
+  String get categoryLabel => isFrontend
+      ? '前端'
+      : isConversation
+          ? '模型'
+          : isApiLog
+              ? '网络'
+              : '应用';
 
   /// AI 原始回复（完整）
   final String? rawAiResponse;
@@ -25,6 +34,7 @@ class UnifiedLogEntry {
     this.level,
     this.isApiLog = false,
     this.isConversation = false,
+    this.isFrontend = false,
     this.rawAiResponse,
     this.rawContext,
   });
@@ -69,8 +79,9 @@ class ConversationTurnLog {
 enum LogTypeFilter {
   all('全部'),
   conversation('对话'),
-  api('API'),
-  system('系统');
+  api('网络'),
+  system('应用'),
+  frontend('前端');
 
   const LogTypeFilter(this.label);
   final String label;
@@ -78,10 +89,10 @@ enum LogTypeFilter {
 
 /// 日志级别筛选选项
 enum LogLevelFilter {
-  all('全部', null),
-  info('INFO+', LogLevel.info),
-  warning('WARNING+', LogLevel.warning),
-  error('ERROR+', LogLevel.error);
+  all('全部级别', null),
+  info('提示及以上', LogLevel.info),
+  warning('注意及以上', LogLevel.warning),
+  error('只看异常', LogLevel.error);
 
   const LogLevelFilter(this.label, this.minLevel);
   final String label;

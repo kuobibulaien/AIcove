@@ -1,4 +1,8 @@
 import 'dart:convert';
+import 'dart:async';
+import 'package:aicove_flutter/src/features/chat/application/chat_edit.dart';
+import 'package:aicove_flutter/src/features/chat/chat_layer_providers.dart';
+import 'package:aicove_flutter/src/core/services/attachment_picker_service.dart';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -38,7 +42,7 @@ AppSettings _buildSettings() {
     apiBaseUrl: 'https://api.openai.com/v1',
     imageGenerationEnabled: false,
     maxFileUploadMB: 10,
-    historyMessageLimit: 100,
+    contextWindowTokens: 272000,
     customModels: const <CustomModel>[],
     providers: const <ProviderAuth>[],
     modelProviderMap: const <String, String>{},
@@ -72,8 +76,14 @@ Conversation _buildConversation(String id) {
   );
 }
 
+final _liveOwner = StateProvider<String>((ref) => 'conv_a');
+
 Widget _buildHost({
   required Conversation conversation,
+  Future<void> Function(ChatEditDraft, String, SelectedAttachment?)?
+      onSubmitEdit,
+  void Function(String)? onSend,
+  bool liveOwner = false,
 }) {
   final settings = _buildSettings();
   return ProviderScope(
@@ -82,14 +92,16 @@ Widget _buildHost({
       appSettingsProvider.overrideWith(
         () => _FakeAppSettingsNotifier(settings),
       ),
-      activeConversationProvider.overrideWith((ref) => conversation),
+      activeConversationProvider.overrideWith((ref) =>
+          liveOwner ? _buildConversation(ref.watch(_liveOwner)) : conversation),
     ],
     child: SkinScope(
       skin: const MoeTalkSkin(),
       child: MaterialApp(
         home: Scaffold(
           body: Composer(
-            onSend: (_) {},
+            onSend: onSend ?? (_) {},
+            onSubmitEdit: onSubmitEdit,
             onImageSelected: (_, {String? text}) {},
             onFileSelected: (_, {String? text}) {},
           ),
@@ -104,6 +116,181 @@ void main() {
 
   setUp(() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
+  });
+
+  const edit = ChatEditDraft(
+      conversationId: 'conv_a', messageId: 'm2', historyVersion: 'v1');
+  void seedEdit({Map<String, dynamic>? marker}) {
+    SharedPreferences.setMockInitialValues({
+      composerDraftStorageKey('conv_a'): jsonEncode({
+        'version': 1,
+        'text': '编辑内容',
+        'edit': marker ?? edit.toJson(),
+      })
+    });
+  }
+
+  for (final width in [360.0, 1000.0]) {
+    testWidgets('编辑草稿重建后仍有取消入口 $width', (tester) async {
+      tester.view.physicalSize = Size(width, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      seedEdit();
+      await tester
+          .pumpWidget(_buildHost(conversation: _buildConversation('conv_a')));
+      await _pumpComposerReady(tester);
+      expect(find.text('编辑内容'), findsOneWidget);
+      expect(find.byKey(const ValueKey('cancel_message_edit')), findsOneWidget);
+      await _disposeComposer(tester);
+      await tester
+          .pumpWidget(_buildHost(conversation: _buildConversation('conv_a')));
+      await _pumpComposerReady(tester);
+      expect(find.byKey(const ValueKey('cancel_message_edit')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('cancel_message_edit')));
+      await _pumpComposerReady(tester);
+      expect(find.text('编辑内容'), findsNothing);
+      expect(
+          (await SharedPreferences.getInstance())
+              .getString(composerDraftStorageKey('conv_a')),
+          isNull);
+      expect(tester.takeException(), isNull);
+      await _disposeComposer(tester);
+    });
+  }
+
+  testWidgets('未提交及拒绝提交均保留编辑草稿', (tester) async {
+    seedEdit();
+    final accepted = Completer<void>();
+    var calls = 0;
+    String? receivedId;
+    await tester.pumpWidget(_buildHost(
+        conversation: _buildConversation('conv_a'),
+        onSubmitEdit: (draft, text, attachment) {
+          calls++;
+          receivedId = draft.messageId;
+          return accepted.future;
+        }));
+    await _pumpComposerReady(tester);
+    tester.widget<TextField>(find.byType(TextField)).onSubmitted!('');
+    await _pumpComposerReady(tester);
+    tester.widget<TextField>(find.byType(TextField)).onSubmitted!('');
+    await _pumpComposerReady(tester);
+    expect(calls, 1);
+    expect(receivedId, 'm2');
+    expect(find.text('编辑内容'), findsOneWidget);
+    accepted.completeError(StateError('测试提交拒绝'));
+    await _pumpComposerReady(tester);
+    expect(find.text('编辑内容'), findsOneWidget);
+    expect(
+        (await SharedPreferences.getInstance())
+            .getString(composerDraftStorageKey('conv_a')),
+        contains('m2'));
+    await _disposeComposer(tester);
+  });
+
+  testWidgets('确认本地提交后才清除编辑草稿', (tester) async {
+    seedEdit();
+    final accepted = Completer<void>();
+    await tester.pumpWidget(_buildHost(
+        conversation: _buildConversation('conv_a'),
+        onSubmitEdit: (_, __, ___) => accepted.future));
+    await _pumpComposerReady(tester);
+    tester.widget<TextField>(find.byType(TextField)).onSubmitted!('');
+    await _pumpComposerReady(tester);
+    expect(find.text('编辑内容'), findsOneWidget);
+    accepted.complete();
+    await _pumpComposerReady(tester);
+    expect(find.text('编辑内容'), findsNothing);
+    expect(
+        (await SharedPreferences.getInstance())
+            .getString(composerDraftStorageKey('conv_a')),
+        isNull);
+    await _disposeComposer(tester);
+  });
+
+  testWidgets('提交期间切角色不清另一角色草稿，也不把编辑标识带过去', (tester) async {
+    seedEdit();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(composerDraftStorageKey('conv_b'),
+        jsonEncode({'version': 1, 'text': 'B的草稿'}));
+    final accepted = Completer<void>();
+    await tester.pumpWidget(_buildHost(
+        conversation: _buildConversation('conv_a'),
+        liveOwner: true,
+        onSubmitEdit: (_, __, ___) => accepted.future));
+    await _pumpComposerReady(tester);
+    final container =
+        ProviderScope.containerOf(tester.element(find.byType(Composer)));
+    tester.widget<TextField>(find.byType(TextField)).onSubmitted!('');
+    await _pumpComposerReady(tester);
+    container.read(_liveOwner.notifier).state = 'conv_b';
+    await _pumpComposerReady(tester);
+    expect(find.text('B的草稿'), findsOneWidget);
+    expect(find.byKey(const ValueKey('cancel_message_edit')), findsNothing);
+    accepted.complete();
+    await _pumpComposerReady(tester);
+    expect(find.text('B的草稿'), findsOneWidget);
+    expect(prefs.getString(composerDraftStorageKey('conv_a')), isNull);
+    expect(
+        prefs.getString(composerDraftStorageKey('conv_b')), contains('B的草稿'));
+    container.read(_liveOwner.notifier).state = 'conv_a';
+    await _pumpComposerReady(tester);
+    expect(find.text('编辑内容'), findsNothing);
+    await _disposeComposer(tester);
+  });
+
+  testWidgets('损坏编辑标识不能降级为普通发送', (tester) async {
+    seedEdit(marker: {'messageId': 'm2'});
+    var sends = 0;
+    await tester.pumpWidget(_buildHost(
+        conversation: _buildConversation('conv_a'), onSend: (_) => sends++));
+    await _pumpComposerReady(tester);
+    tester.widget<TextField>(find.byType(TextField)).onSubmitted!('');
+    await _pumpComposerReady(tester);
+    expect(sends, 0);
+    expect(find.byKey(const ValueKey('cancel_message_edit')), findsOneWidget);
+    await _disposeComposer(tester);
+  });
+
+  testWidgets('损坏的整份JSON草稿不能把编辑元数据当普通消息发送', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      composerDraftStorageKey('conv_a'): '{"version":1,"text":"原文","edit":'
+    });
+    var sends = 0;
+    await tester.pumpWidget(_buildHost(
+        conversation: _buildConversation('conv_a'), onSend: (_) => sends++));
+    await _pumpComposerReady(tester);
+    tester.widget<TextField>(find.byType(TextField)).onSubmitted!('');
+    await _pumpComposerReady(tester);
+    expect(sends, 0);
+    expect(find.byKey(const ValueKey('cancel_message_edit')), findsOneWidget);
+    await _disposeComposer(tester);
+  });
+
+  testWidgets('异步编辑回填按owner隔离且空文本会清旧输入', (tester) async {
+    await tester
+        .pumpWidget(_buildHost(conversation: _buildConversation('conv_a')));
+    await _pumpComposerReady(tester);
+    final container =
+        ProviderScope.containerOf(tester.element(find.byType(Composer)));
+    await tester.enterText(find.byType(TextField), '旧输入');
+    container.read(chatEditSeedProvider('conv_b').notifier).state =
+        const ChatEditSeed(
+            draft: ChatEditDraft(
+                conversationId: 'conv_b',
+                messageId: 'other',
+                historyVersion: 'b'),
+            text: '不能出现');
+    await _pumpComposerReady(tester);
+    expect(find.text('旧输入'), findsOneWidget);
+    container.read(chatEditSeedProvider('conv_a').notifier).state =
+        const ChatEditSeed(draft: edit, text: '');
+    await _pumpComposerReady(tester);
+    expect(find.text('旧输入'), findsNothing);
+    expect(find.text('不能出现'), findsNothing);
+    expect(find.byKey(const ValueKey('cancel_message_edit')), findsOneWidget);
+    await _disposeComposer(tester);
   });
 
   testWidgets('scoped draft restores text when attachment metadata exists',
@@ -226,5 +413,5 @@ Future<void> _pumpComposerReady(WidgetTester tester) async {
 
 Future<void> _disposeComposer(WidgetTester tester) async {
   await tester.pumpWidget(const SizedBox.shrink());
-  await tester.pump(const Duration(milliseconds: 50));
+  await tester.pump(const Duration(seconds: 4));
 }

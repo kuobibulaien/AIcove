@@ -1,5 +1,0 @@
-{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend checklist for verification."}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Analyzer/test quality gate."}
-{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Verify type-safe test updates."}
-{"file": ".trellis/spec/agent-context/index.md", "reason": "Verify analyzer-domain tests match current Agent Context contracts."}
-{"file": ".trellis/spec/project/architecture-boundaries.md", "reason": "Check that changes remain scoped and do not cross boundaries unnecessarily."}

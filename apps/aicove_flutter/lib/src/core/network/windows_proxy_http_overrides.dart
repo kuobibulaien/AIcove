@@ -1,6 +1,5 @@
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 
 import '../app_logger.dart';
@@ -21,8 +20,6 @@ const MethodChannel _systemProxyChannel =
 ///   3. environment variables (http_proxy / https_proxy / no_proxy)
 ///   4. DIRECT
 Future<void> installProxyHttpOverrides() async {
-  if (kIsWeb) return;
-
   final env = Platform.environment;
   _SystemProxyConfig? systemProxy;
   try {

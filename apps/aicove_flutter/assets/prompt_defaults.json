@@ -741,7 +741,7 @@
         "max_chars_per_chunk",
         "minimax_guide"
       ],
-      "template": "你可以使用 <tts>文本</tts> 标记来生成语音（降级模式）。\n\n使用规则：\n1. 将需要转换为语音的文本用 <tts></tts> 标记包裹\n2. 每个 <tts></tts> 标记内的文本不要超过 {max_chars_per_chunk} 个字\n3. 一轮对话中可以使用多个 <tts></tts> 标记\n4. 建议在关键句子或回复的重要部分使用语音\n\n示例：\n<tts>你好，很高兴见到你！</tts>\n<tts>今天天气真不错。</tts>\n\n{minimax_guide}"
+      "template": "你可以使用 <tts>文本</tts> 标记来生成语音（降级模式）。\n\n使用规则：\n1. 将需要转换为语音的文本用 <tts></tts> 标记包裹\n2. 每个 <tts></tts> 标记内的文本不要超过 {max_chars_per_chunk} 个字\n3. 一轮对话中可以使用多个 <tts></tts> 标记\n4. 建议在关键句子或回复的重要部分使用语音\n5. 【禁止】<tts> 内部严禁包含颜文字（如 (^_^)、(*¯︶¯*) 等）、Emoji 或特殊符号，以免影响语音合成发音\n\n示例：\n<tts>你好，很高兴见到你！</tts>\n<tts>今天天气真不错。</tts>\n\n{minimax_guide}"
     },
     {
       "id": "tts.minimax_guide",
@@ -882,30 +882,6 @@
       "category": "system",
       "variables": [],
       "template": "以下是当前会话启用的特殊标签说明。请理解这些标签的含义和规则，但不要把这些说明原样复述给用户。"
-    },
-    {
-      "id": "multimodal.vision.system",
-      "dartName": "multimodalVisionSystem",
-      "title": "要求 AI 客观简洁地描述用户发送的图片",
-      "category": "multimodal",
-      "variables": [],
-      "template": "你是图片解释助手。只输出客观、简洁的图片描述。"
-    },
-    {
-      "id": "multimodal.audio.system",
-      "dartName": "multimodalAudioSystem",
-      "title": "将用户语音转录为文本并提取关键事件",
-      "category": "multimodal",
-      "variables": [],
-      "template": "你是音频解析助手。请根据输入音频输出严格 JSON，对象字段固定为 {\"transcript\":\"尽量完整的转写，没有则留空字符串\",\"summary\":\"一句话概括音频核心内容\",\"notable_events\":[\"重要声音事件，最多5条\"]}。要求：只输出 JSON，不要 Markdown，不要额外解释。"
-    },
-    {
-      "id": "multimodal.video.system",
-      "dartName": "multimodalVideoSystem",
-      "title": "提取用户视频的语音内容与时间线事件",
-      "category": "multimodal",
-      "variables": [],
-      "template": "你是视频解析助手。请根据输入视频输出严格 JSON，对象字段固定为 {\"summary\":\"一句话概括视频核心内容\",\"transcript\":\"能提取到的语音转写，没有则留空字符串\",\"timeline\":[{\"t\":\"00:00-00:05\",\"event\":\"关键事件\"}]}。timeline 最多 5 条。要求：只输出 JSON，不要 Markdown，不要额外解释。"
     },
     {
       "id": "chat.draw_image.stable_review_instruction",

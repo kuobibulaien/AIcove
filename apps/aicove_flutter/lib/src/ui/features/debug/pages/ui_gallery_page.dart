@@ -1,4 +1,7 @@
+import 'package:aicove_flutter/src/ui/theme/moe_interaction_theme.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'spring_transition_demo.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
@@ -11,15 +14,36 @@ class UiGalleryPage extends StatefulWidget {
   State<UiGalleryPage> createState() => _UiGalleryPageState();
 }
 
-class _UiGalleryPageState extends State<UiGalleryPage> {
+class _UiGalleryPageState extends State<UiGalleryPage>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _liquidAnimController;
   bool _switchValue = true;
   bool _checkboxValue = true;
-  final TextEditingController _textController =
-      TextEditingController(text: 'Hello MoeTalk');
+  final TextEditingController _textController = TextEditingController(
+    text: 'Hello MoeTalk',
+  );
   double _cornerRadius = 20.0;
+
+  bool _liquidGlassEnabled = true;
+  double _liquidThickness = 20.0;
+  double _liquidBlur = 8.0;
+  double _liquidRefraction = 1.25;
+
+  @override
+  void initState() {
+    super.initState();
+    _liquidAnimController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 8),
+    );
+    if (!WidgetsBinding.instance.runtimeType.toString().contains('Test')) {
+      _liquidAnimController.repeat(reverse: true);
+    }
+  }
 
   @override
   void dispose() {
+    _liquidAnimController.dispose();
     _textController.dispose();
     super.dispose();
   }
@@ -28,17 +52,49 @@ class _UiGalleryPageState extends State<UiGalleryPage> {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
 
-    return Scaffold(
+    return MoePageScaffold(
       backgroundColor: colors.bgMain,
-      appBar: const MoeAppBar(
-        title: '组件库 (UI Kit)',
-        showBackButton: true,
-      ),
+      appBar: const MoeAppBar(title: '组件库 (UI Kit)', showBackButton: true),
       body: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(vertical: MoeSpacing.md),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            _buildHeader('连续打断转场'),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: MoeSpacing.md),
+              child: Wrap(
+                spacing: MoeSpacing.sm,
+                runSpacing: MoeSpacing.sm,
+                children: [
+                  for (final demo in SpringTransitionDemo.values)
+                    MoeSecondaryButton(
+                      key: ValueKey('spring-demo-${demo.name}'),
+                      label: demo.label,
+                      onPressed: () => openSpringTransitionDemo(context, demo),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: MoeSpacing.xl),
+
+            _buildHeader('iOS 页面转场'),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: MoeSpacing.md),
+              child: Wrap(
+                spacing: MoeSpacing.sm,
+                runSpacing: MoeSpacing.sm,
+                children: [
+                  for (final demo in _TransitionDemo.values)
+                    MoeSecondaryButton(
+                      label: demo.label,
+                      onPressed: () => _openTransitionDemo(context, demo),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: MoeSpacing.xl),
+
             _buildHeader('按钮组件 (Buttons)'),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: MoeSpacing.md),
@@ -46,23 +102,13 @@ class _UiGalleryPageState extends State<UiGalleryPage> {
                 spacing: MoeSpacing.sm,
                 runSpacing: MoeSpacing.sm,
                 children: [
-                  MoePrimaryButton(
-                    onPressed: () {},
-                    label: '主按钮 (Primary)',
-                  ),
+                  MoePrimaryButton(onPressed: () {}, label: '主按钮 (Primary)'),
                   MoeSecondaryButton(
                     onPressed: () {},
                     label: '次按钮 (Secondary)',
                   ),
-                  MoeIconButton(
-                    icon: Icons.favorite,
-                    onTap: () {},
-                  ),
-                  MoeTileButton(
-                    label: '磁贴按钮',
-                    icon: Icons.star,
-                    onTap: () {},
-                  ),
+                  MoeIconButton(icon: Icons.favorite, onTap: () {}),
+                  MoeTileButton(label: '磁贴按钮', icon: Icons.star, onTap: () {}),
                 ],
               ),
             ),
@@ -114,6 +160,7 @@ class _UiGalleryPageState extends State<UiGalleryPage> {
 
             _buildHeader('列表组件 (List)'),
             MoeSettingsGroup(
+              margin: const EdgeInsets.symmetric(horizontal: 16),
               title: '设置分组 (Settings Group Container)',
               children: [
                 MoeSettingsRow(
@@ -247,7 +294,10 @@ class _UiGalleryPageState extends State<UiGalleryPage> {
                           MoeSheetAction(label: '选项 A', onTap: () {}),
                           MoeSheetAction(label: '选项 B', onTap: () {}),
                           MoeSheetAction(
-                              label: '危险操作', isDestructive: true, onTap: () {}),
+                            label: '危险操作',
+                            isDestructive: true,
+                            onTap: () {},
+                          ),
                         ],
                       );
                     },
@@ -301,6 +351,10 @@ class _UiGalleryPageState extends State<UiGalleryPage> {
             ),
             const SizedBox(height: MoeSpacing.xl),
 
+            _buildHeader('液态玻璃材质 (Liquid Glass Pilot)'),
+            _buildLiquidGlassDemo(colors),
+            const SizedBox(height: MoeSpacing.xl),
+
             _buildHeader('背景色对比 (Background Colors)'),
             _buildBackgroundColorsDemo(colors),
             const SizedBox(height: MoeSpacing.xl),
@@ -314,10 +368,238 @@ class _UiGalleryPageState extends State<UiGalleryPage> {
     );
   }
 
+  Widget _buildLiquidGlassDemo(MoeColors colors) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: MoeSpacing.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 动态移动纹理背景展示区
+          ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: SizedBox(
+              height: 220,
+              width: double.infinity,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  AnimatedBuilder(
+                    animation: _liquidAnimController,
+                    builder: (context, child) {
+                      final t = _liquidAnimController.value;
+                      return DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment(-1.0 + t * 0.8, -1.0),
+                            end: Alignment(1.0 - t * 0.8, 1.0),
+                            colors: [
+                              colors.primary.withValues(alpha: 0.8),
+                              colors.accentColor.withValues(alpha: 0.7),
+                              colors.dialogWarning.withValues(alpha: 0.6),
+                              colors.primary.withValues(alpha: 0.9),
+                            ],
+                          ),
+                        ),
+                        child: CustomPaint(
+                          painter: _MovingPatternPainter(animationValue: t),
+                        ),
+                      );
+                    },
+                  ),
+                  Center(
+                    child: MoeLiquidGlass(
+                      enabled: _liquidGlassEnabled,
+                      thickness: _liquidThickness,
+                      blurSigma: _liquidBlur,
+                      refractiveIndex: _liquidRefraction,
+                      radius: 24,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
+                      child: Wrap(
+                        spacing: 10,
+                        runSpacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        alignment: WrapAlignment.center,
+                        children: [
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.auto_awesome,
+                                color: colors.accentColor,
+                                size: 20,
+                              ),
+                              const SizedBox(width: 8),
+                              Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '液态晶体胶囊',
+                                    style: TextStyle(
+                                      fontWeight: MoeFontWeights.emphasis,
+                                      fontSize: 13,
+                                      color: colors.text,
+                                    ),
+                                  ),
+                                  Text(
+                                    _liquidGlassEnabled
+                                        ? 'GPU Shader 透镜折射'
+                                        : '原生材质优雅降级',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: colors.textSecondary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                          MoeSecondaryButton(
+                            label: '交互测试',
+                            onPressed: () {
+                              MoeToast.info(context, '晶体表面 Material 点击与水波纹正常');
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: MoeSpacing.md),
+
+          // 控制选项
+          MoeSettingsGroup(
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+            children: [
+              MoeSettingsRow(
+                icon: Icons.lens_blur,
+                label: '启用液态效果 (Shader)',
+                subtitle: _liquidGlassEnabled ? '已开启着色器物理折射' : '已降级为原生材质',
+                trailingType: MoeSettingsRowTrailing.switchControl,
+                switchValue: _liquidGlassEnabled,
+                onSwitchChanged: (v) => setState(() => _liquidGlassEnabled = v),
+              ),
+              if (_liquidGlassEnabled) ...[
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: MoeSpacing.md,
+                    vertical: MoeSpacing.xs,
+                  ),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 90,
+                        child: Text(
+                          '厚度: ${_liquidThickness.round()}px',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: colors.text,
+                            fontWeight: MoeFontWeights.emphasis,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Slider(
+                          overlayColor: moeInteractionOverlay,
+                          value: _liquidThickness,
+                          min: 0,
+                          max: 40,
+                          divisions: 40,
+                          label: '${_liquidThickness.round()}px',
+                          onChanged: (v) =>
+                              setState(() => _liquidThickness = v),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: MoeSpacing.md,
+                    vertical: MoeSpacing.xs,
+                  ),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 90,
+                        child: Text(
+                          '模糊: ${_liquidBlur.toStringAsFixed(1)}',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: colors.text,
+                            fontWeight: MoeFontWeights.emphasis,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Slider(
+                          overlayColor: moeInteractionOverlay,
+                          value: _liquidBlur,
+                          min: 0,
+                          max: 20,
+                          divisions: 20,
+                          label: _liquidBlur.toStringAsFixed(1),
+                          onChanged: (v) => setState(() => _liquidBlur = v),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: MoeSpacing.md,
+                    vertical: MoeSpacing.xs,
+                  ),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 90,
+                        child: Text(
+                          '折射: ${_liquidRefraction.toStringAsFixed(2)}',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: colors.text,
+                            fontWeight: MoeFontWeights.emphasis,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Slider(
+                          overlayColor: moeInteractionOverlay,
+                          value: _liquidRefraction,
+                          min: 1.0,
+                          max: 1.5,
+                          divisions: 20,
+                          label: _liquidRefraction.toStringAsFixed(2),
+                          onChanged: (v) =>
+                              setState(() => _liquidRefraction = v),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildHeader(String title) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(
-          MoeSpacing.md, 0, MoeSpacing.md, MoeSpacing.sm),
+        MoeSpacing.md,
+        0,
+        MoeSpacing.md,
+        MoeSpacing.sm,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -357,6 +639,7 @@ class _UiGalleryPageState extends State<UiGalleryPage> {
               ),
               Expanded(
                 child: Slider(
+                  overlayColor: moeInteractionOverlay,
                   value: _cornerRadius,
                   min: 0,
                   max: 50,
@@ -370,8 +653,10 @@ class _UiGalleryPageState extends State<UiGalleryPage> {
           const SizedBox(height: MoeSpacing.md),
 
           // G2 圆角用法示例（项目统一标准）
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          Wrap(
+            alignment: WrapAlignment.spaceEvenly,
+            spacing: MoeSpacing.sm,
+            runSpacing: MoeSpacing.md,
             children: [
               // 1) MoeG2Decoration（只负责绘制，不裁剪 child）
               _buildCornerBox(
@@ -414,8 +699,9 @@ class _UiGalleryPageState extends State<UiGalleryPage> {
                   decoration: MoeG2Decoration(
                     radius: _cornerRadius,
                     color: colors.accentColor,
-                    border:
-                        Border.all(color: Colors.white.withValues(alpha: 0.35)),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.35),
+                    ),
                   ),
                 ),
               ),
@@ -463,10 +749,7 @@ class _UiGalleryPageState extends State<UiGalleryPage> {
         Text(
           label,
           textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 12,
-            color: colors.textSecondary,
-          ),
+          style: TextStyle(fontSize: 12, color: colors.textSecondary),
         ),
       ],
     );
@@ -564,8 +847,12 @@ class _UiGalleryPageState extends State<UiGalleryPage> {
           _buildColorRow('surface', '表面背景色', colors.surface, colors),
           _buildColorRow('surfaceAlt', '次级表面（略深）', colors.surfaceAlt, colors),
           _buildColorRow('panel', '容器背景（卡片/面板）', colors.panel, colors),
-          _buildColorRow('componentBackground', '组件背景（设置分组）',
-              colors.componentBackground, colors),
+          _buildColorRow(
+            'componentBackground',
+            '组件背景（设置分组）',
+            colors.componentBackground,
+            colors,
+          ),
           const SizedBox(height: MoeSpacing.sm),
           Container(
             padding: const EdgeInsets.all(MoeSpacing.sm),
@@ -589,8 +876,13 @@ class _UiGalleryPageState extends State<UiGalleryPage> {
   }
 
   Widget _buildColorRow(
-      String name, String desc, Color color, MoeColors colors) {
-    final hex = '#${color.value.toRadixString(16).substring(2).toUpperCase()}';
+    String name,
+    String desc,
+    Color color,
+    MoeColors colors,
+  ) {
+    final hex =
+        '#${color.toARGB32().toRadixString(16).substring(2).toUpperCase()}';
     return Padding(
       padding: const EdgeInsets.only(bottom: MoeSpacing.sm),
       child: Row(
@@ -619,10 +911,7 @@ class _UiGalleryPageState extends State<UiGalleryPage> {
                 ),
                 Text(
                   '$desc ($hex)',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: colors.textSecondary,
-                  ),
+                  style: TextStyle(fontSize: 12, color: colors.textSecondary),
                 ),
               ],
             ),
@@ -631,4 +920,149 @@ class _UiGalleryPageState extends State<UiGalleryPage> {
       ),
     );
   }
+}
+
+enum _TransitionDemo {
+  page('横向切页', 'CupertinoPageRoute', '新页面从右侧进入，返回时反向退出。可从左边缘滑动返回。'),
+  transition(
+    '自定义横向转场',
+    'CupertinoPageTransition',
+    '与横向切页外观接近；这里在自定义路由中复用官方转场。请点击返回按钮退出。',
+  ),
+  sheet('底部堆叠', 'showCupertinoSheet', '页面从底部升起。再打开一层，观察前一层上移并缩小；向下拖动可关闭。');
+
+  const _TransitionDemo(this.label, this.api, this.description);
+
+  final String label;
+  final String api;
+  final String description;
+}
+
+void _openTransitionDemo(
+  BuildContext context,
+  _TransitionDemo demo, {
+  int depth = 1,
+}) {
+  Widget builder(BuildContext context) =>
+      _TransitionDemoPage(demo: demo, depth: depth);
+
+  switch (demo) {
+    case _TransitionDemo.page:
+      Navigator.of(context).push<void>(CupertinoPageRoute(builder: builder));
+    case _TransitionDemo.transition:
+      Navigator.of(context).push<void>(
+        PageRouteBuilder<void>(
+          transitionDuration: const Duration(milliseconds: 500),
+          reverseTransitionDuration: const Duration(milliseconds: 500),
+          pageBuilder: (context, animation, secondaryAnimation) =>
+              builder(context),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) =>
+              CupertinoPageTransition(
+                primaryRouteAnimation: animation,
+                secondaryRouteAnimation: secondaryAnimation,
+                linearTransition: false,
+                child: child,
+              ),
+        ),
+      );
+    case _TransitionDemo.sheet:
+      showCupertinoSheet<void>(context: context, builder: builder);
+  }
+}
+
+class _TransitionDemoPage extends StatelessWidget {
+  const _TransitionDemoPage({required this.demo, required this.depth});
+
+  final _TransitionDemo demo;
+  final int depth;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.moeColors;
+    return MoePageScaffold(
+      backgroundColor: depth.isOdd ? colors.bgMain : colors.surfaceAlt,
+      appBar: MoeAppBar(
+        title: '${demo.label} · 第 $depth 层',
+        showBackButton: true,
+      ),
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 600),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(MoeSpacing.lg),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Icon(
+                    demo == _TransitionDemo.sheet
+                        ? Icons.layers_outlined
+                        : Icons.swipe_left_outlined,
+                    size: 64,
+                    color: colors.accentColor,
+                  ),
+                  const SizedBox(height: MoeSpacing.lg),
+                  Text(
+                    demo.api,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: colors.text, fontSize: 20),
+                  ),
+                  const SizedBox(height: MoeSpacing.md),
+                  Text(
+                    demo.description,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: colors.textSecondary, height: 1.6),
+                  ),
+                  const SizedBox(height: MoeSpacing.xl),
+                  MoePrimaryButton(
+                    label: '再打开一层',
+                    onPressed: () =>
+                        _openTransitionDemo(context, demo, depth: depth + 1),
+                  ),
+                  const SizedBox(height: MoeSpacing.md),
+                  MoeSecondaryButton(
+                    label: '返回上一层',
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MovingPatternPainter extends CustomPainter {
+  const _MovingPatternPainter({required this.animationValue});
+
+  final double animationValue;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.15)
+      ..style = PaintingStyle.fill;
+
+    // 绘制几颗动态位移的几何装饰圆，提供丰富的背景图案供液态玻璃折射
+    final cx1 = size.width * (0.25 + 0.3 * animationValue);
+    final cy1 = size.height * (0.3 + 0.4 * (1 - animationValue));
+    canvas.drawCircle(Offset(cx1, cy1), 45, paint);
+
+    final cx2 = size.width * (0.75 - 0.35 * animationValue);
+    final cy2 = size.height * (0.65 - 0.3 * animationValue);
+    canvas.drawCircle(
+      Offset(cx2, cy2),
+      60,
+      Paint()
+        ..color = Colors.black.withValues(alpha: 0.12)
+        ..style = PaintingStyle.fill,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_MovingPatternPainter oldDelegate) =>
+      oldDelegate.animationValue != animationValue;
 }

@@ -6,7 +6,9 @@
 /// - 按钮带圆角
 library;
 
+import 'package:aicove_flutter/src/ui/theme/moe_interaction_theme.dart';
 import 'package:flutter/material.dart';
+import 'moe_floating_surface.dart';
 import '../../theme/tokens.dart';
 import '../effects/smooth_clip.dart';
 
@@ -57,18 +59,18 @@ class MeoTalkDialog extends StatelessWidget {
           child: Container(
             width: double.infinity,
             margin: const EdgeInsets.all(16),
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
-            decoration: MoeG2Decoration(
+            child: MoeFloatingSurface(
+              baseline: MoeMaterialBaseline.background,
               radius: 30,
-              color: colors.componentBackground,
-            ),
+              solidColor: colors.componentBackground,
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 _buildTitle(colors),
                 const SizedBox(height: 16),
-                // 内容居左
-                Align(
+                // Keep long content scrollable within the available dialog height.
+                Flexible(child: SingleChildScrollView(child: Align(
                   alignment: Alignment.centerLeft,
                   child: DefaultTextStyle(
                     style: TextStyle(
@@ -78,11 +80,12 @@ class MeoTalkDialog extends StatelessWidget {
                     ),
                     child: content,
                   ),
-                ),
+                ))),
                 const SizedBox(height: 24),
                 // 按钮
                 _buildButtons(context, colors),
               ],
+            ),
             ),
           ),
         ),
@@ -116,13 +119,13 @@ class MeoTalkDialog extends StatelessWidget {
               right: 0,
               child: TextButton(
                 onPressed: onTitleAction,
-                style: TextButton.styleFrom(
+                style: withoutHoverFeedback(TextButton.styleFrom(
                   foregroundColor: colors.textSecondary,
                   minimumSize: Size.zero,
                   padding:
                       const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
+                )),
                 child: Text(
                   titleActionText!,
                   style: TextStyle(
@@ -155,9 +158,9 @@ class MeoTalkDialog extends StatelessWidget {
                 radius: buttonRadius,
                 child: TextButton(
                   onPressed: onCancel ?? () => Navigator.of(context).pop(false),
-                  style: TextButton.styleFrom(
+                  style: withoutHoverFeedback(TextButton.styleFrom(
                     backgroundColor: colors.surface,
-                  ),
+                  )),
                   child: Text(
                     cancelText ?? '取消',
                     style: TextStyle(fontSize: 16, color: colors.text),
@@ -175,9 +178,9 @@ class MeoTalkDialog extends StatelessWidget {
                 radius: buttonRadius,
                 child: TextButton(
                   onPressed: onConfirm,
-                  style: TextButton.styleFrom(
+                  style: withoutHoverFeedback(TextButton.styleFrom(
                     backgroundColor: colors.surface,
-                  ),
+                  )),
                   child: Text(
                     confirmText ?? '确认',
                     style: TextStyle(

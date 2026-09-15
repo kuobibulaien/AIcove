@@ -22,9 +22,10 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/form/moe_input_decoration.dart';
 import 'package:flutter/services.dart';
 import '../../../theme/tokens.dart';
-import '../../effects/smooth_clip.dart';
+import '../moe_floating_surface.dart';
 
 /// 输入框尺寸枚举
 enum MoeTextFieldSize { sm, md, lg }
@@ -286,15 +287,15 @@ class _MoeTextFieldState extends State<MoeTextField> {
         ],
         
         // 输入框
-        AnimatedContainer(
-          duration: kAnimFast,
-          decoration: MoeG2Decoration(
-            radius: g2Radius,
-            color: currentFill,
-            border: Border.all(
-              color: currentBorder,
-              width: _hasFocus ? borderWidth * 1.5 : borderWidth,
-            ),
+        MoeFloatingSurface(
+          baseline: MoeMaterialBaseline.text,
+          radius: g2Radius,
+          borderRadius: radius,
+          solidColor: currentFill,
+          shadows: const [],
+          border: BorderSide(
+            color: currentBorder,
+            width: _hasFocus ? borderWidth * 1.5 : borderWidth,
           ),
           child: TextField(
             controller: widget.controller,
@@ -316,13 +317,12 @@ class _MoeTextFieldState extends State<MoeTextField> {
               fontSize: _fontSize,
               color: widget.enabled ? textColor : colors.muted,
             ),
-            decoration: InputDecoration(
+            decoration: MoeInputDecoration(
               hintText: widget.hint,
               hintStyle: TextStyle(
                 fontSize: _fontSize,
                 color: hintColor,
               ),
-              border: InputBorder.none,
               contentPadding: padding,
               isDense: true,
               prefixIcon: widget.prefixIcon != null

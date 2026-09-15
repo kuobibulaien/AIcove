@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:figma_squircle/figma_squircle.dart';
@@ -33,7 +31,7 @@ class ChatPreviewPage extends ConsumerWidget {
     final messagesAsync =
         ref.watch(_chatPreviewMessagesProvider(conversation.id));
 
-    return Scaffold(
+    return MoePageScaffold(
       appBar: MoeAppBar(
         title: '${conversation.displayName} 聊天预览',
         showBackButton: true,
@@ -139,23 +137,11 @@ class ChatPreviewPage extends ConsumerWidget {
         children: [
           if (!isUser) ...[
             // AI 头像
-            CircleAvatar(
-              radius: 16,
-              backgroundImage: conversation.avatarUrl != null &&
-                      conversation.avatarUrl!.isNotEmpty
-                  ? (conversation.avatarUrl!.startsWith('assets/')
-                      ? AssetImage(conversation.avatarUrl!) as ImageProvider
-                      : FileImage(File(conversation.avatarUrl!)))
-                  : null,
-              child: conversation.avatarUrl == null ||
-                      conversation.avatarUrl!.isEmpty
-                  ? Text(
-                      conversation.displayName.isNotEmpty
-                          ? conversation.displayName[0]
-                          : '?',
-                      style: const TextStyle(fontSize: 12),
-                    )
-                  : null,
+            MoeAvatar(
+              name: conversation.displayName,
+              avatarUrl: conversation.avatarUrl,
+              characterImage: conversation.characterImage,
+              size: 32,
             ),
             const SizedBox(width: 8),
           ],
@@ -225,15 +211,7 @@ class ChatPreviewPage extends ConsumerWidget {
           if (isUser) ...[
             const SizedBox(width: 8),
             // 用户头像
-            CircleAvatar(
-              radius: 16,
-              backgroundColor: theme.colorScheme.primaryContainer,
-              child: Icon(
-                LucideIcons.user,
-                size: 16,
-                color: theme.colorScheme.primary,
-              ),
-            ),
+            const MoeAvatar(name: '', size: 32),
           ],
         ],
       ),

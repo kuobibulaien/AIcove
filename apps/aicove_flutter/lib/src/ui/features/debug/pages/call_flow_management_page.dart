@@ -1,5 +1,6 @@
 library;
 
+import 'package:aicove_flutter/src/ui/theme/moe_interaction_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -19,38 +20,23 @@ class CallFlowManagementPage extends ConsumerStatefulWidget {
       _CallFlowManagementPageState();
 }
 
-class _CallFlowManagementPageState
-    extends ConsumerState<CallFlowManagementPage> {
+class _CallFlowManagementPageState extends ConsumerState<CallFlowManagementPage>
+    with MoeAutoSaveState<CallFlowManagementPage> {
   CallFlowSettings? _draft;
   bool _initialized = false;
-  bool _saving = false;
 
   void _ensureDraft(AppSettings settings) {
     if (_initialized) return;
     _draft = settings.callFlowSettings;
     _initialized = true;
+    autoSave.configure(
+        save: _persist, snapshot: () => moeAutoSaveSignature(_draft!.toJson()));
   }
 
-  Future<void> _persist({bool showToast = true}) async {
-    final draft = _draft;
-    if (draft == null) return;
-    setState(() => _saving = true);
-    try {
-      await ref
-          .read(appSettingsProvider.notifier)
-          .updateCallFlowSettings(draft);
-      if (mounted && showToast) {
-        MoeToast.success(context, '调用超时设置已保存');
-      }
-    } catch (e) {
-      if (mounted) {
-        MoeToast.error(context, '保存失败: $e');
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _saving = false);
-      }
-    }
+  Future<void> _persist() async {
+    await ref
+        .read(appSettingsProvider.notifier)
+        .updateCallFlowSettings(_draft!);
   }
 
   void _resetToDefault() {
@@ -69,7 +55,7 @@ class _CallFlowManagementPageState
     final colors = context.moeColors;
     final settingsAsync = ref.watch(appSettingsProvider);
 
-    return Scaffold(
+    return autoSavePage(MoePageScaffold(
       backgroundColor: colors.surface,
       appBar: const MoeAppBar(title: '调用超时管理', showBackButton: true),
       body: settingsAsync.when(
@@ -88,8 +74,6 @@ class _CallFlowManagementPageState
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              if (_saving) const LinearProgressIndicator(minHeight: 2),
-              if (_saving) const SizedBox(height: 12),
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: MoeG2Decoration(
@@ -124,6 +108,7 @@ class _CallFlowManagementPageState
                       ),
                     ),
                     Slider(
+                  overlayColor: moeInteractionOverlay,
                       value: draft.modelTimeoutSeconds.toDouble(),
                       min: CallFlowSettings.minModelTimeoutSeconds.toDouble(),
                       max: CallFlowSettings.maxModelTimeoutSeconds.toDouble(),
@@ -165,6 +150,7 @@ class _CallFlowManagementPageState
                       ),
                     ),
                     Slider(
+                  overlayColor: moeInteractionOverlay,
                       value: draft.toolTimeoutSeconds.toDouble(),
                       min: CallFlowSettings.minToolTimeoutSeconds.toDouble(),
                       max: CallFlowSettings.maxToolTimeoutSeconds.toDouble(),
@@ -195,14 +181,6 @@ class _CallFlowManagementPageState
                       onPressed: _resetToDefault,
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: MoePrimaryButton(
-                      label: '保存超时',
-                      icon: Icons.save_outlined,
-                      onPressed: _saving ? null : _persist,
-                    ),
-                  ),
                 ],
               ),
               const SizedBox(height: 24),
@@ -210,6 +188,6 @@ class _CallFlowManagementPageState
           );
         },
       ),
-    );
+    ));
   }
 }

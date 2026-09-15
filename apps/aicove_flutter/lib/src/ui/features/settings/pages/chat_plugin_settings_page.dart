@@ -2,20 +2,22 @@
 ///
 /// 整合所有聊天相关插件的入口：
 /// - 记忆库、表情包、主动关怀、语音设置、绘图设置
+import 'package:aicove_flutter/src/ui/shared/widgets/moe_page_scaffold.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/moe_app_bar.dart';
+import '../../../../ui/shared/widgets/list/moe_settings_group.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
-import '../../../../features/plugins/plugin_providers.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../plugins/pages/image_plugin_detail_page.dart';
 import '../../plugins/pages/memory_plugin_detail_page.dart';
 import '../../plugins/pages/time_awareness_plugin_detail_page.dart';
 import '../../plugins/pages/tts_plugin_detail_page.dart';
 import '../../plugins/pages/sticker_settings_page.dart';
+import '../../plugins/pages/tavern_plugin_detail_page.dart';
 import '../../auto_reply/pages/auto_reply_settings_page.dart';
 
 /// 聊天插件配置项
@@ -70,6 +72,14 @@ const chatPluginItems = [
     icon: Icons.brush_outlined,
   ),
   ChatPluginItem(
+    id: 'tavern_compatibility',
+    name: '酒馆兼容插件（测试）',
+    subtitle: '预设、正则、世界书',
+    icon: Icons.menu_book_outlined,
+    // 使用角色现有 recipeId 单独绑定，不伪装成工具权限开关。
+    conversationSelectable: false,
+  ),
+  ChatPluginItem(
     id: 'time_awareness',
     name: '时间感知',
     subtitle: '当前时间、消息时间线',
@@ -88,80 +98,104 @@ class ChatPluginSettingsPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final colors = context.moeColors;
 
-    return Scaffold(
+    return MoePageScaffold(
       appBar: const MoeAppBar(title: '聊天插件', showBackButton: true),
       backgroundColor: colors.surface,
-      body: ListView.separated(
-        itemCount: chatPluginItems.length,
-        separatorBuilder: (_, __) => Divider(
-            height: borderWidth,
-            thickness: borderWidth,
-            color: colors.borderLight),
-        itemBuilder: (context, index) {
-          final item = chatPluginItems[index];
-          final isEnabled = _isPluginEnabled(ref, item.id);
-
-          return ListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-            minLeadingWidth: 24,
-            horizontalTitleGap: 12,
-            leading: Icon(item.icon, color: colors.text, size: 24),
-            title: Text(item.name,
-                style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: MoeFontWeights.emphasis,
-                    color: colors.text)),
-            subtitle: Wrap(
-              spacing: 8,
-              runSpacing: 4,
-              crossAxisAlignment: WrapCrossAlignment.center,
+      body: MoeSettingsContent(
+        child: ListView(
+          padding: MoeSettingsLayout.verticalListPadding,
+          children: [
+            MoeSettingsGroup(
               children: [
-                Text(item.subtitle,
-                    style: TextStyle(fontSize: 13, color: colors.muted)),
-                if (isEnabled != null)
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: MoeG2Decoration(
-                      radius: 4,
-                      color: isEnabled
-                          ? colors.primary.withOpacity(0.1)
-                          : colors.muted.withOpacity(0.1),
+                for (
+                  var index = 0;
+                  index < chatPluginItems.length;
+                  index++
+                ) ...[
+                  if (index > 0)
+                    Divider(
+                      height: borderWidth,
+                      thickness: borderWidth,
+                      color: colors.borderLight,
                     ),
-                    child: Text(
-                      isEnabled ? '已启用' : '已禁用',
-                      style: TextStyle(
-                          fontSize: 10,
-                          color: isEnabled ? colors.primary : colors.muted),
-                    ),
+                  Builder(
+                    builder: (context) {
+                      final item = chatPluginItems[index];
+                      final isEnabled = _isPluginEnabled(ref, item.id);
+
+                      return ListTile(
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                        ),
+                        title: Text(
+                          item.name,
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: MoeFontWeights.emphasis,
+                            color: colors.text,
+                          ),
+                        ),
+                        subtitle: Wrap(
+                          spacing: 8,
+                          runSpacing: 4,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            Text(
+                              item.subtitle,
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: colors.muted,
+                              ),
+                            ),
+                            if (isEnabled != null)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 2,
+                                ),
+                                decoration: MoeG2Decoration(
+                                  radius: 4,
+                                  color: isEnabled
+                                      ? colors.primary.withOpacity(0.1)
+                                      : colors.muted.withOpacity(0.1),
+                                ),
+                                child: Text(
+                                  isEnabled ? '已启用' : '已禁用',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: isEnabled
+                                        ? colors.primary
+                                        : colors.muted,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                        trailing: Icon(
+                          Icons.chevron_right,
+                          color: colors.muted,
+                        ),
+                        onTap: () => _navigateToPlugin(context, item),
+                      );
+                    },
                   ),
+                ],
               ],
             ),
-            trailing: Icon(Icons.chevron_right, color: colors.muted),
-            onTap: () => _navigateToPlugin(context, item),
-          );
-        },
+          ],
+        ),
       ),
     );
   }
 
-  /// 获取插件启用状态
+  /// 获取插件启用状态；只有保留全局开关的主动关怀返回状态，
+  /// 其余插件常开、由角色卡选择控制，不显示徽标
   bool? _isPluginEnabled(WidgetRef ref, String pluginId) {
     switch (pluginId) {
-      case 'memory':
-        return ref.watch(memoryPluginConfigProvider).enabled;
-      case 'tts':
-        return ref.watch(ttsPluginConfigProvider).enabled;
       case 'trigger':
         return ref.watch(appSettingsProvider).value?.autoReplySettings.enabled;
-      case 'sticker':
-        return ref.watch(stickerPluginConfigProvider).enabled;
-      case 'image':
-        return ref.watch(appSettingsProvider).value?.imageGenerationEnabled;
-      case 'time_awareness':
-        return ref.watch(timeAwarenessPluginConfigProvider).enabled;
       default:
-        return null; // 未实现的插件不显示状态
+        return null;
     }
   }
 
@@ -169,6 +203,9 @@ class ChatPluginSettingsPage extends ConsumerWidget {
   void _navigateToPlugin(BuildContext context, ChatPluginItem item) {
     Widget? page;
     switch (item.id) {
+      case 'tavern_compatibility':
+        page = const TavernPluginDetailPage();
+        break;
       case 'memory':
         page = const MemoryPluginDetailPage();
         break;

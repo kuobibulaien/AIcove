@@ -15,6 +15,7 @@ class StoredSupplementInsertOp {
     required this.forceAppendToTail,
     this.localPath,
     this.prompt,
+    this.generationSnapshot,
     this.audioUrl,
     this.text,
   });
@@ -24,6 +25,7 @@ class StoredSupplementInsertOp {
   final bool forceAppendToTail;
   final String? localPath;
   final String? prompt;
+  final ImageGenerationSnapshot? generationSnapshot;
   final String? audioUrl;
   final String? text;
 }
@@ -159,6 +161,7 @@ class ChatMessageProjectionCodec {
           'forceAppendToTail': op.forceAppendToTail,
           if (op.localPath != null) 'localPath': op.localPath,
           if (op.prompt != null) 'prompt': op.prompt,
+          if (op.generationSnapshot != null) 'generationSnapshot': op.generationSnapshot!.toJson(),
           if (op.audioUrl != null) 'audioUrl': op.audioUrl,
           if (op.text != null) 'text': op.text,
         },
@@ -257,6 +260,7 @@ class ChatMessageProjectionCodec {
           forceAppendToTail: forceAppendToTail,
           localPath: map['localPath'] as String?,
           prompt: map['prompt'] as String?,
+          generationSnapshot: ImageGenerationSnapshot.tryRead(map['generationSnapshot']),
           audioUrl: map['audioUrl'] as String?,
           text: map['text'] as String?,
         ),
@@ -399,6 +403,7 @@ class ChatMessageProjectionCodec {
         'type': 'image',
         'localPath': content.localPath,
         'caption': content.caption,
+        if (content.generationSnapshot != null) 'generationSnapshot': content.generationSnapshot!.toJson(),
       };
     }
     if (content is PluginAudioContent) {
@@ -423,6 +428,7 @@ class ChatMessageProjectionCodec {
         return PluginImageContent(
           localPath,
           caption: raw['caption'] as String?,
+          generationSnapshot: ImageGenerationSnapshot.tryRead(raw['generationSnapshot']),
         );
       case 'audio':
         final localPath = raw['localPath'] as String?;

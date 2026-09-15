@@ -37,7 +37,7 @@ AppSettings _buildSettings() {
     apiBaseUrl: 'https://api.openai.com/v1',
     imageGenerationEnabled: false,
     maxFileUploadMB: 10,
-    historyMessageLimit: 100,
+    contextWindowTokens: 272000,
     customModels: const <CustomModel>[],
     providers: const <ProviderAuth>[],
     modelProviderMap: const <String, String>{},
@@ -75,6 +75,7 @@ Widget _buildHost({
   required Conversation conversation,
   required Future<void> Function(String text) onSend,
   required ValueChanged<double> onHeightChanged,
+  bool disabled = false,
 }) {
   final settings = _buildSettings();
   return ProviderScope(
@@ -89,6 +90,7 @@ Widget _buildHost({
       child: MaterialApp(
         home: Scaffold(
           body: Composer(
+            disabled: disabled,
             onSend: onSend,
             onImageSelected: (_, {String? text}) async {},
             onFileSelected: (_, {String? text}) async {},
@@ -149,6 +151,47 @@ void main() {
     expect(editableAfterComplete.controller.text, isEmpty);
     expect(reportedHeights.length, greaterThan(heightCountBeforeSend));
     expect(reportedHeights.last, lessThan(heightBeforeSend));
+  });
+
+  testWidgets('send button uses minimalist line arrow icon inheriting accent color',
+      (tester) async {
+    await tester.pumpWidget(
+      _buildHost(
+        conversation: _buildConversation('conv_send_icon_test'),
+        onSend: (_) async {},
+        onHeightChanged: (_) {},
+      ),
+    );
+    await _pumpComposerReady(tester);
+
+    final sendFinder = find.byTooltip('发送');
+    expect(sendFinder, findsOneWidget);
+
+    final iconButton = tester.widget<IconButton>(
+      find.ancestor(of: sendFinder, matching: find.byType(IconButton)),
+    );
+    final icon = iconButton.icon as Icon;
+
+    expect(icon.icon, Icons.arrow_upward_rounded);
+    expect(icon.color, const Color(0xFFFC96AA));
+    expect(iconButton.style?.backgroundColor?.resolve(<WidgetState>{}), isNull);
+
+    // Verify disabled state uses muted color
+    await tester.pumpWidget(
+      _buildHost(
+        conversation: _buildConversation('conv_send_icon_test_disabled'),
+        onSend: (_) async {},
+        onHeightChanged: (_) {},
+        disabled: true,
+      ),
+    );
+    await _pumpComposerReady(tester);
+
+    final disabledButton = tester.widget<IconButton>(
+      find.ancestor(of: find.byTooltip('发送'), matching: find.byType(IconButton)),
+    );
+    final disabledIcon = disabledButton.icon as Icon;
+    expect(disabledIcon.color, isNot(const Color(0xFFFC96AA)));
   });
 }
 

@@ -1,7 +1,0 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
-{"file": ".trellis/spec/frontend/index.md", "reason": "Flutter 前端开发入口规范"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Flutter 质量与验证要求"}
-{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Dart 类型和数据模型约束"}
-{"file": ".trellis/spec/agent-context/index.md", "reason": "Agent 上下文与提示词装配边界"}
-{"file": ".trellis/spec/project/architecture-boundaries.md", "reason": "项目架构边界和允许修改范围"}
-{"file": ".trellis/spec/backend/index.md", "reason": "云端管理面板文件位于 cloud_backend，检查时需覆盖后端/面板质量入口"}

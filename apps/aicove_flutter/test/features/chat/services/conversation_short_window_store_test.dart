@@ -1,3 +1,4 @@
+import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -25,7 +26,9 @@ Future<void> _insertConversation(
   String conversationId,
   int timestamp,
 ) {
-  return database.into(database.conversations).insert(
+  return database
+      .into(database.conversations)
+      .insert(
         db.ConversationsCompanion.insert(
           id: conversationId,
           title: '测试会话',
@@ -67,10 +70,10 @@ Future<File> _writeTestPng(
 }
 
 ImageDimensions _dims(int width, int height) => ImageDimensions(
-      width: width,
-      height: height,
-      hitSource: ImageDimensionProbeSource.localPath,
-    );
+  width: width,
+  height: height,
+  hitSource: ImageDimensionProbeSource.localPath,
+);
 
 /// 可脚本化 fake 探测：记录输入、支持第 N 次调用信号。
 class _FakeProbe {
@@ -173,7 +176,7 @@ class _GatedMessageRepository extends MessageRepository {
   Completer<void>? entered;
 
   @override
-  Future<List<db.Message>> getByConversationStable(
+  Future<List<db.Message>> getByConversationForDisplay(
     String conversationId, {
     int limit = 50,
     int? beforeTime,
@@ -187,7 +190,7 @@ class _GatedMessageRepository extends MessageRepository {
       }
       await currentGate.future;
     }
-    return super.getByConversationStable(
+    return super.getByConversationForDisplay(
       conversationId,
       limit: limit,
       beforeTime: beforeTime,
@@ -256,10 +259,7 @@ ProviderContainer _createTimelineContainer(
   List<Override> overrides = const <Override>[],
 }) {
   final container = ProviderContainer(
-    overrides: [
-      databaseProvider.overrideWithValue(database),
-      ...overrides,
-    ],
+    overrides: [databaseProvider.overrideWithValue(database), ...overrides],
   );
   return container;
 }
@@ -277,12 +277,7 @@ Message _projectedImageMessage({
     role: 'assistant',
     sourceMessageId: sourceMessageId,
     blocks: <MessageBlock>[
-      ImageBlock(
-        messageId: id,
-        localPath: localPath,
-        url: url,
-        base64: base64,
-      ),
+      ImageBlock(messageId: id, localPath: localPath, url: url, base64: base64),
     ],
     createdAt: createdAt,
   );
@@ -303,6 +298,7 @@ Future<Map<String, dynamic>> _readSingleImageRowData(
 }
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
   TestWidgetsFlutterBinding.ensureInitialized();
 
   Directory? tempDir;
@@ -320,9 +316,7 @@ void main() {
     await _insertConversation(database, 'conv-seed', baseTime);
 
     final container = ProviderContainer(
-      overrides: [
-        databaseProvider.overrideWithValue(database),
-      ],
+      overrides: [databaseProvider.overrideWithValue(database)],
     );
     addTearDown(container.dispose);
 
@@ -341,10 +335,7 @@ void main() {
 
     final store = container.read(conversationTimelineCacheProvider);
     final window = await store
-        .watchWindow(
-          conversationId: 'conv-seed',
-          limit: 20,
-        )
+        .watchWindow(conversationId: 'conv-seed', limit: 20)
         .first;
 
     expect(
@@ -362,9 +353,7 @@ void main() {
     await _insertConversation(database, 'conv-page', baseTime);
 
     final container = ProviderContainer(
-      overrides: [
-        databaseProvider.overrideWithValue(database),
-      ],
+      overrides: [databaseProvider.overrideWithValue(database)],
     );
     addTearDown(container.dispose);
 
@@ -382,8 +371,10 @@ void main() {
     }
 
     final store = container.read(conversationTimelineCacheProvider);
-    await store.reloadConversationFromRawStore('conv-page',
-        targetMessageCount: 20);
+    await store.reloadConversationFromRawStore(
+      'conv-page',
+      targetMessageCount: 20,
+    );
     final addedCount = await store.loadOlderMessages(
       conversationId: 'conv-page',
       pageSize: 20,
@@ -391,17 +382,14 @@ void main() {
 
     expect(addedCount, 10);
     expect(
-      (await store.loadCachedMessages('conv-page'))
-          .map((message) => message.id)
-          .toList(),
+      (await store.loadCachedMessages(
+        'conv-page',
+      )).map((message) => message.id).toList(),
       List<String>.generate(30, (index) => 'm${index + 1}', growable: false),
     );
 
     final expandedWindow = await store
-        .watchWindow(
-          conversationId: 'conv-page',
-          limit: 40,
-        )
+        .watchWindow(conversationId: 'conv-page', limit: 40)
         .first;
     expect(expandedWindow.hasMoreMessages, isFalse);
   });
@@ -413,9 +401,7 @@ void main() {
     await _insertConversation(database, 'conv-projection-window', baseTime);
 
     final container = ProviderContainer(
-      overrides: [
-        databaseProvider.overrideWithValue(database),
-      ],
+      overrides: [databaseProvider.overrideWithValue(database)],
     );
     addTearDown(container.dispose);
 
@@ -446,10 +432,7 @@ void main() {
         id: 'raw_latest_user_mixed',
         role: 'user',
         blocks: <MessageBlock>[
-          TextBlock(
-            messageId: 'raw_latest_user_mixed',
-            content: '最新一条用户图文消息',
-          ),
+          TextBlock(messageId: 'raw_latest_user_mixed', content: '最新一条用户图文消息'),
           ImageBlock(
             messageId: 'raw_latest_user_mixed',
             localPath: r'C:\mock\latest_image.png',
@@ -463,10 +446,7 @@ void main() {
 
     final store = container.read(conversationTimelineCacheProvider);
     final window = await store
-        .watchWindow(
-          conversationId: 'conv-projection-window',
-          limit: 2,
-        )
+        .watchWindow(conversationId: 'conv-projection-window', limit: 2)
         .first;
 
     expect(
@@ -497,9 +477,7 @@ void main() {
     );
 
     final container = ProviderContainer(
-      overrides: [
-        databaseProvider.overrideWithValue(database),
-      ],
+      overrides: [databaseProvider.overrideWithValue(database)],
     );
     addTearDown(container.dispose);
 
@@ -552,17 +530,13 @@ void main() {
     );
 
     final window = await store
-        .watchWindow(
-          conversationId: 'conv-stream-placeholder-window',
-          limit: 2,
-        )
+        .watchWindow(conversationId: 'conv-stream-placeholder-window', limit: 2)
         .first;
 
     expect(
       window.messages.map((message) => message.id).toList(),
       <String>['raw_mid_ai', 'stream_part_1', 'stream_part_2'],
-      reason:
-          '同一轮流式占位拆成多条前端气泡时，短窗应按共享 pending source id 把它们算作一个 raw 槽位。',
+      reason: '同一轮流式占位拆成多条前端气泡时，短窗应按共享 pending source id 把它们算作一个 raw 槽位。',
     );
     expect(window.hasMoreMessages, isTrue);
   });
@@ -574,9 +548,7 @@ void main() {
     await _insertConversation(database, 'conv-load-older-raw-count', baseTime);
 
     final container = ProviderContainer(
-      overrides: [
-        databaseProvider.overrideWithValue(database),
-      ],
+      overrides: [databaseProvider.overrideWithValue(database)],
     );
     addTearDown(container.dispose);
 
@@ -587,10 +559,7 @@ void main() {
         id: 'raw_old_mixed',
         role: 'assistant',
         blocks: <MessageBlock>[
-          TextBlock(
-            messageId: 'raw_old_mixed',
-            content: '更早的一条图文助手消息',
-          ),
+          TextBlock(messageId: 'raw_old_mixed', content: '更早的一条图文助手消息'),
           ImageBlock(
             messageId: 'raw_old_mixed',
             localPath: r'C:\mock\older_image.png',
@@ -627,9 +596,9 @@ void main() {
 
     expect(addedCount, 1);
     expect(
-      (await store.loadCachedMessages('conv-load-older-raw-count'))
-          .map((message) => message.id)
-          .toList(),
+      (await store.loadCachedMessages(
+        'conv-load-older-raw-count',
+      )).map((message) => message.id).toList(),
       <String>[
         'raw_old_mixed__proj_00_text',
         'raw_old_mixed__proj_01_image',
@@ -645,9 +614,7 @@ void main() {
     await _insertConversation(database, 'conv-sync', baseTime);
 
     final container = ProviderContainer(
-      overrides: [
-        databaseProvider.overrideWithValue(database),
-      ],
+      overrides: [databaseProvider.overrideWithValue(database)],
     );
     addTearDown(container.dispose);
 
@@ -663,8 +630,10 @@ void main() {
     );
 
     final store = container.read(conversationTimelineCacheProvider);
-    await store.reloadConversationFromRawStore('conv-sync',
-        targetMessageCount: 20);
+    await store.reloadConversationFromRawStore(
+      'conv-sync',
+      targetMessageCount: 20,
+    );
     await store.upsertMessage(
       conversationId: 'conv-sync',
       message: Message(
@@ -676,18 +645,21 @@ void main() {
       ),
     );
     expect(
-      (await store.loadCachedMessages('conv-sync'))
-          .map((message) => message.id),
+      (await store.loadCachedMessages(
+        'conv-sync',
+      )).map((message) => message.id),
       contains('proj_1'),
     );
 
-    await store.reloadConversationFromRawStore('conv-sync',
-        targetMessageCount: 20);
+    await store.reloadConversationFromRawStore(
+      'conv-sync',
+      targetMessageCount: 20,
+    );
 
     expect(
-      (await store.loadCachedMessages('conv-sync'))
-          .map((message) => message.id)
-          .toList(),
+      (await store.loadCachedMessages(
+        'conv-sync',
+      )).map((message) => message.id).toList(),
       <String>['raw_1'],
     );
   });
@@ -699,9 +671,7 @@ void main() {
     await _insertConversation(database, 'conv-separate', baseTime);
 
     final container = ProviderContainer(
-      overrides: [
-        databaseProvider.overrideWithValue(database),
-      ],
+      overrides: [databaseProvider.overrideWithValue(database)],
     );
     addTearDown(container.dispose);
 
@@ -717,8 +687,10 @@ void main() {
     );
 
     final store = container.read(conversationTimelineCacheProvider);
-    await store.reloadConversationFromRawStore('conv-separate',
-        targetMessageCount: 20);
+    await store.reloadConversationFromRawStore(
+      'conv-separate',
+      targetMessageCount: 20,
+    );
     await store.replaceMessages(
       conversationId: 'conv-separate',
       removeMessageIds: const <String>['raw_1'],
@@ -738,9 +710,9 @@ void main() {
       'frontend override',
     );
     expect(
-      (await container.read(chatHistoryStoreProvider).loadAllRawMessages(
-                'conv-separate',
-              ))
+      (await container
+              .read(chatHistoryStoreProvider)
+              .loadAllRawMessages('conv-separate'))
           .single
           .content,
       'raw content',
@@ -754,9 +726,7 @@ void main() {
     await _insertConversation(database, 'conv-transient-replace', baseTime);
 
     final container = ProviderContainer(
-      overrides: [
-        databaseProvider.overrideWithValue(database),
-      ],
+      overrides: [databaseProvider.overrideWithValue(database)],
     );
     addTearDown(container.dispose);
 
@@ -776,8 +746,9 @@ void main() {
       'conv-transient-replace',
       targetMessageCount: 20,
     );
-    final mappingRepo =
-        container.read(messageProjectionMappingRepositoryProvider);
+    final mappingRepo = container.read(
+      messageProjectionMappingRepositoryProvider,
+    );
     final beforeMappings = await mappingRepo.getByRawMessage('raw_1');
 
     await store.replaceMessagesTransient(
@@ -814,9 +785,7 @@ void main() {
     await _insertConversation(database, 'conv-find', baseTime);
 
     final container = ProviderContainer(
-      overrides: [
-        databaseProvider.overrideWithValue(database),
-      ],
+      overrides: [databaseProvider.overrideWithValue(database)],
     );
     addTearDown(container.dispose);
 
@@ -861,9 +830,7 @@ void main() {
     await _insertConversation(database, 'conv-image', baseTime);
 
     final container = ProviderContainer(
-      overrides: [
-        databaseProvider.overrideWithValue(database),
-      ],
+      overrides: [databaseProvider.overrideWithValue(database)],
     );
     addTearDown(container.dispose);
 
@@ -891,10 +858,7 @@ void main() {
 
     final store = container.read(conversationTimelineCacheProvider);
     final firstWindow = await store
-        .watchWindow(
-          conversationId: 'conv-image',
-          limit: 20,
-        )
+        .watchWindow(conversationId: 'conv-image', limit: 20)
         .first;
     final firstImageBlock =
         firstWindow.messages.single.blocks!.single as ImageBlock;
@@ -926,9 +890,10 @@ void main() {
       await _insertConversation(database, 'conv-t1-https', baseTime);
 
       final probe = _FakeProbe((_) async => _dims(9, 9));
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [imageDimensionProbeProvider.overrideWithValue(probe.call)],
+      );
       addTearDown(container.dispose);
 
       await _persistMessage(
@@ -954,10 +919,11 @@ void main() {
       expect(probe.callCount, 0);
       expect(store.debugProbeCount, 0);
       expect(store.debugMaintenanceEnqueueCount, 0);
-      final block = (await store.loadCachedMessages('conv-t1-https'))
-          .single
-          .blocks!
-          .single as ImageBlock;
+      final block =
+          (await store.loadCachedMessages(
+                'conv-t1-https',
+              )).single.blocks!.single
+              as ImageBlock;
       expect(block.width, isNull);
       expect(block.height, isNull);
     });
@@ -971,10 +937,13 @@ void main() {
 
       final probe = _nullProbe();
       final spyBlocks = _SpyMessageBlockRepository(database);
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-        messageBlockRepositoryProvider.overrideWithValue(spyBlocks),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [
+          imageDimensionProbeProvider.overrideWithValue(probe.call),
+          messageBlockRepositoryProvider.overrideWithValue(spyBlocks),
+        ],
+      );
       addTearDown(container.dispose);
 
       await _persistMessage(
@@ -1015,10 +984,11 @@ void main() {
       expect(store.debugProbeCount, 1);
       expect(store.debugMaintenanceEnqueueCount, 1);
       expect(recorder.events.length, 1, reason: '全败维护轮不发通知（无自激）');
-      final block = (await store.loadCachedMessages('conv-t1-missing'))
-          .single
-          .blocks!
-          .single as ImageBlock;
+      final block =
+          (await store.loadCachedMessages(
+                'conv-t1-missing',
+              )).single.blocks!.single
+              as ImageBlock;
       expect(block.width, isNull);
     });
 
@@ -1059,10 +1029,11 @@ void main() {
       await store.loadCachedMessages('conv-t1-broken');
       await _drainMaintenance(store, 'conv-t1-broken');
       expect(store.debugProbeCount, 1, reason: '损坏图 attempted 后不再重试');
-      final block = (await store.loadCachedMessages('conv-t1-broken'))
-          .single
-          .blocks!
-          .single as ImageBlock;
+      final block =
+          (await store.loadCachedMessages(
+                'conv-t1-broken',
+              )).single.blocks!.single
+              as ImageBlock;
       expect(block.width, isNull);
     });
 
@@ -1120,19 +1091,19 @@ void main() {
 
       // 模拟重启：同一数据库、新容器新缓存实例，装载后不再探测。
       final probe2 = _FakeProbe((_) async => _dims(9, 9));
-      final container2 = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe2.call),
-      ]);
+      final container2 = _createTimelineContainer(
+        database,
+        overrides: [imageDimensionProbeProvider.overrideWithValue(probe2.call)],
+      );
       addTearDown(container2.dispose);
       final store2 = container2.read(conversationTimelineCacheProvider);
       await store2.reloadConversationFromRawStore('conv-t1-ok');
       await _drainMaintenance(store2, 'conv-t1-ok');
 
       expect(probe2.callCount, 0, reason: '重启后从 DB 直接取到宽高，不再探测');
-      final restoredBlock = (await store2.loadCachedMessages('conv-t1-ok'))
-          .single
-          .blocks!
-          .single as ImageBlock;
+      final restoredBlock =
+          (await store2.loadCachedMessages('conv-t1-ok')).single.blocks!.single
+              as ImageBlock;
       expect(restoredBlock.width, 1);
       expect(restoredBlock.height, 1);
     });
@@ -1193,14 +1164,18 @@ void main() {
       expect(store.debugProbeCount, 2);
       expect(recorder.events.length, 2, reason: '部分成功的维护轮只通知一次');
       final messages = await store.loadCachedMessages('conv-t1-partial');
-      final goodBlock = messages
-          .firstWhere((message) => message.id == 'img_good')
-          .blocks!
-          .single as ImageBlock;
-      final lostBlock = messages
-          .firstWhere((message) => message.id == 'img_lost')
-          .blocks!
-          .single as ImageBlock;
+      final goodBlock =
+          messages
+                  .firstWhere((message) => message.id == 'img_good')
+                  .blocks!
+                  .single
+              as ImageBlock;
+      final lostBlock =
+          messages
+                  .firstWhere((message) => message.id == 'img_lost')
+                  .blocks!
+                  .single
+              as ImageBlock;
       expect(goodBlock.width, 1);
       expect(goodBlock.height, 1);
       expect(lostBlock.width, isNull);
@@ -1212,8 +1187,9 @@ void main() {
       final baseTime = DateTime(2026, 7, 19, 9, 25, 0).millisecondsSinceEpoch;
       await _insertConversation(database, 'conv-t1-fallback', baseTime);
 
-      final pngBase64 =
-          base64Encode(img.encodePng(img.Image(width: 5, height: 9)));
+      final pngBase64 = base64Encode(
+        img.encodePng(img.Image(width: 5, height: 9)),
+      );
 
       final container = _createTimelineContainer(database);
       addTearDown(container.dispose);
@@ -1259,9 +1235,10 @@ void main() {
       await _insertConversation(database, 'conv-t1-reproject', baseTime);
 
       final probe = _nullProbe();
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [imageDimensionProbeProvider.overrideWithValue(probe.call)],
+      );
       addTearDown(container.dispose);
 
       await _persistMessage(
@@ -1319,11 +1296,15 @@ void main() {
       );
 
       final spyBlocks = _SpyMessageBlockRepository(database);
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider
-            .overrideWithValue(probe_stub.probeImageDimensions),
-        messageBlockRepositoryProvider.overrideWithValue(spyBlocks),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [
+          imageDimensionProbeProvider.overrideWithValue(
+            probe_stub.probeImageDimensions,
+          ),
+          messageBlockRepositoryProvider.overrideWithValue(spyBlocks),
+        ],
+      );
       addTearDown(container.dispose);
 
       await _persistMessage(
@@ -1365,9 +1346,10 @@ void main() {
       await _insertConversation(database, 'conv-t2-peek', baseTime);
 
       final probe = _FakeProbe((_) async => _dims(9, 9));
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [imageDimensionProbeProvider.overrideWithValue(probe.call)],
+      );
       addTearDown(container.dispose);
 
       final store = container.read(conversationTimelineCacheProvider);
@@ -1415,10 +1397,13 @@ void main() {
       await _insertConversation(database, 'conv-t3-hot', baseTime);
 
       final gatedRepo = _GatedMessageRepository(database);
-      final container = _createTimelineContainer(database, overrides: [
-        messageRepositoryProvider.overrideWithValue(gatedRepo),
-        imageDimensionProbeProvider.overrideWithValue(_nullProbe().call),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [
+          messageRepositoryProvider.overrideWithValue(gatedRepo),
+          imageDimensionProbeProvider.overrideWithValue(_nullProbe().call),
+        ],
+      );
       addTearDown(container.dispose);
 
       for (var i = 1; i <= 25; i += 1) {
@@ -1453,20 +1438,20 @@ void main() {
       final firstEvent = Completer<void>();
       final secondEvent = Completer<void>();
       late final StreamSubscription<ConversationTimelineWindowState>
-          subscription;
+      subscription;
       subscription = store
           .watchWindow(conversationId: 'conv-t3-hot', limit: 50)
           .listen((window) {
-        events.add(window);
-        if (events.length == 1) {
-          // 暂停消费：把生成器钉在首个 yield 上，制造
-          // 「变更发生在首值与监听建立之间」的窗口。
-          subscription.pause();
-          firstEvent.complete();
-        } else if (events.length == 2 && !secondEvent.isCompleted) {
-          secondEvent.complete();
-        }
-      });
+            events.add(window);
+            if (events.length == 1) {
+              // 暂停消费：把生成器钉在首个 yield 上，制造
+              // 「变更发生在首值与监听建立之间」的窗口。
+              subscription.pause();
+              firstEvent.complete();
+            } else if (events.length == 2 && !secondEvent.isCompleted) {
+              secondEvent.complete();
+            }
+          });
       addTearDown(subscription.cancel);
 
       await firstEvent.future.timeout(
@@ -1509,12 +1494,15 @@ void main() {
       await _insertConversation(database, 'conv-t4-row', baseTime);
 
       final probe = _FakeProbe((_) async => _dims(7, 9));
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [imageDimensionProbeProvider.overrideWithValue(probe.call)],
+      );
       addTearDown(container.dispose);
 
-      await container.read(messageRepositoryProvider).upsert(
+      await container
+          .read(messageRepositoryProvider)
+          .upsert(
             MessageConverter.toCompanion(
               Message(
                 id: 'row_raw',
@@ -1525,7 +1513,9 @@ void main() {
               'conv-t4-row',
             ),
           );
-      await database.into(database.messageBlocks).insert(
+      await database
+          .into(database.messageBlocks)
+          .insert(
             db.MessageBlocksCompanion.insert(
               id: 'row_custom',
               messageId: 'row_raw',
@@ -1561,18 +1551,18 @@ void main() {
 
       // 模拟重启：新缓存实例装载后不再探测。
       final probe2 = _FakeProbe((_) async => _dims(1, 1));
-      final container2 = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe2.call),
-      ]);
+      final container2 = _createTimelineContainer(
+        database,
+        overrides: [imageDimensionProbeProvider.overrideWithValue(probe2.call)],
+      );
       addTearDown(container2.dispose);
       final store2 = container2.read(conversationTimelineCacheProvider);
       await store2.reloadConversationFromRawStore('conv-t4-row');
       await _drainMaintenance(store2, 'conv-t4-row');
       expect(probe2.callCount, 0);
-      final block = (await store2.loadCachedMessages('conv-t4-row'))
-          .single
-          .blocks!
-          .single as ImageBlock;
+      final block =
+          (await store2.loadCachedMessages('conv-t4-row')).single.blocks!.single
+              as ImageBlock;
       expect(block.width, 7);
       expect(block.height, 9);
     });
@@ -1584,12 +1574,15 @@ void main() {
       await _insertConversation(database, 'conv-t4-import', baseTime);
 
       final probe = _FakeProbe((_) async => _dims(11, 13));
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [imageDimensionProbeProvider.overrideWithValue(probe.call)],
+      );
       addTearDown(container.dispose);
 
-      await container.read(messageRepositoryProvider).upsert(
+      await container
+          .read(messageRepositoryProvider)
+          .upsert(
             MessageConverter.toCompanion(
               Message(
                 id: 'import_raw',
@@ -1600,7 +1593,9 @@ void main() {
               'conv-t4-import',
             ),
           );
-      await database.into(database.messageBlocks).insert(
+      await database
+          .into(database.messageBlocks)
+          .insert(
             db.MessageBlocksCompanion.insert(
               id: 'row_import_1',
               messageId: 'import_raw',
@@ -1638,10 +1633,13 @@ void main() {
 
       final probe = _FakeProbe((_) async => _dims(5, 6));
       final spyBlocks = _SpyMessageBlockRepository(database);
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-        messageBlockRepositoryProvider.overrideWithValue(spyBlocks),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [
+          imageDimensionProbeProvider.overrideWithValue(probe.call),
+          messageBlockRepositoryProvider.overrideWithValue(spyBlocks),
+        ],
+      );
       addTearDown(container.dispose);
 
       await _persistMessage(
@@ -1671,10 +1669,12 @@ void main() {
       expect(store.debugProbeCount, 1);
       expect(spyBlocks.casCallCount, 0, reason: '无真相源行时不做 DB 写回');
       final messages = await store.loadCachedMessages('conv-t4-synth');
-      final block = messages
-          .firstWhere((message) => message.id == 'proj_synth')
-          .blocks!
-          .single as ImageBlock;
+      final block =
+          messages
+                  .firstWhere((message) => message.id == 'proj_synth')
+                  .blocks!
+                  .single
+              as ImageBlock;
       expect(block.width, 5);
       expect(block.height, 6);
 
@@ -1696,12 +1696,15 @@ void main() {
       expect(payloadA.length, payloadB.length);
 
       final probe = _FakeProbe((_) async => _dims(3, 4));
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [imageDimensionProbeProvider.overrideWithValue(probe.call)],
+      );
       addTearDown(container.dispose);
 
-      await container.read(messageRepositoryProvider).upsert(
+      await container
+          .read(messageRepositoryProvider)
+          .upsert(
             MessageConverter.toCompanion(
               Message(
                 id: 'b64_raw',
@@ -1712,7 +1715,9 @@ void main() {
               'conv-t4-b64',
             ),
           );
-      await database.into(database.messageBlocks).insert(
+      await database
+          .into(database.messageBlocks)
+          .insert(
             db.MessageBlocksCompanion.insert(
               id: 'row_b64_a',
               messageId: 'b64_raw',
@@ -1727,7 +1732,9 @@ void main() {
               createdAt: baseTime + 1,
             ),
           );
-      await database.into(database.messageBlocks).insert(
+      await database
+          .into(database.messageBlocks)
+          .insert(
             db.MessageBlocksCompanion.insert(
               id: 'row_b64_b',
               messageId: 'b64_raw',
@@ -1765,15 +1772,11 @@ void main() {
       expect(rowA['height'], 4);
       expect(rowB.containsKey('width'), isFalse, reason: 'B 行不得被 A 尺寸污染');
 
-      final blocks = (await store.loadCachedMessages('conv-t4-b64'))
-          .single
-          .blocks!
-          .whereType<ImageBlock>()
-          .toList();
-      final blockA =
-          blocks.firstWhere((block) => block.base64 == payloadA);
-      final blockB =
-          blocks.firstWhere((block) => block.base64 == payloadB);
+      final blocks = (await store.loadCachedMessages(
+        'conv-t4-b64',
+      )).single.blocks!.whereType<ImageBlock>().toList();
+      final blockA = blocks.firstWhere((block) => block.base64 == payloadA);
+      final blockB = blocks.firstWhere((block) => block.base64 == payloadB);
       expect(blockA.width, 3);
       expect(blockB.width, isNull, reason: 'B 块不得被 A 尺寸污染');
     });
@@ -1789,9 +1792,10 @@ void main() {
       await Directory('${tempDir!.path}/same source dir').create();
 
       final probe = _FakeProbe((_) async => _dims(2, 3));
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [imageDimensionProbeProvider.overrideWithValue(probe.call)],
+      );
       addTearDown(container.dispose);
 
       await _persistMessage(
@@ -1832,10 +1836,12 @@ void main() {
 
       expect(store.debugProbeCount, 1, reason: 'file:// 与 localPath 同指纹，回放即可');
       final messages = await store.loadCachedMessages('conv-t4-fileurl');
-      final block = messages
-          .firstWhere((message) => message.id == 'proj_fileurl')
-          .blocks!
-          .single as ImageBlock;
+      final block =
+          messages
+                  .firstWhere((message) => message.id == 'proj_fileurl')
+                  .blocks!
+                  .single
+              as ImageBlock;
       expect(block.width, 2);
       expect(block.height, 3);
     });
@@ -1846,22 +1852,28 @@ void main() {
       final baseTime = DateTime(2026, 7, 19, 10, 45, 0).millisecondsSinceEpoch;
       await _insertConversation(database, 'conv-t4-wrap', baseTime);
 
-      final payload =
-          base64Encode(img.encodePng(img.Image(width: 4, height: 6)));
+      final payload = base64Encode(
+        img.encodePng(img.Image(width: 4, height: 6)),
+      );
       final wrapped = 'data:image/png;base64,$payload';
       final buffer = StringBuffer();
       for (var i = 0; i < payload.length; i += 40) {
         buffer
-          ..write(payload.substring(
-              i, i + 40 > payload.length ? payload.length : i + 40))
+          ..write(
+            payload.substring(
+              i,
+              i + 40 > payload.length ? payload.length : i + 40,
+            ),
+          )
           ..write('\n');
       }
       final whitespaced = buffer.toString();
 
       final probe = _FakeProbe((_) async => _dims(4, 6));
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [imageDimensionProbeProvider.overrideWithValue(probe.call)],
+      );
       addTearDown(container.dispose);
 
       await _persistMessage(
@@ -1910,14 +1922,18 @@ void main() {
 
       expect(store.debugProbeCount, 1, reason: '包装差异不影响 sourceKey 与精确门');
       final messages = await store.loadCachedMessages('conv-t4-wrap');
-      final dataUrlBlock = messages
-          .firstWhere((message) => message.id == 'proj_wrap_dataurl')
-          .blocks!
-          .single as ImageBlock;
-      final whitespacedBlock = messages
-          .firstWhere((message) => message.id == 'proj_wrap_ws')
-          .blocks!
-          .single as ImageBlock;
+      final dataUrlBlock =
+          messages
+                  .firstWhere((message) => message.id == 'proj_wrap_dataurl')
+                  .blocks!
+                  .single
+              as ImageBlock;
+      final whitespacedBlock =
+          messages
+                  .firstWhere((message) => message.id == 'proj_wrap_ws')
+                  .blocks!
+                  .single
+              as ImageBlock;
       expect(dataUrlBlock.width, 4);
       expect(dataUrlBlock.height, 6);
       expect(whitespacedBlock.width, 4);
@@ -1941,9 +1957,10 @@ void main() {
       }
 
       final probe = _nullProbe();
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [imageDimensionProbeProvider.overrideWithValue(probe.call)],
+      );
       addTearDown(container.dispose);
       final store = container.read(conversationTimelineCacheProvider);
 
@@ -2087,9 +2104,10 @@ void main() {
 
       final probeGate = Completer<ImageDimensions?>();
       final probe = _FakeProbe((_) => probeGate.future);
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [imageDimensionProbeProvider.overrideWithValue(probe.call)],
+      );
       addTearDown(container.dispose);
 
       await _persistMessage(
@@ -2142,10 +2160,13 @@ void main() {
         return probeGate.future;
       };
       final spyBlocks = _SpyMessageBlockRepository(database);
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-        messageBlockRepositoryProvider.overrideWithValue(spyBlocks),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [
+          imageDimensionProbeProvider.overrideWithValue(probe.call),
+          messageBlockRepositoryProvider.overrideWithValue(spyBlocks),
+        ],
+      );
       addTearDown(container.dispose);
 
       await _persistMessage(
@@ -2178,13 +2199,15 @@ void main() {
       await spyBlocks.update(
         rowId,
         db.MessageBlocksCompanion(
-          data: Value(jsonEncode(<String, dynamic>{
-            'id': rowId,
-            'messageId': 'cas_raw',
-            'type': 'image',
-            'status': 'success',
-            'localPath': '/source/b.png',
-          })),
+          data: Value(
+            jsonEncode(<String, dynamic>{
+              'id': rowId,
+              'messageId': 'cas_raw',
+              'type': 'image',
+              'status': 'success',
+              'localPath': '/source/b.png',
+            }),
+          ),
         ),
       );
       final reloadFuture = store.reloadConversationFromRawStore('conv-t6-cas');
@@ -2198,18 +2221,13 @@ void main() {
       expect(rowData['localPath'], '/source/b.png');
       expect(rowData.containsKey('width'), isFalse, reason: '旧尺寸不得写入新图');
 
-      final cachedBlock = (await store.loadCachedMessages('conv-t6-cas'))
-          .single
-          .blocks!
-          .single as ImageBlock;
+      final cachedBlock =
+          (await store.loadCachedMessages('conv-t6-cas')).single.blocks!.single
+              as ImageBlock;
       expect(cachedBlock.localPath, '/source/b.png');
       expect(cachedBlock.width, isNull, reason: 'reload 安装的新快照未被旧结果覆盖');
 
-      expect(
-        recorder.events.length,
-        2,
-        reason: '仅 reload 通知一次；stale 维护轮不通知',
-      );
+      expect(recorder.events.length, 2, reason: '仅 reload 通知一次；stale 维护轮不通知');
 
       // 终审 N3：全部 stale 后状态表不得留有该来源尺寸——
       // 重新引入 A 来源块：attempted 命中不重探测，且不回放出宽高。
@@ -2225,10 +2243,12 @@ void main() {
       );
       await _drainMaintenance(store, 'conv-t6-cas');
       expect(store.debugProbeCount, probeCountBefore);
-      final reintroducedBlock = (await store.loadCachedMessages('conv-t6-cas'))
-          .firstWhere((message) => message.id == 'proj_a_again')
-          .blocks!
-          .single as ImageBlock;
+      final reintroducedBlock =
+          (await store.loadCachedMessages('conv-t6-cas'))
+                  .firstWhere((message) => message.id == 'proj_a_again')
+                  .blocks!
+                  .single
+              as ImageBlock;
       expect(reintroducedBlock.width, isNull, reason: '状态表无该来源尺寸');
     });
 
@@ -2245,10 +2265,13 @@ void main() {
         return probeGate.future;
       };
       final spyBlocks = _SpyMessageBlockRepository(database);
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-        messageBlockRepositoryProvider.overrideWithValue(spyBlocks),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [
+          imageDimensionProbeProvider.overrideWithValue(probe.call),
+          messageBlockRepositoryProvider.overrideWithValue(spyBlocks),
+        ],
+      );
       addTearDown(container.dispose);
 
       await _persistMessage(
@@ -2270,9 +2293,7 @@ void main() {
 
       // 探测期间行被软删除。
       final rows = await database.select(database.messageBlocks).get();
-      final rowId = rows
-          .firstWhere((row) => row.messageId == 'softdel_raw')
-          .id;
+      final rowId = rows.firstWhere((row) => row.messageId == 'softdel_raw').id;
       await spyBlocks.softDelete(rowId, baseTime + 100);
 
       final originalData = rows
@@ -2299,13 +2320,18 @@ void main() {
       final spyBlocks = _SpyMessageBlockRepository(database)
         ..throwOnCas = (rowId) =>
             rowId == 'dup_row_2' ? StateError('cas boom') : null;
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-        messageBlockRepositoryProvider.overrideWithValue(spyBlocks),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [
+          imageDimensionProbeProvider.overrideWithValue(probe.call),
+          messageBlockRepositoryProvider.overrideWithValue(spyBlocks),
+        ],
+      );
       addTearDown(container.dispose);
 
-      await container.read(messageRepositoryProvider).upsert(
+      await container
+          .read(messageRepositoryProvider)
+          .upsert(
             MessageConverter.toCompanion(
               Message(
                 id: 'dup_raw',
@@ -2317,7 +2343,9 @@ void main() {
             ),
           );
       for (final (index, rowId) in <String>['dup_row_1', 'dup_row_2'].indexed) {
-        await database.into(database.messageBlocks).insert(
+        await database
+            .into(database.messageBlocks)
+            .insert(
               db.MessageBlocksCompanion.insert(
                 id: rowId,
                 messageId: 'dup_raw',
@@ -2339,7 +2367,10 @@ void main() {
       await store.reloadConversationFromRawStore('conv-t6-tworows');
       await _drainMaintenance(store, 'conv-t6-tworows');
 
-      expect(spyBlocks.casRowIds, containsAll(<String>['dup_row_1', 'dup_row_2']));
+      expect(
+        spyBlocks.casRowIds,
+        containsAll(<String>['dup_row_1', 'dup_row_2']),
+      );
       final row1 = await _readSingleImageRowData(
         container,
         'dup_raw',
@@ -2353,11 +2384,9 @@ void main() {
       expect(row1['width'], 8, reason: '单块写回失败不影响其余块');
       expect(row2.containsKey('width'), isFalse);
 
-      final blocks = (await store.loadCachedMessages('conv-t6-tworows'))
-          .single
-          .blocks!
-          .whereType<ImageBlock>()
-          .toList();
+      final blocks = (await store.loadCachedMessages(
+        'conv-t6-tworows',
+      )).single.blocks!.whereType<ImageBlock>().toList();
       for (final block in blocks) {
         expect(block.width, 8, reason: '≥1 行成功即内存提交');
         expect(block.height, 9);
@@ -2378,11 +2407,15 @@ void main() {
         return probeCallIndex == 1 ? _dims(2, 2) : null;
       });
       final spyMapping = _SpyMappingRepository(database);
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-        messageProjectionMappingRepositoryProvider
-            .overrideWithValue(spyMapping),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [
+          imageDimensionProbeProvider.overrideWithValue(probe.call),
+          messageProjectionMappingRepositoryProvider.overrideWithValue(
+            spyMapping,
+          ),
+        ],
+      );
       addTearDown(container.dispose);
 
       await _persistMessage(
@@ -2413,7 +2446,11 @@ void main() {
         ),
       );
       final writesAfterUpsert1 = spyMapping.writeCallCount;
-      expect(writesAfterUpsert1, writesAfterReload + 1, reason: 'upsert 自身同步一次');
+      expect(
+        writesAfterUpsert1,
+        writesAfterReload + 1,
+        reason: 'upsert 自身同步一次',
+      );
       await _drainMaintenance(store, 'conv-t7-map');
       expect(store.debugProbeCount, 1);
       expect(
@@ -2464,9 +2501,10 @@ void main() {
         }
         return Future<ImageDimensions?>.value(null);
       };
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [imageDimensionProbeProvider.overrideWithValue(probe.call)],
+      );
       addTearDown(container.dispose);
 
       for (var i = 1; i <= 5; i += 1) {
@@ -2516,10 +2554,9 @@ void main() {
       await _drainMaintenance(store, 'conv-t8-relay');
 
       expect(store.debugProbeCount, 5, reason: '第 5 个候选经接力最终被探测');
-      expect(
-        probe.inputs.map((input) => input.localPath).toSet(),
-        <String>{for (var i = 1; i <= 5; i += 1) '/gone/relay_$i.png'},
-      );
+      expect(probe.inputs.map((input) => input.localPath).toSet(), <String>{
+        for (var i = 1; i <= 5; i += 1) '/gone/relay_$i.png',
+      });
       expect(
         store.debugMaintenanceEnqueueCount,
         greaterThanOrEqualTo(2),
@@ -2536,9 +2573,10 @@ void main() {
       final probe = _FakeProbe((input) async {
         return input.localPath == '/gone/pr_1.png' ? _dims(1, 2) : null;
       });
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [imageDimensionProbeProvider.overrideWithValue(probe.call)],
+      );
       addTearDown(container.dispose);
 
       for (var i = 1; i <= 5; i += 1) {
@@ -2562,10 +2600,9 @@ void main() {
 
       expect(store.debugProbeCount, 5);
       final messages = await store.loadCachedMessages('conv-t8-partial');
-      final okBlock = messages
-          .firstWhere((message) => message.id == 'pr_1')
-          .blocks!
-          .single as ImageBlock;
+      final okBlock =
+          messages.firstWhere((message) => message.id == 'pr_1').blocks!.single
+              as ImageBlock;
       expect(okBlock.width, 1);
       expect(okBlock.height, 2);
     });
@@ -2579,9 +2616,10 @@ void main() {
       await _insertConversation(database, 'conv-t9-replay', baseTime);
 
       final probe = _FakeProbe((_) async => _dims(9, 9));
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [imageDimensionProbeProvider.overrideWithValue(probe.call)],
+      );
       addTearDown(container.dispose);
 
       await _persistMessage(
@@ -2621,10 +2659,12 @@ void main() {
       await _drainMaintenance(store, 'conv-t9-replay');
 
       expect(store.debugProbeCount, 1, reason: '回放命中，无需再探测');
-      final block = (await store.loadCachedMessages('conv-t9-replay'))
-          .firstWhere((message) => message.id == 'proj_r9_b')
-          .blocks!
-          .single as ImageBlock;
+      final block =
+          (await store.loadCachedMessages('conv-t9-replay'))
+                  .firstWhere((message) => message.id == 'proj_r9_b')
+                  .blocks!
+                  .single
+              as ImageBlock;
       expect(block.width, 9);
       expect(block.height, 9);
     });
@@ -2638,10 +2678,13 @@ void main() {
       final probe = _FakeProbe((_) async => _dims(4, 4));
       final spyBlocks = _SpyMessageBlockRepository(database)
         ..throwOnCas = (_) => StateError('db write boom');
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-        messageBlockRepositoryProvider.overrideWithValue(spyBlocks),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [
+          imageDimensionProbeProvider.overrideWithValue(probe.call),
+          messageBlockRepositoryProvider.overrideWithValue(spyBlocks),
+        ],
+      );
       addTearDown(container.dispose);
 
       await _persistMessage(
@@ -2664,20 +2707,22 @@ void main() {
       expect(store.debugProbeCount, 1);
       final rowData = await _readSingleImageRowData(container, 'r9db');
       expect(rowData['width'], isNull, reason: 'DB 写回失败');
-      var block = (await store.loadCachedMessages('conv-t9-dbfail'))
-          .single
-          .blocks!
-          .single as ImageBlock;
+      var block =
+          (await store.loadCachedMessages(
+                'conv-t9-dbfail',
+              )).single.blocks!.single
+              as ImageBlock;
       expect(block.width, 4, reason: '内存降级生效');
 
       // reload 重投影：DB 行仍无尺寸，但状态表回放补齐，不再探测。
       await store.reloadConversationFromRawStore('conv-t9-dbfail');
       await _drainMaintenance(store, 'conv-t9-dbfail');
       expect(store.debugProbeCount, 1);
-      block = (await store.loadCachedMessages('conv-t9-dbfail'))
-          .single
-          .blocks!
-          .single as ImageBlock;
+      block =
+          (await store.loadCachedMessages(
+                'conv-t9-dbfail',
+              )).single.blocks!.single
+              as ImageBlock;
       expect(block.width, 4, reason: '不出现「不再探测且宽高丢失」');
       expect(block.height, 4);
     });
@@ -2693,9 +2738,10 @@ void main() {
         if (input.localPath == '/gone/b9.png') return _dims(2, 2);
         return null;
       });
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [imageDimensionProbeProvider.overrideWithValue(probe.call)],
+      );
       addTearDown(container.dispose);
 
       await _persistMessage(
@@ -2751,19 +2797,24 @@ void main() {
       await _drainMaintenance(store, 'conv-t9-evict');
 
       expect(store.debugProbeCount, 3, reason: '被逐出来源重新成为候选');
-      expect(
-        probe.inputs.map((input) => input.localPath).toList(),
-        <String>['/gone/a9.png', '/gone/b9.png', '/gone/a9.png'],
-      );
+      expect(probe.inputs.map((input) => input.localPath).toList(), <String>[
+        '/gone/a9.png',
+        '/gone/b9.png',
+        '/gone/a9.png',
+      ]);
       final messages = await store.loadCachedMessages('conv-t9-evict');
-      final blockA = messages
-          .firstWhere((message) => message.id == 'proj_a9_again')
-          .blocks!
-          .single as ImageBlock;
-      final blockB = messages
-          .firstWhere((message) => message.id == 'proj_b9')
-          .blocks!
-          .single as ImageBlock;
+      final blockA =
+          messages
+                  .firstWhere((message) => message.id == 'proj_a9_again')
+                  .blocks!
+                  .single
+              as ImageBlock;
+      final blockB =
+          messages
+                  .firstWhere((message) => message.id == 'proj_b9')
+                  .blocks!
+                  .single
+              as ImageBlock;
       expect(blockA.width, 1, reason: '重新探测后不丢宽高');
       expect(blockB.width, 2, reason: '已应用到快照的尺寸不受逐出影响');
     });
@@ -2783,10 +2834,13 @@ void main() {
         return probeGate.future;
       };
       final spyBlocks = _SpyMessageBlockRepository(database);
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-        messageBlockRepositoryProvider.overrideWithValue(spyBlocks),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [
+          imageDimensionProbeProvider.overrideWithValue(probe.call),
+          messageBlockRepositoryProvider.overrideWithValue(spyBlocks),
+        ],
+      );
       addTearDown(container.dispose);
 
       await _persistMessage(
@@ -2823,11 +2877,7 @@ void main() {
       final rowData = await _readSingleImageRowData(container, 'inv_raw');
       expect(rowData['width'], isNull);
       expect(await store.loadCachedMessages('conv-t10-clear'), isEmpty);
-      expect(
-        recorder.events.length,
-        2,
-        reason: '仅 clear 自身通知一次，失效维护轮静默',
-      );
+      expect(recorder.events.length, 2, reason: '仅 clear 自身通知一次，失效维护轮静默');
       expect(store.debugMaintenanceEnqueueCount, 1, reason: '失效后不重排队');
 
       // clear 清理了状态表：同来源重新引入允许再次探测。
@@ -2853,10 +2903,13 @@ void main() {
       final probeGate = Completer<ImageDimensions?>();
       final probe = _FakeProbe((_) => probeGate.future);
       final spyBlocks = _SpyMessageBlockRepository(database);
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-        messageBlockRepositoryProvider.overrideWithValue(spyBlocks),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [
+          imageDimensionProbeProvider.overrideWithValue(probe.call),
+          messageBlockRepositoryProvider.overrideWithValue(spyBlocks),
+        ],
+      );
       addTearDown(container.dispose);
 
       await _persistMessage(
@@ -2913,11 +2966,14 @@ void main() {
       });
       final gatedRepo = _GatedMessageRepository(database);
       final spyBlocks = _SpyMessageBlockRepository(database);
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-        messageRepositoryProvider.overrideWithValue(gatedRepo),
-        messageBlockRepositoryProvider.overrideWithValue(spyBlocks),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [
+          imageDimensionProbeProvider.overrideWithValue(probe.call),
+          messageRepositoryProvider.overrideWithValue(gatedRepo),
+          messageBlockRepositoryProvider.overrideWithValue(spyBlocks),
+        ],
+      );
       addTearDown(container.dispose);
 
       for (var i = 1; i <= 20; i += 1) {
@@ -2973,9 +3029,11 @@ void main() {
       // 被占内容任务之后：此刻第二批「已入队、未启动」。
       gate1.complete(null);
       await gatedRepo.entered!.future.timeout(const Duration(seconds: 10));
-      for (var i = 0;
-          i < 50 && store.debugMaintenanceEnqueueCount < 2;
-          i += 1) {
+      for (
+        var i = 0;
+        i < 50 && store.debugMaintenanceEnqueueCount < 2;
+        i += 1
+      ) {
         await Future<void>.delayed(Duration.zero);
       }
       expect(store.debugMaintenanceEnqueueCount, 2, reason: '第二批已入队');
@@ -2990,11 +3048,7 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       await Future<void>.delayed(Duration.zero);
 
-      expect(
-        store.debugProbeCount,
-        4,
-        reason: 'B1：epoch 固定于入队时刻，已失效批次零探测',
-      );
+      expect(store.debugProbeCount, 4, reason: 'B1：epoch 固定于入队时刻，已失效批次零探测');
       expect(spyBlocks.casCallCount, 0, reason: '零 DB 写');
       expect(store.debugMaintenanceEnqueueCount, 2, reason: '零重排队');
       expect(
@@ -3018,9 +3072,10 @@ void main() {
       await _insertConversation(database, 'conv-b2-active', baseTime);
 
       final probe = _nullProbe();
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [imageDimensionProbeProvider.overrideWithValue(probe.call)],
+      );
       addTearDown(container.dispose);
 
       for (var i = 1; i <= 5; i += 1) {
@@ -3044,11 +3099,7 @@ void main() {
       // 旧实现会因「逐出活跃失败源 → 重新成为候选 → 永久接力」在此不收敛。
       await _drainMaintenance(store, 'conv-b2-active');
 
-      expect(
-        store.debugProbeCount,
-        5,
-        reason: '每个失败来源恰好探测一次：软上限保护活跃源不被逐出',
-      );
+      expect(store.debugProbeCount, 5, reason: '每个失败来源恰好探测一次：软上限保护活跃源不被逐出');
       expect(
         store.debugMaintenanceEnqueueCount,
         2,
@@ -3075,13 +3126,18 @@ void main() {
         return probeGate.future;
       };
       final spyBlocks = _SpyMessageBlockRepository(database);
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-        messageBlockRepositoryProvider.overrideWithValue(spyBlocks),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [
+          imageDimensionProbeProvider.overrideWithValue(probe.call),
+          messageBlockRepositoryProvider.overrideWithValue(spyBlocks),
+        ],
+      );
       addTearDown(container.dispose);
 
-      await container.read(messageRepositoryProvider).upsert(
+      await container
+          .read(messageRepositoryProvider)
+          .upsert(
             MessageConverter.toCompanion(
               Message(
                 id: 'meta_raw',
@@ -3092,7 +3148,9 @@ void main() {
               'conv-b3-meta',
             ),
           );
-      await database.into(database.messageBlocks).insert(
+      await database
+          .into(database.messageBlocks)
+          .insert(
             db.MessageBlocksCompanion.insert(
               id: 'meta_row',
               messageId: 'meta_raw',
@@ -3122,15 +3180,17 @@ void main() {
       await spyBlocks.update(
         'meta_row',
         db.MessageBlocksCompanion(
-          data: Value(jsonEncode(<String, dynamic>{
-            'id': 'meta_row',
-            'messageId': 'meta_raw',
-            'type': 'image',
-            'status': 'success',
-            'localPath': '/source/meta.png',
-            'prompt': 'new prompt',
-            'customExtra': 'added-later',
-          })),
+          data: Value(
+            jsonEncode(<String, dynamic>{
+              'id': 'meta_row',
+              'messageId': 'meta_raw',
+              'type': 'image',
+              'status': 'success',
+              'localPath': '/source/meta.png',
+              'prompt': 'new prompt',
+              'customExtra': 'added-later',
+            }),
+          ),
         ),
       );
 
@@ -3138,20 +3198,15 @@ void main() {
       await _drainMaintenance(store, 'conv-b3-meta');
 
       expect(store.debugStaleWriteBackSkipCount, 1, reason: '首次 CAS stale');
-      expect(
-        spyBlocks.casCallCount,
-        2,
-        reason: '来源未变：本轮内以新原文恰好重试一次',
-      );
+      expect(spyBlocks.casCallCount, 2, reason: '来源未变：本轮内以新原文恰好重试一次');
       final rowData = await _readSingleImageRowData(container, 'meta_raw');
       expect(rowData['width'], 12, reason: 'B3：metadata-only stale 最终写回宽高');
       expect(rowData['height'], 34);
       expect(rowData['prompt'], 'new prompt', reason: '并发写入的新字段原样保留');
       expect(rowData['customExtra'], 'added-later');
-      final block = (await store.loadCachedMessages('conv-b3-meta'))
-          .single
-          .blocks!
-          .single as ImageBlock;
+      final block =
+          (await store.loadCachedMessages('conv-b3-meta')).single.blocks!.single
+              as ImageBlock;
       expect(block.width, 12);
       expect(block.height, 34);
       expect(recorder.events.length, 2, reason: '成功维护轮恰一次通知');
@@ -3180,16 +3235,21 @@ void main() {
       final whitespaceBuffer = StringBuffer();
       for (var i = 0; i < payloadP.length; i += 76) {
         whitespaceBuffer
-          ..write(payloadP.substring(
-              i, i + 76 > payloadP.length ? payloadP.length : i + 76))
+          ..write(
+            payloadP.substring(
+              i,
+              i + 76 > payloadP.length ? payloadP.length : i + 76,
+            ),
+          )
           ..write('\n');
       }
       final whitespacedP = whitespaceBuffer.toString();
 
       final probe = _FakeProbe((_) async => _dims(5, 5));
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [imageDimensionProbeProvider.overrideWithValue(probe.call)],
+      );
       addTearDown(container.dispose);
 
       await _persistMessage(
@@ -3238,14 +3298,15 @@ void main() {
       await _drainMaintenance(store, 'conv-b4-stream');
       expect(store.debugProbeCount, 1, reason: '包装差异同 sourceKey，直接回放');
       var messages = await store.loadCachedMessages('conv-b4-stream');
-      final dataUrlBlock = messages
-          .firstWhere((message) => message.id == 'b4_data')
-          .blocks!
-          .single as ImageBlock;
-      final whitespacedBlock = messages
-          .firstWhere((message) => message.id == 'b4_ws')
-          .blocks!
-          .single as ImageBlock;
+      final dataUrlBlock =
+          messages
+                  .firstWhere((message) => message.id == 'b4_data')
+                  .blocks!
+                  .single
+              as ImageBlock;
+      final whitespacedBlock =
+          messages.firstWhere((message) => message.id == 'b4_ws').blocks!.single
+              as ImageBlock;
       expect(dataUrlBlock.width, 5);
       expect(whitespacedBlock.width, 5);
 
@@ -3263,10 +3324,9 @@ void main() {
       await _drainMaintenance(store, 'conv-b4-stream');
       expect(store.debugProbeCount, 1);
       messages = await store.loadCachedMessages('conv-b4-stream');
-      final collidedBlock = messages
-          .firstWhere((message) => message.id == 'b4_q')
-          .blocks!
-          .single as ImageBlock;
+      final collidedBlock =
+          messages.firstWhere((message) => message.id == 'b4_q').blocks!.single
+              as ImageBlock;
       expect(collidedBlock.width, isNull, reason: '精确门拒绝碰撞来源的尺寸回放');
 
       expect(
@@ -3283,9 +3343,10 @@ void main() {
       await _insertConversation(database, 'conv-s1-tail', baseTime);
 
       final probe = _nullProbe();
-      final container = _createTimelineContainer(database, overrides: [
-        imageDimensionProbeProvider.overrideWithValue(probe.call),
-      ]);
+      final container = _createTimelineContainer(
+        database,
+        overrides: [imageDimensionProbeProvider.overrideWithValue(probe.call)],
+      );
       addTearDown(container.dispose);
 
       await _persistMessage(

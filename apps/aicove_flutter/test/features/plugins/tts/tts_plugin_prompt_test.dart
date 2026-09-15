@@ -22,6 +22,7 @@ void main() {
       expect(prompt, contains('<tts>文本</tts>'));
       expect(prompt, contains('不要超过 36 个字'));
       expect(prompt, contains('建议在关键句子或回复的重要部分使用语音'));
+      expect(prompt, contains('严禁包含颜文字'));
     });
 
     test('MiniMax 渠道追加语音增强说明', () {
@@ -39,6 +40,28 @@ void main() {
       expect(prompt, isNotNull);
       expect(prompt, contains('MiniMax 语音增强'));
       expect(prompt, contains('<#0.5#>'));
+    });
+
+    test('Fish Audio 渠道追加词级语音控制说明', () {
+      final plugin = TtsPlugin(
+        TtsConfig(
+          enabled: true,
+        ),
+        requestUrl: 'https://api.fish.audio/v1',
+        requestFormat: 'fish_audio',
+        selectedModel: 's2.1-pro-free',
+      );
+
+      final prompt = plugin.buildTagSemanticsPrompt();
+
+      expect(prompt, isNotNull);
+      expect(prompt, contains('Fish Audio (S2/S2.1) 语音控制'));
+      expect(prompt, contains('[窃窃私语]'));
+      expect(prompt, contains('[笑着说]'));
+      expect(prompt, contains('[长停顿]'));
+      expect(prompt, contains('鼓励大量叠用情绪标签'));
+      expect(prompt, contains('[高潮的娇喘]'));
+      expect(prompt, contains('严禁包含任何颜文字'));
     });
 
     test('自定义模板会进入运行时标签说明', () {

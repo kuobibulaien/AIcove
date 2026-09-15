@@ -1,11 +1,10 @@
 import 'dart:io';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
 /// 检测当前是否为桌面平台
 bool get isDesktop =>
-    !kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
+    Platform.isWindows || Platform.isMacOS || Platform.isLinux;
 
 /// macOS 风格窗口按钮的尺寸常量
 const double kMacButtonSize = 13;
@@ -58,7 +57,7 @@ class DesktopWindowFrame extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // 非桌面端直接返回 child
-    if (!isDesktop) {
+    if (!isDesktop || Platform.isMacOS) {
       return child;
     }
 

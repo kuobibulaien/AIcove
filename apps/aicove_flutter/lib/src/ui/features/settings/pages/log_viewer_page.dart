@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:aicove_flutter/src/ui/shared/animations/parallax_slide_page_route.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -11,11 +13,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../../../core/api_logger.dart' show ApiLogEntry, ApiLogger;
 import '../../../../core/app_logger.dart';
 import '../../../../features/observability/trace_models.dart';
+import '../../../../features/observability/frontend_diagnostics_provider.dart';
 import '../../../../features/observability/trace_query_service.dart';
 import '../../../../features/observability/trace_store.dart';
 import '../../../../ui/theme/tokens.dart';
-import '../../../../ui/shared/widgets/meotalk_dialog.dart';
-import '../../../../ui/shared/widgets/moe_toast.dart';
+import '../../../../ui/shared/widgets/index.dart';
 import 'log_viewer/log_viewer_trace_conversation_view.dart';
 import 'log_viewer/log_viewer_unified_list.dart';
 import 'log_formatters.dart';
@@ -143,14 +145,14 @@ class LogViewerExportService {
   }
 }
 
-class LogViewerPage extends StatefulWidget {
+class LogViewerPage extends ConsumerStatefulWidget {
   const LogViewerPage({super.key});
 
   @override
-  State<LogViewerPage> createState() => _LogViewerPageState();
+  ConsumerState<LogViewerPage> createState() => _LogViewerPageState();
 }
 
-class _LogViewerPageState extends State<LogViewerPage> {
+class _LogViewerPageState extends ConsumerState<LogViewerPage> {
   static const String _hideBeforeTimeKey = 'log_viewer_hide_before_time';
   static const String _logLevelFilterKey = 'log_viewer_level_filter';
   static const String _logTypeFilterKey = 'log_viewer_type_filter';
@@ -163,7 +165,6 @@ class _LogViewerPageState extends State<LogViewerPage> {
   int _lastVisibleLogCount = 0;
   LogLevelFilter _levelFilter = LogLevelFilter.all;
   LogTypeFilter _typeFilter = LogTypeFilter.all;
-  bool _showRawStreamEvents = false;
   bool _traceLoading = false;
   List<TraceEvent> _traceEvents = <TraceEvent>[];
   TraceTurnSummary? _selectedTraceTurn;
@@ -475,7 +476,7 @@ class _LogViewerPageState extends State<LogViewerPage> {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
 
-    return Scaffold(
+    return MoePageScaffold(
       backgroundColor: colors.surface,
       appBar: AppBar(
         backgroundColor: colors.surface,
@@ -486,6 +487,7 @@ class _LogViewerPageState extends State<LogViewerPage> {
                 onPressed: _exitSelectionMode,
               )
             : IconButton(
+                tooltip: '返回',
                 icon: Icon(Icons.arrow_back, color: colors.text),
                 onPressed: () => Navigator.of(context).pop(),
               ),
@@ -512,24 +514,39 @@ class _LogViewerPageState extends State<LogViewerPage> {
               ]
             : [
                 IconButton(
-                  tooltip: '新建日志',
-                  icon: Icon(Icons.add_circle_outline, color: colors.text),
-                  onPressed: _startNewSession,
-                ),
-                IconButton(
                   tooltip: '历史日志',
                   icon: Icon(Icons.history, color: colors.text),
                   onPressed: _showHistoryLogs,
                 ),
                 IconButton(
-                  tooltip: '导出全部',
+                  tooltip: _typeFilter == LogTypeFilter.conversation
+                      ? '导出选中对话（含前端记录）'
+                      : '导出当前筛选',
                   icon: Icon(Icons.file_download_outlined, color: colors.text),
                   onPressed: _exportLogs,
                 ),
-                IconButton(
-                  tooltip: '清空日志',
-                  icon: Icon(Icons.delete_outline, color: colors.text),
-                  onPressed: _confirmClearLogs,
+                Builder(
+                  builder: (menuContext) => IconButton(
+                    tooltip: '更多操作',
+                    icon: Icon(Icons.more_horiz, color: colors.text),
+                    onPressed: () => MoePopupMenu.show(
+                      menuContext,
+                      targetBox: menuContext.findRenderObject()! as RenderBox,
+                      alignToEnd: true,
+                      items: [
+                        MoePopupMenuItem(
+                          label: '记录前端响应（本次运行）',
+                          checked: ref.read(frontendDiagnosticsProvider).enabled,
+                          onTap: () {
+                            final diagnostics = ref.read(frontendDiagnosticsProvider);
+                            setState(() => diagnostics.enabled = !diagnostics.enabled);
+                          },
+                        ),
+                        MoePopupMenuItem(label: '从现在开始看', onTap: _startNewSession),
+                        MoePopupMenuItem(label: '清空当前列表', onTap: _confirmClearLogs),
+                      ],
+                    ),
+                  ),
                 ),
               ],
       ),
@@ -631,165 +648,61 @@ class _LogViewerPageState extends State<LogViewerPage> {
   // ─────────────────────────────────────────
 
   Widget _buildFilterBar() {
-    final colors = context.moeColors;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: colors.surface,
-        border: Border(
-          bottom: BorderSide(color: colors.borderLight, width: 0.5),
-        ),
-      ),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            ...LogTypeFilter.values.map((filter) {
-              final isSelected = _typeFilter == filter;
-              final chipColor = filter == LogTypeFilter.conversation
-                  ? Colors.deepPurple
-                  : colors.primary;
-              return Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      _typeFilter = filter;
-                      _expandedIndices.clear();
-                      _selectedIndices.clear();
-                      _isSelectionMode = false;
-                    });
-                    if (filter == LogTypeFilter.conversation) {
-                      _loadTraceEvents();
-                    } else {
-                      _scheduleScrollToBottom();
-                    }
-                    _saveTypeFilter(filter);
-                  },
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color:
-                          isSelected ? chipColor : colors.componentBackground,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: isSelected ? chipColor : colors.borderLight,
-                        width: 1,
-                      ),
-                    ),
-                    child: Text(
-                      filter.label,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: isSelected ? Colors.white : colors.textSecondary,
-                        fontWeight: isSelected
-                            ? MoeFontWeights.emphasis
-                            : MoeFontWeights.normal,
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            }),
-            Container(
-              width: 1,
-              height: 20,
-              margin: const EdgeInsets.symmetric(horizontal: 4),
-              color: colors.borderLight,
-            ),
-            ...LogLevelFilter.values.map((filter) {
-              final isSelected = _levelFilter == filter;
-              return Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      _levelFilter = filter;
-                      _expandedIndices.clear();
-                      _selectedIndices.clear();
-                      _isSelectionMode = false;
-                    });
-                    _scheduleScrollToBottom();
-                    _saveLevelFilter(filter);
-                  },
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: isSelected
-                          ? colors.primary
-                          : colors.componentBackground,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: isSelected ? colors.primary : colors.borderLight,
-                        width: 1,
-                      ),
-                    ),
-                    child: Text(
-                      filter.label,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: isSelected ? Colors.white : colors.textSecondary,
-                        fontWeight: isSelected
-                            ? MoeFontWeights.emphasis
-                            : MoeFontWeights.normal,
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            }),
-            if (_typeFilter == LogTypeFilter.conversation) ...[
-              Container(
-                width: 1,
-                height: 20,
-                margin: const EdgeInsets.symmetric(horizontal: 4),
-                color: colors.borderLight,
-              ),
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      _showRawStreamEvents = !_showRawStreamEvents;
-                    });
-                  },
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: _showRawStreamEvents
-                          ? Colors.deepPurple
-                          : colors.componentBackground,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: _showRawStreamEvents
-                            ? Colors.deepPurple
-                            : colors.borderLight,
-                        width: 1,
-                      ),
-                    ),
-                    child: Text(
-                      _showRawStreamEvents ? '原始流事件: 开' : '原始流事件: 关',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: _showRawStreamEvents
-                            ? Colors.white
-                            : colors.textSecondary,
-                        fontWeight: _showRawStreamEvents
-                            ? MoeFontWeights.emphasis
-                            : MoeFontWeights.normal,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
+    return Column(
+      children: [
+        MoeFilterChipBar<LogTypeFilter>(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          items: [
+            for (final filter in const [
+              LogTypeFilter.all,
+              LogTypeFilter.frontend,
+              LogTypeFilter.conversation,
+              LogTypeFilter.api,
+              LogTypeFilter.system
+            ])
+              MoeFilterItem(value: filter, label: filter.label),
           ],
+          selectedValue: _typeFilter,
+          onSelected: (filter) {
+            setState(() {
+              _typeFilter = filter;
+              _expandedIndices.clear();
+              _selectedIndices.clear();
+              _isSelectionMode = false;
+            });
+            if (filter == LogTypeFilter.conversation) {
+              _loadTraceEvents();
+            } else {
+              _scheduleScrollToBottom();
+            }
+            _saveTypeFilter(filter);
+          },
         ),
-      ),
+        if (_typeFilter != LogTypeFilter.conversation)
+          MoeFilterChipBar<LogLevelFilter>(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            items: [
+              for (final filter in const [
+                LogLevelFilter.all,
+                LogLevelFilter.error,
+                LogLevelFilter.warning,
+                LogLevelFilter.info
+              ])
+                MoeFilterItem(value: filter, label: filter.label)
+            ],
+            selectedValue: _levelFilter,
+            onSelected: (filter) {
+              setState(() {
+                _levelFilter = filter;
+                _expandedIndices.clear();
+                _selectedIndices.clear();
+                _isSelectionMode = false;
+              });
+              _scheduleScrollToBottom();
+              _saveLevelFilter(filter);
+            },
+          ),
+      ],
     );
   }
   // ─────────────────────────────────────────
@@ -865,7 +778,7 @@ class _LogViewerPageState extends State<LogViewerPage> {
   }
 
   Future<void> _exportLogs() async {
-    final entries = buildUnifiedEntries(
+    var entries = buildUnifiedEntries(
       ApiLogger.entries.value,
       AppLogger.entries.value,
       hideBeforeTime: _hideBeforeTime,
@@ -873,6 +786,30 @@ class _LogViewerPageState extends State<LogViewerPage> {
       typeFilter: _typeFilter,
     );
 
+    if (_typeFilter == LogTypeFilter.conversation) {
+      final selected = _selectedTraceTurn;
+      if (selected == null) {
+        MoeToast.info(context, '先选择一轮对话');
+        return;
+      }
+      try {
+        final content =
+            await ref.read(traceExportProvider).exportTurn(selected.traceId);
+        if (!mounted) return;
+        entries = content == null
+            ? []
+            : [
+                UnifiedLogEntry(
+                  time: DateTime.now(),
+                  title: '完整对话诊断',
+                  fullContent: content,
+                )
+              ];
+      } catch (_) {
+        if (mounted) MoeToast.error(context, '读取对话诊断失败，请重试');
+        return;
+      }
+    }
     if (entries.isEmpty) {
       MoeToast.info(context, '暂无日志可导出');
       return;
@@ -909,7 +846,7 @@ class _LogViewerPageState extends State<LogViewerPage> {
       final location = result.savedPath ?? result.fileName;
       MoeToast.success(
         context,
-        '已导出 ${result.entryCount} 条日志\n$location',
+        '${_typeFilter == LogTypeFilter.conversation ? '已导出完整对话诊断' : '已导出 ${result.entryCount} 条日志'}\n$location',
       );
     } catch (e) {
       if (!mounted) return;
@@ -920,8 +857,8 @@ class _LogViewerPageState extends State<LogViewerPage> {
   void _confirmClearLogs() async {
     final confirmed = await showMeoTalkConfirm(
       context: context,
-      title: '清空日志',
-      message: '确认要清空所有日志吗？',
+      title: '清空当前列表',
+      message: '只清空当前显示的记录，已保存的历史文件仍会保留。',
       cancelText: '取消',
       confirmText: '清空',
       isDanger: true,
@@ -944,7 +881,7 @@ class _LogViewerPageState extends State<LogViewerPage> {
     _tracePayloadLoading = false;
     _saveHideBeforeTime(null);
     setState(() {});
-    MoeToast.success(context, '日志已清空');
+    MoeToast.success(context, '当前列表已清空，历史文件已保留');
   }
 
   void _startNewSession() {
@@ -956,12 +893,12 @@ class _LogViewerPageState extends State<LogViewerPage> {
     });
     _ensureTraceSelection();
     _saveHideBeforeTime(now);
-    MoeToast.brief(context, '已开始新的日志会话');
+    MoeToast.brief(context, '现在只显示此刻之后的记录');
   }
 
   void _showHistoryLogs() {
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const LogHistoryListPage()),
+      ParallaxSlidePageRoute(page: const LogHistoryListPage()),
     );
   }
 

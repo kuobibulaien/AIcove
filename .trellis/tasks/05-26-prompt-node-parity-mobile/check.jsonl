@@ -1,5 +1,0 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
-{"file": ".trellis/spec/frontend/index.md", "reason": "Check frontend rules and responsive behavior"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Check Flutter verification requirements"}
-{"file": ".trellis/spec/agent-context/index.md", "reason": "Check prompt defaults and Agent Build semantics"}
-{"file": ".trellis/spec/project/documentation.md", "reason": "Check docs/spec update decision"}

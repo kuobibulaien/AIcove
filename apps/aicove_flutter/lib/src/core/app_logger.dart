@@ -110,6 +110,19 @@ class AppLogger {
   static const int _writeBatchSize = 32;
   static final ListQueue<LogEntry> _writeQueue = ListQueue<LogEntry>();
   static bool _isWriting = false;
+  static int _writtenEntries = 0;
+  static int _failedWriteEntries = 0;
+  static String? _lastWriteErrorType;
+
+  /// 只是已知写入状态，不是“强杀也零丢失”的承诺。不得为报告健康再次写日志。
+  static Map<String, Object?> get diagnosticHealth => {
+        'initialized': _initialized,
+        'queued': _writeQueue.length + _preInitBuffer.length,
+        'writing': _isWriting,
+        'writtenEntries': _writtenEntries,
+        'failedEntries': _failedWriteEntries,
+        if (_lastWriteErrorType != null) 'lastErrorType': _lastWriteErrorType,
+      };
 
   // 初始化前的缓冲区
   static final List<LogEntry> _preInitBuffer = [];
@@ -176,6 +189,7 @@ class AppLogger {
         }
       }
     } catch (e) {
+      _lastWriteErrorType = e.runtimeType.toString();
       _initialized = true; // 即使失败也标记为已初始化，避免死循环
       _initCompleter!.complete();
       if (kDebugMode) {
@@ -223,7 +237,10 @@ class AppLogger {
         mode: FileMode.append,
         flush: true,
       );
+      _writtenEntries += batch.length;
     } catch (e) {
+      _failedWriteEntries += batch.length;
+      _lastWriteErrorType = e.runtimeType.toString();
       if (kDebugMode) {
         debugPrint('日志写入文件失败: $e');
       }
@@ -402,12 +419,14 @@ class AppLogger {
   static TraceLogger startTrace(String name,
       {String? source,
       String? file,
+      String? traceId,
       LogLevel level = LogLevel.info,
       bool compact = true}) {
     return TraceLogger(
       name: name,
       source: source ?? 'App',
       file: file,
+      traceId: traceId,
       level: level,
       compact: compact,
     );

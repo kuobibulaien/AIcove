@@ -106,7 +106,7 @@ AppSettings _buildTestSettings({
     apiBaseUrl: 'https://api.openai.com/v1',
     imageGenerationEnabled: false,
     maxFileUploadMB: 10,
-    historyMessageLimit: 100,
+    contextWindowTokens: 272000,
     customModels: const <CustomModel>[],
     providers: const <ProviderAuth>[
       ProviderAuth(
@@ -365,9 +365,8 @@ class _ScriptedStreamingSendService extends ChatSendService {
   Future<List<Message>> prepareHistoryFromStore({
     required Conversation conv,
     required Message userMsg,
-    required int limit,
   }) async {
-    return prepareHistory(conv: conv, userMsg: userMsg, limit: limit);
+    return prepareHistory(conv: conv, userMsg: userMsg,);
   }
 
   @override
@@ -459,6 +458,19 @@ class _RecordingStreamTtsHandler extends ChatTtsHandler {
   List<Message> lastPendingStreamTtsMessages = const <Message>[];
   List<String> lastStreamTextMessageIds = const <String>[];
   bool lastAppendAfterStreamText = false;
+  List<Message> recordedStreamPendingMessages = <Message>[];
+
+  @override
+  Future<void> resolvePendingStreamMessage({
+    required String convId,
+    required Message message,
+    void Function(String audioUrl, double? durationSeconds)? onAudioResolved,
+    void Function(String text)? onTextFallback,
+    bool persistResult = true,
+    bool Function()? shouldApplyResult,
+  }) async {
+    recordedStreamPendingMessages.add(message);
+  }
 
   @override
   Future<void> deliverSegmentedMessages({
@@ -471,6 +483,7 @@ class _RecordingStreamTtsHandler extends ChatTtsHandler {
     bool appendAfterStreamText = false,
     List<String>? streamTextMessageIds,
     List<Message>? streamPendingTtsMessages,
+    bool streamTtsResolutionManaged = false,
     TraceLogger? trace,
   }) async {
     lastAppendAfterStreamText = appendAfterStreamText;
@@ -824,6 +837,47 @@ Future<_Harness> _buildHarness({
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   _installPlatformChannelMocks();
+
+  for (final note in ['', '你怎么看这段聊天？']) {
+    test('分享集合跨联系人保留归属并触发回复 note=$note', () async {
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      final sourceId = 'forward_source_$stamp';
+      final targetId = 'forward_target_$stamp';
+      final now = DateTime.now();
+      final target = Conversation(id: targetId, title: '接收方', displayName: '接收方',
+        createdAt: now, updatedAt: now);
+      final harness = await _buildHarness(
+        convId: sourceId,
+        settings: _buildTestSettings(enableChunking: true, minSegmentLength: 1, streamSegmentDelaySeconds: 0),
+        script: const [_DeltaStep('收到聊天记录。')], replyText: '收到聊天记录。',
+        switchableActiveConversation: true, extraConversations: [target],
+      );
+      addTearDown(harness.dispose);
+      final actions = harness.container.read(chatActionsProvider);
+      await actions.forwardMessages(
+        conversationId: targetId, sourceTitle: '小林', note: note,
+        messages: [Message(id: 'source_message', role: 'assistant', content: '今天去散步吧。', createdAt: now)],
+      );
+      for (var i = 0; i < 100; i++) {
+        final timeline = await harness.loadTimeline(targetId);
+        if (timeline.any((m) => m.role == 'assistant' && m.displayText.contains('收到聊天记录'))) break;
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      final timeline = await harness.loadTimeline(targetId);
+      expect(timeline.any((m) => m.role == 'assistant' && m.displayText.contains('收到聊天记录')), isTrue);
+      expect(harness.sendService.executeSessionIds, [targetId]);
+      expect(harness.container.read(activeConversationIdProvider), sourceId);
+      final raw = await harness.container.read(chatHistoryStoreProvider).loadAllRawMessages(targetId);
+      final user = raw.singleWhere((m) => m.role == 'user');
+      final record = user.blocks!.whereType<ChatRecordBlock>().single;
+      expect(record.sourceName, '小林');
+      expect(record.entries.single.text, '今天去散步吧。');
+      expect(user.content, contains('用户与「小林」的聊天记录'));
+      if (note.isNotEmpty) expect(user.content, contains(note));
+      expect((await harness.loadTimeline(sourceId)).where((m) => m.role == 'user'), isEmpty);
+    });
+  }
 
   group('A) non-chunking mode — 10 unpunctuated deltas', () {
     test('window notifies roughly with flushes; single active tail; id stability',
@@ -2317,17 +2371,13 @@ void main() {
   });
 
   group('J) segment reveal pacing', () {
-    test('delay 前不揭示；首次只揭示一段；间隔下限；finalize 可一次带出剩余段',
+    test('delay 前不揭示；首次只揭示一段；间隔下限；finalize 保持逐段揭示',
         () async {
       // Precision boundary (真实时钟 / Timer + 40ms 轮询，无 fake-async):
       // - 无法可靠断言 delay-ε 亚毫秒边界；用 delay/2 作「明显早于 delay」。
       // - 计数只认精确单句 seal（`节奏一。` 等），避免 commit 合并正文干扰。
-      // - 实测现状（2026-07-20）：mid-stream 常见 0 → 1 后长时间平台期；
-      //   收尾 finalize:true 可一次物化剩余 seal（观测上 1→3），drain 步进
-      //   在 40ms 采样下常被同帧吞掉。因此：
-      //   * 严格锁「首次揭示至多 +1」与「delay 前为 0」；
-      //   * 对后续 +N 仅允许发生在已有 ≥1 段之后（收尾排空），并记录间隔下限
-      //     于首次平台期时长（1 段停留 ≥ segmentDelay - slack）。
+      // - 2026-09-12：收尾也必须按间隔揭示；不能提前写满可见计数。
+      //   40ms 采样小于 200ms 间隔，后续样本也不允许一次增加多段。
       const segmentDelayMs = 200;
       final settings = _buildTestSettings(
         enableChunking: true,
@@ -2439,36 +2489,15 @@ void main() {
             ' times=$sampleTimesMs（精度边界：40ms 采样）。',
       );
 
-      // (4) 后续递增：允许 finalize 一次带出剩余段（+N，N>1），但不得从 0 跳。
-      // 若观测到逐步 +1，也合法。
-      var prev = sealedCounts[firstNonZeroIdx];
-      var sawLateJump = false;
+      // (4) 收尾保持相同节奏，不允许一次带出剩余段。
       for (var i = firstNonZeroIdx + 1; i < sealedCounts.length; i++) {
-        final cur = sealedCounts[i];
-        final delta = cur - prev;
-        if (delta < 0) {
-          // commit 合并导致 exact 单句计数下降 — 允许
-          prev = cur;
-          continue;
-        }
-        if (delta > 1) {
-          sawLateJump = true;
-          expect(
-            prev,
-            greaterThanOrEqualTo(1),
-            reason: '现状：>1 的跳跃只发生在已有揭示之后（finalize 排空剩余段），'
-                '不得从 0 全量爆发。 counts=$sealedCounts',
-          );
-        }
-        prev = cur;
+        expect(
+          sealedCounts[i] - sealedCounts[i - 1],
+          lessThanOrEqualTo(1),
+          reason: 'finalize 不得跳过分段间隔。 counts=$sealedCounts',
+        );
       }
-      // 峰值至少覆盖多段（流中 1 + 收尾剩余，或逐步揭示）
-      final peak = sealedCounts.reduce((a, b) => a > b ? a : b);
-      expect(
-        peak,
-        greaterThanOrEqualTo(1),
-        reason: 'counts=$sealedCounts lateJump=$sawLateJump',
-      );
+
     });
 
     test('burst backlog：delay 内不全量爆发（mid-stream 现状）', () async {

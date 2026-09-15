@@ -1,13 +1,13 @@
 /// MoeTileButton - 功能入口按钮组件
-/// 
+///
 /// 用于设置项、功能卡片等场景。
-/// 
+///
 /// 设计特点：
 /// - 类似设置行的布局（图标 + 标题 + 副标题）
 /// - 但作为独立按钮使用
 /// - iOS 风格交互
 /// - 完整的样式接口
-/// 
+///
 /// 使用示例：
 /// ```dart
 /// MoeTileButton(
@@ -17,14 +17,14 @@
 ///   onTap: () => openLanguageSettings(),
 /// )
 /// ```
-/// 
+///
 /// 更新记录：
 /// - 2025-12-31: 创建功能入口按钮组件
 library;
 
 import 'package:flutter/material.dart';
 import '../../../theme/tokens.dart';
-import '../../effects/smooth_clip.dart';
+import 'moe_button_surface.dart';
 
 /// 功能入口按钮组件
 class MoeTileButton extends StatefulWidget {
@@ -71,7 +71,7 @@ class MoeTileButton extends StatefulWidget {
   final bool enabled;
 
   // === 样式接口 ===
-  
+
   final Color? backgroundColor;
   final Color? pressedBackgroundColor;
   final Color? iconColor;
@@ -94,16 +94,17 @@ class _MoeTileButtonState extends State<MoeTileButton> {
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
-    
+
     // 解析样式
-    final bgColor = widget.backgroundColor ?? colors.surface;
-    final pressedBg = widget.pressedBackgroundColor ?? colors.surfaceAlt;
+    final bgColor = widget.backgroundColor ?? Colors.transparent;
+    final pressedBg = widget.pressedBackgroundColor ?? Colors.transparent;
     final iconColor = widget.iconColor ?? colors.text;
     final labelColor = widget.labelColor ?? colors.text;
     final subtitleColor = widget.subtitleColor ?? colors.muted;
     final radius = widget.borderRadius ?? MoeRadii.borderMd;
-    final g2Radius = radius.topLeft.x;
-    final padding = widget.contentPadding ?? const EdgeInsets.symmetric(horizontal: 16, vertical: 14);
+    final padding =
+        widget.contentPadding ??
+        const EdgeInsets.symmetric(horizontal: 16, vertical: 14);
 
     final currentBg = (_pressed && _isEnabled) ? pressedBg : bgColor;
 
@@ -112,15 +113,14 @@ class _MoeTileButtonState extends State<MoeTileButton> {
       onTapUp: _isEnabled ? (_) => setState(() => _pressed = false) : null,
       onTapCancel: _isEnabled ? () => setState(() => _pressed = false) : null,
       onTap: _isEnabled ? widget.onTap : null,
-      child: AnimatedContainer(
-        duration: kAnimFast,
+      child: MoeButtonSurface(
+        tintColor: currentBg,
+        borderRadius: radius,
+        border: widget.border == null
+            ? null
+            : Border.fromBorderSide(widget.border!),
+        shadows: widget.boxShadow,
         padding: padding,
-        decoration: MoeG2Decoration(
-          radius: g2Radius,
-          color: currentBg,
-          border: widget.border != null ? Border.fromBorderSide(widget.border!) : null,
-          boxShadow: widget.boxShadow ?? MoeShadows.soft,
-        ),
         child: Row(
           children: [
             // 图标
@@ -130,7 +130,7 @@ class _MoeTileButtonState extends State<MoeTileButton> {
               color: widget.enabled ? iconColor : colors.muted,
             ),
             const SizedBox(width: 14),
-            
+
             // 标题区
             Expanded(
               child: Column(
@@ -151,27 +151,25 @@ class _MoeTileButtonState extends State<MoeTileButton> {
                       widget.subtitle!,
                       style: TextStyle(
                         fontSize: 13,
-                        color: widget.enabled ? subtitleColor : colors.muted.withValues(alpha: 0.6),
+                        color: widget.enabled
+                            ? subtitleColor
+                            : colors.muted.withValues(alpha: 0.6),
                       ),
                     ),
                   ],
                 ],
               ),
             ),
-            
+
             // 右侧控件
             if (widget.trailing != null) ...[
               const SizedBox(width: 8),
               widget.trailing!,
             ],
-            
+
             // 箭头
             if (widget.showChevron && widget.trailing == null)
-              Icon(
-                Icons.chevron_right,
-                size: 20,
-                color: colors.muted,
-              ),
+              Icon(Icons.chevron_right, size: 20, color: colors.muted),
           ],
         ),
       ),

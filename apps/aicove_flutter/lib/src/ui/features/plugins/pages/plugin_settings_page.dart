@@ -1,3 +1,4 @@
+import 'package:aicove_flutter/src/ui/shared/widgets/moe_page_scaffold.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../ui/theme/tokens.dart';
@@ -17,7 +18,7 @@ class PluginSettingsPage extends ConsumerWidget {
     final allPlugins = pluginManager.getAllPlugins();
     final colors = context.moeColors;
 
-    return Scaffold(
+    return MoePageScaffold(
       backgroundColor: colors.surface,
       appBar: AppBar(
         backgroundColor: colors.surface,
@@ -56,10 +57,7 @@ class PluginSettingsPage extends ConsumerWidget {
         decoration: MoeG2Decoration(
           radius: 12,
           color: colors.panel,
-          border: Border.all(
-            color: colors.border,
-            width: 1,
-          ),
+          border: Border.all(color: colors.border, width: 1),
         ),
         child: Material(
           color: Colors.transparent,
@@ -71,22 +69,6 @@ class PluginSettingsPage extends ConsumerWidget {
               padding: const EdgeInsets.all(16),
               child: Row(
                 children: [
-                  // 插件图标
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: MoeG2Decoration(
-                      radius: 8,
-                      color: colors.primary.withValues(alpha: 0.1),
-                    ),
-                    child: Icon(
-                      plugin.icon,
-                      color: colors.primary,
-                      size: 24,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-
                   // 插件名称（居左）
                   Expanded(
                     child: Text(
@@ -103,7 +85,9 @@ class PluginSettingsPage extends ConsumerWidget {
                   Text(
                     plugin.enabled ? '已启用' : '已禁用',
                     style: TextStyle(
-                      color: plugin.enabled ? colors.primary : colors.textSecondary,
+                      color: plugin.enabled
+                          ? colors.primary
+                          : colors.textSecondary,
                       fontSize: 14,
                       fontWeight: MoeFontWeights.emphasis,
                     ),
@@ -130,14 +114,14 @@ class PluginSettingsPage extends ConsumerWidget {
     // 根据插件 ID 导航到对应的详细设置页面
     switch (plugin.id) {
       case 'tts':
-        Navigator.of(context).push(
-          ParallaxSlidePageRoute(page: const TtsPluginDetailPage()),
-        );
+        Navigator.of(
+          context,
+        ).push(ParallaxSlidePageRoute(page: const TtsPluginDetailPage()));
         break;
       case 'memory':
-        Navigator.of(context).push(
-          ParallaxSlidePageRoute(page: const MemoryPluginDetailPage()),
-        );
+        Navigator.of(
+          context,
+        ).push(ParallaxSlidePageRoute(page: const MemoryPluginDetailPage()));
         break;
       // 未来可以添加更多插件的详细页面
       default:

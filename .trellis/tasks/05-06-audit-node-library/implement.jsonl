@@ -1,4 +1,0 @@
-{"file": ".trellis/spec/agent-context/index.md", "reason": "Agent Context Studio node library and Agent Build graph rules"}
-{"file": ".trellis/spec/backend/index.md", "reason": "Cloud backend API/admin panel implementation conventions"}
-{"file": ".trellis/spec/frontend/index.md", "reason": "Flutter asset and frontend quality expectations"}
-{"file": ".trellis/tasks/05-06-audit-node-library/research/node-library-audit.md", "reason": "Findings that define the node library implementation scope"}

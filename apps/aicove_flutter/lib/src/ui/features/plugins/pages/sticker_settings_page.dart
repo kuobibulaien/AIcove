@@ -2,424 +2,290 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../ui/theme/tokens.dart';
-import '../../../../ui/shared/animations/expanding_page_route.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
-import '../../../../features/plugins/plugin_providers.dart';
 import '../../../../features/stickers/sticker_registry.dart';
 
-/// 分组方式枚举
-enum StickerGroupMode { byTag, byFolder }
-
-/// 表情包设置页面 - 支持按标签/套组两种分组方式
+/// 表情包设置页
+///
+/// 功能：
+/// 1. 按套组浏览全部表情，支持按标签 / 描述 / 套组名搜索
+/// 3. 点按单个表情查看大图与全部可触发标签（含同义词）
 class StickerSettingsPage extends ConsumerStatefulWidget {
   const StickerSettingsPage({super.key});
 
   @override
-  ConsumerState<StickerSettingsPage> createState() => _StickerSettingsPageState();
+  ConsumerState<StickerSettingsPage> createState() =>
+      _StickerSettingsPageState();
 }
 
 class _StickerSettingsPageState extends ConsumerState<StickerSettingsPage> {
-  StickerGroupMode _groupMode = StickerGroupMode.byTag;
+  String _query = '';
 
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
-    final stickerConfig = ref.watch(stickerPluginConfigProvider);
     final registry = StickerRegistry.instance;
+    final searching = _query.trim().isNotEmpty;
+    final results = searching ? _searchStickers(registry, _query) : null;
+    final folders = registry.stickersByFolder;
+    final folderNames = folders.keys.toList()..sort();
 
-    // 根据分组方式获取数据
-    final Map<String, List<Sticker>> groupedStickers;
-    final List<String> sortedKeys;
-    
-    if (_groupMode == StickerGroupMode.byTag) {
-      groupedStickers = registry.stickersByTag;
-      sortedKeys = groupedStickers.keys.toList()..sort();
-    } else {
-      groupedStickers = registry.stickersByFolder;
-      // 文件夹按名称排序
-      sortedKeys = groupedStickers.keys.toList()..sort();
-    }
-
-    return Scaffold(
+    return MoePageScaffold(
       backgroundColor: colors.surface,
-      appBar: MoeDetailAppBar(
-        title: '表情包管理',
-      ),
-      body: Column(
-        children: [
-          // 开关设置
-          _buildEnableToggle(stickerConfig.enabled, colors),
-          
-          // 分组切换
-          _buildGroupModeToggle(colors),
-          
-          const SizedBox(height: 8),
-          
-          // 提示文字
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-              _groupMode == StickerGroupMode.byTag
-                  ? 'AI 使用 [标签] 语法发送表情包，同义词自动匹配。'
-                  : '分组可用于管理不同角色的表情包（未来功能）。',
-              style: TextStyle(color: colors.muted, fontSize: 13),
+      appBar: const MoeDetailAppBar(title: '表情包'),
+      body: CustomScrollView(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        slivers: [
+          SliverToBoxAdapter(
+            child: MoeSearchField(
+              hintText: '搜索表情、标签或套组',
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+              onChanged: (value) => setState(() => _query = value),
             ),
           ),
-          
-          const SizedBox(height: 12),
-          
-          // 统计信息
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              children: [
-                _buildStatChip('${registry.stickers.length} 个表情', colors),
-                const SizedBox(width: 8),
-                _buildStatChip('${registry.allTags.length} 个标签', colors),
-                const SizedBox(width: 8),
-                _buildStatChip('${registry.allFolders.length} 个分组', colors),
-              ],
+          if (registry.stickers.isEmpty)
+            const SliverFillRemaining(
+              hasScrollBody: false,
+              child: MoeEmptyState(
+                icon: Icons.emoji_emotions_outlined,
+                title: '还没有表情包',
+                description: '添加表情资源并注册后，这里会列出可供 AI 发送的表情。',
+              ),
+            )
+          else if (searching) ...[
+            SliverToBoxAdapter(
+              child: _SectionHeader(title: '搜索结果', count: results!.length),
             ),
-          ),
-          
-          const SizedBox(height: 16),
-          
-          // 根据分组方式显示不同布局
-          Expanded(
-            child: _groupMode == StickerGroupMode.byTag
-                ? _buildTagListView(sortedKeys, groupedStickers, colors)
-                : _buildFolderGridView(sortedKeys, groupedStickers, colors),
-          ),
+            if (results.isEmpty)
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.only(top: 48),
+                  child: MoeEmptyState(
+                    icon: Icons.search_off_rounded,
+                    title: '没有找到相关表情',
+                    description: '换个关键词试试，支持标签同义词、描述和套组名。',
+                  ),
+                ),
+              )
+            else
+              _buildGrid(results),
+          ] else
+            for (final name in folderNames) ...[
+              SliverToBoxAdapter(
+                child: _SectionHeader(
+                  title: name,
+                  count: folders[name]!.length,
+                ),
+              ),
+              _buildGrid(folders[name]!),
+            ],
+          const SliverToBoxAdapter(child: SizedBox(height: 24)),
         ],
       ),
     );
   }
 
-  /// 按标签模式 - 列表布局
-  Widget _buildTagListView(List<String> sortedKeys, Map<String, List<Sticker>> groupedStickers, MoeColors colors) {
-    return ListView.builder(
+  /// 搜索：先做同义词归一化的精确标签匹配，再做标签／描述／套组的包含匹配
+  List<Sticker> _searchStickers(StickerRegistry registry, String query) {
+    final q = query.trim().toLowerCase();
+    final results = <Sticker>{...registry.getAllByTag(q)};
+    for (final sticker in registry.stickers) {
+      if (results.contains(sticker)) continue;
+      final haystacks = [sticker.description, sticker.folder, ...sticker.tags];
+      if (haystacks.any((h) => h.toLowerCase().contains(q))) {
+        results.add(sticker);
+      }
+    }
+    return results.toList();
+  }
+
+  Widget _buildGrid(List<Sticker> stickers) {
+    return SliverPadding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
-      itemCount: sortedKeys.length,
-      itemBuilder: (context, index) {
-        final key = sortedKeys[index];
-        final stickers = groupedStickers[key] ?? [];
-        return _buildTagGroup(key, stickers, colors);
-      },
-    );
-  }
-
-  /// 按分组模式 - iOS相册风格网格布局
-  Widget _buildFolderGridView(List<String> sortedKeys, Map<String, List<Sticker>> groupedStickers, MoeColors colors) {
-    return GridView.builder(
-      padding: const EdgeInsets.all(16),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,          // 两列
-        crossAxisSpacing: 12,       // 列间距
-        mainAxisSpacing: 12,        // 行间距
-        childAspectRatio: 1,        // 正方形
+      sliver: SliverGrid(
+        delegate: SliverChildBuilderDelegate(
+          (context, index) => _StickerCell(
+            sticker: stickers[index],
+            onTap: () => _showStickerSheet(stickers[index]),
+          ),
+          childCount: stickers.length,
+        ),
+        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+          maxCrossAxisExtent: 76,
+          crossAxisSpacing: 8,
+          mainAxisSpacing: 8,
+        ),
       ),
-      itemCount: sortedKeys.length,
-      itemBuilder: (context, index) {
-        final folderName = sortedKeys[index];
-        final stickers = groupedStickers[folderName] ?? [];
-        return _buildFolderCard(folderName, stickers, colors);
-      },
     );
   }
 
-  /// 构建文件夹卡片（iOS相册风格）
-  /// - 圆角方形
-  /// - 图片填充满
-  /// - 文字在底部居中悬浮（半透明遮罩）
-  Widget _buildFolderCard(String folderName, List<Sticker> stickers, MoeColors colors) {
-    final coverSticker = stickers.isNotEmpty ? stickers.first : null;
-    const cardRadius = 12.0;
-    
-    return Builder(
-      builder: (cardContext) {
-        return GestureDetector(
-          onTap: () {
-            Navigator.of(context).pushExpanding(
-              page: _StickerFolderDetailPage(
-                folderName: folderName,
-                stickers: stickers,
-              ),
-              sourceContext: cardContext,
-              sourceRadius: cardRadius,
-            );
-          },
-          child: MoeG2ClipRRect(
-            radius: cardRadius,
-            child: Container(
-              color: colors.surfaceAlt,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                // 封面图（填充满）
-                coverSticker != null
-                    ? Image.asset(
-                        coverSticker.assetPath,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => _buildPlaceholder(colors),
-                      )
-                    : _buildPlaceholder(colors),
-                // 底部悬浮文字（渐变遮罩）
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  child: Container(
-                    padding: const EdgeInsets.fromLTRB(8, 24, 8, 8),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Colors.transparent,
-                          Colors.black.withValues(alpha: 0.7),
-                        ],
+  /// 单个表情详情：大图 + 全部可触发标签
+  void _showStickerSheet(Sticker sticker) {
+    final registry = StickerRegistry.instance;
+    final triggers = sticker.tags
+        .expand(registry.triggerWordsOf)
+        .toSet()
+        .toList();
+
+    showMoeBottomSheet(
+      context: context,
+      title: sticker.description.isNotEmpty ? sticker.description : '表情详情',
+      builder: (sheetContext) {
+        final colors = sheetContext.moeColors;
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              GestureDetector(
+                onTap: () => MoeImagePreview.show(
+                  sheetContext,
+                  AssetImage(sticker.assetPath),
+                  heroTag: 'sticker_${sticker.id}',
+                ),
+                child: Container(
+                  width: double.infinity,
+                  height: 180,
+                  padding: const EdgeInsets.all(12),
+                  decoration: MoeG2Decoration(
+                    radius: 16,
+                    color: colors.surfaceAlt,
+                  ),
+                  child: Image.asset(
+                    sticker.assetPath,
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => Center(
+                      child: Icon(
+                        Icons.emoji_emotions_outlined,
+                        color: colors.muted,
+                        size: 48,
                       ),
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          folderName,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                            fontWeight: MoeFontWeights.emphasis,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          '${stickers.length} 个表情',
-                          style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.8),
-                            fontSize: 11,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                      ],
                     ),
                   ),
                 ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'AI 回复中带以下标签时，可能随机发出这张表情',
+                style: TextStyle(fontSize: 12, color: colors.muted),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final word in triggers)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 5,
+                      ),
+                      decoration: MoeG2Decoration(
+                        radius: 999,
+                        color: colors.primary.withValues(alpha: 0.1),
+                      ),
+                      child: Text(
+                        word,
+                        style: TextStyle(fontSize: 13, color: colors.primary),
+                      ),
+                    ),
                 ],
               ),
-            ),
+              const SizedBox(height: 14),
+              Text(
+                '来自套组 ${sticker.folder}',
+                style: TextStyle(fontSize: 12, color: colors.muted),
+              ),
+            ],
           ),
         );
       },
     );
   }
+}
 
-  /// 占位图
-  Widget _buildPlaceholder(MoeColors colors) {
-    return Center(
-      child: Icon(Icons.emoji_emotions_outlined, color: colors.muted, size: 48),
-    );
-  }
+/// 套组／搜索结果的分节标题
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({required this.title, required this.count});
 
-  Widget _buildStatChip(String text, MoeColors colors) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: MoeG2Decoration(
-        radius: 12,
-        color: colors.surfaceAlt,
-      ),
-      child: Text(text, style: TextStyle(fontSize: 12, color: colors.muted)),
-    );
-  }
+  final String title;
+  final int count;
 
-  /// 构建启用开关
-  Widget _buildEnableToggle(bool enabled, MoeColors colors) {
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.moeColors;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(0, 16, 0, 8),
-      child: MoeSettingsGroup(
-        children: [
-          MoeSettingsRow(
-            icon: Icons.emoji_emotions_outlined,
-            label: '启用表情包',
-            subtitle: enabled ? '已启用' : '已禁用',
-            subtitleColor: enabled ? colors.primary : colors.muted,
-            trailingType: MoeSettingsRowTrailing.switchControl,
-            switchValue: enabled,
-            onSwitchChanged: (value) => ref.read(stickerPluginConfigProvider.notifier).setEnabled(value),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 构建分组切换
-  Widget _buildGroupModeToggle(MoeColors colors) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
       child: Row(
         children: [
-          Text('分组方式：', style: TextStyle(color: colors.text, fontSize: 14)),
-          const SizedBox(width: 12),
-          Expanded(
-            child: MoeToggleBar<StickerGroupMode>(
-              value: _groupMode,
-              items: const [
-                MoeToggleItem(value: StickerGroupMode.byTag, label: '按标签', icon: Icons.label_outline),
-                MoeToggleItem(value: StickerGroupMode.byFolder, label: '按分组', icon: Icons.folder_outlined),
-              ],
-              onChanged: (value) => setState(() => _groupMode = value),
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: MoeFontWeights.emphasis,
+              color: colors.textSecondary,
             ),
           ),
+          const SizedBox(width: 6),
+          Text('$count 个', style: TextStyle(fontSize: 12, color: colors.muted)),
         ],
-      ),
-    );
-  }
-
-  /// 构建标签分组（按标签模式使用）
-  Widget _buildTagGroup(String tag, List<Sticker> stickers, MoeColors colors) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      decoration: MoeG2Decoration(
-        radius: 12,
-        color: colors.panel,
-        border: Border.all(color: colors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 标签标题
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: MoeG2Decoration(
-                    radius: 6,
-                    color: colors.primary.withValues(alpha: 0.1),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.label, size: 14, color: colors.primary),
-                      const SizedBox(width: 4),
-                      Text(
-                        '[$tag]',
-                        style: TextStyle(color: colors.primary, fontSize: 14, fontWeight: MoeFontWeights.emphasis),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text('${stickers.length}个', style: TextStyle(color: colors.muted, fontSize: 13)),
-              ],
-            ),
-          ),
-          // 表情包网格
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: stickers.map((sticker) => _buildStickerItem(sticker, colors)).toList(),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 构建单个表情包项
-  Widget _buildStickerItem(Sticker sticker, MoeColors colors) {
-    return Tooltip(
-      message: sticker.description.isNotEmpty ? sticker.description : sticker.tags.join(', '),
-      child: Container(
-        width: 64,
-        height: 64,
-        decoration: MoeG2Decoration(
-          radius: 8,
-          color: colors.surfaceAlt,
-          border: Border.all(color: colors.border),
-        ),
-        child: MoeG2ClipRRect(
-          radius: 7,
-          child: Image.asset(
-            sticker.assetPath,
-            width: 64,
-            height: 64,
-            fit: BoxFit.contain,
-            errorBuilder: (_, __, ___) => Center(
-              child: Icon(Icons.emoji_emotions, color: colors.muted, size: 32),
-            ),
-          ),
-        ),
       ),
     );
   }
 }
 
-// ============================================================
-// 文件夹详情页 - 展示单个分组内的所有表情包
-// ============================================================
+/// 网格中的单个表情：圆角底 + 按压缩放反馈，点按看详情
+class _StickerCell extends StatefulWidget {
+  const _StickerCell({required this.sticker, required this.onTap});
 
-class _StickerFolderDetailPage extends StatelessWidget {
-  final String folderName;
-  final List<Sticker> stickers;
+  final Sticker sticker;
+  final VoidCallback onTap;
 
-  const _StickerFolderDetailPage({
-    required this.folderName,
-    required this.stickers,
-  });
+  @override
+  State<_StickerCell> createState() => _StickerCellState();
+}
+
+class _StickerCellState extends State<_StickerCell> {
+  bool _pressed = false;
 
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
+    final sticker = widget.sticker;
 
-    return Scaffold(
-      backgroundColor: colors.surface,
-      appBar: MoeDetailAppBar(
-        title: folderName,
-        actions: [
-          // 未来可添加编辑按钮
-          IconButton(
-            icon: Icon(Icons.edit_outlined, color: colors.headerContentColor),
-            onPressed: () {
-              // TODO: 实现编辑功能
-              MoeToast.brief(context, '编辑功能开发中...');
-            },
-          ),
-        ],
-      ),
-      body: GridView.builder(
-        padding: EdgeInsets.zero,
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 4,       // 四列
-          crossAxisSpacing: 1,     // 紧邻，1px间隙
-          mainAxisSpacing: 1,      // 紧邻，1px间隙
-          childAspectRatio: 1,     // 正方形
-        ),
-        itemCount: stickers.length,
-        itemBuilder: (context, index) {
-          final sticker = stickers[index];
-          return _buildStickerItem(sticker, colors);
-        },
-      ),
-    );
-  }
-
-  Widget _buildStickerItem(Sticker sticker, MoeColors colors) {
     return Tooltip(
-      message: sticker.description.isNotEmpty ? sticker.description : sticker.tags.join(', '),
-      child: Container(
-        color: colors.surfaceAlt,
-        child: Image.asset(
-          sticker.assetPath,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => Center(
-            child: Icon(Icons.emoji_emotions, color: colors.muted, size: 32),
+      message: sticker.description.isNotEmpty
+          ? sticker.description
+          : sticker.tags.join('、'),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        onTapDown: (_) => setState(() => _pressed = true),
+        onTapUp: (_) => setState(() => _pressed = false),
+        onTapCancel: () => setState(() => _pressed = false),
+        child: AnimatedScale(
+          scale: _pressed ? 0.92 : 1,
+          duration: kAnimFast,
+          child: Container(
+            decoration: MoeG2Decoration(radius: 14, color: colors.surfaceAlt),
+            child: MoeG2ClipRRect(
+              radius: 14,
+              child: Padding(
+                padding: const EdgeInsets.all(8),
+                child: Image.asset(
+                  sticker.assetPath,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => Center(
+                    child: Icon(
+                      Icons.emoji_emotions_outlined,
+                      color: colors.muted,
+                      size: 30,
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ),
         ),
       ),

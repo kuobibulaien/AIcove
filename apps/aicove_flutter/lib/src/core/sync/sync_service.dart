@@ -35,9 +35,9 @@ class SyncService {
 
   /// 获取同步游标
   Future<SyncCursor?> _getCursor() async {
-    return (_db.select(_db.syncCursors)
-          ..where((t) => t.deviceId.equals(_deviceId)))
-        .getSingleOrNull();
+    return (_db.select(
+      _db.syncCursors,
+    )..where((t) => t.deviceId.equals(_deviceId))).getSingleOrNull();
   }
 
   /// 更新同步游标
@@ -48,15 +48,20 @@ class SyncService {
   }) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     final existing = await _getCursor();
-    await _db.into(_db.syncCursors).insertOnConflictUpdate(
+    await _db
+        .into(_db.syncCursors)
+        .insertOnConflictUpdate(
           SyncCursorsCompanion(
             deviceId: Value(_deviceId),
             conversationsCursor: Value(
-                conversationsCursor ?? existing?.conversationsCursor ?? 0),
-            messagesCursor:
-                Value(messagesCursor ?? existing?.messagesCursor ?? 0),
-            providersCursor:
-                Value(providersCursor ?? existing?.providersCursor ?? 0),
+              conversationsCursor ?? existing?.conversationsCursor ?? 0,
+            ),
+            messagesCursor: Value(
+              messagesCursor ?? existing?.messagesCursor ?? 0,
+            ),
+            providersCursor: Value(
+              providersCursor ?? existing?.providersCursor ?? 0,
+            ),
             updatedAt: Value(now),
           ),
         );
@@ -72,8 +77,10 @@ class SyncService {
       params['providers_cursor'] = cursor.providersCursor;
     }
 
-    final response =
-        await _dio.get('/api/v1/sync/v2/pull', queryParameters: params);
+    final response = await _dio.get(
+      '/api/v1/sync/v2/pull',
+      queryParameters: params,
+    );
     final data = response.data as Map<String, dynamic>;
 
     // 应用会话变更
@@ -108,10 +115,11 @@ class SyncService {
   /// 推送本地变更
   Future<void> push() async {
     // 获取待同步操作
-    final pending = await (_db.select(_db.pendingOperations)
-          ..where((t) => t.synced.equals(false))
-          ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]))
-        .get();
+    final pending =
+        await (_db.select(_db.pendingOperations)
+              ..where((t) => t.synced.equals(false))
+              ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]))
+            .get();
 
     if (pending.isEmpty) return;
 
@@ -149,9 +157,13 @@ class SyncService {
 
   /// 添加待同步操作
   Future<void> addPendingOperation(
-      String opType, Map<String, dynamic> data) async {
+    String opType,
+    Map<String, dynamic> data,
+  ) async {
     final opId = const Uuid().v4();
-    await _db.into(_db.pendingOperations).insert(
+    await _db
+        .into(_db.pendingOperations)
+        .insert(
           PendingOperationsCompanion(
             opId: Value(opId),
             opType: Value(opType),
@@ -166,9 +178,9 @@ class SyncService {
     final id = data['id'] as String;
     final avatarUrl = data['avatar_url'] as String?;
     final characterImage = data['character_image'] as String?;
-    final existing = await (_db.select(_db.conversations)
-          ..where((t) => t.id.equals(id)))
-        .getSingleOrNull();
+    final existing = await (_db.select(
+      _db.conversations,
+    )..where((t) => t.id.equals(id))).getSingleOrNull();
 
     final companion = ConversationsCompanion(
       id: Value(id),
@@ -177,14 +189,16 @@ class SyncService {
       avatarUrl: Value(avatarUrl),
       characterImage: Value(characterImage),
       chatBackgroundImage: Value(data['chat_background_image'] as String?),
-      chatBackgroundMaskOpacity:
-          Value((data['chat_background_mask_opacity'] as num?)?.toDouble()),
+      chatBackgroundMaskOpacity: Value(
+        (data['chat_background_mask_opacity'] as num?)?.toDouble(),
+      ),
       selfAddress: Value(data['self_address'] as String?),
       addressUser: Value(data['address_user'] as String?),
       voiceFile: Value(data['voice_file'] as String?),
       personaPrompt: Value(data['persona_prompt'] as String? ?? ''),
       defaultProvider: Value(data['default_provider'] as String?),
       sessionProvider: Value(data['session_provider'] as String?),
+      thinkingLevels: Value(data['thinking_levels'] as String?),
       isPinned: Value(data['is_pinned'] as bool? ?? false),
       isFavorite: Value(data['is_favorite'] as bool? ?? false),
       isMuted: Value(data['is_muted'] as bool? ?? false),
@@ -196,16 +210,19 @@ class SyncService {
       deletedAt: Value(data['deleted_at'] as int?),
       purgeAt: Value(data['purge_at'] as int?),
       createdAt: Value(
-          data['created_at'] as int? ?? DateTime.now().millisecondsSinceEpoch),
+        data['created_at'] as int? ?? DateTime.now().millisecondsSinceEpoch,
+      ),
       updatedAt: Value(
-          data['updated_at'] as int? ?? DateTime.now().millisecondsSinceEpoch),
+        data['updated_at'] as int? ?? DateTime.now().millisecondsSinceEpoch,
+      ),
     );
 
     if (existing == null) {
       await _db.into(_db.conversations).insert(companion);
     } else {
-      await (_db.update(_db.conversations)..where((t) => t.id.equals(id)))
-          .write(companion);
+      await (_db.update(
+        _db.conversations,
+      )..where((t) => t.id.equals(id))).write(companion);
     }
 
     final source = BlurredBackgroundService.pickPreferredSource(
@@ -213,19 +230,18 @@ class SyncService {
       avatarUrl: avatarUrl,
     );
     if (BlurredBackgroundService.shouldPreGenerateEagerly(source)) {
-      unawaited(BlurredBackgroundService.ensureBlur(
-        source,
-        allowNetwork: false,
-      ));
+      unawaited(
+        BlurredBackgroundService.ensureBlur(source, allowNetwork: false),
+      );
     }
   }
 
   // 应用远程消息到本地
   Future<void> _applyMessage(Map<String, dynamic> data) async {
     final id = data['id'] as String;
-    final existing = await (_db.select(_db.messages)
-          ..where((t) => t.id.equals(id)))
-        .getSingleOrNull();
+    final existing = await (_db.select(
+      _db.messages,
+    )..where((t) => t.id.equals(id))).getSingleOrNull();
 
     final companion = MessagesCompanion(
       id: Value(id),
@@ -237,14 +253,16 @@ class SyncService {
       deletedAt: Value(data['deleted_at'] as int?),
       purgeAt: Value(data['purge_at'] as int?),
       createdAt: Value(
-          data['created_at'] as int? ?? DateTime.now().millisecondsSinceEpoch),
+        data['created_at'] as int? ?? DateTime.now().millisecondsSinceEpoch,
+      ),
     );
 
     if (existing == null) {
       await _db.into(_db.messages).insert(companion);
     } else {
-      await (_db.update(_db.messages)..where((t) => t.id.equals(id)))
-          .write(companion);
+      await (_db.update(
+        _db.messages,
+      )..where((t) => t.id.equals(id))).write(companion);
     }
 
     // 处理消息块
@@ -257,9 +275,9 @@ class SyncService {
   // 应用远程消息块到本地
   Future<void> _applyMessageBlock(Map<String, dynamic> data) async {
     final id = data['id'] as String;
-    final existing = await (_db.select(_db.messageBlocks)
-          ..where((t) => t.id.equals(id)))
-        .getSingleOrNull();
+    final existing = await (_db.select(
+      _db.messageBlocks,
+    )..where((t) => t.id.equals(id))).getSingleOrNull();
 
     final companion = MessageBlocksCompanion(
       id: Value(id),
@@ -270,23 +288,25 @@ class SyncService {
       sortOrder: Value(data['sort_order'] as int? ?? 0),
       deletedAt: Value(data['deleted_at'] as int?),
       createdAt: Value(
-          data['created_at'] as int? ?? DateTime.now().millisecondsSinceEpoch),
+        data['created_at'] as int? ?? DateTime.now().millisecondsSinceEpoch,
+      ),
     );
 
     if (existing == null) {
       await _db.into(_db.messageBlocks).insert(companion);
     } else {
-      await (_db.update(_db.messageBlocks)..where((t) => t.id.equals(id)))
-          .write(companion);
+      await (_db.update(
+        _db.messageBlocks,
+      )..where((t) => t.id.equals(id))).write(companion);
     }
   }
 
   // 应用远程渠道商到本地
   Future<void> _applyProvider(Map<String, dynamic> data) async {
     final id = data['id'] as String;
-    final existing = await (_db.select(_db.providers)
-          ..where((t) => t.id.equals(id)))
-        .getSingleOrNull();
+    final existing = await (_db.select(
+      _db.providers,
+    )..where((t) => t.id.equals(id))).getSingleOrNull();
 
     final companion = ProvidersCompanion(
       id: Value(id),
@@ -302,16 +322,19 @@ class SyncService {
       deletedAt: Value(data['deleted_at'] as int?),
       purgeAt: Value(data['purge_at'] as int?),
       createdAt: Value(
-          data['created_at'] as int? ?? DateTime.now().millisecondsSinceEpoch),
+        data['created_at'] as int? ?? DateTime.now().millisecondsSinceEpoch,
+      ),
       updatedAt: Value(
-          data['updated_at'] as int? ?? DateTime.now().millisecondsSinceEpoch),
+        data['updated_at'] as int? ?? DateTime.now().millisecondsSinceEpoch,
+      ),
     );
 
     if (existing == null) {
       await _db.into(_db.providers).insert(companion);
     } else {
-      await (_db.update(_db.providers)..where((t) => t.id.equals(id)))
-          .write(companion);
+      await (_db.update(
+        _db.providers,
+      )..where((t) => t.id.equals(id))).write(companion);
     }
   }
 }
@@ -323,11 +346,13 @@ final syncServiceProvider = FutureProvider<SyncService>((ref) async {
   final deviceId = await SyncService.getDeviceId(secureStorage);
 
   // TODO: 从设置中读取云端 URL
-  final dio = Dio(BaseOptions(
-    baseUrl: 'https://api.example.com', // 需要配置
-    connectTimeout: const Duration(seconds: 30),
-    receiveTimeout: const Duration(seconds: 30),
-  ));
+  final dio = Dio(
+    BaseOptions(
+      baseUrl: 'https://api.example.com', // 需要配置
+      connectTimeout: const Duration(seconds: 30),
+      receiveTimeout: const Duration(seconds: 30),
+    ),
+  );
 
   return SyncService(db, dio, deviceId);
 });

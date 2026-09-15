@@ -1,3 +1,4 @@
+import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
@@ -8,11 +9,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 
 import '../../../core/database/database.dart' as db;
-import '../../../core/database/converters/database_converters.dart';
 import '../../../core/database/database_provider.dart';
 import '../../../core/models/message_block.dart';
 import '../domain/message.dart';
-import 'chat_frontend_message_projection_service.dart';
+import '../../observability/frontend_diagnostics_port.dart';
+import 'history_display_decoder.dart';
+import '../../observability/frontend_diagnostics_provider.dart';
 import 'image_dimension_probe/image_dimension_probe.dart';
 
 const int kConversationTimelineSeedMessageCount = 20;
@@ -45,8 +47,7 @@ class ConversationTimelineCache {
   final Map<String, _ConversationTimelineSnapshot> _snapshotsByConversation =
       <String, _ConversationTimelineSnapshot>{};
   final Map<String, _ConversationFrontendVisibilityState>
-      _visibilityByConversation =
-      <String, _ConversationFrontendVisibilityState>{};
+  _visibilityByConversation = <String, _ConversationFrontendVisibilityState>{};
   final Map<String, StreamController<void>> _changeControllers =
       <String, StreamController<void>>{};
   final Map<String, Future<void>> _conversationTasks = <String, Future<void>>{};
@@ -55,7 +56,7 @@ class ConversationTimelineCache {
 
   /// 统一来源状态表：attempted 与成功尺寸合一（同进同出的单 LRU）。
   final Map<String, LinkedHashMap<String, _SourceProbeState>>
-      _sourceProbeStates = <String, LinkedHashMap<String, _SourceProbeState>>{};
+  _sourceProbeStates = <String, LinkedHashMap<String, _SourceProbeState>>{};
 
   /// 在途维护任务存在时收到的重跑请求（由尾处理消费）。
   final Set<String> _maintenanceRerunRequested = <String>{};
@@ -150,20 +151,17 @@ class ConversationTimelineCache {
     // 完成的任何变更不丢失。
     final changes = StreamController<void>();
     final subscription = _controllerFor(normalizedConversationId).stream.listen(
-          changes.add,
-          onError: changes.addError,
-          onDone: changes.close,
-        );
+      changes.add,
+      onError: changes.addError,
+      onDone: changes.close,
+    );
     try {
       yield await _resolveWindow(
         normalizedConversationId,
         limit: normalizedLimit,
       );
       yield* changes.stream.asyncMap((_) {
-        return _resolveWindow(
-          normalizedConversationId,
-          limit: normalizedLimit,
-        );
+        return _resolveWindow(normalizedConversationId, limit: normalizedLimit);
       });
     } finally {
       await subscription.cancel();
@@ -210,7 +208,8 @@ class ConversationTimelineCache {
           conversationId: normalizedConversationId,
           messages: normalizedMessages,
           hasMoreMessages: current.hasMoreMessages,
-          oldestRawCursor: current.oldestRawCursor ??
+          oldestRawCursor:
+              current.oldestRawCursor ??
               _estimateOldestRawCursor(normalizedMessages),
           loadedRawMessageCount: current.loadedRawMessageCount > 0
               ? current.loadedRawMessageCount
@@ -278,13 +277,46 @@ class ConversationTimelineCache {
     }
 
     await _runConversationTask(normalizedConversationId, () async {
+      await _loadVisibility(normalizedConversationId);
       final current = _visibilityFor(normalizedConversationId);
-      _visibilityByConversation[normalizedConversationId] = current.merge(
+      final next = current.merge(
         hiddenRawMessageIds: normalizedRawIds,
         hiddenProjectedMessageIds: normalizedProjectedIds,
       );
+      final preferences = await SharedPreferences.getInstance();
+      final saved = await preferences.setString(
+        _visibilityKey(normalizedConversationId),
+        jsonEncode({
+          'raw': next.hiddenRawMessageIds.toList(),
+          'projected': next.hiddenProjectedMessageIds.toList(),
+        }),
+      );
+      if (!saved) throw StateError('消息隐藏记录保存失败');
+      _visibilityByConversation[normalizedConversationId] = next;
       _notifyConversationChanged(normalizedConversationId);
     });
+  }
+
+  // Local presentation preferences only: never stored in raw history or synced.
+  String _visibilityKey(String conversationId) =>
+      'aicove.frontend_hidden.v1.$conversationId';
+
+  Future<void> _loadVisibility(String conversationId) async {
+    if (_visibilityByConversation.containsKey(conversationId)) return;
+    final preferences = await SharedPreferences.getInstance();
+    final encoded = preferences.getString(_visibilityKey(conversationId));
+    final value = encoded == null
+        ? const <String, dynamic>{}
+        : jsonDecode(encoded) as Map<String, dynamic>;
+    _visibilityByConversation[conversationId] =
+        _ConversationFrontendVisibilityState(
+          hiddenRawMessageIds: Set<String>.from(
+            value['raw'] as List? ?? const [],
+          ),
+          hiddenProjectedMessageIds: Set<String>.from(
+            value['projected'] as List? ?? const [],
+          ),
+        );
   }
 
   Future<void> _replaceMessagesInternal({
@@ -330,7 +362,8 @@ class ConversationTimelineCache {
         conversationId: normalizedConversationId,
         messages: normalizedMessages,
         hasMoreMessages: current.hasMoreMessages,
-        oldestRawCursor: current.oldestRawCursor ??
+        oldestRawCursor:
+            current.oldestRawCursor ??
             _estimateOldestRawCursor(normalizedMessages),
         loadedRawMessageCount: current.loadedRawMessageCount > 0
             ? current.loadedRawMessageCount
@@ -417,6 +450,87 @@ class ConversationTimelineCache {
     });
   }
 
+  Set<String> get loadedConversationIds => {
+    ..._snapshotsByConversation.keys,
+    ..._conversationTasks.keys,
+  };
+
+  /// Refresh committed remote changes in warm windows. This is explicit so
+  /// projection-maintenance writes cannot trigger a database notification loop.
+  Future<Set<String>> refreshConversationsFromRawStore(
+    Set<String> conversationIds, {
+    required bool Function(String conversationId) canRefresh,
+  }) async {
+    final deferred = <String>{};
+    for (final id in conversationIds) {
+      if (_disposed) return {};
+      final refreshed = await _runConversationTask(id, () async {
+        if (_disposed) return true;
+        final current = _snapshotsByConversation[id];
+        if (current == null) return true;
+        if (!canRefresh(id)) return false;
+        final diagnostics = _ref.read(frontendDiagnosticsProvider);
+        final operation = diagnostics.enabled
+            ? diagnostics.child(
+                null,
+                FrontendStage.historyReady,
+                conversationId: id,
+              )
+            : null;
+        var rebuilt = await _loadRecentSnapshotFromDb(
+          id,
+          targetCount: _maxInt(
+            kConversationTimelineSeedMessageCount,
+            current.loadedRawMessageCount,
+          ),
+        );
+        // Once the user has paged backwards, keep their oldest loaded anchor
+        // while including newly arrived messages above it, with no page gaps.
+        final anchor = current.oldestRawCursor;
+        if (anchor != null &&
+            current.loadedRawMessageCount >
+                kConversationTimelineSeedMessageCount) {
+          while (rebuilt.hasMoreMessages &&
+              rebuilt.oldestRawCursor != null &&
+              !rebuilt.oldestRawCursor!.createdAt.isBefore(anchor.createdAt) &&
+              !rebuilt.messages.any(
+                (m) => _messageRawSourceId(m) == anchor.messageId,
+              )) {
+            if (_disposed || !canRefresh(id)) return false;
+            rebuilt = await _expandSnapshotFromDb(
+              rebuilt,
+              minMessages:
+                  rebuilt.loadedRawMessageCount +
+                  kConversationTimelineSeedMessageCount,
+            );
+          }
+        }
+        if (_disposed || !canRefresh(id)) return false;
+        // Remote snapshots already contain canonical projection mappings.
+        // Refreshing the view must not rewrite them into local sync mutations.
+        final next = _buildInMemorySnapshot(rebuilt);
+        _installSnapshot(id, next, scheduleMaintenance: true);
+        _notifyConversationChanged(id);
+        diagnostics.record(
+          operation,
+          FrontendStage.historyReady,
+          itemCount: next.messages.length,
+          facts: DiagnosticFacts(
+            phase: DiagnosticPhase.end,
+            state: {
+              'syncRefresh': true,
+              'rawReadCount': next.loadedRawMessageCount,
+              'projectedCount': next.messages.length,
+            },
+          ),
+        );
+        return true;
+      });
+      if (!refreshed) deferred.add(id);
+    }
+    return deferred;
+  }
+
   Future<void> reloadConversationFromRawStore(
     String conversationId, {
     int? targetMessageCount,
@@ -434,8 +548,8 @@ class ConversationTimelineCache {
               current?.loadedRawMessageCount ?? 0,
             )
           : targetMessageCount < 1
-              ? 1
-              : targetMessageCount;
+          ? 1
+          : targetMessageCount;
 
       final rebuilt = await _loadRecentSnapshotFromDb(
         normalizedConversationId,
@@ -465,6 +579,10 @@ class ConversationTimelineCache {
     _sourceProbeStates.remove(normalizedConversationId);
 
     await _runConversationTask(normalizedConversationId, () async {
+      final preferences = await SharedPreferences.getInstance();
+      if (!await preferences.remove(_visibilityKey(normalizedConversationId))) {
+        throw StateError('消息隐藏记录清理失败');
+      }
       _installSnapshot(
         normalizedConversationId,
         _ConversationTimelineSnapshot(
@@ -506,6 +624,13 @@ class ConversationTimelineCache {
     final snapshot = await _loadSnapshot(normalizedConversationId);
     return snapshot.loadedRawMessageCount;
   }
+
+  bool isMessageHidden(String conversationId, Message message) =>
+      _isMessageHiddenByFrontendVisibility(
+        message,
+        _visibilityByConversation[conversationId] ??
+            const _ConversationFrontendVisibilityState(),
+      );
 
   Future<Message?> findCachedMessageById(
     String messageId, {
@@ -573,26 +698,72 @@ class ConversationTimelineCache {
   }
 
   Future<_ConversationTimelineSnapshot> _loadSnapshot(String conversationId) {
+    final queued = Stopwatch()..start();
     return _runConversationTask(
       conversationId,
-      () => _loadSnapshotUnlocked(conversationId),
+      () => _loadSnapshotUnlocked(
+        conversationId,
+        queueMs: queued.elapsedMilliseconds,
+      ),
     );
   }
 
   Future<_ConversationTimelineSnapshot> _loadSnapshotUnlocked(
-    String conversationId,
-  ) async {
-    var snapshot = _snapshotsByConversation[conversationId];
-    snapshot ??= await _loadRecentSnapshotFromDb(
-      conversationId,
-      targetCount: kConversationTimelineSeedMessageCount,
-    );
-
-    return _installSnapshot(
-      conversationId,
-      snapshot,
-      scheduleMaintenance: true,
-    );
+    String conversationId, {
+    required int queueMs,
+  }) async {
+    final hot = _snapshotsByConversation[conversationId];
+    if (hot != null) {
+      return _installSnapshot(conversationId, hot, scheduleMaintenance: true);
+    }
+    final diagnostics = _ref.read(frontendDiagnosticsProvider);
+    final operation = diagnostics.enabled
+        ? diagnostics.child(
+            null,
+            FrontendStage.historyColdLoad,
+            conversationId: conversationId,
+          )
+        : null;
+    final metrics = operation == null
+        ? null
+        : <String, Object?>{'queueMs': queueMs};
+    try {
+      final snapshot = await _loadRecentSnapshotFromDb(
+        conversationId,
+        targetCount: kConversationTimelineSeedMessageCount,
+        coldLoadMetrics: metrics,
+      );
+      final clock = Stopwatch()..start();
+      final installed = _installSnapshot(
+        conversationId,
+        snapshot,
+        scheduleMaintenance: true,
+      );
+      metrics?['installMs'] = clock.elapsedMilliseconds;
+      diagnostics.record(
+        operation,
+        FrontendStage.historyColdLoad,
+        itemCount: installed.messages.length,
+        facts: DiagnosticFacts(
+          phase: DiagnosticPhase.end,
+          state: metrics ?? const {},
+        ),
+      );
+      return installed;
+    } catch (error, stack) {
+      diagnostics.record(
+        operation,
+        FrontendStage.historyFailed,
+        error: error,
+        stackTrace: stack,
+        facts: DiagnosticFacts(
+          phase: DiagnosticPhase.error,
+          reason: DiagnosticReason.operationFailed,
+          state: metrics ?? const {},
+        ),
+      );
+      rethrow;
+    }
   }
 
   Future<_ConversationTimelineSnapshot> _ensureConversationReadyUnlocked(
@@ -666,20 +837,21 @@ class ConversationTimelineCache {
     // 启动」的任务会吸收期间发生的 clear/delete 失效并复活。
     final capturedEpoch = _maintenanceEpoch[conversationId] ?? 0;
     late final Future<void> task;
-    task = _runConversationTask(conversationId, () {
-      return _runSnapshotMaintenanceRound(conversationId, capturedEpoch);
-    }).catchError((Object _) {}).whenComplete(() {
-      if (identical(_snapshotUpgradeTasks[conversationId], task)) {
-        _snapshotUpgradeTasks.remove(conversationId);
-      }
-      try {
-        debugMaintenanceTailHook?.call(conversationId);
-        _handleMaintenanceTail(conversationId, capturedEpoch);
-      } on Object {
-        // S1：尾处理异常必须就地密封——维护任务无人 await，
-        // 不得让 task 以 error 完成产生未处理异常。
-      }
-    });
+    task =
+        _runConversationTask(conversationId, () {
+          return _runSnapshotMaintenanceRound(conversationId, capturedEpoch);
+        }).catchError((Object _) {}).whenComplete(() {
+          if (identical(_snapshotUpgradeTasks[conversationId], task)) {
+            _snapshotUpgradeTasks.remove(conversationId);
+          }
+          try {
+            debugMaintenanceTailHook?.call(conversationId);
+            _handleMaintenanceTail(conversationId, capturedEpoch);
+          } on Object {
+            // S1：尾处理异常必须就地密封——维护任务无人 await，
+            // 不得让 task 以 error 完成产生未处理异常。
+          }
+        });
     _snapshotUpgradeTasks[conversationId] = task;
   }
 
@@ -696,7 +868,8 @@ class ConversationTimelineCache {
       return;
     }
     final snapshot = _snapshotsByConversation[conversationId];
-    final hasCandidates = snapshot != null &&
+    final hasCandidates =
+        snapshot != null &&
         _hasDimensionUpgradeCandidates(conversationId, snapshot);
     if (rerunRequested || hasCandidates) {
       _requestMaintenance(conversationId);
@@ -930,7 +1103,8 @@ class ConversationTimelineCache {
         if (parts == null || !parts.hasProbeSource) {
           continue;
         }
-        final sourceKey = '${_messageRawSourceId(message)}|${parts.fingerprint}';
+        final sourceKey =
+            '${_messageRawSourceId(message)}|${parts.fingerprint}';
         if (states != null && states.containsKey(sourceKey)) {
           _touchSourceState(states, sourceKey);
           continue;
@@ -1160,6 +1334,7 @@ class ConversationTimelineCache {
                   width: dimensions.width,
                   height: dimensions.height,
                   prompt: block.prompt,
+                  generationSnapshot: block.generationSnapshot,
                   status: block.status,
                 ),
               );
@@ -1212,9 +1387,11 @@ class ConversationTimelineCache {
     final normalizedLocalPath = _normalizeLocalPathValue(localPath);
     final trimmedUrl = url?.trim();
     final isFileUrl = trimmedUrl != null && trimmedUrl.startsWith('file://');
-    final normalizedFileUrlPath =
-        isFileUrl ? _normalizeLocalPathValue(trimmedUrl) : null;
-    final remoteUrl = (trimmedUrl != null && trimmedUrl.isNotEmpty && !isFileUrl)
+    final normalizedFileUrlPath = isFileUrl
+        ? _normalizeLocalPathValue(trimmedUrl)
+        : null;
+    final remoteUrl =
+        (trimmedUrl != null && trimmedUrl.isNotEmpty && !isFileUrl)
         ? trimmedUrl
         : null;
     // 流式采样：不构造完整规范化 payload 副本。
@@ -1242,7 +1419,8 @@ class ConversationTimelineCache {
     return _ImageSourceParts(
       fingerprint: fingerprintParts.join('\u0000'),
       triple: _SourceTriple(localPath: localPath, url: url, base64: base64),
-      hasProbeSource: normalizedLocalPath != null ||
+      hasProbeSource:
+          normalizedLocalPath != null ||
           normalizedFileUrlPath != null ||
           base64Metadata != null,
     );
@@ -1271,12 +1449,10 @@ class ConversationTimelineCache {
         break;
       }
       current = current.copyWith(
-        messages: _normalizeMessages(
-          <Message>[
-            ...page.messages,
-            ...current.messages,
-          ],
-        ),
+        messages: _normalizeMessages(<Message>[
+          ...page.messages,
+          ...current.messages,
+        ]),
         hasMoreMessages: page.hasMoreMessages,
         oldestRawCursor: page.oldestRawCursor ?? current.oldestRawCursor,
         loadedRawMessageCount:
@@ -1291,20 +1467,34 @@ class ConversationTimelineCache {
   Future<_ConversationTimelineSnapshot> _loadRecentSnapshotFromDb(
     String conversationId, {
     required int targetCount,
+    Map<String, Object?>? coldLoadMetrics,
   }) async {
+    if (!_visibilityByConversation.containsKey(conversationId)) {
+      await _loadVisibility(conversationId);
+    }
     final normalizedTargetCount = targetCount < 1 ? 1 : targetCount;
-    final dbMessages =
-        await _ref.read(messageRepositoryProvider).getByConversationStable(
-              conversationId,
-              limit: normalizedTargetCount + 1,
-            );
+    final clock = Stopwatch()..start();
+    final dbMessages = await _ref
+        .read(messageRepositoryProvider)
+        .getByConversationForDisplay(
+          conversationId,
+          limit: normalizedTargetCount + 1,
+        );
+    coldLoadMetrics?.addAll({
+      'rawReadMs': clock.elapsedMilliseconds,
+      'rawReadCount': dbMessages.length,
+    });
     final hasMoreMessages = dbMessages.length > normalizedTargetCount;
     final trimmedDbMessages = hasMoreMessages
         ? dbMessages.take(normalizedTargetCount).toList(growable: false)
         : dbMessages;
-    final orderedDbMessages =
-        trimmedDbMessages.reversed.toList(growable: false);
-    final orderedMessages = await _buildMessagesFromDb(orderedDbMessages);
+    final orderedDbMessages = trimmedDbMessages.reversed.toList(
+      growable: false,
+    );
+    final orderedMessages = await _buildMessagesFromDb(
+      orderedDbMessages,
+      coldLoadMetrics: coldLoadMetrics,
+    );
 
     return _ConversationTimelineSnapshot(
       conversationId: conversationId,
@@ -1323,19 +1513,21 @@ class ConversationTimelineCache {
     required int pageSize,
   }) async {
     final normalizedPageSize = pageSize < 1 ? 1 : pageSize;
-    final dbMessages =
-        await _ref.read(messageRepositoryProvider).getByConversationStable(
-              conversationId,
-              limit: normalizedPageSize + 1,
-              beforeTime: beforeCursor.createdAt.millisecondsSinceEpoch,
-              beforeId: beforeCursor.messageId,
-            );
+    final dbMessages = await _ref
+        .read(messageRepositoryProvider)
+        .getByConversationForDisplay(
+          conversationId,
+          limit: normalizedPageSize + 1,
+          beforeTime: beforeCursor.createdAt.millisecondsSinceEpoch,
+          beforeId: beforeCursor.messageId,
+        );
     final hasMoreMessages = dbMessages.length > normalizedPageSize;
     final trimmedDbMessages = hasMoreMessages
         ? dbMessages.take(normalizedPageSize).toList(growable: false)
         : dbMessages;
-    final orderedDbMessages =
-        trimmedDbMessages.reversed.toList(growable: false);
+    final orderedDbMessages = trimmedDbMessages.reversed.toList(
+      growable: false,
+    );
     final orderedMessages = await _buildMessagesFromDb(orderedDbMessages);
 
     return _OlderPageResult(
@@ -1371,9 +1563,11 @@ class ConversationTimelineCache {
     return _ConversationTimelineSnapshot(
       conversationId: snapshot.conversationId,
       messages: normalizedMessages,
-      hasMoreMessages: snapshot.hasMoreMessages &&
+      hasMoreMessages:
+          snapshot.hasMoreMessages &&
           (normalizedMessages.isNotEmpty || snapshot.oldestRawCursor != null),
-      oldestRawCursor: snapshot.oldestRawCursor ??
+      oldestRawCursor:
+          snapshot.oldestRawCursor ??
           _estimateOldestRawCursor(normalizedMessages),
       loadedRawMessageCount: snapshot.loadedRawMessageCount > 0
           ? snapshot.loadedRawMessageCount
@@ -1388,38 +1582,95 @@ class ConversationTimelineCache {
   }
 
   Future<List<Message>> _buildMessagesFromDb(
-      List<db.Message> dbMessages) async {
+    List<db.Message> dbMessages, {
+    Map<String, Object?>? coldLoadMetrics,
+  }) async {
+    coldLoadMetrics?.addAll({
+      'rawCount': dbMessages.length,
+      'rawPayloadChars': dbMessages.fold<int>(
+        0,
+        (n, m) => n + (m.rawPayload?.length ?? 0),
+      ),
+      'blockReadMs': 0,
+      'blockCount': 0,
+      'blockDataChars': 0,
+      'decodeMs': 0,
+      'projectionMs': 0,
+      'projectedCount': 0,
+    });
     if (dbMessages.isEmpty) {
       return const <Message>[];
     }
 
-    final messageIds =
-        dbMessages.map((message) => message.id).toList(growable: false);
-    final dbBlocks =
-        await _ref.read(messageBlockRepositoryProvider).getByMessages(
-              messageIds,
-            );
-    final blocksByMessageId = <String, List<MessageBlock>>{};
-    for (final dbBlock in dbBlocks) {
-      final block = MessageBlockConverter.fromDb(dbBlock);
-      if (block == null) {
-        continue;
+    final clock = Stopwatch()..start();
+    final messageIds = dbMessages
+        .map((message) => message.id)
+        .toList(growable: false);
+    final dbBlocks = await _ref
+        .read(messageBlockRepositoryProvider)
+        .getByMessages(messageIds);
+    coldLoadMetrics?.addAll({
+      'blockReadMs': clock.elapsedMilliseconds,
+      'blockCount': dbBlocks.length,
+      'blockDataChars': dbBlocks.fold<int>(0, (n, b) => n + b.data.length),
+    });
+    var result = await decodeHistoryDisplay(
+      HistoryDisplayBatch(
+        dbMessages,
+        dbBlocks,
+        collectStats: coldLoadMetrics != null,
+      ),
+    );
+    final fallbackCount = result.fallbackIds.length;
+    if (fallbackCount > 0) {
+      final initialMetrics = result.metrics;
+      clock.reset();
+      final fallbackIds = result.fallbackIds.toSet();
+      final repository = _ref.read(messageRepositoryProvider);
+      final completeRows = <db.Message>[];
+      for (final row in dbMessages) {
+        final complete = fallbackIds.contains(row.id)
+            ? await repository.getById(row.id)
+            : row;
+        if (complete != null) completeRows.add(complete);
       }
-      blocksByMessageId
-          .putIfAbsent(dbBlock.messageId, () => <MessageBlock>[])
-          .add(block);
-    }
-
-    final rawMessages = <Message>[
-      for (final dbMessage in dbMessages)
-        MessageConverter.fromDb(
-          dbMessage,
-          blocks: blocksByMessageId[dbMessage.id],
+      if (coldLoadMetrics != null) {
+        coldLoadMetrics['rawReadMs'] =
+            (coldLoadMetrics['rawReadMs'] as int? ?? 0) +
+            clock.elapsedMilliseconds;
+        coldLoadMetrics['rawPayloadChars'] = completeRows.fold<int>(
+          0,
+          (n, m) => n + (m.rawPayload?.length ?? 0),
+        );
+      }
+      result = await decodeHistoryDisplay(
+        HistoryDisplayBatch(
+          completeRows,
+          dbBlocks,
+          collectStats: coldLoadMetrics != null,
         ),
-    ];
-    return _ref
-        .read(chatFrontendMessageProjectionServiceProvider)
-        .projectMessages(rawMessages);
+      );
+      for (final key in [
+        'decodeMs',
+        'projectionMs',
+        'payloadStatsMs',
+        'workerMs',
+      ]) {
+        if (result.metrics[key] is int && initialMetrics[key] is int) {
+          result.metrics[key] =
+              (result.metrics[key] as int) + (initialMetrics[key] as int);
+        }
+      }
+      result.metrics['backgroundDecode'] =
+          result.metrics['backgroundDecode'] == true ||
+          initialMetrics['backgroundDecode'] == true;
+    }
+    coldLoadMetrics?.addAll({
+      ...result.metrics,
+      'displayRead': true,
+      'displayFallbackCount': fallbackCount,
+    });
+    return result.messages;
   }
 
   Future<void> _syncProjectionMappingsUnlocked(
@@ -1549,17 +1800,20 @@ class ConversationTimelineCache {
         _conversationTasks[conversationId] ?? Future<void>.value();
     final completer = Completer<T>();
     late final Future<void> currentTask;
-    currentTask = previousTask.catchError((_) {}).then((_) async {
-      try {
-        completer.complete(await action());
-      } catch (error, stackTrace) {
-        completer.completeError(error, stackTrace);
-      }
-    }).whenComplete(() {
-      if (identical(_conversationTasks[conversationId], currentTask)) {
-        _conversationTasks.remove(conversationId);
-      }
-    });
+    currentTask = previousTask
+        .catchError((_) {})
+        .then((_) async {
+          try {
+            completer.complete(await action());
+          } catch (error, stackTrace) {
+            completer.completeError(error, stackTrace);
+          }
+        })
+        .whenComplete(() {
+          if (identical(_conversationTasks[conversationId], currentTask)) {
+            _conversationTasks.remove(conversationId);
+          }
+        });
     _conversationTasks[conversationId] = currentTask;
     return completer.future;
   }
@@ -1677,10 +1931,7 @@ class _DimensionUpgradeCandidate {
 }
 
 class _BackingBlockRow {
-  const _BackingBlockRow({
-    required this.rowId,
-    required this.dataText,
-  });
+  const _BackingBlockRow({required this.rowId, required this.dataText});
 
   final String rowId;
   final String dataText;
@@ -1713,10 +1964,7 @@ class _ConversationFrontendVisibilityState {
 }
 
 class _RawMessageCursor {
-  const _RawMessageCursor({
-    required this.messageId,
-    required this.createdAt,
-  });
+  const _RawMessageCursor({required this.messageId, required this.createdAt});
 
   final String messageId;
   final DateTime createdAt;
@@ -1827,8 +2075,10 @@ List<Message> _normalizeMessages(Iterable<Message> messages) {
   final deduped = <String, ({int index, Message message})>{};
   var index = 0;
   for (final message in messages) {
-    deduped[_timelineMessageDedupeKey(message)] =
-        (index: index, message: message);
+    deduped[_timelineMessageDedupeKey(message)] = (
+      index: index,
+      message: message,
+    );
     index += 1;
   }
   final normalizedEntries = deduped.values.toList(growable: false)
@@ -1839,9 +2089,7 @@ List<Message> _normalizeMessages(Iterable<Message> messages) {
       }
       return left.index.compareTo(right.index);
     });
-  return <Message>[
-    for (final entry in normalizedEntries) entry.message,
-  ];
+  return <Message>[for (final entry in normalizedEntries) entry.message];
 }
 
 String _timelineMessageDedupeKey(Message message) {
@@ -2023,7 +2271,8 @@ bool _hasNormalizedBase64Content(String? raw) {
     mixCodeUnit(lengthSuffix.codeUnitAt(i));
   }
 
-  final hashHex = hi.toRadixString(16).padLeft(8, '0') +
+  final hashHex =
+      hi.toRadixString(16).padLeft(8, '0') +
       lo.toRadixString(16).padLeft(8, '0');
   return (length: normalizedLength, hashHex: hashHex);
 }
@@ -2123,8 +2372,9 @@ bool _stringListEquals(List<String> left, List<String> right) {
   return true;
 }
 
-final conversationTimelineCacheProvider =
-    Provider<ConversationTimelineCache>((ref) {
+final conversationTimelineCacheProvider = Provider<ConversationTimelineCache>((
+  ref,
+) {
   final store = ConversationTimelineCache(ref);
   ref.onDispose(store.dispose);
   return store;

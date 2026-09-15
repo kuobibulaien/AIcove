@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aicove_flutter/src/core/api/agent_api.dart';
+import 'package:aicove_flutter/src/core/api/providers/provider_adapter.dart';
 import 'package:aicove_flutter/src/core/app_logger.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_send_api_runner.dart';
@@ -30,7 +31,7 @@ AppSettings _buildTestSettings() {
     apiBaseUrl: 'https://api.openai.com/v1',
     imageGenerationEnabled: true,
     maxFileUploadMB: 10,
-    historyMessageLimit: 100,
+    contextWindowTokens: 272000,
     customModels: <CustomModel>[],
     providers: <ProviderAuth>[
       ProviderAuth(
@@ -78,6 +79,7 @@ class _SplitInlineImageStreamingClient extends AgentApiClient {
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
+    ProviderChatRequestOptions? requestOptions,
     List<Map<String, dynamic>>? tools,
     TraceLogger? trace,
     String? turnId,
@@ -101,6 +103,7 @@ class _SplitInlineImageStreamingClient extends AgentApiClient {
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
+    ProviderChatRequestOptions? requestOptions,
     List<Map<String, dynamic>>? tools,
     void Function(String delta)? onTextDelta,
     void Function()? onToolCallsDetected,
@@ -137,6 +140,7 @@ class _SplitThinkStreamingClient extends AgentApiClient {
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
+    ProviderChatRequestOptions? requestOptions,
     List<Map<String, dynamic>>? tools,
     TraceLogger? trace,
     String? turnId,
@@ -160,6 +164,7 @@ class _SplitThinkStreamingClient extends AgentApiClient {
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
+    ProviderChatRequestOptions? requestOptions,
     List<Map<String, dynamic>>? tools,
     void Function(String delta)? onTextDelta,
     void Function()? onToolCallsDetected,
@@ -196,6 +201,7 @@ class _StrayThinkCloseStreamingClient extends AgentApiClient {
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
+    ProviderChatRequestOptions? requestOptions,
     List<Map<String, dynamic>>? tools,
     TraceLogger? trace,
     String? turnId,
@@ -219,6 +225,7 @@ class _StrayThinkCloseStreamingClient extends AgentApiClient {
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
+    ProviderChatRequestOptions? requestOptions,
     List<Map<String, dynamic>>? tools,
     void Function(String delta)? onTextDelta,
     void Function()? onToolCallsDetected,
@@ -254,6 +261,7 @@ class _AttributeImageTagStreamingClient extends AgentApiClient {
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
+    ProviderChatRequestOptions? requestOptions,
     List<Map<String, dynamic>>? tools,
     TraceLogger? trace,
     String? turnId,
@@ -277,6 +285,7 @@ class _AttributeImageTagStreamingClient extends AgentApiClient {
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
+    ProviderChatRequestOptions? requestOptions,
     List<Map<String, dynamic>>? tools,
     void Function(String delta)? onTextDelta,
     void Function()? onToolCallsDetected,
@@ -334,7 +343,6 @@ class _InlineImageStripPlugin extends BasePlugin {
   }
 }
 
-
 class _StrayImageCloseStreamingClient extends AgentApiClient {
   _StrayImageCloseStreamingClient(Duration timeout) : super(timeout: timeout);
 
@@ -352,6 +360,7 @@ class _StrayImageCloseStreamingClient extends AgentApiClient {
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
+    ProviderChatRequestOptions? requestOptions,
     List<Map<String, dynamic>>? tools,
     TraceLogger? trace,
     String? turnId,
@@ -375,6 +384,7 @@ class _StrayImageCloseStreamingClient extends AgentApiClient {
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
+    ProviderChatRequestOptions? requestOptions,
     List<Map<String, dynamic>>? tools,
     void Function(String delta)? onTextDelta,
     void Function()? onToolCallsDetected,
@@ -583,8 +593,7 @@ void main() {
     );
 
     final runner = ChatSendApiRunner.withAgentClientFactory(
-      agentClientFactory: (timeout) =>
-          _StrayImageCloseStreamingClient(timeout),
+      agentClientFactory: (timeout) => _StrayImageCloseStreamingClient(timeout),
     );
     final streamedDeltas = <String>[];
 

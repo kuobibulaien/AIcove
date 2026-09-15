@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 
 import '../../../../ui/theme/tokens.dart';
 
@@ -59,12 +60,19 @@ class _CollapsibleSelectableTextState extends State<CollapsibleSelectableText> {
               const SizedBox(height: 4),
               GestureDetector(
                 onTap: () => setState(() => _expanded = !_expanded),
-                child: Text(
-                  _expanded ? '收起' : '展开更多',
-                  style: TextStyle(
-                    color: widget.toggleColor,
-                    fontSize: 10,
-                    fontWeight: MoeFontWeights.emphasis,
+                child: MoeButtonSurface(
+                  radius: 8,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
+                  child: Text(
+                    _expanded ? '收起' : '展开更多',
+                    style: TextStyle(
+                      color: widget.toggleColor,
+                      fontSize: 10,
+                      fontWeight: MoeFontWeights.emphasis,
+                    ),
                   ),
                 ),
               ),

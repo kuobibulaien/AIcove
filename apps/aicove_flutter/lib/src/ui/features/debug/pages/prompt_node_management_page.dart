@@ -244,21 +244,6 @@ const _runtimeUsages = <String, _RuntimePromptUsage>{
     summary: '用于合并多个标签说明时的前置说明。',
     status: _RuntimePromptStatus.active,
   ),
-  'multimodal.vision.system': _RuntimePromptUsage(
-    area: '多模态理解',
-    summary: '用于图片理解辅助模型。',
-    status: _RuntimePromptStatus.active,
-  ),
-  'multimodal.audio.system': _RuntimePromptUsage(
-    area: '多模态理解',
-    summary: '用于音频理解辅助模型。',
-    status: _RuntimePromptStatus.active,
-  ),
-  'multimodal.video.system': _RuntimePromptUsage(
-    area: '多模态理解',
-    summary: '用于视频理解辅助模型。',
-    status: _RuntimePromptStatus.active,
-  ),
   'chat.draw_image.stable_review_instruction': _RuntimePromptUsage(
     area: '聊天绘图',
     summary: '用于绘图结果稳定性审核。',
@@ -401,7 +386,7 @@ class _PromptNodeManagementPageState extends State<PromptNodeManagementPage> {
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
-    return Scaffold(
+    return MoePageScaffold(
       backgroundColor: colors.surface,
       appBar: const MoeAppBar(title: '提示词节点', showBackButton: true),
       body: FutureBuilder<_PromptNodeSnapshot>(
@@ -631,9 +616,11 @@ class _MetricChip extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 6),
-          Text(
-            label,
-            style: TextStyle(color: colors.textSecondary, fontSize: 12),
+          Flexible(
+            child: Text(
+              label,
+              style: TextStyle(color: colors.textSecondary, fontSize: 12),
+            ),
           ),
         ],
       ),
@@ -947,7 +934,7 @@ class _CustomPromptNodeSheetState extends State<_CustomPromptNodeSheet> {
             const SizedBox(width: 12),
             Expanded(
               child: MoePrimaryButton(
-                label: '保存',
+                label: '创建节点',
                 icon: Icons.save_outlined,
                 isLoading: _saving,
                 onPressed: _saving ? null : _save,

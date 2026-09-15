@@ -151,6 +151,12 @@ class $ConversationsTable extends Conversations
   late final GeneratedColumn<String> recipeId = GeneratedColumn<String>(
       'recipe_id', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _thinkingLevelsMeta =
+      const VerificationMeta('thinkingLevels');
+  @override
+  late final GeneratedColumn<String> thinkingLevels = GeneratedColumn<String>(
+      'thinking_levels', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   static const VerificationMeta _lastMessageMeta =
       const VerificationMeta('lastMessage');
   @override
@@ -242,6 +248,7 @@ class $ConversationsTable extends Conversations
         notificationSound,
         enabledPlugins,
         recipeId,
+        thinkingLevels,
         lastMessage,
         lastMessageTime,
         unreadCount,
@@ -383,6 +390,12 @@ class $ConversationsTable extends Conversations
       context.handle(_recipeIdMeta,
           recipeId.isAcceptableOrUnknown(data['recipe_id']!, _recipeIdMeta));
     }
+    if (data.containsKey('thinking_levels')) {
+      context.handle(
+          _thinkingLevelsMeta,
+          thinkingLevels.isAcceptableOrUnknown(
+              data['thinking_levels']!, _thinkingLevelsMeta));
+    }
     if (data.containsKey('last_message')) {
       context.handle(
           _lastMessageMeta,
@@ -498,6 +511,8 @@ class $ConversationsTable extends Conversations
           .read(DriftSqlType.string, data['${effectivePrefix}enabled_plugins']),
       recipeId: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}recipe_id']),
+      thinkingLevels: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}thinking_levels']),
       lastMessage: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}last_message']),
       lastMessageTime: attachedDatabase.typeMapping
@@ -553,6 +568,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
   final bool notificationSound;
   final String? enabledPlugins;
   final String? recipeId;
+  final String? thinkingLevels;
   final String? lastMessage;
   final int? lastMessageTime;
   final int unreadCount;
@@ -586,6 +602,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       required this.notificationSound,
       this.enabledPlugins,
       this.recipeId,
+      this.thinkingLevels,
       this.lastMessage,
       this.lastMessageTime,
       required this.unreadCount,
@@ -648,6 +665,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
     }
     if (!nullToAbsent || recipeId != null) {
       map['recipe_id'] = Variable<String>(recipeId);
+    }
+    if (!nullToAbsent || thinkingLevels != null) {
+      map['thinking_levels'] = Variable<String>(thinkingLevels);
     }
     if (!nullToAbsent || lastMessage != null) {
       map['last_message'] = Variable<String>(lastMessage);
@@ -729,6 +749,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       recipeId: recipeId == null && nullToAbsent
           ? const Value.absent()
           : Value(recipeId),
+      thinkingLevels: thinkingLevels == null && nullToAbsent
+          ? const Value.absent()
+          : Value(thinkingLevels),
       lastMessage: lastMessage == null && nullToAbsent
           ? const Value.absent()
           : Value(lastMessage),
@@ -788,6 +811,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       notificationSound: serializer.fromJson<bool>(json['notificationSound']),
       enabledPlugins: serializer.fromJson<String?>(json['enabledPlugins']),
       recipeId: serializer.fromJson<String?>(json['recipeId']),
+      thinkingLevels: serializer.fromJson<String?>(json['thinkingLevels']),
       lastMessage: serializer.fromJson<String?>(json['lastMessage']),
       lastMessageTime: serializer.fromJson<int?>(json['lastMessageTime']),
       unreadCount: serializer.fromJson<int>(json['unreadCount']),
@@ -831,6 +855,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       'notificationSound': serializer.toJson<bool>(notificationSound),
       'enabledPlugins': serializer.toJson<String?>(enabledPlugins),
       'recipeId': serializer.toJson<String?>(recipeId),
+      'thinkingLevels': serializer.toJson<String?>(thinkingLevels),
       'lastMessage': serializer.toJson<String?>(lastMessage),
       'lastMessageTime': serializer.toJson<int?>(lastMessageTime),
       'unreadCount': serializer.toJson<int>(unreadCount),
@@ -868,6 +893,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           bool? notificationSound,
           Value<String?> enabledPlugins = const Value.absent(),
           Value<String?> recipeId = const Value.absent(),
+          Value<String?> thinkingLevels = const Value.absent(),
           Value<String?> lastMessage = const Value.absent(),
           Value<int?> lastMessageTime = const Value.absent(),
           int? unreadCount,
@@ -915,6 +941,8 @@ class Conversation extends DataClass implements Insertable<Conversation> {
         enabledPlugins:
             enabledPlugins.present ? enabledPlugins.value : this.enabledPlugins,
         recipeId: recipeId.present ? recipeId.value : this.recipeId,
+        thinkingLevels:
+            thinkingLevels.present ? thinkingLevels.value : this.thinkingLevels,
         lastMessage: lastMessage.present ? lastMessage.value : this.lastMessage,
         lastMessageTime: lastMessageTime.present
             ? lastMessageTime.value
@@ -982,6 +1010,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           ? data.enabledPlugins.value
           : this.enabledPlugins,
       recipeId: data.recipeId.present ? data.recipeId.value : this.recipeId,
+      thinkingLevels: data.thinkingLevels.present
+          ? data.thinkingLevels.value
+          : this.thinkingLevels,
       lastMessage:
           data.lastMessage.present ? data.lastMessage.value : this.lastMessage,
       lastMessageTime: data.lastMessageTime.present
@@ -1031,6 +1062,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           ..write('notificationSound: $notificationSound, ')
           ..write('enabledPlugins: $enabledPlugins, ')
           ..write('recipeId: $recipeId, ')
+          ..write('thinkingLevels: $thinkingLevels, ')
           ..write('lastMessage: $lastMessage, ')
           ..write('lastMessageTime: $lastMessageTime, ')
           ..write('unreadCount: $unreadCount, ')
@@ -1069,6 +1101,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
         notificationSound,
         enabledPlugins,
         recipeId,
+        thinkingLevels,
         lastMessage,
         lastMessageTime,
         unreadCount,
@@ -1106,6 +1139,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           other.notificationSound == this.notificationSound &&
           other.enabledPlugins == this.enabledPlugins &&
           other.recipeId == this.recipeId &&
+          other.thinkingLevels == this.thinkingLevels &&
           other.lastMessage == this.lastMessage &&
           other.lastMessageTime == this.lastMessageTime &&
           other.unreadCount == this.unreadCount &&
@@ -1141,6 +1175,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
   final Value<bool> notificationSound;
   final Value<String?> enabledPlugins;
   final Value<String?> recipeId;
+  final Value<String?> thinkingLevels;
   final Value<String?> lastMessage;
   final Value<int?> lastMessageTime;
   final Value<int> unreadCount;
@@ -1175,6 +1210,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     this.notificationSound = const Value.absent(),
     this.enabledPlugins = const Value.absent(),
     this.recipeId = const Value.absent(),
+    this.thinkingLevels = const Value.absent(),
     this.lastMessage = const Value.absent(),
     this.lastMessageTime = const Value.absent(),
     this.unreadCount = const Value.absent(),
@@ -1210,6 +1246,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     this.notificationSound = const Value.absent(),
     this.enabledPlugins = const Value.absent(),
     this.recipeId = const Value.absent(),
+    this.thinkingLevels = const Value.absent(),
     this.lastMessage = const Value.absent(),
     this.lastMessageTime = const Value.absent(),
     this.unreadCount = const Value.absent(),
@@ -1249,6 +1286,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     Expression<bool>? notificationSound,
     Expression<String>? enabledPlugins,
     Expression<String>? recipeId,
+    Expression<String>? thinkingLevels,
     Expression<String>? lastMessage,
     Expression<int>? lastMessageTime,
     Expression<int>? unreadCount,
@@ -1287,6 +1325,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       if (notificationSound != null) 'notification_sound': notificationSound,
       if (enabledPlugins != null) 'enabled_plugins': enabledPlugins,
       if (recipeId != null) 'recipe_id': recipeId,
+      if (thinkingLevels != null) 'thinking_levels': thinkingLevels,
       if (lastMessage != null) 'last_message': lastMessage,
       if (lastMessageTime != null) 'last_message_time': lastMessageTime,
       if (unreadCount != null) 'unread_count': unreadCount,
@@ -1326,6 +1365,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       Value<bool>? notificationSound,
       Value<String?>? enabledPlugins,
       Value<String?>? recipeId,
+      Value<String?>? thinkingLevels,
       Value<String?>? lastMessage,
       Value<int?>? lastMessageTime,
       Value<int>? unreadCount,
@@ -1362,6 +1402,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       notificationSound: notificationSound ?? this.notificationSound,
       enabledPlugins: enabledPlugins ?? this.enabledPlugins,
       recipeId: recipeId ?? this.recipeId,
+      thinkingLevels: thinkingLevels ?? this.thinkingLevels,
       lastMessage: lastMessage ?? this.lastMessage,
       lastMessageTime: lastMessageTime ?? this.lastMessageTime,
       unreadCount: unreadCount ?? this.unreadCount,
@@ -1447,6 +1488,9 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     if (recipeId.present) {
       map['recipe_id'] = Variable<String>(recipeId.value);
     }
+    if (thinkingLevels.present) {
+      map['thinking_levels'] = Variable<String>(thinkingLevels.value);
+    }
     if (lastMessage.present) {
       map['last_message'] = Variable<String>(lastMessage.value);
     }
@@ -1512,6 +1556,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
           ..write('notificationSound: $notificationSound, ')
           ..write('enabledPlugins: $enabledPlugins, ')
           ..write('recipeId: $recipeId, ')
+          ..write('thinkingLevels: $thinkingLevels, ')
           ..write('lastMessage: $lastMessage, ')
           ..write('lastMessageTime: $lastMessageTime, ')
           ..write('unreadCount: $unreadCount, ')
@@ -7469,6 +7514,7 @@ typedef $$ConversationsTableCreateCompanionBuilder = ConversationsCompanion
   Value<bool> notificationSound,
   Value<String?> enabledPlugins,
   Value<String?> recipeId,
+  Value<String?> thinkingLevels,
   Value<String?> lastMessage,
   Value<int?> lastMessageTime,
   Value<int> unreadCount,
@@ -7505,6 +7551,7 @@ typedef $$ConversationsTableUpdateCompanionBuilder = ConversationsCompanion
   Value<bool> notificationSound,
   Value<String?> enabledPlugins,
   Value<String?> recipeId,
+  Value<String?> thinkingLevels,
   Value<String?> lastMessage,
   Value<int?> lastMessageTime,
   Value<int> unreadCount,
@@ -7557,6 +7604,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             Value<bool> notificationSound = const Value.absent(),
             Value<String?> enabledPlugins = const Value.absent(),
             Value<String?> recipeId = const Value.absent(),
+            Value<String?> thinkingLevels = const Value.absent(),
             Value<String?> lastMessage = const Value.absent(),
             Value<int?> lastMessageTime = const Value.absent(),
             Value<int> unreadCount = const Value.absent(),
@@ -7592,6 +7640,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             notificationSound: notificationSound,
             enabledPlugins: enabledPlugins,
             recipeId: recipeId,
+            thinkingLevels: thinkingLevels,
             lastMessage: lastMessage,
             lastMessageTime: lastMessageTime,
             unreadCount: unreadCount,
@@ -7627,6 +7676,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             Value<bool> notificationSound = const Value.absent(),
             Value<String?> enabledPlugins = const Value.absent(),
             Value<String?> recipeId = const Value.absent(),
+            Value<String?> thinkingLevels = const Value.absent(),
             Value<String?> lastMessage = const Value.absent(),
             Value<int?> lastMessageTime = const Value.absent(),
             Value<int> unreadCount = const Value.absent(),
@@ -7662,6 +7712,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             notificationSound: notificationSound,
             enabledPlugins: enabledPlugins,
             recipeId: recipeId,
+            thinkingLevels: thinkingLevels,
             lastMessage: lastMessage,
             lastMessageTime: lastMessageTime,
             unreadCount: unreadCount,
@@ -7784,6 +7835,11 @@ class $$ConversationsTableFilterComposer
 
   ColumnFilters<String> get recipeId => $state.composableBuilder(
       column: $state.table.recipeId,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get thinkingLevels => $state.composableBuilder(
+      column: $state.table.thinkingLevels,
       builder: (column, joinBuilders) =>
           ColumnFilters(column, joinBuilders: joinBuilders));
 
@@ -8026,6 +8082,11 @@ class $$ConversationsTableOrderingComposer
 
   ColumnOrderings<String> get recipeId => $state.composableBuilder(
       column: $state.table.recipeId,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get thinkingLevels => $state.composableBuilder(
+      column: $state.table.thinkingLevels,
       builder: (column, joinBuilders) =>
           ColumnOrderings(column, joinBuilders: joinBuilders));
 

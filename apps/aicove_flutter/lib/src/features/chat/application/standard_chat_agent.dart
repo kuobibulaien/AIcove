@@ -20,6 +20,13 @@ abstract final class StandardChatAgentIds {
   static String contextRecipeIdForContact(String contactId) =>
       'standard_chat_recipe:$contactId';
 
+  static String contextRecipeIdForConversation(Conversation conversation) {
+    final boundRecipeId = conversation.recipeId?.trim();
+    return boundRecipeId != null && boundRecipeId.isNotEmpty
+        ? boundRecipeId
+        : contextRecipeIdForContact(conversation.id);
+  }
+
   static AgentDefinition definitionForConversation(Conversation conversation) {
     return AgentDefinition(
       id: agentIdForContact(conversation.id),
@@ -27,7 +34,7 @@ abstract final class StandardChatAgentIds {
       objective: conversation.personaPrompt,
       triggerKind: AgentTriggerKind.userMessage,
       agentKind: AgentKind.chat,
-      contextRecipeId: contextRecipeIdForContact(conversation.id),
+      contextRecipeId: contextRecipeIdForConversation(conversation),
       contextProfile: ContextProfile.standardChat,
       outputContract: AgentOutputContract.standardChat,
       deliveryChannel: AgentDeliveryChannelKind.foregroundConversation,
@@ -57,8 +64,9 @@ class StandardChatAgentRunRequest extends AgentRunRequest {
           triggerPayload: command,
           inputMessages: <Message>[command.userMessage],
           contextOverrides: <String, Object?>{
-            'contextRecipeId': StandardChatAgentIds.contextRecipeIdForContact(
-              command.conversation.id,
+            'contextRecipeId':
+                StandardChatAgentIds.contextRecipeIdForConversation(
+              command.conversation,
             ),
             'contactId': command.conversation.id,
             'conversationId': command.conversation.id,

@@ -18,6 +18,8 @@ library;
 
 import 'dart:ui' show lerpDouble;
 
+import 'package:flutter/foundation.dart' show listEquals;
+
 import 'package:flutter/material.dart';
 import 'package:figma_squircle/figma_squircle.dart';
 
@@ -90,6 +92,24 @@ class SmoothRectDecoration extends Decoration {
   BoxPainter createBoxPainter([VoidCallback? onChanged]) {
     return _SmoothRectPainter(this, onChanged);
   }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is SmoothRectDecoration &&
+        other.radius == radius &&
+        other.color == color &&
+        other.border == border &&
+        listEquals(other.boxShadow, boxShadow);
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        radius,
+        color,
+        border,
+        boxShadow == null ? null : Object.hashAll(boxShadow!),
+      );
 }
 
 class _SmoothRectPainter extends BoxPainter {
@@ -306,6 +326,27 @@ class MoeG2Decoration extends Decoration {
   BoxPainter createBoxPainter([VoidCallback? onChanged]) {
     return _G2RectPainter(this, onChanged);
   }
+
+  // Decoration 默认按引用比较；父组件每次 rebuild 都新建装饰实例，
+  // RenderDecoratedBox 就会丢掉 painter 重画 squircle 路径。值相等让
+  // 未变化的气泡装饰跳过重绘。
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is MoeG2Decoration &&
+        other.borderRadius == borderRadius &&
+        other.color == color &&
+        other.border == border &&
+        listEquals(other.boxShadow, boxShadow);
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        borderRadius,
+        color,
+        border,
+        boxShadow == null ? null : Object.hashAll(boxShadow!),
+      );
 }
 
 class _G2RectPainter extends BoxPainter {

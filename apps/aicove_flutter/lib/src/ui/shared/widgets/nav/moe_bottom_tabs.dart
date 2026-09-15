@@ -1,14 +1,14 @@
 /// MoeBottomTabBar - 底部 Tab 切换组件
-/// 
+///
 /// 仿 kelivo 风格的底部 Tab 切换器，支持任意数量 Tab。
-/// 
+///
 /// 设计特点：
 /// - G2 圆角边框（MoeSmoothRadii.md = 20px）
 /// - 高度/宽度可配置（默认 80px / 95%）
 /// - 图标+文字上下排列
 /// - iOS 触觉反馈
 /// - 平滑动画
-/// 
+///
 /// 使用示例：
 /// ```dart
 /// MoeBottomTabBar(
@@ -20,30 +20,28 @@
 ///   onTap: (i) => setState(() => _tabIndex = i),
 /// )
 /// ```
-/// 
+///
 /// 更新记录：
 /// - 2026-01-25: 重构：高度/宽度可配置，支持任意 Tab 数量
 /// - 2026-01-21: 创建底部双 Tab 组件
 library;
 
 import 'package:flutter/material.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/buttons/moe_button_surface.dart';
+import '../moe_floating_surface.dart';
 import 'package:flutter/services.dart';
 import '../../../theme/tokens.dart';
-import '../../effects/smooth_clip.dart';
 
 /// Tab 配置项
 class MoeTabItem {
-  const MoeTabItem({
-    required this.icon,
-    required this.label,
-  });
+  const MoeTabItem({required this.icon, required this.label});
 
   final IconData icon;
   final String label;
 }
 
 /// 底部 Tab 切换器
-/// 
+///
 /// 支持任意数量 Tab，高度/宽度可配置。
 class MoeBottomTabBar extends StatelessWidget {
   const MoeBottomTabBar({
@@ -81,34 +79,37 @@ class MoeBottomTabBar extends StatelessWidget {
         widthFactor: widthFactor,
         child: Container(
           height: height,
-          decoration: MoeG2Decoration(
+          child: MoeFloatingSurface(
             radius: MoeSmoothRadii.md,
-            color: colors.componentBackground,
-            border: Border.all(color: colors.border, width: 1),
-            boxShadow: MoeShadows.card,
-          ),
-          child: Row(
-            children: List.generate(tabs.length * 2 - 1, (index) {
-              if (index.isOdd) {
-                return Container(width: 1, height: dividerHeight, color: colors.border);
-              }
-              final tabIndex = index ~/ 2;
-              final tab = tabs[tabIndex];
-              return Expanded(
-                child: _TabItem(
-                  icon: tab.icon,
-                  label: tab.label,
-                  isSelected: currentIndex == tabIndex,
-                  colors: colors,
-                  onTap: () {
-                    if (currentIndex != tabIndex) {
-                      HapticFeedback.lightImpact();
-                      onTap(tabIndex);
-                    }
-                  },
-                ),
-              );
-            }),
+            solidColor: colors.componentBackground,
+            shadows: MoeShadows.card,
+            child: Row(
+              children: List.generate(tabs.length * 2 - 1, (index) {
+                if (index.isOdd) {
+                  return Container(
+                    width: 1,
+                    height: dividerHeight,
+                    color: colors.border,
+                  );
+                }
+                final tabIndex = index ~/ 2;
+                final tab = tabs[tabIndex];
+                return Expanded(
+                  child: _TabItem(
+                    icon: tab.icon,
+                    label: tab.label,
+                    isSelected: currentIndex == tabIndex,
+                    colors: colors,
+                    onTap: () {
+                      if (currentIndex != tabIndex) {
+                        HapticFeedback.lightImpact();
+                        onTap(tabIndex);
+                      }
+                    },
+                  ),
+                );
+              }),
+            ),
           ),
         ),
       ),
@@ -138,8 +139,8 @@ class _TabItem extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
-      child: AnimatedContainer(
-        duration: kAnimFast,
+      child: MoeButtonSurface(
+        radius: 20,
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -150,7 +151,9 @@ class _TabItem extends StatelessWidget {
               style: TextStyle(
                 fontSize: 13,
                 color: color,
-                fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
+                fontWeight: isSelected
+                    ? MoeFontWeights.emphasis
+                    : MoeFontWeights.normal,
               ),
             ),
           ],
@@ -161,7 +164,7 @@ class _TabItem extends StatelessWidget {
 }
 
 /// 底部双 Tab 组件（便捷封装）
-/// 
+///
 /// 如果只有两个 Tab，可以使用这个简化版本。
 class MoeBottomTabs extends StatelessWidget {
   const MoeBottomTabs({

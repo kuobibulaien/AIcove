@@ -256,6 +256,7 @@ Future<ContactEditResult?> showContactEditDialog({
                   customDrawingPrompt: personaParts.customDrawingPrompt,
                   drawingToolPresetName: personaParts.drawingToolPresetName,
                   drawingArtistPresetName: personaParts.drawingArtistPresetName,
+                  drawingPresetId: personaParts.drawingPresetId,
                 ),
               ));
             },

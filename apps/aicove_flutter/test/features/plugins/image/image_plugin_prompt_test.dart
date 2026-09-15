@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,6 +11,8 @@ import 'package:aicove_flutter/src/features/plugins/image/image_config.dart';
 import 'package:aicove_flutter/src/features/plugins/image/image_plugin.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/image_plugin_detail_page.dart';
+
+class _LocalHttpOverrides extends HttpOverrides {}
 
 class _FakeAppSettingsNotifier extends AppSettingsNotifier {
   _FakeAppSettingsNotifier(this._settings);
@@ -40,7 +43,7 @@ AppSettings _buildImageSettings({
     apiBaseUrl: 'https://api.openai.com/v1',
     imageGenerationEnabled: true,
     maxFileUploadMB: 10,
-    historyMessageLimit: 100,
+    contextWindowTokens: 272000,
     customModels: <CustomModel>[],
     providers: <ProviderAuth>[
       const ProviderAuth(
@@ -92,7 +95,7 @@ AppSettings _buildHiddenOnlyImageSettings() {
     apiBaseUrl: 'https://api.openai.com/v1',
     imageGenerationEnabled: true,
     maxFileUploadMB: 10,
-    historyMessageLimit: 100,
+    contextWindowTokens: 272000,
     customModels: <CustomModel>[],
     providers: <ProviderAuth>[
       ProviderAuth(
@@ -304,6 +307,93 @@ void main() {
     expect(plugin.getTools(), isEmpty);
   });
 
+  test('request image plugin freezes schema, style and deferred event configuration', () async {
+    final settings = _buildImageSettings().copyWith(
+      providers: const [ProviderAuth(id: 'openai', apiKeys: ['test-key'], apiBaseUrl: 'https://invalid.example',
+        models: ['test-image-model'], visibleModels: ['test-image-model'], capabilities: ['image'],
+        customConfig: {'requestFormat': 'novelai'})]);
+    final container = ProviderContainer(overrides: [appSettingsProvider.overrideWith(() => _FakeAppSettingsNotifier(settings))]);
+    addTearDown(container.dispose);
+    await container.read(appSettingsProvider.future);
+    const config = ImageConfig(selectedProviderId: 'openai', selectedModelId: 'openai:test-image-model',
+      defaultSteps: 23, defaultGuidanceScale: 7);
+    final plugin = container.read(Provider((ref) => ImagePlugin(config, ref, requestSettings: settings, isRequestSnapshot: true)));
+    final tool = plugin.getTools().single;
+    expect(tool.parameters.keys, containsAll(['steps', 'guidance_scale', 'count']));
+    expect(tool.parameters['steps']!.description, contains('23'));
+    expect(tool.parameters['width']!.required, isFalse);
+    final events = (await plugin.processResponse('<image>{"prompt":"cat","steps":35}</image>')).events;
+    expect((events.single.data['drawingConfig'] as Map)['defaultSteps'], 23);
+    expect(events.single.data['prompt'], contains('35'));
+    final result = jsonDecode((await tool.handler({'prompt': 'cat', 'steps': 0}))!);
+    expect(result['success'], false);
+    expect(result['error'], contains('steps'));
+  });
+
+  test('tool and inline requests use preset channels and override only allowed parameters', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    final bodies = <Map<String, dynamic>>[];
+    final keys = <String?>[];
+    server.listen((request) async {
+      bodies.add(jsonDecode(await utf8.decoder.bind(request).join()) as Map<String, dynamic>);
+      keys.add(request.headers.value('authorization'));
+      request.response.statusCode = 400; // 只核验请求，不生成图片或写用户文件。
+      request.response.write('{"error":"offline fixture"}');
+      await request.response.close();
+    });
+    const model = 'nai-diffusion-5-full';
+    final settings = _buildImageSettings().copyWith(
+      modelTypes: {'a:$model': 'image', 'b:$model': 'image'},
+      modelProviderMap: {'a:$model': 'a', 'b:$model': 'b'},
+      providers: [for (final id in ['a', 'b']) ProviderAuth(id: id, apiKeys: ['key-$id'],
+        apiBaseUrl: 'http://127.0.0.1:${server.port}', models: [model], visibleModels: [model],
+        capabilities: ['image'], customConfig: const {'requestFormat': 'novelai'})]);
+    final container = ProviderContainer(overrides: [appSettingsProvider.overrideWith(() => _FakeAppSettingsNotifier(settings))]);
+    addTearDown(container.dispose);
+    await container.read(appSettingsProvider.future);
+    ImagePlugin pluginFor(String id) => container.read(Provider((ref) => ImagePlugin(ImageConfig(
+      selectedProviderId: id, selectedModelId: '$id:$model', defaultSteps: 23,
+      artistPresets: [ArtistPreset(name: id, content: 'style-$id')], selectedArtistPresetName: id),
+      ref, requestSettings: settings, isRequestSnapshot: true)));
+    final a = pluginFor('a');
+    final b = pluginFor('b');
+    await HttpOverrides.runWithHttpOverrides(() async {
+      await a.getTools().single.handler({'prompt': 'cat', 'width': 1024, 'height': 1024,
+        'steps': 35, 'guidance_scale': 6, 'selectedProviderId': 'b', '_aicove_role_artist_preset_name': 'b'});
+      await b.generateInlineImage(prompt: '{"prompt":"dog","steps":30,"width":768,"height":1024}');
+      await a.generateInlineImage(prompt: '{{{pov}}}, cat');
+    }, _LocalHttpOverrides());
+    expect(bodies, hasLength(3));
+    expect(keys, ['Bearer key-a', 'Bearer key-b', 'Bearer key-a']);
+    expect(bodies[2]['input'], 'style-a, {{{pov}}}, cat');
+    expect(bodies[0]['input'], 'style-a, cat');
+    expect(bodies[1]['input'], 'style-b, dog');
+    final first = bodies[0]['parameters'] as Map;
+    final second = bodies[1]['parameters'] as Map;
+    expect([first['width'], first['height'], first['steps'], first['scale']], [1024, 1024, 35, 6]);
+    expect([second['width'], second['height'], second['steps']], [768, 1024, 30]);
+    final event = (await a.processResponse('<image>cat</image>')).events.single;
+    expect((event.data['drawingConfig'] as Map)['defaultSteps'], 23);
+  });
+
+  test('explicit missing provider/model fails without fallback or network request', () async {
+    final settings = _buildImageSettings();
+    final container = ProviderContainer(overrides: [appSettingsProvider.overrideWith(() => _FakeAppSettingsNotifier(settings))]);
+    addTearDown(container.dispose);
+    await container.read(appSettingsProvider.future);
+    for (final config in [const ImageConfig(selectedProviderId: 'missing', selectedModelId: 'missing:x'),
+      const ImageConfig(selectedProviderId: 'openai', selectedModelId: 'openai:missing')]) {
+      final plugin = container.read(Provider((ref) => ImagePlugin(config, ref, requestSettings: settings, isRequestSnapshot: true)));
+      final result = jsonDecode((await plugin.runDrawImageToolForDebug(prompt: 'cat'))!);
+      expect(result['success'], false);
+      expect(result['error'], contains('no configured image provider/model'));
+    }
+    final conflicting = container.read(Provider((ref) => ImagePlugin(
+      const ImageConfig(selectedProviderId: 'missing', selectedModelId: 'openai:test-image-model'), ref)));
+    expect(conflicting.getTools(), isEmpty);
+  });
+
   testWidgets(
       'image settings page should only list visible image-tagged models',
       (tester) async {
@@ -351,9 +441,10 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('当前模型已不可用'), findsOneWidget);
-
-    await tester.tap(find.text('当前模型已不可用'));
+    expect(find.text('绘图预设'), findsOneWidget);
+    await tester.tap(find.text('默认绘图').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('渠道与模型'));
     await tester.pumpAndSettle();
 
     expect(find.text('可用生图模型'), findsOneWidget);

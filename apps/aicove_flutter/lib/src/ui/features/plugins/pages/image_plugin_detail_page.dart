@@ -1,654 +1,265 @@
 import 'package:flutter/material.dart';
+import '../../../shared/animations/parallax_slide_page_route.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../../features/plugins/image/image_config.dart';
-import '../../../../features/plugins/plugin_providers.dart';
+import '../../../../features/plugins/image/drawing_preset.dart';
+import '../../../../features/plugins/image/drawing_preset_provider.dart';
 import '../../../../features/settings/app_settings.dart';
-import '../../../../ui/shared/widgets/index.dart';
-import '../../../../ui/theme/tokens.dart';
-import 'artist_preset_page.dart';
-import 'draw_image_tool_description_page.dart';
+import '../../../shared/widgets/index.dart';
+import '../../../theme/tokens.dart';
+import 'drawing_preset_editor_page.dart';
 import 'image_generation_test_page.dart';
-import 'inline_image_prompt_page.dart';
 
 class ImagePluginDetailPage extends ConsumerWidget {
   const ImagePluginDetailPage({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final colors = context.moeColors;
+    final catalogAsync = ref.watch(drawingPresetCatalogProvider);
     final settingsAsync = ref.watch(appSettingsProvider);
-    final imageConfig = ref.watch(imagePluginConfigProvider);
-
-    return Scaffold(
-      backgroundColor: colors.surface,
-      appBar: const MoeAppBar(
-        title: '绘图设置',
-        showBackButton: true,
-      ),
-      body: settingsAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('加载设置失败: $e')),
-        data: (settings) => _buildBody(
-          context: context,
-          ref: ref,
-          settings: settings,
-          config: imageConfig,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBody({
-    required BuildContext context,
-    required WidgetRef ref,
-    required AppSettings settings,
-    required ImageConfig config,
-  }) {
     final colors = context.moeColors;
-    final configNotifier = ref.read(imagePluginConfigProvider.notifier);
-    final settingsNotifier = ref.read(appSettingsProvider.notifier);
 
-    // 只展示渠道管理里已显示且带图像生成标签的模型。
-    final imageModels = _visibleImageModels(settings);
-    final selectedModel = _resolveSelectedModel(
-      config: config,
-      imageModels: imageModels,
-    );
-    final hasStoredSelection = _hasStoredModelSelection(config);
-
-    return ListView(
-      padding: const EdgeInsets.symmetric(vertical: 16),
-      children: [
-        _buildGenerationPathSection(
-          context: context,
-          settings: settings,
-          settingsNotifier: settingsNotifier,
-        ),
-        const SizedBox(height: 16),
-        MoeSettingsGroup(
-          margin: const EdgeInsets.symmetric(horizontal: 16),
-          children: [
-            MoeSettingsRow(
-              icon: Icons.brush_outlined,
-              label: '启用绘图工具',
-              subtitle: settings.imageGenerationEnabled ? '已启用' : '已禁用',
-              subtitleColor: settings.imageGenerationEnabled
-                  ? colors.primary
-                  : colors.muted,
-              trailingType: MoeSettingsRowTrailing.switchControl,
-              switchValue: settings.imageGenerationEnabled,
-              onSwitchChanged: (value) =>
-                  settingsNotifier.setImageGenerationEnabled(value),
+    return MoePageScaffold(
+      backgroundColor: colors.surface,
+      appBar: const MoeAppBar(title: '绘图预设', showBackButton: true),
+      body: catalogAsync.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (error, _) => Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('绘图预设加载失败：$error'),
+                const SizedBox(height: 12),
+                TextButton(
+                  onPressed: () => ref.invalidate(drawingPresetCatalogProvider),
+                  child: const Text('重试'),
+                ),
+              ],
             ),
-            MoeSettingsRow(
-              icon: Icons.auto_awesome_outlined,
-              label: selectedModel?.displayName ??
-                  (imageModels.isEmpty
-                      ? '暂无可用绘图模型'
-                      : (hasStoredSelection ? '当前模型已不可用' : '自动选择首个模型')),
-              subtitle: imageModels.isEmpty
-                  ? '暂无可用绘图模型，请先到渠道商管理显示并标记生图模型'
-                  : '模型来源：渠道商管理中已显示且带生图标签的模型',
-              trailingType: MoeSettingsRowTrailing.chevron,
-              onTap: imageModels.isEmpty
-                  ? () => MoeToast.show(context, '暂无可用图片模型')
-                  : () => _showModelPicker(
+          ),
+        ),
+        data: (catalog) => settingsAsync.when(
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (error, _) => Center(child: Text('设置加载失败：$error')),
+          data: (settings) => MoeSettingsContent(
+            child: ListView(
+              padding: MoeSettingsLayout.verticalListPadding,
+              children: [
+                MoeSettingsGroup(
+                  padding: MoeSettingsLayout.contentPadding,
+                  children: [
+                    Text(
+                      '每张角色卡可绑定一个绘图预设。未绑定时使用默认预设；编辑共享预设会影响所有绑定角色。',
+                      style: TextStyle(fontSize: 13, color: colors.muted),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: MoeSettingsLayout.sectionGap),
+                MoeSettingsGroup(
+                  title: '预设列表',
+                  children: [
+                    for (final preset in catalog.presets)
+                      _buildPresetRow(
                         context: context,
                         ref: ref,
-                        imageModels: imageModels,
-                        config: config,
+                        preset: preset,
+                        catalog: catalog,
+                        settings: settings,
+                        colors: colors,
                       ),
-            ),
-            MoeSettingsRow(
-              icon: Icons.rule_folder_outlined,
-              label: '稳定链路预设',
-              subtitle: config.selectedSystemPromptPreset?.name ??
-                  (config.systemPromptPresets.isNotEmpty
-                      ? config.systemPromptPresets.first.name
-                      : '默认'),
-              trailingType: MoeSettingsRowTrailing.chevron,
-              onTap: () => _showSystemPromptPresetPicker(
-                context: context,
-                notifier: configNotifier,
-                config: config,
-              ),
-            ),
-            MoeSettingsRow(
-              icon: Icons.flash_on_outlined,
-              label: '快速链路预设',
-              subtitle: config.selectedFastPromptPreset?.name ??
-                  (config.fastPromptPresets.isNotEmpty
-                      ? config.fastPromptPresets.first.name
-                      : '默认'),
-              trailingType: MoeSettingsRowTrailing.chevron,
-              onTap: () => _showFastPromptPresetPicker(
-                context: context,
-                notifier: configNotifier,
-                config: config,
-              ),
-              showDivider: false,
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        MoeSettingsGroup(
-          title: '默认参数',
-          margin: const EdgeInsets.symmetric(horizontal: 16),
-          children: [
-            MoeSettingsRow(
-              icon: Icons.crop_outlined,
-              label: '默认尺寸',
-              trailingType: MoeSettingsRowTrailing.text,
-              detailText: '${config.defaultWidth} x ${config.defaultHeight}',
-              onTap: () => _showSizePicker(
-                context: context,
-                notifier: configNotifier,
-              ),
-            ),
-            MoeSettingsRow(
-              icon: Icons.timeline_outlined,
-              label: '默认步数',
-              trailingType: MoeSettingsRowTrailing.text,
-              detailText: '${config.defaultSteps}',
-              onTap: () => _showStepsPicker(
-                context: context,
-                notifier: configNotifier,
-                current: config.defaultSteps,
-              ),
-            ),
-            MoeSettingsRow(
-              icon: Icons.tune_outlined,
-              label: '默认提示词强度',
-              trailingType: MoeSettingsRowTrailing.text,
-              detailText: config.defaultGuidanceScale.toStringAsFixed(1),
-              onTap: () => _showGuidancePicker(
-                context: context,
-                notifier: configNotifier,
-                current: config.defaultGuidanceScale,
-              ),
-            ),
-            MoeSettingsRow(
-              icon: Icons.collections_outlined,
-              label: '默认生成张数',
-              trailingType: MoeSettingsRowTrailing.text,
-              detailText: '${config.defaultCount}',
-              onTap: () => _showCountPicker(
-                context: context,
-                notifier: configNotifier,
-                current: config.defaultCount,
-              ),
-              showDivider: false,
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        MoeSettingsGroup(
-          title: '高级设置',
-          margin: const EdgeInsets.symmetric(horizontal: 16),
-          children: [
-            MoeSettingsRow(
-              icon: Icons.palette_outlined,
-              label: '画师串预设',
-              subtitle: config.selectedArtistPreset != null
-                  ? config.selectedArtistPreset!.name
-                  : '未选择',
-              subtitleColor: config.selectedArtistPreset != null
-                  ? colors.primary
-                  : colors.muted,
-              trailingType: MoeSettingsRowTrailing.chevron,
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => const ArtistPresetPage(),
+                    MoeSettingsRow(
+                      key: const ValueKey('add-drawing-preset'),
+                      label: '新建绘图预设',
+                      labelColor: colors.primary,
+                      trailingType: MoeSettingsRowTrailing.chevron,
+                      onTap: () => _edit(
+                        context,
+                        catalog.require(catalog.defaultPresetId),
+                        isNew: true,
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-            ),
-            MoeSettingsRow(
-              icon: Icons.description_outlined,
-              label: '稳定链路提示词',
-              subtitle: _buildPromptSummary(config),
-              labelMaxLines: 1,
-              trailingType: MoeSettingsRowTrailing.chevron,
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => const DrawImageToolDescriptionPage(),
+                const SizedBox(height: MoeSettingsLayout.sectionGap),
+                MoeSettingsGroup(
+                  title: '生图方式',
+                  children: [
+                    for (final mode in [CallFlowMode.auto, CallFlowMode.fast])
+                      MoeSettingsRow(
+                        label: mode == CallFlowMode.auto ? '自动模式' : '快速模式',
+                        subtitle: mode == CallFlowMode.auto
+                            ? '按对话模型能力自动选择'
+                            : '通过图片标签直连生图',
+                        trailingType: mode == settings.callFlowSettings.mode
+                            ? MoeSettingsRowTrailing.custom
+                            : MoeSettingsRowTrailing.none,
+                        trailing: mode == settings.callFlowSettings.mode
+                            ? Icon(Icons.check, color: colors.primary)
+                            : null,
+                        onTap: () => _perform(
+                          context,
+                          () => ref
+                              .read(appSettingsProvider.notifier)
+                              .updateCallFlowSettings(
+                                settings.callFlowSettings.copyWith(mode: mode),
+                              ),
+                        ),
+                      ),
+                  ],
                 ),
-              ),
+              ],
             ),
-            MoeSettingsRow(
-              icon: Icons.bolt_outlined,
-              label: '快速链路提示词',
-              subtitle: _buildInlinePromptSummary(config),
-              labelMaxLines: 1,
-              trailingType: MoeSettingsRowTrailing.chevron,
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => const InlineImagePromptPage(),
-                ),
-              ),
-              showDivider: false,
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        MoeSettingsGroup(
-          title: '调试',
-          margin: const EdgeInsets.symmetric(horizontal: 16),
-          children: [
-            MoeSettingsRow(
-              icon: Icons.science_outlined,
-              label: '生图测试',
-              subtitle: '进入独立页面，直接查看返回图片和原始错误',
-              trailingType: MoeSettingsRowTrailing.chevron,
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => ImageGenerationTestPage(
-                    initialProviderLabel: selectedModel?.providerName,
-                    initialModelLabel: selectedModel?.displayName,
-                  ),
-                ),
-              ),
-              showDivider: false,
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-      ],
-    );
-  }
-
-  Widget _buildGenerationPathSection({
-    required BuildContext context,
-    required AppSettings settings,
-    required AppSettingsNotifier settingsNotifier,
-  }) {
-    final mode = settings.callFlowSettings.mode;
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          MoeSettingsGroup(
-            margin: EdgeInsets.zero,
-            children: [
-              MoeSettingsRow(
-                icon: Icons.alt_route_outlined,
-                label: '生图路径',
-                trailingType: MoeSettingsRowTrailing.text,
-                detailText: mode.label,
-                showDivider: false,
-              ),
-            ],
           ),
-          const SizedBox(height: 12),
-          MoeToggleBar<CallFlowMode>(
-            value: mode,
-            items: const [
-              MoeToggleItem(
-                value: CallFlowMode.auto,
-                label: '自动',
-              ),
-              MoeToggleItem(
-                value: CallFlowMode.fast,
-                label: '快速',
-              ),
-            ],
-            onChanged: (nextMode) async {
-              if (nextMode == mode) return;
-              try {
-                await settingsNotifier.updateCallFlowSettings(
-                  settings.callFlowSettings.copyWith(mode: nextMode),
-                );
-                if (context.mounted) {
-                  MoeToast.success(context, '生图路径已切换为${nextMode.label}');
-                }
-              } catch (e) {
-                if (context.mounted) {
-                  MoeToast.error(context, '切换生图路径失败: $e');
-                }
-              }
-            },
-          ),
-        ],
+        ),
       ),
     );
   }
 
-  /// 图片模型条目
-  List<_ImageModelEntry> _visibleImageModels(AppSettings settings) {
-    final result = <_ImageModelEntry>[];
-    for (final provider in settings.providers) {
-      if (!provider.enabled) continue;
-      final models = settings.getProviderVisibleModelsByType(
-        provider.id,
-        type: ModelType.image,
-      );
-      for (final modelId in models) {
-        final modelRef = settings.buildModelRef(provider.id, modelId);
-        result.add(_ImageModelEntry(
-          modelRef: modelRef,
-          modelId: modelId,
-          providerId: provider.id,
-          providerName: provider.displayName ?? provider.id,
-          displayName: settings.getModelDisplayName(modelRef),
-        ));
-      }
-    }
-    return result;
-  }
-
-  bool _hasStoredModelSelection(ImageConfig config) {
-    final selected = config.selectedModelId?.trim();
-    return selected != null && selected.isNotEmpty;
-  }
-
-  _ImageModelEntry? _resolveSelectedModel({
-    required ImageConfig config,
-    required List<_ImageModelEntry> imageModels,
-  }) {
-    if (imageModels.isEmpty) return null;
-    final selected = config.selectedModelId?.trim();
-    if (selected == null || selected.isEmpty) {
-      return imageModels.first;
-    }
-    return imageModels.where((m) => m.modelRef == selected).firstOrNull;
-  }
-
-  Future<void> _showModelPicker({
+  Widget _buildPresetRow({
     required BuildContext context,
     required WidgetRef ref,
-    required List<_ImageModelEntry> imageModels,
-    required ImageConfig config,
-  }) async {
-    final notifier = ref.read(imagePluginConfigProvider.notifier);
-    if (imageModels.isEmpty) {
-      MoeToast.show(context, '暂无可用图片模型');
-      return;
-    }
+    required DrawingPreset preset,
+    required DrawingPresetCatalog catalog,
+    required AppSettings settings,
+    required MoeColors colors,
+  }) {
+    final isDefault = preset.id == catalog.defaultPresetId;
+    final modelText = preset.config.selectedModelId == null
+        ? '待选择渠道与模型'
+        : settings.getModelDisplayName(preset.config.selectedModelId!);
+    final subtitle =
+        '$modelText · ${preset.config.defaultWidth} × ${preset.config.defaultHeight} · ${preset.config.defaultCount} 张';
 
-    final actions = <MoeSheetAction>[
-      MoeSheetAction(
-        icon: config.selectedModelId == null
-            ? Icons.check_circle
-            : Icons.circle_outlined,
-        label: '自动选择',
-        subtitle: '使用第一个可用模型',
-        onTap: () => notifier.setSelectedModel(null),
-      ),
-      for (final model in imageModels)
-        MoeSheetAction(
-          icon: config.selectedModelId == model.modelRef
-              ? Icons.check_circle
-              : Icons.circle_outlined,
-          label: model.displayName,
-          subtitle: '${model.providerName} / ${model.modelId}',
-          onTap: () => notifier.setSelectedModel(model.modelRef),
-        ),
-    ];
-
-    await showMoeActionSheet(
-      context: context,
-      title: '选择绘图模型',
-      actions: actions,
-    );
-  }
-
-  Future<void> _showSystemPromptPresetPicker({
-    required BuildContext context,
-    required ImagePluginConfigNotifier notifier,
-    required ImageConfig config,
-  }) async {
-    final actions = <MoeSheetAction>[
-      for (final preset in config.systemPromptPresets)
-        MoeSheetAction(
-          icon: config.selectedSystemPromptPresetName == preset.name
-              ? Icons.check_circle
-              : Icons.circle_outlined,
-          label: preset.name,
-          subtitle: config.buildPresetPreview(preset),
-          onTap: () => notifier.updateConfig(
-            config.copyWith(selectedSystemPromptPresetName: preset.name),
-          ),
-        ),
-    ];
-
-    await showMoeActionSheet(
-      context: context,
-      title: '选择稳定链路预设',
-      actions: actions,
-    );
-  }
-
-  Future<void> _showFastPromptPresetPicker({
-    required BuildContext context,
-    required ImagePluginConfigNotifier notifier,
-    required ImageConfig config,
-  }) async {
-    final actions = <MoeSheetAction>[
-      for (final preset in config.fastPromptPresets)
-        MoeSheetAction(
-          icon: config.selectedFastPromptPreset?.name == preset.name
-              ? Icons.check_circle
-              : Icons.circle_outlined,
-          label: preset.name,
-          subtitle: config.buildInlinePresetPreview(preset),
-          onTap: () => notifier.updateConfig(
-            config.copyWith(selectedFastPromptPresetName: preset.name),
-          ),
-        ),
-    ];
-
-    await showMoeActionSheet(
-      context: context,
-      title: '选择快速链路预设',
-      actions: actions,
-    );
-  }
-
-  Future<void> _showSizePicker({
-    required BuildContext context,
-    required ImagePluginConfigNotifier notifier,
-  }) async {
-    const options = <List<int>>[
-      [512, 512],
-      [768, 768],
-      [1024, 1024],
-      [1216, 832],
-      [832, 1216],
-    ];
-
-    var showCustom = false;
-
-    await showMoeActionSheet(
-      context: context,
-      title: '选择默认尺寸',
-      actions: [
-        for (final option in options)
-          MoeSheetAction(
-            label: '${option[0]} x ${option[1]}',
-            onTap: () async {
-              await notifier.setDefaultWidth(option[0]);
-              await notifier.setDefaultHeight(option[1]);
-            },
-          ),
-        MoeSheetAction(
-          label: '自定义尺寸...',
-          onTap: () => showCustom = true,
-        ),
-      ],
-    );
-
-    if (showCustom && context.mounted) {
-      await _showCustomSizeDialog(context: context, notifier: notifier);
-    }
-  }
-
-  Future<void> _showCustomSizeDialog({
-    required BuildContext context,
-    required ImagePluginConfigNotifier notifier,
-  }) async {
-    final currentState = notifier.currentConfig;
-    final widthController =
-        TextEditingController(text: '${currentState.defaultWidth}');
-    final heightController =
-        TextEditingController(text: '${currentState.defaultHeight}');
-
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('自定义尺寸'),
-        content: Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: widthController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: '宽度',
-                  hintText: '256-2048',
-                  border: OutlineInputBorder(),
+    return MoeSettingsRow(
+      key: ValueKey('drawing-preset-${preset.id}'),
+      label: preset.name,
+      subtitle: isDefault ? '默认预设 · $subtitle' : subtitle,
+      trailingType: MoeSettingsRowTrailing.custom,
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (isDefault)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              margin: const EdgeInsets.only(right: 4),
+              decoration: BoxDecoration(
+                color: colors.primary.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                '默认',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: colors.primary,
                 ),
               ),
             ),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 8),
-              child: Text('x'),
-            ),
-            Expanded(
-              child: TextField(
-                controller: heightController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: '高度',
-                  hintText: '256-2048',
-                  border: OutlineInputBorder(),
-                ),
+          Builder(
+            builder: (menuContext) => IconButton(
+              key: ValueKey('preset-menu-${preset.id}'),
+              icon: Icon(Icons.more_vert, size: 20, color: colors.muted),
+              tooltip: '更多操作',
+              onPressed: () => MoePopupMenu.show(
+                menuContext,
+                targetBox: menuContext.findRenderObject()! as RenderBox,
+                alignToEnd: true,
+                items: [
+                  MoePopupMenuItem(
+                    label: '编辑',
+                    onTap: () => _edit(context, preset),
+                  ),
+                  MoePopupMenuItem(
+                    label: '复制',
+                    onTap: () => _edit(context, preset, isNew: true),
+                  ),
+                  if (!isDefault)
+                    MoePopupMenuItem(
+                      label: '设为默认',
+                      onTap: () => _perform(
+                        context,
+                        () => ref
+                            .read(drawingPresetCatalogProvider.notifier)
+                            .setDefault(preset.id),
+                      ),
+                    ),
+                  MoePopupMenuItem(
+                    label: '测试',
+                    onTap: () => Navigator.push(
+                      context,
+                      ParallaxSlidePageRoute(
+                        page: ImageGenerationTestPage(
+                          drawingConfig: preset.config,
+                          initialModelLabel: preset.name,
+                        ),
+                      ),
+                    ),
+                  ),
+                  MoePopupMenuItem(
+                    key: ValueKey('delete-drawing-${preset.id}'),
+                    label: '删除',
+                    danger: true,
+                    onTap: () => _delete(context, ref, preset),
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('取消'),
           ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('确定'),
-          ),
+          Icon(Icons.chevron_right, size: 20, color: colors.muted),
         ],
       ),
+      onTap: () => _edit(context, preset),
     );
+  }
 
-    if (ok == true) {
-      final w = int.tryParse(widthController.text.trim());
-      final h = int.tryParse(heightController.text.trim());
-      if (w != null && h != null) {
-        await notifier.setDefaultWidth(w);
-        await notifier.setDefaultHeight(h);
-      } else {
-        if (context.mounted) MoeToast.warning(context, '请输入有效的数字');
-      }
+  Future<void> _delete(
+    BuildContext context,
+    WidgetRef ref,
+    DrawingPreset preset,
+  ) async {
+    final catalog = ref.read(drawingPresetCatalogProvider).requireValue;
+    if (preset.id == catalog.defaultPresetId) {
+      MoeToast.error(context, '这是默认绘图预设，请先将其他预设设为默认');
+      return;
     }
-
-    widthController.dispose();
-    heightController.dispose();
+    final confirmed = await showMeoTalkDialog(
+      context: context,
+      title: '删除绘图预设？',
+      content: Text('确定删除「${preset.name}」？删除后无法恢复。仍有角色使用的预设不会被删除。'),
+      cancelText: '取消',
+      confirmText: '删除',
+      isDanger: true,
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await ref
+          .read(drawingPresetCatalogProvider.notifier)
+          .deletePreset(preset.id);
+      if (context.mounted) MoeToast.success(context, '绘图预设已删除');
+    } catch (e) {
+      if (context.mounted) MoeToast.error(context, '删除失败：$e');
+    }
   }
 
-  Future<void> _showStepsPicker({
-    required BuildContext context,
-    required ImagePluginConfigNotifier notifier,
-    required int current,
-  }) async {
-    const options = <int>[20, 28, 35, 50];
-    await showMoeActionSheet(
-      context: context,
-      title: '选择默认步数',
-      actions: [
-        for (final value in options)
-          MoeSheetAction(
-            icon: value == current ? Icons.check_circle : Icons.circle_outlined,
-            label: '$value',
-            onTap: () => notifier.setDefaultSteps(value),
-          ),
-      ],
+  Future<void> _perform(
+    BuildContext context,
+    Future<void> Function() action,
+  ) async {
+    try {
+      await action();
+    } catch (e) {
+      if (context.mounted) MoeToast.error(context, '保存失败：$e');
+    }
+  }
+
+  void _edit(BuildContext context, DrawingPreset preset, {bool isNew = false}) {
+    Navigator.push(
+      context,
+      ParallaxSlidePageRoute(
+        page: DrawingPresetEditorPage(preset: preset, isNew: isNew),
+      ),
     );
   }
-
-  Future<void> _showGuidancePicker({
-    required BuildContext context,
-    required ImagePluginConfigNotifier notifier,
-    required double current,
-  }) async {
-    const options = <double>[3.5, 5.0, 7.0, 9.0];
-    await showMoeActionSheet(
-      context: context,
-      title: '选择默认提示词强度',
-      actions: [
-        for (final value in options)
-          MoeSheetAction(
-            icon: value == current ? Icons.check_circle : Icons.circle_outlined,
-            label: value.toStringAsFixed(1),
-            onTap: () => notifier.setDefaultGuidanceScale(value),
-          ),
-      ],
-    );
-  }
-
-  Future<void> _showCountPicker({
-    required BuildContext context,
-    required ImagePluginConfigNotifier notifier,
-    required int current,
-  }) async {
-    const options = <int>[1, 2, 3, 4];
-    await showMoeActionSheet(
-      context: context,
-      title: '选择默认生成张数',
-      actions: [
-        for (final value in options)
-          MoeSheetAction(
-            icon: value == current ? Icons.check_circle : Icons.circle_outlined,
-            label: '$value 张',
-            onTap: () => notifier.setDefaultCount(value),
-          ),
-      ],
-    );
-  }
-
-  String _buildPromptSummary(ImageConfig config) {
-    final systemPart = config.selectedSystemPromptPreset != null
-        ? '预设：${config.selectedSystemPromptPreset!.name}'
-        : (config.isManualToolDescriptionDefault ? '预设：手动默认' : '预设：手动自定义');
-    final artistPart = config.selectedArtistPreset != null
-        ? ' / 画师串：${config.selectedArtistPreset!.name}'
-        : '';
-    return '$systemPart$artistPart';
-  }
-
-  String _buildInlinePromptSummary(ImageConfig config) {
-    final presetName = config.selectedFastPromptPreset?.name ??
-        (config.fastPromptPresets.isNotEmpty
-            ? config.fastPromptPresets.first.name
-            : '默认');
-    return '预设：$presetName';
-  }
-
-}
-
-/// 图片模型条目
-class _ImageModelEntry {
-  final String modelRef;
-  final String modelId;
-  final String providerId;
-  final String providerName;
-  final String displayName;
-
-  const _ImageModelEntry({
-    required this.modelRef,
-    required this.modelId,
-    required this.providerId,
-    required this.providerName,
-    required this.displayName,
-  });
 }

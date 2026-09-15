@@ -6,6 +6,8 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/app_logger.dart';
+import '../../core/api/providers/provider_adapter.dart'
+    show ProviderChatRequestOptions;
 import '../chat/domain/message.dart';
 import '../chat/services/chat_history_store.dart';
 import '../chat/services/chat_send_api_runner.dart';
@@ -178,6 +180,7 @@ class BackgroundAgentService {
     String? extraInstruction,
     List<Message>? contextMessages,
     List<AITool> additionalTools = const <AITool>[],
+    int? maxOutputTokens,
   }) async {
     final sessionId = _sessionIdFactory(definition.id);
     final traceContext = await _startTurnTrace(
@@ -226,6 +229,9 @@ class BackgroundAgentService {
             definition.temperature ?? requestConfig.modelTemperature,
         modelTopP: requestConfig.modelTopP,
         modelContextMessageLimit: requestConfig.modelContextMessageLimit,
+        providerRequestOptions: maxOutputTokens == null
+            ? null
+            : ProviderChatRequestOptions(maxOutputTokens: maxOutputTokens),
         traceContext: traceContext,
       );
       await _recordPreparationTrace(

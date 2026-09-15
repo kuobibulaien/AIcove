@@ -4,6 +4,7 @@
 library;
 
 import 'dart:io';
+import '../sync/cloud_tracking.dart';
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:path_provider/path_provider.dart';
@@ -41,7 +42,10 @@ class Conversations extends Table {
       boolean().withDefault(const Constant(true))();
   TextColumn get enabledPlugins =>
       text().nullable()(); // JSON array of plugin IDs
-  TextColumn get recipeId => text().nullable()(); // SillyTavern preset recipe ID
+  TextColumn get recipeId =>
+      text().nullable()(); // SillyTavern preset recipe ID
+  // 会话级思考档位：JSON 对象 {modelRef: ThinkingLevel.name}
+  TextColumn get thinkingLevels => text().nullable()();
 
   // 会话摘要缓存
   TextColumn get lastMessage => text().nullable()();
@@ -351,7 +355,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(QueryExecutor executor) : super(executor);
 
   @override
-  int get schemaVersion => 14;
+  int get schemaVersion => 16;
 
   @override
   MigrationStrategy get migration {
@@ -360,6 +364,7 @@ class AppDatabase extends _$AppDatabase {
         await m.createAll();
         await _ensureMemoryFts();
         await _ensureAutoReplyClaimTable();
+        await _ensureTopicHandoffs();
       },
       onUpgrade: (Migrator m, int from, int to) async {
         // (注释已丢失)
@@ -436,9 +441,84 @@ class AppDatabase extends _$AppDatabase {
         if (from < 14) {
           await _ensureAutoReplyClaimTable();
         }
+        // v14 -> v15: 会话级思考档位
+        if (from < 15) {
+          await _safeAddColumn('conversations', 'thinking_levels TEXT');
+        }
+        if (from < 16) {
+          await _ensureTopicHandoffs();
+        }
       },
+      // 只补物理访问索引，不改变表/记录格式或user_version。
+      // 已有v16也能获得索引，且回退到此前v16应用无需降级数据库。
+      beforeOpen: (_) => _ensureChatEntryIndexes(),
     );
   }
+
+  Future<void> _ensureChatEntryIndexes() async {
+    for (var attempt = 0;; attempt++) {
+      try {
+        await transaction(() async {
+          await installCloudTracking(this);
+          // 默认ASC与隐含rowid同向；倒序扫描即可匹配created_at DESC,
+          // rowid DESC。显式把时间列改成DESC反而会为同时间戳二次排序。
+          await customStatement('''
+CREATE INDEX IF NOT EXISTS messages_active_conversation_time
+ON messages(conversation_id, created_at)
+WHERE deleted_at IS NULL AND replaced_by IS NULL
+''');
+          await customStatement('''
+CREATE INDEX IF NOT EXISTS message_blocks_active_message_order
+ON message_blocks(message_id, sort_order)
+WHERE deleted_at IS NULL
+''');
+        });
+        return;
+      } on SqliteException catch (error) {
+        // 前台/后台连接可同时首次打开。先回滚释放锁，再有界异步重试；
+        // 不改连接全局busy_timeout，不吞磁盘/语法等非锁错误。
+        if ((error.resultCode != 5 && error.resultCode != 6) || attempt >= 6) {
+          rethrow;
+        }
+        await Future<void>.delayed(Duration(milliseconds: 50 * (1 << attempt)));
+      }
+    }
+  }
+
+  /// 派生的上下文交接记录与待归档状态；raw 消息、旧记忆均不迁移/删除。
+  /// 与认领表一样由专用 Adapter 访问，避免污染会话/消息实体。
+  Future<void> _ensureTopicHandoffs() => customStatement('''
+CREATE TABLE IF NOT EXISTS topic_handoffs (
+  id TEXT PRIMARY KEY NOT NULL,
+  owner_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  boundary_id TEXT NOT NULL,
+  previous_boundary_id TEXT,
+  summary TEXT NOT NULL,
+  source_ids TEXT NOT NULL,
+  source_digest TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  memory_state TEXT NOT NULL
+)
+''').then((_) => customStatement('''
+CREATE INDEX IF NOT EXISTS topic_handoffs_owner_boundary
+ON topic_handoffs(owner_id, boundary_id, created_at)
+''')).then((_) => customStatement('''
+CREATE TABLE IF NOT EXISTS compaction_memory_jobs (
+ id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+ source_ids TEXT NOT NULL, source_digest TEXT NOT NULL, updates_json TEXT NOT NULL,
+ runtime_record TEXT, state TEXT NOT NULL
+)
+''')).then((_) => customStatement('''
+CREATE TABLE IF NOT EXISTS runtime_context_records (
+ id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+ source_json TEXT NOT NULL, replacement_json TEXT NOT NULL, created_at INTEGER NOT NULL,
+ raw_ids TEXT NOT NULL DEFAULT '[]', raw_digest TEXT NOT NULL DEFAULT ''
+)
+''')).then((_) async {
+      final columns = (await customSelect('PRAGMA table_info(runtime_context_records)').get()).map((r) => r.read<String>('name')).toSet();
+      if (!columns.contains('raw_ids')) await customStatement("ALTER TABLE runtime_context_records ADD COLUMN raw_ids TEXT NOT NULL DEFAULT '[]'");
+      if (!columns.contains('raw_digest')) await customStatement("ALTER TABLE runtime_context_records ADD COLUMN raw_digest TEXT NOT NULL DEFAULT ''");
+    });
 
   /// 主动回复触发器执行权认领表：前台轮询与后台 WorkManager 发送前
   /// 必须先 INSERT OR IGNORE 认领，认领失败即另一方已执行。

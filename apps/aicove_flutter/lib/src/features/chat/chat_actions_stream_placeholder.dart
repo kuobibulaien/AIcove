@@ -60,6 +60,14 @@ class _TextSegmentDescriptors {
 
 enum _RawStreamSegmentKind { text, tts, image }
 
+enum _StreamTtsHandoffState { streaming, committing, committed, discarded }
+
+typedef _StreamTtsResolution = ({
+  String? audioUrl,
+  double? durationSeconds,
+  String? fallbackText,
+});
+
 class _RawStreamSegment {
   const _RawStreamSegment(this.kind, this.content);
 
@@ -91,7 +99,9 @@ class _StreamPlaceholderDelivery {
     required this.formatConfig,
     required this.enableTtsPlaceholders,
     this.segmentDelay = Duration.zero,
-  });
+    this.onPendingAudioAppeared,
+    this.diagnosticContext,
+  }) : _diagnostics = _ref.read(frontendDiagnosticsProvider);
 
   static const String kGeneratingText = '生成中...';
   static const Duration _kFlushInterval = Duration(milliseconds: 180);
@@ -104,9 +114,46 @@ class _StreamPlaceholderDelivery {
   /// ChatActions 分配的 runId（跨 delivery 实例全局单调），
   /// 活跃流通道 CAS 的主身份（07-20 任务 design v2 §2.1）。
   final int generationSeq;
+  final FrontendDiagnosticContext? diagnosticContext;
+  final FrontendDiagnosticsPort _diagnostics;
+  int _diagnosticProjectionRevision = 0;
+  String? _diagnosticCommittedSource;
+
+  void _recordDiagnostic(FrontendStage stage,
+      {String? messageId,
+      DiagnosticPhase phase = DiagnosticPhase.decision,
+      DiagnosticReason? reason,
+      Map<String, Object?> state = const {},
+      Object? error,
+      StackTrace? stack}) {
+    _diagnostics.record(diagnosticContext, stage,
+        messageId: messageId,
+        error: error,
+        stackTrace: stack,
+        facts: DiagnosticFacts(
+            phase: phase,
+            reason: reason,
+            sourceMessageId: _diagnosticCommittedSource ?? _pendingRawSourceId,
+            state: {
+              'sourceIsProvisional': _diagnosticCommittedSource == null,
+              'generationSeq': generationSeq,
+              'writeEpoch': _writeEpoch,
+              'projectionRevision': _diagnosticProjectionRevision,
+              ...state
+            }));
+  }
+
   final MessageFormatConfig formatConfig;
   final bool enableTtsPlaceholders;
   final Duration segmentDelay;
+  final void Function(Message pendingMessage)? onPendingAudioAppeared;
+  final Set<String> _scheduledAudioMessageIds = <String>{};
+  final Map<String, String> _terminalAudioFallbacks = <String, String>{};
+  final Map<String, _StreamTtsResolution> _bufferedTtsResolutions =
+      <String, _StreamTtsResolution>{};
+  final Map<String, Message> _committedTtsMessages = <String, Message>{};
+  _StreamTtsHandoffState _ttsHandoffState = _StreamTtsHandoffState.streaming;
+  Future<void> _committedTtsWriteQueue = Future<void>.value();
 
   /// G2.1 活跃流通道开关；false＝旧全量 transient 路径（默认）。
   late final bool _useActiveStreamChannel =
@@ -116,6 +163,7 @@ class _StreamPlaceholderDelivery {
   final List<Message> _currentTimelineMessages = <Message>[];
   final Map<String, Message> _stablePendingAudioMessages = <String, Message>{};
   final String _pendingRawSourceId = genId('raw_msg');
+  VoiceRequest? voiceRequest;
 
   int? _timelineBaseMs;
   int _timelineTick = 0;
@@ -141,6 +189,7 @@ class _StreamPlaceholderDelivery {
 
   void onDelta(String delta) {
     if (_disposed || delta.isEmpty) return;
+    voiceRequest ??= VoiceRequest.current;
     final previousRaw = _rawStreamText.toString();
     _rawStreamText.write(delta);
     _receivedDelta = true;
@@ -164,6 +213,13 @@ class _StreamPlaceholderDelivery {
     _finalizedRawText = null;
     _thinkingPlaceholderElapsed = false;
     _rawStreamText.clear();
+    _parsedRawText = null;
+    _parsedTimeline = null;
+    voiceRequest = null;
+    _scheduledAudioMessageIds.clear();
+    _terminalAudioFallbacks.clear();
+    _bufferedTtsResolutions.clear();
+    _ttsHandoffState = _StreamTtsHandoffState.streaming;
     _currentTimelineMessages.clear();
     _stablePendingAudioMessages.clear();
     _timelineBaseMs = null;
@@ -188,10 +244,8 @@ class _StreamPlaceholderDelivery {
   bool canFinalizeWith({required String finalText}) {
     if (_disposed || !_receivedDelta || _fallbackTriggered) return false;
     final effectiveFinalText = _resolveEffectiveFinalText(finalText);
-    return _buildTimelineDescriptors(
-      effectiveFinalText,
-      finalize: true,
-    ).isNotEmpty;
+    // Eligibility must not advance the reveal cursor or start timers.
+    return _countSealedTextDescriptors(effectiveFinalText) > 0;
   }
 
   Future<void> finalize({required String finalText}) async {
@@ -201,6 +255,7 @@ class _StreamPlaceholderDelivery {
     _finalizedRawText = effectiveFinalText;
     _fallbackTriggered = false;
     await _drainSegmentRevealBacklog(sourceRaw: effectiveFinalText);
+    if (_disposed || writeEpoch != _writeEpoch) return;
     _cancelThinkingPlaceholderTimer();
     _flushTimer?.cancel();
     _flushTimer = null;
@@ -217,9 +272,20 @@ class _StreamPlaceholderDelivery {
         List<Message>.from(_currentTimelineMessages, growable: false);
     _writeEpoch += 1;
     _clearActiveStreamProjection();
+    _committedTtsMessages
+      ..clear()
+      ..addEntries(
+        finalMessages
+            .where(
+              (message) => _scheduledAudioMessageIds.contains(message.id),
+            )
+            .map((message) => MapEntry(message.id, message)),
+      );
     _currentTimelineMessages.clear();
     _stablePendingAudioMessages.clear();
     _rawStreamText.clear();
+    _parsedRawText = null;
+    _parsedTimeline = null;
     _finalizedRawText = null;
     _receivedDelta = false;
     _fallbackTriggered = false;
@@ -232,6 +298,29 @@ class _StreamPlaceholderDelivery {
       previousMessages: previousMessages,
       nextMessages: finalMessages,
     );
+    _diagnosticCommittedSource = finalMessages.firstOrNull?.sourceMessageId;
+    if (_diagnosticCommittedSource != null) {
+      _diagnostics.bindMessage(_diagnosticCommittedSource!, diagnosticContext);
+    }
+    for (final message in finalMessages) {
+      _recordDiagnostic(FrontendStage.projectionCommitted,
+          messageId: message.id,
+          phase: DiagnosticPhase.end,
+          state: {'finalCount': finalMessages.length});
+    }
+    _ttsHandoffState = _StreamTtsHandoffState.committed;
+    final buffered = Map<String, _StreamTtsResolution>.from(
+      _bufferedTtsResolutions,
+    );
+    _bufferedTtsResolutions.clear();
+    for (final entry in buffered.entries) {
+      await _enqueueCommittedTtsResolution(entry.key, entry.value);
+    }
+  }
+
+  void beginTtsCommit() {
+    if (_ttsHandoffState != _StreamTtsHandoffState.streaming) return;
+    _ttsHandoffState = _StreamTtsHandoffState.committing;
   }
 
   List<Message> buildFinalTimelineMessages({
@@ -254,17 +343,17 @@ class _StreamPlaceholderDelivery {
       return normalizedCommitted;
     }
 
-    final preservedPending = _pendingAudioPlaceholderMessages(
+    final preservedTts = ttsTimelineMessages(
       sourceMessageId: sourceMessageId,
     );
-    if (preservedPending.isEmpty) {
+    if (preservedTts.isEmpty) {
       return normalizedCommitted;
     }
 
     final merged = <Message>[];
     var committedIndex = 0;
     for (final timelineMessage in _currentTimelineMessages) {
-      if (_isPendingAudioPlaceholderMessage(timelineMessage)) {
+      if (_scheduledAudioMessageIds.contains(timelineMessage.id)) {
         merged.add(
           timelineMessage.copyWith(sourceMessageId: sourceMessageId),
         );
@@ -300,6 +389,36 @@ class _StreamPlaceholderDelivery {
     return _pendingAudioPlaceholderMessages(sourceMessageId: sourceMessageId);
   }
 
+  List<Message> ttsTimelineMessages({
+    required String sourceMessageId,
+  }) {
+    return <Message>[
+      for (final message in _currentTimelineMessages)
+        if (_scheduledAudioMessageIds.contains(message.id))
+          message.copyWith(sourceMessageId: sourceMessageId),
+    ];
+  }
+
+  bool get hasAudioPlaceholders =>
+      _currentTimelineMessages.any(
+        (message) => _scheduledAudioMessageIds.contains(message.id),
+      ) ||
+      _committedTtsMessages.isNotEmpty;
+
+  bool canAcceptTtsResolution(String messageId) {
+    final accepted = _scheduledAudioMessageIds.contains(messageId) &&
+        _ttsHandoffState != _StreamTtsHandoffState.discarded;
+    if (!accepted) {
+      _recordDiagnostic(FrontendStage.ttsApplyDecision,
+          messageId: messageId,
+          phase: DiagnosticPhase.skip,
+          reason: _ttsHandoffState == _StreamTtsHandoffState.discarded
+              ? DiagnosticReason.discarded
+              : DiagnosticReason.unknownMessage);
+    }
+    return accepted;
+  }
+
   String _resolveEffectiveFinalText(String finalText) {
     final candidate = finalText.trim();
     if (candidate.isNotEmpty) return finalText;
@@ -309,6 +428,7 @@ class _StreamPlaceholderDelivery {
   }
 
   Future<void> removePlaceholders() async {
+    _discardTtsResolutions();
     _writeEpoch += 1;
     _clearActiveStreamProjection();
     _cancelThinkingPlaceholderTimer();
@@ -321,6 +441,8 @@ class _StreamPlaceholderDelivery {
     _currentTimelineMessages.clear();
     _stablePendingAudioMessages.clear();
     _rawStreamText.clear();
+    _parsedRawText = null;
+    _parsedTimeline = null;
     _finalizedRawText = null;
     _receivedDelta = false;
     _fallbackTriggered = false;
@@ -334,6 +456,11 @@ class _StreamPlaceholderDelivery {
 
   void dispose() {
     _disposed = true;
+    _parsedRawText = null;
+    _parsedTimeline = null;
+    if (_ttsHandoffState != _StreamTtsHandoffState.committed) {
+      _discardTtsResolutions();
+    }
     _writeEpoch += 1;
     _clearActiveStreamProjection();
     _cancelThinkingPlaceholderTimer();
@@ -403,14 +530,49 @@ class _StreamPlaceholderDelivery {
     required int writeEpoch,
   }) async {
     await _enqueue(() async {
-      if (_disposed || writeEpoch != _writeEpoch) return;
+      if (_disposed || writeEpoch != _writeEpoch) {
+        _recordDiagnostic(FrontendStage.projectionSkipped,
+            phase: DiagnosticPhase.skip,
+            reason: _disposed
+                ? DiagnosticReason.disposed
+                : DiagnosticReason.staleWriteEpoch,
+            state: {'requestedEpoch': writeEpoch});
+        return;
+      }
       await _ensureTimelineBaseMs();
-      if (_disposed || writeEpoch != _writeEpoch) return;
+      if (_disposed || writeEpoch != _writeEpoch) {
+        _recordDiagnostic(FrontendStage.projectionSkipped,
+            phase: DiagnosticPhase.skip,
+            reason: _disposed
+                ? DiagnosticReason.disposed
+                : DiagnosticReason.staleWriteEpoch,
+            state: {'requestedEpoch': writeEpoch});
+        return;
+      }
       final previousMessages =
           List<Message>.from(_currentTimelineMessages, growable: false);
       final sourceRaw = _finalizedRawText ?? _rawStreamText.toString();
-      final descriptors = _buildTimelineDescriptors(sourceRaw, finalize: finalize);
+      final descriptors =
+          _buildTimelineDescriptors(sourceRaw, finalize: finalize);
       final messages = _materializeTimeline(descriptors);
+      final structuralChange = previousMessages.length != messages.length ||
+          messages.indexed
+              .any((entry) => previousMessages[entry.$1].id != entry.$2.id);
+      if (structuralChange) _diagnosticProjectionRevision++;
+      void recordApplied() {
+        if (!structuralChange && !finalize) return;
+        _recordDiagnostic(FrontendStage.projectionApplied,
+            phase: DiagnosticPhase.end,
+            reason: DiagnosticReason.structuralChange,
+            state: {
+              'beforeCount': previousMessages.length,
+              'afterCount': messages.length,
+              'rawCharacters': sourceRaw.length,
+              'finalize': finalize,
+              'activeChannel': _useActiveStreamChannel
+            });
+      }
+
       if (!_useActiveStreamChannel) {
         // 旧路径：视觉变化即全量替换（policy off，行为与改造前逐字节一致）。
         final shouldNotifyTimeline =
@@ -418,7 +580,10 @@ class _StreamPlaceholderDelivery {
         _currentTimelineMessages
           ..clear()
           ..addAll(messages);
-        if (!shouldNotifyTimeline) return;
+        if (!shouldNotifyTimeline) {
+          recordApplied();
+          return;
+        }
         await _ref
             .read(conversationTimelineCacheProvider)
             .replaceMessagesTransient(
@@ -428,6 +593,7 @@ class _StreamPlaceholderDelivery {
               ],
               messages: messages,
             );
+        recordApplied();
         return;
       }
       // 新路径（design v2 §2.2/2.3/2.5）：结构增量写时间线，活跃尾文本走通道。
@@ -471,7 +637,18 @@ class _StreamPlaceholderDelivery {
               messages: upserts,
             );
       }
-      if (_disposed || writeEpoch != _writeEpoch) return;
+      if (_disposed || writeEpoch != _writeEpoch) {
+        _recordDiagnostic(FrontendStage.projectionSkipped,
+            phase: DiagnosticPhase.skip,
+            reason: _disposed
+                ? DiagnosticReason.disposed
+                : DiagnosticReason.staleWriteEpoch,
+            state: {
+              'requestedEpoch': writeEpoch,
+              'timelineAlreadyWritten': true
+            });
+        return;
+      }
       // 先写时间线再 publish（design v2 §2.5 交接顺序）。
       final channel = _ref.read(activeStreamProjectionsProvider.notifier);
       if (tail != null) {
@@ -486,6 +663,7 @@ class _StreamPlaceholderDelivery {
       } else {
         channel.clear(convId, generationSeq: generationSeq);
       }
+      recordApplied();
     });
   }
 
@@ -540,13 +718,22 @@ class _StreamPlaceholderDelivery {
     }
   }
 
-  List<_StreamDescriptor> _buildTimelineDescriptors(
+  // Keep only the latest parse. Timer-only reveals reuse it without scanning
+  // the entire accumulated reply again. Parsing never changes delivery state.
+  String? _parsedRawText;
+  bool _parsedSealTail = false;
+  _TextSegmentDescriptors? _parsedTimeline;
+
+  _TextSegmentDescriptors _describeTimeline(
     String rawText, {
-    required bool finalize,
+    required bool sealTail,
   }) {
+    if (_parsedRawText == rawText && _parsedSealTail == sealTail) {
+      final cached = _parsedTimeline;
+      if (cached != null) return cached;
+    }
     final segments = _extractRawSegments(rawText);
     final orderedDescriptors = <_StreamDescriptor>[];
-    final descriptors = <_StreamDescriptor>[];
     _StreamDescriptor? activeText;
 
     for (var index = 0; index < segments.length; index++) {
@@ -566,13 +753,36 @@ class _StreamPlaceholderDelivery {
       }
       final described = _describeTextSegment(
         segment.content,
-        forceSealTail: finalize || hasFollowingBoundary,
+        forceSealTail: sealTail || hasFollowingBoundary,
       );
       orderedDescriptors.addAll(described.sealed);
-      if (!finalize && !formatConfig.enableChunking && !hasFollowingBoundary) {
+      if (!sealTail && !formatConfig.enableChunking && !hasFollowingBoundary) {
         activeText = described.active;
       }
     }
+    final result = _TextSegmentDescriptors(
+      sealed: orderedDescriptors,
+      active: activeText,
+    );
+    _parsedRawText = rawText;
+    _parsedSealTail = sealTail;
+    _parsedTimeline = result;
+    return result;
+  }
+
+  List<_StreamDescriptor> _buildTimelineDescriptors(
+    String rawText, {
+    required bool finalize,
+  }) {
+    // A completed input seals its unpunctuated tail, but the reveal cursor
+    // still advances one segment at a time until the backlog is drained.
+    final parsed = _describeTimeline(
+      rawText,
+      sealTail: finalize || _finalizedRawText != null,
+    );
+    final orderedDescriptors = parsed.sealed;
+    final activeText = parsed.active;
+    final descriptors = <_StreamDescriptor>[];
     if (finalize) {
       _visibleSealedTextCount = _countSealedTextDescriptorsInOrder(
         orderedDescriptors,
@@ -605,6 +815,9 @@ class _StreamPlaceholderDelivery {
     }
 
     if (hasHiddenSealed) {
+      // 待展示的已完成分段也是未提交的视觉变化。即使模型暂时没有
+      // 新 delta，定时 flush 仍须执行，不能因 _dirty=false 直接退出。
+      _dirty = true;
       _scheduleFlush();
     }
 
@@ -658,30 +871,9 @@ class _StreamPlaceholderDelivery {
   }
 
   int _countSealedTextDescriptors(String rawText) {
-    if (rawText.trim().isEmpty) return 0;
-    final segments = _extractRawSegments(rawText);
-    final orderedDescriptors = <_StreamDescriptor>[];
-    for (var index = 0; index < segments.length; index++) {
-      final segment = segments[index];
-      if (segment.kind == _RawStreamSegmentKind.tts && enableTtsPlaceholders) {
-        final ttsText = segment.content.trim();
-        if (ttsText.isNotEmpty) {
-          orderedDescriptors.add(
-            _StreamDescriptor.pendingAudio(content: ttsText),
-          );
-        }
-        continue;
-      }
-      if (segment.kind == _RawStreamSegmentKind.image) {
-        continue;
-      }
-      final described = _describeTextSegment(
-        segment.content,
-        forceSealTail: true,
-      );
-      orderedDescriptors.addAll(described.sealed);
-    }
-    return _countSealedTextDescriptorsInOrder(orderedDescriptors);
+    return _countSealedTextDescriptorsInOrder(
+      _describeTimeline(rawText, sealTail: true).sealed,
+    );
   }
 
   int _countReadyPendingAudioDescriptors(String rawText) {
@@ -984,6 +1176,13 @@ class _StreamPlaceholderDelivery {
     _stablePendingAudioMessages
       ..clear()
       ..addAll(nextStablePendingAudioMessages);
+    for (final message in messages) {
+      if (_isPendingAudioPlaceholderMessage(message) &&
+          !_scheduledAudioMessageIds.contains(message.id)) {
+        _scheduledAudioMessageIds.add(message.id);
+        onPendingAudioAppeared?.call(message);
+      }
+    }
     return messages;
   }
 
@@ -1024,8 +1223,15 @@ class _StreamPlaceholderDelivery {
         block.content.trim() == kGeneratingText;
   }
 
+  bool _isAudioTimelineMessage(Message message) {
+    final blocks = message.blocks;
+    if (blocks == null || blocks.length != 1) return false;
+    final block = blocks.first;
+    return block is AudioBlock && (block.text?.trim().isNotEmpty ?? false);
+  }
+
   bool _isPersistableProjectedTimelineMessage(Message message) {
-    if (_isPendingAudioPlaceholderMessage(message)) {
+    if (_isAudioTimelineMessage(message)) {
       return true;
     }
     final textBlocks =
@@ -1046,6 +1252,18 @@ class _StreamPlaceholderDelivery {
 
   Message _createMessage(_StreamDescriptor descriptor) {
     final messageId = genId('msg');
+    _recordDiagnostic(FrontendStage.segmentCreated,
+        messageId: messageId,
+        phase: DiagnosticPhase.end,
+        state: {
+          'segmentIndex': _timelineTick,
+          'characters': descriptor.content.length,
+          'pendingAudio': descriptor.kind == _StreamDescriptorKind.pendingAudio,
+          'segmentDelayMs': segmentDelay.inMilliseconds
+        });
+    _ref
+        .read(frontendDiagnosticsProvider)
+        .bindMessage(messageId, diagnosticContext);
     return switch (descriptor.kind) {
       _StreamDescriptorKind.text => Message.fromBlocks(
           id: messageId,
@@ -1100,21 +1318,44 @@ class _StreamPlaceholderDelivery {
           createdAt: effectiveCreatedAt,
           status: descriptor.messageStatus,
         ),
-      _StreamDescriptorKind.pendingAudio => Message.fromBlocks(
-          id: baseMessage.id,
-          role: baseMessage.role,
-          sourceMessageId: _pendingRawSourceId,
-          blocks: [
-            AudioBlock(
-              messageId: baseMessage.id,
-              url: '',
-              text: descriptor.content,
-              status: BlockStatus.pending,
-            ),
-          ],
-          createdAt: effectiveCreatedAt,
-          status: descriptor.messageStatus,
-        ),
+      _StreamDescriptorKind.pendingAudio => () {
+          final fallbackText = _terminalAudioFallbacks[baseMessage.id];
+          if (fallbackText != null) {
+            return Message.text(
+              id: baseMessage.id,
+              role: baseMessage.role,
+              sourceMessageId: _pendingRawSourceId,
+              content: fallbackText,
+              createdAt: effectiveCreatedAt,
+              status: 'sent',
+            );
+          }
+          final existingAudio =
+              baseMessage.blocks?.whereType<AudioBlock>().firstOrNull;
+          final hasResolvedAudio =
+              existingAudio != null && existingAudio.url.isNotEmpty;
+          return Message.fromBlocks(
+            id: baseMessage.id,
+            role: baseMessage.role,
+            sourceMessageId: _pendingRawSourceId,
+            blocks: [
+              AudioBlock(
+                messageId: baseMessage.id,
+                url: hasResolvedAudio ? existingAudio.url : '',
+                text: descriptor.content,
+                durationSeconds:
+                    hasResolvedAudio ? existingAudio.durationSeconds : null,
+                status: hasResolvedAudio
+                    ? (existingAudio.status == BlockStatus.pending
+                        ? BlockStatus.success
+                        : existingAudio.status)
+                    : BlockStatus.pending,
+              ),
+            ],
+            createdAt: effectiveCreatedAt,
+            status: hasResolvedAudio ? 'sent' : descriptor.messageStatus,
+          );
+        }(),
     };
   }
 
@@ -1140,8 +1381,21 @@ class _StreamPlaceholderDelivery {
 
   Future<void> _enqueue(Future<void> Function() task) {
     _queue = _queue.catchError((_) {}).then((_) async {
-      if (_disposed) return;
-      await task();
+      if (_disposed) {
+        _recordDiagnostic(FrontendStage.projectionSkipped,
+            phase: DiagnosticPhase.skip, reason: DiagnosticReason.disposed);
+        return;
+      }
+      try {
+        await task();
+      } catch (error, stack) {
+        _recordDiagnostic(FrontendStage.projectionSkipped,
+            phase: DiagnosticPhase.error,
+            reason: DiagnosticReason.operationFailed,
+            error: error,
+            stack: stack);
+        rethrow;
+      }
     });
     return _queue;
   }
@@ -1190,6 +1444,306 @@ class _StreamPlaceholderDelivery {
     return block is AudioBlock &&
         (block.url.isEmpty || block.status == BlockStatus.pending) &&
         (block.text?.trim().isNotEmpty ?? false);
+  }
+
+  void updateResolvedAudio({
+    required String messageId,
+    required String audioUrl,
+    double? durationSeconds,
+  }) {
+    if (!canAcceptTtsResolution(messageId)) return;
+    final resolution = (
+      audioUrl: audioUrl,
+      durationSeconds: durationSeconds,
+      fallbackText: null,
+    );
+    _recordDiagnostic(FrontendStage.ttsApplyDecision,
+        messageId: messageId,
+        reason: DiagnosticReason.values.byName(_ttsHandoffState.name),
+        state: {
+          'bufferedCount': _bufferedTtsResolutions.length,
+          'hasAudio': audioUrl.isNotEmpty
+        });
+    if (_ttsHandoffState == _StreamTtsHandoffState.committing) {
+      _bufferedTtsResolutions[messageId] = resolution;
+      return;
+    }
+    if (_ttsHandoffState == _StreamTtsHandoffState.committed) {
+      unawaited(_enqueueCommittedTtsResolution(messageId, resolution));
+      return;
+    }
+    _terminalAudioFallbacks.remove(messageId);
+    var updated = false;
+
+    for (var i = 0; i < _currentTimelineMessages.length; i++) {
+      final msg = _currentTimelineMessages[i];
+      if (msg.id == messageId) {
+        final blocks = msg.blocks;
+        if (blocks != null && blocks.isNotEmpty && blocks.first is AudioBlock) {
+          final oldAudio = blocks.first as AudioBlock;
+          final newBlock = AudioBlock(
+            messageId: msg.id,
+            url: audioUrl,
+            text: oldAudio.text,
+            durationSeconds: durationSeconds ?? oldAudio.durationSeconds,
+            status: BlockStatus.success,
+          );
+          _currentTimelineMessages[i] = Message.fromBlocks(
+            id: msg.id,
+            role: msg.role,
+            sourceMessageId: msg.sourceMessageId,
+            blocks: [newBlock],
+            createdAt: msg.createdAt,
+            status: 'sent',
+          );
+          updated = true;
+        }
+      }
+    }
+
+    for (final entry in _stablePendingAudioMessages.entries) {
+      if (entry.value.id == messageId) {
+        final msg = entry.value;
+        final blocks = msg.blocks;
+        if (blocks != null && blocks.isNotEmpty && blocks.first is AudioBlock) {
+          final oldAudio = blocks.first as AudioBlock;
+          final newBlock = AudioBlock(
+            messageId: msg.id,
+            url: audioUrl,
+            text: oldAudio.text,
+            durationSeconds: durationSeconds ?? oldAudio.durationSeconds,
+            status: BlockStatus.success,
+          );
+          _stablePendingAudioMessages[entry.key] = Message.fromBlocks(
+            id: msg.id,
+            role: msg.role,
+            sourceMessageId: msg.sourceMessageId,
+            blocks: [newBlock],
+            createdAt: msg.createdAt,
+            status: 'sent',
+          );
+          updated = true;
+        }
+      }
+    }
+
+    if (updated) {
+      unawaited(_enqueue(() async {
+        if (_disposed) return;
+        // 流中 raw 尚未落库，回填只能更新缓存，不能提前写带外键的投影映射。
+        await _ref
+            .read(conversationTimelineCacheProvider)
+            .replaceMessagesTransient(
+              conversationId: convId,
+              messages: List<Message>.from(_currentTimelineMessages),
+            );
+        _recordDiagnostic(FrontendStage.ttsApplyDecision,
+            messageId: messageId,
+            phase: DiagnosticPhase.end,
+            reason: DiagnosticReason.streaming,
+            state: {'transientApplied': true});
+      }));
+    }
+  }
+
+  void updateFallbackText({
+    required String messageId,
+    required String text,
+  }) {
+    if (!canAcceptTtsResolution(messageId)) return;
+    final resolution = (
+      audioUrl: null,
+      durationSeconds: null,
+      fallbackText: text,
+    );
+    _recordDiagnostic(FrontendStage.ttsApplyDecision,
+        messageId: messageId,
+        reason: DiagnosticReason.values.byName(_ttsHandoffState.name),
+        state: {
+          'fallbackText': true,
+          'bufferedCount': _bufferedTtsResolutions.length
+        });
+    if (_ttsHandoffState == _StreamTtsHandoffState.committing) {
+      _bufferedTtsResolutions[messageId] = resolution;
+      return;
+    }
+    if (_ttsHandoffState == _StreamTtsHandoffState.committed) {
+      unawaited(_enqueueCommittedTtsResolution(messageId, resolution));
+      return;
+    }
+    _terminalAudioFallbacks[messageId] = text;
+    var updated = false;
+
+    for (var i = 0; i < _currentTimelineMessages.length; i++) {
+      final msg = _currentTimelineMessages[i];
+      if (msg.id == messageId) {
+        _currentTimelineMessages[i] = Message.text(
+          id: msg.id,
+          role: msg.role,
+          sourceMessageId: msg.sourceMessageId,
+          content: text,
+          createdAt: msg.createdAt,
+          status: 'sent',
+        );
+        updated = true;
+      }
+    }
+
+    for (final entry in _stablePendingAudioMessages.entries) {
+      if (entry.value.id == messageId) {
+        final msg = entry.value;
+        _stablePendingAudioMessages[entry.key] = Message.text(
+          id: msg.id,
+          role: msg.role,
+          sourceMessageId: msg.sourceMessageId,
+          content: text,
+          createdAt: msg.createdAt,
+          status: 'sent',
+        );
+        updated = true;
+      }
+    }
+
+    if (updated) {
+      unawaited(_enqueue(() async {
+        if (_disposed) return;
+        // 失败回退同样属于流中瞬态更新；持久化统一留给 commit。
+        await _ref
+            .read(conversationTimelineCacheProvider)
+            .replaceMessagesTransient(
+              conversationId: convId,
+              messages: List<Message>.from(_currentTimelineMessages),
+            );
+        _recordDiagnostic(FrontendStage.ttsApplyDecision,
+            messageId: messageId,
+            phase: DiagnosticPhase.end,
+            reason: DiagnosticReason.streaming,
+            state: {'transientApplied': true, 'fallbackText': true});
+      }));
+    }
+  }
+
+  void _discardTtsResolutions() {
+    _ttsHandoffState = _StreamTtsHandoffState.discarded;
+    _scheduledAudioMessageIds.clear();
+    _terminalAudioFallbacks.clear();
+    _bufferedTtsResolutions.clear();
+    _committedTtsMessages.clear();
+  }
+
+  Future<void> _enqueueCommittedTtsResolution(
+    String messageId,
+    _StreamTtsResolution resolution,
+  ) {
+    final future = _committedTtsWriteQueue.catchError((_) {}).then((_) async {
+      if (!canAcceptTtsResolution(messageId) ||
+          _ttsHandoffState != _StreamTtsHandoffState.committed) {
+        return;
+      }
+      final baseMessage = _committedTtsMessages[messageId];
+      if (baseMessage == null) {
+        _recordDiagnostic(FrontendStage.ttsApplyDecision,
+            messageId: messageId,
+            phase: DiagnosticPhase.skip,
+            reason: DiagnosticReason.unknownMessage);
+        return;
+      }
+      final fallbackText = resolution.fallbackText;
+      final nextMessage = fallbackText != null
+          ? Message.text(
+              id: baseMessage.id,
+              role: baseMessage.role,
+              sourceMessageId: baseMessage.sourceMessageId,
+              content: fallbackText,
+              createdAt: baseMessage.createdAt,
+              status: 'sent',
+            )
+          : Message.fromBlocks(
+              id: baseMessage.id,
+              role: baseMessage.role,
+              sourceMessageId: baseMessage.sourceMessageId,
+              blocks: [
+                AudioBlock(
+                  messageId: baseMessage.id,
+                  url: resolution.audioUrl ?? '',
+                  text: baseMessage.blocks
+                      ?.whereType<AudioBlock>()
+                      .firstOrNull
+                      ?.text,
+                  durationSeconds: resolution.durationSeconds,
+                  status: BlockStatus.success,
+                ),
+              ],
+              createdAt: baseMessage.createdAt,
+              status: 'sent',
+            );
+      _committedTtsMessages[messageId] = nextMessage;
+      try {
+        final historyStore = _ref.read(chatHistoryStoreProvider);
+        final sourceMessageId = nextMessage.sourceMessageId?.trim() ?? '';
+        final sourceIsActive = await historyStore.isRawMessageActive(
+          conversationId: convId,
+          messageId: sourceMessageId,
+        );
+        if (!sourceIsActive) {
+          _recordDiagnostic(FrontendStage.ttsApplyDecision,
+              messageId: messageId,
+              phase: DiagnosticPhase.skip,
+              reason: DiagnosticReason.rawInactive);
+          _retireCommittedTtsMessage(messageId);
+          return;
+        }
+        await historyStore.updateMessage(
+          conversationId: convId,
+          message: nextMessage,
+        );
+        _recordDiagnostic(FrontendStage.ttsPersisted,
+            messageId: messageId,
+            phase: DiagnosticPhase.end,
+            reason: DiagnosticReason.persisted,
+            state: {'fallbackText': fallbackText != null});
+        if (!await historyStore.isRawMessageActive(
+          conversationId: convId,
+          messageId: sourceMessageId,
+        )) {
+          _recordDiagnostic(FrontendStage.ttsApplyDecision,
+              messageId: messageId,
+              phase: DiagnosticPhase.skip,
+              reason: DiagnosticReason.rawInactive,
+              state: {'afterPersist': true});
+          await _ref.read(conversationTimelineCacheProvider).replaceMessages(
+            conversationId: convId,
+            removeMessageIds: <String>[messageId],
+          );
+          _retireCommittedTtsMessage(messageId);
+        }
+      } catch (error, stack) {
+        _recordDiagnostic(FrontendStage.ttsFailed,
+            messageId: messageId,
+            phase: DiagnosticPhase.error,
+            reason: DiagnosticReason.persistenceFailed,
+            error: error,
+            stack: stack);
+        AppLogger.error(
+          'ChatActions',
+          '流式 TTS 收尾回写失败',
+          metadata: {
+            'convId': convId,
+            'messageId': messageId,
+            'error': error.toString(),
+          },
+        );
+      }
+    });
+    _committedTtsWriteQueue = future.catchError((_) {});
+    return future;
+  }
+
+  void _retireCommittedTtsMessage(String messageId) {
+    _scheduledAudioMessageIds.remove(messageId);
+    _terminalAudioFallbacks.remove(messageId);
+    _bufferedTtsResolutions.remove(messageId);
+    _committedTtsMessages.remove(messageId);
   }
 }
 

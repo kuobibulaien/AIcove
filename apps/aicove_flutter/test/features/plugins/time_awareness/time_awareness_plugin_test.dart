@@ -17,19 +17,15 @@ void main() {
       expect(config.enabled, isTrue);
     });
 
-    test('fromJson 显式 enabled=false 时保持关闭', () {
+    test('fromJson 忽略旧存储的 enabled=false，读取恒为启用', () {
       final config = TimeAwarenessConfig.fromJson({'enabled': false});
-      expect(config.enabled, isFalse);
+      expect(config.enabled, isTrue);
     });
   });
 
   group('TimeAwarenessPlugin 系统提醒数据', () {
     test('启用后生成简洁中文时间提示', () {
-      final plugin = TimeAwarenessPlugin(
-        TimeAwarenessConfig(
-          enabled: true,
-        ),
-      );
+      final plugin = TimeAwarenessPlugin(TimeAwarenessConfig(enabled: true));
       final payload = plugin.buildSystemReminderPayload(
         currentTime: DateTime(2026, 3, 23, 10, 30, 15),
         previousUserMessageTime: DateTime(2026, 3, 22, 21, 45, 30),
@@ -45,11 +41,7 @@ void main() {
     });
 
     test('没有上一条用户消息时省略该部分', () {
-      final plugin = TimeAwarenessPlugin(
-        TimeAwarenessConfig(
-          enabled: true,
-        ),
-      );
+      final plugin = TimeAwarenessPlugin(TimeAwarenessConfig(enabled: true));
       final payload = plugin.buildSystemReminderPayload(
         currentTime: DateTime(2026, 3, 23, 10, 30, 15),
         previousUserMessageTime: null,
@@ -64,10 +56,7 @@ void main() {
 
     test('关闭当前时间注入后不再包含当前时间', () {
       final plugin = TimeAwarenessPlugin(
-        TimeAwarenessConfig(
-          enabled: true,
-          includeCurrentTime: false,
-        ),
+        TimeAwarenessConfig(enabled: true, includeCurrentTime: false),
       );
 
       final payload = plugin.buildSystemReminderPayload(
@@ -83,10 +72,7 @@ void main() {
 
     test('关闭当前时间注入且无上一条用户消息时返回 null', () {
       final plugin = TimeAwarenessPlugin(
-        TimeAwarenessConfig(
-          enabled: true,
-          includeCurrentTime: false,
-        ),
+        TimeAwarenessConfig(enabled: true, includeCurrentTime: false),
       );
 
       final payload = plugin.buildSystemReminderPayload(
@@ -98,11 +84,7 @@ void main() {
     });
 
     test('字段含义说明会描述当前时间模板和历史时间戳', () {
-      final plugin = TimeAwarenessPlugin(
-        TimeAwarenessConfig(
-          enabled: true,
-        ),
-      );
+      final plugin = TimeAwarenessPlugin(TimeAwarenessConfig(enabled: true));
 
       final guide = plugin.buildSystemReminderFieldGuide();
 
@@ -153,10 +135,10 @@ void main() {
 
       final anchor =
           ChatSendService.resolveTimeAwarenessPreviousUserMessageTime([
-        previousUserMessage,
-        assistantMessage,
-        currentUserMessage,
-      ]);
+            previousUserMessage,
+            assistantMessage,
+            currentUserMessage,
+          ]);
 
       expect(anchor, previousUserMessage.createdAt);
     });
@@ -184,10 +166,10 @@ void main() {
 
       final anchor =
           ChatSendService.resolveTimeAwarenessPreviousUserMessageTime([
-        first,
-        middle,
-        last,
-      ]);
+            first,
+            middle,
+            last,
+          ]);
 
       expect(anchor, first.createdAt);
     });
@@ -203,8 +185,8 @@ void main() {
 
       final anchor =
           ChatSendService.resolveTimeAwarenessPreviousUserMessageTime([
-        currentUserMessage,
-      ]);
+            currentUserMessage,
+          ]);
 
       expect(anchor, isNull);
     });

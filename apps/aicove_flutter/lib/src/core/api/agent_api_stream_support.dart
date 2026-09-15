@@ -25,6 +25,7 @@ class _AgentApiStreamSupport {
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
     List<Map<String, dynamic>>? tools,
+    ProviderChatRequestOptions? requestOptions,
     void Function(String delta)? onTextDelta,
     void Function()? onToolCallsDetected,
     TraceLogger? trace,
@@ -32,8 +33,9 @@ class _AgentApiStreamSupport {
     int? roundIndex,
     String? traceId,
   }) async {
-    final logger =
-        trace ?? AppLogger.startTrace('API流式调用', source: 'AgentApiClient');
+    final logger = trace ??
+        AppLogger.startTrace('API流式调用',
+            source: 'AgentApiClient', traceId: traceId);
     final directTrace = logger.startChild('直连流式请求');
 
     final trimmedBase = providerApiBase?.trim();
@@ -58,6 +60,7 @@ class _AgentApiStreamSupport {
       providerApiBase: trimmedBase,
       customConfig: customConfig,
       tools: tools,
+      requestOptions: requestOptions,
       streaming: true,
       allowAuthorizationFallback: true,
     );
@@ -266,8 +269,12 @@ class _AgentApiStreamSupport {
             geminiThoughtAggregator.consumePart(part);
           }
           final textPart = _extractStreamingText(part['text']);
-          if (!isThoughtPart && textPart.isNotEmpty) {
-            emitTextDelta(textPart);
+          if (textPart.isNotEmpty) {
+            if (isThoughtPart) {
+              emitReasoningDelta(textPart);
+            } else {
+              emitTextDelta(textPart);
+            }
           }
           final rawFunctionCall = part['functionCall'] ?? part['function_call'];
           if (rawFunctionCall is Map) {

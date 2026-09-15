@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:aicove_flutter/src/core/api/providers/google_api_mode.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:aicove_flutter/src/core/api/providers/zai_compat.dart';
+import 'package:aicove_flutter/src/features/settings/data/support/ui_models_store_support.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -364,7 +365,6 @@ void main() {
     expect(provider.customConfig['requestFormat'], 'gemini');
     expect(provider.customConfig['vertexExpress'], isTrue);
     expect(settings.defaultModelName, 'gemini:gemini-2.5-pro');
-    expect(settings.defaultVisionModel, 'gemini:gemini-2.5-pro');
     expect(settings.defaultChatModels, <String>['gemini:gemini-2.5-pro']);
 
     final prefs = await SharedPreferences.getInstance();
@@ -659,7 +659,18 @@ void main() {
     );
   });
 
-  test('history_message_limit should load from persisted store', () async {
+  test('obsolete message count is ignored; context defaults to 272k', () async {
+    SharedPreferences.setMockInitialValues({'aicove.ui_models.v1': jsonEncode({'history_message_limit': 3})});
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    expect((await container.read(appSettingsProvider.future)).contextWindowTokens, 272000);
+    await container.read(appSettingsProvider.notifier).setContextWindowTokens(300000);
+    final prefs = await SharedPreferences.getInstance();
+    final saved = jsonDecode(prefs.getString('aicove.ui_models.v1')!) as Map<String, dynamic>;
+    expect(saved.containsKey('history_message_limit'), isFalse);
+  });
+
+  test('context_window_tokens should load from persisted store', () async {
     final store = <String, dynamic>{
       'providers': [
         {
@@ -677,7 +688,7 @@ void main() {
       'default_model': 'openai:gpt-4o',
       'default_chat_models': <String>['openai:gpt-4o'],
       'visible_models': <String>['gpt-4o'],
-      'history_message_limit': 42,
+      'context_window_tokens': 42,
     };
 
     SharedPreferences.setMockInitialValues(<String, Object>{
@@ -688,10 +699,10 @@ void main() {
     addTearDown(container.dispose);
 
     final settings = await container.read(appSettingsProvider.future);
-    expect(settings.historyMessageLimit, 42);
+    expect(settings.contextWindowTokens, 42);
   });
 
-  test('setHistoryMessageLimit should persist values', () async {
+  test('setContextWindowTokens should persist values', () async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     final container = ProviderContainer();
     addTearDown(container.dispose);
@@ -699,15 +710,15 @@ void main() {
     await container.read(appSettingsProvider.future);
     final notifier = container.read(appSettingsProvider.notifier);
 
-    await notifier.setHistoryMessageLimit(36);
+    await notifier.setContextWindowTokens(36);
 
     final settings = container.read(appSettingsProvider).requireValue;
-    expect(settings.historyMessageLimit, 36);
+    expect(settings.contextWindowTokens, 36);
 
     final prefs = await SharedPreferences.getInstance();
     final saved = jsonDecode(prefs.getString('aicove.ui_models.v1')!)
         as Map<String, dynamic>;
-    expect(saved['history_message_limit'], 36);
+    expect(saved['context_window_tokens'], 36);
   });
 
   test(
@@ -1065,20 +1076,406 @@ void main() {
     expect(settings.mode, CallFlowMode.auto);
   });
 
-  test('setPreferVisionAssistant persists values', () async {
+  test('fresh NovelAI provider should default to V5 Full and survive reload',
+      () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    var container = ProviderContainer();
+    addTearDown(() => container.dispose());
+
+    var settings = await container.read(appSettingsProvider.future);
+    final provider = settings.providers.firstWhere((p) => p.id == 'novelai');
+    expect(provider.visibleModels.first, 'nai-diffusion-5-full');
+    expect(
+      provider.visibleModels,
+      <String>['nai-diffusion-5-full', 'nai-diffusion-5-curated'],
+    );
+    expect(provider.models, kNovelAiDefaultModels);
+    expect(provider.customConfig['requestFormat'], 'novelai');
+    expect(provider.customConfig['defaultImageModel'], 'nai-diffusion-5-full');
+
+    final prefs = await SharedPreferences.getInstance();
+    final saved = jsonDecode(prefs.getString('aicove.ui_models.v1')!)
+        as Map<String, dynamic>;
+    final savedProviders =
+        (saved['providers'] as List).cast<Map<String, dynamic>>();
+    final savedProvider =
+        savedProviders.firstWhere((p) => p['id'] == 'novelai');
+    expect(savedProvider.containsKey('customConfig'), isFalse,
+        reason: '持久层应使用 custom_config 键');
+    expect(
+      (savedProvider['custom_config']
+          as Map<String, dynamic>)['defaultImageModel'],
+      'nai-diffusion-5-full',
+    );
+    expect(
+      (saved['applied_migrations'] as List).cast<String>(),
+      contains(kNovelAiV5FullDefaultMigrationId),
+    );
+
+    container.dispose();
+    container = ProviderContainer();
+    settings = await container.read(appSettingsProvider.future);
+    final reloaded = settings.providers.firstWhere((p) => p.id == 'novelai');
+    expect(reloaded.visibleModels.first, 'nai-diffusion-5-full');
+    expect(reloaded.customConfig['defaultImageModel'], 'nai-diffusion-5-full');
+    expect(reloaded.models, kNovelAiDefaultModels);
+  });
+
+  test('existing NovelAI provider should migrate historical default to V5 Full',
+      () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'aicove.ui_models.v1': jsonEncode(
+        _legacyNovelAiStore(defaultModel: 'nai-diffusion-4-5-full'),
+      ),
+    });
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    final settings = await container.read(appSettingsProvider.future);
+    final provider = settings.providers.firstWhere((p) => p.id == 'novelai');
+    expect(provider.customConfig['defaultImageModel'], 'nai-diffusion-5-full');
+    expect(provider.visibleModels.first, 'nai-diffusion-5-full');
+    expect(provider.visibleModels, contains('nai-diffusion-4-5-curated'));
+    expect(provider.models, kNovelAiDefaultModels);
+    expect(provider.apiKeys, <String>['token-1']);
+    expect(provider.apiBaseUrl, 'https://image.novelai.net');
+    expect(provider.enabled, isTrue);
+    expect(provider.capabilities, contains('image'));
+    expect(provider.customConfig['unknown_custom_field'], 'keep-me');
+
+    final prefs = await SharedPreferences.getInstance();
+    final saved = jsonDecode(prefs.getString('aicove.ui_models.v1')!)
+        as Map<String, dynamic>;
+    expect(
+      (saved['applied_migrations'] as List).cast<String>(),
+      contains(kNovelAiV5FullDefaultMigrationId),
+    );
+  });
+
+  test('V4.5 Curated and old preview alias defaults should migrate to V5 Full',
+      () async {
+    for (final historical in <String>[
+      'nai-diffusion-4-5-curated',
+      'nai-diffusion-4-5-curated-preview',
+    ]) {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'aicove.ui_models.v1': jsonEncode(
+          _legacyNovelAiStore(defaultModel: historical),
+        ),
+      });
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+
+      final settings = await container.read(appSettingsProvider.future);
+      final provider = settings.providers.firstWhere((p) => p.id == 'novelai');
+      expect(
+        provider.customConfig['defaultImageModel'],
+        'nai-diffusion-5-full',
+        reason: '历史默认值 $historical 应升级为 V5 Full',
+      );
+    }
+  });
+
+  test('explicit V3 Furry V3 V4 and custom defaults should be preserved',
+      () async {
+    for (final explicit in <String>[
+      'nai-diffusion-3',
+      'nai-diffusion-furry-3',
+      'nai-diffusion-4-full',
+      'nai-diffusion-4-curated-preview',
+      'custom-image-model',
+    ]) {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'aicove.ui_models.v1': jsonEncode(
+          _legacyNovelAiStore(defaultModel: explicit),
+        ),
+      });
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+
+      final settings = await container.read(appSettingsProvider.future);
+      final provider = settings.providers.firstWhere((p) => p.id == 'novelai');
+      expect(
+        provider.customConfig['defaultImageModel'],
+        explicit,
+        reason: '明确选择的默认值 $explicit 应保留',
+      );
+      expect(
+        provider.visibleModels,
+        contains(explicit),
+        reason: '明确默认值 $explicit 必须仍在 provider 可见模型中',
+      );
+      expect(provider.models, contains(explicit));
+      expect(provider.capabilities, <String>['image']);
+      expect(
+        settings.getProviderVisibleModelsByType(
+          'novelai',
+          type: ModelType.image,
+        ),
+        contains(explicit),
+        reason: '明确默认值 $explicit 必须仍能进入图片插件候选集',
+      );
+    }
+  });
+
+  test('NovelAI model update should normalize old alias before filtering',
+      () async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     final container = ProviderContainer();
     addTearDown(container.dispose);
 
     await container.read(appSettingsProvider.future);
-    final notifier = container.read(appSettingsProvider.notifier);
+    await container.read(appSettingsProvider.notifier).updateProviderModels(
+      providerId: 'novelai',
+      allModels: const <String>[
+        'nai-diffusion-4-5-curated-preview',
+        'nai-diffusion-5-full',
+      ],
+      visibleModels: const <String>[
+        'nai-diffusion-4-5-curated-preview',
+      ],
+    );
 
-    await notifier.setPreferVisionAssistant(true);
-    var settings = container.read(appSettingsProvider).requireValue;
-    expect(settings.preferVisionAssistant, isTrue);
-
-    await notifier.setPreferVisionAssistant(false);
-    settings = container.read(appSettingsProvider).requireValue;
-    expect(settings.preferVisionAssistant, isFalse);
+    final settings = container.read(appSettingsProvider).requireValue;
+    final provider = settings.providers.firstWhere((p) => p.id == 'novelai');
+    expect(
+      provider.models,
+      <String>['nai-diffusion-5-full', 'nai-diffusion-4-5-curated'],
+    );
+    expect(provider.visibleModels, <String>['nai-diffusion-4-5-curated']);
   });
+
+  test('migration should apply to every NovelAI provider by id URL or format',
+      () async {
+    final store = <String, dynamic>{
+      'providers': [
+        {
+          'id': 'novelai',
+          'displayName': 'NovelAI A',
+          'apiKeys': <String>['token-a'],
+          'apiBaseUrl': 'https://image.novelai.net',
+          'enabled': true,
+          'models': <String>[
+            'nai-diffusion-4-5-curated',
+            'nai-diffusion-4-5-full'
+          ],
+          'visible_models': <String>['nai-diffusion-4-5-curated'],
+          'hidden_models': <String>[],
+          'capabilities': <String>['image'],
+          'custom_config': <String, dynamic>{
+            'requestFormat': 'novelai',
+            'defaultImageModel': 'nai-diffusion-4-5-full',
+          },
+        },
+        {
+          'id': 'nai-proxy',
+          'displayName': 'NovelAI Proxy',
+          'apiKeys': <String>['token-b'],
+          'apiBaseUrl': 'https://proxy.example.com/v1',
+          'enabled': false,
+          'models': <String>['nai-diffusion-4-5-curated'],
+          'visible_models': <String>['nai-diffusion-4-5-curated'],
+          'hidden_models': <String>[],
+          'capabilities': <String>['image'],
+          'custom_config': <String, dynamic>{
+            'requestFormat': 'nai',
+            'defaultImageModel': 'nai-diffusion-4-5-full',
+          },
+        },
+        {
+          'id': 'other',
+          'displayName': 'NovelAI via URL',
+          'apiKeys': <String>['token-c'],
+          'apiBaseUrl': 'https://api.novelai.net',
+          'enabled': true,
+          'models': <String>['nai-diffusion-3'],
+          'visible_models': <String>['nai-diffusion-3'],
+          'hidden_models': <String>[],
+          'capabilities': <String>['image'],
+          'custom_config': <String, dynamic>{
+            'defaultImageModel': 'nai-diffusion-4-5-full',
+          },
+        },
+      ],
+      'visible_models': <String>['nai-diffusion-4-5-curated'],
+    };
+
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'aicove.ui_models.v1': jsonEncode(store),
+    });
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    final settings = await container.read(appSettingsProvider.future);
+    final byId = settings.providers.firstWhere((p) => p.id == 'novelai');
+    final byFormat = settings.providers.firstWhere((p) => p.id == 'nai-proxy');
+    final byUrl = settings.providers.firstWhere((p) => p.id == 'other');
+
+    expect(byId.customConfig['defaultImageModel'], 'nai-diffusion-5-full');
+    expect(byFormat.customConfig['defaultImageModel'], 'nai-diffusion-5-full');
+    expect(byFormat.apiBaseUrl, 'https://proxy.example.com/v1',
+        reason: '自定义 base URL 不应被改写');
+    expect(byUrl.customConfig['defaultImageModel'], 'nai-diffusion-5-full');
+    expect(byUrl.apiBaseUrl, 'https://image.novelai.net');
+    expect(byUrl.visibleModels.first, 'nai-diffusion-5-full');
+  });
+
+  test(
+      'migration should preserve keys base URL enabled capabilities and extras',
+      () async {
+    final store = <String, dynamic>{
+      'providers': [
+        {
+          'id': 'novelai',
+          'displayName': '我的 NovelAI',
+          'apiKeys': <String>['token-x', 'token-y'],
+          'apiBaseUrl': 'https://my-proxy.example.net',
+          'enabled': true,
+          'models': <String>['nai-diffusion-4-5-curated', 'nai-diffusion-3'],
+          'visible_models': <String>['nai-diffusion-3'],
+          'hidden_models': <String>['nai-diffusion-4-5-curated'],
+          'capabilities': <String>['image'],
+          'custom_config': <String, dynamic>{
+            'requestFormat': 'novelai',
+            'defaultImageModel': 'nai-diffusion-4-5-full',
+            'image_parameters': <String, dynamic>{'custom_param': 1},
+            'multi_key_enabled': true,
+          },
+          'temperature': 0.7,
+          'max_context_tokens': 4096,
+        },
+      ],
+      'visible_models': <String>['nai-diffusion-3'],
+    };
+
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'aicove.ui_models.v1': jsonEncode(store),
+    });
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    final settings = await container.read(appSettingsProvider.future);
+    final provider = settings.providers.firstWhere((p) => p.id == 'novelai');
+    expect(provider.customConfig['defaultImageModel'], 'nai-diffusion-5-full');
+    expect(provider.apiKeys, <String>['token-x', 'token-y']);
+    expect(provider.apiBaseUrl, 'https://my-proxy.example.net');
+    expect(provider.enabled, isTrue);
+    expect(provider.displayName, '我的 NovelAI');
+    expect(provider.capabilities, <String>['image']);
+    expect(provider.customConfig['image_parameters'],
+        <String, dynamic>{'custom_param': 1});
+    expect(provider.customConfig['multi_key_enabled'], isTrue);
+    expect(provider.temperature, 0.7);
+    expect(provider.maxContextTokens, 4096);
+    expect(provider.visibleModels.first, 'nai-diffusion-5-full');
+    expect(provider.visibleModels, contains('nai-diffusion-3'));
+    expect(provider.hiddenModels, <String>['nai-diffusion-4-5-curated']);
+  });
+
+  test('migration is idempotent and later user changes survive reload',
+      () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'aicove.ui_models.v1': jsonEncode(
+        _legacyNovelAiStore(defaultModel: 'nai-diffusion-4-5-full'),
+      ),
+    });
+
+    var container = ProviderContainer();
+    addTearDown(() => container.dispose());
+
+    var settings = await container.read(appSettingsProvider.future);
+    var provider = settings.providers.firstWhere((p) => p.id == 'novelai');
+    expect(provider.customConfig['defaultImageModel'], 'nai-diffusion-5-full');
+
+    // 迁移后用户改回 V3 默认并调整可见模型顺序。
+    await container.read(appSettingsProvider.notifier).editProvider(
+      providerId: 'novelai',
+      customConfig: const <String, dynamic>{
+        'requestFormat': 'novelai',
+        'defaultImageModel': 'nai-diffusion-3',
+      },
+    );
+    await container.read(appSettingsProvider.notifier).updateProviderModels(
+      providerId: 'novelai',
+      allModels: const <String>[
+        'nai-diffusion-3',
+        'nai-diffusion-5-full',
+        'nai-diffusion-4-5-curated',
+      ],
+      visibleModels: const <String>[
+        'nai-diffusion-3',
+        'nai-diffusion-5-full',
+      ],
+    );
+    container.dispose();
+
+    container = ProviderContainer();
+    settings = await container.read(appSettingsProvider.future);
+    provider = settings.providers.firstWhere((p) => p.id == 'novelai');
+    expect(provider.customConfig['defaultImageModel'], 'nai-diffusion-3');
+    expect(
+      provider.visibleModels,
+      <String>['nai-diffusion-3', 'nai-diffusion-5-full'],
+    );
+  });
+
+  test('expandAudioText should default to true and persist toggle', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    final initial = await container.read(appSettingsProvider.future);
+    expect(initial.expandAudioText, isTrue);
+
+    final notifier = container.read(appSettingsProvider.notifier);
+    await notifier.setExpandAudioText(false);
+
+    expect(
+      container.read(appSettingsProvider).requireValue.expandAudioText,
+      isFalse,
+    );
+
+    await notifier.setExpandAudioText(true);
+    expect(
+      container.read(appSettingsProvider).requireValue.expandAudioText,
+      isTrue,
+    );
+  });
+}
+
+Map<String, dynamic> _legacyNovelAiStore({
+  String defaultModel = 'nai-diffusion-4-5-full',
+  List<String> models = const <String>[
+    'nai-diffusion-4-5-curated',
+    'nai-diffusion-4-5-full',
+    'nai-diffusion-3',
+  ],
+  List<String> visible = const <String>['nai-diffusion-4-5-curated'],
+  Map<String, dynamic>? customConfig,
+}) {
+  return <String, dynamic>{
+    'providers': [
+      {
+        'id': 'novelai',
+        'displayName': 'NovelAI',
+        'apiKeys': <String>['token-1'],
+        'apiBaseUrl': 'https://image.novelai.net',
+        'enabled': true,
+        'models': models,
+        'visible_models': visible,
+        'hidden_models': <String>[],
+        'capabilities': <String>['image'],
+        'custom_config': customConfig ??
+            <String, dynamic>{
+              'requestFormat': 'novelai',
+              'defaultImageModel': defaultModel,
+              'unknown_custom_field': 'keep-me',
+            },
+      },
+    ],
+    'visible_models': visible,
+    'model_types': <String, String>{
+      'novelai:custom-image-model': 'image',
+    },
+  };
 }

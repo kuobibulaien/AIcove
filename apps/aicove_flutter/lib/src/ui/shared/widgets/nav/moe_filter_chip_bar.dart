@@ -1,13 +1,13 @@
 /// MoeFilterChipBar - 水平滚动筛选标签栏
-/// 
+///
 /// 用于在多个选项间切换，如分类筛选、Tab 切换等。
-/// 
+///
 /// 设计特点：
 /// - 水平滚动
 /// - 选中项高亮
 /// - 可选的计数徽章
 /// - iOS 风格无水波纹交互
-/// 
+///
 /// 使用示例：
 /// ```dart
 /// MoeFilterChipBar<String>(
@@ -17,7 +17,7 @@
 ///   onSelected: (item) => setState(() => _selected = item),
 /// )
 /// ```
-/// 
+///
 /// 更新记录：
 /// - 2025-12-31: 创建筛选标签栏组件
 library;
@@ -25,6 +25,7 @@ library;
 import 'package:flutter/material.dart';
 import '../../../theme/tokens.dart';
 import '../../effects/smooth_clip.dart';
+import '../buttons/moe_button_surface.dart';
 
 /// 筛选项定义
 class MoeFilterItem<T> {
@@ -134,14 +135,12 @@ class _FilterChipState<T> extends State<_FilterChip<T>> {
     // 颜色计算
     final bgColor = isSelected
         ? colors.primary
-        : (_pressed && isEnabled
-            ? colors.surfaceAlt
-            : colors.surface);
+        : (_pressed && isEnabled ? colors.surfaceAlt : colors.surface);
     final textColor = isSelected
-        ? Colors.white
+        ? colors.text
         : (isEnabled ? colors.text : colors.muted);
     final iconColor = isSelected
-        ? Colors.white
+        ? colors.text
         : (isEnabled ? colors.text : colors.muted);
     final countBgColor = isSelected
         ? colors.surface
@@ -153,13 +152,10 @@ class _FilterChipState<T> extends State<_FilterChip<T>> {
       onTapUp: isEnabled ? (_) => setState(() => _pressed = false) : null,
       onTapCancel: isEnabled ? () => setState(() => _pressed = false) : null,
       onTap: widget.onTap,
-      child: AnimatedContainer(
-        duration: kAnimFast,
+      child: MoeButtonSurface(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: MoeG2Decoration(
-          radius: 20,
-          color: bgColor,
-        ),
+        radius: 20,
+        tintColor: isSelected ? bgColor : Colors.transparent,
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -174,7 +170,9 @@ class _FilterChipState<T> extends State<_FilterChip<T>> {
               item.label,
               style: TextStyle(
                 fontSize: 14,
-                fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.emphasis,
+                fontWeight: isSelected
+                    ? MoeFontWeights.emphasis
+                    : MoeFontWeights.emphasis,
                 color: textColor,
               ),
             ),
@@ -184,10 +182,7 @@ class _FilterChipState<T> extends State<_FilterChip<T>> {
               const SizedBox(width: 6),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: MoeG2Decoration(
-                  radius: 10,
-                  color: countBgColor,
-                ),
+                decoration: MoeG2Decoration(radius: 10, color: countBgColor),
                 child: Text(
                   '${item.count}',
                   style: TextStyle(

@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Project SDK entry point. Does not change the machine-wide Flutter installation.
+set -euo pipefail
+
+default_sdk="$HOME/dev-sdks/flutter-3.44.6"
+if [[ -z "${AICOVE_FLUTTER_SDK:-}" ]]; then
+  if [[ -d "/tmp/flutter-3.44.6" ]] && [[ -w "/tmp/flutter-3.44.6/bin/cache" ]]; then
+    sdk="/tmp/flutter-3.44.6"
+  elif ! touch "$default_sdk/bin/cache/.write_check" 2>/dev/null; then
+    # Sandbox or read-only dev-sdks: use shadow SDK in /tmp
+    if [[ ! -d "/tmp/flutter-3.44.6" ]]; then
+      mkdir -p "/tmp/flutter-3.44.6"
+      for item in "$default_sdk"/*; do
+        b="$(basename "$item")"
+        if [[ "$b" == "bin" ]]; then
+          cp -R "$item" "/tmp/flutter-3.44.6/bin"
+        elif [[ "$b" == "packages" ]]; then
+          mkdir -p "/tmp/flutter-3.44.6/packages"
+          for pkg in "$item"/*; do
+            pb="$(basename "$pkg")"
+            if [[ "$pb" == "flutter_tools" ]]; then
+              cp -R "$pkg" "/tmp/flutter-3.44.6/packages/"
+            else
+              ln -s "$pkg" "/tmp/flutter-3.44.6/packages/$pb"
+            fi
+          done
+        else
+          ln -s "$item" "/tmp/flutter-3.44.6/$b"
+        fi
+      done
+    fi
+    sdk="/tmp/flutter-3.44.6"
+  else
+    rm -f "$default_sdk/bin/cache/.write_check" 2>/dev/null || true
+    sdk="$default_sdk"
+  fi
+else
+  sdk="$AICOVE_FLUTTER_SDK"
+fi
+
+if [[ ! -x "$sdk/bin/flutter" ]]; then
+  printf 'Flutter SDK not found: %s\nSet AICOVE_FLUTTER_SDK to your Flutter 3.44.6 SDK directory.\n' "$sdk" >&2
+  exit 1
+fi
+export PATH="$sdk/bin:$PATH"
+export FLUTTER_ROOT="$sdk"
+if [[ "${1:-}" == "--dart" ]]; then
+  shift
+  export DART_SDK="$sdk/bin/cache/dart-sdk"
+  export FLUTTER_SDK="$sdk"
+  exec "$sdk/bin/dart" "$@"
+fi
+exec "$sdk/bin/flutter" "$@"

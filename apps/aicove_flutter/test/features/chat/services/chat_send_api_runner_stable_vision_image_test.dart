@@ -76,6 +76,9 @@ class _SequencedVisionDrawImagePlugin extends BasePlugin {
               <String, dynamic>{
                 'localPath': imagePaths[index],
                 'caption': prompt,
+                'generationSnapshot': {'version':1,'providerId':'original','modelId':'model',
+                  'requestProvider':'openai','prompt':prompt,'negativePrompt':'old',
+                  'width':1024,'height':768,'steps':31,'guidanceScale':6.5},
               },
             ],
             'message': 'ok',
@@ -105,7 +108,7 @@ AppSettings _buildVisionSettings() {
     apiBaseUrl: 'https://api.openai.com/v1',
     imageGenerationEnabled: true,
     maxFileUploadMB: 10,
-    historyMessageLimit: 100,
+    contextWindowTokens: 272000,
     customModels: <CustomModel>[],
     providers: <ProviderAuth>[
       ProviderAuth(
@@ -446,6 +449,7 @@ void main() {
     expect(result.processedText, contains('这张可以发给你'));
     final image = result.pluginContents.whereType<PluginImageContent>().single;
     expect(image.localPath, firstImage);
+    expect(image.generationSnapshot!.steps, 31);
   });
 
   test(

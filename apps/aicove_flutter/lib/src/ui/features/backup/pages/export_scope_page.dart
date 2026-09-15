@@ -19,7 +19,7 @@ class ExportScopePage extends ConsumerWidget {
     final options = ref.watch(exportOptionsProvider);
     final theme = Theme.of(context);
 
-    return Scaffold(
+    return MoePageScaffold(
       appBar: MoeAppBar(
         title: '选择导出内容',
         showBackButton: true,

@@ -13,134 +13,103 @@ class AutoReplyHistoryLogCard extends StatelessWidget {
     required this.logs,
     required this.loading,
     required this.onRefresh,
+    this.maxItems = 50,
   });
 
   final List<AutoReplyTriggerLog> logs;
   final bool loading;
   final VoidCallback onRefresh;
+  final int maxItems;
 
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
-    final displayLogs = logs.take(50).toList(growable: false);
+    final displayLogs = logs.take(maxItems).toList(growable: false);
 
-    return MoeG2ClipRRect(
-      radius: MoeSmoothRadii.sm,
-      child: Material(
-        color: colors.panel,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
+    return MoeSettingsGroup(
+      padding: MoeSettingsLayout.contentPadding,
+      children: [
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    '历史触发器日志',
+                    style: TextStyle(fontWeight: MoeFontWeights.emphasis),
+                  ),
+                ),
+                IconButton(
+                  tooltip: '刷新日志',
+                  onPressed: loading ? null : onRefresh,
+                  icon: loading
+                      ? SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation(colors.primary),
+                          ),
+                        )
+                      : Icon(Icons.refresh, color: colors.textSecondary),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '这里会记录系统默认唤醒、后台 Agent 行为、触发器生命周期和实际发送结果。本地最多保留最近 200 条，当前展示最近 ${displayLogs.length} 条。',
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.4,
+                color: colors.textSecondary,
+              ),
+            ),
+            const SizedBox(height: 12),
+            _buildLegend(context),
+            const SizedBox(height: 12),
+            if (loading && logs.isEmpty)
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: MoeLoadingIndicator(),
+                ),
+              )
+            else if (displayLogs.isEmpty)
+              const MoeEmptyState(
+                icon: Icons.inbox_outlined,
+                title: '还没有历史日志',
+                description: '等后台 Agent 运行、触发器创建或默认唤醒发生后，这里就会出现记录。',
+              )
+            else
+              Column(
                 children: [
-                  Icon(Icons.history_toggle_off, color: colors.primary),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text(
-                      '历史触发器日志',
-                      style: TextStyle(fontWeight: MoeFontWeights.emphasis),
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: '刷新日志',
-                    onPressed: loading ? null : onRefresh,
-                    icon: loading
-                        ? SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor:
-                                  AlwaysStoppedAnimation(colors.primary),
-                            ),
-                          )
-                        : Icon(Icons.refresh, color: colors.textSecondary),
-                  ),
+                  for (var index = 0; index < displayLogs.length; index++) ...[
+                    _HistoryLogTile(log: displayLogs[index]),
+                    if (index != displayLogs.length - 1)
+                      Divider(
+                        height: borderWidth,
+                        thickness: borderWidth,
+                        color: colors.borderLight,
+                      ),
+                  ],
                 ],
               ),
-              const SizedBox(height: 8),
-              Text(
-                '这里会记录系统默认唤醒、后台 Agent 行为、触发器生命周期和实际发送结果。本地最多保留最近 200 条，当前展示最近 ${displayLogs.length} 条。',
-                style: TextStyle(
-                  fontSize: 13,
-                  height: 1.4,
-                  color: colors.textSecondary,
-                ),
-              ),
-              const SizedBox(height: 12),
-              _buildLegend(context),
-              const SizedBox(height: 12),
-              if (loading && logs.isEmpty)
-                const Center(
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(vertical: 24),
-                    child: MoeLoadingIndicator(),
-                  ),
-                )
-              else if (displayLogs.isEmpty)
-                const MoeEmptyState(
-                  icon: Icons.inbox_outlined,
-                  title: '还没有历史日志',
-                  description: '等后台 Agent 运行、触发器创建或默认唤醒发生后，这里就会出现记录。',
-                )
-              else
-                Column(
-                  children: [
-                    for (var index = 0;
-                        index < displayLogs.length;
-                        index++) ...[
-                      _HistoryLogTile(log: displayLogs[index]),
-                      if (index != displayLogs.length - 1)
-                        Divider(
-                          height: borderWidth,
-                          thickness: borderWidth,
-                          color: colors.borderLight,
-                        ),
-                    ],
-                  ],
-                ),
-            ],
-          ),
+          ],
         ),
-      ),
+      ],
     );
   }
 
   Widget _buildLegend(BuildContext context) {
     final colors = context.moeColors;
-    final items = <({String label, IconData icon, Color color})>[
-      (
-        label: '默认唤醒',
-        icon: Icons.alarm,
-        color: colors.primary,
-      ),
-      (
-        label: '分析决策',
-        icon: Icons.psychology_outlined,
-        color: const Color(0xFF7E57C2),
-      ),
-      (
-        label: '触发器',
-        icon: Icons.flash_on_outlined,
-        color: const Color(0xFFFFA726),
-      ),
-      (
-        label: '后台 Agent',
-        icon: Icons.smart_toy_outlined,
-        color: const Color(0xFF26A69A),
-      ),
-      (
-        label: '发送结果',
-        icon: Icons.mark_chat_read_outlined,
-        color: const Color(0xFF66BB6A),
-      ),
-      (
-        label: '后台兜底',
-        icon: Icons.sync_outlined,
-        color: const Color(0xFF42A5F5),
-      ),
+    final items = <({String label, Color color})>[
+      (label: '默认唤醒', color: colors.primary),
+      (label: '分析决策', color: const Color(0xFF7E57C2)),
+      (label: '触发器', color: const Color(0xFFFFA726)),
+      (label: '后台 Agent', color: const Color(0xFF26A69A)),
+      (label: '发送结果', color: const Color(0xFF66BB6A)),
+      (label: '后台兜底', color: const Color(0xFF42A5F5)),
     ];
 
     return Wrap(
@@ -158,8 +127,6 @@ class AutoReplyHistoryLogCard extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(item.icon, size: 14, color: item.color),
-                const SizedBox(width: 6),
                 Text(
                   item.label,
                   style: TextStyle(
@@ -185,7 +152,6 @@ class _HistoryLogTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
     final accentColor = _accentColor(colors);
-    final icon = _iconForCategory();
     final metadataText = log.metadata.isEmpty
         ? ''
         : const JsonEncoder.withIndent('  ').convert(log.metadata);
@@ -195,15 +161,6 @@ class _HistoryLogTile extends StatelessWidget {
       child: ExpansionTile(
         tilePadding: const EdgeInsets.symmetric(horizontal: 0, vertical: 4),
         childrenPadding: const EdgeInsets.only(bottom: 12),
-        leading: Container(
-          width: 36,
-          height: 36,
-          decoration: MoeG2Decoration(
-            radius: 18,
-            color: accentColor.withValues(alpha: 0.12),
-          ),
-          child: Icon(icon, color: accentColor, size: 18),
-        ),
         title: Text(
           log.message,
           style: TextStyle(
@@ -223,15 +180,9 @@ class _HistoryLogTile extends StatelessWidget {
                 _formatDateTime(log.occurredAt),
                 style: TextStyle(fontSize: 12, color: colors.textSecondary),
               ),
-              _MetaChip(
-                label: _labelForCategory(),
-                color: accentColor,
-              ),
+              _MetaChip(label: _labelForCategory(), color: accentColor),
               if (log.title?.trim().isNotEmpty == true)
-                _MetaChip(
-                  label: log.title!.trim(),
-                  color: colors.primary,
-                ),
+                _MetaChip(label: log.title!.trim(), color: colors.primary),
               if (log.success != null)
                 _MetaChip(
                   label: log.success! ? '成功' : '失败',
@@ -239,8 +190,9 @@ class _HistoryLogTile extends StatelessWidget {
                 ),
               if (log.level != AutoReplyTriggerLogLevel.info)
                 _MetaChip(
-                  label:
-                      log.level == AutoReplyTriggerLogLevel.error ? '错误' : '警告',
+                  label: log.level == AutoReplyTriggerLogLevel.error
+                      ? '错误'
+                      : '警告',
                   color: log.level == AutoReplyTriggerLogLevel.error
                       ? colors.toastError
                       : const Color(0xFFFFA726),
@@ -322,23 +274,6 @@ class _HistoryLogTile extends StatelessWidget {
     }
   }
 
-  IconData _iconForCategory() {
-    switch (log.category) {
-      case AutoReplyTriggerLogCategory.wakeup:
-        return Icons.alarm_outlined;
-      case AutoReplyTriggerLogCategory.analyzer:
-        return Icons.psychology_outlined;
-      case AutoReplyTriggerLogCategory.trigger:
-        return Icons.flash_on_outlined;
-      case AutoReplyTriggerLogCategory.agent:
-        return Icons.smart_toy_outlined;
-      case AutoReplyTriggerLogCategory.delivery:
-        return Icons.mark_chat_read_outlined;
-      case AutoReplyTriggerLogCategory.background:
-        return Icons.sync_outlined;
-    }
-  }
-
   String _labelForCategory() {
     switch (log.category) {
       case AutoReplyTriggerLogCategory.wakeup:
@@ -381,10 +316,7 @@ class _HistoryLogTile extends StatelessWidget {
 }
 
 class _MetaChip extends StatelessWidget {
-  const _MetaChip({
-    required this.label,
-    required this.color,
-  });
+  const _MetaChip({required this.label, required this.color});
 
   final String label;
   final Color color;
@@ -410,10 +342,7 @@ class _MetaChip extends StatelessWidget {
 }
 
 class _DetailRow extends StatelessWidget {
-  const _DetailRow({
-    required this.label,
-    required this.value,
-  });
+  const _DetailRow({required this.label, required this.value});
 
   final String label;
   final String value;

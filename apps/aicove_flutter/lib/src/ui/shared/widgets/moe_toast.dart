@@ -1,18 +1,20 @@
 /// MoeToast - 可换肤的轻量级提示组件
-/// 
+///
 /// 使用 Overlay 实现自定义 Toast，支持：
 /// - 屏幕中央显示
 /// - 淡入淡出动画
 /// - 图标支持
 /// - 皮肤系统集成
-/// 
+///
 /// 更新记录：
 /// - 2025-12-06: 创建，统一全局提示样式
 /// - 2025-12-06: 重构为 Overlay 实现，增加动画和图标
 /// - 2025-12-06: 接入皮肤系统
 library;
+
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/buttons/moe_button_surface.dart';
 import '../../theme/tokens.dart';
 import '../../theme/skin_provider.dart';
 import '../effects/smooth_clip.dart';
@@ -52,7 +54,7 @@ class MoeToast {
     _dismiss();
 
     final overlay = Overlay.of(context);
-    
+
     _currentEntry = OverlayEntry(
       builder: (context) => _ToastWidget(
         message: message,
@@ -81,17 +83,33 @@ class MoeToast {
 
   /// 成功提示
   static void success(BuildContext context, String message) {
-    show(context, message, type: ToastType.success, icon: Icons.check_circle_outline);
+    show(
+      context,
+      message,
+      type: ToastType.success,
+      icon: Icons.check_circle_outline,
+    );
   }
 
   /// 错误提示
   static void error(BuildContext context, String message) {
-    show(context, message, type: ToastType.error, icon: Icons.error_outline, duration: const Duration(seconds: 3));
+    show(
+      context,
+      message,
+      type: ToastType.error,
+      icon: Icons.error_outline,
+      duration: const Duration(seconds: 3),
+    );
   }
 
   /// 警告提示
   static void warning(BuildContext context, String message) {
-    show(context, message, type: ToastType.warning, icon: Icons.warning_amber_outlined);
+    show(
+      context,
+      message,
+      type: ToastType.warning,
+      icon: Icons.warning_amber_outlined,
+    );
   }
 
   /// 短暂提示（1.5秒，常用于操作反馈）
@@ -100,9 +118,9 @@ class MoeToast {
   }
 
   /// 可静默通知
-  /// 
+  ///
   /// 显示带"不再提醒"按钮的 Toast。
-  /// 
+  ///
   /// [noticeKey] 用于标识此类通知的唯一键名
   /// [onDismissForever] 用户点击"不再提醒"时的回调
   static void showDismissible(
@@ -117,7 +135,7 @@ class MoeToast {
     _dismiss();
 
     final overlay = Overlay.of(context);
-    
+
     _currentEntry = OverlayEntry(
       builder: (context) => _DismissibleToastWidget(
         message: message,
@@ -154,7 +172,7 @@ class _ToastWidget extends StatefulWidget {
   State<_ToastWidget> createState() => _ToastWidgetState();
 }
 
-class _ToastWidgetState extends State<_ToastWidget> 
+class _ToastWidgetState extends State<_ToastWidget>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<double> _fadeAnimation;
@@ -163,17 +181,15 @@ class _ToastWidgetState extends State<_ToastWidget>
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: kAnim,
-    );
+    _controller = AnimationController(vsync: this, duration: kAnim);
     _fadeAnimation = CurvedAnimation(
       parent: _controller,
       curve: Curves.easeOut,
     );
-    _scaleAnimation = Tween<double>(begin: 0.8, end: 1.0).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeOutBack),
-    );
+    _scaleAnimation = Tween<double>(
+      begin: 0.8,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutBack));
     _controller.forward();
   }
 
@@ -206,7 +222,10 @@ class _ToastWidgetState extends State<_ToastWidget>
                   constraints: BoxConstraints(
                     maxWidth: MediaQuery.sizeOf(context).width * 0.8,
                   ),
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 14,
+                  ),
                   decoration: decoration,
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -254,7 +273,8 @@ class _DismissibleToastWidget extends StatefulWidget {
   });
 
   @override
-  State<_DismissibleToastWidget> createState() => _DismissibleToastWidgetState();
+  State<_DismissibleToastWidget> createState() =>
+      _DismissibleToastWidgetState();
 }
 
 class _DismissibleToastWidgetState extends State<_DismissibleToastWidget>
@@ -266,17 +286,15 @@ class _DismissibleToastWidgetState extends State<_DismissibleToastWidget>
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: kAnim,
-    );
+    _controller = AnimationController(vsync: this, duration: kAnim);
     _fadeAnimation = CurvedAnimation(
       parent: _controller,
       curve: Curves.easeOut,
     );
-    _scaleAnimation = Tween<double>(begin: 0.8, end: 1.0).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeOutBack),
-    );
+    _scaleAnimation = Tween<double>(
+      begin: 0.8,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutBack));
     _controller.forward();
   }
 
@@ -309,7 +327,10 @@ class _DismissibleToastWidgetState extends State<_DismissibleToastWidget>
                   constraints: BoxConstraints(
                     maxWidth: MediaQuery.sizeOf(context).width * 0.85,
                   ),
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
                   decoration: decoration,
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -317,7 +338,11 @@ class _DismissibleToastWidgetState extends State<_DismissibleToastWidget>
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.warning_amber_outlined, color: Colors.white, size: 18),
+                          const Icon(
+                            Icons.warning_amber_outlined,
+                            color: Colors.white,
+                            size: 18,
+                          ),
                           const SizedBox(width: 8),
                           Flexible(
                             child: Text(
@@ -338,16 +363,17 @@ class _DismissibleToastWidgetState extends State<_DismissibleToastWidget>
                         children: [
                           GestureDetector(
                             onTap: widget.onDismiss,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                              decoration: MoeG2Decoration(
-                                radius: 16,
-                                color: Colors.white.withValues(alpha: 0.2),
+                            child: MoeButtonSurface(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 6,
                               ),
-                              child: const Text(
+                              radius: 16,
+                              tintColor: Colors.white.withValues(alpha: 0.2),
+                              child: Text(
                                 '知道了',
                                 style: TextStyle(
-                                  color: Colors.white,
+                                  color: context.moeColors.text,
                                   fontSize: 12,
                                   fontWeight: MoeFontWeights.emphasis,
                                 ),
@@ -357,16 +383,17 @@ class _DismissibleToastWidgetState extends State<_DismissibleToastWidget>
                           const SizedBox(width: 12),
                           GestureDetector(
                             onTap: widget.onDismissForever,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                              decoration: MoeG2Decoration(
-                                radius: 16,
-                                color: Colors.white.withValues(alpha: 0.2),
+                            child: MoeButtonSurface(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 6,
                               ),
-                              child: const Text(
+                              radius: 16,
+                              tintColor: Colors.white.withValues(alpha: 0.2),
+                              child: Text(
                                 '不再提醒',
                                 style: TextStyle(
-                                  color: Colors.white70,
+                                  color: context.moeColors.text,
                                   fontSize: 12,
                                   fontWeight: MoeFontWeights.emphasis,
                                 ),

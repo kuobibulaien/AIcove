@@ -1,3 +1,0 @@
-{"file": "scratch/diagnostics/聊天首屏加载慢_codex诊断_20260716.md", "reason": "双线诊断报告：根因、行号证据、修复顺序建议，是本任务的问题定义来源"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端性能硬约束（2026-07-13 滑动卡顿沉淀），实现时须遵守且不得回退其结论"}
-{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用优先思维指南，改缓存核心逻辑时优先复用既有仓储接口"}

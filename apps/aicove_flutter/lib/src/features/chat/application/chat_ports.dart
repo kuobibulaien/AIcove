@@ -68,7 +68,6 @@ abstract interface class ChatSendPort {
   Future<List<Message>> prepareHistoryFromStore({
     required Conversation conv,
     required Message userMsg,
-    required int limit,
   });
 
   List<String> buildImageSendModelRefs(AppSettings settings);

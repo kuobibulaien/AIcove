@@ -1,5 +1,8 @@
+import '../../../../core/media/media_store.dart';
+import '../../../../core/media/media_asset.dart';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -11,6 +14,41 @@ import '../../../../core/models/message_block.dart';
 import '../../../../ui/shared/widgets/meotalk_dialog.dart';
 import '../../../../ui/shared/widgets/moe_toast.dart';
 
+/// Saves a rendered PNG using the same platform destinations as chat media.
+Future<void> saveChatImageBytes(BuildContext context, Uint8List bytes) async {
+  final filename = 'chat_${DateTime.now().millisecondsSinceEpoch}.png';
+  try {
+    if (Platform.isAndroid) {
+      final granted = await _ensureAndroidGalleryPermission(context);
+      if (!context.mounted) return;
+      if (!granted) {
+        _showToast(context, '未授予相册权限，无法保存');
+        return;
+      }
+      final result =
+          await ImageGallerySaverPlus.saveImage(bytes, name: filename);
+      if (context.mounted) {
+        _showToast(
+            context, _isGallerySaveSuccess(result) ? '已保存到相册' : '保存到相册失败');
+      }
+      return;
+    }
+    final mobile = Platform.isIOS;
+    final path = await FilePicker.platform.saveFile(
+      dialogTitle: '保存聊天图片',
+      fileName: filename,
+      type: FileType.custom,
+      allowedExtensions: ['png'],
+      bytes: mobile ? bytes : null,
+    );
+    if (path == null) return;
+    if (!mobile) await File(path).writeAsBytes(bytes, flush: true);
+    if (context.mounted) _showToast(context, '已保存');
+  } catch (_) {
+    if (context.mounted) MoeToast.error(context, '保存失败，请重试');
+  }
+}
+
 Future<void> saveChatMessageListMediaBlock(
   BuildContext context,
   MessageBlock block,
@@ -21,7 +59,9 @@ Future<void> saveChatMessageListMediaBlock(
     final isImage = block is ImageBlock;
 
     if (isImage) {
-      sourcePath = block.localPath;
+      sourcePath = block.mediaId == null ? block.localPath :
+          (await (await MediaStore.shared).original(block.mediaId!)).path;
+      if (!context.mounted) return;
       if (sourcePath == null || sourcePath.isEmpty) {
         if (block.url != null && block.url!.isNotEmpty) {
           _showToast(context, '网络图片请在预览中保存');
@@ -107,6 +147,8 @@ Future<void> saveChatMessageListMediaBlock(
     await sourceFile.copy(savePath);
     if (!context.mounted) return;
     _showToast(context, '已保存');
+  } on OriginalMediaUnavailable catch (error) {
+    if (context.mounted) _showToast(context, error.toString());
   } catch (e) {
     if (!context.mounted) return;
     _showToast(context, '保存失败: $e');

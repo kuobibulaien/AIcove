@@ -20,7 +20,7 @@ class DataManagementPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
 
-    return Scaffold(
+    return MoePageScaffold(
       appBar: MoeAppBar(
         title: '数据管理',
         showBackButton: true,

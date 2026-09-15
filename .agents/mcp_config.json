@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "dart": {
+      "command": "bash",
+      "args": ["-c", "exec \"$(git rev-parse --show-toplevel)/apps/aicove_flutter/tool/dart_mcp_server\""]
+    }
+  }
+}

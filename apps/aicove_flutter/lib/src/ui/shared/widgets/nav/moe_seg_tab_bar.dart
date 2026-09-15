@@ -1,13 +1,13 @@
 /// MoeSegTabBar - 分段选择器组件
-/// 
+///
 /// 仿 kelivo 风格的水平分段选择器。
-/// 
+///
 /// 设计特点：
 /// - 水平滚动 + 选中高亮
 /// - iOS 触觉反馈
 /// - 平滑动画
 /// - 圆角胶囊形状
-/// 
+///
 /// 使用示例：
 /// ```dart
 /// MoeSegTabBar(
@@ -16,7 +16,7 @@
 ///   onTap: (index) => setState(() => _index = index),
 /// )
 /// ```
-/// 
+///
 /// 更新记录：
 /// - 2026-01-21: 创建分段选择器组件
 library;
@@ -24,7 +24,8 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../theme/tokens.dart';
-import '../../effects/smooth_clip.dart';
+import '../buttons/moe_button_surface.dart';
+import '../moe_floating_surface.dart';
 
 /// 分段选择器组件
 class MoeSegTabBar extends StatelessWidget {
@@ -52,22 +53,22 @@ class MoeSegTabBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
 
-    final content = Container(
-      height: 36,
+    final content = MoeFloatingSurface(
+      radius: 20,
       padding: const EdgeInsets.all(3),
-      decoration: MoeG2Decoration(
-        radius: 18,
-        color: colors.surface,
-        border: Border.all(color: colors.border, width: 1),
-      ),
-      child: Row(
-        mainAxisSize: scrollable ? MainAxisSize.min : MainAxisSize.max,
-        children: List.generate(tabs.length, (index) {
-          final isSelected = currentIndex == index;
-          return scrollable
-              ? _buildTab(context, index, isSelected, colors)
-              : Expanded(child: _buildTab(context, index, isSelected, colors));
-        }),
+      child: SizedBox(
+        height: 30,
+        child: Row(
+          mainAxisSize: scrollable ? MainAxisSize.min : MainAxisSize.max,
+          children: List.generate(tabs.length, (index) {
+            final isSelected = currentIndex == index;
+            return scrollable
+                ? _buildTab(context, index, isSelected, colors)
+                : Expanded(
+                    child: _buildTab(context, index, isSelected, colors),
+                  );
+          }),
+        ),
       ),
     );
 
@@ -81,7 +82,12 @@ class MoeSegTabBar extends StatelessWidget {
     return content;
   }
 
-  Widget _buildTab(BuildContext context, int index, bool isSelected, MoeColors colors) {
+  Widget _buildTab(
+    BuildContext context,
+    int index,
+    bool isSelected,
+    MoeColors colors,
+  ) {
     return GestureDetector(
       onTap: () {
         if (currentIndex != index) {
@@ -89,20 +95,20 @@ class MoeSegTabBar extends StatelessWidget {
           onTap(index);
         }
       },
-      child: AnimatedContainer(
-        duration: kAnimFast,
+      child: MoeButtonSurface(
         padding: const EdgeInsets.symmetric(horizontal: 16),
-        decoration: MoeG2Decoration(
-          radius: 15,
-          color: isSelected ? colors.focus : Colors.transparent,
-        ),
+        radius: 15,
+        tintColor: isSelected ? colors.focus : Colors.transparent,
+        shadows: const [],
         alignment: Alignment.center,
         child: Text(
           tabs[index],
           style: TextStyle(
             fontSize: 13,
-            color: isSelected ? Colors.white : colors.textSecondary,
-            fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
+            color: isSelected ? colors.text : colors.textSecondary,
+            fontWeight: isSelected
+                ? MoeFontWeights.emphasis
+                : MoeFontWeights.normal,
           ),
         ),
       ),
@@ -136,23 +142,23 @@ class MoeSegTabBarWithIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
 
-    final content = Container(
-      height: 40,
+    final content = MoeFloatingSurface(
+      radius: 20,
       padding: const EdgeInsets.all(3),
-      decoration: MoeG2Decoration(
-        radius: 20,
-        color: colors.surface,
-        border: Border.all(color: colors.border, width: 1),
-      ),
-      child: Row(
-        mainAxisSize: scrollable ? MainAxisSize.min : MainAxisSize.max,
-        children: List.generate(tabs.length, (index) {
-          final isSelected = currentIndex == index;
-          final tab = tabs[index];
-          return scrollable
-              ? _buildTab(context, index, tab, isSelected, colors)
-              : Expanded(child: _buildTab(context, index, tab, isSelected, colors));
-        }),
+      child: SizedBox(
+        height: 34,
+        child: Row(
+          mainAxisSize: scrollable ? MainAxisSize.min : MainAxisSize.max,
+          children: List.generate(tabs.length, (index) {
+            final isSelected = currentIndex == index;
+            final tab = tabs[index];
+            return scrollable
+                ? _buildTab(context, index, tab, isSelected, colors)
+                : Expanded(
+                    child: _buildTab(context, index, tab, isSelected, colors),
+                  );
+          }),
+        ),
       ),
     );
 
@@ -180,13 +186,11 @@ class MoeSegTabBarWithIcon extends StatelessWidget {
           onTap(index);
         }
       },
-      child: AnimatedContainer(
-        duration: kAnimFast,
+      child: MoeButtonSurface(
         padding: const EdgeInsets.symmetric(horizontal: 14),
-        decoration: MoeG2Decoration(
-          radius: 17,
-          color: isSelected ? colors.focus : Colors.transparent,
-        ),
+        radius: 17,
+        tintColor: isSelected ? colors.focus : Colors.transparent,
+        shadows: const [],
         alignment: Alignment.center,
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -194,15 +198,17 @@ class MoeSegTabBarWithIcon extends StatelessWidget {
             Icon(
               tab.icon,
               size: 16,
-              color: isSelected ? Colors.white : colors.muted,
+              color: isSelected ? colors.text : colors.muted,
             ),
             const SizedBox(width: 6),
             Text(
               tab.label,
               style: TextStyle(
                 fontSize: 13,
-                color: isSelected ? Colors.white : colors.textSecondary,
-                fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
+                color: isSelected ? colors.text : colors.textSecondary,
+                fontWeight: isSelected
+                    ? MoeFontWeights.emphasis
+                    : MoeFontWeights.normal,
               ),
             ),
           ],
@@ -214,10 +220,7 @@ class MoeSegTabBarWithIcon extends StatelessWidget {
 
 /// 分段 Tab 配置项
 class MoeSegTabItem {
-  const MoeSegTabItem({
-    required this.icon,
-    required this.label,
-  });
+  const MoeSegTabItem({required this.icon, required this.label});
 
   final IconData icon;
   final String label;

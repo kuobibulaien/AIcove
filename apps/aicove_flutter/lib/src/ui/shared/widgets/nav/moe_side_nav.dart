@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/buttons/moe_button_surface.dart';
 import '../../../theme/tokens.dart';
 
 /// 侧边导航项数据类
@@ -132,14 +133,12 @@ class _SideNavItem extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               // 选中指示器 + 图标
-              Container(
+              MoeButtonSurface(
                 width: 44,
                 height: 32,
-                decoration: isSelected
-                    ? BoxDecoration(
-                        color: colors.primary.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(16),
-                      )
+                radius: 16,
+                tintColor: isSelected
+                    ? colors.primary.withValues(alpha: 0.15)
                     : null,
                 child: Icon(
                   icon,
@@ -154,7 +153,9 @@ class _SideNavItem extends StatelessWidget {
                   label!,
                   style: TextStyle(
                     fontSize: 10,
-                    fontWeight: isSelected ? MoeFontWeights.emphasis : MoeFontWeights.normal,
+                    fontWeight: isSelected
+                        ? MoeFontWeights.emphasis
+                        : MoeFontWeights.normal,
                     color: isSelected ? colors.primary : colors.muted,
                   ),
                 ),

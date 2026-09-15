@@ -2,12 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/app_logger.dart';
 import '../../../core/database/database_provider.dart';
+import '../../../core/database/converters/database_converters.dart';
 import '../../../core/prompts/prompt_builtin_defaults.g.dart';
 import '../../../core/prompts/prompt_template_renderer.dart';
 import '../../background_agent/background_agent_service.dart';
 import '../../chat/domain/message.dart' as chat;
-import '../../chat/providers2.dart';
+import '../plugin_providers.dart' show memoryPluginConfigProvider;
 import '../../memory/models/memory_entity.dart';
+import '../../memory/application/contact_memory_reader.dart';
+import '../../memory/application/contact_memory_tools.dart';
+import '../../memory/providers/contact_memory_provider.dart';
 import '../../chat/services/chat_history_store.dart';
 import '../../memory/services/memory_service.dart';
 import '../../memory/utils/lexical_tokenizer_zh.dart';
@@ -24,8 +28,9 @@ String buildRoleScopedMemoryPrompt({
   List<String> l2SkillDetails = const [],
   List<String> l3Memories = const [],
 }) {
-  final normalizedRoleLabel =
-      roleLabel.trim().isEmpty ? '当前角色' : roleLabel.trim();
+  final normalizedRoleLabel = roleLabel.trim().isEmpty
+      ? '当前角色'
+      : roleLabel.trim();
   final profileLines = _normalizeProfilePromptLines(profilePrompt);
   final recallLines = <String>[
     ...relatedMemories.where((line) => line.trim().isNotEmpty),
@@ -33,16 +38,10 @@ String buildRoleScopedMemoryPrompt({
   ];
   final profileBlock = profileLines.isEmpty
       ? ''
-      : _formatRoleScopedBlock(
-          title: 'L1 用户攻略',
-          body: profileLines.join('\n'),
-        );
+      : _formatRoleScopedBlock(title: 'L1 用户攻略', body: profileLines.join('\n'));
   final l2SkillIndexBlock = l2SkillIndex.isEmpty
       ? ''
-      : _formatRoleScopedBlock(
-          title: 'L2 技能索引',
-          body: l2SkillIndex.join('\n'),
-        );
+      : _formatRoleScopedBlock(title: 'L2 技能索引', body: l2SkillIndex.join('\n'));
   final l2SkillDetailBlock = l2SkillDetails.isEmpty
       ? ''
       : _formatRoleScopedBlock(
@@ -71,10 +70,7 @@ String buildRoleScopedMemoryPrompt({
   );
 }
 
-String _formatRoleScopedBlock({
-  required String title,
-  required String body,
-}) {
+String _formatRoleScopedBlock({required String title, required String body}) {
   final trimmedBody = body.trim();
   if (trimmedBody.isEmpty) return '';
   return '\n\n### $title\n$trimmedBody';
@@ -99,8 +95,9 @@ String formatL2SkillIndexEntry(MemoryEntity memory) {
 
 String formatL2SkillDetailBlock(MemoryEntity memory) {
   final snapshot = _extractL2SkillSnapshot(memory);
-  final indentedDetails =
-      snapshot.contentLines.map((line) => '    $line').join('\n');
+  final indentedDetails = snapshot.contentLines
+      .map((line) => '    $line')
+      .join('\n');
   return '- 技能：${snapshot.title}\n'
       '  时间：${snapshot.timePrefix}\n'
       '  详细内容：\n'
@@ -114,18 +111,19 @@ _L2SkillSnapshot _extractL2SkillSnapshot(MemoryEntity memory) {
       .where((line) => line.isNotEmpty)
       .toList(growable: false);
   final title = _extractL2Title(lines, memory.content);
-  final triggerHints = <String?>[
-    title,
-    _extractStructuredValue(lines, '事件：'),
-    _extractStructuredValue(lines, '情绪：'),
-    _extractStructuredValue(lines, '性格分析：'),
-  ]
-      .whereType<String>()
-      .map((value) => _truncateText(value, maxChars: 24))
-      .where((value) => value.trim().isNotEmpty)
-      .toSet()
-      .take(4)
-      .toList(growable: false);
+  final triggerHints =
+      <String?>[
+            title,
+            _extractStructuredValue(lines, '事件：'),
+            _extractStructuredValue(lines, '情绪：'),
+            _extractStructuredValue(lines, '性格分析：'),
+          ]
+          .whereType<String>()
+          .map((value) => _truncateText(value, maxChars: 24))
+          .where((value) => value.trim().isNotEmpty)
+          .toSet()
+          .take(4)
+          .toList(growable: false);
   return _L2SkillSnapshot(
     title: title,
     timePrefix: MemoryTimeFormatter.getTimePrefix(memory.createdAt),
@@ -312,10 +310,16 @@ class MemoryPlugin extends BasePlugin {
         _memoryConfig.summarizeProviderId,
         _memoryConfig.summarizeModelName,
       ),
-      summarizeModel: _resolveModel(settings, _memoryConfig.summarizeProviderId,
-          _memoryConfig.summarizeModelName),
-      embeddingModel: _resolveModel(settings, _memoryConfig.embeddingProviderId,
-          _memoryConfig.embeddingModelName),
+      summarizeModel: _resolveModel(
+        settings,
+        _memoryConfig.summarizeProviderId,
+        _memoryConfig.summarizeModelName,
+      ),
+      embeddingModel: _resolveModel(
+        settings,
+        _memoryConfig.embeddingProviderId,
+        _memoryConfig.embeddingModelName,
+      ),
       fallbackEmbeddingModel: _resolveModel(
         settings,
         _memoryConfig.fallbackEmbeddingProviderId,
@@ -335,7 +339,10 @@ class MemoryPlugin extends BasePlugin {
   }
 
   ResolvedModelConfig? _resolveModel(
-      AppSettings settings, String? providerId, String? modelName) {
+    AppSettings settings,
+    String? providerId,
+    String? modelName,
+  ) {
     if (providerId == null ||
         providerId.isEmpty ||
         modelName == null ||
@@ -382,35 +389,44 @@ class MemoryPlugin extends BasePlugin {
   }
 
   @override
-  Future<String?> getSystemPrompt(
-      {String? userMessage,
-      bool supportsToolCalling = false,
-      String? conversationId}) async {
-    final service = _service;
-    if (!enabled ||
-        service == null ||
-        userMessage == null ||
-        userMessage.trim().isEmpty) {
+  Future<String?> getSystemPrompt({
+    String? userMessage,
+    bool supportsToolCalling = false,
+    String? conversationId,
+  }) async {
+    if (!enabled || userMessage == null || userMessage.trim().isEmpty) {
       return null;
     }
-
     final resolvedConversationId = _resolveConversationId(conversationId);
     if (resolvedConversationId == null) return null;
+    final notebookPrompt =
+        await ContactMemoryReader(_ref.read(contactMemoryPortProvider))
+            .buildPrompt(
+              resolvedConversationId,
+              supportsTools: supportsToolCalling,
+            )
+            .timeout(const Duration(milliseconds: 500));
+    if (notebookPrompt != null) return notebookPrompt;
+    final service = _service;
+    if (service == null) return null;
 
     // next-day summary trigger on user message (fire-and-forget)
     if (_memoryConfig.enableNextDayTrigger) {
       Future(() async {
         try {
+          if (await usesNotebook(resolvedConversationId)) return;
           await service.checkAndTriggerDailySummarization(
             conversationId: resolvedConversationId,
           );
         } catch (e) {
           AppLogger.warning(
-              'MemoryPlugin', 'Daily summarization trigger failed',
-              metadata: {
-                'conversationId': resolvedConversationId,
-                'error': e.toString(),
-              });
+            'MemoryPlugin',
+            'Daily summarization trigger failed',
+            metadata: {
+              'conversationId': resolvedConversationId,
+              'error': e.toString(),
+            },
+          );
         }
       });
     }
@@ -423,10 +439,9 @@ class MemoryPlugin extends BasePlugin {
       final normalizedContextStartMessageId =
           contextStartMessageId?.trim() ?? '';
       if (normalizedContextStartMessageId.isEmpty) {
-        return _ref.read(chatHistoryStoreProvider).loadRecentProjectedMessages(
-              resolvedConversationId,
-              limit: 3,
-            );
+        return _ref
+            .read(chatHistoryStoreProvider)
+            .loadRecentProjectedMessages(resolvedConversationId, limit: 3);
       }
       final topicMessages = await _ref
           .read(chatHistoryStoreProvider)
@@ -445,7 +460,8 @@ class MemoryPlugin extends BasePlugin {
 
     List<MemoryEntity> related = const <MemoryEntity>[];
     if (isFiller) {
-      related = _lastRetrievedByConversation[resolvedConversationId] ??
+      related =
+          _lastRetrievedByConversation[resolvedConversationId] ??
           const <MemoryEntity>[];
     }
 
@@ -457,10 +473,14 @@ class MemoryPlugin extends BasePlugin {
         );
         _lastRetrievedByConversation[resolvedConversationId] = related;
       } catch (e) {
-        AppLogger.warning('MemoryPlugin', 'Memory retrieval failed', metadata: {
-          'conversationId': resolvedConversationId,
-          'error': e.toString(),
-        });
+        AppLogger.warning(
+          'MemoryPlugin',
+          'Memory retrieval failed',
+          metadata: {
+            'conversationId': resolvedConversationId,
+            'error': e.toString(),
+          },
+        );
       }
     }
 
@@ -470,8 +490,10 @@ class MemoryPlugin extends BasePlugin {
     final l2Skills = related.where((memory) => memory.layer == 'L2').toList();
     final l3Recalls = related
         .where((memory) => memory.layer != 'L1' && memory.layer != 'L2')
-        .map((memory) =>
-            MemoryTimeFormatter.format(memory.createdAt, memory.content))
+        .map(
+          (memory) =>
+              MemoryTimeFormatter.format(memory.createdAt, memory.content),
+        )
         .toList(growable: false);
     if (profilePrompt.trim().isEmpty && l2Skills.isEmpty && l3Recalls.isEmpty) {
       return null;
@@ -511,15 +533,20 @@ class MemoryPlugin extends BasePlugin {
     if (resolvedConversationId == null) return;
     Future(() async {
       try {
+        if (await usesNotebook(resolvedConversationId)) return;
         await service.runPreFlush(
           conversationId: resolvedConversationId,
           messagesLikelyToLose: droppedMessages,
         );
       } catch (e) {
-        AppLogger.warning('MemoryPlugin', 'Pre-flush failed', metadata: {
-          'conversationId': resolvedConversationId,
-          'error': e.toString(),
-        });
+        AppLogger.warning(
+          'MemoryPlugin',
+          'Pre-flush failed',
+          metadata: {
+            'conversationId': resolvedConversationId,
+            'error': e.toString(),
+          },
+        );
       }
     });
   }
@@ -529,7 +556,8 @@ class MemoryPlugin extends BasePlugin {
     if (explicitConversationId != null && explicitConversationId.isNotEmpty) {
       return explicitConversationId;
     }
-    return _ref.read(activeConversationProvider)?.id;
+    // 缺少请求作用域时必须失败关闭；活动页面可能已经切换到另一个角色。
+    return null;
   }
 
   /// kept for backward compatibility with existing caller
@@ -542,8 +570,9 @@ class MemoryPlugin extends BasePlugin {
   }
 
   Future<String> _resolveRoleLabel(String conversationId) async {
-    final conversation =
-        await _ref.read(conversationRepositoryProvider).getById(conversationId);
+    final conversation = await _ref
+        .read(conversationRepositoryProvider)
+        .getById(conversationId);
     if (conversation == null) {
       return '当前角色';
     }
@@ -556,6 +585,34 @@ class MemoryPlugin extends BasePlugin {
       return title;
     }
     return '当前角色';
+  }
+
+  Future<bool> usesNotebook(String conversationId) async =>
+      (await _ref
+              .read(contactMemoryPortProvider)
+              .load(conversationId)
+              .timeout(const Duration(milliseconds: 500)))
+          .enabled;
+
+  Future<List<AITool>> getToolsForConversation(String? conversationId) async {
+    final ownerId = _resolveConversationId(conversationId);
+    if (!enabled || ownerId == null || !await usesNotebook(ownerId)) return [];
+    final port = _ref.read(contactMemoryPortProvider);
+    return buildContactMemoryTools(
+      port: port,
+      ownerId: ownerId,
+      isAllowed: () async {
+        // 每次执行再次检查全局与该角色授权，但绝不重新绑定活动页面。
+        final settings = _ref.read(memoryPluginConfigProvider);
+        final conversation = await _ref
+            .read(conversationRepositoryProvider)
+            .getById(ownerId);
+        return settings.enabled &&
+            conversation != null &&
+            conversation.deletedAt == null &&
+            ConversationConverter.fromDb(conversation).allowsPlugin('memory');
+      },
+    );
   }
 
   MemoryService? get service => _service;

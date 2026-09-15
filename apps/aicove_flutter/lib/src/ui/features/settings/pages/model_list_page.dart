@@ -150,7 +150,7 @@ class _ModelListPageState extends ConsumerState<ModelListPage> {
           _exitSelectMode();
         }
       },
-      child: Scaffold(
+      child: MoePageScaffold(
         appBar: MoeAppBar(
           title: '模型管理',
           showBackButton: true,
@@ -206,21 +206,7 @@ class _ModelListPageState extends ConsumerState<ModelListPage> {
                 padding: EdgeInsets.zero,
                 children: [
                   MoeSettingsRow(
-                    iconWidget: SizedBox(
-                      width: 32,
-                      height: 32,
-                      child: DecoratedBox(
-                        decoration: MoeG2Decoration(
-                          radius: 8,
-                          color: colors.primary.withValues(alpha: 0.1),
-                        ),
-                        child:
-                            Icon(Icons.tune, color: colors.primary, size: 18),
-                      ),
-                    ),
-                    iconContainerWidth: 40,
                     label: '默认模型设置',
-                    subtitle: '聊天模型、图片识别模型',
                     trailingType: MoeSettingsRowTrailing.chevron,
                     onTap: () {
                       Navigator.of(context).push(

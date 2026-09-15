@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/09-03-model-thinking-level/research/codebase-survey.md", "reason": "对照锚点核对注入层与适配器改动是否落在预期位置"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查五层数据流是否贯通、字段命名一致"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "UI 组件质量与测试要求"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "适配器与数据层质量要求"}

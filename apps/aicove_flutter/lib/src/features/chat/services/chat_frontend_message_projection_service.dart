@@ -87,7 +87,8 @@ class ChatFrontendMessageProjectionService {
 
   Message _projectPassthroughMessage(Message message) {
     return message.copyWith(
-      sourceMessageId: message.sourceMessageId ?? message.id,
+      // DB sourceMessageId 是导入来源；展示操作必须指向当前 raw 行。
+      sourceMessageId: message.id,
       rawPayload: null,
     );
   }
@@ -195,6 +196,7 @@ class ChatFrontendMessageProjectionService {
               width: imageBlock.width,
               height: imageBlock.height,
               prompt: imageBlock.prompt,
+              generationSnapshot: imageBlock.generationSnapshot,
               status: imageBlock.status,
             ),
           ],
@@ -264,6 +266,7 @@ class ChatFrontendMessageProjectionService {
                 messageId: 'img_${localPath.hashCode}_${op.textCharsBefore}',
                 localPath: localPath,
                 prompt: op.prompt,
+                generationSnapshot: op.generationSnapshot,
               ),
             ],
             createdAt: DateTime.now(),

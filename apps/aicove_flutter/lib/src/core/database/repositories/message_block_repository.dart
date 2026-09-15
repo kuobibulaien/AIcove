@@ -1,11 +1,19 @@
 import 'package:drift/drift.dart';
 import '../database.dart';
+import '../../media/embedded_media_store.dart';
 
 /// 消息内容块 Repository
 class MessageBlockRepository {
   final AppDatabase _db;
 
-  MessageBlockRepository(this._db);
+  MessageBlockRepository(this._db, {EmbeddedMediaStore? mediaStore})
+      : _mediaStore = mediaStore ?? EmbeddedMediaStore.shared;
+  final EmbeddedMediaStore _mediaStore;
+
+  Future<MessageBlocksCompanion> _compact(MessageBlocksCompanion data) async {
+    if (!data.data.present) return data;
+    return data.copyWith(data: Value(await _mediaStore.compactJson(data.data.value)));
+  }
 
   /// 获取消息的所有内容块
   Future<List<MessageBlock>> getByMessage(String messageId) async {
@@ -32,25 +40,27 @@ class MessageBlockRepository {
 
   /// 创建内容块
   Future<void> insert(MessageBlocksCompanion data) async {
-    await _db.into(_db.messageBlocks).insert(data);
+    await _db.into(_db.messageBlocks).insert(await _compact(data));
   }
 
   /// 创建或更新内容块（upsert）
   Future<void> upsert(MessageBlocksCompanion data) async {
-    await _db.into(_db.messageBlocks).insertOnConflictUpdate(data);
+    await _db.into(_db.messageBlocks).insertOnConflictUpdate(await _compact(data));
   }
 
   /// 批量创建内容块
   Future<void> insertAll(List<MessageBlocksCompanion> blocks) async {
+    final compact = <MessageBlocksCompanion>[];
+    for (final block in blocks) { compact.add(await _compact(block)); }
     await _db.batch((batch) {
-      batch.insertAll(_db.messageBlocks, blocks);
+      batch.insertAll(_db.messageBlocks, compact);
     });
   }
 
   /// 更新内容块
   Future<void> update(String id, MessageBlocksCompanion data) async {
     await (_db.update(_db.messageBlocks)..where((t) => t.id.equals(id)))
-        .write(data);
+        .write(await _compact(data));
   }
 
   /// CAS 语义更新内容块 data：仅当行未软删且 data 与 [expectedData] 原文

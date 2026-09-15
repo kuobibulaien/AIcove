@@ -8,7 +8,6 @@ class ChatPageVisionCompatibilityDecision {
   const ChatPageVisionCompatibilityDecision._({
     required this.canSend,
     this.modelDisplayName,
-    this.hasVisionModel = false,
   });
 
   const ChatPageVisionCompatibilityDecision.allow()
@@ -16,16 +15,13 @@ class ChatPageVisionCompatibilityDecision {
 
   const ChatPageVisionCompatibilityDecision.requireConfirmation({
     required String modelDisplayName,
-    required bool hasVisionModel,
   }) : this._(
           canSend: false,
           modelDisplayName: modelDisplayName,
-          hasVisionModel: hasVisionModel,
         );
 
   final bool canSend;
   final String? modelDisplayName;
-  final bool hasVisionModel;
 }
 
 class ChatPageSendSupport {
@@ -63,8 +59,6 @@ class ChatPageSendSupport {
 
     return ChatPageVisionCompatibilityDecision.requireConfirmation(
       modelDisplayName: settings.getModelDisplayName(primaryModel),
-      hasVisionModel: settings.defaultVisionModel != null &&
-          settings.defaultVisionModel!.isNotEmpty,
     );
   }
 }

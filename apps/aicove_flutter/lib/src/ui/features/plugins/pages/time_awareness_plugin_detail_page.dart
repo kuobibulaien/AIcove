@@ -16,41 +16,19 @@ class TimeAwarenessPluginDetailPage extends ConsumerWidget {
     final config = ref.watch(timeAwarenessPluginConfigProvider);
     final notifier = ref.read(timeAwarenessPluginConfigProvider.notifier);
 
-    return Scaffold(
+    return MoePageScaffold(
       backgroundColor: colors.surface,
-      appBar: const MoeAppBar(
-        title: '时间感知',
-        showBackButton: true,
-      ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-        children: [
-          _OverviewCard(config: config),
-          const SizedBox(height: 16),
-          MoeSettingsGroup(
-            margin: EdgeInsets.zero,
-            children: [
-              MoeSettingsRow(
-                icon: Icons.schedule_outlined,
-                iconColor: colors.focus,
-                label: '启用时间感知',
-                subtitle: '默认开启。关闭后不再向 AI 注入当前时间和消息时序辅助信息。',
-                trailingType: MoeSettingsRowTrailing.switchControl,
-                switchValue: config.enabled,
-                onSwitchChanged: notifier.setEnabled,
-                showDivider: false,
-              ),
-            ],
-          ),
-          if (config.enabled) ...[
-            const SizedBox(height: 16),
+      appBar: const MoeAppBar(title: '时间感知', showBackButton: true),
+      body: MoeSettingsContent(
+        child: ListView(
+          padding: MoeSettingsLayout.verticalListPadding,
+          children: [
+            _OverviewCard(config: config),
+            const SizedBox(height: MoeSettingsLayout.sectionGap),
             MoeSettingsGroup(
               title: '注入内容',
-              margin: EdgeInsets.zero,
               children: [
                 MoeSettingsRow(
-                  icon: Icons.history_outlined,
-                  iconColor: colors.focus,
                   label: '历史消息时间戳',
                   subtitle: '为历史消息补上发送时间，帮助 AI 理解前后顺序和时间间隔。',
                   trailingType: MoeSettingsRowTrailing.switchControl,
@@ -58,8 +36,6 @@ class TimeAwarenessPluginDetailPage extends ConsumerWidget {
                   onSwitchChanged: notifier.setIncludeMessageTimestamp,
                 ),
                 MoeSettingsRow(
-                  icon: Icons.access_time_outlined,
-                  iconColor: colors.focus,
                   label: '当前时间注入',
                   subtitle: '把本次回复时的设备本地时间写入 <system-reminder>，让 AI 感知“现在”。',
                   trailingType: MoeSettingsRowTrailing.switchControl,
@@ -69,10 +45,10 @@ class TimeAwarenessPluginDetailPage extends ConsumerWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: MoeSettingsLayout.sectionGap),
             _TipsCard(config: config),
           ],
-        ],
+        ),
       ),
     );
   }
@@ -87,79 +63,47 @@ class _OverviewCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
 
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: MoeG2Decoration(
-        radius: MoeSmoothRadii.lg,
-        color: colors.panel,
-        border: Border.all(color: colors.borderLight, width: borderWidth),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 42,
-                height: 42,
-                decoration: MoeG2Decoration(
-                  radius: MoeSmoothRadii.md,
-                  color: colors.focus.withOpacity(0.12),
-                ),
-                child: Icon(
-                  Icons.schedule_outlined,
-                  color: colors.focus,
-                  size: 22,
-                ),
+    return MoeSettingsGroup(
+      padding: MoeSettingsLayout.contentPadding,
+      children: [
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '时间线辅助已接入聊天主链路',
+              style: TextStyle(
+                color: colors.text,
+                fontSize: 17,
+                fontWeight: MoeFontWeights.emphasis,
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '时间线辅助已接入聊天主链路',
-                      style: TextStyle(
-                        color: colors.text,
-                        fontSize: 17,
-                        fontWeight: MoeFontWeights.emphasis,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '它会把历史消息顺序和当前设备时间整理给 AI，避免“刚说完晚安又秒回早安”这类时间错位。',
-                      style: TextStyle(
-                        color: colors.textSecondary,
-                        fontSize: 13,
-                        height: 1.45,
-                      ),
-                    ),
-                  ],
-                ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '它会把历史消息顺序和当前设备时间整理给 AI，避免“刚说完晚安又秒回早安”这类时间错位。',
+              style: TextStyle(
+                color: colors.textSecondary,
+                fontSize: 13,
+                height: 1.45,
               ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _StatusChip(
-                label: config.enabled ? '插件已启用' : '插件已关闭',
-                highlighted: config.enabled,
-              ),
-              _StatusChip(
-                label: config.includeMessageTimestamp ? '历史消息带时间' : '历史消息不带时间',
-                highlighted: config.enabled && config.includeMessageTimestamp,
-              ),
-              _StatusChip(
-                label: config.includeCurrentTime ? '注入当前时间' : '不注入当前时间',
-                highlighted: config.enabled && config.includeCurrentTime,
-              ),
-            ],
-          ),
-        ],
-      ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            _StatusChip(
+              label: config.includeMessageTimestamp ? '历史消息带时间' : '历史消息不带时间',
+              highlighted: config.includeMessageTimestamp,
+            ),
+            _StatusChip(
+              label: config.includeCurrentTime ? '注入当前时间' : '不注入当前时间',
+              highlighted: config.includeCurrentTime,
+            ),
+          ],
+        ),
+      ],
     );
   }
 }
@@ -176,52 +120,35 @@ class _TipsCard extends StatelessWidget {
         ? '当前会回退到默认的当前时间模板'
         : '调试中心里的当前时间模板会直接影响 <system-reminder> 文案';
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: MoeG2Decoration(
-        radius: MoeSmoothRadii.lg,
-        color: colors.componentBackground,
-        border: Border.all(color: colors.borderLight, width: borderWidth),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.info_outline, color: colors.primary, size: 18),
-              const SizedBox(width: 8),
-              Text(
-                '生效说明',
-                style: TextStyle(
-                  color: colors.text,
-                  fontSize: 14,
-                  fontWeight: MoeFontWeights.emphasis,
-                ),
-              ),
-            ],
+    return MoeSettingsGroup(
+      padding: MoeSettingsLayout.contentPadding,
+      children: [
+        Text(
+          '生效说明',
+          style: TextStyle(
+            color: colors.text,
+            fontSize: 14,
+            fontWeight: MoeFontWeights.emphasis,
           ),
-          const SizedBox(height: 10),
-          Text(
-            '1. 历史消息时间戳会直接影响聊天历史序列化。\n'
-            '2. 当前时间注入会影响 system-reminder 内容。\n'
-            '3. $promptHint。',
-            style: TextStyle(
-              color: colors.textSecondary,
-              fontSize: 13,
-              height: 1.5,
-            ),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          '1. 历史消息时间戳会直接影响聊天历史序列化。\n'
+          '2. 当前时间注入会影响 system-reminder 内容。\n'
+          '3. $promptHint。',
+          style: TextStyle(
+            color: colors.textSecondary,
+            fontSize: 13,
+            height: 1.5,
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
 
 class _StatusChip extends StatelessWidget {
-  const _StatusChip({
-    required this.label,
-    required this.highlighted,
-  });
+  const _StatusChip({required this.label, required this.highlighted});
 
   final String label;
   final bool highlighted;

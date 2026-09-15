@@ -1,8 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:aicove_flutter/src/core/api/providers/gemini_adapter.dart';
+import 'package:aicove_flutter/src/core/api/providers/claude_adapter.dart';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'package:aicove_flutter/src/core/api/providers/provider_adapter.dart';
 import 'package:drift/native.dart';
 // ignore: depend_on_referenced_packages
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
@@ -13,17 +17,22 @@ import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
 import 'package:aicove_flutter/src/core/database/database.dart' as db;
 import 'package:aicove_flutter/src/core/database/database_provider.dart';
 import 'package:aicove_flutter/src/core/database/converters/database_converters.dart';
+import 'package:aicove_flutter/src/features/agent_context/data/silly_tavern_preset_store.dart';
+import 'package:aicove_flutter/src/features/agent_context/providers/preset_recipe_provider.dart';
+import 'package:aicove_flutter/src/features/agent_context/domain/tavern_compatibility_port.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/chat/domain/persona_prompt_codec.dart';
-import 'package:aicove_flutter/src/core/services/multimodal_assistant_service.dart';
 import 'package:aicove_flutter/src/features/plugins/image/image_config.dart';
+import 'package:aicove_flutter/src/features/plugins/image/drawing_preset.dart';
+import 'package:aicove_flutter/src/features/plugins/image/drawing_preset_provider.dart';
 import 'package:aicove_flutter/src/features/plugins/plugin_providers.dart';
 import 'package:aicove_flutter/src/features/plugins/trigger/trigger_config.dart';
 import 'package:aicove_flutter/src/features/plugins/trigger/trigger_plugin.dart';
 import 'package:aicove_flutter/src/features/observability/trace_models.dart';
 import 'package:aicove_flutter/src/features/observability/trace_store.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_request_message_builder.dart';
+import 'package:aicove_flutter/src/features/chat/services/chat_plugin_context_policy.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_send_service.dart';
 import 'package:aicove_flutter/src/features/plugins/time_awareness/time_awareness_config.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
@@ -55,34 +64,17 @@ class _FakePathProviderPlatform extends PathProviderPlatform {
   Future<String?> getTemporaryPath() async => rootPath;
 }
 
-class _FakeMultimodalAssistantService extends MultimodalAssistantService {
-  _FakeMultimodalAssistantService({
-    this.audioResult,
-    this.videoResult,
-  });
-
-  final String? audioResult;
-  final String? videoResult;
-
-  @override
-  Future<String?> transcribeAudioFile({
-    required FileBlock fileBlock,
-    required AppSettings settings,
-  }) async {
-    return audioResult;
-  }
-
-  @override
-  Future<String?> summarizeVideoFile({
-    required FileBlock fileBlock,
-    required AppSettings settings,
-  }) async {
-    return videoResult;
-  }
-}
-
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() async {
+    final previous = PathProviderPlatform.instance;
+    final root = await Directory.systemTemp.createTemp('chat_service_settings_');
+    PathProviderPlatform.instance = _FakePathProviderPlatform(root.path);
+    addTearDown(() async {
+      PathProviderPlatform.instance = previous;
+      await root.delete(recursive: true);
+    });
+  });
 
   Message msg(String id, String text, DateTime t) => Message(
         id: id,
@@ -94,8 +86,6 @@ void main() {
   AppSettings fakeSettings({
     required String defaultModelName,
     List<String>? defaultChatModels,
-    String? defaultVisionModel,
-    bool preferVisionAssistant = false,
     Map<String, ModelConfig>? modelConfigs,
     bool imageGenerationEnabled = false,
     CallFlowMode callFlowMode = CallFlowMode.auto,
@@ -114,7 +104,7 @@ void main() {
       apiBaseUrl: 'https://api.openai.com/v1',
       imageGenerationEnabled: imageGenerationEnabled,
       maxFileUploadMB: 10,
-      historyMessageLimit: 100,
+      contextWindowTokens: 272000,
       customModels: const <CustomModel>[],
       providers: const <ProviderAuth>[
         ProviderAuth(
@@ -147,8 +137,6 @@ void main() {
       accentColor: 'FC96AA',
       hideUserAvatar: true,
       defaultChatModels: defaultChatModels ?? <String>[defaultModelName],
-      defaultVisionModel: defaultVisionModel,
-      preferVisionAssistant: preferVisionAssistant,
       callFlowSettings: CallFlowSettings(mode: callFlowMode),
     );
   }
@@ -178,13 +166,12 @@ void main() {
     final history = service.prepareHistory(
       conv: conv,
       userMsg: userMsg,
-      limit: 20,
     );
 
     expect(history.map((m) => m.id).toList(), ['m3', 'm4', 'm5']);
   });
 
-  test('prepareHistory still applies message limit after context slicing', () {
+  test('prepareHistory keeps all messages after context slicing', () {
     final now = DateTime.now();
     final conv = Conversation(
       id: 'conv_2',
@@ -209,13 +196,12 @@ void main() {
     final history = service.prepareHistory(
       conv: conv,
       userMsg: userMsg,
-      limit: 2,
     );
 
-    expect(history.map((m) => m.id).toList(), ['m4', 'm5']);
+    expect(history.map((m) => m.id).toList(), ['m2', 'm3', 'm4', 'm5']);
   });
 
-  test('prepareHistory falls back to normal limit when marker is missing', () {
+  test('prepareHistory keeps full history when marker is missing', () {
     final now = DateTime.now();
     final conv = Conversation(
       id: 'conv_3',
@@ -239,10 +225,9 @@ void main() {
     final history = service.prepareHistory(
       conv: conv,
       userMsg: userMsg,
-      limit: 3,
     );
 
-    expect(history.map((m) => m.id).toList(), ['m2', 'm3', 'm4']);
+    expect(history.map((m) => m.id).toList(), ['m1', 'm2', 'm3', 'm4']);
   });
 
   test('prepareHistoryFromStore uses full persisted history, not UI page',
@@ -286,7 +271,6 @@ void main() {
     final history = await service.prepareHistoryFromStore(
       conv: conv,
       userMsg: userMsg,
-      limit: 20,
     );
 
     expect(history.map((m) => m.id).toList(),
@@ -338,7 +322,6 @@ void main() {
     final history = await service.prepareHistoryFromStore(
       conv: conv,
       userMsg: userMsg,
-      limit: 20,
     );
 
     expect(history.map((m) => m.id).toList(), ['m4', 'm5']);
@@ -359,70 +342,6 @@ void main() {
     expect(blocks!.whereType<ImageBlock>().length, 1);
     expect(blocks.whereType<TextBlock>().length, 1);
     expect(blocks.whereType<TextBlock>().first.content, '这是图片说明文字');
-  });
-
-  test('non-vision description reuses image prompt before vision fallback',
-      () async {
-    var visionCalled = false;
-    final block = ImageBlock(
-      messageId: 'msg_1',
-      localPath: '/tmp/demo.png',
-      prompt: '1girl, blue hair, smile',
-    );
-
-    final description =
-        await ChatSendService.resolveImageDescriptionForNonVision(
-      imageBlock: block,
-      translateWithVision: () async {
-        visionCalled = true;
-        return 'vision generated description';
-      },
-    );
-
-    expect(description, '1girl, blue hair, smile');
-    expect(visionCalled, isFalse);
-  });
-
-  test('non-vision description calls vision fallback when prompt is missing',
-      () async {
-    var visionCalled = false;
-    final block = ImageBlock(
-      messageId: 'msg_2',
-      localPath: '/tmp/demo2.png',
-    );
-
-    final description =
-        await ChatSendService.resolveImageDescriptionForNonVision(
-      imageBlock: block,
-      translateWithVision: () async {
-        visionCalled = true;
-        return 'vision generated description';
-      },
-    );
-
-    expect(description, 'vision generated description');
-    expect(visionCalled, isTrue);
-  });
-
-  test('non-vision description reuses cached description', () async {
-    var visionCalled = false;
-    final block = ImageBlock(
-      messageId: 'msg_2_cache',
-      localPath: '/tmp/demo2.png',
-    );
-
-    final description =
-        await ChatSendService.resolveImageDescriptionForNonVision(
-      imageBlock: block,
-      cachedDescription: '缓存描述',
-      translateWithVision: () async {
-        visionCalled = true;
-        return 'vision generated description';
-      },
-    );
-
-    expect(description, '缓存描述');
-    expect(visionCalled, isFalse);
   });
 
   test('non-vision assistant image no longer injects hidden image marker', () {
@@ -481,32 +400,11 @@ void main() {
     expect(result.single['content'], '正文');
   });
 
-  test('vision translation request uses system prompt + single image only', () {
-    final messages = ChatSendService.buildVisionTranslationMessages(
-      imagePart: const <String, dynamic>{
-        'type': 'image_url',
-        'image_url': <String, dynamic>{'url': 'https://example.com/cat.jpg'},
-      },
-    );
-
-    expect(messages.length, 2);
-    expect(messages.first['role'], 'system');
-    expect(
-      messages.first['content'],
-      ChatSendService.visionDescriptionSystemPrompt,
-    );
-    expect(messages[1]['role'], 'user');
-    final content = messages[1]['content'] as List<dynamic>;
-    expect(content.length, 1);
-    expect((content.first as Map<String, dynamic>)['type'], 'image_url');
-  });
-
   test('image send chain skips vision assistant when chat model has vision',
       () {
     final settings = fakeSettings(
       defaultModelName: 'openai:gpt-4.1-mini',
       defaultChatModels: const <String>['openai:gpt-4.1-mini'],
-      defaultVisionModel: 'openai:gpt-4o-mini',
       modelConfigs: const <String, ModelConfig>{
         'openai:gpt-4.1-mini': ModelConfig(
           chatCapabilities: <String>['vision'],
@@ -528,7 +426,6 @@ void main() {
     final settings = fakeSettings(
       defaultModelName: 'openai:gpt-3.5-turbo',
       defaultChatModels: const <String>['openai:gpt-3.5-turbo'],
-      defaultVisionModel: 'openai:gpt-4o-mini',
     );
     final container = ProviderContainer();
     addTearDown(container.dispose);
@@ -545,7 +442,6 @@ void main() {
     final settings = fakeSettings(
       defaultModelName: 'openai:gpt-4o',
       defaultChatModels: const <String>['openai:gpt-4o'],
-      defaultVisionModel: 'openai:gpt-4o-mini',
     );
     final container = ProviderContainer();
     addTearDown(container.dispose);
@@ -557,61 +453,6 @@ void main() {
     expect(chain, isNot(contains('openai:gpt-4o-mini')));
   });
 
-  test(
-      'image send chain keeps chat model first when preference switch is enabled',
-      () {
-    final settings = fakeSettings(
-      defaultModelName: 'openai:gpt-4o',
-      defaultChatModels: const <String>['openai:gpt-4o'],
-      defaultVisionModel: 'openai:gpt-4o-mini',
-      preferVisionAssistant: true,
-    );
-    final container = ProviderContainer();
-    addTearDown(container.dispose);
-    final service = container.read(chatSendServiceProvider);
-
-    final chain = service.buildImageSendModelRefs(settings);
-
-    expect(chain, <String>['openai:gpt-4o']);
-  });
-
-  test(
-      'image send chain falls back to chat models when preference switch is enabled but vision model is missing',
-      () {
-    final settings = fakeSettings(
-      defaultModelName: 'openai:gpt-4o',
-      defaultChatModels: const <String>['openai:gpt-4o'],
-      defaultVisionModel: null,
-      preferVisionAssistant: true,
-    );
-    final container = ProviderContainer();
-    addTearDown(container.dispose);
-    final service = container.read(chatSendServiceProvider);
-
-    final chain = service.buildImageSendModelRefs(settings);
-
-    expect(chain, <String>['openai:gpt-4o']);
-  });
-
-  test('preferVisionAssistant treats vision chat model as non-vision flow', () {
-    final settings = fakeSettings(
-      defaultModelName: 'openai:gpt-4o',
-      defaultChatModels: const <String>['openai:gpt-4o'],
-      defaultVisionModel: 'openai:gpt-4o-mini',
-      preferVisionAssistant: true,
-    );
-    final container = ProviderContainer();
-    addTearDown(container.dispose);
-    final service = container.read(chatSendServiceProvider);
-
-    final shouldPreprocess = service.shouldUseNonVisionImageFlow(
-      settings: settings,
-      modelRef: 'openai:gpt-4o',
-    );
-
-    expect(shouldPreprocess, isTrue);
-  });
-
   test('assistant generated image is omitted in non-vision flow', () async {
     final builder = ChatRequestMessageBuilder(
       readImageAsBase64: (_) async => null,
@@ -619,7 +460,6 @@ void main() {
     final settings = fakeSettings(
       defaultModelName: 'openai:gpt-3.5-turbo',
       defaultChatModels: const <String>['openai:gpt-3.5-turbo'],
-      defaultVisionModel: 'openai:gpt-4o-mini',
     );
     final message = Message.fromBlocks(
       id: 'msg_assistant_image',
@@ -642,6 +482,28 @@ void main() {
 
     expect(result, isEmpty);
   });
+
+  for (final mime in ['audio/mpeg', 'video/mp4']) {
+    test('media bytes reach the current chat provider: $mime', () async {
+      final root = await Directory.systemTemp.createTemp('media_request_');
+      addTearDown(() => root.delete(recursive: true));
+      final file = File('${root.path}/sample');
+      await file.writeAsBytes([1, 2, 3, 4]);
+      final builder = ChatRequestMessageBuilder(readImageAsBase64: (_) async => null);
+      final message = Message.fromBlocks(id: 'media', role: 'user', createdAt: DateTime(2026), blocks: [
+        TextBlock(messageId: 'media', content: '请总结附件'),
+        FileBlock(messageId: 'media', fileName: 'sample', filePath: file.path, mimeType: mime, fileSize: 4),
+      ]);
+      final messages = await builder.buildRequestMessages([message], settings: fakeSettings(defaultModelName: 'gemini:gemini-2.5-pro'));
+      final body = GeminiAdapter().buildRequestBody(model: 'gemini-2.5-pro', messages: messages);
+      final parts = ((body['contents'] as List).single as Map)['parts'] as List;
+      expect(parts.first['text'], '请总结附件');
+      expect(parts.last['inlineData'], {'mimeType': mime, 'data': 'AQIDBA=='});
+      expect(() => ClaudeAdapter().buildRequestBody(model: 'claude-sonnet', messages: messages), throwsUnsupportedError);
+      await file.writeAsBytes(List.filled(1024 * 1024 + 1, 0));
+      await expectLater(builder.buildRequestMessages([message], settings: fakeSettings(defaultModelName: 'gemini:gemini-2.5-pro').copyWith(maxFileUploadMB: 1)), throwsStateError);
+    });
+  }
 
   test('createUserFileMessage infers audio mime and preserves caption text',
       () async {
@@ -671,140 +533,77 @@ void main() {
     expect(textBlock?.content, '帮我总结这个音频');
   });
 
-  test('audio FileBlock is converted to audio_context by assistant', () async {
-    final builder = ChatRequestMessageBuilder(
-      readImageAsBase64: (_) async => null,
-      multimodalAssistantService: _FakeMultimodalAssistantService(
-        audioResult: '{"transcript":"你好","summary":"问候"}',
-      ),
-    );
-    final message = Message.fromBlocks(
-      id: 'msg_audio_file',
-      role: 'user',
-      blocks: [
-        FileBlock(
-          messageId: 'msg_audio_file',
-          fileName: 'sample.mp3',
-          fileSize: 1024,
-          mimeType: 'audio/mpeg',
-          filePath: '/tmp/sample.mp3',
-        ),
-      ],
-      createdAt: DateTime(2026, 4, 21, 21, 0, 0),
-    );
-
-    final result = await builder.buildRequestMessages(
-      [message],
+  test('disabled media drops generated blocks and tool pairs but preserves uploads', () async {
+    var imageReads = 0;
+    final builder = ChatRequestMessageBuilder(readImageAsBase64: (_) async {
+      imageReads++;
+      return 'image-bytes';
+    });
+    final now = DateTime(2026, 9, 11);
+    final history = [
+      Message.fromBlocks(id: 'generated', role: 'assistant', createdAt: now, blocks: [
+        TextBlock(messageId: 'generated', content: 'text<tts>VOICE_SECRET</tts>'),
+        ImageBlock(messageId: 'generated', localPath: '/unused/generated.png'),
+        ToolBlock(messageId: 'generated', toolName: 'draw_image', toolCallId: 'draw', arguments: {'prompt': 'IMAGE_SECRET'}, result: {'url': 'IMAGE_SECRET'}),
+        ToolBlock(messageId: 'generated', toolName: 'speak', toolCallId: 'voice', arguments: {'text': 'VOICE_SECRET'}, result: {'audio': 'VOICE_SECRET'}),
+      ]),
+      Message.fromBlocks(id: 'upload', role: 'user', createdAt: now, blocks: [
+        TextBlock(messageId: 'upload', content: 'question'),
+        ImageBlock(messageId: 'upload', url: 'https://example.invalid/user.png'),
+      ]),
+    ];
+    final result = await builder.buildRequestMessages(history,
       settings: fakeSettings(defaultModelName: 'openai:gpt-4o'),
-    );
-
-    expect(result, hasLength(1));
-    final content = result.single['content'];
-    expect(content, contains('<audio_context source="history"'));
-    expect(content, contains('"transcript":"你好"'));
+      pluginPolicy: const ChatPluginContextPolicy(imageEnabled: false, ttsEnabled: false));
+    expect(imageReads, 0);
+    expect(result.first, {'role': 'assistant', 'content': 'text'});
+    expect(result.last['content'], hasLength(2));
+    expect(jsonEncode(result), isNot(contains('_SECRET')));
+    expect(history.first.blocks, hasLength(4));
   });
 
-  test('audio FileBlock 在非 Gemini 辅助模型下会退化为文字提示', () async {
-    final builder = ChatRequestMessageBuilder(
-      readImageAsBase64: (_) async => null,
-      multimodalAssistantService: MultimodalAssistantService(),
-    );
-    final message = Message.fromBlocks(
-      id: 'msg_audio_file_fallback',
-      role: 'user',
-      blocks: [
-        FileBlock(
-          messageId: 'msg_audio_file_fallback',
-          fileName: 'sample.mp3',
-          fileSize: 1024,
-          mimeType: 'audio/mpeg',
-          filePath: '/tmp/sample.mp3',
+  test('a user message reduced to nothing cannot silently replay an older question', () async {
+    final builder = ChatRequestMessageBuilder(readImageAsBase64: (_) async => null);
+    final now = DateTime(2026, 9, 11);
+    await expectLater(builder.buildRequestMessages([
+      msg('old', 'previous question', now), msg('new', '<tts>hidden</tts>', now),
+    ], settings: fakeSettings(defaultModelName: 'openai:gpt-4o'),
+      pluginPolicy: const ChatPluginContextPolicy(imageEnabled: false, ttsEnabled: false)),
+      throwsA(isA<StateError>()));
+  });
+
+  for (final includeHistory in [false, true]) {
+    test('disabled plugins leave clean context (history=$includeHistory)', () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final now = DateTime(2026, 9, 11);
+      final container = ProviderContainer(overrides: [
+        appSettingsProvider.overrideWith(() => _FakeAppSettingsNotifier(
+          fakeSettings(defaultModelName: 'openai:gpt-4o'),
+        )),
+      ]);
+      addTearDown(container.dispose);
+      final history = <Message>[
+        if (includeHistory) Message(
+          id: 'old', role: 'assistant', createdAt: now,
+          content: 'before<IMAGE source="history">secret image</IMAGE><tts voice="a">secret voice</tts>after',
         ),
-      ],
-      createdAt: DateTime(2026, 4, 21, 21, 1, 0),
-    );
-
-    final result = await builder.buildRequestMessages(
-      [message],
-      settings: fakeSettings(
-        defaultModelName: 'openai:gpt-4o',
-        defaultVisionModel: 'openai:gpt-4o-mini',
-      ),
-    );
-
-    expect(result, hasLength(1));
-    final content = result.single['content'] as String;
-    expect(content, contains('用户上传了音频文件：sample.mp3'));
-    expect(content, contains('但当前无法解析音频内容'));
-  });
-
-  test('video FileBlock is converted to video_context by assistant', () async {
-    final builder = ChatRequestMessageBuilder(
-      readImageAsBase64: (_) async => null,
-      multimodalAssistantService: _FakeMultimodalAssistantService(
-        videoResult:
-            '{"summary":"用户在演示功能","transcript":"","timeline":[{"t":"00:00-00:05","event":"打开页面"}]}',
-      ),
-    );
-    final message = Message.fromBlocks(
-      id: 'msg_video_file',
-      role: 'user',
-      blocks: [
-        FileBlock(
-          messageId: 'msg_video_file',
-          fileName: 'sample.mp4',
-          fileSize: 2048,
-          mimeType: 'video/mp4',
-          filePath: '/tmp/sample.mp4',
-        ),
-      ],
-      createdAt: DateTime(2026, 4, 21, 21, 5, 0),
-    );
-
-    final result = await builder.buildRequestMessages(
-      [message],
-      settings: fakeSettings(defaultModelName: 'openai:gpt-4o'),
-    );
-
-    expect(result, hasLength(1));
-    final content = result.single['content'];
-    expect(content, contains('<video_context source="history"'));
-    expect(content, contains('"summary":"用户在演示功能"'));
-  });
-
-  test('video FileBlock 在非 Gemini 辅助模型下会退化为文字提示', () async {
-    final builder = ChatRequestMessageBuilder(
-      readImageAsBase64: (_) async => null,
-      multimodalAssistantService: MultimodalAssistantService(),
-    );
-    final message = Message.fromBlocks(
-      id: 'msg_video_file_fallback',
-      role: 'user',
-      blocks: [
-        FileBlock(
-          messageId: 'msg_video_file_fallback',
-          fileName: 'sample.mp4',
-          fileSize: 2048,
-          mimeType: 'video/mp4',
-          filePath: '/tmp/sample.mp4',
-        ),
-      ],
-      createdAt: DateTime(2026, 4, 21, 21, 6, 0),
-    );
-
-    final result = await builder.buildRequestMessages(
-      [message],
-      settings: fakeSettings(
-        defaultModelName: 'openai:gpt-4o',
-        defaultVisionModel: 'openai:gpt-4o-mini',
-      ),
-    );
-
-    expect(result, hasLength(1));
-    final content = result.single['content'] as String;
-    expect(content, contains('用户上传了视频文件：sample.mp4'));
-    expect(content, contains('但当前无法解析视频内容'));
-  });
+        Message(id: 'latest', role: 'user', content: 'hello', createdAt: now),
+      ];
+      final original = history.first.content;
+      final config = await container.read(chatSendServiceProvider).prepareApiConfig(
+        conv: Conversation(id: 'clean', title: 'clean', displayName: 'clean', personaPrompt: '',
+          enabledPlugins: const [], createdAt: now, updatedAt: now, messages: const []),
+        history: history, userText: 'hello',
+      );
+      expect(config.messages.where((m) => m['role'] == 'system'), isEmpty);
+      expect(config.tools ?? [], isEmpty);
+      expect(config.messages, [
+        if (includeHistory) {'role': 'assistant', 'content': 'beforeafter'},
+        {'role': 'user', 'content': 'hello'},
+      ]);
+      expect(history.first.content, original);
+    });
+  }
 
   test('prepareApiConfig should keep draw prompt out of system and into tool',
       () async {
@@ -1001,12 +800,54 @@ void main() {
     expect(drawTools, anyOf(isNull, isEmpty));
   });
 
+  test('two role requests keep independent drawing snapshots across preset edits', () async {
+    final root = await Directory.systemTemp.createTemp('drawing-owner-test-');
+    final previousPaths = PathProviderPlatform.instance;
+    PathProviderPlatform.instance = _FakePathProviderPlatform(root.path);
+    addTearDown(() async { PathProviderPlatform.instance = previousPaths; await root.delete(recursive: true); });
+    const a = DrawingPreset(id: 'a', name: 'A绘图', config: ImageConfig(selectedProviderId: 'openai',
+      selectedModelId: 'openai:image-a', defaultWidth: 768, drawingSystemPrompt: 'rule A'));
+    const b = DrawingPreset(id: 'b', name: 'B绘图', config: ImageConfig(selectedProviderId: 'other',
+      selectedModelId: 'other:image-b', defaultWidth: 1024, drawingSystemPrompt: 'rule B'));
+    final catalog = DrawingPresetCatalog(presets: [a, b], defaultPresetId: 'a', legacyConfig: const ImageConfig());
+    SharedPreferences.setMockInitialValues({PreferencesDrawingPresetStore.storageKey: jsonEncode(catalog.toJson())});
+    final settings = fakeSettings(imageGenerationEnabled: true, defaultModelName: 'openai:gpt-4o',
+      defaultChatModels: ['openai:gpt-4o'], modelConfigs: const {
+        'openai:gpt-4o': ModelConfig(chatCapabilities: ['tools', 'vision'])});
+    final container = ProviderContainer(overrides: [appSettingsProvider.overrideWith(() => _FakeAppSettingsNotifier(settings))]);
+    addTearDown(container.dispose);
+    final service = container.read(chatSendServiceProvider);
+    final now = DateTime(2026, 9, 6);
+    Conversation role(String id) => Conversation(id: id, title: id, displayName: id,
+      personaPrompt: PersonaPromptCodec.compose(userPrompt: id, drawingPresetId: id),
+      enabledPlugins: const ['image'], createdAt: now, updatedAt: now, messages: const []);
+    final history = [Message(id: 'user', role: 'user', content: '画图', createdAt: now)];
+    final requestA = await service.prepareApiConfig(conv: role('a'), history: history, userText: '画图');
+    final requestB = await service.prepareApiConfig(conv: role('b'), history: history, userText: '画图');
+    await container.read(drawingPresetCatalogProvider.notifier).savePreset(DrawingPreset(id: 'a', name: 'A修改',
+      config: a.config.copyWith(defaultWidth: 1280)));
+    await container.read(drawingPresetCatalogProvider.notifier).setDefault('b');
+    expect(requestA.drawingConfig!.defaultWidth, 768);
+    expect(requestB.drawingConfig!.defaultWidth, 1024);
+    expect(requestA.drawingConfig!.selectedProviderId, 'openai');
+    expect(requestB.drawingConfig!.selectedProviderId, 'other');
+    expect(requestA.boundTools!.firstWhere((t) => t.name == 'draw_image').parameters['prompt']!.description, 'rule A');
+    expect(requestB.boundTools!.firstWhere((t) => t.name == 'draw_image').parameters['prompt']!.description, 'rule B');
+    final next = await service.prepareApiConfig(conv: role('a'), history: history, userText: '画图');
+    expect(next.drawingConfig!.defaultWidth, 1280);
+  });
+
   test(
       'prepareApiConfig should preserve explicit artist preset disable binding',
       () async {
+    final root = await Directory.systemTemp.createTemp('drawing-legacy-test-');
+    final previousPaths = PathProviderPlatform.instance;
+    PathProviderPlatform.instance = _FakePathProviderPlatform(root.path);
+    addTearDown(() async { PathProviderPlatform.instance = previousPaths; await root.delete(recursive: true); });
     SharedPreferences.setMockInitialValues(<String, Object>{});
     final now = DateTime(2026, 3, 7, 12, 0, 0);
     final settings = fakeSettings(
+      imageGenerationEnabled: true,
       defaultModelName: 'openai:gpt-4o',
       defaultChatModels: const <String>['openai:gpt-4o'],
       modelConfigs: const <String, ModelConfig>{
@@ -1021,6 +862,7 @@ void main() {
       ],
       selectedArtistPresetName: '全局画风',
     );
+    SharedPreferences.setMockInitialValues({'aicove.plugins.image.config': jsonEncode(imageConfig.toJson())});
     final conv = Conversation(
       id: 'conv_artist_binding',
       title: 'Chat',
@@ -1057,10 +899,10 @@ void main() {
       userText: userMsg.content,
     );
 
-    expect(
-      apiConfig.boundImageArtistPresetName,
-      PersonaPromptCodec.artistPresetDisabledBinding,
-    );
+    expect(apiConfig.drawingConfig, isNotNull);
+    expect(apiConfig.drawingConfig!.selectedArtistPreset, isNull);
+    // 旧“禁用画师串”已迁移成快照值，不再透传旧名称覆盖参数。
+    expect(apiConfig.boundImageArtistPresetName, isNull);
   });
 
   test(
@@ -1183,7 +1025,7 @@ void main() {
     );
     expect(
       promptAssembly['finalSystemPrompt'].toString(),
-      contains('以下是当前会话启用的特殊标签说明'),
+      isNot(contains('以下是当前会话启用的特殊标签说明')),
     );
     expect(
       promptAssembly['finalSystemPrompt'].toString(),
@@ -1277,13 +1119,14 @@ void main() {
     );
   });
 
-  test('prepareApiConfig should inject image failure into system reminder only',
+  for (final imageActive in [false, true]) {
+  test('prepareApiConfig should inject image failure into system reminder only (enabled=$imageActive)',
       () async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     final settings = fakeSettings(
       defaultModelName: 'openai:gpt-4o-mini',
       defaultChatModels: const <String>['openai:gpt-4o-mini'],
-    );
+    ).copyWith(imageGenerationEnabled: imageActive);
     final now = DateTime(2026, 3, 23, 12, 0, 0);
     final conv = Conversation(
       id: 'conv_image_failure_reminder',
@@ -1292,7 +1135,7 @@ void main() {
       personaPrompt: PersonaPromptCodec.compose(
         userPrompt: '你是贴心助手。',
       ),
-      enabledPlugins: const <String>[],
+      enabledPlugins: imageActive ? const ['image'] : const [],
       createdAt: now,
       updatedAt: now,
       messages: const <Message>[],
@@ -1341,6 +1184,14 @@ void main() {
       userText: currentUserMsg.content,
     );
 
+    if (!imageActive) {
+      final contents = jsonEncode(apiConfig.messages);
+      expect(contents, isNot(contains('<image')));
+      expect(contents, isNot(contains('image_generation_failure')));
+      expect(contents, isNot(contains('<system-reminder>')));
+      return;
+    }
+
     final reminderIndex = apiConfig.messages.lastIndexWhere((message) {
       final content = (message['content'] ?? '').toString();
       return (message['role'] ?? '').toString() == 'user' &&
@@ -1374,14 +1225,17 @@ void main() {
     expect(joinedContents, isNot(contains('<image source="history"')));
   });
 
+  }
+
+  for (final imageActive in [false, true]) {
   test(
-      'prepareApiConfig should inject internal image history guard into system prompt',
+      'prepareApiConfig should inject internal image history guard into system prompt (enabled=$imageActive)',
       () async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     final settings = fakeSettings(
       defaultModelName: 'openai:gpt-4o-mini',
       defaultChatModels: const <String>['openai:gpt-4o-mini'],
-    );
+    ).copyWith(imageGenerationEnabled: imageActive);
     final now = DateTime(2026, 4, 16, 13, 0, 0);
     final internalImageHistoryText =
         ChatRequestMessageBuilder.buildInternalImageContextText(
@@ -1400,7 +1254,7 @@ void main() {
       personaPrompt: PersonaPromptCodec.compose(
         userPrompt: '你是测试助手。',
       ),
-      enabledPlugins: const <String>[],
+      enabledPlugins: imageActive ? const ['image'] : const [],
       createdAt: now,
       updatedAt: now,
       messages: const <Message>[],
@@ -1432,6 +1286,14 @@ void main() {
       userText: currentUserMsg.content,
     );
 
+    if (!imageActive) {
+      final contents = jsonEncode(apiConfig.messages);
+      expect(contents, isNot(contains('<image')));
+      expect(contents, isNot(contains('image_generation_failure')));
+      expect(contents, isNot(contains('<system-reminder>')));
+      return;
+    }
+
     final systemMessage = apiConfig.messages.firstWhere(
       (message) => message['role'] == 'system',
       orElse: () => const <String, dynamic>{},
@@ -1444,6 +1306,8 @@ void main() {
       contains('<image source="history" ...>...</image> 是内部图片上下文记录'),
     );
   });
+
+  }
 
   test('trigger plugin should not inject system prompt', () async {
     final container = ProviderContainer();
@@ -1459,6 +1323,69 @@ void main() {
     );
 
     expect(prompt, isNull);
+  });
+
+  test('prepareApiConfig resolves thinking level: session > model default > software default',
+      () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final now = DateTime(2026, 4, 16, 12, 0, 0);
+    const modelRef = 'openai:gpt-5.2';
+    final settings = fakeSettings(
+      defaultModelName: modelRef,
+      defaultChatModels: const <String>[modelRef],
+      modelConfigs: const <String, ModelConfig>{
+        modelRef: ModelConfig(thinkingLevel: ThinkingLevel.medium),
+      },
+    );
+    Conversation buildConv(Map<String, ThinkingLevel> levels) => Conversation(
+          id: 'conv_thinking',
+          title: 'Chat',
+          displayName: 'Chat',
+          thinkingLevels: levels,
+          createdAt: now,
+          updatedAt: now,
+        );
+    final userMsg = Message(
+      id: 'msg_thinking',
+      role: 'user',
+      content: 'hi',
+      createdAt: now,
+    );
+    final container = ProviderContainer(
+      overrides: [
+        appSettingsProvider
+            .overrideWith(() => _FakeAppSettingsNotifier(settings)),
+      ],
+    );
+    addTearDown(container.dispose);
+    final service = container.read(chatSendServiceProvider);
+
+    final withSession = await service.prepareApiConfig(
+      conv: buildConv(const {modelRef: ThinkingLevel.xhigh}),
+      history: <Message>[userMsg],
+      userText: userMsg.content,
+    );
+    expect(withSession.providerRequestOptions?.thinkingLevel,
+        ThinkingLevel.xhigh);
+    expect(withSession.providerRequestOptions?.thinkingScheme,
+        ThinkingScheme.openaiEffort);
+
+    final modelDefault = await service.prepareApiConfig(
+      conv: buildConv(const {}),
+      history: <Message>[userMsg],
+      userText: userMsg.content,
+    );
+    expect(modelDefault.providerRequestOptions?.thinkingLevel,
+        ThinkingLevel.medium);
+
+    // 另一个模型的会话覆盖不影响当前模型（会话内按模型隔离）
+    final otherModel = await service.prepareApiConfig(
+      conv: buildConv(const {'openai:o3': ThinkingLevel.high}),
+      history: <Message>[userMsg],
+      userText: userMsg.content,
+    );
+    expect(otherModel.providerRequestOptions?.thinkingLevel,
+        ThinkingLevel.medium);
   });
 
   test(
@@ -1520,6 +1447,18 @@ void main() {
     expect(toolNames, contains('delete_reminder'));
     expect(toolNames, contains('list_reminders'));
     expect(toolNames, contains('search_reminders'));
+    // 无预设时 options 仍会构造（承载思考档位），但预设字段全部为空。
+    final options = apiConfig.providerRequestOptions;
+    expect(options, isNotNull);
+    expect(options!.temperature, isNull);
+    expect(options.reasoningEffort, isNull);
+    expect(options.useSystemPrompt, isTrue);
+    // gpt-4o-mini 未识别为原生档位模型 → generic → 软件默认 auto
+    expect(options.thinkingLevel, ThinkingLevel.auto);
+    expect(options.thinkingScheme, ThinkingScheme.generic);
+    expect(apiConfig.presetRegexScripts, isEmpty);
+    expect(apiConfig.presetRegexAuthorized, isFalse);
+    expect(apiConfig.presetStreamResponse, isNull);
   });
 
   test(
@@ -1581,5 +1520,265 @@ void main() {
     expect(toolNames, isNot(contains('delete_reminder')));
     expect(toolNames, isNot(contains('list_reminders')));
     expect(toolNames, isNot(contains('search_reminders')));
+  });
+
+  test('prepareApiConfig applies bound SillyTavern preset to final messages',
+      () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final temp = await Directory.systemTemp.createTemp('aicove_st_runtime_');
+    addTearDown(() async {
+      if (await temp.exists()) await temp.delete(recursive: true);
+    });
+    final previousPathProvider = PathProviderPlatform.instance;
+    PathProviderPlatform.instance = _FakePathProviderPlatform(temp.path);
+    TraceStore.instance.debugResetForTest();
+    addTearDown(() {
+      PathProviderPlatform.instance = previousPathProvider;
+      TraceStore.instance.debugResetForTest();
+    });
+    final store = SillyTavernPresetStore(
+      documentsDirectoryResolver: () async => temp,
+    );
+    const source = '''
+{
+  "name":"Runtime Preset",
+  "function_calling":false,
+  "assistant_prefill":"PREFILL",
+  "temperature":0.33,
+  "top_p":0.77,
+  "prompts":[
+    {"identifier":"main","role":"system","content":"MAIN {{char}} / {{user}}<image>PRESET_IMAGE_SECRET</image><tts>PRESET_VOICE_SECRET</tts>"},
+    {"identifier":"charDescription","marker":true,"role":"system"},
+    {"identifier":"attached","role":"system","content":"ATTACHED","attach_index":1,"attach_role":"user","attach_side":"end"},
+    {"identifier":"chatHistory","marker":true},
+    {"identifier":"tail","role":"system","content":"TAIL"}
+  ],
+  "prompt_order":[{"order":[
+    {"identifier":"main","enabled":true},
+    {"identifier":"charDescription","enabled":true},
+    {"identifier":"attached","enabled":true},
+    {"identifier":"chatHistory","enabled":true},
+    {"identifier":"tail","enabled":true}
+  ]}]
+}
+''';
+    final preset = await store.importSource(
+      source,
+      sourceFileName: 'runtime.json',
+    );
+    final settings = fakeSettings(
+      defaultModelName: 'openai:gpt-4o-mini',
+      defaultChatModels: const <String>['openai:gpt-4o-mini'],
+      modelConfigs: const <String, ModelConfig>{
+        'openai:gpt-4o-mini': ModelConfig(
+          chatCapabilities: <String>['tools'],
+        ),
+      },
+      autoReplySettings: const AutoReplySettings(
+        enabled: true,
+        allowAiSetReminders: true,
+      ),
+    ).copyWith(userName: '小云');
+    final now = DateTime(2026, 8, 27, 12);
+    final conv = Conversation(
+      id: 'conv_st_runtime',
+      title: 'Alice',
+      displayName: '爱丽丝',
+      personaPrompt: PersonaPromptCodec.compose(userPrompt: '角色人设正文'),
+      recipeId: preset.id,
+      enabledPlugins: const <String>['trigger'],
+      createdAt: now,
+      updatedAt: now,
+    );
+    final history = <Message>[
+      Message(
+        id: 'u1',
+        role: 'user',
+        content: '你好',
+        createdAt: now,
+      ),
+      Message(
+        id: 'a1',
+        role: 'assistant',
+        content: '你好呀',
+        createdAt: now,
+      ),
+    ];
+    final container = ProviderContainer(
+      overrides: [
+        appSettingsProvider
+            .overrideWith(() => _FakeAppSettingsNotifier(settings)),
+        sillyTavernPresetStoreProvider.overrideWithValue(store),
+      ],
+    );
+    addTearDown(container.dispose);
+    final service = container.read(chatSendServiceProvider);
+    final traceContext = await TraceStore.instance.startTurn(
+      sessionId: conv.id,
+      turnId: history.last.id,
+    );
+
+    final apiConfig = await service.prepareApiConfig(
+      conv: conv,
+      history: history,
+      userText: '你好',
+      traceContext: traceContext,
+    );
+
+    final contents =
+        apiConfig.messages.map((message) => message['content']).toList();
+    expect(contents.first, 'MAIN 爱丽丝 / 小云');
+    expect(contents.join(), isNot(contains('PRESET_IMAGE_SECRET')));
+    expect(contents.join(), isNot(contains('PRESET_VOICE_SECRET')));
+    expect(contents[1], '角色人设正文');
+    expect(contents.join(), isNot(contains('特殊标签说明')));
+    expect(contents.sublist(contents.length - 4), <dynamic>[
+      '你好\n\nATTACHED',
+      '你好呀',
+      'TAIL',
+      'PREFILL',
+    ]);
+    expect(apiConfig.modelTemperature, 0.33);
+    expect(apiConfig.modelTopP, 0.77);
+    expect(apiConfig.tools, isNull);
+    expect(
+      apiConfig.messages.where((message) => message['content'] == '角色人设正文'),
+      hasLength(1),
+    );
+    await TraceStore.instance.waitForPendingWrites();
+    final events = await TraceStore.instance.readEventsByTraceId(
+      traceContext.traceId,
+    );
+    final event = events.lastWhere(
+      (item) => item.stage == TraceStage.apiConfigReady.value,
+    );
+    final envelope =
+        await TraceStore.instance.readPayloadByRef(event.payloadRef);
+    final payload = envelope!['payload'] as Map<String, dynamic>;
+    final assembly = payload['promptAssembly'] as Map<String, dynamic>;
+    final presetTrace = assembly['sillyTavernPreset'] as Map<String, dynamic>;
+    expect(presetTrace['recipeId'], preset.id);
+    expect(presetTrace['presetName'], 'Runtime Preset');
+    expect(presetTrace['attachmentCount'], 1);
+    expect(presetTrace['assistantPrefillDeclared'], isTrue);
+    expect(presetTrace['assistantPrefillApplied'], isTrue);
+    expect(presetTrace['toolsEffectiveCount'], 0);
+    expect(presetTrace['entries'], isNotEmpty);
+  });
+
+  test('tavern final request follows entry switches, world regex, default and owner snapshot', () async {
+    SharedPreferences.setMockInitialValues({});
+    final temp = await Directory.systemTemp.createTemp('tavern_e2e_');
+    addTearDown(() => temp.delete(recursive: true));
+    final store = SillyTavernPresetStore(documentsDirectoryResolver: () async => temp);
+    const source = '''{"name":"真实组合","function_calling":false,"prompts":[
+      {"identifier":"main","content":"MAIN","role":"system"},
+      {"identifier":"worldInfoBefore","marker":true},
+      {"identifier":"charDescription","marker":true},
+      {"identifier":"worldInfoAfter","marker":true},
+      {"identifier":"chatHistory","marker":true}],"prompt_order":[
+      {"identifier":"main","enabled":true},
+      {"identifier":"worldInfoBefore","enabled":true},
+      {"identifier":"charDescription","enabled":true},
+      {"identifier":"worldInfoAfter","enabled":true},
+      {"identifier":"chatHistory","enabled":true}]}''';
+    final preset = await store.importSource(source, sourceFileName: 'e2e.json');
+    await store.importRegex(preset.id, '''[
+      {"id":"user","findRegex":"猫","replaceString":"森林","placement":[1],"promptOnly":true},
+      {"id":"wi","findRegex":"旧词","replaceString":"新词","placement":[5],"promptOnly":true}]
+    ''');
+    await store.setRegexAuthorization(preset.id, true);
+    await store.importWorldBook(preset.id, '''{"entries":{
+      "0":{"key":["森林"],"content":"BEFORE {{char}} 旧词","position":0},
+      "1":{"constant":true,"content":"AFTER","position":1},
+      "2":{"constant":true,"content":"DEPTH","position":4,"depth":1,"role":2}}}''', '世界.json');
+    await store.savePluginSettings(TavernPluginSettings(defaultPresetId: preset.id));
+    final now = DateTime(2026, 9, 6);
+    final a = Conversation(id: 'tavern-a', title: 'Alice', displayName: 'Alice',
+      personaPrompt: PersonaPromptCodec.compose(userPrompt: 'PERSONA'),
+      enabledPlugins: const [], createdAt: now, updatedAt: now);
+    final bPreset = await store.importSource(source.replaceAll('MAIN', 'B_MAIN'), sourceFileName: 'b.json');
+    final b = a.copyWith(id: 'tavern-b', recipeId: bPreset.id);
+    final history = [Message(id: 'u', role: 'user', content: '猫', createdAt: now)];
+    final settings = fakeSettings(defaultModelName: 'openai:gpt-4o-mini',
+      defaultChatModels: const ['openai:gpt-4o-mini']);
+    final container = ProviderContainer(overrides: [
+      appSettingsProvider.overrideWith(() => _FakeAppSettingsNotifier(settings)),
+      sillyTavernPresetStoreProvider.overrideWithValue(store),
+    ]);
+    addTearDown(container.dispose);
+    final service = container.read(chatSendServiceProvider);
+    final first = await service.prepareApiConfig(conv: a, history: history, userText: '猫');
+    final contents = first.messages.map((m) => m['content']).toList();
+    expect(contents, containsAllInOrder(['MAIN', 'BEFORE Alice 新词', 'PERSONA', 'AFTER', 'DEPTH', '森林']));
+    expect(first.messages.firstWhere((m) => m['content'] == 'DEPTH')['role'], 'assistant');
+    expect(history.single.content, '猫');
+    final bookId = (await store.get(preset.id))!.worldBooks.single.id;
+    await store.setPromptEnabled(preset.id, 'main', false);
+    await store.setWorldEntryEnabled(preset.id, bookId, '1', false);
+    await store.setRegexEnabled(preset.id, 'user', false);
+    final second = await service.prepareApiConfig(conv: a, history: history, userText: '猫');
+    final secondText = second.messages.map((m) => m['content']).join('\n');
+    expect(secondText, isNot(contains('MAIN')));
+    expect(secondText, isNot(contains('BEFORE')));
+    expect(secondText, isNot(contains('AFTER')));
+    expect(secondText, contains('DEPTH'));
+    expect(secondText, contains('猫'));
+    expect(first.presetRegexScripts.first.disabled, isFalse);
+    expect(first.messages.map((m) => m['content']), contents);
+    final bResult = await service.prepareApiConfig(conv: b, history: history, userText: '猫');
+    expect(bResult.messages.first['content'], 'B_MAIN');
+    expect(bResult.messages.map((m) => m['content']).join(), isNot(contains('DEPTH')));
+    await store.savePluginSettings(TavernPluginSettings(enabled: false, defaultPresetId: preset.id));
+    final off = await service.prepareApiConfig(conv: b, history: history, userText: '猫');
+    expect(off.messages.map((m) => m['content']).join(), isNot(contains('B_MAIN')));
+    expect(off.presetRegexScripts, isEmpty);
+  });
+
+  test('prepareApiConfig rejects a missing explicit preset instead of changing context silently', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final temp = await Directory.systemTemp.createTemp('aicove_st_fallback_');
+    addTearDown(() async {
+      if (await temp.exists()) await temp.delete(recursive: true);
+    });
+    final store = SillyTavernPresetStore(
+      documentsDirectoryResolver: () async => temp,
+    );
+    final settings = fakeSettings(
+      defaultModelName: 'openai:gpt-4o-mini',
+      defaultChatModels: const <String>['openai:gpt-4o-mini'],
+    );
+    final now = DateTime(2026, 8, 27, 12);
+    final conv = Conversation(
+      id: 'conv_st_fallback',
+      title: 'Chat',
+      displayName: 'Chat',
+      personaPrompt: PersonaPromptCodec.compose(userPrompt: '默认人设仍生效'),
+      recipeId: 'st_preset_aaaaaaaaaaaaaaaaaaaaaaaa',
+      enabledPlugins: const <String>[],
+      createdAt: now,
+      updatedAt: now,
+    );
+    final userMessage = Message(
+      id: 'u1',
+      role: 'user',
+      content: '回退测试',
+      createdAt: now,
+    );
+    final container = ProviderContainer(
+      overrides: [
+        appSettingsProvider
+            .overrideWith(() => _FakeAppSettingsNotifier(settings)),
+        sillyTavernPresetStoreProvider.overrideWithValue(store),
+      ],
+    );
+    addTearDown(container.dispose);
+    final service = container.read(chatSendServiceProvider);
+
+    await expectLater(service.prepareApiConfig(
+      conv: conv,
+      history: <Message>[userMessage],
+      userText: userMessage.content,
+    ), throwsStateError);
   });
 }

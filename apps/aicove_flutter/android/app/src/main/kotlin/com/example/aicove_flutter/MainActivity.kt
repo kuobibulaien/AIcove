@@ -60,6 +60,22 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
+        // 只读自身构建/运行身份，无导出组件、无新系统权限。
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.example.aicove_flutter/diagnostic_identity")
+            .setMethodCallHandler { call, result ->
+                if (call.method == "read") {
+                    result.success(mapOf(
+                        "buildId" to BuildConfig.DIAGNOSTIC_BUILD_ID,
+                        "buildType" to BuildConfig.BUILD_TYPE,
+                        "versionName" to BuildConfig.VERSION_NAME,
+                        "versionCode" to BuildConfig.VERSION_CODE,
+                        "deviceModel" to Build.MODEL,
+                        "androidApi" to Build.VERSION.SDK_INT,
+                        "identityScope" to "android_source_snapshot_no_hot_reload"
+                    ))
+                } else result.notImplemented()
+            }
+
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SYSTEM_PROXY_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -142,23 +158,43 @@ class MainActivity : FlutterActivity() {
             "setGuardEnabled" -> {
                 val enabled = call.argument<Boolean>("enabled") == true
                 if (enabled) {
+                    KeepAliveConfig.setGuardEnabled(this, true)
                     val started = PersistentGuardService.start(this)
-                    KeepAliveConfig.setGuardEnabled(this, started)
+                    if (!started) {
+                        KeepAliveConfig.setGuardEnabled(this, false)
+                    }
                 } else {
                     KeepAliveConfig.setGuardEnabled(this, false)
-                    PersistentGuardService.stop(this)
+                    PersistentGuardService.stopIfIdle(this)
                 }
                 result.success(buildKeepAliveStatus())
             }
             "startGuardService" -> {
+                KeepAliveConfig.setGuardEnabled(this, true)
                 val started = PersistentGuardService.start(this)
-                KeepAliveConfig.setGuardEnabled(this, started)
+                if (!started) {
+                    KeepAliveConfig.setGuardEnabled(this, false)
+                }
                 result.success(buildKeepAliveStatus())
             }
             "stopGuardService" -> {
                 KeepAliveConfig.setGuardEnabled(this, false)
-                PersistentGuardService.stop(this)
+                PersistentGuardService.stopIfIdle(this)
                 result.success(buildKeepAliveStatus())
+            }
+            "setGenerationActive" -> {
+                val active = call.argument<Boolean>("active") == true
+                val changed = PersistentGuardService.setGenerationActive(this, active)
+                if (changed) {
+                    result.success(null)
+                } else {
+                    result.error(
+                        "generation_guard_start_failed",
+                        PersistentGuardService.getLastStartError()
+                            ?: "Unable to start generation guard service",
+                        null,
+                    )
+                }
             }
             "requestIgnoreBatteryOptimizations" -> {
                 result.success(requestIgnoreBatteryOptimizations())
@@ -192,6 +228,7 @@ class MainActivity : FlutterActivity() {
 
         return mapOf(
             "guardEnabled" to KeepAliveConfig.isGuardEnabled(this),
+            "generationActive" to PersistentGuardService.isGenerationActive(),
             "serviceRunning" to PersistentGuardService.isForegroundActive(),
             "batteryOptimizationIgnored" to isBatteryOptimizationIgnored(),
             "canScheduleExactAlarms" to canScheduleExactAlarms(),

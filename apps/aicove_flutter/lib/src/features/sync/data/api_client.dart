@@ -6,27 +6,29 @@ class ApiClient {
   final Dio _dio;
   final FlutterSecureStorage _storage;
   final String baseUrl;
+  final bool useSecureTokenStore;
+  String? _memoryToken;
 
   ApiClient({
     required this.baseUrl,
     FlutterSecureStorage? storage,
-  })  : _storage = storage ?? const FlutterSecureStorage(),
-        _dio = Dio(
-          BaseOptions(
-            baseUrl: baseUrl,
-            connectTimeout: const Duration(seconds: 30),
-            receiveTimeout: const Duration(seconds: 30),
-            headers: {
-              'Content-Type': 'application/json',
-            },
-          ),
-        ) {
+    this.useSecureTokenStore = true,
+  }) : _storage = storage ?? const FlutterSecureStorage(),
+       _dio = Dio(
+         BaseOptions(
+           baseUrl: baseUrl,
+           followRedirects: useSecureTokenStore,
+           connectTimeout: const Duration(seconds: 30),
+           receiveTimeout: const Duration(seconds: 30),
+           headers: {'Content-Type': 'application/json'},
+         ),
+       ) {
     // 添加认证拦截器
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
           // 自动添加Token
-          final token = await _storage.read(key: 'access_token');
+          final token = await getToken();
           if (token != null) {
             options.headers['Authorization'] = 'Bearer $token';
           }
@@ -36,7 +38,7 @@ class ApiClient {
           // 401错误：Token过期或无效
           if (error.response?.statusCode == 401) {
             // 清除Token
-            await _storage.delete(key: 'access_token');
+            await clearToken();
           }
           return handler.next(error);
         },
@@ -72,10 +74,7 @@ class ApiClient {
   }) async {
     final response = await _dio.post(
       '/api/v1/auth/login',
-      data: {
-        'username': username,
-        'password': password,
-      },
+      data: {'username': username, 'password': password},
     );
     return response.data as Map<String, dynamic>;
   }
@@ -92,16 +91,15 @@ class ApiClient {
   Future<Map<String, dynamic>> getContacts({String? since}) async {
     final response = await _dio.get(
       '/api/v1/sync/contacts',
-      queryParameters: {
-        if (since != null) 'since': since,
-      },
+      queryParameters: {if (since != null) 'since': since},
     );
     return response.data as Map<String, dynamic>;
   }
 
   /// 批量同步联系人
   Future<Map<String, dynamic>> syncContacts(
-      List<Map<String, dynamic>> items) async {
+    List<Map<String, dynamic>> items,
+  ) async {
     final response = await _dio.post(
       '/api/v1/sync/contacts',
       data: {'items': items},
@@ -135,7 +133,8 @@ class ApiClient {
 
   /// 批量同步消息
   Future<Map<String, dynamic>> syncMessages(
-      List<Map<String, dynamic>> items) async {
+    List<Map<String, dynamic>> items,
+  ) async {
     final response = await _dio.post(
       '/api/v1/sync/messages',
       data: {'items': items},
@@ -151,7 +150,8 @@ class ApiClient {
 
   /// 更新用户设置
   Future<Map<String, dynamic>> updateSettings(
-      Map<String, dynamic> settings) async {
+    Map<String, dynamic> settings,
+  ) async {
     final response = await _dio.put(
       '/api/v1/sync/settings',
       data: {'settings': settings},
@@ -169,18 +169,27 @@ class ApiClient {
 
   /// 保存Token
   Future<void> saveToken(String token) async {
-    await _storage.write(key: 'access_token', value: token);
+    if (useSecureTokenStore) {
+      await _storage.write(key: 'access_token', value: token);
+    } else {
+      _memoryToken = token;
+    }
   }
 
   /// 获取Token
   Future<String?> getToken() async {
-    return await _storage.read(key: 'access_token');
+    return useSecureTokenStore
+        ? await _storage.read(key: 'access_token')
+        : _memoryToken;
   }
 
   /// 清除Token
   Future<void> clearToken() async {
-    await _storage.delete(key: 'access_token');
+    if (useSecureTokenStore) await _storage.delete(key: 'access_token');
+    _memoryToken = null;
   }
+
+  void close() => _dio.close();
 
   /// 检查是否已登录
   Future<bool> isLoggedIn() async {

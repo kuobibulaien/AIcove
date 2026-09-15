@@ -108,7 +108,7 @@ extension ChatActionsActionOps on ChatActions {
               .read(chatHistoryStoreProvider)
               .loadCanonicalContextMessages(
                 targetConvId,
-                limit: settings.historyMessageLimit,
+                limit: 0,
               );
           final modelsToTry = _resolvePreferredChatModels(settings);
           final (apiResult, usedSettings) = await _executeWithFailover(
@@ -192,7 +192,10 @@ extension ChatActionsActionOps on ChatActions {
       throw Exception('消息不存在或状态不正确');
     }
 
-    final runId = _startGeneration(convId: convId, userMsgId: messageId);
+    final runId = await _startGeneration(
+      convId: convId,
+      userMsgId: messageId,
+    );
     final traceContext = await _startTurnTrace(
       convId: convId,
       turnId: messageId,
@@ -270,12 +273,21 @@ extension ChatActionsActionOps on ChatActions {
                 _ref,
                 convId: convId,
                 generationSeq: runId,
+                diagnosticContext: _diagnostics.forTurn(traceContext?.turnId),
                 formatConfig: settings.messageFormatConfig,
                 enableTtsPlaceholders: settings.ttsEnabled,
                 segmentDelay: Duration(
                   milliseconds:
                       (settings.streamSegmentDelaySeconds * 1000).round(),
                 ),
+                onPendingAudioAppeared: (pendingMessage) {
+                  if (!_isGenerationCurrent(convId, runId)) return;
+                  _scheduleStreamPendingTtsResolution(
+                    convId: convId,
+                    pendingMessage: pendingMessage,
+                    streamDelivery: streamDelivery!,
+                  );
+                },
               );
               await streamDelivery!.start();
             },
@@ -375,7 +387,7 @@ extension ChatActionsActionOps on ChatActions {
         await streamDelivery?.removePlaceholders();
       }
       streamDelivery?.dispose();
-      _finishGeneration(convId, runId);
+      await _finishGeneration(convId, runId);
     }
   }
 
@@ -440,6 +452,7 @@ extension ChatActionsActionOps on ChatActions {
     final targetMessage = await _resolveCanonicalActionMessage(
       convId: convId,
       messageId: aiMessageId,
+      history: messages,
     );
     if (targetMessage == null) {
       return null;
@@ -478,39 +491,76 @@ extension ChatActionsActionOps on ChatActions {
     final conv = _ref.read(activeConversationProvider);
     if (conv == null) return;
     final convId = conv.id;
-    final messages = await _loadConversationMessages(convId);
-
-    final userMsg = await _findRegenerateSourceUserMessage(
-      convId,
-      messages,
-      aiMessageId,
-    );
-    if (userMsg == null) return;
-    final userText = userMsg.displayText;
-    final traceContext = await _startTurnTrace(
-      convId: convId,
-      turnId: userMsg.id,
-      entry: useEnhancement ? 'regenerate_enhanced' : 'regenerate',
-      meta: {'targetAiMessageId': aiMessageId},
-    );
-
-    final runId = _startGeneration(convId: convId, userMsgId: userMsg.id);
-
-    // 收集被移除的消息 ID，用于数据库软删除
-    await _historyPort.truncateAfterMessage(
+    // 在第一个 await 前占用发送状态，历史读取/保活等待也可取消且不能重入。
+    if (_activeGenerations.containsKey(convId) ||
+        _ref.read(conversationSendingProvider(convId))) {
+      return;
+    }
+    final operation = _diagnostics.begin(
+      FrontendStage.sendRequested,
       conversationId: convId,
-      anchorMessageId: userMsg.id,
     );
-    if (!_isGenerationCurrent(convId, runId)) return;
-
+    _diagnostics.record(operation, FrontendStage.sendRequested,
+        facts: DiagnosticFacts(state: {
+          'regenerate': true,
+          'enhanced': useEnhancement,
+        }));
+    final runId = await _startGeneration(convId: convId);
+    TraceContext? traceContext;
     _StreamPlaceholderDelivery? streamDelivery;
     var streamCommitted = false;
-    _setGenerationInterruptCleanup(convId, runId, () async {
-      await streamDelivery?.removePlaceholders();
-      streamDelivery?.dispose();
-      await _restoreFrontendMessagesFromHistory(convId);
-    });
     try {
+      if (!_isGenerationCurrent(convId, runId)) return;
+      final readClock = Stopwatch()..start();
+      final messages = await _loadConversationMessages(convId);
+      final historyReadMs = readClock.elapsedMilliseconds;
+      if (!_isGenerationCurrent(convId, runId)) return;
+      final userMsg = await _findRegenerateSourceUserMessage(
+        convId,
+        messages,
+        aiMessageId,
+      );
+      if (!_isGenerationCurrent(convId, runId)) return;
+      if (userMsg == null) {
+        _diagnostics.record(operation, FrontendStage.turnCancelled,
+            facts:
+                const DiagnosticFacts(reason: DiagnosticReason.unknownMessage));
+        return;
+      }
+      final lookupMs = readClock.elapsedMilliseconds - historyReadMs;
+      final userText = userMsg.displayText;
+      _activeGenerations[convId] = _GenerationTask(
+        id: runId,
+        convId: convId,
+        userMsgId: userMsg.id,
+      );
+      traceContext = await _startTurnTrace(
+        convId: convId,
+        turnId: userMsg.id,
+        entry: useEnhancement ? 'regenerate_enhanced' : 'regenerate',
+        meta: {'targetAiMessageId': aiMessageId},
+      );
+      if (!_isGenerationCurrent(convId, runId)) return;
+      _setGenerationInterruptCleanup(convId, runId, () async {
+        await streamDelivery?.removePlaceholders();
+        streamDelivery?.dispose();
+        await _restoreFrontendMessagesFromHistory(convId);
+      });
+      final truncateClock = Stopwatch()..start();
+      await _historyPort.truncateAfterMessage(
+        conversationId: convId,
+        anchorMessageId: userMsg.id,
+      );
+      _diagnostics.record(operation, FrontendStage.sendRequested,
+          itemCount: messages.length,
+          facts: DiagnosticFacts(phase: DiagnosticPhase.end, state: {
+            'regenerate': true,
+            'enhanced': useEnhancement,
+            'historyReadMs': historyReadMs,
+            'lookupMs': lookupMs,
+            'truncateMs': truncateClock.elapsedMilliseconds,
+          }));
+      if (!_isGenerationCurrent(convId, runId)) return;
       await _runWithProviderRefreshRetry<void>(
         entry: useEnhancement ? 'regenerate_enhanced' : 'regenerate',
         convId: convId,
@@ -533,7 +583,9 @@ extension ChatActionsActionOps on ChatActions {
             ),
             loadSettings: () => _ref.read(appSettingsProvider.future),
             prepareTurn: (settings) async {
-              final updatedConv = _ref.read(activeConversationProvider)!;
+              // 活动页面可能已切到另一个联系人，请求始终归属最初的convId。
+              final updatedConv =
+                  _ref.read(conversationSnapshotByIdProvider(convId)) ?? conv;
               final canUseEnhancement =
                   useEnhancement && settings.enhancedDialogueSettings.enabled;
               if (!canUseEnhancement) {
@@ -542,7 +594,6 @@ extension ChatActionsActionOps on ChatActions {
                   history: await _sendPort.prepareHistoryFromStore(
                     conv: updatedConv,
                     userMsg: userMsg,
-                    limit: settings.historyMessageLimit,
                   ),
                   sessionId: convId,
                   modelsToTry: _resolvePreferredChatModels(settings),
@@ -614,12 +665,21 @@ extension ChatActionsActionOps on ChatActions {
                 _ref,
                 convId: convId,
                 generationSeq: runId,
+                diagnosticContext: _diagnostics.forTurn(traceContext?.turnId),
                 formatConfig: settings.messageFormatConfig,
                 enableTtsPlaceholders: settings.ttsEnabled,
                 segmentDelay: Duration(
                   milliseconds:
                       (settings.streamSegmentDelaySeconds * 1000).round(),
                 ),
+                onPendingAudioAppeared: (pendingMessage) {
+                  if (!_isGenerationCurrent(convId, runId)) return;
+                  _scheduleStreamPendingTtsResolution(
+                    convId: convId,
+                    pendingMessage: pendingMessage,
+                    streamDelivery: streamDelivery!,
+                  );
+                },
               );
               await streamDelivery!.start();
             },
@@ -701,14 +761,34 @@ extension ChatActionsActionOps on ChatActions {
         status: TraceEventStatus.failed,
         meta: {'error': e.toString()},
       );
-      await _restoreFrontendMessagesFromHistory(convId);
-      _setConversationError(convId, e.toString());
-    } finally {
-      if (!streamCommitted) {
-        await streamDelivery?.removePlaceholders();
+      if (traceContext == null) {
+        _diagnostics.record(operation, FrontendStage.turnFailed,
+            error: e,
+            facts: const DiagnosticFacts(
+                phase: DiagnosticPhase.error,
+                reason: DiagnosticReason.operationFailed));
       }
-      streamDelivery?.dispose();
-      _finishGeneration(convId, runId);
+      _setConversationError(convId, e.toString());
+      try {
+        await _restoreFrontendMessagesFromHistory(convId);
+      } catch (restoreError, stack) {
+        _diagnostics.record(operation, FrontendStage.historyFailed,
+            error: restoreError, stackTrace: stack);
+      }
+    } finally {
+      if (!_isGenerationCurrent(convId, runId)) {
+        _diagnostics.record(operation, FrontendStage.turnCancelled, once: true);
+      }
+      // 占位清理出错也不能跳过发送锁和保活释放。
+      try {
+        if (!streamCommitted) await streamDelivery?.removePlaceholders();
+      } finally {
+        try {
+          streamDelivery?.dispose();
+        } finally {
+          await _finishGeneration(convId, runId);
+        }
+      }
     }
   }
 
@@ -821,12 +901,14 @@ extension ChatActionsActionOps on ChatActions {
     );
   }
 
-  /// 编辑消息：删除指定消息及其后的所有消息，返回被删除消息的文本用于填充输入框
+  /// 准备编辑草稿，不改变历史；只有确认发送后才提交新分支。
   Future<String?> editMessage(String messageId) async {
     final conv = _ref.read(activeConversationProvider);
     if (conv == null) return null;
     final convId = conv.id;
-    final attachmentNotifier = _ref.read(recalledAttachmentProvider.notifier);
+    if (_ref.read(conversationSendingProvider(convId))) {
+      throw StateError('当前会话正在生成，请结束后再编辑');
+    }
     final historyStore = _ref.read(chatHistoryStoreProvider);
     final frontendMessage = await historyStore.loadFrontendMessageById(
       messageId,
@@ -844,14 +926,19 @@ extension ChatActionsActionOps on ChatActions {
             ) ??
             frontendMessage
         : frontendMessage;
-    final text = _extractEditableTextForRecall(msg);
-    attachmentNotifier.state = _extractAttachmentForRecall(msg);
-
-    await _historyPort.truncateFromMessage(
-      conversationId: convId,
-      fromMessageId: msg.id,
-    );
-
+    final draft =
+        await _ref.read(chatEditPortProvider).prepareEdit(convId, msg.id);
+    if (_ref.read(activeConversationProvider)?.id != convId ||
+        _ref.read(conversationSendingProvider(convId))) {
+      throw StateError('会话状态已变化，未进入编辑');
+    }
+    final original = draft.originalMessage;
+    if (original == null) throw StateError('无法恢复原始消息，未进入编辑');
+    final text = _extractEditableTextForRecall(original);
+    _ref.read(chatEditSeedProvider(convId).notifier).state = ChatEditSeed(
+        draft: draft,
+        text: text,
+        attachment: _extractAttachmentForRecall(original));
     return text;
   }
 
@@ -871,12 +958,13 @@ extension ChatActionsActionOps on ChatActions {
   Future<Message?> _resolveCanonicalActionMessage({
     required String convId,
     required String messageId,
+    List<Message>? history,
   }) async {
-    final history = await _loadConversationMessages(convId);
+    final resolvedHistory = history ?? await _loadConversationMessages(convId);
     final resolved = await _resolveFrontendActionMessage(
       convId: convId,
       messageId: messageId,
-      history: history,
+      history: resolvedHistory,
     );
     if (resolved == null) {
       return null;
@@ -884,7 +972,7 @@ extension ChatActionsActionOps on ChatActions {
     return _canonicalizeActionMessage(
       convId,
       resolved,
-      history: history,
+      history: resolvedHistory,
     );
   }
 

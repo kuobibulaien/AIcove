@@ -1,4 +1,7 @@
+import 'package:aicove_flutter/src/ui/shared/widgets/moe_page_scaffold.dart';
 import 'dart:async';
+
+import 'package:aicove_flutter/src/ui/theme/moe_interaction_theme.dart';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -46,16 +49,14 @@ class _NetworkDiagnosticPageState extends State<NetworkDiagnosticPage> {
 
     try {
       final uri = Uri.parse(url);
-      final headers = <String, String>{
-        ..._customHeaders,
-      };
+      final headers = <String, String>{..._customHeaders};
 
       late http.Response response;
       switch (_method) {
         case 'HEAD':
-          response = await client.head(uri, headers: headers).timeout(
-                const Duration(seconds: 15),
-              );
+          response = await client
+              .head(uri, headers: headers)
+              .timeout(const Duration(seconds: 15));
           break;
         case 'POST':
           response = await client
@@ -63,9 +64,9 @@ class _NetworkDiagnosticPageState extends State<NetworkDiagnosticPage> {
               .timeout(const Duration(seconds: 15));
           break;
         default:
-          response = await client.get(uri, headers: headers).timeout(
-                const Duration(seconds: 15),
-              );
+          response = await client
+              .get(uri, headers: headers)
+              .timeout(const Duration(seconds: 15));
       }
 
       stopwatch.stop();
@@ -109,7 +110,7 @@ class _NetworkDiagnosticPageState extends State<NetworkDiagnosticPage> {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
 
-    return Scaffold(
+    return MoePageScaffold(
       backgroundColor: colors.surface,
       appBar: const MoeAppBar(title: '网络诊断', showBackButton: true),
       body: Column(
@@ -148,9 +149,13 @@ class _NetworkDiagnosticPageState extends State<NetworkDiagnosticPage> {
                           items: const [
                             DropdownMenuItem(value: 'GET', child: Text('GET')),
                             DropdownMenuItem(
-                                value: 'HEAD', child: Text('HEAD')),
+                              value: 'HEAD',
+                              child: Text('HEAD'),
+                            ),
                             DropdownMenuItem(
-                                value: 'POST', child: Text('POST')),
+                              value: 'POST',
+                              child: Text('POST'),
+                            ),
                           ],
                           onChanged: (v) {
                             if (v != null) setState(() => _method = v);
@@ -163,14 +168,15 @@ class _NetworkDiagnosticPageState extends State<NetworkDiagnosticPage> {
                     Expanded(
                       child: TextField(
                         controller: _urlController,
-                        style: TextStyle(
-                            color: colors.text, fontSize: 13),
+                        style: TextStyle(color: colors.text, fontSize: 13),
                         decoration: InputDecoration(
                           hintText: '输入 URL...',
                           hintStyle: TextStyle(color: colors.textSecondary),
                           isDense: true,
                           contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 10),
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
                           filled: true,
                           fillColor: colors.surface,
                           border: OutlineInputBorder(
@@ -190,15 +196,18 @@ class _NetworkDiagnosticPageState extends State<NetworkDiagnosticPage> {
                       flex: 2,
                       child: TextField(
                         controller: _headerKeyController,
-                        style: TextStyle(
-                            color: colors.text, fontSize: 12),
+                        style: TextStyle(color: colors.text, fontSize: 12),
                         decoration: InputDecoration(
                           hintText: 'Header Key (如 Authorization)',
                           hintStyle: TextStyle(
-                              color: colors.textSecondary, fontSize: 12),
+                            color: colors.textSecondary,
+                            fontSize: 12,
+                          ),
                           isDense: true,
                           contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 8),
+                            horizontal: 10,
+                            vertical: 8,
+                          ),
                           filled: true,
                           fillColor: colors.surface,
                           border: OutlineInputBorder(
@@ -213,15 +222,18 @@ class _NetworkDiagnosticPageState extends State<NetworkDiagnosticPage> {
                       flex: 3,
                       child: TextField(
                         controller: _headerValueController,
-                        style: TextStyle(
-                            color: colors.text, fontSize: 12),
+                        style: TextStyle(color: colors.text, fontSize: 12),
                         decoration: InputDecoration(
                           hintText: 'Header Value (如 Bearer xxx)',
                           hintStyle: TextStyle(
-                              color: colors.textSecondary, fontSize: 12),
+                            color: colors.textSecondary,
+                            fontSize: 12,
+                          ),
                           isDense: true,
                           contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 8),
+                            horizontal: 10,
+                            vertical: 8,
+                          ),
                           filled: true,
                           fillColor: colors.surface,
                           border: OutlineInputBorder(
@@ -236,16 +248,19 @@ class _NetworkDiagnosticPageState extends State<NetworkDiagnosticPage> {
                       height: 32,
                       child: TextButton(
                         onPressed: _addHeader,
-                        style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          backgroundColor: colors.surface,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(6),
+                        style: withoutHoverFeedback(
+                          TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            backgroundColor: colors.surface,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(6),
+                            ),
                           ),
                         ),
-                        child: Text('+',
-                            style: TextStyle(
-                                color: colors.accent, fontSize: 16)),
+                        child: Text(
+                          '+',
+                          style: TextStyle(color: colors.accent, fontSize: 16),
+                        ),
                       ),
                     ),
                   ],
@@ -261,13 +276,17 @@ class _NetworkDiagnosticPageState extends State<NetworkDiagnosticPage> {
                           ? '${e.key}: ${e.value.substring(0, 20)}...'
                           : '${e.key}: ${e.value}';
                       return Chip(
-                        label: Text(display,
-                            style: TextStyle(
-                                fontSize: 11, color: colors.text)),
-                        deleteIcon: Icon(Icons.close,
-                            size: 14, color: colors.textSecondary),
-                        onDeleted: () => setState(
-                            () => _customHeaders.remove(e.key)),
+                        label: Text(
+                          display,
+                          style: TextStyle(fontSize: 11, color: colors.text),
+                        ),
+                        deleteIcon: Icon(
+                          Icons.close,
+                          size: 14,
+                          color: colors.textSecondary,
+                        ),
+                        onDeleted: () =>
+                            setState(() => _customHeaders.remove(e.key)),
                         backgroundColor: colors.surface,
                         visualDensity: VisualDensity.compact,
                       );
@@ -280,13 +299,16 @@ class _NetworkDiagnosticPageState extends State<NetworkDiagnosticPage> {
                   width: double.infinity,
                   child: ElevatedButton(
                     onPressed: _testing ? null : _runTest,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: colors.accent,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
+                    style: withoutHoverFeedback(
+                      ElevatedButton.styleFrom(
+                        elevation: 1,
+                        backgroundColor: colors.accent,
+                        foregroundColor: colors.text,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 10),
                       ),
-                      padding: const EdgeInsets.symmetric(vertical: 10),
                     ),
                     child: _testing
                         ? const SizedBox(
@@ -364,12 +386,10 @@ class _ResultCardState extends State<_ResultCard> {
     final statusColor = r.isError
         ? Colors.red
         : (r.statusCode != null && r.statusCode! < 400)
-            ? Colors.green
-            : Colors.orange;
+        ? Colors.green
+        : Colors.orange;
 
-    final statusText = r.isError
-        ? 'ERROR'
-        : '${r.statusCode}';
+    final statusText = r.isError ? 'ERROR' : '${r.statusCode}';
 
     return GestureDetector(
       onTap: () => setState(() => _expanded = !_expanded),
@@ -390,8 +410,10 @@ class _ResultCardState extends State<_ResultCard> {
             Row(
               children: [
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
                   decoration: BoxDecoration(
                     color: statusColor.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(4),
@@ -407,24 +429,24 @@ class _ResultCardState extends State<_ResultCard> {
                 ),
                 const SizedBox(width: 8),
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: colors.surface,
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
                     r.method,
-                    style: TextStyle(
-                        color: colors.textSecondary, fontSize: 11),
+                    style: TextStyle(color: colors.textSecondary, fontSize: 11),
                   ),
                 ),
                 const Spacer(),
                 if (r.duration != null)
                   Text(
                     '${r.duration!.inMilliseconds}ms',
-                    style: TextStyle(
-                        color: colors.textSecondary, fontSize: 12),
+                    style: TextStyle(color: colors.textSecondary, fontSize: 12),
                   ),
                 const SizedBox(width: 4),
                 Icon(
@@ -460,11 +482,14 @@ class _ResultCardState extends State<_ResultCard> {
               Divider(color: colors.divider, height: 1),
               const SizedBox(height: 8),
               if (r.responseHeaders != null) ...[
-                Text('Response Headers:',
-                    style: TextStyle(
-                        color: colors.textSecondary,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600)),
+                Text(
+                  'Response Headers:',
+                  style: TextStyle(
+                    color: colors.textSecondary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
                 const SizedBox(height: 4),
                 ...r.responseHeaders!.entries.map(
                   (e) => Padding(
@@ -472,19 +497,23 @@ class _ResultCardState extends State<_ResultCard> {
                     child: Text(
                       '${e.key}: ${e.value}',
                       style: TextStyle(
-                          color: colors.textSecondary, fontSize: 11),
+                        color: colors.textSecondary,
+                        fontSize: 11,
+                      ),
                     ),
                   ),
                 ),
               ],
-              if (r.bodyPreview != null &&
-                  r.bodyPreview!.isNotEmpty) ...[
+              if (r.bodyPreview != null && r.bodyPreview!.isNotEmpty) ...[
                 const SizedBox(height: 6),
-                Text('Response Body:',
-                    style: TextStyle(
-                        color: colors.textSecondary,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600)),
+                Text(
+                  'Response Body:',
+                  style: TextStyle(
+                    color: colors.textSecondary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
                 const SizedBox(height: 4),
                 Container(
                   width: double.infinity,

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../features/plugins/image/image_config.dart';
+import '../../../../features/plugins/image/drawing_preset_provider.dart';
 import '../../../../features/plugins/image/image_plugin.dart';
 import '../../../../features/plugins/plugin_providers.dart';
 import '../../../../features/settings/app_settings.dart';
@@ -15,11 +16,13 @@ import '../../../../ui/theme/tokens.dart';
 class ImageGenerationTestPage extends ConsumerStatefulWidget {
   final String? initialProviderLabel;
   final String? initialModelLabel;
+  final ImageConfig? drawingConfig;
 
   const ImageGenerationTestPage({
     super.key,
     this.initialProviderLabel,
     this.initialModelLabel,
+    this.drawingConfig,
   });
 
   @override
@@ -67,14 +70,17 @@ class _ImageGenerationTestPageState
       return;
     }
 
-    final pluginManager = ref.read(pluginManagerProvider);
-    final imagePlugin = pluginManager.getPlugin('image') as ImagePlugin?;
-    if (imagePlugin == null) {
+    final imagePlugin = widget.drawingConfig == null
+        ? ref.read(pluginManagerProvider).getPlugin('image') as ImagePlugin?
+        : null;
+    final testPort = widget.drawingConfig == null
+        ? null
+        : ref.read(drawingPresetTestProvider(widget.drawingConfig!));
+    if (imagePlugin == null && testPort == null) {
       MoeToast.warning(context, '未找到绘图插件');
       return;
     }
 
-    final config = ref.read(imagePluginConfigProvider);
     setState(() {
       _status = _ImageTestStatus.testing;
       _error = null;
@@ -87,11 +93,10 @@ class _ImageGenerationTestPageState
     });
 
     try {
-      final rawResult = await imagePlugin.runDrawImageToolForDebug(
-        prompt: prompt,
-        width: config.defaultWidth,
-        height: config.defaultHeight,
-      );
+      final rawResult = testPort != null
+          ? await testPort.generate(prompt)
+          : await imagePlugin!.runDrawImageToolForDebug(prompt: prompt);
+      if (!mounted) return;
       final payload = _decodePayload(rawResult);
       final success = payload['success'] == true;
       final images = _extractLocalPaths(payload['images']);
@@ -99,7 +104,8 @@ class _ImageGenerationTestPageState
       if (!success || images.isEmpty) {
         setState(() {
           _status = _ImageTestStatus.error;
-          _error = _stringValue(payload['error']) ??
+          _error =
+              _stringValue(payload['error']) ??
               (images.isEmpty ? '工具返回成功但没有图片' : '生图测试失败');
           _providerId = _stringValue(payload['provider']);
           _modelId = _stringValue(payload['model']);
@@ -119,6 +125,7 @@ class _ImageGenerationTestPageState
         _selectedIndex = 0;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _status = _ImageTestStatus.error;
         _error = '测试失败: $e';
@@ -151,10 +158,7 @@ class _ImageGenerationTestPageState
   Map<String, dynamic> _decodePayload(String? rawResult) {
     final text = rawResult?.trim() ?? '';
     if (text.isEmpty) {
-      return const {
-        'success': false,
-        'error': '绘图工具未返回结果',
-      };
+      return const {'success': false, 'error': '绘图工具未返回结果'};
     }
     final decoded = jsonDecode(text);
     if (decoded is Map<String, dynamic>) {
@@ -163,10 +167,7 @@ class _ImageGenerationTestPageState
     if (decoded is Map) {
       return decoded.map((key, value) => MapEntry('$key', value));
     }
-    return const {
-      'success': false,
-      'error': '绘图工具返回了无法识别的结果',
-    };
+    return const {'success': false, 'error': '绘图工具返回了无法识别的结果'};
   }
 
   List<String> _extractLocalPaths(dynamic images) {
@@ -209,20 +210,28 @@ class _ImageGenerationTestPageState
   Widget build(BuildContext context) {
     final colors = context.moeColors;
     final settingsAsync = ref.watch(appSettingsProvider);
-    final config = ref.watch(imagePluginConfigProvider);
+    final ImageConfig config =
+        widget.drawingConfig ??
+        ref.watch<ImageConfig>(imagePluginConfigProvider);
 
-    return Scaffold(
+    return MoePageScaffold(
       backgroundColor: colors.surface,
-      appBar: const MoeAppBar(
-        title: '生图测试',
-        showBackButton: true,
-      ),
+      appBar: const MoeAppBar(title: '生图测试', showBackButton: true),
       body: settingsAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('加载设置失败: $e')),
         data: (settings) {
-          final providerLabel = widget.initialProviderLabel ?? '未选择渠道';
-          final modelLabel = widget.initialModelLabel ?? '未匹配到可用绘图模型';
+          final provider = settings.providers
+              .where((p) => p.id == config.selectedProviderId)
+              .firstOrNull;
+          final providerLabel =
+              widget.initialProviderLabel ??
+              provider?.displayName ??
+              provider?.id ??
+              '未选择渠道';
+          final modelLabel = config.selectedModelId == null
+              ? widget.initialModelLabel ?? '未匹配到可用绘图模型'
+              : settings.getModelDisplayName(config.selectedModelId!);
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
@@ -263,8 +272,6 @@ class _ImageGenerationTestPageState
         children: [
           Row(
             children: [
-              Icon(Icons.science_outlined, color: colors.primary, size: 20),
-              const SizedBox(width: 8),
               Text(
                 '当前测试配置',
                 style: TextStyle(
@@ -338,30 +345,26 @@ class _ImageGenerationTestPageState
             fillColor: colors.surface,
             borderColor: colors.border,
             focusBorderColor: colors.primary,
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 10,
+            ),
             onChanged: (_) => _clearResult(),
           ),
           const SizedBox(height: 12),
-          Row(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Expanded(
-                child: MoePrimaryButton(
-                  label:
-                      _status == _ImageTestStatus.testing ? '生成中...' : '开始测试',
-                  icon: Icons.play_arrow,
-                  enabled: _status != _ImageTestStatus.testing,
-                  onPressed: _runTest,
-                ),
+              MoePrimaryButton(
+                label: _status == _ImageTestStatus.testing ? '生成中...' : '开始测试',
+                enabled: _status != _ImageTestStatus.testing,
+                onPressed: _runTest,
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: MoeSecondaryButton(
-                  label: '清空结果',
-                  icon: Icons.restart_alt,
-                  enabled: _status != _ImageTestStatus.testing,
-                  onPressed: _clearResult,
-                ),
+              const SizedBox(height: 12),
+              MoeSecondaryButton(
+                label: '清空结果',
+                enabled: _status != _ImageTestStatus.testing,
+                onPressed: _clearResult,
               ),
             ],
           ),
@@ -396,10 +399,7 @@ class _ImageGenerationTestPageState
               Text(
                 '成功后会直接展示返回图片，失败时会展示原始错误。',
                 textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: colors.textSecondary,
-                  fontSize: 13,
-                ),
+                style: TextStyle(color: colors.textSecondary, fontSize: 13),
               ),
             ],
           ),
@@ -426,10 +426,7 @@ class _ImageGenerationTestPageState
               Expanded(
                 child: Text(
                   '正在请求当前绘图模型，请稍等...',
-                  style: TextStyle(
-                    color: colors.textSecondary,
-                    fontSize: 13,
-                  ),
+                  style: TextStyle(color: colors.textSecondary, fontSize: 13),
                 ),
               ),
             ],
@@ -464,20 +461,14 @@ class _ImageGenerationTestPageState
                 const SizedBox(height: 8),
                 Text(
                   '渠道：${_providerId ?? '-'} / 模型：${_modelId ?? '-'}',
-                  style: TextStyle(
-                    color: colors.textSecondary,
-                    fontSize: 13,
-                  ),
+                  style: TextStyle(color: colors.textSecondary, fontSize: 13),
                 ),
               ],
               if (_error != null) ...[
                 const SizedBox(height: 10),
                 SelectableText(
                   _error!,
-                  style: TextStyle(
-                    color: colors.textSecondary,
-                    fontSize: 13,
-                  ),
+                  style: TextStyle(color: colors.textSecondary, fontSize: 13),
                 ),
               ],
             ],
@@ -526,10 +517,7 @@ class _ImageGenerationTestPageState
                         errorBuilder: (_, __, ___) => Center(
                           child: Text(
                             '图片预览失败',
-                            style: TextStyle(
-                              color: colors.muted,
-                              fontSize: 13,
-                            ),
+                            style: TextStyle(color: colors.muted, fontSize: 13),
                           ),
                         ),
                       ),
@@ -540,10 +528,7 @@ class _ImageGenerationTestPageState
               const SizedBox(height: 8),
               Text(
                 '点击大图可全屏查看',
-                style: TextStyle(
-                  color: colors.muted,
-                  fontSize: 12,
-                ),
+                style: TextStyle(color: colors.muted, fontSize: 12),
               ),
               if (_localPaths.length > 1) ...[
                 const SizedBox(height: 12),
@@ -586,10 +571,7 @@ class _ImageGenerationTestPageState
               const SizedBox(height: 12),
               Text(
                 '渠道：${_providerId ?? '-'} / 模型：${_modelId ?? '-'}',
-                style: TextStyle(
-                  color: colors.textSecondary,
-                  fontSize: 13,
-                ),
+                style: TextStyle(color: colors.textSecondary, fontSize: 13),
               ),
               if (_resolvedPrompt != null) ...[
                 const SizedBox(height: 12),
@@ -604,10 +586,7 @@ class _ImageGenerationTestPageState
                 const SizedBox(height: 4),
                 SelectableText(
                   _resolvedPrompt!,
-                  style: TextStyle(
-                    color: colors.textSecondary,
-                    fontSize: 13,
-                  ),
+                  style: TextStyle(color: colors.textSecondary, fontSize: 13),
                 ),
               ],
               if (_negativePrompt != null) ...[
@@ -623,19 +602,13 @@ class _ImageGenerationTestPageState
                 const SizedBox(height: 4),
                 SelectableText(
                   _negativePrompt!,
-                  style: TextStyle(
-                    color: colors.textSecondary,
-                    fontSize: 13,
-                  ),
+                  style: TextStyle(color: colors.textSecondary, fontSize: 13),
                 ),
               ],
               const SizedBox(height: 12),
               Text(
                 currentPath,
-                style: TextStyle(
-                  color: colors.muted,
-                  fontSize: 11,
-                ),
+                style: TextStyle(color: colors.muted, fontSize: 11),
               ),
             ],
           ),

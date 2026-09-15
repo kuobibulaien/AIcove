@@ -486,18 +486,21 @@ class MessageFormatter {
 
     // 2) Protect quoted content using placeholders.
     final quotedContents = <String>[];
-    const quotePlaceholder = '\x00QTE';
-    if (config.protectQuotes) {
-      for (final m in _quotePattern.allMatches(protected)) {
-        quotedContents.add(m.group(0)!);
-      }
-      for (var i = 0; i < quotedContents.length; i++) {
-        protected = protected.replaceFirst(
-          quotedContents[i],
-          '$quotePlaceholder$i\x00',
-        );
-      }
+    var quotePlaceholder = '\x00QTE';
+    // Do not interpret literal placeholder-like input as a generated token.
+    while (protected.contains(quotePlaceholder)) {
+      quotePlaceholder += '_';
     }
+    if (config.protectQuotes) {
+      protected = protected.replaceAllMapped(_quotePattern, (match) {
+        final index = quotedContents.length;
+        quotedContents.add(match.group(0)!);
+        return '$quotePlaceholder$index\x00';
+      });
+    }
+    final quoteTokenPattern = RegExp(
+      '${RegExp.escape(quotePlaceholder)}([0-9]+)\x00',
+    );
 
     // 3) Split by configured punctuation with lookahead.
     final punctuationTokens = config.effectiveChunkPunctuations
@@ -522,9 +525,10 @@ class MessageFormatter {
     // 4) Restore placeholders.
     final restored = <String>[];
     for (var sentence in sentences) {
-      for (var i = 0; i < quotedContents.length; i++) {
-        sentence =
-            sentence.replaceAll('$quotePlaceholder$i\x00', quotedContents[i]);
+      if (quotedContents.isNotEmpty) {
+        sentence = sentence.replaceAllMapped(quoteTokenPattern, (match) {
+          return quotedContents[int.parse(match.group(1)!)];
+        });
       }
       for (var i = 0; i < kaomojis.length; i++) {
         sentence =

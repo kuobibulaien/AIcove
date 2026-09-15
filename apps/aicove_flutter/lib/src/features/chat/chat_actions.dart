@@ -13,6 +13,8 @@
 /// - 2026-01-28: 使用 deliverSegmentedMessages 统一消息交付，移除占位符机制
 library;
 
+import '../plugins/tts/voice_request.dart';
+
 import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -22,12 +24,15 @@ import '../auto_reply/data/auto_reply_trigger.dart';
 import 'data/enhanced_dialogue_service.dart';
 import 'application/active_stream_projection.dart';
 import 'application/chat_ports.dart';
+import 'application/chat_forward_messages.dart';
+import 'application/chat_edit.dart';
 import 'application/chat_send_use_case.dart';
 import 'application/chat_turn_command.dart';
 import 'application/standard_chat_agent.dart';
 import 'id_gen.dart' show genId;
 import 'chat_layer_providers.dart';
 import 'services/chat_history_store.dart';
+import 'services/chat_media_regeneration.dart';
 import 'services/chat_send_service.dart' show chatSendServiceProvider;
 import 'services/chat_types.dart'
     show
@@ -37,6 +42,7 @@ import 'services/chat_types.dart'
         isProviderRefreshTimingError;
 import 'services/chat_tts_handler.dart';
 import 'domain/message.dart';
+import 'domain/conversation.dart';
 import '../settings/app_settings.dart';
 import 'conversation_providers.dart';
 import 'services/conversation_short_window_store.dart'
@@ -46,11 +52,14 @@ import '../../core/app_logger.dart';
 import '../../core/models/message_block.dart';
 import '../../core/models/block_status.dart';
 import '../../core/prompts/prompt_builtin_defaults.g.dart';
+import '../../core/services/android_keep_alive_manager.dart';
 import '../../core/services/attachment_picker_service.dart';
 import '../../core/services/system_reminder_service.dart';
 import '../../core/utils/mime_utils.dart';
 import '../../core/utils/message_formatter.dart';
 import '../observability/trace_models.dart';
+import '../observability/frontend_diagnostics_port.dart';
+import '../observability/frontend_diagnostics_provider.dart';
 import '../observability/trace_store.dart';
 import '../plugins/domain/plugin.dart' show PluginEvent;
 
@@ -72,7 +81,71 @@ class ChatActions {
 
   ChatActions(this._ref);
 
+  FrontendDiagnosticsPort get _diagnostics =>
+      _ref.read(frontendDiagnosticsProvider);
+
   final Ref _ref;
+
+  Future<void> regenerateMedia({
+    required String conversationId,
+    required String messageId,
+    required String blockId,
+  }) =>
+      _ref.read(chatMediaRegenerationProvider).regenerate(
+          conversationId: conversationId,
+          messageId: messageId,
+          blockId: blockId);
+
+  final _forwardSubmissions = <String>{};
+
+  Future<void> forwardMessages({
+    required String conversationId,
+    required String sourceTitle,
+    required List<Message> messages,
+    required String note,
+  }) async {
+    final target = _ref.read(resolvedConversationByIdProvider(conversationId));
+    if (target == null) throw StateError('联系人已不存在');
+    final message = buildForwardedChatMessage(
+      sourceTitle: sourceTitle, messages: messages, note: note,
+    );
+    if (_activeGenerations.containsKey(conversationId) ||
+        !_forwardSubmissions.add(conversationId)) {
+      throw StateError('该联系人正在回复，请稍后再分享');
+    }
+    final accepted = Completer<void>();
+    unawaited(() async {
+      try {
+        await _sendText(message.content,
+          targetConversation: target,
+          preparedMessage: message,
+          onUserCommitted: (_) => accepted.complete(),
+        );
+        if (!accepted.isCompleted) accepted.completeError(StateError('分享未受理'));
+      } catch (error, stack) {
+        if (!accepted.isCompleted) {
+          accepted.completeError(error, stack);
+        } else {
+          try {
+            await _historyPort.markMessageStatus(
+              conversationId: conversationId, messageId: message.id, status: 'failed',
+            );
+          } catch (_) {
+            // Keep the accepted record; never resubmit after a reply failure.
+          }
+          _setConversationError(conversationId, '回复失败，可重试已分享的聊天记录');
+        }
+      } finally {
+        _forwardSubmissions.remove(conversationId);
+        final generation = _activeGenerations[conversationId];
+        if (generation?.userMsgId == message.id) {
+          await _finishGeneration(conversationId, generation!.id);
+        }
+      }
+    }());
+    return accepted.future;
+  }
+
   ChatSendPort get _sendPort => _ref.read(chatSendPortProvider);
   StandardChatAgent get _chatAgent => _ref.read(standardChatAgentProvider);
   ChatTtsHandler get _ttsHandler => _ref.read(chatTtsHandlerProvider);
@@ -82,6 +155,8 @@ class ChatActions {
   int _generationSerial = 0;
   final Map<String, _GenerationTask> _activeGenerations = {};
   final Map<String, Future<void> Function()> _generationInterruptCleanups = {};
+  final Map<int, Future<AndroidGenerationKeepAliveLease?>>
+      _generationKeepAliveLeases = {};
 
   Future<TraceContext?> _startTurnTrace({
     required String convId,
@@ -90,7 +165,7 @@ class ChatActions {
     Map<String, dynamic>? meta,
   }) async {
     try {
-      return await TraceStore.instance.startTurn(
+      final context = await TraceStore.instance.startTurn(
         sessionId: convId,
         turnId: turnId,
         source: 'ChatActions',
@@ -99,6 +174,9 @@ class ChatActions {
           ...?meta,
         },
       );
+      _diagnostics.linkTurn(
+          conversationId: convId, turnId: turnId, traceId: context.traceId);
+      return context;
     } catch (e) {
       AppLogger.warning(
         'ChatActions',
@@ -122,6 +200,17 @@ class ChatActions {
     Map<String, dynamic>? payloadRef,
   }) {
     if (context == null) return;
+    final frontendStage = switch (stage) {
+      TraceStage.messageDelivered => FrontendStage.messageDelivered,
+      TraceStage.turnCompleted => FrontendStage.turnCompleted,
+      TraceStage.turnFailed => FrontendStage.turnFailed,
+      _ => null,
+    };
+    final diagnosticContext = _diagnostics.forTurn(context.turnId);
+    if (frontendStage != null &&
+        diagnosticContext?.traceId == context.traceId) {
+      _diagnostics.record(diagnosticContext, frontendStage, once: true);
+    }
     unawaited(
       TraceStore.instance.record(
         traceId: context.traceId,
@@ -145,18 +234,21 @@ class ChatActions {
 
   void _setConversationStatus(String convId, ChatStatus status) {
     _runIgnoringProviderRefreshTiming('set_conversation_status', () {
+      if (_ref.read(activeConversationProvider)?.id != convId) return;
       _ref.read(chatStatusProvider.notifier).state = status;
     });
   }
 
   void _setConversationError(String convId, String? error) {
     _runIgnoringProviderRefreshTiming('set_conversation_error', () {
+      if (_ref.read(activeConversationProvider)?.id != convId) return;
       _ref.read(errorProvider.notifier).state = error;
     });
   }
 
   void _setConversationFailoverInfo(String convId, String? modelName) {
     _runIgnoringProviderRefreshTiming('set_conversation_failover_info', () {
+      if (_ref.read(activeConversationProvider)?.id != convId) return;
       _ref.read(modelFailoverInfoProvider.notifier).state = modelName;
     });
   }
@@ -176,10 +268,10 @@ class ChatActions {
         );
   }
 
-  int _startGeneration({
+  Future<int> _startGeneration({
     required String convId,
     String? userMsgId,
-  }) {
+  }) async {
     final runId = ++_generationSerial;
     _activeGenerations[convId] = _GenerationTask(
       id: runId,
@@ -189,6 +281,22 @@ class ChatActions {
     _setConversationSending(convId, true);
     _setConversationStatus(convId, ChatStatus.thinking);
     _setConversationError(convId, null);
+    final leaseFuture = AndroidKeepAliveManager.acquireGenerationLease();
+    _generationKeepAliveLeases[runId] = leaseFuture;
+    try {
+      await leaseFuture;
+    } catch (e) {
+      _generationKeepAliveLeases.remove(runId);
+      AppLogger.warning(
+        'ChatActions',
+        '生成保活启动失败，继续以前台模式执行',
+        metadata: {
+          'convId': convId,
+          'runId': runId,
+          'error': e.toString(),
+        },
+      );
+    }
     return runId;
   }
 
@@ -222,11 +330,12 @@ class ChatActions {
     }
   }
 
-  void _finishGeneration(
+  Future<void> _finishGeneration(
     String convId,
     int runId, {
     bool clearFailoverInfo = false,
-  }) {
+  }) async {
+    await _releaseGenerationKeepAlive(runId, convId: convId);
     if (!_isGenerationCurrent(convId, runId)) return;
     _activeGenerations.remove(convId);
     _generationInterruptCleanups.remove(convId);
@@ -234,6 +343,28 @@ class ChatActions {
     _setConversationStatus(convId, ChatStatus.idle);
     if (clearFailoverInfo) {
       _setConversationFailoverInfo(convId, null);
+    }
+  }
+
+  Future<void> _releaseGenerationKeepAlive(
+    int runId, {
+    required String convId,
+  }) async {
+    final leaseFuture = _generationKeepAliveLeases.remove(runId);
+    if (leaseFuture == null) return;
+    try {
+      final lease = await leaseFuture;
+      await lease?.release();
+    } catch (e) {
+      AppLogger.warning(
+        'ChatActions',
+        '生成保活释放失败',
+        metadata: {
+          'convId': convId,
+          'runId': runId,
+          'error': e.toString(),
+        },
+      );
     }
   }
 
@@ -326,10 +457,14 @@ class ChatActions {
     );
   }
 
-  List<String> _extractProjectedTextMessageIds(List<Message> messages) {
+  List<String> _extractProjectedTextMessageIds(
+    List<Message> messages, {
+    Set<String> excludedMessageIds = const <String>{},
+  }) {
     return <String>[
       for (final message in messages)
-        if (!_isPendingAudioPlaceholderMessage(message) &&
+        if (!excludedMessageIds.contains(message.id) &&
+            !_isPendingAudioPlaceholderMessage(message) &&
             _messageContainsVisibleText(message))
           message.id,
     ];
@@ -371,6 +506,7 @@ class ChatActions {
     if (rawMessage == null) {
       throw StateError('流式收尾缺少原始 assistant 消息');
     }
+    streamDelivery.beginTtsCommit();
     final finalTimelineMessages = streamDelivery.buildFinalTimelineMessages(
       committedMessages: committedMessages,
       sourceMessageId: rawMessage.id,
@@ -378,12 +514,15 @@ class ChatActions {
     if (finalTimelineMessages.isEmpty) {
       throw StateError('流式收尾缺少可提交的前端时间线消息');
     }
-    final pendingStreamTtsMessages =
-        streamDelivery.pendingAudioPlaceholderMessages(
+    final pendingStreamTtsMessages = streamDelivery.ttsTimelineMessages(
       sourceMessageId: rawMessage.id,
     );
-    final projectedTextMessageIds =
-        _extractProjectedTextMessageIds(finalTimelineMessages);
+    final projectedTextMessageIds = _extractProjectedTextMessageIds(
+      finalTimelineMessages,
+      excludedMessageIds: {
+        for (final message in pendingStreamTtsMessages) message.id,
+      },
+    );
     final finalMessagePreview = buildResult.lastMessageText.trim().isNotEmpty
         ? buildResult.lastMessageText
         : finalTimelineMessages.last.displayText;
@@ -401,6 +540,10 @@ class ChatActions {
       rawMessageId: rawMessage.id,
       keepMessages: finalTimelineMessages,
     );
+    await _ref.read(chatHistoryStoreProvider).syncRawSupplementsFromTimeline(
+      conversationId: convId,
+      rawMessageIds: {rawMessage.id},
+    );
     await _ttsHandler.deliverSegmentedMessages(
       convId: convId,
       userMsgId: userMsgId,
@@ -411,6 +554,7 @@ class ChatActions {
       appendAfterStreamText: true,
       streamTextMessageIds: projectedTextMessageIds,
       streamPendingTtsMessages: pendingStreamTtsMessages,
+      streamTtsResolutionManaged: streamDelivery.hasAudioPlaceholders,
       trace: trace,
     );
   }
@@ -458,6 +602,9 @@ class ChatActions {
     final task = _activeGenerations[targetConvId];
     if (task == null) return false;
 
+    _diagnostics.record(
+        _diagnostics.forTurn(task.userMsgId), FrontendStage.turnCancelled,
+        once: true);
     _activeGenerations.remove(targetConvId);
     final cleanup = _generationInterruptCleanups.remove(targetConvId);
     _setConversationSending(targetConvId, false);
@@ -467,6 +614,7 @@ class ChatActions {
     _ref.read(modelFailoverPromptProvider.notifier).dismiss(
           defaultDecision: ModelFailoverDecision.cancel,
         );
+    await _releaseGenerationKeepAlive(task.id, convId: targetConvId);
 
     if (cleanup != null) {
       try {
@@ -540,6 +688,53 @@ class ChatActions {
         : <String>[settings.defaultModelName];
   }
 
+  void _scheduleStreamPendingTtsResolution({
+    required String convId,
+    required Message pendingMessage,
+    required _StreamPlaceholderDelivery streamDelivery,
+  }) {
+    unawaited(() async {
+      try {
+        Future<void> resolve() => _ttsHandler.resolvePendingStreamMessage(
+              convId: convId,
+              message: pendingMessage,
+              persistResult: false,
+              shouldApplyResult: () =>
+                  streamDelivery.canAcceptTtsResolution(pendingMessage.id),
+              onAudioResolved: (audioUrl, durationSeconds) {
+                streamDelivery.updateResolvedAudio(
+                  messageId: pendingMessage.id,
+                  audioUrl: audioUrl,
+                  durationSeconds: durationSeconds,
+                );
+              },
+              onTextFallback: (text) {
+                streamDelivery.updateFallbackText(
+                  messageId: pendingMessage.id,
+                  text: text,
+                );
+              },
+            );
+        final request = streamDelivery.voiceRequest;
+        if (request == null) {
+          await resolve();
+        } else {
+          await request.run(resolve);
+        }
+      } catch (e) {
+        AppLogger.error(
+          'ChatActions',
+          '流式 TTS 并发解析失败',
+          metadata: {
+            'convId': convId,
+            'messageId': pendingMessage.id,
+            'error': e.toString(),
+          },
+        );
+      }
+    }());
+  }
+
   // ===== 公开 API =====
 
   /// 根据工具名称更新聊天进度状态
@@ -554,23 +749,133 @@ class ChatActions {
     }
   }
 
-  /// 发送文本消息（支持自动轮询多个默认聊天模型）
-  Future<void> send(String text) async {
-    final conv = _ref.read(activeConversationProvider);
+  final Set<String> _editSubmissions = {};
+
+  /// 只等待本地分支提交，模型响应在既有发送链继续；失败不冒充受理成功。
+  Future<void> submitEditedMessage(
+    ChatEditDraft draft, {
+    required String text,
+    SelectedAttachment? attachment,
+  }) async {
+    final owner = draft.conversationId;
+    if (_ref.read(activeConversationProvider)?.id != owner ||
+        _ref.read(conversationSendingProvider(owner)) ||
+        !_editSubmissions.add(owner)) {
+      throw StateError('会话已切换或正在发送，编辑草稿已保留');
+    }
+    if (text.trim().isEmpty && attachment == null) {
+      _editSubmissions.remove(owner);
+      throw StateError('请输入消息内容');
+    }
+    _setConversationSending(owner, true);
+    final accepted = Completer<void>();
+    Message? committed;
+    void onCommitted(Message message) {
+      committed = message;
+      if (!accepted.isCompleted) accepted.complete();
+    }
+
+    unawaited(() async {
+      try {
+        if (attachment == null) {
+          await _sendText(text, edit: draft, onUserCommitted: onCommitted);
+        } else if (attachment.type == AttachmentType.image) {
+          await _sendImage(attachment.path,
+              text: text, edit: draft, onUserCommitted: onCommitted);
+        } else {
+          await _sendFile(attachment.path,
+              text: text, edit: draft, onUserCommitted: onCommitted);
+        }
+        if (!accepted.isCompleted) {
+          accepted.completeError(StateError('发送未受理，编辑草稿已保留'));
+        }
+      } catch (error, stack) {
+        if (!accepted.isCompleted) {
+          accepted.completeError(error, stack);
+        } else if (committed != null) {
+          // 覆盖模型准备阶段（尚未进入旧发送try/finally）的异常。
+          try {
+            await _historyPort.markMessageStatus(
+                conversationId: owner,
+                messageId: committed!.id,
+                status: 'failed');
+            _setConversationError(owner, '回复失败，可重试已提交的消息');
+          } catch (_) {/* 保留已提交原文，不重新提交旧草稿。 */}
+        }
+      } finally {
+        final generation = _activeGenerations[owner];
+        if (committed != null && generation?.userMsgId == committed!.id) {
+          await _finishGeneration(owner, generation!.id);
+        } else if (generation == null) {
+          _setConversationSending(owner, false);
+        }
+        _editSubmissions.remove(owner);
+      }
+    }());
+    return accepted.future;
+  }
+
+  Future<void> _persistUserMessageForSend(
+      {required String convId,
+      required Message userMsg,
+      required String displayText,
+      required int runId,
+      ChatEditDraft? edit,
+      void Function(Message)? onUserCommitted}) async {
+    try {
+      if (edit == null) {
+        await _sendPort.addUserMessage(
+            convId: convId, userMsg: userMsg, displayText: displayText);
+      } else {
+        if (edit.conversationId != convId) throw StateError('编辑会话不匹配');
+        await _ref.read(chatEditPortProvider).commitEdit(edit, userMsg);
+      }
+    } catch (_) {
+      await _finishGeneration(convId, runId);
+      rethrow;
+    }
+    onUserCommitted?.call(userMsg);
+    if (edit != null) {
+      try {
+        await _ref
+            .read(conversationTimelineCacheProvider)
+            .reloadConversationFromRawStore(convId);
+      } catch (_) {
+        AppLogger.warning('ChatActions', '编辑已落库，时间线刷新失败；重新进入会话可恢复');
+      }
+    }
+  }
+
+  /// 发送文本消息（支持自动轮询多个默认聊天模型），保留原有公开签名。
+  Future<void> send(String text) => _sendText(text);
+
+  Future<void> _sendText(String text,
+      {ChatEditDraft? edit, void Function(Message)? onUserCommitted,
+      Conversation? targetConversation, Message? preparedMessage}) async {
+    final conv = targetConversation ?? _ref.read(activeConversationProvider);
     if (conv == null || text.trim().isEmpty) return;
     final convId = conv.id;
 
-    final trace = AppLogger.startTrace('AI消息发送', source: 'ChatActions');
-    final userMsg = _sendPort.createUserMessage(text: text, imagePath: null);
+    final userMsg = preparedMessage ?? _sendPort.createUserMessage(text: text, imagePath: null);
     final traceContext = await _startTurnTrace(
       convId: convId,
       turnId: userMsg.id,
       entry: 'send_text',
       meta: {'inputLength': text.length},
     );
-    final runId = _startGeneration(convId: convId, userMsgId: userMsg.id);
-    await _sendPort.addUserMessage(
-        convId: convId, userMsg: userMsg, displayText: text);
+    final trace = AppLogger.startTrace('AI消息发送',
+        source: 'ChatActions', traceId: traceContext?.traceId);
+    final runId = await _startGeneration(
+      convId: convId,
+      userMsgId: userMsg.id,
+    );
+    await _persistUserMessageForSend(
+        convId: convId,
+        userMsg: userMsg,
+        displayText: text,
+        runId: runId,
+        edit: edit,
+        onUserCommitted: onUserCommitted);
     _recordTurnTrace(
       traceContext,
       TraceStage.userMessagePersisted,
@@ -585,12 +890,21 @@ class ChatActions {
       _ref,
       convId: convId,
       generationSeq: runId,
+      diagnosticContext: _diagnostics.forTurn(traceContext?.turnId),
       formatConfig: initialSettings.messageFormatConfig,
       enableTtsPlaceholders: initialSettings.ttsEnabled,
       segmentDelay: Duration(
         milliseconds:
             (initialSettings.streamSegmentDelaySeconds * 1000).round(),
       ),
+      onPendingAudioAppeared: (pendingMessage) {
+        if (!_isGenerationCurrent(convId, runId)) return;
+        _scheduleStreamPendingTtsResolution(
+          convId: convId,
+          pendingMessage: pendingMessage,
+          streamDelivery: streamDelivery!,
+        );
+      },
     );
     await streamDelivery.start();
     var streamCommitted = false;
@@ -618,12 +932,21 @@ class ChatActions {
               _ref,
               convId: convId,
               generationSeq: runId,
+              diagnosticContext: _diagnostics.forTurn(traceContext?.turnId),
               formatConfig: settings.messageFormatConfig,
               enableTtsPlaceholders: settings.ttsEnabled,
               segmentDelay: Duration(
                 milliseconds:
                     (settings.streamSegmentDelaySeconds * 1000).round(),
               ),
+              onPendingAudioAppeared: (pendingMessage) {
+                if (!_isGenerationCurrent(convId, runId)) return;
+                _scheduleStreamPendingTtsResolution(
+                  convId: convId,
+                  pendingMessage: pendingMessage,
+                  streamDelivery: streamDelivery!,
+                );
+              },
             );
             await streamDelivery!.start();
           }
@@ -717,6 +1040,10 @@ class ChatActions {
           );
           if (turnResult == null) return;
           if (!_isGenerationCurrent(convId, runId)) return;
+          for (final message in turnResult.buildResult.messages) {
+            _diagnostics.bindMessage(
+                message.id, _diagnostics.forTurn(traceContext?.turnId));
+          }
           _recordTurnTrace(
             traceContext,
             TraceStage.messageDelivered,
@@ -750,7 +1077,7 @@ class ChatActions {
         await streamDelivery?.removePlaceholders();
       }
       streamDelivery?.dispose();
-      _finishGeneration(
+      await _finishGeneration(
         convId,
         runId,
         clearFailoverInfo: true,
@@ -821,7 +1148,13 @@ class ChatActions {
   }
 
   /// 发送图片消息（可附带文字说明，支持图片识别模型 + 轮询）
-  Future<void> sendWithImage(String imagePath, {String? text}) async {
+  Future<void> sendWithImage(String imagePath, {String? text}) =>
+      _sendImage(imagePath, text: text);
+
+  Future<void> _sendImage(String imagePath,
+      {String? text,
+      ChatEditDraft? edit,
+      void Function(Message)? onUserCommitted}) async {
     final conv = _ref.read(activeConversationProvider);
     if (conv == null || imagePath.trim().isEmpty) return;
     final convId = conv.id;
@@ -838,10 +1171,18 @@ class ChatActions {
       entry: 'send_image',
       meta: {'hasText': hasText},
     );
-    final runId = _startGeneration(convId: convId, userMsgId: userMsg.id);
+    final runId = await _startGeneration(
+      convId: convId,
+      userMsgId: userMsg.id,
+    );
     final displayText = hasText ? userText : '[图片]';
-    await _sendPort.addUserMessage(
-        convId: convId, userMsg: userMsg, displayText: displayText);
+    await _persistUserMessageForSend(
+        convId: convId,
+        userMsg: userMsg,
+        displayText: displayText,
+        runId: runId,
+        edit: edit,
+        onUserCommitted: onUserCommitted);
     _recordTurnTrace(
       traceContext,
       TraceStage.userMessagePersisted,
@@ -923,7 +1264,7 @@ class ChatActions {
           convId: convId, userMsgId: userMsg.id);
       _setConversationError(convId, e.toString());
     } finally {
-      _finishGeneration(
+      await _finishGeneration(
         convId,
         runId,
         clearFailoverInfo: true,
@@ -935,7 +1276,13 @@ class ChatActions {
   }
 
   /// 发送文件 / 音频 / 视频附件消息（第一版统一复用 FileBlock）。
-  Future<void> sendWithFile(String filePath, {String? text}) async {
+  Future<void> sendWithFile(String filePath, {String? text}) =>
+      _sendFile(filePath, text: text);
+
+  Future<void> _sendFile(String filePath,
+      {String? text,
+      ChatEditDraft? edit,
+      void Function(Message)? onUserCommitted}) async {
     final conv = _ref.read(activeConversationProvider);
     if (conv == null || filePath.trim().isEmpty) return;
     final convId = conv.id;
@@ -973,10 +1320,16 @@ class ChatActions {
         'mimeType': mimeType,
       },
     );
-    final runId = _startGeneration(convId: convId, userMsgId: userMsg.id);
-    await _sendPort.addUserMessage(
+    final runId = await _startGeneration(
+      convId: convId,
+      userMsgId: userMsg.id,
+    );
+    await _persistUserMessageForSend(
       convId: convId,
       userMsg: userMsg,
+      runId: runId,
+      edit: edit,
+      onUserCommitted: onUserCommitted,
       displayText: normalizedText != null && normalizedText.isNotEmpty
           ? normalizedText
           : placeholder,
@@ -1068,7 +1421,7 @@ class ChatActions {
           convId: convId, userMsgId: userMsg.id);
       _setConversationError(convId, e.toString());
     } finally {
-      _finishGeneration(
+      await _finishGeneration(
         convId,
         runId,
         clearFailoverInfo: true,
@@ -1109,6 +1462,8 @@ class ChatActions {
       toolPrefs: config.toolPrefs,
       messages: normalizedMessages,
       tools: config.tools,
+      boundTools: config.boundTools,
+      runtimeContext: config.runtimeContext,
       enabledPluginIds: config.enabledPluginIds,
       modelTemperature: config.modelTemperature,
       modelTopP: config.modelTopP,
@@ -1116,6 +1471,7 @@ class ChatActions {
       traceContext: config.traceContext,
       boundImageToolPresetName: config.boundImageToolPresetName,
       boundImageArtistPresetName: config.boundImageArtistPresetName,
+      voiceRequest: config.voiceRequest,
     );
   }
 

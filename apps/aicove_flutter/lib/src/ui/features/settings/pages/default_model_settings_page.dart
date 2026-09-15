@@ -1,6 +1,6 @@
 /// DefaultModelSettingsPage - 默认模型设置页面
 ///
-/// 设置默认聊天模型（多选，有序，支持轮询）和多模态辅助模型（单选）。
+/// 设置默认聊天模型（多选，有序，支持轮询）。
 ///
 /// 更新记录：
 /// - 2026-02-20: 创建
@@ -25,24 +25,19 @@ class DefaultModelSettingsPage extends ConsumerStatefulWidget {
 }
 
 class _DefaultModelSettingsPageState
-    extends ConsumerState<DefaultModelSettingsPage> {
+    extends ConsumerState<DefaultModelSettingsPage>
+    with MoeAutoSaveState<DefaultModelSettingsPage> {
   /// 本地状态：选中的聊天模型列表（有序）
   List<String>? _localChatModels;
 
-  /// 本地状态：选中的多模态辅助模型
-  String? _localVisionModel;
-  bool _visionInitialized = false;
-  bool? _localPreferVisionAssistant;
-  bool _preferVisionInitialized = false;
-
-  /// 本地状态：历史消息条数
-  late TextEditingController _historyLimitCtrl;
-  bool _historyLimitInitialized = false;
+  /// 本地状态：上下文窗口
+  late TextEditingController _contextWindowCtrl;
+  bool _contextWindowInitialized = false;
 
   @override
   void dispose() {
-    if (_historyLimitInitialized) {
-      _historyLimitCtrl.dispose();
+    if (_contextWindowInitialized) {
+      _contextWindowCtrl.dispose();
     }
     super.dispose();
   }
@@ -52,14 +47,16 @@ class _DefaultModelSettingsPageState
     final settingsAsync = ref.watch(appSettingsProvider);
     final colors = context.moeColors;
 
-    return Scaffold(
-      appBar: const MoeAppBar(title: '默认模型设置', showBackButton: true),
-      backgroundColor: colors.surface,
-      body: settingsAsync.when(
-        loading: () =>
-            const Center(child: MoeLoadingIndicator(message: '加载中...')),
-        error: (e, _) => Center(child: Text('加载失败: $e')),
-        data: (settings) => _buildBody(settings, colors),
+    return autoSavePage(
+      MoePageScaffold(
+        appBar: const MoeAppBar(title: '默认模型设置', showBackButton: true),
+        backgroundColor: colors.surface,
+        body: settingsAsync.when(
+          loading: () =>
+              const Center(child: MoeLoadingIndicator(message: '加载中...')),
+          error: (e, _) => Center(child: Text('加载失败: $e')),
+          data: (settings) => _buildBody(settings, colors),
+        ),
       ),
     );
   }
@@ -68,8 +65,6 @@ class _DefaultModelSettingsPageState
     _ensureLocalStateInitialized(settings);
     final chatModels = _buildChatModels(settings);
     final selectedChatModels = _localChatModels ?? settings.defaultChatModels;
-    final preferVisionAssistant =
-        _localPreferVisionAssistant ?? settings.preferVisionAssistant;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
@@ -114,81 +109,8 @@ class _DefaultModelSettingsPageState
 
         const SizedBox(height: 24),
 
-        // ============ 多模态辅助模型 ============
-        _buildSectionHeader(colors, '多模态辅助模型', '发送图片、音频、视频时使用的辅助模型'),
-        const SizedBox(height: 8),
-        MoeSettingsGroup(
-          margin: EdgeInsets.zero,
-          padding: EdgeInsets.zero,
-          children: [
-            MoeSettingsRow(
-              icon: Icons.swap_horiz_outlined,
-              label: '优先使用辅助模型',
-              subtitle: '开启后发送图片、音频、视频会优先尝试辅助模型，再回退聊天模型',
-              trailingType: MoeSettingsRowTrailing.switchControl,
-              switchValue: preferVisionAssistant,
-              onSwitchChanged: (value) =>
-                  _togglePreferVisionAssistant(value, settings),
-              showDivider: true,
-            ),
-            if (chatModels.isEmpty)
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text(
-                  '暂无可用的模型',
-                  style: TextStyle(color: colors.muted, fontSize: 13),
-                ),
-              )
-            else ...[
-              // "跟随聊天模型" 选项
-              MoeSettingsRow(
-                iconWidget: Icon(Icons.sync, color: colors.muted, size: 18),
-                iconContainerWidth: 28,
-                label: '跟随聊天模型',
-                subtitle: '使用默认聊天模型处理图片',
-                trailingType: MoeSettingsRowTrailing.custom,
-                trailing: Icon(
-                  _localVisionModel == null
-                      ? Icons.radio_button_checked
-                      : Icons.radio_button_unchecked,
-                  color:
-                      _localVisionModel == null ? colors.primary : colors.muted,
-                  size: 20,
-                ),
-                onTap: () => _selectVisionModel(null),
-                showDivider: true,
-              ),
-              ...chatModels.map((entry) {
-                final isSelected = _localVisionModel == entry.modelRef;
-                return MoeSettingsRow(
-                  iconWidget: Icon(
-                    Icons.visibility_outlined,
-                    color: isSelected ? colors.primary : colors.muted,
-                    size: 18,
-                  ),
-                  iconContainerWidth: 28,
-                  label: entry.displayName,
-                  subtitle: entry.providerName,
-                  trailingType: MoeSettingsRowTrailing.custom,
-                  trailing: Icon(
-                    isSelected
-                        ? Icons.radio_button_checked
-                        : Icons.radio_button_unchecked,
-                    color: isSelected ? colors.primary : colors.muted,
-                    size: 20,
-                  ),
-                  onTap: () => _selectVisionModel(entry.modelRef),
-                  showDivider: entry != chatModels.last,
-                );
-              }),
-            ],
-          ],
-        ),
-
-        const SizedBox(height: 24),
-
-        // ============ 上下文管理 ============
-        _buildSectionHeader(colors, '上下文管理', '控制发送给 AI 的历史消息量'),
+        // ============ 上下文窗口 ============
+        _buildSectionHeader(colors, '上下文窗口', '接近窗口容量时自动压缩对话'),
         const SizedBox(height: 8),
         MoeSettingsGroup(
           margin: EdgeInsets.zero,
@@ -200,25 +122,17 @@ class _DefaultModelSettingsPageState
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   MoeTextField(
-                    controller: _historyLimitCtrl,
-                    label: '历史消息条数',
-                    hint: '请输入整数',
-                    helperText: '发送前最多保留最近 N 条历史消息',
+                    controller: _contextWindowCtrl,
+                    label: '窗口大小（k tokens）',
+                    hint: '272',
+                    helperText: '默认 272k，约用到 80% 时自动压缩；原始聊天保留',
                     keyboardType: TextInputType.number,
                     textInputAction: TextInputAction.done,
                     inputFormatters: <TextInputFormatter>[
                       FilteringTextInputFormatter.digitsOnly,
                     ],
-                    onSubmitted: (_) => _saveHistoryMessageLimit(settings),
                   ),
                   const SizedBox(height: 12),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: MoePrimaryButton(
-                      label: '保存',
-                      onPressed: () => _saveHistoryMessageLimit(settings),
-                    ),
-                  ),
                 ],
               ),
             ),
@@ -229,19 +143,18 @@ class _DefaultModelSettingsPageState
   }
 
   void _ensureLocalStateInitialized(AppSettings settings) {
-    if (!_visionInitialized) {
-      _localVisionModel = settings.defaultVisionModel;
-      _visionInitialized = true;
-    }
-    if (!_preferVisionInitialized) {
-      _localPreferVisionAssistant = settings.preferVisionAssistant;
-      _preferVisionInitialized = true;
-    }
-    if (!_historyLimitInitialized) {
-      _historyLimitCtrl = TextEditingController(
-        text: settings.historyMessageLimit.toString(),
+    if (!_contextWindowInitialized) {
+      _contextWindowCtrl = TextEditingController(
+        text: (settings.contextWindowTokens / 1000).toStringAsFixed(
+          settings.contextWindowTokens % 1000 == 0 ? 0 : 3,
+        ),
       );
-      _historyLimitInitialized = true;
+      _contextWindowInitialized = true;
+      autoSave.configure(
+        save: _saveContextWindowTokens,
+        snapshot: () => _contextWindowCtrl.text,
+        fields: [_contextWindowCtrl],
+      );
     }
   }
 
@@ -270,7 +183,10 @@ class _DefaultModelSettingsPageState
   }
 
   Widget _buildSectionHeader(
-      MoeColors colors, String title, String description) {
+    MoeColors colors,
+    String title,
+    String description,
+  ) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -283,10 +199,7 @@ class _DefaultModelSettingsPageState
           ),
         ),
         const SizedBox(height: 2),
-        Text(
-          description,
-          style: TextStyle(fontSize: 12, color: colors.muted),
-        ),
+        Text(description, style: TextStyle(fontSize: 12, color: colors.muted)),
       ],
     );
   }
@@ -352,8 +265,9 @@ class _DefaultModelSettingsPageState
 
   void _toggleChatModel(String modelRef, AppSettings settings) {
     setState(() {
-      final current =
-          List<String>.from(_localChatModels ?? settings.defaultChatModels);
+      final current = List<String>.from(
+        _localChatModels ?? settings.defaultChatModels,
+      );
       if (current.contains(modelRef)) {
         current.remove(modelRef);
       } else {
@@ -368,62 +282,14 @@ class _DefaultModelSettingsPageState
         .setDefaultChatModels(_localChatModels!);
   }
 
-  void _selectVisionModel(String? modelId) {
-    final shouldDisablePreferVisionAssistant =
-        (modelId == null || modelId.trim().isEmpty) &&
-            (_localPreferVisionAssistant == true);
-    setState(() {
-      _localVisionModel = modelId;
-      if (shouldDisablePreferVisionAssistant) {
-        _localPreferVisionAssistant = false;
-      }
-    });
-    final notifier = ref.read(appSettingsProvider.notifier);
-    notifier.setDefaultVisionModel(modelId);
-    if (shouldDisablePreferVisionAssistant) {
-      notifier.setPreferVisionAssistant(false);
-      MoeToast.info(context, '已关闭“优先使用辅助模型”');
-    }
-  }
-
-  void _togglePreferVisionAssistant(bool value, AppSettings settings) {
-    if (value) {
-      final selectedVisionModel =
-          (_localVisionModel ?? settings.defaultVisionModel)?.trim();
-      if (selectedVisionModel == null || selectedVisionModel.isEmpty) {
-        MoeToast.warning(context, '请先选择多模态辅助模型');
-        setState(() {
-          _localPreferVisionAssistant = false;
-        });
-        return;
-      }
-    }
-
-    setState(() {
-      _localPreferVisionAssistant = value;
-    });
-    ref.read(appSettingsProvider.notifier).setPreferVisionAssistant(value);
-  }
-
-  Future<void> _saveHistoryMessageLimit(AppSettings settings) async {
-    if (!_historyLimitInitialized) return;
-
-    final rawValue = _historyLimitCtrl.text.trim();
-    final parsed = int.tryParse(rawValue);
+  Future<void> _saveContextWindowTokens() async {
+    final parsed = int.tryParse(_contextWindowCtrl.text.trim());
     if (parsed == null || parsed <= 0) {
-      MoeToast.warning(context, '请输入大于 0 的整数');
-      _historyLimitCtrl.text = settings.historyMessageLimit.toString();
-      return;
+      throw const FormatException('上下文窗口请输入大于 0 的整数');
     }
-    if (parsed == settings.historyMessageLimit) {
-      MoeToast.brief(context, '未修改');
-      return;
-    }
-
-    await ref.read(appSettingsProvider.notifier).setHistoryMessageLimit(parsed);
-    if (!mounted) return;
-    _historyLimitCtrl.text = parsed.toString();
-    MoeToast.success(context, '已保存');
+    await ref
+        .read(appSettingsProvider.notifier)
+        .setContextWindowTokens(parsed * 1000);
   }
 }
 

@@ -1,3 +1,4 @@
+import 'package:aicove_flutter/src/ui/shared/widgets/moe_page_scaffold.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -37,7 +38,7 @@ class _MessageFormatSettingsPageState extends ConsumerState<MessageFormatSetting
     final settingsAsync = ref.watch(appSettingsProvider);
     final colors = context.moeColors;
 
-    return Scaffold(
+    return MoePageScaffold(
       appBar: AppBar(
         backgroundColor: colors.surface,
         foregroundColor: colors.text,

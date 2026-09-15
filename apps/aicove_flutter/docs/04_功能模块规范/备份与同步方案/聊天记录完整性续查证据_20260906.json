@@ -1,0 +1,132 @@
+{
+  "date": "2026-09-06",
+  "scope": "malignant history/basic-card bugs only; no preset or setting migration",
+  "new_tests": {
+    "total": 15,
+    "success": 13,
+    "failure": 2
+  },
+  "baseline_new_tests": {
+    "success": 3,
+    "failure": 12
+  },
+  "related_tests": {
+    "success": 30
+  },
+  "existing_layout_tests": {
+    "success": 15,
+    "failure": 4
+  },
+  "static_analysis": "no issues",
+  "build": "pub get and Android debug passed; not installed",
+  "native_run": "blocked: no xcodebuild",
+  "files": [
+    {
+      "path": "lib/src/features/backup/data/conversation_exporter.dart",
+      "sha256": "83b169d839c3b1771b6d9a6aca721e2d4327d980b4229a34fd0e00350ce0b70e"
+    },
+    {
+      "path": "lib/src/features/backup/data/conversation_importer.dart",
+      "sha256": "c9b5362a9c7839507d2c1e459d0617f8d3115c0579c3a9c26ee76a67a1e9383d"
+    },
+    {
+      "path": "lib/src/features/chat/services/chat_frontend_message_projection_service.dart",
+      "sha256": "b37d3970c5225ea205d7ccac306b67dbbcd1543c3224cb8483e8bc12fa605ef7"
+    },
+    {
+      "path": "lib/src/features/chat/services/chat_message_projection_codec.dart",
+      "sha256": "9f01a11f38cd150ffd6b60028e966224435835c0d30a776e775ecda8f7a7109b"
+    },
+    {
+      "path": "test/features/backup/chat_history_integrity_test.dart",
+      "sha256": "4e5e31accd4ee1553a1fb69c33fd250796afca21f83b671f5ee2daa674922fc7"
+    }
+  ],
+  "results": [
+    {
+      "name": "H01 selected image missing locally must fail without damaging old backup",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "H01 selected audio missing locally must fail without damaging old backup",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "H01 selected file missing locally must fail without damaging old backup",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "H02 explicitly excluded missing image must not block text backup",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "H02 explicitly excluded missing audio must not block text backup",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "H03 malformed nonempty block {broken must not silently become empty",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "H03 malformed nonempty block [] must not silently become empty",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "H03 malformed nonempty block null must not silently become empty",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "H04 card-only export ignores corrupt unselected chat",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "H05 missing selected avatar must not silently disappear from backup",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "H05 missing selected poster must not silently disappear from backup",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "H06 basic card retains supported reference assets/characters/Arona.webp",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "H06 basic card retains supported reference https://example.invalid/avatar.png",
+      "errors": [],
+      "result": "success"
+    },
+    {
+      "name": "H07 evidence: actual chat rebuild retains supplementary image after transfer",
+      "errors": [
+        {
+          "message": "Expected: an object with length of <1>\n  Actual: []\n   Which: has length of <0>\nsuccessful restore must not silently lose a visible media message\n",
+          "stack": "package:matcher                                              expect\npackage:flutter_test/src/widget_tester.dart 473:18           expect\ntest/features/backup/chat_history_integrity_test.dart 215:7  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    },
+    {
+      "name": "H07 evidence: actual chat rebuild retains supplementary audio after transfer",
+      "errors": [
+        {
+          "message": "Expected: an object with length of <1>\n  Actual: []\n   Which: has length of <0>\nsuccessful restore must not silently lose a visible media message\n",
+          "stack": "package:matcher                                              expect\npackage:flutter_test/src/widget_tester.dart 473:18           expect\ntest/features/backup/chat_history_integrity_test.dart 215:7  main.<fn>\n"
+        }
+      ],
+      "result": "failure"
+    }
+  ]
+}

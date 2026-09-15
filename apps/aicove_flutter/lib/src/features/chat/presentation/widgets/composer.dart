@@ -11,30 +11,35 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:ui' as ui;
+
+import 'package:aicove_flutter/src/ui/theme/moe_interaction_theme.dart';
 
 import 'package:chat_bottom_container/chat_bottom_container.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import '../../../../core/services/attachment_picker_service.dart';
-import '../../../../ui/theme/skin_provider.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
-import '../../../../ui/shared/widgets/meotalk_dialog.dart';
-import '../../../../ui/shared/widgets/moe_toast.dart';
-import '../../../../ui/shared/widgets/media/attachment_preview.dart';
 import '../../../settings/app_settings.dart';
 import '../../chat_actions.dart';
+import '../../application/chat_edit.dart';
+import '../../chat_layer_providers.dart';
 import '../../conversation_providers.dart';
 import '../../domain/conversation.dart';
 import 'composer_model_picker_sheet.dart';
 import 'composer_more_panel.dart';
+import 'thinking_level_sheet.dart';
+import '../../../../core/api/thinking/thinking_level_labels.dart';
+import '../../../../core/api/providers/provider_adapter_factory.dart';
+import '../../../../core/api/thinking/thinking_level_resolver.dart';
+import '../../../agent_context/providers/preset_recipe_provider.dart';
 
 @visibleForTesting
 const String composerLegacyDraftStorageKey = 'composer_draft_text';
@@ -51,8 +56,9 @@ String composerDraftStorageKey(String conversationId) =>
 SelectedAttachment? composerDecodeDraftAttachment(dynamic rawAttachment) {
   if (rawAttachment is! Map) return null;
 
-  final attachmentMap =
-      Map<String, dynamic>.from(rawAttachment.cast<String, dynamic>());
+  final attachmentMap = Map<String, dynamic>.from(
+    rawAttachment.cast<String, dynamic>(),
+  );
   final path = (attachmentMap['path'] as String?)?.trim();
   if (path == null || path.isEmpty) return null;
 
@@ -94,9 +100,15 @@ class Composer extends ConsumerStatefulWidget {
   final bool disabled;
   final FutureOr<void> Function(String) onSend;
   final FutureOr<void> Function(String imagePath, {String? text})?
-      onImageSelected;
+  onImageSelected;
   final FutureOr<void> Function(String filePath, {String? text})?
-      onFileSelected;
+  onFileSelected;
+  final Future<void> Function(
+    ChatEditDraft draft,
+    String text,
+    SelectedAttachment? attachment,
+  )?
+  onSubmitEdit;
   final ValueChanged<double>? onHeightChanged;
   final VoidCallback? onInputTap;
   const Composer({
@@ -105,6 +117,7 @@ class Composer extends ConsumerStatefulWidget {
     this.disabled = false,
     this.onImageSelected,
     this.onFileSelected,
+    this.onSubmitEdit,
     this.onHeightChanged,
     this.onInputTap,
   });
@@ -122,6 +135,13 @@ class _ComposerState extends ConsumerState<Composer> {
   Timer? _draftSaveTimer;
   AppLifecycleListener? _appLifecycleListener;
   String? _draftConversationId;
+  ChatEditDraft? _editDraft;
+  bool _invalidEditDraft = false;
+  bool _editSubmitting = false;
+  bool _draftLoading = false;
+  int _editSeedSerial = 0;
+  int _draftScopeEpoch = 0;
+  Future<void> _draftWrites = Future<void>.value();
 
   // chat_bottom_container 控制器
   final _panelController =
@@ -129,7 +149,8 @@ class _ComposerState extends ConsumerState<Composer> {
   ComposerPanelType _currentPanelType = ComposerPanelType.none;
 
   // 记录键盘高度，用于更多面板的高度
-  double _keyboardHeight = 270;
+  static const _defaultPanelHeight = 270.0;
+  double _keyboardHeight = _defaultPanelHeight;
   // 输入态锚点高度：用于“键盘 <-> 更多面板”切换时保持输入框不跳动
   double _anchorPanelHeight = 0;
   bool _holdPanelHeight = false;
@@ -225,8 +246,8 @@ class _ComposerState extends ConsumerState<Composer> {
       // 如果焦点移到了另一个文本输入框，说明是用户主动点击，不抢焦点
       final primaryFocus = FocusManager.instance.primaryFocus;
       if (primaryFocus != null && primaryFocus.context != null) {
-        final editableState =
-            primaryFocus.context!.findAncestorStateOfType<EditableTextState>();
+        final editableState = primaryFocus.context!
+            .findAncestorStateOfType<EditableTextState>();
         if (editableState != null) return;
       }
 
@@ -276,6 +297,12 @@ class _ComposerState extends ConsumerState<Composer> {
   void dispose() {
     _keyboardGuardTimer?.cancel();
     _draftSaveTimer?.cancel();
+    // 在controller释放前捕获快照，退出编辑不触碰历史。
+    unawaited(
+      _saveDraftSnapshot(
+        scopeId: _draftConversationId,
+      ).catchError((Object _) {}),
+    );
     _appLifecycleListener?.dispose();
     _ctrl.removeListener(_onTextChanged);
     _inputFocus.removeListener(_onDesktopFocusChange);
@@ -307,13 +334,30 @@ class _ComposerState extends ConsumerState<Composer> {
     final currentScopeId = _normalizeDraftScopeId(_draftConversationId);
     if (!forceReload && currentScopeId == nextScopeId) return;
 
-    if (!forceReload && currentScopeId != null) {
-      _draftSaveTimer?.cancel();
-      await _saveDraftSnapshot(scopeId: currentScopeId);
-    }
-
+    final epoch = ++_draftScopeEpoch;
+    _draftSaveTimer?.cancel();
+    final save = !forceReload && currentScopeId != null
+        ? _saveDraftSnapshot(scopeId: currentScopeId)
+        : Future<void>.value();
+    _draftLoading = true;
     _draftConversationId = nextScopeId;
-    await _loadDraftSnapshot(scopeId: nextScopeId, replaceCurrent: true);
+    if (mounted && !forceReload) {
+      setState(() {
+        _editDraft = null;
+        _invalidEditDraft = false;
+        _selectedAttachment = null;
+        _ctrl.clear();
+      });
+    }
+    try {
+      await save;
+      if (!mounted || epoch != _draftScopeEpoch) return;
+      await _loadDraftSnapshot(scopeId: nextScopeId, replaceCurrent: true);
+    } finally {
+      if (mounted && epoch == _draftScopeEpoch) {
+        setState(() => _draftLoading = false);
+      }
+    }
   }
 
   Future<_ComposerDraftSnapshot?> _readStoredDraftSnapshot(
@@ -369,10 +413,7 @@ class _ComposerState extends ConsumerState<Composer> {
     );
   }
 
-  bool _sameAttachment(
-    SelectedAttachment? left,
-    SelectedAttachment? right,
-  ) {
+  bool _sameAttachment(SelectedAttachment? left, SelectedAttachment? right) {
     return left?.path == right?.path &&
         left?.type == right?.type &&
         left?.name == right?.name &&
@@ -383,18 +424,47 @@ class _ComposerState extends ConsumerState<Composer> {
     required String? scopeId,
     required bool replaceCurrent,
   }) async {
+    final serial = _editSeedSerial;
+    final epoch = _draftScopeEpoch;
     final prefs = await SharedPreferences.getInstance();
-    final snapshot = await _readStoredDraftSnapshot(
-      prefs,
-      scopeId: scopeId,
+    final snapshot = await _readStoredDraftSnapshot(prefs, scopeId: scopeId);
+    if (!mounted ||
+        epoch != _draftScopeEpoch ||
+        serial != _editSeedSerial ||
+        scopeId != _readCurrentConversationId()) {
+      return;
+    }
+    if (snapshot?.edit == null &&
+        !(snapshot?.invalidEdit ?? false) &&
+        (scopeId == null || ref.read(chatEditSeedProvider(scopeId)) == null)) {
+      _applyDraftText(snapshot?.text ?? '', replaceCurrent: replaceCurrent);
+    }
+    final restoredAttachment = await _resolveRestorableAttachment(
+      snapshot?.attachment,
     );
-    if (!mounted) return;
-
+    if (!mounted ||
+        epoch != _draftScopeEpoch ||
+        serial != _editSeedSerial ||
+        scopeId != _readCurrentConversationId()) {
+      return;
+    }
+    final seed = scopeId == null
+        ? null
+        : ref.read(chatEditSeedProvider(scopeId));
+    if (seed != null) {
+      _applyEditSeed(seed);
+      return;
+    }
+    setState(() {
+      _editDraft = snapshot?.edit;
+      _invalidEditDraft =
+          (snapshot?.invalidEdit ?? false) ||
+          (_editDraft != null &&
+              (_editDraft!.conversationId != scopeId ||
+                  (snapshot?.attachment != null &&
+                      restoredAttachment == null)));
+    });
     _applyDraftText(snapshot?.text ?? '', replaceCurrent: replaceCurrent);
-
-    final restoredAttachment =
-        await _resolveRestorableAttachment(snapshot?.attachment);
-    if (!mounted) return;
 
     final shouldReplaceAttachment =
         replaceCurrent || _selectedAttachment == null;
@@ -404,6 +474,8 @@ class _ComposerState extends ConsumerState<Composer> {
     }
 
     if (snapshot != null &&
+        snapshot.edit == null &&
+        !snapshot.invalidEdit &&
         snapshot.attachment != null &&
         restoredAttachment == null) {
       final sanitized = snapshot.copyWith(attachment: null);
@@ -420,42 +492,108 @@ class _ComposerState extends ConsumerState<Composer> {
 
   /// 输入变化时触发（带防抖保存草稿）
   void _onTextChanged() {
+    if (_draftLoading) return;
     _scheduleDraftSave();
   }
 
   void _scheduleDraftSave() {
     _draftSaveTimer?.cancel();
     _draftSaveTimer = Timer(const Duration(milliseconds: 500), () {
-      unawaited(_saveDraftSnapshot(scopeId: _draftConversationId));
+      unawaited(
+        _saveDraftSnapshot(
+          scopeId: _draftConversationId,
+        ).catchError((Object _) {}),
+      );
     });
   }
 
   void _persistDraftImmediately() {
     _draftSaveTimer?.cancel();
-    unawaited(_saveDraftSnapshot(scopeId: _draftConversationId));
+    unawaited(
+      _saveDraftSnapshot(
+        scopeId: _draftConversationId,
+      ).catchError((Object _) {}),
+    );
   }
 
   /// 保存草稿到本地
-  Future<void> _saveDraftSnapshot({String? scopeId}) async {
-    final prefs = await SharedPreferences.getInstance();
+  Future<void> _saveDraftSnapshot({String? scopeId}) {
+    if (_draftLoading) return Future<void>.value();
+    // await之前捕获owner及内容，串行写入防止旧保存覆盖取消/提交。
     final snapshot = _ComposerDraftSnapshot(
       text: _ctrl.text,
       attachment: _selectedAttachment,
+      edit: _editDraft,
+      invalidEdit: _invalidEditDraft,
     );
     final draftKey = _resolveDraftStorageKey(scopeId);
-
-    if (snapshot.isEmpty) {
-      await prefs.remove(draftKey);
-    } else {
-      await prefs.setString(draftKey, snapshot.encode());
-    }
+    final task = _draftWrites.then((_) async {
+      final prefs = await SharedPreferences.getInstance();
+      final ok = snapshot.isEmpty
+          ? await prefs.remove(draftKey)
+          : await prefs.setString(draftKey, snapshot.encode());
+      if (!ok) throw StateError('草稿保存失败');
+    });
+    _draftWrites = task.catchError((Object _) {});
+    return task;
   }
 
   /// 清除草稿（发送成功后调用）
-  Future<void> _clearDraft() async {
+  Future<void> _clearDraft({String? scopeId}) {
+    final owner = scopeId ?? _draftConversationId;
+    if (owner == _draftConversationId) _draftSaveTimer?.cancel();
+    final key = _resolveDraftStorageKey(owner);
+    final task = _draftWrites.then((_) async {
+      final prefs = await SharedPreferences.getInstance();
+      if (!await prefs.remove(key)) throw StateError('草稿清理失败');
+    });
+    _draftWrites = task.catchError((Object _) {});
+    return task;
+  }
+
+  void _applyEditSeed(ChatEditSeed seed) {
+    if (!mounted || _readCurrentConversationId() != seed.draft.conversationId) {
+      return;
+    }
+    _editSeedSerial++;
+    _draftLoading = false;
     _draftSaveTimer?.cancel();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_resolveDraftStorageKey(_draftConversationId));
+    _draftConversationId = seed.draft.conversationId;
+    ref.read(quotedMessageProvider.notifier).state = null;
+    setState(() {
+      _editDraft = seed.draft;
+      _invalidEditDraft = false;
+      _selectedAttachment = seed.attachment; // 包括null，清掉上一次的附件。
+      _ctrl.text = seed.text; // 包括空串，纯图片编辑不能带上旧文本。
+      _ctrl.selection = TextSelection.collapsed(offset: seed.text.length);
+    });
+    ref.read(chatEditSeedProvider(seed.draft.conversationId).notifier).state =
+        null;
+    unawaited(
+      _saveDraftSnapshot(scopeId: seed.draft.conversationId).catchError((
+        Object _,
+      ) {
+        if (mounted) MoeToast.error(context, '编辑草稿保存失败，原历史未改变');
+      }),
+    );
+    _showKeyboardWithPreAnimation();
+  }
+
+  Future<void> _cancelEdit() async {
+    if (_editSubmitting) return;
+    final owner = _draftConversationId;
+    _editSeedSerial++;
+    setState(() {
+      _editDraft = null;
+      _invalidEditDraft = false;
+      _selectedAttachment = null;
+      _ctrl.clear();
+    });
+    try {
+      await _clearDraft(scopeId: owner);
+    } catch (_) {
+      if (mounted) MoeToast.error(context, '草稿清理失败；原历史仍保留');
+    }
   }
 
   Future<SelectedAttachment> _stabilizeAttachmentForDraft(
@@ -516,10 +654,18 @@ class _ComposerState extends ConsumerState<Composer> {
     SelectedAttachment? attachment, {
     bool persistImmediately = true,
   }) async {
+    if (_editSubmitting) return;
+    final epoch = _draftScopeEpoch;
+    final serial = _editSeedSerial;
     final nextAttachment = attachment == null
         ? null
         : await _stabilizeAttachmentForDraft(attachment);
-    if (!mounted) return;
+    if (!mounted ||
+        _editSubmitting ||
+        epoch != _draftScopeEpoch ||
+        serial != _editSeedSerial) {
+      return;
+    }
     if (_sameAttachment(_selectedAttachment, nextAttachment)) return;
 
     setState(() => _selectedAttachment = nextAttachment);
@@ -584,8 +730,9 @@ class _ComposerState extends ConsumerState<Composer> {
 
     // 从“更多面板”切回键盘时，先固定在锚点高度，等系统键盘高度追平后再释放。
     if (_holdPanelHeight && _anchorPanelHeight > 0) {
-      final fixedHeight =
-          liveInset > _anchorPanelHeight ? liveInset : _anchorPanelHeight;
+      final fixedHeight = liveInset > _anchorPanelHeight
+          ? liveInset
+          : _anchorPanelHeight;
       if (liveInset >= _anchorPanelHeight - 1) {
         _holdPanelHeight = false;
       }
@@ -622,31 +769,31 @@ class _ComposerState extends ConsumerState<Composer> {
         ? _anchorPanelHeight
         : (nativeHeight > 0 ? nativeHeight : _keyboardHeight);
     if (resolved > 0) _keyboardHeight = resolved;
-    return _clampToSafeArea(resolved);
+    // Floating IMEs may report only a tiny candidate strip. Actions still
+    // need a usable viewport, independent of that keyboard's docking height.
+    final minimumHeight = (MediaQuery.sizeOf(context).height * 0.4).clamp(
+      120.0,
+      _defaultPanelHeight,
+    );
+    return _clampToSafeArea(resolved).clamp(minimumHeight, double.infinity);
   }
 
   bool get _supportsSoftKeyboardPanel {
-    if (kIsWeb) return false;
     return switch (defaultTargetPlatform) {
       TargetPlatform.android || TargetPlatform.iOS => true,
       TargetPlatform.fuchsia ||
       TargetPlatform.linux ||
       TargetPlatform.macOS ||
-      TargetPlatform.windows =>
-        false,
+      TargetPlatform.windows => false,
     };
   }
 
   Widget _buildComposerGlassLayer({required Widget child}) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final tint = isDark
-        ? Colors.black.withValues(alpha: 0.18)
-        : Colors.white.withValues(alpha: 0.22);
-
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ui.ImageFilter.blur(sigmaX: 22, sigmaY: 22),
-        child: ColoredBox(color: tint, child: child),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 14),
+      child: MoeFloatingSurface(
+        key: const ValueKey('composer-floating-surface'),
+        child: child,
       ),
     );
   }
@@ -741,15 +888,11 @@ class _ComposerState extends ConsumerState<Composer> {
           _armKeyboardGuard();
         }
       case ComposerPanelType.keyboard:
-        await _performKeyboardTransition(
-          explicitShow: intent.explicitShow,
-        );
+        await _performKeyboardTransition(explicitShow: intent.explicitShow);
     }
   }
 
-  Future<void> _performKeyboardTransition({
-    required bool explicitShow,
-  }) async {
+  Future<void> _performKeyboardTransition({required bool explicitShow}) async {
     if (!mounted || widget.disabled) return;
 
     if (!_supportsSoftKeyboardPanel) {
@@ -814,8 +957,9 @@ class _ComposerState extends ConsumerState<Composer> {
       if (!ref.read(sendingProvider)) return;
       setState(() => _isInterruptingGeneration = true);
       try {
-        final stopped =
-            await ref.read(chatActionsProvider).interruptCurrentGeneration();
+        final stopped = await ref
+            .read(chatActionsProvider)
+            .interruptCurrentGeneration();
         if (!mounted) return;
         if (stopped) {
           MoeToast.brief(context, '已停止生成');
@@ -834,6 +978,50 @@ class _ComposerState extends ConsumerState<Composer> {
   Future<void> _submit() async {
     final attachment = _selectedAttachment;
     final text = _ctrl.text.trim();
+    if (_editSubmitting || _draftLoading) return;
+    if (_invalidEditDraft) {
+      MoeToast.error(context, '编辑草稿或附件失效，请取消后重新编辑');
+      return;
+    }
+    final edit = _editDraft;
+    if (edit != null) {
+      if (widget.disabled || (text.isEmpty && attachment == null)) return;
+      if (widget.onSubmitEdit == null) {
+        MoeToast.error(context, '当前页面不支持提交编辑');
+        return;
+      }
+      setState(() => _editSubmitting = true);
+      var locallyCommitted = false;
+      try {
+        await _saveDraftSnapshot(scopeId: edit.conversationId);
+        await widget.onSubmitEdit!(edit, text, attachment);
+        locallyCommitted = true;
+        if (mounted &&
+            _readCurrentConversationId() == edit.conversationId &&
+            identical(_editDraft, edit)) {
+          setState(() {
+            _editDraft = null;
+            _selectedAttachment = null;
+            _ctrl.clear();
+          });
+        }
+        await _clearDraft(scopeId: edit.conversationId);
+      } catch (error) {
+        if (mounted) {
+          MoeToast.error(
+            context,
+            locallyCommitted
+                ? '消息已提交，但草稿清理失败；再次进入时请取消旧草稿'
+                : error is StateError
+                ? error.message.toString()
+                : '编辑提交失败，草稿已保留',
+          );
+        }
+      } finally {
+        if (mounted) setState(() => _editSubmitting = false);
+      }
+      return;
+    }
 
     if (attachment != null) {
       if (attachment.type == AttachmentType.image &&
@@ -871,7 +1059,8 @@ class _ComposerState extends ConsumerState<Composer> {
   void _onMorePressed() {
     if (widget.disabled) return;
     final pendingTarget = _pendingPanelIntent?.target;
-    final isMoreOpen = _currentPanelType == ComposerPanelType.more ||
+    final isMoreOpen =
+        _currentPanelType == ComposerPanelType.more ||
         pendingTarget == ComposerPanelType.more;
     if (isMoreOpen) {
       _showKeyboardDirect();
@@ -882,6 +1071,12 @@ class _ComposerState extends ConsumerState<Composer> {
 
   @override
   Widget build(BuildContext context) {
+    final editOwner = ref.watch(activeConversationProvider)?.id;
+    if (editOwner != null) {
+      ref.listen<ChatEditSeed?>(chatEditSeedProvider(editOwner), (_, seed) {
+        if (seed != null) _applyEditSeed(seed);
+      });
+    }
     ref.listen<String?>(editingTextProvider, (previous, next) {
       if (next != null && next.isNotEmpty) {
         _ctrl.text = next;
@@ -892,8 +1087,10 @@ class _ComposerState extends ConsumerState<Composer> {
         _showKeyboardWithPreAnimation();
       }
     });
-    ref.listen<SelectedAttachment?>(recalledAttachmentProvider,
-        (previous, next) {
+    ref.listen<SelectedAttachment?>(recalledAttachmentProvider, (
+      previous,
+      next,
+    ) {
       if (next != null) {
         ref.read(recalledAttachmentProvider.notifier).state = null;
         unawaited(_setSelectedAttachment(next));
@@ -922,52 +1119,76 @@ class _ComposerState extends ConsumerState<Composer> {
         child: Container(
           key: _rootKey,
           child: TextFieldTapRegion(
-            child: _buildComposerGlassLayer(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _buildQuotedMessagePreview(),
-                  if (_selectedAttachment?.type == AttachmentType.image)
-                    ImageAttachmentPreview(
-                      imagePath: _selectedAttachment!.path,
-                      onRemove: () {
-                        unawaited(_setSelectedAttachment(null));
-                      },
-                    ),
-                  if (_selectedAttachment?.type == AttachmentType.file)
-                    FileAttachmentPreview(
-                      filePath: _selectedAttachment!.path,
-                      fileName: _selectedAttachment!.name,
-                      fileSizeBytes: _selectedAttachment!.sizeBytes,
-                      leadingIcon: Icons.insert_drive_file_outlined,
-                      onRemove: () {
-                        unawaited(_setSelectedAttachment(null));
-                      },
-                    ),
-                  if (_selectedAttachment?.type == AttachmentType.audio)
-                    FileAttachmentPreview(
-                      filePath: _selectedAttachment!.path,
-                      fileName: _selectedAttachment!.name,
-                      fileSizeBytes: _selectedAttachment!.sizeBytes,
-                      leadingIcon: Icons.audiotrack_outlined,
-                      onRemove: () {
-                        unawaited(_setSelectedAttachment(null));
-                      },
-                    ),
-                  if (_selectedAttachment?.type == AttachmentType.video)
-                    FileAttachmentPreview(
-                      filePath: _selectedAttachment!.path,
-                      fileName: _selectedAttachment!.name,
-                      fileSizeBytes: _selectedAttachment!.sizeBytes,
-                      leadingIcon: Icons.movie_outlined,
-                      onRemove: () {
-                        unawaited(_setSelectedAttachment(null));
-                      },
-                    ),
-                  _buildInputBar(),
-                  _buildPanelContainer(),
-                ],
-              ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildComposerGlassLayer(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_editDraft != null || _invalidEditDraft)
+                        Row(
+                          children: [
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                _invalidEditDraft
+                                    ? '编辑草稿失效，原历史未改变'
+                                    : '发送后重新生成对话',
+                                maxLines: 2,
+                              ),
+                            ),
+                            TextButton(
+                              key: const ValueKey('cancel_message_edit'),
+                              onPressed: _editSubmitting ? null : _cancelEdit,
+                              child: const Text('取消编辑'),
+                            ),
+                          ],
+                        ),
+                      _buildQuotedMessagePreview(),
+                      if (_selectedAttachment?.type == AttachmentType.image)
+                        ImageAttachmentPreview(
+                          imagePath: _selectedAttachment!.path,
+                          onRemove: () {
+                            unawaited(_setSelectedAttachment(null));
+                          },
+                        ),
+                      if (_selectedAttachment?.type == AttachmentType.file)
+                        FileAttachmentPreview(
+                          filePath: _selectedAttachment!.path,
+                          fileName: _selectedAttachment!.name,
+                          fileSizeBytes: _selectedAttachment!.sizeBytes,
+                          leadingIcon: Icons.insert_drive_file_outlined,
+                          onRemove: () {
+                            unawaited(_setSelectedAttachment(null));
+                          },
+                        ),
+                      if (_selectedAttachment?.type == AttachmentType.audio)
+                        FileAttachmentPreview(
+                          filePath: _selectedAttachment!.path,
+                          fileName: _selectedAttachment!.name,
+                          fileSizeBytes: _selectedAttachment!.sizeBytes,
+                          leadingIcon: Icons.audiotrack_outlined,
+                          onRemove: () {
+                            unawaited(_setSelectedAttachment(null));
+                          },
+                        ),
+                      if (_selectedAttachment?.type == AttachmentType.video)
+                        FileAttachmentPreview(
+                          filePath: _selectedAttachment!.path,
+                          fileName: _selectedAttachment!.name,
+                          fileSizeBytes: _selectedAttachment!.sizeBytes,
+                          leadingIcon: Icons.movie_outlined,
+                          onRemove: () {
+                            unawaited(_setSelectedAttachment(null));
+                          },
+                        ),
+                      _buildInputBar(),
+                    ],
+                  ),
+                ),
+                _buildPanelContainer(),
+              ],
             ),
           ),
         ),
@@ -976,45 +1197,41 @@ class _ComposerState extends ConsumerState<Composer> {
   }
 
   Widget _buildInputBar() {
-    final skin = context.skin;
     final colors = context.moeColors;
-    final inputStyle = skin.inputDecoration(colors);
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           _buildMoreButton(
-              isActive: _currentPanelType == ComposerPanelType.more),
-          const SizedBox(width: 8),
+            isActive: _currentPanelType == ComposerPanelType.more,
+          ),
+          const SizedBox(width: 2),
           Expanded(
             child: Container(
               constraints: const BoxConstraints(minHeight: 42),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: MoeG2Decoration(
-                radius: skin.buttonRadius,
-                color: Colors.transparent,
-                border: inputStyle.border,
-                boxShadow: inputStyle.boxShadow,
-              ),
+              alignment: Alignment.centerLeft,
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
               child: TextField(
                 controller: _ctrl,
                 focusNode: _inputFocus,
                 minLines: 1,
                 maxLines: 4,
-                style: const TextStyle(fontSize: 16, height: 1.5),
-                readOnly: _suppressKeyboard,
+                textAlignVertical: TextAlignVertical.center,
+                style: const TextStyle(fontSize: 16, height: 1.4),
+                readOnly: _suppressKeyboard || _editSubmitting || _draftLoading,
                 showCursor: !_suppressKeyboard,
                 decoration: InputDecoration.collapsed(
-                  hintText: '说点什么...',
+                  hintText: '消息',
                   hintStyle: TextStyle(color: colors.muted),
-                ),
+                ).copyWith(visualDensity: VisualDensity.standard),
                 enabled: !widget.disabled,
                 onTap: () {
                   if (widget.disabled) return;
                   widget.onInputTap?.call();
-                  final shouldExplicitShow = _suppressKeyboard ||
+                  final shouldExplicitShow =
+                      _suppressKeyboard ||
                       _currentPanelType == ComposerPanelType.more;
                   _showKeyboardDirect(explicitShow: shouldExplicitShow);
                 },
@@ -1022,7 +1239,7 @@ class _ComposerState extends ConsumerState<Composer> {
               ),
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 2),
           _buildSendButton(),
         ],
       ),
@@ -1047,10 +1264,7 @@ class _ComposerState extends ConsumerState<Composer> {
           Container(
             width: 3,
             height: 32,
-            decoration: MoeG2Decoration(
-              radius: 2,
-              color: colors.accentColor,
-            ),
+            decoration: MoeG2Decoration(radius: 2, color: colors.accentColor),
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -1071,10 +1285,7 @@ class _ComposerState extends ConsumerState<Composer> {
                   quoted.content,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: colors.muted,
-                  ),
+                  style: TextStyle(fontSize: 13, color: colors.muted),
                 ),
               ],
             ),
@@ -1082,7 +1293,10 @@ class _ComposerState extends ConsumerState<Composer> {
           const SizedBox(width: 8),
           GestureDetector(
             onTap: () => ref.read(quotedMessageProvider.notifier).state = null,
-            child: Icon(Icons.close, size: 18, color: colors.muted),
+            child: MoeButtonSurface(
+              radius: 999,
+              child: Icon(Icons.close, size: 18, color: colors.muted),
+            ),
           ),
         ],
       ),
@@ -1104,43 +1318,20 @@ class _ComposerState extends ConsumerState<Composer> {
             panel = const SizedBox.shrink();
           }
         } else {
-          panel = _panelController.buildInPanel(panelType) ??
+          panel =
+              _panelController.buildInPanel(panelType) ??
               const SizedBox.shrink();
         }
         final duration = _panelController.isKeyboardHeightChangedByItself
             ? kAnimXFast
             : (panelType == ChatBottomPanelType.none ? kAnim : kAnimFast);
-        final switchKey = switch (panelType) {
-          ChatBottomPanelType.none => 'none',
-          ChatBottomPanelType.keyboard => 'keyboard',
-          ChatBottomPanelType.other => 'other:${data?.name ?? 'null'}',
-        };
-        return Container(
-          color: Colors.transparent,
-          child: AnimatedSize(
-            alignment: Alignment.topCenter,
-            duration: duration,
-            curve: Curves.easeOutCubic,
-            child: AnimatedSwitcher(
-              duration: kAnimFast,
-              switchInCurve: Curves.easeOutCubic,
-              switchOutCurve: Curves.easeInCubic,
-              transitionBuilder: (child, animation) {
-                return FadeTransition(opacity: animation, child: child);
-              },
-              layoutBuilder: (currentChild, previousChildren) {
-                return Stack(
-                  alignment: Alignment.topCenter,
-                  children: [
-                    for (final child in previousChildren)
-                      Positioned.fill(child: child),
-                    if (currentChild != null) currentChild,
-                  ],
-                );
-              },
-              child: KeyedSubtree(key: ValueKey(switchKey), child: panel),
-            ),
-          ),
+        // Animate the panel height without applying group opacity to its
+        // backdrop filter. Some Impeller backends reject that combination.
+        return AnimatedSize(
+          alignment: Alignment.topCenter,
+          duration: duration,
+          curve: Curves.easeOutCubic,
+          child: panel,
         );
       },
       otherPanelWidget: (type) {
@@ -1152,8 +1343,14 @@ class _ComposerState extends ConsumerState<Composer> {
         }
         if (type != ComposerPanelType.more) return const SizedBox.shrink();
         return SizedBox(
-            height: height,
-            child: ComposerMorePanel(onAction: _handlePanelAction));
+          height: height,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
+            child: MoeFloatingSurface(
+              child: ComposerMorePanel(onAction: _handlePanelAction),
+            ),
+          ),
+        );
       },
       onPanelTypeChange: (panelType, data) {
         setState(() {
@@ -1162,7 +1359,7 @@ class _ComposerState extends ConsumerState<Composer> {
               _currentPanelType = ComposerPanelType.none;
               final switchingToMore =
                   _desiredPanelType == ComposerPanelType.more ||
-                      _pendingPanelIntent?.target == ComposerPanelType.more;
+                  _pendingPanelIntent?.target == ComposerPanelType.more;
               if (!switchingToMore) {
                 _suppressKeyboard = false;
                 _holdPanelHeight = false;
@@ -1200,8 +1397,8 @@ class _ComposerState extends ConsumerState<Composer> {
           }
           final effectiveHeight = _holdPanelHeight && _anchorPanelHeight > 0
               ? (liveHeight > _anchorPanelHeight
-                  ? liveHeight
-                  : _anchorPanelHeight)
+                    ? liveHeight
+                    : _anchorPanelHeight)
               : liveHeight;
           return _clampToSafeArea(effectiveHeight);
         }
@@ -1220,6 +1417,8 @@ class _ComposerState extends ConsumerState<Composer> {
     switch (action) {
       case ComposerAction.model:
         _openModelPickerFromMorePanel();
+      case ComposerAction.thinking:
+        _openThinkingLevelFromMorePanel();
       case ComposerAction.gallery:
         _pickImage(ImageSource.gallery);
       case ComposerAction.camera:
@@ -1252,6 +1451,80 @@ class _ComposerState extends ConsumerState<Composer> {
     await _openModelPicker();
   }
 
+  Future<void> _openThinkingLevelFromMorePanel() async {
+    _requestPanelIntent(ComposerPanelType.none);
+    if (_supportsSoftKeyboardPanel) {
+      await Future<void>.delayed(kAnimFast);
+    }
+    if (!mounted) return;
+    await _openThinkingLevelPicker();
+  }
+
+  /// 会话级思考档位：作用于当前会话 × 当前默认模型。
+  Future<void> _openThinkingLevelPicker() async {
+    final settings = ref.read(appSettingsProvider).valueOrNull;
+    final conversation = ref.read(activeConversationProvider);
+    if (settings == null || conversation == null) {
+      MoeToast.brief(context, '设置加载中，请稍后再试');
+      return;
+    }
+    final modelRef = settings.defaultModelName.trim();
+    if (modelRef.isEmpty) {
+      MoeToast.brief(context, '请先选择模型');
+      return;
+    }
+    final providerId = settings.getModelProviderId(modelRef) ?? 'openai';
+    final providerAuth = settings.providers
+        .where((p) => p.id == providerId)
+        .firstOrNull;
+    final resolvedProvider = ProviderAdapterFactory.resolveProvider(
+      providerId,
+      customConfig: providerAuth?.customConfig,
+      apiBaseUrl: providerAuth?.apiBaseUrl,
+    );
+    String? presetEffort;
+    final recipeId = conversation.recipeId?.trim();
+    if (recipeId != null && recipeId.isNotEmpty) {
+      presetEffort = ref
+          .read(presetRecipeProvider(recipeId))
+          .valueOrNull
+          ?.reasoningEffort;
+    }
+    final effective = resolveEffectiveThinkingLevel(
+      providerType: resolvedProvider,
+      modelId: settings.getRawModelId(modelRef),
+      sessionLevel: conversation.thinkingLevels[modelRef],
+      modelDefaultLevel: settings.getModelConfig(modelRef).thinkingLevel,
+      presetReasoningEffort: presetEffort,
+    );
+
+    final result = await showThinkingLevelSheet(
+      context,
+      title: '思考档位 · ${settings.getModelDisplayName(modelRef)}',
+      options: effective.options,
+      current: effective.level,
+      currentSource: effective.source,
+      hasOwnSetting: conversation.thinkingLevels.containsKey(modelRef),
+      clearLabel: '清除本会话设置，改用模型默认',
+    );
+    if (result == null || !mounted) return;
+
+    await ref
+        .read(conversationsProvider.notifier)
+        .setConversationThinkingLevel(
+          conversation.id,
+          modelRef: modelRef,
+          level: result.cleared ? null : result.level,
+        );
+    if (!mounted) return;
+    MoeToast.success(
+      context,
+      result.cleared
+          ? '已清除本会话的思考档位'
+          : '本会话思考档位：${thinkingLevelTitle(result.level!, isNative: effective.options.isNative)}',
+    );
+  }
+
   Widget _buildMoreButton({required bool isActive}) {
     final colors = context.moeColors;
     return SizedBox(
@@ -1259,9 +1532,11 @@ class _ComposerState extends ConsumerState<Composer> {
       height: 42,
       child: IconButton(
         onPressed: _onMorePressed,
-        style: IconButton.styleFrom(
-          padding: EdgeInsets.zero,
-          shape: const CircleBorder(),
+        style: withoutHoverFeedback(
+          IconButton.styleFrom(
+            padding: EdgeInsets.zero,
+            shape: const CircleBorder(),
+          ),
         ),
         icon: Icon(
           isActive ? Icons.close_rounded : Icons.add_rounded,
@@ -1280,20 +1555,25 @@ class _ComposerState extends ConsumerState<Composer> {
       width: 42,
       height: 42,
       child: IconButton(
-        onPressed:
-            (widget.disabled || isStopping) ? null : _onSendButtonPressed,
+        onPressed: (widget.disabled || isStopping)
+            ? null
+            : _onSendButtonPressed,
         tooltip: isStopping ? '正在停止' : (isGenerating ? '停止生成' : '发送'),
-        style: IconButton.styleFrom(
-          padding: EdgeInsets.zero,
-          shape: const CircleBorder(),
+        style: withoutHoverFeedback(
+          IconButton.styleFrom(
+            padding: EdgeInsets.zero,
+            shape: const CircleBorder(),
+          ),
         ),
         icon: Icon(
           isStopping
               ? Icons.hourglass_top_rounded
               : (isGenerating
-                  ? Icons.stop_rounded
-                  : Icons.arrow_upward_rounded),
-          color: widget.disabled ? colors.muted : colors.accentColor,
+                    ? Icons.stop_rounded
+                    : Icons.arrow_upward_rounded),
+          color: (widget.disabled || isStopping)
+              ? colors.muted
+              : colors.accentColor,
           size: 24,
         ),
       ),
@@ -1465,13 +1745,18 @@ class _PanelIntent {
 class _ComposerDraftSnapshot {
   final String text;
   final SelectedAttachment? attachment;
+  final ChatEditDraft? edit;
+  final bool invalidEdit;
 
   const _ComposerDraftSnapshot({
     required this.text,
     this.attachment,
+    this.edit,
+    this.invalidEdit = false,
   });
 
-  bool get isEmpty => text.isEmpty && attachment == null;
+  bool get isEmpty =>
+      text.isEmpty && attachment == null && edit == null && !invalidEdit;
 
   _ComposerDraftSnapshot copyWith({
     String? text,
@@ -1480,6 +1765,8 @@ class _ComposerDraftSnapshot {
     return _ComposerDraftSnapshot(
       text: text ?? this.text,
       attachment: attachment,
+      edit: edit,
+      invalidEdit: invalidEdit,
     );
   }
 
@@ -1487,6 +1774,8 @@ class _ComposerDraftSnapshot {
     return jsonEncode(<String, Object?>{
       'version': _kComposerDraftVersion,
       'text': text,
+      if (edit != null) 'edit': edit!.toJson(),
+      if (invalidEdit) 'invalidEdit': true,
       if (attachment != null)
         'attachment': <String, Object?>{
           'path': attachment!.path,
@@ -1504,16 +1793,34 @@ class _ComposerDraftSnapshot {
       if (decoded is! Map) {
         return _ComposerDraftSnapshot(text: rawValue);
       }
-      final draftMap =
-          Map<String, dynamic>.from(decoded.cast<String, dynamic>());
+      final draftMap = Map<String, dynamic>.from(
+        decoded.cast<String, dynamic>(),
+      );
       final text = (draftMap['text'] as String?) ?? '';
       final attachment = _decodeAttachment(draftMap['attachment']);
+      ChatEditDraft? edit;
+      var invalid = draftMap['invalidEdit'] == true;
+      if (draftMap.containsKey('edit')) {
+        try {
+          edit = ChatEditDraft.fromJson(
+            Map<String, dynamic>.from(draftMap['edit'] as Map),
+          );
+        } catch (_) {
+          invalid = true;
+        }
+      }
       return _ComposerDraftSnapshot(
         text: text,
         attachment: attachment,
+        edit: edit,
+        invalidEdit: invalid,
       );
     } catch (_) {
-      return _ComposerDraftSnapshot(text: rawValue);
+      // 结构化草稿损坏时禁止将原始JSON降级成普通聊天内容发送。
+      return _ComposerDraftSnapshot(
+        text: rawValue,
+        invalidEdit: rawValue.trimLeft().startsWith('{'),
+      );
     }
   }
 

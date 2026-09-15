@@ -7,6 +7,11 @@ class ConversationRepository {
 
   ConversationRepository(this._db);
 
+  /// 同一个 AppDatabase 上的会话、消息及附件仓库共享此事务。
+  /// 导入等跨仓库操作必须整批成功，不能在失败时留下半条历史。
+  Future<T> transaction<T>(Future<T> Function() action) =>
+      _db.transaction(action);
+
   /// 获取所有会话（不含已删除）
   Future<List<Conversation>> getAll() async {
     return (_db.select(_db.conversations)
@@ -89,7 +94,8 @@ class ConversationRepository {
   Future<List<Conversation>> getDeleted() async {
     final now = DateTime.now().millisecondsSinceEpoch;
     return (_db.select(_db.conversations)
-          ..where((t) => t.deletedAt.isNotNull() & t.purgeAt.isBiggerThanValue(now)))
+          ..where((t) =>
+              t.deletedAt.isNotNull() & t.purgeAt.isBiggerThanValue(now)))
         .get();
   }
 
@@ -104,7 +110,8 @@ class ConversationRepository {
   Future<int> purgeExpired() async {
     final now = DateTime.now().millisecondsSinceEpoch;
     return (_db.delete(_db.conversations)
-          ..where((t) => t.purgeAt.isNotNull() & t.purgeAt.isSmallerOrEqualValue(now)))
+          ..where((t) =>
+              t.purgeAt.isNotNull() & t.purgeAt.isSmallerOrEqualValue(now)))
         .go();
   }
 }

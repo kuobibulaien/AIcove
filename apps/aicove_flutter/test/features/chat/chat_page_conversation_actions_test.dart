@@ -1,3 +1,4 @@
+import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:io';
 
 import 'package:drift/drift.dart' hide isNull;
@@ -14,6 +15,7 @@ import 'package:aicove_flutter/src/core/database/repositories/message_repository
 import 'package:aicove_flutter/src/features/chat/application/chat_page_conversation_actions.dart';
 import 'package:aicove_flutter/src/features/chat/conversation_providers.dart';
 import 'package:aicove_flutter/src/features/memory/services/memory_service.dart';
+import 'package:aicove_flutter/src/ui/features/character/services/contact_edit_snapshot_store.dart';
 
 class _FakePathProviderPlatform extends PathProviderPlatform {
   _FakePathProviderPlatform(this.rootPath);
@@ -27,17 +29,21 @@ class _FakePathProviderPlatform extends PathProviderPlatform {
 Future<void> _insertConversation(
   AppDatabase db, {
   required String id,
+  String? recipeId,
   String? contextStartMessageId,
   String? lastMessage,
   DateTime? lastMessageTime,
   int unreadCount = 0,
 }) async {
   final now = DateTime(2026, 3, 21, 20).millisecondsSinceEpoch;
-  await db.into(db.conversations).insert(
+  await db
+      .into(db.conversations)
+      .insert(
         ConversationsCompanion.insert(
           id: id,
           title: id,
           displayName: id,
+          recipeId: Value(recipeId),
           contextStartMessageId: Value(contextStartMessageId),
           lastMessage: Value(lastMessage),
           lastMessageTime: Value(lastMessageTime?.millisecondsSinceEpoch),
@@ -55,7 +61,9 @@ Future<void> _insertMessage(
   required String role,
   required DateTime createdAt,
 }) async {
-  await db.into(db.messages).insert(
+  await db
+      .into(db.messages)
+      .insert(
         MessagesCompanion.insert(
           id: id,
           conversationId: conversationId,
@@ -73,7 +81,9 @@ Future<void> _insertMemory(
   required String conversationId,
 }) async {
   final now = DateTime(2026, 3, 21, 20).millisecondsSinceEpoch;
-  await db.into(db.memories).insert(
+  await db
+      .into(db.memories)
+      .insert(
         MemoriesCompanion.insert(
           id: id,
           content: 'memory:$id',
@@ -90,7 +100,9 @@ Future<void> _insertDiary(
   required String conversationId,
 }) async {
   final now = DateTime(2026, 3, 21, 20).millisecondsSinceEpoch;
-  await db.into(db.diaries).insert(
+  await db
+      .into(db.diaries)
+      .insert(
         DiariesCompanion.insert(
           id: id,
           conversationId: conversationId,
@@ -108,7 +120,9 @@ Future<void> _insertSummarizationRecord(
   required String conversationId,
 }) async {
   final now = DateTime(2026, 3, 21, 20).millisecondsSinceEpoch;
-  await db.into(db.summarizationRecords).insert(
+  await db
+      .into(db.summarizationRecords)
+      .insert(
         SummarizationRecordsCompanion.insert(
           id: id,
           conversationId: conversationId,
@@ -127,17 +141,17 @@ class _RecordingMemoryService extends MemoryService {
     MemoryRepository memoryRepository,
     MessageRepository messageRepository,
   ) : super(
-          const MemoryServiceConfig(
-            enabled: true,
-            enableCapacityCompress: false,
-            enableMemoryMerge: false,
-            enableProfileLayer: false,
-            enablePreFlush: false,
-            enableNextDayTrigger: true,
-          ),
-          memoryRepository,
-          messageRepository,
-        );
+        const MemoryServiceConfig(
+          enabled: true,
+          enableCapacityCompress: false,
+          enableMemoryMerge: false,
+          enableProfileLayer: false,
+          enablePreFlush: false,
+          enableNextDayTrigger: true,
+        ),
+        memoryRepository,
+        messageRepository,
+      );
 
   final List<List<String>> candidateMessageIds = <List<String>>[];
   final List<MemoryIngestTrigger> triggers = <MemoryIngestTrigger>[];
@@ -169,13 +183,14 @@ class _RecordingMemoryService extends MemoryService {
     required MemoryIngestTrigger trigger,
   }) async {
     this.candidateMessageIds.add(
-          candidateMessageIds?.toList(growable: false) ?? const <String>[],
-        );
+      candidateMessageIds?.toList(growable: false) ?? const <String>[],
+    );
     triggers.add(trigger);
   }
 }
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('ChatPageConversationActions 记忆联动', () {
@@ -184,6 +199,7 @@ void main() {
     Directory? tempDir;
 
     setUp(() async {
+      await ContactEditSnapshotStore.instance.clearMemory();
       previousPathProvider = PathProviderPlatform.instance;
       tempDir = await Directory.systemTemp.createTemp('chat_page_actions_');
       PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir!.path);
@@ -191,6 +207,8 @@ void main() {
     });
 
     tearDown(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      await ContactEditSnapshotStore.instance.clearMemory();
       PathProviderPlatform.instance = previousPathProvider;
       await db.close();
       if (tempDir != null && await tempDir!.exists()) {
@@ -235,8 +253,10 @@ void main() {
       );
 
       final messageRepository = MessageRepository(db);
-      final memoryService =
-          _RecordingMemoryService(MemoryRepository(db), messageRepository);
+      final memoryService = _RecordingMemoryService(
+        MemoryRepository(db),
+        messageRepository,
+      );
       final container = ProviderContainer(
         overrides: [
           databaseProvider.overrideWithValue(db),
@@ -247,22 +267,53 @@ void main() {
       addTearDown(container.dispose);
       await container.read(conversationsProvider.future);
 
-      await container.read(chatPageConversationActionsProvider).startNewTopic(
-            conversationId: 'conv_topic',
-            lastMessageId: 'm3',
-          );
+      await container
+          .read(chatPageConversationActionsProvider)
+          .startNewTopic(conversationId: 'conv_topic', lastMessageId: 'm3');
 
       expect(memoryService.triggers, [MemoryIngestTrigger.manual]);
       expect(memoryService.contextStartMessageIds, ['m1']);
       expect(memoryService.lastMessageIds, ['m3']);
       expect(memoryService.candidateMessageIds, [
-        ['m2', 'm3']
+        ['m2', 'm3'],
       ]);
 
-      final row = await (db.select(db.conversations)
-            ..where((table) => table.id.equals('conv_topic')))
-          .getSingle();
+      final row = await (db.select(
+        db.conversations,
+      )..where((table) => table.id.equals('conv_topic'))).getSingle();
       expect(row.contextStartMessageId, 'm3');
+    });
+
+    test('角色编辑会持久化并清除酒馆上下文预设绑定', () async {
+      await _insertConversation(db, id: 'conv_recipe');
+      final container = ProviderContainer(
+        overrides: [
+          databaseProvider.overrideWithValue(db),
+          chatPageMemoryPluginProvider.overrideWithValue(null),
+        ],
+      );
+      addTearDown(container.dispose);
+      await container.read(conversationsProvider.future);
+
+      final actions = container.read(chatPageConversationActionsProvider);
+      await actions.applyConversationEdits(
+        'conv_recipe',
+        recipeId: 'st_preset_aaaaaaaaaaaaaaaaaaaaaaaa',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+
+      var row = await (db.select(
+        db.conversations,
+      )..where((table) => table.id.equals('conv_recipe'))).getSingle();
+      expect(row.recipeId, 'st_preset_aaaaaaaaaaaaaaaaaaaaaaaa');
+
+      await actions.applyConversationEdits('conv_recipe', clearRecipeId: true);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+
+      row = await (db.select(
+        db.conversations,
+      )..where((table) => table.id.equals('conv_recipe'))).getSingle();
+      expect(row.recipeId, isNull);
     });
 
     test('清空聊天会同步清空该角色的记忆日记和总结记录', () async {
@@ -302,10 +353,16 @@ void main() {
       await _insertMemory(db, id: 'mem_b', conversationId: 'conv_b');
       await _insertDiary(db, id: 'diary_a', conversationId: 'conv_a');
       await _insertDiary(db, id: 'diary_b', conversationId: 'conv_b');
-      await _insertSummarizationRecord(db,
-          id: 'record_a', conversationId: 'conv_a');
-      await _insertSummarizationRecord(db,
-          id: 'record_b', conversationId: 'conv_b');
+      await _insertSummarizationRecord(
+        db,
+        id: 'record_a',
+        conversationId: 'conv_a',
+      );
+      await _insertSummarizationRecord(
+        db,
+        id: 'record_b',
+        conversationId: 'conv_b',
+      );
 
       final container = ProviderContainer(
         overrides: [
@@ -316,16 +373,16 @@ void main() {
       addTearDown(container.dispose);
       await container.read(conversationsProvider.future);
 
-      await container.read(chatPageConversationActionsProvider).clearMessages(
-            'conv_a',
-          );
+      await container
+          .read(chatPageConversationActionsProvider)
+          .clearMessages('conv_a');
 
-      final convARow = await (db.select(db.conversations)
-            ..where((table) => table.id.equals('conv_a')))
-          .getSingle();
-      final convBRow = await (db.select(db.conversations)
-            ..where((table) => table.id.equals('conv_b')))
-          .getSingle();
+      final convARow = await (db.select(
+        db.conversations,
+      )..where((table) => table.id.equals('conv_a'))).getSingle();
+      final convBRow = await (db.select(
+        db.conversations,
+      )..where((table) => table.id.equals('conv_b'))).getSingle();
 
       expect(convARow.contextStartMessageId, isNull);
       expect(convARow.lastMessage, isNull);
@@ -348,24 +405,24 @@ void main() {
         hasLength(1),
       );
 
-      final remainingMemoriesA = await (db.select(db.memories)
-            ..where((table) => table.conversationId.equals('conv_a')))
-          .get();
-      final remainingMemoriesB = await (db.select(db.memories)
-            ..where((table) => table.conversationId.equals('conv_b')))
-          .get();
-      final remainingDiariesA = await (db.select(db.diaries)
-            ..where((table) => table.conversationId.equals('conv_a')))
-          .get();
-      final remainingDiariesB = await (db.select(db.diaries)
-            ..where((table) => table.conversationId.equals('conv_b')))
-          .get();
-      final remainingRecordsA = await (db.select(db.summarizationRecords)
-            ..where((table) => table.conversationId.equals('conv_a')))
-          .get();
-      final remainingRecordsB = await (db.select(db.summarizationRecords)
-            ..where((table) => table.conversationId.equals('conv_b')))
-          .get();
+      final remainingMemoriesA = await (db.select(
+        db.memories,
+      )..where((table) => table.conversationId.equals('conv_a'))).get();
+      final remainingMemoriesB = await (db.select(
+        db.memories,
+      )..where((table) => table.conversationId.equals('conv_b'))).get();
+      final remainingDiariesA = await (db.select(
+        db.diaries,
+      )..where((table) => table.conversationId.equals('conv_a'))).get();
+      final remainingDiariesB = await (db.select(
+        db.diaries,
+      )..where((table) => table.conversationId.equals('conv_b'))).get();
+      final remainingRecordsA = await (db.select(
+        db.summarizationRecords,
+      )..where((table) => table.conversationId.equals('conv_a'))).get();
+      final remainingRecordsB = await (db.select(
+        db.summarizationRecords,
+      )..where((table) => table.conversationId.equals('conv_b'))).get();
 
       expect(remainingMemoriesA, isEmpty);
       expect(remainingDiariesA, isEmpty);

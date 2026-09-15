@@ -1,4 +1,6 @@
+import 'package:aicove_flutter/src/ui/shared/widgets/moe_page_scaffold.dart';
 import 'package:flutter/material.dart';
+import 'package:aicove_flutter/src/ui/shared/animations/parallax_slide_page_route.dart';
 
 import '../../../../core/log_history_service.dart';
 import '../../../../ui/theme/tokens.dart';
@@ -47,7 +49,7 @@ class _LogHistoryListPageState extends State<LogHistoryListPage> {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
 
-    return Scaffold(
+    return MoePageScaffold(
       backgroundColor: colors.surface,
       appBar: AppBar(
         backgroundColor: colors.surface,
@@ -172,8 +174,8 @@ class _LogHistoryListPageState extends State<LogHistoryListPage> {
 
   void _viewFile(LogHistoryFile file) {
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => LogHistoryDetailPage(file: file),
+      ParallaxSlidePageRoute(
+        page: LogHistoryDetailPage(file: file),
       ),
     );
   }

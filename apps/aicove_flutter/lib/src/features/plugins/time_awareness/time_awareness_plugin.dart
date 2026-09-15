@@ -98,9 +98,7 @@ class TimeAwarenessPlugin extends BasePlugin {
     }
 
     return PromptTemplateRenderer.renderTrimmed(
-      PromptBuiltinDefaults.requireTemplate(
-        'time_awareness.system.default',
-      ),
+      PromptBuiltinDefaults.requireTemplate('time_awareness.system.default'),
       <String, Object?>{
         'current_time_explanation': _config.includeCurrentTime
             ? _lineWithTrailingBreak(
@@ -120,12 +118,20 @@ class TimeAwarenessPlugin extends BasePlugin {
     );
   }
 
+  String? buildTagSemanticsPrompt() {
+    if (!enabled) return null;
+    return [
+      const SystemReminderService().buildReminderSemanticsPrompt(),
+      buildSystemReminderFieldGuide(),
+    ].where((part) => part.trim().isNotEmpty).join('\n\n');
+  }
+
   @override
   Future<String?> getSystemPrompt({
     String? userMessage,
     bool supportsToolCalling = false,
   }) async {
-    return null;
+    return buildTagSemanticsPrompt();
   }
 
   String _formatDateTime(DateTime dateTime) {
@@ -161,8 +167,8 @@ class TimeAwarenessPlugin extends BasePlugin {
     final normalizedTemplate = template.isEmpty
         ? TimeAwarenessConfig.fallbackCurrentTimePromptTemplate
         : (template.contains(dateTimePlaceholder)
-            ? template
-            : '$template $dateTimePlaceholder');
+              ? template
+              : '$template $dateTimePlaceholder');
     return PromptTemplateRenderer.renderTrimmed(
       normalizedTemplate,
       <String, Object?>{'datetime': formatted},

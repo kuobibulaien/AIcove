@@ -101,6 +101,7 @@ class _TtsTestSectionState extends ConsumerState<TtsTestSection> {
         requestFormat:
             provider.customConfig['requestFormat'] as String? ?? 'openai_tts',
         model: config.selectedModelId,
+        customConfig: provider.customConfig,
       );
 
       // 调用转换
@@ -149,8 +150,6 @@ class _TtsTestSectionState extends ConsumerState<TtsTestSection> {
           // 标题
           Row(
             children: [
-              Icon(Icons.play_circle_outline, color: colors.primary, size: 20),
-              const SizedBox(width: 8),
               Text(
                 '测试功能',
                 style: TextStyle(
@@ -190,7 +189,6 @@ class _TtsTestSectionState extends ConsumerState<TtsTestSection> {
             width: double.infinity,
             child: MoePrimaryButton(
               label: _testStatus == TtsTestStatus.testing ? '测试中...' : '开始测试',
-              icon: Icons.play_arrow,
               enabled: _testStatus != TtsTestStatus.testing,
               onPressed: _testTtsConversion,
             ),

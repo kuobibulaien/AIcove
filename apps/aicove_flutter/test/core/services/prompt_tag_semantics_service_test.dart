@@ -4,6 +4,13 @@ import 'package:aicove_flutter/src/core/services/prompt_tag_semantics_service.da
 
 void main() {
   group('PromptTagSemanticsService', () {
+    test('empty or disabled entries never produce a lead-in', () {
+      const service = PromptTagSemanticsService();
+      expect(service.buildMergedPrompt(const []), isEmpty);
+      expect(service.buildMergedPrompt(const [
+        PromptTagSemanticsEntry(id: 'tts', tagName: '<tts>', prompt: 'rules', enabled: false),
+      ]), isEmpty);
+    });
     test('只汇总启用且非空的标签说明', () {
       const service = PromptTagSemanticsService();
 

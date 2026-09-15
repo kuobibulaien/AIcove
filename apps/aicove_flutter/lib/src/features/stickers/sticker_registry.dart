@@ -170,6 +170,17 @@ class StickerRegistry {
     final normalizedTag = _normalizeTag(tag);
     return _tagIndex.containsKey(normalizedTag);
   }
+
+  /// 获取能命中指定标签的全部触发词（含归一化前的同义词写法）
+  /// 例如 triggerWordsOf('晚安') → {晚安, 睡觉, 好梦, 安安, 困了, 睡了}
+  Set<String> triggerWordsOf(String tag) {
+    final normalizedTag = _normalizeTag(tag);
+    final words = <String>{normalizedTag};
+    for (final entry in _synonymMap.entries) {
+      if (entry.value == normalizedTag) words.add(entry.key);
+    }
+    return words;
+  }
 }
 
 /// 表情包数据配置

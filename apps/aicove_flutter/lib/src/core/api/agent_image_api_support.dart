@@ -1,20 +1,18 @@
 part of 'agent_api.dart';
 
+/// NovelAI 模型族：V5 / V4（含 V4.5）/ V3（含 Furry V3）。
+enum _NovelAiModelFamily { v5, v4, v3 }
+
 class _AgentImageApiSupport {
   const _AgentImageApiSupport(this._owner);
 
   static const String _novelAiDefaultBase = 'https://image.novelai.net';
   static const String _novelAiLegacyBase = 'https://api.novelai.net';
-  static const String _novelAiDefaultModel = 'nai-diffusion-4-5-curated';
+  static const String _novelAiDefaultModel = 'nai-diffusion-5-full';
   static const Map<String, String> _novelAiModelAliases = <String, String>{
     'nai-diffusion-4-5-curated-preview': 'nai-diffusion-4-5-curated',
   };
-  static const List<String> _novelAiModelFallbackOrder = <String>[
-    'nai-diffusion-4-5-curated',
-    'nai-diffusion-4-5-full',
-    'nai-diffusion-3',
-  ];
-  static const Set<String> _novelAiV4ReservedParameterKeys = <String>{
+  static const Set<String> _novelAiStructuredReservedParameterKeys = <String>{
     'params_version',
     'width',
     'height',
@@ -107,49 +105,26 @@ class _AgentImageApiSupport {
         model,
         customConfig: customConfig,
       );
-      final candidates = _buildNovelAiModelCandidates(normalizedNovelAiModel);
-      Object? lastError;
-      for (final candidate in candidates) {
-        try {
-          return await _generateImageWithNovelAI(
-            provider: normalizedProvider,
-            model: candidate,
-            prompt: prompt,
-            negativePrompt: negativePrompt,
-            width: width,
-            height: height,
-            count: count,
-            steps: steps,
-            guidanceScale: guidanceScale,
-            seed: seed,
-            sampler: sampler,
-            baseUrl: base,
-            apiKey: trimmedKey,
-            customConfig: customConfig,
-            requestId: normalizedRequestId,
-            requestSource: normalizedRequestSource,
-            flowMode: normalizedFlowMode,
-          );
-        } catch (e) {
-          lastError = e;
-          if (!_isNovelAiModelEnumError(e) || candidate == candidates.last) {
-            rethrow;
-          }
-          _owner._evt(
-            'image:novelai_model_retry',
-            <String, Object?>{
-              'reason': 'enum_error',
-              'from': candidate,
-              'to': candidates[candidates.indexOf(candidate) + 1],
-              'baseUrl': base,
-            },
-            level: 'WARN',
-          );
-        }
-      }
-      if (lastError != null) {
-        throw lastError;
-      }
+      // 显式选择的模型失败即返回，不做跨模型静默降级。
+      return _generateImageWithNovelAI(
+        provider: normalizedProvider,
+        model: normalizedNovelAiModel,
+        prompt: prompt,
+        negativePrompt: negativePrompt,
+        width: width,
+        height: height,
+        count: count,
+        steps: steps,
+        guidanceScale: guidanceScale,
+        seed: seed,
+        sampler: sampler,
+        baseUrl: base,
+        apiKey: trimmedKey,
+        customConfig: customConfig,
+        requestId: normalizedRequestId,
+        requestSource: normalizedRequestSource,
+        flowMode: normalizedFlowMode,
+      );
     }
 
     final baseUrl = (trimmedBase == null || trimmedBase.isEmpty)
@@ -258,29 +233,12 @@ class _AgentImageApiSupport {
     return trimmed;
   }
 
-  List<String> _buildNovelAiModelCandidates(String primary) {
-    final normalizedPrimary = _novelAiModelAliases[primary] ?? primary;
-    final candidates = <String>[];
-
-    void add(String modelId) {
-      final fixed = (_novelAiModelAliases[modelId] ?? modelId).trim();
-      if (fixed.isEmpty || candidates.contains(fixed)) return;
-      candidates.add(fixed);
-    }
-
-    add(normalizedPrimary);
-    for (final fallback in _novelAiModelFallbackOrder) {
-      add(fallback);
-    }
-    if (candidates.isEmpty) {
-      return const <String>[_novelAiDefaultModel];
-    }
-    return candidates;
-  }
-
-  bool _isNovelAiModelEnumError(Object error) {
-    final message = error.toString().toLowerCase();
-    return message.contains('model must be a valid enum value');
+  _NovelAiModelFamily _novelAiModelFamily(String model) {
+    final value = model.toLowerCase().trim();
+    if (value.startsWith('nai-diffusion-5')) return _NovelAiModelFamily.v5;
+    if (value.startsWith('nai-diffusion-4')) return _NovelAiModelFamily.v4;
+    // V3 / Furry V3 以及未知 NovelAI 模型走 legacy 分支。
+    return _NovelAiModelFamily.v3;
   }
 
   Future<ImageGenerationResult> _generateImageWithNovelAI({
@@ -311,7 +269,7 @@ class _AgentImageApiSupport {
     final endpoint = '$normalized/ai/generate-image';
     final samplerValue = sampler?.trim();
     final negativePromptValue = negativePrompt?.trim();
-    final isV4 = _isNovelAiV4Model(model);
+    final family = _novelAiModelFamily(model);
     final params = _buildNovelAiParameters(
       model: model,
       prompt: prompt,
@@ -327,9 +285,9 @@ class _AgentImageApiSupport {
     _mergeNovelAiExtraParameters(
       params,
       customConfig?['image_parameters'],
-      reservedKeys: isV4
-          ? _novelAiV4ReservedParameterKeys
-          : _novelAiV3ReservedParameterKeys,
+      reservedKeys: family == _NovelAiModelFamily.v3
+          ? _novelAiV3ReservedParameterKeys
+          : _novelAiStructuredReservedParameterKeys,
     );
     final payload = <String, dynamic>{
       'input': prompt,
@@ -577,11 +535,6 @@ class _AgentImageApiSupport {
     };
   }
 
-  bool _isNovelAiV4Model(String model) {
-    final value = model.toLowerCase().trim();
-    return value.startsWith('nai-diffusion-4');
-  }
-
   String _formatImageHttpError({
     required int statusCode,
     required String provider,
@@ -614,13 +567,14 @@ class _AgentImageApiSupport {
     int? seed,
     String? sampler,
   }) {
+    final family = _novelAiModelFamily(model);
     final params = <String, dynamic>{
-      'params_version': 3,
+      'params_version': family == _NovelAiModelFamily.v5 ? 4 : 3,
       'width': width.clamp(256, 2048),
       'height': height.clamp(256, 2048),
       'n_samples': count.clamp(1, 4),
       'steps': (steps ?? 23).clamp(1, 50),
-      'scale': guidanceScale ?? 5.0,
+      'scale': guidanceScale ?? (family == _NovelAiModelFamily.v5 ? 7.0 : 5.0),
       'sampler': (sampler != null && sampler.isNotEmpty)
           ? sampler
           : 'k_euler_ancestral',
@@ -628,7 +582,8 @@ class _AgentImageApiSupport {
       if (negativePrompt != null && negativePrompt.isNotEmpty)
         'negative_prompt': negativePrompt,
     };
-    if (_isNovelAiV4Model(model)) {
+    // V5 与 V4 / V4.5 共用结构化提示词请求体，不携带 V3 legacy 字段。
+    if (family != _NovelAiModelFamily.v3) {
       final v4Negative = (negativePrompt == null || negativePrompt.isEmpty)
           ? 'lowres'
           : negativePrompt;

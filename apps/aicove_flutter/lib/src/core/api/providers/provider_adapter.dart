@@ -9,6 +9,10 @@ library;
 
 import 'dart:convert';
 
+import '../thinking/thinking_level.dart';
+
+export '../thinking/thinking_level.dart' show ThinkingLevel, ThinkingScheme;
+
 /// API 调用结果
 class ApiCallResult {
   final String text;
@@ -96,6 +100,170 @@ class ToolResult {
   });
 }
 
+/// 只对当前聊天请求生效的供应商参数。
+///
+/// 这层与渠道的持久化 `customConfig` 分开，用于让 SillyTavern
+/// 预设在本轮覆盖模型默认值，同时由各 adapter 转成正确字段名。
+class ProviderChatRequestOptions {
+  final bool useSystemPrompt;
+  final double? temperature;
+  final double? topP;
+  final int? topK;
+  final double? minP;
+  final double? topA;
+  final double? repetitionPenalty;
+  final double? frequencyPenalty;
+  final double? presencePenalty;
+  final int? seed;
+  final int? maxOutputTokens;
+
+  /// SillyTavern 预设的原始 `reasoning_effort` 字符串；仅在 [thinkingLevel]
+  /// 为空时由 OpenAI 系 adapter 回退使用。
+  final String? reasoningEffort;
+
+  /// 已按模型可用集合收敛后的思考档位；null 表示未解析（沿用 [reasoningEffort]）。
+  final ThinkingLevel? thinkingLevel;
+  final ThinkingScheme? thinkingScheme;
+
+  const ProviderChatRequestOptions({
+    this.useSystemPrompt = true,
+    this.temperature,
+    this.topP,
+    this.topK,
+    this.minP,
+    this.topA,
+    this.repetitionPenalty,
+    this.frequencyPenalty,
+    this.presencePenalty,
+    this.seed,
+    this.maxOutputTokens,
+    this.reasoningEffort,
+    this.thinkingLevel,
+    this.thinkingScheme,
+  });
+
+  ProviderChatRequestOptions copyWith({
+    ThinkingLevel? thinkingLevel,
+    ThinkingScheme? thinkingScheme,
+  }) =>
+      ProviderChatRequestOptions(
+        useSystemPrompt: useSystemPrompt,
+        temperature: temperature,
+        topP: topP,
+        topK: topK,
+        minP: minP,
+        topA: topA,
+        repetitionPenalty: repetitionPenalty,
+        frequencyPenalty: frequencyPenalty,
+        presencePenalty: presencePenalty,
+        seed: seed,
+        maxOutputTokens: maxOutputTokens,
+        reasoningEffort: reasoningEffort,
+        thinkingLevel: thinkingLevel ?? this.thinkingLevel,
+        thinkingScheme: thinkingScheme ?? this.thinkingScheme,
+      );
+
+  Map<String, dynamic> toTraceJson() => <String, dynamic>{
+        'useSystemPrompt': useSystemPrompt,
+        if (temperature != null) 'temperature': temperature,
+        if (topP != null) 'topP': topP,
+        if (topK != null) 'topK': topK,
+        if (minP != null) 'minP': minP,
+        if (topA != null) 'topA': topA,
+        if (repetitionPenalty != null) 'repetitionPenalty': repetitionPenalty,
+        if (frequencyPenalty != null) 'frequencyPenalty': frequencyPenalty,
+        if (presencePenalty != null) 'presencePenalty': presencePenalty,
+        if (seed != null) 'seed': seed,
+        if (maxOutputTokens != null) 'maxOutputTokens': maxOutputTokens,
+        if (reasoningEffort?.isNotEmpty == true)
+          'reasoningEffort': reasoningEffort,
+        if (thinkingLevel != null) 'thinkingLevel': thinkingLevel!.name,
+        if (thinkingScheme != null) 'thinkingScheme': thinkingScheme!.name,
+      };
+
+  List<Map<String, dynamic>> parameterTraceForProvider(String provider) {
+    final normalized = provider.trim().toLowerCase();
+    final supported = switch (normalized) {
+      'claude' => const <String>{
+          'temperature',
+          'top_p',
+          'top_k',
+          'max_tokens',
+          'thinking_level',
+          'use_sysprompt',
+        },
+      'gemini' => const <String>{
+          'temperature',
+          'top_p',
+          'top_k',
+          'frequency_penalty',
+          'presence_penalty',
+          'seed',
+          'max_tokens',
+          'thinking_level',
+          'use_sysprompt',
+        },
+      _ => const <String>{
+          'temperature',
+          'top_p',
+          'top_k',
+          'min_p',
+          'top_a',
+          'repetition_penalty',
+          'frequency_penalty',
+          'presence_penalty',
+          'seed',
+          'max_tokens',
+          'reasoning_effort',
+          'thinking_level',
+          'use_sysprompt',
+        },
+    };
+    final declared = <String, dynamic>{
+      'use_sysprompt': useSystemPrompt,
+      if (temperature != null) 'temperature': temperature,
+      if (topP != null) 'top_p': topP,
+      if (topK != null) 'top_k': topK,
+      if (minP != null) 'min_p': minP,
+      if (topA != null) 'top_a': topA,
+      if (repetitionPenalty != null) 'repetition_penalty': repetitionPenalty,
+      if (frequencyPenalty != null) 'frequency_penalty': frequencyPenalty,
+      if (presencePenalty != null) 'presence_penalty': presencePenalty,
+      if (seed != null) 'seed': seed,
+      if (maxOutputTokens != null) 'max_tokens': maxOutputTokens,
+      if (reasoningEffort?.isNotEmpty == true)
+        'reasoning_effort': reasoningEffort,
+      if (thinkingLevel != null) 'thinking_level': thinkingLevel!.name,
+    };
+    bool isDefault(String field, dynamic value) => switch (field) {
+          'top_k' || 'min_p' || 'top_a' => value == 0,
+          'repetition_penalty' => value == 1,
+          'frequency_penalty' || 'presence_penalty' => value == 0,
+          'seed' => value is int && value < 0,
+          'reasoning_effort' => value == 'auto' || value == '' || thinkingLevel != null,
+          'thinking_level' => value == 'auto',
+          _ => false,
+        };
+    return <Map<String, dynamic>>[
+      for (final entry in declared.entries)
+        <String, dynamic>{
+          'field': entry.key,
+          'value': entry.value,
+          'status': isDefault(entry.key, entry.value)
+              ? 'notApplicable'
+              : supported.contains(entry.key)
+                  ? 'applied'
+                  : 'intentionallyUnsupported',
+          'reason': isDefault(entry.key, entry.value)
+              ? 'default_value_omitted'
+              : supported.contains(entry.key)
+                  ? 'emitted_to_$normalized'
+                  : 'not_supported_by_$normalized',
+        },
+    ];
+  }
+}
+
 /// Provider 适配器抽象接口
 abstract class ProviderAdapter {
   /// 构建请求端点 URL
@@ -114,6 +282,7 @@ abstract class ProviderAdapter {
     double? topP,
     Map<String, dynamic>? customConfig,
     List<Map<String, dynamic>>? tools,
+    ProviderChatRequestOptions? requestOptions,
   });
 
   /// 解析响应

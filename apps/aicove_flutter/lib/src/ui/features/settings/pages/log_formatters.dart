@@ -5,6 +5,7 @@ import 'package:flutter/material.dart' show IconData, Icons;
 import '../../../../core/api_logger.dart' show ApiLogEntry, truncateLongText;
 import '../../../../core/app_logger.dart' show LogEntry, LogLevel;
 import 'log_models.dart';
+import 'frontend_log_summary.dart';
 
 // ─────────────────────────────────────────────
 //  base64 图片数据安全截断（修复卡死 bug）
@@ -1056,11 +1057,15 @@ List<UnifiedLogEntry> buildUnifiedEntries(
     final isConversation = log.isConversation;
     if (typeFilter == LogTypeFilter.conversation && !isConversation) continue;
     if (typeFilter == LogTypeFilter.api && isConversation) continue;
-    if (typeFilter == LogTypeFilter.system) continue;
+    if (typeFilter == LogTypeFilter.system ||
+        typeFilter == LogTypeFilter.frontend) {
+      continue;
+    }
+    final level = log.ok ? LogLevel.info : LogLevel.error;
+    if (minLevel != null && level.value < minLevel.value) continue;
 
-    final title = isConversation
-        ? '[对话] ${log.status ?? '--'} ${shortenUrl(log.url)}'
-        : '[API] ${log.method} ${log.status ?? '--'} ${shortenUrl(log.url)}';
+    final title = '${isConversation ? '模型请求' : '网络请求'}'
+        '${log.ok ? '成功' : '失败'} · ${log.durationMs}ms · ${shortenUrl(log.url)}';
 
     final extra =
         isConversation ? formatConversationExtra(log) : formatApiLogExtra(log);
@@ -1070,6 +1075,7 @@ List<UnifiedLogEntry> buildUnifiedEntries(
       title: title,
       extraContent: extra,
       fullContent: formatApiLogFull(log),
+      level: level,
       isApiLog: true,
       isConversation: isConversation,
       rawAiResponse: log.rawAiResponse,
@@ -1077,18 +1083,26 @@ List<UnifiedLogEntry> buildUnifiedEntries(
     ));
   }
 
-  if (typeFilter == LogTypeFilter.all || typeFilter == LogTypeFilter.system) {
+  if (typeFilter == LogTypeFilter.all ||
+      typeFilter == LogTypeFilter.system ||
+      typeFilter == LogTypeFilter.frontend) {
     for (final log in systemLogs) {
+      final isFrontend = log.metadata?['category'] == 'frontend';
+      if (typeFilter == LogTypeFilter.frontend && !isFrontend) continue;
+      if (typeFilter == LogTypeFilter.system && isFrontend) continue;
       if (hideBeforeTime != null && log.time.isBefore(hideBeforeTime)) continue;
       if (minLevel != null && log.level.value < minLevel.value) continue;
 
-      final title = '[${log.level.label}] [${log.source}] ${log.message}';
+      final title = isFrontend ? frontendLogTitle(log) : log.message;
       entries.add(UnifiedLogEntry(
         time: log.time,
         title: title,
         extraContent: formatMetadata(log.metadata),
-        fullContent: formatSystemLogFull(log),
+        fullContent: isFrontend
+            ? '${frontendLogSummary(log)}\n\n${formatSystemLogFull(log)}'
+            : formatSystemLogFull(log),
         level: log.level,
+        isFrontend: isFrontend,
       ));
     }
   }

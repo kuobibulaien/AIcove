@@ -282,6 +282,7 @@ List<PluginImageContent> _extractToolImageContents(String result) {
   void collect(dynamic value, {String? fallbackCaption}) {
     String localPath = '';
     String? caption;
+    ImageGenerationSnapshot? generationSnapshot;
 
     if (value is Map) {
       final map = _toStringDynamicMap(value);
@@ -292,6 +293,7 @@ List<PluginImageContent> _extractToolImageContents(String result) {
               ?.toString()
               .trim() ??
           '';
+      generationSnapshot = ImageGenerationSnapshot.tryRead(map['generationSnapshot']);
       caption = map['caption']?.toString().trim();
       caption ??= map['prompt']?.toString().trim();
     } else if (value is String) {
@@ -307,7 +309,7 @@ List<PluginImageContent> _extractToolImageContents(String result) {
             ? null
             : fallbackCaption)
         : caption;
-    contents.add(PluginImageContent(localPath, caption: effectiveCaption));
+    contents.add(PluginImageContent(localPath, caption: effectiveCaption, generationSnapshot: generationSnapshot));
   }
 
   final promptCaption = payload['prompt']?.toString().trim();

@@ -1,52 +1,52 @@
-<!-- TRELLIS:START -->
-# Trellis Instructions
+# 项目记忆（所有 agent 必读必写）
 
-These instructions are for AI assistants working in this project.
+本项目的长期记忆在 `docs/项目记忆/`，对 Claude Code、Codex、Pi、Gemini 及任何实验性 harness 一视同仁：
 
-This project is managed by Trellis. The working knowledge you need lives under `.trellis/`:
+- **开工**：先读 `docs/项目记忆/README.md`（总览、架构边界、当前重点、写入规则）。支持 hook 的平台会自动注入；没注入就自己读。
+- **收工**：按 README「写入规则」回写——需求日志补 `结果：` 行；架构级决定写 `决策记录/`；修完「表面原因≠真实原因」的 bug 写 `经验教训.md`。
+- 用户每次提问的原话由 `hooks/memory.py` 自动追加到 `docs/项目记忆/需求日志.md`（Claude Code / Codex / Pi 已接入）；不支持 hook 的平台由 agent 自行补条目。
+- 回查历史对话原文：`trellis mem search <关键词>`（全局 CLI，与项目内文件无关）。
 
-- `.trellis/workflow.md` — development phases, when to create tasks, skill routing
-- `.trellis/spec/` — package- and layer-scoped coding guidelines (read before writing code in a given layer)
-- `.trellis/workspace/` — per-developer journals and session traces
-- `.trellis/tasks/` — active and archived tasks (PRDs, research, jsonl context)
+# 运行问题排查：Agent 主动抓取当前日志（2026-09-10）
 
-If a Trellis command is available on your platform (e.g. `/trellis:finish-work`, `/trellis:continue`), prefer it over manual steps. Not every platform exposes every command.
+- 排查卡顿、异常、聊天、音频或其它手机运行问题时，**先抓当前日志再定位代码**；复现前后、修复验收时按需再次采集，不把抓日志、筛选、导出或截图交给用户。
+- Release 已支持应用启动自动开启电脑读取，持续有效、重启自动恢复。**不要求切换 Debug，不要求开启开关，排查结束不要关闭读取服务。** 电脑仍需已授权 ADB 与本机读取凭证；多设备必须明确设备号。
+- 在 `apps/aicove_flutter/` 执行 `python3 tool/collect_diagnostics.py --release --since 2h --print`（已有 `AICOVE_DIAGNOSTIC_TOKEN` 时）；也可使用诊断页面提供的带凭证命令。凭证获取、故障处理与完整流程见 [Agent 日志采集说明](apps/aicove_flutter/tool/DIAGNOSTICS.md)。不要把凭证写入文档或提交。
+- 先保全现场再重启/重装/清理；读取 `summary.json`、`manifest.json` 核对构建与覆盖缺口，再沿 `operations.jsonl` 的事件和关联编号分析。这里的“实时抓取”是按需读取当前已落盘的快照，可重复执行，不是持续推送或完整逐帧录像。
 
-If you're using Codex or another agent-capable tool, additional project-scoped helpers may live in:
-- `.agents/skills/` — reusable Trellis skills
-- `.codex/agents/` — optional custom subagents
+# Mac 调试与界面验收：默认不抢前台（2026-09-11）
 
-Managed by Trellis. Edits outside this block are preserved; edits inside may be overwritten by a future `trellis update`.
-
-<!-- TRELLIS:END -->
+- 适用于本项目所有 agent。日志采集、构建、静态检查与自动化测试优先通过终端完成，不为查看进度或确认运行而主动激活 AIcove。
+- 需要读取或操作 Mac 界面时，优先使用 Computer Use 按目标应用后台执行，让用户继续使用其它应用；不把“界面验收”理解为必须置顶窗口或接管系统鼠标键盘。
+- 常规检查不调用 `activateIgnoringOtherApps`、`AXRaise`，不通过全局鼠标键盘事件等脚本抢占前台；旧临时验收脚本包含这些操作时，不直接复用。
+- 后台操作不可用或失败时，先排查并说明具体限制，不自动改成抢前台。全屏切换、焦点行为、系统菜单等确实需要影响当前桌面的验收，提前说明必要性、影响和预计占用时间，集中完成最小操作；已有明确授权不重复请示。
+- 不降低验收标准：仍按项目宪法第 7 条验证实际界面与宽窄状态，无法完成的项目明确记录缺口，不能用编译成功、进程存活或日志正常替代界面通过。
 
 # 开发环境
 
 - macOS / zsh（2026-07 由 Windows 迁移而来；node 经 nvm 安装，用前 `. ~/.nvm/nvm.sh`）
-- Flutter 项目，改完代码用 `flutter run --no-resident` 验证
+- Flutter SDK 使用项目 `apps/aicove_flutter/tool/flutterw`，不要调用全局旧版 `flutter`；版本、环境变量与并发隔离规则见 [DIAGNOSTICS.md「项目 Flutter SDK」](apps/aicove_flutter/tool/DIAGNOSTICS.md#项目-flutter-sdk2026-09-12)。
+- Flutter 项目：代码生效、MCP 校验、热重载／热重启、重新构建与安装的选择统一按根 [README.md 项目宪法第 7 条](README.md)；操作命令见 [DIAGNOSTICS.md](apps/aicove_flutter/tool/DIAGNOSTICS.md#dart-mcp)。本文不另列验证流程。
 - 版本控制：仓库根目录单一 git 仓库，本地为主；构建产物与密钥已由 .gitignore 挡住
 
 # 工作流程
 
-全程中文对话。总路线：**模糊需求 → 分级提问澄清 → prd.md → codex 审方案 → 实现 → codex 审代码 → 沉淀知识**。
+全程中文对话。默认由当前主会话（无论哪个 harness）直接完成调研、实现、检查和验证；仅当用户在当次请求中明确点名时才使用外部模型或多代理。
 
 1. **先查后动**：改代码前先找相关文档，不确定就调查清楚；代码和文档能回答的问题不许问用户
-2. **分级提问**（详见 trellis-brainstorm 技能）：只问两类问题——本次目标与验收、难回头的全局架构决策（必须附推荐答案＋理由＋代价）；技术选型与实现方案由 AI 自主设计，写入 prd.md「自主决策」段供用户扫读否决；典型任务 1~3 问收敛
-3. **先说再做**：编码前描述方案等批准；方案获批后、动工前，用 `/codex:review` 请 Codex 审查方案
-4. **拆大为小**（两层规则）：改动超 3 个文件先在 Trellis 建任务（含 `implement.md` 清单）；只有当需求包含多个可独立验收的交付物时才拆父子任务，单一功能自然跨多文件不硬拆
-5. **手脑分工**：凡是耗时的动手型任务——预计需多轮工具调用、且不依赖主会话对话上下文的（代码实现、批量修改/重构、跑测试并修复、跨文件调研摘要、写文档/样板）——优先派给 `grok-hands` 子代理执行（Grok CLI，grok-4.5），主会话只负责写清任务书（目标/范围/验收）与核对结果；返工用返回的 sessionId `--resume` 续做。机制详见 `scratch/diagnostics/异模型子代理机制说明_20260702.md` §8
-6. **写完必跑**：按根 `README.md` 项目宪法第 7 条交付检查（`flutter pub get` → 编译运行 → 窄/宽屏各验一次）
-7. **完工必审**：实现完成后用 `/codex:review` 请 Codex 审查代码，问题修完再收尾；review gate 保持关闭，审查手动触发
-8. **收尾检查**：完成后列出潜在问题；发现 bug 先写复现测试再修
+2. **分级提问**：只问两类问题——本次目标与验收、难回头的全局架构决策（必须附推荐答案＋理由＋代价）；技术选型与实现方案由 AI 自主设计并在方案里列出供用户扫读否决；典型任务 1~3 问收敛
+3. **按风险推进**：确认门槛看影响和可恢复性，不按文件数量。普通问答、已授权功能范围内的本地代码改动直接完成，自然跨多文件不硬拆也不请示；触及架构边界、数据契约或「确认与异常」所列事项时，先给目标、边界、验收、回滚与执行清单，用户确认后再动工
+4. **拆大为小**：需求含多个可独立验收的交付物时分批交付，每批可单独验证与回滚
+5. **单代理闭环**：主会话直接实现并核验，不把实现、检查或报告润色默认转交给其它模型
+6. **写完必验**：按根 `README.md` 项目宪法第 7 条随改动类型选择验证（唯一权威位置，本文不复制清单）；证据优先用日志、运行时异常、组件树与布局断言，截图只用于外观判断，窗口脚本只用于原生窗口专项
+7. **完工即收**：目标行为已验证、相关检查通过、完整 diff 已审阅即收工；第 6 条通过后相关代码又有变化才重跑对应检查。只报告实际发现的问题，不固定罗列假设风险，不顺手扩成全项目排查；发现 bug 先写复现测试再修
+8. **可见修改必须附预览**：仅当本次修改影响用户可见的 Flutter 界面时，最终汇报必须直接嵌入基于修改后源码生成的 **Flutter 源码渲染预览图**，不能只给文件链接；即使热重载失败或超时，也必须生成并展示。明确标注为源码渲染预览，不冒充实机截图，不据此宣称运行中的应用已更新或实机验收通过；纯逻辑、后台、文档等不可见修改不要求附图。
 
-## 确认机制
+## 确认与异常
 
-- **重大变更须确认**：文件结构增删、核心算法、新依赖、API 定义——先提方案问"您同意吗？"，批准后再动
-- **局部优化可自主**：函数内部重构、命名优化等不影响外部调用的可以直接做，报告里说明即可
-
-## 遇到问题必须停
-
-命令报错、测试不过、发现逻辑漏洞——需要报告，报告：遇到了什么、原计划是什么、建议怎么办。报告后直接继续修复，保证开发效率。
+- 文件或目录删除、数据/schema 迁移、核心依赖更新、公开 API/核心算法变更、生产请求、系统权限与全局配置变更，先说明影响和回滚方案并获得确认。
+- 范围内的本地代码编辑、格式化、测试、静态检查和可恢复配置修改不重复请示。
+- 命令报错、测试不过或发现逻辑漏洞时，说明原因并继续做安全的范围内修复；只有需要新增权限、扩大范围或作不可逆决定时才停下询问。
 
 # 编码规范
 
@@ -54,49 +54,30 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 
 遵循 KISS、YAGNI、DRY、SOLID。编码风格与代码库保持一致，优先复用已有函数。
 
+# 全端界面架构（2026-09-11）
+
+- 全端前端重写方向已获用户确认，以 Mac 为设计、开发与首轮验收基准；实施仍按任务批次推进。
+- 窄屏模式就是手机模式；宽屏是左侧悬浮的完整手机一级界面，加右侧展开的同一套二级及更深页面。
+- 共用整页、标题、底部导航、菜单、表单、输入与业务状态，不能只共享列表后再复制手机／桌面页面；宽屏必须覆盖全部窄屏页面与入口。
+- 自适应壳统一管理宽度、局部约束、承载位置和导航栈；跨断点保持页面身份、草稿、搜索及滚动状态。平台差异限于窗口与能力适配。
+- 先读 [全端共用界面架构与布局规范](apps/aicove_flutter/docs/界面布局说明.md)；前端目标冲突以此为准，旧 SplitChatPage、独立 Mac 工作区和“旧 UI 只能渐进修补”的限制失效。不要把规范确认当作全部代码或平台已经验收。
+
 # 项目背景
 
-- 开工前必读：根目录 `README.md`（含项目宪法）
-- 术语口径：`.trellis/spec/project/glossary.md`（词汇表）；重大决策：`.trellis/spec/project/decisions/`（ADR）
-- 涉及前端界面时必读：`apps/aicove_flutter/docs/公共组件总览.md`
+- 按任务读取根 `README.md` 的相关架构或项目宪法章节，不默认通读全文
+- 术语口径：`docs/项目记忆/术语表.md`；重大决策：`docs/项目记忆/决策记录/`；踩坑硬约束：`docs/项目记忆/经验教训.md`
+- 涉及前端界面时读：`apps/aicove_flutter/docs/界面布局说明.md`；`apps/aicove_flutter/docs/公共组件总览.md` 只查用到的组件章节
 - 文档库总入口：`apps/aicove_flutter/docs/README.md`
 - 云端文档：`cloud_backend/README.md`
-- 遇到问题多查文档库，解决后也往文档库里记录
+- 文档读取：先查索引，只读与任务相关的章节，长文档按目录定位不通读；本会话已读且未变化的文档不重复读
+- 遇到问题先查文档库；只有产生长期有效的新约定时才更新文档。每条规则只保留一个权威位置，其他文档放链接不复制正文。文档职责：本文管执行方式、授权边界与文档索引；根 `README.md` 管架构约束与验证流程；`apps/aicove_flutter/tool/DIAGNOSTICS.md` 管日志、调试会话与工具命令；`docs/项目记忆/` 管当前状态与历史索引
 
-# Trellis 文档系统
+# 交付边界
 
-项目已完整接入 Trellis（CLI ＋ 钩子自动注入），`.trellis/` 管理可渐进加载的项目知识：
-
-- `.trellis/workflow.md`：任务生命周期与工作流
-- `.trellis/spec/`：长期有效的项目规范、架构边界、词汇表与决策卡
-- `.trellis/tasks/`：大任务的 PRD、研究记录、验收标准
-- `.trellis/workspace/`：会话日志、交接与阶段性决策
-
-使用规则：
-
-1. 新任务开始前，优先读取 `.trellis/spec/README.md` 和相关领域 spec。
-2. 大任务、跨 3 个以上文件的变更，先在 `.trellis/tasks/` 建任务文档，再实现。
-3. 可复用经验、踩坑结论、架构决定写回 `.trellis/spec/`；临时过程写入 `.trellis/workspace/` 或 `scratch/`。
-4. 完成实现、修 bug、架构讨论或检查后，必须判断是否产生长期有效知识；如果有，自动更新 `.trellis/spec/` 或 `apps/aicove_flutter/docs/`。
-5. 只在接口、架构、组件、踩坑、约定变化时更新文档；小改动不要制造文档噪音。
-6. `AGENTS.md` 只保留全局硬规则和入口说明，不再堆大量模块细节。
-
-# 高风险操作（须确认）
-
-以下操作执行前必须告知用户并获得确认：
-
-| 类别 | 示例 |
-|------|------|
-| 文件系统 | 删除文件/目录、批量修改、覆盖系统文件 |
-| 版本控制 | git commit / push / reset --hard |
-| 系统配置 | 环境变量、全局配置、权限变更 |
-| 数据操作 | 删数据、改表结构、批量更新 |
-| 网络请求 | 含敏感数据的请求、调用生产环境 API |
-| 包管理 | 全局安装/卸载、更新核心依赖 |
-
-确认格式：
-> ⚠️ 危险操作：[操作内容]，影响范围：[说明]，风险：[后果]。确认执行？
-
+- 可根据任务需要自行进行 Git 提交；保护工作树中已有的用户改动，禁止用 destructive reset 覆盖现场。
+- 不部署、不调用生产环境或改账户状态，除非用户明确要求。
+- 用户提示直接安装时，以最简单的过程安装到设备即可，不必有验证过程。
 # MCP 服务
 
-`fast-context` 语义搜索原配置在 Windows 机器上，迁移后尚未在本机重新配置——配置好之前不要调用。重配后在此更新调用示例。
+- 项目级官方 Dart MCP 已接入，服务名 `dart`；所有 harness 共用 `apps/aicove_flutter/tool/dart_mcp_server` 和项目 SDK。客户端配置、连接步骤、无原生 MCP 时的命令行入口及实测范围见 [DIAGNOSTICS.md「项目级 Dart MCP」](apps/aicove_flutter/tool/DIAGNOSTICS.md#dart-mcp)。
+- Dart／Flutter 排查优先按需使用 MCP 读取异常和组件树；先核对目标项目与应用，保留已有调试会话、待完成的重载及错误现场。MCP 工具可见不等于已连接应用，组件树可读不等于外观通过；运行与界面验收仍按上面的规则执行。

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../features/settings/mcp_api.dart';
+import '../../../shared/widgets/index.dart';
 
 class TtsToolDetailPage extends ConsumerStatefulWidget {
   const TtsToolDetailPage({super.key});
@@ -10,7 +11,8 @@ class TtsToolDetailPage extends ConsumerStatefulWidget {
   ConsumerState<TtsToolDetailPage> createState() => _TtsToolDetailPageState();
 }
 
-class _TtsToolDetailPageState extends ConsumerState<TtsToolDetailPage> {
+class _TtsToolDetailPageState extends ConsumerState<TtsToolDetailPage>
+    with MoeAutoSaveState<TtsToolDetailPage> {
   final McpApi _api = McpApi();
 
   final TextEditingController _apiKeyCtrl = TextEditingController();
@@ -18,11 +20,11 @@ class _TtsToolDetailPageState extends ConsumerState<TtsToolDetailPage> {
   final TextEditingController _audioUrlCtrl = TextEditingController();
   final TextEditingController _promptTextCtrl = TextEditingController();
   final TextEditingController _speedCtrl = TextEditingController();
-  final TextEditingController _testTextCtrl =
-      TextEditingController(text: '你好，这是一个 TTS 连通性测试。');
+  final TextEditingController _testTextCtrl = TextEditingController(
+    text: '你好，这是一个 TTS 连通性测试。',
+  );
 
   bool _loading = true;
-  bool _saving = false;
   bool _testing = false;
   String? _result;
 
@@ -52,8 +54,9 @@ class _TtsToolDetailPageState extends ConsumerState<TtsToolDetailPage> {
       final config = response.config;
       final defaults = response.defaults;
 
-      _apiKeyCtrl.text =
-          config.apiKey.isNotEmpty ? config.apiKey : defaults.apiKey;
+      _apiKeyCtrl.text = config.apiKey.isNotEmpty
+          ? config.apiKey
+          : defaults.apiKey;
       _requestUrlCtrl.text = config.requestUrl.isNotEmpty
           ? config.requestUrl
           : defaults.requestUrl;
@@ -65,11 +68,31 @@ class _TtsToolDetailPageState extends ConsumerState<TtsToolDetailPage> {
           : defaults.promptText;
       final speed = config.speed ?? defaults.speed;
       _speedCtrl.text = speed?.toString() ?? '';
+      autoSave.configure(
+        save: _save,
+        snapshot: () => moeAutoSaveSignature([
+          for (final c in [
+            _apiKeyCtrl,
+            _requestUrlCtrl,
+            _audioUrlCtrl,
+            _promptTextCtrl,
+            _speedCtrl,
+          ])
+            c.text,
+        ]),
+        fields: [
+          _apiKeyCtrl,
+          _requestUrlCtrl,
+          _audioUrlCtrl,
+          _promptTextCtrl,
+          _speedCtrl,
+        ],
+      );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('加载失败: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('加载失败: $e')));
       }
     } finally {
       if (mounted) {
@@ -101,55 +124,15 @@ class _TtsToolDetailPageState extends ConsumerState<TtsToolDetailPage> {
   }
 
   Future<void> _save() async {
-    double? speed;
-    try {
-      speed = _parseSpeed();
-    } on FormatException catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message)),
-      );
-      return;
-    }
-
-    setState(() {
-      _saving = true;
-    });
-
-    try {
-      final response = await _api.updateTtsConfig(_buildDto(speed));
-      final config = response.config;
-      _apiKeyCtrl.text = config.apiKey;
-      _requestUrlCtrl.text = config.requestUrl;
-      _audioUrlCtrl.text = config.promptAudioUrl;
-      _promptTextCtrl.text = config.promptText;
-      _speedCtrl.text = config.speed?.toString() ?? '';
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('配置已保存')),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('保存失败: $e')),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _saving = false;
-        });
-      }
-    }
+    await _api.updateTtsConfig(_buildDto(_parseSpeed()));
   }
 
   Future<void> _test() async {
     final text = _testTextCtrl.text.trim();
     if (text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请先输入测试文本')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请先输入测试文本')));
       return;
     }
 
@@ -182,103 +165,92 @@ class _TtsToolDetailPageState extends ConsumerState<TtsToolDetailPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('TTS 工具设置')),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                TextField(
-                  controller: _apiKeyCtrl,
-                  obscureText: false,
-                  decoration: const InputDecoration(
-                    labelText: 'API Key',
-                    border: OutlineInputBorder(),
+    return autoSavePage(
+      MoePageScaffold(
+        appBar: AppBar(title: const Text('TTS 工具设置')),
+        body: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  TextField(
+                    controller: _apiKeyCtrl,
+                    obscureText: false,
+                    decoration: const InputDecoration(
+                      labelText: 'API Key',
+                      border: OutlineInputBorder(),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _requestUrlCtrl,
-                  decoration: const InputDecoration(
-                    labelText: '请求地址',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _audioUrlCtrl,
-                  decoration: const InputDecoration(
-                    labelText: '参考音频 URL',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _speedCtrl,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(
-                    labelText: '语速(可选)',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _promptTextCtrl,
-                  minLines: 3,
-                  maxLines: 6,
-                  decoration: const InputDecoration(
-                    labelText: '提示词',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                FilledButton.icon(
-                  onPressed: _saving ? null : _save,
-                  icon: _saving
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Icon(Icons.save_outlined),
-                  label: const Text('保存'),
-                ),
-                const Divider(height: 32),
-                TextField(
-                  controller: _testTextCtrl,
-                  minLines: 2,
-                  maxLines: 4,
-                  decoration: const InputDecoration(
-                    labelText: '测试文本',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                FilledButton.icon(
-                  onPressed: _testing ? null : _test,
-                  icon: _testing
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Icon(Icons.play_arrow_outlined),
-                  label: const Text('测试 TTS'),
-                ),
-                if (_result != null) ...[
                   const SizedBox(height: 12),
-                  Text(_result!),
+                  TextField(
+                    controller: _requestUrlCtrl,
+                    decoration: const InputDecoration(
+                      labelText: '请求地址',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _audioUrlCtrl,
+                    decoration: const InputDecoration(
+                      labelText: '参考音频 URL',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _speedCtrl,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: const InputDecoration(
+                      labelText: '语速(可选)',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _promptTextCtrl,
+                    minLines: 3,
+                    maxLines: 6,
+                    decoration: const InputDecoration(
+                      labelText: '提示词',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  const Divider(height: 32),
+                  TextField(
+                    controller: _testTextCtrl,
+                    minLines: 2,
+                    maxLines: 4,
+                    decoration: const InputDecoration(
+                      labelText: '测试文本',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton.icon(
+                    onPressed: _testing ? null : _test,
+                    icon: _testing
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.play_arrow_outlined),
+                    label: const Text('测试 TTS'),
+                  ),
+                  if (_result != null) ...[
+                    const SizedBox(height: 12),
+                    Text(_result!),
+                  ],
                 ],
-              ],
-            ),
+              ),
+      ),
     );
   }
 }

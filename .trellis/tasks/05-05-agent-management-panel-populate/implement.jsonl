@@ -1,8 +1,0 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
-{"file": ".trellis/spec/backend/index.md", "reason": "Backend API conventions for cloud_backend admin endpoints"}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "FastAPI error response conventions"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend verification expectations"}
-{"file": ".trellis/spec/agent-context/index.md", "reason": "AgentDefinition and Agent Context Runtime contract"}
-{"file": ".trellis/spec/project/architecture-boundaries.md", "reason": "Project architecture boundary rules"}
-{"file": "cloud_backend/Agent上下文系统Web管理端实施说明_20260430.md", "reason": "Agent Context Web admin design notes"}
-{"file": ".trellis/spec/frontend/index.md", "reason": "Flutter asset loader and tests for synced Agent Context artifact"}

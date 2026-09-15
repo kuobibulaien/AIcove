@@ -47,7 +47,7 @@ const _baseSettings = AppSettings(
   apiBaseUrl: 'https://api.openai.com/v1',
   imageGenerationEnabled: false,
   maxFileUploadMB: 10,
-  historyMessageLimit: 100,
+  contextWindowTokens: 272000,
   customModels: <CustomModel>[],
   providers: <ProviderAuth>[],
   modelProviderMap: <String, String>{},

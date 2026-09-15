@@ -19,7 +19,7 @@ AppSettings _buildSettings(List<ProviderAuth> providers) {
     apiBaseUrl: 'https://api.openai.com/v1',
     imageGenerationEnabled: false,
     maxFileUploadMB: 10,
-    historyMessageLimit: 20,
+    contextWindowTokens: 272000,
     customModels: const <CustomModel>[],
     providers: providers,
     modelProviderMap: const <String, String>{},

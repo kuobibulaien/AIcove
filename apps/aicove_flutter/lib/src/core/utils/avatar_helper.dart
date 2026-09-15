@@ -47,7 +47,7 @@ class AvatarHelper {
     BoxFit fit = BoxFit.cover,
     Widget? fallback,
   }) {
-    final fallbackWidget = fallback ?? _buildFallbackLetter();
+    final fallbackWidget = fallback ?? const SizedBox.expand();
 
     // 1. 尝试 avatarUrl
     final avatarWidget = _buildImageFromUrl(

@@ -81,7 +81,8 @@ void main() {
     final reorderable = tester.widget<ReorderableListView>(
       find.byType(ReorderableListView),
     );
-    reorderable.onReorder(2, 0);
+    expect(reorderable.onReorder, isNotNull);
+    reorderable.onReorder!(2, 0);
     await tester.pumpAndSettle();
 
     expect(
@@ -153,7 +154,7 @@ AppSettings _buildSettings({
     apiBaseUrl: 'https://api.openai.com/v1',
     imageGenerationEnabled: false,
     maxFileUploadMB: 10,
-    historyMessageLimit: 100,
+    contextWindowTokens: 272000,
     customModels: const <CustomModel>[],
     providers: const <ProviderAuth>[
       ProviderAuth(

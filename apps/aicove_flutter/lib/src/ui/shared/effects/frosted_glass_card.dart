@@ -1,5 +1,5 @@
 /// 毛玻璃卡片组件 - 纯高斯模糊效果
-/// 
+///
 /// 用法示例：
 /// ```dart
 /// FrostedGlassCard(
@@ -7,41 +7,42 @@
 ///   child: Text('内容'),
 /// )
 /// ```
-/// 
+///
 /// 更新记录：
 /// - 2025-12-07: 从 role_card_page.dart 抽取，简化为纯毛玻璃效果
 /// - 2025-12-07: 改用 SmoothClipRRect 实现 iOS 风格平滑圆角
 /// - 2026-01-22: 圆角统一升级为 MoeG2ClipRRect / MoeG2Decoration（Figma G2 连续曲线）
 /// - 2025-12-25: 修复描边不生效与阴影被裁剪问题，增强卡片边角线条可见性
 library;
-import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import '../../theme/tokens.dart';
 import 'smooth_clip.dart';
+import '../widgets/moe_floating_surface.dart';
 
 /// 毛玻璃卡片 - 图片背景 + 高斯模糊
 class FrostedGlassCard extends StatelessWidget {
   /// 背景图片 Provider
   final ImageProvider? imageProvider;
-  
+
   /// 卡片内容
   final Widget child;
-  
+
   /// 卡片宽度
   final double? width;
-  
+
   /// 卡片高度
   final double? height;
-  
+
   /// 圆角半径，默认 MoeSmoothRadii.md (20px)
   final double borderRadius;
-  
-  /// 模糊强度 (默认 25)
-  final double blurSigma;
-  
+
+  /// 局部模糊强度；默认跟随统一材质主题
+  final double? blurSigma;
+
   /// 阴影
   final List<BoxShadow>? boxShadow;
-  
+
   /// 点击回调
   final VoidCallback? onTap;
 
@@ -52,7 +53,7 @@ class FrostedGlassCard extends StatelessWidget {
     this.width,
     this.height,
     this.borderRadius = MoeSmoothRadii.md,
-    this.blurSigma = 25,
+    this.blurSigma,
     this.boxShadow,
     this.onTap,
   });
@@ -68,18 +69,20 @@ class FrostedGlassCard extends StatelessWidget {
       height: height,
       decoration: MoeG2Decoration(
         radius: borderRadius,
-        boxShadow: boxShadow ?? [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.15),
-            blurRadius: 16,
-            offset: const Offset(0, 6),
-          ),
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.08),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        boxShadow:
+            boxShadow ??
+            [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.15),
+                blurRadius: 16,
+                offset: const Offset(0, 6),
+              ),
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.08),
+                blurRadius: 4,
+                offset: const Offset(0, 2),
+              ),
+            ],
       ),
       child: MoeG2ClipRRect(
         radius: borderRadius,
@@ -104,7 +107,9 @@ class FrostedGlassCard extends StatelessWidget {
                     image: imageProvider!,
                     fit: BoxFit.cover,
                     errorBuilder: (_, __, ___) => Container(
-                      color: isDark ? const Color(0xFF1E1E1E) : Colors.grey[200],
+                      color: isDark
+                          ? const Color(0xFF1E1E1E)
+                          : Colors.grey[200],
                     ),
                   ),
                 )
@@ -113,23 +118,13 @@ class FrostedGlassCard extends StatelessWidget {
                   color: isDark ? const Color(0xFF1E1E1E) : Colors.grey[200],
                 ),
 
-              // 2. 毛玻璃效果 (BackdropFilter)
-              ClipRect(
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
-                  child: Container(color: Colors.transparent),
-                ),
+              MoeFloatingSurface(
+                baseline: MoeMaterialBaseline.text,
+                radius: borderRadius,
+                blurSigma: MoeGlassTheme.maybeOf(context)?.blurSigma ?? blurSigma,
+                shadows: const [],
+                child: child,
               ),
-
-              // 3. 轻微着色层（提升层次感）
-              Container(
-                color: isDark
-                    ? Colors.black.withValues(alpha: 0.3)  // 暗色模式：轻微压暗
-                    : Colors.white.withValues(alpha: 0.15), // 亮色模式：轻微提亮
-              ),
-
-              // 4. 内容层
-              child,
             ],
           ),
         ),
@@ -139,10 +134,7 @@ class FrostedGlassCard extends StatelessWidget {
     if (onTap != null) {
       return Material(
         color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          child: card,
-        ),
+        child: InkWell(onTap: onTap, child: card),
       );
     }
 
@@ -150,10 +142,10 @@ class FrostedGlassCard extends StatelessWidget {
   }
 }
 
-/// 毛玻璃容器 - 简单的半透明容器（不二次模糊，只做玻璃底色/描边）
+/// 历史容器入口，背景委托给统一三态材质。
 ///
 /// 用于简介气泡、弹窗等场景
-/// 注意：不再使用 BackdropFilter，避免与静态模糊背景叠加导致"里边更糊"
+/// 新代码优先直接使用 MoeFloatingSurface。
 class FrostedGlassContainer extends StatelessWidget {
   final Widget child;
   final double borderRadius;
@@ -172,29 +164,14 @@ class FrostedGlassContainer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    // 使用 MoeG2ClipRRect / MoeG2Decoration 实现 G2 连续曲线圆角
-    // 不使用 BackdropFilter，只做玻璃底色/描边
-    return MoeG2ClipRRect(
-      radius: borderRadius,
-      child: Container(
-        width: width,
-        height: height,
+    return SizedBox(
+      width: width,
+      height: height,
+      child: MoeFloatingSurface(
+        baseline: MoeMaterialBaseline.text,
+        radius: borderRadius,
         padding: padding,
-        decoration: MoeG2Decoration(
-          radius: borderRadius,
-          // 半透明底色（与外层背景融合）
-          color: isDark
-              ? Colors.black.withValues(alpha: 0.35)
-              : Colors.white.withValues(alpha: 0.32),
-          border: Border.all(
-            color: isDark
-                ? Colors.white.withValues(alpha: 0.1)
-                : Colors.white.withValues(alpha: 0.26),
-            width: 0.5,
-          ),
-        ),
+        shadows: const [],
         child: child,
       ),
     );

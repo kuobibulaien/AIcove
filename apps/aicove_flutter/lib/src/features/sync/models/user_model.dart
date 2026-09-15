@@ -2,6 +2,7 @@
 class UserModel {
   final int id;
   final String username;
+  final String? uniqueId;
   final String? email;
   final bool isAdmin;
   final DateTime? createdAt;
@@ -9,6 +10,7 @@ class UserModel {
   UserModel({
     required this.id,
     required this.username,
+    this.uniqueId,
     this.email,
     this.isAdmin = false,
     this.createdAt,
@@ -18,6 +20,7 @@ class UserModel {
     return UserModel(
       id: json['id'] as int,
       username: json['username'] as String,
+      uniqueId: json['unique_id'] as String?,
       email: json['email'] as String?,
       isAdmin: json['is_admin'] as bool? ?? false,
       createdAt: json['created_at'] != null
@@ -30,6 +33,7 @@ class UserModel {
     return {
       'id': id,
       'username': username,
+      'unique_id': uniqueId,
       'email': email,
       'is_admin': isAdmin,
       'created_at': createdAt?.toIso8601String(),

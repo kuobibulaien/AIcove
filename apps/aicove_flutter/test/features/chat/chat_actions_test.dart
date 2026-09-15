@@ -7,6 +7,8 @@ import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 import 'package:aicove_flutter/src/core/database/database.dart'
     hide Conversation, Message;
@@ -39,8 +41,22 @@ import 'package:aicove_flutter/src/features/plugins/plugin_providers.dart';
 import 'package:aicove_flutter/src/features/plugins/tts/tts_config.dart';
 import 'package:aicove_flutter/src/features/plugins/tts/tts_player_manager.dart';
 import 'package:aicove_flutter/src/features/plugins/tts/tts_service.dart';
+import 'package:aicove_flutter/src/features/plugins/tts/voice_request.dart';
+import 'package:aicove_flutter/src/features/plugins/tts/voice_preset_application.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
+
+// Existing delivery tests inject their fake speech service through the new
+// owner-bound port; their timing/persistence assertions remain unchanged.
+class _TestVoiceApplication implements VoicePresetApplicationPort {
+  _TestVoiceApplication(this.service);
+  final TtsService service;
+  @override
+  Future<VoiceRequest> forOwnerId(String ownerId) async =>
+      VoiceRequest(ownerId: ownerId, service: service);
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 class _FakeConversationsNotifier extends ConversationsNotifier {
   _FakeConversationsNotifier(this._seed);
@@ -259,7 +275,7 @@ AppSettings _buildTestSettings({double streamSegmentDelaySeconds = 0}) {
     apiBaseUrl: 'https://api.openai.com/v1',
     imageGenerationEnabled: false,
     maxFileUploadMB: 10,
-    historyMessageLimit: 100,
+    contextWindowTokens: 272000,
     customModels: const <CustomModel>[],
     providers: const <ProviderAuth>[
       ProviderAuth(
@@ -460,12 +476,10 @@ abstract class _InMemoryHistorySendService extends ChatSendService {
   Future<List<Message>> prepareHistoryFromStore({
     required Conversation conv,
     required Message userMsg,
-    required int limit,
   }) async {
     return prepareHistory(
       conv: conv,
       userMsg: userMsg,
-      limit: limit,
     );
   }
 }
@@ -1441,6 +1455,137 @@ class _StreamingLeadingTtsSendService extends _InMemoryHistorySendService {
   }
 }
 
+class _SlowTailStreamingTtsSendService extends _InMemoryHistorySendService {
+  _SlowTailStreamingTtsSendService(
+    super.ref,
+    this._settings, {
+    this.ttsTagClosed,
+    this.releaseTail,
+    this.includeStickerAfterTts = false,
+    this.longTailText = '',
+  });
+
+  final AppSettings _settings;
+  final Completer<void>? ttsTagClosed;
+  final Completer<void>? releaseTail;
+  final bool includeStickerAfterTts;
+  final String longTailText;
+
+  @override
+  Future<ApiConfig> prepareApiConfig({
+    required Conversation conv,
+    required List<Message> history,
+    required String? userText,
+    TraceLogger? trace,
+    String? overrideModel,
+    String? conversationId,
+    TraceContext? traceContext,
+  }) async {
+    return ApiConfig(
+      settings: _settings,
+      modelFullId: overrideModel ?? _settings.defaultModelName,
+      providerApiBase: _settings.apiBaseUrl,
+      providerApiKey: null,
+      customConfig: const <String, dynamic>{},
+      toolPrefs: const <String, dynamic>{},
+      messages: const <Map<String, dynamic>>[],
+      tools: null,
+      enabledPluginIds: null,
+      modelTemperature: null,
+      modelTopP: null,
+      modelContextMessageLimit: null,
+    );
+  }
+
+  @override
+  Future<ApiCallResult> executeApiCall({
+    required ApiConfig config,
+    required String sessionId,
+    required String? userText,
+    String? turnId,
+    TraceLogger? trace,
+    int maxRounds = 5,
+    void Function(String toolName)? onToolExecuting,
+    bool enableStreaming = false,
+    void Function(String delta)? onStreamTextDelta,
+    void Function()? onStreamTextReset,
+    void Function()? onStreamToolCallObserved,
+    void Function()? onStreamingFallback,
+  }) async {
+    onStreamTextDelta?.call('第一句。');
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    onStreamTextDelta?.call('<tts>流中语音');
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    onStreamTextDelta?.call('</tts>');
+    if (ttsTagClosed != null && !ttsTagClosed!.isCompleted) {
+      ttsTagClosed!.complete();
+    }
+    if (longTailText.isNotEmpty) {
+      onStreamTextDelta?.call(longTailText);
+    }
+    if (releaseTail != null) {
+      await releaseTail!.future;
+    } else {
+      // 语音闭合后，留出足够时间让快速 TTS 返回
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    // TTS 返回后，模型继续流式输出后续长尾文字
+    onStreamTextDelta?.call('第二句很长很长的文本。');
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    onStreamTextDelta?.call('第三句仍在流式生成的文本。');
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    return ApiCallResult(
+      replyText: includeStickerAfterTts
+          ? '第一句。<tts>流中语音</tts>[开心]$longTailText第二句很长很长的文本。第三句仍在流式生成的文本。'
+          : '第一句。<tts>流中语音</tts>$longTailText第二句很长很长的文本。第三句仍在流式生成的文本。',
+      processedText: '第一句。$longTailText第二句很长很长的文本。第三句仍在流式生成的文本。',
+      pluginEvents: <PluginEvent>[
+        PluginEvent(
+          pluginId: 'tts',
+          type: 'tts_convert',
+          data: <String, dynamic>{
+            'text': '流中语音',
+            'originalText': '流中语音',
+          },
+          id: 'evt_stream_fast_tts',
+        ),
+        if (includeStickerAfterTts)
+          PluginEvent(
+            pluginId: 'sticker',
+            type: 'sticker_convert',
+            data: const <String, dynamic>{
+              'stickerId': 'happy',
+              'tag': '开心',
+              'assetPath': 'assets/stickers/happy.png',
+            },
+            id: 'evt_stream_sticker_after_tts',
+          ),
+      ],
+      toolResults: <Map<String, dynamic>>[],
+    );
+  }
+
+  @override
+  AssistantMessageBuildResult buildAssistantMessages({
+    required ApiCallResult apiResult,
+    required AppSettings settings,
+  }) {
+    return _buildTestAssistantBuildResult(
+      messages: <Message>[
+        Message(
+          id: 'assistant_slow_tail_stream_tts_result',
+          role: 'assistant',
+          content: apiResult.processedText,
+          createdAt: DateTime.now(),
+          status: 'sent',
+        ),
+      ],
+      lastMessageText: apiResult.processedText,
+      rawReplyText: apiResult.replyText,
+    );
+  }
+}
+
 class _StreamingInlineImageSendService extends _InMemoryHistorySendService {
   _StreamingInlineImageSendService(super.ref, this._settings);
 
@@ -1904,6 +2049,19 @@ class _RecordingStreamTtsHandler extends ChatTtsHandler {
   List<Message> lastPendingStreamTtsMessages = const <Message>[];
   List<String> lastStreamTextMessageIds = const <String>[];
   bool lastAppendAfterStreamText = false;
+  List<Message> recordedStreamPendingMessages = <Message>[];
+
+  @override
+  Future<void> resolvePendingStreamMessage({
+    required String convId,
+    required Message message,
+    void Function(String audioUrl, double? durationSeconds)? onAudioResolved,
+    void Function(String text)? onTextFallback,
+    bool persistResult = true,
+    bool Function()? shouldApplyResult,
+  }) async {
+    recordedStreamPendingMessages.add(message);
+  }
 
   @override
   Future<void> deliverSegmentedMessages({
@@ -1916,6 +2074,7 @@ class _RecordingStreamTtsHandler extends ChatTtsHandler {
     bool appendAfterStreamText = false,
     List<String>? streamTextMessageIds,
     List<Message>? streamPendingTtsMessages,
+    bool streamTtsResolutionManaged = false,
     TraceLogger? trace,
   }) async {
     lastAppendAfterStreamText = appendAfterStreamText;
@@ -2036,8 +2195,12 @@ class _TrackingDelayedTtsService extends TtsService {
   _TrackingDelayedTtsService({
     Duration defaultDelay = Duration.zero,
     Map<String, Duration>? delays,
+    Set<String> failingTexts = const <String>{},
+    Map<String, Completer<void>> blockers = const <String, Completer<void>>{},
   })  : _defaultDelay = defaultDelay,
         _delays = delays ?? const <String, Duration>{},
+        _failingTexts = failingTexts,
+        _blockers = blockers,
         super(
           config: TtsConfig(enabled: true),
           requestUrl: 'https://example.com/tts',
@@ -2045,6 +2208,8 @@ class _TrackingDelayedTtsService extends TtsService {
 
   final Duration _defaultDelay;
   final Map<String, Duration> _delays;
+  final Set<String> _failingTexts;
+  final Map<String, Completer<void>> _blockers;
   final List<String> startedTexts = <String>[];
   int activeCount = 0;
   int maxConcurrent = 0;
@@ -2058,6 +2223,18 @@ class _TrackingDelayedTtsService extends TtsService {
     }
     try {
       await Future<void>.delayed(_delays[text] ?? _defaultDelay);
+      final blocker = _blockers[text];
+      if (blocker != null) {
+        await blocker.future;
+      }
+      if (_failingTexts.contains(text)) {
+        return TtsConvertResult(
+          audioUrl: '',
+          text: text,
+          success: false,
+          error: 'test_failure',
+        );
+      }
       return TtsConvertResult(
         audioUrl: r'C:\tmp\tts_${text.hashCode.abs()}.mp3',
         text: text,
@@ -2404,6 +2581,7 @@ class _NoopChatTtsHandler extends ChatTtsHandler {
     bool appendAfterStreamText = false,
     List<String>? streamTextMessageIds,
     List<Message>? streamPendingTtsMessages,
+    bool streamTtsResolutionManaged = false,
     TraceLogger? trace,
   }) async {}
 }
@@ -2425,6 +2603,7 @@ class _DeliverBuildResultOnlyChatTtsHandler extends ChatTtsHandler {
     bool appendAfterStreamText = false,
     List<String>? streamTextMessageIds,
     List<Message>? streamPendingTtsMessages,
+    bool streamTtsResolutionManaged = false,
     TraceLogger? trace,
   }) async {
     lastAppendAfterStreamText = appendAfterStreamText;
@@ -2629,7 +2808,7 @@ void main() {
 
     expect(text, '编辑时应回填这段文字');
 
-    final recalledAttachment = container.read(recalledAttachmentProvider);
+    final recalledAttachment = container.read(chatEditSeedProvider(conv.id))?.attachment;
     expect(recalledAttachment, isNotNull);
     expect(recalledAttachment!.type, AttachmentType.image);
     expect(recalledAttachment.path, imagePath);
@@ -2637,18 +2816,18 @@ void main() {
     final remainingMessages = await container
         .read(chatHistoryStoreProvider)
         .loadProjectedMessagesFromRawStore(conv.id);
-    expect(remainingMessages, isEmpty);
+    expect(remainingMessages, isNotEmpty);
 
     final repo = container.read(messageRepositoryProvider);
     final deletedUser = await repo.getById(userMsg.id);
     final deletedAi = await repo.getById(aiMsg.id);
     expect(deletedUser, isNotNull);
-    expect(deletedUser!.deletedAt, isNotNull);
+    expect(deletedUser!.deletedAt, isNull);
     expect(deletedAi, isNotNull);
-    expect(deletedAi!.deletedAt, isNotNull);
+    expect(deletedAi!.deletedAt, isNull);
   });
 
-  test('editMessage 优先复用前端缓存定位消息，不依赖全量 raw history', () async {
+  test('editMessage 只准备编辑草稿，不调用旧截断入口', () async {
     final now = DateTime.now();
     final userMsg = Message(
       id: 'msg_edit_fast_path_user',
@@ -2712,7 +2891,7 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     expect(historyPort.loadRawMessagesCallCount, 0);
-    expect(historyPort.truncateFromMessageCallCount, 1);
+    expect(historyPort.truncateFromMessageCallCount, 0);
 
     truncateCompleter.complete();
 
@@ -5526,6 +5705,7 @@ void main() {
           (ref) => _StreamingTtsSendService(ref, settings),
         ),
         ttsPlayerManagerProvider.overrideWithValue(ttsManager),
+        voicePresetApplicationProvider.overrideWithValue(_TestVoiceApplication(ttsService)),
       ],
     );
     addTearDown(container.dispose);
@@ -5562,18 +5742,18 @@ void main() {
 
     var frontendMessages =
         await _loadFrontendTimelineMessages(container, conv.id);
-    final pendingAfterCommit = frontendMessages.where((message) {
+    final audioMessagesAfterCommit = frontendMessages.where((message) {
       final audioBlock = _firstAudioBlock(message);
       return audioBlock != null &&
-          (audioBlock.text ?? '') == '这是一段语音' &&
-          audioBlock.status == BlockStatus.pending;
-    });
+          (audioBlock.text ?? '') == '这是一段语音';
+    }).toList();
     expect(
-      pendingAfterCommit.length,
+      audioMessagesAfterCommit.length,
       1,
       reason: '流式收尾后，应继续复用原来的语音占位，而不是立刻删掉再重插一条',
     );
-    final retainedPendingId = pendingAfterCommit.single.id;
+    final retainedPendingId = audioMessagesAfterCommit.single.id;
+    expect(retainedPendingId, placeholderId);
     final handler = container.read(chatTtsHandlerProvider);
     await handler.debugWaitForBackgroundTasks();
 
@@ -5595,6 +5775,541 @@ void main() {
       <String>[retainedPendingId],
       reason: 'TTS 完成后，应由同一条消息原位补齐，不应留下旧占位或新增副本',
     );
+  });
+
+  test('流式回复中语音若先返回，应在流中原位置为 success 可播放，且后续流式 delta 不被重置为 pending', () async {
+    final now = DateTime.now();
+    final convId =
+        'conv_stream_tts_mid_resolve_${now.microsecondsSinceEpoch}';
+    final conv = Conversation(
+      id: convId,
+      title: 'StreamTtsMidResolve',
+      displayName: 'StreamTtsMidResolve',
+      createdAt: now,
+      updatedAt: now,
+      messages: const [],
+      lastMessage: '',
+      lastMessageTime: now,
+    );
+    final settings = _buildTestSettings();
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+
+    // 真机连接会开启外键；测试也必须拒绝引用尚未落库的 raw 消息。
+    await db.customStatement('PRAGMA foreign_keys = ON');
+
+    // 保留真实 TtsService 请求构造与响应解析，仅在 HTTP 边界拦截外网。
+    final ttsService = TtsService(
+      config: TtsConfig(enabled: true),
+      requestUrl: 'https://example.com/v1/audio/speech',
+    );
+    final ttsManager = TtsPlayerManager(() => ttsService);
+    addTearDown(ttsManager.dispose);
+    final ttsTagClosed = Completer<void>();
+    final releaseTail = Completer<void>();
+    addTearDown(() {
+      if (!releaseTail.isCompleted) releaseTail.complete();
+    });
+
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(settings),
+        ),
+        conversationsProvider.overrideWith(
+          () => _FakeConversationsNotifier([conv]),
+        ),
+        activeConversationProvider.overrideWith((ref) => conv),
+        chatSendServiceProvider.overrideWith(
+          (ref) => _SlowTailStreamingTtsSendService(
+            ref,
+            settings,
+            ttsTagClosed: ttsTagClosed,
+            releaseTail: releaseTail,
+            longTailText: List.filled(800, '后续正文还在继续生成。').join(),
+          ),
+        ),
+        ttsPlayerManagerProvider.overrideWithValue(ttsManager),
+        voicePresetApplicationProvider.overrideWithValue(_TestVoiceApplication(ttsService)),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await container.read(appSettingsProvider.future);
+
+    final requestedTexts = <String>[];
+    final client = MockClient((request) async {
+      expect(releaseTail.isCompleted, isFalse,
+          reason: 'TTS HTTP 请求必须在模型流结束前发出');
+      expect(request.method, 'POST');
+      requestedTexts.add(
+        (jsonDecode(request.body) as Map<String, dynamic>)['input'] as String,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      return http.Response.bytes(
+        <int>[0x49, 0x44, 0x33, 0],
+        200,
+        headers: const {'content-type': 'audio/mpeg'},
+      );
+    });
+    addTearDown(client.close);
+    final sendFuture = http.runWithClient(
+      () => container.read(chatActionsProvider).send('测试流中语音提前就绪'),
+      () => client,
+    );
+    addTearDown(() async {
+      if (!releaseTail.isCompleted) releaseTail.complete();
+      await sendFuture;
+    });
+    var sendCompleted = false;
+    unawaited(sendFuture.then<void>(
+      (_) => sendCompleted = true,
+      onError: (Object _, StackTrace __) => sendCompleted = true,
+    ));
+    await ttsTagClosed.future.timeout(const Duration(seconds: 2));
+
+    Message? playableDuringStream;
+    for (var i = 0; i < 20 && playableDuringStream == null; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      final messages = await _loadFrontendTimelineMessages(container, conv.id);
+      for (final message in messages) {
+        final audio = _firstAudioBlock(message);
+        if (audio != null &&
+            (audio.text ?? '') == '流中语音' &&
+            audio.status == BlockStatus.success &&
+            audio.url.isNotEmpty) {
+          playableDuringStream = message;
+          break;
+        }
+      }
+    }
+    expect(playableDuringStream, isNotNull);
+    expect(requestedTexts, <String>['流中语音']);
+    expect(
+      await (db.select(db.messageProjectionMappings)
+            ..where((row) => row.rawMessageId
+                .equals(playableDuringStream!.sourceMessageId!)))
+          .get(),
+      isEmpty,
+      reason: '流中只能更新瞬态缓存，不得提前为未落库 raw 写投影映射',
+    );
+    expect(
+      sendCompleted,
+      isFalse,
+      reason: '模型尾部仍被闩锁时，语音必须已经可播放，不能等整段文字结束',
+    );
+
+    releaseTail.complete();
+    await sendFuture;
+
+    // 后续文字 delta 与最终收尾都不能把 success 冲回 pending，也不能重复合成。
+    final finalMessages =
+        await _loadFrontendTimelineMessages(container, conv.id);
+    final finalAudios = finalMessages
+        .where((m) => (_firstAudioBlock(m)?.text ?? '') == '流中语音')
+        .toList();
+    expect(finalAudios, hasLength(1));
+    final finalAudioBlock = _firstAudioBlock(finalAudios.single)!;
+    expect(finalAudioBlock.status, BlockStatus.success);
+    expect(finalAudioBlock.url, startsWith('data:audio/mpeg;base64,'));
+    expect(requestedTexts, <String>['流中语音']);
+    final persistedMessages = await container
+        .read(chatHistoryStoreProvider)
+        .loadProjectedMessagesFromRawStore(conv.id);
+    final persistedAudio = persistedMessages
+        .expand((message) =>
+            message.blocks?.whereType<AudioBlock>() ?? const <AudioBlock>[])
+        .single;
+    expect(persistedAudio.url, finalAudioBlock.url);
+    expect(persistedAudio.status, BlockStatus.success);
+    expect(await db.customSelect('PRAGMA foreign_key_check').get(), isEmpty);
+  });
+
+  test('流中 TTS 若在文字收尾后才返回，应沿用同一次转换并持久化原占位', () async {
+    final now = DateTime.now();
+    final conv = Conversation(
+      id: 'conv_stream_tts_late_handoff_${now.microsecondsSinceEpoch}',
+      title: 'StreamTtsLateHandoff',
+      displayName: 'StreamTtsLateHandoff',
+      createdAt: now,
+      updatedAt: now,
+      messages: const [],
+      lastMessage: '',
+      lastMessageTime: now,
+    );
+    final settings = _buildTestSettings();
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+
+    final ttsService = _TrackingDelayedTtsService(
+      delays: const <String, Duration>{
+        '流中语音': Duration(milliseconds: 500),
+      },
+    );
+    final ttsManager = TtsPlayerManager(() => ttsService);
+    addTearDown(ttsManager.dispose);
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(settings),
+        ),
+        conversationsProvider.overrideWith(
+          () => _FakeConversationsNotifier([conv]),
+        ),
+        activeConversationProvider.overrideWith((ref) => conv),
+        chatSendServiceProvider.overrideWith(
+          (ref) => _SlowTailStreamingTtsSendService(ref, settings),
+        ),
+        ttsPlayerManagerProvider.overrideWithValue(ttsManager),
+        voicePresetApplicationProvider.overrideWithValue(_TestVoiceApplication(ttsService)),
+      ],
+    );
+    addTearDown(container.dispose);
+    await container.read(appSettingsProvider.future);
+
+    await container.read(chatActionsProvider).send('测试流末 TTS 交接');
+
+    Message? resolved;
+    for (var i = 0; i < 20 && resolved == null; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      final messages = await _loadFrontendTimelineMessages(container, conv.id);
+      for (final message in messages) {
+        final audio = _firstAudioBlock(message);
+        if (audio != null &&
+            (audio.text ?? '') == '流中语音' &&
+            audio.status == BlockStatus.success &&
+            audio.url.isNotEmpty) {
+          resolved = message;
+          break;
+        }
+      }
+    }
+
+    expect(resolved, isNotNull);
+    expect(ttsService.startedTexts, <String>['流中语音']);
+    final persisted = await container
+        .read(chatHistoryStoreProvider)
+        .loadProjectedMessagesFromRawStore(conv.id);
+    final persistedAudio = persisted
+        .where((message) => (_firstAudioBlock(message)?.text ?? '') == '流中语音')
+        .toList(growable: false);
+    expect(persistedAudio, hasLength(1));
+    expect(_firstAudioBlock(persistedAudio.single)!.status, BlockStatus.success);
+    expect(_firstAudioBlock(persistedAudio.single)!.url, isNotEmpty);
+  });
+
+  test('流式收尾后删除原回复，迟到的 TTS 结果不应复活已删语音', () async {
+    final now = DateTime.now();
+    final conv = Conversation(
+      id: 'conv_stream_tts_deleted_after_commit_${now.microsecondsSinceEpoch}',
+      title: 'StreamTtsDeletedAfterCommit',
+      displayName: 'StreamTtsDeletedAfterCommit',
+      createdAt: now,
+      updatedAt: now,
+      messages: const [],
+      lastMessage: '',
+      lastMessageTime: now,
+    );
+    final settings = _buildTestSettings();
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+
+    final releaseTts = Completer<void>();
+    addTearDown(() {
+      if (!releaseTts.isCompleted) releaseTts.complete();
+    });
+    final ttsService = _TrackingDelayedTtsService(
+      blockers: <String, Completer<void>>{'流中语音': releaseTts},
+    );
+    final ttsManager = TtsPlayerManager(() => ttsService);
+    addTearDown(ttsManager.dispose);
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(settings),
+        ),
+        conversationsProvider.overrideWith(
+          () => _FakeConversationsNotifier([conv]),
+        ),
+        activeConversationProvider.overrideWith((ref) => conv),
+        chatSendServiceProvider.overrideWith(
+          (ref) => _SlowTailStreamingTtsSendService(ref, settings),
+        ),
+        ttsPlayerManagerProvider.overrideWithValue(ttsManager),
+        voicePresetApplicationProvider.overrideWithValue(_TestVoiceApplication(ttsService)),
+      ],
+    );
+    addTearDown(container.dispose);
+    await container.read(appSettingsProvider.future);
+
+    await container.read(chatActionsProvider).send('测试收尾后删除的迟到 TTS');
+    expect(ttsService.startedTexts, <String>['流中语音']);
+
+    final historyStore = container.read(chatHistoryStoreProvider);
+    final rawAssistant = (await historyStore.loadAllRawMessages(conv.id))
+        .lastWhere((message) => message.role == 'assistant');
+    final pendingMessages =
+        await _loadFrontendTimelineMessages(container, conv.id);
+    final pendingAudio = pendingMessages.singleWhere(
+      (message) => (_firstAudioBlock(message)?.text ?? '') == '流中语音',
+    );
+
+    await historyStore.softDeleteMessages(conv.id, <String>[rawAssistant.id]);
+    releaseTts.complete();
+    for (var i = 0; i < 20 && ttsService.activeCount > 0; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    final afterLateResult =
+        await _loadFrontendTimelineMessages(container, conv.id);
+    expect(
+      afterLateResult.any(
+        (message) =>
+            message.id == pendingAudio.id ||
+            message.sourceMessageId == rawAssistant.id,
+      ),
+      isFalse,
+    );
+    expect(ttsService.startedTexts, <String>['流中语音']);
+  });
+
+  test('中断流式回复后，迟到的 TTS 结果不应复活已清理的语音占位', () async {
+    final now = DateTime.now();
+    final conv = Conversation(
+      id: 'conv_stream_tts_interrupt_${now.microsecondsSinceEpoch}',
+      title: 'StreamTtsInterrupt',
+      displayName: 'StreamTtsInterrupt',
+      createdAt: now,
+      updatedAt: now,
+      messages: const [],
+      lastMessage: '',
+      lastMessageTime: now,
+    );
+    final settings = _buildTestSettings();
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+
+    final ttsService = _TrackingDelayedTtsService(
+      delays: const <String, Duration>{
+        '流中语音': Duration(milliseconds: 180),
+      },
+    );
+    final ttsManager = TtsPlayerManager(() => ttsService);
+    addTearDown(ttsManager.dispose);
+    final ttsTagClosed = Completer<void>();
+    final releaseTail = Completer<void>();
+    addTearDown(() {
+      if (!releaseTail.isCompleted) releaseTail.complete();
+    });
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(settings),
+        ),
+        conversationsProvider.overrideWith(
+          () => _FakeConversationsNotifier([conv]),
+        ),
+        activeConversationProvider.overrideWith((ref) => conv),
+        chatSendServiceProvider.overrideWith(
+          (ref) => _SlowTailStreamingTtsSendService(
+            ref,
+            settings,
+            ttsTagClosed: ttsTagClosed,
+            releaseTail: releaseTail,
+          ),
+        ),
+        ttsPlayerManagerProvider.overrideWithValue(ttsManager),
+        voicePresetApplicationProvider.overrideWithValue(_TestVoiceApplication(ttsService)),
+      ],
+    );
+    addTearDown(container.dispose);
+    await container.read(appSettingsProvider.future);
+
+    final actions = container.read(chatActionsProvider);
+    final sendFuture = actions.send('测试中断后迟到 TTS');
+    await ttsTagClosed.future.timeout(const Duration(seconds: 2));
+    for (var i = 0; i < 20 && ttsService.startedTexts.isEmpty; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(ttsService.startedTexts, <String>['流中语音']);
+    expect(await actions.interruptCurrentGeneration(convId: conv.id), isTrue);
+    await Future<void>.delayed(const Duration(milliseconds: 260));
+
+    final afterLateResult =
+        await _loadFrontendTimelineMessages(container, conv.id);
+    expect(
+      afterLateResult
+          .where((message) => (_firstAudioBlock(message)?.text ?? '') == '流中语音'),
+      isEmpty,
+    );
+    releaseTail.complete();
+    await sendFuture;
+    expect(ttsService.startedTexts, <String>['流中语音']);
+  });
+
+  test('流中 TTS 失败回退文本后，后续 delta 不应重建占位或再次转换', () async {
+    final now = DateTime.now();
+    final conv = Conversation(
+      id: 'conv_stream_tts_fallback_${now.microsecondsSinceEpoch}',
+      title: 'StreamTtsFallback',
+      displayName: 'StreamTtsFallback',
+      createdAt: now,
+      updatedAt: now,
+      messages: const [],
+      lastMessage: '',
+      lastMessageTime: now,
+    );
+    final settings = _buildTestSettings();
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+
+    final ttsService = _TrackingDelayedTtsService(
+      delays: const <String, Duration>{
+        '流中语音': Duration(milliseconds: 30),
+      },
+      failingTexts: const <String>{'流中语音'},
+    );
+    final ttsManager = TtsPlayerManager(() => ttsService);
+    addTearDown(ttsManager.dispose);
+    final ttsTagClosed = Completer<void>();
+    final releaseTail = Completer<void>();
+    addTearDown(() {
+      if (!releaseTail.isCompleted) releaseTail.complete();
+    });
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(settings),
+        ),
+        conversationsProvider.overrideWith(
+          () => _FakeConversationsNotifier([conv]),
+        ),
+        activeConversationProvider.overrideWith((ref) => conv),
+        chatSendServiceProvider.overrideWith(
+          (ref) => _SlowTailStreamingTtsSendService(
+            ref,
+            settings,
+            ttsTagClosed: ttsTagClosed,
+            releaseTail: releaseTail,
+          ),
+        ),
+        ttsPlayerManagerProvider.overrideWithValue(ttsManager),
+        voicePresetApplicationProvider.overrideWithValue(_TestVoiceApplication(ttsService)),
+      ],
+    );
+    addTearDown(container.dispose);
+    await container.read(appSettingsProvider.future);
+
+    await db.customStatement('PRAGMA foreign_keys = ON');
+    final sendFuture = container.read(chatActionsProvider).send('测试流中 TTS 回退');
+    await ttsTagClosed.future.timeout(const Duration(seconds: 2));
+    var sawFallbackText = false;
+    for (var i = 0; i < 20 && !sawFallbackText; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      final messages = await _loadFrontendTimelineMessages(container, conv.id);
+      sawFallbackText = messages.any(
+        (message) =>
+            message.displayText == '流中语音' &&
+            _firstAudioBlock(message) == null,
+      );
+    }
+    expect(sawFallbackText, isTrue);
+
+    releaseTail.complete();
+    await sendFuture;
+    final finalMessages =
+        await _loadFrontendTimelineMessages(container, conv.id);
+    expect(
+      finalMessages
+          .where((message) => (_firstAudioBlock(message)?.text ?? '') == '流中语音'),
+      isEmpty,
+    );
+    expect(
+      finalMessages.where((message) => message.displayText == '流中语音'),
+      hasLength(1),
+    );
+    expect(ttsService.startedTexts, <String>['流中语音']);
+  });
+
+  test('流中 TTS 失败后，表情应保持在回退文本与后续正文之间', () async {
+    final now = DateTime.now();
+    final conv = Conversation(
+      id: 'conv_stream_tts_fallback_sticker_${now.microsecondsSinceEpoch}',
+      title: 'StreamTtsFallbackSticker',
+      displayName: 'StreamTtsFallbackSticker',
+      createdAt: now,
+      updatedAt: now,
+      messages: const [],
+      lastMessage: '',
+      lastMessageTime: now,
+    );
+    final settings = _buildTestSettings();
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+
+    final ttsService = _TrackingDelayedTtsService(
+      delays: const <String, Duration>{
+        '流中语音': Duration(milliseconds: 30),
+      },
+      failingTexts: const <String>{'流中语音'},
+    );
+    final ttsManager = TtsPlayerManager(() => ttsService);
+    addTearDown(ttsManager.dispose);
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(settings),
+        ),
+        conversationsProvider.overrideWith(
+          () => _FakeConversationsNotifier([conv]),
+        ),
+        activeConversationProvider.overrideWith((ref) => conv),
+        chatSendServiceProvider.overrideWith(
+          (ref) => _SlowTailStreamingTtsSendService(
+            ref,
+            settings,
+            includeStickerAfterTts: true,
+          ),
+        ),
+        ttsPlayerManagerProvider.overrideWithValue(ttsManager),
+        voicePresetApplicationProvider.overrideWithValue(_TestVoiceApplication(ttsService)),
+      ],
+    );
+    addTearDown(container.dispose);
+    await container.read(appSettingsProvider.future);
+
+    await container.read(chatActionsProvider).send('测试 TTS 回退与表情顺序');
+    final finalMessages =
+        await _loadFrontendTimelineMessages(container, conv.id);
+    final fallbackIndex = finalMessages.indexWhere(
+      (message) =>
+          message.displayText == '流中语音' &&
+          _firstAudioBlock(message) == null,
+    );
+    final stickerIndex = finalMessages.indexWhere(
+      (message) => message.blocks?.whereType<EmojiBlock>().isNotEmpty ?? false,
+    );
+    final tailTextIndex = finalMessages.indexWhere(
+      (message) => message.displayText.contains('第二句很长很长的文本'),
+    );
+
+    expect(fallbackIndex, greaterThanOrEqualTo(0));
+    expect(stickerIndex, greaterThan(fallbackIndex));
+    expect(tailTextIndex, greaterThan(stickerIndex));
+    expect(ttsService.startedTexts, <String>['流中语音']);
   });
 
   test('deliverSegmentedMessages 在流式后补时，多个 TTS 占位会并发启动转换', () async {
@@ -5669,6 +6384,7 @@ void main() {
           () => _FakeAppSettingsNotifier(settings),
         ),
         ttsPlayerManagerProvider.overrideWithValue(ttsManager),
+        voicePresetApplicationProvider.overrideWithValue(_TestVoiceApplication(ttsService)),
       ],
     );
     addTearDown(container.dispose);
@@ -5812,6 +6528,7 @@ void main() {
           () => _FakeAppSettingsNotifier(settings),
         ),
         ttsPlayerManagerProvider.overrideWithValue(ttsManager),
+        voicePresetApplicationProvider.overrideWithValue(_TestVoiceApplication(ttsService)),
         pluginManagerProvider.overrideWith((ref) {
           final manager = PluginManager();
           imagePlugin = _DelayedInlineImagePlugin(
@@ -6419,6 +7136,7 @@ void main() {
           () => _FakeAppSettingsNotifier(settings),
         ),
         ttsPlayerManagerProvider.overrideWithValue(ttsManager),
+        voicePresetApplicationProvider.overrideWithValue(_TestVoiceApplication(ttsService)),
         pluginManagerProvider.overrideWith((ref) {
           final manager = PluginManager();
           imagePlugin = _DelayedInlineImagePlugin(
@@ -6572,6 +7290,7 @@ void main() {
           () => _FakeAppSettingsNotifier(settings),
         ),
         ttsPlayerManagerProvider.overrideWithValue(ttsManager),
+        voicePresetApplicationProvider.overrideWithValue(_TestVoiceApplication(ttsService)),
       ],
     );
     addTearDown(container.dispose);
@@ -6722,6 +7441,7 @@ void main() {
           (ref) => _StreamingMixedTtsImageTailSendService(ref, settings),
         ),
         ttsPlayerManagerProvider.overrideWithValue(ttsManager),
+        voicePresetApplicationProvider.overrideWithValue(_TestVoiceApplication(ttsService)),
         pluginManagerProvider.overrideWith((ref) {
           final manager = PluginManager();
           imagePlugin = _DelayedInlineImagePlugin(
@@ -6915,6 +7635,7 @@ void main() {
           (ref) => _StreamingOnlyTtsSendService(ref, settings),
         ),
         ttsPlayerManagerProvider.overrideWithValue(ttsManager),
+        voicePresetApplicationProvider.overrideWithValue(_TestVoiceApplication(ttsService)),
       ],
     );
     addTearDown(container.dispose);
@@ -7001,6 +7722,7 @@ void main() {
           (ref) => _StreamingOnlyTtsAndImageSendService(ref, settings),
         ),
         ttsPlayerManagerProvider.overrideWithValue(ttsManager),
+        voicePresetApplicationProvider.overrideWithValue(_TestVoiceApplication(ttsService)),
         pluginManagerProvider.overrideWith((ref) {
           final manager = PluginManager();
           imagePlugin = _DelayedInlineImagePlugin(
@@ -7188,7 +7910,6 @@ void main() {
     final settings = _buildTestSettings().copyWith(
       defaultModelName: 'openai:gpt-3.5-turbo',
       defaultChatModels: const <String>['openai:gpt-3.5-turbo'],
-      defaultVisionModel: 'openai:gpt-4o-mini',
       modelList: const <String>['openai:gpt-3.5-turbo', 'openai:gpt-4o-mini'],
       allKnownModels: const <String>[
         'openai:gpt-3.5-turbo',

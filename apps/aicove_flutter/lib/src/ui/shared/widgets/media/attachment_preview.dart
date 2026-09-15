@@ -5,6 +5,7 @@ library;
 
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/buttons/moe_button_surface.dart';
 import 'package:path/path.dart' as p;
 import '../../../theme/tokens.dart';
 import '../../effects/smooth_clip.dart';
@@ -43,8 +44,11 @@ class ImageAttachmentPreview extends StatelessWidget {
                     radius: 8,
                     color: Colors.grey.shade300,
                   ),
-                  child: const Icon(Icons.broken_image,
-                      color: Colors.grey, size: 20),
+                  child: const Icon(
+                    Icons.broken_image,
+                    color: Colors.grey,
+                    size: 20,
+                  ),
                 ),
               ),
             ),
@@ -81,8 +85,9 @@ class FileAttachmentPreview extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
     final displayName = fileName ?? p.basename(filePath);
-    final sizeText =
-        fileSizeBytes != null ? _formatFileSize(fileSizeBytes!) : null;
+    final sizeText = fileSizeBytes != null
+        ? _formatFileSize(fileSizeBytes!)
+        : null;
 
     return Align(
       alignment: Alignment.centerLeft,
@@ -122,10 +127,7 @@ class FileAttachmentPreview extends StatelessWidget {
                         if (sizeText != null)
                           Text(
                             sizeText,
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: colors.muted,
-                            ),
+                            style: TextStyle(fontSize: 10, color: colors.muted),
                           ),
                       ],
                     ),
@@ -167,14 +169,12 @@ class _RemoveButton extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         customBorder: const CircleBorder(),
-        child: Container(
+        child: MoeButtonSurface(
           width: 20,
           height: 20,
-          decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.6),
-            shape: BoxShape.circle,
-          ),
-          child: const Icon(Icons.close, size: 12, color: Colors.white),
+          tintColor: Colors.black.withValues(alpha: 0.6),
+          radius: 999,
+          child: Icon(Icons.close, size: 12, color: context.moeColors.text),
         ),
       ),
     );

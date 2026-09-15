@@ -9,6 +9,7 @@ class TtsSynthesisContext {
     this.requestFormat = 'openai_tts',
     this.model,
     this.apiKey,
+    this.customConfig = const <String, dynamic>{},
   });
 
   final TtsConfig config;
@@ -18,6 +19,7 @@ class TtsSynthesisContext {
   final String requestFormat;
   final String? model;
   final String? apiKey;
+  final Map<String, dynamic> customConfig;
 
   String get normalizedRequestFormat =>
       TtsSynthesisAdapter.normalizeIdentifier(requestFormat) ?? 'openai_tts';
@@ -81,10 +83,7 @@ abstract class TtsSynthesisAdapter {
       _ => '$path$speechPath',
     };
 
-    return _withoutQuery(
-      uri,
-      path: newPath,
-    );
+    return _withoutQuery(uri, path: newPath);
   }
 
   static Uri _withoutQuery(Uri uri, {String? path}) {

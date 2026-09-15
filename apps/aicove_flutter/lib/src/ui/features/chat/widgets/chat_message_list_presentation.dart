@@ -41,9 +41,10 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     final timelineMessages = _currentTimelineMessages;
     final shouldBypassDisplayCache =
         _shouldBypassDisplayCache(stableMessages) ||
-            _hasTransientTimelineContent;
-    final windowSignature =
-        shouldBypassDisplayCache ? null : _buildWindowSignature(stableMessages);
+        _hasTransientTimelineContent;
+    final windowSignature = shouldBypassDisplayCache
+        ? null
+        : _buildWindowSignature(stableMessages);
     final formatSignature = shouldBypassDisplayCache
         ? null
         : _buildFormatSignature(effectiveConfig);
@@ -152,13 +153,10 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
   }) {
     return SliverChildBuilderDelegate(
       (context, index) {
-        final item =
-            reverseForViewport ? items[items.length - 1 - index] : items[index];
-        return _buildListItemWidget(
-          context,
-          item,
-          actions,
-        );
+        final item = reverseForViewport
+            ? items[items.length - 1 - index]
+            : items[index];
+        return _buildListItemWidget(context, item, actions);
       },
       childCount: items.length,
       addAutomaticKeepAlives: false,
@@ -171,12 +169,55 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     );
   }
 
+  void _recordAnimationDecision(Message message, bool animate) {
+    final diagnostics = ref.read(frontendDiagnosticsProvider);
+    if (!diagnostics.enabled) return;
+    final viewport = _listDiagnosticContext;
+    final pending = _pendingAnimationIds.contains(message.id);
+    final state = (animate, pending, _userOwnsViewport);
+    final previous = _diagnosticAnimationStates[message.id];
+    if (previous == state) return;
+    _diagnosticAnimationStates.remove(message.id);
+    _diagnosticAnimationStates[message.id] = state;
+    if (_diagnosticAnimationStates.length > 512) {
+      _diagnosticAnimationStates.remove(_diagnosticAnimationStates.keys.first);
+    }
+    diagnostics.record(
+      viewport.withParent(diagnostics.forMessage(message.id)),
+      FrontendStage.animationDecision,
+      messageId: message.id,
+      facts: DiagnosticFacts(
+        pageInstanceId: viewport.operationId,
+        sourceMessageId: message.sourceMessageId,
+        reason: animate
+            ? DiagnosticReason.pendingAnimationId
+            : (pending
+                  ? DiagnosticReason.pinnedLatestTail
+                  : DiagnosticReason.notPending),
+        state: {
+          'animate': animate,
+          'viewportClock': true,
+          'pending': pending,
+          'previouslyBuilt': previous != null,
+          'userOwnsViewport': _userOwnsViewport,
+          'followLatest': _autoScrollEnabled,
+          'initialLoading': widget.isInitialLoading,
+          'pinLatestTail': widget.viewportController.shouldPinLatestTail,
+          if (_scrollController.hasClients &&
+              _scrollController.position.hasPixels)
+            'pixels': _scrollController.position.pixels,
+        },
+      ),
+    );
+  }
+
   Widget _buildListItemWidget(
     BuildContext context,
     ChatMessageListItem item,
     ChatActions actions,
   ) {
     final itemKey = ValueKey<String>(_listItemStableKey(item));
+    widget.onDebugItemBuilt?.call(itemKey.value);
 
     if (item is ChatTimeDividerItem) {
       return KeyedSubtree(
@@ -185,10 +226,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
       );
     }
     if (item is ChatNewTopicDividerItem) {
-      return KeyedSubtree(
-        key: itemKey,
-        child: _buildNewTopicDivider(context),
-      );
+      return KeyedSubtree(key: itemKey, child: _buildNewTopicDivider(context));
     }
     if (item is ChatChunkedMessageItem) {
       final message = item.originalMessage;
@@ -201,28 +239,53 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
         status: message.status,
       );
       final bubbleWidget = Padding(
-        padding:
-            const EdgeInsets.symmetric(vertical: _kMessageItemVerticalPadding),
-        child: MessageBubble(
-          isMe: isMe,
-          message: chunkMessage,
-          avatarUrl: isMe ? null : widget.avatarUrl,
-          displayName: isMe ? null : widget.displayName,
-          showCorner: item.showCorner,
-          showName: false,
-          showAvatar: item.showAvatar,
-          chatImages: _cachedChatImages,
-          onRetry: null,
-          onLongPress: (bubbleBox) =>
-              _handleMessageLongPress(context, message, isMe, bubbleBox),
-          onMediaLongPress: (mediaBox, block) =>
-              _handleMediaLongPress(context, message, isMe, mediaBox, block),
+        padding: const EdgeInsets.symmetric(
+          vertical: _kMessageItemVerticalPadding,
+        ),
+        child: FrontendMessageProbe(
+          messageId: message.id,
+          hasText: !isMe && item.chunkText.trim().isNotEmpty,
+          child: MessageBubble(
+            isMe: isMe,
+            message: chunkMessage,
+            selectionWrapper: (child) =>
+                ChatSelectableMessage(messageId: chunkMessage.id, child: child),
+            avatarUrl: isMe ? null : widget.avatarUrl,
+            displayName: isMe ? null : widget.displayName,
+            showCorner: item.showCorner,
+            showName: false,
+            showAvatar: item.showAvatar,
+            hideContactAvatar: widget.selection?.active == true,
+            chatImages: _cachedChatImages,
+            onRetry: null,
+            onLongPress: (bubbleBox, position) => _handleMessageLongPress(
+              context,
+              message,
+              isMe,
+              bubbleBox,
+              position,
+              selectionId: chunkMessage.id,
+            ),
+            onMediaLongPress: (mediaBox, block, position) =>
+                _handleMediaLongPress(
+                  context,
+                  message,
+                  isMe,
+                  mediaBox,
+                  block,
+                  position,
+                ),
+          ),
         ),
       );
 
-      final shouldAnimate = item.chunkIndex == 0 &&
+      final shouldAnimate =
+          item.chunkIndex == 0 &&
           _pendingAnimationIds.contains(message.id) &&
           _shouldAnimatePendingMessage(message);
+      if (item.chunkIndex == 0) {
+        _recordAnimationDecision(message, shouldAnimate);
+      }
       if (shouldAnimate) {
         _pendingAnimationIds.remove(message.id);
         final animationSerial = _markEntranceAnimationStarted();
@@ -232,10 +295,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
           child: bubbleWidget,
         );
       }
-      return KeyedSubtree(
-        key: itemKey,
-        child: bubbleWidget,
-      );
+      return KeyedSubtree(key: itemKey, child: bubbleWidget);
     }
     Widget buildPlainChatBubble(
       BuildContext context,
@@ -244,22 +304,47 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
       ChatMessageItem item,
       ChatActions actions,
     ) {
-      return MessageBubble(
+      final bubble = MessageBubble(
         isMe: isMe,
         message: message,
+        selectionWrapper: (child) =>
+            ChatSelectableMessage(messageId: message.id, child: child),
         avatarUrl: isMe ? null : widget.avatarUrl,
         displayName: isMe ? null : widget.displayName,
         showCorner: item.showCorner,
         showName: false,
         showAvatar: item.showAvatar,
+        hideContactAvatar: widget.selection?.active == true,
         chatImages: _cachedChatImages,
         onRetry: (isMe && message.status == 'failed')
             ? () => actions.recallFailedMessage(message.id)
             : null,
-        onLongPress: (bubbleBox) =>
-            _handleMessageLongPress(context, message, isMe, bubbleBox),
-        onMediaLongPress: (mediaBox, block) =>
-            _handleMediaLongPress(context, message, isMe, mediaBox, block),
+        onLongPress: (bubbleBox, position) => _handleMessageLongPress(
+          context,
+          message,
+          isMe,
+          bubbleBox,
+          position,
+        ),
+        onMediaLongPress: (mediaBox, block, position) => _handleMediaLongPress(
+          context,
+          message,
+          isMe,
+          mediaBox,
+          block,
+          position,
+        ),
+      );
+      if (isMe) return bubble;
+      return FrontendMessageProbe(
+        messageId: message.id,
+        hasText:
+            message.blocks?.whereType<TextBlock>().any(
+              (block) =>
+                  block.content.trim().isNotEmpty && block.content != '生成中...',
+            ) ??
+            message.content.trim().isNotEmpty,
+        child: bubble,
       );
     }
 
@@ -267,35 +352,37 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
       final message = item.message;
       final isMe = message.role == 'user';
       final bubbleWidget = Padding(
-        padding:
-            const EdgeInsets.symmetric(vertical: _kMessageItemVerticalPadding),
+        padding: const EdgeInsets.symmetric(
+          vertical: _kMessageItemVerticalPadding,
+        ),
         // G2.1 活跃流通道：policy on 时仅活跃尾气泡的 Consumer 命中通道并随
         // 文本增长重建，其余气泡 select 恒 null；policy off 时不包 Consumer、
         // 不建订阅，气泡子树与改造前一致（B-01：off＝严格回滚面）。
         child: !_streamChannelEnabled
             ? buildPlainChatBubble(context, message, isMe, item, actions)
-            : Consumer(builder: (context, ref, _) {
-                final live = ref.watch(activeStreamProjectionsProvider.select(
-                  (projections) {
-                    final projection = projections[widget.conversationId];
-                    return projection != null &&
-                            projection.tailMessageId == message.id
-                        ? projection
-                        : null;
-                  },
-                ));
-                return buildPlainChatBubble(
-                  context,
-                  resolveActiveStreamTailMessage(message, live),
-                  isMe,
-                  item,
-                  actions,
-                );
-              }),
+            : Consumer(
+                builder: (context, ref, _) {
+                  final live = ref.watch(
+                    _chatVisibleStreamProjectionProvider((
+                      conversationId: widget.conversationId,
+                      messageId: message.id,
+                    )),
+                  );
+                  return buildPlainChatBubble(
+                    context,
+                    resolveActiveStreamTailMessage(message, live),
+                    isMe,
+                    item,
+                    actions,
+                  );
+                },
+              ),
       );
 
-      final shouldAnimate = _pendingAnimationIds.contains(message.id) &&
+      final shouldAnimate =
+          _pendingAnimationIds.contains(message.id) &&
           _shouldAnimatePendingMessage(message);
+      _recordAnimationDecision(message, shouldAnimate);
       if (shouldAnimate) {
         _pendingAnimationIds.remove(message.id);
         final animationSerial = _markEntranceAnimationStarted();
@@ -305,16 +392,10 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
           child: bubbleWidget,
         );
       }
-      return KeyedSubtree(
-        key: itemKey,
-        child: bubbleWidget,
-      );
+      return KeyedSubtree(key: itemKey, child: bubbleWidget);
     }
 
-    return KeyedSubtree(
-      key: itemKey,
-      child: const SizedBox.shrink(),
-    );
+    return KeyedSubtree(key: itemKey, child: const SizedBox.shrink());
   }
 
   Widget _buildJumpToBottomButton(BuildContext context) {
@@ -322,26 +403,21 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
 
     return Tooltip(
       message: '回到底部',
-      child: Material(
-        color: Colors.transparent,
+      child: MoeFloatingSurface(
+        radius: _kJumpToBottomButtonSize / 2,
         child: InkWell(
           key: const ValueKey<String>('chat_jump_to_latest_badge'),
           onTap: widget.viewportController.onJumpToLatest,
           customBorder: const CircleBorder(),
-          child: Container(
+          child: SizedBox(
             width: _kJumpToBottomButtonSize,
             height: _kJumpToBottomButtonSize,
-            decoration: MoeG2Decoration(
-              radius: MoeSmoothRadii.lg,
-              color: colors.surface.withValues(alpha: 0.96),
-              border: Border.all(color: colors.borderLight),
-              boxShadow: MoeShadows.soft,
-            ),
-            alignment: Alignment.center,
-            child: Icon(
-              Icons.keyboard_arrow_down_rounded,
-              size: 24,
-              color: colors.accentColor,
+            child: Center(
+              child: Icon(
+                Icons.keyboard_arrow_down_rounded,
+                size: 24,
+                color: colors.accentColor,
+              ),
             ),
           ),
         ),
@@ -358,25 +434,16 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
   }
 
   Widget _buildLoadingIndicator(BuildContext context) {
-    final colors = context.moeColors;
-    return Center(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: colors.surface.withValues(alpha: 0.94),
-          borderRadius: BorderRadius.circular(999),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x1F000000),
-              blurRadius: 16,
-              offset: Offset(0, 6),
-            ),
-          ],
-        ),
-        child: const SizedBox(
-          width: 20,
-          height: 20,
-          child: CircularProgressIndicator(strokeWidth: 2.2),
+    return const Center(
+      child: MoeFloatingSurface(
+        radius: 999,
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2.2),
+          ),
         ),
       ),
     );
@@ -389,17 +456,17 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     return Center(
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        decoration: MoeG2Decoration(
+        child: MoeFloatingSurface(
           radius: 12,
-          color: colors.surfaceAlt,
-        ),
-        child: Text(
-          timeStr,
-          style: TextStyle(
-            color: colors.muted,
-            fontSize: 12,
-            fontWeight: MoeFontWeights.normal,
+          shadows: const [],
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          child: Text(
+            timeStr,
+            style: TextStyle(
+              color: colors.muted,
+              fontSize: 12,
+              fontWeight: MoeFontWeights.normal,
+            ),
           ),
         ),
       ),
@@ -416,7 +483,9 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
           children: [
             Expanded(
               child: Container(
-                  height: 0.5, color: colors.muted.withValues(alpha: 0.3)),
+                height: 0.5,
+                color: colors.muted.withValues(alpha: 0.3),
+              ),
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -431,7 +500,9 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
             ),
             Expanded(
               child: Container(
-                  height: 0.5, color: colors.muted.withValues(alpha: 0.3)),
+                height: 0.5,
+                color: colors.muted.withValues(alpha: 0.3),
+              ),
             ),
           ],
         ),
@@ -469,28 +540,68 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     Message message,
     bool isMe,
     RenderBox bubbleBox,
-  ) async {
+    Offset globalPosition, {
+    String? selectionId,
+  }) async {
     final actions = ref.read(chatActionsProvider);
-    final enableEnhancedRegenerate = ref
+    final enableEnhancedRegenerate =
+        ref
             .read(appSettingsProvider)
             .valueOrNull
             ?.enhancedDialogueSettings
             .enabled ==
         true;
+
+    final audioBlock = message.blocks?.whereType<AudioBlock>().firstOrNull;
+    final audioText = audioBlock?.text?.trim();
+    final canRegenerateAudio =
+        audioBlock != null &&
+        MediaRegenerationTarget.canRegenerate(message, audioBlock);
+    final hasAudioText =
+        audioBlock != null && audioText != null && audioText.isNotEmpty;
+    final globalExpand =
+        ref.read(appSettingsProvider).valueOrNull?.expandAudioText ?? true;
+    final localExpand = ref.read(audioMessageTextExpandedProvider(message.id));
+    final isAudioExpanded = localExpand ?? globalExpand;
+
+    final effectiveMessageText = (hasAudioText && audioText.isNotEmpty)
+        ? audioText
+        : message.displayText;
+
     await showMessageActionMenu(
       context,
       targetBox: bubbleBox,
+      globalPosition: globalPosition,
       isUserMessage: isMe,
-      messageText: message.displayText,
-      showEnhanceRegenerate: enableEnhancedRegenerate,
+      allowSelect: widget.selection != null && message.status != 'sending',
+      messageText: effectiveMessageText,
+      showEnhanceRegenerate: enableEnhancedRegenerate && !canRegenerateAudio,
+      regenerateAudio: canRegenerateAudio,
+      showTranscribe: hasAudioText,
+      isAudioTextExpanded: isAudioExpanded,
       onAction: (action) async {
         if (!context.mounted) return;
         switch (action) {
+          case MessageAction.select:
+            widget.selection?.start(selectionId ?? message.id);
+            break;
           case MessageAction.copy:
             MoeToast.show(context, '已复制到剪贴板');
             break;
+          case MessageAction.toggleAudioText:
+            final nextState = !isAudioExpanded;
+            ref
+                    .read(audioMessageTextExpandedProvider(message.id).notifier)
+                    .state =
+                nextState;
+            break;
           case MessageAction.edit:
             widget.onEditMessage?.call(message);
+            break;
+          case MessageAction.regenerateMedia:
+            if (audioBlock != null && canRegenerateAudio) {
+              await _regenerateMedia(context, message, audioBlock);
+            }
             break;
           case MessageAction.regenerate:
             widget.onRegenerateMessage?.call(message);
@@ -501,7 +612,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
           case MessageAction.quote:
             ref.read(quotedMessageProvider.notifier).state = QuotedMessage(
               id: message.id,
-              content: message.displayText,
+              content: effectiveMessageText,
               isUser: isMe,
             );
             break;
@@ -532,23 +643,61 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     );
   }
 
+  Future<void> _regenerateMedia(
+    BuildContext context,
+    Message message,
+    MessageBlock block,
+  ) async {
+    if (!MediaRegenerationTarget.canRegenerate(message, block)) return;
+    final mediaLabel = MediaRegenerationTarget.kindOf(block)!.label;
+    final actions = ref.read(chatActionsProvider);
+    MoeToast.show(context, '正在重新生成$mediaLabel…');
+    try {
+      await actions.regenerateMedia(
+        conversationId: widget.conversationId,
+        messageId: message.id,
+        blockId: block.id,
+      );
+      if (context.mounted) MoeToast.show(context, '$mediaLabel已重新生成');
+    } catch (error) {
+      if (context.mounted) {
+        MoeToast.error(
+          context,
+          error is StateError
+              ? error.message.toString()
+              : '$mediaLabel重新生成失败，原$mediaLabel已保留',
+        );
+      }
+    }
+  }
+
   Future<void> _handleMediaLongPress(
     BuildContext context,
     Message message,
     bool isMe,
     RenderBox mediaBox,
     MessageBlock block,
+    Offset globalPosition,
   ) async {
     final actions = ref.read(chatActionsProvider);
     final mediaType = block is AudioBlock ? MediaType.audio : MediaType.image;
     await showMediaActionMenu(
       context,
       targetBox: mediaBox,
+      globalPosition: globalPosition,
       mediaType: mediaType,
+      allowSelect: widget.selection != null && message.status != 'sending',
       allowDelete: true,
+      allowRegenerate: MediaRegenerationTarget.canRegenerate(message, block),
       onAction: (action) async {
         if (!context.mounted) return;
         switch (action) {
+          case MessageAction.select:
+            widget.selection?.start(message.id);
+            break;
+          case MessageAction.regenerateMedia:
+            await _regenerateMedia(context, message, block);
+            break;
           case MessageAction.save:
             await saveChatMessageListMediaBlock(context, block);
             break;
@@ -556,8 +705,8 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
             final quoteText = block is ImageBlock
                 ? '[图片]'
                 : block is AudioBlock
-                    ? '[语音]'
-                    : '[媒体]';
+                ? '[语音]'
+                : '[媒体]';
             ref.read(quotedMessageProvider.notifier).state = QuotedMessage(
               id: message.id,
               content: quoteText,

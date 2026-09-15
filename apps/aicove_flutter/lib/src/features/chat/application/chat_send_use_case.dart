@@ -131,7 +131,6 @@ class ChatSendUseCase {
             history: await _sendPort.prepareHistoryFromStore(
               conv: command.conversation,
               userMsg: command.userMessage,
-              limit: settings.historyMessageLimit,
             ),
             sessionId: command.sessionId,
           );

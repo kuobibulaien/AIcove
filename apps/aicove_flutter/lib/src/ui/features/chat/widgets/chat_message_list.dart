@@ -9,12 +9,14 @@ library;
 
 import 'dart:async';
 import 'dart:math' as math;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../features/chat/chat_actions.dart';
 import '../../../../features/chat/application/active_stream_projection.dart';
+import '../../../../features/chat/application/chat_media_regeneration.dart';
 import '../../../../features/chat/application/chat_message_list_queries.dart';
 import '../../../../features/chat/domain/message.dart';
 import '../../../../features/chat/presentation/widgets/message_bubble.dart';
@@ -22,17 +24,23 @@ import '../../../../features/chat/presentation/widgets/message_action_sheet.dart
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/meotalk_dialog.dart';
+import '../../../../ui/shared/widgets/moe_floating_surface.dart';
 import '../../../../ui/shared/widgets/moe_toast.dart';
 import '../../../../ui/shared/widgets/media/moe_image_preview.dart';
 import '../../../../core/utils/message_formatter.dart';
 import '../../../../features/settings/app_settings.dart';
-import '../../../../core/models/block_status.dart';
 import '../../../../core/models/message_block.dart';
 import 'animated_message_item.dart';
+import 'chat_end_anchored_sliver.dart';
 import 'chat_message_list_display_cache.dart';
 import 'chat_message_list_items.dart';
+import 'chat_message_selection.dart';
+import 'chat_selection_region.dart';
 import 'chat_message_list_media_save.dart';
 import 'chat_viewport_controller.dart';
+import 'frontend_message_probe.dart';
+import '../../../../features/observability/frontend_diagnostics_port.dart';
+import '../../../../features/observability/frontend_diagnostics_provider.dart';
 
 part 'chat_message_list_presentation.dart';
 part 'chat_message_list_timeline.dart';
@@ -41,8 +49,6 @@ part 'chat_message_list_viewport.dart';
 const double _kMessageItemVerticalPadding = 2.0;
 const Duration _kHistoryLoadingOverlayMinDuration = Duration(milliseconds: 260);
 const Duration _kTransientHandoffHoldDuration = Duration(milliseconds: 220);
-const Duration _kStreamingScrollUpdateDeferDuration =
-    Duration(milliseconds: 220);
 const Duration _kAnimatedScrollToBottomMinDuration =
     Duration(milliseconds: 180);
 const Duration _kAnimatedScrollToBottomMaxDuration =
@@ -50,6 +56,21 @@ const Duration _kAnimatedScrollToBottomMaxDuration =
 const double _kHistoryPagingTopFrictionBase = 0.05;
 const double _kJumpToBottomVisibilityThreshold = 120.0;
 const double _kJumpToBottomButtonSize = 44.0;
+
+typedef _ChatStreamBubbleKey = ({
+  String conversationId,
+  String messageId,
+});
+
+/// 流式文字始终更新；用户接管时只暂停视口跟随，不冻结内容。
+/// 按消息选择，非活跃气泡的输出始终为 null，不参与逐增量重建。
+final _chatVisibleStreamProjectionProvider = Provider.autoDispose
+    .family<ActiveStreamProjection?, _ChatStreamBubbleKey>((ref, key) {
+  return ref.watch(activeStreamProjectionsProvider.select((projections) {
+    final projection = projections[key.conversationId];
+    return projection?.tailMessageId == key.messageId ? projection : null;
+  }));
+});
 
 @visibleForTesting
 List<Message> mergeChatTimelineMessagesForDisplay(
@@ -325,6 +346,10 @@ class ChatMessageList extends ConsumerStatefulWidget {
   final String conversationId;
   final String? avatarUrl;
   final String displayName;
+  final ChatMessageSelection? selection;
+
+  /// Space above the oldest message, inside the scrolling viewport.
+  final double topOverlayHeight;
   final double bottomOverlayHeight;
   final void Function(Message message)? onEditMessage;
   final void Function(Message message)? onRegenerateMessage;
@@ -336,6 +361,9 @@ class ChatMessageList extends ConsumerStatefulWidget {
   /// 分页加载：滑到顶部（历史消息方向）时触发
   final Future<void> Function()? onLoadMore;
 
+  /// 首批历史尚未返回。用于区分历史恢复与真正的新消息入场。
+  final bool isInitialLoading;
+
   /// 是否正在加载更多
   final bool isLoadingMore;
 
@@ -344,6 +372,9 @@ class ChatMessageList extends ConsumerStatefulWidget {
 
   /// 统一管理聊天视窗控制权的控制器。
   final ChatViewportController viewportController;
+
+  @visibleForTesting
+  final ValueChanged<String>? onDebugItemBuilt;
 
   @visibleForTesting
   final ValueChanged<int>? onDebugListItemCountChanged;
@@ -358,16 +389,20 @@ class ChatMessageList extends ConsumerStatefulWidget {
     required this.conversationId,
     this.avatarUrl,
     required this.displayName,
+    this.selection,
+    this.topOverlayHeight = 0,
     this.bottomOverlayHeight = 0,
     this.onEditMessage,
     this.onRegenerateMessage,
     this.onEnhanceRegenerateMessage,
     this.contextStartMessageId,
     this.onLoadMore,
+    this.isInitialLoading = false,
     this.isLoadingMore = false,
     this.hasMoreMessages = true,
     required this.viewportController,
     this.onDebugListItemCountChanged,
+    this.onDebugItemBuilt,
     this.onDebugAutoScrollRequested,
   });
 
@@ -377,13 +412,33 @@ class ChatMessageList extends ConsumerStatefulWidget {
 
 class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   final Set<String> _pendingAnimationIds = <String>{};
+  // 只记录动画裁决变化，不逐次 build 写盘。这个缓存不参与动画/滚动决策。
+  final Map<String, (bool, bool, bool)> _diagnosticAnimationStates = {};
+  FrontendDiagnosticContext? _diagnosticViewport;
+  FrontendDiagnosticContext get _listDiagnosticContext {
+    if (_diagnosticViewport?.conversationId != widget.conversationId) {
+      _diagnosticAnimationStates.clear();
+      _diagnosticViewport = ref.read(frontendDiagnosticsProvider).child(
+          null, FrontendStage.viewportAttached,
+          conversationId: widget.conversationId);
+    }
+    return _diagnosticViewport!;
+  }
+
   final GlobalKey _listViewportKey =
       GlobalKey(debugLabel: 'chat_message_list_viewport');
   final Key _centerKey = const ValueKey<String>('chat_message_list_center');
   DateTime? _latestAnimatedAt;
   List<ChatMessageListItem> _cachedListItems = [];
+
+  /// 长历史入场将分界固定在最后一个显示项，而非整条 raw 回复的开头。
+  /// 这样 reverse history sliver 可从末尾惰性布局，不必先排完上百段。
+  /// 分界在本次页面生命周期内保持，手势/新消息不会搬动已显示的气泡。
+  String? _entrySplitItemKey;
   _TimelineSplitBoundary? _detachedSplitBoundary;
   _TimelineSplitBoundary? _pendingDetachedSplitBoundary;
+  _TimelineSplitBoundary? _renderedActiveBoundary;
+  bool _renderedPinLatestTail = false;
 
   /// 缓存的消息格式化配置（用于检测配置变化）
   MessageFormatConfig? _cachedFormatConfig;
@@ -427,6 +482,15 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   int? _activeEntranceAnimationSerial;
   double _manualDetachedDistanceToBottom = 0;
 
+  /// 活跃区 sliver 的布局期贴底修正开关。跟随贴底时，气泡长高的那一帧
+  /// 就把 pixels 修正到底部，不再先画一帧错位再由帖后 jumpTo 补位（流式
+  /// 增长「一卡一卡」的直接来源）。在原本调度帖后稳底的位置 arm；用户
+  /// 手势、历史分页、切到 detached 时 disarm；入场动画进行中延长保持，
+  /// 让 SizeTransition 逐帧长高全程贴底。帖后稳底路径保留为兜底。
+  late final ChatEndAnchorController _endAnchor = ChatEndAnchorController(
+    isHoldActive: () => _activeEntranceAnimationSerial != null,
+  );
+
   /// 「回到底部」按钮显隐，由 ValueListenableBuilder 局部消费。
   ///
   /// 语义与 [_manualDetachedDistanceToBottom] 完全一致（后者仍是唯一距离
@@ -441,34 +505,44 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   Timer? _historyLoadingOverlayHideTimer;
   Set<String> _pendingTransientHandoffIds = <String>{};
   Timer? _transientHandoffHoldTimer;
-  Timer? _deferredStreamingListUpdateTimer;
-  MessageFormatConfig? _deferredStreamingListUpdateConfig;
   int _historyViewportRestoreSerial = 0;
   bool _historyViewportRestorePending = false;
   bool _holdListForHistoryPagingEmptyTimeline = false;
   List<Message> _heldTimelineMessagesForLayout = const <Message>[];
   bool _isUserScrollActive = false;
-  bool _hasDeferredStreamingListUpdate = false;
+  final Set<int> _pressedPointers = <int>{};
+  int _viewportInteractionSerial = 0;
+  int? _followLatestStabilizationSerial;
 
-  // —— detached 模式下「尾项 ImageBlock 几何变化」的 extent 像素补偿 ——
-  // 用户上滑时 _autoScrollEnabled=false，_shouldStabilizeFollowLatestViewport 首守卫
-  // 直接 return false 不补 jumpTo（chat_message_list_timeline.dart:568-571），尾图高度
-  // 阶跃（占位→真实尺寸）会让 active sliver（center 前，reverse growth）的 minScrollExtent
-  // 突变、pixels 不变 → 内容相对视口跳移。这里记录重建前的 minScrollExtent/pixels，
-  // 重建后按 target = previousPixels + (newMin - previousMin) 用 jumpTo 把内容拉回
-  // 用户手指所在的逻辑位置。serial 独立于 history/programmatic；history > detached。
-  // 见 _scheduleDetachedActiveExtentRestore（chat_message_list_viewport.dart）。
-  int _detachedExtentRestoreSerial = 0;
-  double? _detachedExtentRestorePreviousMin;
-  double? _detachedExtentRestorePreviousPixels;
-  String? _detachedExtentRestoreConversationId;
+  bool get _userOwnsViewport =>
+      _pressedPointers.isNotEmpty || _isUserScrollActive;
+
+  bool get _canFollowLatest =>
+      widget.selection?.active != true &&
+      _autoScrollEnabled &&
+      !_userOwnsViewport &&
+      !_isProgrammaticScroll &&
+      !_historyPagingLockActive;
 
   List<Message> get _stableMessages => widget.messages;
 
-  List<Message> get _currentTimelineMessages => _mergeTimelineMessages(
-        _stableMessages,
-        widget.transientMessages,
-      );
+  // 合并去重＋排序是 O(n log n)，build/didUpdateWidget 一帧内会多次读取；
+  // 按两个输入列表的引用身份缓存，同一对输入只算一次。
+  List<Message>? _mergedTimelineStable;
+  List<Message>? _mergedTimelineTransient;
+  List<Message> _mergedTimeline = const <Message>[];
+
+  List<Message> get _currentTimelineMessages {
+    final stable = _stableMessages;
+    final transient = widget.transientMessages;
+    if (!identical(stable, _mergedTimelineStable) ||
+        !identical(transient, _mergedTimelineTransient)) {
+      _mergedTimelineStable = stable;
+      _mergedTimelineTransient = transient;
+      _mergedTimeline = _mergeTimelineMessages(stable, transient);
+    }
+    return _mergedTimeline;
+  }
 
   bool get _hasTransientTimelineContent => widget.transientMessages.isNotEmpty;
 
@@ -483,6 +557,7 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   @override
   void initState() {
     super.initState();
+    widget.selection?.addListener(_onSelectionChanged);
     _bindViewportController(widget.viewportController);
     _showHistoryLoadingOverlay = widget.isLoadingMore && widget.hasMoreMessages;
     if (_showHistoryLoadingOverlay) {
@@ -491,7 +566,10 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     if (_currentTimelineMessages.isNotEmpty) {
       _latestAnimatedAt = _currentTimelineMessages.last.createdAt;
     }
-    _hydrateInitialListItems();
+    _hydrateInitialListItems(
+      ref.read(appSettingsProvider).valueOrNull?.messageFormatConfig,
+    );
+    _prepareTailFirstEntryLayout();
 
     // 滚动控制只保留“用户手势优先 + 软跟随”语义，不再做像素补偿。
     _scrollController = ScrollController();
@@ -531,8 +609,18 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     );
   }
 
+  void _onSelectionChanged() {
+    if (!mounted) return;
+    if (widget.selection?.active == true) {
+      widget.viewportController.onUserGesture();
+    }
+    setState(() {});
+  }
+
   @override
   void dispose() {
+    widget.selection?.removeListener(_onSelectionChanged);
+    _viewportInteractionSerial += 1;
     _tailSignalSub?.close();
     _unbindViewportController(widget.viewportController);
     _scrollController.removeListener(_onScroll);
@@ -540,13 +628,16 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     _showJumpToBottom.dispose();
     _historyLoadingOverlayHideTimer?.cancel();
     _transientHandoffHoldTimer?.cancel();
-    _deferredStreamingListUpdateTimer?.cancel();
     super.dispose();
   }
 
   @override
   void didUpdateWidget(covariant ChatMessageList oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.selection != widget.selection) {
+      oldWidget.selection?.removeListener(_onSelectionChanged);
+      widget.selection?.addListener(_onSelectionChanged);
+    }
     if (oldWidget.conversationId != widget.conversationId) {
       _subscribeActiveStreamTailSignal();
     }
@@ -588,12 +679,53 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     }
 
     final listItems = _cachedListItems;
+    final selection = widget.selection;
+    if (selection != null) {
+      final pruned = selection.updateMessages(
+        listItems.map(chatListItemSelectionMessage).whereType<Message>(),
+      );
+      if (pruned) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && identical(widget.selection, selection)) {
+            selection.refresh();
+          }
+        });
+      }
+    }
     final timelineMessagesForSectioning =
         _holdListForHistoryPagingEmptyTimeline &&
                 _currentTimelineMessages.isEmpty &&
                 _heldTimelineMessagesForLayout.isNotEmpty
             ? _heldTimelineMessagesForLayout
             : _currentTimelineMessages;
+    final boundaryIndex =
+        _resolveActiveBoundaryIndex(timelineMessagesForSectioning);
+    final boundaryMessage = boundaryIndex == null
+        ? null
+        : timelineMessagesForSectioning[boundaryIndex];
+    // 发送会先切换 pinLatestTail，消息异步入库前也可能重建旧时间线。
+    // 此时 user 组从 history 搬到 active，消息内容未变，didUpdateWidget
+    // 不会稳底。必须按实际分区变化在布局期对齐，不能先画错再帖后补位。
+    // 仅补首次切换到即时回底的分区变化；消息增删仍由时间线裁决，
+    // 手势、分页和“回到底部”的滚动动画仍由原逻辑接管。
+    final pinLatestTail = widget.viewportController.shouldPinLatestTail;
+    if (_canFollowLatest &&
+        !_historyViewportRestorePending &&
+        !_renderedPinLatestTail &&
+        pinLatestTail &&
+        !widget.viewportController.scrollToBottomRequestAnimated &&
+        _renderedActiveBoundary != null &&
+        boundaryMessage != null &&
+        (_renderedActiveBoundary!.messageId != boundaryMessage.id ||
+            _renderedActiveBoundary!.createdAt != boundaryMessage.createdAt)) {
+      _endAnchor.arm();
+    }
+    _renderedPinLatestTail = pinLatestTail;
+    _renderedActiveBoundary = boundaryMessage == null
+        ? null
+        : _TimelineSplitBoundary(
+            messageId: boundaryMessage.id,
+            createdAt: boundaryMessage.createdAt);
     final listSections = _splitListItems(
       listItems,
       timelineMessagesForSectioning,
@@ -628,7 +760,7 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
       });
     }
 
-    return Stack(
+    final content = Stack(
       children: [
         // ScrollMetricsNotification 不是 ScrollNotification 子类，须独立监听；
         // 覆盖「纯渲染层长高（表情/图片解码、字体、视口尺寸变化）不经
@@ -638,39 +770,51 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
           onNotification: _handleScrollMetricsNotification,
           child: NotificationListener<ScrollNotification>(
             onNotification: _handleScrollNotification,
-            child: ScrollConfiguration(
-              behavior: const _ChatMessageListScrollBehavior(),
-              child: CustomScrollView(
-                key: _listViewportKey,
-                controller: _scrollController,
-                reverse: true,
-                center: _centerKey,
-                physics: const _ChatHistoryPagingScrollPhysics(
-                  parent: AlwaysScrollableScrollPhysics(),
+            child: Listener(
+              onPointerDown: _handlePointerDown,
+              onPointerSignal: _handlePointerSignal,
+              onPointerUp: _handlePointerReleased,
+              onPointerCancel: _handlePointerReleased,
+              child: ScrollConfiguration(
+                behavior: const _ChatMessageListScrollBehavior(),
+                child: CustomScrollView(
+                  key: _listViewportKey,
+                  controller: _scrollController,
+                  // Preserve the first drag delta while competing with a
+                  // bubble's long-press recognizer.
+                  dragStartBehavior: DragStartBehavior.down,
+                  reverse: true,
+                  center: _centerKey,
+                  physics: const _ChatHistoryPagingScrollPhysics(
+                    parent: AlwaysScrollableScrollPhysics(),
+                  ),
+                  cacheExtent: 500,
+                  slivers: [
+                    ChatEndAnchoredSliver(
+                      controller: _endAnchor,
+                      sliver: SliverPadding(
+                        padding: EdgeInsets.only(
+                          left: 4,
+                          right: 4,
+                          bottom: listBottomPadding,
+                        ),
+                        sliver: SliverList(delegate: activeDelegate),
+                      ),
+                    ),
+                    SliverToBoxAdapter(
+                      key: _centerKey,
+                      child: const SizedBox.shrink(),
+                    ),
+                    SliverPadding(
+                      padding: EdgeInsets.only(
+                        left: 4,
+                        right: 4,
+                        top: widget.topOverlayHeight + 10,
+                      ),
+                      sliver: SliverList(delegate: historyDelegate),
+                    ),
+                  ],
                 ),
-                cacheExtent: 500,
-                slivers: [
-                  SliverPadding(
-                    padding: EdgeInsets.only(
-                      left: 4,
-                      right: 4,
-                      bottom: listBottomPadding,
-                    ),
-                    sliver: SliverList(delegate: activeDelegate),
-                  ),
-                  SliverToBoxAdapter(
-                    key: _centerKey,
-                    child: const SizedBox.shrink(),
-                  ),
-                  SliverPadding(
-                    padding: const EdgeInsets.only(
-                      left: 4,
-                      right: 4,
-                      top: 10,
-                    ),
-                    sliver: SliverList(delegate: historyDelegate),
-                  ),
-                ],
               ),
             ),
           ),
@@ -679,7 +823,7 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
           Positioned(
             left: 0,
             right: 0,
-            top: 12,
+            top: widget.topOverlayHeight + 12,
             child: IgnorePointer(
               child: KeyedSubtree(
                 key: const ValueKey<String>('history_loading_overlay'),
@@ -690,7 +834,9 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
         ValueListenableBuilder<bool>(
           valueListenable: _showJumpToBottom,
           builder: (context, show, _) {
-            if (!show) return const SizedBox.shrink();
+            if (!show || widget.selection?.active == true) {
+              return const SizedBox.shrink();
+            }
             return Positioned(
               right: 14,
               bottom: jumpToBottomBottomOffset,
@@ -699,6 +845,13 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
           },
         ),
       ],
+    );
+    return ChatSelectionRegion(
+      selection: widget.selection,
+      scrollController: _scrollController,
+      topInset: widget.topOverlayHeight,
+      bottomInset: listBottomPadding,
+      child: content,
     );
   }
 }

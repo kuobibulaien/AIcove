@@ -1,3 +1,4 @@
+import 'package:aicove_flutter/src/ui/shared/widgets/moe_page_scaffold.dart';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -59,7 +60,7 @@ class _LogHistoryDetailPageState extends State<LogHistoryDetailPage> {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
 
-    return Scaffold(
+    return MoePageScaffold(
       backgroundColor: colors.surface,
       appBar: AppBar(
         backgroundColor: colors.surface,

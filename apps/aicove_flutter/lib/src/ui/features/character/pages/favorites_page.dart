@@ -9,6 +9,7 @@
 /// - 2025-12-07: 在 role_card_page.dart 中创建，使用展开动画跳转
 library;
 
+import 'package:aicove_flutter/src/ui/shared/widgets/moe_page_scaffold.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -16,7 +17,7 @@ import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../../ui/shared/effects/frosted_glass_card.dart';
 import '../../../../ui/shared/widgets/moe_app_bar.dart';
-import '../../../../core/utils/data_image.dart';
+import '../../../../core/utils/avatar_helper.dart';
 import '../../../../features/chat/domain/conversation.dart';
 import '../../../../features/chat/domain/persona_prompt_codec.dart';
 import '../../../../features/chat/providers2.dart';
@@ -32,7 +33,7 @@ class FavoritesPage extends ConsumerWidget {
     final colors = context.moeColors;
     final conversationsAsync = ref.watch(conversationsProvider);
 
-    return Scaffold(
+    return MoePageScaffold(
       appBar: MoeAppBar(
         title: '我的角色卡',
         leading: IconButton(
@@ -114,21 +115,11 @@ class _FavoriteCard extends StatelessWidget {
   });
 
   ImageProvider? _getImageProvider() {
-    final charImage = conversation.characterImage;
-    if (charImage != null && charImage.isNotEmpty) {
-      final charBytes = decodeDataImage(charImage);
-      if (charBytes != null) return MemoryImage(charBytes);
-      return AssetImage(charImage);
-    }
-
-    final avatar = conversation.avatarUrl;
-    if (avatar != null && avatar.isNotEmpty) {
-      final avatarBytes = decodeDataImage(avatar);
-      if (avatarBytes != null) return MemoryImage(avatarBytes);
-      if (avatar.startsWith('http')) return NetworkImage(avatar);
-      return AssetImage(avatar);
-    }
-    return null;
+    return AvatarHelper(
+      avatarUrl: conversation.avatarUrl,
+      characterImage: conversation.characterImage,
+      displayName: conversation.displayName,
+    ).getCharacterProvider();
   }
 
   @override

@@ -86,6 +86,16 @@ class TtsProviderFactory {
           );
         }
       }
+      if (normalizedProviderId == 'fish_audio' ||
+          normalizedProviderId == 'fishaudio') {
+        return TtsProviderResolution(
+          voiceProvider: null,
+          requestFormat: normalizedRequestFormat == 'openai_tts'
+              ? 'fish_audio'
+              : normalizedRequestFormat,
+          matchedBy: 'providerId',
+        );
+      }
     }
 
     final normalizedApiUrl = _normalizeRoutingValue(apiUrl);
@@ -98,6 +108,15 @@ class TtsProviderFactory {
             matchedBy: 'apiUrl',
           );
         }
+      }
+      if (normalizedApiUrl.contains('fish.audio')) {
+        return TtsProviderResolution(
+          voiceProvider: null,
+          requestFormat: normalizedRequestFormat == 'openai_tts'
+              ? 'fish_audio'
+              : normalizedRequestFormat,
+          matchedBy: 'apiUrl',
+        );
       }
     }
 

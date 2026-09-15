@@ -5,26 +5,21 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
-import '../../../core/services/multimodal_assistant_service.dart';
 import '../../settings/app_settings.dart';
 import '../domain/message.dart';
 import '../../../core/models/message_block.dart';
 import '../../../core/utils/mime_utils.dart';
+import 'chat_plugin_context_policy.dart';
 
 /// 负责将会话消息转换为模型请求消息。
 ///
-/// 聚合了图片/文件消息转换、非视觉模型回退描述、视觉辅助模型翻译等逻辑。
+/// 聚合图片、媒体附件与文本文件的请求转换。
 class ChatRequestMessageBuilder {
   ChatRequestMessageBuilder({
     required this.readImageAsBase64,
-    MultimodalAssistantService? multimodalAssistantService,
-  }) : _multimodalAssistantService = multimodalAssistantService ??
-            MultimodalAssistantService(
-              readImageAsBase64: readImageAsBase64,
-            );
+  });
 
   final Future<String?> Function(String imagePath) readImageAsBase64;
-  final MultimodalAssistantService _multimodalAssistantService;
 
   static const String internalImageContextToolName = 'image_context';
   static const String nonVisionImageContextSource = 'history';
@@ -37,6 +32,7 @@ class ChatRequestMessageBuilder {
     List<Message> history, {
     required AppSettings settings,
     bool supportsVision = true,
+    ChatPluginContextPolicy? pluginPolicy,
   }) async {
     final reqMessages = <Map<String, dynamic>>[];
     for (final message in history) {
@@ -44,7 +40,13 @@ class ChatRequestMessageBuilder {
         message,
         settings: settings,
         supportsVision: supportsVision,
+        pluginPolicy: pluginPolicy,
       );
+      if (pluginPolicy != null && identical(message, history.last) &&
+          message.role == 'user' && convertedMessages.isEmpty &&
+          message.content.trim().isNotEmpty) {
+        throw StateError('当前消息过滤已关闭插件的标签后为空，请输入正文或添加附件。');
+      }
       reqMessages.addAll(convertedMessages);
     }
     return _mergeAdjacentAssistantTextMessages(reqMessages);
@@ -89,10 +91,11 @@ class ChatRequestMessageBuilder {
     Message message, {
     required AppSettings settings,
     bool supportsVision = true,
+    ChatPluginContextPolicy? pluginPolicy,
   }) async {
     final blocks = message.blocks;
     if (blocks == null || blocks.isEmpty) {
-      final content = message.content;
+      final content = pluginPolicy?.filterText(message.content) ?? message.content;
       if (content.trim().isEmpty) return [];
       return [
         {'role': message.role, 'content': content}
@@ -105,18 +108,16 @@ class ChatRequestMessageBuilder {
 
     for (final block in blocks) {
       if (block is TextBlock) {
-        if (block.content.trim().isEmpty) continue;
-        parts.add({'type': 'text', 'text': block.content});
+        final text = pluginPolicy?.filterText(block.content) ?? block.content;
+        if (text.trim().isEmpty) continue;
+        parts.add({'type': 'text', 'text': text});
         continue;
       }
 
       if (block is ImageBlock) {
+        if (message.role == 'assistant' && pluginPolicy?.imageEnabled == false) continue;
         if (!supportsVision) {
-          final description =
-              await _multimodalAssistantService.describeImageBlock(
-            imageBlock: block,
-            settings: settings,
-          );
+          final description = block.prompt;
           final fallbackText = buildNonVisionImageMessageText(
             role: message.role,
             description: description,
@@ -124,6 +125,11 @@ class ChatRequestMessageBuilder {
           if (fallbackText != null && fallbackText.isNotEmpty) {
             parts.add({'type': 'text', 'text': fallbackText});
           }
+          continue;
+        }
+
+        if (block.mediaId != null) {
+          parts.add({'type': 'image_url', 'image_url': {'url': 'aicove-media://${block.mediaId}'}});
           continue;
         }
 
@@ -162,13 +168,30 @@ class ChatRequestMessageBuilder {
       }
 
       if (block is FileBlock) {
-        final fileText = await _resolveFileBlockText(block, settings: settings);
+        final mimeType = MimeUtils.normalizeContentType(block.mimeType) ??
+            MimeUtils.guessAttachmentMimeType(block.filePath);
+        if (MimeUtils.isAudioMimeType(mimeType) || MimeUtils.isVideoMimeType(mimeType)) {
+          final file = File(block.filePath);
+          final maxBytes = settings.maxFileUploadMB * 1024 * 1024;
+          final size = await file.length();
+          if (maxBytes > 0 && size > maxBytes) {
+            throw StateError('附件 ${block.fileName} 超过上传大小限制');
+          }
+          final data = base64Encode(await file.readAsBytes());
+          parts.add({
+            'type': 'file',
+            'file': {'filename': block.fileName, 'file_data': 'data:$mimeType;base64,$data'},
+          });
+          continue;
+        }
+        final fileText = await _readTextFileForAi(block, settings: settings);
         if (fileText.trim().isEmpty) continue;
         parts.add({'type': 'text', 'text': fileText});
         continue;
       }
 
       if (block is ToolBlock) {
+        if (pluginPolicy != null && !pluginPolicy.allowsTool(block.toolName)) continue;
         if (extractInternalImageContextPayloadFromToolBlock(block) != null) {
           continue;
         }
@@ -216,28 +239,6 @@ class ChatRequestMessageBuilder {
       if (parts.isNotEmpty || toolCalls.isNotEmpty) assistantMessage,
       ...toolResultMessages
     ];
-  }
-
-  static Future<String?> resolveImageDescriptionForNonVision({
-    required ImageBlock imageBlock,
-    required Future<String?> Function() translateWithVision,
-    String? cachedDescription,
-    void Function(String description)? onDescriptionResolved,
-  }) async {
-    final existingPrompt = imageBlock.prompt?.trim();
-    if (existingPrompt != null && existingPrompt.isNotEmpty) {
-      return existingPrompt;
-    }
-
-    final cached = cachedDescription?.trim();
-    if (cached != null && cached.isNotEmpty) {
-      return cached;
-    }
-
-    final translated = (await translateWithVision())?.trim();
-    if (translated == null || translated.isEmpty) return null;
-    onDescriptionResolved?.call(translated);
-    return translated;
   }
 
   static String? buildNonVisionImageMessageText({
@@ -371,30 +372,6 @@ class ChatRequestMessageBuilder {
     'sh',
   };
 
-  Future<String> _resolveFileBlockText(
-    FileBlock block, {
-    required AppSettings settings,
-  }) async {
-    final mimeType = MimeUtils.normalizeContentType(block.mimeType) ??
-        MimeUtils.guessAttachmentMimeType(block.filePath);
-    if (MimeUtils.isAudioMimeType(mimeType)) {
-      final audioContext =
-          await _multimodalAssistantService.transcribeAudioFile(
-        fileBlock: block,
-        settings: settings,
-      );
-      return _buildAudioContextText(block, audioContext);
-    }
-    if (MimeUtils.isVideoMimeType(mimeType)) {
-      final videoContext = await _multimodalAssistantService.summarizeVideoFile(
-        fileBlock: block,
-        settings: settings,
-      );
-      return _buildVideoContextText(block, videoContext);
-    }
-    return _readTextFileForAi(block, settings: settings);
-  }
-
   Future<String> _readTextFileForAi(
     FileBlock block, {
     required AppSettings settings,
@@ -432,22 +409,6 @@ class ChatRequestMessageBuilder {
         return 'User uploaded file ${block.fileName}, but reading failed: $e';
       }
     }
-  }
-
-  String _buildAudioContextText(FileBlock block, String? analysis) {
-    final normalized = analysis?.trim();
-    if (normalized != null && normalized.isNotEmpty) {
-      return '<audio_context source="history" file="${block.fileName}">$normalized</audio_context>';
-    }
-    return '用户上传了音频文件：${block.fileName}（${block.fileSize}B，${block.mimeType}），但当前无法解析音频内容。';
-  }
-
-  String _buildVideoContextText(FileBlock block, String? analysis) {
-    final normalized = analysis?.trim();
-    if (normalized != null && normalized.isNotEmpty) {
-      return '<video_context source="history" file="${block.fileName}">$normalized</video_context>';
-    }
-    return '用户上传了视频文件：${block.fileName}（${block.fileSize}B，${block.mimeType}），但当前无法解析视频内容。';
   }
 
   String _truncateForPrompt(String content) {

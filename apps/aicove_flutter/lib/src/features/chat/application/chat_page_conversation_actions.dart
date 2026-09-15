@@ -1,3 +1,4 @@
+import '../services/chat_history_store.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/app_logger.dart';
@@ -22,29 +23,34 @@ class ChatPageConversationActions {
   final Ref _ref;
 
   Future<void> clearUnread(String conversationId) {
-    return _ref.read(conversationsProvider.notifier).clearUnread(
-          conversationId,
-        );
+    return _ref
+        .read(conversationsProvider.notifier)
+        .clearUnread(conversationId);
   }
 
   Future<void> startNewTopic({
     required String conversationId,
     required String lastMessageId,
   }) async {
-    final conversation =
-        _ref.read(conversationSnapshotByIdProvider(conversationId));
+    final conversation = _ref.read(
+      conversationSnapshotByIdProvider(conversationId),
+    );
     final memoryPlugin = _ref.read(chatPageMemoryPluginProvider);
     final memoryService = _ref.read(chatPageMemoryServiceProvider);
     if (conversation != null &&
+        conversation.allowsPlugin('memory') &&
         memoryService != null &&
         memoryService.config.enabled) {
       try {
-        await memoryService.ingestConversationTopic(
-          conversationId: conversationId,
-          lastMessageId: lastMessageId,
-          contextStartMessageId: conversation.contextStartMessageId,
-          trigger: MemoryIngestTrigger.manual,
-        );
+        if (memoryPlugin == null ||
+            !await memoryPlugin.usesNotebook(conversationId)) {
+          await memoryService.ingestConversationTopic(
+            conversationId: conversationId,
+            lastMessageId: lastMessageId,
+            contextStartMessageId: conversation.contextStartMessageId,
+            trigger: MemoryIngestTrigger.manual,
+          );
+        }
       } catch (error) {
         AppLogger.warning(
           'ChatPageConversationActions',
@@ -57,7 +63,9 @@ class ChatPageConversationActions {
         );
       }
     }
-    await _ref.read(conversationsProvider.notifier).updateOne(
+    await _ref
+        .read(conversationsProvider.notifier)
+        .updateOne(
           conversationId,
           (currentConversation) => currentConversation.copyWith(
             contextStartMessageId: lastMessageId,
@@ -91,8 +99,12 @@ class ChatPageConversationActions {
     String? personaPrompt,
     List<String>? enabledPlugins,
     bool clearEnabledPlugins = false,
+    String? recipeId,
+    bool clearRecipeId = false,
   }) {
-    return _ref.read(conversationsProvider.notifier).applyContactEdit(
+    return _ref
+        .read(conversationsProvider.notifier)
+        .applyContactEdit(
           conversationId,
           displayName: displayName,
           avatarUrl: avatarUrl,
@@ -116,6 +128,8 @@ class ChatPageConversationActions {
           personaPrompt: personaPrompt,
           enabledPlugins: enabledPlugins,
           clearEnabledPlugins: clearEnabledPlugins,
+          recipeId: recipeId,
+          clearRecipeId: clearRecipeId,
         );
   }
 
@@ -128,7 +142,9 @@ class ChatPageConversationActions {
     List<String>? enabledPlugins,
     bool clearEnabledPlugins = false,
   }) {
-    return _ref.read(conversationsProvider.notifier).updateConversationSettings(
+    return _ref
+        .read(conversationsProvider.notifier)
+        .updateConversationSettings(
           conversationId,
           isPinned: isPinned,
           isFavorite: isFavorite,
@@ -139,23 +155,29 @@ class ChatPageConversationActions {
         );
   }
 
+  Future<void> hideMessages(String conversationId, List<String> messageIds) {
+    return _ref
+        .read(chatHistoryStoreProvider)
+        .hideMessagesInFrontendTimeline(conversationId, messageIds);
+  }
+
   Future<void> clearMessages(String conversationId) async {
-    await _ref.read(conversationsProvider.notifier).clearMessages(
-          conversationId,
-        );
+    await _ref
+        .read(conversationsProvider.notifier)
+        .clearMessages(conversationId);
     _ref
         .read(chatPageMemoryPluginProvider)
         ?.clearConversationCache(conversationId);
   }
 
   Future<void> deleteConversation(String conversationId) {
-    return _ref.read(conversationsProvider.notifier).deleteConversation(
-          conversationId,
-        );
+    return _ref
+        .read(conversationsProvider.notifier)
+        .deleteConversation(conversationId);
   }
 }
 
 final chatPageConversationActionsProvider =
     Provider<ChatPageConversationActions>((ref) {
-  return ChatPageConversationActions(ref);
-});
+      return ChatPageConversationActions(ref);
+    });

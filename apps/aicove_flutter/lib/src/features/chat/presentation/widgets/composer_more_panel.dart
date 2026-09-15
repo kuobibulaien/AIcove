@@ -5,9 +5,10 @@ library;
 
 import 'package:flutter/material.dart';
 import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/widgets/index.dart';
 
 /// 更多面板操作类型
-enum ComposerAction { model, gallery, camera, file, audio, video }
+enum ComposerAction { model, thinking, gallery, camera, file, audio, video }
 
 /// Composer 更多面板
 class ComposerMorePanel extends StatelessWidget {
@@ -22,6 +23,11 @@ class ComposerMorePanel extends StatelessWidget {
         icon: Icons.tune,
         label: '模型',
         onTap: () => onAction(ComposerAction.model),
+      ),
+      _MoreActionSpec(
+        icon: Icons.psychology_outlined,
+        label: '思考',
+        onTap: () => onAction(ComposerAction.thinking),
       ),
       _MoreActionSpec(
         icon: Icons.photo_library_outlined,
@@ -57,7 +63,8 @@ class ComposerMorePanel extends StatelessWidget {
         const bottomPadding = 12.0;
         const spacing = 10.0;
         const labelTopGap = 8.0;
-        const labelHeight = 18.0;
+        final labelHeight = (MediaQuery.textScalerOf(context).scale(12) * 1.5)
+            .ceilToDouble();
         const buttonSide = 64.0; // ~= 1.5 * composer input min height (42)
 
         final usableWidth = (constraints.maxWidth - horizontalPadding * 2)
@@ -68,7 +75,7 @@ class ComposerMorePanel extends StatelessWidget {
             ? (usableWidth - spacing * 3) / 4
             : (usableWidth - spacing * 2) / 3;
         final itemWidth = rawItemWidth.clamp(0.0, 260.0).toDouble();
-        const itemHeight = buttonSide + labelTopGap + labelHeight;
+        final itemHeight = buttonSide + labelTopGap + labelHeight;
 
         return SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(
@@ -131,7 +138,8 @@ class MoreActionTile extends StatelessWidget {
     const maxButtonSide = 64.0;
     const minButtonSide = 52.0;
     const labelTopGap = 8.0;
-    const labelHeight = 18.0;
+    final labelHeight = (MediaQuery.textScalerOf(context).scale(12) * 1.5)
+        .ceilToDouble();
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -153,20 +161,11 @@ class MoreActionTile extends StatelessWidget {
                 SizedBox(
                   width: side,
                   height: side,
-                  child: Material(
-                    color: colors.panel.withValues(alpha: 0.9),
-                    borderRadius: BorderRadius.circular(radius),
-                    clipBehavior: Clip.antiAlias,
-                    child: Ink(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(radius),
-                        border: Border.all(
-                          color: colors.border.withValues(alpha: 0.55),
-                        ),
-                      ),
-                      child: Center(
-                        child: Icon(icon, size: 30, color: colors.accentColor),
-                      ),
+                  child: MoeButtonSurface(
+                    shareParentSurface: false,
+                    radius: radius,
+                    child: Center(
+                      child: Icon(icon, size: 30, color: colors.accentColor),
                     ),
                   ),
                 ),

@@ -52,6 +52,7 @@ class OpenAIAdapter implements ProviderAdapter {
     double? topP,
     Map<String, dynamic>? customConfig,
     List<Map<String, dynamic>>? tools,
+    ProviderChatRequestOptions? requestOptions,
   }) {
     final hasTools = tools != null && tools.isNotEmpty;
     final hasCustomMaxTokens = _hasCustomMaxTokens(customConfig);
@@ -74,7 +75,62 @@ class OpenAIAdapter implements ProviderAdapter {
     if (customConfig != null && customConfig.isNotEmpty) {
       body.addAll(customConfig);
     }
+    _applyRequestOptions(body, requestOptions);
     return body;
+  }
+
+  void _applyRequestOptions(
+    Map<String, dynamic> body,
+    ProviderChatRequestOptions? options,
+  ) {
+    if (options == null) return;
+    if (options.temperature != null) {
+      body['temperature'] = options.temperature;
+    }
+    if (options.topP != null) body['top_p'] = options.topP;
+    if ((options.topK ?? 0) > 0) body['top_k'] = options.topK;
+    if ((options.minP ?? 0) > 0) body['min_p'] = options.minP;
+    if ((options.topA ?? 0) > 0) body['top_a'] = options.topA;
+    if (options.repetitionPenalty != null && options.repetitionPenalty != 1) {
+      body['repetition_penalty'] = options.repetitionPenalty;
+    }
+    if (options.frequencyPenalty != null && options.frequencyPenalty != 0) {
+      body['frequency_penalty'] = options.frequencyPenalty;
+    }
+    if (options.presencePenalty != null && options.presencePenalty != 0) {
+      body['presence_penalty'] = options.presencePenalty;
+    }
+    if ((options.seed ?? -1) >= 0) body['seed'] = options.seed;
+    if (options.maxOutputTokens != null) {
+      body['max_tokens'] = options.maxOutputTokens;
+    }
+    final thinkingLevel = options.thinkingLevel;
+    if (thinkingLevel != null) {
+      final effort = _reasoningEffortFor(thinkingLevel, options.thinkingScheme);
+      if (effort != null) body['reasoning_effort'] = effort;
+      return;
+    }
+    final reasoningEffort = options.reasoningEffort?.trim();
+    if (reasoningEffort != null &&
+        reasoningEffort.isNotEmpty &&
+        reasoningEffort != 'auto') {
+      body['reasoning_effort'] = reasoningEffort;
+    }
+  }
+
+  /// 档位 → `reasoning_effort`。返回 null 表示不发该字段。
+  String? _reasoningEffortFor(ThinkingLevel level, ThinkingScheme? scheme) {
+    final isGeneric = scheme == null || scheme == ThinkingScheme.generic;
+    return switch (level) {
+      ThinkingLevel.auto => null,
+      ThinkingLevel.off => 'none',
+      ThinkingLevel.minimal => 'minimal',
+      ThinkingLevel.low => 'low',
+      ThinkingLevel.medium => 'medium',
+      ThinkingLevel.high => 'high',
+      ThinkingLevel.xhigh => isGeneric ? 'high' : 'xhigh',
+      ThinkingLevel.max => isGeneric ? 'high' : 'max',
+    };
   }
 
   @override

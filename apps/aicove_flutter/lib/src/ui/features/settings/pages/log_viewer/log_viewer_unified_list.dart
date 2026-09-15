@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../../../../../core/app_logger.dart' show LogLevel;
 import '../../../../../core/utils/data_image.dart';
 import '../../../../shared/effects/smooth_clip.dart';
+import '../../../../shared/widgets/index.dart';
 import '../../../../theme/tokens.dart';
 import '../collapsible_selectable_text.dart';
 import '../context_image_preview_extractor.dart';
@@ -38,26 +39,45 @@ class LogViewerUnifiedList extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
     if (entries.isEmpty) {
-      return Center(
-        child: Text('暂无日志', style: TextStyle(color: colors.textSecondary)),
+      return const MoeEmptyState(
+        icon: Icons.receipt_long_outlined,
+        title: '当前筛选下暂无记录',
+        description: '前端记录会在聊天操作后出现；以前的记录请打开历史日志。',
       );
     }
 
-    return ListView.builder(
-      controller: scrollController,
-      padding: const EdgeInsets.all(12),
-      itemCount: entries.length,
-      itemBuilder: (context, index) => _LogViewerEntryItem(
-        entry: entries[index],
-        index: index,
-        isExpanded: expandedIndices.contains(index),
-        isSelected: selectedIndices.contains(index),
-        isSelectionMode: isSelectionMode,
-        onToggleSelection: () => onToggleSelection(index),
-        onToggleExpansion: () => onToggleExpansion(index),
-        onEnterSelectionMode: () => onEnterSelectionMode(index),
+    final attentionCount = entries
+        .where((entry) => (entry.level?.value ?? 0) >= LogLevel.warning.value)
+        .length;
+    return Column(children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+        child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              '当前运行 · ${entries.length} 条记录 · $attentionCount 条需要关注\n'
+              '“进入后／累计”是时间点，不代表动画耗时；展开查看阶段统计。',
+              style: TextStyle(
+                  color: colors.textSecondary, fontSize: 12, height: 1.5),
+            )),
       ),
-    );
+      Expanded(
+          child: ListView.builder(
+        controller: scrollController,
+        padding: const EdgeInsets.all(16),
+        itemCount: entries.length,
+        itemBuilder: (context, index) => _LogViewerEntryItem(
+          entry: entries[index],
+          index: index,
+          isExpanded: expandedIndices.contains(index),
+          isSelected: selectedIndices.contains(index),
+          isSelectionMode: isSelectionMode,
+          onToggleSelection: () => onToggleSelection(index),
+          onToggleExpansion: () => onToggleExpansion(index),
+          onEnterSelectionMode: () => onEnterSelectionMode(index),
+        ),
+      )),
+    ]);
   }
 }
 
@@ -123,7 +143,7 @@ class _LogViewerEntryItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
-    final needsFold = entry.needsFold;
+    final needsFold = entry.fullContent.isNotEmpty;
     final levelColor = _resolveLevelColor(colors, entry);
 
     return GestureDetector(
@@ -141,10 +161,10 @@ class _LogViewerEntryItem extends StatelessWidget {
         }
       },
       child: Container(
-        margin: const EdgeInsets.only(bottom: 6),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(14),
         decoration: MoeG2Decoration(
-          radius: 8,
+          radius: MoeSmoothRadii.sm,
           color: isSelected
               ? colors.primary.withValues(alpha: 0.15)
               : colors.componentBackground,
@@ -173,23 +193,21 @@ class _LogViewerEntryItem extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.only(top: 2),
                   child: Text(
-                    formatTime(entry.time),
+                    '${entry.categoryLabel}\n${formatTime(entry.time)}',
                     style: TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 10,
-                      color: colors.muted,
-                    ),
+                        fontSize: 11, height: 1.5, color: colors.muted),
                   ),
                 ),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     entry.title,
+                    maxLines: isExpanded ? null : 3,
+                    overflow: isExpanded ? null : TextOverflow.ellipsis,
                     style: TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 11,
+                      fontSize: 14,
                       color: levelColor,
-                      height: 1.3,
+                      height: 1.5,
                     ),
                   ),
                 ),
@@ -208,25 +226,18 @@ class _LogViewerEntryItem extends StatelessWidget {
               const SizedBox(height: 4),
               if (isExpanded)
                 SelectableText(
-                  entry.extraContent!,
+                  entry.fullContent,
                   style: TextStyle(
                     fontFamily: 'monospace',
-                    fontSize: 10,
-                    height: 1.4,
+                    fontSize: 12,
+                    height: 1.5,
                     color: colors.text,
                   ),
                 )
               else
                 Text(
-                  entry.extraContent!,
-                  style: TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 10,
-                    height: 1.3,
-                    color: colors.textSecondary,
-                  ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
+                  '点开查看详情',
+                  style: TextStyle(fontSize: 12, color: colors.textSecondary),
                 ),
             ],
           ],
@@ -844,9 +855,6 @@ class _ConversationFlowSummary extends StatelessWidget {
 }
 
 Color _resolveLevelColor(MoeColors colors, UnifiedLogEntry entry) {
-  if (entry.isConversation) {
-    return Colors.deepPurple;
-  }
   if (entry.level != null) {
     switch (entry.level!) {
       case LogLevel.error:
@@ -855,7 +863,7 @@ Color _resolveLevelColor(MoeColors colors, UnifiedLogEntry entry) {
       case LogLevel.warning:
         return Colors.orange;
       case LogLevel.info:
-        return colors.primary;
+        return colors.text;
       case LogLevel.debug:
         return colors.textSecondary;
     }

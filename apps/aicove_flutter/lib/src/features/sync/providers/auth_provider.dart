@@ -94,10 +94,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
       return true;
     } catch (e) {
-      state = state.copyWith(
-        isLoading: false,
-        error: '登录失败: ${e.toString()}',
-      );
+      state = state.copyWith(isLoading: false, error: '登录失败: ${e.toString()}');
       return false;
     }
   }
@@ -133,10 +130,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
       return true;
     } catch (e) {
-      state = state.copyWith(
-        isLoading: false,
-        error: '注册失败: ${e.toString()}',
-      );
+      state = state.copyWith(isLoading: false, error: '注册失败: ${e.toString()}');
       return false;
     }
   }

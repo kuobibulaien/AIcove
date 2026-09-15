@@ -42,13 +42,16 @@ class GeminiAdapter implements ProviderAdapter {
     double? topP,
     Map<String, dynamic>? customConfig,
     List<Map<String, dynamic>>? tools,
+    ProviderChatRequestOptions? requestOptions,
   }) {
     final contents = <Map<String, dynamic>>[];
     final systemInstructions = <String>[];
+    final useSystemPrompt = requestOptions?.useSystemPrompt ?? true;
+    var reachedChat = false;
 
     for (final msg in messages) {
       final role = (msg['role'] ?? '').toString();
-      if (role == 'system') {
+      if (role == 'system' && useSystemPrompt && !reachedChat) {
         final content = msg['content'];
         if (content != null) {
           final text = content is String ? content : content.toString();
@@ -58,6 +61,7 @@ class GeminiAdapter implements ProviderAdapter {
         }
         continue;
       }
+      reachedChat = true;
 
       final normalizedRole =
           (role == 'assistant' || role == 'model') ? 'model' : 'user';
@@ -102,7 +106,13 @@ class GeminiAdapter implements ProviderAdapter {
       }).toList();
     }
 
-    final body = {
+    final generationConfig = <String, dynamic>{
+      if (temperature != null) 'temperature': temperature,
+      if (topP != null) 'topP': topP,
+      ...?customConfig?['generationConfig'] as Map<String, dynamic>?,
+    };
+    _applyRequestOptions(generationConfig, requestOptions);
+    final body = <String, dynamic>{
       'contents': contents,
       if (systemInstructions.isNotEmpty)
         'systemInstruction': {
@@ -114,14 +124,74 @@ class GeminiAdapter implements ProviderAdapter {
         'tools': [
           {'functionDeclarations': geminiTools}
         ],
-      'generationConfig': {
-        if (temperature != null) 'temperature': temperature,
-        if (topP != null) 'topP': topP,
-        ...?customConfig?['generationConfig'] as Map<String, dynamic>?,
-      },
+      'generationConfig': generationConfig,
     };
 
     return body;
+  }
+
+  void _applyRequestOptions(
+    Map<String, dynamic> generationConfig,
+    ProviderChatRequestOptions? options,
+  ) {
+    if (options == null) return;
+    if (options.temperature != null) {
+      generationConfig['temperature'] = options.temperature;
+    }
+    if (options.topP != null) generationConfig['topP'] = options.topP;
+    if ((options.topK ?? 0) > 0) generationConfig['topK'] = options.topK;
+    if (options.frequencyPenalty != null && options.frequencyPenalty != 0) {
+      generationConfig['frequencyPenalty'] = options.frequencyPenalty;
+    }
+    if (options.presencePenalty != null && options.presencePenalty != 0) {
+      generationConfig['presencePenalty'] = options.presencePenalty;
+    }
+    if ((options.seed ?? -1) >= 0) generationConfig['seed'] = options.seed;
+    if (options.maxOutputTokens != null) {
+      generationConfig['maxOutputTokens'] = options.maxOutputTokens;
+    }
+    _applyThinking(generationConfig, options);
+  }
+
+  static const _thinkingBudgetByLevel = <ThinkingLevel, int>{
+    ThinkingLevel.off: 0,
+    ThinkingLevel.minimal: 512,
+    ThinkingLevel.low: 1024,
+    ThinkingLevel.medium: 8192,
+    ThinkingLevel.high: -1,
+  };
+
+  /// Gemini 3 用 `thinkingLevel`，2.5 用 `thinkingBudget`；两者互斥，
+  /// 渠道 customConfig 里已有的同名键会被本设置覆盖。
+  void _applyThinking(
+    Map<String, dynamic> generationConfig,
+    ProviderChatRequestOptions options,
+  ) {
+    final level = options.thinkingLevel;
+    if (level == null || level.isAuto) return;
+    final existing = generationConfig['thinkingConfig'];
+    final thinkingConfig = <String, dynamic>{
+      if (existing is Map) ...Map<String, dynamic>.from(existing),
+    }
+      ..remove('thinkingLevel')
+      ..remove('thinkingBudget')
+      ..remove('thinking_level')
+      ..remove('thinking_budget');
+
+    if (options.thinkingScheme == ThinkingScheme.geminiLevel) {
+      final name = switch (level) {
+        ThinkingLevel.xhigh || ThinkingLevel.max => 'HIGH',
+        ThinkingLevel.off => 'MINIMAL',
+        _ => level.name.toUpperCase(),
+      };
+      thinkingConfig['thinkingLevel'] = name;
+      thinkingConfig['includeThoughts'] = true;
+    } else {
+      final budget = _thinkingBudgetByLevel[level] ?? -1;
+      thinkingConfig['thinkingBudget'] = budget;
+      if (budget != 0) thinkingConfig['includeThoughts'] = true;
+    }
+    generationConfig['thinkingConfig'] = thinkingConfig;
   }
 
   @override
@@ -270,6 +340,13 @@ class GeminiAdapter implements ProviderAdapter {
       final text = (part['text'] ?? part['input_text'])?.toString();
       if (text == null || text.trim().isEmpty) return null;
       return {'text': text};
+    }
+
+    if (type == 'file') {
+      final file = part['file'];
+      final data = file is Map ? file['file_data']?.toString() : null;
+      if (data == null || !data.startsWith('data:')) return null;
+      return _convertImageUrlToGeminiPart(data);
     }
 
     if (type == 'image_url') {

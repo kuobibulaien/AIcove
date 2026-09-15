@@ -1,4 +1,0 @@
-{"file": ".trellis/spec/agent-context/index.md", "reason": "Verify node library and Agent Build behavior against Agent Context rules"}
-{"file": ".trellis/spec/backend/index.md", "reason": "Verify backend API/admin panel quality"}
-{"file": ".trellis/spec/frontend/index.md", "reason": "Verify Flutter asset/test consistency"}
-{"file": ".trellis/tasks/05-06-audit-node-library/research/node-library-audit.md", "reason": "Verify fixes address the audited gaps"}

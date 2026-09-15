@@ -28,71 +28,65 @@ class _ImportFilePageState extends ConsumerState<ImportFilePage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return Scaffold(
-      appBar: MoeAppBar(
-        title: '导入数据',
-        showBackButton: true,
-      ),
-      body: Padding(
+    return MoePageScaffold(
+      appBar: const MoeAppBar(title: '导入数据', showBackButton: true),
+      body: ListView(
         padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // 说明
-            Text(
-              '选择要导入的备份文件',
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: MoeFontWeights.emphasis,
-              ),
+        children: [
+          // 说明
+          Text(
+            '选择要导入的备份文件',
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: MoeFontWeights.emphasis,
             ),
-            const SizedBox(height: 8),
-            Text(
-              '支持 .aicove 格式的备份文件',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '支持 .aicove 格式的备份文件',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
             ),
+          ),
 
-            const SizedBox(height: 32),
+          const SizedBox(height: 32),
 
-            // 选择文件按钮
-            _buildFilePickerCard(context),
+          // 选择文件按钮
+          _buildFilePickerCard(context),
 
-            if (_errorMessage != null) ...[
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: MoeG2Decoration(
-                  radius: 8,
-                  color: theme.colorScheme.errorContainer,
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      LucideIcons.alertCircle,
-                      color: theme.colorScheme.error,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _errorMessage!,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onErrorContainer,
-                        ),
+          if (_errorMessage != null) ...[
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: MoeG2Decoration(
+                radius: 8,
+                color: theme.colorScheme.errorContainer,
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    LucideIcons.alertCircle,
+                    color: theme.colorScheme.error,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _errorMessage!,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onErrorContainer,
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-            ],
-
-            const Spacer(),
-
-            // 帮助信息
-            _buildHelpSection(context),
+            ),
           ],
-        ),
+
+          const SizedBox(height: 24),
+
+          // 帮助信息
+          _buildHelpSection(context),
+        ],
       ),
     );
   }
@@ -106,14 +100,12 @@ class _ImportFilePageState extends ConsumerState<ImportFilePage> {
         color: Colors.transparent,
         child: InkWell(
           onTap: _isLoading ? null : _pickFile,
-          child: Container(
+          child: MoeButtonSurface(
             padding: const EdgeInsets.all(32),
-            decoration: MoeG2Decoration(
-              radius: 16,
-              border: Border.all(
-                color: theme.colorScheme.outline.withValues(alpha: 0.3),
-                width: 2,
-              ),
+            radius: 16,
+            border: Border.all(
+              color: theme.colorScheme.outline.withValues(alpha: 0.3),
+              width: 2,
             ),
             child: Column(
               children: [
@@ -175,10 +167,12 @@ class _ImportFilePageState extends ConsumerState<ImportFilePage> {
                 color: theme.colorScheme.onSurfaceVariant,
               ),
               const SizedBox(width: 8),
-              Text(
-                '如何获取备份文件？',
-                style: theme.textTheme.titleSmall?.copyWith(
-                  fontWeight: MoeFontWeights.emphasis,
+              Expanded(
+                child: Text(
+                  '如何获取备份文件？',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: MoeFontWeights.emphasis,
+                  ),
                 ),
               ),
             ],
@@ -253,10 +247,7 @@ class _ImportFilePageState extends ConsumerState<ImportFilePage> {
       // 跳转到预览页面
       Navigator.of(context).push(
         ParallaxSlidePageRoute(
-          page: ImportPreviewPage(
-            file: file,
-            preview: preview,
-          ),
+          page: ImportPreviewPage(file: file, preview: preview),
         ),
       );
     } catch (e) {

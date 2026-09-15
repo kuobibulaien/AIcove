@@ -46,6 +46,7 @@ class PromptTagSemanticsSnapshot {
       ];
 
   String get mergedPrompt {
+    if (activeEntries.isEmpty) return '';
     final parts = <String>[];
     final leadInText = leadIn?.trim() ?? '';
     if (leadInText.isNotEmpty) {

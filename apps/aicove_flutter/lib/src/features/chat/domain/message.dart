@@ -132,6 +132,10 @@ class Message {
           'text': addTimestampPrefix(block.content),
         });
       } else if (block is ImageBlock) {
+        if (block.mediaId != null) {
+          contentParts.add({'type': 'image_url', 'image_url': {'url': 'aicove-media://${block.mediaId}'}});
+          continue;
+        }
         if (block.url != null) {
           contentParts.add({
             'type': 'image_url',

@@ -86,28 +86,23 @@ class _CreateTriggerSheetState extends ConsumerState<_CreateTriggerSheet> {
             width: 40,
             height: 4,
             margin: const EdgeInsets.only(bottom: 12),
-            decoration: MoeG2Decoration(
-              radius: 2,
-              color: colors.borderLight,
-            ),
+            decoration: MoeG2Decoration(radius: 2, color: colors.borderLight),
           ),
           Text(
             '创建自定义触发',
             style: TextStyle(
-                fontSize: 16,
-                fontWeight: MoeFontWeights.emphasis,
-                color: colors.text),
+              fontSize: 16,
+              fontWeight: MoeFontWeights.emphasis,
+              color: colors.text,
+            ),
           ),
           const SizedBox(height: 16),
-          MoeTextField(
-            controller: _titleCtrl,
-            label: '标题',
-            hint: '例如：晚安提醒',
-          ),
+          MoeTextField(controller: _titleCtrl, label: '标题', hint: '例如：晚安提醒'),
           const SizedBox(height: 12),
           conversationsAsync.when(
             data: (conversations) {
               return DropdownButtonFormField<String>(
+                isExpanded: true,
                 initialValue: _selectedContactId,
                 decoration: InputDecoration(
                   labelText: '指定联系人 (可选)',
@@ -118,12 +113,17 @@ class _CreateTriggerSheetState extends ConsumerState<_CreateTriggerSheet> {
                 items: [
                   const DropdownMenuItem(
                     value: null,
-                    child: Text('不指定 (当前活跃)'),
+                    child: Text('不指定 (当前活跃)', overflow: TextOverflow.ellipsis),
                   ),
-                  ...conversations.map((c) => DropdownMenuItem(
-                        value: c.id,
-                        child: Text(c.displayName),
-                      )),
+                  ...conversations.map(
+                    (c) => DropdownMenuItem(
+                      value: c.id,
+                      child: Text(
+                        c.displayName,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ),
                 ],
                 onChanged: (value) {
                   setState(() {
@@ -144,8 +144,8 @@ class _CreateTriggerSheetState extends ConsumerState<_CreateTriggerSheet> {
             helperText: '后台 Agent 会把这段客观提醒并入上下文，再生成一条主动消息',
           ),
           const SizedBox(height: 12),
-          Align(
-            alignment: Alignment.centerLeft,
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
             child: MoeToggleBar<AutoReplyTriggerType>(
               value: _type,
               items: const [
@@ -166,7 +166,6 @@ class _CreateTriggerSheetState extends ConsumerState<_CreateTriggerSheet> {
           else
             _buildFixedPicker(colors),
           MoeSettingsRow(
-            icon: Icons.nightlight_round,
             label: '夜间也允许触发',
             subtitle: '默认夜间会自动顺延，开启后可在夜间提醒',
             trailingType: MoeSettingsRowTrailing.switchControl,
@@ -175,7 +174,6 @@ class _CreateTriggerSheetState extends ConsumerState<_CreateTriggerSheet> {
             showDivider: false,
           ),
           MoeSettingsRow(
-            icon: Icons.timer,
             label: '使用精准模式',
             subtitle: '适合严格到点的提醒，可能更耗电',
             trailingType: MoeSettingsRowTrailing.switchControl,
@@ -192,24 +190,18 @@ class _CreateTriggerSheetState extends ConsumerState<_CreateTriggerSheet> {
               ),
             ),
           const SizedBox(height: 12),
-          Row(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Expanded(
-                child: MoeSecondaryButton(
-                  label: '立即测试',
-                  icon: Icons.play_arrow,
-                  onPressed: _submitting ? null : _handleTestRun,
-                ),
+              MoeSecondaryButton(
+                label: '立即测试',
+                onPressed: _submitting ? null : _handleTestRun,
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                flex: 2,
-                child: MoePrimaryButton(
-                  label: '创建触发器',
-                  icon: _submitting ? null : Icons.check,
-                  onPressed: _submitting ? null : _handleSubmit,
-                  isLoading: _submitting,
-                ),
+              const SizedBox(height: 12),
+              MoePrimaryButton(
+                label: '创建触发器',
+                onPressed: _submitting ? null : _handleSubmit,
+                isLoading: _submitting,
               ),
             ],
           ),
@@ -222,15 +214,18 @@ class _CreateTriggerSheetState extends ConsumerState<_CreateTriggerSheet> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('延迟 ${_delayMinutes.round()} 分钟后触发',
-            style: TextStyle(
-                fontWeight: MoeFontWeights.emphasis, color: colors.text)),
-        Slider(
+        Text(
+          '延迟 ${_delayMinutes.round()} 分钟后触发',
+          style: TextStyle(
+            fontWeight: MoeFontWeights.emphasis,
+            color: colors.text,
+          ),
+        ),
+        MoeSlider(
           value: _delayMinutes,
           divisions: 23,
           min: 1,
           max: 120,
-          activeColor: colors.primary,
           label: '${_delayMinutes.round()} 分钟',
           onChanged: (value) => setState(() => _delayMinutes = value),
         ),
@@ -242,15 +237,16 @@ class _CreateTriggerSheetState extends ConsumerState<_CreateTriggerSheet> {
     final display = _selectedDate == null || _selectedTime == null
         ? '未选择'
         : '${_selectedDate!.year}-${_selectedDate!.month.toString().padLeft(2, '0')}-${_selectedDate!.day.toString().padLeft(2, '0')} '
-            '${_selectedTime!.hour.toString().padLeft(2, '0')}:${_selectedTime!.minute.toString().padLeft(2, '0')}';
+              '${_selectedTime!.hour.toString().padLeft(2, '0')}:${_selectedTime!.minute.toString().padLeft(2, '0')}';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         MoeListTile(
-          leading: Icon(Icons.calendar_month, color: colors.primary),
           title: Text('触发时间', style: TextStyle(color: colors.text)),
-          subtitle:
-              Text(display, style: TextStyle(color: colors.textSecondary)),
+          subtitle: Text(
+            display,
+            style: TextStyle(color: colors.textSecondary),
+          ),
           trailing: Icon(Icons.chevron_right, color: colors.muted),
           onTap: () async {
             final now = DateTime.now();
@@ -264,7 +260,8 @@ class _CreateTriggerSheetState extends ConsumerState<_CreateTriggerSheet> {
             if (!mounted) return;
             final pickedTime = await showTimePicker(
               context: context,
-              initialTime: _selectedTime ??
+              initialTime:
+                  _selectedTime ??
                   TimeOfDay.fromDateTime(now.add(const Duration(minutes: 5))),
             );
             if (pickedTime == null) return;

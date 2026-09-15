@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:aicove_flutter/src/ui/shared/animations/parallax_slide_page_route.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../features/plugins/image/image_config.dart';
@@ -26,12 +27,9 @@ class _ArtistPresetPageState extends ConsumerState<ArtistPresetPage> {
     final config = ref.watch(imagePluginConfigProvider);
     final notifier = ref.read(imagePluginConfigProvider.notifier);
 
-    return Scaffold(
+    return MoePageScaffold(
       backgroundColor: colors.surface,
-      appBar: const MoeAppBar(
-        title: '画师串预设',
-        showBackButton: true,
-      ),
+      appBar: const MoeAppBar(title: '画师串预设', showBackButton: true),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(
           MoeSpacing.md,
@@ -94,7 +92,6 @@ class _ArtistPresetPageState extends ConsumerState<ArtistPresetPage> {
               _slotRow(context, config, notifier, i, selectedName),
             // 添加按钮
             MoeSettingsRow(
-              icon: Icons.add_circle_outline,
               label: '添加画师串',
               subtitle: '新建一个空白画师串预设',
               trailingType: MoeSettingsRowTrailing.none,
@@ -156,22 +153,19 @@ class _ArtistPresetPageState extends ConsumerState<ArtistPresetPage> {
       children: [
         GestureDetector(
           onTap: () => setState(() => _previewExpanded = !_previewExpanded),
-          child: Container(
+          child: MoeButtonSurface(
             padding: const EdgeInsets.symmetric(
               horizontal: MoeSpacing.md,
               vertical: MoeSpacing.sm,
             ),
-            decoration: BoxDecoration(
-              color: colors.componentBackground,
-              borderRadius: _previewExpanded
-                  ? const BorderRadius.vertical(
-                      top: Radius.circular(MoeSmoothRadii.sm))
-                  : BorderRadius.circular(MoeSmoothRadii.sm),
-            ),
+            tintColor: Colors.transparent,
+            borderRadius: _previewExpanded
+                ? const BorderRadius.vertical(
+                    top: Radius.circular(MoeSmoothRadii.sm),
+                  )
+                : BorderRadius.circular(MoeSmoothRadii.sm),
             child: Row(
               children: [
-                Icon(Icons.preview_outlined, size: 20, color: colors.text),
-                const SizedBox(width: MoeSpacing.xs),
                 Expanded(
                   child: Text(
                     '当前生效内容预览',
@@ -185,8 +179,11 @@ class _ArtistPresetPageState extends ConsumerState<ArtistPresetPage> {
                 AnimatedRotation(
                   turns: _previewExpanded ? 0.5 : 0,
                   duration: const Duration(milliseconds: 200),
-                  child: Icon(Icons.keyboard_arrow_down,
-                      size: 20, color: colors.muted),
+                  child: Icon(
+                    Icons.keyboard_arrow_down,
+                    size: 20,
+                    color: colors.muted,
+                  ),
                 ),
               ],
             ),
@@ -197,11 +194,16 @@ class _ArtistPresetPageState extends ConsumerState<ArtistPresetPage> {
           secondChild: Container(
             width: double.infinity,
             padding: const EdgeInsets.fromLTRB(
-                MoeSpacing.md, 0, MoeSpacing.md, MoeSpacing.md),
+              MoeSpacing.md,
+              0,
+              MoeSpacing.md,
+              MoeSpacing.md,
+            ),
             decoration: BoxDecoration(
               color: colors.componentBackground,
               borderRadius: const BorderRadius.vertical(
-                  bottom: Radius.circular(MoeSmoothRadii.sm)),
+                bottom: Radius.circular(MoeSmoothRadii.sm),
+              ),
             ),
             child: SelectableText(
               previewText,
@@ -228,9 +230,11 @@ class _ArtistPresetPageState extends ConsumerState<ArtistPresetPage> {
     buf.writeln(preset.content.trim().isEmpty ? '(空)' : preset.content.trim());
     buf.writeln();
     buf.writeln('[ 负面提示词（合并到 negative prompt） ]');
-    buf.writeln(preset.negativeContent.trim().isEmpty
-        ? '(空)'
-        : preset.negativeContent.trim());
+    buf.writeln(
+      preset.negativeContent.trim().isEmpty
+          ? '(空)'
+          : preset.negativeContent.trim(),
+    );
     return buf.toString().trimRight();
   }
 
@@ -238,8 +242,8 @@ class _ArtistPresetPageState extends ConsumerState<ArtistPresetPage> {
 
   void _openEditor(BuildContext context, String presetName) {
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => _ArtistPresetEditorPage(presetName: presetName),
+      ParallaxSlidePageRoute(
+        page: _ArtistPresetEditorPage(presetName: presetName),
       ),
     );
   }
@@ -273,8 +277,9 @@ class _ArtistPresetPageState extends ConsumerState<ArtistPresetPage> {
     ArtistPreset preset,
     int index,
   ) async {
-    final isBuiltin = index == 0 && ImageConfig.defaultArtistPresets
-        .any((d) => d.name == preset.name);
+    final isBuiltin =
+        index == 0 &&
+        ImageConfig.defaultArtistPresets.any((d) => d.name == preset.name);
 
     await showMoeActionSheet(
       context: context,
@@ -282,19 +287,16 @@ class _ArtistPresetPageState extends ConsumerState<ArtistPresetPage> {
       description: _presetPreview(preset, max: 90),
       actions: [
         MoeSheetAction(
-          icon: Icons.edit_note_outlined,
           label: '编辑',
           onTap: () => _openEditor(context, preset.name),
         ),
         if (!isBuiltin)
           MoeSheetAction(
-            icon: Icons.drive_file_rename_outline,
             label: '重命名',
             onTap: () => _renamePreset(context, config, notifier, preset),
           ),
         if (!isBuiltin)
           MoeSheetAction(
-            icon: Icons.delete_outline,
             label: '删除',
             isDestructive: true,
             onTap: () => notifier.removeArtistPreset(preset.name),
@@ -309,25 +311,33 @@ class _ArtistPresetPageState extends ConsumerState<ArtistPresetPage> {
     ImagePluginConfigNotifier notifier,
     ArtistPreset preset,
   ) async {
-    final name = await _showNameDialog(
+    var currentName = preset.name;
+    await showMoeAutoSaveTextEditor(
       context: context,
-      title: '重命名画师串',
-      hintText: '输入新名称',
-      initial: preset.name,
-    );
-    if (!mounted || name == null) return;
-    if (config.artistPresets
-        .any((p) => p.name == name && p.name != preset.name)) {
-      MoeToast.warning(this.context, '已存在同名预设');
-      return;
-    }
-    await notifier.updateArtistPreset(
-      preset.name,
-      ArtistPreset(
-        name: name,
-        content: preset.content,
-        negativeContent: preset.negativeContent,
-      ),
+      title: '重命名预设',
+      initialValue: currentName,
+      onSave: (text) async {
+        final name = text.trim();
+        if (name.isEmpty) throw const FormatException('预设名称不能为空');
+        if (name == currentName) return;
+        final current = ref.read(imagePluginConfigProvider);
+        final original = current.artistPresets
+            .where((p) => p.name == currentName)
+            .firstOrNull;
+        if (original == null) throw const FormatException('预设已不存在');
+        if (current.artistPresets.any((p) => p.name == name)) {
+          throw const FormatException('已存在同名预设');
+        }
+        await notifier.updateArtistPreset(
+          currentName,
+          ArtistPreset(
+            name: name,
+            content: original.content,
+            negativeContent: original.negativeContent,
+          ),
+        );
+        currentName = name;
+      },
     );
   }
 
@@ -382,10 +392,10 @@ class _ArtistPresetEditorPage extends ConsumerStatefulWidget {
 }
 
 class _ArtistPresetEditorPageState
-    extends ConsumerState<_ArtistPresetEditorPage> {
+    extends ConsumerState<_ArtistPresetEditorPage>
+    with MoeAutoSaveState<_ArtistPresetEditorPage> {
   late final TextEditingController _positiveCtrl;
   late final TextEditingController _negativeCtrl;
-  bool _dirty = false;
 
   @override
   void initState() {
@@ -395,6 +405,12 @@ class _ArtistPresetEditorPageState
     _negativeCtrl = TextEditingController(text: preset?.negativeContent ?? '');
     _positiveCtrl.addListener(_onChanged);
     _negativeCtrl.addListener(_onChanged);
+    autoSave.configure(
+      save: _save,
+      snapshot: () =>
+          moeAutoSaveSignature([_positiveCtrl.text, _negativeCtrl.text]),
+      fields: [_positiveCtrl, _negativeCtrl],
+    );
   }
 
   @override
@@ -413,13 +429,7 @@ class _ArtistPresetEditorPageState
         .firstOrNull;
   }
 
-  void _onChanged() {
-    final preset = _findPreset();
-    if (preset == null) return;
-    final dirty = preset.content != _positiveCtrl.text ||
-        preset.negativeContent != _negativeCtrl.text;
-    if (dirty != _dirty) setState(() => _dirty = dirty);
-  }
+  void _onChanged() => autoSave.changed();
 
   Future<void> _save() async {
     final notifier = ref.read(imagePluginConfigProvider.notifier);
@@ -431,58 +441,43 @@ class _ArtistPresetEditorPageState
         negativeContent: _negativeCtrl.text,
       ),
     );
-    setState(() => _dirty = false);
-    if (mounted) MoeToast.success(context, '已保存');
   }
 
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
 
-    return Scaffold(
-      backgroundColor: colors.surface,
-      appBar: MoeAppBar(
-        title: '编辑「${widget.presetName}」',
-        showBackButton: true,
-      ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(
-          MoeSpacing.md,
-          MoeSpacing.md,
-          MoeSpacing.md,
-          MoeSpacing.xl,
+    return autoSavePage(
+      MoePageScaffold(
+        backgroundColor: colors.surface,
+        appBar: MoeAppBar(
+          title: '编辑「${widget.presetName}」',
+          showBackButton: true,
         ),
-        children: [
-          _fieldCard(
-            context,
-            title: '正面提示词（画师串）',
-            hint: '自动拼在 AI 生成的 prompt 前面，一般是画师权重标签',
-            controller: _positiveCtrl,
+        body: ListView(
+          padding: const EdgeInsets.fromLTRB(
+            MoeSpacing.md,
+            MoeSpacing.md,
+            MoeSpacing.md,
+            MoeSpacing.xl,
           ),
-          const SizedBox(height: MoeSpacing.sm),
-          _fieldCard(
-            context,
-            title: '负面提示词',
-            hint: '自动合并到 negative prompt，常用质量控制标签',
-            controller: _negativeCtrl,
-          ),
-          const SizedBox(height: MoeSpacing.lg),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: _dirty ? _save : null,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: colors.primary,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(MoeSmoothRadii.sm),
-                ),
-              ),
-              child: const Text('保存'),
+          children: [
+            _fieldCard(
+              context,
+              title: '正面提示词（画师串）',
+              hint: '自动拼在 AI 生成的 prompt 前面，一般是画师权重标签',
+              controller: _positiveCtrl,
             ),
-          ),
-        ],
+            const SizedBox(height: MoeSpacing.sm),
+            _fieldCard(
+              context,
+              title: '负面提示词',
+              hint: '自动合并到 negative prompt，常用质量控制标签',
+              controller: _negativeCtrl,
+            ),
+            const SizedBox(height: MoeSpacing.lg),
+          ],
+        ),
       ),
     );
   }

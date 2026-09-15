@@ -5,7 +5,7 @@ class TimeAwarenessConfig {
   static const String defaultCurrentTimePromptTemplate = '当前时间: {datetime}';
   static const String fallbackCurrentTimePromptTemplate = '当前时间为{datetime}';
 
-  /// 是否启用插件
+  /// 全局常开：持久化读取时恒为 true；是否启用由角色/会话的插件选择决定。
   final bool enabled;
 
   /// 是否为历史消息添加时间戳前缀
@@ -27,18 +27,20 @@ class TimeAwarenessConfig {
   });
 
   Map<String, dynamic> toJson() => {
-        'enabled': enabled,
-        'includeMessageTimestamp': includeMessageTimestamp,
-        'includeCurrentTime': includeCurrentTime,
-        'currentTimePromptTemplate': currentTimePromptTemplate,
-      };
+    'enabled': enabled,
+    'includeMessageTimestamp': includeMessageTimestamp,
+    'includeCurrentTime': includeCurrentTime,
+    'currentTimePromptTemplate': currentTimePromptTemplate,
+  };
 
   factory TimeAwarenessConfig.fromJson(Map<String, dynamic> json) {
     return TimeAwarenessConfig(
-      enabled: json['enabled'] as bool? ?? true,
+      // 全局开关已移除，忽略旧存储值
+      enabled: true,
       includeMessageTimestamp: json['includeMessageTimestamp'] as bool? ?? true,
       includeCurrentTime: json['includeCurrentTime'] as bool? ?? true,
-      currentTimePromptTemplate: json['currentTimePromptTemplate'] as String? ??
+      currentTimePromptTemplate:
+          json['currentTimePromptTemplate'] as String? ??
           defaultCurrentTimePromptTemplate,
     );
   }

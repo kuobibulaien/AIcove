@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -7,6 +8,7 @@ import '../../../../core/models/message_block.dart';
 import '../../../../core/utils/data_image.dart';
 import '../../../../core/utils/message_formatter.dart';
 import '../../../../features/chat/domain/message.dart';
+import '../../../../features/chat/presentation/widgets/message_bubble.dart';
 import '../../../../ui/shared/widgets/media/moe_image_preview.dart';
 
 abstract class ChatMessageListItem {
@@ -59,6 +61,24 @@ class ChatNewTopicDividerItem extends ChatMessageListItem {
   final String associatedMessageId;
 }
 
+/// Selection follows displayed bubbles, including legacy text chunks.
+Message? chatListItemSelectionMessage(ChatMessageListItem item) {
+  if (item is ChatMessageItem) {
+    return MessageBubble.hasVisibleContent(item.message) ? item.message : null;
+  }
+  if (item is ChatChunkedMessageItem) {
+    final message = item.originalMessage;
+    return Message(
+      id: '${message.id}_chunk_${item.chunkIndex}',
+      role: message.role,
+      content: item.chunkText,
+      createdAt: message.createdAt,
+      status: message.status,
+    );
+  }
+  return null;
+}
+
 List<ChatMessageListItem> buildChatMessageListItems({
   required List<Message> messages,
   MessageFormatConfig? config,
@@ -109,8 +129,7 @@ List<ChatMessageListItem> buildChatMessageListItems({
         chunkSourceText.trim().isNotEmpty;
 
     if (shouldChunk && config != null) {
-      final chunks =
-          MessageFormatter.formatAndChunkText(chunkSourceText, config);
+      final chunks = _chunkTextMemoized(chunkSourceText, config);
       if (chunks.length > 1) {
         for (var chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
           items.add(
@@ -193,6 +212,41 @@ ImageProvider? resolveChatMessageListImageProvider(MessageBlock block) {
 bool _hasNonTextBlocks(Message message) {
   final blocks = message.blocks;
   return blocks?.any((block) => block is! TextBlock) ?? false;
+}
+
+// 分段是多组正则＋颗文字保护的纯函数；列表每次结构变化（历史翻页、流式
+// 结构事件）都对全部消息重建列表项，未变化的旧消息不该重复付费。
+// 按（格式签名, 原文）记忆化，原文引用已由 message 持有，键不额外占大内存。
+const int _kChunkMemoMaxEntries = 512;
+final LinkedHashMap<String, List<String>> _chunkMemo =
+    LinkedHashMap<String, List<String>>();
+String? _chunkMemoFormatSignature;
+
+List<String> _chunkTextMemoized(String text, MessageFormatConfig config) {
+  final formatSignature = buildMessageFormatProjectionSignature(config);
+  if (_chunkMemoFormatSignature != formatSignature) {
+    _chunkMemo.clear();
+    _chunkMemoFormatSignature = formatSignature;
+  }
+  final cached = _chunkMemo.remove(text);
+  if (cached != null) {
+    _chunkMemo[text] = cached;
+    return cached;
+  }
+  final chunks = List<String>.unmodifiable(
+    MessageFormatter.formatAndChunkText(text, config),
+  );
+  _chunkMemo[text] = chunks;
+  while (_chunkMemo.length > _kChunkMemoMaxEntries) {
+    _chunkMemo.remove(_chunkMemo.keys.first);
+  }
+  return chunks;
+}
+
+@visibleForTesting
+void clearChatMessageListChunkMemo() {
+  _chunkMemo.clear();
+  _chunkMemoFormatSignature = null;
 }
 
 String _resolveChunkSourceText(Message message) {

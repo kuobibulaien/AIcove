@@ -1,4 +1,5 @@
 class MemoryConfig {
+  /// 全局常开：持久化读取时恒为 true；是否启用由角色/会话的插件选择决定。
   final bool enabled;
 
   // model config
@@ -113,33 +114,34 @@ class MemoryConfig {
   }
 
   Map<String, dynamic> toJson() => {
-        'enabled': enabled,
-        'summarizeProviderId': summarizeProviderId,
-        'summarizeModelName': summarizeModelName,
-        'summarizePrompt': summarizePrompt,
-        'embeddingProviderId': embeddingProviderId,
-        'embeddingModelName': embeddingModelName,
-        'fallbackEmbeddingEnabled': fallbackEmbeddingEnabled,
-        'fallbackEmbeddingProviderId': fallbackEmbeddingProviderId,
-        'fallbackEmbeddingModelName': fallbackEmbeddingModelName,
-        'enableCategoryClassification': enableCategoryClassification,
-        'enableHybridSearch': enableHybridSearch,
-        'enableFourLayer': enableFourLayer,
-        'enableProfileLayer': enableProfileLayer,
-        'enableNextDayTrigger': enableNextDayTrigger,
-        'enableConversationIsolation': enableConversationIsolation,
-        'enableMemoryMerge': enableMemoryMerge,
-        'enableCapacityCompress': enableCapacityCompress,
-        'enablePreFlush': enablePreFlush,
-        'enableEmbeddingCache': enableEmbeddingCache,
-        'roundSplitThreshold': roundSplitThreshold,
-        'localMaxMemories': localMaxMemories,
-        'triggerInterval': triggerInterval,
-      };
+    'enabled': enabled,
+    'summarizeProviderId': summarizeProviderId,
+    'summarizeModelName': summarizeModelName,
+    'summarizePrompt': summarizePrompt,
+    'embeddingProviderId': embeddingProviderId,
+    'embeddingModelName': embeddingModelName,
+    'fallbackEmbeddingEnabled': fallbackEmbeddingEnabled,
+    'fallbackEmbeddingProviderId': fallbackEmbeddingProviderId,
+    'fallbackEmbeddingModelName': fallbackEmbeddingModelName,
+    'enableCategoryClassification': enableCategoryClassification,
+    'enableHybridSearch': enableHybridSearch,
+    'enableFourLayer': enableFourLayer,
+    'enableProfileLayer': enableProfileLayer,
+    'enableNextDayTrigger': enableNextDayTrigger,
+    'enableConversationIsolation': enableConversationIsolation,
+    'enableMemoryMerge': enableMemoryMerge,
+    'enableCapacityCompress': enableCapacityCompress,
+    'enablePreFlush': enablePreFlush,
+    'enableEmbeddingCache': enableEmbeddingCache,
+    'roundSplitThreshold': roundSplitThreshold,
+    'localMaxMemories': localMaxMemories,
+    'triggerInterval': triggerInterval,
+  };
 
   factory MemoryConfig.fromJson(Map<String, dynamic> json) {
     return MemoryConfig(
-      enabled: json['enabled'] as bool? ?? true,
+      // 全局开关已移除，忽略旧存储值
+      enabled: true,
       summarizeProviderId: json['summarizeProviderId'] as String?,
       summarizeModelName: json['summarizeModelName'] as String?,
       summarizePrompt: json['summarizePrompt'] as String? ?? '',

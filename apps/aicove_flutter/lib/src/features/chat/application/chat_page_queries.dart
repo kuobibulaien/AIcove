@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/database/database.dart' as db;
@@ -19,9 +20,59 @@ class ChatPageMessageSearchItem {
 }
 
 class ChatPageQueries {
-  const ChatPageQueries(this._ref);
+  ChatPageQueries(this._ref) {
+    _ref.onDispose(() => _disposed = true);
+  }
 
   final Ref _ref;
+  bool _disposed = false;
+  Future<void>? _entryWarmupTask;
+
+  /// 每个应用容器只预读一次、最多三个候选会话，每场仍只读取最近窗口。
+  /// 复用正式时间线缓存，不创建第二份消息源；串行读取避免抢占首屏。
+  /// 限制的是额外预读量，用户实际打开/翻页的缓存仍沿用原生命周期。
+  Future<void> warmEntryMessages(Iterable<String> conversationIds) {
+    final existing = _entryWarmupTask;
+    if (existing != null) return existing;
+    final targets = conversationIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .take(3)
+        .toList(growable: false);
+    if (_disposed || targets.isEmpty) return Future<void>.value();
+    final cache = _ref.read(conversationTimelineCacheProvider);
+    return _entryWarmupTask = _warmEntryMessages(cache, targets);
+  }
+
+  Future<void> _warmEntryMessages(
+    ConversationTimelineCache cache,
+    List<String> targets,
+  ) async {
+    for (final id in targets) {
+      // 让出事件循环，不把多个会话的解析连在同一串 microtask 里。
+      await Future<void>.delayed(Duration.zero);
+      if (_disposed) return;
+      if (cache.peekWindow(
+            conversationId: id,
+            limit: kConversationTimelineSeedMessageCount,
+          ) !=
+          null) {
+        continue;
+      }
+      try {
+        await cache
+            .watchWindow(
+              conversationId: id,
+              limit: kConversationTimelineSeedMessageCount,
+            )
+            .first;
+      } on Object catch (error) {
+        // 预读失败不能影响联系人页；实际进入会话仍走正常读取与错误处理。
+        debugPrint('[ChatEntry] 预读失败: ${error.runtimeType}');
+      }
+    }
+  }
 
   /// Frontend-only query: follows the current projected timeline cache.
   ///

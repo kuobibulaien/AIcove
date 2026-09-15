@@ -1,13 +1,13 @@
 /// MoeSettingsGroup - 设置分组卡片组件
-/// 
+///
 /// 用于设置页面的分组容器，包裹多个 MoeSettingsRow。
-/// 
+///
 /// 设计特点：
 /// - iOS 风格分组卡片
 /// - 可选的分组标题
 /// - 圆角、边框、阴影可自定义
 /// - 自动处理最后一行的分割线
-/// 
+///
 /// 使用示例：
 /// ```dart
 /// MoeSettingsGroup(
@@ -18,14 +18,14 @@
 ///   ],
 /// )
 /// ```
-/// 
+///
 /// 更新记录：
 /// - 2025-12-31: 创建设置分组组件
 library;
 
 import 'package:flutter/material.dart';
 import '../../../theme/tokens.dart';
-import '../../effects/smooth_clip.dart';
+import '../moe_floating_surface.dart';
 import 'moe_settings_row.dart';
 
 /// 设置分组卡片组件
@@ -57,7 +57,7 @@ class MoeSettingsGroup extends StatelessWidget {
   final bool titleFirst;
 
   // === 样式接口 ===
-  
+
   /// 卡片背景色
   final Color? backgroundColor;
 
@@ -91,29 +91,33 @@ class MoeSettingsGroup extends StatelessWidget {
 
     // 解析样式 - 卡片背景使用主题的组件公共背景色
     final bgColor = backgroundColor ?? colors.componentBackground;
-    final radius = borderRadius ?? MoeRadii.borderMd;
+    final radius =
+        borderRadius ?? BorderRadius.circular(MoeSettingsLayout.cardRadius);
     final g2Radius = radius.topLeft.x;
-    final borderSide = border ?? BorderSide(
-      color: colors.border.withValues(alpha: 0.06),
-      width: 0.6,
-    );
-    final shadow = boxShadow ?? MoeShadows.soft;
-    final outerMargin = margin ?? const EdgeInsets.symmetric(horizontal: 16);
+    final borderSide =
+        border ??
+        BorderSide(color: colors.border.withValues(alpha: 0.06), width: 0.6);
+    final shadow = boxShadow ?? const <BoxShadow>[];
+    final outerMargin = margin ?? EdgeInsets.zero;
     final innerPadding = padding ?? const EdgeInsets.symmetric(vertical: 4);
-    final titleMargin = titlePadding ?? EdgeInsets.only(
-      left: 16,
-      right: 16,
-      top: titleFirst ? 2 : 12,
-      bottom: 8,
-    );
-    final defaultTitleStyle = titleStyle ?? TextStyle(
-      fontSize: 13,
-      fontWeight: MoeFontWeights.emphasis,
-      color: titleColor ?? colors.textSecondary.withValues(alpha: 0.8),
-    );
+    final titleMargin =
+        titlePadding ??
+        EdgeInsets.only(
+          left: outerMargin.left + 12,
+          right: outerMargin.right + 12,
+          top: titleFirst ? 0 : 16,
+          bottom: 8,
+        );
+    final defaultTitleStyle =
+        titleStyle ??
+        TextStyle(
+          fontSize: 13,
+          fontWeight: MoeFontWeights.emphasis,
+          color: titleColor ?? colors.primary,
+        );
 
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
         // 分组标题
@@ -122,21 +126,21 @@ class MoeSettingsGroup extends StatelessWidget {
             padding: titleMargin,
             child: Text(title!, style: defaultTitleStyle),
           ),
-        
+
         // 卡片容器
         Container(
           margin: outerMargin,
-          decoration: MoeG2Decoration(
+          child: MoeFloatingSurface(
+            baseline: MoeMaterialBaseline.text,
             radius: g2Radius,
-            color: bgColor,
-            border: Border.fromBorderSide(borderSide),
-            boxShadow: shadow,
-          ),
-          child: MoeG2ClipRRect(
-            radius: g2Radius,
+            borderRadius: radius,
+            solidColor: bgColor,
+            border: borderSide,
+            shadows: shadow,
             child: Padding(
               padding: innerPadding,
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 mainAxisSize: MainAxisSize.min,
                 children: _processChildren(),
               ),
@@ -150,12 +154,12 @@ class MoeSettingsGroup extends StatelessWidget {
   /// 处理子组件，确保最后一个不显示分割线
   List<Widget> _processChildren() {
     if (children.isEmpty) return children;
-    
+
     return children.asMap().entries.map((entry) {
       final index = entry.key;
       final child = entry.value;
       final isLast = index == children.length - 1;
-      
+
       // 如果是 MoeSettingsRow 且是最后一个，隐藏分割线
       if (isLast && child is MoeSettingsRow) {
         return MoeSettingsRow(
@@ -165,16 +169,20 @@ class MoeSettingsGroup extends StatelessWidget {
           label: child.label,
           labelMaxLines: child.labelMaxLines,
           subtitle: child.subtitle,
+          subtitleWidget: child.subtitleWidget,
           trailingType: child.trailingType,
           trailing: child.trailing,
+          expandTrailing: child.expandTrailing,
           detailText: child.detailText,
           switchValue: child.switchValue,
           onSwitchChanged: child.onSwitchChanged,
           onTap: child.onTap,
+          onLongPress: child.onLongPress,
           enabled: child.enabled,
           showDivider: false, // 最后一个不显示分割线
           iconColor: child.iconColor,
           labelColor: child.labelColor,
+          labelStyle: child.labelStyle,
           subtitleColor: child.subtitleColor,
           backgroundColor: child.backgroundColor,
           pressedBackgroundColor: child.pressedBackgroundColor,
@@ -184,8 +192,29 @@ class MoeSettingsGroup extends StatelessWidget {
           contentPadding: child.contentPadding,
         );
       }
-      
+
       return child;
     }).toList();
+  }
+}
+
+class MoeSettingsContent extends StatelessWidget {
+  const MoeSettingsContent({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final contentWidth = constraints.hasBoundedWidth
+            ? MoeSettingsLayout.contentWidthFor(constraints.maxWidth)
+            : MoeSettingsLayout.maxContentWidth;
+        return Align(
+          alignment: Alignment.topCenter,
+          child: SizedBox(width: contentWidth, child: child),
+        );
+      },
+    );
   }
 }

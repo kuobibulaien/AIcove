@@ -31,12 +31,16 @@ import '../../../theme/tokens.dart';
 enum MoeSettingsRowTrailing {
   /// 显示箭头（用于导航）
   chevron,
+
   /// 显示开关（需配合 switchValue/onSwitchChanged）
   switchControl,
+
   /// 显示文字（需配合 detailText）
   text,
+
   /// 不显示（只有点击效果）
   none,
+
   /// 自定义（使用 trailing 参数）
   custom,
 }
@@ -53,6 +57,7 @@ class MoeSettingsRow extends StatefulWidget {
     this.subtitleWidget,
     this.trailingType = MoeSettingsRowTrailing.chevron,
     this.trailing,
+    this.expandTrailing = false,
     this.detailText,
     this.switchValue,
     this.onSwitchChanged,
@@ -63,6 +68,7 @@ class MoeSettingsRow extends StatefulWidget {
     // === 样式接口 ===
     this.iconColor,
     this.labelColor,
+    this.labelStyle,
     this.subtitleColor,
     this.backgroundColor,
     this.pressedBackgroundColor,
@@ -96,6 +102,9 @@ class MoeSettingsRow extends StatefulWidget {
   /// 自定义右侧控件（trailingType 为 custom 时使用）
   final Widget? trailing;
 
+  /// 让尾部占满标题以外的空间，适用于行内输入框。
+  final bool expandTrailing;
+
   /// 右侧文字（trailingType 为 text 时使用）
   final String? detailText;
 
@@ -118,9 +127,10 @@ class MoeSettingsRow extends StatefulWidget {
   final bool showDivider;
 
   // === 样式接口 ===
-  
+
   final Color? iconColor;
   final Color? labelColor;
+  final TextStyle? labelStyle;
   final Color? subtitleColor;
   final Color? backgroundColor;
   final Color? pressedBackgroundColor;
@@ -136,11 +146,14 @@ class MoeSettingsRow extends StatefulWidget {
 class _MoeSettingsRowState extends State<MoeSettingsRow> {
   bool _pressed = false;
 
-  bool get _isEnabled => widget.enabled && (widget.onTap != null || widget.onSwitchChanged != null);
+  bool get _isEnabled =>
+      widget.enabled &&
+      (widget.onTap != null || widget.onSwitchChanged != null);
 
   void _handleTap() {
-    if (widget.trailingType == MoeSettingsRowTrailing.switchControl && widget.onSwitchChanged != null) {
-      widget.onSwitchChanged!(!widget.switchValue!);
+    if (widget.trailingType == MoeSettingsRowTrailing.switchControl &&
+        widget.onSwitchChanged != null) {
+      widget.onSwitchChanged!(!(widget.switchValue ?? false));
     } else if (widget.onTap != null) {
       widget.onTap!();
     }
@@ -149,15 +162,19 @@ class _MoeSettingsRowState extends State<MoeSettingsRow> {
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
-    
+
     // 解析样式
     final iconColor = widget.iconColor ?? colors.text;
     final labelColor = widget.labelColor ?? colors.text;
     final subtitleColor = widget.subtitleColor ?? colors.muted;
     final bgColor = widget.backgroundColor ?? Colors.transparent;
-    final pressedBg = widget.pressedBackgroundColor ?? colors.surfaceAlt.withValues(alpha: 0.5);
+    final pressedBg =
+        widget.pressedBackgroundColor ??
+        colors.surfaceAlt.withValues(alpha: 0.5);
     final dividerColor = widget.dividerColor ?? colors.divider;
-    final padding = widget.contentPadding ?? const EdgeInsets.symmetric(horizontal: 12, vertical: 11);
+    final padding =
+        widget.contentPadding ??
+        const EdgeInsets.symmetric(horizontal: 12, vertical: 11);
 
     final currentBg = (_pressed && _isEnabled) ? pressedBg : bgColor;
 
@@ -167,10 +184,12 @@ class _MoeSettingsRowState extends State<MoeSettingsRow> {
         GestureDetector(
           onTapDown: _isEnabled ? (_) => setState(() => _pressed = true) : null,
           onTapUp: _isEnabled ? (_) => setState(() => _pressed = false) : null,
-          onTapCancel: _isEnabled ? () => setState(() => _pressed = false) : null,
+          onTapCancel: _isEnabled
+              ? () => setState(() => _pressed = false)
+              : null,
           onTap: _isEnabled ? _handleTap : null,
-          onLongPress: widget.onLongPress,
-          onSecondaryTapUp: widget.onLongPress != null
+          onLongPress: widget.enabled ? widget.onLongPress : null,
+          onSecondaryTapUp: widget.enabled && widget.onLongPress != null
               ? (_) => widget.onLongPress!()
               : null,
           child: AnimatedContainer(
@@ -183,17 +202,21 @@ class _MoeSettingsRowState extends State<MoeSettingsRow> {
                 if (widget.icon != null || widget.iconWidget != null) ...[
                   SizedBox(
                     width: widget.iconContainerWidth,
-                    child: widget.iconWidget ?? Icon(
-                      widget.icon,
-                      size: widget.iconSize,
-                      color: widget.enabled ? iconColor : colors.muted,
-                    ),
+                    child:
+                        widget.iconWidget ??
+                        Icon(
+                          widget.icon,
+                          size: widget.iconSize,
+                          color: widget.enabled ? iconColor : colors.muted,
+                        ),
                   ),
                   const SizedBox(width: 12),
                 ],
-                
+
                 // 标题区
-                Expanded(
+                Flexible(
+                  flex: widget.expandTrailing ? 0 : 1,
+                  fit: FlexFit.tight,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
@@ -201,14 +224,23 @@ class _MoeSettingsRowState extends State<MoeSettingsRow> {
                       Text(
                         widget.label,
                         maxLines: widget.labelMaxLines,
-                        overflow: widget.labelMaxLines != null ? TextOverflow.ellipsis : null,
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: MoeFontWeights.emphasis,
-                          color: widget.enabled ? labelColor : colors.muted,
-                        ),
+                        overflow: widget.labelMaxLines != null
+                            ? TextOverflow.ellipsis
+                            : null,
+                        style:
+                            const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: MoeFontWeights.emphasis,
+                                )
+                                .merge(widget.labelStyle)
+                                .copyWith(
+                                  color: widget.enabled
+                                      ? labelColor
+                                      : colors.muted,
+                                ),
                       ),
-                      if (widget.subtitleWidget != null) ...[                        const SizedBox(height: 2),
+                      if (widget.subtitleWidget != null) ...[
+                        const SizedBox(height: 2),
                         widget.subtitleWidget!,
                       ] else if (widget.subtitle != null) ...[
                         const SizedBox(height: 2),
@@ -216,28 +248,30 @@ class _MoeSettingsRowState extends State<MoeSettingsRow> {
                           widget.subtitle!,
                           style: TextStyle(
                             fontSize: 13,
-                            color: widget.enabled ? subtitleColor : colors.muted.withValues(alpha: 0.6),
+                            color: widget.enabled
+                                ? subtitleColor
+                                : colors.muted.withValues(alpha: 0.6),
                           ),
                         ),
                       ],
                     ],
                   ),
                 ),
-                
+
                 // 右侧控件
-                _buildTrailing(colors),
+                if (widget.expandTrailing) ...[
+                  const SizedBox(width: 12),
+                  Expanded(child: _buildTrailing(colors)),
+                ] else
+                  _buildTrailing(colors),
               ],
             ),
           ),
         ),
-        
+
         // 分割线（全宽）
         if (widget.showDivider)
-          Divider(
-            height: 0.5,
-            thickness: 0.5,
-            color: dividerColor,
-          ),
+          Divider(height: 0.5, thickness: 0.5, color: dividerColor),
       ],
     );
   }
@@ -245,12 +279,8 @@ class _MoeSettingsRowState extends State<MoeSettingsRow> {
   Widget _buildTrailing(MoeColors colors) {
     switch (widget.trailingType) {
       case MoeSettingsRowTrailing.chevron:
-        return Icon(
-          Icons.chevron_right,
-          size: 20,
-          color: colors.muted,
-        );
-        
+        return Icon(Icons.chevron_right, size: 20, color: colors.muted);
+
       case MoeSettingsRowTrailing.switchControl:
         return IgnorePointer(
           child: Switch(
@@ -260,7 +290,7 @@ class _MoeSettingsRowState extends State<MoeSettingsRow> {
             thumbColor: WidgetStateProperty.all(Colors.white),
           ),
         );
-        
+
       case MoeSettingsRowTrailing.text:
         return ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 180),
@@ -270,28 +300,21 @@ class _MoeSettingsRowState extends State<MoeSettingsRow> {
               Flexible(
                 child: Text(
                   widget.detailText ?? '',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: colors.muted,
-                  ),
+                  style: TextStyle(fontSize: 14, color: colors.muted),
                   textAlign: TextAlign.end,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
               const SizedBox(width: 4),
-              Icon(
-                Icons.chevron_right,
-                size: 20,
-                color: colors.muted,
-              ),
+              Icon(Icons.chevron_right, size: 20, color: colors.muted),
             ],
           ),
         );
-        
+
       case MoeSettingsRowTrailing.none:
         return const SizedBox.shrink();
-        
+
       case MoeSettingsRowTrailing.custom:
         return widget.trailing ?? const SizedBox.shrink();
     }

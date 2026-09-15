@@ -9,6 +9,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/utils/message_formatter.dart';
+import '../../ui/theme/tokens.dart';
 import 'settings_models.dart';
 import 'ui_models_api.dart';
 
@@ -215,9 +216,9 @@ AppSettings mapUiModelsToAppSettings(Map<String, dynamic> data) {
 }
 
 AppSettings _mapToSettings(Map<String, dynamic> data) {
-  int normalizeHistoryMessageLimit(num? value) {
-    final limit = value?.toInt() ?? 100;
-    return limit > 0 ? limit : 100;
+  int normalizeContextWindowTokens(num? value) {
+    final limit = value?.toInt() ?? 272000;
+    return limit > 0 ? limit : 272000;
   }
 
   final providers = (data['providers'] as List? ?? const <dynamic>[])
@@ -227,9 +228,10 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
   final fallbackVisible = (data['visible_models'] as List? ?? const <dynamic>[])
       .map((e) => e.toString())
       .toList();
-  final displayNames = (data['model_display_names'] as Map? ??
-          const <String, dynamic>{})
-      .map((key, value) => MapEntry(key.toString(), value?.toString() ?? ''));
+  final displayNames =
+      (data['model_display_names'] as Map? ?? const <String, dynamic>{}).map(
+        (key, value) => MapEntry(key.toString(), value?.toString() ?? ''),
+      );
   final modelTypes = (data['model_types'] as Map? ?? const <String, dynamic>{})
       .map((key, value) => MapEntry(key.toString(), value?.toString() ?? ''));
   // 解析模型级别配置
@@ -239,8 +241,9 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
   for (final entry in modelConfigsRaw.entries) {
     final key = entry.key.toString();
     if (entry.value is Map) {
-      modelConfigs[key] =
-          ModelConfig.fromJson((entry.value as Map).cast<String, dynamic>());
+      modelConfigs[key] = ModelConfig.fromJson(
+        (entry.value as Map).cast<String, dynamic>(),
+      );
     }
   }
   final meta = _calculateModelMeta(
@@ -252,7 +255,8 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
 
   final messageFormatConfig = data['message_format_config'] != null
       ? MessageFormatConfig.fromJson(
-          data['message_format_config'] as Map<String, dynamic>)
+          data['message_format_config'] as Map<String, dynamic>,
+        )
       : const MessageFormatConfig();
 
   final textScaleFactor =
@@ -270,6 +274,7 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     data['windows_window_controls_side']?.toString(),
   );
   final hideUserAvatar = data['hide_user_avatar'] != false;
+  final expandAudioText = data['expand_audio_text'] != false;
   final userAvatar = data['user_avatar'] as String?;
   final userName = data['user_name'] as String?;
   final autoReplySettings = data['auto_reply_settings'] is Map
@@ -302,6 +307,12 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
   // 支持十六进制颜色值（如 'FC96AA'）或旧枚举值（如 'pink'）
   final rawAccent = (data['accent_color'] as String?) ?? 'FC96AA';
   final accentColor = _migrateAccentColor(rawAccent);
+  final glassEffectEnabled = data['glass_effect_enabled'] != false;
+  final glassBlurSigma =
+      ((data['glass_blur_sigma'] as num?)?.toDouble() ?? kDefaultGlassBlurSigma)
+          .clamp(kMinGlassBlurSigma, kMaxGlassBlurSigma)
+          .toDouble();
+  final useLiquidGlass = data['use_liquid_glass'] != false;
 
   // 解析默认聊天模型列表和图片识别模型
   final chatProviderIds = meta.providerIds;
@@ -343,15 +354,6 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
   final primaryChatModelRef = defaultChatModels.isNotEmpty
       ? defaultChatModels.first
       : meta.defaultModel;
-  final rawDefaultVisionModel = data['default_vision_model'] as String?;
-  final defaultVisionModel = rawDefaultVisionModel == null
-      ? null
-      : _normalizeStoredModelRef(
-          rawDefaultVisionModel,
-          providerMap: meta.providerMap,
-          providerIds: chatProviderIds,
-        );
-  final preferVisionAssistant = data['prefer_vision_assistant'] == true;
   final skipVisionCompatDialog = data['skip_vision_compat_dialog'] == true;
 
   return AppSettings(
@@ -359,19 +361,23 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     defaultModelName: primaryChatModelRef,
     // temperature 不设置，默认 null → 不发送，由云端使用默认值
     defaultPersonaPrompt: '',
-    modelList:
-        meta.visible.isEmpty ? <String>['deepseek-reasoner'] : meta.visible,
-    allKnownModels:
-        meta.allKnown.isEmpty ? <String>['deepseek-reasoner'] : meta.allKnown,
+    modelList: meta.visible.isEmpty
+        ? <String>['deepseek-reasoner']
+        : meta.visible,
+    allKnownModels: meta.allKnown.isEmpty
+        ? <String>['deepseek-reasoner']
+        : meta.allKnown,
     modelDisplayNames: displayNames,
     modelTypes: modelTypes,
     modelConfigs: modelConfigs,
     apiKey: '',
     apiBaseUrl: 'https://api.openai.com/v1',
-    imageGenerationEnabled: data['image_generation_enabled'] == true,
+    // 全局开关已移除，常开；是否启用由角色/会话的插件选择决定
+    imageGenerationEnabled: true,
     maxFileUploadMB: 10,
-    historyMessageLimit:
-        normalizeHistoryMessageLimit(data['history_message_limit'] as num?),
+    contextWindowTokens: normalizeContextWindowTokens(
+      data['context_window_tokens'] as num?,
+    ),
     customModels: const <CustomModel>[],
     providers: providers,
     modelProviderMap: meta.providerMap,
@@ -383,17 +389,19 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     imagePreviewScale: imagePreviewScale,
     windowsWindowControlsSide: windowsWindowControlsSide,
     hideUserAvatar: hideUserAvatar,
+    expandAudioText: expandAudioText,
     autoReplySettings: autoReplySettings,
     globalBackgroundColor: globalBackgroundColor,
     chatBackgroundColor: chatBackgroundColor,
     isDarkMode: isDarkMode,
     useSystemTheme: useSystemTheme,
     accentColor: accentColor,
+    glassEffectEnabled: glassEffectEnabled,
+    glassBlurSigma: glassBlurSigma,
+    useLiquidGlass: useLiquidGlass,
     userAvatar: userAvatar,
     userName: userName,
     defaultChatModels: defaultChatModels,
-    defaultVisionModel: defaultVisionModel,
-    preferVisionAssistant: preferVisionAssistant,
     skipVisionCompatDialog: skipVisionCompatDialog,
     enhancedDialogueSettings: enhancedDialogueSettings,
     callFlowSettings: callFlowSettings,
@@ -405,10 +413,12 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
 
 final appSettingsProvider =
     AsyncNotifierProvider<AppSettingsNotifier, AppSettings>(
-        AppSettingsNotifier.new);
+      AppSettingsNotifier.new,
+    );
 
 class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
   UiModelsApi get _api => UiModelsApi();
+  Future<void> _materialWrite = Future<void>.value();
 
   @override
   Future<AppSettings> build() async {
@@ -465,8 +475,10 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
       final data = await _api.fetchAll();
       final names =
           (data['model_display_names'] as Map? ?? const <String, dynamic>{})
-              .map((key, value) =>
-                  MapEntry(key.toString(), value?.toString() ?? ''));
+              .map(
+                (key, value) =>
+                    MapEntry(key.toString(), value?.toString() ?? ''),
+              );
       if (displayName == null || displayName.trim().isEmpty) {
         names.remove(modelId);
         names.remove(normalizedModelId);
@@ -489,8 +501,9 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     await _commit(() async {
       final data = await _api.fetchAll();
       final types = (data['model_types'] as Map? ?? const <String, dynamic>{})
-          .map((key, value) =>
-              MapEntry(key.toString(), value?.toString() ?? ''));
+          .map(
+            (key, value) => MapEntry(key.toString(), value?.toString() ?? ''),
+          );
       if (type == ModelType.chat) {
         final inferredType = ModelType.inferFromModelId(rawModelId);
         if (inferredType == ModelType.chat) {
@@ -544,8 +557,9 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
 
       provider['models'] = models;
       provider['visible_models'] = visibleModels;
-      provider['hidden_models'] =
-          hiddenModels.where((m) => !visibleModels.contains(m)).toList();
+      provider['hidden_models'] = hiddenModels
+          .where((m) => !visibleModels.contains(m))
+          .toList();
       providers[index] = provider;
 
       return _api.updatePartial({
@@ -586,16 +600,21 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
 
   Future<void> setProviderEnabled(String providerId, bool enabled) async {
     await _commit(
-        () => _api.updateProvider(providerId: providerId, enabled: enabled));
+      () => _api.updateProvider(providerId: providerId, enabled: enabled),
+    );
   }
 
   /// 设置渠道是否禁用工具调用
   Future<void> setProviderDisableToolCalling(
-      String providerId, bool disableToolCalling) async {
-    await _commit(() => _api.updateProvider(
-          providerId: providerId,
-          disableToolCalling: disableToolCalling,
-        ));
+    String providerId,
+    bool disableToolCalling,
+  ) async {
+    await _commit(
+      () => _api.updateProvider(
+        providerId: providerId,
+        disableToolCalling: disableToolCalling,
+      ),
+    );
   }
 
   /// 更新渠道的模型参数（temperature, topP, contextMessageLimit, maxContextTokens）
@@ -610,17 +629,19 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     int? maxContextTokens,
     bool clearMaxContextTokens = false,
   }) async {
-    await _commit(() => _api.updateProvider(
-          providerId: providerId,
-          temperature: temperature,
-          clearTemperature: clearTemperature,
-          topP: topP,
-          clearTopP: clearTopP,
-          contextMessageLimit: contextMessageLimit,
-          clearContextMessageLimit: clearContextMessageLimit,
-          maxContextTokens: maxContextTokens,
-          clearMaxContextTokens: clearMaxContextTokens,
-        ));
+    await _commit(
+      () => _api.updateProvider(
+        providerId: providerId,
+        temperature: temperature,
+        clearTemperature: clearTemperature,
+        topP: topP,
+        clearTopP: clearTopP,
+        contextMessageLimit: contextMessageLimit,
+        clearContextMessageLimit: clearContextMessageLimit,
+        maxContextTokens: maxContextTokens,
+        clearMaxContextTokens: clearMaxContextTokens,
+      ),
+    );
   }
 
   /// 设置模型是否禁用工具调用
@@ -648,13 +669,16 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     bool clearChatCapabilities = false,
     int? maxContextTokens,
     bool clearMaxContextTokens = false,
+    ThinkingLevel? thinkingLevel,
+    bool clearThinkingLevel = false,
   }) async {
     final normalizedModelId = _normalizeModelRefForPersist(modelId);
     await _commit(() async {
       final data = await _api.fetchAll();
       final configs =
-          (data['model_configs'] as Map? ?? const <String, dynamic>{})
-              .map((key, value) => MapEntry(key.toString(), value));
+          (data['model_configs'] as Map? ?? const <String, dynamic>{}).map(
+            (key, value) => MapEntry(key.toString(), value),
+          );
 
       // 获取现有配置或创建新配置
       final existingSource = configs[normalizedModelId] ?? configs[modelId];
@@ -674,6 +698,8 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
         clearChatCapabilities: clearChatCapabilities,
         maxContextTokens: maxContextTokens,
         clearMaxContextTokens: clearMaxContextTokens,
+        thinkingLevel: thinkingLevel,
+        clearThinkingLevel: clearThinkingLevel,
       );
 
       if (updated.isDefault) {
@@ -699,10 +725,12 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     required String providerId,
     required List<String> modelIds,
   }) async {
-    await _commit(() => _api.reorderProviderModels(
-          providerId: providerId,
-          modelIds: modelIds,
-        ));
+    await _commit(
+      () => _api.reorderProviderModels(
+        providerId: providerId,
+        modelIds: modelIds,
+      ),
+    );
   }
 
   Future<void> editProvider({
@@ -713,14 +741,16 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     List<String>? capabilities,
     Map<String, dynamic>? customConfig,
   }) async {
-    await _commit(() => _api.updateProvider(
-          providerId: providerId,
-          displayName: displayName,
-          apiBaseUrl: apiBaseUrl,
-          apiKeys: apiKeys,
-          capabilities: capabilities,
-          customConfig: customConfig,
-        ));
+    await _commit(
+      () => _api.updateProvider(
+        providerId: providerId,
+        displayName: displayName,
+        apiBaseUrl: apiBaseUrl,
+        apiKeys: apiKeys,
+        capabilities: capabilities,
+        customConfig: customConfig,
+      ),
+    );
   }
 
   Future<List<String>> previewProviderModels({
@@ -761,8 +791,9 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     final current = state.value;
     if (current == null) return base;
 
-    final usedIds =
-        current.providers.map((p) => p.id.trim().toLowerCase()).toSet();
+    final usedIds = current.providers
+        .map((p) => p.id.trim().toLowerCase())
+        .toSet();
     if (!usedIds.contains(base)) return base;
 
     var index = 2;
@@ -785,18 +816,20 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     Map<String, dynamic>? customConfig,
   }) async {
     final resolvedProviderId = _resolveImportProviderId(provider);
-    await _commit(() => _api.importProvider(
-          providerId: resolvedProviderId,
-          model: name,
-          apiKey: apiKey,
-          apiBaseUrl: apiBaseUrl,
-          displayName: displayName,
-          visibleModels: visibleModels,
-          hiddenModels: hiddenModels,
-          allModels: allModels,
-          capabilities: capabilities,
-          customConfig: customConfig,
-        ));
+    await _commit(
+      () => _api.importProvider(
+        providerId: resolvedProviderId,
+        model: name,
+        apiKey: apiKey,
+        apiBaseUrl: apiBaseUrl,
+        displayName: displayName,
+        visibleModels: visibleModels,
+        hiddenModels: hiddenModels,
+        allModels: allModels,
+        capabilities: capabilities,
+        customConfig: customConfig,
+      ),
+    );
   }
 
   /// 更新渠道的模型列表
@@ -806,12 +839,14 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     List<String>? visibleModels,
     List<String>? hiddenModels,
   }) async {
-    await _commit(() => _api.updateProvider(
-          providerId: providerId,
-          allModels: allModels,
-          visibleModels: visibleModels ?? allModels,
-          hiddenModels: hiddenModels,
-        ));
+    await _commit(
+      () => _api.updateProvider(
+        providerId: providerId,
+        allModels: allModels,
+        visibleModels: visibleModels ?? allModels,
+        hiddenModels: hiddenModels,
+      ),
+    );
   }
 
   /// 添加自定义模型到渠道
@@ -857,19 +892,15 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
 
   Future<void> setMessageChunkingEnabled(bool value) async {
     await _commit(
-        () => _api.updatePartial({'message_chunking_enabled': value}));
-  }
-
-  Future<void> setHistoryMessageLimit(int limit) async {
-    final normalized = limit > 0 ? limit : 100;
-    await _commit(
-      () => _api.updatePartial({'history_message_limit': normalized}),
+      () => _api.updatePartial({'message_chunking_enabled': value}),
     );
   }
 
-  Future<void> setImageGenerationEnabled(bool value) async {
+  Future<void> setContextWindowTokens(int limit) async {
+    final normalized = limit > 0 ? limit : 272000;
     await _commit(
-        () => _api.updatePartial({'image_generation_enabled': value}));
+      () => _api.updatePartial({'context_window_tokens': normalized}),
+    );
   }
 
   Future<void> setBackendApiKey(String key) async {
@@ -885,8 +916,10 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
   Future<void> setTextScaleFactor(double scale) async {
     await _commit(
       () => _api.updatePartial({
-        'text_scale_factor':
-            scale.clamp(kMinTextScaleFactor, kMaxTextScaleFactor),
+        'text_scale_factor': scale.clamp(
+          kMinTextScaleFactor,
+          kMaxTextScaleFactor,
+        ),
       }),
     );
   }
@@ -902,8 +935,10 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
   Future<void> setImagePreviewScale(double scale) async {
     await _commit(
       () => _api.updatePartial({
-        'image_preview_scale':
-            scale.clamp(kMinImagePreviewScale, kMaxImagePreviewScale),
+        'image_preview_scale': scale.clamp(
+          kMinImagePreviewScale,
+          kMaxImagePreviewScale,
+        ),
       }),
     );
   }
@@ -920,6 +955,10 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     await _commit(() => _api.updatePartial({'hide_user_avatar': hide}));
   }
 
+  Future<void> setExpandAudioText(bool expand) async {
+    await _commit(() => _api.updatePartial({'expand_audio_text': expand}));
+  }
+
   Future<void> setUserAvatar(String? avatar) async {
     await _commit(() => _api.updatePartial({'user_avatar': avatar}));
   }
@@ -930,18 +969,23 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
 
   Future<void> updateAutoReplySettings(AutoReplySettings settings) async {
     await _commit(
-        () => _api.updatePartial({'auto_reply_settings': settings.toJson()}));
+      () => _api.updatePartial({'auto_reply_settings': settings.toJson()}),
+    );
   }
 
   Future<void> updateEnhancedDialogueSettings(
-      EnhancedDialogueSettings settings) async {
-    await _commit(() =>
-        _api.updatePartial({'enhanced_dialogue_settings': settings.toJson()}));
+    EnhancedDialogueSettings settings,
+  ) async {
+    await _commit(
+      () =>
+          _api.updatePartial({'enhanced_dialogue_settings': settings.toJson()}),
+    );
   }
 
   Future<void> updateCallFlowSettings(CallFlowSettings settings) async {
     await _commit(
-        () => _api.updatePartial({'call_flow_settings': settings.toJson()}));
+      () => _api.updatePartial({'call_flow_settings': settings.toJson()}),
+    );
   }
 
   Future<void> setStreamSegmentDelaySeconds(double seconds) async {
@@ -953,12 +997,14 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
 
   Future<void> setGlobalBackgroundColor(GlobalBackgroundColor color) async {
     await _commit(
-        () => _api.updatePartial({'global_background_color': color.value}));
+      () => _api.updatePartial({'global_background_color': color.value}),
+    );
   }
 
   Future<void> setChatBackgroundColor(ChatBackgroundColor color) async {
     await _commit(
-        () => _api.updatePartial({'chat_background_color': color.value}));
+      () => _api.updatePartial({'chat_background_color': color.value}),
+    );
   }
 
   Future<void> setDarkMode(bool isDark) async {
@@ -973,13 +1019,48 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     await _commit(() => _api.updatePartial({'accent_color': color}));
   }
 
+  Future<void> setSurfaceMaterial(MoeSurfaceMaterial material) {
+    final next = _materialWrite.then(
+      (_) => _commit(
+        () => _api.updatePartial({
+          'glass_effect_enabled': material != MoeSurfaceMaterial.solid,
+          'use_liquid_glass': material == MoeSurfaceMaterial.liquid,
+        }),
+      ),
+    );
+    _materialWrite = next.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    return next;
+  }
+
+  Future<void> setGlassEffectEnabled(bool enabled) async {
+    await _commit(() => _api.updatePartial({'glass_effect_enabled': enabled}));
+  }
+
+  Future<void> setGlassBlurSigma(double sigma) async {
+    final clamped = sigma
+        .clamp(kMinGlassBlurSigma, kMaxGlassBlurSigma)
+        .toDouble();
+    await _commit(() => _api.updatePartial({'glass_blur_sigma': clamped}));
+  }
+
+  Future<void> setUseLiquidGlass(bool useLiquid) async {
+    await _commit(() => _api.updatePartial({'use_liquid_glass': useLiquid}));
+  }
+
   /// 同时设置暗色模式和是否跟随系统（避免两次状态更新冲突）
-  Future<void> setDarkModeAndSystemTheme(
-      {required bool isDark, required bool useSystem}) async {
-    await _commit(() => _api.updatePartial({
-          'is_dark_mode': isDark,
-          'use_system_theme': useSystem,
-        }));
+  Future<void> setDarkModeAndSystemTheme({
+    required bool isDark,
+    required bool useSystem,
+  }) async {
+    await _commit(
+      () => _api.updatePartial({
+        'is_dark_mode': isDark,
+        'use_system_theme': useSystem,
+      }),
+    );
   }
 
   /// 设置默认聊天模型列表（有序，第一个为首选）
@@ -991,42 +1072,21 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
         normalized.add(modelRef);
       }
     }
-    final payload = <String, dynamic>{
-      'default_chat_models': normalized,
-    };
+    final payload = <String, dynamic>{'default_chat_models': normalized};
     if (normalized.isNotEmpty) {
       payload['default_model'] = normalized.first;
     }
-    await _commit(
-      () => _api.updatePartial(payload),
-    );
-  }
-
-  /// 设置默认图片识别模型
-  Future<void> setDefaultVisionModel(String? modelId) async {
-    final normalized =
-        modelId == null ? null : _normalizeModelRefForPersist(modelId);
-    await _commit(
-      () => _api.updatePartial({'default_vision_model': normalized}),
-    );
-  }
-
-  /// 设置是否优先使用视觉辅助模型
-  Future<void> setPreferVisionAssistant(bool prefer) async {
-    await _commit(
-      () => _api.updatePartial({'prefer_vision_assistant': prefer}),
-    );
+    await _commit(() => _api.updatePartial(payload));
   }
 
   /// 设置是否跳过视觉兼容性弹窗
   Future<void> setSkipVisionCompatDialog(bool skip) async {
     await _commit(
-        () => _api.updatePartial({'skip_vision_compat_dialog': skip}));
+      () => _api.updatePartial({'skip_vision_compat_dialog': skip}),
+    );
   }
 
-  Future<void> _commit(
-    Future<Map<String, dynamic>> Function() mutation,
-  ) async {
+  Future<void> _commit(Future<Map<String, dynamic>> Function() mutation) async {
     final data = await mutation();
     state = AsyncData(_mapToSettings(data));
   }
