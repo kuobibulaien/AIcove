@@ -1,2 +1,6 @@
 #include "../../Flutter/Flutter-Release.xcconfig"
 #include "Warnings.xcconfig"
+
+// Xcode 27 lipo 回归：多架构 -verify_arch 报错，Release 先只出 arm64；
+// 需要通用包时删除本行（前提 lipo 恢复）或改用 tool/lipo-shim 思路。
+ARCHS = arm64
