@@ -644,8 +644,10 @@ class _AnimatedWaveformState extends State<_AnimatedWaveform>
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(duration: kAnimLong, vsync: this)
-      ..repeat();
+    _controller = AnimationController(duration: kAnimLong, vsync: this);
+    if (widget.isPlaying) {
+      _controller.repeat();
+    }
 
     // 初始化随机种子，让波形看起来更自然
     _generateSeeds();

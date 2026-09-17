@@ -16,7 +16,9 @@ import 'package:aicove_flutter/src/features/plugins/plugin_providers.dart';
 import 'package:aicove_flutter/src/features/plugins/tts/tts_config.dart';
 import 'package:aicove_flutter/src/features/plugins/tts/voice_preset_application.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
+import 'package:aicove_flutter/src/ui/features/auto_reply/pages/auto_reply_history_log_page.dart';
 import 'package:aicove_flutter/src/ui/features/auto_reply/pages/auto_reply_settings_page.dart';
+import 'package:aicove_flutter/src/ui/features/auto_reply/pages/auto_reply_trigger_list_page.dart';
 import 'package:aicove_flutter/src/ui/features/auto_reply/widgets/auto_reply_settings_cards.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/image_plugin_detail_page.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/memory_plugin_detail_page.dart';
@@ -117,7 +119,7 @@ List<Rect> _groupCardRects(WidgetTester tester) {
           find
               .descendant(
                 of: find.byWidget(group),
-                matching: find.byType(MoeFloatingSurface),
+                matching: find.byType(MoeContentSurface),
               )
               .first,
         ),
@@ -308,7 +310,7 @@ void main() {
     }
   });
 
-  testWidgets('记忆库无 embedding 渠道时仍同宽且可清除失效配置', (tester) async {
+  testWidgets('记忆库失效配置点击清除后写回空且同宽', (tester) async {
     await _mount(
       tester,
       const MemoryPluginDetailPage(),
@@ -323,6 +325,22 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.textContaining('当前配置已失效'), findsOneWidget);
     _expectUnifiedSurfaceWidth(tester);
+    final element = tester.element(find.byType(MemoryPluginDetailPage));
+    final container = ProviderScope.containerOf(element);
+    await tester.tap(find.textContaining('点击清除'));
+    await tester.pumpAndSettle();
+    final config = container.read(memoryPluginConfigProvider);
+    expect(config.embeddingProviderId, isNull);
+    expect(config.embeddingModelName, isNull);
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      final prefs = await SharedPreferences.getInstance();
+      final stored = prefs.getString('aicove.plugins.memory.config');
+      expect(stored, isNotNull);
+      final decoded = jsonDecode(stored!) as Map<String, dynamic>;
+      expect(decoded['embeddingProviderId'], isNull);
+      expect(decoded['embeddingModelName'], isNull);
+    });
   });
 
   testWidgets('主动回复开启时全部分组同列等宽', (tester) async {
@@ -431,19 +449,91 @@ void main() {
     });
   });
 
-  testWidgets('时间感知两个开关仍回写配置', (tester) async {
+  testWidgets('时间感知两个开关分别回写配置且互不影响', (tester) async {
     await _mount(tester, const TimeAwarenessPluginDetailPage());
-    expect(find.text('历史消息时间戳'), findsOneWidget);
     _expectUnifiedSurfaceWidth(tester);
     final element = tester.element(find.byType(TimeAwarenessPluginDetailPage));
     final container = ProviderScope.containerOf(element);
-    Future<bool> flag() async => container
+    Future<bool> timestamp() async => container
         .read(timeAwarenessPluginConfigProvider)
         .includeMessageTimestamp;
-    final before = await flag();
+    Future<bool> currentTime() async =>
+        container.read(timeAwarenessPluginConfigProvider).includeCurrentTime;
+    final timestampBefore = await timestamp();
+    final currentBefore = await currentTime();
+
     await tester.tap(find.text('历史消息时间戳'));
     await tester.pumpAndSettle();
-    expect(await flag(), isNot(before));
+    expect(await timestamp(), isNot(timestampBefore));
+    expect(await currentTime(), currentBefore);
+
+    await tester.tap(find.text('当前时间注入'));
+    await tester.pumpAndSettle();
+    expect(await currentTime(), isNot(currentBefore));
+    expect(await timestamp(), isNot(timestampBefore));
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('语音搜索滚出卸载后回来仍保持查询与过滤', (tester) async {
+    await _mount(tester, const TtsPluginDetailPage(), voicePresetCount: 1000);
+    final search = find.byKey(const ValueKey('voice-preset-search'));
+    await tester.enterText(search, '预设');
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('voice-preset-p0')),
+      findsOneWidget,
+      reason: '过滤后首条应可见',
+    );
+    final scrollable = find.descendant(
+      of: find.byType(CustomScrollView),
+      matching: find.byType(Scrollable),
+    );
+    for (var i = 0; i < 10; i++) {
+      await tester.drag(scrollable.first, const Offset(0, -800));
+      await tester.pump();
+    }
+    await tester.pumpAndSettle();
+    expect(search, findsNothing, reason: '搜索栏应已滚出屏幕并卸载');
+    await tester.dragUntilVisible(
+      search,
+      scrollable.first,
+      const Offset(0, 400),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(of: search, matching: find.text('预设')),
+      findsOneWidget,
+      reason: '搜索栏重建后应保留原查询文本',
+    );
+    expect(
+      find.byKey(const ValueKey('voice-preset-p0')),
+      findsOneWidget,
+      reason: '过滤结果应与滚出前一致',
+    );
+    await tester.enterText(search, '预设0999');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('voice-preset-p999')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final (label, page) in [
+    ('触发器列表', const AutoReplyTriggerListPage()),
+    ('历史日志', const AutoReplyHistoryLogPage()),
+  ]) {
+    for (final size in [const Size(360, 800), const Size(1000, 800)]) {
+      for (final scale in [1.0, 1.8]) {
+        testWidgets('主动回复$label $size scale=$scale 卡片同宽无溢出', (tester) async {
+          await _mount(tester, page, size: size, scale: scale);
+          expect(tester.takeException(), isNull);
+          _expectUnifiedSurfaceWidth(tester);
+          final scroll = find.byType(Scrollable).first;
+          for (var i = 0; i < 3; i++) {
+            await tester.drag(scroll, const Offset(0, -300));
+            await tester.pumpAndSettle();
+            expect(tester.takeException(), isNull);
+          }
+        });
+      }
+    }
+  }
 }

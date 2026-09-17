@@ -11,8 +11,10 @@ import '../../debug/pages/prompt_node_management_page.dart';
 import '../../../shared/widgets/moe_floating_surface.dart';
 
 import '../../../../ui/theme/tokens.dart';
+import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/moe_app_bar.dart';
 import '../../../../ui/shared/widgets/moe_adaptive_shell.dart';
+import '../../../../ui/shared/widgets/moe_content_surface.dart';
 import '../../../../ui/shared/widgets/list/moe_settings_row.dart';
 import '../../debug/pages/debug_center_page.dart';
 import 'chat_plugin_settings_page.dart';
@@ -131,10 +133,6 @@ class _SettingsContentState extends ConsumerState<SettingsContent> {
   Widget build(BuildContext context) {
     final settings = ref.watch(appSettingsProvider).valueOrNull;
     final colors = context.moeColors;
-    // Preserve the current theme while lifting the profile off the backdrop.
-    final cardColor = Theme.of(context).brightness == Brightness.dark
-        ? colors.text.withValues(alpha: 0.06)
-        : colors.surface.withValues(alpha: 0.88);
     final name = settings?.userName?.trim();
     final displayName = name == null || name.isEmpty ? '设置个人资料' : name;
     final terms = _query.trim().toLowerCase().split(RegExp(r'\s+'));
@@ -171,11 +169,9 @@ class _SettingsContentState extends ConsumerState<SettingsContent> {
                     _outerInset,
                     16,
                   ),
-                  child: Material(
+                  // Preserve the current theme while lifting the profile off the backdrop.
+                  child: MoeContentSurface(
                     key: const ValueKey('settings-profile-card'),
-                    color: cardColor,
-                    borderRadius: BorderRadius.circular(20),
-                    clipBehavior: Clip.antiAlias,
                     child: InkWell(
                       onTap: _openProfile,
                       child: Padding(
@@ -232,11 +228,8 @@ class _SettingsContentState extends ConsumerState<SettingsContent> {
                   padding: const EdgeInsets.symmetric(
                     horizontal: _outerInset,
                   ),
-                  child: Material(
+                  child: MoeContentSurface(
                     key: const ValueKey('settings-entry-container'),
-                    color: cardColor,
-                    borderRadius: BorderRadius.circular(20),
-                    clipBehavior: Clip.antiAlias,
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -289,10 +282,7 @@ class _SettingsContentState extends ConsumerState<SettingsContent> {
       iconWidget: Container(
         width: 30,
         height: 30,
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(7),
-        ),
+        decoration: MoeG2Decoration(radius: 7, color: color),
         child: Icon(icon, color: Colors.white, size: 19),
       ),
       contentPadding: const EdgeInsets.symmetric(

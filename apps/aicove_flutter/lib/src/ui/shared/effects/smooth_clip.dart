@@ -48,6 +48,35 @@ class SmoothClipRRect extends StatelessWidget {
   }
 }
 
+SmoothRectangleBorder moeG2Shape({
+  double radius = 20,
+  BorderRadius? borderRadius,
+  BorderSide side = BorderSide.none,
+}) {
+  final corners = borderRadius ?? BorderRadius.circular(radius);
+  return SmoothRectangleBorder(
+    borderRadius: SmoothBorderRadius.only(
+      topLeft: SmoothRadius(
+        cornerRadius: corners.topLeft.x,
+        cornerSmoothing: 0.6,
+      ),
+      topRight: SmoothRadius(
+        cornerRadius: corners.topRight.x,
+        cornerSmoothing: 0.6,
+      ),
+      bottomLeft: SmoothRadius(
+        cornerRadius: corners.bottomLeft.x,
+        cornerSmoothing: 0.6,
+      ),
+      bottomRight: SmoothRadius(
+        cornerRadius: corners.bottomRight.x,
+        cornerSmoothing: 0.6,
+      ),
+    ),
+    side: side,
+  );
+}
+
 /// 平滑圆角裁剪器（兼容旧命名）
 /// 
 /// 内部使用 Figma G2 圆角路径。
@@ -59,12 +88,9 @@ class SmoothRectClipper extends CustomClipper<Path> {
   
   @override
   Path getClip(Size size) {
-    final shape = SmoothRectangleBorder(
-      borderRadius: SmoothBorderRadius.all(
-        SmoothRadius(cornerRadius: radius, cornerSmoothing: 0.6),
-      ),
-    );
-    return shape.getOuterPath(Rect.fromLTWH(0, 0, size.width, size.height));
+    return moeG2Shape(
+      radius: radius,
+    ).getOuterPath(Rect.fromLTWH(0, 0, size.width, size.height));
   }
   
   @override
@@ -120,11 +146,7 @@ class _SmoothRectPainter extends BoxPainter {
   @override
   void paint(Canvas canvas, Offset offset, ImageConfiguration configuration) {
     final rect = offset & configuration.size!;
-    final shape = SmoothRectangleBorder(
-      borderRadius: SmoothBorderRadius.all(
-        SmoothRadius(cornerRadius: _decoration.radius, cornerSmoothing: 0.6),
-      ),
-    );
+    final shape = moeG2Shape(radius: _decoration.radius);
     final path = shape.getOuterPath(rect);
 
     // 绘制阴影

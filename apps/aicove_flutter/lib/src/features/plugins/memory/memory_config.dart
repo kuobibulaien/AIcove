@@ -1,3 +1,5 @@
+const Object _unset = Object();
+
 class MemoryConfig {
   /// 全局常开：持久化读取时恒为 true；是否启用由角色/会话的插件选择决定。
   final bool enabled;
@@ -62,8 +64,8 @@ class MemoryConfig {
     String? summarizeProviderId,
     String? summarizeModelName,
     String? summarizePrompt,
-    String? embeddingProviderId,
-    String? embeddingModelName,
+    Object? embeddingProviderId = _unset,
+    Object? embeddingModelName = _unset,
     bool? fallbackEmbeddingEnabled,
     String? fallbackEmbeddingProviderId,
     String? fallbackEmbeddingModelName,
@@ -86,8 +88,12 @@ class MemoryConfig {
       summarizeProviderId: summarizeProviderId ?? this.summarizeProviderId,
       summarizeModelName: summarizeModelName ?? this.summarizeModelName,
       summarizePrompt: summarizePrompt ?? this.summarizePrompt,
-      embeddingProviderId: embeddingProviderId ?? this.embeddingProviderId,
-      embeddingModelName: embeddingModelName ?? this.embeddingModelName,
+      embeddingProviderId: identical(embeddingProviderId, _unset)
+          ? this.embeddingProviderId
+          : embeddingProviderId as String?,
+      embeddingModelName: identical(embeddingModelName, _unset)
+          ? this.embeddingModelName
+          : embeddingModelName as String?,
       fallbackEmbeddingEnabled:
           fallbackEmbeddingEnabled ?? this.fallbackEmbeddingEnabled,
       fallbackEmbeddingProviderId:

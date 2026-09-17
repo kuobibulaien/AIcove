@@ -207,6 +207,8 @@ const double kDefaultGlassBlurSigma = 16.0;
 const double kMinGlassBlurSigma = 0.0;
 const double kMaxGlassBlurSigma = 32.0;
 
+const double kMaxContentSurfaceBlurSigma = 8.0;
+
 /// Per-component minimums; floating controls intentionally have no baseline.
 @immutable
 class MoeMaterialBaseline {

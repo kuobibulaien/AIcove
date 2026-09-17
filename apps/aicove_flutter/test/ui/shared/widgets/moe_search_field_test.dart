@@ -141,4 +141,28 @@ void main() {
       }
     }
   }
+
+  testWidgets('controller-only usage updates controller and clears safely', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(360, 200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final controller = TextEditingController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(extensions: [MoeColors.light()]),
+        home: Scaffold(
+          body: MoeSearchField(controller: controller),
+        ),
+      ),
+    );
+    await tester.enterText(find.byType(TextField), '角色');
+    await tester.pump();
+    expect(controller.text, '角色');
+    await tester.tap(find.byTooltip('清除搜索'));
+    await tester.pumpAndSettle();
+    expect(controller.text, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
 }

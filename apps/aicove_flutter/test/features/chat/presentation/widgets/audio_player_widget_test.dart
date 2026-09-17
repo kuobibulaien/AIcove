@@ -884,4 +884,198 @@ void main() {
       }
     }
   });
+
+  group('波形动画帧调度回归', () {
+    testWidgets('预就绪未播放语音挂载后不持续调度帧', (tester) async {
+      const url = 'https://example.invalid/ready-unplayed.wav';
+      final backend = _FakeAudioPlaybackBackend(
+        duration: const Duration(seconds: 2),
+      );
+      final controller = AudioPlayerController(url, backend: backend);
+      await tester.runAsync(() async {
+        await _waitUntil(() => backend.setUrlCalls.isNotEmpty);
+        await _settleAsync();
+      });
+      expect(controller.state.isLoading, isFalse);
+      expect(controller.state.isPlaying, isFalse);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            audioPlayerControllerProvider.overrideWith(
+              (ref, url) => controller,
+            ),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: Center(
+                child: AudioPlayerWidget(
+                  block: AudioBlock(
+                    id: 'ready-unplayed-audio',
+                    messageId: 'm',
+                    url: url,
+                    durationSeconds: 2,
+                  ),
+                  textColor: Colors.black,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(seconds: 2));
+      expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+
+      var scheduledAfterPump = 0;
+      for (var i = 0; i < 30; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        if (tester.binding.hasScheduledFrame) scheduledAfterPump++;
+      }
+      expect(scheduledAfterPump, 0);
+      expect(tester.binding.transientCallbackCount, 0);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    });
+
+    testWidgets('新建语音控制器加载完成后静止不调度帧', (tester) async {
+      final backend = _FakeAudioPlaybackBackend(
+        duration: const Duration(seconds: 2),
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            audioPlayerControllerProvider.overrideWith(
+              (ref, url) => AudioPlayerController(url, backend: backend),
+            ),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: Center(
+                child: AudioPlayerWidget(
+                  block: AudioBlock(
+                    id: 'fresh-audio',
+                    messageId: 'm',
+                    url: 'https://example.invalid/fresh-audio.wav',
+                    durationSeconds: 2,
+                  ),
+                  textColor: Colors.black,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle(
+        const Duration(milliseconds: 100),
+        EnginePhase.sendSemanticsUpdate,
+        const Duration(seconds: 5),
+      );
+      expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+
+      var scheduledAfterPump = 0;
+      for (var i = 0; i < 30; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        if (tester.binding.hasScheduledFrame) scheduledAfterPump++;
+      }
+      expect(scheduledAfterPump, 0);
+      expect(tester.binding.transientCallbackCount, 0);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    });
+
+    testWidgets('播放中波形持续调度帧，暂停、完成与卸载后停止', (tester) async {
+      const url = 'https://example.invalid/playing-audio.wav';
+      final backend = _FakeAudioPlaybackBackend(
+        duration: const Duration(seconds: 2),
+      );
+      final controller = AudioPlayerController(url, backend: backend);
+      await tester.runAsync(() async {
+        await _waitUntil(() => backend.setUrlCalls.isNotEmpty);
+        await controller.togglePlayPause();
+        await _settleAsync();
+      });
+      expect(controller.state.isPlaying, isTrue);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            audioPlayerControllerProvider.overrideWith(
+              (ref, url) => controller,
+            ),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: Center(
+                child: AudioPlayerWidget(
+                  block: AudioBlock(
+                    id: 'playing-audio',
+                    messageId: 'm',
+                    url: url,
+                    durationSeconds: 2,
+                  ),
+                  textColor: Colors.black,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+
+      var scheduledAfterPump = 0;
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        if (tester.binding.hasScheduledFrame) scheduledAfterPump++;
+      }
+      expect(scheduledAfterPump, 10);
+
+      await tester.tap(find.byIcon(Icons.pause_rounded));
+      await tester.pumpAndSettle(
+        const Duration(milliseconds: 100),
+        EnginePhase.sendSemanticsUpdate,
+        const Duration(seconds: 5),
+      );
+      expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+      scheduledAfterPump = 0;
+      for (var i = 0; i < 30; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        if (tester.binding.hasScheduledFrame) scheduledAfterPump++;
+      }
+      expect(scheduledAfterPump, 0);
+      expect(tester.binding.transientCallbackCount, 0);
+
+      await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+      await tester.pump();
+      expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+      scheduledAfterPump = 0;
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        if (tester.binding.hasScheduledFrame) scheduledAfterPump++;
+      }
+      expect(scheduledAfterPump, greaterThan(0));
+
+      backend.emitCompleted();
+      await tester.pumpAndSettle(
+        const Duration(milliseconds: 100),
+        EnginePhase.sendSemanticsUpdate,
+        const Duration(seconds: 5),
+      );
+      scheduledAfterPump = 0;
+      for (var i = 0; i < 30; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        if (tester.binding.hasScheduledFrame) scheduledAfterPump++;
+      }
+      expect(scheduledAfterPump, 0);
+      expect(tester.binding.transientCallbackCount, 0);
+
+      await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+      await tester.pump();
+      expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      await tester.pump();
+      expect(tester.binding.transientCallbackCount, 0);
+    });
+  });
 }

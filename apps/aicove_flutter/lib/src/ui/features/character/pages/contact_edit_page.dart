@@ -536,14 +536,13 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
   }
 
   Widget _buildShellCard(MoeColors colors, {required double height}) {
-    return Container(
-      height: height,
-      decoration: BoxDecoration(
-        // 与真实卡片（ContactEditCard / MoeSettingsGroup）同色，避免骨架屏闪出第三种背景色
-        color: colors.componentBackground,
-        border: Border.all(color: colors.borderLight, width: borderWidth),
-        borderRadius: BorderRadius.circular(18),
+    // 与真实卡片（ContactEditCard / MoeSettingsGroup）同色，避免骨架屏闪出第三种背景色
+    return MoeContentSurface(
+      border: BorderSide(
+        color: colors.border.withValues(alpha: 0.06),
+        width: 0.6,
       ),
+      child: SizedBox(height: height),
     );
   }
 

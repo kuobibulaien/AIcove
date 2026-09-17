@@ -8,7 +8,7 @@ import 'moe_floating_surface.dart';
 class MoeSearchField extends StatefulWidget {
   const MoeSearchField({
     super.key,
-    required this.onChanged,
+    this.onChanged,
     this.hintText = '搜索',
     this.controller,
     this.initialValue = '',
@@ -16,7 +16,7 @@ class MoeSearchField extends StatefulWidget {
     this.padding = const EdgeInsets.fromLTRB(12, 4, 12, 10),
   });
 
-  final ValueChanged<String> onChanged;
+  final ValueChanged<String>? onChanged;
   final String hintText;
   final TextEditingController? controller;
   final String initialValue;
@@ -147,7 +147,7 @@ class _MoeSearchFieldState extends State<MoeSearchField> {
                               _focusNode.unfocus();
                             } else {
                               _controller.clear();
-                              widget.onChanged('');
+                              widget.onChanged?.call('');
                               _focusNode.requestFocus();
                             }
                           },

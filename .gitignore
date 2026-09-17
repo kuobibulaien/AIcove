@@ -23,3 +23,14 @@ scratch/aicove_data_backup_*/
 
 # Portable cloud backups contain private account data
 *.aicove-cloud
+.codex-temp/
+scratch/
+.gradle/
+*.hprof
+*.jks
+*.keystore
+*.pem
+*.key
+.kotlin/
+docs/项目记忆/需求日志.md
+docs/项目记忆/历史任务/旧工作日志-2026-07.md

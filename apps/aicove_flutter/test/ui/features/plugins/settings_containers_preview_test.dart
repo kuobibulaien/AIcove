@@ -22,6 +22,7 @@ import 'package:aicove_flutter/src/ui/features/plugins/pages/memory_plugin_detai
 import 'package:aicove_flutter/src/ui/features/plugins/pages/tavern_plugin_detail_page.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/time_awareness_plugin_detail_page.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/tts_plugin_detail_page.dart';
+import 'package:aicove_flutter/src/ui/features/settings/pages/settings_page.dart';
 import 'package:aicove_flutter/src/ui/shared/animations/parallax_slide_page_route.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_adaptive_shell.dart';
@@ -115,11 +116,16 @@ Widget _wrap({
       fontFamily: _write ? _fontFamily : null,
       extensions: [colors],
     ),
-    builder: (context, child) => MediaQuery(
-      data: MediaQuery.of(
-        context,
-      ).copyWith(textScaler: TextScaler.linear(scale)),
-      child: child!,
+    builder: (context, child) => MoeGlassTheme(
+      enabled: true,
+      blurSigma: 16,
+      useLiquidGlass: false,
+      child: MediaQuery(
+        data: MediaQuery.of(
+          context,
+        ).copyWith(textScaler: TextScaler.linear(scale)),
+        child: child!,
+      ),
     ),
     home: child,
   );
@@ -229,42 +235,48 @@ void main() {
       });
     }
     testWidgets('narrow contact sheet dark=$dark', (tester) async {
-      tester.view.devicePixelRatio = 1;
-      tester.view.physicalSize = const Size(360 * 5 + 24, 800);
-      addTearDown(tester.view.reset);
-      final store = await seedStore(tester);
-      final key = GlobalKey();
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: overrides(store: store),
-          child: _wrap(
-            dark: dark,
-            scale: 1.0,
-            child: RepaintBoundary(
-              key: key,
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    for (final entry in _pages.entries)
-                      SizedBox(width: 360, height: 800, child: entry.value),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-      await _settle(tester);
-      expect(tester.takeException(), isNull);
-      if (_write) {
-        await _capture(
-          tester,
-          key,
-          'contact-narrow-${dark ? 'dark' : 'light'}',
+      if (!_write) return;
+      final mode = dark ? 'dark' : 'light';
+      await tester.runAsync(() async {
+        final images = <ui.Image>[];
+        for (final page in _pages.keys) {
+          final file = File('$_outDir/narrow-$mode-$page.png');
+          expect(
+            file.existsSync(),
+            isTrue,
+            reason: '缺少已渲染窄图 narrow-$mode-$page.png',
+          );
+          final codec = await ui.instantiateImageCodec(
+            await file.readAsBytes(),
+          );
+          images.add((await codec.getNextFrame()).image);
+        }
+        final tileWidth = images.first.width;
+        final tileHeight = images.first.height;
+        for (final image in images) {
+          expect(image.width, tileWidth);
+          expect(image.height, tileHeight);
+        }
+        final recorder = ui.PictureRecorder();
+        final canvas = Canvas(recorder);
+        var dx = 0.0;
+        for (final image in images) {
+          canvas.drawImage(image, Offset(dx, 0), Paint());
+          dx += tileWidth;
+        }
+        final combined = await recorder.endRecording().toImage(
+          tileWidth * images.length,
+          tileHeight,
         );
-      }
+        final data = await combined.toByteData(format: ui.ImageByteFormat.png);
+        await File(
+          '$_outDir/contact-narrow-$mode.png',
+        ).writeAsBytes(data!.buffer.asUint8List());
+        for (final image in images) {
+          image.dispose();
+        }
+        combined.dispose();
+      });
     });
   }
 
@@ -288,7 +300,7 @@ void main() {
               child: MoeAdaptiveShell(
                 navigatorKey: nav,
                 observer: observer,
-                primary: const Scaffold(body: Text('一级')),
+                primary: const SettingsPage(),
                 detail: Navigator(
                   key: nav,
                   observers: [observer],

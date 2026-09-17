@@ -5,14 +5,14 @@ library;
 
 import 'package:flutter/material.dart';
 
-import '../../../shared/widgets/moe_floating_surface.dart';
+import '../../../shared/widgets/moe_content_surface.dart';
 import '../../../theme/tokens.dart';
 
 class ContactEditCard extends StatelessWidget {
   const ContactEditCard({
     super.key,
     required this.child,
-    this.padding = const EdgeInsets.all(16),
+    this.padding = MoeSettingsLayout.contentPadding,
   });
 
   final Widget child;
@@ -20,14 +20,9 @@ class ContactEditCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.moeColors;
-
-    return MoeFloatingSurface(
-      baseline: MoeMaterialBaseline.text,
-      radius: 16,
+    return MoeContentSurface(
+      radius: MoeSettingsLayout.cardRadius,
       padding: padding,
-      solidColor: colors.componentBackground,
-      shadows: const [],
       child: child,
     );
   }

@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 
@@ -65,7 +66,7 @@ void main() {
 
       final expected = _expectedContentWidth(width);
       final surfaces = tester
-          .widgetList<MoeFloatingSurface>(find.byType(MoeFloatingSurface))
+          .widgetList<MoeContentSurface>(find.byType(MoeContentSurface))
           .map((w) => tester.getRect(find.byWidget(w)))
           .toList();
       expect(surfaces, hasLength(2));
@@ -102,7 +103,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     final expected = _expectedContentWidth(460);
-    final card = tester.getRect(find.byType(MoeFloatingSurface));
+    final card = tester.getRect(find.byType(MoeContentSurface));
     expect(card.width, closeTo(expected, 0.01));
     expect(tester.takeException(), isNull);
   });
@@ -121,7 +122,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    final card = tester.getRect(find.byType(MoeFloatingSurface));
+    final card = tester.getRect(find.byType(MoeContentSurface));
     expect(card.width, closeTo(760, 0.01));
     expect(tester.takeException(), isNull);
   });
@@ -135,6 +136,16 @@ void main() {
       testWidgets(
         'material props stay delegated dark=$dark glass=$enabled liquid=$liquid',
         (tester) async {
+          MoeLiquidGlassService.setMockState(
+            initialized: true,
+            available: true,
+          );
+          addTearDown(
+            () => MoeLiquidGlassService.setMockState(
+              initialized: false,
+              available: false,
+            ),
+          );
           await tester.pumpWidget(
             _wrap(
               dark: dark,
@@ -149,13 +160,32 @@ void main() {
             ),
           );
           await tester.pumpAndSettle();
-          final surface = tester.widget<MoeFloatingSurface>(
-            find.byType(MoeFloatingSurface),
+          final surface = tester.widget<MoeContentSurface>(
+            find.byType(MoeContentSurface),
           );
-          expect(surface.baseline, MoeMaterialBaseline.text);
-          expect(surface.useLiquid, isNull);
-          expect(surface.blurSigma, isNull);
+          final group = find.byType(MoeSettingsGroup);
+          expect(surface.color, isNotNull);
+          expect(surface.blurSigma, 0);
           expect(surface.borderRadius, BorderRadius.circular(20));
+          expect(
+            find.descendant(of: group, matching: find.byType(MoeLiquidGlass)),
+            findsNothing,
+          );
+          expect(
+            find.descendant(of: group, matching: find.byType(AdaptiveGlass)),
+            findsNothing,
+          );
+          expect(
+            find.descendant(of: group, matching: find.byType(BackdropFilter)),
+            findsNothing,
+          );
+          expect(
+            find.descendant(
+              of: group,
+              matching: find.byType(MoeFloatingSurface),
+            ),
+            findsNothing,
+          );
           expect(tester.takeException(), isNull);
         },
       );
@@ -178,7 +208,7 @@ void main() {
       find.byType(MoeSettingsGroup),
     );
     expect(group.margin, isNull);
-    final card = tester.getRect(find.byType(MoeFloatingSurface));
+    final card = tester.getRect(find.byType(MoeContentSurface));
     final content = tester.getRect(find.byType(MoeSettingsContent));
     expect(
       card.left,

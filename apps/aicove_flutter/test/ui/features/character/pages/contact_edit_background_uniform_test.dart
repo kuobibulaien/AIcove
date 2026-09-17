@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:aicove_flutter/src/features/agent_context/providers/preset_recipe_provider.dart';
@@ -80,10 +81,83 @@ void main() {
       });
     });
   });
+
+  themes.forEach((themeName, scenario) {
+    testWidgets(
+        'contact edit cards stay content surfaces under global liquid '
+        '($themeName)', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      MoeLiquidGlassService.setMockState(initialized: true, available: true);
+      addTearDown(() => MoeLiquidGlassService.setMockState());
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final conversation = Conversation(
+        id: 'background-unify-liquid',
+        title: 'Synthetic',
+        displayName: 'Synthetic',
+        createdAt: DateTime(2026, 9, 12),
+        updatedAt: DateTime(2026, 9, 12),
+      );
+
+      await tester.pumpWidget(ProviderScope(
+        overrides: [
+          presetRecipeListProvider
+              .overrideWith((ref) async => const <PresetRecipeSummary>[]),
+        ],
+        child: MaterialApp(
+          builder: (context, child) => MoeGlassTheme(
+              enabled: true,
+              blurSigma: 16,
+              useLiquidGlass: true,
+              child: child!),
+          theme: ThemeData(
+            brightness: scenario.dark ? Brightness.dark : Brightness.light,
+            extensions: <ThemeExtension<dynamic>>[scenario.colors],
+          ),
+          home: ContactEditPage(
+            conversation: conversation,
+            initialSnapshot:
+                ContactEditSnapshot.fromConversation(conversation),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      final settingsGroups = find.byType(MoeSettingsGroup);
+      expect(settingsGroups, findsAtLeastNWidgets(3));
+
+      final cardColors = <Color>{
+        for (var i = 0; i < settingsGroups.evaluate().length; i++)
+          _decorationColor(tester, settingsGroups.at(i)),
+      };
+      expect(cardColors, {scenario.colors.componentBackground});
+
+      for (var i = 0; i < settingsGroups.evaluate().length; i++) {
+        final group = settingsGroups.at(i);
+        expect(
+          find.descendant(of: group, matching: find.byType(MoeLiquidGlass)),
+          findsNothing,
+          reason: '内容分组不得产生液态材质',
+        );
+        expect(
+          find.descendant(of: group, matching: find.byType(AdaptiveGlass)),
+          findsNothing,
+          reason: '内容分组不得产生液态材质',
+        );
+        expect(
+          find.descendant(of: group, matching: find.byType(BackdropFilter)),
+          findsNothing,
+          reason: '内容分组默认不得产生模糊滤镜',
+        );
+      }
+    });
+  });
 }
 
 Color _decorationColor(WidgetTester tester, Finder card) {
-  final surface = find.descendant(of: card, matching: find.byType(MoeFloatingSurface)).first;
+  final surface = find.descendant(of: card, matching: find.byType(MoeContentSurface)).first;
   final material = tester.widgetList<Material>(
       find.descendant(of: surface, matching: find.byType(Material)))
       .firstWhere((material) => material.color != null);

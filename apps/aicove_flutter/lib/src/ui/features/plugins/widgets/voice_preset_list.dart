@@ -32,7 +32,24 @@ class VoicePresetList extends StatefulWidget {
 }
 
 class _VoicePresetListState extends State<VoicePresetList> {
-  String _query = '';
+  final TextEditingController _searchController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController.addListener(_onSearchChanged);
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _onSearchChanged() {
+    if (mounted) setState(() {});
+  }
+
   String _provider(VoicePreset preset) {
     final id = preset.synthesis?.providerId;
     if (id == null) return '待完善';
@@ -53,7 +70,7 @@ class _VoicePresetListState extends State<VoicePresetList> {
               (p) =>
                   '${p.name} ${_provider(p)} ${p.synthesis?.modelId ?? ''} ${p.synthesis?.voiceId ?? ''}'
                       .toLowerCase()
-                      .contains(_query.trim().toLowerCase()),
+                      .contains(_searchController.text.trim().toLowerCase()),
             )
             .toList()
           ..sort((a, b) {
@@ -94,24 +111,31 @@ class _VoicePresetListState extends State<VoicePresetList> {
                 return MoeSearchField(
                   padding: EdgeInsets.zero,
                   key: const ValueKey('voice-preset-search'),
-                  onChanged: (value) => setState(() => _query = value),
+                  controller: _searchController,
                   hintText: '搜索预设、渠道或模型',
                 );
               }
               if (entry == _VoiceListSlot.defaultTile) {
-                return ListTile(
-                  title: const Text('使用默认预设'),
-                  subtitle: Text(
-                    widget.presets
-                            .where((p) => p.id == widget.defaultId)
-                            .firstOrNull
-                            ?.name ??
-                        '尚未设置默认预设',
-                  ),
-                  trailing: widget.selectedId == null
-                      ? const Icon(Icons.check)
-                      : null,
-                  onTap: () => widget.onSelect(null),
+                return MoeSettingsGroup(
+                  children: [
+                    ListTile(
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                      ),
+                      title: const Text('使用默认预设'),
+                      subtitle: Text(
+                        widget.presets
+                                .where((p) => p.id == widget.defaultId)
+                                .firstOrNull
+                                ?.name ??
+                            '尚未设置默认预设',
+                      ),
+                      trailing: widget.selectedId == null
+                          ? const Icon(Icons.check)
+                          : null,
+                      onTap: () => widget.onSelect(null),
+                    ),
+                  ],
                 );
               }
               if (entry == _VoiceListSlot.empty) {
@@ -119,7 +143,9 @@ class _VoicePresetListState extends State<VoicePresetList> {
                   padding: MoeSettingsLayout.contentPadding,
                   children: [
                     Text(
-                      _query.isEmpty ? '还没有音色预设\n点击“新建预设”开始' : '没有匹配的预设',
+                      _searchController.text.isEmpty
+                          ? '还没有音色预设\n点击“新建预设”开始'
+                          : '没有匹配的预设',
                       textAlign: TextAlign.center,
                     ),
                   ],
@@ -143,6 +169,7 @@ class _VoicePresetListState extends State<VoicePresetList> {
                 children: [
                   ListTile(
                     key: ValueKey('voice-preset-${preset.id}'),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12),
                     title: Text(preset.name),
                     subtitle: Text(
                       synthesis == null

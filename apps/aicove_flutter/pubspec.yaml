@@ -79,7 +79,8 @@ flutter:
   uses-material-design: true
 
   assets:
-    - assets/
+    - assets/agent_context_defaults.json
+    - assets/prompt_defaults.json
     - assets/characters/
     - assets/characters/images/
     - assets/characters/prompts/

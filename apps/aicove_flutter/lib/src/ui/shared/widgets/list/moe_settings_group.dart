@@ -25,7 +25,7 @@ library;
 
 import 'package:flutter/material.dart';
 import '../../../theme/tokens.dart';
-import '../moe_floating_surface.dart';
+import '../moe_content_surface.dart';
 import 'moe_settings_row.dart';
 
 /// 设置分组卡片组件
@@ -130,20 +130,17 @@ class MoeSettingsGroup extends StatelessWidget {
         // 卡片容器
         Container(
           margin: outerMargin,
-          child: MoeFloatingSurface(
-            baseline: MoeMaterialBaseline.text,
+          child: MoeContentSurface(
             radius: g2Radius,
             borderRadius: radius,
-            solidColor: bgColor,
+            color: bgColor,
             border: borderSide,
             shadows: shadow,
-            child: Padding(
-              padding: innerPadding,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                mainAxisSize: MainAxisSize.min,
-                children: _processChildren(),
-              ),
+            padding: innerPadding,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: _processChildren(),
             ),
           ),
         ),

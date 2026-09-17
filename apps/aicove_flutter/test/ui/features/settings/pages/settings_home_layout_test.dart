@@ -1,12 +1,22 @@
 import 'package:aicove_flutter/src/ui/features/settings/pages/settings_page.dart';
+import 'package:aicove_flutter/src/ui/shared/effects/smooth_clip.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_adaptive_shell.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_avatar.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/moe_content_surface.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/moe_liquid_glass.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/list/moe_settings_row.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+Material _innerMaterial(WidgetTester tester, Finder surface) {
+  return tester.widget<Material>(
+    find.descendant(of: surface, matching: find.byType(Material)).first,
+  );
+}
 
 const _profileCard = ValueKey('settings-profile-card');
 const _entryContainer = ValueKey('settings-entry-container');
@@ -53,14 +63,16 @@ void main() {
         final containerRect = tester.getRect(container);
         expect(containerRect.left, cardRect.left);
         expect(containerRect.right, cardRect.right);
-        final cardMaterial = tester.widget<Material>(card);
-        final containerMaterial = tester.widget<Material>(container);
+        final cardSurface = tester.widget<MoeContentSurface>(card);
+        final containerSurface = tester.widget<MoeContentSurface>(container);
+        expect(cardSurface.color, isNull);
+        expect(containerSurface.color, isNull);
+        final cardMaterial = _innerMaterial(tester, card);
+        final containerMaterial = _innerMaterial(tester, container);
         expect(containerMaterial.color, cardMaterial.color);
-        expect(
-          cardMaterial.color,
-          MoeColors.light().surface.withValues(alpha: 0.88),
-        );
-        expect(containerMaterial.borderRadius, BorderRadius.circular(20));
+        expect(cardMaterial.color, MoeColors.light().componentBackground);
+        expect(cardMaterial.shape, moeG2Shape(radius: 20));
+        expect(containerMaterial.shape, moeG2Shape(radius: 20));
         final avatar = tester.getRect(find.byType(MoeAvatar));
         final rows = tester
             .widgetList<MoeSettingsRow>(find.byType(MoeSettingsRow))
@@ -80,11 +92,10 @@ void main() {
             greaterThanOrEqualTo(52),
           );
           final tile = row.iconWidget! as Container;
-          final decoration = tile.decoration! as BoxDecoration;
+          final decoration = tile.decoration! as MoeG2Decoration;
           final (iconData, colorValue) = _entryStyles[row.label]!;
           expect(decoration.color, Color(colorValue));
-          expect(decoration.borderRadius, BorderRadius.circular(7));
-          expect(decoration.shape, BoxShape.rectangle);
+          expect(decoration.radius, 7);
           final glyph = tile.child! as Icon;
           expect(glyph.icon, iconData);
           expect(glyph.color, Colors.white);
@@ -149,9 +160,10 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    final expected = MoeColors.dark().text.withValues(alpha: 0.06);
-    final cardMaterial = tester.widget<Material>(find.byKey(_profileCard));
-    final containerMaterial = tester.widget<Material>(
+    final expected = MoeColors.dark().componentBackground;
+    final cardMaterial = _innerMaterial(tester, find.byKey(_profileCard));
+    final containerMaterial = _innerMaterial(
+      tester,
       find.byKey(_entryContainer),
     );
     expect(cardMaterial.color, expected);
@@ -162,10 +174,59 @@ void main() {
     expect(rows.length, 5);
     for (final row in rows) {
       final tile = row.iconWidget! as Container;
-      final decoration = tile.decoration! as BoxDecoration;
+      final decoration = tile.decoration! as MoeG2Decoration;
       final (_, colorValue) = _entryStyles[row.label]!;
       expect(decoration.color, Color(colorValue));
-      expect(decoration.shape, BoxShape.rectangle);
+      expect(decoration.radius, 7);
+    }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('root cards stay content surfaces under global liquid', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    MoeLiquidGlassService.setMockState(available: true);
+    addTearDown(() => MoeLiquidGlassService.setMockState());
+    await tester.binding.setSurfaceSize(const Size(360, 780));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          builder: (context, child) => MoeGlassTheme(
+            enabled: true,
+            blurSigma: 16,
+            useLiquidGlass: true,
+            child: child!,
+          ),
+          home: const SettingsPage(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    for (final key in [_profileCard, _entryContainer]) {
+      final surface = find.byKey(key);
+      expect(surface, findsOneWidget);
+      expect(
+        tester.widget<MoeContentSurface>(surface),
+        isA<MoeContentSurface>(),
+      );
+      expect(
+        find.descendant(of: surface, matching: find.byType(AdaptiveGlass)),
+        findsNothing,
+      );
+      expect(
+        find.descendant(of: surface, matching: find.byType(MoeLiquidGlass)),
+        findsNothing,
+      );
+      expect(
+        find.descendant(of: surface, matching: find.byType(BackdropFilter)),
+        findsNothing,
+      );
+      expect(
+        _innerMaterial(tester, surface).color,
+        MoeColors.light().componentBackground,
+      );
     }
     expect(tester.takeException(), isNull);
   });
