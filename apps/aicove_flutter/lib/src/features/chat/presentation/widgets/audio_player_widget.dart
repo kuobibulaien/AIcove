@@ -103,11 +103,66 @@ class JustAudioPlaybackBackend implements AudioPlaybackBackend {
   Future<void> dispose() => _player.dispose();
 }
 
+/// 全局语音播放协调器
+/// 保证同一时间最多只有一个语音条处于播放状态。
+/// 当播放下一条语音条时，打断当前正在播放的语音条。
+class AudioPlaybackCoordinator {
+  static final AudioPlaybackCoordinator shared = AudioPlaybackCoordinator();
+
+  AudioPlayerController? _activeController;
+  AudioPlayerController? get activeController => _activeController;
+
+  /// 请求播放 [controller]。
+  /// 如果当前有其它控制器正在播放，会先打断该控制器。
+  void requestPlay(AudioPlayerController controller) {
+    if (_activeController == controller) return;
+    final previous = _activeController;
+    _activeController = controller;
+    if (previous != null) {
+      unawaited(previous.interrupt());
+    }
+  }
+
+  /// 释放活跃状态（当控制器暂停、播放完成或销毁时）
+  void release(AudioPlayerController controller) {
+    if (_activeController == controller) {
+      _activeController = null;
+    }
+  }
+
+  /// 打断并停止所有播放
+  Future<void> stopAll() async {
+    final active = _activeController;
+    _activeController = null;
+    if (active != null) {
+      await active.interrupt();
+    }
+  }
+
+  /// 重置协调器状态（主要供测试使用）
+  void reset() {
+    _activeController = null;
+  }
+
+  void dispose() {
+    unawaited(stopAll());
+  }
+}
+
+/// 全局语音播放协调器 Provider
+final audioPlaybackCoordinatorProvider =
+    Provider<AudioPlaybackCoordinator>((ref) {
+  return AudioPlaybackCoordinator.shared;
+});
+
 /// 音频播放器控制器
 class AudioPlayerController extends StateNotifier<AudioPlayerState> {
   final AudioPlaybackBackend _player;
   final String audioUrl;
   final Future<Directory> Function() _temporaryDirectoryProvider;
+  final Ref? _ref;
+  final AudioPlaybackCoordinator _coordinator;
+  KeepAliveLink? _keepAliveLink;
   final List<StreamSubscription<Object?>> _subscriptions =
       <StreamSubscription<Object?>>[];
   bool _completed = false;
@@ -118,11 +173,25 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
     this.audioUrl, {
     AudioPlaybackBackend? backend,
     Future<Directory> Function()? temporaryDirectoryProvider,
+    Ref? ref,
+    AudioPlaybackCoordinator? coordinator,
   }) : _player = backend ?? JustAudioPlaybackBackend(),
        _temporaryDirectoryProvider =
            temporaryDirectoryProvider ?? getTemporaryDirectory,
+       // ignore: prefer_initializing_formals
+       _ref = ref,
+       _coordinator = coordinator ?? AudioPlaybackCoordinator.shared,
        super(const AudioPlayerState()) {
     _init();
+  }
+
+  void _updateKeepAlive(bool shouldKeepAlive) {
+    if (shouldKeepAlive) {
+      _keepAliveLink ??= _ref?.keepAlive();
+    } else {
+      _keepAliveLink?.close();
+      _keepAliveLink = null;
+    }
   }
 
   void _init() {
@@ -130,9 +199,16 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
     _subscriptions.add(
       _player.playerStateStream.listen((playerState) {
         _completed = playerState.processingState == ProcessingState.completed;
+        final isPlaying = _completed ? false : playerState.playing;
+        if (_completed) {
+          _updateKeepAlive(false);
+          if (_coordinator.activeController == this) {
+            _coordinator.release(this);
+          }
+        }
         if (!mounted) return;
         state = state.copyWith(
-          isPlaying: _completed ? false : playerState.playing,
+          isPlaying: isPlaying,
           isLoading:
               playerState.processingState == ProcessingState.loading ||
               playerState.processingState == ProcessingState.buffering,
@@ -168,6 +244,8 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
             '音频播放流出错',
             metadata: {'error': e.toString()},
           );
+          _updateKeepAlive(false);
+          _coordinator.release(this);
           if (!mounted) return;
           state = state.copyWith(
             isPlaying: false,
@@ -393,11 +471,20 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
 
       if (state.isPlaying) {
         await _player.pause();
+        _updateKeepAlive(false);
+        _coordinator.release(this);
       } else {
+        _coordinator.requestPlay(this);
+        _updateKeepAlive(true);
+
         // 如果音频还没准备好，等待加载完成
         if (!_isReady) {
           await _loadAudio();
-          if (!_isReady || state.error != null) return;
+          if (!_isReady || state.error != null) {
+            _updateKeepAlive(false);
+            _coordinator.release(this);
+            return;
+          }
         }
 
         // 首次播放或播放完成后重播，都从头开始
@@ -419,7 +506,32 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
         _hasStartedPlayback = true;
       }
     } catch (e) {
+      _updateKeepAlive(false);
+      _coordinator.release(this);
       state = state.copyWith(error: '播放失败: $e');
+    }
+  }
+
+  /// 被下一条语音打断时调用
+  Future<void> interrupt() async {
+    try {
+      unawaited(_player.pause());
+      unawaited(_player.seek(Duration.zero));
+    } catch (e) {
+      AppLogger.warning(
+        'AudioPlayer',
+        '打断语音播放失败',
+        metadata: {'error': e.toString()},
+      );
+    }
+    _completed = false;
+    _hasStartedPlayback = false;
+    _updateKeepAlive(false);
+    if (mounted) {
+      state = state.copyWith(
+        isPlaying: false,
+        position: Duration.zero,
+      );
     }
   }
 
@@ -433,6 +545,8 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
 
   @override
   void dispose() {
+    _updateKeepAlive(false);
+    _coordinator.release(this);
     for (final subscription in _subscriptions) {
       unawaited(subscription.cancel());
     }
@@ -444,7 +558,14 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
 /// Provider工厂：为每个音频URL创建独立的控制器
 final audioPlayerControllerProvider = StateNotifierProvider.autoDispose
     .family<AudioPlayerController, AudioPlayerState, String>(
-      (ref, audioUrl) => AudioPlayerController(audioUrl),
+      (ref, audioUrl) {
+        final coordinator = ref.watch(audioPlaybackCoordinatorProvider);
+        return AudioPlayerController(
+          audioUrl,
+          ref: ref,
+          coordinator: coordinator,
+        );
+      },
     );
 
 /// 音频播放器组件

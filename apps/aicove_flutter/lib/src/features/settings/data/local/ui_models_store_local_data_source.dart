@@ -1,4 +1,5 @@
 import '../../../../core/sync/cloud_local_write.dart';
+import '../../../../core/api/image_providers/comfyui_workflow.dart';
 import 'dart:convert';
 
 import 'package:flutter/services.dart' show rootBundle;
@@ -58,6 +59,14 @@ class UiModelsStoreLocalDataSource {
         requestFormat == 'novelai' ||
         requestFormat == 'nai';
 
+    final isComfyUI = ComfyUIWorkflow.isProvider(providerId, customConfig);
+    if (isComfyUI) {
+      for (final model in models) {
+        modelTypes['$providerId:$model'] = 'image';
+      }
+      current['model_types'] = modelTypes;
+    }
+
     var visible = cleanSettingsStrings(
       visibleModels ?? (model != null ? [model] : models.take(3)),
     );
@@ -72,6 +81,10 @@ class UiModelsStoreLocalDataSource {
         .toList();
 
     final normalizedConfig = Map<String, dynamic>.from(customConfig ?? {});
+    if (isComfyUI) {
+      normalizedConfig['requestFormat'] = 'comfyui';
+      normalizedConfig['defaultImageModel'] = ComfyUIWorkflow.modelId;
+    }
     if (isNovelAi) {
       normalizedConfig['requestFormat'] = 'novelai';
       if ((normalizedConfig['defaultImageModel']?.toString().trim() ?? '')
@@ -117,9 +130,9 @@ class UiModelsStoreLocalDataSource {
     providers.removeWhere((p) => p['id'] == providerId);
     providers.add(entry);
     current['providers'] = providers;
-    if (visible.isNotEmpty) {
+    if (!isComfyUI && visible.isNotEmpty) {
       current['default_model'] = visible.first;
-    } else if (models.isNotEmpty) {
+    } else if (!isComfyUI && models.isNotEmpty) {
       current['default_model'] = models.first;
     }
 

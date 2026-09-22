@@ -1078,4 +1078,268 @@ void main() {
       expect(tester.binding.transientCallbackCount, 0);
     });
   });
+
+  group('语音条播放连续性与互斥打断逻辑', () {
+    tearDown(() {
+      AudioPlaybackCoordinator.shared.reset();
+    });
+
+    testWidgets('滑动消息列表导致语音条滑出可视区域不影响语音条播放，滑回视口依然处于播放中', (tester) async {
+      final backend = _FakeAudioPlaybackBackend(
+        duration: const Duration(seconds: 10),
+      );
+      const url = 'https://example.invalid/scrollable-audio.wav';
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            audioPlayerControllerProvider.overrideWith(
+              (ref, targetUrl) => AudioPlayerController(
+                targetUrl,
+                backend: backend,
+                ref: ref,
+              ),
+            ),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                height: 300,
+                child: ListView.builder(
+                  controller: scrollController,
+                  itemCount: 30,
+                  itemExtent: 80,
+                  itemBuilder: (context, index) {
+                    if (index == 0) {
+                      return AudioPlayerWidget(
+                        key: const ValueKey('voice-0'),
+                        block: AudioBlock(
+                          id: 'audio-0',
+                          messageId: 'm-0',
+                          url: url,
+                          durationSeconds: 10,
+                        ),
+                        textColor: Colors.black,
+                      );
+                    }
+                    return Text('消息项 $index');
+                  },
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('voice-0')), findsOneWidget);
+      expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+      await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+      await tester.pump();
+      expect(backend.playCalls, 1);
+      expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+
+      scrollController.jumpTo(1000);
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('voice-0')), findsNothing);
+      expect(backend.pauseCalls, 0);
+
+      scrollController.jumpTo(0);
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('voice-0')), findsOneWidget);
+      expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.pause_rounded));
+      await tester.pump();
+      expect(backend.pauseCalls, 1);
+      expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+    });
+
+    testWidgets('播放下一条语音条时会打断当前正在播放的语音条', (tester) async {
+      final backendA = _FakeAudioPlaybackBackend(
+        duration: const Duration(seconds: 5),
+      );
+      final backendB = _FakeAudioPlaybackBackend(
+        duration: const Duration(seconds: 8),
+      );
+      const urlA = 'https://example.invalid/audio-a.wav';
+      const urlB = 'https://example.invalid/audio-b.wav';
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            audioPlayerControllerProvider.overrideWith(
+              (ref, targetUrl) => AudioPlayerController(
+                targetUrl,
+                backend: targetUrl == urlA ? backendA : backendB,
+                ref: ref,
+              ),
+            ),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: Column(
+                children: [
+                  AudioPlayerWidget(
+                    key: const ValueKey('voice-a'),
+                    block: AudioBlock(
+                      id: 'audio-a',
+                      messageId: 'm-a',
+                      url: urlA,
+                      durationSeconds: 5,
+                    ),
+                    textColor: Colors.black,
+                  ),
+                  AudioPlayerWidget(
+                    key: const ValueKey('voice-b'),
+                    block: AudioBlock(
+                      id: 'audio-b',
+                      messageId: 'm-b',
+                      url: urlB,
+                      durationSeconds: 8,
+                    ),
+                    textColor: Colors.black,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final playButtons = find.byIcon(Icons.play_arrow_rounded);
+      expect(playButtons, findsNWidgets(2));
+
+      await tester.tap(find.descendant(
+        of: find.byKey(const ValueKey('voice-a')),
+        matching: find.byIcon(Icons.play_arrow_rounded),
+      ));
+      await tester.pump();
+      expect(backendA.playCalls, 1);
+      expect(backendB.playCalls, 0);
+
+      expect(find.descendant(
+        of: find.byKey(const ValueKey('voice-a')),
+        matching: find.byIcon(Icons.pause_rounded),
+      ), findsOneWidget);
+
+      await tester.tap(find.descendant(
+        of: find.byKey(const ValueKey('voice-b')),
+        matching: find.byIcon(Icons.play_arrow_rounded),
+      ));
+      await tester.pump();
+
+      expect(backendA.pauseCalls, 1);
+      expect(backendA.seekCalls, contains(Duration.zero));
+      expect(find.descendant(
+        of: find.byKey(const ValueKey('voice-a')),
+        matching: find.byIcon(Icons.play_arrow_rounded),
+      ), findsOneWidget);
+
+      expect(backendB.playCalls, 1);
+      expect(find.descendant(
+        of: find.byKey(const ValueKey('voice-b')),
+        matching: find.byIcon(Icons.pause_rounded),
+      ), findsOneWidget);
+    });
+
+    testWidgets('视口外的正在播放语音条在下一条语音播放时同样被打断并回收', (tester) async {
+      final backendA = _FakeAudioPlaybackBackend(
+        duration: const Duration(seconds: 15),
+      );
+      final backendB = _FakeAudioPlaybackBackend(
+        duration: const Duration(seconds: 6),
+      );
+      const urlA = 'https://example.invalid/audio-a-out.wav';
+      const urlB = 'https://example.invalid/audio-b-out.wav';
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            audioPlayerControllerProvider.overrideWith(
+              (ref, targetUrl) => AudioPlayerController(
+                targetUrl,
+                backend: targetUrl == urlA ? backendA : backendB,
+                ref: ref,
+              ),
+            ),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                height: 300,
+                child: ListView.builder(
+                  controller: scrollController,
+                  itemCount: 40,
+                  itemExtent: 80,
+                  itemBuilder: (context, index) {
+                    if (index == 0) {
+                      return AudioPlayerWidget(
+                        key: const ValueKey('voice-a'),
+                        block: AudioBlock(
+                          id: 'audio-a',
+                          messageId: 'm-a',
+                          url: urlA,
+                          durationSeconds: 15,
+                        ),
+                        textColor: Colors.black,
+                      );
+                    }
+                    if (index == 25) {
+                      return AudioPlayerWidget(
+                        key: const ValueKey('voice-b'),
+                        block: AudioBlock(
+                          id: 'audio-b',
+                          messageId: 'm-b',
+                          url: urlB,
+                          durationSeconds: 6,
+                        ),
+                        textColor: Colors.black,
+                      );
+                    }
+                    return Text('消息项 $index');
+                  },
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+      await tester.pump();
+      expect(backendA.playCalls, 1);
+
+      scrollController.jumpTo(2000);
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('voice-a')), findsNothing);
+      expect(find.byKey(const ValueKey('voice-b')), findsOneWidget);
+      expect(backendA.pauseCalls, 0);
+
+      await tester.tap(find.descendant(
+        of: find.byKey(const ValueKey('voice-b')),
+        matching: find.byIcon(Icons.play_arrow_rounded),
+      ));
+      await tester.pump();
+
+      expect(backendA.pauseCalls, 1);
+      expect(backendB.playCalls, 1);
+      expect(find.descendant(
+        of: find.byKey(const ValueKey('voice-b')),
+        matching: find.byIcon(Icons.pause_rounded),
+      ), findsOneWidget);
+    });
+  });
 }

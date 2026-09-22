@@ -61,8 +61,8 @@ class MemoryConfig {
 
   MemoryConfig copyWith({
     bool? enabled,
-    String? summarizeProviderId,
-    String? summarizeModelName,
+    Object? summarizeProviderId = _unset,
+    Object? summarizeModelName = _unset,
     String? summarizePrompt,
     Object? embeddingProviderId = _unset,
     Object? embeddingModelName = _unset,
@@ -85,8 +85,12 @@ class MemoryConfig {
   }) {
     return MemoryConfig(
       enabled: enabled ?? this.enabled,
-      summarizeProviderId: summarizeProviderId ?? this.summarizeProviderId,
-      summarizeModelName: summarizeModelName ?? this.summarizeModelName,
+      summarizeProviderId: identical(summarizeProviderId, _unset)
+          ? this.summarizeProviderId
+          : summarizeProviderId as String?,
+      summarizeModelName: identical(summarizeModelName, _unset)
+          ? this.summarizeModelName
+          : summarizeModelName as String?,
       summarizePrompt: summarizePrompt ?? this.summarizePrompt,
       embeddingProviderId: identical(embeddingProviderId, _unset)
           ? this.embeddingProviderId

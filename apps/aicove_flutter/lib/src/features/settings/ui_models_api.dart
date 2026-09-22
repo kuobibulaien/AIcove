@@ -1,6 +1,7 @@
 import 'package:http/http.dart' as http;
 
 import '../../core/api/providers/minimax_compat.dart';
+import '../../core/api/image_providers/comfyui_workflow.dart';
 import '../../core/api/providers/provider_adapter_factory.dart';
 import '../../core/api/providers/zai_compat.dart';
 import 'data/local/ui_models_store_local_data_source.dart';
@@ -11,7 +12,7 @@ import 'data/support/ui_models_store_support.dart';
 /// 对外保持原有 API，不直接承载具体存储和网络细节。
 class UiModelsApi {
   UiModelsApi({http.Client? httpClient})
-      : _remote = ProviderProbeRemoteDataSource(httpClient: httpClient);
+    : _remote = ProviderProbeRemoteDataSource(httpClient: httpClient);
 
   final UiModelsStoreLocalDataSource _local =
       const UiModelsStoreLocalDataSource();
@@ -70,27 +71,29 @@ class UiModelsApi {
     List<String>? capabilities,
     Map<String, dynamic>? customConfig,
   }) async {
-    if (providerId != 'openai_full_compat' && apiKey.trim().isEmpty) {
+    if (providerId != 'openai_full_compat' &&
+        !ComfyUIWorkflow.isProvider(providerId, customConfig) &&
+        apiKey.trim().isEmpty) {
       throw ArgumentError('provider_id 和 api_key 不能为空');
     }
 
-    final requestFormat =
-        customConfig?['requestFormat']?.toString().trim().toLowerCase();
+    final requestFormat = customConfig?['requestFormat']
+        ?.toString()
+        .trim()
+        .toLowerCase();
     final isNovelAi =
         isNovelAiProvider(providerId: providerId, apiBaseUrl: apiBaseUrl) ||
-            requestFormat == 'novelai' ||
-            requestFormat == 'nai';
-    final isGemini = ProviderAdapterFactory.resolveProvider(
+        requestFormat == 'novelai' ||
+        requestFormat == 'nai';
+    final isGemini =
+        ProviderAdapterFactory.resolveProvider(
           providerId,
           customConfig: customConfig,
           apiBaseUrl: apiBaseUrl,
         ) ==
         'gemini';
     final isMiniMax = isMiniMaxApiUrl(apiBaseUrl);
-    final isZai = isZaiProvider(
-      providerId: providerId,
-      apiBaseUrl: apiBaseUrl,
-    );
+    final isZai = isZaiProvider(providerId: providerId, apiBaseUrl: apiBaseUrl);
 
     List<String> models;
     if (allModels != null) {

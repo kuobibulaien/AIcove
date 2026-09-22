@@ -357,6 +357,8 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
   final skipVisionCompatDialog = data['skip_vision_compat_dialog'] == true;
 
   return AppSettings(
+    smartReplyEnabled: data['smart_reply_enabled'] == true,
+    smartReplyModel: (data['smart_reply_model'] as String?) ?? '',
     ttsEnabled: true,
     defaultModelName: primaryChatModelRef,
     // temperature 不设置，默认 null → 不发送，由云端使用默认值
@@ -444,6 +446,14 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
       return rawModelId;
     }
     return settings.buildModelRef(providerId, rawModelId);
+  }
+
+  Future<void> setSmartReplyEnabled(bool enabled) async {
+    await _commit(() => _api.updatePartial({'smart_reply_enabled': enabled}));
+  }
+
+  Future<void> setSmartReplyModel(String modelRef) async {
+    await _commit(() => _api.updatePartial({'smart_reply_model': modelRef.trim()}));
   }
 
   Future<void> setDefaultModelName(String modelId) async {

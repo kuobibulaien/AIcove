@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:drift/drift.dart' show Value;
 import 'package:aicove_flutter/src/features/chat/domain/persona_prompt_codec.dart';
 import 'package:drift/native.dart';
@@ -51,6 +52,7 @@ void main() {
   const png =
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jJ1kAAAAASUVORK5CYII=';
   setUp(() async {
+    SharedPreferences.setMockInitialValues({});
     bodies.clear();
     drawingStore = _DrawingStore(DrawingPresetCatalog.migrate(const ImageConfig(
       artistPresets: [

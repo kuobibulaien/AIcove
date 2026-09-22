@@ -24,7 +24,7 @@ const _entryContainer = ValueKey('settings-entry-container');
 const _entryStyles = <String, (IconData, int)>{
   '账号': (Icons.person_rounded, 0xFF007AFF),
   '模型': (Icons.layers_rounded, 0xFF5856D6),
-  '界面': (Icons.tune_rounded, 0xFF32ADE6),
+  '通用': (Icons.tune_rounded, 0xFF32ADE6),
   '插件': (Icons.extension_rounded, 0xFFAF52DE),
   '调试': (Icons.terminal_rounded, 0xFFFF9500),
 };
@@ -77,7 +77,7 @@ void main() {
         final rows = tester
             .widgetList<MoeSettingsRow>(find.byType(MoeSettingsRow))
             .toList();
-        expect(rows.map((e) => e.label), ['账号', '模型', '界面', '插件', '调试']);
+        expect(rows.map((e) => e.label), ['账号', '模型', '通用', '插件', '调试']);
         for (final row in rows) {
           expect(
             tester.getRect(find.byWidget(row.iconWidget!)).left,
@@ -124,7 +124,7 @@ void main() {
         expect(find.byType(MoeAvatar), findsNothing);
         expect(card, findsNothing);
         expect(find.byType(MoeSettingsRow), findsOneWidget);
-        expect(find.text('界面'), findsOneWidget);
+        expect(find.text('通用'), findsOneWidget);
         expect(container, findsOneWidget);
         expect(
           find.descendant(

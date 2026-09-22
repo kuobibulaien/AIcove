@@ -961,6 +961,8 @@ enum WindowControlButtonSide {
 
 /// 应用设置数据类
 class AppSettings {
+  final bool smartReplyEnabled;
+  final String smartReplyModel;
   final bool ttsEnabled;
   final String defaultModelName;
   final double? temperature;
@@ -1043,6 +1045,8 @@ class AppSettings {
   final double streamSegmentDelaySeconds;
 
   const AppSettings({
+    this.smartReplyEnabled = false,
+    this.smartReplyModel = '',
     required this.ttsEnabled,
     required this.defaultModelName,
     this.temperature,
@@ -1088,6 +1092,8 @@ class AppSettings {
   });
 
   AppSettings copyWith({
+    bool? smartReplyEnabled,
+    String? smartReplyModel,
     bool? ttsEnabled,
     String? defaultModelName,
     double? temperature,
@@ -1131,6 +1137,8 @@ class AppSettings {
     String? userAvatar,
     String? userName,
   }) => AppSettings(
+    smartReplyEnabled: smartReplyEnabled ?? this.smartReplyEnabled,
+    smartReplyModel: smartReplyModel ?? this.smartReplyModel,
     ttsEnabled: ttsEnabled ?? this.ttsEnabled,
     defaultModelName: defaultModelName ?? this.defaultModelName,
     temperature: temperature ?? this.temperature,

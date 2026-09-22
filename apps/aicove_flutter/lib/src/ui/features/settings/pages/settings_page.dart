@@ -70,8 +70,8 @@ class _SettingsContentState extends ConsumerState<SettingsContent> {
       root: true,
     ),
     (
-      label: '界面',
-      keywords: '主题 颜色 深色 浅色 外观 字体 背景 玻璃 材质 跟随系统',
+      label: '通用',
+      keywords: '通用设置 界面 辅助回答 快速 回复建议 主题 颜色 深色 浅色 外观 字体 背景 玻璃 材质 跟随系统',
       icon: Icons.tune_rounded,
       color: Color(0xFF32ADE6),
       page: UiSettingsPage(),

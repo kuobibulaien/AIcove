@@ -19,6 +19,7 @@ class ProviderDetailRequestFormat {
   static const openai = ProviderDetailRequestFormat._('openai', 'OpenAI');
   static const claude = ProviderDetailRequestFormat._('claude', 'Claude');
   static const gemini = ProviderDetailRequestFormat._('gemini', 'Gemini');
+  static const comfyui = ProviderDetailRequestFormat._('comfyui', 'ComfyUI');
   static const novelai = ProviderDetailRequestFormat._('novelai', 'NovelAI');
 
   static const chatFormats = <ProviderDetailRequestFormat>[
@@ -26,7 +27,11 @@ class ProviderDetailRequestFormat {
     claude,
     gemini,
   ];
-  static const imageFormats = <ProviderDetailRequestFormat>[openai, novelai];
+  static const imageFormats = <ProviderDetailRequestFormat>[
+    openai,
+    novelai,
+    comfyui,
+  ];
 
   final String value;
   final String label;
@@ -39,14 +44,16 @@ class ProviderDetailRequestFormat {
       return const <ProviderDetailRequestFormat>[gemini];
     }
     final current = fromRaw(provider.customConfig['requestFormat']?.toString());
-    if (current == ProviderDetailRequestFormat.novelai) {
+    if (current == ProviderDetailRequestFormat.novelai || current == comfyui) {
       return imageFormats;
     }
     if (settings == null) {
       return chatFormats;
     }
-    final imageModels =
-        settings.getProviderModelsByType(provider.id, type: ModelType.image);
+    final imageModels = settings.getProviderModelsByType(
+      provider.id,
+      type: ModelType.image,
+    );
     final hasImageModel = imageModels.isNotEmpty;
     final hasNonImageModel = provider.models.any((modelId) {
       final modelRef = settings.buildModelRef(provider.id, modelId);
@@ -68,6 +75,8 @@ class ProviderDetailRequestFormat {
       case 'vertex':
       case 'google':
         return ProviderDetailRequestFormat.gemini;
+      case 'comfyui':
+        return ProviderDetailRequestFormat.comfyui;
       case 'novelai':
       case 'nai':
         return ProviderDetailRequestFormat.novelai;
@@ -176,7 +185,8 @@ class ProviderMultiKeyItem {
       consecutiveFailures: (json['consecutive_failures'] as num?)?.toInt() ?? 0,
       lastUsedAt: (json['last_used_at'] as num?)?.toInt(),
       lastError: json['last_error']?.toString(),
-      updatedAt: (json['updated_at'] as num?)?.toInt() ??
+      updatedAt:
+          (json['updated_at'] as num?)?.toInt() ??
           DateTime.now().millisecondsSinceEpoch,
     );
   }
@@ -225,26 +235,23 @@ class ProviderMultiKeyItem {
   }
 
   Map<String, dynamic> toJson() => <String, dynamic>{
-        'id': id,
-        'key': key,
-        'alias': alias,
-        'enabled': enabled,
-        'status': status == ProviderMultiKeyStatus.error ? 'error' : 'normal',
-        'total_requests': totalRequests,
-        'success_requests': successRequests,
-        'failed_requests': failedRequests,
-        'consecutive_failures': consecutiveFailures,
-        'last_used_at': lastUsedAt,
-        'last_error': lastError,
-        'updated_at': updatedAt,
-      };
+    'id': id,
+    'key': key,
+    'alias': alias,
+    'enabled': enabled,
+    'status': status == ProviderMultiKeyStatus.error ? 'error' : 'normal',
+    'total_requests': totalRequests,
+    'success_requests': successRequests,
+    'failed_requests': failedRequests,
+    'consecutive_failures': consecutiveFailures,
+    'last_used_at': lastUsedAt,
+    'last_error': lastError,
+    'updated_at': updatedAt,
+  };
 }
 
 class ProviderMultiKeyFormResult {
-  const ProviderMultiKeyFormResult({
-    required this.key,
-    this.alias,
-  });
+  const ProviderMultiKeyFormResult({required this.key, this.alias});
 
   final String key;
   final String? alias;
@@ -254,8 +261,9 @@ bool isProviderMultiKeyEnabled(ProviderAuth provider) =>
     provider.customConfig[providerMultiKeyEnabledField] == true;
 
 String providerMultiKeyStrategy(ProviderAuth provider) {
-  final raw =
-      provider.customConfig[providerMultiKeyStrategyField]?.toString().trim();
+  final raw = provider.customConfig[providerMultiKeyStrategyField]
+      ?.toString()
+      .trim();
   if (raw == null || raw.isEmpty) return providerMultiKeyStrategyRoundRobin;
   return raw.toLowerCase();
 }
@@ -337,7 +345,7 @@ Map<String, dynamic> buildProviderCustomConfigForMultiKey({
 }
 
 ({Map<String, dynamic> customConfig, List<String> apiKeys, bool changed})
-    buildProviderMultiKeyFailurePatch({
+buildProviderMultiKeyFailurePatch({
   required ProviderAuth provider,
   required String failedKey,
   String? failedItemId,

@@ -105,7 +105,10 @@ void main() {
 
   double renderedScale(WidgetTester tester) => tester
       .widget<Transform>(
-        find.ancestor(of: inThumb(MoeLiquidGlass), matching: find.byType(Transform)),
+        find.ancestor(
+          of: inThumb(MoeLiquidGlass),
+          matching: find.byType(Transform),
+        ),
       )
       .transform
       .getMaxScaleOnAxis();
@@ -166,13 +169,7 @@ void main() {
   testWidgets('MoeSlider 轨道不渲染刻度点', (tester) async {
     await tester.pumpWidget(
       wrap(
-        MoeSlider(
-          value: 8,
-          min: 0,
-          max: 32,
-          divisions: 4,
-          onChanged: (_) {},
-        ),
+        MoeSlider(value: 8, min: 0, max: 32, divisions: 4, onChanged: (_) {}),
       ),
     );
     final theme = tester.widget<SliderTheme>(
@@ -186,14 +183,12 @@ void main() {
   });
 
   testWidgets('MoeSlider 禁用态可渲染', (tester) async {
-    await tester.pumpWidget(
-      wrap(const MoeSlider(value: 8, min: 0, max: 32)),
-    );
+    await tester.pumpWidget(wrap(const MoeSlider(value: 8, min: 0, max: 32)));
     await tester.pump();
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('滑钮为 32×24 圆角矩形并接入高级材质', (tester) async {
+  testWidgets('滑钮为 32×24 圆角矩形并采用实色材质', (tester) async {
     await tester.pumpWidget(
       wrap(MoeSlider(value: 16, min: 0, max: 32, onChanged: (_) {})),
     );
@@ -207,8 +202,9 @@ void main() {
   });
 
   for (final dark in [false, true]) {
-    testWidgets('滑钮按全局三态走对应材质分支 dark=$dark', (tester) async {
-      Widget slider() => MoeSlider(value: 16, min: 0, max: 32, onChanged: (_) {});
+    testWidgets('滑钮在全局三态下始终不采样背景 dark=$dark', (tester) async {
+      Widget slider() =>
+          MoeSlider(value: 16, min: 0, max: 32, onChanged: (_) {});
 
       await tester.pumpWidget(themed(slider(), dark: dark, enabled: false));
       expect(inThumb(BackdropFilter), findsNothing);
@@ -217,23 +213,21 @@ void main() {
       await tester.pumpWidget(
         themed(slider(), dark: dark, enabled: true, useLiquid: false),
       );
-      expect(inThumb(BackdropFilter), findsOneWidget);
+      expect(inThumb(BackdropFilter), findsNothing);
       expect(inThumb(AdaptiveGlass), findsNothing);
 
       await tester.pumpWidget(
         themed(slider(), dark: dark, enabled: true, useLiquid: true),
       );
-      expect(inThumb(AdaptiveGlass), findsOneWidget);
+      expect(inThumb(AdaptiveGlass), findsNothing);
       expect(inThumb(BackdropFilter), findsNothing);
-      final adaptive = tester.widget<AdaptiveGlass>(inThumb(AdaptiveGlass));
-      expect(adaptive.quality, GlassQuality.standard);
 
       MoeLiquidGlassService.setMockState(available: false);
       await tester.pumpWidget(
         themed(slider(), dark: dark, enabled: true, useLiquid: true),
       );
       expect(inThumb(AdaptiveGlass), findsNothing);
-      expect(inThumb(BackdropFilter), findsOneWidget);
+      expect(inThumb(BackdropFilter), findsNothing);
       MoeLiquidGlassService.setMockState(available: true);
 
       await tester.pumpWidget(
@@ -263,7 +257,7 @@ void main() {
     });
   }
 
-  testWidgets('滑钮材质响应全局强度 0/16/32', (tester) async {
+  testWidgets('滑钮在全局强度 0/16/32 下保持不透明', (tester) async {
     for (final sigma in [0.0, 16.0, 32.0]) {
       await tester.pumpWidget(
         themed(
@@ -272,8 +266,10 @@ void main() {
           sigma: sigma,
         ),
       );
-      final adaptive = tester.widget<AdaptiveGlass>(inThumb(AdaptiveGlass));
-      expect(adaptive.settings.blur, sigma);
+      expect(inThumb(AdaptiveGlass), findsNothing);
+      expect(inThumb(BackdropFilter), findsNothing);
+      final surfaces = tester.widgetList<Material>(inThumb(Material));
+      expect(surfaces.where((surface) => surface.color?.a == 1), isNotEmpty);
     }
     expect(tester.takeException(), isNull);
   });
@@ -299,9 +295,7 @@ void main() {
       ),
     );
     double target() =>
-        tester
-            .widget<AnimatedScale>(inThumb(AnimatedScale))
-            .scale;
+        tester.widget<AnimatedScale>(inThumb(AnimatedScale)).scale;
     expect(target(), 1.0);
     expect(renderedScale(tester), moreOrLessEquals(1, epsilon: 0.01));
 
@@ -343,19 +337,13 @@ void main() {
     );
     final gesture = await tester.startGesture(tester.getCenter(thumb()));
     await tester.pump();
-    expect(
-      tester.widget<AnimatedScale>(inThumb(AnimatedScale)).scale,
-      1.25,
-    );
+    expect(tester.widget<AnimatedScale>(inThumb(AnimatedScale)).scale, 1.25);
     final afterDown = values.length;
     await gesture.cancel();
     await tester.pump();
     await tester.pump(kAnimFast * 2);
     expect(values.length, afterDown);
-    expect(
-      tester.widget<AnimatedScale>(inThumb(AnimatedScale)).scale,
-      1.0,
-    );
+    expect(tester.widget<AnimatedScale>(inThumb(AnimatedScale)).scale, 1.0);
     expect(tester.takeException(), isNull);
   });
 
@@ -368,10 +356,7 @@ void main() {
     var gesture = await tester.startGesture(tester.getCenter(thumb()));
     await tester.pump();
     await tester.pump(kAnimFast * 2);
-    expect(
-      tester.widget<AnimatedScale>(inThumb(AnimatedScale)).scale,
-      1.0,
-    );
+    expect(tester.widget<AnimatedScale>(inThumb(AnimatedScale)).scale, 1.0);
     await gesture.up();
     await tester.pump();
     expect(values, isEmpty);
@@ -393,10 +378,7 @@ void main() {
     await gesture.moveBy(const Offset(40, 0));
     await tester.pump();
     await tester.pump(kAnimFast * 2);
-    expect(
-      tester.widget<AnimatedScale>(inThumb(AnimatedScale)).scale,
-      1.0,
-    );
+    expect(tester.widget<AnimatedScale>(inThumb(AnimatedScale)).scale, 1.0);
     await gesture.up();
     await tester.pump();
     expect(values, isEmpty);
@@ -425,15 +407,15 @@ void main() {
           moreOrLessEquals(expected.dx, epsilon: 1),
           reason: '$direction value=$value 滑钮未对齐轨道取值',
         );
-        expect(
-          center.dy,
-          moreOrLessEquals(expected.dy, epsilon: 1),
-        );
+        expect(center.dy, moreOrLessEquals(expected.dy, epsilon: 1));
       }
     }
 
     final follower = tester.renderObject<RenderFollowerLayer>(
-      find.ancestor(of: thumb(), matching: find.byType(CompositedTransformFollower)),
+      find.ancestor(
+        of: thumb(),
+        matching: find.byType(CompositedTransformFollower),
+      ),
     );
     expect(follower.link.leader, isNotNull);
 
@@ -504,10 +486,7 @@ void main() {
     expect(moved.dx, greaterThan(before.dx));
     expect(
       moved.dx,
-      moreOrLessEquals(
-        expectedThumbCenter(tester, 24, 0, 32).dx,
-        epsilon: 1,
-      ),
+      moreOrLessEquals(expectedThumbCenter(tester, 24, 0, 32).dx, epsilon: 1),
     );
     await tester.pumpWidget(host(24, top: 100));
     await tester.pump();
@@ -846,17 +825,10 @@ void main() {
         home: Scaffold(
           body: Center(
             child: SliderTheme(
-              data: const SliderThemeData(
-                padding: EdgeInsets.only(top: 24),
-              ),
+              data: const SliderThemeData(padding: EdgeInsets.only(top: 24)),
               child: SizedBox(
                 width: 300,
-                child: MoeSlider(
-                  value: 8,
-                  min: 0,
-                  max: 32,
-                  onChanged: (_) {},
-                ),
+                child: MoeSlider(value: 8, min: 0, max: 32, onChanged: (_) {}),
               ),
             ),
           ),
@@ -943,104 +915,116 @@ void main() {
     }
 
     try {
-    for (final dark in [false, true]) {
-      final boundaryKey = GlobalKey();
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: ThemeData(
-            brightness: dark ? Brightness.dark : Brightness.light,
-            fontFamily: capture ? 'MaterialPreview' : null,
-            extensions: [dark ? MoeColors.dark() : MoeColors.light()],
-          ),
-          home: Scaffold(
-            body: RepaintBoundary(
-              key: boundaryKey,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const SizedBox(
-                      height: 24,
-                      child: Row(
-                        children: [
-                          SizedBox(width: 44),
-                          Expanded(
-                            child: Center(
-                              child: Text('普通', style: TextStyle(fontSize: 12)),
+      for (final dark in [false, true]) {
+        final boundaryKey = GlobalKey();
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: ThemeData(
+              brightness: dark ? Brightness.dark : Brightness.light,
+              fontFamily: capture ? 'MaterialPreview' : null,
+              extensions: [dark ? MoeColors.dark() : MoeColors.light()],
+            ),
+            home: Scaffold(
+              body: RepaintBoundary(
+                key: boundaryKey,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const SizedBox(
+                        height: 24,
+                        child: Row(
+                          children: [
+                            SizedBox(width: 44),
+                            Expanded(
+                              child: Center(
+                                child: Text(
+                                  '普通',
+                                  style: TextStyle(fontSize: 12),
+                                ),
+                              ),
                             ),
-                          ),
-                          SizedBox(width: 12),
-                          Expanded(
-                            child: Center(
-                              child: Text('按住拖动', style: TextStyle(fontSize: 12)),
+                            SizedBox(width: 12),
+                            Expanded(
+                              child: Center(
+                                child: Text(
+                                  '按住拖动',
+                                  style: TextStyle(fontSize: 12),
+                                ),
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                    row('纯色', enabled: false, liquid: false),
-                    row('模糊', enabled: true, liquid: false),
-                    row('玻璃', enabled: true, liquid: true),
-                  ],
+                      row('纯色', enabled: false, liquid: false),
+                      row('模糊', enabled: true, liquid: false),
+                      row('玻璃', enabled: true, liquid: true),
+                    ],
+                  ),
                 ),
               ),
             ),
           ),
-        ),
-      );
-      await tester.pump();
-      final shaderProblems = logs.where(
-        (line) =>
-            (line.contains('LiquidGlass') ||
-                line.contains('LightweightGlass') ||
-                line.toLowerCase().contains('shader')) &&
-            (line.contains('failed') ||
-                line.contains('Error') ||
-                line.contains('fallback')),
-      );
-      expect(shaderProblems, isEmpty);
-      expect(thumb(), findsNWidgets(6));
-      expect(find.byType(LightweightLiquidGlass), findsWidgets);
+        );
+        await tester.pump();
+        final shaderProblems = logs.where(
+          (line) =>
+              (line.contains('LiquidGlass') ||
+                  line.contains('LightweightGlass') ||
+                  line.toLowerCase().contains('shader')) &&
+              (line.contains('failed') ||
+                  line.contains('Error') ||
+                  line.contains('fallback')),
+        );
+        expect(shaderProblems, isEmpty);
+        expect(thumb(), findsNWidgets(6));
+        expect(find.byType(LightweightLiquidGlass), findsNothing);
 
-      final presses = <TestGesture>[];
-      for (final i in [1, 3, 5]) {
-        presses.add(await tester.startGesture(tester.getCenter(thumb().at(i))));
-      }
-      await tester.pump();
-      await tester.pump(kAnimFast * 2);
-      expect(
-        tester.widget<AnimatedScale>(
-          find.descendant(
-            of: thumb().at(1),
-            matching: find.byType(AnimatedScale),
-            matchRoot: true,
-          ),
-        ).scale,
-        1.25,
-      );
-
-      if (capture) {
-        await tester.runAsync(() async {
-          tester.binding.drawFrame();
-          final boundary =
-              boundaryKey.currentContext!.findRenderObject()!
-                  as RenderRepaintBoundary;
-          final image = await boundary.toImage(pixelRatio: 2);
-          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-          final file = File(
-            '../../scratch/slider-thumb-20260916/slider-thumb-${dark ? 'dark' : 'light'}.png',
+        final presses = <TestGesture>[];
+        for (final i in [1, 3, 5]) {
+          presses.add(
+            await tester.startGesture(tester.getCenter(thumb().at(i))),
           );
-          await file.parent.create(recursive: true);
-          await file.writeAsBytes(bytes!.buffer.asUint8List());
-          image.dispose();
-        });
+        }
+        await tester.pump();
+        await tester.pump(kAnimFast * 2);
+        expect(
+          tester
+              .widget<AnimatedScale>(
+                find.descendant(
+                  of: thumb().at(1),
+                  matching: find.byType(AnimatedScale),
+                  matchRoot: true,
+                ),
+              )
+              .scale,
+          1.25,
+        );
+
+        if (capture) {
+          await tester.runAsync(() async {
+            tester.binding.drawFrame();
+            final boundary =
+                boundaryKey.currentContext!.findRenderObject()!
+                    as RenderRepaintBoundary;
+            final image = await boundary.toImage(pixelRatio: 2);
+            final bytes = await image.toByteData(
+              format: ui.ImageByteFormat.png,
+            );
+            final file = File(
+              '../../scratch/slider-thumb-20260916/slider-thumb-${dark ? 'dark' : 'light'}.png',
+            );
+            await file.parent.create(recursive: true);
+            await file.writeAsBytes(bytes!.buffer.asUint8List());
+            image.dispose();
+          });
+        }
+        for (final press in presses) {
+          await press.up();
+        }
+        await tester.pump();
       }
-      for (final press in presses) {
-        await press.up();
-      }
-      await tester.pump();
-    }
     } finally {
       debugPrint = originalDebugPrint;
     }

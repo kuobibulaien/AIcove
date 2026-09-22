@@ -54,15 +54,9 @@ void main() {
           ), dark: dark));
           await tester.pumpAndSettle();
           expect(tester.takeException(), isNull);
-          if (mode == MoeSurfaceMaterial.solid) {
-            expect(find.byType(BackdropFilter), findsNothing);
-            expect(find.byType(AdaptiveGlass), findsNothing);
-          } else if (mode == MoeSurfaceMaterial.frosted) {
-            expect(find.byType(BackdropFilter), findsWidgets);
-            expect(find.byType(AdaptiveGlass), findsNothing);
-          } else {
-            expect(find.byType(AdaptiveGlass), findsWidgets);
-          }
+          // Every sample here moves with the outer scroll view.
+          expect(find.byType(BackdropFilter), findsNothing);
+          expect(find.byType(AdaptiveGlass), findsNothing);
           if (const bool.fromEnvironment('WRITE_MATERIAL_QA')) {
             final boundary = capture.currentContext!.findRenderObject() as RenderRepaintBoundary;
             await tester.runAsync(() async {
@@ -101,9 +95,9 @@ void main() {
 
   testWidgets('reduce transparency removes both glass pipelines', (tester) async {
     await tester.pumpWidget(materialApp(MoeSurfaceMaterial.liquid,
-      GlassAccessibilityScope(
+      const GlassAccessibilityScope(
         reduceTransparency: true,
-        child: const MoeFloatingSurface(child: Text('不透明背景')),
+        child: MoeFloatingSurface(child: Text('不透明背景')),
       ),
     ));
     expect(find.byType(AdaptiveGlass), findsNothing);

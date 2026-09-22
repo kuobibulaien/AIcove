@@ -8,13 +8,15 @@ import '../../../../core/api/providers/provider_chat_api_path.dart';
 import '../../../../core/api/providers/provider_adapter_factory.dart';
 import '../../../../core/api/providers/zai_compat.dart';
 import '../../../../core/network/json_http_client.dart';
+import '../../../../core/api/image_providers/comfyui_workflow.dart';
+import '../../../../core/api/image_providers/comfyui_image_adapter.dart';
 import '../support/ui_models_store_support.dart';
 
 /// 设置模块远端探测数据源。
 /// 只负责模型列表预览和单模型连通性测试。
 class ProviderProbeRemoteDataSource {
   const ProviderProbeRemoteDataSource({http.Client? httpClient})
-      : _httpClient = httpClient;
+    : _httpClient = httpClient;
 
   final http.Client? _httpClient;
 
@@ -24,6 +26,9 @@ class ProviderProbeRemoteDataSource {
     required String apiBaseUrl,
     Map<String, dynamic>? customConfig,
   }) async {
+    if (ComfyUIWorkflow.isProvider(providerId, customConfig)) {
+      return const [ComfyUIWorkflow.modelId];
+    }
     final resolvedProvider = ProviderAdapterFactory.resolveProvider(
       providerId,
       customConfig: customConfig,
@@ -96,6 +101,24 @@ class ProviderProbeRemoteDataSource {
     required String modelId,
     Map<String, dynamic>? customConfig,
   }) async {
+    if (ComfyUIWorkflow.isProvider(providerId, customConfig)) {
+      final client = _httpClient ?? http.Client();
+      try {
+        final response = await client
+            .get(
+              ComfyUIImageAdapter.endpoint(apiBaseUrl, 'system_stats'),
+              headers: ComfyUIImageAdapter.headers(apiKey),
+            )
+            .timeout(const Duration(seconds: 15));
+        if (response.statusCode != 200 ||
+            (jsonDecode(response.body) as Map)['system'] == null) {
+          throw StateError('ComfyUI 连接失败：HTTP ${response.statusCode}');
+        }
+        return 'ComfyUI 连接成功（未执行生图）';
+      } finally {
+        if (_httpClient == null) client.close();
+      }
+    }
     try {
       final adapter = ProviderAdapterFactory.getAdapter(
         providerId,
@@ -115,10 +138,7 @@ class ProviderProbeRemoteDataSource {
         messages: [
           {'role': 'user', 'content': 'hi'},
         ],
-        customConfig: {
-          ...?requestCustomConfig,
-          'max_tokens': 3,
-        },
+        customConfig: {...?requestCustomConfig, 'max_tokens': 3},
       );
       final uri = adapter.name == 'gemini'
           ? buildGoogleRequestUri(
@@ -168,10 +188,11 @@ class ProviderProbeRemoteDataSource {
         customConfig: customConfig,
         apiBaseUrl: apiBaseUrl,
       );
-      final base = (apiBaseUrl.trim().isEmpty
-              ? kGeminiDeveloperApiBase
-              : apiBaseUrl.trim())
-          .replaceAll(RegExp(r'/+$'), '');
+      final base =
+          (apiBaseUrl.trim().isEmpty
+                  ? kGeminiDeveloperApiBase
+                  : apiBaseUrl.trim())
+              .replaceAll(RegExp(r'/+$'), '');
       final models = <String>[];
       String? pageToken;
 
@@ -180,18 +201,19 @@ class ProviderProbeRemoteDataSource {
           'pageSize': '200',
           if (pageToken != null && pageToken.isNotEmpty) 'pageToken': pageToken,
         };
-        final uri = buildGooglePublisherModelsListUri(
-          baseUrl: base,
-          apiKey: apiKey,
-        ).replace(
-          queryParameters: <String, String>{
-            ...buildGooglePublisherModelsListUri(
+        final uri =
+            buildGooglePublisherModelsListUri(
               baseUrl: base,
               apiKey: apiKey,
-            ).queryParameters,
-            ...query,
-          },
-        );
+            ).replace(
+              queryParameters: <String, String>{
+                ...buildGooglePublisherModelsListUri(
+                  baseUrl: base,
+                  apiKey: apiKey,
+                ).queryParameters,
+                ...query,
+              },
+            );
         final response = await JsonHttpClient.getJson(
           uri: uri,
           headers: _buildGeminiHeaders(

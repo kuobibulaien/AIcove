@@ -17,6 +17,7 @@ class DrawingParameters {
     ImageConfig config,
     Map<String, dynamic> args, {
     required bool novelAi,
+    bool supportsSamplingParameters = false,
   }) {
     int integer(String key, int fallback, int min, int max) {
       final raw = args[key];
@@ -45,6 +46,7 @@ class DrawingParameters {
     }
 
     if (!novelAi &&
+        !supportsSamplingParameters &&
         (args.containsKey('steps') || args.containsKey('guidance_scale'))) {
       throw const FormatException('当前图片渠道不支持 steps / guidance_scale');
     }

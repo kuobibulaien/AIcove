@@ -199,7 +199,20 @@ class ConversationTimelineCache {
         for (final message in current.messages) message.id: message,
       };
       for (final message in messages) {
-        mergedById[message.id] = message;
+        final existing = mergedById[message.id];
+        final sourceMessageId = message.sourceMessageId?.trim();
+        // Media callbacks may retain a stream timestamp from before a history
+        // reload or supplement insertion. Keep the current projection's slot;
+        // resolve its timestamp inside this queue, alongside snapshot updates.
+        final preservePosition =
+            existing != null &&
+            sourceMessageId != null &&
+            sourceMessageId.isNotEmpty &&
+            sourceMessageId != message.id &&
+            _messageRawSourceId(existing) == sourceMessageId;
+        mergedById[message.id] = preservePosition
+            ? message.copyWith(createdAt: existing.createdAt)
+            : message;
       }
 
       final normalizedMessages = _normalizeMessages(mergedById.values);

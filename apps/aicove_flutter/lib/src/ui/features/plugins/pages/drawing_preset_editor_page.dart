@@ -125,14 +125,26 @@ class _DrawingPresetEditorPageState
           customConfig: provider.customConfig,
         ) ==
         'novelai';
+    final sampling =
+        novelAi ||
+        ImageProviderAdapterFactory.resolveProvider(
+              provider.id,
+              customConfig: provider.customConfig,
+            ) ==
+            'comfyui';
     final args = <String, dynamic>{
       for (final key in ['width', 'height', 'count']) key: _text(key),
-      if (novelAi) ...{
+      if (sampling) ...{
         'steps': _text('steps'),
         'guidance_scale': _text('guidance_scale'),
       },
     };
-    final values = DrawingParameters.resolve(_config, args, novelAi: novelAi);
+    final values = DrawingParameters.resolve(
+      _config,
+      args,
+      novelAi: novelAi,
+      supportsSamplingParameters: sampling,
+    );
     final timeout = int.tryParse(_text('timeout'));
     if (timeout == null || timeout < 5 || timeout > 600) {
       throw const FormatException('超时请填写 5–600 秒');
@@ -348,6 +360,14 @@ class _DrawingPresetEditorPageState
                       customConfig: provider.customConfig,
                     ) ==
                     'novelai';
+            final sampling =
+                novelAi ||
+                (provider != null &&
+                    ImageProviderAdapterFactory.resolveProvider(
+                          provider.id,
+                          customConfig: provider.customConfig,
+                        ) ==
+                        'comfyui');
             return Align(
               alignment: Alignment.topCenter,
               child: ConstrainedBox(
@@ -397,7 +417,7 @@ class _DrawingPresetEditorPageState
                     ),
                     _field('width', '宽度（256–2048）', number: true),
                     _field('height', '高度（256–2048）', number: true),
-                    if (novelAi) ...[
+                    if (sampling) ...[
                       _field('steps', '步数（1–100）', number: true),
                       _field('guidance_scale', '提示词强度（0–10）', number: true),
                     ],

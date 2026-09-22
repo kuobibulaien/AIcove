@@ -98,6 +98,7 @@ void main() {
   }
 
   setUp(() async {
+    SharedPreferences.setMockInitialValues({});
     database = db.AppDatabase.forTesting(NativeDatabase.memory());
     await database.customStatement('PRAGMA foreign_keys = ON');
     container = ProviderContainer(

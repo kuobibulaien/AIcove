@@ -292,13 +292,16 @@ class ImagePlugin extends BasePlugin {
         '<image> 内可写英文正向提示词，或使用下文定义的参数 JSON；不要写解释或代码块',
       );
     }
+    final sampling =
+        _settings != null && _supportsSamplingParameters(_settings!);
     final baseTemplate = isRequestSnapshot
         ? '$template\n\n【本次绘图参数契约】需要调整参数时，<image> 内可传 JSON：'
               '{"prompt":"English prompt","width":${_config.defaultWidth},"height":${_config.defaultHeight},"count":${_config.defaultCount}'
-              '${novelAi ? ',"steps":${_config.defaultSteps},"guidance_scale":${_config.defaultGuidanceScale}' : ''}}。'
+              '${sampling ? ',"steps":${_config.defaultSteps},"guidance_scale":${_config.defaultGuidanceScale}' : ''}}。'
               '以上是参考值，可合理调整。除 prompt 外均可省略，省略时使用角色绘图预设；negative_prompt 可选。'
               '宽高范围 256–2048，张数 count 范围 1–4。'
-              '${novelAi ? '宽高必须是64的倍数，steps为1–100整数，guidance_scale范围0–10。' : '当前渠道不支持 steps、guidance_scale。'}'
+              '${novelAi ? '宽高必须是64的倍数。' : ''}'
+              '${sampling ? 'steps为1–100整数，guidance_scale范围0–10；ComfyUI仅对已绑定输入生效。' : '当前渠道不支持 steps、guidance_scale。'}'
               '本次格式以此契约为准，禁止传入渠道或模型选择参数。'
         : template;
     final extraRule = customDrawingPrompt?.trim() ?? '';
@@ -380,6 +383,11 @@ class ImagePlugin extends BasePlugin {
       customConfig: {
         ...target.provider.customConfig,
         'image_parameters': parameters,
+        if (snapshot.requestProvider == 'comfyui') ...{
+          'comfyWorkflow': parameters['comfyWorkflow'],
+          'comfyBindings': parameters['comfyBindings'] ?? <String, dynamic>{},
+          'comfyOutputNode': parameters['comfyOutputNode'] ?? '',
+        },
       },
       requestSource: 'regenerate_image',
     );
@@ -479,6 +487,7 @@ class ImagePlugin extends BasePlugin {
         _config,
         inlineArgs,
         novelAi: requestProvider == 'novelai',
+        supportsSamplingParameters: requestProvider == 'comfyui',
       );
       final saved = await _generateAndSaveImages(
         requestProvider: requestProvider,
@@ -587,7 +596,7 @@ class ImagePlugin extends BasePlugin {
         type: 'integer',
         description: '生成张数 1–4，参考 ${_config.defaultCount}，可省略。',
       ),
-      if (_settings != null && _isNovelAi(_settings!)) ...{
+      if (_settings != null && _supportsSamplingParameters(_settings!)) ...{
         'steps': ToolParameter(
           type: 'integer',
           description: '采样步数 1–100，参考 ${_config.defaultSteps}，可合理调整。',
@@ -650,6 +659,8 @@ class ImagePlugin extends BasePlugin {
         _config,
         args,
         novelAi: _resolveRequestProvider(resolvedTarget.provider) == 'novelai',
+        supportsSamplingParameters:
+            _resolveRequestProvider(resolvedTarget.provider) == 'comfyui',
       );
       final width = parameters.width;
       final height = parameters.height;
@@ -850,8 +861,16 @@ class ImagePlugin extends BasePlugin {
       'guidanceScale': guidanceScale,
       'basePrompt': basePrompt,
       'baseNegativePrompt': baseNegativePrompt,
-      'customParameters':
-          customConfig['image_parameters'] ?? <String, dynamic>{},
+      'customParameters': requestProvider == 'comfyui'
+          ? {
+              for (final key in [
+                'comfyWorkflow',
+                'comfyBindings',
+                'comfyOutputNode',
+              ])
+                if (customConfig.containsKey(key)) key: customConfig[key],
+            }
+          : customConfig['image_parameters'] ?? <String, dynamic>{},
     });
     AppLogger.info('ImagePlugin', '图片生成请求开始', metadata: metadata);
     final client = AgentApiClient(
@@ -1100,7 +1119,10 @@ class ImagePlugin extends BasePlugin {
     final apiKey = resolvedProvider.apiKeys.isNotEmpty
         ? resolvedProvider.apiKeys.first
         : '';
-    if (apiKey.trim().isEmpty) return null;
+    if (apiKey.trim().isEmpty &&
+        _resolveRequestProvider(resolvedProvider) != 'comfyui') {
+      return null;
+    }
     return _ImageTarget(
       provider: resolvedProvider,
       modelId: modelId,
@@ -1110,7 +1132,8 @@ class ImagePlugin extends BasePlugin {
 
   bool _isProviderUsable(ProviderAuth provider) {
     if (!provider.enabled) return false;
-    if (provider.apiKeys.isEmpty || provider.apiKeys.first.trim().isEmpty) {
+    if (_resolveRequestProvider(provider) != 'comfyui' &&
+        (provider.apiKeys.isEmpty || provider.apiKeys.first.trim().isEmpty)) {
       return false;
     }
     return true;
@@ -1178,6 +1201,15 @@ class ImagePlugin extends BasePlugin {
       return 'webp';
     }
     return 'png';
+  }
+
+  bool _supportsSamplingParameters(AppSettings settings) {
+    final target = _resolveTarget(settings);
+    return target != null &&
+        const [
+          'novelai',
+          'comfyui',
+        ].contains(_resolveRequestProvider(target.provider));
   }
 
   bool _isNovelAi(AppSettings settings) {

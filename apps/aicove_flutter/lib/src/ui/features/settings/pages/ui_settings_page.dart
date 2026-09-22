@@ -12,6 +12,7 @@ import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import 'profile_page.dart';
+import '../widgets/smart_reply_settings_group.dart';
 
 /// 预设颜色列表
 const _presetColors = [
@@ -26,7 +27,7 @@ const _presetColors = [
 
 bool get _isWindowsDesktop => defaultTargetPlatform == TargetPlatform.windows;
 
-/// 界面设置页面
+/// 通用设置页面
 class UiSettingsPage extends ConsumerWidget {
   const UiSettingsPage({super.key});
 
@@ -35,7 +36,7 @@ class UiSettingsPage extends ConsumerWidget {
     final settingsAsync = ref.watch(appSettingsProvider);
 
     return MoePageScaffold(
-      appBar: const MoeAppBar(title: '界面设置', showBackButton: true),
+      appBar: const MoeAppBar(title: '通用设置', showBackButton: true),
       body: settingsAsync.when(
         loading: () => const Center(child: MoeLoadingIndicator()),
         error: (e, _) => Center(child: Text('加载设置失败: $e')),
@@ -69,6 +70,7 @@ class UiSettingsPage extends ConsumerWidget {
       child: ListView(
         padding: MoeSettingsLayout.verticalListPadding,
         children: [
+          SmartReplySettingsGroup(settings: settings),
           MoeSettingsGroup(
             children: [
               MoeSettingsRow(

@@ -40,10 +40,14 @@ Future<TopicSummaryPort> _buildSummary(
   required bool automatic,
 }) async {
   final settings = await ref.watch(appSettingsProvider.future);
+  final config = ref.watch(memoryPluginConfigProvider);
   // 复用已配置的总结模型；未配置时使用当前默认聊天模型，不需要 Embedding。
-  final configured = ref.watch(memoryPluginConfigProvider).summarizeModelName;
-  final model = configured?.trim().isNotEmpty == true
-      ? configured!.trim()
+  final configuredName = config.summarizeModelName?.trim() ?? '';
+  final configuredProviderId = config.summarizeProviderId?.trim() ?? '';
+  final model = configuredName.isNotEmpty
+      ? (configuredProviderId.isNotEmpty
+            ? settings.buildModelRef(configuredProviderId, configuredName)
+            : configuredName)
       : (settings.defaultChatModels.isNotEmpty
             ? settings.defaultChatModels.first
             : settings.defaultModelName);

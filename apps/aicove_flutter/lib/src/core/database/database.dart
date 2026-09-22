@@ -355,7 +355,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(QueryExecutor executor) : super(executor);
 
   @override
-  int get schemaVersion => 16;
+  int get schemaVersion => 17;
 
   @override
   MigrationStrategy get migration {
@@ -445,7 +445,7 @@ class AppDatabase extends _$AppDatabase {
         if (from < 15) {
           await _safeAddColumn('conversations', 'thinking_levels TEXT');
         }
-        if (from < 16) {
+        if (from < 17) {
           await _ensureTopicHandoffs();
         }
       },

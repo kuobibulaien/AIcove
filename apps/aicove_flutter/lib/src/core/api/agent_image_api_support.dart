@@ -85,15 +85,19 @@ class _AgentImageApiSupport {
     String? flowMode,
   }) async {
     final trimmedBase = providerApiBase?.trim();
-    final trimmedKey = providerApiKey?.trim();
-    if (trimmedKey == null || trimmedKey.isEmpty) {
-      throw StateError('Missing providerApiKey for image generation');
-    }
+    final trimmedKey = providerApiKey?.trim() ?? '';
 
     final normalizedProvider = ImageProviderAdapterFactory.resolveProvider(
       provider,
       customConfig: customConfig,
     );
+    if (trimmedKey.isEmpty && normalizedProvider != 'comfyui') {
+      throw StateError('Missing providerApiKey for image generation');
+    }
+    if (normalizedProvider == 'comfyui' &&
+        (trimmedBase == null || trimmedBase.isEmpty)) {
+      throw StateError('请先配置 ComfyUI 服务地址');
+    }
     final normalizedRequestId = _normalizeImageRequestId(requestId);
     final normalizedRequestSource = requestSource?.trim();
     final normalizedFlowMode = flowMode?.trim();
@@ -166,11 +170,15 @@ class _AgentImageApiSupport {
       'hasNegativePrompt': negativePrompt?.trim().isNotEmpty == true,
     };
     final startedAt = DateTime.now();
-    AppLogger.info('AgentApiClient', '图片请求开始', metadata: {
-      ...logMetadata,
-      'requestFormat': 'adapter',
-      'adapter': adapter.name,
-    });
+    AppLogger.info(
+      'AgentApiClient',
+      '图片请求开始',
+      metadata: {
+        ...logMetadata,
+        'requestFormat': 'adapter',
+        'adapter': adapter.name,
+      },
+    );
     try {
       final result = await adapter.generate(
         client: _client,
@@ -178,13 +186,17 @@ class _AgentImageApiSupport {
         request: request,
       );
       final durationMs = DateTime.now().difference(startedAt).inMilliseconds;
-      AppLogger.info('AgentApiClient', '图片请求完成', metadata: {
-        ...logMetadata,
-        'requestFormat': 'adapter',
-        'adapter': adapter.name,
-        'durationMs': durationMs,
-        'imageCount': result.images.length,
-      });
+      AppLogger.info(
+        'AgentApiClient',
+        '图片请求完成',
+        metadata: {
+          ...logMetadata,
+          'requestFormat': 'adapter',
+          'adapter': adapter.name,
+          'durationMs': durationMs,
+          'imageCount': result.images.length,
+        },
+      );
       return ImageGenerationResult(
         images: result.images,
         provider: normalizedProvider,
@@ -193,14 +205,18 @@ class _AgentImageApiSupport {
       );
     } catch (e) {
       final durationMs = DateTime.now().difference(startedAt).inMilliseconds;
-      AppLogger.warning('AgentApiClient', '图片请求失败', metadata: {
-        ...logMetadata,
-        'requestFormat': 'adapter',
-        'adapter': adapter.name,
-        'durationMs': durationMs,
-        'phase': 'adapter_generate',
-        'error': e.toString(),
-      });
+      AppLogger.warning(
+        'AgentApiClient',
+        '图片请求失败',
+        metadata: {
+          ...logMetadata,
+          'requestFormat': 'adapter',
+          'adapter': adapter.name,
+          'durationMs': durationMs,
+          'phase': 'adapter_generate',
+          'error': e.toString(),
+        },
+      );
       rethrow;
     }
   }
@@ -316,12 +332,16 @@ class _AgentImageApiSupport {
     var phase = 'prepare_request';
     var apiLogWritten = false;
 
-    AppLogger.info('AgentApiClient', '图片请求准备发送', metadata: {
-      ...baseMetadata,
-      'phase': phase,
-      'requestBodyBytes': requestBodyBytes,
-      'requestBodyPreview': ApiLogger.safeSnippet(requestBodyJson, max: 2000),
-    });
+    AppLogger.info(
+      'AgentApiClient',
+      '图片请求准备发送',
+      metadata: {
+        ...baseMetadata,
+        'phase': phase,
+        'requestBodyBytes': requestBodyBytes,
+        'requestBodyPreview': ApiLogger.safeSnippet(requestBodyJson, max: 2000),
+      },
+    );
 
     try {
       final request = http.Request('POST', Uri.parse(endpoint))
@@ -334,14 +354,18 @@ class _AgentImageApiSupport {
       phase = 'wait_headers';
       final response = await _client.send(request).timeout(timeout);
       final headersElapsed = DateTime.now().difference(startedAt);
-      AppLogger.info('AgentApiClient', '图片请求收到响应头', metadata: {
-        ...baseMetadata,
-        'phase': phase,
-        'statusCode': response.statusCode,
-        'durationMs': headersElapsed.inMilliseconds,
-        'contentType': response.headers['content-type'],
-        'contentLength': response.headers['content-length'],
-      });
+      AppLogger.info(
+        'AgentApiClient',
+        '图片请求收到响应头',
+        metadata: {
+          ...baseMetadata,
+          'phase': phase,
+          'statusCode': response.statusCode,
+          'durationMs': headersElapsed.inMilliseconds,
+          'contentType': response.headers['content-type'],
+          'contentLength': response.headers['content-length'],
+        },
+      );
 
       final remaining = _remainingImageTimeout(startedAt);
       if (remaining == Duration.zero) {
@@ -361,78 +385,92 @@ class _AgentImageApiSupport {
           body: errorBody,
         );
         apiLogWritten = true;
-        ApiLogger.add(ApiLogEntry(
+        ApiLogger.add(
+          ApiLogEntry(
+            time: startedAt,
+            method: 'POST',
+            url: endpoint,
+            status: response.statusCode,
+            durationMs: durationMs,
+            requestBody: ApiLogger.safeSnippet(requestBodyJson),
+            responseBody: ApiLogger.safeSnippet(errorBody, max: 1200),
+            ok: false,
+            rawRequestBody: requestBodyJson,
+            rawResponseBody: jsonEncode({
+              'kind': 'error',
+              'phase': phase,
+              'requestId': normalizedRequestId,
+              'statusCode': response.statusCode,
+              'contentType': contentType,
+              'bodyBytes': bytes.length,
+              'headers': _compactImageResponseHeaders(response.headers),
+              'bodyPreview': ApiLogger.safeSnippet(errorBody, max: 2000),
+            }),
+            eventType: 'image_generation',
+            source: 'AgentApiClient',
+          ),
+        );
+        AppLogger.warning(
+          'AgentApiClient',
+          '图片请求返回非成功状态',
+          metadata: {
+            ...baseMetadata,
+            'phase': phase,
+            'statusCode': response.statusCode,
+            'durationMs': durationMs,
+            'contentType': contentType,
+            'bodyBytes': bytes.length,
+            'friendlyError': friendlyError,
+            'errorBodyPreview': ApiLogger.safeSnippet(errorBody, max: 800),
+          },
+        );
+        throw Exception(friendlyError);
+      }
+
+      phase = 'decode_body';
+      final images = _extractImageBytesFromNovelAIResponse(
+        bytes,
+        response.headers,
+      );
+      apiLogWritten = true;
+      ApiLogger.add(
+        ApiLogEntry(
           time: startedAt,
           method: 'POST',
           url: endpoint,
           status: response.statusCode,
           durationMs: durationMs,
           requestBody: ApiLogger.safeSnippet(requestBodyJson),
-          responseBody: ApiLogger.safeSnippet(errorBody, max: 1200),
-          ok: false,
+          responseBody: '[image binary] ${bytes.length} bytes',
+          ok: true,
           rawRequestBody: requestBodyJson,
           rawResponseBody: jsonEncode({
-            'kind': 'error',
+            'kind': 'binary',
             'phase': phase,
             'requestId': normalizedRequestId,
             'statusCode': response.statusCode,
             'contentType': contentType,
             'bodyBytes': bytes.length,
             'headers': _compactImageResponseHeaders(response.headers),
-            'bodyPreview': ApiLogger.safeSnippet(errorBody, max: 2000),
+            'imageCount': images.length,
           }),
           eventType: 'image_generation',
           source: 'AgentApiClient',
-        ));
-        AppLogger.warning('AgentApiClient', '图片请求返回非成功状态', metadata: {
+        ),
+      );
+      AppLogger.info(
+        'AgentApiClient',
+        '图片请求完成',
+        metadata: {
           ...baseMetadata,
           'phase': phase,
           'statusCode': response.statusCode,
           'durationMs': durationMs,
           'contentType': contentType,
           'bodyBytes': bytes.length,
-          'friendlyError': friendlyError,
-          'errorBodyPreview': ApiLogger.safeSnippet(errorBody, max: 800),
-        });
-        throw Exception(friendlyError);
-      }
-
-      phase = 'decode_body';
-      final images =
-          _extractImageBytesFromNovelAIResponse(bytes, response.headers);
-      apiLogWritten = true;
-      ApiLogger.add(ApiLogEntry(
-        time: startedAt,
-        method: 'POST',
-        url: endpoint,
-        status: response.statusCode,
-        durationMs: durationMs,
-        requestBody: ApiLogger.safeSnippet(requestBodyJson),
-        responseBody: '[image binary] ${bytes.length} bytes',
-        ok: true,
-        rawRequestBody: requestBodyJson,
-        rawResponseBody: jsonEncode({
-          'kind': 'binary',
-          'phase': phase,
-          'requestId': normalizedRequestId,
-          'statusCode': response.statusCode,
-          'contentType': contentType,
-          'bodyBytes': bytes.length,
-          'headers': _compactImageResponseHeaders(response.headers),
           'imageCount': images.length,
-        }),
-        eventType: 'image_generation',
-        source: 'AgentApiClient',
-      ));
-      AppLogger.info('AgentApiClient', '图片请求完成', metadata: {
-        ...baseMetadata,
-        'phase': phase,
-        'statusCode': response.statusCode,
-        'durationMs': durationMs,
-        'contentType': contentType,
-        'bodyBytes': bytes.length,
-        'imageCount': images.length,
-      });
+        },
+      );
       return ImageGenerationResult(
         images: images,
         provider: provider,
@@ -441,65 +479,77 @@ class _AgentImageApiSupport {
     } on TimeoutException catch (e) {
       final durationMs = DateTime.now().difference(startedAt).inMilliseconds;
       if (!apiLogWritten) {
-        ApiLogger.add(ApiLogEntry(
-          time: startedAt,
-          method: 'POST',
-          url: endpoint,
-          status: null,
-          durationMs: durationMs,
-          requestBody: ApiLogger.safeSnippet(requestBodyJson),
-          responseBody: ApiLogger.safeSnippet(e.toString(), max: 1200),
-          ok: false,
-          rawRequestBody: requestBodyJson,
-          rawResponseBody: jsonEncode({
-            'kind': 'timeout',
-            'phase': phase,
-            'requestId': normalizedRequestId,
-            'durationMs': durationMs,
-            'timeoutMs': timeout.inMilliseconds,
-            'error': e.toString(),
-          }),
-          eventType: 'image_generation',
-          source: 'AgentApiClient',
-        ));
+        ApiLogger.add(
+          ApiLogEntry(
+            time: startedAt,
+            method: 'POST',
+            url: endpoint,
+            status: null,
+            durationMs: durationMs,
+            requestBody: ApiLogger.safeSnippet(requestBodyJson),
+            responseBody: ApiLogger.safeSnippet(e.toString(), max: 1200),
+            ok: false,
+            rawRequestBody: requestBodyJson,
+            rawResponseBody: jsonEncode({
+              'kind': 'timeout',
+              'phase': phase,
+              'requestId': normalizedRequestId,
+              'durationMs': durationMs,
+              'timeoutMs': timeout.inMilliseconds,
+              'error': e.toString(),
+            }),
+            eventType: 'image_generation',
+            source: 'AgentApiClient',
+          ),
+        );
       }
-      AppLogger.warning('AgentApiClient', '图片请求超时', metadata: {
-        ...baseMetadata,
-        'phase': phase,
-        'durationMs': durationMs,
-        'error': e.toString(),
-      });
+      AppLogger.warning(
+        'AgentApiClient',
+        '图片请求超时',
+        metadata: {
+          ...baseMetadata,
+          'phase': phase,
+          'durationMs': durationMs,
+          'error': e.toString(),
+        },
+      );
       rethrow;
     } catch (e) {
       final durationMs = DateTime.now().difference(startedAt).inMilliseconds;
       if (!apiLogWritten) {
-        ApiLogger.add(ApiLogEntry(
-          time: startedAt,
-          method: 'POST',
-          url: endpoint,
-          status: null,
-          durationMs: durationMs,
-          requestBody: ApiLogger.safeSnippet(requestBodyJson),
-          responseBody: ApiLogger.safeSnippet(e.toString(), max: 1200),
-          ok: false,
-          rawRequestBody: requestBodyJson,
-          rawResponseBody: jsonEncode({
-            'kind': 'exception',
-            'phase': phase,
-            'requestId': normalizedRequestId,
-            'durationMs': durationMs,
-            'error': e.toString(),
-          }),
-          eventType: 'image_generation',
-          source: 'AgentApiClient',
-        ));
+        ApiLogger.add(
+          ApiLogEntry(
+            time: startedAt,
+            method: 'POST',
+            url: endpoint,
+            status: null,
+            durationMs: durationMs,
+            requestBody: ApiLogger.safeSnippet(requestBodyJson),
+            responseBody: ApiLogger.safeSnippet(e.toString(), max: 1200),
+            ok: false,
+            rawRequestBody: requestBodyJson,
+            rawResponseBody: jsonEncode({
+              'kind': 'exception',
+              'phase': phase,
+              'requestId': normalizedRequestId,
+              'durationMs': durationMs,
+              'error': e.toString(),
+            }),
+            eventType: 'image_generation',
+            source: 'AgentApiClient',
+          ),
+        );
       }
-      AppLogger.warning('AgentApiClient', '图片请求失败', metadata: {
-        ...baseMetadata,
-        'phase': phase,
-        'durationMs': durationMs,
-        'error': e.toString(),
-      });
+      AppLogger.warning(
+        'AgentApiClient',
+        '图片请求失败',
+        metadata: {
+          ...baseMetadata,
+          'phase': phase,
+          'durationMs': durationMs,
+          'error': e.toString(),
+        },
+      );
       rethrow;
     }
   }
@@ -520,7 +570,8 @@ class _AgentImageApiSupport {
   }
 
   Map<String, String> _compactImageResponseHeaders(
-      Map<String, String> headers) {
+    Map<String, String> headers,
+  ) {
     if (headers.isEmpty) return const <String, String>{};
     return <String, String>{
       for (final entry in headers.entries)
@@ -640,7 +691,8 @@ class _AgentImageApiSupport {
     Map<String, String> headers,
   ) {
     final contentType = headers['content-type']?.toLowerCase() ?? '';
-    final isZip = contentType.contains('zip') ||
+    final isZip =
+        contentType.contains('zip') ||
         (bytes.length > 3 && bytes[0] == 0x50 && bytes[1] == 0x4B);
     if (isZip) {
       final archive = ZipDecoder().decodeBytes(bytes, verify: false);

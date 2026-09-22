@@ -134,9 +134,7 @@ void main() {
       'scrolling premium glass aligns on its first moved frame refresh=$refreshBeforePaint',
       (tester) async {
         MoeLiquidGlassService.setMockState(available: true);
-        addTearDown(
-          () => MoeLiquidGlassService.setMockState(available: false),
-        );
+        addTearDown(() => MoeLiquidGlassService.setMockState(available: false));
         tester.view.devicePixelRatio = 1;
         tester.view.physicalSize = const Size(600, 400);
         addTearDown(tester.view.reset);
@@ -159,15 +157,26 @@ void main() {
                     right: 360,
                   ),
                   children: [
-                    MoeLiquidGlass(
+                    // Keep exercising the dependency's unsupported premium
+                    // path; app wrappers now use solid surfaces in scrollables.
+                    SizedBox(
                       key: panel,
                       width: 180,
                       height: 90,
-                      baseline: MoeMaterialBaseline.text,
-                      blurSigma: 3.52,
-                      shadows: const [],
-                      border: BorderSide.none,
-                      child: const SizedBox.expand(),
+                      child: AdaptiveGlass(
+                        quality: GlassQuality.premium,
+                        shape: const LiquidRoundedSuperellipse(
+                          borderRadius: 20,
+                        ),
+                        settings: LiquidGlassSettings(
+                          blur: MoeMaterialBaseline.text.blurSigma(3.52),
+                          glassColor: MoeColors.dark().glassTintForSigma(
+                            3.52,
+                            baseline: MoeMaterialBaseline.text,
+                          ),
+                        ),
+                        child: const SizedBox.expand(),
+                      ),
                     ),
                     const SizedBox(height: 1000),
                   ],
@@ -179,11 +188,7 @@ void main() {
         for (var i = 0; i < 4; i++) {
           await tester.pump();
         }
-        const samplePoints = [
-          Offset(30, 45),
-          Offset(90, 45),
-          Offset(150, 45),
-        ];
+        const samplePoints = [Offset(30, 45), Offset(90, 45), Offset(150, 45)];
         final box = panel.currentContext!.findRenderObject() as RenderBox;
         Future<List<List<int>>> sampleRgb(ui.Image image) async {
           final bytes = (await image.toByteData(
@@ -207,7 +212,7 @@ void main() {
                   .toImage();
           final rgb = await sampleRgb(image);
           image.dispose();
-          print(
+          debugPrint(
             '[scroll-regression refresh=$refreshBeforePaint] baseline rgb=$rgb',
           );
           for (final t in rgb) {
@@ -234,7 +239,7 @@ void main() {
                       as RenderRepaintBoundary)
                   .toImage();
           final rgb = await sampleRgb(image);
-          print(
+          debugPrint(
             '[scroll-regression refresh=$refreshBeforePaint] moved rgb=$rgb',
           );
           if (const bool.fromEnvironment('WRITE_ALIGNMENT_QA')) {
@@ -245,11 +250,7 @@ void main() {
           }
           image.dispose();
           for (final t in rgb) {
-            expect(
-              t[1],
-              lessThan(115),
-              reason: '布局已移动但glass shade未同步',
-            );
+            expect(t[1], lessThan(115), reason: '布局已移动但glass shade未同步');
           }
         });
       },

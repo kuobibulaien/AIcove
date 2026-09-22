@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:aicove_flutter/src/features/smart_reply/application/smart_reply_controller.dart';
 import 'dart:async';
 import 'package:aicove_flutter/src/features/chat/application/chat_edit.dart';
 import 'package:aicove_flutter/src/features/chat/chat_layer_providers.dart';
@@ -116,6 +117,23 @@ void main() {
 
   setUp(() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
+  });
+
+  testWidgets('辅助回答按会话填入并保留已有草稿，不发送', (tester) async {
+    var sends = 0;
+    await tester.pumpWidget(_buildHost(conversation: _buildConversation('conv_a'), onSend: (_) => sends++));
+    await _pumpComposerReady(tester);
+    final input = find.byType(TextField).first;
+    await tester.enterText(input, '已有草稿');
+    final container = ProviderScope.containerOf(tester.element(find.byType(Composer)));
+    container.read(smartReplyDraftProvider('conv_b').notifier).state = '其他会话';
+    await tester.pump();
+    expect(tester.widget<TextField>(input).controller!.text, '已有草稿');
+    container.read(smartReplyDraftProvider('conv_a').notifier).state = '候选回复';
+    await _pumpComposerReady(tester);
+    expect(tester.widget<TextField>(input).controller!.text, '已有草稿\n候选回复');
+    expect(sends, 0);
+    await _disposeComposer(tester);
   });
 
   const edit = ChatEditDraft(

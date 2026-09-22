@@ -17,23 +17,26 @@ class ProviderDetailActions {
   AppSettings? get _settings => _ref.read(appSettingsProvider).valueOrNull;
 
   String resolvePrimaryApiKey(ProviderAuth provider) {
-    final fallback =
-        provider.apiKeys.isNotEmpty ? provider.apiKeys.first.trim() : '';
+    final fallback = provider.apiKeys.isNotEmpty
+        ? provider.apiKeys.first.trim()
+        : '';
     if (!isProviderMultiKeyEnabled(provider)) return fallback;
 
     final items = providerMultiKeyItemsFromProvider(provider);
     final available = items
-        .where((item) =>
-            item.enabled &&
-            item.status != ProviderMultiKeyStatus.error &&
-            item.key.trim().isNotEmpty)
+        .where(
+          (item) =>
+              item.enabled &&
+              item.status != ProviderMultiKeyStatus.error &&
+              item.key.trim().isNotEmpty,
+        )
         .toList();
     if (providerMultiKeyStrategy(provider) == providerMultiKeyStrategyExhaust &&
         available.isNotEmpty) {
       final currentIndex =
           (provider.customConfig[providerMultiKeyRoundRobinIndexField] as num?)
-                  ?.toInt() ??
-              0;
+              ?.toInt() ??
+          0;
       final normalizedIndex = currentIndex.clamp(0, items.length - 1).toInt();
       for (var offset = 0; offset < items.length; offset++) {
         final index = (normalizedIndex + offset) % items.length;
@@ -152,15 +155,31 @@ class ProviderDetailActions {
     );
   }
 
+  Future<void> saveComfyUIWorkflow(
+    ProviderAuth provider,
+    Map<String, dynamic> workflow,
+  ) {
+    final latest =
+        _settings?.providers
+            .where((item) => item.id == provider.id)
+            .firstOrNull ??
+        provider;
+    return _notifier.editProvider(
+      providerId: provider.id,
+      customConfig: {...latest.customConfig, ...workflow},
+    );
+  }
+
   Future<String> testModel({
     required ProviderAuth provider,
     required String apiKey,
     required String modelId,
   }) {
     return _notifier.testModel(
-      providerId:
-          resolveProviderDetailRequestFormat(provider, settings: _settings)
-              .value,
+      providerId: resolveProviderDetailRequestFormat(
+        provider,
+        settings: _settings,
+      ).value,
       apiKey: apiKey,
       apiBaseUrl: provider.apiBaseUrl,
       modelId: modelId,

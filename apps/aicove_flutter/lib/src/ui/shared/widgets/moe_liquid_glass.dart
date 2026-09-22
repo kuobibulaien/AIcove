@@ -9,6 +9,7 @@ import 'package:liquid_glass_widgets/src/renderer/liquid_glass_renderer.dart'
 
 import '../../theme/tokens.dart';
 import '../../theme/moe_frosted_material.dart';
+import 'moe_surface_motion.dart';
 
 /// AICove 液态玻璃材质组件 (材质 2)
 ///
@@ -103,7 +104,9 @@ class MoeLiquidGlass extends StatelessWidget {
 
     // 效果可用性：受显式参数、全局主题、平台能力及无障碍降级共同约束
     final isGlassEnabled =
-        (enabled ?? glassTheme?.enabled ?? true) && !isAccessibilityDegraded;
+        (enabled ?? glassTheme?.enabled ?? true) &&
+        !moeSurfaceMovesWithContent(context) &&
+        !isAccessibilityDegraded;
     final isFrosted = glassTheme?.material == MoeSurfaceMaterial.frosted;
     final isLiquidEnabled =
         isGlassEnabled &&

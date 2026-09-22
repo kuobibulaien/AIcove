@@ -23,6 +23,9 @@ import '../../../../features/settings/app_settings.dart';
 import '../../../theme/tokens.dart';
 import '../../../shared/effects/smooth_clip.dart';
 import '../../../shared/widgets/index.dart';
+import '../../../../core/api/image_providers/comfyui_workflow.dart';
+import '../../../../core/api/image_providers/comfyui_image_adapter.dart';
+import '../widgets/comfyui_workflow_editor.dart';
 
 /// 鏄剧ず娣诲姞渚涘簲鍟嗗簳閮ㄥ脊绐?
 Future<bool?> showAddProviderSheet(BuildContext context) {
@@ -68,8 +71,15 @@ class ApiFormat {
     '',
   );
 
+  static const comfyui = ApiFormat._(
+    'comfyui',
+    'ComfyUI',
+    'http://127.0.0.1:8188',
+    '',
+  );
+
   static const chatFormats = <ApiFormat>[openai, claude, gemini];
-  static const imageFormats = <ApiFormat>[openai, novelai];
+  static const imageFormats = <ApiFormat>[openai, novelai, comfyui];
 
   static List<ApiFormat> forCapability(String capability) {
     if (capability == 'image') return imageFormats;
@@ -100,6 +110,8 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
 
   ApiFormat _selectedFormat = ApiFormat.openai;
   bool _submitting = false;
+  Map<String, dynamic> _comfyConfig = {};
+  bool get _isComfyUI => _selectedFormat == ApiFormat.comfyui;
 
   @override
   void dispose() {
@@ -139,7 +151,7 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
     final apiPath = _pathCtrl.text.trim();
     final displayName = _displayCtrl.text.trim();
 
-    if (apiKey.isEmpty) {
+    if (apiKey.isEmpty && !_isComfyUI) {
       MoeToast.show(context, '\u8bf7\u8f93\u5165 API Key');
       return;
     }
@@ -147,11 +159,20 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
       MoeToast.show(context, '\u8bf7\u8f93\u5165 API \u5730\u5740');
       return;
     }
-    if (apiPath.isEmpty) {
+    if (apiPath.isEmpty && !_isComfyUI) {
       MoeToast.show(context, '请输入 API 路径');
       return;
     }
 
+    if (_isComfyUI) {
+      try {
+        ComfyUIImageAdapter.endpoint(apiBaseUrl, 'prompt');
+        ComfyUIWorkflow.validate(_comfyConfig);
+      } catch (error) {
+        MoeToast.show(context, error.toString(), type: ToastType.error);
+        return;
+      }
+    }
     setState(() => _submitting = true);
 
     try {
@@ -160,7 +181,10 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
       List<String> allModels = const <String>[];
       List<String> visibleModels = const <String>[];
       final customConfig = copyCustomConfigWithProviderChatApiPath(
-        <String, dynamic>{'requestFormat': _selectedFormat.value},
+        <String, dynamic>{
+          'requestFormat': _selectedFormat.value,
+          if (_isComfyUI) ..._comfyConfig,
+        },
         apiPath,
       );
 
@@ -187,6 +211,7 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
         allModels: allModels,
         visibleModels: visibleModels,
         customConfig: customConfig,
+        capabilities: _isComfyUI ? const ['image'] : null,
       );
 
       if (!mounted) return;
@@ -296,12 +321,15 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                           children: [
                             MoeToggleBar<ApiFormat>(
                               value: _selectedFormat,
-                              items: ApiFormat.chatFormats
-                                  .map(
-                                    (f) =>
-                                        MoeToggleItem(value: f, label: f.label),
-                                  )
-                                  .toList(),
+                              items:
+                                  [...ApiFormat.chatFormats, ApiFormat.comfyui]
+                                      .map(
+                                        (f) => MoeToggleItem(
+                                          value: f,
+                                          label: f.label,
+                                        ),
+                                      )
+                                      .toList(),
                               onChanged: _onFormatChanged,
                             ),
                           ],
@@ -355,7 +383,9 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                                     color: colors.text,
                                   ),
                                   decoration: MoeInputDecoration(
-                                    hintText: '\u5fc5\u586b',
+                                    hintText: _isComfyUI
+                                        ? '可选（Bearer Token）'
+                                        : '\u5fc5\u586b',
                                     hintStyle: TextStyle(
                                       color: colors.muted,
                                       fontSize: 14,
@@ -390,32 +420,62 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                                 ),
                               ),
                             ),
-                            MoeSettingsRow(
-                              icon: Icons.route_outlined,
-                              label: 'API 路径',
-                              trailingType: MoeSettingsRowTrailing.custom,
-                              trailing: SizedBox(
-                                width: 180,
-                                child: TextField(
-                                  controller: _pathCtrl,
-                                  textAlign: TextAlign.end,
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: colors.text,
-                                  ),
-                                  decoration: MoeInputDecoration(
-                                    hintStyle: TextStyle(
-                                      color: colors.muted,
+                            if (!_isComfyUI)
+                              MoeSettingsRow(
+                                icon: Icons.route_outlined,
+                                label: 'API 路径',
+                                trailingType: MoeSettingsRowTrailing.custom,
+                                trailing: SizedBox(
+                                  width: 180,
+                                  child: TextField(
+                                    controller: _pathCtrl,
+                                    textAlign: TextAlign.end,
+                                    style: TextStyle(
                                       fontSize: 14,
+                                      color: colors.text,
                                     ),
-                                    isDense: true,
-                                    contentPadding: EdgeInsets.zero,
+                                    decoration: MoeInputDecoration(
+                                      hintStyle: TextStyle(
+                                        color: colors.muted,
+                                        fontSize: 14,
+                                      ),
+                                      isDense: true,
+                                      contentPadding: EdgeInsets.zero,
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
                           ],
                         ),
+                        if (_isComfyUI) ...[
+                          const SizedBox(height: 16),
+                          MoeSettingsGroup(
+                            margin: EdgeInsets.zero,
+                            children: [
+                              MoeSettingsRow(
+                                label: 'ComfyUI 工作流',
+                                detailText: _comfyConfig.isEmpty
+                                    ? '导入并绑定提示词'
+                                    : '已配置',
+                                trailingType: MoeSettingsRowTrailing.chevron,
+                                onTap: () async {
+                                  final config =
+                                      await showComfyUIWorkflowEditor(
+                                        context,
+                                        _comfyConfig,
+                                      );
+                                  if (config != null && mounted) {
+                                    setState(() => _comfyConfig = config);
+                                  }
+                                },
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            '同机可用 127.0.0.1；手机连接电脑时填写电脑的局域网地址。模型与 LoRA 由工作流指定。',
+                          ),
+                        ],
                         ValueListenableBuilder<TextEditingValue>(
                           valueListenable: _urlCtrl,
                           builder: (context, value, _) {

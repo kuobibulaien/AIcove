@@ -206,7 +206,7 @@ void main() {
           } else {
             expect(
               find.byType(BackdropFilter),
-              sigma == 0 ? findsNothing : findsWidgets,
+              findsWidgets, // Frosted mode keeps the documented 10% minimum.
             );
           }
           for (final type in [

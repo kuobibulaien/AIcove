@@ -175,7 +175,7 @@ void main() {
         await db.customStatement('DROP INDEX IF EXISTS $name');
       }
       before = await _snapshot(db);
-      expect((before['version'] as Map)['user_version'], 16);
+      expect((before['version'] as Map)['user_version'], db.schemaVersion);
     } finally {
       await db.close();
     }

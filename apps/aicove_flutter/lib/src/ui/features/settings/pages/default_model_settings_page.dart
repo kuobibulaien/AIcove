@@ -11,6 +11,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../features/settings/app_settings.dart';
+import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
+import 'automatic_context_settings_page.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
@@ -109,6 +111,37 @@ class _DefaultModelSettingsPageState
 
         const SizedBox(height: 24),
 
+        MoeSettingsGroup(
+          margin: EdgeInsets.zero,
+          children: [
+            MoeSettingsRow(
+              label: '自动压缩',
+              subtitle: '总结模型、上下文窗口与触发规则',
+              trailingType: MoeSettingsRowTrailing.chevron,
+              onTap: () async {
+                if (!await autoSave.flush() || !mounted) return;
+                await Navigator.of(context).push(
+                  ParallaxSlidePageRoute(
+                    page: const AutomaticContextSettingsPage(),
+                  ),
+                );
+                if (!mounted) return;
+                final latest = ref.read(appSettingsProvider).valueOrNull;
+                if (latest == null) return;
+                _contextWindowCtrl.text = (latest.contextWindowTokens / 1000)
+                    .toStringAsFixed(
+                      latest.contextWindowTokens % 1000 == 0 ? 0 : 3,
+                    );
+                autoSave.configure(
+                  save: _saveContextWindowTokens,
+                  snapshot: () => _contextWindowCtrl.text,
+                  fields: [_contextWindowCtrl],
+                );
+              },
+            ),
+          ],
+        ),
+        const SizedBox(height: 24),
         // ============ 上下文窗口 ============
         _buildSectionHeader(colors, '上下文窗口', '接近窗口容量时自动压缩对话'),
         const SizedBox(height: 8),

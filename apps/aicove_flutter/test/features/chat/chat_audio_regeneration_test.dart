@@ -4,8 +4,10 @@ import 'dart:io';
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:aicove_flutter/src/core/database/database.dart' as db;
 import 'package:aicove_flutter/src/core/database/database_provider.dart';
+import 'package:aicove_flutter/src/core/media/media_store.dart';
 import 'package:aicove_flutter/src/core/models/message_block.dart';
 import 'package:aicove_flutter/src/core/models/block_status.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
@@ -116,6 +118,7 @@ void main() {
   }
 
   setUp(() async {
+    SharedPreferences.setMockInitialValues({});
     database = db.AppDatabase.forTesting(NativeDatabase.memory());
     await database.customStatement('PRAGMA foreign_keys = ON');
     container = ProviderContainer(
@@ -304,6 +307,13 @@ void main() {
     expect(speech.called.isCompleted, false);
   });
   test('语音重生成实际经过本机HTTP，保存新音频并保留角色音色参数', () async {
+    final mediaDirectory = await Directory.systemTemp.createTemp('tts-media-');
+    final mediaStore = MediaStore(mediaDirectory, 'tts-test-device');
+    MediaStore.use(mediaStore);
+    addTearDown(() async {
+      await mediaStore.close();
+      await mediaDirectory.delete(recursive: true);
+    });
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(() => server.close(force: true));
     final bodies = <Map<String, dynamic>>[];

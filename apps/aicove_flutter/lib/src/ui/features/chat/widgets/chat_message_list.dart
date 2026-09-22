@@ -31,6 +31,7 @@ import '../../../../core/utils/message_formatter.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../../core/models/message_block.dart';
 import 'animated_message_item.dart';
+import 'smart_reply_badge.dart';
 import 'chat_end_anchored_sliver.dart';
 import 'chat_message_list_display_cache.dart';
 import 'chat_message_list_items.dart';
@@ -834,13 +835,26 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
         ValueListenableBuilder<bool>(
           valueListenable: _showJumpToBottom,
           builder: (context, show, _) {
-            if (!show || widget.selection?.active == true) {
+            if (widget.selection?.active == true) {
               return const SizedBox.shrink();
             }
             return Positioned(
               right: 14,
               bottom: jumpToBottomBottomOffset,
-              child: _buildJumpToBottomButton(context),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SmartReplyBadge(
+                    key: ValueKey('smart_reply_${widget.conversationId}'),
+                    conversationId: widget.conversationId,
+                    size: _kJumpToBottomButtonSize,
+                  ),
+                  if (show) ...[
+                    const SizedBox(width: 10),
+                    _buildJumpToBottomButton(context),
+                  ],
+                ],
+              ),
             );
           },
         ),

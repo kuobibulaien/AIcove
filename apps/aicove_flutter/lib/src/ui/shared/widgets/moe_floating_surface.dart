@@ -6,6 +6,7 @@ import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import '../../theme/tokens.dart';
 import '../../theme/moe_frosted_material.dart';
 import 'moe_liquid_glass.dart';
+import 'moe_surface_motion.dart';
 
 /// A clipped, translucent surface shared by phone and desktop chat controls.
 class MoeFloatingSurface extends StatefulWidget {
@@ -66,6 +67,7 @@ class _MoeFloatingSurfaceState extends State<MoeFloatingSurface> {
     final highContrast = MediaQuery.maybeHighContrastOf(context) ?? false;
     final isBlurEnabled =
         (blurEnabled ?? glassTheme?.enabled ?? true) &&
+        !moeSurfaceMovesWithContent(context) &&
         !highContrast &&
         !GlassAccessibilityData.of(context).reduceTransparency;
     final isFrosted = glassTheme?.material == MoeSurfaceMaterial.frosted;

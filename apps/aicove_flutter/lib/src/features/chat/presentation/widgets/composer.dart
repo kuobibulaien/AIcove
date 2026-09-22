@@ -28,6 +28,7 @@ import '../../../../core/services/attachment_picker_service.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../settings/app_settings.dart';
+import '../../../smart_reply/application/smart_reply_controller.dart';
 import '../../chat_actions.dart';
 import '../../application/chat_edit.dart';
 import '../../chat_layer_providers.dart';
@@ -1073,6 +1074,21 @@ class _ComposerState extends ConsumerState<Composer> {
   Widget build(BuildContext context) {
     final editOwner = ref.watch(activeConversationProvider)?.id;
     if (editOwner != null) {
+      ref.listen<String?>(smartReplyDraftProvider(editOwner), (_, text) {
+        if (text == null || _readCurrentConversationId() != editOwner) return;
+        ref.read(smartReplyDraftProvider(editOwner).notifier).state = null;
+        if (_editDraft != null || widget.disabled) {
+          MoeToast.brief(context, '请先完成当前编辑，再使用辅助回答');
+          return;
+        }
+        final draft = _ctrl.text;
+        final next = draft.isEmpty ? text : '$draft\n$text';
+        _ctrl.value = TextEditingValue(
+          text: next,
+          selection: TextSelection.collapsed(offset: next.length),
+        );
+        _showKeyboardWithPreAnimation();
+      });
       ref.listen<ChatEditSeed?>(chatEditSeedProvider(editOwner), (_, seed) {
         if (seed != null) _applyEditSeed(seed);
       });

@@ -31,6 +31,8 @@ import '../widgets/model_row_tile.dart';
 import '../widgets/model_picker_sheet.dart';
 import '../widgets/model_test_sheet.dart';
 import 'multi_key_manager_page.dart';
+import '../../../../core/api/image_providers/comfyui_workflow.dart';
+import '../widgets/comfyui_workflow_editor.dart';
 
 /// 供应商详情页
 class ProviderDetailPage extends ConsumerStatefulWidget {
@@ -228,7 +230,8 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage>
     }
 
     final apiKey = _actions.resolvePrimaryApiKey(provider);
-    if (apiKey.isEmpty) {
+    if (apiKey.isEmpty &&
+        !ComfyUIWorkflow.isProvider(provider.id, provider.customConfig)) {
       MoeToast.show(context, '请先配置可用 API Key', type: ToastType.error);
       return;
     }
@@ -735,6 +738,46 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage>
                 ),
             ],
           ),
+          if (requestFormat == ProviderDetailRequestFormat.comfyui)
+            MoeSettingsGroup(
+              margin: const EdgeInsets.symmetric(horizontal: 16),
+              title: 'ComfyUI',
+              children: [
+                MoeSettingsRow(
+                  label: '工作流与参数绑定',
+                  detailText:
+                      provider.customConfig.containsKey(
+                        ComfyUIWorkflow.workflowKey,
+                      )
+                      ? '已配置'
+                      : '尚未导入',
+                  trailingType: MoeSettingsRowTrailing.chevron,
+                  onTap: () async {
+                    final workflow = await showComfyUIWorkflowEditor(
+                      context,
+                      provider.customConfig,
+                    );
+                    if (workflow != null && mounted) {
+                      try {
+                        await _actions.saveComfyUIWorkflow(provider, workflow);
+                      } catch (error) {
+                        if (context.mounted) {
+                          MoeToast.show(
+                            context,
+                            '保存失败：$error',
+                            type: ToastType.error,
+                          );
+                        }
+                      }
+                    }
+                  },
+                ),
+                const Padding(
+                  padding: EdgeInsets.all(12),
+                  child: Text('API Key 可留空；模型由工作流指定。测试连接只检查服务，不执行生图。'),
+                ),
+              ],
+            ),
           MoeSettingsGroup(
             margin: const EdgeInsets.symmetric(horizontal: 16),
             title: '高级信息',

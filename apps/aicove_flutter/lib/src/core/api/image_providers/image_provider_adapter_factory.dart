@@ -1,6 +1,8 @@
 library;
 
 import 'image_provider_adapter.dart';
+import 'comfyui_image_adapter.dart';
+import 'comfyui_workflow.dart';
 import 'openai_compatible_image_adapter.dart';
 
 class ImageProviderAdapterFactory {
@@ -11,8 +13,11 @@ class ImageProviderAdapterFactory {
     String provider, {
     Map<String, dynamic>? customConfig,
   }) {
-    final requestFormat =
-        customConfig?['requestFormat']?.toString().trim().toLowerCase();
+    if (ComfyUIWorkflow.isProvider(provider, customConfig)) return 'comfyui';
+    final requestFormat = customConfig?['requestFormat']
+        ?.toString()
+        .trim()
+        .toLowerCase();
     if (requestFormat == 'novelai' || requestFormat == 'nai') {
       return 'novelai';
     }
@@ -31,6 +36,8 @@ class ImageProviderAdapterFactory {
   }) {
     final resolved = resolveProvider(provider, customConfig: customConfig);
     switch (resolved) {
+      case 'comfyui':
+        return const ComfyUIImageAdapter();
       case 'openai':
         return _openAiCompatibleAdapter;
       default:
