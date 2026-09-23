@@ -87,7 +87,8 @@ class _PromptNodeSnapshot {
 
   int get attentionCount => prompts
       .where(
-          (prompt) => _attentionStatuses.contains(_usageFor(prompt.id).status))
+        (prompt) => _attentionStatuses.contains(_usageFor(prompt.id).status),
+      )
       .length;
 
   int get customNodeCount => customNodes.length;
@@ -204,36 +205,6 @@ const _runtimeUsages = <String, _RuntimePromptUsage>{
     summary: '用于生成 <system-reminder> 的时间上下文文本。',
     status: _RuntimePromptStatus.configurable,
   ),
-  'memory.summary.default': _RuntimePromptUsage(
-    area: '记忆总结',
-    summary: '作为记忆总结 BackgroundAgent 的默认 objectivePrompt。',
-    status: _RuntimePromptStatus.configurable,
-  ),
-  'memory.summary.extra_instruction': _RuntimePromptUsage(
-    area: '记忆总结',
-    summary: '作为记忆总结 extraInstruction 的固定前置说明。',
-    status: _RuntimePromptStatus.active,
-  ),
-  'memory.summary.role_persona.generic_instruction': _RuntimePromptUsage(
-    area: '记忆总结',
-    summary: '用于角色专属记忆总结的通用约束。',
-    status: _RuntimePromptStatus.active,
-  ),
-  'memory.summary.role_persona.context_instruction': _RuntimePromptUsage(
-    area: '记忆总结',
-    summary: '用于拼接角色名称、称呼和人设摘要。',
-    status: _RuntimePromptStatus.active,
-  ),
-  'memory.role_scoped.root': _RuntimePromptUsage(
-    area: '记忆注入',
-    summary: '用于把召回记忆组织为角色专属上下文。',
-    status: _RuntimePromptStatus.active,
-  ),
-  'memory.profile_prompt.root': _RuntimePromptUsage(
-    area: '用户画像',
-    summary: '用于格式化 L1 用户画像记忆。',
-    status: _RuntimePromptStatus.active,
-  ),
   'system_reminder.semantics': _RuntimePromptUsage(
     area: '系统提醒',
     summary: '用于说明 <system-reminder> 标签语义。',
@@ -254,16 +225,6 @@ const _runtimeUsages = <String, _RuntimePromptUsage>{
     summary: '用于生成角色视角日记。',
     status: _RuntimePromptStatus.active,
   ),
-  'memory.merge.prompt': _RuntimePromptUsage(
-    area: '记忆合并',
-    summary: '用于将新事实合并进已有 L2 记忆。',
-    status: _RuntimePromptStatus.active,
-  ),
-  'memory.reenrich.default': _RuntimePromptUsage(
-    area: '记忆重丰富',
-    summary: '用于重新丰富被压缩标记的记忆。',
-    status: _RuntimePromptStatus.active,
-  ),
 };
 
 class PromptNodeManagementPage extends StatefulWidget {
@@ -272,9 +233,9 @@ class PromptNodeManagementPage extends StatefulWidget {
     AssetBundle? assetBundle,
     AgentContextDefaultsLoader? defaultsLoader,
     PromptCustomNodeStore? customNodeStore,
-  })  : _assetBundle = assetBundle,
-        _defaultsLoader = defaultsLoader,
-        _customNodeStore = customNodeStore;
+  }) : _assetBundle = assetBundle,
+       _defaultsLoader = defaultsLoader,
+       _customNodeStore = customNodeStore;
 
   final AssetBundle? _assetBundle;
   final AgentContextDefaultsLoader? _defaultsLoader;
@@ -306,21 +267,24 @@ class _PromptNodeManagementPageState extends State<PromptNodeManagementPage> {
 
   Future<_PromptNodeSnapshot> _loadSnapshot() async {
     final assetBundle = widget._assetBundle ?? rootBundle;
-    final rawPromptDefaults =
-        await assetBundle.loadString('assets/prompt_defaults.json');
+    final rawPromptDefaults = await assetBundle.loadString(
+      'assets/prompt_defaults.json',
+    );
     final promptDocument = _readObject(jsonDecode(rawPromptDefaults));
-    final prompts = _readObjectList(promptDocument['prompts'])
-        .map(_PromptDefaultNode.fromJson)
-        .toList(growable: false)
-      ..sort((a, b) {
-        final category = a.category.compareTo(b.category);
-        if (category != 0) return category;
-        return a.id.compareTo(b.id);
-      });
+    final prompts =
+        _readObjectList(
+            promptDocument['prompts'],
+          ).map(_PromptDefaultNode.fromJson).toList(growable: false)
+          ..sort((a, b) {
+            final category = a.category.compareTo(b.category);
+            if (category != 0) return category;
+            return a.id.compareTo(b.id);
+          });
 
-    final defaults = await (widget._defaultsLoader ??
-            AgentContextDefaultsLoader(bundle: widget._assetBundle))
-        .load();
+    final defaults =
+        await (widget._defaultsLoader ??
+                AgentContextDefaultsLoader(bundle: widget._assetBundle))
+            .load();
     final graphLinks = <String, List<_PromptGraphLink>>{};
     for (final agent in defaults.agents) {
       for (final node in agent.agentGraph.nodes) {
@@ -329,15 +293,17 @@ class _PromptNodeManagementPageState extends State<PromptNodeManagementPage> {
           node.nodeId,
           () => <_PromptGraphLink>[],
         );
-        links.add(_PromptGraphLink(
-          agentId: agent.id,
-          agentName: agent.name,
-          stageLabel: _readString(
-            node.config['stageLabel'],
-            fallback: _readString(node.config['stage']),
+        links.add(
+          _PromptGraphLink(
+            agentId: agent.id,
+            agentName: agent.name,
+            stageLabel: _readString(
+              node.config['stageLabel'],
+              fallback: _readString(node.config['stage']),
+            ),
+            slot: node.slot ?? '',
           ),
-          slot: node.slot ?? '',
-        ));
+        );
       }
     }
     final promptIds = prompts.map((prompt) => prompt.id).toSet();
@@ -387,6 +353,7 @@ class _PromptNodeManagementPageState extends State<PromptNodeManagementPage> {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
     return MoePageScaffold(
+      extendBodyBehindAppBar: true,
       backgroundColor: colors.surface,
       appBar: const MoeAppBar(title: '提示词节点', showBackButton: true),
       body: FutureBuilder<_PromptNodeSnapshot>(
@@ -407,66 +374,66 @@ class _PromptNodeManagementPageState extends State<PromptNodeManagementPage> {
           final customNodes = _filter == _PromptNodeFilter.all
               ? data.customNodes
               : const <PromptCustomNode>[];
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              _SummaryPanel(snapshot: data),
-              const SizedBox(height: 14),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: MoePrimaryButton(
-                  label: '新增自定义节点',
-                  icon: Icons.add_rounded,
-                  size: MoePrimaryButtonSize.sm,
-                  onPressed: () => _openCustomNodeEditor(data),
-                ),
-              ),
-              const SizedBox(height: 14),
-              MoeToggleBar<_PromptNodeFilter>(
-                value: _filter,
-                items: const [
-                  MoeToggleItem(value: _PromptNodeFilter.all, label: '全部'),
-                  MoeToggleItem(value: _PromptNodeFilter.graph, label: '图内'),
-                  MoeToggleItem(
-                    value: _PromptNodeFilter.graphMissing,
-                    label: '图外',
+          return Builder(
+            builder: (context) => ListView(
+              padding: moeUnderBarPadding(context, EdgeInsets.all(16)),
+              children: [
+                _SummaryPanel(snapshot: data),
+                const SizedBox(height: 14),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: MoePrimaryButton(
+                    label: '新增自定义节点',
+                    icon: Icons.add_rounded,
+                    size: MoePrimaryButtonSize.sm,
+                    onPressed: () => _openCustomNodeEditor(data),
                   ),
-                  MoeToggleItem(
-                    value: _PromptNodeFilter.attention,
-                    label: '关注',
+                ),
+                const SizedBox(height: 14),
+                MoeToggleBar<_PromptNodeFilter>(
+                  value: _filter,
+                  items: const [
+                    MoeToggleItem(value: _PromptNodeFilter.all, label: '全部'),
+                    MoeToggleItem(value: _PromptNodeFilter.graph, label: '图内'),
+                    MoeToggleItem(
+                      value: _PromptNodeFilter.graphMissing,
+                      label: '图外',
+                    ),
+                    MoeToggleItem(
+                      value: _PromptNodeFilter.attention,
+                      label: '关注',
+                    ),
+                  ],
+                  onChanged: (value) => setState(() => _filter = value),
+                ),
+                const SizedBox(height: 14),
+                for (var index = 0; index < prompts.length; index++) ...[
+                  _PromptNodeCard(
+                    prompt: prompts[index],
+                    graphLinks:
+                        data.graphLinksByPromptId[prompts[index].id] ??
+                        const <_PromptGraphLink>[],
                   ),
+                  if (index != prompts.length - 1) const SizedBox(height: 10),
                 ],
-                onChanged: (value) => setState(() => _filter = value),
-              ),
-              const SizedBox(height: 14),
-              for (var index = 0; index < prompts.length; index++) ...[
-                _PromptNodeCard(
-                  prompt: prompts[index],
-                  graphLinks: data.graphLinksByPromptId[prompts[index].id] ??
-                      const <_PromptGraphLink>[],
-                ),
-                if (index != prompts.length - 1) const SizedBox(height: 10),
-              ],
-              if (customNodes.isNotEmpty) ...[
-                const SizedBox(height: 18),
-                _SectionTitle(
-                  title: '自定义节点',
-                  count: customNodes.length,
-                ),
-                const SizedBox(height: 10),
-                for (var index = 0; index < customNodes.length; index++) ...[
-                  _CustomPromptNodeCard(node: customNodes[index]),
-                  if (index != customNodes.length - 1)
-                    const SizedBox(height: 10),
+                if (customNodes.isNotEmpty) ...[
+                  const SizedBox(height: 18),
+                  _SectionTitle(title: '自定义节点', count: customNodes.length),
+                  const SizedBox(height: 10),
+                  for (var index = 0; index < customNodes.length; index++) ...[
+                    _CustomPromptNodeCard(node: customNodes[index]),
+                    if (index != customNodes.length - 1)
+                      const SizedBox(height: 10),
+                  ],
                 ],
+                if (prompts.isEmpty && customNodes.isEmpty)
+                  const MoeEmptyState(
+                    icon: Icons.search_off_outlined,
+                    title: '没有匹配项',
+                    description: '当前筛选条件下没有提示词节点',
+                  ),
               ],
-              if (prompts.isEmpty && customNodes.isEmpty)
-                const MoeEmptyState(
-                  icon: Icons.search_off_outlined,
-                  title: '没有匹配项',
-                  description: '当前筛选条件下没有提示词节点',
-                ),
-            ],
+            ),
           );
         },
       ),
@@ -479,18 +446,22 @@ class _PromptNodeManagementPageState extends State<PromptNodeManagementPage> {
         return snapshot.prompts;
       case _PromptNodeFilter.graph:
         return snapshot.prompts
-            .where((prompt) =>
-                snapshot.graphLinksByPromptId.containsKey(prompt.id))
+            .where(
+              (prompt) => snapshot.graphLinksByPromptId.containsKey(prompt.id),
+            )
             .toList(growable: false);
       case _PromptNodeFilter.graphMissing:
         return snapshot.prompts
-            .where((prompt) =>
-                !snapshot.graphLinksByPromptId.containsKey(prompt.id))
+            .where(
+              (prompt) => !snapshot.graphLinksByPromptId.containsKey(prompt.id),
+            )
             .toList(growable: false);
       case _PromptNodeFilter.attention:
         return snapshot.prompts
-            .where((prompt) =>
-                _attentionStatuses.contains(_usageFor(prompt.id).status))
+            .where(
+              (prompt) =>
+                  _attentionStatuses.contains(_usageFor(prompt.id).status),
+            )
             .toList(growable: false);
     }
   }
@@ -531,13 +502,19 @@ class _SummaryPanel extends StatelessWidget {
               runSpacing: 8,
               children: [
                 _MetricChip(
-                    label: '内置提示词', value: '${snapshot.prompts.length}'),
+                  label: '内置提示词',
+                  value: '${snapshot.prompts.length}',
+                ),
                 _MetricChip(
-                    label: 'Agent Build', value: '${snapshot.graphNodeCount}'),
+                  label: 'Agent Build',
+                  value: '${snapshot.graphNodeCount}',
+                ),
                 _MetricChip(label: '图外运行', value: '$graphMissing'),
                 _MetricChip(label: '关注项', value: '${snapshot.attentionCount}'),
                 _MetricChip(
-                    label: '自定义节点', value: '${snapshot.customNodeCount}'),
+                  label: '自定义节点',
+                  value: '${snapshot.customNodeCount}',
+                ),
               ],
             ),
             const SizedBox(height: 10),
@@ -557,10 +534,7 @@ class _SummaryPanel extends StatelessWidget {
 }
 
 class _SectionTitle extends StatelessWidget {
-  const _SectionTitle({
-    required this.title,
-    required this.count,
-  });
+  const _SectionTitle({required this.title, required this.count});
 
   final String title;
   final int count;
@@ -586,10 +560,7 @@ class _SectionTitle extends StatelessWidget {
 }
 
 class _MetricChip extends StatelessWidget {
-  const _MetricChip({
-    required this.label,
-    required this.value,
-  });
+  const _MetricChip({required this.label, required this.value});
 
   final String label;
   final String value;
@@ -629,10 +600,7 @@ class _MetricChip extends StatelessWidget {
 }
 
 class _PromptNodeCard extends StatelessWidget {
-  const _PromptNodeCard({
-    required this.prompt,
-    required this.graphLinks,
-  });
+  const _PromptNodeCard({required this.prompt, required this.graphLinks});
 
   final _PromptDefaultNode prompt;
   final List<_PromptGraphLink> graphLinks;
@@ -652,8 +620,10 @@ class _PromptNodeCard extends StatelessWidget {
         child: Theme(
           data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
           child: ExpansionTile(
-            tilePadding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+            tilePadding: const EdgeInsets.symmetric(
+              horizontal: 14,
+              vertical: 4,
+            ),
             childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
             iconColor: colors.textSecondary,
             collapsedIconColor: colors.muted,
@@ -703,23 +673,19 @@ class _PromptNodeCard extends StatelessWidget {
                 _DetailBlock(
                   title: 'Agent Build',
                   body: graphLinks
-                      .map((link) => [
-                            link.agentName,
-                            link.stageLabel,
-                            if (link.slot.isNotEmpty) link.slot,
-                          ].where((part) => part.isNotEmpty).join(' / '))
+                      .map(
+                        (link) => [
+                          link.agentName,
+                          link.stageLabel,
+                          if (link.slot.isNotEmpty) link.slot,
+                        ].where((part) => part.isNotEmpty).join(' / '),
+                      )
                       .join('\n'),
                 ),
               if (prompt.variables.isNotEmpty)
-                _DetailBlock(
-                  title: '变量',
-                  body: prompt.variables.join(', '),
-                ),
+                _DetailBlock(title: '变量', body: prompt.variables.join(', ')),
               if (prompt.description.isNotEmpty)
-                _DetailBlock(
-                  title: '说明',
-                  body: prompt.description,
-                ),
+                _DetailBlock(title: '说明', body: prompt.description),
               if (prompt.dartName.isNotEmpty)
                 _DetailBlock(
                   title: 'Dart 常量',
@@ -758,8 +724,10 @@ class _CustomPromptNodeCard extends StatelessWidget {
         child: Theme(
           data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
           child: ExpansionTile(
-            tilePadding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+            tilePadding: const EdgeInsets.symmetric(
+              horizontal: 14,
+              vertical: 4,
+            ),
             childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
             iconColor: colors.textSecondary,
             collapsedIconColor: colors.muted,
@@ -797,15 +765,9 @@ class _CustomPromptNodeCard extends StatelessWidget {
             ),
             children: [
               if (node.variables.isNotEmpty)
-                _DetailBlock(
-                  title: '变量',
-                  body: node.variables.join(', '),
-                ),
+                _DetailBlock(title: '变量', body: node.variables.join(', ')),
               if (node.description.isNotEmpty)
-                _DetailBlock(
-                  title: '说明',
-                  body: node.description,
-                ),
+                _DetailBlock(title: '说明', body: node.description),
               _DetailBlock(
                 title: '模板预览',
                 body: node.template,
@@ -831,8 +793,9 @@ class _CustomPromptNodeSheet extends StatefulWidget {
 class _CustomPromptNodeSheetState extends State<_CustomPromptNodeSheet> {
   final TextEditingController _idController = TextEditingController();
   final TextEditingController _titleController = TextEditingController();
-  final TextEditingController _categoryController =
-      TextEditingController(text: 'custom');
+  final TextEditingController _categoryController = TextEditingController(
+    text: 'custom',
+  );
   final TextEditingController _descriptionController = TextEditingController();
   final TextEditingController _variablesController = TextEditingController();
   final TextEditingController _templateController = TextEditingController();
@@ -1028,10 +991,7 @@ class _RuntimeStatusChip extends StatelessWidget {
 }
 
 class _StatusChip extends StatelessWidget {
-  const _StatusChip({
-    required this.label,
-    required this.color,
-  });
+  const _StatusChip({required this.label, required this.color});
 
   final String label;
   final Color color;

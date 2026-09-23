@@ -269,9 +269,7 @@ class ChatPluginContextBuilder {
       var attempt = 0;
       while (true) {
         try {
-          tools.addAll(plugin is MemoryPlugin
-              ? await plugin.getToolsForConversation(conversationId)
-              : plugin.getTools());
+          tools.addAll(plugin.getTools());
           break;
         } catch (e) {
           final retryable = isProviderRefreshTimingError(e);

@@ -65,6 +65,7 @@ class _CloudConflictsPageState extends ConsumerState<CloudConflictsPage> {
 
   @override
   Widget build(BuildContext context) => MoePageScaffold(
+    extendBodyBehindAppBar: true,
     appBar: const MoeAppBar(title: '处理同时修改', showBackButton: true),
     body: FutureBuilder<Map<String, dynamic>>(
       future: _preview,
@@ -77,45 +78,47 @@ class _CloudConflictsPageState extends ConsumerState<CloudConflictsPage> {
         final preview = snapshot.data!;
         final conflicts = (preview['conflicts'] as List).cast<Map>();
         if (conflicts.isEmpty) return const Center(child: Text('没有需要处理的同时修改'));
-        return ListView(
-          padding: const EdgeInsets.all(24),
-          children: [
-            if (_error != null) Text(_error!),
-            for (final conflict in conflicts)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 32),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text('记录：${(conflict['incoming'] as Map)['entity_id']}'),
-                    const SizedBox(height: 12),
-                    const Text('云端现有版本'),
-                    SelectableText(_describe(conflict['latest'] as Map)),
-                    MoeSecondaryButton(
-                      label: '保留云端版本',
-                      enabled: !_busy,
-                      onPressed: () => _resolve(
-                        preview,
-                        conflict['conflict_id'] as String,
-                        false,
+        return Builder(
+          builder: (context) => ListView(
+            padding: moeUnderBarPadding(context, EdgeInsets.all(24)),
+            children: [
+              if (_error != null) Text(_error!),
+              for (final conflict in conflicts)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 32),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text('记录：${(conflict['incoming'] as Map)['entity_id']}'),
+                      const SizedBox(height: 12),
+                      const Text('云端现有版本'),
+                      SelectableText(_describe(conflict['latest'] as Map)),
+                      MoeSecondaryButton(
+                        label: '保留云端版本',
+                        enabled: !_busy,
+                        onPressed: () => _resolve(
+                          preview,
+                          conflict['conflict_id'] as String,
+                          false,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 16),
-                    Text('来自设备 ${conflict['device_id']} 的修改'),
-                    SelectableText(_describe(conflict['incoming'] as Map)),
-                    MoeSecondaryButton(
-                      label: '采用这次修改',
-                      enabled: !_busy,
-                      onPressed: () => _resolve(
-                        preview,
-                        conflict['conflict_id'] as String,
-                        true,
+                      const SizedBox(height: 16),
+                      Text('来自设备 ${conflict['device_id']} 的修改'),
+                      SelectableText(_describe(conflict['incoming'] as Map)),
+                      MoeSecondaryButton(
+                        label: '采用这次修改',
+                        enabled: !_busy,
+                        onPressed: () => _resolve(
+                          preview,
+                          conflict['conflict_id'] as String,
+                          true,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-          ],
+            ],
+          ),
         );
       },
     ),

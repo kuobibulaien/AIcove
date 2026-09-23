@@ -31,7 +31,7 @@ void main() {
   });
 
   for (final mode in MoeSurfaceMaterial.values) {
-    testWidgets('聊天头部不再叠加导航渐隐背景 $mode', (tester) async {
+    testWidgets('聊天头部静止时只有胶囊材质，不预先叠加滚动边缘 $mode', (tester) async {
       tester.view.devicePixelRatio = 1;
       tester.view.physicalSize = const Size(420, 260);
       tester.view.padding = const FakeViewPadding(top: 24);
@@ -114,7 +114,7 @@ void main() {
       expect(
         headerFilterCount,
         find.byType(BackdropFilter).evaluate().length,
-        reason: '头部滤镜数必须等于三个胶囊自身，不再含整层渐隐背景',
+        reason: '内容未滑入头部下方时，滤镜数必须等于三个胶囊自身',
       );
 
       if (capture) {
@@ -159,9 +159,7 @@ void main() {
               captureKey.currentContext!.findRenderObject()!
                   as RenderRepaintBoundary;
           final image = await boundary.toImage(pixelRatio: 1.5);
-          final bytes = await image.toByteData(
-            format: ui.ImageByteFormat.png,
-          );
+          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
           final file = File(
             '../../.codex-temp/nav-header-clean/${mode.name}.png',
           );

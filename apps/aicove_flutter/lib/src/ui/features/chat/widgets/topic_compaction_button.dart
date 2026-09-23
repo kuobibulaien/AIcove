@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../../features/chat/domain/topic_compaction_port.dart';
-import '../../../../features/chat/providers/topic_compaction_provider.dart';
+import '../../../../features/context/domain/context_summary.dart';
+import '../../../../features/context/providers/context_providers.dart';
 import '../../../shared/widgets/index.dart';
 import '../../../theme/tokens.dart';
 
@@ -33,7 +33,7 @@ class _TopicCompactionButtonState extends ConsumerState<TopicCompactionButton> {
                       barrierDismissible: false,
                       builder: (_) => TopicCompactionDialog(
                           ownerId: owner,
-                          port: ref.read(topicCompactionProvider)));
+                          port: ref.read(manualCompactionProvider)));
                   if (context.mounted &&
                       widget.ownerId == owner &&
                       result != null) {
@@ -51,16 +51,16 @@ class TopicCompactionDialog extends StatefulWidget {
   const TopicCompactionDialog(
       {super.key, required this.ownerId, required this.port});
   final String ownerId;
-  final TopicCompactionPort port;
+  final ManualCompactionPort port;
   @override
   State<TopicCompactionDialog> createState() => _TopicCompactionDialogState();
 }
 
 class _TopicCompactionDialogState extends State<TopicCompactionDialog> {
   final _text = TextEditingController();
-  TopicCompactionDraft? _draft;
-  TopicHandoff? _current;
-  bool _busy = false, _committing = false, _cancelled = false, _archive = false;
+  ManualCompactionDraft? _draft;
+  ContextSummary? _current;
+  bool _busy = false, _committing = false, _cancelled = false;
   int _generation = 0;
   String? _error;
   String _progress = '';
@@ -82,7 +82,6 @@ class _TopicCompactionDialogState extends State<TopicCompactionDialog> {
       _busy = false;
       _committing = false;
       _cancelled = false;
-      _archive = false;
       _error = null;
       _loadCurrent();
     }
@@ -105,7 +104,7 @@ class _TopicCompactionDialogState extends State<TopicCompactionDialog> {
     super.dispose();
   }
 
-  String _errorText(Object error) => error is TopicCompactionException
+  String _errorText(Object error) => error is ContextCompactionException
       ? error.message
       : '整理或保存失败，请检查模型/网络后重试。确认前原话题不会改变。';
 
@@ -128,7 +127,6 @@ class _TopicCompactionDialogState extends State<TopicCompactionDialog> {
       setState(() {
         _draft = draft;
         _text.text = draft.summary;
-        _archive = draft.canArchive;
       });
     } catch (error) {
       if (_valid(generation)) setState(() => _error = _errorText(error));
@@ -148,12 +146,9 @@ class _TopicCompactionDialogState extends State<TopicCompactionDialog> {
       _progress = '正在保存内容交接…';
     });
     try {
-      final result =
-          await widget.port.commit(draft, _text.text, archive: _archive);
+      await widget.port.commit(draft, _text.text);
       if (mounted && _valid(generation)) {
-        Navigator.of(context).pop(result.memoryPending
-            ? '已开启新话题，内容已保留；角色记忆待补写，可从同一按钮重试。'
-            : (_archive ? '已保留内容并归档角色记忆，新话题将使用最新角色卡。' : '已保留内容，新话题将使用最新角色卡。'));
+        Navigator.of(context).pop('已保留内容，新话题将使用最新角色卡。');
       }
     } catch (error) {
       if (_valid(generation)) setState(() => _error = _errorText(error));
@@ -167,37 +162,27 @@ class _TopicCompactionDialogState extends State<TopicCompactionDialog> {
     }
   }
 
-  Future<void> _maintenance({required bool undo}) async {
+  Future<void> _undo() async {
     final generation = _generation;
     final owner = widget.ownerId;
     final port = widget.port;
-    if (undo) {
-      final accepted = await showMeoTalkDialog(
-          context: context,
-          title: '撤销上次压缩',
-          content: const Text(
-              '恢复压缩前的上下文边界，聊天记录不会删除。已写入的角色记忆不会撤回；恢复旧消息后也可能恢复旧格式的影响。'),
-          confirmText: '恢复上下文');
-      if (accepted != true || !_valid(generation)) return;
-    }
+    final accepted = await showMeoTalkDialog(
+        context: context,
+        title: '撤销上次压缩',
+        content: const Text(
+            '恢复压缩前的上下文边界，聊天记录不会删除。已经整理进长期记忆的内容不会撤回；恢复旧消息后也可能恢复旧格式的影响。'),
+        confirmText: '恢复上下文');
+    if (accepted != true || !_valid(generation)) return;
     setState(() {
       _busy = true;
       _committing = true;
       _error = null;
-      _progress = undo ? '正在恢复…' : '正在补写记忆…';
+      _progress = '正在恢复…';
     });
     try {
-      if (undo) {
-        await port.undo(owner);
-        if (mounted && _valid(generation)) {
-          Navigator.of(context).pop('已恢复上次压缩前的上下文；角色记忆未撤回。');
-        }
-      } else {
-        final ok = await port.retryArchive(owner);
-        if (_valid(generation)) {
-          setState(() =>
-              _error = ok ? '本批待归档记忆已处理。' : '记忆尚未写入，请确认该角色已启用 MD 记忆，或稍后重试。');
-        }
+      await port.undo(owner);
+      if (mounted && _valid(generation)) {
+        Navigator.of(context).pop('已恢复上次压缩前的上下文；长期记忆未撤回。');
       }
     } catch (error) {
       if (_valid(generation)) setState(() => _error = _errorText(error));
@@ -251,34 +236,18 @@ class _TopicCompactionDialogState extends State<TopicCompactionDialog> {
                       minLines: 4,
                       maxLines: 8,
                       label: '新话题内容摘要（可修改）'),
-                  MoeSettingsRow(
-                      icon: Icons.book_outlined,
-                      label: '同时归档到该角色记忆',
-                      trailingType: MoeSettingsRowTrailing.switchControl,
-                      switchValue: _archive,
-                      enabled: _draft!.canArchive,
-                      onSwitchChanged: (value) =>
-                          setState(() => _archive = value)),
-                  Text(_draft!.canArchive
-                      ? '请检查摘要，删掉不想长期保存的敏感内容。不会覆盖手写常驻笔记。'
-                      : '该角色未启用可用的 MD 记忆。内容摘要仍会继承，但不会自动归档到旧记忆库。'),
+                  const Text('请检查摘要，删掉不想保留的内容。保存后，该角色若启用了记忆库，会在后台把这段对话整理进长期记忆。'),
                   TextButton(
                       onPressed: _prepare, child: const Text('重新整理（保留原话题）')),
                 ],
                 if (_draft == null && !_busy) ...[
                   const Text(
-                      '整理会使用配置的总结模型，未配置时使用默认聊天模型；会产生一次或多次模型调用。确认摘要后才切换。'),
+                      '整理会使用配置的压缩模型，未配置时使用默认聊天模型；会产生一次或多次模型调用。确认摘要后才切换。'),
                   if (_current != null)
                     Text('上次内容摘要：\n${_current!.summary}',
                         maxLines: 4, overflow: TextOverflow.ellipsis),
-                  Wrap(children: [
-                    TextButton(
-                        onPressed: () => _maintenance(undo: true),
-                        child: const Text('撤销上次压缩')),
-                    TextButton(
-                        onPressed: () => _maintenance(undo: false),
-                        child: const Text('补写待归档记忆')),
-                  ]),
+                  TextButton(
+                      onPressed: _undo, child: const Text('撤销上次压缩')),
                 ],
                 if (_error != null)
                   Padding(

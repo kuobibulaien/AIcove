@@ -3,27 +3,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import '../../../../ui/theme/tokens.dart';
-import '../../../../ui/theme/accent_color_provider.dart';
 import '../../../../core/utils/message_formatter.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
+import 'custom_skin_page.dart';
 import 'profile_page.dart';
 import '../widgets/smart_reply_settings_group.dart';
-
-/// 预设颜色列表
-const _presetColors = [
-  Color(0xFFFC96AA), // 粉红
-  Color(0xFF4A90E2), // 淡蓝
-  Color(0xFF4ECDC4), // 薄荷
-  Color(0xFFB39DDB), // 薰衣草
-  Color(0xFFFF8A65), // 珊瑚
-  Color(0xFFFFD54F), // 金黄
-  Color(0xFF81C784), // 草绿
-];
 
 bool get _isWindowsDesktop => defaultTargetPlatform == TargetPlatform.windows;
 
@@ -36,6 +24,7 @@ class UiSettingsPage extends ConsumerWidget {
     final settingsAsync = ref.watch(appSettingsProvider);
 
     return MoePageScaffold(
+      extendBodyBehindAppBar: true,
       appBar: const MoeAppBar(title: '通用设置', showBackButton: true),
       body: settingsAsync.when(
         loading: () => const Center(child: MoeLoadingIndicator()),
@@ -67,231 +56,253 @@ class UiSettingsPage extends ConsumerWidget {
           );
 
     return MoeSettingsContent(
-      child: ListView(
-        padding: MoeSettingsLayout.verticalListPadding,
-        children: [
-          SmartReplySettingsGroup(settings: settings),
-          MoeSettingsGroup(
-            children: [
-              MoeSettingsRow(
-                label: '个人资料',
-                onTap: () => Navigator.of(
-                  context,
-                ).push(ParallaxSlidePageRoute(page: const ProfilePage())),
-              ),
-            ],
+      child: Builder(
+        builder: (context) => ListView(
+          padding: moeUnderBarPadding(
+            context,
+            MoeSettingsLayout.verticalListPadding,
           ),
-
-          // ========== 外观：主题色 / 深色模式 ==========
-          MoeSettingsGroup(
-            title: '外观',
-            children: [
-              _buildAccentColorPicker(context, ref, colors),
-              _divider(colors),
-              MoeSettingsRow(
-                label: '深色模式',
-                subtitle: settings.useSystemTheme ? '当前跟随系统设置' : '手动控制',
-                trailingType: MoeSettingsRowTrailing.switchControl,
-                switchValue: settings.isDarkMode,
-                onSwitchChanged: (value) {
-                  ref
-                      .read(appSettingsProvider.notifier)
-                      .setDarkModeAndSystemTheme(
-                        isDark: value,
-                        useSystem: false,
-                      );
-                },
-              ),
-              MoeSettingsRow(
-                label: '跟随系统',
-                subtitle: '自动切换浅色/深色模式',
-                trailingType: MoeSettingsRowTrailing.switchControl,
-                switchValue: settings.useSystemTheme,
-                onSwitchChanged: (value) {
-                  ref
-                      .read(appSettingsProvider.notifier)
-                      .setUseSystemTheme(value);
-                },
-              ),
-            ],
-          ),
-
-          // ========== 材质等级 ==========
-          MoeSettingsGroup(
-            title: '材质等级',
-            children: [_buildMaterialPicker(context, ref, settings, colors)],
-          ),
-
-          // ========== 显示：字体 / 缩放 / 窗口按钮 ==========
-          MoeSettingsGroup(
-            title: '显示',
-            children: [
-              _buildScaleSlider(
-                colors: colors,
-                label: '字体大小',
-                value: settings.textScaleFactor.clamp(
-                  kMinTextScaleFactor,
-                  kMaxTextScaleFactor,
+          children: [
+            SmartReplySettingsGroup(settings: settings),
+            MoeSettingsGroup(
+              children: [
+                MoeSettingsRow(
+                  label: '个人资料',
+                  onTap: () => Navigator.of(
+                    context,
+                  ).push(ParallaxSlidePageRoute(page: const ProfilePage())),
                 ),
-                min: kMinTextScaleFactor,
-                max: kMaxTextScaleFactor,
-                divisions: 14, // 0.05 步长：(1.5-0.8)/0.05 = 14
-                onChanged: (value) => ref
-                    .read(appSettingsProvider.notifier)
-                    .setTextScaleFactor(value),
-                onValueTap: () => _showScaleInputDialog(
-                  context,
-                  title: '输入字体缩放值',
-                  hint: '范围 $kMinTextScaleFactor ~ $kMaxTextScaleFactor',
-                  min: kMinTextScaleFactor,
-                  max: kMaxTextScaleFactor,
-                  current: settings.textScaleFactor.clamp(
+              ],
+            ),
+
+            // ========== 外观：界面皮肤 / 深色模式 ==========
+            MoeSettingsGroup(
+              title: '外观',
+              children: [
+                _buildSkinPicker(ref, settings, colors),
+                _divider(colors),
+                MoeSettingsRow(
+                  label: '深色模式',
+                  subtitle: settings.useSystemTheme ? '当前跟随系统设置' : '手动控制',
+                  trailingType: MoeSettingsRowTrailing.switchControl,
+                  switchValue: settings.isDarkMode,
+                  onSwitchChanged: (value) {
+                    ref
+                        .read(appSettingsProvider.notifier)
+                        .setDarkModeAndSystemTheme(
+                          isDark: value,
+                          useSystem: false,
+                        );
+                  },
+                ),
+                MoeSettingsRow(
+                  label: '跟随系统',
+                  subtitle: '自动切换浅色/深色模式',
+                  trailingType: MoeSettingsRowTrailing.switchControl,
+                  switchValue: settings.useSystemTheme,
+                  onSwitchChanged: (value) {
+                    ref
+                        .read(appSettingsProvider.notifier)
+                        .setUseSystemTheme(value);
+                  },
+                ),
+              ],
+            ),
+
+            // ========== 材质等级 ==========
+            MoeSettingsGroup(
+              title: '材质等级',
+              children: [_buildMaterialPicker(context, ref, settings, colors)],
+            ),
+
+            // ========== 显示：字体 / 缩放 / 窗口按钮 ==========
+            MoeSettingsGroup(
+              title: '显示',
+              children: [
+                _buildScaleSlider(
+                  colors: colors,
+                  label: '字体大小',
+                  value: settings.textScaleFactor.clamp(
                     kMinTextScaleFactor,
                     kMaxTextScaleFactor,
                   ),
-                  onSave: (value) => ref
+                  min: kMinTextScaleFactor,
+                  max: kMaxTextScaleFactor,
+                  divisions: 14, // 0.05 步长：(1.5-0.8)/0.05 = 14
+                  onChanged: (value) => ref
                       .read(appSettingsProvider.notifier)
                       .setTextScaleFactor(value),
+                  onValueTap: () => _showScaleInputDialog(
+                    context,
+                    title: '输入字体缩放值',
+                    hint: '范围 $kMinTextScaleFactor ~ $kMaxTextScaleFactor',
+                    min: kMinTextScaleFactor,
+                    max: kMaxTextScaleFactor,
+                    current: settings.textScaleFactor.clamp(
+                      kMinTextScaleFactor,
+                      kMaxTextScaleFactor,
+                    ),
+                    onSave: (value) => ref
+                        .read(appSettingsProvider.notifier)
+                        .setTextScaleFactor(value),
+                  ),
                 ),
-              ),
-              _divider(colors),
-              _buildScaleSlider(
-                colors: colors,
-                label: '界面缩放',
-                value: settings.uiScaleFactor.clamp(
-                  kMinUiScaleFactor,
-                  kMaxUiScaleFactor,
-                ),
-                min: kMinUiScaleFactor,
-                max: kMaxUiScaleFactor,
-                divisions: 7, // 0.05 步长：(1.20-0.85)/0.05 = 7
-                note: '用于微调整体界面大小（推荐 0.95~1.05）',
-                onChanged: (value) => ref
-                    .read(appSettingsProvider.notifier)
-                    .setUiScaleFactor(value),
-                onValueTap: () => _showScaleInputDialog(
-                  context,
-                  title: '输入界面缩放值',
-                  hint: '范围 $kMinUiScaleFactor ~ $kMaxUiScaleFactor',
-                  min: kMinUiScaleFactor,
-                  max: kMaxUiScaleFactor,
-                  current: settings.uiScaleFactor.clamp(
+                _divider(colors),
+                _buildScaleSlider(
+                  colors: colors,
+                  label: '界面缩放',
+                  value: settings.uiScaleFactor.clamp(
                     kMinUiScaleFactor,
                     kMaxUiScaleFactor,
                   ),
-                  onSave: (value) => ref
+                  min: kMinUiScaleFactor,
+                  max: kMaxUiScaleFactor,
+                  divisions: 7, // 0.05 步长：(1.20-0.85)/0.05 = 7
+                  note: '用于微调整体界面大小（推荐 0.95~1.05）',
+                  onChanged: (value) => ref
                       .read(appSettingsProvider.notifier)
                       .setUiScaleFactor(value),
+                  onValueTap: () => _showScaleInputDialog(
+                    context,
+                    title: '输入界面缩放值',
+                    hint: '范围 $kMinUiScaleFactor ~ $kMaxUiScaleFactor',
+                    min: kMinUiScaleFactor,
+                    max: kMaxUiScaleFactor,
+                    current: settings.uiScaleFactor.clamp(
+                      kMinUiScaleFactor,
+                      kMaxUiScaleFactor,
+                    ),
+                    onSave: (value) => ref
+                        .read(appSettingsProvider.notifier)
+                        .setUiScaleFactor(value),
+                  ),
                 ),
-              ),
-              if (_isWindowsDesktop) ...[
-                _divider(colors),
-                _buildWindowControlsSidePicker(context, ref, settings, colors),
+                if (_isWindowsDesktop) ...[
+                  _divider(colors),
+                  _buildWindowControlsSidePicker(
+                    context,
+                    ref,
+                    settings,
+                    colors,
+                  ),
+                ],
               ],
-            ],
-          ),
+            ),
 
-          // ========== 聊天：背景色 / 图片预览 / 气泡 ==========
-          MoeSettingsGroup(
-            title: '聊天',
-            children: [
-              _buildBackgroundColorPicker(context, ref, settings, colors),
-              _divider(colors),
-              _buildScaleSlider(
-                colors: colors,
-                label: '图片预览大小',
-                value: settings.imagePreviewScale.clamp(
-                  kMinImagePreviewScale,
-                  kMaxImagePreviewScale,
-                ),
-                min: kMinImagePreviewScale,
-                max: kMaxImagePreviewScale,
-                divisions: 20, // 0.05 步长：(1.5-0.5)/0.05 = 20
-                note: '调整聊天中图片和表情包的显示大小',
-                onChanged: (value) => ref
-                    .read(appSettingsProvider.notifier)
-                    .setImagePreviewScale(value),
-                onValueTap: () => _showScaleInputDialog(
-                  context,
-                  title: '输入图片预览缩放值',
-                  hint: '范围 $kMinImagePreviewScale ~ $kMaxImagePreviewScale',
-                  min: kMinImagePreviewScale,
-                  max: kMaxImagePreviewScale,
-                  current: settings.imagePreviewScale.clamp(
+            // ========== 聊天：图片预览 / 气泡 ==========
+            MoeSettingsGroup(
+              title: '聊天',
+              children: [
+                _buildScaleSlider(
+                  colors: colors,
+                  label: '图片预览大小',
+                  value: settings.imagePreviewScale.clamp(
                     kMinImagePreviewScale,
                     kMaxImagePreviewScale,
                   ),
-                  onSave: (value) => ref
+                  min: kMinImagePreviewScale,
+                  max: kMaxImagePreviewScale,
+                  divisions: 20, // 0.05 步长：(1.5-0.5)/0.05 = 20
+                  note: '调整聊天中图片和表情包的显示大小',
+                  onChanged: (value) => ref
                       .read(appSettingsProvider.notifier)
                       .setImagePreviewScale(value),
+                  onValueTap: () => _showScaleInputDialog(
+                    context,
+                    title: '输入图片预览缩放值',
+                    hint: '范围 $kMinImagePreviewScale ~ $kMaxImagePreviewScale',
+                    min: kMinImagePreviewScale,
+                    max: kMaxImagePreviewScale,
+                    current: settings.imagePreviewScale.clamp(
+                      kMinImagePreviewScale,
+                      kMaxImagePreviewScale,
+                    ),
+                    onSave: (value) => ref
+                        .read(appSettingsProvider.notifier)
+                        .setImagePreviewScale(value),
+                  ),
                 ),
-              ),
-              _divider(colors),
-              MoeSettingsRow(
-                label: '语音消息气泡',
-                subtitle: settings.expandAudioText ? '默认展开文字' : '收回文字',
-                trailingType: MoeSettingsRowTrailing.switchControl,
-                switchValue: settings.expandAudioText,
-                onSwitchChanged: (value) {
-                  ref
-                      .read(appSettingsProvider.notifier)
-                      .setExpandAudioText(value);
-                },
-              ),
-              MoeSettingsRow(
-                label: '隐藏用户头像',
-                subtitle: '隐藏后消息气泡将贴着屏幕边缘',
-                trailingType: MoeSettingsRowTrailing.switchControl,
-                switchValue: settings.hideUserAvatar,
-                onSwitchChanged: (value) {
-                  ref
-                      .read(appSettingsProvider.notifier)
-                      .setHideUserAvatar(value);
-                },
-              ),
-            ],
-          ),
-
-          // ========== 消息分段 ==========
-          MoeSettingsGroup(
-            title: '消息分段',
-            children: [
-              MoeSettingsRow(
-                label: '启用消息分段',
-                subtitle: '按标点符号自动分段显示 AI 回复',
-                trailingType: MoeSettingsRowTrailing.switchControl,
-                switchValue: chunkConfig.enableChunking,
-                onSwitchChanged: (value) async {
-                  await ref
-                      .read(appSettingsProvider.notifier)
-                      .updateMessageFormatConfig(
-                        chunkConfig.copyWith(enableChunking: value),
-                      );
-                },
-              ),
-              MoeSettingsRow(
-                label: '过滤句末标点',
-                subtitle: '移除分段后末尾的标点符号',
-                trailingType: MoeSettingsRowTrailing.switchControl,
-                switchValue: chunkConfig.filterPunctuation,
-                onSwitchChanged: (value) async {
-                  await ref
-                      .read(appSettingsProvider.notifier)
-                      .updateMessageFormatConfig(
-                        chunkConfig.copyWith(filterPunctuation: value),
-                      );
-                },
-              ),
-              if (chunkConfig.enableChunking)
+                _divider(colors),
                 MoeSettingsRow(
-                  label: '分段标点',
-                  trailingType: MoeSettingsRowTrailing.text,
-                  detailText: activeSetName ?? '',
-                  onTap: () => _showPunctuationSheet(context),
+                  label: '语音消息气泡',
+                  subtitle: settings.expandAudioText ? '默认展开文字' : '收回文字',
+                  trailingType: MoeSettingsRowTrailing.switchControl,
+                  switchValue: settings.expandAudioText,
+                  onSwitchChanged: (value) {
+                    ref
+                        .read(appSettingsProvider.notifier)
+                        .setExpandAudioText(value);
+                  },
                 ),
-            ],
-          ),
-        ],
+                MoeSettingsRow(
+                  label: '隐藏用户头像',
+                  subtitle: '隐藏后消息气泡将贴着屏幕边缘',
+                  trailingType: MoeSettingsRowTrailing.switchControl,
+                  switchValue: settings.hideUserAvatar,
+                  onSwitchChanged: (value) {
+                    ref
+                        .read(appSettingsProvider.notifier)
+                        .setHideUserAvatar(value);
+                  },
+                ),
+              ],
+            ),
+
+            // ========== 消息分段 ==========
+            MoeSettingsGroup(
+              title: '消息分段',
+              children: [
+                MoeSettingsRow(
+                  label: '启用消息分段',
+                  subtitle: '按标点符号自动分段显示 AI 回复',
+                  trailingType: MoeSettingsRowTrailing.switchControl,
+                  switchValue: chunkConfig.enableChunking,
+                  onSwitchChanged: (value) async {
+                    await ref
+                        .read(appSettingsProvider.notifier)
+                        .updateMessageFormatConfig(
+                          chunkConfig.copyWith(enableChunking: value),
+                        );
+                  },
+                ),
+                MoeSettingsRow(
+                  label: '过滤句末标点',
+                  subtitle: '移除分段后末尾的标点符号',
+                  trailingType: MoeSettingsRowTrailing.switchControl,
+                  switchValue: chunkConfig.filterPunctuation,
+                  onSwitchChanged: (value) async {
+                    await ref
+                        .read(appSettingsProvider.notifier)
+                        .updateMessageFormatConfig(
+                          chunkConfig.copyWith(filterPunctuation: value),
+                        );
+                  },
+                ),
+                if (chunkConfig.enableChunking)
+                  MoeSettingsRow(
+                    label: '分段标点',
+                    trailingType: MoeSettingsRowTrailing.text,
+                    detailText: activeSetName ?? '',
+                    onTap: () => _showPunctuationSheet(context),
+                  ),
+              ],
+            ),
+
+            // ========== 高级：自定义皮肤（刻意放在页底） ==========
+            MoeSettingsGroup(
+              title: '高级',
+              children: [
+                MoeSettingsRow(
+                  label: '自定义皮肤',
+                  subtitle: '自由搭配主题色与聊天背景色',
+                  onTap: () => Navigator.of(
+                    context,
+                  ).push(ParallaxSlidePageRoute(page: const CustomSkinPage())),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -312,69 +323,36 @@ class UiSettingsPage extends ConsumerWidget {
     );
   }
 
-  /// 主题色选择块：预设色板 + 自定义取色
-  Widget _buildAccentColorPicker(
-    BuildContext context,
+  /// 界面皮肤选择块：内置皮肤；当前为自定义皮肤时额外显示自定义格。
+  Widget _buildSkinPicker(
     WidgetRef ref,
+    AppSettings settings,
     MoeColors colors,
   ) {
-    final currentColor = ref.watch(accentColorProvider);
-
+    final current = settings.interfaceSkin;
+    final options = [
+      ...InterfaceSkin.presets,
+      if (current == InterfaceSkin.custom) InterfaceSkin.custom,
+    ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          _blockLabel(colors, '界面皮肤'),
+          const SizedBox(height: 10),
           Row(
             children: [
-              _blockLabel(colors, '主题色'),
-              const Spacer(),
-              Container(
-                width: 20,
-                height: 20,
-                decoration: BoxDecoration(
-                  color: currentColor,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: colors.borderLight),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              for (final color in _presetColors)
-                _buildColorSwatch(context, ref, colors, color, currentColor),
-              // 自定义颜色按钮
-              GestureDetector(
-                onTap: () => _showColorPickerDialog(context, ref, currentColor),
-                child: Container(
-                  width: 34,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    gradient: const SweepGradient(
-                      colors: [
-                        Colors.red,
-                        Colors.yellow,
-                        Colors.green,
-                        Colors.cyan,
-                        Colors.blue,
-                        Colors.purple,
-                        Colors.red,
-                      ],
-                    ),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: colors.borderLight),
-                  ),
-                  child: const Icon(
-                    Icons.colorize,
-                    color: Colors.white,
-                    size: 16,
+              for (final skin in options)
+                Expanded(
+                  child: _buildSkinTile(
+                    ref,
+                    settings,
+                    colors,
+                    skin,
+                    isSelected: skin == current,
                   ),
                 ),
-              ),
             ],
           ),
         ],
@@ -382,73 +360,94 @@ class UiSettingsPage extends ConsumerWidget {
     );
   }
 
-  Widget _buildColorSwatch(
-    BuildContext context,
+  Widget _buildSkinTile(
     WidgetRef ref,
+    AppSettings settings,
     MoeColors colors,
-    Color color,
-    Color currentColor,
-  ) {
-    final isSelected =
-        (currentColor.toARGB32() & 0xFFFFFF) == (color.toARGB32() & 0xFFFFFF);
-    final checkColor = color.computeLuminance() > 0.55
-        ? Colors.black87
-        : Colors.white;
+    InterfaceSkin skin, {
+    required bool isSelected,
+  }) {
+    final resolved = settings.copyWith(interfaceSkin: skin);
+    final lightBg = resolved.lightChatBackground ?? moeSurface;
+    final borderWidth = isSelected ? 2.0 : 1.0;
     return GestureDetector(
-      onTap: () => ref.setAccentColor(color),
-      child: Container(
-        width: 34,
-        height: 34,
-        decoration: BoxDecoration(
-          color: color,
-          shape: BoxShape.circle,
-          border: Border.all(
-            color: isSelected ? colors.text : colors.borderLight,
-            width: isSelected ? 2 : 1,
+      onTap: isSelected
+          ? null
+          : () => ref.read(appSettingsProvider.notifier).setInterfaceSkin(skin),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 3),
+            child: Container(
+              height: 44,
+              padding: EdgeInsets.all(borderWidth),
+              decoration: MoeG2Decoration(
+                radius: 12,
+                color: isSelected ? colors.accentColor : colors.borderLight,
+              ),
+              // 左半浅色、右半暗色，各放一枚对应强调色圆点
+              child: MoeG2ClipRRect(
+                radius: 12 - borderWidth,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: ColoredBox(
+                        color: lightBg,
+                        child: Center(
+                          child: _skinDot(resolved.lightAccentColor, isSelected),
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: ColoredBox(
+                        color: moeSurfaceDark,
+                        child: Center(
+                          child: _skinDot(resolved.darkAccentColor, isSelected),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
-        ),
-        child: isSelected
-            ? Icon(Icons.check_rounded, color: checkColor, size: 16)
-            : null,
+          const SizedBox(height: 6),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2),
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                skin.label,
+                maxLines: 1,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: isSelected
+                      ? MoeFontWeights.emphasis
+                      : MoeFontWeights.normal,
+                  color: isSelected ? colors.text : colors.textSecondary,
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  /// 显示颜色选择器弹窗
-  void _showColorPickerDialog(
-    BuildContext context,
-    WidgetRef ref,
-    Color currentColor,
-  ) {
-    var pickerColor = currentColor;
-    showMoeBottomSheet<void>(
-      context: context,
-      title: '选择主题色',
-      showCloseButton: true,
-      isDismissible: false,
-      enableDrag: false,
-      builder: (context) => MoeAutoSaveForm(
-        snapshot: () => pickerColor.toARGB32(),
-        save: () => ref
-            .read(appSettingsProvider.notifier)
-            .setAccentColor(
-              pickerColor
-                  .toARGB32()
-                  .toRadixString(16)
-                  .padLeft(8, '0')
-                  .substring(2)
-                  .toUpperCase(),
-            ),
-        builder: (context, update) => SingleChildScrollView(
-          child: ColorPicker(
-            pickerColor: pickerColor,
-            onColorChanged: (color) => update(() => pickerColor = color),
-            enableAlpha: false,
-            hexInputBar: true,
-            labelTypes: const [],
-          ),
-        ),
-      ),
+  Widget _skinDot(Color color, bool isSelected) {
+    return Container(
+      width: 16,
+      height: 16,
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+      child: isSelected
+          ? Icon(
+              Icons.check_rounded,
+              size: 12,
+              color: color.computeLuminance() > 0.55
+                  ? Colors.black87
+                  : Colors.white,
+            )
+          : null,
     );
   }
 
@@ -732,101 +731,6 @@ class UiSettingsPage extends ConsumerWidget {
               SegmentedButton.styleFrom(
                 visualDensity: VisualDensity.compact,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 聊天背景色选择块
-  Widget _buildBackgroundColorPicker(
-    BuildContext context,
-    WidgetRef ref,
-    AppSettings settings,
-    MoeColors colors,
-  ) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _blockLabel(colors, '聊天背景色'),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              for (final option in ChatBackgroundColor.values)
-                Expanded(
-                  child: _buildBackgroundColorTile(
-                    context,
-                    ref,
-                    settings,
-                    colors,
-                    option,
-                  ),
-                ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildBackgroundColorTile(
-    BuildContext context,
-    WidgetRef ref,
-    AppSettings settings,
-    MoeColors colors,
-    ChatBackgroundColor option,
-  ) {
-    final isSelected = settings.chatBackgroundColor == option;
-    // 默认色使用全局背景色预览
-    final displayColor = option.color ?? colors.surface;
-    return GestureDetector(
-      onTap: () {
-        ref.read(appSettingsProvider.notifier).setChatBackgroundColor(option);
-      },
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 3),
-            child: Container(
-              height: 44,
-              decoration: MoeG2Decoration(
-                radius: 12,
-                color: displayColor,
-                border: Border.all(
-                  color: isSelected ? colors.accentColor : colors.borderLight,
-                  width: isSelected ? 2 : 1,
-                ),
-              ),
-              child: isSelected
-                  ? Center(
-                      child: Icon(
-                        Icons.check_rounded,
-                        color: colors.accentColor,
-                        size: 20,
-                      ),
-                    )
-                  : null,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 2),
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Text(
-                option.label,
-                maxLines: 1,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: isSelected
-                      ? MoeFontWeights.emphasis
-                      : MoeFontWeights.normal,
-                  color: isSelected ? colors.text : colors.textSecondary,
-                ),
               ),
             ),
           ),

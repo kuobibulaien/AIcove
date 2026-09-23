@@ -13,6 +13,7 @@ import '../../../../ui/shared/widgets/moe_toast.dart';
 import 'collapsible_selectable_text.dart';
 import 'log_formatters.dart';
 import 'log_models.dart';
+import '../../../../ui/shared/widgets/moe_scroll_edge.dart';
 
 /// 历史日志详情页面
 class LogHistoryDetailPage extends StatefulWidget {
@@ -61,6 +62,7 @@ class _LogHistoryDetailPageState extends State<LogHistoryDetailPage> {
     final colors = context.moeColors;
 
     return MoePageScaffold(
+      extendBodyBehindAppBar: true,
       backgroundColor: colors.surface,
       appBar: AppBar(
         backgroundColor: colors.surface,
@@ -109,11 +111,13 @@ class _LogHistoryDetailPageState extends State<LogHistoryDetailPage> {
       );
     }
 
-    return ListView.builder(
-      controller: _scrollController,
-      padding: const EdgeInsets.all(12),
-      itemCount: entries.length,
-      itemBuilder: (context, index) => _buildLogItem(entries[index], index),
+    return Builder(
+      builder: (context) => ListView.builder(
+        controller: _scrollController,
+        padding: moeUnderBarPadding(context, EdgeInsets.all(12)),
+        itemCount: entries.length,
+        itemBuilder: (context, index) => _buildLogItem(entries[index], index),
+      ),
     );
   }
 
@@ -132,20 +136,22 @@ class _LogHistoryDetailPageState extends State<LogHistoryDetailPage> {
       final title = isConversation
           ? _formatHistoryConversationTitle(log)
           : '[API] ${log['method'] ?? '--'} ${log['status'] ?? '--'} ${shortenUrl((log['url'] ?? '').toString())}';
-      entries.add(UnifiedLogEntry(
-        time: time,
-        title: title,
-        extraContent: isConversation
-            ? _formatHistoryConversationExtra(log)
-            : _formatApiExtra(log),
-        fullContent: isConversation
-            ? _formatHistoryConversationFull(log)
-            : _formatApiFull(log),
-        isApiLog: true,
-        isConversation: isConversation,
-        rawAiResponse: historyString(log['rawAiResponse']),
-        rawContext: historyString(log['rawContext']),
-      ));
+      entries.add(
+        UnifiedLogEntry(
+          time: time,
+          title: title,
+          extraContent: isConversation
+              ? _formatHistoryConversationExtra(log)
+              : _formatApiExtra(log),
+          fullContent: isConversation
+              ? _formatHistoryConversationFull(log)
+              : _formatApiFull(log),
+          isApiLog: true,
+          isConversation: isConversation,
+          rawAiResponse: historyString(log['rawAiResponse']),
+          rawContext: historyString(log['rawContext']),
+        ),
+      );
     }
 
     // 解析系统日志
@@ -157,13 +163,15 @@ class _LogHistoryDetailPageState extends State<LogHistoryDetailPage> {
       final level = parseLogLevel(log['level']);
       final title =
           '[${level.label}] [${log['source'] ?? '--'}] ${log['message'] ?? ''}';
-      entries.add(UnifiedLogEntry(
-        time: time,
-        title: title,
-        extraContent: formatMetadata(log['metadata']),
-        fullContent: _formatSystemFull(log, level),
-        level: level,
-      ));
+      entries.add(
+        UnifiedLogEntry(
+          time: time,
+          title: title,
+          extraContent: formatMetadata(log['metadata']),
+          fullContent: _formatSystemFull(log, level),
+          level: level,
+        ),
+      );
     }
 
     entries.sort((a, b) => b.time.compareTo(a.time));
@@ -256,7 +264,8 @@ class _LogHistoryDetailPageState extends State<LogHistoryDetailPage> {
 
     buffer.writeln('[对话] $direction | $roundText');
     buffer.writeln(
-        '状态: ${log['status'] ?? '--'} | 耗时: ${historyDurationLabel(log)}');
+      '状态: ${log['status'] ?? '--'} | 耗时: ${historyDurationLabel(log)}',
+    );
 
     final ctx = historyString(log['rawContext']);
     final rawRequestBody = historyString(log['rawRequestBody']);
@@ -274,8 +283,9 @@ class _LogHistoryDetailPageState extends State<LogHistoryDetailPage> {
       buffer.writeln('\n--- AI 实际发送的完整请求体 ---');
       buffer.writeln(tryFormatJson(rawRequestBody));
     }
-    final rawResponseSection =
-        buildConversationRawResponseSection(rawResponseBody);
+    final rawResponseSection = buildConversationRawResponseSection(
+      rawResponseBody,
+    );
     if (rawResponseSection != null) {
       buffer.writeln('\n--- ${rawResponseSection.title} ---');
       buffer.writeln(rawResponseSection.content);
@@ -410,12 +420,15 @@ class _LogHistoryDetailPageState extends State<LogHistoryDetailPage> {
               decoration: BoxDecoration(
                 color: colors.surface.withValues(alpha: 0.75),
                 borderRadius: BorderRadius.circular(6),
-                border:
-                    Border.all(color: colors.borderLight, width: borderWidth),
+                border: Border.all(
+                  color: colors.borderLight,
+                  width: borderWidth,
+                ),
               ),
               child: CollapsibleSelectableText(
-                key:
-                    ValueKey('history_${index}_${entry.extraContent.hashCode}'),
+                key: ValueKey(
+                  'history_${index}_${entry.extraContent.hashCode}',
+                ),
                 content: entry.extraContent!,
                 collapsedLines: 10,
                 toggleColor: colors.primary,

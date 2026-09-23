@@ -6,7 +6,7 @@ import 'package:aicove_flutter/src/ui/features/plugins/pages/artist_preset_page.
 import 'package:aicove_flutter/src/ui/features/plugins/pages/draw_image_tool_description_page.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/image_plugin_detail_page.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/inline_image_prompt_page.dart';
-import 'package:aicove_flutter/src/ui/features/plugins/pages/memory_plugin_detail_page.dart';
+import 'package:aicove_flutter/src/ui/features/settings/pages/context_memory_settings_page.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/time_awareness_plugin_detail_page.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/tts_plugin_detail_page.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/sticker_settings_page.dart';
@@ -17,7 +17,7 @@ void main() {
     'draw-description': DrawImageToolDescriptionPage(),
     'image': ImagePluginDetailPage(),
     'inline-prompt': InlineImagePromptPage(),
-    'memory': MemoryPluginDetailPage(),
+    'memory': ContextMemorySettingsPage(),
     'time': TimeAwarenessPluginDetailPage(),
     'tts': TtsPluginDetailPage(),
     'stickers': StickerSettingsPage(),

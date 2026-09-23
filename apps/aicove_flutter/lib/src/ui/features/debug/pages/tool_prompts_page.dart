@@ -13,6 +13,7 @@ import '../../../../features/plugins/time_awareness/time_awareness_plugin.dart';
 import '../../../../features/plugins/tts/tts_plugin.dart';
 import '../../../../features/plugins/domain/handlers/ai_tool.dart';
 import '../../../../features/settings/app_settings.dart';
+import '../../../../ui/shared/widgets/moe_scroll_edge.dart';
 
 /// 插件提示词条目（UI 数据模型）
 class _PluginPromptEntry {
@@ -130,22 +131,30 @@ class _ToolPromptsPageState extends ConsumerState<ToolPromptsPage>
         _leaving = false;
       },
       child: MoePageScaffold(
+        extendBodyBehindAppBar: true,
         backgroundColor: colors.surface,
         appBar: const MoeAppBar(title: '工具提示词管理', showBackButton: true),
-        body: ListView(
-          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-          children: [
-            _TagSemanticsSummaryCard(entry: tagSemanticsSummary),
-            if (entries.isNotEmpty) const SizedBox(height: 12),
-            for (var index = 0; index < entries.length; index++) ...[
-              _PluginPromptCard(
-                key: _cards.putIfAbsent(entries[index].pluginId,
-                    () => GlobalKey<_PluginPromptCardState>()),
-                entry: entries[index],
-              ),
-              if (index != entries.length - 1) const SizedBox(height: 12),
+        body: Builder(
+          builder: (context) => ListView(
+            padding: moeUnderBarPadding(
+              context,
+              EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+            ),
+            children: [
+              _TagSemanticsSummaryCard(entry: tagSemanticsSummary),
+              if (entries.isNotEmpty) const SizedBox(height: 12),
+              for (var index = 0; index < entries.length; index++) ...[
+                _PluginPromptCard(
+                  key: _cards.putIfAbsent(
+                    entries[index].pluginId,
+                    () => GlobalKey<_PluginPromptCardState>(),
+                  ),
+                  entry: entries[index],
+                ),
+                if (index != entries.length - 1) const SizedBox(height: 12),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -160,16 +169,18 @@ class _ToolPromptsPageState extends ConsumerState<ToolPromptsPage>
     final ttsConfig = ref.watch(ttsPluginConfigProvider);
     final ttsNotifier = ref.read(ttsPluginConfigProvider.notifier);
     final ttsPlugin = pluginManager.getPlugin('tts');
-    entries.add(_PluginPromptEntry(
-      pluginId: 'tts',
-      pluginName: '语音合成 (TTS)',
-      icon: Icons.record_voice_over_outlined,
-      enabled: ttsConfig.enabled,
-      promptText: ttsConfig.systemPromptTemplate,
-      description: '指导 AI 何时、如何使用 <tts> 标签生成语音',
-      tools: ttsPlugin?.getTools() ?? [],
-      onSave: (text) => ttsNotifier.setSystemPromptTemplate(text),
-    ));
+    entries.add(
+      _PluginPromptEntry(
+        pluginId: 'tts',
+        pluginName: '语音合成 (TTS)',
+        icon: Icons.record_voice_over_outlined,
+        enabled: ttsConfig.enabled,
+        promptText: ttsConfig.systemPromptTemplate,
+        description: '指导 AI 何时、如何使用 <tts> 标签生成语音',
+        tools: ttsPlugin?.getTools() ?? [],
+        onSave: (text) => ttsNotifier.setSystemPromptTemplate(text),
+      ),
+    );
 
     // === Image ===
     final imageConfig = ref.watch(imagePluginConfigProvider);
@@ -177,116 +188,109 @@ class _ToolPromptsPageState extends ConsumerState<ToolPromptsPage>
     final imagePlugin = pluginManager.getPlugin('image');
     final imageEnabled =
         ref.watch(appSettingsProvider).valueOrNull?.imageGenerationEnabled ??
-            false;
-    entries.add(_PluginPromptEntry(
-      pluginId: 'image',
-      pluginName: '绘图工具',
-      icon: Icons.brush_outlined,
-      enabled: imageEnabled,
-      promptText: imageConfig.manualToolDescriptionBlocks.promptDescription,
-      description: 'draw_image.prompt 字段说明（固定块中的 prompt 描述）',
-      tools: imagePlugin?.getTools() ?? [],
-      onSave: (text) => imageNotifier.setDrawingSystemPrompt(text),
-    ));
+        false;
+    entries.add(
+      _PluginPromptEntry(
+        pluginId: 'image',
+        pluginName: '绘图工具',
+        icon: Icons.brush_outlined,
+        enabled: imageEnabled,
+        promptText: imageConfig.manualToolDescriptionBlocks.promptDescription,
+        description: 'draw_image.prompt 字段说明（固定块中的 prompt 描述）',
+        tools: imagePlugin?.getTools() ?? [],
+        onSave: (text) => imageNotifier.setDrawingSystemPrompt(text),
+      ),
+    );
 
     // === Trigger ===
     final triggerConfig = ref.watch(triggerPluginConfigProvider);
     final triggerPlugin = pluginManager.getPlugin('trigger');
-    entries.add(_PluginPromptEntry(
-      pluginId: 'trigger',
-      pluginName: '主动关怀',
-      icon: Icons.favorite_outline,
-      enabled: triggerPlugin?.enabled ?? false,
-      promptText: triggerConfig.logicSystemPrompt,
-      description:
-          '当前主链路通过提醒工具接入聊天模型；logicSystemPrompt 仍是遗留兼容项，不会额外注入 system prompt。',
-      editable: false,
-      readOnlyReason: '主动关怀分析链路实际使用的是设置页里的 analyzerPrompt；'
-          '这里仅保留旧配置回看。提醒工具是否真的注入，还取决于“允许后台 Agent 主动发消息”和“允许 AI 设定提醒”两个开关。',
-      tools: triggerPlugin?.getTools() ?? const <AITool>[],
-      onSave: (_) async {},
-    ));
+    entries.add(
+      _PluginPromptEntry(
+        pluginId: 'trigger',
+        pluginName: '主动关怀',
+        icon: Icons.favorite_outline,
+        enabled: triggerPlugin?.enabled ?? false,
+        promptText: triggerConfig.logicSystemPrompt,
+        description:
+            '当前主链路通过提醒工具接入聊天模型；logicSystemPrompt 仍是遗留兼容项，不会额外注入 system prompt。',
+        editable: false,
+        readOnlyReason:
+            '主动关怀分析链路实际使用的是设置页里的 analyzerPrompt；'
+            '这里仅保留旧配置回看。提醒工具是否真的注入，还取决于“允许后台 Agent 主动发消息”和“允许 AI 设定提醒”两个开关。',
+        tools: triggerPlugin?.getTools() ?? const <AITool>[],
+        onSave: (_) async {},
+      ),
+    );
 
     // === TimeAwareness ===
     final timeConfig = ref.watch(timeAwarenessPluginConfigProvider);
     final timeNotifier = ref.read(timeAwarenessPluginConfigProvider.notifier);
     final timePlugin = pluginManager.getPlugin('time_awareness');
-    entries.add(_PluginPromptEntry(
-      pluginId: 'time_awareness',
-      pluginName: '时间感知',
-      icon: Icons.schedule_outlined,
-      enabled: timeConfig.enabled,
-      promptText: timeConfig.currentTimePromptTemplate,
-      description: '用于生成 <system-reminder> 中的当前时间文案，支持 {datetime} 占位符',
-      tools: timePlugin?.getTools() ?? [],
-      onSave: (text) => timeNotifier.setCurrentTimePromptTemplate(text),
-    ));
-
-    // === Memory ===
-    final memoryConfig = ref.watch(memoryPluginConfigProvider);
-    final memoryNotifier = ref.read(memoryPluginConfigProvider.notifier);
-    final memoryPlugin = pluginManager.getPlugin('memory');
-    entries.add(_PluginPromptEntry(
-      pluginId: 'memory',
-      pluginName: '记忆库',
-      icon: Icons.psychology_outlined,
-      enabled: memoryConfig.enabled,
-      promptText: memoryConfig.summarizePrompt,
-      description: '记忆总结时使用的提示词（留空则使用内置默认值）',
-      tools: memoryPlugin?.getTools() ?? [],
-      onSave: (text) => memoryNotifier.setSummarizePrompt(text),
-    ));
+    entries.add(
+      _PluginPromptEntry(
+        pluginId: 'time_awareness',
+        pluginName: '时间感知',
+        icon: Icons.schedule_outlined,
+        enabled: timeConfig.enabled,
+        promptText: timeConfig.currentTimePromptTemplate,
+        description: '用于生成 <system-reminder> 中的当前时间文案，支持 {datetime} 占位符',
+        tools: timePlugin?.getTools() ?? [],
+        onSave: (text) => timeNotifier.setCurrentTimePromptTemplate(text),
+      ),
+    );
 
     // === Sticker ===
     final stickerConfig = ref.watch(stickerPluginConfigProvider);
     final stickerNotifier = ref.read(stickerPluginConfigProvider.notifier);
     final stickerPlugin = pluginManager.getPlugin('sticker');
-    entries.add(_PluginPromptEntry(
-      pluginId: 'sticker',
-      pluginName: '表情包',
-      icon: Icons.emoji_emotions_outlined,
-      enabled: stickerConfig.enabled,
-      promptText: stickerConfig.systemPromptTemplate,
-      description: '指导 AI 何时发送表情包，{tags} 会被替换为可用标签列表',
-      tools: stickerPlugin?.getTools() ?? [],
-      onSave: (text) => stickerNotifier.setSystemPromptTemplate(text),
-    ));
+    entries.add(
+      _PluginPromptEntry(
+        pluginId: 'sticker',
+        pluginName: '表情包',
+        icon: Icons.emoji_emotions_outlined,
+        enabled: stickerConfig.enabled,
+        promptText: stickerConfig.systemPromptTemplate,
+        description: '指导 AI 何时发送表情包，{tags} 会被替换为可用标签列表',
+        tools: stickerPlugin?.getTools() ?? [],
+        onSave: (text) => stickerNotifier.setSystemPromptTemplate(text),
+      ),
+    );
 
     return entries;
   }
 
   _TagSemanticsSummaryEntry _buildTagSemanticsSummary(WidgetRef ref) {
     final pluginManager = ref.watch(pluginManagerProvider);
-    final promptTagSemanticsService =
-        ref.watch(promptTagSemanticsServiceProvider);
+    final promptTagSemanticsService = ref.watch(
+      promptTagSemanticsServiceProvider,
+    );
     final timePlugin =
         pluginManager.getPlugin('time_awareness') as TimeAwarenessPlugin?;
     final ttsPlugin = pluginManager.getPlugin('tts') as TtsPlugin?;
     final imagePlugin = pluginManager.getPlugin('image') as ImagePlugin?;
     final systemReminderPrompt = timePlugin?.buildTagSemanticsPrompt() ?? '';
-    final snapshot = promptTagSemanticsService.buildSnapshot(
-      <PromptTagSemanticsEntry>[
-        if (systemReminderPrompt.isNotEmpty)
-          PromptTagSemanticsEntry(
-            id: 'system-reminder',
-            tagName: '<system-reminder>',
-            prompt: systemReminderPrompt,
-          ),
-        if ((ttsPlugin?.buildTagSemanticsPrompt()?.isNotEmpty ?? false))
-          PromptTagSemanticsEntry(
-            id: 'tts',
-            tagName: '<tts>',
-            prompt: ttsPlugin!.buildTagSemanticsPrompt()!,
-          ),
-        if ((imagePlugin?.buildTagSemanticsPrompt()?.isNotEmpty ?? false))
-          PromptTagSemanticsEntry(
-            id: 'image',
-            tagName: '<image>',
-            prompt: imagePlugin!.buildTagSemanticsPrompt()!,
-          ),
-      ],
-      leadIn: '',
-    );
+    final snapshot = promptTagSemanticsService
+        .buildSnapshot(<PromptTagSemanticsEntry>[
+          if (systemReminderPrompt.isNotEmpty)
+            PromptTagSemanticsEntry(
+              id: 'system-reminder',
+              tagName: '<system-reminder>',
+              prompt: systemReminderPrompt,
+            ),
+          if ((ttsPlugin?.buildTagSemanticsPrompt()?.isNotEmpty ?? false))
+            PromptTagSemanticsEntry(
+              id: 'tts',
+              tagName: '<tts>',
+              prompt: ttsPlugin!.buildTagSemanticsPrompt()!,
+            ),
+          if ((imagePlugin?.buildTagSemanticsPrompt()?.isNotEmpty ?? false))
+            PromptTagSemanticsEntry(
+              id: 'image',
+              tagName: '<image>',
+              prompt: imagePlugin!.buildTagSemanticsPrompt()!,
+            ),
+        ], leadIn: '');
     return _TagSemanticsSummaryEntry(
       promptText: snapshot.mergedPrompt,
       tagNames: <String>[
@@ -298,9 +302,7 @@ class _ToolPromptsPageState extends ConsumerState<ToolPromptsPage>
 }
 
 class _TagSemanticsSummaryCard extends StatelessWidget {
-  const _TagSemanticsSummaryCard({
-    required this.entry,
-  });
+  const _TagSemanticsSummaryCard({required this.entry});
 
   final _TagSemanticsSummaryEntry entry;
 
@@ -308,8 +310,9 @@ class _TagSemanticsSummaryCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
     final promptText = entry.promptText.trim();
-    final enabledTagsText =
-        entry.tagNames.isEmpty ? '当前没有启用的标签说明注入' : entry.tagNames.join('  ');
+    final enabledTagsText = entry.tagNames.isEmpty
+        ? '当前没有启用的标签说明注入'
+        : entry.tagNames.join('  ');
 
     return MoeG2ClipRRect(
       radius: 12,
@@ -326,8 +329,11 @@ class _TagSemanticsSummaryCard extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  Icon(Icons.label_important_outline,
-                      color: colors.primary, size: 22),
+                  Icon(
+                    Icons.label_important_outline,
+                    color: colors.primary,
+                    size: 22,
+                  ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Column(
@@ -346,7 +352,9 @@ class _TagSemanticsSummaryCard extends StatelessWidget {
                             const SizedBox(width: 8),
                             Container(
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 6, vertical: 2),
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
                               decoration: MoeG2Decoration(
                                 radius: 4,
                                 color: entry.enabled
@@ -369,7 +377,9 @@ class _TagSemanticsSummaryCard extends StatelessWidget {
                         Text(
                           entry.description,
                           style: TextStyle(
-                              fontSize: 12, color: colors.textSecondary),
+                            fontSize: 12,
+                            color: colors.textSecondary,
+                          ),
                         ),
                       ],
                     ),
@@ -379,12 +389,11 @@ class _TagSemanticsSummaryCard extends StatelessWidget {
               const SizedBox(height: 10),
               Container(
                 width: double.infinity,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                decoration: MoeG2Decoration(
-                  radius: 8,
-                  color: colors.surface,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
                 ),
+                decoration: MoeG2Decoration(radius: 8, color: colors.surface),
                 child: Text(
                   enabledTagsText,
                   style: TextStyle(
@@ -435,10 +444,7 @@ class _PluginPromptCard extends StatefulWidget {
 
   /// 当 dirty 状态变化时通知父页面
 
-  const _PluginPromptCard({
-    super.key,
-    required this.entry,
-  });
+  const _PluginPromptCard({super.key, required this.entry});
 
   @override
   State<_PluginPromptCard> createState() => _PluginPromptCardState();
@@ -459,9 +465,10 @@ class _PluginPromptCardState extends State<_PluginPromptCard>
     super.initState();
     _controller = TextEditingController(text: widget.entry.promptText);
     autoSave.configure(
-        save: () => widget.entry.onSave(_controller.text),
-        snapshot: () => _controller.text,
-        fields: [_controller]);
+      save: () => widget.entry.onSave(_controller.text),
+      snapshot: () => _controller.text,
+      fields: [_controller],
+    );
     autoSave.addListener(() {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -538,7 +545,9 @@ class _PluginPromptCardState extends State<_PluginPromptCard>
                               const SizedBox(width: 8),
                               Container(
                                 padding: const EdgeInsets.symmetric(
-                                    horizontal: 6, vertical: 2),
+                                  horizontal: 6,
+                                  vertical: 2,
+                                ),
                                 decoration: MoeG2Decoration(
                                   radius: 4,
                                   color: entry.enabled
@@ -559,11 +568,14 @@ class _PluginPromptCardState extends State<_PluginPromptCard>
                                 const SizedBox(width: 6),
                                 Container(
                                   padding: const EdgeInsets.symmetric(
-                                      horizontal: 6, vertical: 2),
+                                    horizontal: 6,
+                                    vertical: 2,
+                                  ),
                                   decoration: MoeG2Decoration(
                                     radius: 4,
-                                    color: colors.dialogWarning
-                                        .withValues(alpha: 0.1),
+                                    color: colors.dialogWarning.withValues(
+                                      alpha: 0.1,
+                                    ),
                                   ),
                                   child: Text(
                                     '只读',
@@ -592,7 +604,9 @@ class _PluginPromptCardState extends State<_PluginPromptCard>
                           Text(
                             entry.description,
                             style: TextStyle(
-                                fontSize: 12, color: colors.textSecondary),
+                              fontSize: 12,
+                              color: colors.textSecondary,
+                            ),
                           ),
                         ],
                       ),
@@ -602,7 +616,9 @@ class _PluginPromptCardState extends State<_PluginPromptCard>
                       Container(
                         margin: const EdgeInsets.only(right: 6),
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
                         decoration: MoeG2Decoration(
                           radius: 4,
                           color: colors.primary.withValues(alpha: 0.08),
@@ -615,8 +631,11 @@ class _PluginPromptCardState extends State<_PluginPromptCard>
                     AnimatedRotation(
                       turns: _expanded ? 0.25 : 0,
                       duration: const Duration(milliseconds: 200),
-                      child: Icon(Icons.chevron_right,
-                          color: colors.muted, size: 20),
+                      child: Icon(
+                        Icons.chevron_right,
+                        color: colors.muted,
+                        size: 20,
+                      ),
                     ),
                   ],
                 ),
@@ -630,8 +649,10 @@ class _PluginPromptCardState extends State<_PluginPromptCard>
               // 工具列表（如果有）
               if (entry.tools.isNotEmpty)
                 Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 8,
+                  ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -650,28 +671,33 @@ class _PluginPromptCardState extends State<_PluginPromptCard>
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Icon(Icons.build_outlined,
-                                  size: 14, color: colors.primary),
+                              Icon(
+                                Icons.build_outlined,
+                                size: 14,
+                                color: colors.primary,
+                              ),
                               const SizedBox(width: 6),
                               Expanded(
                                 child: Text.rich(
-                                  TextSpan(children: [
-                                    TextSpan(
-                                      text: tool.name,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: MoeFontWeights.emphasis,
-                                        color: colors.text,
+                                  TextSpan(
+                                    children: [
+                                      TextSpan(
+                                        text: tool.name,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: MoeFontWeights.emphasis,
+                                          color: colors.text,
+                                        ),
                                       ),
-                                    ),
-                                    TextSpan(
-                                      text: '  ${tool.description}',
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: colors.textSecondary,
+                                      TextSpan(
+                                        text: '  ${tool.description}',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: colors.textSecondary,
+                                        ),
                                       ),
-                                    ),
-                                  ]),
+                                    ],
+                                  ),
                                 ),
                               ),
                             ],
@@ -750,13 +776,17 @@ class _PluginPromptCardState extends State<_PluginPromptCard>
 
               if (autoSave.error != null)
                 Padding(
-                    padding: const EdgeInsets.all(14),
-                    child: Row(children: [
+                  padding: const EdgeInsets.all(14),
+                  child: Row(
+                    children: [
                       const Expanded(child: Text('自动保存失败，修改已保留。')),
                       TextButton(
-                          onPressed: () => autoSave.flush(),
-                          child: const Text('重试')),
-                    ])),
+                        onPressed: () => autoSave.flush(),
+                        child: const Text('重试'),
+                      ),
+                    ],
+                  ),
+                ),
             ],
           ],
         ),

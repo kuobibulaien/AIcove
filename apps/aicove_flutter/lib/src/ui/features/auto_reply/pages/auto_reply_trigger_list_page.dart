@@ -29,6 +29,7 @@ class AutoReplyTriggerListPage extends ConsumerWidget {
     final controller = ref.read(autoReplyTriggersProvider.notifier);
 
     return MoePageScaffold(
+      extendBodyBehindAppBar: true,
       appBar: const MoeAppBar(title: '待触发列表', showBackButton: true),
       floatingActionButton: IconButton.filled(
         style: withoutHoverFeedback(
@@ -70,105 +71,113 @@ class AutoReplyTriggerListPage extends ConsumerWidget {
             if (pending.isEmpty) {
               return _buildEmptyState();
             }
-            return ListView.separated(
-              padding: MoeSettingsLayout.verticalListPadding,
-              itemCount: pending.length,
-              separatorBuilder: (_, __) =>
-                  const SizedBox(height: MoeSettingsLayout.sectionGap),
-              itemBuilder: (_, index) {
-                final trigger = pending[index];
-                final statusColor = _colorForStatus(trigger.status, colors);
-                return MoeSettingsGroup(
-                  padding: MoeSettingsLayout.contentPadding,
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          trigger.title,
-                                          style: TextStyle(
-                                            fontSize: 15,
-                                            fontWeight: MoeFontWeights.emphasis,
-                                            color: colors.text,
+            return Builder(
+              builder: (context) => ListView.separated(
+                padding: moeUnderBarPadding(
+                  context,
+                  MoeSettingsLayout.verticalListPadding,
+                ),
+                itemCount: pending.length,
+                separatorBuilder: (_, __) =>
+                    const SizedBox(height: MoeSettingsLayout.sectionGap),
+                itemBuilder: (_, index) {
+                  final trigger = pending[index];
+                  final statusColor = _colorForStatus(trigger.status, colors);
+                  return MoeSettingsGroup(
+                    padding: MoeSettingsLayout.contentPadding,
+                    children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            trigger.title,
+                                            style: TextStyle(
+                                              fontSize: 15,
+                                              fontWeight:
+                                                  MoeFontWeights.emphasis,
+                                              color: colors.text,
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 4,
-                                        ),
-                                        decoration: MoeG2Decoration(
-                                          radius: 12,
-                                          color: statusColor.withValues(
-                                            alpha: 0.12,
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 4,
+                                          ),
+                                          decoration: MoeG2Decoration(
+                                            radius: 12,
+                                            color: statusColor.withValues(
+                                              alpha: 0.12,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            _labelForStatus(trigger.status),
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight:
+                                                  MoeFontWeights.emphasis,
+                                              color: statusColor,
+                                            ),
                                           ),
                                         ),
-                                        child: Text(
-                                          _labelForStatus(trigger.status),
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            fontWeight: MoeFontWeights.emphasis,
-                                            color: statusColor,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    '下次触发：${_formatDateTime(trigger.nextFireAt)}',
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      color: colors.textSecondary,
+                                      ],
                                     ),
-                                  ),
-                                ],
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      '下次触发：${_formatDateTime(trigger.nextFireAt)}',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: colors.textSecondary,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            MoeSecondaryButton(
-                              label: '立即触发',
-                              onPressed: () => controller.fireNow(trigger.id),
-                              size: MoeSecondaryButtonSize.sm,
-                            ),
-                            MoeSecondaryButton(
-                              label:
-                                  trigger.status ==
-                                      AutoReplyTriggerStatus.paused
-                                  ? '恢复'
-                                  : '暂停',
-                              onPressed: () =>
-                                  controller.togglePause(trigger.id),
-                              size: MoeSecondaryButtonSize.sm,
-                            ),
-                            MoeIconButton(
-                              icon: Icons.delete_outline,
-                              onTap: () => controller.deleteTrigger(trigger.id),
-                              semanticLabel: '删除',
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ],
-                );
-              },
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              MoeSecondaryButton(
+                                label: '立即触发',
+                                onPressed: () => controller.fireNow(trigger.id),
+                                size: MoeSecondaryButtonSize.sm,
+                              ),
+                              MoeSecondaryButton(
+                                label:
+                                    trigger.status ==
+                                        AutoReplyTriggerStatus.paused
+                                    ? '恢复'
+                                    : '暂停',
+                                onPressed: () =>
+                                    controller.togglePause(trigger.id),
+                                size: MoeSecondaryButtonSize.sm,
+                              ),
+                              MoeIconButton(
+                                icon: Icons.delete_outline,
+                                onTap: () =>
+                                    controller.deleteTrigger(trigger.id),
+                                semanticLabel: '删除',
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ],
+                  );
+                },
+              ),
             );
           },
         ),

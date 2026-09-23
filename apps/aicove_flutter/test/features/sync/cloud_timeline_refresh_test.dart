@@ -13,6 +13,7 @@ import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/chat/services/conversation_short_window_store.dart';
 import 'package:aicove_flutter/src/features/sync/data/cloud_local_store.dart';
 import 'package:aicove_flutter/src/features/sync/providers/cloud_sync_provider.dart';
+import 'package:aicove_flutter/src/core/sync/cloud_tracking.dart';
 
 final _controllerProvider = Provider((ref) {
   final controller = CloudSyncController(ref);
@@ -64,7 +65,7 @@ void main() {
 
   Future<void> applyMessage(int index, {int? deletedAt, String? content}) =>
       local.apply('messages', 'm$index', {
-        'client_schema': database.schemaVersion,
+        'client_schema': kCloudRowSchema,
         'row': {
           'id': 'm$index',
           'conversation_id': 'room',

@@ -75,6 +75,20 @@ String _migrateAccentColor(String value) {
   return legacyMap[value] ?? value;
 }
 
+/// 旧版本没有皮肤字段：未改过配色的归入对应内置皮肤，改过的保留为自定义。
+InterfaceSkin _legacyInterfaceSkin(
+  String accentColor,
+  ChatBackgroundColor chatBackground,
+) {
+  if (accentColor.toUpperCase() != 'FC96AA') return InterfaceSkin.custom;
+  return switch (chatBackground) {
+    ChatBackgroundColor.defaultColor ||
+    ChatBackgroundColor.white => InterfaceSkin.classic,
+    ChatBackgroundColor.momotalk => InterfaceSkin.momotalk,
+    ChatBackgroundColor.warm => InterfaceSkin.custom,
+  };
+}
+
 _ModelMeta _calculateModelMeta(
   List<ProviderAuth> providers, {
   required Map<String, String> modelTypes,
@@ -307,6 +321,9 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
   // 支持十六进制颜色值（如 'FC96AA'）或旧枚举值（如 'pink'）
   final rawAccent = (data['accent_color'] as String?) ?? 'FC96AA';
   final accentColor = _migrateAccentColor(rawAccent);
+  final interfaceSkin =
+      InterfaceSkin.tryParse(data['interface_skin'] as String?) ??
+      _legacyInterfaceSkin(accentColor, chatBackgroundColor);
   final glassEffectEnabled = data['glass_effect_enabled'] != false;
   final glassBlurSigma =
       ((data['glass_blur_sigma'] as num?)?.toDouble() ?? kDefaultGlassBlurSigma)
@@ -359,6 +376,8 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
   return AppSettings(
     smartReplyEnabled: data['smart_reply_enabled'] == true,
     smartReplyModel: (data['smart_reply_model'] as String?) ?? '',
+    compactionModel: (data['compaction_model'] as String?) ?? '',
+    memoryModel: (data['memory_model'] as String?) ?? '',
     ttsEnabled: true,
     defaultModelName: primaryChatModelRef,
     // temperature 不设置，默认 null → 不发送，由云端使用默认值
@@ -398,6 +417,7 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     isDarkMode: isDarkMode,
     useSystemTheme: useSystemTheme,
     accentColor: accentColor,
+    interfaceSkin: interfaceSkin,
     glassEffectEnabled: glassEffectEnabled,
     glassBlurSigma: glassBlurSigma,
     useLiquidGlass: useLiquidGlass,
@@ -454,6 +474,16 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
 
   Future<void> setSmartReplyModel(String modelRef) async {
     await _commit(() => _api.updatePartial({'smart_reply_model': modelRef.trim()}));
+  }
+
+  /// 空字符串表示跟随默认聊天模型。
+  Future<void> setCompactionModel(String modelRef) async {
+    await _commit(() => _api.updatePartial({'compaction_model': modelRef.trim()}));
+  }
+
+  /// 空字符串表示跟随压缩模型。
+  Future<void> setMemoryModel(String modelRef) async {
+    await _commit(() => _api.updatePartial({'memory_model': modelRef.trim()}));
   }
 
   Future<void> setDefaultModelName(String modelId) async {
@@ -1011,9 +1041,22 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     );
   }
 
-  Future<void> setChatBackgroundColor(ChatBackgroundColor color) async {
+  Future<void> setInterfaceSkin(InterfaceSkin skin) async {
+    await _commit(() => _api.updatePartial({'interface_skin': skin.value}));
+  }
+
+  /// 修改自定义皮肤的配色，并切换到自定义皮肤。
+  Future<void> setCustomSkin({
+    String? accentColor,
+    ChatBackgroundColor? chatBackground,
+  }) async {
     await _commit(
-      () => _api.updatePartial({'chat_background_color': color.value}),
+      () => _api.updatePartial({
+        'interface_skin': InterfaceSkin.custom.value,
+        if (accentColor != null) 'accent_color': accentColor,
+        if (chatBackground != null)
+          'chat_background_color': chatBackground.value,
+      }),
     );
   }
 
@@ -1023,10 +1066,6 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
 
   Future<void> setUseSystemTheme(bool useSystem) async {
     await _commit(() => _api.updatePartial({'use_system_theme': useSystem}));
-  }
-
-  Future<void> setAccentColor(String color) async {
-    await _commit(() => _api.updatePartial({'accent_color': color}));
   }
 
   Future<void> setSurfaceMaterial(MoeSurfaceMaterial material) {

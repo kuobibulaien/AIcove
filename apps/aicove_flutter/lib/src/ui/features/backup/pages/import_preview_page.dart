@@ -49,42 +49,45 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
     final importProgress = ref.watch(importProgressProvider);
 
     return MoePageScaffold(
+      extendBodyBehindAppBar: true,
       appBar: const MoeAppBar(title: '导入预览', showBackButton: true),
       body: Column(
         children: [
           Expanded(
-            child: ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                // 文件信息
-                _buildFileInfoCard(context),
-                const SizedBox(height: 24),
-
-                // 兼容性警告
-                if (!widget.preview.isCompatible) ...[
-                  _buildWarningCard(context),
+            child: Builder(
+              builder: (context) => ListView(
+                padding: moeUnderBarPadding(context, EdgeInsets.all(16)),
+                children: [
+                  // 文件信息
+                  _buildFileInfoCard(context),
                   const SizedBox(height: 24),
+
+                  // 兼容性警告
+                  if (!widget.preview.isCompatible) ...[
+                    _buildWarningCard(context),
+                    const SizedBox(height: 24),
+                  ],
+
+                  // 导入范围选择
+                  _buildSectionTitle(context, '导入内容'),
+                  const SizedBox(height: 12),
+                  _buildScopeSelector(context, selectedScopes),
+                  const SizedBox(height: 24),
+
+                  // 角色列表
+                  _buildSectionTitle(context, '选择角色'),
+                  const SizedBox(height: 8),
+                  _buildSelectAllBar(context, selectedConvIds),
+                  const SizedBox(height: 8),
+                  ...widget.preview.conversations.map((conv) {
+                    return _buildConversationItem(
+                      context,
+                      conv,
+                      selectedConvIds.contains(conv.id),
+                    );
+                  }),
                 ],
-
-                // 导入范围选择
-                _buildSectionTitle(context, '导入内容'),
-                const SizedBox(height: 12),
-                _buildScopeSelector(context, selectedScopes),
-                const SizedBox(height: 24),
-
-                // 角色列表
-                _buildSectionTitle(context, '选择角色'),
-                const SizedBox(height: 8),
-                _buildSelectAllBar(context, selectedConvIds),
-                const SizedBox(height: 8),
-                ...widget.preview.conversations.map((conv) {
-                  return _buildConversationItem(
-                    context,
-                    conv,
-                    selectedConvIds.contains(conv.id),
-                  );
-                }),
-              ],
+              ),
             ),
           ),
 

@@ -54,20 +54,26 @@ class _InlineImagePromptPageState extends ConsumerState<InlineImagePromptPage> {
     final notifier = ref.read(imagePluginConfigProvider.notifier);
 
     return MoePageScaffold(
+      extendBodyBehindAppBar: true,
       backgroundColor: colors.surface,
       appBar: const MoeAppBar(title: '快速链路提示词模板', showBackButton: true),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(
-          MoeSpacing.md,
-          MoeSpacing.md,
-          MoeSpacing.md,
-          MoeSpacing.xl,
+      body: Builder(
+        builder: (context) => ListView(
+          padding: moeUnderBarPadding(
+            context,
+            EdgeInsets.fromLTRB(
+              MoeSpacing.md,
+              MoeSpacing.md,
+              MoeSpacing.md,
+              MoeSpacing.xl,
+            ),
+          ),
+          children: [
+            _buildSlotSection(context, config, notifier),
+            const SizedBox(height: MoeSpacing.lg),
+            _buildPreviewSection(context, config),
+          ],
         ),
-        children: [
-          _buildSlotSection(context, config, notifier),
-          const SizedBox(height: MoeSpacing.lg),
-          _buildPreviewSection(context, config),
-        ],
       ),
     );
   }
@@ -469,40 +475,46 @@ class _InlinePromptEditorPageState
 
     return autoSavePage(
       MoePageScaffold(
+        extendBodyBehindAppBar: true,
         backgroundColor: colors.surface,
         appBar: MoeAppBar(
           title: '编辑「${widget.presetName}」',
           showBackButton: true,
         ),
-        body: ListView(
-          padding: const EdgeInsets.fromLTRB(
-            MoeSpacing.md,
-            MoeSpacing.md,
-            MoeSpacing.md,
-            MoeSpacing.xl,
-          ),
-          children: [
-            MoeSettingsGroup(
-              title: '模板内容',
-              margin: EdgeInsets.zero,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(MoeSpacing.md),
-                  child: TextField(
-                    controller: _controller,
-                    maxLines: 18,
-                    minLines: 12,
-                    decoration: const InputDecoration(
-                      hintText: '输入快速链路要注入的完整提示词模板',
-                      border: OutlineInputBorder(),
-                      alignLabelWithHint: true,
+        body: Builder(
+          builder: (context) => ListView(
+            padding: moeUnderBarPadding(
+              context,
+              EdgeInsets.fromLTRB(
+                MoeSpacing.md,
+                MoeSpacing.md,
+                MoeSpacing.md,
+                MoeSpacing.xl,
+              ),
+            ),
+            children: [
+              MoeSettingsGroup(
+                title: '模板内容',
+                margin: EdgeInsets.zero,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(MoeSpacing.md),
+                    child: TextField(
+                      controller: _controller,
+                      maxLines: 18,
+                      minLines: 12,
+                      decoration: const InputDecoration(
+                        hintText: '输入快速链路要注入的完整提示词模板',
+                        border: OutlineInputBorder(),
+                        alignLabelWithHint: true,
+                      ),
                     ),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: MoeSpacing.md),
-          ],
+                ],
+              ),
+              const SizedBox(height: MoeSpacing.md),
+            ],
+          ),
         ),
       ),
     );

@@ -18,6 +18,7 @@ import 'network_diagnostic_page.dart';
 import 'call_flow_management_page.dart';
 import 'message_segmentation_debug_page.dart';
 import 'stream_monitor_debug_page.dart';
+import '../../../../ui/shared/widgets/moe_scroll_edge.dart';
 
 /// 调试中心 - 整合日志、组件库、提示词节点与数据管理
 class DebugCenterPage extends StatelessWidget {
@@ -28,127 +29,142 @@ class DebugCenterPage extends StatelessWidget {
     final colors = context.moeColors;
 
     return MoePageScaffold(
+      extendBodyBehindAppBar: true,
       backgroundColor: colors.surface,
       appBar: const MoeAppBar(title: '调试中心', showBackButton: true),
-      body: ListView(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        children: [
-          MoeSettingsGroup(
-            margin: const EdgeInsets.symmetric(horizontal: 16),
-            children: [
-              MoeSettingsRow(
-                icon: Icons.article_outlined,
-                label: '日志中心',
-                subtitle: '前端响应、模型对话、应用异常',
-                trailingType: MoeSettingsRowTrailing.chevron,
-                onTap: () => Navigator.of(context).push(
-                  ParallaxSlidePageRoute(page: const LogViewerPage()),
-                ),
-              ),
-              MoeSettingsRow(
-                icon: Icons.download_outlined,
-                label: '诊断导出与电脑读取',
-                subtitle: 'Release 可用，一键导出或连接 Agent',
-                trailingType: MoeSettingsRowTrailing.chevron,
-                onTap: () => Navigator.of(context).push(
-                  ParallaxSlidePageRoute(page: const DiagnosticAccessPage()),
-                ),
-              ),
-              MoeSettingsRow(
-                icon: Icons.widgets_outlined,
-                label: 'UI 组件库',
-                subtitle: '查看所有公共组件',
-                trailingType: MoeSettingsRowTrailing.chevron,
-                onTap: () => Navigator.of(context).push(
-                  ParallaxSlidePageRoute(page: const UiGalleryPage()),
-                ),
-              ),
-              MoeSettingsRow(
-                icon: Icons.code_outlined,
-                label: '工具提示词管理',
-                subtitle: '查看和编辑插件注入 AI 的提示词',
-                trailingType: MoeSettingsRowTrailing.chevron,
-                onTap: () => Navigator.of(context).push(
-                  ParallaxSlidePageRoute(page: const ToolPromptsPage()),
-                ),
-              ),
-              MoeSettingsRow(
-                icon: Icons.account_tree_outlined,
-                label: '提示词节点',
-                subtitle: '核对内置提示词与 Agent Build 节点',
-                trailingType: MoeSettingsRowTrailing.chevron,
-                onTap: () => Navigator.of(context).push(
-                  ParallaxSlidePageRoute(page: const PromptNodeManagementPage()),
-                ),
-              ),
-              MoeSettingsRow(
-                icon: Icons.account_tree_outlined,
-                label: '提示词节点管理（增强版）',
-                subtitle: '按联系人查看提示词节点，支持上下文预览',
-                trailingType: MoeSettingsRowTrailing.chevron,
-                onTap: () => Navigator.of(context).push(
-                  ParallaxSlidePageRoute(page: const PromptNodeManagementPageEnhanced()),
-                ),
-              ),
-              MoeSettingsRow(
-                icon: Icons.auto_awesome_outlined,
-                label: '增强对话',
-                subtitle: '配置增强生成（系统提示词 / 第一条用户消息 / 最近轮数）',
-                trailingType: MoeSettingsRowTrailing.chevron,
-                onTap: () => Navigator.of(context).push(
-                  ParallaxSlidePageRoute(page: const EnhancedDialoguePage()),
-                ),
-              ),
-              MoeSettingsRow(
-                icon: Icons.route_outlined,
-                label: '调用超时管理',
-                subtitle: '配置模型与工具超时，生图路径切换已移到绘图设置',
-                trailingType: MoeSettingsRowTrailing.chevron,
-                onTap: () => Navigator.of(context).push(
-                  ParallaxSlidePageRoute(page: const CallFlowManagementPage()),
-                ),
-              ),
-              MoeSettingsRow(
-                icon: Icons.segment_outlined,
-                label: '消息分段',
-                subtitle: '配置流式分段逐条展示延迟',
-                trailingType: MoeSettingsRowTrailing.chevron,
-                onTap: () => Navigator.of(context).push(
-                  ParallaxSlidePageRoute(
-                      page: const MessageSegmentationDebugPage()),
-                ),
-              ),
-              MoeSettingsRow(
-                icon: Icons.monitor_heart_outlined,
-                label: '流式监控',
-                subtitle: '查看流式尝试/成功/回退统计',
-                trailingType: MoeSettingsRowTrailing.chevron,
-                onTap: () => Navigator.of(context).push(
-                  ParallaxSlidePageRoute(page: const StreamMonitorDebugPage()),
-                ),
-              ),
-              MoeSettingsRow(
-                icon: Icons.cloud_sync_outlined,
-                label: '数据管理',
-                subtitle: '备份、导入导出、云同步',
-                trailingType: MoeSettingsRowTrailing.chevron,
-                onTap: () => Navigator.of(context).push(
-                  ParallaxSlidePageRoute(page: const DataManagementPage()),
-                ),
-              ),
-              MoeSettingsRow(
-                icon: Icons.network_check_outlined,
-                label: '网络诊断',
-                subtitle: '测试 URL 连通性（内置简易 curl）',
-                trailingType: MoeSettingsRowTrailing.chevron,
-                onTap: () => Navigator.of(context).push(
-                  ParallaxSlidePageRoute(page: const NetworkDiagnosticPage()),
-                ),
-                showDivider: false,
-              ),
-            ],
+      body: Builder(
+        builder: (context) => ListView(
+          padding: moeUnderBarPadding(
+            context,
+            EdgeInsets.symmetric(vertical: 16),
           ),
-        ],
+          children: [
+            MoeSettingsGroup(
+              margin: const EdgeInsets.symmetric(horizontal: 16),
+              children: [
+                MoeSettingsRow(
+                  icon: Icons.article_outlined,
+                  label: '日志中心',
+                  subtitle: '前端响应、模型对话、应用异常',
+                  trailingType: MoeSettingsRowTrailing.chevron,
+                  onTap: () => Navigator.of(
+                    context,
+                  ).push(ParallaxSlidePageRoute(page: const LogViewerPage())),
+                ),
+                MoeSettingsRow(
+                  icon: Icons.download_outlined,
+                  label: '诊断导出与电脑读取',
+                  subtitle: 'Release 可用，一键导出或连接 Agent',
+                  trailingType: MoeSettingsRowTrailing.chevron,
+                  onTap: () => Navigator.of(context).push(
+                    ParallaxSlidePageRoute(page: const DiagnosticAccessPage()),
+                  ),
+                ),
+                MoeSettingsRow(
+                  icon: Icons.widgets_outlined,
+                  label: 'UI 组件库',
+                  subtitle: '查看所有公共组件',
+                  trailingType: MoeSettingsRowTrailing.chevron,
+                  onTap: () => Navigator.of(
+                    context,
+                  ).push(ParallaxSlidePageRoute(page: const UiGalleryPage())),
+                ),
+                MoeSettingsRow(
+                  icon: Icons.code_outlined,
+                  label: '工具提示词管理',
+                  subtitle: '查看和编辑插件注入 AI 的提示词',
+                  trailingType: MoeSettingsRowTrailing.chevron,
+                  onTap: () => Navigator.of(
+                    context,
+                  ).push(ParallaxSlidePageRoute(page: const ToolPromptsPage())),
+                ),
+                MoeSettingsRow(
+                  icon: Icons.account_tree_outlined,
+                  label: '提示词节点',
+                  subtitle: '核对内置提示词与 Agent Build 节点',
+                  trailingType: MoeSettingsRowTrailing.chevron,
+                  onTap: () => Navigator.of(context).push(
+                    ParallaxSlidePageRoute(
+                      page: const PromptNodeManagementPage(),
+                    ),
+                  ),
+                ),
+                MoeSettingsRow(
+                  icon: Icons.account_tree_outlined,
+                  label: '提示词节点管理（增强版）',
+                  subtitle: '按联系人查看提示词节点，支持上下文预览',
+                  trailingType: MoeSettingsRowTrailing.chevron,
+                  onTap: () => Navigator.of(context).push(
+                    ParallaxSlidePageRoute(
+                      page: const PromptNodeManagementPageEnhanced(),
+                    ),
+                  ),
+                ),
+                MoeSettingsRow(
+                  icon: Icons.auto_awesome_outlined,
+                  label: '增强对话',
+                  subtitle: '配置增强生成（系统提示词 / 第一条用户消息 / 最近轮数）',
+                  trailingType: MoeSettingsRowTrailing.chevron,
+                  onTap: () => Navigator.of(context).push(
+                    ParallaxSlidePageRoute(page: const EnhancedDialoguePage()),
+                  ),
+                ),
+                MoeSettingsRow(
+                  icon: Icons.route_outlined,
+                  label: '调用超时管理',
+                  subtitle: '配置模型与工具超时，生图路径切换已移到绘图设置',
+                  trailingType: MoeSettingsRowTrailing.chevron,
+                  onTap: () => Navigator.of(context).push(
+                    ParallaxSlidePageRoute(
+                      page: const CallFlowManagementPage(),
+                    ),
+                  ),
+                ),
+                MoeSettingsRow(
+                  icon: Icons.segment_outlined,
+                  label: '消息分段',
+                  subtitle: '配置流式分段逐条展示延迟',
+                  trailingType: MoeSettingsRowTrailing.chevron,
+                  onTap: () => Navigator.of(context).push(
+                    ParallaxSlidePageRoute(
+                      page: const MessageSegmentationDebugPage(),
+                    ),
+                  ),
+                ),
+                MoeSettingsRow(
+                  icon: Icons.monitor_heart_outlined,
+                  label: '流式监控',
+                  subtitle: '查看流式尝试/成功/回退统计',
+                  trailingType: MoeSettingsRowTrailing.chevron,
+                  onTap: () => Navigator.of(context).push(
+                    ParallaxSlidePageRoute(
+                      page: const StreamMonitorDebugPage(),
+                    ),
+                  ),
+                ),
+                MoeSettingsRow(
+                  icon: Icons.cloud_sync_outlined,
+                  label: '数据管理',
+                  subtitle: '备份、导入导出、云同步',
+                  trailingType: MoeSettingsRowTrailing.chevron,
+                  onTap: () => Navigator.of(context).push(
+                    ParallaxSlidePageRoute(page: const DataManagementPage()),
+                  ),
+                ),
+                MoeSettingsRow(
+                  icon: Icons.network_check_outlined,
+                  label: '网络诊断',
+                  subtitle: '测试 URL 连通性（内置简易 curl）',
+                  trailingType: MoeSettingsRowTrailing.chevron,
+                  onTap: () => Navigator.of(context).push(
+                    ParallaxSlidePageRoute(page: const NetworkDiagnosticPage()),
+                  ),
+                  showDivider: false,
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

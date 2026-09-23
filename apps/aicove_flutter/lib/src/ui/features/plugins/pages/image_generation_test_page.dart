@@ -215,6 +215,7 @@ class _ImageGenerationTestPageState
         ref.watch<ImageConfig>(imagePluginConfigProvider);
 
     return MoePageScaffold(
+      extendBodyBehindAppBar: true,
       backgroundColor: colors.surface,
       appBar: const MoeAppBar(title: '生图测试', showBackButton: true),
       body: settingsAsync.when(
@@ -232,21 +233,23 @@ class _ImageGenerationTestPageState
           final modelLabel = config.selectedModelId == null
               ? widget.initialModelLabel ?? '未匹配到可用绘图模型'
               : settings.getModelDisplayName(config.selectedModelId!);
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              _buildSummaryCard(
-                colors: colors,
-                settings: settings,
-                config: config,
-                providerLabel: providerLabel,
-                modelLabel: modelLabel,
-              ),
-              const SizedBox(height: 16),
-              _buildComposerCard(colors),
-              const SizedBox(height: 16),
-              _buildResultCard(colors, config),
-            ],
+          return Builder(
+            builder: (context) => ListView(
+              padding: moeUnderBarPadding(context, EdgeInsets.all(16)),
+              children: [
+                _buildSummaryCard(
+                  colors: colors,
+                  settings: settings,
+                  config: config,
+                  providerLabel: providerLabel,
+                  modelLabel: modelLabel,
+                ),
+                const SizedBox(height: 16),
+                _buildComposerCard(colors),
+                const SizedBox(height: 16),
+                _buildResultCard(colors, config),
+              ],
+            ),
           );
         },
       ),

@@ -13,8 +13,35 @@ class MoeSearchField extends StatefulWidget {
     this.controller,
     this.initialValue = '',
     this.autofocus = false,
-    this.padding = const EdgeInsets.fromLTRB(12, 4, 12, 10),
+    this.padding = defaultPadding,
   });
+
+  static const defaultPadding = EdgeInsets.fromLTRB(12, 4, 12, 10);
+
+  /// Laid-out height including [padding], so a bar can reserve the field.
+  static double heightFor(
+    BuildContext context, {
+    EdgeInsetsGeometry padding = defaultPadding,
+  }) {
+    final painter = TextPainter(
+      text: TextSpan(text: ' ', style: _textStyle(context)),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      maxLines: 1,
+    )..layout();
+    final lineHeight = painter.preferredLineHeight;
+    painter.dispose();
+    return lineHeight + _verticalContentPadding * 2 + padding.vertical;
+  }
+
+  static const double _verticalContentPadding = 10;
+
+  static TextStyle _textStyle(BuildContext context) =>
+      Theme.of(context).textTheme.bodyMedium!.copyWith(
+        fontSize: 15,
+        color: context.moeColors.muted,
+        fontWeight: FontWeight.normal,
+      );
 
   final ValueChanged<String>? onChanged;
   final String hintText;
@@ -53,11 +80,7 @@ class _MoeSearchFieldState extends State<MoeSearchField> {
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
-    final hintStyle = Theme.of(context).textTheme.bodyMedium!.copyWith(
-      fontSize: 15,
-      color: colors.muted,
-      fontWeight: FontWeight.normal,
-    );
+    final hintStyle = MoeSearchField._textStyle(context);
     return Padding(
       padding: widget.padding,
       child: ValueListenableBuilder<TextEditingValue>(
@@ -107,9 +130,9 @@ class _MoeSearchFieldState extends State<MoeSearchField> {
                         fillColor: Colors.transparent,
                         contentPadding: EdgeInsets.fromLTRB(
                           leading + 30,
-                          10,
+                          MoeSearchField._verticalContentPadding,
                           44,
-                          10,
+                          MoeSearchField._verticalContentPadding,
                         ),
                         border: border,
                         enabledBorder: border,

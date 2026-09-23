@@ -13,6 +13,7 @@ import '../../../../ui/shared/widgets/index.dart';
 import '../../../settings/app_settings.dart';
 import '../../../../ui/features/settings/pages/log_viewer_page.dart';
 import '../../../../ui/features/debug/pages/ui_gallery_page.dart';
+import '../../../../ui/shared/widgets/moe_scroll_edge.dart';
 
 /// 个人中心内容组件（无 AppBar，可复用）
 class ProfileContent extends ConsumerStatefulWidget {
@@ -45,30 +46,20 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
           transitionDuration: kAnim,
           reverseTransitionDuration: kAnim,
           pageBuilder: (context, animation, secondaryAnimation) =>
-              ImageCropDialog(
-            imageBytes: file.bytes!,
-            fileName: file.name,
-          ),
+              ImageCropDialog(imageBytes: file.bytes!, fileName: file.name),
           transitionsBuilder: (context, animation, secondaryAnimation, child) {
             // 组合淡入和轻微缩放效果
             final fadeAnimation = CurvedAnimation(
               parent: animation,
               curve: Curves.easeOut,
             );
-            final scaleAnimation = Tween<double>(
-              begin: 0.95,
-              end: 1.0,
-            ).animate(CurvedAnimation(
-              parent: animation,
-              curve: Curves.easeOutCubic,
-            ));
+            final scaleAnimation = Tween<double>(begin: 0.95, end: 1.0).animate(
+              CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+            );
 
             return FadeTransition(
               opacity: fadeAnimation,
-              child: ScaleTransition(
-                scale: scaleAnimation,
-                child: child,
-              ),
+              child: ScaleTransition(scale: scaleAnimation, child: child),
             );
           },
         ),
@@ -82,22 +73,23 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('选择图片失败: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('选择图片失败: $e')));
       }
     }
   }
 
   Future<void> _editName() async {
     await showMoeAutoSaveTextEditor(
-        context: context,
-        title: '个人名称',
-        initialValue: ref.read(appSettingsProvider).valueOrNull?.userName ?? '',
-        onSave: (text) async {
-          if (text.trim().isEmpty) throw const FormatException('名称不能为空');
-          await ref.read(appSettingsProvider.notifier).setUserName(text.trim());
-        });
+      context: context,
+      title: '个人名称',
+      initialValue: ref.read(appSettingsProvider).valueOrNull?.userName ?? '',
+      onSave: (text) async {
+        if (text.trim().isEmpty) throw const FormatException('名称不能为空');
+        await ref.read(appSettingsProvider.notifier).setUserName(text.trim());
+      },
+    );
   }
 
   Widget _buildAvatarImage(String? url) {
@@ -151,7 +143,7 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
     final userAvatar = settings?.userAvatar;
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
+      padding: moeUnderBarPadding(context, const EdgeInsets.all(24)),
       child: Column(
         children: [
           const SizedBox(height: 32),
@@ -242,11 +234,11 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
                     context: context,
                     applicationName: 'AIcove',
                     applicationVersion: '1.0.0',
-                    applicationIcon:
-                        const Icon(Icons.chat_bubble_outline, size: 48),
-                    children: const [
-                      Text('一款简单顺手的聊天应用'),
-                    ],
+                    applicationIcon: const Icon(
+                      Icons.chat_bubble_outline,
+                      size: 48,
+                    ),
+                    children: const [Text('一款简单顺手的聊天应用')],
                   );
                 },
               ),
@@ -255,9 +247,9 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
                 label: '查看日志',
                 subtitle: '查看系统运行日志',
                 onTap: () {
-                  MoeWorkspace.navigatorOf(context).push(
-                    ParallaxSlidePageRoute(page: const LogViewerPage()),
-                  );
+                  MoeWorkspace.navigatorOf(
+                    context,
+                  ).push(ParallaxSlidePageRoute(page: const LogViewerPage()));
                 },
               ),
               MoeSettingsRow(
@@ -265,9 +257,9 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
                 label: 'UI 组件库',
                 subtitle: '查看所有公共组件样式',
                 onTap: () {
-                  MoeWorkspace.navigatorOf(context).push(
-                    ParallaxSlidePageRoute(page: const UiGalleryPage()),
-                  );
+                  MoeWorkspace.navigatorOf(
+                    context,
+                  ).push(ParallaxSlidePageRoute(page: const UiGalleryPage()));
                 },
               ),
             ],

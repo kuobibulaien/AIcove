@@ -62,6 +62,7 @@ class _MessageSegmentationDebugPageState
 
     return autoSavePage(
       MoePageScaffold(
+        extendBodyBehindAppBar: true,
         backgroundColor: colors.surface,
         appBar: const MoeAppBar(title: '消息分段', showBackButton: true),
         body: settingsAsync.when(
@@ -76,107 +77,113 @@ class _MessageSegmentationDebugPageState
           data: (settings) {
             _ensureDraft(settings);
 
-            return ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: MoeG2Decoration(
-                    radius: 12,
-                    color: colors.surface,
-                    border: Border.all(color: colors.borderLight),
-                  ),
-                  child: Text(
-                    '用途：给“每条分段消息”增加固定间隔，让流式逐条发送更明显。\n'
-                    '0.0s 表示关闭延迟；例如 0.5s 表示每条分段之间等待 0.5 秒。',
-                    style: TextStyle(fontSize: 13, color: colors.textSecondary),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                MoeSettingsGroup(
-                  margin: const EdgeInsets.symmetric(horizontal: 16),
-                  children: [
-                    MoeSettingsRow(
-                      icon: Icons.schedule_outlined,
-                      label: '当前分段延迟',
-                      trailingType: MoeSettingsRowTrailing.text,
-                      detailText: _delayLabel,
-                      showDivider: false,
+            return Builder(
+              builder: (context) => ListView(
+                padding: moeUnderBarPadding(context, EdgeInsets.all(16)),
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: MoeG2Decoration(
+                      radius: 12,
+                      color: colors.surface,
+                      border: Border.all(color: colors.borderLight),
                     ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
+                    child: Text(
+                      '用途：给“每条分段消息”增加固定间隔，让流式逐条发送更明显。\n'
+                      '0.0s 表示关闭延迟；例如 0.5s 表示每条分段之间等待 0.5 秒。',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: colors.textSecondary,
+                      ),
+                    ),
                   ),
-                  decoration: MoeG2Decoration(
-                    radius: 12,
-                    color: colors.surface,
-                    border: Border.all(color: colors.borderLight),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  const SizedBox(height: 12),
+                  MoeSettingsGroup(
+                    margin: const EdgeInsets.symmetric(horizontal: 16),
                     children: [
-                      Text(
-                        '每条消息延迟：$_delayLabel',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: MoeFontWeights.emphasis,
-                          color: colors.text,
+                      MoeSettingsRow(
+                        icon: Icons.schedule_outlined,
+                        label: '当前分段延迟',
+                        trailingType: MoeSettingsRowTrailing.text,
+                        detailText: _delayLabel,
+                        showDivider: false,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    decoration: MoeG2Decoration(
+                      radius: 12,
+                      color: colors.surface,
+                      border: Border.all(color: colors.borderLight),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '每条消息延迟：$_delayLabel',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: MoeFontWeights.emphasis,
+                            color: colors.text,
+                          ),
                         ),
-                      ),
-                      Slider(
-                        overlayColor: moeInteractionOverlay,
-                        value: _draftDelaySeconds,
-                        min: _kMinDelay,
-                        max: _kMaxDelay,
-                        divisions: ((_kMaxDelay - _kMinDelay) * 10).round(),
-                        label: _delayLabel,
-                        onChanged: (value) =>
-                            setState(() => _draftDelaySeconds = value),
-                      ),
-                      Text(
-                        '建议调试值：0.3s ~ 0.8s',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: colors.textSecondary,
+                        Slider(
+                          overlayColor: moeInteractionOverlay,
+                          value: _draftDelaySeconds,
+                          min: _kMinDelay,
+                          max: _kMaxDelay,
+                          divisions: ((_kMaxDelay - _kMinDelay) * 10).round(),
+                          label: _delayLabel,
+                          onChanged: (value) =>
+                              setState(() => _draftDelaySeconds = value),
+                        ),
+                        Text(
+                          '建议调试值：0.3s ~ 0.8s',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final preset in _kPresets)
+                        MoeButtonSurface(
+                          radius: 999,
+                          child: ChoiceChip(
+                            label: Text('${preset.toStringAsFixed(1)}s'),
+                            selected:
+                                (_draftDelaySeconds - preset).abs() < 0.01,
+                            onSelected: (_) => _applyPreset(preset),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: MoeSecondaryButton(
+                          label: '恢复默认',
+                          icon: Icons.restore_rounded,
+                          onPressed: _resetToDefault,
                         ),
                       ),
                     ],
                   ),
-                ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final preset in _kPresets)
-                      MoeButtonSurface(
-                        radius: 999,
-                        child: ChoiceChip(
-                          label: Text('${preset.toStringAsFixed(1)}s'),
-                          selected: (_draftDelaySeconds - preset).abs() < 0.01,
-                          onSelected: (_) => _applyPreset(preset),
-                        ),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: MoeSecondaryButton(
-                        label: '恢复默认',
-                        icon: Icons.restore_rounded,
-                        onPressed: _resetToDefault,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 24),
-              ],
+                  const SizedBox(height: 24),
+                ],
+              ),
             );
           },
         ),

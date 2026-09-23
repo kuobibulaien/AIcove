@@ -16,6 +16,7 @@ class ProviderSelectorPage extends ConsumerWidget {
     final colors = context.moeColors;
 
     return MoePageScaffold(
+      extendBodyBehindAppBar: true,
       appBar: MoeAppBar(
         title: '选择提供商和模型',
         showBackButton: true,
@@ -31,9 +32,8 @@ class ProviderSelectorPage extends ConsumerWidget {
       ),
       backgroundColor: colors.surface,
       body: providerInfoAsync.when(
-        loading: () => const Center(
-          child: MoeLoadingIndicator(message: '获取可用模型中...'),
-        ),
+        loading: () =>
+            const Center(child: MoeLoadingIndicator(message: '获取可用模型中...')),
         error: (e, _) => Center(
           child: MoeEmptyState(
             icon: Icons.error_outline,
@@ -59,26 +59,30 @@ class ProviderSelectorPage extends ConsumerWidget {
             );
           }
 
-          return ListView(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            children: [
-              Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: Text(
-                  '从后端获取的可用提供商和模型',
-                  style: TextStyle(color: colors.textSecondary, fontSize: 12),
-                ),
+          return Builder(
+            builder: (context) => ListView(
+              padding: moeUnderBarPadding(
+                context,
+                EdgeInsets.symmetric(vertical: 8),
               ),
-              ...providerInfo.providers.map((provider) {
-                final models = providerInfo.models[provider] ?? [];
-                return _ProviderCard(
-                  provider: provider,
-                  models: models,
-                );
-              }),
-              const SizedBox(height: 32),
-            ],
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  child: Text(
+                    '从后端获取的可用提供商和模型',
+                    style: TextStyle(color: colors.textSecondary, fontSize: 12),
+                  ),
+                ),
+                ...providerInfo.providers.map((provider) {
+                  final models = providerInfo.models[provider] ?? [];
+                  return _ProviderCard(provider: provider, models: models);
+                }),
+                const SizedBox(height: 32),
+              ],
+            ),
           );
         },
       ),
@@ -90,10 +94,7 @@ class _ProviderCard extends ConsumerWidget {
   final String provider;
   final List<String> models;
 
-  const _ProviderCard({
-    required this.provider,
-    required this.models,
-  });
+  const _ProviderCard({required this.provider, required this.models});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -120,8 +121,11 @@ class _ProviderCard extends ConsumerWidget {
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                   child: Row(
                     children: [
-                      Icon(_getProviderIcon(provider),
-                          color: colors.primary, size: 24),
+                      Icon(
+                        _getProviderIcon(provider),
+                        color: colors.primary,
+                        size: 24,
+                      ),
                       const SizedBox(width: 8),
                       Text(
                         _getProviderDisplayName(provider),
@@ -146,7 +150,7 @@ class _ProviderCard extends ConsumerWidget {
                   ...models.map((model) {
                     final canQualify =
                         settings?.providers.any((p) => p.id == provider) ??
-                            false;
+                        false;
                     final modelRef = canQualify
                         ? settings!.buildModelRef(provider, model)
                         : model;

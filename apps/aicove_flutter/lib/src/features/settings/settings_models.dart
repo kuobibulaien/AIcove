@@ -303,35 +303,20 @@ enum GlobalBackgroundColor {
   }
 }
 
-/// 聊天背景色选项
+/// 聊天背景色选项（仅自定义皮肤使用）
 enum ChatBackgroundColor {
   /// 默认色 - 跟随全局背景色
   defaultColor('default', '默认', null),
   white('white', '纯白', Color(0xFFFFFFFF)),
-
-  /// Momotalk 经典皮肤：浅灰背景 + 粉色强调（AppBar/主按钮）
-  momotalk(
-    'momotalk',
-    'Momotalk',
-    Color(0xFFF3F6F8),
-    accentColor: Color(0xFFFC96AA),
-  ),
+  momotalk('momotalk', '浅灰', Color(0xFFF3F6F8)),
   warm('warm', '暖色', Color(0xFFFFF7E1));
 
-  const ChatBackgroundColor(
-    this.value,
-    this.label,
-    this.color, {
-    this.accentColor,
-  });
+  const ChatBackgroundColor(this.value, this.label, this.color);
   final String value;
   final String label;
 
   /// 背景色，null 表示跟随全局背景色
   final Color? color;
-
-  /// 该皮肤预设的强调色（null 表示沿用用户自定义主题色）
-  final Color? accentColor;
 
   /// 是否跟随全局背景色
   bool get isDefault => this == ChatBackgroundColor.defaultColor;
@@ -342,6 +327,77 @@ enum ChatBackgroundColor {
     }
     return ChatBackgroundColor.defaultColor;
   }
+}
+
+/// 暗色模式默认强调色：金属金，与纯黑背景对比约 10:1。
+const kDefaultDarkAccentColor = Color(0xFFD4AF37);
+
+/// 界面皮肤：内置的强调色＋聊天背景组合；[custom] 使用
+/// [AppSettings.accentColor] 与 [AppSettings.chatBackgroundColor]。
+enum InterfaceSkin {
+  classic(
+    'classic',
+    '默认',
+    lightAccent: Color(0xFFFC96AA),
+    darkAccent: kDefaultDarkAccentColor,
+  ),
+  momotalk(
+    'momotalk',
+    'Momotalk',
+    lightAccent: Color(0xFFFC96AA),
+    darkAccent: kDefaultDarkAccentColor,
+    chatBackground: Color(0xFFF3F6F8),
+  ),
+  sky(
+    'sky',
+    '晴空',
+    lightAccent: Color(0xFF3390EC),
+    darkAccent: Color(0xFF5AA9F0),
+  ),
+  warm(
+    'warm',
+    '暖笺',
+    lightAccent: Color(0xFFE8916B),
+    darkAccent: Color(0xFFE0A860),
+    chatBackground: Color(0xFFFFF7E1),
+  ),
+  custom('custom', '自定义');
+
+  const InterfaceSkin(
+    this.value,
+    this.label, {
+    this.lightAccent,
+    this.darkAccent,
+    this.chatBackground,
+  });
+
+  final String value;
+  final String label;
+
+  /// 浅色强调色；null 仅用于 [custom]。
+  final Color? lightAccent;
+
+  /// 暗色强调色；null 仅用于 [custom]。
+  final Color? darkAccent;
+
+  /// 浅色模式聊天背景；null 表示跟随全局背景色。
+  final Color? chatBackground;
+
+  /// 内置皮肤（不含自定义）。
+  static List<InterfaceSkin> get presets =>
+      values.where((skin) => skin != custom).toList(growable: false);
+
+  static InterfaceSkin? tryParse(String? value) {
+    for (final skin in values) {
+      if (skin.value == value) return skin;
+    }
+    return null;
+  }
+}
+
+Color _hexToColor(String hex) {
+  final value = int.tryParse(hex.length == 6 ? 'FF$hex' : hex, radix: 16);
+  return value == null ? const Color(0xFFFC96AA) : Color(value);
 }
 
 /// 自动回复设置
@@ -963,6 +1019,12 @@ enum WindowControlButtonSide {
 class AppSettings {
   final bool smartReplyEnabled;
   final String smartReplyModel;
+
+  /// 压缩 Agent 使用的模型；空表示跟随默认聊天模型。
+  final String compactionModel;
+
+  /// 记忆 Agent 使用的模型；空表示跟随压缩模型。
+  final String memoryModel;
   final bool ttsEnabled;
   final String defaultModelName;
   final double? temperature;
@@ -1013,6 +1075,7 @@ class AppSettings {
   final bool isDarkMode;
   final bool useSystemTheme;
   final String accentColor;
+  final InterfaceSkin interfaceSkin;
   final bool hideUserAvatar;
 
   /// 语音消息气泡是否默认展开显示文字
@@ -1047,6 +1110,8 @@ class AppSettings {
   const AppSettings({
     this.smartReplyEnabled = false,
     this.smartReplyModel = '',
+    this.compactionModel = '',
+    this.memoryModel = '',
     required this.ttsEnabled,
     required this.defaultModelName,
     this.temperature,
@@ -1077,6 +1142,7 @@ class AppSettings {
     required this.isDarkMode,
     required this.useSystemTheme,
     required this.accentColor,
+    this.interfaceSkin = InterfaceSkin.classic,
     this.hideUserAvatar = true,
     this.expandAudioText = true,
     this.glassEffectEnabled = true,
@@ -1091,9 +1157,28 @@ class AppSettings {
     this.userName,
   });
 
+  /// 浅色模式生效的强调色（皮肤优先，自定义皮肤读 [accentColor]）。
+  Color get lightAccentColor =>
+      interfaceSkin.lightAccent ?? _hexToColor(accentColor);
+
+  /// 暗色模式生效的强调色；自定义皮肤在浅色强调色基础上略降亮度。
+  Color get darkAccentColor {
+    final preset = interfaceSkin.darkAccent;
+    if (preset != null) return preset;
+    final hsl = HSLColor.fromColor(_hexToColor(accentColor));
+    return hsl.withLightness((hsl.lightness * 0.9).clamp(0.0, 1.0)).toColor();
+  }
+
+  /// 浅色模式聊天背景；null 表示跟随全局背景色。
+  Color? get lightChatBackground => interfaceSkin == InterfaceSkin.custom
+      ? chatBackgroundColor.color
+      : interfaceSkin.chatBackground;
+
   AppSettings copyWith({
     bool? smartReplyEnabled,
     String? smartReplyModel,
+    String? compactionModel,
+    String? memoryModel,
     bool? ttsEnabled,
     String? defaultModelName,
     double? temperature,
@@ -1124,6 +1209,7 @@ class AppSettings {
     bool? isDarkMode,
     bool? useSystemTheme,
     String? accentColor,
+    InterfaceSkin? interfaceSkin,
     bool? hideUserAvatar,
     bool? expandAudioText,
     bool? glassEffectEnabled,
@@ -1139,6 +1225,8 @@ class AppSettings {
   }) => AppSettings(
     smartReplyEnabled: smartReplyEnabled ?? this.smartReplyEnabled,
     smartReplyModel: smartReplyModel ?? this.smartReplyModel,
+    compactionModel: compactionModel ?? this.compactionModel,
+    memoryModel: memoryModel ?? this.memoryModel,
     ttsEnabled: ttsEnabled ?? this.ttsEnabled,
     defaultModelName: defaultModelName ?? this.defaultModelName,
     temperature: temperature ?? this.temperature,
@@ -1172,6 +1260,7 @@ class AppSettings {
     isDarkMode: isDarkMode ?? this.isDarkMode,
     useSystemTheme: useSystemTheme ?? this.useSystemTheme,
     accentColor: accentColor ?? this.accentColor,
+    interfaceSkin: interfaceSkin ?? this.interfaceSkin,
     hideUserAvatar: hideUserAvatar ?? this.hideUserAvatar,
     expandAudioText: expandAudioText ?? this.expandAudioText,
     glassEffectEnabled: glassEffectEnabled ?? this.glassEffectEnabled,

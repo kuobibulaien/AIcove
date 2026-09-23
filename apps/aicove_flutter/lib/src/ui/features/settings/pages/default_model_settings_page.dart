@@ -12,7 +12,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../features/settings/app_settings.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
-import 'automatic_context_settings_page.dart';
+import 'context_memory_settings_page.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
@@ -51,6 +51,7 @@ class _DefaultModelSettingsPageState
 
     return autoSavePage(
       MoePageScaffold(
+        extendBodyBehindAppBar: true,
         appBar: const MoeAppBar(title: '默认模型设置', showBackButton: true),
         backgroundColor: colors.surface,
         body: settingsAsync.when(
@@ -68,110 +69,117 @@ class _DefaultModelSettingsPageState
     final chatModels = _buildChatModels(settings);
     final selectedChatModels = _localChatModels ?? settings.defaultChatModels;
 
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-      children: [
-        // ============ 默认聊天模型 ============
-        _buildSectionHeader(colors, '默认聊天模型', '可多选，失败后自动尝试下一个模型'),
-        const SizedBox(height: 8),
-        MoeSettingsGroup(
-          margin: EdgeInsets.zero,
-          padding: EdgeInsets.zero,
-          children: [
-            if (chatModels.isEmpty)
+    return Builder(
+      builder: (context) => ListView(
+        padding: moeUnderBarPadding(
+          context,
+          EdgeInsets.fromLTRB(16, 12, 16, 24),
+        ),
+        children: [
+          // ============ 默认聊天模型 ============
+          _buildSectionHeader(colors, '默认聊天模型', '可多选，失败后自动尝试下一个模型'),
+          const SizedBox(height: 8),
+          MoeSettingsGroup(
+            margin: EdgeInsets.zero,
+            padding: EdgeInsets.zero,
+            children: [
+              if (chatModels.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    '暂无可用的聊天模型，请先添加供应商',
+                    style: TextStyle(color: colors.muted, fontSize: 13),
+                  ),
+                )
+              else
+                ...chatModels.map((entry) {
+                  final isSelected = selectedChatModels.contains(
+                    entry.modelRef,
+                  );
+                  final order = selectedChatModels.indexOf(entry.modelRef);
+                  return MoeSettingsRow(
+                    iconWidget: _buildOrderBadge(isSelected, order, colors),
+                    iconContainerWidth: 28,
+                    label: entry.displayName,
+                    subtitle: entry.providerName,
+                    trailingType: MoeSettingsRowTrailing.custom,
+                    trailing: MoeCheckbox(
+                      value: isSelected,
+                      onChanged: (_) =>
+                          _toggleChatModel(entry.modelRef, settings),
+                      size: MoeCheckboxSize.md,
+                    ),
+                    onTap: () => _toggleChatModel(entry.modelRef, settings),
+                    showDivider: entry != chatModels.last,
+                  );
+                }),
+            ],
+          ),
+
+          const SizedBox(height: 24),
+
+          MoeSettingsGroup(
+            margin: EdgeInsets.zero,
+            children: [
+              MoeSettingsRow(
+                label: '上下文与记忆',
+                subtitle: '压缩模型、记忆模型与上下文窗口',
+                trailingType: MoeSettingsRowTrailing.chevron,
+                onTap: () async {
+                  if (!await autoSave.flush() || !mounted) return;
+                  await Navigator.of(context).push(
+                    ParallaxSlidePageRoute(
+                      page: const ContextMemorySettingsPage(),
+                    ),
+                  );
+                  if (!mounted) return;
+                  final latest = ref.read(appSettingsProvider).valueOrNull;
+                  if (latest == null) return;
+                  _contextWindowCtrl.text = (latest.contextWindowTokens / 1000)
+                      .toStringAsFixed(
+                        latest.contextWindowTokens % 1000 == 0 ? 0 : 3,
+                      );
+                  autoSave.configure(
+                    save: _saveContextWindowTokens,
+                    snapshot: () => _contextWindowCtrl.text,
+                    fields: [_contextWindowCtrl],
+                  );
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          // ============ 上下文窗口 ============
+          _buildSectionHeader(colors, '上下文窗口', '接近窗口容量时自动压缩对话'),
+          const SizedBox(height: 8),
+          MoeSettingsGroup(
+            margin: EdgeInsets.zero,
+            padding: EdgeInsets.zero,
+            children: [
               Padding(
                 padding: const EdgeInsets.all(16),
-                child: Text(
-                  '暂无可用的聊天模型，请先添加供应商',
-                  style: TextStyle(color: colors.muted, fontSize: 13),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    MoeTextField(
+                      controller: _contextWindowCtrl,
+                      label: '窗口大小（k tokens）',
+                      hint: '272',
+                      helperText: '默认 272k，约用到 80% 时自动压缩；原始聊天保留',
+                      keyboardType: TextInputType.number,
+                      textInputAction: TextInputAction.done,
+                      inputFormatters: <TextInputFormatter>[
+                        FilteringTextInputFormatter.digitsOnly,
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                 ),
-              )
-            else
-              ...chatModels.map((entry) {
-                final isSelected = selectedChatModels.contains(entry.modelRef);
-                final order = selectedChatModels.indexOf(entry.modelRef);
-                return MoeSettingsRow(
-                  iconWidget: _buildOrderBadge(isSelected, order, colors),
-                  iconContainerWidth: 28,
-                  label: entry.displayName,
-                  subtitle: entry.providerName,
-                  trailingType: MoeSettingsRowTrailing.custom,
-                  trailing: MoeCheckbox(
-                    value: isSelected,
-                    onChanged: (_) =>
-                        _toggleChatModel(entry.modelRef, settings),
-                    size: MoeCheckboxSize.md,
-                  ),
-                  onTap: () => _toggleChatModel(entry.modelRef, settings),
-                  showDivider: entry != chatModels.last,
-                );
-              }),
-          ],
-        ),
-
-        const SizedBox(height: 24),
-
-        MoeSettingsGroup(
-          margin: EdgeInsets.zero,
-          children: [
-            MoeSettingsRow(
-              label: '自动压缩',
-              subtitle: '总结模型、上下文窗口与触发规则',
-              trailingType: MoeSettingsRowTrailing.chevron,
-              onTap: () async {
-                if (!await autoSave.flush() || !mounted) return;
-                await Navigator.of(context).push(
-                  ParallaxSlidePageRoute(
-                    page: const AutomaticContextSettingsPage(),
-                  ),
-                );
-                if (!mounted) return;
-                final latest = ref.read(appSettingsProvider).valueOrNull;
-                if (latest == null) return;
-                _contextWindowCtrl.text = (latest.contextWindowTokens / 1000)
-                    .toStringAsFixed(
-                      latest.contextWindowTokens % 1000 == 0 ? 0 : 3,
-                    );
-                autoSave.configure(
-                  save: _saveContextWindowTokens,
-                  snapshot: () => _contextWindowCtrl.text,
-                  fields: [_contextWindowCtrl],
-                );
-              },
-            ),
-          ],
-        ),
-        const SizedBox(height: 24),
-        // ============ 上下文窗口 ============
-        _buildSectionHeader(colors, '上下文窗口', '接近窗口容量时自动压缩对话'),
-        const SizedBox(height: 8),
-        MoeSettingsGroup(
-          margin: EdgeInsets.zero,
-          padding: EdgeInsets.zero,
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  MoeTextField(
-                    controller: _contextWindowCtrl,
-                    label: '窗口大小（k tokens）',
-                    hint: '272',
-                    helperText: '默认 272k，约用到 80% 时自动压缩；原始聊天保留',
-                    keyboardType: TextInputType.number,
-                    textInputAction: TextInputAction.done,
-                    inputFormatters: <TextInputFormatter>[
-                      FilteringTextInputFormatter.digitsOnly,
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                ],
               ),
-            ),
-          ],
-        ),
-      ],
+            ],
+          ),
+        ],
+      ),
     );
   }
 

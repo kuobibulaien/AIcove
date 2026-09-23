@@ -229,36 +229,6 @@ const _runtimeUsages = <String, _RuntimePromptUsage>{
     summary: '用于生成 <system-reminder> 的时间上下文文本。',
     status: _RuntimePromptStatus.configurable,
   ),
-  'memory.summary.default': _RuntimePromptUsage(
-    area: '记忆总结',
-    summary: '作为记忆总结 BackgroundAgent 的默认 objectivePrompt。',
-    status: _RuntimePromptStatus.configurable,
-  ),
-  'memory.summary.extra_instruction': _RuntimePromptUsage(
-    area: '记忆总结',
-    summary: '作为记忆总结 extraInstruction 的固定前置说明。',
-    status: _RuntimePromptStatus.active,
-  ),
-  'memory.summary.role_persona.generic_instruction': _RuntimePromptUsage(
-    area: '记忆总结',
-    summary: '用于角色专属记忆总结的通用约束。',
-    status: _RuntimePromptStatus.active,
-  ),
-  'memory.summary.role_persona.context_instruction': _RuntimePromptUsage(
-    area: '记忆总结',
-    summary: '用于拼接角色名称、称呼和人设摘要。',
-    status: _RuntimePromptStatus.active,
-  ),
-  'memory.role_scoped.root': _RuntimePromptUsage(
-    area: '记忆注入',
-    summary: '用于把召回记忆组织为角色专属上下文。',
-    status: _RuntimePromptStatus.active,
-  ),
-  'memory.profile_prompt.root': _RuntimePromptUsage(
-    area: '用户画像',
-    summary: '用于格式化 L1 用户画像记忆。',
-    status: _RuntimePromptStatus.active,
-  ),
   'system_reminder.semantics': _RuntimePromptUsage(
     area: '系统提醒',
     summary: '用于说明 <system-reminder> 标签语义。',
@@ -277,16 +247,6 @@ const _runtimeUsages = <String, _RuntimePromptUsage>{
   'diary.generate.default': _RuntimePromptUsage(
     area: '角色日记',
     summary: '用于生成角色视角日记。',
-    status: _RuntimePromptStatus.active,
-  ),
-  'memory.merge.prompt': _RuntimePromptUsage(
-    area: '记忆合并',
-    summary: '用于将新事实合并进已有 L2 记忆。',
-    status: _RuntimePromptStatus.active,
-  ),
-  'memory.reenrich.default': _RuntimePromptUsage(
-    area: '记忆重丰富',
-    summary: '用于重新丰富被压缩标记的记忆。',
     status: _RuntimePromptStatus.active,
   ),
 };
@@ -401,6 +361,7 @@ class _PromptNodeManagementPageEnhancedState
   Widget build(BuildContext context) {
     final colors = context.moeColors;
     return MoePageScaffold(
+      extendBodyBehindAppBar: true,
       backgroundColor: colors.surface,
       appBar: const MoeAppBar(title: '提示词节点（增强版）', showBackButton: true),
       body: FutureBuilder<_PromptNodeSnapshot>(
@@ -418,83 +379,87 @@ class _PromptNodeManagementPageEnhancedState
           }
           final data = snapshot.data!;
           final prompts = _applyFilter(data);
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              _SummaryPanel(snapshot: data),
-              const SizedBox(height: 14),
-              if (data.contacts.isNotEmpty) ...[
-                _ContactSelector(
-                  contacts: data.contacts,
-                  selectedContactId: _selectedContactId,
-                  onContactSelected: (contactId) {
+          return Builder(
+            builder: (context) => ListView(
+              padding: moeUnderBarPadding(context, EdgeInsets.all(16)),
+              children: [
+                _SummaryPanel(snapshot: data),
+                const SizedBox(height: 14),
+                if (data.contacts.isNotEmpty) ...[
+                  _ContactSelector(
+                    contacts: data.contacts,
+                    selectedContactId: _selectedContactId,
+                    onContactSelected: (contactId) {
+                      setState(() {
+                        _selectedContactId = contactId;
+                        if (contactId != null) {
+                          _filter = _PromptNodeFilter.contactSpecific;
+                        }
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 14),
+                ],
+                MoeToggleBar<_PromptNodeFilter>(
+                  value: _filter,
+                  items: const [
+                    MoeToggleItem(value: _PromptNodeFilter.all, label: '全部'),
+                    MoeToggleItem(value: _PromptNodeFilter.graph, label: '图内'),
+                    MoeToggleItem(
+                      value: _PromptNodeFilter.graphMissing,
+                      label: '图外',
+                    ),
+                    MoeToggleItem(
+                      value: _PromptNodeFilter.attention,
+                      label: '关注',
+                    ),
+                    MoeToggleItem(
+                      value: _PromptNodeFilter.contactSpecific,
+                      label: '联系人',
+                    ),
+                  ],
+                  onChanged: (value) {
                     setState(() {
-                      _selectedContactId = contactId;
-                      if (contactId != null) {
-                        _filter = _PromptNodeFilter.contactSpecific;
+                      _filter = value;
+                      if (value != _PromptNodeFilter.contactSpecific) {
+                        _selectedContactId = null;
                       }
                     });
                   },
                 ),
                 const SizedBox(height: 14),
-              ],
-              MoeToggleBar<_PromptNodeFilter>(
-                value: _filter,
-                items: const [
-                  MoeToggleItem(value: _PromptNodeFilter.all, label: '全部'),
-                  MoeToggleItem(value: _PromptNodeFilter.graph, label: '图内'),
-                  MoeToggleItem(
-                    value: _PromptNodeFilter.graphMissing,
-                    label: '图外',
+                for (var index = 0; index < prompts.length; index++) ...[
+                  _PromptNodeCard(
+                    prompt: prompts[index],
+                    graphLinks: _selectedContactId != null
+                        ? data.linksForContact(
+                            prompts[index].id,
+                            _selectedContactId,
+                          )
+                        : data.graphLinksByPromptId[prompts[index].id] ??
+                              const <_PromptGraphLink>[],
+                    effectiveTemplate: data.effectiveTemplateFor(
+                      prompts[index],
+                    ),
+                    selectedContactId: _selectedContactId,
+                    contactName: _selectedContactId != null
+                        ? data.contacts
+                              .firstWhere((c) => c.id == _selectedContactId)
+                              .name
+                        : null,
                   ),
-                  MoeToggleItem(
-                    value: _PromptNodeFilter.attention,
-                    label: '关注',
-                  ),
-                  MoeToggleItem(
-                    value: _PromptNodeFilter.contactSpecific,
-                    label: '联系人',
-                  ),
+                  if (index != prompts.length - 1) const SizedBox(height: 10),
                 ],
-                onChanged: (value) {
-                  setState(() {
-                    _filter = value;
-                    if (value != _PromptNodeFilter.contactSpecific) {
-                      _selectedContactId = null;
-                    }
-                  });
-                },
-              ),
-              const SizedBox(height: 14),
-              for (var index = 0; index < prompts.length; index++) ...[
-                _PromptNodeCard(
-                  prompt: prompts[index],
-                  graphLinks: _selectedContactId != null
-                      ? data.linksForContact(
-                          prompts[index].id,
-                          _selectedContactId,
-                        )
-                      : data.graphLinksByPromptId[prompts[index].id] ??
-                            const <_PromptGraphLink>[],
-                  effectiveTemplate: data.effectiveTemplateFor(prompts[index]),
-                  selectedContactId: _selectedContactId,
-                  contactName: _selectedContactId != null
-                      ? data.contacts
-                            .firstWhere((c) => c.id == _selectedContactId)
-                            .name
-                      : null,
-                ),
-                if (index != prompts.length - 1) const SizedBox(height: 10),
+                if (prompts.isEmpty)
+                  MoeEmptyState(
+                    icon: Icons.search_off_outlined,
+                    title: '没有匹配项',
+                    description: _selectedContactId != null
+                        ? '该联系人没有使用任何提示词节点'
+                        : '当前筛选条件下没有提示词节点',
+                  ),
               ],
-              if (prompts.isEmpty)
-                MoeEmptyState(
-                  icon: Icons.search_off_outlined,
-                  title: '没有匹配项',
-                  description: _selectedContactId != null
-                      ? '该联系人没有使用任何提示词节点'
-                      : '当前筛选条件下没有提示词节点',
-                ),
-            ],
+            ),
           );
         },
       ),

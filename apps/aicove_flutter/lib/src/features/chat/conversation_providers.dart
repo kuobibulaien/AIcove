@@ -13,6 +13,8 @@ import '../../core/database/converters/database_converters.dart';
 import '../../core/database/repositories/repositories.dart';
 import 'services/conversation_short_window_store.dart';
 import '../../ui/features/character/services/contact_edit_snapshot_store.dart';
+import '../context/providers/context_providers.dart';
+import '../memory/providers/memory_providers.dart';
 
 class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
   StreamSubscription<List<db.Conversation>>? _watchSub;
@@ -317,7 +319,6 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
 
   // 清空消息
   Future<void> clearMessages(String id) async {
-    final database = ref.read(databaseProvider);
     final msgRepo = ref.read(messageRepositoryProvider);
 
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -325,15 +326,9 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
 
     // (注释已丢失)
     await msgRepo.softDeleteByConversation(id, now, purgeAt);
-    await (database.delete(database.memories)
-          ..where((table) => table.conversationId.equals(id)))
-        .go();
-    await (database.delete(database.diaries)
-          ..where((table) => table.conversationId.equals(id)))
-        .go();
-    await (database.delete(database.summarizationRecords)
-          ..where((table) => table.conversationId.equals(id)))
-        .go();
+    // 摘要与自动整理的记忆都来自这些原文，随之清空；用户锁定的记忆保留。
+    await ref.read(contextSummaryStoreProvider).clear(id);
+    await ref.read(memoryStoreProvider).clearDerived(id);
 
     await updateOne(
       id,

@@ -5,9 +5,13 @@ import '../../theme/tokens.dart';
 import 'desktop_window_frame.dart';
 import 'moe_adaptive_shell.dart';
 import 'moe_chat_header.dart';
-import 'moe_floating_surface.dart';
+import 'moe_scroll_edge.dart';
 
 /// Shared Telegram-style header with pane-aware native window controls.
+///
+/// The header stays clear over resting content and shows an Apple-style
+/// scroll edge once content passes beneath it; pages opt into that by
+/// extending their body behind the bar (see [moeUnderBarPadding]).
 class MoeAppBar extends StatelessWidget implements PreferredSizeWidget {
   final String title;
   final bool showBackButton;
@@ -16,6 +20,11 @@ class MoeAppBar extends StatelessWidget implements PreferredSizeWidget {
   final List<Widget>? actions;
   final bool centerTitle;
   final double titleLeftPadding;
+
+  /// Control row under a root bar's title, such as its search field; it
+  /// shares the bar's scroll edge material. Root bars only.
+  final Widget? bottom;
+  final double bottomHeight;
 
   const MoeAppBar({
     super.key,
@@ -26,7 +35,9 @@ class MoeAppBar extends StatelessWidget implements PreferredSizeWidget {
     this.actions,
     this.centerTitle = false,
     this.titleLeftPadding = 20,
-  });
+    this.bottom,
+    this.bottomHeight = 0,
+  }) : assert(bottom == null || bottomHeight > 0);
 
   /// Pushed pages share the chat header's floating pills; root pages keep the
   /// flat bar.
@@ -36,7 +47,7 @@ class MoeAppBar extends StatelessWidget implements PreferredSizeWidget {
   Size get preferredSize => Size.fromHeight(
     _floating
         ? telegramChatHeaderHeight + telegramChatHeaderVerticalInset * 2
-        : kToolbarHeight + borderWidth,
+        : kToolbarHeight + (bottom == null ? 0 : bottomHeight),
   );
 
   @override
@@ -52,8 +63,6 @@ class MoeAppBar extends StatelessWidget implements PreferredSizeWidget {
 
   Widget _buildBar(BuildContext context) {
     final colors = context.moeColors;
-    final workspace = MoeWorkspace.maybeOf(context);
-    final immersive = workspace?.isWide == true && workspace?.isDetail == true;
     final effectiveBackButton =
         showBackButton && MoeWorkspace.showsBackButton(context);
     final effectiveLeading = showBackButton && !effectiveBackButton
@@ -94,15 +103,10 @@ class MoeAppBar extends StatelessWidget implements PreferredSizeWidget {
         (effectiveBackButton ? const BackButton() : const SizedBox.shrink());
     return AppBar(
       backgroundColor: Colors.transparent,
-      flexibleSpace: immersive || MoeSurfaceGroup.contains(context)
-          ? null
-          : MoeFloatingSurface(
-              radius: 0,
-              shadows: const [],
-              border: BorderSide.none,
-              solidColor: colors.headerColor,
-              child: const SizedBox.expand(),
-            ),
+      // Clear at the lowest floating row: the search capsule or the title.
+      flexibleSpace: MoeScrollEdgeBackdrop(
+        clearFromBottom: bottom == null ? kToolbarHeight / 2 : bottomHeight / 2,
+      ),
       foregroundColor: colors.headerContentColor,
       systemOverlayStyle: Theme.of(context).brightness == Brightness.dark
           ? SystemUiOverlayStyle.light
@@ -134,13 +138,12 @@ class MoeAppBar extends StatelessWidget implements PreferredSizeWidget {
       ),
       centerTitle: centerTitle,
       actions: actions,
-      bottom: PreferredSize(
-        preferredSize: const Size.fromHeight(borderWidth),
-        child: Container(
-          height: borderWidth,
-          color: immersive ? Colors.transparent : colors.divider,
-        ),
-      ),
+      bottom: bottom == null
+          ? null
+          : PreferredSize(
+              preferredSize: Size.fromHeight(bottomHeight),
+              child: SizedBox(height: bottomHeight, child: bottom),
+            ),
     );
   }
 }

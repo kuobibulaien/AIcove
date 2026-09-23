@@ -17,37 +17,43 @@ class TimeAwarenessPluginDetailPage extends ConsumerWidget {
     final notifier = ref.read(timeAwarenessPluginConfigProvider.notifier);
 
     return MoePageScaffold(
+      extendBodyBehindAppBar: true,
       backgroundColor: colors.surface,
       appBar: const MoeAppBar(title: '时间感知', showBackButton: true),
       body: MoeSettingsContent(
-        child: ListView(
-          padding: MoeSettingsLayout.verticalListPadding,
-          children: [
-            _OverviewCard(config: config),
-            const SizedBox(height: MoeSettingsLayout.sectionGap),
-            MoeSettingsGroup(
-              title: '注入内容',
-              children: [
-                MoeSettingsRow(
-                  label: '历史消息时间戳',
-                  subtitle: '为历史消息补上发送时间，帮助 AI 理解前后顺序和时间间隔。',
-                  trailingType: MoeSettingsRowTrailing.switchControl,
-                  switchValue: config.includeMessageTimestamp,
-                  onSwitchChanged: notifier.setIncludeMessageTimestamp,
-                ),
-                MoeSettingsRow(
-                  label: '当前时间注入',
-                  subtitle: '把本次回复时的设备本地时间写入 <system-reminder>，让 AI 感知“现在”。',
-                  trailingType: MoeSettingsRowTrailing.switchControl,
-                  switchValue: config.includeCurrentTime,
-                  onSwitchChanged: notifier.setIncludeCurrentTime,
-                  showDivider: false,
-                ),
-              ],
+        child: Builder(
+          builder: (context) => ListView(
+            padding: moeUnderBarPadding(
+              context,
+              MoeSettingsLayout.verticalListPadding,
             ),
-            const SizedBox(height: MoeSettingsLayout.sectionGap),
-            _TipsCard(config: config),
-          ],
+            children: [
+              _OverviewCard(config: config),
+              const SizedBox(height: MoeSettingsLayout.sectionGap),
+              MoeSettingsGroup(
+                title: '注入内容',
+                children: [
+                  MoeSettingsRow(
+                    label: '历史消息时间戳',
+                    subtitle: '为历史消息补上发送时间，帮助 AI 理解前后顺序和时间间隔。',
+                    trailingType: MoeSettingsRowTrailing.switchControl,
+                    switchValue: config.includeMessageTimestamp,
+                    onSwitchChanged: notifier.setIncludeMessageTimestamp,
+                  ),
+                  MoeSettingsRow(
+                    label: '当前时间注入',
+                    subtitle: '把本次回复时的设备本地时间写入 <system-reminder>，让 AI 感知“现在”。',
+                    trailingType: MoeSettingsRowTrailing.switchControl,
+                    switchValue: config.includeCurrentTime,
+                    onSwitchChanged: notifier.setIncludeCurrentTime,
+                    showDivider: false,
+                  ),
+                ],
+              ),
+              const SizedBox(height: MoeSettingsLayout.sectionGap),
+              _TipsCard(config: config),
+            ],
+          ),
         ),
       ),
     );

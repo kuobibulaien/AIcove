@@ -95,20 +95,26 @@ class _DrawImageToolDescriptionPageState
     final notifier = ref.read(imagePluginConfigProvider.notifier);
 
     return MoePageScaffold(
+      extendBodyBehindAppBar: true,
       backgroundColor: colors.surface,
       appBar: const MoeAppBar(title: '稳定链路提示词模板', showBackButton: true),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(
-          MoeSpacing.md,
-          MoeSpacing.md,
-          MoeSpacing.md,
-          MoeSpacing.xl,
+      body: Builder(
+        builder: (context) => ListView(
+          padding: moeUnderBarPadding(
+            context,
+            EdgeInsets.fromLTRB(
+              MoeSpacing.md,
+              MoeSpacing.md,
+              MoeSpacing.md,
+              MoeSpacing.xl,
+            ),
+          ),
+          children: [
+            _buildSlotSection(context, config, notifier),
+            const SizedBox(height: MoeSpacing.lg),
+            _buildPreviewSection(context, config),
+          ],
         ),
-        children: [
-          _buildSlotSection(context, config, notifier),
-          const SizedBox(height: MoeSpacing.lg),
-          _buildPreviewSection(context, config),
-        ],
       ),
     );
   }
@@ -575,67 +581,73 @@ class _PresetEditorPageState extends ConsumerState<_PresetEditorPage>
 
     return autoSavePage(
       MoePageScaffold(
+        extendBodyBehindAppBar: true,
         backgroundColor: colors.surface,
         appBar: MoeAppBar(
           title: '编辑「${widget.presetName}」',
           showBackButton: true,
         ),
-        body: ListView(
-          padding: const EdgeInsets.fromLTRB(
-            MoeSpacing.md,
-            MoeSpacing.md,
-            MoeSpacing.md,
-            MoeSpacing.xl,
+        body: Builder(
+          builder: (context) => ListView(
+            padding: moeUnderBarPadding(
+              context,
+              EdgeInsets.fromLTRB(
+                MoeSpacing.md,
+                MoeSpacing.md,
+                MoeSpacing.md,
+                MoeSpacing.xl,
+              ),
+            ),
+            children: [
+              _fieldCard(
+                context,
+                title: '功能说明',
+                hint: '告诉 AI 什么时候应该画图、怎么理解图片标签',
+                controller: _toolDescCtrl,
+              ),
+              const SizedBox(height: MoeSpacing.sm),
+              _groupLabel(context, '提示词规范'),
+              const SizedBox(height: MoeSpacing.xs),
+              _fieldCard(
+                context,
+                title: '正面提示词',
+                hint: '教 AI 如何书写画面描述（标签顺序、权重语法、多人规则等）',
+                controller: _promptCtrl,
+              ),
+              const SizedBox(height: MoeSpacing.sm),
+              _fieldCard(
+                context,
+                title: '反面提示词',
+                hint: '教 AI 如何书写排除内容（不想出现在画面中的元素）',
+                controller: _negativeCtrl,
+              ),
+              const SizedBox(height: MoeSpacing.sm),
+              _groupLabel(context, '尺寸规则'),
+              const SizedBox(height: MoeSpacing.xs),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: _fieldCard(
+                      context,
+                      title: '宽度',
+                      hint: '如：竖图 832、横图 1216',
+                      controller: _widthCtrl,
+                    ),
+                  ),
+                  const SizedBox(width: MoeSpacing.sm),
+                  Expanded(
+                    child: _fieldCard(
+                      context,
+                      title: '高度',
+                      hint: '如：竖图 1216、横图 832',
+                      controller: _heightCtrl,
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
-          children: [
-            _fieldCard(
-              context,
-              title: '功能说明',
-              hint: '告诉 AI 什么时候应该画图、怎么理解图片标签',
-              controller: _toolDescCtrl,
-            ),
-            const SizedBox(height: MoeSpacing.sm),
-            _groupLabel(context, '提示词规范'),
-            const SizedBox(height: MoeSpacing.xs),
-            _fieldCard(
-              context,
-              title: '正面提示词',
-              hint: '教 AI 如何书写画面描述（标签顺序、权重语法、多人规则等）',
-              controller: _promptCtrl,
-            ),
-            const SizedBox(height: MoeSpacing.sm),
-            _fieldCard(
-              context,
-              title: '反面提示词',
-              hint: '教 AI 如何书写排除内容（不想出现在画面中的元素）',
-              controller: _negativeCtrl,
-            ),
-            const SizedBox(height: MoeSpacing.sm),
-            _groupLabel(context, '尺寸规则'),
-            const SizedBox(height: MoeSpacing.xs),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: _fieldCard(
-                    context,
-                    title: '宽度',
-                    hint: '如：竖图 832、横图 1216',
-                    controller: _widthCtrl,
-                  ),
-                ),
-                const SizedBox(width: MoeSpacing.sm),
-                Expanded(
-                  child: _fieldCard(
-                    context,
-                    title: '高度',
-                    hint: '如：竖图 1216、横图 832',
-                    controller: _heightCtrl,
-                  ),
-                ),
-              ],
-            ),
-          ],
         ),
       ),
     );

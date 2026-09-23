@@ -497,6 +497,11 @@ class CloudSyncEngine {
             final document = await _inboxDocument(row);
             final kind = document['kind'] as String,
                 id = document['entity_id'] as String;
+            // 退役类型：只消费收件箱推进进度，不写本地、不回传删除（ADR0038）。
+            if (retiredCloudKinds.contains(kind)) {
+              await _clearInbox(kind, id, document['seq'] as int);
+              continue;
+            }
             final childOwner = cloudMessageChildren[kind];
             if (childOwner != null) {
               final owner =
@@ -969,6 +974,13 @@ class CloudSyncEngine {
       final item = pending[index],
           kind = pending[index]['kind'] as String,
           id = pending[index]['entity_id'] as String;
+      if (retiredCloudKinds.contains(kind)) {
+        await local.execute(
+          'DELETE FROM cloud_dirty WHERE kind=? AND entity_id=?',
+          [kind, id],
+        );
+        continue;
+      }
       final document = await local.read(kind, id);
       final known = await _version(kind, id);
       if (document == null && known == null) {

@@ -13,9 +13,7 @@ import 'package:aicove_flutter/src/core/database/repositories/repositories.dart'
 import 'package:aicove_flutter/src/features/backup/data/conversation_exporter.dart';
 import 'package:aicove_flutter/src/features/backup/data/conversation_importer.dart';
 import 'package:aicove_flutter/src/features/backup/models/export_format.dart';
-import 'package:aicove_flutter/src/features/memory/data/markdown_contact_memory_store.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_message_projection_codec.dart';
-import 'package:aicove_flutter/src/features/memory/domain/contact_memory_port.dart';
 
 const scopes = [
   SyncScope.characterCards,
@@ -196,45 +194,11 @@ void main() {
     await restore(await export());
     expect((await MessageRepository(target).getById('m'))!.rawPayload, payload);
   });
-  test('T07 legacy memories survive memory-inclusive round trip', () async {
-    await source.into(source.memories).insert(MemoriesCompanion.insert(
-        id: 'memory-a',
-        content: '喜欢安静',
-        conversationId: const Value('a'),
-        createdAt: 1000,
-        updatedAt: 1000));
-    await restore(await export(selected: [...scopes, SyncScope.memory]));
-    expect((await target.select(target.memories).get()).map((m) => m.content),
-        ['喜欢安静']);
-  });
-  test('T08 Markdown core and archived events survive round trip', () async {
-    final store = MarkdownContactMemoryStore(() async =>
-        Directory(p.join(root.path, 'source-support', 'contact_memories')));
-    await store.save(ContactMemoryNotebook(
-        ownerId: 'a',
-        enabled: true,
-        core: '喜欢安静',
-        events: [
-          ContactMemoryEvent(
-              id: 'event-a',
-              title: '散步',
-              body: '一起散步',
-              occurredAt: DateTime(2026, 9, 1))
-        ]));
-    // Unsupported memory remains a red completeness test; stop-loss must reject it.
-    await restore(await export(selected: [...scopes, SyncScope.memory]));
-    final restored = await MarkdownContactMemoryStore(() async =>
-            Directory(p.join(root.path, 'target-support', 'contact_memories')))
-        .load('a');
-    expect([
-      restored.core,
-      restored.enabled,
-      restored.events.map((e) => e.body).toList()
-    ], [
-      '喜欢安静',
-      true,
-      ['一起散步']
-    ]);
+  test('T07 memory scope is still rejected instead of silently dropped',
+      () async {
+    // 长期记忆暂不进入导入导出（ADR0038）；选了也必须明确拒绝。
+    await expectLater(
+        export(selected: [...scopes, SyncScope.memory]), throwsA(anything));
   });
   test('T09 merge applies explicitly selected character settings', () async {
     await conversation(target, 'a', name: 'old');

@@ -20,6 +20,7 @@ class ImagePluginDetailPage extends ConsumerWidget {
     final colors = context.moeColors;
 
     return MoePageScaffold(
+      extendBodyBehindAppBar: true,
       backgroundColor: colors.surface,
       appBar: const MoeAppBar(title: '绘图预设', showBackButton: true),
       body: catalogAsync.when(
@@ -44,72 +45,79 @@ class ImagePluginDetailPage extends ConsumerWidget {
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (error, _) => Center(child: Text('设置加载失败：$error')),
           data: (settings) => MoeSettingsContent(
-            child: ListView(
-              padding: MoeSettingsLayout.verticalListPadding,
-              children: [
-                MoeSettingsGroup(
-                  padding: MoeSettingsLayout.contentPadding,
-                  children: [
-                    Text(
-                      '每张角色卡可绑定一个绘图预设。未绑定时使用默认预设；编辑共享预设会影响所有绑定角色。',
-                      style: TextStyle(fontSize: 13, color: colors.muted),
-                    ),
-                  ],
+            child: Builder(
+              builder: (context) => ListView(
+                padding: moeUnderBarPadding(
+                  context,
+                  MoeSettingsLayout.verticalListPadding,
                 ),
-                const SizedBox(height: MoeSettingsLayout.sectionGap),
-                MoeSettingsGroup(
-                  title: '预设列表',
-                  children: [
-                    for (final preset in catalog.presets)
-                      _buildPresetRow(
-                        context: context,
-                        ref: ref,
-                        preset: preset,
-                        catalog: catalog,
-                        settings: settings,
-                        colors: colors,
+                children: [
+                  MoeSettingsGroup(
+                    padding: MoeSettingsLayout.contentPadding,
+                    children: [
+                      Text(
+                        '每张角色卡可绑定一个绘图预设。未绑定时使用默认预设；编辑共享预设会影响所有绑定角色。',
+                        style: TextStyle(fontSize: 13, color: colors.muted),
                       ),
-                    MoeSettingsRow(
-                      key: const ValueKey('add-drawing-preset'),
-                      label: '新建绘图预设',
-                      labelColor: colors.primary,
-                      trailingType: MoeSettingsRowTrailing.chevron,
-                      onTap: () => _edit(
-                        context,
-                        catalog.require(catalog.defaultPresetId),
-                        isNew: true,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: MoeSettingsLayout.sectionGap),
-                MoeSettingsGroup(
-                  title: '生图方式',
-                  children: [
-                    for (final mode in [CallFlowMode.auto, CallFlowMode.fast])
+                    ],
+                  ),
+                  const SizedBox(height: MoeSettingsLayout.sectionGap),
+                  MoeSettingsGroup(
+                    title: '预设列表',
+                    children: [
+                      for (final preset in catalog.presets)
+                        _buildPresetRow(
+                          context: context,
+                          ref: ref,
+                          preset: preset,
+                          catalog: catalog,
+                          settings: settings,
+                          colors: colors,
+                        ),
                       MoeSettingsRow(
-                        label: mode == CallFlowMode.auto ? '自动模式' : '快速模式',
-                        subtitle: mode == CallFlowMode.auto
-                            ? '按对话模型能力自动选择'
-                            : '通过图片标签直连生图',
-                        trailingType: mode == settings.callFlowSettings.mode
-                            ? MoeSettingsRowTrailing.custom
-                            : MoeSettingsRowTrailing.none,
-                        trailing: mode == settings.callFlowSettings.mode
-                            ? Icon(Icons.check, color: colors.primary)
-                            : null,
-                        onTap: () => _perform(
+                        key: const ValueKey('add-drawing-preset'),
+                        label: '新建绘图预设',
+                        labelColor: colors.primary,
+                        trailingType: MoeSettingsRowTrailing.chevron,
+                        onTap: () => _edit(
                           context,
-                          () => ref
-                              .read(appSettingsProvider.notifier)
-                              .updateCallFlowSettings(
-                                settings.callFlowSettings.copyWith(mode: mode),
-                              ),
+                          catalog.require(catalog.defaultPresetId),
+                          isNew: true,
                         ),
                       ),
-                  ],
-                ),
-              ],
+                    ],
+                  ),
+                  const SizedBox(height: MoeSettingsLayout.sectionGap),
+                  MoeSettingsGroup(
+                    title: '生图方式',
+                    children: [
+                      for (final mode in [CallFlowMode.auto, CallFlowMode.fast])
+                        MoeSettingsRow(
+                          label: mode == CallFlowMode.auto ? '自动模式' : '快速模式',
+                          subtitle: mode == CallFlowMode.auto
+                              ? '按对话模型能力自动选择'
+                              : '通过图片标签直连生图',
+                          trailingType: mode == settings.callFlowSettings.mode
+                              ? MoeSettingsRowTrailing.custom
+                              : MoeSettingsRowTrailing.none,
+                          trailing: mode == settings.callFlowSettings.mode
+                              ? Icon(Icons.check, color: colors.primary)
+                              : null,
+                          onTap: () => _perform(
+                            context,
+                            () => ref
+                                .read(appSettingsProvider.notifier)
+                                .updateCallFlowSettings(
+                                  settings.callFlowSettings.copyWith(
+                                    mode: mode,
+                                  ),
+                                ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         ),

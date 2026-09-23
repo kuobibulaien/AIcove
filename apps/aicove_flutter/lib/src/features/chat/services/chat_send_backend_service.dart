@@ -1,8 +1,8 @@
 library;
 
 import 'dart:async';
-import '../application/runtime_context_service.dart';
-import '../domain/context_window_policy.dart';
+import '../../context/application/runtime_context_service.dart';
+import '../../context/domain/context_window_policy.dart';
 import 'dart:math' as math;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -14,8 +14,8 @@ import '../../agent_context/domain/silly_tavern_regex_processor.dart';
 import '../../agent_context/domain/silly_tavern_world_book.dart';
 import '../../agent_context/providers/preset_recipe_provider.dart';
 import '../domain/conversation.dart';
-import '../providers/topic_compaction_provider.dart';
-import '../domain/topic_compaction_port.dart';
+import '../../context/domain/context_summary.dart';
+import '../../context/providers/context_providers.dart';
 import '../domain/message.dart';
 import '../domain/persona_prompt_codec.dart';
 import '../../settings/app_settings.dart';
@@ -203,8 +203,8 @@ class ChatSendBackendService {
     }
 
     final originalHistory = history;
-    final automaticContext = _ref.read(automaticContextProvider);
-    final automaticHandoff = await automaticContext.load(
+    final context = _ref.read(conversationContextProvider);
+    final automaticHandoff = await context.loadAuto(
       resolvedConversationId,
       conv.contextStartMessageId,
       originalHistory,
@@ -229,19 +229,12 @@ class ChatSendBackendService {
     if (resolvedConversationId != conv.id) {
       throw StateError('请求联系人与角色上下文不一致');
     }
-    final candidateHandoff = conv.contextStartMessageId == null
-        ? null
-        : await _ref
-              .read(topicHandoffStoreProvider)
-              .active(resolvedConversationId, conv.contextStartMessageId);
-    // 重放旧轮次时，不把覆盖它之后内容的摘要倒灌回去。
-    final handoff =
-        candidateHandoff != null &&
-            !history.any(
-              (message) => candidateHandoff.sourceIds.contains(message.id),
-            )
-        ? candidateHandoff
-        : null;
+    // 边界缺摘要时会先补整理；重放旧轮次时不倒灌之后的摘要。
+    final handoff = await context.manualSummary(
+      resolvedConversationId,
+      conv.contextStartMessageId,
+      history,
+    );
     final handoffPrompt = [
       handoff?.prompt ?? '',
       automaticHandoff?.prompt ?? '',
@@ -385,7 +378,6 @@ class ChatSendBackendService {
       systemParts.add(contextPolicy.filterText(promptEntry.content));
     }
 
-    final runtimeStore = _ref.read(runtimeContextStoreProvider);
     List<Map<String, dynamic>>? tools;
     List<AITool> boundTools = const [];
     if (supportsToolCalling) {
@@ -396,7 +388,6 @@ class ChatSendBackendService {
       if (shouldUseFastImageRoute) {
         aiTools = aiTools.where((tool) => tool.name != 'draw_image').toList();
       }
-      aiTools = [...aiTools, buildContextReadTool(runtimeStore, resolvedConversationId)];
       boundTools = List.unmodifiable(aiTools);
       if (aiTools.isNotEmpty) {
         tools = aiTools.map((t) => t.toOpenAISchema()).toList();
@@ -558,9 +549,7 @@ class ChatSendBackendService {
     final runtimeContext = RuntimeContextService(
       owner: resolvedConversationId,
       policy: policy,
-      store: runtimeStore,
-      summaryFactory: () => _ref.read(automaticSummaryPortProvider.future),
-      memory: _ref.read(compactionMemoryProvider),
+      summarizerFactory: () => _ref.read(contextSummarizerProvider.future),
       tools: tools,
     );
     if (inputTokens >= inputLimit) {
@@ -588,12 +577,12 @@ class ChatSendBackendService {
         },
       );
       if (compactionPass >= 2) {
-        throw const TopicCompactionException(
+        throw const ContextCompactionException(
           '自动压缩后仍超过上下文窗口，本轮未发送；请缩短当前消息或角色设置。',
         );
       }
-      await automaticContext.compact(
-        owner: resolvedConversationId,
+      await context.compactAuto(
+        ownerId: resolvedConversationId,
         topicBoundary: conv.contextStartMessageId,
         history: originalHistory,
         previous: automaticHandoff,

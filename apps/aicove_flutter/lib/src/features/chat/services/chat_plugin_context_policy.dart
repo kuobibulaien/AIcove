@@ -6,7 +6,11 @@ class ChatPluginContextPolicy {
   final bool imageEnabled;
   final bool ttsEnabled;
 
+  /// 已下线的旧记忆工具（ADR0038）：历史里残留的调用与结果成对从请求中去掉。
+  static const retiredTools = {'memory_search', 'memory_read', 'context_read'};
+
   bool allowsTool(String name) =>
+      !retiredTools.contains(name) &&
       (imageEnabled || !const {'draw_image', 'image_context'}.contains(name)) &&
       (ttsEnabled || name != 'speak');
 

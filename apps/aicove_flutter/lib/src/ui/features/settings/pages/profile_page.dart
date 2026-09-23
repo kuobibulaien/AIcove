@@ -16,6 +16,7 @@ class ProfilePage extends StatelessWidget {
     final colors = context.moeColors;
 
     return MoePageScaffold(
+      extendBodyBehindAppBar: true,
       appBar: const MoeAppBar(title: '个人资料', showBackButton: true),
       backgroundColor: colors.surface,
       body: const ProfileContent(),

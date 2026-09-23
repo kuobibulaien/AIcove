@@ -5,6 +5,13 @@ import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 
 void main() {
+  test('glass blur stays see-through through the lower half', () {
+    const none = MoeMaterialBaseline.none;
+    expect(none.blurSigma(8), closeTo(0.75, 0.0001));
+    expect(none.blurSigma(kDefaultGlassBlurSigma), closeTo(3, 0.0001));
+    expect(none.blurSigma(kMaxGlassBlurSigma), kMaxLiquidGlassBlurSigma);
+    expect(MoeMaterialBaseline.text.blurSigma(16), lessThan(5));
+  });
   for (final baseline in [
     MoeMaterialBaseline.none,
     MoeMaterialBaseline.background,
@@ -18,13 +25,18 @@ void main() {
           final colors = dark ? MoeColors.dark() : MoeColors.light();
           expect(
             baseline.blurSigma(0),
-            closeTo(32 * baseline.blurFactor, 0.0001),
+            closeTo(
+              kMaxLiquidGlassBlurSigma *
+                  baseline.blurFactor *
+                  baseline.blurFactor,
+              0.0001,
+            ),
           );
           expect(
             colors.glassTintForSigma(0, baseline: baseline).a,
             closeTo(baseline.tintOpacity, 0.0001),
           );
-          expect(baseline.blurSigma(32), 32);
+          expect(baseline.blurSigma(32), kMaxLiquidGlassBlurSigma);
           expect(
             colors.glassTintForSigma(32, baseline: baseline).a,
             closeTo(
@@ -78,7 +90,7 @@ void main() {
           expect(surfaces[0].settings.glassColor.a, 0);
           expect(surfaces[0].settings.blur, 0);
           expect(surfaces[1].settings.glassColor.a, closeTo(0.1, 0.0001));
-          expect(surfaces[1].settings.blur, closeTo(3.2, 0.0001));
+          expect(surfaces[1].settings.blur, closeTo(0.12, 0.0001));
         } else {
           expect(find.byType(BackdropFilter), findsOneWidget);
           final surfaces = tester

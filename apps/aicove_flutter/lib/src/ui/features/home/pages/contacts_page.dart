@@ -21,9 +21,15 @@ class _ContactsPageState extends ConsumerState<ContactsPage> {
       backgroundColor: MoeSurfaceGroup.contains(context)
           ? Colors.transparent
           : colors.surface,
+      extendBodyBehindAppBar: true,
       appBar: MoeAppBar(
         title: '聊天',
         centerTitle: true,
+        bottom: MoeSearchField(
+          hintText: '搜索',
+          onChanged: (query) => setState(() => _query = query),
+        ),
+        bottomHeight: MoeSearchField.heightFor(context),
         actions: [
           IconButton(
             icon: const Icon(Icons.person_add_alt_1_outlined),
@@ -32,20 +38,10 @@ class _ContactsPageState extends ConsumerState<ContactsPage> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          MoeSearchField(
-            hintText: '搜索',
-            onChanged: (query) => setState(() => _query = query),
-          ),
-          Expanded(
-            child: ContactsListContent(
-              searchQuery: _query,
-              sortMode: ref.watch(sortModeProvider),
-              isAscending: ref.watch(sortAscendingProvider),
-            ),
-          ),
-        ],
+      body: ContactsListContent(
+        searchQuery: _query,
+        sortMode: ref.watch(sortModeProvider),
+        isAscending: ref.watch(sortAscendingProvider),
       ),
     );
   }

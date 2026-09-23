@@ -66,16 +66,16 @@ const moeFocus = Color(0xFF3390EC); // 聚焦/按钮颜色
 
 // ===== 暗色模式 =====
 const moePrimaryDark = Color(0xFF6BA1D8); // 主色调蓝色（暗色版，稍微降低亮度）
-const moeSurfaceDark = Color(0xFF1C1C1C); // 表面背景色（深色背景）
+const moeSurfaceDark = Color(0xFF000000); // 表面背景色（纯黑）
 const moeSurfaceAltDark = moeSurfaceDark; // 次级表面沿用统一基础色
 const moePanelDark = moeSurfaceDark; // 容器背景（卡片/聊天面板）
 const moeBgMainDark = moeSurfaceDark; // 主背景色
 const moeTextDark = Color(0xFFE5E8EB); // 主文本颜色（浅色文字）
 const moeTextSecondaryDark = Color(0xFFADB5BD); // 次要文本颜色
 const moeMutedDark = Color(0xFF8B95A1); // 弱化文本颜色
-const moeBorderDark = Color(0xFF3A404A); // 分割线颜色
-const moeBorderLightDark = Color(0xFF2F3540); // 淡色边框
-const moeDividerColorDark = Color(0xFF282D35); // 更柔和的分割线颜色
+const moeBorderDark = Color(0xFF38383A); // 分割线颜色
+const moeBorderLightDark = Color(0xFF2C2C2E); // 淡色边框
+const moeDividerColorDark = Color(0xFF1F1F1F); // 更柔和的分割线颜色
 const moeFocusDark = Color(0xFF6BA1D8); // 聚焦/按钮颜色
 
 // 分割线宽度（使用 1 物理像素的细线，贴近 MoeTalk 样式）
@@ -111,7 +111,7 @@ const moeBubbleRightBorderDark = moePrimaryDark;
 
 // 强调色
 const moeAccent = Color(0xFFFC879B);
-const moeAccentDark = Color(0xFFB39DDB); // 暗色模式强调色（薰衣草紫，避免黑配高饱和粉刺眼）
+const moeAccentDark = Color(0xFFD4AF37); // 暗色模式强调色（金属金，配纯黑背景）
 
 // Toast 语义色 - 浅色模式
 const moeToastSuccess = Color(0xFF4CAF50); // 成功（绿）
@@ -226,11 +226,26 @@ class MoeMaterialBaseline {
   final double blurFactor;
   final double tintOpacity;
 
-  double blurSigma(double sigma) =>
-      kMaxGlassBlurSigma *
-      (blurFactor +
-          (1 - blurFactor) * (sigma / kMaxGlassBlurSigma).clamp(0.0, 1.0));
+  /// Setting strength in 0..1 after this component's minimum is applied.
+  double strength(double sigma) =>
+      blurFactor +
+      (1 - blurFactor) * (sigma / kMaxGlassBlurSigma).clamp(0.0, 1.0);
+
+  /// Rendered backdrop blur for the glass material.
+  ///
+  /// iOS 26 Liquid Glass reads through: refraction and specular edges carry
+  /// the material, blur only softens. The stored 0..32 setting is mapped onto
+  /// a squared curve so the lower half stays nearly clear, the midpoint lands
+  /// on liquid_glass_widgets' iOS-calibrated default (sigma 3), and the
+  /// heaviest step stays well below the frosted popup recipe (sigma 30).
+  double blurSigma(double sigma) {
+    final s = strength(sigma);
+    return kMaxLiquidGlassBlurSigma * s * s;
+  }
 }
+
+/// Upper bound of [MoeMaterialBaseline.blurSigma] for the glass material.
+const double kMaxLiquidGlassBlurSigma = 12.0;
 
 // ===== 主题扩展 - 让整个应用响应暗色模式 =====
 class MoeColors extends ThemeExtension<MoeColors> {
@@ -393,12 +408,8 @@ class MoeColors extends ThemeExtension<MoeColors> {
 
   // 暗色主题
   static MoeColors dark({Color? accentColor}) {
-    final color = accentColor ?? moeAccentDark;
-    // 暗色模式下稍微降低饱和度
-    final hsl = HSLColor.fromColor(color);
-    final darkColor = hsl
-        .withLightness((hsl.lightness * 0.9).clamp(0.0, 1.0))
-        .toColor();
+    // 传入值已是暗色成品色（皮肤预设或自定义降亮后的颜色）
+    final darkColor = accentColor ?? moeAccentDark;
     return MoeColors(
       // primary/focus 代表"全局强调色"（按钮/选中态等），应跟随用户选择的主题色
       primary: darkColor,

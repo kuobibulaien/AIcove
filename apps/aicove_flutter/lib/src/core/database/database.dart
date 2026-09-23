@@ -211,131 +211,6 @@ class PendingOperations extends Table {
   Set<Column> get primaryKey => {opId};
 }
 
-/// 记忆表（有效记忆 + 回收站记忆）
-///
-/// (注释已丢失)
-/// (注释已丢失)
-class Memories extends Table {
-  TextColumn get id => text()();
-  TextColumn get content => text()(); // (注释已丢失)
-  TextColumn get embedding => text().nullable()(); // 向量，JSON格式存储
-  TextColumn get layer =>
-      text().withDefault(const Constant('L3'))(); // L1/L2/L3/L4
-  TextColumn get category =>
-      text().withDefault(const Constant('daily_chatter'))(); // AI分类
-  TextColumn get conversationId =>
-      text().references(Conversations, #id).nullable()(); // (注释已丢失)
-  TextColumn get contentHash => text().nullable()(); // 去重哈希
-  BoolColumn get needsEnrichment =>
-      boolean().withDefault(const Constant(false))(); // 被召回后待重丰富
-
-  // (注释已丢失)
-  RealColumn get persistenceP =>
-      real().withDefault(const Constant(0.5))(); // (注释已丢失)
-  RealColumn get emotionE =>
-      real().withDefault(const Constant(0.0))(); // (注释已丢失)
-  RealColumn get infoI => real().withDefault(const Constant(0.5))(); // (注释已丢失)
-  RealColumn get judgeJ => real().withDefault(const Constant(0.5))(); // J 综合判断
-
-  // (注释已丢失)
-  RealColumn get infoImportance =>
-      real().withDefault(const Constant(0.5))(); // (注释已丢失)
-  RealColumn get timeCoef =>
-      real().withDefault(const Constant(1.0))(); // (注释已丢失)
-  RealColumn get importance =>
-      real().withDefault(const Constant(0.5))(); // (注释已丢失)
-
-  // 系统维护字段
-  IntColumn get useCount =>
-      integer().withDefault(const Constant(0))(); // (注释已丢失)
-  IntColumn get lastActiveAt => integer().nullable()(); // (注释已丢失)
-
-  // (注释已丢失)
-  IntColumn get deletedAt => integer().nullable()();
-  IntColumn get purgeAt => integer().nullable()();
-
-  // 同步字段
-  BoolColumn get isSynced => boolean().withDefault(const Constant(false))();
-  TextColumn get syncState =>
-      text().withDefault(const Constant('local'))(); // local/synced/modified
-
-  // (注释已丢失)
-  IntColumn get createdAt => integer()();
-  IntColumn get updatedAt => integer()();
-
-  @override
-  Set<Column> get primaryKey => {id};
-}
-
-/// (注释已丢失)
-class SummarizationRecords extends Table {
-  TextColumn get id => text()();
-  TextColumn get conversationId => text().references(Conversations, #id)();
-  TextColumn get dateKey => text()(); // yyyy-MM-dd（归属日期）
-  TextColumn get roundKey => text()(); // (注释已丢失)
-  IntColumn get roundIndex => integer().withDefault(const Constant(0))();
-  IntColumn get firstMsgTime => integer()();
-  IntColumn get lastMsgTime => integer()();
-  IntColumn get messageCount => integer()();
-  BoolColumn get summarized => boolean().withDefault(const Constant(false))();
-  IntColumn get summarizedAt => integer().nullable()();
-  TextColumn get errorMessage => text().nullable()();
-  IntColumn get createdAt => integer()();
-
-  @override
-  Set<Column> get primaryKey => {id};
-
-  @override
-  List<Set<Column>> get uniqueKeys => [
-        {conversationId, dateKey, roundKey},
-      ];
-}
-
-/// (注释已丢失)
-class MemoryTombstones extends Table {
-  TextColumn get tombstoneId => text()();
-  TextColumn get memoryId => text()(); // (注释已丢失)
-  TextColumn get reason =>
-      text()(); // evicted / replaced / user_delete / conflict_patch
-  TextColumn get payloadHash => text().nullable()(); // (注释已丢失)
-
-  // (注释已丢失)
-  IntColumn get deletedAt => integer()();
-  IntColumn get purgeAt => integer()();
-  IntColumn get cloudSyncedAt => integer().nullable()(); // (注释已丢失)
-
-  @override
-  Set<Column> get primaryKey => {tombstoneId};
-}
-
-/// (注释已丢失)
-///
-/// (注释已丢失)
-/// (注释已丢失)
-class Diaries extends Table {
-  TextColumn get id => text()();
-  TextColumn get conversationId =>
-      text().references(Conversations, #id)(); // 关联角色
-  IntColumn get date => integer()(); // (注释已丢失)
-  TextColumn get content => text()(); // (注释已丢失)
-  TextColumn get embedding => text().nullable()(); // 向量，JSON格式存储
-
-  // (注释已丢失)
-  TextColumn get mood => text().nullable()(); // 当天心情
-  TextColumn get keywords => text().nullable()(); // (注释已丢失)
-
-  // 同步字段
-  BoolColumn get isSynced => boolean().withDefault(const Constant(false))();
-  TextColumn get syncState => text().withDefault(const Constant('local'))();
-
-  // (注释已丢失)
-  IntColumn get createdAt => integer()();
-  IntColumn get updatedAt => integer()();
-
-  @override
-  Set<Column> get primaryKey => {id};
-}
-
 @DriftDatabase(tables: [
   Conversations,
   Messages,
@@ -345,33 +220,24 @@ class Diaries extends Table {
   SyncScopes,
   SyncCursors,
   PendingOperations,
-  Memories,
-  MemoryTombstones,
-  Diaries,
-  SummarizationRecords,
 ])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
   AppDatabase.forTesting(QueryExecutor executor) : super(executor);
 
   @override
-  int get schemaVersion => 17;
+  int get schemaVersion => 18;
 
   @override
   MigrationStrategy get migration {
     return MigrationStrategy(
       onCreate: (Migrator m) async {
         await m.createAll();
-        await _ensureMemoryFts();
         await _ensureAutoReplyClaimTable();
-        await _ensureTopicHandoffs();
+        await _ensureContextMemoryTables();
       },
       onUpgrade: (Migrator m, int from, int to) async {
-        // (注释已丢失)
-        if (from < 2) {
-          await m.createTable(memories);
-          await m.createTable(memoryTombstones);
-        }
+        // v1 -> v2 的旧记忆表已随 v18 退役（ADR0038），不再创建。
         // (注释已丢失)
         if (from < 3) {
           await customStatement(
@@ -383,26 +249,10 @@ class AppDatabase extends _$AppDatabase {
               'ALTER TABLE conversations ADD COLUMN enabled_plugins TEXT');
         }
         // (注释已丢失)
-        if (from < 5) {
-          await m.createTable(diaries);
-        }
-        // (注释已丢失)
         if (from < 6) {
           await _safeAddColumn(
               'messages', 'summarized INTEGER NOT NULL DEFAULT 0');
           await _safeAddColumn('messages', 'summarized_at INTEGER');
-
-          await _safeAddColumn("memories", "layer TEXT NOT NULL DEFAULT 'L3'");
-          await _safeAddColumn(
-              "memories", "category TEXT NOT NULL DEFAULT 'daily_chatter'");
-          await _safeAddColumn('memories', 'conversation_id TEXT');
-          await _safeAddColumn('memories', 'content_hash TEXT');
-          await _safeAddColumn(
-              'memories', 'needs_enrichment INTEGER NOT NULL DEFAULT 0');
-
-          await m.createTable(summarizationRecords);
-          await _ensureMemoryFts();
-          await _backfillMemoryFts();
         }
         // v6 -> v7: add chatBackgroundImage column
         if (from < 7) {
@@ -445,8 +295,10 @@ class AppDatabase extends _$AppDatabase {
         if (from < 15) {
           await _safeAddColumn('conversations', 'thinking_levels TEXT');
         }
-        if (from < 17) {
-          await _ensureTopicHandoffs();
+        // v17 -> v18: 记忆与上下文重构（ADR0038）。只建新表；旧记忆表由
+        // LegacyMemoryRetirement 在启动后先备份再删除，这里不直接 DROP。
+        if (from < 18) {
+          await _ensureContextMemoryTables();
         }
       },
       // 只补物理访问索引，不改变表/记录格式或user_version。
@@ -485,40 +337,55 @@ WHERE deleted_at IS NULL
     }
   }
 
-  /// 派生的上下文交接记录与待归档状态；raw 消息、旧记忆均不迁移/删除。
-  /// 与认领表一样由专用 Adapter 访问，避免污染会话/消息实体。
-  Future<void> _ensureTopicHandoffs() => customStatement('''
-CREATE TABLE IF NOT EXISTS topic_handoffs (
+  /// 上下文摘要与长期记忆（ADR0038）。由专用 Adapter 以参数化 SQL 访问，
+  /// 不走 Drift 表定义；每张表一条独立语句，均可重复执行。
+  Future<void> _ensureContextMemoryTables() async {
+    await customStatement('''
+CREATE TABLE IF NOT EXISTS context_summaries (
   id TEXT PRIMARY KEY NOT NULL,
   owner_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
   boundary_id TEXT NOT NULL,
-  previous_boundary_id TEXT,
+  topic_boundary TEXT,
   summary TEXT NOT NULL,
   source_ids TEXT NOT NULL,
   source_digest TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+)''');
+    await customStatement('''
+CREATE INDEX IF NOT EXISTS context_summaries_owner_kind
+ON context_summaries(owner_id, kind, boundary_id, created_at)''');
+    await customStatement('''
+CREATE TABLE IF NOT EXISTS memory_items (
+  id TEXT PRIMARY KEY NOT NULL,
+  owner_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  layer TEXT NOT NULL,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  source_ids TEXT NOT NULL DEFAULT '[]',
+  locked INTEGER NOT NULL DEFAULT 0,
+  embedding BLOB,
   created_at INTEGER NOT NULL,
-  memory_state TEXT NOT NULL
-)
-''').then((_) => customStatement('''
-CREATE INDEX IF NOT EXISTS topic_handoffs_owner_boundary
-ON topic_handoffs(owner_id, boundary_id, created_at)
-''')).then((_) => customStatement('''
-CREATE TABLE IF NOT EXISTS compaction_memory_jobs (
- id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
- source_ids TEXT NOT NULL, source_digest TEXT NOT NULL, updates_json TEXT NOT NULL,
- runtime_record TEXT, state TEXT NOT NULL
-)
-''')).then((_) => customStatement('''
-CREATE TABLE IF NOT EXISTS runtime_context_records (
- id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
- source_json TEXT NOT NULL, replacement_json TEXT NOT NULL, created_at INTEGER NOT NULL,
- raw_ids TEXT NOT NULL DEFAULT '[]', raw_digest TEXT NOT NULL DEFAULT ''
-)
-''')).then((_) async {
-      final columns = (await customSelect('PRAGMA table_info(runtime_context_records)').get()).map((r) => r.read<String>('name')).toSet();
-      if (!columns.contains('raw_ids')) await customStatement("ALTER TABLE runtime_context_records ADD COLUMN raw_ids TEXT NOT NULL DEFAULT '[]'");
-      if (!columns.contains('raw_digest')) await customStatement("ALTER TABLE runtime_context_records ADD COLUMN raw_digest TEXT NOT NULL DEFAULT ''");
-    });
+  updated_at INTEGER NOT NULL
+)''');
+    await customStatement('''
+CREATE INDEX IF NOT EXISTS memory_items_owner_layer
+ON memory_items(owner_id, layer, updated_at)''');
+    await customStatement('''
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_items_fts
+USING fts5(item_id UNINDEXED, owner_id UNINDEXED, tokens)''');
+    await customStatement('''
+CREATE TABLE IF NOT EXISTS memory_progress (
+  owner_id TEXT PRIMARY KEY NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  until_at INTEGER,
+  until_id TEXT,
+  rebuild_until_id TEXT,
+  generation INTEGER NOT NULL DEFAULT 0,
+  paused INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  updated_at INTEGER NOT NULL
+)''');
+  }
 
   /// 主动回复触发器执行权认领表：前台轮询与后台 WorkManager 发送前
   /// 必须先 INSERT OR IGNORE 认领，认领失败即另一方已执行。
@@ -539,93 +406,6 @@ CREATE TABLE IF NOT EXISTS auto_reply_trigger_claims (
     } catch (_) {
       // (注释已丢失)
     }
-  }
-
-  Future<void> _ensureMemoryFts() async {
-    await customStatement('''
-CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts
-USING fts5(memory_id, conversation_id, tokenized_content)
-''');
-  }
-
-  Future<void> _backfillMemoryFts() async {
-    // (注释已丢失)
-    await customStatement('DELETE FROM memory_fts');
-    final rows = await customSelect('''
-SELECT id, COALESCE(conversation_id, '') AS conversation_id, content
-FROM memories
-WHERE deleted_at IS NULL
-''').get();
-
-    await batch((b) {
-      for (final row in rows) {
-        final memoryId = row.read<String>('id');
-        final conversationId = row.read<String>('conversation_id');
-        final content = row.read<String>('content');
-        final tokenized = _tokenizeForFts(content);
-        b.customStatement(
-          '''
-INSERT INTO memory_fts(memory_id, conversation_id, tokenized_content)
-VALUES (?, ?, ?)
-''',
-          [memoryId, conversationId, tokenized],
-        );
-      }
-    });
-  }
-
-  static bool _isHanCodeUnit(int codeUnit) {
-    return (codeUnit >= 0x4E00 && codeUnit <= 0x9FFF) ||
-        (codeUnit >= 0x3400 && codeUnit <= 0x4DBF);
-  }
-
-  static bool _isAsciiWordCodeUnit(int codeUnit) {
-    return (codeUnit >= 0x30 && codeUnit <= 0x39) ||
-        (codeUnit >= 0x41 && codeUnit <= 0x5A) ||
-        (codeUnit >= 0x61 && codeUnit <= 0x7A) ||
-        codeUnit == 0x5F;
-  }
-
-  static String _tokenizeForFts(String text) {
-    final input = text.trim();
-    if (input.isEmpty) return '';
-
-    final tokens = <String>[];
-    var i = 0;
-    while (i < input.length) {
-      final cu = input.codeUnitAt(i);
-
-      if (_isHanCodeUnit(cu)) {
-        final start = i;
-        i++;
-        while (i < input.length && _isHanCodeUnit(input.codeUnitAt(i))) {
-          i++;
-        }
-        final run = input.substring(start, i);
-        if (run.length == 1) {
-          tokens.add(run);
-        } else {
-          for (var j = 0; j < run.length - 1; j++) {
-            tokens.add(run.substring(j, j + 2));
-          }
-        }
-        continue;
-      }
-
-      if (_isAsciiWordCodeUnit(cu)) {
-        final start = i;
-        i++;
-        while (i < input.length && _isAsciiWordCodeUnit(input.codeUnitAt(i))) {
-          i++;
-        }
-        tokens.add(input.substring(start, i).toLowerCase());
-        continue;
-      }
-
-      i++;
-    }
-
-    return tokens.join(' ');
   }
 }
 

@@ -9,7 +9,6 @@ import '../../../shared/widgets/index.dart';
 import '../../../theme/tokens.dart';
 import 'export_scope_page.dart';
 import 'import_file_page.dart';
-import 'memory_trash_page.dart';
 
 /// 数据管理主页
 /// 包含云同步 Scope 设置和离线导入导出入口
@@ -21,105 +20,63 @@ class DataManagementPage extends ConsumerWidget {
     final theme = Theme.of(context);
 
     return MoePageScaffold(
-      appBar: MoeAppBar(
-        title: '数据管理',
-        showBackButton: true,
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          // 离线导入导出区域
-          _buildSectionTitle(context, '离线备份'),
-          const SizedBox(height: 12),
-          _buildExportCard(context),
-          const SizedBox(height: 12),
-          _buildImportCard(context),
+      extendBodyBehindAppBar: true,
+      appBar: MoeAppBar(title: '数据管理', showBackButton: true),
+      body: Builder(
+        builder: (context) => ListView(
+          padding: moeUnderBarPadding(context, EdgeInsets.all(16)),
+          children: [
+            // 离线导入导出区域
+            _buildSectionTitle(context, '离线备份'),
+            const SizedBox(height: 12),
+            _buildExportCard(context),
+            const SizedBox(height: 12),
+            _buildImportCard(context),
 
-          const SizedBox(height: 32),
+            const SizedBox(height: 32),
 
-          // 云同步服务器设置
-          _buildSectionTitle(context, '云同步服务'),
-          const SizedBox(height: 8),
-          Text(
-            '配置云同步服务器（默认离线模式）',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 12),
-          _buildCloudServerSettings(context, ref),
-
-          const SizedBox(height: 24),
-
-          // 云同步范围
-          _buildSectionTitle(context, '同步范围'),
-          const SizedBox(height: 8),
-          Text(
-            '选择哪些数据参与云同步',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 12),
-          _buildSyncScopeSettings(context, ref),
-
-          const SizedBox(height: 32),
-
-          // 说明
-          _buildHelpSection(context),
-
-          const SizedBox(height: 32),
-
-          // 回收站入口
-          _buildSectionTitle(context, '数据清理'),
-          const SizedBox(height: 12),
-          _buildTrashCard(context),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTrashCard(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return MoeSettingsGroup(
-      margin: EdgeInsets.zero,
-      children: [
-        MoeListTile(
-          leading: Container(
-            width: 40,
-            height: 40,
-            decoration: MoeG2Decoration(
-              radius: 10,
-              color: theme.colorScheme.errorContainer.withValues(alpha: 0.3),
-            ),
-            child: Icon(
-              LucideIcons.trash2,
-              color: theme.colorScheme.error,
-              size: 20,
-            ),
-          ),
-          title: const Text('记忆回收站'),
-          subtitle: const Text('查看和恢复已删除的记忆'),
-          trailing: const Icon(LucideIcons.chevronRight, size: 20),
-          onTap: () {
-            Navigator.of(context).push(
-              ParallaxSlidePageRoute(
-                page: const MemoryTrashPage(),
+            // 云同步服务器设置
+            _buildSectionTitle(context, '云同步服务'),
+            const SizedBox(height: 8),
+            Text(
+              '配置云同步服务器（默认离线模式）',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
               ),
-            );
-          },
+            ),
+            const SizedBox(height: 12),
+            _buildCloudServerSettings(context, ref),
+
+            const SizedBox(height: 24),
+
+            // 云同步范围
+            _buildSectionTitle(context, '同步范围'),
+            const SizedBox(height: 8),
+            Text(
+              '选择哪些数据参与云同步',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 12),
+            _buildSyncScopeSettings(context, ref),
+
+            const SizedBox(height: 32),
+
+            // 说明
+            _buildHelpSection(context),
+          ],
         ),
-      ],
+      ),
     );
   }
 
   Widget _buildSectionTitle(BuildContext context, String title) {
     return Text(
       title,
-      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            fontWeight: MoeFontWeights.emphasis,
-          ),
+      style: Theme.of(
+        context,
+      ).textTheme.titleMedium?.copyWith(fontWeight: MoeFontWeights.emphasis),
     );
   }
 
@@ -147,11 +104,9 @@ class DataManagementPage extends ConsumerWidget {
           subtitle: const Text('将角色和聊天记录打包为文件'),
           trailing: const Icon(LucideIcons.chevronRight, size: 20),
           onTap: () {
-            Navigator.of(context).push(
-              ParallaxSlidePageRoute(
-                page: const ExportScopePage(),
-              ),
-            );
+            Navigator.of(
+              context,
+            ).push(ParallaxSlidePageRoute(page: const ExportScopePage()));
           },
         ),
       ],
@@ -182,11 +137,9 @@ class DataManagementPage extends ConsumerWidget {
           subtitle: const Text('从 .aicove 文件还原'),
           trailing: const Icon(LucideIcons.chevronRight, size: 20),
           onTap: () {
-            Navigator.of(context).push(
-              ParallaxSlidePageRoute(
-                page: const ImportFilePage(),
-              ),
-            );
+            Navigator.of(
+              context,
+            ).push(ParallaxSlidePageRoute(page: const ImportFilePage()));
           },
         ),
       ],
@@ -230,7 +183,7 @@ class DataManagementPage extends ConsumerWidget {
 
   void _showServerConfigDialog(BuildContext context, WidgetRef ref) {
     final controller = TextEditingController();
-    
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -291,8 +244,8 @@ class DataManagementPage extends ConsumerWidget {
         final scope = item.$1;
         final icon = item.$2;
         // TODO: 从数据库读取当前启用的 scope
-        final isEnabled = scope == SyncScope.chatHistory ||
-            scope == SyncScope.characterCards;
+        final isEnabled =
+            scope == SyncScope.chatHistory || scope == SyncScope.characterCards;
 
         return MoeSettingsRow(
           icon: icon,

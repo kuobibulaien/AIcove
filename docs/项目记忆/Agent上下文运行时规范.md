@@ -210,24 +210,14 @@ await _scheduleBackgroundTaskForTrigger(trigger);
 ### 7. Implementation Note
 This scenario documents the **interface contract** for future memory linkage. Runtime implementation is deferred to a later phase; current analyzer and agent flows must remain functional without memory integration.
 
-## 联系人 MD 记忆工具（2026-09-05，第一批已实现）
+## 短期／长期记忆的 Agent 边界（2026-09-23，ADR0038）
 
-本节补充标准聊天的实际能力，不将上节主动关怀接口标成已实现。
+本节取代 2026-09-05 的「联系人 MD 记忆工具」与「手动内容交接 Agent」两节（旧文见 git 历史与客户端 `05_历史归档/20260923_旧记忆与压缩方案/`）。
 
-1. `ContactMemoryPort.load/save` 必须显式传入稳定 owner；新模式真相源是各角色独立 MD，聊天原始消息仍在 DB。
-2. `memory_search(query, offset)` 与 `memory_read(id, offset)` 只读，参数不得包含 owner/path。`ChatPluginContextBuilder` 从本次请求取得 owner，handler 闭包固定它。
-3. 工具 schema 与执行器一起保存到 `ApiConfig.boundTools`，`ChatSendApiRunner` 优先使用此绑定；禁止工具执行时重新按 activeConversation 查询所属角色。
-4. 缺 owner、角色删除、禁用插件、关闭 MD 或文档损坏必须失败关闭；常驻读取失败可继续无记忆聊天，但不得隐式跨角色/跨旧库补齐。
-5. 首批仅手工维护。新增自动 MemoryAgent 时仍需定义上下文/输出契约、读取 DB raw messages、验证来源及版本后提交，不能直接复用旧库的 summarized 成功判定。
+1. **聊天模型不带记忆工具。** 长期记忆由 `MemoryPlugin` 在请求前注入（常驻层＋关键词检索出的档案），注入内容显式固定请求 owner；请求副本成对过滤历史中的 `memory_search`、`memory_read`、`context_read`。
+2. **压缩 Agent**：`local.topic_content_handoff`（手动）、`local.automatic_context`（自动与运行时），只允许 conversationWindow 输入与 JSON 输出，无工具、无角色卡，只写摘要。输入来自 DB raw 快照，不是 UI 投影。
+3. **记忆 Agent**：`local.memory_keeper`，只在压缩成功后、发送时续跑、用户点「继续／重建」时运行。输入是一批 raw 原文＋常驻层＋相关档案；唯一工具是只读 `memory_search`（handler 闭包固定 owner）。输出 `{"ops":[...]}` 由代码校验来源、归属与锁定后，与书签推进同事务写入 `memory_items`。
+4. 处理目标由 `context_summaries` 推算，不另设任务表；同一 owner 串行；重建代次变化时丢弃旧批次。失败只记录错误，不阻塞聊天。
+5. 缺 owner、角色删除、未启用「记忆」插件时失败关闭：不注入、不整理。
 
-实现与测试入口：客户端 `docs/04_功能模块规范/记忆系统/联系人Markdown记忆.md`、`test/features/memory/contact_memory_plugin_test.dart`。
-
-## 手动内容交接 Agent（2026-09-05）
-
-- 定义：`local.topic_content_handoff`，`AgentKind.summarizer` / `stateChange`，只允许 conversationWindow 与 JSON 输出；不装配角色卡、不使用工具、不覆盖管理端默认节点。`BackgroundTopicSummaryAdapter` 将定义桥接到现有 BackgroundAgentService，输出只投递后台 trace 和经过校验的 UI 草稿，不直接写记忆。
-- 输入：`TopicHandoffStorePort.snapshot(owner)` 从 DB raw 取得明确范围，携带之前的内容摘要；不是 UI messages.last，不是已裁过的最近 N 条。前一摘要仅作派生背景，来源范围和校验仍绑定 raw。
-- 输出：仅 `{"facts":["..."]}`；规范化为有界纯内容摘要。空事实结果不得抹掉已有背景，格式/身份/标签要求不得晋升为永久事实。摘要是有损草稿，人工预览后才提交。
-- 提交：`TopicCompactionPort.commit` 将摘要、来源、旧/新边界及 pending 同事务保存，再调用 ContactMemoryPort；MD 失败可重试，不能提前标记已归档。生成互斥读取 `conversationSendingProvider(owner)`，不是全局 active 对话发送状态。
-- 读取：标准聊天普通/酒馆装配读取有效交接摘要，不带旧原文；来源改变或重放范围内旧轮次时不注入旧交接摘要。预算不足不得发送丢失当前问题的请求。主动关怀/分析器没有在本批扩大装配权限。
-
-实现与测试：`features/chat/{domain/topic_compaction_port.dart,application/topic_compaction_service.dart,data/background_topic_summary_adapter.dart,data/sqlite_topic_handoff_store.dart}`、`test/features/chat/topic_compaction_test.dart`。自动压缩按 ADR0027 经 AutomaticContextPort 在每轮工具循环的模型请求前做预算检查：默认 272k 窗口、80% 触发线、16% 近期原文预算，产出结构化摘要与有来源的记忆增量，不调用手动新话题入口；ADR0024 的触发与保留策略已被取代，仅其移除条数设置的决定保留。
+实现与测试：客户端 `docs/04_功能模块规范/记忆系统/README.md`；`test/features/context/`、`test/features/memory/memory_keeper_test.dart`。

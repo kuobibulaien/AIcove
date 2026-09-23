@@ -319,14 +319,48 @@ class BackgroundAgentService {
         'content': systemPrompt,
       });
     }
-    for (final message in usedMessages) {
-      messages.addAll(
-        message.toHistoryJsonList(
-          includeTimestamp: definition.contextSpec.includeTimestamps,
-        ),
-      );
+    final includeTimestamp = definition.contextSpec.includeTimestamps;
+    if (usedMessages.every((message) => message.role == 'user')) {
+      for (final message in usedMessages) {
+        messages.addAll(
+          message.toHistoryJsonList(includeTimestamp: includeTimestamp),
+        );
+      }
+      return messages;
     }
+    // Background agents read the dialogue, they never continue it. Sending it
+    // with original roles can leave an assistant tail, which Anthropic-style
+    // APIs reject with 400 and others treat as a prefill, so flatten it into
+    // a single user transcript.
+    messages.add({
+      'role': 'user',
+      'content': usedMessages
+          .map((message) =>
+              '${message.role == 'user' ? '用户' : '角色'}：'
+              '${_plainText(message, includeTimestamp)}')
+          .join('\n'),
+    });
     return messages;
+  }
+
+  String _plainText(Message message, bool includeTimestamp) {
+    return message
+        .toHistoryJsonList(includeTimestamp: includeTimestamp)
+        .where((entry) => entry['role'] == message.role)
+        .map((entry) {
+          final content = entry['content'];
+          if (content is String) return content;
+          if (content is List) {
+            return content
+                .whereType<Map>()
+                .where((part) => part['type'] == 'text')
+                .map((part) => part['text'])
+                .join('\n');
+          }
+          return '';
+        })
+        .where((text) => text.trim().isNotEmpty)
+        .join('\n');
   }
 
   String _buildSystemPrompt(String objectivePrompt, String? extraInstruction) {

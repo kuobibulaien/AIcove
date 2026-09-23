@@ -36,13 +36,3 @@ final messageBlockRepositoryProvider = Provider<MessageBlockRepository>((ref) {
 final providerRepositoryProvider = Provider<ProviderRepository>((ref) {
   return ProviderRepository(ref.watch(databaseProvider));
 });
-
-/// 记忆 Repository
-final memoryRepositoryProvider = Provider<MemoryRepository>((ref) {
-  return MemoryRepository(ref.watch(databaseProvider));
-});
-
-/// 日记 Repository
-final diaryRepositoryProvider = Provider<DiaryRepository>((ref) {
-  return DiaryRepository(ref.watch(databaseProvider));
-});

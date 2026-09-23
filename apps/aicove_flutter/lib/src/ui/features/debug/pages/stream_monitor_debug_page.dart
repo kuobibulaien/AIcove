@@ -95,6 +95,7 @@ class _StreamMonitorDebugPageState extends State<StreamMonitorDebugPage> {
     final colors = context.moeColors;
 
     return MoePageScaffold(
+      extendBodyBehindAppBar: true,
       backgroundColor: colors.surface,
       appBar: const MoeAppBar(title: '流式监控', showBackButton: true),
       body: ValueListenableBuilder<StreamMonitorSnapshot>(
@@ -103,89 +104,122 @@ class _StreamMonitorDebugPageState extends State<StreamMonitorDebugPage> {
           final reasons = snapshot.failureCounts.entries.toList()
             ..sort((a, b) => b.value.compareTo(a.value));
 
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              if (_loading || _resetting)
-                const Padding(
-                  padding: EdgeInsets.only(bottom: 12),
-                  child: LinearProgressIndicator(minHeight: 2),
+          return Builder(
+            builder: (context) => ListView(
+              padding: moeUnderBarPadding(context, EdgeInsets.all(16)),
+              children: [
+                if (_loading || _resetting)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 12),
+                    child: LinearProgressIndicator(minHeight: 2),
+                  ),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: MoeG2Decoration(
+                    radius: 12,
+                    color: colors.surface,
+                    border: Border.all(color: colors.borderLight),
+                  ),
+                  child: Text(
+                    '说明：这里只统计“尝试流式 -> 成功流式 / 回退整段”的结果。'
+                    '如果回退次数增加，优先看失败原因和最近错误。',
+                    style: TextStyle(fontSize: 13, color: colors.textSecondary),
+                  ),
                 ),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: MoeG2Decoration(
-                  radius: 12,
-                  color: colors.surface,
-                  border: Border.all(color: colors.borderLight),
+                const SizedBox(height: 12),
+                MoeSettingsGroup(
+                  margin: const EdgeInsets.symmetric(horizontal: 16),
+                  children: [
+                    MoeSettingsRow(
+                      icon: Icons.flag_outlined,
+                      label: '流式尝试次数',
+                      trailingType: MoeSettingsRowTrailing.text,
+                      detailText: '${snapshot.attemptCount}',
+                    ),
+                    MoeSettingsRow(
+                      icon: Icons.check_circle_outline,
+                      label: '流式成功次数',
+                      trailingType: MoeSettingsRowTrailing.text,
+                      detailText: '${snapshot.successCount}',
+                    ),
+                    MoeSettingsRow(
+                      icon: Icons.error_outline,
+                      label: '回退次数',
+                      trailingType: MoeSettingsRowTrailing.text,
+                      detailText: '${snapshot.fallbackCount}',
+                    ),
+                    MoeSettingsRow(
+                      icon: Icons.percent_outlined,
+                      label: '成功率',
+                      trailingType: MoeSettingsRowTrailing.text,
+                      detailText: _formatPercent(snapshot.successRate),
+                    ),
+                    MoeSettingsRow(
+                      icon: Icons.memory_outlined,
+                      label: '最近模型',
+                      trailingType: MoeSettingsRowTrailing.text,
+                      detailText:
+                          snapshot.lastModelFullId?.trim().isNotEmpty == true
+                          ? snapshot.lastModelFullId!
+                          : '-',
+                      showDivider: false,
+                    ),
+                  ],
                 ),
-                child: Text(
-                  '说明：这里只统计“尝试流式 -> 成功流式 / 回退整段”的结果。'
-                  '如果回退次数增加，优先看失败原因和最近错误。',
-                  style: TextStyle(fontSize: 13, color: colors.textSecondary),
+                const SizedBox(height: 12),
+                MoeSettingsGroup(
+                  margin: const EdgeInsets.symmetric(horizontal: 16),
+                  children: [
+                    MoeSettingsRow(
+                      icon: Icons.event_outlined,
+                      label: '最近失败时间',
+                      trailingType: MoeSettingsRowTrailing.text,
+                      detailText: _formatDateTime(snapshot.lastFailureAt),
+                    ),
+                    MoeSettingsRow(
+                      icon: Icons.report_problem_outlined,
+                      label: '最近失败原因',
+                      trailingType: MoeSettingsRowTrailing.text,
+                      detailText: snapshot.lastFailureReason == null
+                          ? '-'
+                          : _reasonLabel(snapshot.lastFailureReason!.value),
+                      showDivider: false,
+                    ),
+                  ],
                 ),
-              ),
-              const SizedBox(height: 12),
-              MoeSettingsGroup(
-                margin: const EdgeInsets.symmetric(horizontal: 16),
-                children: [
-                  MoeSettingsRow(
-                    icon: Icons.flag_outlined,
-                    label: '流式尝试次数',
-                    trailingType: MoeSettingsRowTrailing.text,
-                    detailText: '${snapshot.attemptCount}',
-                  ),
-                  MoeSettingsRow(
-                    icon: Icons.check_circle_outline,
-                    label: '流式成功次数',
-                    trailingType: MoeSettingsRowTrailing.text,
-                    detailText: '${snapshot.successCount}',
-                  ),
-                  MoeSettingsRow(
-                    icon: Icons.error_outline,
-                    label: '回退次数',
-                    trailingType: MoeSettingsRowTrailing.text,
-                    detailText: '${snapshot.fallbackCount}',
-                  ),
-                  MoeSettingsRow(
-                    icon: Icons.percent_outlined,
-                    label: '成功率',
-                    trailingType: MoeSettingsRowTrailing.text,
-                    detailText: _formatPercent(snapshot.successRate),
-                  ),
-                  MoeSettingsRow(
-                    icon: Icons.memory_outlined,
-                    label: '最近模型',
-                    trailingType: MoeSettingsRowTrailing.text,
-                    detailText:
-                        snapshot.lastModelFullId?.trim().isNotEmpty == true
-                        ? snapshot.lastModelFullId!
-                        : '-',
-                    showDivider: false,
+                if ((snapshot.lastFailureError ?? '').trim().isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: MoeG2Decoration(
+                      radius: 12,
+                      color: colors.surface,
+                      border: Border.all(color: colors.borderLight),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '最近错误详情',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: colors.textSecondary,
+                            fontWeight: MoeFontWeights.emphasis,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        SelectableText(
+                          snapshot.lastFailureError!,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colors.text,
+                            height: 1.4,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
-              ),
-              const SizedBox(height: 12),
-              MoeSettingsGroup(
-                margin: const EdgeInsets.symmetric(horizontal: 16),
-                children: [
-                  MoeSettingsRow(
-                    icon: Icons.event_outlined,
-                    label: '最近失败时间',
-                    trailingType: MoeSettingsRowTrailing.text,
-                    detailText: _formatDateTime(snapshot.lastFailureAt),
-                  ),
-                  MoeSettingsRow(
-                    icon: Icons.report_problem_outlined,
-                    label: '最近失败原因',
-                    trailingType: MoeSettingsRowTrailing.text,
-                    detailText: snapshot.lastFailureReason == null
-                        ? '-'
-                        : _reasonLabel(snapshot.lastFailureReason!.value),
-                    showDivider: false,
-                  ),
-                ],
-              ),
-              if ((snapshot.lastFailureError ?? '').trim().isNotEmpty) ...[
                 const SizedBox(height: 12),
                 Container(
                   padding: const EdgeInsets.all(12),
@@ -198,7 +232,7 @@ class _StreamMonitorDebugPageState extends State<StreamMonitorDebugPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '最近错误详情',
+                        '失败原因分布',
                         style: TextStyle(
                           fontSize: 13,
                           color: colors.textSecondary,
@@ -206,85 +240,54 @@ class _StreamMonitorDebugPageState extends State<StreamMonitorDebugPage> {
                         ),
                       ),
                       const SizedBox(height: 8),
-                      SelectableText(
-                        snapshot.lastFailureError!,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: colors.text,
-                          height: 1.4,
+                      if (reasons.isEmpty)
+                        Text(
+                          '暂无回退记录',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colors.textSecondary,
+                          ),
+                        )
+                      else
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            for (final item in reasons)
+                              Chip(
+                                label: Text(
+                                  '${_reasonLabel(item.key)} x${item.value}',
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                              ),
+                          ],
                         ),
-                      ),
                     ],
                   ),
                 ),
-              ],
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: MoeG2Decoration(
-                  radius: 12,
-                  color: colors.surface,
-                  border: Border.all(color: colors.borderLight),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                const SizedBox(height: 16),
+                Row(
                   children: [
-                    Text(
-                      '失败原因分布',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: colors.textSecondary,
-                        fontWeight: MoeFontWeights.emphasis,
+                    Expanded(
+                      child: MoeSecondaryButton(
+                        label: '刷新',
+                        icon: Icons.refresh,
+                        onPressed: _loading ? null : _loadSnapshot,
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    if (reasons.isEmpty)
-                      Text(
-                        '暂无回退记录',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: colors.textSecondary,
-                        ),
-                      )
-                    else
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          for (final item in reasons)
-                            Chip(
-                              label: Text(
-                                '${_reasonLabel(item.key)} x${item.value}',
-                                style: const TextStyle(fontSize: 12),
-                              ),
-                            ),
-                        ],
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: MoePrimaryButton(
+                        label: '清空统计',
+                        icon: Icons.delete_outline,
+                        onPressed: _resetting ? null : _resetSnapshot,
                       ),
+                    ),
                   ],
                 ),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: MoeSecondaryButton(
-                      label: '刷新',
-                      icon: Icons.refresh,
-                      onPressed: _loading ? null : _loadSnapshot,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: MoePrimaryButton(
-                      label: '清空统计',
-                      icon: Icons.delete_outline,
-                      onPressed: _resetting ? null : _resetSnapshot,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-            ],
+                const SizedBox(height: 24),
+              ],
+            ),
           );
         },
       ),

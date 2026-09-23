@@ -55,13 +55,13 @@ class SmartReplyAdapter implements SmartReplyPort {
             id: definition.id,
             name: definition.name,
             objectivePrompt: definition.objective,
-            contextSpec: const BackgroundContextSpec(lastMessages: 10),
+            contextSpec: const BackgroundContextSpec(lastMessages: 1),
             modelRef: modelRef,
             allowedToolNames: definition.allowedToolNames,
             maxRounds: definition.maxRounds,
           ),
           conversationId: snapshot.conversationId,
-          contextMessages: snapshot.messages,
+          contextMessages: [buildSmartReplyRequest(snapshot.messages)],
           maxOutputTokens: 512,
         );
     return parseSmartReplies(result.text);

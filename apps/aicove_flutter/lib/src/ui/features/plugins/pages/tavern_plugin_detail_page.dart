@@ -22,190 +22,96 @@ class TavernPluginDetailPage extends ConsumerWidget {
     final config = settings.valueOrNull;
     final list = presets.valueOrNull ?? const <PresetRecipeSummary>[];
     return MoePageScaffold(
+      extendBodyBehindAppBar: true,
       backgroundColor: context.moeColors.surface,
       appBar: const MoeAppBar(title: '酒馆兼容插件（测试）', showBackButton: true),
       body: MoeSettingsContent(
-        child: ListView(
-          padding: MoeSettingsLayout.verticalListPadding,
-          children: [
-            MoeSettingsGroup(
-              padding: MoeSettingsLayout.contentPadding,
-              children: [
-                Text(
-                  '插件预设',
-                  style: TextStyle(fontSize: 18, color: context.moeColors.text),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  '每套包含提示词预设、正则和世界书。角色可单独绑定；未绑定时使用标星的默认预设。修改会影响所有绑定角色，从下一次请求生效。',
-                ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    MoePrimaryButton(
-                      label: '导入预设',
-                      onPressed: busy
-                          ? null
-                          : () => _run(context, () async {
-                              final file = await _pickJson();
-                              if (file == null || !context.mounted) return;
-                              final controller = ref.read(
-                                presetRecipeImportControllerProvider.notifier,
-                              );
-                              final preview = controller.previewSource(
-                                file.source,
-                                sourceFileName: file.name,
-                              );
-                              final confirmed = await showMeoTalkDialog(
-                                context: context,
-                                title: '导入「${preview.name}」',
-                                confirmText: '导入',
-                                content: Text(
-                                  '${preview.prompts.length} 个提示词条目 · ${preview.regexScriptCount} 条正则\n'
-                                  '导入后可以逐条开关。正则默认不授权执行。\n\n${preview.warnings.take(5).join('\n')}',
-                                ),
-                              );
-                              if (confirmed != true || !context.mounted) {
-                                return;
-                              }
-                              final preset = await controller.importSource(
-                                file.source,
-                                sourceFileName: file.name,
-                              );
-                              if (context.mounted) {
-                                _openPreset(context, preset.id);
-                              }
-                            }),
-                    ),
-                    MoeSecondaryButton(
-                      label: '创建基础组合',
-                      onPressed: busy
-                          ? null
-                          : () => _run(context, () async {
-                              final preset = await ref
-                                  .read(
-                                    presetRecipeImportControllerProvider
-                                        .notifier,
-                                  )
-                                  .createBasicPreset();
-                              if (context.mounted) {
-                                _openPreset(context, preset.id);
-                              }
-                            }),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                const Text('导入支持 JSON 文件。只想使用正则或世界书？先创建基础组合，再进入对应标签导入。'),
-                if (config?.defaultPresetId != null)
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: TextButton(
-                      onPressed: busy
-                          ? null
-                          : () => _run(
-                              context,
-                              () => ref
-                                  .read(
-                                    presetRecipeImportControllerProvider
-                                        .notifier,
-                                  )
-                                  .change(
-                                    null,
-                                    (port) => port.savePluginSettings(
-                                      const TavernPluginSettings(),
-                                    ),
-                                  ),
-                            ),
-                      child: const Text('取消默认预设（未绑定角色使用原模式）'),
-                    ),
-                  ),
-              ],
+        child: Builder(
+          builder: (context) => ListView(
+            padding: moeUnderBarPadding(
+              context,
+              MoeSettingsLayout.verticalListPadding,
             ),
-            const SizedBox(height: MoeSettingsLayout.sectionGap),
-            if (settings.hasError || presets.hasError)
+            children: [
               MoeSettingsGroup(
                 padding: MoeSettingsLayout.contentPadding,
                 children: [
-                  MoeEmptyState(
-                    title: '读取失败',
-                    description: '${settings.error ?? presets.error}',
-                    action: Wrap(
-                      children: [
-                        TextButton(
-                          onPressed: () {
-                            ref.invalidate(tavernPluginSettingsProvider);
-                            ref.invalidate(presetRecipeListProvider);
-                          },
-                          child: const Text('重试'),
-                        ),
-                        if (settings.hasError)
-                          TextButton(
-                            onPressed: busy
-                                ? null
-                                : () => _run(context, () async {
-                                    final confirmed = await showMeoTalkDialog(
-                                      context: context,
-                                      title: '重置默认选择',
-                                      confirmText: '确认重置',
-                                      content: const Text(
-                                        '清除默认预设选择；不删除预设、正则、世界书或角色绑定。重置后可重新选择默认预设。',
-                                      ),
-                                    );
-                                    if (confirmed != true || !context.mounted) {
-                                      return;
-                                    }
-                                    await ref
-                                        .read(
-                                          presetRecipeImportControllerProvider
-                                              .notifier,
-                                        )
-                                        .change(
-                                          null,
-                                          (port) => port.savePluginSettings(
-                                            const TavernPluginSettings(),
-                                          ),
-                                        );
-                                  }),
-                            child: const Text('重置默认选择'),
-                          ),
-                      ],
+                  Text(
+                    '插件预设',
+                    style: TextStyle(
+                      fontSize: 18,
+                      color: context.moeColors.text,
                     ),
                   ),
-                ],
-              ),
-            if (settings.isLoading || presets.isLoading)
-              const LinearProgressIndicator(),
-            if (!presets.isLoading && list.isEmpty)
-              const MoeSettingsGroup(
-                padding: MoeSettingsLayout.contentPadding,
-                children: [
-                  MoeEmptyState(title: '还没有酒馆预设', description: '导入预设，或创建基础组合。'),
-                ],
-              ),
-            for (final preset in list)
-              Padding(
-                padding: const EdgeInsets.only(
-                  top: MoeSettingsLayout.sectionGap,
-                ),
-                child: MoeSettingsGroup(
-                  children: [
-                    MoeListTile(
-                      title: Text(preset.name),
-                      subtitle: Text(preset.description),
-                      trailing: IconButton(
-                        tooltip: config?.defaultPresetId == preset.id
-                            ? '当前默认预设'
-                            : '设为默认预设',
-                        icon: Icon(
-                          config?.defaultPresetId == preset.id
-                              ? Icons.star
-                              : Icons.star_border,
-                          color: context.moeColors.primary,
-                        ),
-                        onPressed: busy || config == null
+                  const SizedBox(height: 8),
+                  const Text(
+                    '每套包含提示词预设、正则和世界书。角色可单独绑定；未绑定时使用标星的默认预设。修改会影响所有绑定角色，从下一次请求生效。',
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      MoePrimaryButton(
+                        label: '导入预设',
+                        onPressed: busy
+                            ? null
+                            : () => _run(context, () async {
+                                final file = await _pickJson();
+                                if (file == null || !context.mounted) return;
+                                final controller = ref.read(
+                                  presetRecipeImportControllerProvider.notifier,
+                                );
+                                final preview = controller.previewSource(
+                                  file.source,
+                                  sourceFileName: file.name,
+                                );
+                                final confirmed = await showMeoTalkDialog(
+                                  context: context,
+                                  title: '导入「${preview.name}」',
+                                  confirmText: '导入',
+                                  content: Text(
+                                    '${preview.prompts.length} 个提示词条目 · ${preview.regexScriptCount} 条正则\n'
+                                    '导入后可以逐条开关。正则默认不授权执行。\n\n${preview.warnings.take(5).join('\n')}',
+                                  ),
+                                );
+                                if (confirmed != true || !context.mounted) {
+                                  return;
+                                }
+                                final preset = await controller.importSource(
+                                  file.source,
+                                  sourceFileName: file.name,
+                                );
+                                if (context.mounted) {
+                                  _openPreset(context, preset.id);
+                                }
+                              }),
+                      ),
+                      MoeSecondaryButton(
+                        label: '创建基础组合',
+                        onPressed: busy
+                            ? null
+                            : () => _run(context, () async {
+                                final preset = await ref
+                                    .read(
+                                      presetRecipeImportControllerProvider
+                                          .notifier,
+                                    )
+                                    .createBasicPreset();
+                                if (context.mounted) {
+                                  _openPreset(context, preset.id);
+                                }
+                              }),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text('导入支持 JSON 文件。只想使用正则或世界书？先创建基础组合，再进入对应标签导入。'),
+                  if (config?.defaultPresetId != null)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton(
+                        onPressed: busy
                             ? null
                             : () => _run(
                                 context,
@@ -217,19 +123,126 @@ class TavernPluginDetailPage extends ConsumerWidget {
                                     .change(
                                       null,
                                       (port) => port.savePluginSettings(
-                                        TavernPluginSettings(
-                                          defaultPresetId: preset.id,
-                                        ),
+                                        const TavernPluginSettings(),
                                       ),
                                     ),
                               ),
+                        child: const Text('取消默认预设（未绑定角色使用原模式）'),
                       ),
-                      onTap: () => _openPreset(context, preset.id),
+                    ),
+                ],
+              ),
+              const SizedBox(height: MoeSettingsLayout.sectionGap),
+              if (settings.hasError || presets.hasError)
+                MoeSettingsGroup(
+                  padding: MoeSettingsLayout.contentPadding,
+                  children: [
+                    MoeEmptyState(
+                      title: '读取失败',
+                      description: '${settings.error ?? presets.error}',
+                      action: Wrap(
+                        children: [
+                          TextButton(
+                            onPressed: () {
+                              ref.invalidate(tavernPluginSettingsProvider);
+                              ref.invalidate(presetRecipeListProvider);
+                            },
+                            child: const Text('重试'),
+                          ),
+                          if (settings.hasError)
+                            TextButton(
+                              onPressed: busy
+                                  ? null
+                                  : () => _run(context, () async {
+                                      final confirmed = await showMeoTalkDialog(
+                                        context: context,
+                                        title: '重置默认选择',
+                                        confirmText: '确认重置',
+                                        content: const Text(
+                                          '清除默认预设选择；不删除预设、正则、世界书或角色绑定。重置后可重新选择默认预设。',
+                                        ),
+                                      );
+                                      if (confirmed != true ||
+                                          !context.mounted) {
+                                        return;
+                                      }
+                                      await ref
+                                          .read(
+                                            presetRecipeImportControllerProvider
+                                                .notifier,
+                                          )
+                                          .change(
+                                            null,
+                                            (port) => port.savePluginSettings(
+                                              const TavernPluginSettings(),
+                                            ),
+                                          );
+                                    }),
+                              child: const Text('重置默认选择'),
+                            ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
-              ),
-          ],
+              if (settings.isLoading || presets.isLoading)
+                const LinearProgressIndicator(),
+              if (!presets.isLoading && list.isEmpty)
+                const MoeSettingsGroup(
+                  padding: MoeSettingsLayout.contentPadding,
+                  children: [
+                    MoeEmptyState(
+                      title: '还没有酒馆预设',
+                      description: '导入预设，或创建基础组合。',
+                    ),
+                  ],
+                ),
+              for (final preset in list)
+                Padding(
+                  padding: const EdgeInsets.only(
+                    top: MoeSettingsLayout.sectionGap,
+                  ),
+                  child: MoeSettingsGroup(
+                    children: [
+                      MoeListTile(
+                        title: Text(preset.name),
+                        subtitle: Text(preset.description),
+                        trailing: IconButton(
+                          tooltip: config?.defaultPresetId == preset.id
+                              ? '当前默认预设'
+                              : '设为默认预设',
+                          icon: Icon(
+                            config?.defaultPresetId == preset.id
+                                ? Icons.star
+                                : Icons.star_border,
+                            color: context.moeColors.primary,
+                          ),
+                          onPressed: busy || config == null
+                              ? null
+                              : () => _run(
+                                  context,
+                                  () => ref
+                                      .read(
+                                        presetRecipeImportControllerProvider
+                                            .notifier,
+                                      )
+                                      .change(
+                                        null,
+                                        (port) => port.savePluginSettings(
+                                          TavernPluginSettings(
+                                            defaultPresetId: preset.id,
+                                          ),
+                                        ),
+                                      ),
+                                ),
+                        ),
+                        onTap: () => _openPreset(context, preset.id),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );

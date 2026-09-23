@@ -79,8 +79,9 @@ class _ModelListPageState extends ConsumerState<ModelListPage> {
     if (settings == null) return;
 
     // 使用本地状态或从设置中获取
-    final providers =
-        List<ProviderAuth>.from(_localProviders ?? settings.providers);
+    final providers = List<ProviderAuth>.from(
+      _localProviders ?? settings.providers,
+    );
 
     // ReorderableListView 的 newIndex 需要调整
     if (newIndex > oldIndex) {
@@ -151,6 +152,7 @@ class _ModelListPageState extends ConsumerState<ModelListPage> {
         }
       },
       child: MoePageScaffold(
+        extendBodyBehindAppBar: true,
         appBar: MoeAppBar(
           title: '模型管理',
           showBackButton: true,
@@ -187,106 +189,37 @@ class _ModelListPageState extends ConsumerState<ModelListPage> {
   Widget _buildContent(AppSettings settings, MoeColors colors) {
     // 优先使用本地状态（乐观更新），否则使用设置中的数据
     final providers = _localProviders ?? settings.providers;
-    final providerEntries =
-        providers.map(_ProviderListEntry.fromProvider).toList(growable: false);
+    final providerEntries = providers
+        .map(_ProviderListEntry.fromProvider)
+        .toList(growable: false);
 
-    final selectedCount =
-        providers.where((p) => _selected.contains(p.id)).length;
+    final selectedCount = providers
+        .where((p) => _selected.contains(p.id))
+        .length;
 
     return GestureDetector(
       onTap: _selectMode ? _exitSelectMode : null,
       child: Stack(
         children: [
-          ListView(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-            children: [
-              // ============ 默认模型设置 ============
-              MoeSettingsGroup(
-                margin: EdgeInsets.zero,
-                padding: EdgeInsets.zero,
-                children: [
-                  MoeSettingsRow(
-                    label: '默认模型设置',
-                    trailingType: MoeSettingsRowTrailing.chevron,
-                    onTap: () {
-                      Navigator.of(context).push(
-                        ParallaxSlidePageRoute(
-                          page: const DefaultModelSettingsPage(),
-                        ),
-                      );
-                    },
-                  ),
-                ],
+          Builder(
+            builder: (context) => ListView(
+              padding: moeUnderBarPadding(
+                context,
+                const EdgeInsets.fromLTRB(16, 12, 16, 0),
               ),
-
-              const SizedBox(height: 16),
-
-              // ============ 渠道供应商列表 ============
-              if (providers.isEmpty)
-                MoeEmptyState(
-                  icon: Icons.cloud_off,
-                  title: '还没有任何供应商',
-                  description: '右上角可以「新增」供应商',
-                  action: MoePrimaryButton(
-                    label: '新增供应商',
-                    icon: Icons.add,
-                    onPressed: () => showAddProviderSheet(context),
-                  ),
-                )
-              else
+              children: [
+                // ============ 默认模型设置 ============
                 MoeSettingsGroup(
                   margin: EdgeInsets.zero,
                   padding: EdgeInsets.zero,
                   children: [
-                    ReorderableListView.builder(
-                      shrinkWrap: true,
-                      padding: EdgeInsets.zero,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: providers.length,
-                      onReorder: _onReorderProviders,
-                      buildDefaultDragHandles: false,
-                      proxyDecorator: (child, index, animation) {
-                        return AnimatedBuilder(
-                          animation: animation,
-                          builder: (context, child) {
-                            final t =
-                                Curves.easeInOut.transform(animation.value);
-                            final scale = lerpDouble(1.0, 0.98, t) ?? 1.0;
-                            return Transform.scale(
-                              scale: scale,
-                              child: Opacity(
-                                opacity: 0.95,
-                                child: child,
-                              ),
-                            );
-                          },
-                          child: child,
-                        );
-                      },
-                      itemBuilder: (context, index) {
-                        final entry = providerEntries[index];
-                        return ReorderableDelayedDragStartListener(
-                          key: ValueKey(entry.provider.id),
-                          index: index,
-                          child: _SettleAnim(
-                            active: _settleKeys.contains(entry.provider.id),
-                            child: _ProviderRow(
-                              entry: entry,
-                              selectMode: _selectMode,
-                              selected: _selected.contains(entry.provider.id),
-                              onToggleSelect: () =>
-                                  _toggleSelected(entry.provider.id),
-                              onOpenDetail: () {
-                                Navigator.of(context).push(
-                                  ParallaxSlidePageRoute(
-                                    page: ProviderDetailPage(
-                                      providerId: entry.provider.id,
-                                    ),
-                                  ),
-                                );
-                              },
-                              showDivider: index != providerEntries.length - 1,
-                            ),
+                    MoeSettingsRow(
+                      label: '默认模型设置',
+                      trailingType: MoeSettingsRowTrailing.chevron,
+                      onTap: () {
+                        Navigator.of(context).push(
+                          ParallaxSlidePageRoute(
+                            page: const DefaultModelSettingsPage(),
                           ),
                         );
                       },
@@ -294,8 +227,83 @@ class _ModelListPageState extends ConsumerState<ModelListPage> {
                   ],
                 ),
 
-              const SizedBox(height: 80), // 底部留白
-            ],
+                const SizedBox(height: 16),
+
+                // ============ 渠道供应商列表 ============
+                if (providers.isEmpty)
+                  MoeEmptyState(
+                    icon: Icons.cloud_off,
+                    title: '还没有任何供应商',
+                    description: '右上角可以「新增」供应商',
+                    action: MoePrimaryButton(
+                      label: '新增供应商',
+                      icon: Icons.add,
+                      onPressed: () => showAddProviderSheet(context),
+                    ),
+                  )
+                else
+                  MoeSettingsGroup(
+                    margin: EdgeInsets.zero,
+                    padding: EdgeInsets.zero,
+                    children: [
+                      ReorderableListView.builder(
+                        shrinkWrap: true,
+                        padding: EdgeInsets.zero,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: providers.length,
+                        onReorder: _onReorderProviders,
+                        buildDefaultDragHandles: false,
+                        proxyDecorator: (child, index, animation) {
+                          return AnimatedBuilder(
+                            animation: animation,
+                            builder: (context, child) {
+                              final t = Curves.easeInOut.transform(
+                                animation.value,
+                              );
+                              final scale = lerpDouble(1.0, 0.98, t) ?? 1.0;
+                              return Transform.scale(
+                                scale: scale,
+                                child: Opacity(opacity: 0.95, child: child),
+                              );
+                            },
+                            child: child,
+                          );
+                        },
+                        itemBuilder: (context, index) {
+                          final entry = providerEntries[index];
+                          return ReorderableDelayedDragStartListener(
+                            key: ValueKey(entry.provider.id),
+                            index: index,
+                            child: _SettleAnim(
+                              active: _settleKeys.contains(entry.provider.id),
+                              child: _ProviderRow(
+                                entry: entry,
+                                selectMode: _selectMode,
+                                selected: _selected.contains(entry.provider.id),
+                                onToggleSelect: () =>
+                                    _toggleSelected(entry.provider.id),
+                                onOpenDetail: () {
+                                  Navigator.of(context).push(
+                                    ParallaxSlidePageRoute(
+                                      page: ProviderDetailPage(
+                                        providerId: entry.provider.id,
+                                      ),
+                                    ),
+                                  );
+                                },
+                                showDivider:
+                                    index != providerEntries.length - 1,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+
+                const SizedBox(height: 80), // 底部留白
+              ],
+            ),
           ),
           Positioned(
             left: 0,
@@ -305,8 +313,9 @@ class _ModelListPageState extends ConsumerState<ModelListPage> {
               visible: _selectMode,
               count: selectedCount,
               total: providers.length,
-              onDelete:
-                  selectedCount == 0 ? null : () => _deleteSelected(providers),
+              onDelete: selectedCount == 0
+                  ? null
+                  : () => _deleteSelected(providers),
               onSelectAll: () => _toggleSelectAll(providers),
             ),
           ),
@@ -348,10 +357,7 @@ class _ProviderRow extends StatelessWidget {
             ),
             const SizedBox(width: 8),
           ],
-          ProviderAvatar(
-            providerName: entry.name,
-            size: ProviderAvatarSize.sm,
-          ),
+          ProviderAvatar(providerName: entry.name, size: ProviderAvatarSize.sm),
         ],
       ),
       iconContainerWidth: selectMode ? 84 : 40,
@@ -397,8 +403,8 @@ class _ProviderListEntry {
     final capSummary = caps.isEmpty
         ? null
         : (caps.length > 2
-            ? '${caps.take(2).join('/')} +${caps.length - 2}'
-            : caps.join('/'));
+              ? '${caps.take(2).join('/')} +${caps.length - 2}'
+              : caps.join('/'));
     final modelCount = provider.visibleModels.isNotEmpty
         ? provider.visibleModels.length
         : provider.models.length;
@@ -504,8 +510,10 @@ class _CircleActionButton extends StatelessWidget {
       backgroundColor: backgroundColor.withValues(alpha: 0.75),
       pressedBackgroundColor: backgroundColor.withValues(alpha: 0.9),
       borderRadius: MoeRadii.borderCapsule,
-      border:
-          BorderSide(color: colors.border.withValues(alpha: 0.25), width: 0.8),
+      border: BorderSide(
+        color: colors.border.withValues(alpha: 0.25),
+        width: 0.8,
+      ),
     );
   }
 }
@@ -525,10 +533,7 @@ class _StatusChip extends StatelessWidget {
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: MoeG2Decoration(
-        radius: MoeRadii.xs,
-        color: bg,
-      ),
+      decoration: MoeG2Decoration(radius: MoeRadii.xs, color: bg),
       child: Text(
         enabled ? '已启用' : '已禁用',
         style: TextStyle(fontSize: 11, color: fg),

@@ -4,35 +4,33 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
-import 'package:aicove_flutter/src/features/chat/domain/topic_compaction_port.dart';
-import 'package:aicove_flutter/src/features/chat/providers/topic_compaction_provider.dart';
+import 'package:aicove_flutter/src/features/context/domain/context_summary.dart';
+import 'package:aicove_flutter/src/features/context/providers/context_providers.dart';
 import 'package:aicove_flutter/src/ui/features/chat/widgets/topic_compaction_button.dart';
 
-class _Port implements TopicCompactionPort {
+class _Port implements ManualCompactionPort {
   final saved = <String, String>{};
-  final archives = <bool>[];
   Completer<void>? gate;
-  bool conflict = false, memory = true;
+  bool conflict = false;
   bool Function()? cancelled;
-  TopicCompactionDraft draft(String owner) {
+  ManualCompactionDraft draft(String owner) {
     final message = Message(
         id: '$owner-raw',
         role: 'user',
         content: '$owner旧内容',
         createdAt: DateTime(2026));
-    return TopicCompactionDraft(
-        snapshot: TopicSnapshot(
+    return ManualCompactionDraft(
+        snapshot: ContextSnapshot(
             ownerId: owner,
             previousBoundaryId: null,
             allMessages: [message],
             messages: [message],
             previous: null),
-        summary: '$owner：周五看海，怕冷',
-        canArchive: memory);
+        summary: '$owner：周五看海，怕冷');
   }
 
   @override
-  Future<TopicCompactionDraft> prepare(String ownerId,
+  Future<ManualCompactionDraft> prepare(String ownerId,
       {required void Function(int, int) onProgress,
       required bool Function() isCancelled}) async {
     cancelled = isCancelled;
@@ -42,30 +40,26 @@ class _Port implements TopicCompactionPort {
   }
 
   @override
-  Future<TopicCompactionResult> commit(
-      TopicCompactionDraft draft, String summary,
-      {required bool archive}) async {
-    if (conflict) throw const TopicCompactionException('聊天已发生变化，草稿仍保留');
+  Future<ContextSummary> commit(
+      ManualCompactionDraft draft, String summary) async {
+    if (conflict) {
+      throw const ContextCompactionException('聊天已发生变化，草稿仍保留');
+    }
     saved[draft.snapshot.ownerId] = summary;
-    archives.add(archive);
-    return TopicCompactionResult(
-        TopicHandoff(
-            id: 'id',
-            ownerId: draft.snapshot.ownerId,
-            boundaryId: draft.snapshot.boundaryId,
-            previousBoundaryId: null,
-            summary: summary,
-            sourceIds: [],
-            sourceDigest: '',
-            createdAt: DateTime(2026),
-            memoryState: 'off'),
-        memoryPending: false);
+    return ContextSummary(
+        id: 'id',
+        ownerId: draft.snapshot.ownerId,
+        kind: ContextSummaryKind.manual,
+        boundaryId: draft.snapshot.boundaryId,
+        topicBoundary: null,
+        summary: summary,
+        sourceIds: const [],
+        sourceDigest: '',
+        createdAt: DateTime(2026));
   }
 
   @override
-  Future<TopicHandoff?> current(String ownerId) async => null;
-  @override
-  Future<bool> retryArchive(String ownerId) async => true;
+  Future<ContextSummary?> current(String ownerId) async => null;
   @override
   Future<void> undo(String ownerId) async {}
 }
@@ -75,7 +69,7 @@ void main() {
   Future<void> open(WidgetTester tester, _Port port,
       {bool generating = false}) async {
     await tester.pumpWidget(ProviderScope(
-        overrides: [topicCompactionProvider.overrideWithValue(port)],
+        overrides: [manualCompactionProvider.overrideWithValue(port)],
         child: MaterialApp(
             home: Scaffold(
                 appBar: AppBar(actions: [
@@ -86,7 +80,7 @@ void main() {
   }
 
   for (final width in [360.0, 1000.0]) {
-    testWidgets('$width：真实右上角入口，摘要预览/编辑/归档开关/保存', (tester) async {
+    testWidgets('$width：真实右上角入口，摘要预览/编辑/保存，提示会整理长期记忆', (tester) async {
       await tester.binding.setSurfaceSize(Size(width, 850));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       final port = _Port();
@@ -97,13 +91,11 @@ void main() {
       expect(port.saved, isEmpty);
       expect(find.text('a：周五看海，怕冷'), findsOneWidget);
       await tester.enterText(find.byType(TextField), '周五看海，要带外套');
-      await tester.ensureVisible(find.text('同时归档到该角色记忆'));
-      await tester.tap(find.text('同时归档到该角色记忆'));
-      await tester.pumpAndSettle();
+      expect(find.text('同时归档到该角色记忆'), findsNothing);
+      expect(find.textContaining('整理进长期记忆'), findsOneWidget);
       await tester.tap(find.text('保存并开启'));
       await tester.pumpAndSettle();
       expect(port.saved, {'a': '周五看海，要带外套'});
-      expect(port.archives, [false]);
       expect(tester.takeException(), isNull);
       await tester.pump(const Duration(seconds: 4));
       await tester.pumpAndSettle();

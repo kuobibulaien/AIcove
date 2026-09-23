@@ -21,7 +21,7 @@ import 'package:aicove_flutter/src/ui/features/auto_reply/pages/auto_reply_setti
 import 'package:aicove_flutter/src/ui/features/auto_reply/pages/auto_reply_trigger_list_page.dart';
 import 'package:aicove_flutter/src/ui/features/auto_reply/widgets/auto_reply_settings_cards.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/image_plugin_detail_page.dart';
-import 'package:aicove_flutter/src/ui/features/plugins/pages/memory_plugin_detail_page.dart';
+import 'package:aicove_flutter/src/ui/features/settings/pages/context_memory_settings_page.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/time_awareness_plugin_detail_page.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/tts_plugin_detail_page.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/tavern_plugin_detail_page.dart';
@@ -198,7 +198,7 @@ void main() {
 
   group('窄屏与大字号', () {
     final pages = <String, Widget>{
-      'memory': const MemoryPluginDetailPage(),
+      'memory': const ContextMemorySettingsPage(),
       'auto-reply': const AutoReplySettingsPage(),
       'tts': const TtsPluginDetailPage(),
       'tavern': const TavernPluginDetailPage(),
@@ -235,7 +235,7 @@ void main() {
   group('宽屏自适应壳', () {
     for (final width in [1000.0, 1280.0]) {
       for (final entry in <String, Widget>{
-        'memory': const MemoryPluginDetailPage(),
+        'memory': const ContextMemorySettingsPage(),
         'auto-reply': const AutoReplySettingsPage(),
         'tts': const TtsPluginDetailPage(),
         'tavern': const TavernPluginDetailPage(),
@@ -308,39 +308,6 @@ void main() {
         });
       }
     }
-  });
-
-  testWidgets('记忆库失效配置点击清除后写回空且同宽', (tester) async {
-    await _mount(
-      tester,
-      const MemoryPluginDetailPage(),
-      embedding: false,
-      prefs: {
-        'aicove.plugins.memory.config': jsonEncode({
-          'embeddingProviderId': 'gone',
-          'embeddingModelName': 'old-embed',
-        }),
-      },
-    );
-    expect(tester.takeException(), isNull);
-    expect(find.textContaining('当前配置已失效'), findsOneWidget);
-    _expectUnifiedSurfaceWidth(tester);
-    final element = tester.element(find.byType(MemoryPluginDetailPage));
-    final container = ProviderScope.containerOf(element);
-    await tester.tap(find.textContaining('点击清除'));
-    await tester.pumpAndSettle();
-    final config = container.read(memoryPluginConfigProvider);
-    expect(config.embeddingProviderId, isNull);
-    expect(config.embeddingModelName, isNull);
-    await tester.runAsync(() async {
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-      final prefs = await SharedPreferences.getInstance();
-      final stored = prefs.getString('aicove.plugins.memory.config');
-      expect(stored, isNotNull);
-      final decoded = jsonDecode(stored!) as Map<String, dynamic>;
-      expect(decoded['embeddingProviderId'], isNull);
-      expect(decoded['embeddingModelName'], isNull);
-    });
   });
 
   testWidgets('主动回复开启时全部分组同列等宽', (tester) async {

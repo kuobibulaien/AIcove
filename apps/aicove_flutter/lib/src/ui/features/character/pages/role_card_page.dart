@@ -8,16 +8,29 @@ import '../../../shared/widgets/index.dart';
 import '../../../theme/tokens.dart';
 import '../services/open_role_chat.dart';
 
-class RoleCardPage extends StatelessWidget {
+class RoleCardPage extends StatefulWidget {
   const RoleCardPage({super.key});
+  @override
+  State<RoleCardPage> createState() => _RoleCardPageState();
+}
+
+class _RoleCardPageState extends State<RoleCardPage> {
+  String _query = '';
+
   @override
   Widget build(BuildContext context) => Scaffold(
     backgroundColor: MoeSurfaceGroup.contains(context)
         ? Colors.transparent
         : context.moeColors.surface,
+    extendBodyBehindAppBar: true,
     appBar: MoeAppBar(
       title: '角色',
       centerTitle: true,
+      bottom: MoeSearchField(
+        hintText: '搜索',
+        onChanged: (value) => setState(() => _query = value),
+      ),
+      bottomHeight: MoeSearchField.heightFor(context),
       actions: [
         IconButton(
           tooltip: '创建角色',
@@ -26,113 +39,101 @@ class RoleCardPage extends StatelessWidget {
         ),
       ],
     ),
-    body: const RoleCardContent(),
+    body: RoleCardContent(query: _query),
   );
 }
 
 /// Shared, ungrouped role directory with one row per role.
 class RoleCardContent extends ConsumerStatefulWidget {
-  const RoleCardContent({super.key});
+  const RoleCardContent({super.key, this.query = ''});
+
+  final String query;
   @override
   ConsumerState<RoleCardContent> createState() => _RoleCardContentState();
 }
 
 class _RoleCardContentState extends ConsumerState<RoleCardContent> {
   late final _presets = PresetCharactersLoader.load();
-  String _query = '';
 
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
     final conversations = ref.watch(conversationsProvider);
-    return Column(
-      children: [
-        MoeSearchField(
-          hintText: '搜索',
-          onChanged: (value) => setState(() => _query = value),
-        ),
-        Expanded(
-          child: conversations.when(
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (error, _) => MoeEmptyState(
-              icon: Icons.error_outline,
-              title: '角色加载失败',
-              description: '$error',
+    return conversations.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (error, _) => MoeEmptyState(
+        icon: Icons.error_outline,
+        title: '角色加载失败',
+        description: '$error',
+      ),
+      data: (items) => FutureBuilder<List<Conversation>>(
+        future: _presets,
+        builder: (context, snapshot) {
+          final query = widget.query.trim().toLowerCase();
+          final directory = {for (final role in items) role.id: role};
+          for (final role in snapshot.data ?? <Conversation>[]) {
+            directory.putIfAbsent(role.id, () => role);
+          }
+          final roles = directory.values
+              .where((c) => c.displayName.toLowerCase().contains(query))
+              .toList(growable: false);
+          if (roles.isEmpty) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            return MoeEmptyState(
+              icon: Icons.search,
+              title: query.isEmpty ? '暂无角色' : '没有找到角色',
+            );
+          }
+          return ListView.separated(
+            padding: moeUnderBarPadding(context),
+            itemCount: roles.length,
+            separatorBuilder: (_, __) => Divider(
+              height: borderWidth,
+              thickness: borderWidth,
+              indent: 72,
+              color: colors.divider,
             ),
-            data: (items) => FutureBuilder<List<Conversation>>(
-              future: _presets,
-              builder: (context, snapshot) {
-                final query = _query.trim().toLowerCase();
-                final directory = {for (final role in items) role.id: role};
-                for (final role in snapshot.data ?? <Conversation>[]) {
-                  directory.putIfAbsent(role.id, () => role);
-                }
-                final roles = directory.values
-                    .where((c) => c.displayName.toLowerCase().contains(query))
-                    .toList(growable: false);
-                if (roles.isEmpty) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  return MoeEmptyState(
-                    icon: Icons.search,
-                    title: query.isEmpty ? '暂无角色' : '没有找到角色',
-                  );
-                }
-                return ListView.separated(
-                  padding: EdgeInsets.zero,
-                  itemCount: roles.length,
-                  separatorBuilder: (_, __) => Divider(
-                    height: borderWidth,
-                    thickness: borderWidth,
-                    indent: 72,
-                    color: colors.divider,
+            itemBuilder: (context, index) {
+              final role = roles[index];
+              final description = role.description?.trim();
+              return MoeListTile(
+                key: ValueKey('role-directory-${role.id}'),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 12,
+                ),
+                leading: MoeAvatar(
+                  name: role.displayName,
+                  avatarUrl: role.avatarUrl,
+                  characterImage: role.characterImage,
+                  size: 48,
+                ),
+                title: Text(
+                  role.displayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: colors.text,
+                    fontWeight: FontWeight.w600,
                   ),
-                  itemBuilder: (context, index) {
-                    final role = roles[index];
-                    final description = role.description?.trim();
-                    return MoeListTile(
-                      key: ValueKey('role-directory-${role.id}'),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 12,
-                      ),
-                      leading: MoeAvatar(
-                        name: role.displayName,
-                        avatarUrl: role.avatarUrl,
-                        characterImage: role.characterImage,
-                        size: 48,
-                      ),
-                      title: Text(
-                        role.displayName,
+                ),
+                subtitle: description?.isNotEmpty == true
+                    ? Text(
+                        description!,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: colors.text,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      subtitle: description?.isNotEmpty == true
-                          ? Text(
-                              description!,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: colors.muted,
-                              ),
-                            )
-                          : null,
-                      onTap: () => openRoleChat(context, ref, role),
-                    );
-                  },
-                );
-              },
-            ),
-          ),
-        ),
-      ],
+                        style: TextStyle(fontSize: 14, color: colors.muted),
+                      )
+                    : null,
+                onTap: () => openRoleChat(context, ref, role),
+              );
+            },
+          );
+        },
+      ),
     );
   }
 }

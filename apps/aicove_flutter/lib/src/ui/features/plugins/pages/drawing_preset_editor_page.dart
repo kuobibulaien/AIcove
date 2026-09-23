@@ -328,6 +328,7 @@ class _DrawingPresetEditorPageState
 
     return autoSavePage(
       MoePageScaffold(
+        extendBodyBehindAppBar: true,
         backgroundColor: colors.surface,
         appBar: MoeAppBar(
           title: widget.isNew ? '新建绘图预设' : '编辑绘图预设',
@@ -372,91 +373,93 @@ class _DrawingPresetEditorPageState
               alignment: Alignment.topCenter,
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 760),
-                child: ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: [
-                    _field('name', '预设名称'),
-                    MoeSettingsGroup(
-                      margin: const EdgeInsets.only(bottom: 16),
-                      children: [
-                        MoeSettingsRow(
-                          label: '渠道与模型',
-                          subtitle: _config.selectedModelId == null
-                              ? '请选择'
-                              : '${provider?.displayName ?? provider?.id ?? '渠道不可用'}\n${settings.getModelDisplayName(_config.selectedModelId!)}',
-                          onTap: () => _pickModel(settings),
-                        ),
-                        if (!widget.isNew) ...[
-                          if (isDefault)
-                            MoeSettingsRow(
-                              icon: Icons.check_circle,
-                              iconColor: colors.primary,
-                              label: '默认预设',
-                              subtitle: '当前角色未单独绑定时使用此预设',
-                              trailingType: MoeSettingsRowTrailing.none,
-                            )
-                          else
-                            MoeSettingsRow(
-                              label: '设为默认预设',
-                              subtitle: '未单独绑定预设的角色将使用此预设',
-                              trailingType: MoeSettingsRowTrailing.chevron,
-                              onTap: () => _setDefault(context),
-                            ),
+                child: Builder(
+                  builder: (context) => ListView(
+                    padding: moeUnderBarPadding(context, EdgeInsets.all(16)),
+                    children: [
+                      _field('name', '预设名称'),
+                      MoeSettingsGroup(
+                        margin: const EdgeInsets.only(bottom: 16),
+                        children: [
+                          MoeSettingsRow(
+                            label: '渠道与模型',
+                            subtitle: _config.selectedModelId == null
+                                ? '请选择'
+                                : '${provider?.displayName ?? provider?.id ?? '渠道不可用'}\n${settings.getModelDisplayName(_config.selectedModelId!)}',
+                            onTap: () => _pickModel(settings),
+                          ),
+                          if (!widget.isNew) ...[
+                            if (isDefault)
+                              MoeSettingsRow(
+                                icon: Icons.check_circle,
+                                iconColor: colors.primary,
+                                label: '默认预设',
+                                subtitle: '当前角色未单独绑定时使用此预设',
+                                trailingType: MoeSettingsRowTrailing.none,
+                              )
+                            else
+                              MoeSettingsRow(
+                                label: '设为默认预设',
+                                subtitle: '未单独绑定预设的角色将使用此预设',
+                                trailingType: MoeSettingsRowTrailing.chevron,
+                                onTap: () => _setDefault(context),
+                              ),
+                          ],
                         ],
-                      ],
-                    ),
-                    _field('style', '画师串 / 正面风格', lines: 4),
-                    _field('negativeStyle', '负面风格', lines: 3),
-                    const Text(
-                      '参考参数',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 12),
-                      child: Text('模型可按画面需要合理调整；未传参数时使用这里的值。'),
-                    ),
-                    _field('width', '宽度（256–2048）', number: true),
-                    _field('height', '高度（256–2048）', number: true),
-                    if (sampling) ...[
-                      _field('steps', '步数（1–100）', number: true),
-                      _field('guidance_scale', '提示词强度（0–10）', number: true),
-                    ],
-                    _field('count', '张数（1–4）', number: true),
-                    ExpansionTile(
-                      title: const Text('高级'),
-                      subtitle: const Text('生图辅助提示词与其它参数'),
-                      childrenPadding: const EdgeInsets.only(top: 16),
-                      children: [
-                        _field('negative', '基础负面提示词', lines: 3),
-                        _field('timeout', '请求超时（5–600 秒）', number: true),
-                        const Padding(
-                          padding: EdgeInsets.only(bottom: 16),
-                          child: Text('以下为内置辅助提示词，一般无需修改。'),
-                        ),
-                        _field('tool', '工具说明', lines: 4),
-                        _field('prompt', '正面提示词规范', lines: 6),
-                        _field('negativePrompt', '负面提示词规范', lines: 4),
-                        _field('widthPrompt', '宽度说明', lines: 2),
-                        _field('heightPrompt', '高度说明', lines: 2),
-                        _field('inline', '快速模式辅助提示词', lines: 6),
-                      ],
-                    ),
-                    const SizedBox(height: 24),
-                    MoeSecondaryButton(
-                      label: '生图测试',
-                      onPressed: () => _test(context),
-                    ),
-                    if (!widget.isNew) ...[
-                      const SizedBox(height: 12),
-                      MoeSecondaryButton(
-                        key: ValueKey('delete-drawing-${widget.preset.id}'),
-                        label: '删除预设',
-                        foregroundColor: Theme.of(context).colorScheme.error,
-                        onPressed: () => _delete(context),
                       ),
+                      _field('style', '画师串 / 正面风格', lines: 4),
+                      _field('negativeStyle', '负面风格', lines: 3),
+                      const Text(
+                        '参考参数',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 12),
+                        child: Text('模型可按画面需要合理调整；未传参数时使用这里的值。'),
+                      ),
+                      _field('width', '宽度（256–2048）', number: true),
+                      _field('height', '高度（256–2048）', number: true),
+                      if (sampling) ...[
+                        _field('steps', '步数（1–100）', number: true),
+                        _field('guidance_scale', '提示词强度（0–10）', number: true),
+                      ],
+                      _field('count', '张数（1–4）', number: true),
+                      ExpansionTile(
+                        title: const Text('高级'),
+                        subtitle: const Text('生图辅助提示词与其它参数'),
+                        childrenPadding: const EdgeInsets.only(top: 16),
+                        children: [
+                          _field('negative', '基础负面提示词', lines: 3),
+                          _field('timeout', '请求超时（5–600 秒）', number: true),
+                          const Padding(
+                            padding: EdgeInsets.only(bottom: 16),
+                            child: Text('以下为内置辅助提示词，一般无需修改。'),
+                          ),
+                          _field('tool', '工具说明', lines: 4),
+                          _field('prompt', '正面提示词规范', lines: 6),
+                          _field('negativePrompt', '负面提示词规范', lines: 4),
+                          _field('widthPrompt', '宽度说明', lines: 2),
+                          _field('heightPrompt', '高度说明', lines: 2),
+                          _field('inline', '快速模式辅助提示词', lines: 6),
+                        ],
+                      ),
+                      const SizedBox(height: 24),
+                      MoeSecondaryButton(
+                        label: '生图测试',
+                        onPressed: () => _test(context),
+                      ),
+                      if (!widget.isNew) ...[
+                        const SizedBox(height: 12),
+                        MoeSecondaryButton(
+                          key: ValueKey('delete-drawing-${widget.preset.id}'),
+                          label: '删除预设',
+                          foregroundColor: Theme.of(context).colorScheme.error,
+                          onPressed: () => _delete(context),
+                        ),
+                      ],
+                      const SizedBox(height: 32),
                     ],
-                    const SizedBox(height: 32),
-                  ],
+                  ),
                 ),
               ),
             );

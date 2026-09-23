@@ -343,96 +343,6 @@ Rules:
 
   static const String timeAwarenessReminderDefault = r'''{current_time_line}{previous_user_message_line}请自行判断当前与历史对话的关系。''';
 
-  static const String memorySummaryDefault = r'''你是记忆提取助手，分析聊天记录并提取值得记忆的事实。
-
-## 输出格式
-
-按 JSON 输出，不要解释性文本：
-
-{
-  "items": [
-    {
-      "fact": "事件概要；若 target_layer=L3，必须写成角色第一视角的单条日记事件，20~80字",
-      "category": "core_preference | identity_fact | emotional_event | ongoing_plan | temporary_state | daily_chatter",
-      "target_layer": "L2 | L3 | L4",
-      "chat_process": "仅L2可填",
-      "emotion": "仅L2可填",
-      "personality_insight": "仅L2可填",
-      "ai_strategy": "仅L2可填"
-    }
-  ],
-  "profile_suggestion": {
-    "trait": "可空",
-    "evidence": "可空"
-  }
-}
-
-## 字段说明
-
-**category（事件类型）**：
-- `core_preference`：核心偏好（如喜欢被安慰、讨厌被催促）
-- `identity_fact`：身份事实（如职业、家庭、生活习惯）
-- `emotional_event`：情感事件（如吵架、和好、重要时刻）
-- `ongoing_plan`：进行中的计划（如准备考试、正在减肥）
-- `temporary_state`：临时状态（如今天心情不好、这周很忙）
-- `daily_chatter`：日常闲聊（如今天吃了什么、天气如何）
-
-**target_layer（目标层级）**：
-- `L2`：技能记忆（如何应对特定情境）
-- `L3`：日记事件（角色第一视角的单条事件）
-- `L4`：长期回忆（重要的历史事件）
-
-**L2 专属字段**：
-- `chat_process`：对话过程描述
-- `emotion`：用户情绪
-- `personality_insight`：性格洞察
-- `ai_strategy`：应对策略
-
-## 约束
-
-- 不要编造；不确定就不输出
-- 输出 0~8 条，宁缺毋滥
-- 认真使用消息时间戳，判断事情发生在多久前、现在是否还在持续
-- L3 允许同一天输出多条事件，每条都是可独立展示的日记片段
-- 不要把短期状态误写成长期稳定事实''';
-
-  static const String memorySummaryExtraInstruction = r'''你当前收到的是已经按记忆触发规则挑选过的一批旧消息：
-- 核心部分是当前用户消息之前 24 小时保护期之外、且尚未总结的消息
-- 如果保护期边界前后的用户消息连续间隔不超过 10 分钟，保护期内相邻消息也可能被并入
-你正在整理的是某一个角色自己的专属记忆库：
-- 每个 conversationId 都代表一个独立角色记忆库
-- L1 / L2 / L3 / L4 都是这个角色记忆库内部的分层，不是全局共享池
-- 不要把其他角色可能拥有的经历、口吻或记忆混进当前输出
-请强烈关注每条消息中的时间戳，判断事件发生在多久前、是否已经结束，不要把短期状态误写成长期稳定事实。
-严格按要求输出 JSON，不要输出 markdown。''';
-
-  static const String memorySummaryRolePersonaGenericInstruction = r'''当前正在整理一个角色专属记忆库：
-- conversationId：{conversation_id}
-- 你写出的 L1/L2/L3/L4 都只能属于这个角色
-
-当 target_layer = L3 时：
-- fact 必须用角色第一视角写成单条日记事件，像角色自己在回顾“我和用户发生了什么”
-- 可以输出同一天的多条不同事件，每条只聚焦一件事
-- 不要写成旁白、观察报告或分析结论''';
-
-  static const String memorySummaryRolePersonaContextInstruction = r'''当前需要你以指定角色的人设来整理记忆：
-- 当前记忆库类型：角色专属记忆库
-- 当前记忆库 ID：{conversation_id}
-- 角色名：{role_name}
-- 角色自称优先使用：{self_address}
-- 对用户称呼优先使用：{user_address}{persona_summary_block}
-
-{generic_instruction_block}
-- 单日内允许输出多条 L3 事件，这些事件之后会被拼接为同一篇日记展示''';
-
-  static const String memoryRoleScopedRoot = r'''## 当前角色专属记忆库
-- 当前角色：{role_label}
-- 作用范围：以下 L1/L2/L3/L4 记忆仅属于当前角色，不能套用到其他角色
-- 注入方式：L1 直接插入；L2 以 skill 索引和命中详情插入；L3 以召回回忆插入{profile_block}{l2_skill_index_block}{l2_skill_detail_block}{recall_block}''';
-
-  static const String memoryProfilePromptRoot = r'''## 用户画像
-{lines}''';
-
   static const String systemReminderSemantics = r'''<{tag_name}> 中的内容是系统补充信息，请据此理解上下文，不要原样复述。''';
 
   static const String promptTagSemanticsLeadIn = r'''以下是当前会话启用的特殊标签说明。请理解这些标签的含义和规则，但不要把这些说明原样复述给用户。''';
@@ -453,25 +363,6 @@ Rules:
 {conversation_text}
 
 请直接输出日记正文：''';
-
-  static const String memoryMergePrompt = r'''你有一条已存在的记忆和一条新事实，它们是关于同一个主题。
-请合并成一条带时间线的记忆：
-1. 按时间顺序排列
-2. 保留关键细节
-3. 结尾必须包含 "→ 当前状态：..."
-
-已存在记忆：
-{old_content}
-
-新事实：
-{new_fact}
-
-合并结果：''';
-
-  static const String memoryReEnrichDefault = r'''【重新丰富】
-事件：{compressed_content}
-聊天经过：{recent_message_context}
-→ 当前状态：基于最近对话重新确认''';
 
   static const List<String> ids = <String>[
     'auto_reply.analyzer.default',
@@ -494,18 +385,10 @@ Rules:
     'trigger.logic.legacy_default',
     'time_awareness.system.default',
     'time_awareness.reminder.default',
-    'memory.summary.default',
-    'memory.summary.extra_instruction',
-    'memory.summary.role_persona.generic_instruction',
-    'memory.summary.role_persona.context_instruction',
-    'memory.role_scoped.root',
-    'memory.profile_prompt.root',
     'system_reminder.semantics',
     'prompt_tag_semantics.lead_in',
     'chat.draw_image.stable_review_instruction',
     'diary.generate.default',
-    'memory.merge.prompt',
-    'memory.reenrich.default',
   ];
 
   static String? templateById(String id) {
@@ -550,18 +433,6 @@ Rules:
         return timeAwarenessSystemDefault;
       case 'time_awareness.reminder.default':
         return timeAwarenessReminderDefault;
-      case 'memory.summary.default':
-        return memorySummaryDefault;
-      case 'memory.summary.extra_instruction':
-        return memorySummaryExtraInstruction;
-      case 'memory.summary.role_persona.generic_instruction':
-        return memorySummaryRolePersonaGenericInstruction;
-      case 'memory.summary.role_persona.context_instruction':
-        return memorySummaryRolePersonaContextInstruction;
-      case 'memory.role_scoped.root':
-        return memoryRoleScopedRoot;
-      case 'memory.profile_prompt.root':
-        return memoryProfilePromptRoot;
       case 'system_reminder.semantics':
         return systemReminderSemantics;
       case 'prompt_tag_semantics.lead_in':
@@ -570,10 +441,6 @@ Rules:
         return chatDrawImageStableReviewInstruction;
       case 'diary.generate.default':
         return diaryGenerateDefault;
-      case 'memory.merge.prompt':
-        return memoryMergePrompt;
-      case 'memory.reenrich.default':
-        return memoryReEnrichDefault;
       default:
         return null;
     }

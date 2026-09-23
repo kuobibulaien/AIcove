@@ -1,7 +1,7 @@
 library;
 
 import 'dart:async';
-import '../domain/context_window_policy.dart';
+import '../../context/domain/context_window_policy.dart';
 import '../../../core/media/media_resolver.dart';
 import 'dart:convert';
 import 'dart:io';

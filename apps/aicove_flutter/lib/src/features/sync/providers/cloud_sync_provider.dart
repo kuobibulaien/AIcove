@@ -127,7 +127,6 @@ class CloudSyncController extends StateNotifier<CloudProgress> {
     }
     if (kinds.contains('settings')) {
       ref.invalidate(appSettingsProvider);
-      ref.invalidate(memoryPluginConfigProvider);
       ref.invalidate(ttsPluginConfigProvider);
       ref.invalidate(triggerPluginConfigProvider);
       ref.invalidate(stickerPluginConfigProvider);

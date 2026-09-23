@@ -13,12 +13,13 @@ import '../../../../ui/shared/widgets/list/moe_settings_group.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../plugins/pages/image_plugin_detail_page.dart';
-import '../../plugins/pages/memory_plugin_detail_page.dart';
+import 'context_memory_settings_page.dart';
 import '../../plugins/pages/time_awareness_plugin_detail_page.dart';
 import '../../plugins/pages/tts_plugin_detail_page.dart';
 import '../../plugins/pages/sticker_settings_page.dart';
 import '../../plugins/pages/tavern_plugin_detail_page.dart';
 import '../../auto_reply/pages/auto_reply_settings_page.dart';
+import '../../../../ui/shared/widgets/moe_scroll_edge.dart';
 
 /// 聊天插件配置项
 class ChatPluginItem {
@@ -99,90 +100,96 @@ class ChatPluginSettingsPage extends ConsumerWidget {
     final colors = context.moeColors;
 
     return MoePageScaffold(
+      extendBodyBehindAppBar: true,
       appBar: const MoeAppBar(title: '聊天插件', showBackButton: true),
       backgroundColor: colors.surface,
       body: MoeSettingsContent(
-        child: ListView(
-          padding: MoeSettingsLayout.verticalListPadding,
-          children: [
-            MoeSettingsGroup(
-              children: [
-                for (
-                  var index = 0;
-                  index < chatPluginItems.length;
-                  index++
-                ) ...[
-                  if (index > 0)
-                    Divider(
-                      height: borderWidth,
-                      thickness: borderWidth,
-                      color: colors.borderLight,
-                    ),
-                  Builder(
-                    builder: (context) {
-                      final item = chatPluginItems[index];
-                      final isEnabled = _isPluginEnabled(ref, item.id);
+        child: Builder(
+          builder: (context) => ListView(
+            padding: moeUnderBarPadding(
+              context,
+              MoeSettingsLayout.verticalListPadding,
+            ),
+            children: [
+              MoeSettingsGroup(
+                children: [
+                  for (
+                    var index = 0;
+                    index < chatPluginItems.length;
+                    index++
+                  ) ...[
+                    if (index > 0)
+                      Divider(
+                        height: borderWidth,
+                        thickness: borderWidth,
+                        color: colors.borderLight,
+                      ),
+                    Builder(
+                      builder: (context) {
+                        final item = chatPluginItems[index];
+                        final isEnabled = _isPluginEnabled(ref, item.id);
 
-                      return ListTile(
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                        ),
-                        title: Text(
-                          item.name,
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: MoeFontWeights.emphasis,
-                            color: colors.text,
+                        return ListTile(
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12,
                           ),
-                        ),
-                        subtitle: Wrap(
-                          spacing: 8,
-                          runSpacing: 4,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          children: [
-                            Text(
-                              item.subtitle,
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: colors.muted,
-                              ),
+                          title: Text(
+                            item.name,
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: MoeFontWeights.emphasis,
+                              color: colors.text,
                             ),
-                            if (isEnabled != null)
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 6,
-                                  vertical: 2,
+                          ),
+                          subtitle: Wrap(
+                            spacing: 8,
+                            runSpacing: 4,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              Text(
+                                item.subtitle,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: colors.muted,
                                 ),
-                                decoration: MoeG2Decoration(
-                                  radius: 4,
-                                  color: isEnabled
-                                      ? colors.primary.withOpacity(0.1)
-                                      : colors.muted.withOpacity(0.1),
-                                ),
-                                child: Text(
-                                  isEnabled ? '已启用' : '已禁用',
-                                  style: TextStyle(
-                                    fontSize: 10,
+                              ),
+                              if (isEnabled != null)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 2,
+                                  ),
+                                  decoration: MoeG2Decoration(
+                                    radius: 4,
                                     color: isEnabled
-                                        ? colors.primary
-                                        : colors.muted,
+                                        ? colors.primary.withOpacity(0.1)
+                                        : colors.muted.withOpacity(0.1),
+                                  ),
+                                  child: Text(
+                                    isEnabled ? '已启用' : '已禁用',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color: isEnabled
+                                          ? colors.primary
+                                          : colors.muted,
+                                    ),
                                   ),
                                 ),
-                              ),
-                          ],
-                        ),
-                        trailing: Icon(
-                          Icons.chevron_right,
-                          color: colors.muted,
-                        ),
-                        onTap: () => _navigateToPlugin(context, item),
-                      );
-                    },
-                  ),
+                            ],
+                          ),
+                          trailing: Icon(
+                            Icons.chevron_right,
+                            color: colors.muted,
+                          ),
+                          onTap: () => _navigateToPlugin(context, item),
+                        );
+                      },
+                    ),
+                  ],
                 ],
-              ],
-            ),
-          ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -207,7 +214,7 @@ class ChatPluginSettingsPage extends ConsumerWidget {
         page = const TavernPluginDetailPage();
         break;
       case 'memory':
-        page = const MemoryPluginDetailPage();
+        page = const ContextMemorySettingsPage();
         break;
       case 'sticker':
         page = const StickerSettingsPage();

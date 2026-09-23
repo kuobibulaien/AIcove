@@ -8,6 +8,7 @@ import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/meotalk_dialog.dart';
 import '../../../../ui/shared/widgets/moe_toast.dart';
 import 'log_history_detail_page.dart';
+import '../../../../ui/shared/widgets/moe_scroll_edge.dart';
 
 /// 历史日志列表页面
 class LogHistoryListPage extends StatefulWidget {
@@ -50,6 +51,7 @@ class _LogHistoryListPageState extends State<LogHistoryListPage> {
     final colors = context.moeColors;
 
     return MoePageScaffold(
+      extendBodyBehindAppBar: true,
       backgroundColor: colors.surface,
       appBar: AppBar(
         backgroundColor: colors.surface,
@@ -104,10 +106,12 @@ class _LogHistoryListPageState extends State<LogHistoryListPage> {
       );
     }
 
-    return ListView.builder(
-      padding: const EdgeInsets.all(12),
-      itemCount: _files.length,
-      itemBuilder: (context, index) => _buildFileItem(_files[index]),
+    return Builder(
+      builder: (context) => ListView.builder(
+        padding: moeUnderBarPadding(context, EdgeInsets.all(12)),
+        itemCount: _files.length,
+        itemBuilder: (context, index) => _buildFileItem(_files[index]),
+      ),
     );
   }
 
@@ -155,8 +159,11 @@ class _LogHistoryListPageState extends State<LogHistoryListPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             IconButton(
-              icon:
-                  Icon(Icons.visibility_outlined, color: colors.text, size: 20),
+              icon: Icon(
+                Icons.visibility_outlined,
+                color: colors.text,
+                size: 20,
+              ),
               onPressed: () => _viewFile(file),
               tooltip: '查看',
             ),
@@ -173,11 +180,9 @@ class _LogHistoryListPageState extends State<LogHistoryListPage> {
   }
 
   void _viewFile(LogHistoryFile file) {
-    Navigator.of(context).push(
-      ParallaxSlidePageRoute(
-        page: LogHistoryDetailPage(file: file),
-      ),
-    );
+    Navigator.of(
+      context,
+    ).push(ParallaxSlidePageRoute(page: LogHistoryDetailPage(file: file)));
   }
 
   Future<void> _deleteFile(LogHistoryFile file) async {

@@ -1,21 +1,7 @@
 import '../services/chat_history_store.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../core/app_logger.dart';
-import '../../plugins/memory/memory_plugin.dart';
-import '../../plugins/plugin_providers.dart';
-import '../../memory/services/memory_service.dart';
 import '../conversation_providers.dart';
-
-final chatPageMemoryPluginProvider = Provider<MemoryPlugin?>((ref) {
-  final pluginManager = ref.watch(pluginManagerProvider);
-  final plugin = pluginManager.getPlugin('memory');
-  return plugin is MemoryPlugin ? plugin : null;
-});
-
-final chatPageMemoryServiceProvider = Provider<MemoryService?>((ref) {
-  return ref.watch(chatPageMemoryPluginProvider)?.service;
-});
 
 class ChatPageConversationActions {
   const ChatPageConversationActions(this._ref);
@@ -26,53 +12,6 @@ class ChatPageConversationActions {
     return _ref
         .read(conversationsProvider.notifier)
         .clearUnread(conversationId);
-  }
-
-  Future<void> startNewTopic({
-    required String conversationId,
-    required String lastMessageId,
-  }) async {
-    final conversation = _ref.read(
-      conversationSnapshotByIdProvider(conversationId),
-    );
-    final memoryPlugin = _ref.read(chatPageMemoryPluginProvider);
-    final memoryService = _ref.read(chatPageMemoryServiceProvider);
-    if (conversation != null &&
-        conversation.allowsPlugin('memory') &&
-        memoryService != null &&
-        memoryService.config.enabled) {
-      try {
-        if (memoryPlugin == null ||
-            !await memoryPlugin.usesNotebook(conversationId)) {
-          await memoryService.ingestConversationTopic(
-            conversationId: conversationId,
-            lastMessageId: lastMessageId,
-            contextStartMessageId: conversation.contextStartMessageId,
-            trigger: MemoryIngestTrigger.manual,
-          );
-        }
-      } catch (error) {
-        AppLogger.warning(
-          'ChatPageConversationActions',
-          'Failed to summarize current topic before resetting context',
-          metadata: {
-            'conversationId': conversationId,
-            'lastMessageId': lastMessageId,
-            'error': error.toString(),
-          },
-        );
-      }
-    }
-    await _ref
-        .read(conversationsProvider.notifier)
-        .updateOne(
-          conversationId,
-          (currentConversation) => currentConversation.copyWith(
-            contextStartMessageId: lastMessageId,
-            updatedAt: DateTime.now(),
-          ),
-        );
-    memoryPlugin?.clearConversationCache(conversationId);
   }
 
   Future<void> applyConversationEdits(
@@ -161,13 +100,10 @@ class ChatPageConversationActions {
         .hideMessagesInFrontendTimeline(conversationId, messageIds);
   }
 
-  Future<void> clearMessages(String conversationId) async {
-    await _ref
+  Future<void> clearMessages(String conversationId) {
+    return _ref
         .read(conversationsProvider.notifier)
         .clearMessages(conversationId);
-    _ref
-        .read(chatPageMemoryPluginProvider)
-        ?.clearConversationCache(conversationId);
   }
 
   Future<void> deleteConversation(String conversationId) {

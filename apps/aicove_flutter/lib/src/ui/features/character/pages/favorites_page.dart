@@ -23,6 +23,7 @@ import '../../../../features/chat/domain/persona_prompt_codec.dart';
 import '../../../../features/chat/providers2.dart';
 import '../services/contact_edit_snapshot_store.dart';
 import 'contact_edit_page.dart';
+import '../../../../ui/shared/widgets/moe_scroll_edge.dart';
 
 /// 我的收藏页面
 class FavoritesPage extends ConsumerWidget {
@@ -34,6 +35,7 @@ class FavoritesPage extends ConsumerWidget {
     final conversationsAsync = ref.watch(conversationsProvider);
 
     return MoePageScaffold(
+      extendBodyBehindAppBar: true,
       appBar: MoeAppBar(
         title: '我的角色卡',
         leading: IconButton(
@@ -55,8 +57,10 @@ class FavoritesPage extends ConsumerWidget {
                 children: [
                   Icon(Icons.favorite_border, size: 64, color: colors.muted),
                   const SizedBox(height: 16),
-                  Text('还没有收藏的角色',
-                      style: TextStyle(color: colors.textSecondary)),
+                  Text(
+                    '还没有收藏的角色',
+                    style: TextStyle(color: colors.textSecondary),
+                  ),
                   const SizedBox(height: 8),
                   Text(
                     '长按角色卡片可以添加收藏',
@@ -67,36 +71,38 @@ class FavoritesPage extends ConsumerWidget {
             );
           }
 
-          return GridView.builder(
-            padding: const EdgeInsets.all(16),
-            physics: const BouncingScrollPhysics(),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              childAspectRatio: 0.75,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
+          return Builder(
+            builder: (context) => GridView.builder(
+              padding: moeUnderBarPadding(context, EdgeInsets.all(16)),
+              physics: const BouncingScrollPhysics(),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                childAspectRatio: 0.75,
+                crossAxisSpacing: 12,
+                mainAxisSpacing: 12,
+              ),
+              itemCount: favorites.length,
+              itemBuilder: (context, index) {
+                final conv = favorites[index];
+                return _FavoriteCard(
+                  conversation: conv,
+                  onTap: () async {
+                    final initialSnapshot = await ContactEditSnapshotStore
+                        .instance
+                        .prepareFreshSnapshot(conv);
+                    if (!context.mounted) return;
+                    // 跳转到编辑页（模板编辑模式）
+                    Navigator.of(context).pushParallaxSlide(
+                      page: ContactEditPage(
+                        conversation: conv,
+                        initialSnapshot: initialSnapshot,
+                        editMode: EditMode.editTemplate,
+                      ),
+                    );
+                  },
+                );
+              },
             ),
-            itemCount: favorites.length,
-            itemBuilder: (context, index) {
-              final conv = favorites[index];
-              return _FavoriteCard(
-                conversation: conv,
-                onTap: () async {
-                  final initialSnapshot = await ContactEditSnapshotStore
-                      .instance
-                      .prepareFreshSnapshot(conv);
-                  if (!context.mounted) return;
-                  // 跳转到编辑页（模板编辑模式）
-                  Navigator.of(context).pushParallaxSlide(
-                    page: ContactEditPage(
-                      conversation: conv,
-                      initialSnapshot: initialSnapshot,
-                      editMode: EditMode.editTemplate,
-                    ),
-                  );
-                },
-              );
-            },
           );
         },
       ),
@@ -109,10 +115,7 @@ class _FavoriteCard extends StatelessWidget {
   final Conversation conversation;
   final VoidCallback onTap;
 
-  const _FavoriteCard({
-    required this.conversation,
-    required this.onTap,
-  });
+  const _FavoriteCard({required this.conversation, required this.onTap});
 
   ImageProvider? _getImageProvider() {
     return AvatarHelper(
@@ -124,8 +127,9 @@ class _FavoriteCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final personaText =
-        PersonaPromptCodec.parse(conversation.personaPrompt).userPrompt;
+    final personaText = PersonaPromptCodec.parse(
+      conversation.personaPrompt,
+    ).userPrompt;
     return FrostedGlassCard(
       imageProvider: _getImageProvider(),
       blurSigma: 0, // 不需要模糊
@@ -193,8 +197,11 @@ class _FavoriteCard extends StatelessWidget {
                 color: Colors.black.withValues(alpha: 0.3),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.favorite,
-                  color: Colors.pinkAccent, size: 16),
+              child: const Icon(
+                Icons.favorite,
+                color: Colors.pinkAccent,
+                size: 16,
+              ),
             ),
           ),
         ],

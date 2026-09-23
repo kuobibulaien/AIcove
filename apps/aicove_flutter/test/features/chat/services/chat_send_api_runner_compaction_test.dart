@@ -4,7 +4,7 @@ import 'package:aicove_flutter/src/core/api/providers/provider_adapter.dart';
 import 'package:aicove_flutter/src/core/app_logger.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_send_api_runner.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_types.dart';
-import 'package:aicove_flutter/src/features/chat/domain/runtime_context_port.dart';
+import 'package:aicove_flutter/src/features/context/domain/context_summary.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/handlers/ai_tool.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 

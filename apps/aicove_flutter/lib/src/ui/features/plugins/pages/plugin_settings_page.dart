@@ -5,8 +5,9 @@ import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../features/plugins/plugin_providers.dart';
-import 'memory_plugin_detail_page.dart';
+import '../../settings/pages/context_memory_settings_page.dart';
 import 'tts_plugin_detail_page.dart';
+import '../../../../ui/shared/widgets/moe_scroll_edge.dart';
 
 /// 插件设置页面
 class PluginSettingsPage extends ConsumerWidget {
@@ -19,6 +20,7 @@ class PluginSettingsPage extends ConsumerWidget {
     final colors = context.moeColors;
 
     return MoePageScaffold(
+      extendBodyBehindAppBar: true,
       backgroundColor: colors.surface,
       appBar: AppBar(
         backgroundColor: colors.surface,
@@ -36,14 +38,16 @@ class PluginSettingsPage extends ConsumerWidget {
           ),
         ),
       ),
-      body: ListView.separated(
-        padding: const EdgeInsets.all(16),
-        itemCount: allPlugins.length,
-        separatorBuilder: (context, index) => const SizedBox(height: 12),
-        itemBuilder: (context, index) {
-          final plugin = allPlugins[index];
-          return _buildPluginListItem(context, plugin);
-        },
+      body: Builder(
+        builder: (context) => ListView.separated(
+          padding: moeUnderBarPadding(context, EdgeInsets.all(16)),
+          itemCount: allPlugins.length,
+          separatorBuilder: (context, index) => const SizedBox(height: 12),
+          itemBuilder: (context, index) {
+            final plugin = allPlugins[index];
+            return _buildPluginListItem(context, plugin);
+          },
+        ),
       ),
     );
   }
@@ -121,7 +125,7 @@ class PluginSettingsPage extends ConsumerWidget {
       case 'memory':
         Navigator.of(
           context,
-        ).push(ParallaxSlidePageRoute(page: const MemoryPluginDetailPage()));
+        ).push(ParallaxSlidePageRoute(page: const ContextMemorySettingsPage()));
         break;
       // 未来可以添加更多插件的详细页面
       default:

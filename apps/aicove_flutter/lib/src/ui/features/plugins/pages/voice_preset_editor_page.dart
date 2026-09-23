@@ -359,6 +359,7 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
         format == 'aliyun_qwen_tts';
     return autoSavePage(
       MoePageScaffold(
+        extendBodyBehindAppBar: true,
         backgroundColor: colors.surface,
         appBar: MoeAppBar(
           title: widget.preset == null ? '新建音色预设' : '编辑音色预设',
@@ -374,147 +375,116 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
           ],
         ),
         body: SafeArea(
+          top: false,
           child: MoeSettingsContent(
             child: Form(
               key: _form,
-              child: ListView(
-                padding: MoeSettingsLayout.verticalListPadding,
-                children: [
-                  if (_busy) const LinearProgressIndicator(),
-                  if (_error != null)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 12,
-                      ),
-                      child: Text(
-                        _error!,
-                        style: TextStyle(color: colors.primary),
-                      ),
-                    ),
-                  AbsorbPointer(
-                    absorbing: _busy,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        MoeSettingsGroup(
-                          title: '基本信息',
-                          titleFirst: true,
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-                              child: TextFormField(
-                                controller: _name,
-                                decoration: const InputDecoration(
-                                  labelText: '预设名称',
-                                  hintText: '例如：纳西妲 · 温柔',
-                                ),
-                                validator: (v) =>
-                                    v?.trim().isEmpty != false ? '请填写名称' : null,
-                              ),
-                            ),
-                            MoeSettingsRow(
-                              label: '供应商与模型',
-                              subtitle: entry == null
-                                  ? (_provider == null
-                                        ? '请选择已配置的语音模型'
-                                        : '$_provider · $_model（检查渠道配置）')
-                                  : '${entry.providerName}\n${entry.displayName}',
-                              onTap: () => _pickModel(models),
-                              showDivider: false,
-                            ),
-                            if (models.isEmpty)
-                              const Padding(
-                                padding: EdgeInsets.fromLTRB(12, 4, 12, 10),
-                                child: Text('暂无可用语音模型：请先在供应商管理配置密钥，并将模型标记为语音。'),
-                              ),
-                          ],
+              child: Builder(
+                builder: (context) => ListView(
+                  padding: moeUnderBarPadding(
+                    context,
+                    MoeSettingsLayout.verticalListPadding,
+                  ),
+                  children: [
+                    if (_busy) const LinearProgressIndicator(),
+                    if (_error != null)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 12,
                         ),
-                        const SizedBox(height: MoeSettingsLayout.sectionGap),
-                        MoeSettingsGroup(
-                          title: '音色来源',
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-                              child: Wrap(
-                                spacing: 8,
-                                children: [
-                                  for (final value in VoiceSourceType.values)
-                                    MoeButtonSurface(
-                                      radius: 999,
-                                      child: ChoiceChip(
-                                        label: Text(switch (value) {
-                                          VoiceSourceType.preset => '音色 ID',
-                                          VoiceSourceType.url => '音频链接',
-                                          VoiceSourceType.local => '音频文件',
-                                        }),
-                                        selected: _source == value,
-                                        onSelected:
-                                            (value == VoiceSourceType.local &&
-                                                    !canLocal) ||
-                                                (value == VoiceSourceType.url &&
-                                                    !canUrl)
-                                            ? null
-                                            : (_) => setState(() {
-                                                _source = value;
-                                                _audio = null;
-                                              }),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                            if (_source == VoiceSourceType.preset) ...[
+                        child: Text(
+                          _error!,
+                          style: TextStyle(color: colors.primary),
+                        ),
+                      ),
+                    AbsorbPointer(
+                      absorbing: _busy,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          MoeSettingsGroup(
+                            title: '基本信息',
+                            titleFirst: true,
+                            children: [
                               Padding(
                                 padding: const EdgeInsets.fromLTRB(
                                   12,
-                                  4,
+                                  8,
                                   12,
                                   8,
                                 ),
                                 child: TextFormField(
-                                  controller: _voice,
+                                  controller: _name,
                                   decoration: const InputDecoration(
-                                    labelText: '供应商音色 ID',
-                                    hintText: '不是预设名称',
+                                    labelText: '预设名称',
+                                    hintText: '例如：纳西妲 · 温柔',
                                   ),
                                   validator: (v) => v?.trim().isEmpty != false
-                                      ? '请填写或浏览选择音色 ID'
+                                      ? '请填写名称'
                                       : null,
                                 ),
                               ),
-                              if (canBrowse)
-                                Padding(
-                                  padding: const EdgeInsets.fromLTRB(
-                                    12,
-                                    0,
-                                    12,
-                                    8,
-                                  ),
-                                  child: TextButton(
-                                    onPressed: _browse,
-                                    child: const Text('浏览此供应商的音色'),
-                                  ),
-                                ),
-                              if (_bindings.any(
-                                (b) =>
-                                    b.status != null &&
-                                    b.status!.isNotEmpty &&
-                                    b.status != 'OK',
-                              ))
-                                Padding(
-                                  padding: const EdgeInsets.fromLTRB(
-                                    12,
-                                    0,
-                                    12,
-                                    8,
-                                  ),
+                              MoeSettingsRow(
+                                label: '供应商与模型',
+                                subtitle: entry == null
+                                    ? (_provider == null
+                                          ? '请选择已配置的语音模型'
+                                          : '$_provider · $_model（检查渠道配置）')
+                                    : '${entry.providerName}\n${entry.displayName}',
+                                onTap: () => _pickModel(models),
+                                showDivider: false,
+                              ),
+                              if (models.isEmpty)
+                                const Padding(
+                                  padding: EdgeInsets.fromLTRB(12, 4, 12, 10),
                                   child: Text(
-                                    '音色状态：${_bindings.map((b) => b.status ?? '').join(' ')}；审核未完成时暂不能发声',
+                                    '暂无可用语音模型：请先在供应商管理配置密钥，并将模型标记为语音。',
                                   ),
                                 ),
-                            ] else ...[
-                              if (_source == VoiceSourceType.url)
+                            ],
+                          ),
+                          const SizedBox(height: MoeSettingsLayout.sectionGap),
+                          MoeSettingsGroup(
+                            title: '音色来源',
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  12,
+                                  8,
+                                  12,
+                                  4,
+                                ),
+                                child: Wrap(
+                                  spacing: 8,
+                                  children: [
+                                    for (final value in VoiceSourceType.values)
+                                      MoeButtonSurface(
+                                        radius: 999,
+                                        child: ChoiceChip(
+                                          label: Text(switch (value) {
+                                            VoiceSourceType.preset => '音色 ID',
+                                            VoiceSourceType.url => '音频链接',
+                                            VoiceSourceType.local => '音频文件',
+                                          }),
+                                          selected: _source == value,
+                                          onSelected:
+                                              (value == VoiceSourceType.local &&
+                                                      !canLocal) ||
+                                                  (value ==
+                                                          VoiceSourceType.url &&
+                                                      !canUrl)
+                                              ? null
+                                              : (_) => setState(() {
+                                                  _source = value;
+                                                  _audio = null;
+                                                }),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                              if (_source == VoiceSourceType.preset) ...[
                                 Padding(
                                   padding: const EdgeInsets.fromLTRB(
                                     12,
@@ -523,293 +493,368 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
                                     8,
                                   ),
                                   child: TextFormField(
-                                    controller: _url,
+                                    controller: _voice,
                                     decoration: const InputDecoration(
-                                      labelText: '参考音频链接',
-                                      hintText: 'https://...',
+                                      labelText: '供应商音色 ID',
+                                      hintText: '不是预设名称',
                                     ),
-                                    validator: (v) {
-                                      final uri = Uri.tryParse(v?.trim() ?? '');
-                                      return uri == null ||
-                                              ![
-                                                'http',
-                                                'https',
-                                              ].contains(uri.scheme) ||
-                                              uri.host.isEmpty
-                                          ? '请填写有效的音频链接'
-                                          : null;
-                                    },
+                                    validator: (v) => v?.trim().isEmpty != false
+                                        ? '请填写或浏览选择音色 ID'
+                                        : null,
                                   ),
                                 ),
-                              if (_source == VoiceSourceType.local) ...[
+                                if (canBrowse)
+                                  Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      12,
+                                      0,
+                                      12,
+                                      8,
+                                    ),
+                                    child: TextButton(
+                                      onPressed: _browse,
+                                      child: const Text('浏览此供应商的音色'),
+                                    ),
+                                  ),
+                                if (_bindings.any(
+                                  (b) =>
+                                      b.status != null &&
+                                      b.status!.isNotEmpty &&
+                                      b.status != 'OK',
+                                ))
+                                  Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      12,
+                                      0,
+                                      12,
+                                      8,
+                                    ),
+                                    child: Text(
+                                      '音色状态：${_bindings.map((b) => b.status ?? '').join(' ')}；审核未完成时暂不能发声',
+                                    ),
+                                  ),
+                              ] else ...[
+                                if (_source == VoiceSourceType.url)
+                                  Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      12,
+                                      4,
+                                      12,
+                                      8,
+                                    ),
+                                    child: TextFormField(
+                                      controller: _url,
+                                      decoration: const InputDecoration(
+                                        labelText: '参考音频链接',
+                                        hintText: 'https://...',
+                                      ),
+                                      validator: (v) {
+                                        final uri = Uri.tryParse(
+                                          v?.trim() ?? '',
+                                        );
+                                        return uri == null ||
+                                                ![
+                                                  'http',
+                                                  'https',
+                                                ].contains(uri.scheme) ||
+                                                uri.host.isEmpty
+                                            ? '请填写有效的音频链接'
+                                            : null;
+                                      },
+                                    ),
+                                  ),
+                                if (_source == VoiceSourceType.local) ...[
+                                  Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      12,
+                                      4,
+                                      12,
+                                      4,
+                                    ),
+                                    child: Text(
+                                      _localPath == null
+                                          ? '尚未选择文件'
+                                          : _localPath!.split('/').last,
+                                    ),
+                                  ),
+                                  Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      12,
+                                      0,
+                                      12,
+                                      8,
+                                    ),
+                                    child: OutlinedButton(
+                                      onPressed: () => _work(() async {
+                                        final picked = await FilePicker.platform
+                                            .pickFiles(
+                                              type: FileType.custom,
+                                              allowedExtensions: [
+                                                'mp3',
+                                                'wav',
+                                                'm4a',
+                                                'flac',
+                                                'ogg',
+                                                'aac',
+                                              ],
+                                            );
+                                        final path = picked?.files.single.path;
+                                        if (path == null || !mounted) return;
+                                        final saved = await ref
+                                            .read(
+                                              voicePresetApplicationProvider,
+                                            )
+                                            .importAudio(path);
+                                        if (mounted) {
+                                          setState(() {
+                                            _localPath = saved;
+                                            _audio = null;
+                                          });
+                                        }
+                                      }),
+                                      child: const Text('选择音频文件'),
+                                    ),
+                                  ),
+                                ],
                                 Padding(
                                   padding: const EdgeInsets.fromLTRB(
                                     12,
                                     4,
-                                    12,
-                                    4,
-                                  ),
-                                  child: Text(
-                                    _localPath == null
-                                        ? '尚未选择文件'
-                                        : _localPath!.split('/').last,
-                                  ),
-                                ),
-                                Padding(
-                                  padding: const EdgeInsets.fromLTRB(
-                                    12,
-                                    0,
                                     12,
                                     8,
                                   ),
-                                  child: OutlinedButton(
-                                    onPressed: () => _work(() async {
-                                      final picked = await FilePicker.platform
-                                          .pickFiles(
-                                            type: FileType.custom,
-                                            allowedExtensions: [
-                                              'mp3',
-                                              'wav',
-                                              'm4a',
-                                              'flac',
-                                              'ogg',
-                                              'aac',
-                                            ],
-                                          );
-                                      final path = picked?.files.single.path;
-                                      if (path == null || !mounted) return;
-                                      final saved = await ref
-                                          .read(voicePresetApplicationProvider)
-                                          .importAudio(path);
-                                      if (mounted) {
-                                        setState(() {
-                                          _localPath = saved;
-                                          _audio = null;
+                                  child: TextFormField(
+                                    controller: _text,
+                                    maxLines: 3,
+                                    decoration: const InputDecoration(
+                                      labelText: '参考音频对应的文字',
+                                      helperText: '需要参考文本的模型请填写完整、准确的内容',
+                                      helperMaxLines: 4,
+                                    ),
+                                  ),
+                                ),
+                                if (canCreate)
+                                  Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      12,
+                                      0,
+                                      12,
+                                      8,
+                                    ),
+                                    child: TextButton(
+                                      onPressed: () {
+                                        if (!_validate()) return;
+                                        _work(() async {
+                                          final confirmed =
+                                              await showMeoTalkDialog(
+                                                context: context,
+                                                title: '创建云端音色',
+                                                content: const Text(
+                                                  '参考音频将发送到此供应商，可能产生费用。继续吗？',
+                                                ),
+                                                confirmText: '创建',
+                                              );
+                                          if (confirmed != true || !mounted) {
+                                            return;
+                                          }
+                                          final created = await ref
+                                              .read(
+                                                voicePresetApplicationProvider,
+                                              )
+                                              .createRemote(_draft());
+                                          if (mounted) {
+                                            setState(() {
+                                              _bindings = created.bindings;
+                                              _voice.text =
+                                                  created.synthesis!.voiceId!;
+                                              _source = VoiceSourceType.preset;
+                                            });
+                                          }
                                         });
-                                      }
-                                    }),
-                                    child: const Text('选择音频文件'),
+                                      },
+                                      child: const Text('用参考音频创建云端音色'),
+                                    ),
+                                  ),
+                                const Padding(
+                                  padding: EdgeInsets.fromLTRB(12, 0, 12, 10),
+                                  child: Text(
+                                    '支持参考音频的模型可直接试听；其他模型请先创建云端音色，再使用返回的音色 ID。',
                                   ),
                                 ),
                               ],
+                            ],
+                          ),
+                          const SizedBox(height: MoeSettingsLayout.sectionGap),
+                          MoeSettingsGroup(
+                            title: '朗读参数',
+                            children: [
                               Padding(
                                 padding: const EdgeInsets.fromLTRB(
                                   12,
-                                  4,
+                                  8,
+                                  12,
+                                  0,
+                                ),
+                                child: Text('语速 ${_speed.toStringAsFixed(1)}×'),
+                              ),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 4,
+                                ),
+                                child: MoeSlider(
+                                  value: _speed,
+                                  min: 0.5,
+                                  max: 2,
+                                  divisions: 15,
+                                  onChanged: (v) => setState(() => _speed = v),
+                                ),
+                              ),
+                              ExpansionTile(
+                                tilePadding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                ),
+                                childrenPadding: const EdgeInsets.fromLTRB(
+                                  12,
+                                  0,
+                                  12,
+                                  8,
+                                ),
+                                title: const Text('高级设置'),
+                                children: [
+                                  TextFormField(
+                                    controller: _chunk,
+                                    keyboardType: TextInputType.number,
+                                    decoration: const InputDecoration(
+                                      labelText: '每段建议字数',
+                                    ),
+                                    validator: (v) =>
+                                        (int.tryParse(v ?? '') ?? 0) <= 0
+                                        ? '请输入正整数'
+                                        : null,
+                                  ),
+                                  TextFormField(
+                                    controller: _prompt,
+                                    minLines: 3,
+                                    maxLines: 8,
+                                    decoration: const InputDecoration(
+                                      labelText: '语音提示词（可选）',
+                                      helperText:
+                                          '留空沿用默认；支持 {voice_frequency}、{max_chars_per_chunk}',
+                                    ),
+                                  ),
+                                  Text('语音使用频率 $_frequency%（0 为不主动发语音）'),
+                                  MoeSlider(
+                                    value: _frequency.toDouble(),
+                                    min: 0,
+                                    max: 100,
+                                    divisions: 5,
+                                    onChanged: (v) =>
+                                        setState(() => _frequency = v.round()),
+                                  ),
+                                  SwitchListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    title: const Text('情感参考（支持此能力的模型）'),
+                                    value: _useEmotion,
+                                    onChanged: (v) =>
+                                        setState(() => _useEmotion = v),
+                                  ),
+                                  if (_useEmotion)
+                                    TextFormField(
+                                      controller: _emotion,
+                                      decoration: const InputDecoration(
+                                        labelText: '情感描述',
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: MoeSettingsLayout.sectionGap),
+                          MoeSettingsGroup(
+                            title: '试听',
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  12,
+                                  8,
                                   12,
                                   8,
                                 ),
                                 child: TextFormField(
-                                  controller: _text,
+                                  controller: _sample,
                                   maxLines: 3,
                                   decoration: const InputDecoration(
-                                    labelText: '参考音频对应的文字',
-                                    helperText: '需要参考文本的模型请填写完整、准确的内容',
-                                    helperMaxLines: 4,
+                                    labelText: '试听文本',
                                   ),
                                 ),
                               ),
-                              if (canCreate)
-                                Padding(
-                                  padding: const EdgeInsets.fromLTRB(
-                                    12,
-                                    0,
-                                    12,
-                                    8,
-                                  ),
-                                  child: TextButton(
-                                    onPressed: () {
-                                      if (!_validate()) return;
-                                      _work(() async {
-                                        final confirmed =
-                                            await showMeoTalkDialog(
-                                              context: context,
-                                              title: '创建云端音色',
-                                              content: const Text(
-                                                '参考音频将发送到此供应商，可能产生费用。继续吗？',
-                                              ),
-                                              confirmText: '创建',
-                                            );
-                                        if (confirmed != true || !mounted) {
-                                          return;
-                                        }
-                                        final created = await ref
-                                            .read(
-                                              voicePresetApplicationProvider,
-                                            )
-                                            .createRemote(_draft());
-                                        if (mounted) {
-                                          setState(() {
-                                            _bindings = created.bindings;
-                                            _voice.text =
-                                                created.synthesis!.voiceId!;
-                                            _source = VoiceSourceType.preset;
-                                          });
-                                        }
-                                      });
-                                    },
-                                    child: const Text('用参考音频创建云端音色'),
-                                  ),
-                                ),
-                              const Padding(
-                                padding: EdgeInsets.fromLTRB(12, 0, 12, 10),
-                                child: Text(
-                                  '支持参考音频的模型可直接试听；其他模型请先创建云端音色，再使用返回的音色 ID。',
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                        const SizedBox(height: MoeSettingsLayout.sectionGap),
-                        MoeSettingsGroup(
-                          title: '朗读参数',
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-                              child: Text('语速 ${_speed.toStringAsFixed(1)}×'),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 4,
-                              ),
-                              child: MoeSlider(
-                                value: _speed,
-                                min: 0.5,
-                                max: 2,
-                                divisions: 15,
-                                onChanged: (v) => setState(() => _speed = v),
-                              ),
-                            ),
-                            ExpansionTile(
-                              tilePadding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                              ),
-                              childrenPadding: const EdgeInsets.fromLTRB(
-                                12,
-                                0,
-                                12,
-                                8,
-                              ),
-                              title: const Text('高级设置'),
-                              children: [
-                                TextFormField(
-                                  controller: _chunk,
-                                  keyboardType: TextInputType.number,
-                                  decoration: const InputDecoration(
-                                    labelText: '每段建议字数',
-                                  ),
-                                  validator: (v) =>
-                                      (int.tryParse(v ?? '') ?? 0) <= 0
-                                      ? '请输入正整数'
-                                      : null,
-                                ),
-                                TextFormField(
-                                  controller: _prompt,
-                                  minLines: 3,
-                                  maxLines: 8,
-                                  decoration: const InputDecoration(
-                                    labelText: '语音提示词（可选）',
-                                    helperText:
-                                        '留空沿用默认；支持 {voice_frequency}、{max_chars_per_chunk}',
-                                  ),
-                                ),
-                                Text('语音使用频率 $_frequency%（0 为不主动发语音）'),
-                                MoeSlider(
-                                  value: _frequency.toDouble(),
-                                  min: 0,
-                                  max: 100,
-                                  divisions: 5,
-                                  onChanged: (v) =>
-                                      setState(() => _frequency = v.round()),
-                                ),
-                                SwitchListTile(
-                                  contentPadding: EdgeInsets.zero,
-                                  title: const Text('情感参考（支持此能力的模型）'),
-                                  value: _useEmotion,
-                                  onChanged: (v) =>
-                                      setState(() => _useEmotion = v),
-                                ),
-                                if (_useEmotion)
-                                  TextFormField(
-                                    controller: _emotion,
-                                    decoration: const InputDecoration(
-                                      labelText: '情感描述',
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: MoeSettingsLayout.sectionGap),
-                        MoeSettingsGroup(
-                          title: '试听',
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-                              child: TextFormField(
-                                controller: _sample,
-                                maxLines: 3,
-                                decoration: const InputDecoration(
-                                  labelText: '试听文本',
-                                ),
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                              child: OutlinedButton(
-                                onPressed: () {
-                                  if (!_validate()) return;
-                                  _work(() async {
-                                    if (_sample.text.trim().isEmpty) {
-                                      throw StateError('请填写试听文本');
-                                    }
-                                    final request = await ref
-                                        .read(voicePresetApplicationProvider)
-                                        .preview(_draft());
-                                    if (request.error != null) {
-                                      throw StateError(request.error!);
-                                    }
-                                    final result = await request.service!
-                                        .convert(_sample.text.trim());
-                                    if (!result.success) {
-                                      throw StateError(result.error ?? '试听失败');
-                                    }
-                                    if (mounted) {
-                                      setState(() => _audio = result.audioUrl);
-                                    }
-                                  });
-                                },
-                                child: const Text('生成试听（调用供应商）'),
-                              ),
-                            ),
-                            if (_audio != null)
                               Padding(
                                 padding: const EdgeInsets.fromLTRB(
                                   12,
                                   0,
                                   12,
-                                  10,
+                                  8,
                                 ),
-                                child: AudioPlayerWidget(
-                                  block: AudioBlock(
-                                    messageId: 'voice-preview-${_original.id}',
-                                    url: _audio!,
-                                    text: _sample.text,
-                                  ),
-                                  textColor: colors.text,
+                                child: OutlinedButton(
+                                  onPressed: () {
+                                    if (!_validate()) return;
+                                    _work(() async {
+                                      if (_sample.text.trim().isEmpty) {
+                                        throw StateError('请填写试听文本');
+                                      }
+                                      final request = await ref
+                                          .read(voicePresetApplicationProvider)
+                                          .preview(_draft());
+                                      if (request.error != null) {
+                                        throw StateError(request.error!);
+                                      }
+                                      final result = await request.service!
+                                          .convert(_sample.text.trim());
+                                      if (!result.success) {
+                                        throw StateError(
+                                          result.error ?? '试听失败',
+                                        );
+                                      }
+                                      if (mounted) {
+                                        setState(
+                                          () => _audio = result.audioUrl,
+                                        );
+                                      }
+                                    });
+                                  },
+                                  child: const Text('生成试听（调用供应商）'),
                                 ),
                               ),
-                          ],
-                        ),
-                        const SizedBox(height: MoeSettingsLayout.sectionGap),
-                        const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 12),
-                          child: Text('修改自动保存，共享此预设的角色会使用更新后的设置。'),
-                        ),
-                      ],
+                              if (_audio != null)
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    12,
+                                    0,
+                                    12,
+                                    10,
+                                  ),
+                                  child: AudioPlayerWidget(
+                                    block: AudioBlock(
+                                      messageId:
+                                          'voice-preview-${_original.id}',
+                                      url: _audio!,
+                                      text: _sample.text,
+                                    ),
+                                    textColor: colors.text,
+                                  ),
+                                ),
+                            ],
+                          ),
+                          const SizedBox(height: MoeSettingsLayout.sectionGap),
+                          const Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 12),
+                            child: Text('修改自动保存，共享此预设的角色会使用更新后的设置。'),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),

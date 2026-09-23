@@ -8,12 +8,36 @@ const cloudTables = <String, String>{
   'message_blocks': 'id',
   'message_projection_mappings': 'id',
   'providers': 'id',
-  'memories': 'id',
-  'summarization_records': 'id',
-  'memory_tombstones': 'tombstone_id',
-  'diaries': 'id',
-  'topic_handoffs': 'id',
 };
+
+/// 同步表的结构版本，写进每条同步记录的 `client_schema`。
+/// 只在同步表的列发生变化时才升，不跟整库版本绑定：整库升级（例如 v18 只新增
+/// 本地表）时，旧版本设备仍能收到聊天记录。收到的列多于本机时，接收端会拒绝。
+const kCloudRowSchema = 17;
+
+/// 已退役、不再同步的类型（ADR0038）。本地不采集、不上传；
+/// 云端推下来的旧记录只清掉收件箱，不写本地，也不回传删除。
+const retiredCloudKinds = <String>{
+  'memories',
+  'summarization_records',
+  'memory_tombstones',
+  'diaries',
+  'topic_handoffs',
+  'contact_memory',
+};
+
+/// 清掉退役类型在本地同步状态里的残留，避免推送删除或反复重试。
+Future<void> purgeRetiredCloudKinds(GeneratedDatabase db) async {
+  final kinds = retiredCloudKinds.map((k) => "'$k'").join(',');
+  for (final table in [
+    'cloud_dirty',
+    'cloud_outbox',
+    'cloud_inbox',
+    'cloud_versions',
+  ]) {
+    await db.customStatement('DELETE FROM $table WHERE kind IN ($kinds)');
+  }
+}
 
 const cloudMessageChildren = <String, String>{
   'message_blocks': 'message_id',
@@ -66,6 +90,13 @@ Future<void> installCloudTracking(GeneratedDatabase db) async {
       'CREATE INDEX IF NOT EXISTS cloud_${child.key}_owner ON ${child.key}(${child.value},id)',
     );
   }
+  // 旧版本在退役表上装过的触发器：表删除前也不能再产生同步记录。
+  for (final kind in retiredCloudKinds) {
+    for (final operation in ['insert', 'update', 'delete']) {
+      await db.customStatement('DROP TRIGGER IF EXISTS cloud_${kind}_$operation');
+    }
+  }
+  await purgeRetiredCloudKinds(db);
   for (final table in cloudTables.entries) {
     for (final operation in ['INSERT', 'UPDATE', 'DELETE']) {
       final row = operation == 'DELETE' ? 'OLD' : 'NEW';

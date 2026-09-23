@@ -66,31 +66,37 @@ class ChatRecordPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => MoePageScaffold(
+    extendBodyBehindAppBar: true,
     appBar: MoeAppBar(
       title: '与${record.sourceName}的聊天记录',
       showBackButton: true,
     ),
-    body: ListView.builder(
-      padding: const EdgeInsets.symmetric(vertical: 16),
-      itemCount: record.entries.length,
-      itemBuilder: (context, index) {
-        final entry = record.entries[index];
-        return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: MessageBubble(
-            isMe: entry.isUser,
-            displayName: entry.sender,
-            showName: true,
-            message: Message(
-              id: '${record.id}_$index',
-              role: entry.isUser ? 'user' : 'assistant',
-              content: entry.text,
-              blocks: entry.blocks,
-              createdAt: entry.createdAt,
+    body: Builder(
+      builder: (context) => ListView.builder(
+        padding: moeUnderBarPadding(
+          context,
+          EdgeInsets.symmetric(vertical: 16),
+        ),
+        itemCount: record.entries.length,
+        itemBuilder: (context, index) {
+          final entry = record.entries[index];
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: MessageBubble(
+              isMe: entry.isUser,
+              displayName: entry.sender,
+              showName: true,
+              message: Message(
+                id: '${record.id}_$index',
+                role: entry.isUser ? 'user' : 'assistant',
+                content: entry.text,
+                blocks: entry.blocks,
+                createdAt: entry.createdAt,
+              ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     ),
   );
 }

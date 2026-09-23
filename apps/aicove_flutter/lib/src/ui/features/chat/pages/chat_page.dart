@@ -263,7 +263,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final bytes = raw == null ? null : decodeDataImage(raw);
     final wallpaper = raw == null || raw.isEmpty ? null
         : bytes != null ? MemoryImage(bytes) : _getImageProvider(raw);
-    final setting = ref.read(appSettingsProvider).valueOrNull?.chatBackgroundColor.color;
+    final setting = ref.read(appSettingsProvider).valueOrNull?.lightChatBackground;
     final fallback = Theme.of(context).brightness == Brightness.dark
         ? telegramChatBackgroundDark
         : setting == null || setting == Colors.white ? telegramChatBackground : setting;
@@ -1433,7 +1433,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         ? null
         : ref.watch(
             appSettingsProvider.select(
-              (settings) => settings.valueOrNull?.chatBackgroundColor,
+              (settings) => settings.valueOrNull?.lightChatBackground,
             ),
           );
     final colors = context.moeColors;
@@ -1463,10 +1463,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final chatBgColor = isDark
         ? telegramChatBackgroundDark
-        : (chatBackgroundColorSetting?.color == null ||
-              chatBackgroundColorSetting?.color == Colors.white)
+        : (chatBackgroundColorSetting == null ||
+              chatBackgroundColorSetting == Colors.white)
         ? telegramChatBackground
-        : (chatBackgroundColorSetting?.color ?? telegramChatBackground);
+        : chatBackgroundColorSetting;
     final textScaler = MediaQuery.textScalerOf(context);
     final toolbarHeight = MoeChatHeader.heightFor(textScaler);
     final listTopSpacing =

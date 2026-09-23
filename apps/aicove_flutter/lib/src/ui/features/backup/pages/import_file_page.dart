@@ -29,64 +29,67 @@ class _ImportFilePageState extends ConsumerState<ImportFilePage> {
     final theme = Theme.of(context);
 
     return MoePageScaffold(
+      extendBodyBehindAppBar: true,
       appBar: const MoeAppBar(title: '导入数据', showBackButton: true),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          // 说明
-          Text(
-            '选择要导入的备份文件',
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: MoeFontWeights.emphasis,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            '支持 .aicove 格式的备份文件',
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-
-          const SizedBox(height: 32),
-
-          // 选择文件按钮
-          _buildFilePickerCard(context),
-
-          if (_errorMessage != null) ...[
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: MoeG2Decoration(
-                radius: 8,
-                color: theme.colorScheme.errorContainer,
+      body: Builder(
+        builder: (context) => ListView(
+          padding: moeUnderBarPadding(context, EdgeInsets.all(16)),
+          children: [
+            // 说明
+            Text(
+              '选择要导入的备份文件',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: MoeFontWeights.emphasis,
               ),
-              child: Row(
-                children: [
-                  Icon(
-                    LucideIcons.alertCircle,
-                    color: theme.colorScheme.error,
-                    size: 20,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      _errorMessage!,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onErrorContainer,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '支持 .aicove 格式的备份文件',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+
+            const SizedBox(height: 32),
+
+            // 选择文件按钮
+            _buildFilePickerCard(context),
+
+            if (_errorMessage != null) ...[
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: MoeG2Decoration(
+                  radius: 8,
+                  color: theme.colorScheme.errorContainer,
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      LucideIcons.alertCircle,
+                      color: theme.colorScheme.error,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _errorMessage!,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onErrorContainer,
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
+            ],
+
+            const SizedBox(height: 24),
+
+            // 帮助信息
+            _buildHelpSection(context),
           ],
-
-          const SizedBox(height: 24),
-
-          // 帮助信息
-          _buildHelpSection(context),
-        ],
+        ),
       ),
     );
   }

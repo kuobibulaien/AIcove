@@ -183,6 +183,24 @@ class _MoeWorkspaceBackgroundState extends State<MoeWorkspaceBackground> {
   }
 }
 
+/// Android predictive back only reaches Flutter while the framework claims it.
+/// A root dialog closing reports the root navigator alone, so merge the nested
+/// detail stack before telling the platform; otherwise back leaves the app.
+NotificationListenerCallback<NavigationNotification> moeNavigationNotification(
+  GoRouter router,
+) {
+  return (notification) {
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    if (lifecycle == null || lifecycle == AppLifecycleState.detached) {
+      return true;
+    }
+    SystemNavigator.setFrameworkHandlesBack(
+      notification.canHandlePop || router.canPop(),
+    );
+    return true;
+  };
+}
+
 /// Routes opened from a primary page enter the same navigator as chat details.
 /// Descendants of a detail page keep using Navigator.of(context) normally.
 class MoeWorkspace extends InheritedWidget {

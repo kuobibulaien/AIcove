@@ -51,106 +51,109 @@ class _AccountPageState extends ConsumerState<AccountPage> {
     final signedIn = connection?.hasSession ?? false;
     final colors = context.moeColors;
     return MoePageScaffold(
+      extendBodyBehindAppBar: true,
       appBar: const MoeAppBar(title: '账号', showBackButton: true),
-      body: SingleChildScrollView(
-        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-        padding: const EdgeInsets.all(24),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 520),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  signedIn ? '已登录' : '登录你的账号',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  connection == null
-                      ? '首次登录会将这台设备的现有数据绑定到该账号，原有内容会保留。'
-                      : '本地数据已绑定到此账号。退出登录会保留这些数据。',
-                  style: TextStyle(color: colors.muted),
-                ),
-                if (connection != null) ...[
-                  const SizedBox(height: 24),
-                  MoeSettingsGroup(
-                    margin: EdgeInsets.zero,
-                    children: [
-                      MoeSettingsRow(
-                        icon: Icons.person_outline,
-                        label: '用户名',
-                        subtitle: connection.user.username,
-                      ),
-                      MoeSettingsRow(
-                        icon: Icons.badge_outlined,
-                        label: '账号 ID',
-                        subtitle: connection.user.id.toString(),
-                      ),
-                    ],
-                  ),
-                ],
-                const SizedBox(height: 24),
-                MoeTextField(
-                  key: const ValueKey('account-server'),
-                  controller: _server,
-                  label: '服务器地址',
-                  keyboardType: TextInputType.url,
-                  enabled: !state.busy && connection == null,
-                ),
-                if (!signedIn) ...[
-                  const SizedBox(height: 16),
-                  MoeTextField(
-                    key: const ValueKey('account-username'),
-                    controller: _username,
-                    label: '用户名',
-                    enabled: !state.busy,
-                    textInputAction: TextInputAction.next,
-                  ),
-                  const SizedBox(height: 16),
-                  MoeTextField(
-                    key: const ValueKey('account-password'),
-                    controller: _password,
-                    label: '密码',
-                    obscureText: false,
-                    enabled: !state.busy,
-                    textInputAction: TextInputAction.done,
-                    onSubmitted: (_) => _login(),
-                  ),
-                ],
-                if (state.error != null) ...[
-                  const SizedBox(height: 16),
+      body: Builder(
+        builder: (context) => SingleChildScrollView(
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: moeUnderBarPadding(context, EdgeInsets.all(24)),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
                   Text(
-                    state.error!,
-                    style: TextStyle(color: colors.toastError),
+                    signedIn ? '已登录' : '登录你的账号',
+                    style: Theme.of(context).textTheme.titleLarge,
                   ),
-                ],
-                const SizedBox(height: 24),
-                if (signedIn)
-                  MoeSecondaryButton(
-                    label: '退出登录',
-                    enabled: !state.busy,
-                    onPressed: () =>
-                        ref.read(accountProvider.notifier).logout(),
-                  )
-                else
-                  MoePrimaryButton(
-                    label: '登录',
-                    isLoading: state.busy,
-                    onPressed: _login,
+                  const SizedBox(height: 12),
+                  Text(
+                    connection == null
+                        ? '首次登录会将这台设备的现有数据绑定到该账号，原有内容会保留。'
+                        : '本地数据已绑定到此账号。退出登录会保留这些数据。',
+                    style: TextStyle(color: colors.muted),
                   ),
-                const SizedBox(height: 12),
-                TextButton(
-                  onPressed: state.busy
-                      ? null
-                      : () => ref.read(accountProvider.notifier).refresh(),
-                  child: const Text('刷新账号状态'),
-                ),
-                if (signedIn) ...[
+                  if (connection != null) ...[
+                    const SizedBox(height: 24),
+                    MoeSettingsGroup(
+                      margin: EdgeInsets.zero,
+                      children: [
+                        MoeSettingsRow(
+                          icon: Icons.person_outline,
+                          label: '用户名',
+                          subtitle: connection.user.username,
+                        ),
+                        MoeSettingsRow(
+                          icon: Icons.badge_outlined,
+                          label: '账号 ID',
+                          subtitle: connection.user.id.toString(),
+                        ),
+                      ],
+                    ),
+                  ],
                   const SizedBox(height: 24),
-                  const _CloudSyncSettings(),
+                  MoeTextField(
+                    key: const ValueKey('account-server'),
+                    controller: _server,
+                    label: '服务器地址',
+                    keyboardType: TextInputType.url,
+                    enabled: !state.busy && connection == null,
+                  ),
+                  if (!signedIn) ...[
+                    const SizedBox(height: 16),
+                    MoeTextField(
+                      key: const ValueKey('account-username'),
+                      controller: _username,
+                      label: '用户名',
+                      enabled: !state.busy,
+                      textInputAction: TextInputAction.next,
+                    ),
+                    const SizedBox(height: 16),
+                    MoeTextField(
+                      key: const ValueKey('account-password'),
+                      controller: _password,
+                      label: '密码',
+                      obscureText: false,
+                      enabled: !state.busy,
+                      textInputAction: TextInputAction.done,
+                      onSubmitted: (_) => _login(),
+                    ),
+                  ],
+                  if (state.error != null) ...[
+                    const SizedBox(height: 16),
+                    Text(
+                      state.error!,
+                      style: TextStyle(color: colors.toastError),
+                    ),
+                  ],
+                  const SizedBox(height: 24),
+                  if (signedIn)
+                    MoeSecondaryButton(
+                      label: '退出登录',
+                      enabled: !state.busy,
+                      onPressed: () =>
+                          ref.read(accountProvider.notifier).logout(),
+                    )
+                  else
+                    MoePrimaryButton(
+                      label: '登录',
+                      isLoading: state.busy,
+                      onPressed: _login,
+                    ),
+                  const SizedBox(height: 12),
+                  TextButton(
+                    onPressed: state.busy
+                        ? null
+                        : () => ref.read(accountProvider.notifier).refresh(),
+                    child: const Text('刷新账号状态'),
+                  ),
+                  if (signedIn) ...[
+                    const SizedBox(height: 24),
+                    const _CloudSyncSettings(),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),

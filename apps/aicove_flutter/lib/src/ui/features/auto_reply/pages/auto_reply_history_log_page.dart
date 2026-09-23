@@ -61,19 +61,25 @@ class _AutoReplyHistoryLogPageState
     });
 
     return MoePageScaffold(
+      extendBodyBehindAppBar: true,
       appBar: const MoeAppBar(title: '历史记录', showBackButton: true),
       backgroundColor: context.moeColors.surface,
       body: MoeSettingsContent(
-        child: ListView(
-          padding: MoeSettingsLayout.verticalListPadding,
-          children: [
-            AutoReplyHistoryLogCard(
-              logs: _logs,
-              loading: _loading,
-              maxItems: 200,
-              onRefresh: _load,
+        child: Builder(
+          builder: (context) => ListView(
+            padding: moeUnderBarPadding(
+              context,
+              MoeSettingsLayout.verticalListPadding,
             ),
-          ],
+            children: [
+              AutoReplyHistoryLogCard(
+                logs: _logs,
+                loading: _loading,
+                maxItems: 200,
+                onRefresh: _load,
+              ),
+            ],
+          ),
         ),
       ),
     );

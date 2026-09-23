@@ -40,7 +40,6 @@ class CloudLocalStore {
     'variables': Directory(
       p.join(documents.path, 'aicove', 'sillytavern_preset_variables'),
     ),
-    'notebooks': Directory(p.join(support.path, 'contact_memories')),
   };
 
   Future<List<Map<String, dynamic>>> rows(
@@ -87,7 +86,7 @@ class CloudLocalStore {
       );
       if (result.isEmpty) return null;
       return CloudLocalDocument(kind, id, {
-        'client_schema': db.schemaVersion,
+        'client_schema': kCloudRowSchema,
         'row': result.single,
       });
     }
@@ -113,19 +112,12 @@ class CloudLocalStore {
         recursive: true,
         followLinks: false,
       )) {
-        if (entity is! File ||
-            !(entity.path.endsWith('.json') ||
-                p.basename(entity.path) == 'MEMORY.md')) {
-          continue;
-        }
+        if (entity is! File || !entity.path.endsWith('.json')) continue;
         final relative = p
             .split(p.relative(entity.path, from: entry.value.path))
             .join('/');
-        final kind = entry.key == 'notebooks'
-            ? 'contact_memory'
-            : 'plugin_presets';
         result.add(
-          CloudLocalDocument(kind, cloudObjectId('${entry.key}:$relative'), {
+          CloudLocalDocument('plugin_presets', cloudObjectId('${entry.key}:$relative'), {
             'storage': 'file',
             'root': entry.key,
             'path': relative,
@@ -147,7 +139,7 @@ class CloudLocalStore {
     final documents = await external();
     final current = {for (final doc in documents) '${doc.kind}/${doc.id}': doc};
     final previous = await rows(
-      "SELECT * FROM cloud_versions WHERE kind IN ('settings','plugin_presets','contact_memory')",
+      "SELECT * FROM cloud_versions WHERE kind IN ('settings','plugin_presets')",
     );
     final known = {
       for (final row in previous) '${row['kind']}/${row['entity_id']}': row,
@@ -439,11 +431,13 @@ class CloudLocalStore {
     Map<String, dynamic> payload,
     bool deleted,
   ) async {
+    // 退役类型：不写本地（ADR0038）。
+    if (retiredCloudKinds.contains(kind)) return;
     if (cloudTables.containsKey(kind)) {
       final key = cloudTables[kind]!;
       final row = Map<String, dynamic>.from(payload['row'] as Map);
       if (row[key] != id ||
-          (payload['client_schema'] as int) > db.schemaVersion) {
+          (payload['client_schema'] as int) > kCloudRowSchema) {
         throw const CloudSyncFailure('云端数据格式较新，请先更新应用');
       }
       final columns = _columns[kind] ??= (await rows(

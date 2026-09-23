@@ -9,9 +9,10 @@ import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../../features/settings/app_settings.dart';
 import 'ui_settings_page.dart';
 import '../../plugins/pages/sticker_settings_page.dart';
+import '../../../../ui/shared/widgets/moe_scroll_edge.dart';
 
 /// 自然回复设置页面
-/// 
+///
 /// 功能区：
 /// 1. 消息分段 - 启用/过滤开关，点击进入详细设置
 /// 2. 表情包 - 管理入口
@@ -19,10 +20,12 @@ class MessageFormatSettingsPage extends ConsumerStatefulWidget {
   const MessageFormatSettingsPage({super.key});
 
   @override
-  ConsumerState<MessageFormatSettingsPage> createState() => _MessageFormatSettingsPageState();
+  ConsumerState<MessageFormatSettingsPage> createState() =>
+      _MessageFormatSettingsPageState();
 }
 
-class _MessageFormatSettingsPageState extends ConsumerState<MessageFormatSettingsPage> {
+class _MessageFormatSettingsPageState
+    extends ConsumerState<MessageFormatSettingsPage> {
   MessageFormatConfig? _config;
   bool _initialized = false;
 
@@ -39,6 +42,7 @@ class _MessageFormatSettingsPageState extends ConsumerState<MessageFormatSetting
     final colors = context.moeColors;
 
     return MoePageScaffold(
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
         backgroundColor: colors.surface,
         foregroundColor: colors.text,
@@ -57,70 +61,114 @@ class _MessageFormatSettingsPageState extends ConsumerState<MessageFormatSetting
           _initializeConfig(settings.messageFormatConfig);
           final currentConfig = _config ?? const MessageFormatConfig();
 
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              // ========== 消息分段 ==========
-              _buildSectionHeader('消息分段', colors),
-              MoeG2ClipRRect(
-                radius: MoeSmoothRadii.sm,
-                child: Material(
-                  color: colors.surfaceAlt,
-                  child: Column(
-                    children: [
-                      ListTile(
-                        leading: Icon(Icons.segment, color: colors.primary),
-                        title: const Text('消息分段', style: TextStyle(fontSize: 15, fontWeight: MoeFontWeights.emphasis)),
-                        subtitle: Text(
-                          currentConfig.enableChunking ? '已开启' : '已关闭',
-                          style: TextStyle(fontSize: 13, color: colors.muted),
+          return Builder(
+            builder: (context) => ListView(
+              padding: moeUnderBarPadding(context, EdgeInsets.all(16)),
+              children: [
+                // ========== 消息分段 ==========
+                _buildSectionHeader('消息分段', colors),
+                MoeG2ClipRRect(
+                  radius: MoeSmoothRadii.sm,
+                  child: Material(
+                    color: colors.surfaceAlt,
+                    child: Column(
+                      children: [
+                        ListTile(
+                          leading: Icon(Icons.segment, color: colors.primary),
+                          title: const Text(
+                            '消息分段',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: MoeFontWeights.emphasis,
+                            ),
+                          ),
+                          subtitle: Text(
+                            currentConfig.enableChunking ? '已开启' : '已关闭',
+                            style: TextStyle(fontSize: 13, color: colors.muted),
+                          ),
+                          trailing: Icon(
+                            Icons.arrow_forward_ios,
+                            size: 16,
+                            color: colors.muted,
+                          ),
+                          onTap: () => Navigator.of(context).push(
+                            ParallaxSlidePageRoute(
+                              page: const UiSettingsPage(),
+                            ),
+                          ),
                         ),
-                        trailing: Icon(Icons.arrow_forward_ios, size: 16, color: colors.muted),
-                        onTap: () => Navigator.of(context).push(ParallaxSlidePageRoute(page: const UiSettingsPage())),
-                      ),
-                      Divider(height: 0, thickness: borderWidth, color: colors.divider),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-                        child: Text(
-                          '模拟真实聊天，按标点符号自动将长消息拆分成多条发送。',
-                          style: TextStyle(fontSize: 12, color: colors.muted),
+                        Divider(
+                          height: 0,
+                          thickness: borderWidth,
+                          color: colors.divider,
                         ),
-                      ),
-                    ],
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                          child: Text(
+                            '模拟真实聊天，按标点符号自动将长消息拆分成多条发送。',
+                            style: TextStyle(fontSize: 12, color: colors.muted),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 24),
+                const SizedBox(height: 24),
 
-              // ========== 表情包 ==========
-              _buildSectionHeader('表情包', colors),
-              MoeG2ClipRRect(
-                radius: MoeSmoothRadii.sm,
-                child: Material(
-                  color: colors.surfaceAlt,
-                  child: Column(
-                    children: [
-                      ListTile(
-                        leading: Icon(Icons.emoji_emotions, color: colors.primary),
-                        title: const Text('表情包管理', style: TextStyle(fontSize: 15, fontWeight: MoeFontWeights.emphasis)),
-                        subtitle: Text('按标签分组查看和管理', style: TextStyle(fontSize: 13, color: colors.muted)),
-                        trailing: Icon(Icons.arrow_forward_ios, size: 16, color: colors.muted),
-                        onTap: () => Navigator.of(context).push(ParallaxSlidePageRoute(page: const StickerSettingsPage())),
-                      ),
-                      Divider(height: 0, thickness: borderWidth, color: colors.divider),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-                        child: Text(
-                          'AI 使用 [标签] 语法发送表情包，如 [晚安]、[抱抱]。同义词自动匹配。',
-                          style: TextStyle(fontSize: 12, color: colors.muted),
+                // ========== 表情包 ==========
+                _buildSectionHeader('表情包', colors),
+                MoeG2ClipRRect(
+                  radius: MoeSmoothRadii.sm,
+                  child: Material(
+                    color: colors.surfaceAlt,
+                    child: Column(
+                      children: [
+                        ListTile(
+                          leading: Icon(
+                            Icons.emoji_emotions,
+                            color: colors.primary,
+                          ),
+                          title: const Text(
+                            '表情包管理',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: MoeFontWeights.emphasis,
+                            ),
+                          ),
+                          subtitle: Text(
+                            '按标签分组查看和管理',
+                            style: TextStyle(fontSize: 13, color: colors.muted),
+                          ),
+                          trailing: Icon(
+                            Icons.arrow_forward_ios,
+                            size: 16,
+                            color: colors.muted,
+                          ),
+                          onTap: () => Navigator.of(context).push(
+                            ParallaxSlidePageRoute(
+                              page: const StickerSettingsPage(),
+                            ),
+                          ),
                         ),
-                      ),
-                    ],
+                        Divider(
+                          height: 0,
+                          thickness: borderWidth,
+                          color: colors.divider,
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                          child: Text(
+                            'AI 使用 [标签] 语法发送表情包，如 [晚安]、[抱抱]。同义词自动匹配。',
+                            style: TextStyle(fontSize: 12, color: colors.muted),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 24),
-            ],
+                const SizedBox(height: 24),
+              ],
+            ),
           );
         },
       ),
@@ -132,7 +180,11 @@ class _MessageFormatSettingsPageState extends ConsumerState<MessageFormatSetting
       padding: const EdgeInsets.only(bottom: 12),
       child: Text(
         title,
-        style: TextStyle(color: colors.textSecondary, fontWeight: MoeFontWeights.emphasis, fontSize: 13),
+        style: TextStyle(
+          color: colors.textSecondary,
+          fontWeight: MoeFontWeights.emphasis,
+          fontSize: 13,
+        ),
       ),
     );
   }

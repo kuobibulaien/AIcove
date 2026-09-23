@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../shared/widgets/moe_avatar.dart';
 import '../../../shared/widgets/moe_search_field.dart';
+import '../../../shared/widgets/moe_scroll_edge.dart';
 import 'profile_page.dart';
 import 'account_page.dart';
 import 'log_viewer_page.dart';
@@ -22,32 +23,59 @@ import 'model_list_page.dart';
 import 'ui_settings_page.dart';
 
 /// 窄屏与宽屏左侧共用的设置根页。
-class SettingsPage extends StatelessWidget {
+class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
+
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  String _query = '';
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: const MoeAppBar(title: '设置', centerTitle: true),
+      extendBodyBehindAppBar: true,
+      appBar: MoeAppBar(
+        title: '设置',
+        centerTitle: true,
+        bottom: MoeSearchField(
+          hintText: '搜索',
+          padding: SettingsContent.searchPadding,
+          onChanged: (value) => setState(() => _query = value),
+        ),
+        bottomHeight: MoeSearchField.heightFor(
+          context,
+          padding: SettingsContent.searchPadding,
+        ),
+      ),
       backgroundColor: MoeSurfaceGroup.contains(context)
           ? Colors.transparent
           : context.moeColors.surface,
-      body: const SettingsContent(),
+      body: SettingsContent(query: _query),
     );
   }
 }
 
 /// 设置根目录，复用统一详情导航打开完整子页。
 class SettingsContent extends ConsumerStatefulWidget {
-  const SettingsContent({super.key});
+  const SettingsContent({super.key, this.query = ''});
+
+  final String query;
+
+  static const searchPadding = EdgeInsets.fromLTRB(
+    _SettingsContentState._outerInset,
+    4,
+    _SettingsContentState._outerInset,
+    10,
+  );
 
   @override
   ConsumerState<SettingsContent> createState() => _SettingsContentState();
 }
 
 class _SettingsContentState extends ConsumerState<SettingsContent> {
-  String _query = '';
-
   // Size text, touch targets and whitespace independently of display density.
   static const double _outerInset = 12;
   static const double _innerInset = 16;
@@ -135,8 +163,8 @@ class _SettingsContentState extends ConsumerState<SettingsContent> {
     final colors = context.moeColors;
     final name = settings?.userName?.trim();
     final displayName = name == null || name.isEmpty ? '设置个人资料' : name;
-    final terms = _query.trim().toLowerCase().split(RegExp(r'\s+'));
-    final searching = _query.trim().isNotEmpty;
+    final terms = widget.query.trim().toLowerCase().split(RegExp(r'\s+'));
+    final searching = widget.query.trim().isNotEmpty;
     final entries = _entries
         .where(
           (entry) => searching
@@ -149,114 +177,99 @@ class _SettingsContentState extends ConsumerState<SettingsContent> {
         )
         .toList();
 
-    return Column(
+    return ListView(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      padding: moeUnderBarPadding(
+        context,
+        const EdgeInsets.only(top: 2, bottom: 24),
+      ),
       children: [
-        MoeSearchField(
-          hintText: '搜索',
-          padding: const EdgeInsets.fromLTRB(_outerInset, 4, _outerInset, 10),
-          onChanged: (value) => setState(() => _query = value),
-        ),
-        Expanded(
-          child: ListView(
-            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-            padding: const EdgeInsets.only(top: 2, bottom: 24),
-            children: [
-              if (!searching) ...[
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(
-                    _outerInset,
-                    0,
-                    _outerInset,
-                    16,
-                  ),
-                  // Preserve the current theme while lifting the profile off the backdrop.
-                  child: MoeContentSurface(
-                    key: const ValueKey('settings-profile-card'),
-                    child: InkWell(
-                      onTap: _openProfile,
-                      child: Padding(
-                        padding: const EdgeInsets.all(_innerInset),
-                        child: Row(
+        if (!searching) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(_outerInset, 0, _outerInset, 16),
+            // Preserve the current theme while lifting the profile off the backdrop.
+            child: MoeContentSurface(
+              key: const ValueKey('settings-profile-card'),
+              child: InkWell(
+                onTap: _openProfile,
+                child: Padding(
+                  padding: const EdgeInsets.all(_innerInset),
+                  child: Row(
+                    children: [
+                      MoeAvatar(
+                        name: displayName,
+                        avatarUrl: settings?.userAvatar,
+                        size: 56,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            MoeAvatar(
-                              name: displayName,
-                              avatarUrl: settings?.userAvatar,
-                              size: 56,
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    displayName,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 17,
-                                      fontWeight: MoeFontWeights.emphasis,
-                                      color: colors.text,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 3),
-                                  Text(
-                                    '编辑头像和名字',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      color: colors.muted,
-                                    ),
-                                  ),
-                                ],
+                            Text(
+                              displayName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 17,
+                                fontWeight: MoeFontWeights.emphasis,
+                                color: colors.text,
                               ),
                             ),
-                            const SizedBox(width: 8),
-                            Icon(
-                              Icons.chevron_right,
-                              color: colors.muted.withValues(alpha: 0.55),
-                              size: 20,
+                            const SizedBox(height: 3),
+                            Text(
+                              '编辑头像和名字',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: colors.muted,
+                              ),
                             ),
                           ],
                         ),
                       ),
-                    ),
+                      const SizedBox(width: 8),
+                      Icon(
+                        Icons.chevron_right,
+                        color: colors.muted.withValues(alpha: 0.55),
+                        size: 20,
+                      ),
+                    ],
                   ),
                 ),
-              ],
-              if (entries.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: _outerInset,
-                  ),
-                  child: MoeContentSurface(
-                    key: const ValueKey('settings-entry-container'),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        for (final entry in entries)
-                          _buildEntry(
-                            context,
-                            icon: entry.icon,
-                            color: entry.color,
-                            label: entry.label,
-                            page: entry.page,
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              if (entries.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.all(32),
-                  child: Text(
-                    '没有找到相关设置',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: colors.muted),
-                  ),
-                ),
-            ],
+              ),
+            ),
           ),
-        ),
+        ],
+        if (entries.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: _outerInset),
+            child: MoeContentSurface(
+              key: const ValueKey('settings-entry-container'),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final entry in entries)
+                    _buildEntry(
+                      context,
+                      icon: entry.icon,
+                      color: entry.color,
+                      label: entry.label,
+                      page: entry.page,
+                    ),
+                ],
+              ),
+            ),
+          ),
+        if (entries.isEmpty)
+          Padding(
+            padding: const EdgeInsets.all(32),
+            child: Text(
+              '没有找到相关设置',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: colors.muted),
+            ),
+          ),
       ],
     );
   }

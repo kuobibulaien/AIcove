@@ -8,10 +8,7 @@ import '../../../theme/tokens.dart';
 import '../../../shared/widgets/index.dart';
 
 class MultiKeyManagerPage extends ConsumerStatefulWidget {
-  const MultiKeyManagerPage({
-    super.key,
-    required this.providerId,
-  });
+  const MultiKeyManagerPage({super.key, required this.providerId});
 
   final String providerId;
 
@@ -93,8 +90,9 @@ class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
                 trailing: current == providerMultiKeyStrategyRoundRobin
                     ? Icon(Icons.check, color: colors.primary, size: 18)
                     : const SizedBox.shrink(),
-                onTap: () => Navigator.of(sheetContext)
-                    .pop(providerMultiKeyStrategyRoundRobin),
+                onTap: () => Navigator.of(
+                  sheetContext,
+                ).pop(providerMultiKeyStrategyRoundRobin),
               ),
               MoeSettingsRow(
                 icon: Icons.shuffle_outlined,
@@ -103,8 +101,9 @@ class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
                 trailing: current == providerMultiKeyStrategyRandom
                     ? Icon(Icons.check, color: colors.primary, size: 18)
                     : const SizedBox.shrink(),
-                onTap: () => Navigator.of(sheetContext)
-                    .pop(providerMultiKeyStrategyRandom),
+                onTap: () => Navigator.of(
+                  sheetContext,
+                ).pop(providerMultiKeyStrategyRandom),
               ),
               MoeSettingsRow(
                 icon: Icons.hourglass_bottom_outlined,
@@ -114,8 +113,9 @@ class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
                 trailing: current == providerMultiKeyStrategyExhaust
                     ? Icon(Icons.check, color: colors.primary, size: 18)
                     : const SizedBox.shrink(),
-                onTap: () => Navigator.of(sheetContext)
-                    .pop(providerMultiKeyStrategyExhaust),
+                onTap: () => Navigator.of(
+                  sheetContext,
+                ).pop(providerMultiKeyStrategyExhaust),
               ),
             ],
           ),
@@ -157,8 +157,9 @@ class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
         if (ok) successCount++;
         final now = DateTime.now().millisecondsSinceEpoch;
         next[i] = item.copyWith(
-          status:
-              ok ? ProviderMultiKeyStatus.normal : ProviderMultiKeyStatus.error,
+          status: ok
+              ? ProviderMultiKeyStatus.normal
+              : ProviderMultiKeyStatus.error,
           totalRequests: item.totalRequests + 1,
           successRequests: item.successRequests + (ok ? 1 : 0),
           failedRequests: item.failedRequests + (ok ? 0 : 1),
@@ -207,8 +208,9 @@ class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
       final next = items.map((item) {
         if (item.id != target.id) return item;
         return item.copyWith(
-          status:
-              ok ? ProviderMultiKeyStatus.normal : ProviderMultiKeyStatus.error,
+          status: ok
+              ? ProviderMultiKeyStatus.normal
+              : ProviderMultiKeyStatus.error,
           totalRequests: item.totalRequests + 1,
           successRequests: item.successRequests + (ok ? 1 : 0),
           failedRequests: item.failedRequests + (ok ? 0 : 1),
@@ -232,8 +234,9 @@ class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
     ProviderAuth provider,
     List<ProviderMultiKeyItem> items,
   ) async {
-    final toDelete =
-        items.where((item) => item.status == ProviderMultiKeyStatus.error);
+    final toDelete = items.where(
+      (item) => item.status == ProviderMultiKeyStatus.error,
+    );
     if (toDelete.isEmpty) {
       MoeToast.show(context, '没有错误 Key');
       return;
@@ -338,61 +341,74 @@ class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
     MoeToast.show(context, '已新增 $added 个 Key');
   }
 
-  Future<void> _editKey(ProviderAuth provider, List<ProviderMultiKeyItem> items,
-      ProviderMultiKeyItem target) async {
+  Future<void> _editKey(
+    ProviderAuth provider,
+    List<ProviderMultiKeyItem> items,
+    ProviderMultiKeyItem target,
+  ) async {
     final key = TextEditingController(text: target.key);
     final alias = TextEditingController(text: target.alias ?? '');
     await showMoeBottomSheet<void>(
-        context: context,
-        title: '编辑 Key',
-        showCloseButton: true,
-        isDismissible: false,
-        enableDrag: false,
-        builder: (context) => MoeAutoSaveForm(
-              disposeFields: true,
-              fields: [key, alias],
-              snapshot: () => moeAutoSaveSignature([key.text, alias.text]),
-              save: () async {
-                final value = key.text.trim();
-                final name = alias.text.trim();
-                if (value.isEmpty) throw const FormatException('Key 不能为空');
-                final current = ref
-                    .read(appSettingsProvider)
-                    .requireValue
-                    .providers
-                    .where((p) => p.id == provider.id)
-                    .firstOrNull;
-                if (current == null) throw const FormatException('渠道已不存在');
-                final entries = providerMultiKeyItemsFromProvider(current);
-                if (entries.any((item) =>
-                    item.id != target.id &&
-                    item.key.trim().toLowerCase() == value.toLowerCase())) {
-                  throw const FormatException('Key 已存在');
-                }
-                if (!entries.any((item) => item.id == target.id)) {
-                  throw const FormatException('Key 已不存在');
-                }
-                await _saveItems(
-                    current,
-                    entries
-                        .map((item) => item.id == target.id
-                            ? item.copyWith(
-                                key: value,
-                                alias: name,
-                                clearAlias: name.isEmpty,
-                                updatedAt:
-                                    DateTime.now().millisecondsSinceEpoch)
-                            : item)
-                        .toList());
-              },
-              builder: (context, update) => Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    MoeTextField(controller: alias, label: '备注'),
-                    const SizedBox(height: 12),
-                    MoeTextField(controller: key, label: 'API Key'),
-                  ])),
-            ));
+      context: context,
+      title: '编辑 Key',
+      showCloseButton: true,
+      isDismissible: false,
+      enableDrag: false,
+      builder: (context) => MoeAutoSaveForm(
+        disposeFields: true,
+        fields: [key, alias],
+        snapshot: () => moeAutoSaveSignature([key.text, alias.text]),
+        save: () async {
+          final value = key.text.trim();
+          final name = alias.text.trim();
+          if (value.isEmpty) throw const FormatException('Key 不能为空');
+          final current = ref
+              .read(appSettingsProvider)
+              .requireValue
+              .providers
+              .where((p) => p.id == provider.id)
+              .firstOrNull;
+          if (current == null) throw const FormatException('渠道已不存在');
+          final entries = providerMultiKeyItemsFromProvider(current);
+          if (entries.any(
+            (item) =>
+                item.id != target.id &&
+                item.key.trim().toLowerCase() == value.toLowerCase(),
+          )) {
+            throw const FormatException('Key 已存在');
+          }
+          if (!entries.any((item) => item.id == target.id)) {
+            throw const FormatException('Key 已不存在');
+          }
+          await _saveItems(
+            current,
+            entries
+                .map(
+                  (item) => item.id == target.id
+                      ? item.copyWith(
+                          key: value,
+                          alias: name,
+                          clearAlias: name.isEmpty,
+                          updatedAt: DateTime.now().millisecondsSinceEpoch,
+                        )
+                      : item,
+                )
+                .toList(),
+          );
+        },
+        builder: (context, update) => Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              MoeTextField(controller: alias, label: '备注'),
+              const SizedBox(height: 12),
+              MoeTextField(controller: key, label: 'API Key'),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _deleteKey(
@@ -404,7 +420,8 @@ class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
       context: context,
       title: '删除 Key',
       content: Text(
-          '确定删除 ${target.alias ?? maskProviderMultiKeyValue(target.key)} 吗？'),
+        '确定删除 ${target.alias ?? maskProviderMultiKeyValue(target.key)} 吗？',
+      ),
       confirmText: '删除',
       cancelText: '取消',
     );
@@ -437,11 +454,13 @@ class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
 
     return settingsAsync.when(
       loading: () => MoePageScaffold(
+        extendBodyBehindAppBar: true,
         backgroundColor: colors.surface,
         appBar: const MoeAppBar(title: '多 Key 管理', showBackButton: true),
         body: const Center(child: MoeLoadingIndicator()),
       ),
       error: (e, _) => MoePageScaffold(
+        extendBodyBehindAppBar: true,
         backgroundColor: colors.surface,
         appBar: const MoeAppBar(title: '多 Key 管理', showBackButton: true),
         body: MoeEmptyState(title: '加载失败', description: e.toString()),
@@ -458,6 +477,7 @@ class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
         );
         if (provider.id.isEmpty) {
           return const MoePageScaffold(
+            extendBodyBehindAppBar: true,
             appBar: MoeAppBar(title: '多 Key 管理', showBackButton: true),
             body: MoeEmptyState(title: '渠道不存在'),
           );
@@ -471,10 +491,12 @@ class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
         final error = items
             .where((item) => item.status == ProviderMultiKeyStatus.error)
             .length;
-        final strategy =
-            providerMultiKeyStrategyLabel(providerMultiKeyStrategy(provider));
+        final strategy = providerMultiKeyStrategyLabel(
+          providerMultiKeyStrategy(provider),
+        );
 
         return MoePageScaffold(
+          extendBodyBehindAppBar: true,
           backgroundColor: colors.surface,
           appBar: MoeAppBar(
             title: '多 Key 管理',
@@ -497,8 +519,9 @@ class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
                       )
                     : Icon(Icons.monitor_heart_outlined, color: colors.text),
                 tooltip: '检测',
-                onPressed:
-                    _detecting ? null : () => _detectAll(provider, items),
+                onPressed: _detecting
+                    ? null
+                    : () => _detectAll(provider, items),
               ),
               IconButton(
                 icon: Icon(Icons.add, color: colors.text),
@@ -507,74 +530,82 @@ class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
               ),
             ],
           ),
-          body: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-            child: Column(
-              children: [
-                MoeSettingsGroup(
-                  margin: EdgeInsets.zero,
-                  children: [
-                    MoeSettingsRow(
-                      icon: Icons.numbers,
-                      label: '总数',
-                      trailingType: MoeSettingsRowTrailing.text,
-                      detailText: '$total',
-                    ),
-                    MoeSettingsRow(
-                      icon: Icons.check_circle_outline,
-                      label: '正常',
-                      trailingType: MoeSettingsRowTrailing.text,
-                      detailText: '$normal',
-                    ),
-                    MoeSettingsRow(
-                      icon: Icons.error_outline,
-                      label: '错误',
-                      trailingType: MoeSettingsRowTrailing.text,
-                      detailText: '$error',
-                    ),
-                    MoeSettingsRow(
-                      icon: Icons.sync_alt_outlined,
-                      label: '负载均衡策略',
-                      trailingType: MoeSettingsRowTrailing.text,
-                      detailText: strategy,
-                      onTap: () => _pickStrategy(provider, items),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                if (items.isEmpty)
+          body: Builder(
+            builder: (context) => SingleChildScrollView(
+              padding: moeUnderBarPadding(
+                context,
+                EdgeInsets.fromLTRB(16, 12, 16, 24),
+              ),
+              child: Column(
+                children: [
                   MoeSettingsGroup(
                     margin: EdgeInsets.zero,
                     children: [
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 20),
-                        child: Center(
-                          child: Text(
-                            '暂无 Key',
-                            style: TextStyle(color: colors.muted, fontSize: 14),
-                          ),
-                        ),
+                      MoeSettingsRow(
+                        icon: Icons.numbers,
+                        label: '总数',
+                        trailingType: MoeSettingsRowTrailing.text,
+                        detailText: '$total',
+                      ),
+                      MoeSettingsRow(
+                        icon: Icons.check_circle_outline,
+                        label: '正常',
+                        trailingType: MoeSettingsRowTrailing.text,
+                        detailText: '$normal',
+                      ),
+                      MoeSettingsRow(
+                        icon: Icons.error_outline,
+                        label: '错误',
+                        trailingType: MoeSettingsRowTrailing.text,
+                        detailText: '$error',
+                      ),
+                      MoeSettingsRow(
+                        icon: Icons.sync_alt_outlined,
+                        label: '负载均衡策略',
+                        trailingType: MoeSettingsRowTrailing.text,
+                        detailText: strategy,
+                        onTap: () => _pickStrategy(provider, items),
                       ),
                     ],
-                  )
-                else
-                  MoeSettingsGroup(
-                    margin: EdgeInsets.zero,
-                    children: [
-                      for (final item in items)
-                        _MultiKeyRow(
-                          item: item,
-                          colors: colors,
-                          testing: _testingKeyId == item.id,
-                          onToggleEnabled: (value) =>
-                              _toggleKeyEnabled(provider, items, item, value),
-                          onDetect: () => _detectOne(provider, items, item),
-                          onEdit: () => _editKey(provider, items, item),
-                          onDelete: () => _deleteKey(provider, items, item),
-                        ),
-                    ],
                   ),
-              ],
+                  const SizedBox(height: 12),
+                  if (items.isEmpty)
+                    MoeSettingsGroup(
+                      margin: EdgeInsets.zero,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 20),
+                          child: Center(
+                            child: Text(
+                              '暂无 Key',
+                              style: TextStyle(
+                                color: colors.muted,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    )
+                  else
+                    MoeSettingsGroup(
+                      margin: EdgeInsets.zero,
+                      children: [
+                        for (final item in items)
+                          _MultiKeyRow(
+                            item: item,
+                            colors: colors,
+                            testing: _testingKeyId == item.id,
+                            onToggleEnabled: (value) =>
+                                _toggleKeyEnabled(provider, items, item, value),
+                            onDetect: () => _detectOne(provider, items, item),
+                            onEdit: () => _editKey(provider, items, item),
+                            onDelete: () => _deleteKey(provider, items, item),
+                          ),
+                      ],
+                    ),
+                ],
+              ),
             ),
           ),
         );
@@ -642,10 +673,7 @@ class _MultiKeyFormSheet extends StatelessWidget {
               Row(
                 children: [
                   Expanded(
-                    child: MoeSecondaryButton(
-                      label: '取消',
-                      onPressed: onCancel,
-                    ),
+                    child: MoeSecondaryButton(label: '取消', onPressed: onCancel),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -688,8 +716,9 @@ class _MultiKeyRow extends StatelessWidget {
     final statusColor = item.status == ProviderMultiKeyStatus.error
         ? const Color(0xFFE53935)
         : const Color(0xFF43A047);
-    final statusText =
-        item.status == ProviderMultiKeyStatus.error ? '错误' : '正常';
+    final statusText = item.status == ProviderMultiKeyStatus.error
+        ? '错误'
+        : '正常';
     final title = (item.alias?.trim().isNotEmpty ?? false)
         ? '${item.alias} · ${maskProviderMultiKeyValue(item.key)}'
         : maskProviderMultiKeyValue(item.key);

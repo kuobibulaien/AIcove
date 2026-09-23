@@ -801,71 +801,6 @@
       "template": "{current_time_line}{previous_user_message_line}请自行判断当前与历史对话的关系。"
     },
     {
-      "id": "memory.summary.default",
-      "dartName": "memorySummaryDefault",
-      "title": "分析聊天记录并提取有价值的记忆事件",
-      "category": "memory",
-      "variables": [],
-      "template": "你是记忆提取助手，分析聊天记录并提取值得记忆的事实。\n\n## 输出格式\n\n按 JSON 输出，不要解释性文本：\n\n{\n  \"items\": [\n    {\n      \"fact\": \"事件概要；若 target_layer=L3，必须写成角色第一视角的单条日记事件，20~80字\",\n      \"category\": \"core_preference | identity_fact | emotional_event | ongoing_plan | temporary_state | daily_chatter\",\n      \"target_layer\": \"L2 | L3 | L4\",\n      \"chat_process\": \"仅L2可填\",\n      \"emotion\": \"仅L2可填\",\n      \"personality_insight\": \"仅L2可填\",\n      \"ai_strategy\": \"仅L2可填\"\n    }\n  ],\n  \"profile_suggestion\": {\n    \"trait\": \"可空\",\n    \"evidence\": \"可空\"\n  }\n}\n\n## 字段说明\n\n**category（事件类型）**：\n- `core_preference`：核心偏好（如喜欢被安慰、讨厌被催促）\n- `identity_fact`：身份事实（如职业、家庭、生活习惯）\n- `emotional_event`：情感事件（如吵架、和好、重要时刻）\n- `ongoing_plan`：进行中的计划（如准备考试、正在减肥）\n- `temporary_state`：临时状态（如今天心情不好、这周很忙）\n- `daily_chatter`：日常闲聊（如今天吃了什么、天气如何）\n\n**target_layer（目标层级）**：\n- `L2`：技能记忆（如何应对特定情境）\n- `L3`：日记事件（角色第一视角的单条事件）\n- `L4`：长期回忆（重要的历史事件）\n\n**L2 专属字段**：\n- `chat_process`：对话过程描述\n- `emotion`：用户情绪\n- `personality_insight`：性格洞察\n- `ai_strategy`：应对策略\n\n## 约束\n\n- 不要编造；不确定就不输出\n- 输出 0~8 条，宁缺毋滥\n- 认真使用消息时间戳，判断事情发生在多久前、现在是否还在持续\n- L3 允许同一天输出多条事件，每条都是可独立展示的日记片段\n- 不要把短期状态误写成长期稳定事实"
-    },
-    {
-      "id": "memory.summary.extra_instruction",
-      "dartName": "memorySummaryExtraInstruction",
-      "title": "记忆总结时的前置约束与时间保护说明",
-      "category": "memory",
-      "variables": [],
-      "template": "你当前收到的是已经按记忆触发规则挑选过的一批旧消息：\n- 核心部分是当前用户消息之前 24 小时保护期之外、且尚未总结的消息\n- 如果保护期边界前后的用户消息连续间隔不超过 10 分钟，保护期内相邻消息也可能被并入\n你正在整理的是某一个角色自己的专属记忆库：\n- 每个 conversationId 都代表一个独立角色记忆库\n- L1 / L2 / L3 / L4 都是这个角色记忆库内部的分层，不是全局共享池\n- 不要把其他角色可能拥有的经历、口吻或记忆混进当前输出\n请强烈关注每条消息中的时间戳，判断事件发生在多久前、是否已经结束，不要把短期状态误写成长期稳定事实。\n严格按要求输出 JSON，不要输出 markdown。"
-    },
-    {
-      "id": "memory.summary.role_persona.generic_instruction",
-      "dartName": "memorySummaryRolePersonaGenericInstruction",
-      "title": "强制 AI 按照特定角色身份去总结专属记忆",
-      "category": "memory",
-      "variables": [
-        "conversation_id"
-      ],
-      "template": "当前正在整理一个角色专属记忆库：\n- conversationId：{conversation_id}\n- 你写出的 L1/L2/L3/L4 都只能属于这个角色\n\n当 target_layer = L3 时：\n- fact 必须用角色第一视角写成单条日记事件，像角色自己在回顾“我和用户发生了什么”\n- 可以输出同一天的多条不同事件，每条只聚焦一件事\n- 不要写成旁白、观察报告或分析结论"
-    },
-    {
-      "id": "memory.summary.role_persona.context_instruction",
-      "dartName": "memorySummaryRolePersonaContextInstruction",
-      "title": "包含角色具体人设的记忆总结前置说明",
-      "category": "memory",
-      "variables": [
-        "conversation_id",
-        "role_name",
-        "self_address",
-        "user_address",
-        "persona_summary_block",
-        "generic_instruction_block"
-      ],
-      "template": "当前需要你以指定角色的人设来整理记忆：\n- 当前记忆库类型：角色专属记忆库\n- 当前记忆库 ID：{conversation_id}\n- 角色名：{role_name}\n- 角色自称优先使用：{self_address}\n- 对用户称呼优先使用：{user_address}{persona_summary_block}\n\n{generic_instruction_block}\n- 单日内允许输出多条 L3 事件，这些事件之后会被拼接为同一篇日记展示"
-    },
-    {
-      "id": "memory.role_scoped.root",
-      "dartName": "memoryRoleScopedRoot",
-      "title": "向聊天上下文中注入角色专属的各级记忆",
-      "category": "memory",
-      "variables": [
-        "role_label",
-        "profile_block",
-        "l2_skill_index_block",
-        "l2_skill_detail_block",
-        "recall_block"
-      ],
-      "template": "## 当前角色专属记忆库\n- 当前角色：{role_label}\n- 作用范围：以下 L1/L2/L3/L4 记忆仅属于当前角色，不能套用到其他角色\n- 注入方式：L1 直接插入；L2 以 skill 索引和命中详情插入；L3 以召回回忆插入{profile_block}{l2_skill_index_block}{l2_skill_detail_block}{recall_block}"
-    },
-    {
-      "id": "memory.profile_prompt.root",
-      "dartName": "memoryProfilePromptRoot",
-      "title": "格式化用户画像清单（L1记忆）",
-      "category": "memory",
-      "variables": [
-        "lines"
-      ],
-      "template": "## 用户画像\n{lines}"
-    },
-    {
       "id": "system_reminder.semantics",
       "dartName": "systemReminderSemantics",
       "title": "告诉 AI 不要复述 <system-reminder> 的内容",
@@ -904,28 +839,6 @@
         "conversation_text"
       ],
       "template": "你现在是「{assistant_name}」，请以第一人称视角写一篇今天的日记。\n\n要求：\n1. 用「{self_address}」来称呼自己\n2. 用「{user_address}」来称呼对方\n3. 日记要有感情，记录今天和对方聊了什么、发生了什么有趣的事\n4. 长度适中（100-300字）\n5. 语气要符合角色性格\n6. 不要写日期，直接开始正文{persona_hint_block}\n\n今天的对话内容：\n{conversation_text}\n\n请直接输出日记正文："
-    },
-    {
-      "id": "memory.merge.prompt",
-      "dartName": "memoryMergePrompt",
-      "title": "将新发生的事实合并进旧的记忆中",
-      "category": "memory",
-      "variables": [
-        "old_content",
-        "new_fact"
-      ],
-      "template": "你有一条已存在的记忆和一条新事实，它们是关于同一个主题。\n请合并成一条带时间线的记忆：\n1. 按时间顺序排列\n2. 保留关键细节\n3. 结尾必须包含 \"→ 当前状态：...\"\n\n已存在记忆：\n{old_content}\n\n新事实：\n{new_fact}\n\n合并结果："
-    },
-    {
-      "id": "memory.reenrich.default",
-      "dartName": "memoryReEnrichDefault",
-      "title": "结合最新聊天内容重新丰富被压缩的记忆",
-      "category": "memory",
-      "variables": [
-        "compressed_content",
-        "recent_message_context"
-      ],
-      "template": "【重新丰富】\n事件：{compressed_content}\n聊天经过：{recent_message_context}\n→ 当前状态：基于最近对话重新确认"
     }
   ]
 }

@@ -44,7 +44,8 @@ void main() {
         ));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
-        await tester.scrollUntilVisible(find.text('Reminder 99'), 500,
+        // Content may rest beneath the translucent bar; wait until tappable.
+        await tester.scrollUntilVisible(find.text('Reminder 99').hitTestable(), 500,
             maxScrolls: 100);
         expect(find.text('Reminder 99').hitTestable(), findsOneWidget);
         expect(tester.takeException(), isNull);

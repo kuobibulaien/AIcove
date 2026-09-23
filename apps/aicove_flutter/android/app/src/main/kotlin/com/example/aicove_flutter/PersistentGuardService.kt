@@ -1,6 +1,7 @@
 package com.example.aicove_flutter
 
 import android.app.ActivityManager
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -176,36 +177,33 @@ class PersistentGuardService : Service() {
             ?: return
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "AI 守护模式",
+            "后台运行",
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = "保持 AIcove 主动回复与聊天生成在后台尽量稳定运行"
+            description = "主动回复与后台生成回复时显示"
             setShowBadge(false)
         }
         manager.createNotificationChannel(channel)
     }
 
-    private fun buildNotification() = NotificationCompat.Builder(this, CHANNEL_ID)
-        .setContentTitle("AI 守护中")
-        .setContentText(
-            if (generationActive) {
-                "正在后台生成回复，完成后会自动释放临时守护。"
-            } else {
-                "主动回复守护模式已开启，点击可返回应用。"
-            },
-        )
-        .setSmallIcon(android.R.drawable.ic_dialog_info)
-        .setOngoing(true)
-        .setOnlyAlertOnce(true)
-        .setCategory(NotificationCompat.CATEGORY_SERVICE)
-        .setPriority(NotificationCompat.PRIORITY_LOW)
-        .setContentIntent(buildOpenAppPendingIntent())
-        .addAction(
-            0,
-            "停止长期守护",
-            buildStopPendingIntent(),
-        )
-        .build()
+    private fun buildNotification(): Notification {
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(if (generationActive) "正在回复…" else "主动回复已开启")
+            .setSmallIcon(R.drawable.ic_stat_aicove)
+            .setShowWhen(false)
+            .setSilent(true)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setContentIntent(buildOpenAppPendingIntent())
+        // Temporary generation-only guard stops by itself; only the persistent one gets a stop button.
+        if (KeepAliveConfig.isGuardEnabled(this)) {
+            builder.addAction(0, "关闭", buildStopPendingIntent())
+        }
+        return builder.build()
+    }
 
     private fun buildOpenAppPendingIntent(): PendingIntent {
         val intent = packageManager.getLaunchIntentForPackage(packageName)

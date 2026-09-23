@@ -33,55 +33,61 @@ class _StickerSettingsPageState extends ConsumerState<StickerSettingsPage> {
 
     return MoePageScaffold(
       backgroundColor: colors.surface,
+      extendBodyBehindAppBar: true,
       appBar: const MoeDetailAppBar(title: '表情包'),
-      body: CustomScrollView(
-        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-        slivers: [
-          SliverToBoxAdapter(
-            child: MoeSearchField(
-              hintText: '搜索表情、标签或套组',
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-              onChanged: (value) => setState(() => _query = value),
-            ),
-          ),
-          if (registry.stickers.isEmpty)
-            const SliverFillRemaining(
-              hasScrollBody: false,
-              child: MoeEmptyState(
-                icon: Icons.emoji_emotions_outlined,
-                title: '还没有表情包',
-                description: '添加表情资源并注册后，这里会列出可供 AI 发送的表情。',
-              ),
-            )
-          else if (searching) ...[
+      body: Builder(
+        builder: (context) => CustomScrollView(
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          slivers: [
             SliverToBoxAdapter(
-              child: _SectionHeader(title: '搜索结果', count: results!.length),
+              child: MoeSearchField(
+                hintText: '搜索表情、标签或套组',
+                padding: moeUnderBarPadding(
+                  context,
+                  const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                ),
+                onChanged: (value) => setState(() => _query = value),
+              ),
             ),
-            if (results.isEmpty)
-              const SliverToBoxAdapter(
-                child: Padding(
-                  padding: EdgeInsets.only(top: 48),
-                  child: MoeEmptyState(
-                    icon: Icons.search_off_rounded,
-                    title: '没有找到相关表情',
-                    description: '换个关键词试试，支持标签同义词、描述和套组名。',
-                  ),
+            if (registry.stickers.isEmpty)
+              const SliverFillRemaining(
+                hasScrollBody: false,
+                child: MoeEmptyState(
+                  icon: Icons.emoji_emotions_outlined,
+                  title: '还没有表情包',
+                  description: '添加表情资源并注册后，这里会列出可供 AI 发送的表情。',
                 ),
               )
-            else
-              _buildGrid(results),
-          ] else
-            for (final name in folderNames) ...[
+            else if (searching) ...[
               SliverToBoxAdapter(
-                child: _SectionHeader(
-                  title: name,
-                  count: folders[name]!.length,
-                ),
+                child: _SectionHeader(title: '搜索结果', count: results!.length),
               ),
-              _buildGrid(folders[name]!),
-            ],
-          const SliverToBoxAdapter(child: SizedBox(height: 24)),
-        ],
+              if (results.isEmpty)
+                const SliverToBoxAdapter(
+                  child: Padding(
+                    padding: EdgeInsets.only(top: 48),
+                    child: MoeEmptyState(
+                      icon: Icons.search_off_rounded,
+                      title: '没有找到相关表情',
+                      description: '换个关键词试试，支持标签同义词、描述和套组名。',
+                    ),
+                  ),
+                )
+              else
+                _buildGrid(results),
+            ] else
+              for (final name in folderNames) ...[
+                SliverToBoxAdapter(
+                  child: _SectionHeader(
+                    title: name,
+                    count: folders[name]!.length,
+                  ),
+                ),
+                _buildGrid(folders[name]!),
+              ],
+            const SliverToBoxAdapter(child: SizedBox(height: 24)),
+          ],
+        ),
       ),
     );
   }

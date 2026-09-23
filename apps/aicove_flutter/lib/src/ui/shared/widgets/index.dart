@@ -71,6 +71,7 @@ export 'moe_liquid_glass.dart';
 export 'moe_chat_header.dart';
 export 'moe_chat_wallpaper.dart';
 export 'moe_avatar.dart';
+export 'moe_scroll_edge.dart';
 export 'moe_search_field.dart';
 export 'form/moe_auto_save.dart';
 

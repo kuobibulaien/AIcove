@@ -30,7 +30,9 @@ class _CallFlowManagementPageState extends ConsumerState<CallFlowManagementPage>
     _draft = settings.callFlowSettings;
     _initialized = true;
     autoSave.configure(
-        save: _persist, snapshot: () => moeAutoSaveSignature(_draft!.toJson()));
+      save: _persist,
+      snapshot: () => moeAutoSaveSignature(_draft!.toJson()),
+    );
   }
 
   Future<void> _persist() async {
@@ -55,139 +57,161 @@ class _CallFlowManagementPageState extends ConsumerState<CallFlowManagementPage>
     final colors = context.moeColors;
     final settingsAsync = ref.watch(appSettingsProvider);
 
-    return autoSavePage(MoePageScaffold(
-      backgroundColor: colors.surface,
-      appBar: const MoeAppBar(title: '调用超时管理', showBackButton: true),
-      body: settingsAsync.when(
-        loading: () => const Center(child: MoeLoadingIndicator()),
-        error: (error, _) => Center(
-          child: MoeEmptyState(
-            icon: Icons.error_outline,
-            title: '加载失败',
-            description: '$error',
+    return autoSavePage(
+      MoePageScaffold(
+        extendBodyBehindAppBar: true,
+        backgroundColor: colors.surface,
+        appBar: const MoeAppBar(title: '调用超时管理', showBackButton: true),
+        body: settingsAsync.when(
+          loading: () => const Center(child: MoeLoadingIndicator()),
+          error: (error, _) => Center(
+            child: MoeEmptyState(
+              icon: Icons.error_outline,
+              title: '加载失败',
+              description: '$error',
+            ),
           ),
-        ),
-        data: (settings) {
-          _ensureDraft(settings);
-          final draft = _draft ?? settings.callFlowSettings;
+          data: (settings) {
+            _ensureDraft(settings);
+            final draft = _draft ?? settings.callFlowSettings;
 
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: MoeG2Decoration(
-                  radius: 12,
-                  color: colors.surface,
-                  border: Border.all(color: colors.borderLight),
-                ),
-                child: Text(
-                  '这里只调试模型请求和工具执行超时。\n'
-                  '生图路径切换已经移动到「绘图设置」，自动档会在满足视觉 + 工具调用时走 draw_image 审图链路，否则改走 <image> 标签直连链路。',
-                  style: TextStyle(fontSize: 13, color: colors.textSecondary),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: MoeG2Decoration(
-                  radius: 12,
-                  color: colors.surface,
-                  border: Border.all(color: colors.borderLight),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '模型默认超时：${draft.modelTimeoutSeconds}s',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: MoeFontWeights.emphasis,
-                        color: colors.text,
-                      ),
-                    ),
-                    Slider(
-                  overlayColor: moeInteractionOverlay,
-                      value: draft.modelTimeoutSeconds.toDouble(),
-                      min: CallFlowSettings.minModelTimeoutSeconds.toDouble(),
-                      max: CallFlowSettings.maxModelTimeoutSeconds.toDouble(),
-                      divisions: CallFlowSettings.maxModelTimeoutSeconds -
-                          CallFlowSettings.minModelTimeoutSeconds,
-                      label: '${draft.modelTimeoutSeconds}s',
-                      onChanged: (value) => setState(
-                        () => _draft = draft.copyWith(
-                          modelTimeoutSeconds: value.round(),
-                        ),
-                      ),
-                    ),
-                    Text(
-                      '作用：限制每轮模型请求等待时间。超时后本轮失败。',
-                      style:
-                          TextStyle(fontSize: 12, color: colors.textSecondary),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: MoeG2Decoration(
-                  radius: 12,
-                  color: colors.surface,
-                  border: Border.all(color: colors.borderLight),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '工具默认超时：${draft.toolTimeoutSeconds}s',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: MoeFontWeights.emphasis,
-                        color: colors.text,
-                      ),
-                    ),
-                    Slider(
-                  overlayColor: moeInteractionOverlay,
-                      value: draft.toolTimeoutSeconds.toDouble(),
-                      min: CallFlowSettings.minToolTimeoutSeconds.toDouble(),
-                      max: CallFlowSettings.maxToolTimeoutSeconds.toDouble(),
-                      divisions: CallFlowSettings.maxToolTimeoutSeconds -
-                          CallFlowSettings.minToolTimeoutSeconds,
-                      label: '${draft.toolTimeoutSeconds}s',
-                      onChanged: (value) => setState(
-                        () => _draft = draft.copyWith(
-                          toolTimeoutSeconds: value.round(),
-                        ),
-                      ),
-                    ),
-                    Text(
-                      '作用：限制单个工具调用等待时间。自动档命中稳定链路时主要影响 draw_image 及其他工具执行；快速档下生图改走 <image> 标签链路，这里主要影响非生图工具。',
-                      style:
-                          TextStyle(fontSize: 12, color: colors.textSecondary),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              Row(
+            return Builder(
+              builder: (context) => ListView(
+                padding: moeUnderBarPadding(context, EdgeInsets.all(16)),
                 children: [
-                  Expanded(
-                    child: MoeSecondaryButton(
-                      label: '恢复默认',
-                      icon: Icons.restore_rounded,
-                      onPressed: _resetToDefault,
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: MoeG2Decoration(
+                      radius: 12,
+                      color: colors.surface,
+                      border: Border.all(color: colors.borderLight),
+                    ),
+                    child: Text(
+                      '这里只调试模型请求和工具执行超时。\n'
+                      '生图路径切换已经移动到「绘图设置」，自动档会在满足视觉 + 工具调用时走 draw_image 审图链路，否则改走 <image> 标签直连链路。',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: colors.textSecondary,
+                      ),
                     ),
                   ),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    decoration: MoeG2Decoration(
+                      radius: 12,
+                      color: colors.surface,
+                      border: Border.all(color: colors.borderLight),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '模型默认超时：${draft.modelTimeoutSeconds}s',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: MoeFontWeights.emphasis,
+                            color: colors.text,
+                          ),
+                        ),
+                        Slider(
+                          overlayColor: moeInteractionOverlay,
+                          value: draft.modelTimeoutSeconds.toDouble(),
+                          min: CallFlowSettings.minModelTimeoutSeconds
+                              .toDouble(),
+                          max: CallFlowSettings.maxModelTimeoutSeconds
+                              .toDouble(),
+                          divisions:
+                              CallFlowSettings.maxModelTimeoutSeconds -
+                              CallFlowSettings.minModelTimeoutSeconds,
+                          label: '${draft.modelTimeoutSeconds}s',
+                          onChanged: (value) => setState(
+                            () => _draft = draft.copyWith(
+                              modelTimeoutSeconds: value.round(),
+                            ),
+                          ),
+                        ),
+                        Text(
+                          '作用：限制每轮模型请求等待时间。超时后本轮失败。',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    decoration: MoeG2Decoration(
+                      radius: 12,
+                      color: colors.surface,
+                      border: Border.all(color: colors.borderLight),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '工具默认超时：${draft.toolTimeoutSeconds}s',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: MoeFontWeights.emphasis,
+                            color: colors.text,
+                          ),
+                        ),
+                        Slider(
+                          overlayColor: moeInteractionOverlay,
+                          value: draft.toolTimeoutSeconds.toDouble(),
+                          min: CallFlowSettings.minToolTimeoutSeconds
+                              .toDouble(),
+                          max: CallFlowSettings.maxToolTimeoutSeconds
+                              .toDouble(),
+                          divisions:
+                              CallFlowSettings.maxToolTimeoutSeconds -
+                              CallFlowSettings.minToolTimeoutSeconds,
+                          label: '${draft.toolTimeoutSeconds}s',
+                          onChanged: (value) => setState(
+                            () => _draft = draft.copyWith(
+                              toolTimeoutSeconds: value.round(),
+                            ),
+                          ),
+                        ),
+                        Text(
+                          '作用：限制单个工具调用等待时间。自动档命中稳定链路时主要影响 draw_image 及其他工具执行；快速档下生图改走 <image> 标签链路，这里主要影响非生图工具。',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: MoeSecondaryButton(
+                          label: '恢复默认',
+                          icon: Icons.restore_rounded,
+                          onPressed: _resetToDefault,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
                 ],
               ),
-              const SizedBox(height: 24),
-            ],
-          );
-        },
+            );
+          },
+        ),
       ),
-    ));
+    );
   }
 }

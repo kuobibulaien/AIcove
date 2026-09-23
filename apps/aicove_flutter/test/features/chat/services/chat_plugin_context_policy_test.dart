@@ -96,4 +96,38 @@ void main() {
           {'role': 'user', 'content': 'hello'}
         ]);
   });
+  test('retired memory tools are dropped in pairs even when all plugins are on',
+      () {
+    const on = ChatPluginContextPolicy(imageEnabled: true, ttsEnabled: true);
+    final messages = <Map<String, dynamic>>[
+      {'role': 'user', 'content': '还记得吗'},
+      {
+        'role': 'assistant',
+        'content': '',
+        'tool_calls': [
+          {
+            'id': 'old',
+            'type': 'function',
+            'function': {'name': 'memory_search', 'arguments': '{}'},
+          },
+          {
+            'id': 'keep',
+            'type': 'function',
+            'function': {'name': 'draw_image', 'arguments': '{}'},
+          },
+        ],
+      },
+      {'role': 'tool', 'tool_call_id': 'old', 'content': '旧记忆'},
+      {'role': 'tool', 'tool_call_id': 'keep', 'content': '图'},
+    ];
+    final filtered = on.filterMessages(messages);
+    expect(jsonEncode(filtered), isNot(contains('memory_search')));
+    expect(jsonEncode(filtered), isNot(contains('旧记忆')));
+    expect(jsonEncode(filtered), contains('draw_image'));
+    expect(filtered.last['tool_call_id'], 'keep');
+    expect(jsonEncode(messages), contains('memory_search'));
+    for (final name in ['memory_read', 'context_read']) {
+      expect(on.allowsTool(name), isFalse);
+    }
+  });
 }

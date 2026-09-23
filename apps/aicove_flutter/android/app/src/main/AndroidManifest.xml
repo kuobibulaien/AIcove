@@ -18,7 +18,7 @@
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false"/>
     
     <application
-        android:label="aicove_flutter"
+        android:label="AIcove"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true">

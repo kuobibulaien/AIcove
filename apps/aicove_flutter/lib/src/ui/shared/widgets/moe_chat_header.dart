@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'moe_floating_surface.dart';
+import 'moe_scroll_edge.dart';
 import '../../theme/tokens.dart';
 
 /// Shared floating navigation and actions for phone and desktop chats and
@@ -45,66 +46,81 @@ class MoeChatHeader extends StatelessWidget implements PreferredSizeWidget {
                   ? SystemUiOverlayStyle.light
                   : SystemUiOverlayStyle.dark)
               .copyWith(statusBarColor: Colors.transparent),
-      child: SafeArea(
-        bottom: false,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: 12,
-            vertical: telegramChatHeaderVerticalInset,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned.fill(
+            child: MoeScrollEdgeBackdrop(
+              clearFromBottom:
+                  telegramChatHeaderVerticalInset + toolbarHeight / 2,
+            ),
           ),
-          child: SizedBox(
-            height: toolbarHeight,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                if (nativeInset > 0) SizedBox(width: nativeInset),
-                if (showBackButton) ...[
-                  MoeFloatingSurface(
-                    radius: toolbarHeight / 2,
-                    child: SizedBox.square(
-                      dimension: toolbarHeight,
-                      child: leading ?? const BackButton(),
-                    ),
+          _buildControls(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildControls() {
+    return SafeArea(
+      bottom: false,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: telegramChatHeaderVerticalInset,
+        ),
+        child: SizedBox(
+          height: toolbarHeight,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              if (nativeInset > 0) SizedBox(width: nativeInset),
+              if (showBackButton) ...[
+                MoeFloatingSurface(
+                  radius: toolbarHeight / 2,
+                  child: SizedBox.square(
+                    dimension: toolbarHeight,
+                    child: leading ?? const BackButton(),
                   ),
-                  const SizedBox(width: telegramChatHeaderGap),
-                ],
-                Expanded(
-                  child: MoeFloatingSurface(
-                    radius: toolbarHeight / 2,
-                    child: SizedBox(
-                      height: toolbarHeight,
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(8, 4, 12, 4),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [Expanded(child: title)],
-                        ),
+                ),
+                const SizedBox(width: telegramChatHeaderGap),
+              ],
+              Expanded(
+                child: MoeFloatingSurface(
+                  radius: toolbarHeight / 2,
+                  child: SizedBox(
+                    height: toolbarHeight,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 4, 12, 4),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [Expanded(child: title)],
                       ),
                     ),
                   ),
                 ),
-                if (actions.isNotEmpty) ...[
-                  const SizedBox(width: telegramChatHeaderGap),
-                  MoeFloatingSurface(
-                    radius: toolbarHeight / 2,
-                    child: SizedBox(
-                      height: toolbarHeight,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 2,
-                          vertical: 0,
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: actions,
-                        ),
+              ),
+              if (actions.isNotEmpty) ...[
+                const SizedBox(width: telegramChatHeaderGap),
+                MoeFloatingSurface(
+                  radius: toolbarHeight / 2,
+                  child: SizedBox(
+                    height: toolbarHeight,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 2,
+                        vertical: 0,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: actions,
                       ),
                     ),
                   ),
-                ],
+                ),
               ],
-            ),
+            ],
           ),
         ),
       ),

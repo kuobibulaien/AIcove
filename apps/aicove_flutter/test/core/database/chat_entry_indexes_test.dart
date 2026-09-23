@@ -130,7 +130,7 @@ Future<Map<String, Object?>> _snapshot(AppDatabase db) async => {
         'conversations',
         'messages',
         'message_blocks',
-        'topic_handoffs'
+        'context_summaries'
       ])
         table: (await db
                 .customSelect('SELECT rowid, * FROM $table ORDER BY rowid')
@@ -207,7 +207,7 @@ void main() {
       for (final name in _indexNames) {
         await database.customStatement('DROP INDEX $name');
       }
-      await database.customStatement('DROP TABLE topic_handoffs');
+      await database.customStatement('DROP TABLE context_summaries');
       await database.customStatement('PRAGMA user_version = 15');
     } finally {
       await database.close();

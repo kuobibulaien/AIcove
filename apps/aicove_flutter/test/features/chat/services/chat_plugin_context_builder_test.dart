@@ -9,7 +9,6 @@ import 'package:aicove_flutter/src/features/plugins/domain/base_plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/handlers/ai_tool.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin_metadata.dart';
-import 'package:aicove_flutter/src/features/plugins/memory/memory_config.dart';
 import 'package:aicove_flutter/src/features/plugins/memory/memory_plugin.dart';
 
 Future<String?> _noopToolHandler(Map<String, dynamic> _) async => 'ok';
@@ -84,7 +83,7 @@ class _StubPlugin extends BasePlugin {
 }
 
 class _SpyMemoryPlugin extends MemoryPlugin {
-  _SpyMemoryPlugin(Ref ref) : super(const MemoryConfig(enabled: true), ref);
+  _SpyMemoryPlugin(super.ref);
 
   String? lastConversationId;
 

@@ -16,7 +16,6 @@ import 'tts/tts_service.dart';
 import 'trigger/trigger_plugin.dart';
 import 'trigger/trigger_config.dart';
 import 'memory/memory_plugin.dart';
-import 'memory/memory_config.dart';
 import 'sticker/sticker_plugin.dart';
 import 'sticker/sticker_config.dart';
 import 'image/image_plugin.dart';
@@ -29,7 +28,6 @@ final pluginManagerProvider = Provider<PluginManager>((ref) {
   // 监听配置变化，并在变化时更新插件实例
   final ttsConfig = ref.watch(ttsPluginConfigProvider);
   final triggerConfig = ref.watch(triggerPluginConfigProvider);
-  final memoryConfig = ref.watch(memoryPluginConfigProvider);
   final stickerConfig = ref.watch(stickerPluginConfigProvider);
   final imageConfig = ref.watch(imagePluginConfigProvider);
   final timeAwarenessConfig = ref.watch(timeAwarenessPluginConfigProvider);
@@ -50,7 +48,7 @@ final pluginManagerProvider = Provider<PluginManager>((ref) {
   _pluginManagerSingleton!.updatePlugin(
     TriggerPlugin(effectiveTriggerConfig, ref),
   );
-  _pluginManagerSingleton!.updatePlugin(MemoryPlugin(memoryConfig, ref));
+  _pluginManagerSingleton!.updatePlugin(MemoryPlugin(ref));
   _pluginManagerSingleton!.updatePlugin(StickerPlugin(stickerConfig));
   _pluginManagerSingleton!.updatePlugin(ImagePlugin(imageConfig, ref));
   _pluginManagerSingleton!.updatePlugin(
@@ -59,87 +57,6 @@ final pluginManagerProvider = Provider<PluginManager>((ref) {
 
   return _pluginManagerSingleton!;
 });
-
-/// Memory 插件配置 Provider
-final memoryPluginConfigProvider =
-    StateNotifierProvider<MemoryPluginConfigNotifier, MemoryConfig>(
-      (ref) => MemoryPluginConfigNotifier(),
-    );
-
-/// Memory 插件配置 Notifier
-class MemoryPluginConfigNotifier extends StateNotifier<MemoryConfig> {
-  static const _storageKey = 'aicove.plugins.memory.config';
-
-  MemoryPluginConfigNotifier() : super(const MemoryConfig()) {
-    _loadConfig();
-  }
-
-  Future<void> _loadConfig() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final json = prefs.getString(_storageKey);
-
-      if (json != null && json.isNotEmpty) {
-        final data = jsonDecode(json) as Map<String, dynamic>;
-        state = MemoryConfig.fromJson(data);
-      }
-    } catch (e) {
-      print('[MemoryPluginConfigNotifier] Failed to load config: $e');
-    }
-  }
-
-  Future<void> updateConfig(MemoryConfig config) async {
-    state = config;
-    await _saveConfig();
-  }
-
-  Future<void> _saveConfig() async {
-    final data = jsonEncode(state.toJson());
-    final prefs = await SharedPreferences.getInstance();
-    if (!await cloudLocalWrite(() => prefs.setString(_storageKey, data))) {
-      throw StateError('配置写入失败');
-    }
-  }
-
-  Future<void> setSummarizePrompt(String prompt) async {
-    state = state.copyWith(summarizePrompt: prompt);
-    await _saveConfig();
-  }
-
-  Future<void> setSummarizeModel(String? providerId, String? modelName) async {
-    state = state.copyWith(
-      summarizeProviderId: providerId,
-      summarizeModelName: modelName,
-    );
-    await _saveConfig();
-  }
-
-  Future<void> setEmbeddingModel(String? providerId, String? modelName) async {
-    state = state.copyWith(
-      embeddingProviderId: providerId,
-      embeddingModelName: modelName,
-    );
-    await _saveConfig();
-  }
-
-  Future<void> setFallbackEmbeddingModel(
-    bool enabled,
-    String? providerId,
-    String? modelName,
-  ) async {
-    state = state.copyWith(
-      fallbackEmbeddingEnabled: enabled,
-      fallbackEmbeddingProviderId: providerId,
-      fallbackEmbeddingModelName: modelName,
-    );
-    await _saveConfig();
-  }
-
-  Future<void> setRoundSplitThreshold(int value) async {
-    state = state.copyWith(roundSplitThreshold: value.clamp(5, 200));
-    await _saveConfig();
-  }
-}
 
 // PluginManager 单例
 PluginManager? _pluginManagerSingleton;

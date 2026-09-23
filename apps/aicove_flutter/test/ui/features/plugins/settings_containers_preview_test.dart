@@ -18,7 +18,7 @@ import 'package:aicove_flutter/src/features/plugins/tts/tts_config.dart';
 import 'package:aicove_flutter/src/features/plugins/tts/voice_preset_application.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:aicove_flutter/src/ui/features/auto_reply/pages/auto_reply_settings_page.dart';
-import 'package:aicove_flutter/src/ui/features/plugins/pages/memory_plugin_detail_page.dart';
+import 'package:aicove_flutter/src/ui/features/settings/pages/context_memory_settings_page.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/tavern_plugin_detail_page.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/time_awareness_plugin_detail_page.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/tts_plugin_detail_page.dart';
@@ -74,7 +74,7 @@ const _fontFamily = 'SettingsContainerCapture';
 const _outDir = '../../.codex-temp/settings-containers-20260916';
 
 final _pages = <String, Widget>{
-  'memory': const MemoryPluginDetailPage(),
+  'memory': const ContextMemorySettingsPage(),
   'auto-reply': const AutoReplySettingsPage(),
   'tts': const TtsPluginDetailPage(),
   'tavern': const TavernPluginDetailPage(),

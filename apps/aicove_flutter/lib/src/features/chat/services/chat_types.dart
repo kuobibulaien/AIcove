@@ -6,7 +6,7 @@
 /// - 2025-12-31: 从 chat_actions.dart 提取
 library;
 
-import '../domain/runtime_context_port.dart';
+import '../../context/domain/context_summary.dart' show RuntimeContextPort;
 
 import 'dart:async';
 import '../domain/conversation.dart';

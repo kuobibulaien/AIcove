@@ -28,20 +28,26 @@ class _ArtistPresetPageState extends ConsumerState<ArtistPresetPage> {
     final notifier = ref.read(imagePluginConfigProvider.notifier);
 
     return MoePageScaffold(
+      extendBodyBehindAppBar: true,
       backgroundColor: colors.surface,
       appBar: const MoeAppBar(title: '画师串预设', showBackButton: true),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(
-          MoeSpacing.md,
-          MoeSpacing.md,
-          MoeSpacing.md,
-          MoeSpacing.xl,
+      body: Builder(
+        builder: (context) => ListView(
+          padding: moeUnderBarPadding(
+            context,
+            EdgeInsets.fromLTRB(
+              MoeSpacing.md,
+              MoeSpacing.md,
+              MoeSpacing.md,
+              MoeSpacing.xl,
+            ),
+          ),
+          children: [
+            _buildSlotSection(context, config, notifier),
+            const SizedBox(height: MoeSpacing.lg),
+            _buildPreviewSection(context, config),
+          ],
         ),
-        children: [
-          _buildSlotSection(context, config, notifier),
-          const SizedBox(height: MoeSpacing.lg),
-          _buildPreviewSection(context, config),
-        ],
       ),
     );
   }
@@ -449,34 +455,40 @@ class _ArtistPresetEditorPageState
 
     return autoSavePage(
       MoePageScaffold(
+        extendBodyBehindAppBar: true,
         backgroundColor: colors.surface,
         appBar: MoeAppBar(
           title: '编辑「${widget.presetName}」',
           showBackButton: true,
         ),
-        body: ListView(
-          padding: const EdgeInsets.fromLTRB(
-            MoeSpacing.md,
-            MoeSpacing.md,
-            MoeSpacing.md,
-            MoeSpacing.xl,
+        body: Builder(
+          builder: (context) => ListView(
+            padding: moeUnderBarPadding(
+              context,
+              EdgeInsets.fromLTRB(
+                MoeSpacing.md,
+                MoeSpacing.md,
+                MoeSpacing.md,
+                MoeSpacing.xl,
+              ),
+            ),
+            children: [
+              _fieldCard(
+                context,
+                title: '正面提示词（画师串）',
+                hint: '自动拼在 AI 生成的 prompt 前面，一般是画师权重标签',
+                controller: _positiveCtrl,
+              ),
+              const SizedBox(height: MoeSpacing.sm),
+              _fieldCard(
+                context,
+                title: '负面提示词',
+                hint: '自动合并到 negative prompt，常用质量控制标签',
+                controller: _negativeCtrl,
+              ),
+              const SizedBox(height: MoeSpacing.lg),
+            ],
           ),
-          children: [
-            _fieldCard(
-              context,
-              title: '正面提示词（画师串）',
-              hint: '自动拼在 AI 生成的 prompt 前面，一般是画师权重标签',
-              controller: _positiveCtrl,
-            ),
-            const SizedBox(height: MoeSpacing.sm),
-            _fieldCard(
-              context,
-              title: '负面提示词',
-              hint: '自动合并到 negative prompt，常用质量控制标签',
-              controller: _negativeCtrl,
-            ),
-            const SizedBox(height: MoeSpacing.lg),
-          ],
         ),
       ),
     );

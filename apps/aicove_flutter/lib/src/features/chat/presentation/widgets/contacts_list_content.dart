@@ -14,6 +14,7 @@ import '../../domain/sort_mode.dart';
 import 'character_list_item.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/moe_adaptive_shell.dart';
+import '../../../../ui/shared/widgets/moe_scroll_edge.dart';
 
 @visibleForTesting
 VoidCallback scheduleConversationTapWarmup(
@@ -94,12 +95,13 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
     // 根联系人页可在聊天转场下继续挂载，不能让它的预读抢当前会话的冷读。
     // 在build中订阅路由状态，返回联系人页后仍有机会开始预读。
     if (ModalRoute.of(context)?.isCurrent == false) return;
-    final targets =
-        filtered.take(_kListWarmupConversationCount).toList(growable: false);
+    final targets = filtered
+        .take(_kListWarmupConversationCount)
+        .toList(growable: false);
     if (targets.isEmpty) return;
 
     final fingerprint = [
-      for (final c in targets) '${c.id}:${c.updatedAt.millisecondsSinceEpoch}'
+      for (final c in targets) '${c.id}:${c.updatedAt.millisecondsSinceEpoch}',
     ].join('|');
     if (fingerprint == _lastWarmupFingerprint) return;
 
@@ -116,9 +118,13 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
         return;
       }
 
-      unawaited(ref.read(chatPageQueriesProvider).warmEntryMessages(
-            _pendingWarmupTargets.map((conversation) => conversation.id),
-          ));
+      unawaited(
+        ref
+            .read(chatPageQueriesProvider)
+            .warmEntryMessages(
+              _pendingWarmupTargets.map((conversation) => conversation.id),
+            ),
+      );
       final queue = ref.read(imagePreheatQueueProvider);
       final configuration = createLocalImageConfiguration(context);
       for (final conv in _pendingWarmupTargets) {
@@ -147,7 +153,8 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
               ];
 
         // 排序：置顶的在前，然后根据 sortMode 和 isAscending 排序
-        filtered = [...filtered]..sort((a, b) {
+        filtered = [...filtered]
+          ..sort((a, b) {
             // 1. 置顶优先
             if (a.isPinned != b.isPinned) {
               return a.isPinned ? -1 : 1;
@@ -192,16 +199,19 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
         }
         // 当前选中的会话，用于高亮联系人卡片（仅在宽屏模式下启用）
         // 窄屏模式下（onContactTap == null）不高亮任何卡片
-        final activeId = widget.onContactTap != null ||
+        final activeId =
+            widget.onContactTap != null ||
                 (MoeWorkspace.maybeOf(context)?.isWide ?? false)
             ? ref.watch(activeConversationIdProvider)
             : null;
-        final highlightId = activeId ??
+        final highlightId =
+            activeId ??
             (widget.onContactTap != null && filtered.isNotEmpty
                 ? filtered.first.id
                 : null);
 
-        // 移除所有默认边距，确保列表铺满整个容器
+        // 列表铺满容器；顶部只保留半透明标题栏让出的距离，内容可从栏下滑过。
+        final underBarPadding = moeUnderBarPadding(context);
         return MediaQuery.removePadding(
           context: context,
           removeTop: true,
@@ -209,11 +219,11 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
           removeLeft: true,
           removeRight: true,
           child: ScrollConfiguration(
-            behavior: ScrollConfiguration.of(context).copyWith(
-              scrollbars: false,
-            ),
+            behavior: ScrollConfiguration.of(
+              context,
+            ).copyWith(scrollbars: false),
             child: ListView.builder(
-              padding: EdgeInsets.zero, // 确保ListView本身没有padding
+              padding: underBarPadding,
               itemCount: filtered.length,
               itemBuilder: (context, index) {
                 final c = filtered[index];
@@ -247,8 +257,9 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
                             context: context,
                             builder: (context) => AlertDialog(
                               title: const Text('确认删除'),
-                              content:
-                                  Text('确定要删除 "${c.displayName}" 吗？删除后无法恢复。'),
+                              content: Text(
+                                '确定要删除 "${c.displayName}" 吗？删除后无法恢复。',
+                              ),
                               actions: [
                                 TextButton(
                                   onPressed: () =>
@@ -257,9 +268,11 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
                                 ),
                                 TextButton(
                                   onPressed: () => Navigator.pop(context, true),
-                                  style: withoutHoverFeedback(TextButton.styleFrom(
-                                    foregroundColor: Colors.red,
-                                  )),
+                                  style: withoutHoverFeedback(
+                                    TextButton.styleFrom(
+                                      foregroundColor: Colors.red,
+                                    ),
+                                  ),
                                   child: const Text('删除'),
                                 ),
                               ],
@@ -290,8 +303,11 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
                         ref.read(activeConversationIdProvider.notifier).state =
                             c.id;
                         // 传入初始会话数据，避免新页面首帧先渲染到顶部/错误位置再跳动
-                        MoeWorkspace.openLocation(context, '/chat/${c.id}',
-                            extra: c);
+                        MoeWorkspace.openLocation(
+                          context,
+                          '/chat/${c.id}',
+                          extra: c,
+                        );
                       }
                     },
                     // 移除 onEdit 参数 - 编辑功能改到聊天界面

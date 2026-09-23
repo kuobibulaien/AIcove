@@ -31,6 +31,7 @@ import 'features/chat/providers2.dart';
 import 'features/chat/services/tts_fallback_notification.dart';
 import 'features/settings/app_settings.dart';
 import 'ui/theme/accent_color_provider.dart';
+import 'features/memory/providers/memory_providers.dart';
 
 class MyApp extends ConsumerStatefulWidget {
   const MyApp({super.key});
@@ -65,6 +66,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       ref.read(cloudSyncProvider);
+      unawaited(_retireLegacyMemory());
       _requestRecentConversationsWarmup();
       unawaited(_syncAndroidKeepAliveGuard());
       // 预热供应商 SVG 图标
@@ -72,6 +74,19 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       // 清理过期日志（7天前的）
       _cleanExpiredLogs();
     });
+  }
+
+  /// 旧记忆数据先备份再退役（ADR0038）；失败只记日志，下次启动重试。
+  Future<void> _retireLegacyMemory() async {
+    try {
+      await ref.read(legacyMemoryRetirementProvider).run();
+    } catch (error) {
+      AppLogger.warning(
+        'LegacyMemoryRetirement',
+        '旧记忆数据退役失败，下次启动重试',
+        metadata: {'error': error.toString()},
+      );
+    }
   }
 
   /// 初始化日志系统
@@ -368,10 +383,8 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     // 创建浅色主题
     final lightTheme = _buildTheme(isDark: false, accent: accentColor);
 
-    // 创建暗色主题：默认粉红在暗色模式下自动转为协调舒适的薰衣草紫
-    final darkAccent = accentColor == const Color(0xFFFC96AA)
-        ? moeAccentDark
-        : accentColor;
+    // 暗色主题强调色由皮肤决定（默认金色）
+    final darkAccent = ref.watch(darkAccentColorProvider);
     final darkTheme = _buildTheme(isDark: true, accent: darkAccent);
 
     return MoeLiquidGlassService.wrapApp(
@@ -438,6 +451,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
             ],
             locale: const Locale('zh', 'CN'),
             routerConfig: _router,
+            onNavigationNotification: moeNavigationNotification(_router),
             // 桌面端包裹自定义标题栏
             builder: (context, child) {
               // 用户字号缩放直接作用于统一的基础排版。

@@ -515,5 +515,77 @@ void main() {
       );
       expect(capturedConfig?.traceContext, isNotNull);
     });
+
+    test('对话以 assistant 结尾时请求仍以一条 user 消息结尾', () async {
+      ApiConfig? capturedConfig;
+
+      final service = BackgroundAgentService(
+        loadRecentMessages: (_, __) async => const <Message>[],
+        loadSettings: () async => _buildTestSettings(),
+        readPluginManager: () => PluginManager(),
+        requestConfigResolver: ({
+          required AppSettings settings,
+          required String? modelRef,
+        }) async {
+          return const BackgroundAgentRequestConfig(
+            modelFullId: 'openai:gpt-3.5-turbo',
+            providerApiBase: 'https://api.openai.com/v1',
+            providerApiKey: 'test-key',
+            customConfig: <String, dynamic>{},
+            modelTemperature: null,
+            modelTopP: null,
+            modelContextMessageLimit: null,
+          );
+        },
+        executor: ({
+          required ApiConfig config,
+          required List<AITool> availableTools,
+          required String sessionId,
+          required int maxRounds,
+        }) async {
+          capturedConfig = config;
+          return const ApiCallResult(
+            replyText: '',
+            processedText: '{}',
+            pluginEvents: <PluginEvent>[],
+            toolResults: <Map<String, dynamic>>[],
+          );
+        },
+      );
+
+      await service.run(
+        definition: const BackgroundAgentDefinition(
+          id: 'auto_reply_scheduler',
+          name: '主动回复触发判断',
+          objectivePrompt: '决定是否主动回复',
+          contextSpec: BackgroundContextSpec(includeTimestamps: true),
+        ),
+        conversationId: 'preset_nahida',
+        contextMessages: <Message>[
+          Message.text(
+            id: 'u1',
+            role: 'user',
+            content: '我去洗澡了',
+            createdAt: DateTime(2026, 9, 23, 14, 40),
+          ),
+          Message.text(
+            id: 'a1',
+            role: 'assistant',
+            content: '好，等你回来',
+            createdAt: DateTime(2026, 9, 23, 14, 41),
+          ),
+        ],
+      );
+
+      final messages = capturedConfig!.messages;
+      expect(messages.map((m) => m['role']), <String>['system', 'user']);
+      expect(
+        messages.last['content'],
+        allOf(
+          contains('用户：[2026-09-23 14:40]: 我去洗澡了'),
+          contains('角色：[2026-09-23 14:41]: 好，等你回来'),
+        ),
+      );
+    });
   });
 }

@@ -192,7 +192,7 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage>
             : !status.notificationsEnabled
             ? '主动回复已开启，但系统把 AIcove 的通知总开关关掉了；守护通知不会出现在通知栏。'
             : !status.guardNotificationChannelEnabled
-            ? '主动回复已开启，但“AI 守护模式”通知渠道被关闭了；请到通知设置里重新打开。'
+            ? '主动回复已开启，但“后台运行”通知渠道被关闭了；请到通知设置里重新打开。'
             : '主动回复已开启，但系统暂时还没把守护通知展示出来，您可以在「后台运行」里刷新状态再看一眼。';
         MoeToast.warning(context, reason);
         return;
@@ -273,7 +273,7 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage>
     final opened = await AndroidKeepAliveManager.openNotificationSettings();
     if (!mounted) return;
     if (opened) {
-      MoeToast.info(context, '请确认应用通知总开关和“AI 守护模式”渠道都处于开启状态。');
+      MoeToast.info(context, '请确认应用通知总开关和“后台运行”渠道都处于开启状态。');
     } else {
       MoeToast.warning(context, '未能直接打开通知设置，请手动到系统设置里查找。');
     }
@@ -303,6 +303,7 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage>
     final settingsAsync = ref.watch(appSettingsProvider);
 
     return MoePageScaffold(
+      extendBodyBehindAppBar: true,
       appBar: const MoeAppBar(title: '主动回复', showBackButton: true),
       body: settingsAsync.when(
         loading: () => const Center(child: MoeLoadingIndicator()),
@@ -339,216 +340,223 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage>
           else
             const SizedBox(height: 2),
           Expanded(
-            child: ListView(
-              padding: MoeSettingsLayout.verticalListPadding,
-              children: [
-                // ===== 总开关 =====
-                MoeSettingsGroup(
-                  titleFirst: true,
-                  children: [
-                    MoeSettingsRow(
-                      label: '主动回复',
-                      subtitle: draft.enabled
-                          ? '开启中，AI 会在合适的时机主动联系你'
-                          : '关闭后，AI 只在你发消息时回应',
-                      trailingType: MoeSettingsRowTrailing.switchControl,
-                      switchValue: draft.enabled,
-                      onSwitchChanged: (value) =>
-                          _handleEnabledChanged(draft, value),
-                    ),
-                    MoeSettingsRow(
-                      label: '允许 AI 设定提醒',
-                      subtitle: !draft.enabled
-                          ? '需先开启主动回复；开启后 AI 才能在聊天里管理提醒'
-                          : draft.allowAiSetReminders
-                          ? 'AI 可在聊天中创建、查询和删除提醒'
-                          : 'AI 不会再替你设置或管理提醒',
-                      trailingType: MoeSettingsRowTrailing.switchControl,
-                      switchValue: draft.allowAiSetReminders,
-                      onSwitchChanged: (value) => _updateDraft(
-                        draft.copyWith(allowAiSetReminders: value),
-                        showToast: true,
+            child: Builder(
+              builder: (context) => ListView(
+                padding: moeUnderBarPadding(
+                  context,
+                  MoeSettingsLayout.verticalListPadding,
+                ),
+                children: [
+                  // ===== 总开关 =====
+                  MoeSettingsGroup(
+                    titleFirst: true,
+                    children: [
+                      MoeSettingsRow(
+                        label: '主动回复',
+                        subtitle: draft.enabled
+                            ? '开启中，AI 会在合适的时机主动联系你'
+                            : '关闭后，AI 只在你发消息时回应',
+                        trailingType: MoeSettingsRowTrailing.switchControl,
+                        switchValue: draft.enabled,
+                        onSwitchChanged: (value) =>
+                            _handleEnabledChanged(draft, value),
                       ),
-                    ),
-                  ],
-                ),
-                AutoReplySectionFooter(
-                  draft.enabled
-                      ? '后台 Agent 会分析对话状态，自动排程并发送主动消息${AndroidKeepAliveManager.isSupported ? '，同时启用通知栏前台保活' : ''}。'
-                      : '关闭后后台 Agent 不再排程主动消息；已创建的触发器会保留但不会发送。',
-                ),
-                const SizedBox(height: MoeSettingsLayout.sectionGap),
-
-                // ===== 触发器 =====
-                MoeSettingsGroup(
-                  title: '触发器',
-                  children: [
-                    MoeSettingsRow(
-                      label: '待触发',
-                      subtitle: '已排程、尚未发送的主动消息',
-                      trailingType: MoeSettingsRowTrailing.text,
-                      detailText: pendingCount > 0 ? '$pendingCount 条' : '无',
-                      onTap: () => Navigator.of(context).push(
-                        ParallaxSlidePageRoute(
-                          page: const AutoReplyTriggerListPage(),
+                      MoeSettingsRow(
+                        label: '允许 AI 设定提醒',
+                        subtitle: !draft.enabled
+                            ? '需先开启主动回复；开启后 AI 才能在聊天里管理提醒'
+                            : draft.allowAiSetReminders
+                            ? 'AI 可在聊天中创建、查询和删除提醒'
+                            : 'AI 不会再替你设置或管理提醒',
+                        trailingType: MoeSettingsRowTrailing.switchControl,
+                        switchValue: draft.allowAiSetReminders,
+                        onSwitchChanged: (value) => _updateDraft(
+                          draft.copyWith(allowAiSetReminders: value),
+                          showToast: true,
                         ),
                       ),
-                    ),
-                    MoeSettingsRow(
-                      label: '新建触发',
-                      subtitle: '手动创建一条到点发送的主动消息',
-                      onTap: () =>
-                          showCreateAutoReplyTriggerSheet(context, ref),
-                    ),
-                    MoeSettingsRow(
-                      label: '历史记录',
-                      subtitle: '后台 Agent 决策与触发发送日志',
-                      onTap: () => Navigator.of(context).push(
-                        ParallaxSlidePageRoute(
-                          page: const AutoReplyHistoryLogPage(),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-
-                if (draft.enabled) ...[
+                    ],
+                  ),
+                  AutoReplySectionFooter(
+                    draft.enabled
+                        ? '后台 Agent 会分析对话状态，自动排程并发送主动消息${AndroidKeepAliveManager.isSupported ? '，同时启用通知栏前台保活' : ''}。'
+                        : '关闭后后台 Agent 不再排程主动消息；已创建的触发器会保留但不会发送。',
+                  ),
                   const SizedBox(height: MoeSettingsLayout.sectionGap),
 
-                  // ===== 频率与免打扰 =====
+                  // ===== 触发器 =====
                   MoeSettingsGroup(
-                    title: '频率与免打扰',
+                    title: '触发器',
                     children: [
-                      AutoReplySliderTile(
-                        label: '每日上限',
-                        valueText: '${draft.dailyLimit} 次/天',
-                        value: draft.dailyLimit.toDouble(),
-                        min: 1,
-                        max: 6,
-                        divisions: 5,
-                        hint: '超过后当天不再主动发消息，建议 1~5 次',
-                        onChanged: (value) => setState(
-                          () => _draft = (_draft ?? draft).copyWith(
-                            dailyLimit: value.round(),
-                          ),
-                        ),
-                        onChangeEnd: (value) => _persist(
-                          (_draft ?? draft).copyWith(dailyLimit: value.round()),
-                        ),
-                      ),
-                      AutoReplySliderTile(
-                        label: '最短间隔',
-                        valueText: _formatInterval(draft.minIntervalMinutes),
-                        value: draft.minIntervalMinutes.toDouble(),
-                        min: 30,
-                        max: 360,
-                        divisions: 11,
-                        hint: '两条主动消息之间的冷却时间',
-                        onChanged: (value) => setState(
-                          () => _draft = (_draft ?? draft).copyWith(
-                            minIntervalMinutes: value.round(),
-                          ),
-                        ),
-                        onChangeEnd: (value) => _persist(
-                          (_draft ?? draft).copyWith(
-                            minIntervalMinutes: value.round(),
+                      MoeSettingsRow(
+                        label: '待触发',
+                        subtitle: '已排程、尚未发送的主动消息',
+                        trailingType: MoeSettingsRowTrailing.text,
+                        detailText: pendingCount > 0 ? '$pendingCount 条' : '无',
+                        onTap: () => Navigator.of(context).push(
+                          ParallaxSlidePageRoute(
+                            page: const AutoReplyTriggerListPage(),
                           ),
                         ),
                       ),
                       MoeSettingsRow(
-                        label: '夜间免打扰',
-                        subtitle: draft.quietHoursEnabled
-                            ? '${draft.quietHoursStart} ~ ${draft.quietHoursEnd} 不发送'
-                            : '关闭后夜间也可能收到主动消息',
-                        trailingType: MoeSettingsRowTrailing.switchControl,
-                        switchValue: draft.quietHoursEnabled,
-                        onSwitchChanged: (value) => _updateDraft(
-                          draft.copyWith(quietHoursEnabled: value),
+                        label: '新建触发',
+                        subtitle: '手动创建一条到点发送的主动消息',
+                        onTap: () =>
+                            showCreateAutoReplyTriggerSheet(context, ref),
+                      ),
+                      MoeSettingsRow(
+                        label: '历史记录',
+                        subtitle: '后台 Agent 决策与触发发送日志',
+                        onTap: () => Navigator.of(context).push(
+                          ParallaxSlidePageRoute(
+                            page: const AutoReplyHistoryLogPage(),
+                          ),
                         ),
                       ),
-                      if (draft.quietHoursEnabled) ...[
-                        MoeSettingsRow(
-                          label: '开始时间',
-                          trailingType: MoeSettingsRowTrailing.text,
-                          detailText: draft.quietHoursStart,
-                          onTap: () => _pickTime(draft, true),
+                    ],
+                  ),
+
+                  if (draft.enabled) ...[
+                    const SizedBox(height: MoeSettingsLayout.sectionGap),
+
+                    // ===== 频率与免打扰 =====
+                    MoeSettingsGroup(
+                      title: '频率与免打扰',
+                      children: [
+                        AutoReplySliderTile(
+                          label: '每日上限',
+                          valueText: '${draft.dailyLimit} 次/天',
+                          value: draft.dailyLimit.toDouble(),
+                          min: 1,
+                          max: 6,
+                          divisions: 5,
+                          hint: '超过后当天不再主动发消息，建议 1~5 次',
+                          onChanged: (value) => setState(
+                            () => _draft = (_draft ?? draft).copyWith(
+                              dailyLimit: value.round(),
+                            ),
+                          ),
+                          onChangeEnd: (value) => _persist(
+                            (_draft ?? draft).copyWith(
+                              dailyLimit: value.round(),
+                            ),
+                          ),
+                        ),
+                        AutoReplySliderTile(
+                          label: '最短间隔',
+                          valueText: _formatInterval(draft.minIntervalMinutes),
+                          value: draft.minIntervalMinutes.toDouble(),
+                          min: 30,
+                          max: 360,
+                          divisions: 11,
+                          hint: '两条主动消息之间的冷却时间',
+                          onChanged: (value) => setState(
+                            () => _draft = (_draft ?? draft).copyWith(
+                              minIntervalMinutes: value.round(),
+                            ),
+                          ),
+                          onChangeEnd: (value) => _persist(
+                            (_draft ?? draft).copyWith(
+                              minIntervalMinutes: value.round(),
+                            ),
+                          ),
                         ),
                         MoeSettingsRow(
-                          label: '结束时间',
-                          trailingType: MoeSettingsRowTrailing.text,
-                          detailText: draft.quietHoursEnd,
-                          onTap: () => _pickTime(draft, false),
+                          label: '夜间免打扰',
+                          subtitle: draft.quietHoursEnabled
+                              ? '${draft.quietHoursStart} ~ ${draft.quietHoursEnd} 不发送'
+                              : '关闭后夜间也可能收到主动消息',
+                          trailingType: MoeSettingsRowTrailing.switchControl,
+                          switchValue: draft.quietHoursEnabled,
+                          onSwitchChanged: (value) => _updateDraft(
+                            draft.copyWith(quietHoursEnabled: value),
+                          ),
+                        ),
+                        if (draft.quietHoursEnabled) ...[
+                          MoeSettingsRow(
+                            label: '开始时间',
+                            trailingType: MoeSettingsRowTrailing.text,
+                            detailText: draft.quietHoursStart,
+                            onTap: () => _pickTime(draft, true),
+                          ),
+                          MoeSettingsRow(
+                            label: '结束时间',
+                            trailingType: MoeSettingsRowTrailing.text,
+                            detailText: draft.quietHoursEnd,
+                            onTap: () => _pickTime(draft, false),
+                          ),
+                        ],
+                        MoeSettingsRow(
+                          label: '更准时的提醒',
+                          subtitle: _exactAlarmSubtitle(draft),
+                          trailingType: MoeSettingsRowTrailing.switchControl,
+                          switchValue: draft.allowExactAlarm,
+                          onSwitchChanged: (value) =>
+                              _handleExactAlarmChanged(draft, value),
                         ),
                       ],
-                      MoeSettingsRow(
-                        label: '更准时的提醒',
-                        subtitle: _exactAlarmSubtitle(draft),
-                        trailingType: MoeSettingsRowTrailing.switchControl,
-                        switchValue: draft.allowExactAlarm,
-                        onSwitchChanged: (value) =>
-                            _handleExactAlarmChanged(draft, value),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: MoeSettingsLayout.sectionGap),
-
-                  // ===== 后台 Agent =====
-                  MoeSettingsGroup(
-                    title: '后台 Agent',
-                    children: [
-                      MoeSettingsRow(
-                        label: '独立模型',
-                        subtitle: '主动回复由独立后台 Agent 负责，可用便宜的小模型',
-                        trailingType: MoeSettingsRowTrailing.text,
-                        detailText: _analyzerModelLabel(draft),
-                        onTap: () => _showModelPicker(draft, settings),
-                      ),
-                      MoeSettingsRow(
-                        label: '分析提示词',
-                        subtitle: '后台 Agent 判断何时主动发消息所用的提示词',
-                        trailingType: MoeSettingsRowTrailing.text,
-                        detailText:
-                            draft.analyzerPrompt ==
-                                AutoReplySettings.defaultAnalyzerPrompt
-                            ? '默认'
-                            : '已自定义',
-                        onTap: () => _showEditPromptSheet(draft),
-                      ),
-                      if (draft.analyzerPrompt !=
-                          AutoReplySettings.defaultAnalyzerPrompt)
-                        MoeSettingsRow(
-                          label: '恢复默认提示词',
-                          labelColor: context.moeColors.primary,
-                          trailingType: MoeSettingsRowTrailing.none,
-                          onTap: () => _updateDraft(
-                            draft.copyWith(
-                              analyzerPrompt:
-                                  AutoReplySettings.defaultAnalyzerPrompt,
-                            ),
-                            showToast: true,
-                          ),
-                        ),
-                    ],
-                  ),
-
-                  // ===== Android 后台运行 =====
-                  if (AndroidKeepAliveManager.isSupported) ...[
-                    const SizedBox(height: MoeSettingsLayout.sectionGap),
-                    AutoReplyKeepAliveSection(
-                      status: _keepAliveStatus,
-                      loading: _loadingKeepAliveStatus,
-                      onRefresh: _refreshKeepAliveStatus,
-                      onNotificationTap: _handleNotificationTap,
-                      onBatteryTap: _handleRequestBatteryWhitelist,
-                      onAutoStartTap: _handleOpenAutoStartSettings,
-                      onBackgroundProtectionTap:
-                          _handleOpenBackgroundProtectionSettings,
-                      onExactAlarmTap: _handleOpenExactAlarmSettings,
                     ),
+                    const SizedBox(height: MoeSettingsLayout.sectionGap),
+
+                    // ===== 后台 Agent =====
+                    MoeSettingsGroup(
+                      title: '后台 Agent',
+                      children: [
+                        MoeSettingsRow(
+                          label: '独立模型',
+                          subtitle: '主动回复由独立后台 Agent 负责，可用便宜的小模型',
+                          trailingType: MoeSettingsRowTrailing.text,
+                          detailText: _analyzerModelLabel(draft),
+                          onTap: () => _showModelPicker(draft, settings),
+                        ),
+                        MoeSettingsRow(
+                          label: '分析提示词',
+                          subtitle: '后台 Agent 判断何时主动发消息所用的提示词',
+                          trailingType: MoeSettingsRowTrailing.text,
+                          detailText:
+                              draft.analyzerPrompt ==
+                                  AutoReplySettings.defaultAnalyzerPrompt
+                              ? '默认'
+                              : '已自定义',
+                          onTap: () => _showEditPromptSheet(draft),
+                        ),
+                        if (draft.analyzerPrompt !=
+                            AutoReplySettings.defaultAnalyzerPrompt)
+                          MoeSettingsRow(
+                            label: '恢复默认提示词',
+                            labelColor: context.moeColors.primary,
+                            trailingType: MoeSettingsRowTrailing.none,
+                            onTap: () => _updateDraft(
+                              draft.copyWith(
+                                analyzerPrompt:
+                                    AutoReplySettings.defaultAnalyzerPrompt,
+                              ),
+                              showToast: true,
+                            ),
+                          ),
+                      ],
+                    ),
+
+                    // ===== Android 后台运行 =====
+                    if (AndroidKeepAliveManager.isSupported) ...[
+                      const SizedBox(height: MoeSettingsLayout.sectionGap),
+                      AutoReplyKeepAliveSection(
+                        status: _keepAliveStatus,
+                        loading: _loadingKeepAliveStatus,
+                        onRefresh: _refreshKeepAliveStatus,
+                        onNotificationTap: _handleNotificationTap,
+                        onBatteryTap: _handleRequestBatteryWhitelist,
+                        onAutoStartTap: _handleOpenAutoStartSettings,
+                        onBackgroundProtectionTap:
+                            _handleOpenBackgroundProtectionSettings,
+                        onExactAlarmTap: _handleOpenExactAlarmSettings,
+                      ),
+                    ],
                   ],
+                  const SizedBox(height: MoeSettingsLayout.sectionGap),
                 ],
-                const SizedBox(height: MoeSettingsLayout.sectionGap),
-              ],
+              ),
             ),
           ),
         ],

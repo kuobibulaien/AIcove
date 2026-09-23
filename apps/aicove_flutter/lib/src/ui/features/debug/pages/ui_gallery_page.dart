@@ -53,316 +53,328 @@ class _UiGalleryPageState extends State<UiGalleryPage>
     final colors = context.moeColors;
 
     return MoePageScaffold(
+      extendBodyBehindAppBar: true,
       backgroundColor: colors.bgMain,
       appBar: const MoeAppBar(title: '组件库 (UI Kit)', showBackButton: true),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(vertical: MoeSpacing.md),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildHeader('连续打断转场'),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: MoeSpacing.md),
-              child: Wrap(
-                spacing: MoeSpacing.sm,
-                runSpacing: MoeSpacing.sm,
-                children: [
-                  for (final demo in SpringTransitionDemo.values)
-                    MoeSecondaryButton(
-                      key: ValueKey('spring-demo-${demo.name}'),
-                      label: demo.label,
-                      onPressed: () => openSpringTransitionDemo(context, demo),
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(height: MoeSpacing.xl),
-
-            _buildHeader('iOS 页面转场'),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: MoeSpacing.md),
-              child: Wrap(
-                spacing: MoeSpacing.sm,
-                runSpacing: MoeSpacing.sm,
-                children: [
-                  for (final demo in _TransitionDemo.values)
-                    MoeSecondaryButton(
-                      label: demo.label,
-                      onPressed: () => _openTransitionDemo(context, demo),
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(height: MoeSpacing.xl),
-
-            _buildHeader('按钮组件 (Buttons)'),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: MoeSpacing.md),
-              child: Wrap(
-                spacing: MoeSpacing.sm,
-                runSpacing: MoeSpacing.sm,
-                children: [
-                  MoePrimaryButton(onPressed: () {}, label: '主按钮 (Primary)'),
-                  MoeSecondaryButton(
-                    onPressed: () {},
-                    label: '次按钮 (Secondary)',
-                  ),
-                  MoeIconButton(icon: Icons.favorite, onTap: () {}),
-                  MoeTileButton(label: '磁贴按钮', icon: Icons.star, onTap: () {}),
-                ],
-              ),
-            ),
-            const SizedBox(height: MoeSpacing.xl),
-
-            _buildHeader('表单组件 (Form)'),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: MoeSpacing.md),
-              child: Column(
-                children: [
-                  MoeTextField(
-                    controller: _textController,
-                    label: '示例输入框',
-                    hint: '请输入内容...',
-                  ),
-                  const SizedBox(height: MoeSpacing.md),
-                  Wrap(
-                    spacing: MoeSpacing.lg,
-                    runSpacing: MoeSpacing.sm,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Text('开关: '),
-                          MoeSwitch(
-                            value: _switchValue,
-                            onChanged: (v) => setState(() => _switchValue = v),
-                          ),
-                        ],
+      body: Builder(
+        builder: (context) => SingleChildScrollView(
+          padding: moeUnderBarPadding(
+            context,
+            EdgeInsets.symmetric(vertical: MoeSpacing.md),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildHeader('连续打断转场'),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: MoeSpacing.md),
+                child: Wrap(
+                  spacing: MoeSpacing.sm,
+                  runSpacing: MoeSpacing.sm,
+                  children: [
+                    for (final demo in SpringTransitionDemo.values)
+                      MoeSecondaryButton(
+                        key: ValueKey('spring-demo-${demo.name}'),
+                        label: demo.label,
+                        onPressed: () =>
+                            openSpringTransitionDemo(context, demo),
                       ),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Text('复选框: '),
-                          MoeCheckbox(
-                            value: _checkboxValue,
-                            onChanged: (v) =>
-                                setState(() => _checkboxValue = v),
-                          ),
-                        ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: MoeSpacing.xl),
+
+              _buildHeader('iOS 页面转场'),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: MoeSpacing.md),
+                child: Wrap(
+                  spacing: MoeSpacing.sm,
+                  runSpacing: MoeSpacing.sm,
+                  children: [
+                    for (final demo in _TransitionDemo.values)
+                      MoeSecondaryButton(
+                        label: demo.label,
+                        onPressed: () => _openTransitionDemo(context, demo),
                       ),
-                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: MoeSpacing.xl),
+
+              _buildHeader('按钮组件 (Buttons)'),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: MoeSpacing.md),
+                child: Wrap(
+                  spacing: MoeSpacing.sm,
+                  runSpacing: MoeSpacing.sm,
+                  children: [
+                    MoePrimaryButton(onPressed: () {}, label: '主按钮 (Primary)'),
+                    MoeSecondaryButton(
+                      onPressed: () {},
+                      label: '次按钮 (Secondary)',
+                    ),
+                    MoeIconButton(icon: Icons.favorite, onTap: () {}),
+                    MoeTileButton(
+                      label: '磁贴按钮',
+                      icon: Icons.star,
+                      onTap: () {},
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: MoeSpacing.xl),
+
+              _buildHeader('表单组件 (Form)'),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: MoeSpacing.md),
+                child: Column(
+                  children: [
+                    MoeTextField(
+                      controller: _textController,
+                      label: '示例输入框',
+                      hint: '请输入内容...',
+                    ),
+                    const SizedBox(height: MoeSpacing.md),
+                    Wrap(
+                      spacing: MoeSpacing.lg,
+                      runSpacing: MoeSpacing.sm,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text('开关: '),
+                            MoeSwitch(
+                              value: _switchValue,
+                              onChanged: (v) =>
+                                  setState(() => _switchValue = v),
+                            ),
+                          ],
+                        ),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text('复选框: '),
+                            MoeCheckbox(
+                              value: _checkboxValue,
+                              onChanged: (v) =>
+                                  setState(() => _checkboxValue = v),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: MoeSpacing.xl),
+
+              _buildHeader('列表组件 (List)'),
+              MoeSettingsGroup(
+                margin: const EdgeInsets.symmetric(horizontal: 16),
+                title: '设置分组 (Settings Group Container)',
+                children: [
+                  MoeSettingsRow(
+                    icon: Icons.settings,
+                    label: '普通导航行 (Navigation Row)',
+                    subtitle: '点击跳转到子页面',
+                    trailingType: MoeSettingsRowTrailing.chevron,
+                    onTap: () {
+                      MoeToast.info(context, '点击了导航行');
+                    },
+                  ),
+                  MoeSettingsRow(
+                    icon: Icons.wifi_off,
+                    label: '开关行 (Switch Row)',
+                    subtitle: '带开关控件的设置项',
+                    trailingType: MoeSettingsRowTrailing.switchControl,
+                    switchValue: _switchValue,
+                    onSwitchChanged: (v) {
+                      setState(() => _switchValue = v);
+                      MoeToast.success(context, '已${v ? "开启" : "关闭"}');
+                    },
+                  ),
+                  MoeSettingsRow(
+                    icon: Icons.language,
+                    label: '文字详情行 (Text Detail Row)',
+                    subtitle: '右侧显示当前值',
+                    trailingType: MoeSettingsRowTrailing.text,
+                    detailText: '简体中文',
+                    onTap: () {
+                      MoeToast.info(context, '点击了文字详情行');
+                    },
+                  ),
+                  MoeSettingsRow(
+                    icon: Icons.check_circle,
+                    label: '自定义尾部 (Custom Trailing)',
+                    subtitle: '可以放任意 Widget',
+                    trailingType: MoeSettingsRowTrailing.custom,
+                    trailing: MoeCheckbox(
+                      value: _checkboxValue,
+                      onChanged: (v) => setState(() => _checkboxValue = v),
+                    ),
                   ),
                 ],
               ),
-            ),
-            const SizedBox(height: MoeSpacing.xl),
-
-            _buildHeader('列表组件 (List)'),
-            MoeSettingsGroup(
-              margin: const EdgeInsets.symmetric(horizontal: 16),
-              title: '设置分组 (Settings Group Container)',
-              children: [
-                MoeSettingsRow(
-                  icon: Icons.settings,
-                  label: '普通导航行 (Navigation Row)',
-                  subtitle: '点击跳转到子页面',
-                  trailingType: MoeSettingsRowTrailing.chevron,
+              const SizedBox(height: MoeSpacing.md),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: MoeSpacing.md),
+                child: MoeListTile(
+                  leading: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: MoeG2Decoration(
+                      radius: 10,
+                      color: colors.accentColor.withValues(alpha: 0.2),
+                    ),
+                    child: Icon(Icons.info_outline, color: colors.accentColor),
+                  ),
+                  title: const Text('通用列表项 (List Tile)'),
+                  subtitle: const Text('支持头像、标题、副标题、尾部图标'),
+                  trailing: const Icon(Icons.chevron_right),
                   onTap: () {
-                    MoeToast.info(context, '点击了导航行');
+                    MoeToast.info(context, '点击了列表项');
                   },
                 ),
-                MoeSettingsRow(
-                  icon: Icons.wifi_off,
-                  label: '开关行 (Switch Row)',
-                  subtitle: '带开关控件的设置项',
-                  trailingType: MoeSettingsRowTrailing.switchControl,
-                  switchValue: _switchValue,
-                  onSwitchChanged: (v) {
-                    setState(() => _switchValue = v);
-                    MoeToast.success(context, '已${v ? "开启" : "关闭"}');
-                  },
-                ),
-                MoeSettingsRow(
-                  icon: Icons.language,
-                  label: '文字详情行 (Text Detail Row)',
-                  subtitle: '右侧显示当前值',
-                  trailingType: MoeSettingsRowTrailing.text,
-                  detailText: '简体中文',
-                  onTap: () {
-                    MoeToast.info(context, '点击了文字详情行');
-                  },
-                ),
-                MoeSettingsRow(
-                  icon: Icons.check_circle,
-                  label: '自定义尾部 (Custom Trailing)',
-                  subtitle: '可以放任意 Widget',
-                  trailingType: MoeSettingsRowTrailing.custom,
-                  trailing: MoeCheckbox(
-                    value: _checkboxValue,
-                    onChanged: (v) => setState(() => _checkboxValue = v),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: MoeSpacing.md),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: MoeSpacing.md),
-              child: MoeListTile(
-                leading: Container(
-                  width: 40,
-                  height: 40,
-                  decoration: MoeG2Decoration(
-                    radius: 10,
-                    color: colors.accentColor.withValues(alpha: 0.2),
-                  ),
-                  child: Icon(Icons.info_outline, color: colors.accentColor),
-                ),
-                title: const Text('通用列表项 (List Tile)'),
-                subtitle: const Text('支持头像、标题、副标题、尾部图标'),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () {
-                  MoeToast.info(context, '点击了列表项');
-                },
               ),
-            ),
-            const SizedBox(height: MoeSpacing.xl),
+              const SizedBox(height: MoeSpacing.xl),
 
-            _buildHeader('反馈组件 (Feedback)'),
-            const Center(
-              child: Column(
-                children: [
-                  MoeLoadingIndicator(),
-                  SizedBox(height: MoeSpacing.md),
-                  MoeEmptyState(
-                    icon: Icons.inbox_outlined,
-                    title: '空状态占位 (Empty State)',
-                    description: '当列表为空或加载失败时显示',
-                  ),
-                ],
+              _buildHeader('反馈组件 (Feedback)'),
+              const Center(
+                child: Column(
+                  children: [
+                    MoeLoadingIndicator(),
+                    SizedBox(height: MoeSpacing.md),
+                    MoeEmptyState(
+                      icon: Icons.inbox_outlined,
+                      title: '空状态占位 (Empty State)',
+                      description: '当列表为空或加载失败时显示',
+                    ),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: MoeSpacing.md),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: MoeSpacing.md),
-              child: Wrap(
-                spacing: MoeSpacing.sm,
-                runSpacing: MoeSpacing.sm,
-                alignment: WrapAlignment.center,
-                children: [
-                  MoeSecondaryButton(
-                    onPressed: () {
-                      MoeToast.info(context, '普通信息 (Info)');
-                    },
-                    label: 'Toast - Info',
-                  ),
-                  MoeSecondaryButton(
-                    onPressed: () {
-                      MoeToast.success(context, '操作成功 (Success)');
-                    },
-                    label: 'Toast - Success',
-                  ),
-                  MoeSecondaryButton(
-                    onPressed: () {
-                      MoeToast.error(context, '操作失败 (Error)');
-                    },
-                    label: 'Toast - Error',
-                  ),
-                  MoeSecondaryButton(
-                    onPressed: () {
-                      MoeToast.warning(context, '警告提示 (Warning)');
-                    },
-                    label: 'Toast - Warning',
-                  ),
-                ],
+              const SizedBox(height: MoeSpacing.md),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: MoeSpacing.md),
+                child: Wrap(
+                  spacing: MoeSpacing.sm,
+                  runSpacing: MoeSpacing.sm,
+                  alignment: WrapAlignment.center,
+                  children: [
+                    MoeSecondaryButton(
+                      onPressed: () {
+                        MoeToast.info(context, '普通信息 (Info)');
+                      },
+                      label: 'Toast - Info',
+                    ),
+                    MoeSecondaryButton(
+                      onPressed: () {
+                        MoeToast.success(context, '操作成功 (Success)');
+                      },
+                      label: 'Toast - Success',
+                    ),
+                    MoeSecondaryButton(
+                      onPressed: () {
+                        MoeToast.error(context, '操作失败 (Error)');
+                      },
+                      label: 'Toast - Error',
+                    ),
+                    MoeSecondaryButton(
+                      onPressed: () {
+                        MoeToast.warning(context, '警告提示 (Warning)');
+                      },
+                      label: 'Toast - Warning',
+                    ),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: MoeSpacing.xl),
+              const SizedBox(height: MoeSpacing.xl),
 
-            _buildHeader('弹窗组件 (Sheets & Dialogs)'),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: MoeSpacing.md),
-              child: Wrap(
-                spacing: MoeSpacing.sm,
-                runSpacing: MoeSpacing.sm,
-                children: [
-                  MoeSecondaryButton(
-                    onPressed: () {
-                      showMoeActionSheet(
-                        context: context,
-                        actions: [
-                          MoeSheetAction(label: '选项 A', onTap: () {}),
-                          MoeSheetAction(label: '选项 B', onTap: () {}),
-                          MoeSheetAction(
-                            label: '危险操作',
-                            isDestructive: true,
-                            onTap: () {},
+              _buildHeader('弹窗组件 (Sheets & Dialogs)'),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: MoeSpacing.md),
+                child: Wrap(
+                  spacing: MoeSpacing.sm,
+                  runSpacing: MoeSpacing.sm,
+                  children: [
+                    MoeSecondaryButton(
+                      onPressed: () {
+                        showMoeActionSheet(
+                          context: context,
+                          actions: [
+                            MoeSheetAction(label: '选项 A', onTap: () {}),
+                            MoeSheetAction(label: '选项 B', onTap: () {}),
+                            MoeSheetAction(
+                              label: '危险操作',
+                              isDestructive: true,
+                              onTap: () {},
+                            ),
+                          ],
+                        );
+                      },
+                      label: 'Action Sheet',
+                    ),
+                    MoeSecondaryButton(
+                      onPressed: () {
+                        showMoeBottomSheet(
+                          context: context,
+                          title: '选择内容',
+                          builder: (context) => Container(
+                            height: 200,
+                            alignment: Alignment.center,
+                            child: const Text('这是一个底部面板自定义内容'),
                           ),
-                        ],
-                      );
-                    },
-                    label: 'Action Sheet',
-                  ),
-                  MoeSecondaryButton(
-                    onPressed: () {
-                      showMoeBottomSheet(
-                        context: context,
-                        title: '选择内容',
-                        builder: (context) => Container(
-                          height: 200,
-                          alignment: Alignment.center,
-                          child: const Text('这是一个底部面板自定义内容'),
-                        ),
-                      );
-                    },
-                    label: 'Bottom Sheet',
-                  ),
-                  MoeSecondaryButton(
-                    onPressed: () {
-                      showDialog(
-                        context: context,
-                        builder: (context) => MeoTalkDialog(
-                          title: '系统提示',
-                          content: const Text('确定要执行此操作吗？'),
-                          confirmText: '确定',
-                          onConfirm: () => Navigator.pop(context),
-                        ),
-                      );
-                    },
-                    label: 'MeoTalk Dialog',
-                  ),
-                ],
+                        );
+                      },
+                      label: 'Bottom Sheet',
+                    ),
+                    MoeSecondaryButton(
+                      onPressed: () {
+                        showDialog(
+                          context: context,
+                          builder: (context) => MeoTalkDialog(
+                            title: '系统提示',
+                            content: const Text('确定要执行此操作吗？'),
+                            confirmText: '确定',
+                            onConfirm: () => Navigator.pop(context),
+                          ),
+                        );
+                      },
+                      label: 'MeoTalk Dialog',
+                    ),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: MoeSpacing.xl),
+              const SizedBox(height: MoeSpacing.xl),
 
-            _buildHeader('导航组件 (Navigation)'),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: MoeSpacing.md),
-              child: MoeFilterChipBar<String>(
-                items: const [
-                  MoeFilterItem(value: 'All', label: '全部'),
-                  MoeFilterItem(value: 'Active', label: '进行中'),
-                  MoeFilterItem(value: 'Done', label: '已完成'),
-                ],
-                selectedValue: 'All',
-                onSelected: (val) {},
+              _buildHeader('导航组件 (Navigation)'),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: MoeSpacing.md),
+                child: MoeFilterChipBar<String>(
+                  items: const [
+                    MoeFilterItem(value: 'All', label: '全部'),
+                    MoeFilterItem(value: 'Active', label: '进行中'),
+                    MoeFilterItem(value: 'Done', label: '已完成'),
+                  ],
+                  selectedValue: 'All',
+                  onSelected: (val) {},
+                ),
               ),
-            ),
-            const SizedBox(height: MoeSpacing.xl),
+              const SizedBox(height: MoeSpacing.xl),
 
-            _buildHeader('液态玻璃材质 (Liquid Glass Pilot)'),
-            _buildLiquidGlassDemo(colors),
-            const SizedBox(height: MoeSpacing.xl),
+              _buildHeader('液态玻璃材质 (Liquid Glass Pilot)'),
+              _buildLiquidGlassDemo(colors),
+              const SizedBox(height: MoeSpacing.xl),
 
-            _buildHeader('背景色对比 (Background Colors)'),
-            _buildBackgroundColorsDemo(colors),
-            const SizedBox(height: MoeSpacing.xl),
+              _buildHeader('背景色对比 (Background Colors)'),
+              _buildBackgroundColorsDemo(colors),
+              const SizedBox(height: MoeSpacing.xl),
 
-            _buildHeader('圆角对比 (Corner Radius)'),
-            _buildCornerRadiusDemo(colors),
-            const SizedBox(height: 100), // 底部留白
-          ],
+              _buildHeader('圆角对比 (Corner Radius)'),
+              _buildCornerRadiusDemo(colors),
+              const SizedBox(height: 100), // 底部留白
+            ],
+          ),
         ),
       ),
     );
@@ -862,7 +874,7 @@ class _UiGalleryPageState extends State<UiGalleryPage>
             ),
             child: Text(
               '浅色模式：bgMain=#DAE1E5, surface=#F3F6F8, surfaceAlt=#E8EDF2, panel=#DAE5F1, component=白色\n'
-              '暗色模式：bgMain=#1C1C1C, surface=#1C1C1C, surfaceAlt=#232830, panel=#333333, component=#333333',
+              '暗色模式：bgMain=#000000, surface=#000000, surfaceAlt=#232830, panel=#333333, component=#333333',
               style: TextStyle(
                 fontSize: 11,
                 color: colors.textSecondary,

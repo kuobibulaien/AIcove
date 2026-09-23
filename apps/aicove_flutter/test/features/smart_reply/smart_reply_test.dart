@@ -133,4 +133,12 @@ void main() {
     port.pending!.complete(['一', '二', '三']);
     await expectLater(future, throwsFormatException);
   });
+  test('request is one user turn so providers never see an assistant tail', () {
+    final request = buildSmartReplyRequest([
+      message('1', '今天吃什么', role: 'user'),
+      message('2', '火锅怎么样'),
+    ]);
+    expect(request.role, 'user');
+    expect(request.content, '我：今天吃什么\n对方：火锅怎么样');
+  });
 }

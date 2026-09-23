@@ -50,6 +50,7 @@ abstract final class MoeFrostedMaterial {
   static ui.ImageFilter surfaceFilter(
     Brightness brightness, {
     double sigma = surfaceSigma,
+    TileMode? tileMode,
   }) {
     final blurSigma = sigma
         .clamp(surfaceSigma * minStrength, surfaceSigma)
@@ -60,7 +61,11 @@ abstract final class MoeFrostedMaterial {
             ? _darkSaturationMatrix
             : _lightSaturationMatrix,
       ),
-      outer: ui.ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
+      outer: ui.ImageFilter.blur(
+        sigmaX: blurSigma,
+        sigmaY: blurSigma,
+        tileMode: tileMode,
+      ),
     );
   }
 
