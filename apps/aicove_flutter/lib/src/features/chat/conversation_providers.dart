@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/api/thinking/thinking_level.dart';
 import '../../core/utils/blurred_background_service.dart';
+import 'domain/chat_display_policy.dart';
 import 'domain/conversation.dart';
 import 'id_gen.dart';
 import 'data/preset_characters_loader.dart';
@@ -15,6 +16,8 @@ import 'services/conversation_short_window_store.dart';
 import '../../ui/features/character/services/contact_edit_snapshot_store.dart';
 import '../context/providers/context_providers.dart';
 import '../memory/providers/memory_providers.dart';
+import '../settings/app_settings.dart';
+import '../../core/utils/message_formatter.dart';
 
 class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
   StreamSubscription<List<db.Conversation>>? _watchSub;
@@ -306,6 +309,17 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
     );
   }
 
+  /// 设置会话聊天样式；[style] 为 null 表示跟随全局默认（ADR0047）。
+  Future<void> setConversationChatDisplayStyle(
+    String id,
+    ChatDisplayStyle? style,
+  ) async {
+    await updateOne(
+      id,
+      (c) => c.copyWith(chatDisplayStyle: style, updatedAt: DateTime.now()),
+    );
+  }
+
   // (注释已丢失)
   Future<void> clearUnread(String id) async {
     final convRepo = ref.read(conversationRepositoryProvider);
@@ -389,6 +403,28 @@ final conversationSnapshotByIdProvider = Provider.family<Conversation?, String>(
     );
   },
 );
+
+/// 会话实际生效的显示策略（ADR0047）：全局默认样式叠加会话覆盖。
+/// 按会话的覆盖值取（null 跟随全局），只监听全局设置；会话对象由调用方传入，
+/// 避免为读一个字段去监听整个会话列表。
+final chatDisplayPolicyProvider =
+    Provider.family<ChatDisplayPolicy, ChatDisplayStyle?>(
+        (ref, conversationStyle) {
+  final global = ref.watch(
+    appSettingsProvider.select(
+      (settings) => (
+        settings.valueOrNull?.messageFormatConfig ??
+            const MessageFormatConfig(),
+        settings.valueOrNull?.chatDisplayStyle ?? ChatDisplayStyle.bubble,
+      ),
+    ),
+  );
+  return ChatDisplayPolicy.resolve(
+    formatConfig: global.$1,
+    globalStyle: global.$2,
+    conversationStyle: conversationStyle,
+  );
+});
 
 final conversationByIdProvider =
     StreamProvider.autoDispose.family<Conversation?, String>(

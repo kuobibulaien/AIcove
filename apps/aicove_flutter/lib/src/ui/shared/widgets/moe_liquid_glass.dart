@@ -158,12 +158,15 @@ class MoeLiquidGlass extends StatelessWidget {
       final fallbackSurface = Material(
         color: isGlassEnabled
             ? (isFrosted
-                  ? MoeFrostedMaterial.surfaceTint(brightness)
+                  ? MoeFrostedMaterial.surfaceTint(
+                      brightness,
+                      sigma: effectiveSigma,
+                    )
                   : colors.glassTintForSigma(
                       effectiveSigma,
                       baseline: baseline,
                     ))
-            : colors.surface.withValues(alpha: 1),
+            : colors.componentBackground.withValues(alpha: 1),
         shape: surfaceShape.copyWith(
           side:
               border ??

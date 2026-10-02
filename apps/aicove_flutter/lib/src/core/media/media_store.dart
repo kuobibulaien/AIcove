@@ -155,6 +155,13 @@ class MediaStore {
     });
   }
 
+  /// Direct transfers use the same durable index and arrival notifications,
+  /// without replacing the cloud downloader callback.
+  Future<void> saveReceived(LocalMedia record) async {
+    await save(record);
+    if (!_arrivals.isClosed) _arrivals.add(record.asset.id);
+  }
+
   Stream<LocalMedia> records() async* {
     await for (final json in (await _index).records()) {
       yield LocalMedia.fromJson(json);
@@ -190,6 +197,7 @@ class MediaStore {
     String? mimeType,
     bool inlineImage = false,
     bool originalRequired = false,
+    bool allowNetworkDownload = true,
   }) {
     final managed = mediaIdFromReference(source);
     if (managed != null) {
@@ -199,8 +207,9 @@ class MediaStore {
         originalRequired: originalRequired,
       );
     }
+    final registrationKey = '$allowNetworkDownload:$source';
     return _registrations
-        .putIfAbsent(source, () async {
+        .putIfAbsent(registrationKey, () async {
           try {
             return await _register(
               source,
@@ -208,9 +217,10 @@ class MediaStore {
               mimeType,
               inlineImage,
               originalRequired,
+              allowNetworkDownload,
             );
           } finally {
-            _registrations.remove(source);
+            _registrations.remove(registrationKey);
           }
         })
         .then(
@@ -270,6 +280,7 @@ class MediaStore {
     String? mimeType,
     bool inlineImage,
     bool originalRequired,
+    bool allowNetworkDownload,
   ) async {
     final uri = Uri.tryParse(source);
     File file;
@@ -328,7 +339,12 @@ class MediaStore {
           sha256.convert(utf8.encode(source)).toString(),
         ),
       );
-      if (!await file.exists()) await _downloadSource(uri!, file);
+      if (!await file.exists()) {
+        if (!allowNetworkDownload) {
+          throw const FileSystemException('直连同步不主动下载公网附件');
+        }
+        await _downloadSource(uri!, file);
+      }
     } else {
       file = File(uri?.scheme == 'file' ? uri!.toFilePath() : source);
     }

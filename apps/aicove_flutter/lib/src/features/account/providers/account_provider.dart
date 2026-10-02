@@ -24,8 +24,14 @@ final accountProvider = StateNotifierProvider<AccountController, AccountState>(
 class AccountController extends StateNotifier<AccountState> {
   AccountController(this._account) : super(const AccountState(busy: true)) {
     unawaited(_initialize());
+    _renewal = Timer.periodic(renewInterval, (_) => unawaited(_renew()));
   }
   final AccountPort _account;
+  late final Timer _renewal;
+
+  /// Well inside the server token lifetime, so a long-running app never
+  /// reaches expiry between checks.
+  static const renewInterval = Duration(hours: 6);
 
   Future<void> _initialize() async {
     await _run(() async {
@@ -41,6 +47,29 @@ class AccountController extends StateNotifier<AccountState> {
     await _account.load();
     await _account.refresh();
   });
+
+  // Background renewal stays silent on transient failures; only a rejected
+  // session (already logged out by the repository) surfaces to the UI.
+  Future<void> _renew() async {
+    if (state.busy || _account.connection?.hasSession != true) return;
+    try {
+      await _account.refresh();
+      if (mounted) state = AccountState(connection: _account.connection);
+    } on AccountFailure catch (error) {
+      if (mounted && _account.connection?.hasSession != true) {
+        state = AccountState(
+          connection: _account.connection,
+          error: error.message,
+        );
+      }
+    } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    _renewal.cancel();
+    super.dispose();
+  }
 
   Future<bool> _run(
     Future<void> Function() action, {

@@ -87,7 +87,7 @@ def read_page(engine, boundary, after, stage, limit):
     more = len(seqs) > limit
     query = select(Change).where(Change.user_id == user, Change.seq.in_(seqs[:limit])).order_by(Change.seq)
     for change in db.scalars(query).yield_per(1):
-        document = engine.vault.open(change.document)
+        document = engine._decode(change)
         addition = len(canonical(document).encode())
         if candidates and size + addition > PAGE_BYTES:
             more = True
@@ -108,7 +108,7 @@ def read_page(engine, boundary, after, stage, limit):
                 Change.user_id == user, Change.seq == latest.c.seq
             )).where(tuple_(latest.c.kind, latest.c.entity_id).in_(wanted[start:start+300]))
             for change in db.scalars(dependency_query).yield_per(1):
-                dependency = engine.vault.open(change.document)
+                dependency = engine._decode(change)
                 dependency_bytes += len(canonical(dependency).encode())
                 if dependency_bytes > 16 * 1024 * 1024:
                     from .service import SyncError

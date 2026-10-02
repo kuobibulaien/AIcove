@@ -88,6 +88,199 @@ class SyncTest(unittest.TestCase):
             conflicts = SyncEngine(db, 1, self.vault).conflicts()
         self.assertEqual(conflicts[0]['incoming']['payload']['text'], 'mac')
 
+    def test_identical_stale_submission_converges_without_conflict_or_new_version(self):
+        original = self.push([self.put(text='shared')])['results'][0]['document']
+        result = self.push([self.put(op='mac-copy', text='shared')], device='mac')['results'][0]
+        self.assertEqual(result['status'], 'applied')
+        self.assertEqual(result['document'], original)
+        self.assertEqual(self.status()['cursor'], 1)
+        with self.sessions() as db:
+            self.assertEqual(SyncEngine(db, 1, self.vault).conflicts(), [])
+        self.assertEqual(self.push([self.put(op='mac-copy', text='shared')], device='mac')['results'][0], result)
+
+    def test_same_content_at_current_version_does_not_invalidate_other_devices(self):
+        self.push([self.put(text='shared')])
+        self.push([self.put(version=1, op='unchanged', text='shared')])
+        result = self.push([self.put(version=1, op='real-edit', text='edited')], device='mac')['results'][0]
+        self.assertEqual(result['status'], 'applied')
+        self.assertEqual(result['document']['version'], 2)
+        self.assertEqual(self.status()['cursor'], 2)
+
+    def test_equal_body_with_different_attachment_references_remains_conflict(self):
+        from sync_v3.models import Blob
+        old, incoming = 'a' * 64, 'b' * 64
+        with self.sessions.begin() as db:
+            db.add_all([Blob(user_id=1, digest=d, size=1) for d in (old, incoming)])
+        self.push([self.put(text='shared').model_copy(update={'blob_ids': [old]})])
+        result = self.push([self.put(op='different-attachment', text='shared').model_copy(
+            update={'blob_ids': [incoming]})])['results'][0]
+        self.assertEqual(result['status'], 'conflict')
+
+    def test_identical_stale_put_does_not_resurrect_tombstone(self):
+        self.push([self.put(text='shared')])
+        self.push([Mutation(op_id='delete', kind='messages', entity_id='m', base_version=1, action='delete')])
+        result = self.push([self.put(op='old-copy', text='shared')], device='mac')['results'][0]
+        self.assertEqual(result['status'], 'conflict')
+        self.assertTrue(result['current']['deleted'])
+
+    def test_identical_content_still_rejects_future_version(self):
+        self.push([self.put(text='shared')])
+        with self.assertRaises(SyncError) as failure:
+            self.push([self.put(version=2, op='future-copy', text='shared')])
+        self.assertEqual(failure.exception.code, 'future_version')
+        self.assertEqual(self.status()['cursor'], 1)
+
+    def setting(self, op, version, fields, times):
+        return Mutation(op_id=op, kind='conversations', entity_id='role', base_version=version,
+                        payload={'client_schema': 18, 'row': {'id': 'role', 'created_at': 1, **fields},
+                                 'setting_times_version': 1, 'setting_times': times})
+
+    def test_settings_merge_uses_edit_time_not_upload_order(self):
+        self.push([self.setting('base', 0, {'voice_file': 'base', 'chat_background_image': None}, {})])
+        self.push([self.setting('phone', 1, {'voice_file': 'base', 'chat_background_image': 'phone'},
+                               {'chat_background_image': {'at_ms': 200, 'device_id': 'phone'}})])
+        result = self.push([self.setting('mac', 1, {'voice_file': 'mac', 'chat_background_image': None},
+                               {'voice_file': {'at_ms': 300, 'device_id': 'mac'}})], device='mac')['results'][0]
+        self.assertEqual(result['status'], 'merged')
+        self.assertEqual(result['document']['payload']['row']['chat_background_image'], 'phone')
+        self.assertEqual(result['document']['payload']['row']['voice_file'], 'mac')
+
+    def test_older_setting_upload_cannot_overwrite_newer_edit(self):
+        self.push([self.setting('base', 0, {'voice_file': 'base'}, {})])
+        self.push([self.setting('newer', 1, {'voice_file': 'newer'},
+                               {'voice_file': {'at_ms': 300, 'device_id': 'phone'}})])
+        result = self.push([self.setting('older', 1, {'voice_file': 'older'},
+                               {'voice_file': {'at_ms': 200, 'device_id': 'mac'}})], device='mac')['results'][0]
+        self.assertEqual(result['status'], 'merged')
+        self.assertEqual(result['document']['payload']['row']['voice_file'], 'newer')
+        self.assertEqual(result['document']['version'], 2)
+        self.assertEqual(self.push([self.setting('older', 1, {'voice_file': 'older'},
+                               {'voice_file': {'at_ms': 200, 'device_id': 'mac'}})], device='mac')['results'][0], result)
+
+    def test_newer_explicit_clear_wins_over_existing_value(self):
+        self.push([self.setting('base', 0, {'voice_file': 'base'}, {})])
+        self.push([self.setting('phone', 1, {'voice_file': 'phone'},
+                               {'voice_file': {'at_ms': 200, 'device_id': 'phone'}})])
+        result = self.push([self.setting('clear', 1, {'voice_file': None},
+                               {'voice_file': {'at_ms': 300, 'device_id': 'mac'}})], device='mac')['results'][0]
+        self.assertEqual(result['status'], 'merged')
+        self.assertIsNone(result['document']['payload']['row']['voice_file'])
+
+    def test_newer_wallpaper_clear_removes_its_media_dependency(self):
+        media_id = 'a' * 64
+        self.push([Mutation(op_id='media', kind='media_assets', entity_id=media_id, base_version=0,
+            payload={'media_id': media_id, 'mime_type': 'image/png', 'byte_length': 1, 'created_at_ms': 1})])
+        wallpaper = self.setting('wallpaper', 0, {'chat_background_image': 'aicove-media://' + media_id},
+            {'chat_background_image': {'at_ms': 100, 'device_id': 'phone'}}).model_copy(update={'media_ids': [media_id]})
+        self.push([wallpaper])
+        result = self.push([self.setting('clear-wallpaper', 0, {'chat_background_image': None},
+            {'chat_background_image': {'at_ms': 200, 'device_id': 'mac'}})])['results'][0]
+        self.assertEqual(result['status'], 'merged')
+        self.assertIsNone(result['document']['payload']['row']['chat_background_image'])
+        self.assertEqual(result['document']['media_ids'], [])
+
+    def test_setting_stamp_contract_rejects_malformed_times(self):
+        from pydantic import ValidationError
+        for stamp in [{'at_ms': True, 'device_id': 'phone'}, {'at_ms': -1, 'device_id': 'phone'},
+                      {'at_ms': 1}, {'at_ms': 1, 'device_id': 7}, {'at_ms': 1, 'device_id': 'phone', 'extra': 1}]:
+            with self.subTest(stamp=stamp), self.assertRaises(ValidationError):
+                self.setting('invalid', 0, {'voice_file': 'A'}, {'voice_file': stamp})
+
+    def test_unknown_setting_times_preserve_conflict(self):
+        self.push([self.setting('base', 0, {'voice_file': 'base'}, {})])
+        self.push([self.setting('phone', 1, {'voice_file': 'phone'}, {})])
+        result = self.push([self.setting('mac', 1, {'voice_file': 'mac'}, {})], device='mac')['results'][0]
+        self.assertEqual(result['status'], 'conflict')
+
+    def test_equal_value_retains_newer_edit_clock_against_late_intermediate_edit(self):
+        self.push([self.setting('base', 0, {'voice_file': 'A'},
+                               {'voice_file': {'at_ms': 100, 'device_id': 'phone'}})])
+        result = self.push([self.setting('back-to-A', 1, {'voice_file': 'A'},
+                               {'voice_file': {'at_ms': 300, 'device_id': 'phone'}})])['results'][0]
+        self.assertEqual(result['document']['payload']['setting_times']['voice_file']['at_ms'], 300)
+        result = self.push([self.setting('intermediate-B', 1, {'voice_file': 'B'},
+                               {'voice_file': {'at_ms': 200, 'device_id': 'mac'}})], device='mac')['results'][0]
+        self.assertEqual(result['document']['payload']['row']['voice_file'], 'A')
+
+    def test_clockless_client_cannot_erase_recorded_setting_times(self):
+        self.push([self.setting('base', 0, {'voice_file': 'A'},
+                               {'voice_file': {'at_ms': 100, 'device_id': 'phone'}})])
+        legacy = Mutation(op_id='legacy', kind='conversations', entity_id='role', base_version=1,
+                          payload={'client_schema': 18, 'row': {'id': 'role', 'created_at': 1, 'voice_file': 'B'}})
+        result = self.push([legacy], device='legacy')['results'][0]
+        self.assertEqual(result['status'], 'conflict')
+        self.assertEqual(result['current']['payload']['row']['voice_file'], 'A')
+
+    def test_current_version_delete_of_timestamped_setting_remains_supported(self):
+        self.push([self.setting('base', 0, {'voice_file': 'A'},
+                               {'voice_file': {'at_ms': 100, 'device_id': 'phone'}})])
+        result = self.push([Mutation(op_id='delete-role', kind='conversations', entity_id='role',
+                                     base_version=1, action='delete')])['results'][0]
+        self.assertEqual(result['status'], 'applied')
+        self.assertTrue(result['document']['deleted'])
+
+    def test_snapshot_restore_is_a_new_setting_edit(self):
+        from sync_v3.contracts import Restore
+        self.push([self.setting('base', 0, {'voice_file': 'A'},
+                               {'voice_file': {'at_ms': 100, 'device_id': 'phone'}})])
+        with self.sessions() as db:
+            snapshot = SyncEngine(db, 1, self.vault).create_snapshot('old setting')
+        self.push([self.setting('newer', 1, {'voice_file': 'B'},
+                               {'voice_file': {'at_ms': 200, 'device_id': 'phone'}})])
+        with self.sessions() as db:
+            service = SyncEngine(db, 1, self.vault)
+            service.restore(snapshot['snapshot_id'], Restore(op_id='restore-setting', device_id='mac',
+                epoch=self.epoch, expected_cursor=self.status()['cursor']))
+        result = self.push([self.setting('late-offline', 2, {'voice_file': 'offline'},
+                               {'voice_file': {'at_ms': 300, 'device_id': 'phone'}})])['results'][0]
+        self.assertEqual(result['document']['payload']['row']['voice_file'], 'A')
+
+    def test_explicit_conflict_choice_is_a_new_setting_edit(self):
+        from sync_v3.contracts import Restore
+        self.push([self.setting('base', 0, {'voice_file': 'A'},
+                               {'voice_file': {'at_ms': 100, 'device_id': 'phone'}})])
+        legacy = Mutation(op_id='legacy-choice', kind='conversations', entity_id='role', base_version=0,
+            payload={'client_schema': 18, 'row': {'id': 'role', 'created_at': 1, 'voice_file': 'chosen'}})
+        conflict = self.push([legacy])['results'][0]
+        with self.sessions() as db:
+            SyncEngine(db, 1, self.vault).resolve(conflict['conflict_id'], Restore(
+                op_id='choose', device_id='mac', epoch=self.epoch, expected_cursor=self.status()['cursor']), True)
+        result = self.push([self.setting('late-offline', 1, {'voice_file': 'offline'},
+                               {'voice_file': {'at_ms': 300, 'device_id': 'phone'}})])['results'][0]
+        self.assertEqual(result['status'], 'merged')
+        self.assertEqual(result['document']['payload']['row']['voice_file'], 'chosen')
+
+    def test_equal_timestamp_order_is_deterministic(self):
+        for order, entity in [(('phone', 'mac'), 'first'), (('mac', 'phone'), 'second')]:
+            def operation(op, owner, version):
+                return self.setting(op, version, {'voice_file': owner},
+                    {'voice_file': {'at_ms': 200, 'device_id': owner}}).model_copy(update={'entity_id': entity,
+                    'payload': {'client_schema': 18, 'row': {'id': entity, 'created_at': 1, 'voice_file': owner},
+                                'setting_times_version': 1, 'setting_times': {'voice_file': {'at_ms': 200, 'device_id': owner}}}})
+            self.push([operation(entity+'-base', order[0], 0)], device=order[0])
+            result = self.push([operation(entity+'-next', order[1], 0)], device=order[1])['results'][0]
+            self.assertEqual(result['document']['payload']['row']['voice_file'], 'phone')
+
+    def test_general_settings_filtered_on_write_and_historical_reads(self):
+        import json
+        from sync_v3.general_settings import LOCAL_GENERAL_SETTINGS
+        fields = {key: 'device-only' for key in LOCAL_GENERAL_SETTINGS}
+        fields['default_model'] = 'shared-model'
+        payload = {'storage': 'preference', 'key': 'aicove.ui_models.v1', 'json_value': json.dumps(fields)}
+        result = self.push([Mutation(op_id='settings', kind='settings', entity_id='preferences',
+                                     base_version=0, payload=payload)])['results'][0]
+        self.assertEqual(json.loads(result['document']['payload']['json_value']), {'default_model': 'shared-model'})
+        with self.sessions() as db:
+            service = SyncEngine(db, 1, self.vault)
+            historical = service._write(service._account(lock=True), 'settings', 'old-preferences', payload, [])
+            db.commit()
+            self.assertIn('device-only', service.vault.open(db.get(Entity, (1, 'settings', 'old-preferences')).document)['payload']['json_value'])
+            pages = [service.pull(self.epoch), service.bootstrap(self.epoch), service.read_page(self.epoch)]
+            for page in pages:
+                docs = page.get('changes', page.get('entities', page.get('documents')))
+                old = next(doc for doc in docs if doc['entity_id'] == historical['entity_id'])
+                self.assertEqual(json.loads(old['payload']['json_value']), {'default_model': 'shared-model'})
+
     def test_malformed_batch_rolls_back_preceding_writes(self):
         with self.assertRaises(SyncError):
             self.push([self.put(), self.put(id='missing', op='bad', version=8)])

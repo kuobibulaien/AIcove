@@ -1,4 +1,5 @@
 import 'kaomoji_parser.dart';
+import 'markdown_fence.dart';
 
 const List<String> _kDefaultChunkPunctuations = [
   '\u3002',
@@ -415,6 +416,25 @@ String buildMessageFormatProjectionSignature(MessageFormatConfig config) {
   ].join('|');
 }
 
+/// 分段保护区（ADR0047）：[start, end) 内的文本是一个组件，整块成为一个分段，
+/// 内部不做换行切分、标点切分、短句合并与尾标点过滤。
+/// [closed] 为 false 表示流式中尚未写完，区间延伸到当前文本末尾。
+class ProtectedTextRange {
+  const ProtectedTextRange(this.start, this.end, {this.closed = true});
+
+  final int start;
+  final int end;
+  final bool closed;
+}
+
+/// 一个分段。[openEnded] 为 true 表示它是尚未闭合的组件，流式中还会继续增长。
+class MessageChunk {
+  const MessageChunk(this.text, {this.openEnded = false});
+
+  final String text;
+  final bool openEnded;
+}
+
 /// Message formatter for chunk display logic.
 class MessageFormatter {
   // Matches paired quotes/brackets to protect quoted text from splitting.
@@ -438,13 +458,96 @@ class MessageFormatter {
   /// Format and chunk text.
   static List<String> formatAndChunkText(
     String text,
-    MessageFormatConfig config,
-  ) {
+    MessageFormatConfig config, {
+    Iterable<ProtectedTextRange> protectedRanges = const [],
+  }) {
+    return [
+      for (final chunk in formatAndChunk(
+        text,
+        config,
+        protectedRanges: protectedRanges,
+      ))
+        chunk.text,
+    ];
+  }
+
+  /// 只切正文句子（ADR0047）：围栏代码块总是受保护，调用方可再传入
+  /// 标签等组件区间；代码块内部的区间视为代码文字而忽略。
+  static List<MessageChunk> formatAndChunk(
+    String text,
+    MessageFormatConfig config, {
+    Iterable<ProtectedTextRange> protectedRanges = const [],
+  }) {
     // Chunking disabled: return raw text as one chunk.
     if (!config.enableChunking) {
-      return [text];
+      return [MessageChunk(text)];
     }
+    final ranges = _resolveProtectedRanges(text, protectedRanges);
+    if (ranges.isEmpty) {
+      return [
+        for (final chunk in _chunkPlainText(text, config)) MessageChunk(chunk),
+      ];
+    }
+    final result = <MessageChunk>[];
+    var cursor = 0;
+    for (final range in ranges) {
+      if (range.start > cursor) {
+        for (final chunk
+            in _chunkPlainText(text.substring(cursor, range.start), config)) {
+          result.add(MessageChunk(chunk));
+        }
+      }
+      final component = text.substring(range.start, range.end).trim();
+      if (component.isNotEmpty) {
+        result.add(MessageChunk(component, openEnded: !range.closed));
+      }
+      cursor = range.end;
+    }
+    if (cursor < text.length) {
+      for (final chunk in _chunkPlainText(text.substring(cursor), config)) {
+        result.add(MessageChunk(chunk));
+      }
+    }
+    return result;
+  }
 
+  /// 合并围栏代码块与调用方区间：起点落在代码块内的区间丢弃，重叠区间合并。
+  static List<ProtectedTextRange> _resolveProtectedRanges(
+    String text,
+    Iterable<ProtectedTextRange> extra,
+  ) {
+    final fences = [
+      for (final block in scanFencedCodeBlocks(text))
+        ProtectedTextRange(block.start, block.end, closed: block.closed),
+    ];
+    final candidates = <ProtectedTextRange>[
+      ...fences,
+      for (final range in extra)
+        if (range.start >= 0 &&
+            range.end <= text.length &&
+            range.start < range.end &&
+            !fences.any((f) => range.start >= f.start && range.start < f.end))
+          range,
+    ]..sort((a, b) => a.start.compareTo(b.start));
+    final merged = <ProtectedTextRange>[];
+    for (final range in candidates) {
+      final last = merged.isEmpty ? null : merged.last;
+      if (last != null && range.start < last.end) {
+        if (range.end > last.end) {
+          merged.last =
+              ProtectedTextRange(last.start, range.end, closed: range.closed);
+        }
+        continue;
+      }
+      merged.add(range);
+    }
+    return merged;
+  }
+
+  static List<String> _chunkPlainText(
+    String text,
+    MessageFormatConfig config,
+  ) {
     // Normalize escaped newline.
     var processedText = text.replaceAll('\\n', '\n');
     // Treat 4+ consecutive spaces as paragraph breaks.

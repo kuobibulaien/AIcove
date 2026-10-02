@@ -42,6 +42,11 @@
 7. **完工即收**：目标行为已验证、相关检查通过、完整 diff 已审阅即收工；第 6 条通过后相关代码又有变化才重跑对应检查。只报告实际发现的问题，不固定罗列假设风险，不顺手扩成全项目排查；发现 bug 先写复现测试再修
 8. **可见修改必须附预览**：仅当本次修改影响用户可见的 Flutter 界面时，最终汇报必须直接嵌入基于修改后源码生成的 **Flutter 源码渲染预览图**，不能只给文件链接；即使热重载失败或超时，也必须生成并展示。明确标注为源码渲染预览，不冒充实机截图，不据此宣称运行中的应用已更新或实机验收通过；纯逻辑、后台、文档等不可见修改不要求附图。
 
+## 默认测试模型（2026-09-29）
+
+- 需要真实模型请求来测试或验收（聊天、辅助回答、记忆 Agent 等）时，默认使用 DeepSeek Flash：模型名 `deepseek-flash`，接口 `https://api.deepseek.com`（OpenAI 格式）。用户当次指定其它模型或功能本身依赖特定供应商时除外。
+- 旧名 `deepseek-chat`／`deepseek-reasoner` 已于 2026-07-24 停用，`deepseek-v4-flash` 仅为兼容别名，测试不再使用。以官方文档 https://api-docs.deepseek.com/quick_start/pricing 为准。
+
 ## 确认与异常
 
 - 文件或目录删除、数据/schema 迁移、核心依赖更新、公开 API/核心算法变更、生产请求、系统权限与全局配置变更，先说明影响和回滚方案并获得确认。
@@ -77,6 +82,14 @@
 - 可根据任务需要自行进行 Git 提交；保护工作树中已有的用户改动，禁止用 destructive reset 覆盖现场。
 - 不部署、不调用生产环境或改账户状态，除非用户明确要求。
 - 用户提示直接安装时，以最简单的过程安装到设备即可，不必有验证过程。
+
+## 公开发布与脱敏（2026-09-29）
+
+源码可以公开，隐私不能公开。公开仓库为 GitHub `kuobibulaien/AIcove`，本地仓库不设 remote，本地 main 含私人历史，**禁止直接 push**。
+
+- 提交：本地照常提交；`docs/项目记忆/需求日志.md`、`历史任务/旧工作日志-2026-07.md` 只存本地，不 `git add -f`；提交前用 `git ls-files -ci --exclude-standard` 确认没有被忽略却仍被跟踪的文件。本地抓取的第三方资料不入库。
+- 上传源码：在不含用户名的隔离目录（如 `/private/tmp/aicove-release-<日期>/publish`）克隆公开仓库，用本地 `git archive HEAD` 覆盖同步（同步删除），再脱敏：用户名改 `kuobibulaien`，本机路径改 `/path/to/aicove`，设备序列号改 `<设备号>`；`git grep` 本机用户名、邮箱、`/home/` 须 0 命中；第三方酒馆预设原件与片段不公开（2026-09-29 用户裁决），同步后删除 `opusdocs/预设与正则/*.json`、`apps/aicove_flutter/test/fixtures/preset_runtime/`、`test/fixtures/preset_tags/` 及引用它们的测试（`git grep -l "fixtures/preset_runtime\|fixtures/preset_tags\|kemini_fixture"` 查找）；`python3 apps/aicove_flutter/tool/test_release_hygiene.py` 通过后，在公开仓库以快进方式提交并推送。
+- 安装包：公开 APK/Mac 包只在上述隔离目录构建，上传前按[经验教训「公开安装包不能在本机仓库路径下构建」](docs/项目记忆/经验教训.md)检查 0 命中；与 `SHA256SUMS` 一起上传 GitHub Release，下载回验哈希。完整测试未全绿时标记为预发布。
 # MCP 服务
 
 - 项目级官方 Dart MCP 已接入，服务名 `dart`；所有 harness 共用 `apps/aicove_flutter/tool/dart_mcp_server` 和项目 SDK。客户端配置、连接步骤、无原生 MCP 时的命令行入口及实测范围见 [DIAGNOSTICS.md「项目级 Dart MCP」](apps/aicove_flutter/tool/DIAGNOSTICS.md#dart-mcp)。

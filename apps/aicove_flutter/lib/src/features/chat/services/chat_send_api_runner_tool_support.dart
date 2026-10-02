@@ -633,6 +633,38 @@ Map<String, dynamic> _buildAssistantMessageFromRich(
   SendMessageRichResult rich,
   String adapterName,
 ) {
+  // Preset output decoding deliberately drops the provider envelope. Rebuild
+  // follow-up content from the remaining business calls, not that old envelope.
+  if (rich.rawResponse == null) {
+    switch (adapterName) {
+      case 'gemini':
+      case 'google':
+        return {'content': {'parts': [
+          ...rich.hiddenThoughtParts,
+          if (rich.text.isNotEmpty) {'text': rich.text},
+          for (final call in rich.toolCalls) {
+            'functionCall': {
+              'name': call.name, 'args': call.arguments,
+              if (call.id.isNotEmpty) 'id': call.id,
+            },
+            if (call.thoughtSignature != null) 'thoughtSignature': call.thoughtSignature,
+          },
+        ]}};
+      case 'claude':
+      case 'anthropic':
+        return {'content': [
+          if (rich.text.isNotEmpty) {'type': 'text', 'text': rich.text},
+          for (final call in rich.toolCalls)
+            {'type': 'tool_use', 'id': call.id, 'name': call.name, 'input': call.arguments},
+        ]};
+      default:
+        return {'role': 'assistant', 'content': rich.text,
+          if (rich.toolCalls.isNotEmpty) 'tool_calls': [
+            for (final call in rich.toolCalls) call.toOpenAIFormat(),
+          ],
+        };
+    }
+  }
   switch (adapterName) {
     case 'claude':
     case 'anthropic':

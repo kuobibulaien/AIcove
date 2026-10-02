@@ -1,4 +1,5 @@
 import '../../../core/api/thinking/thinking_level.dart';
+import 'chat_display_policy.dart';
 import 'message.dart';
 
 /// Sentinel value used by [Conversation.copyWith] to distinguish
@@ -41,6 +42,9 @@ class Conversation {
   // 会话级思考档位覆盖，按 modelRef 分别记录；空表示未设置
   final Map<String, ThinkingLevel> thinkingLevels;
 
+  // 会话级聊天样式覆盖；null 跟随全局默认（ADR0047）
+  final ChatDisplayStyle? chatDisplayStyle;
+
   // 上下文截断：新话题起始消息ID，此ID之后的消息才纳入AI上下文
   final String? contextStartMessageId;
 
@@ -76,6 +80,7 @@ class Conversation {
     this.enabledPlugins,
     this.recipeId,
     this.thinkingLevels = const {},
+    this.chatDisplayStyle,
     this.contextStartMessageId,
     this.lastMessage,
     this.lastMessageTime,
@@ -124,6 +129,7 @@ class Conversation {
     Object? enabledPlugins = _sentinel,
     Object? recipeId = _sentinel,
     Map<String, ThinkingLevel>? thinkingLevels,
+    Object? chatDisplayStyle = _sentinel,
     Object? contextStartMessageId = _sentinel,
     Object? lastMessage = _sentinel,
     Object? lastMessageTime = _sentinel,
@@ -175,6 +181,9 @@ class Conversation {
           : enabledPlugins as List<String>?,
       recipeId: recipeId == _sentinel ? this.recipeId : recipeId as String?,
       thinkingLevels: thinkingLevels ?? this.thinkingLevels,
+      chatDisplayStyle: chatDisplayStyle == _sentinel
+          ? this.chatDisplayStyle
+          : chatDisplayStyle as ChatDisplayStyle?,
       contextStartMessageId: contextStartMessageId == _sentinel
           ? this.contextStartMessageId
           : contextStartMessageId as String?,

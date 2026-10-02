@@ -23,7 +23,6 @@ import '../services/contact_edit_snapshot_store.dart';
 import '../widgets/background_info_section.dart';
 import '../widgets/character_plugins_section.dart';
 import '../widgets/character_text_editor_sheet.dart';
-import '../widgets/wallpaper_section.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/index.dart';
 
@@ -262,6 +261,8 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
         backgroundColor: colors.surfaceAlt,
         appBar: MoeAppBar(
           title: widget.editMode == EditMode.create ? '新建角色' : '编辑角色',
+          titleWidget: _buildNameField(colors),
+          centerTitle: true,
           showBackButton: true,
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
@@ -313,20 +314,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
 
             const SizedBox(height: 16),
 
-            // 壁纸（聊天页与本页共用）
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: WallpaperSection(
-                imageBytes: _chatBackgroundBytes,
-                rawValue: _chatBackgroundCtrl.text,
-                onPick: _pickChatBackgroundImage,
-                onClear: _clearChatBackgroundImage,
-              ),
-            ),
-
-            const SizedBox(height: 16),
-
-            // 插件列表：允许后才展开对应绑定
+            // 已开启插件各占一个容器，末尾为全部插件开关列表
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: CharacterPluginsSection(
@@ -368,7 +356,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
 
             const SizedBox(height: 16),
 
-            // 背景信息补充：人设提示词 + 角色专属绘图要求
+            // 角色卡信息：人设提示词 + 绘图提示
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: BackgroundInfoSection(
@@ -384,7 +372,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
                   hint: '详细描述角色的性格、说话方式、行为边界和世界观...',
                 ),
                 onEditDrawing: () => _openFullScreenEditor(
-                  title: '编辑绘图要求',
+                  title: '编辑绘图提示',
                   controller: _customDrawingPromptCtrl,
                   hint:
                       '可在此设定男女主外貌标签优先使用 Danbooru，也可用自然语言描述，以及对生图的要求。\n\n示例：女主纳西妲，danbooru标签"nahida_(genshin_impact)",男主danbooru标签"aether_(genshin_impact)"，默认生图视角为男主第一视角，少数情况使用第三视角出现男主全身。',
@@ -395,6 +383,28 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
             // 底部留白
             const SizedBox(height: 48),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// 标题栏内的角色名输入，取代固定的页面标题。
+  Widget _buildNameField(MoeColors colors) {
+    final style = TextStyle(
+      fontSize: 18,
+      fontWeight: FontWeight.w600,
+      color: colors.headerContentColor,
+    );
+    return TextField(
+      controller: _nameCtrl,
+      textAlign: TextAlign.center,
+      maxLines: 1,
+      style: style,
+      decoration: InputDecoration.collapsed(
+        hintText: '输入角色名称',
+        hintStyle: style.copyWith(
+          fontWeight: FontWeight.normal,
+          color: colors.muted,
         ),
       ),
     );
@@ -497,11 +507,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: _buildShellCard(colors, height: 320),
-            ),
-            const SizedBox(height: 16),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: _buildShellCard(colors, height: 60),
             ),
             const SizedBox(height: 16),
             Padding(
@@ -733,33 +738,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
   void _clearCharacterImage() {
     setState(() {
       _refImageCtrl.clear();
-    });
-    _scheduleAutoSave();
-  }
-
-  Future<void> _pickChatBackgroundImage() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
-      withData: true,
-    );
-    if (result == null || result.files.isEmpty) return;
-
-    final file = result.files.first;
-    final bytes = file.bytes;
-    if (bytes == null) return;
-
-    final dataUrl = buildDataImage(bytes, fileName: file.name);
-    setState(() {
-      _chatBackgroundBytes = bytes;
-      _chatBackgroundCtrl.text = dataUrl;
-    });
-    _scheduleAutoSave();
-  }
-
-  void _clearChatBackgroundImage() {
-    setState(() {
-      _chatBackgroundBytes = null;
-      _chatBackgroundCtrl.clear();
     });
     _scheduleAutoSave();
   }

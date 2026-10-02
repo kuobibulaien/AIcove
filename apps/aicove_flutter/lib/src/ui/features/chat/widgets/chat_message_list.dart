@@ -15,10 +15,15 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../features/chat/chat_actions.dart';
+import '../../../../features/chat/conversation_providers.dart'
+    show chatDisplayPolicyProvider;
 import '../../../../features/chat/application/active_stream_projection.dart';
 import '../../../../features/chat/application/chat_media_regeneration.dart';
 import '../../../../features/chat/application/chat_message_list_queries.dart';
 import '../../../../features/chat/domain/message.dart';
+import '../../../../features/agent_context/domain/preset_tag_mapping.dart';
+import '../../../../features/agent_context/providers/preset_recipe_provider.dart';
+import '../../../../features/content_tags/domain/tag_presentation.dart';
 import '../../../../features/chat/presentation/widgets/message_bubble.dart';
 import '../../../../features/chat/presentation/widgets/message_action_sheet.dart';
 import '../../../../ui/theme/tokens.dart';
@@ -29,9 +34,11 @@ import '../../../../ui/shared/widgets/moe_toast.dart';
 import '../../../../ui/shared/widgets/media/moe_image_preview.dart';
 import '../../../../core/utils/message_formatter.dart';
 import '../../../../features/settings/app_settings.dart';
+import '../../../../core/models/block_status.dart';
 import '../../../../core/models/message_block.dart';
 import 'animated_message_item.dart';
-import 'smart_reply_badge.dart';
+import '../../../../features/dialogue_options/domain/dialogue_options.dart';
+import 'dialogue_options_badge.dart';
 import 'chat_end_anchored_sliver.dart';
 import 'chat_message_list_display_cache.dart';
 import 'chat_message_list_items.dart';
@@ -345,6 +352,12 @@ class ChatMessageList extends ConsumerStatefulWidget {
   final List<Message> messages;
   final List<Message> transientMessages;
   final String conversationId;
+
+  /// 会话绑定的酒馆预设；决定聊天里语义标签的折叠／正文／选项呈现。
+  final String? recipeId;
+
+  /// 会话级聊天样式覆盖；null 跟随全局默认（ADR0047）。
+  final ChatDisplayStyle? chatDisplayStyle;
   final String? avatarUrl;
   final String displayName;
   final ChatMessageSelection? selection;
@@ -388,6 +401,8 @@ class ChatMessageList extends ConsumerStatefulWidget {
     required this.messages,
     this.transientMessages = const <Message>[],
     required this.conversationId,
+    this.recipeId,
+    this.chatDisplayStyle,
     this.avatarUrl,
     required this.displayName,
     this.selection,
@@ -443,6 +458,34 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
 
   /// 缓存的消息格式化配置（用于检测配置变化）
   MessageFormatConfig? _cachedFormatConfig;
+
+  /// 当前会话是否为文档样式（ADR0047），build 时更新，供气泡渲染读取。
+  bool _documentStyle = false;
+
+  /// 上次统计“聊天中发现”标签时的列表项，列表重建后才重新统计。
+  List<ChatMessageListItem>? _observedItems;
+
+  void _observeUnknownTags(List<ChatMessageListItem> items) {
+    if (identical(items, _observedItems)) return;
+    _observedItems = items;
+    final names = collectUnknownReplyTags(_stableMessages, _tagPresentation);
+    if (names.isEmpty) return;
+    final key = observedTagsKey(widget.recipeId);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final notifier = ref.read(observedUnknownTagsProvider.notifier);
+      final known = notifier.state[key] ?? const <String>{};
+      if (known.containsAll(names)) return;
+      notifier.state = {
+        ...notifier.state,
+        key: {...known, ...names},
+      };
+    });
+  }
+
+  /// 当前会话预设的语义标签呈现（ADR0046），变化时重建列表项。
+  TagPresentationMap _tagPresentation = const {};
+  String _tagPresentationSignature = '';
 
   /// 缓存的聊天图片列表（画廊模式左右滑动切换）
   List<ImagePreviewItem> _cachedChatImages = [];
@@ -568,7 +611,9 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
       _latestAnimatedAt = _currentTimelineMessages.last.createdAt;
     }
     _hydrateInitialListItems(
-      ref.read(appSettingsProvider).valueOrNull?.messageFormatConfig,
+      ref
+          .read(chatDisplayPolicyProvider(widget.chatDisplayStyle))
+          .effectiveFormatConfig,
     );
     _prepareTailFirstEntryLayout();
 
@@ -667,19 +712,35 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
         ? widget.bottomOverlayHeight
         : fallbackBottomPadding;
 
-    // 获取消息格式化配置（用于分段显示）
-    final formatConfig = ref.watch(appSettingsProvider.select(
-      (settings) =>
-          settings.valueOrNull?.messageFormatConfig ??
-          const MessageFormatConfig(),
-    ));
+    // 分段配置取会话显示策略（ADR0047）：文档模式强制不分段。
+    final formatConfig = ref.watch(
+      chatDisplayPolicyProvider(widget.chatDisplayStyle)
+          .select((policy) => policy.effectiveFormatConfig),
+    );
+    _documentStyle = ref.watch(
+      chatDisplayPolicyProvider(widget.chatDisplayStyle)
+          .select((policy) => policy.style == ChatDisplayStyle.document),
+    );
+
+    final tagPresentation = ref
+            .watch(tagPresentationForRecipeProvider(widget.recipeId))
+            .valueOrNull ??
+            builtinPresetTagMapping.presentationMap;
+    final tagSignature = _signTagPresentation(tagPresentation);
+    final tagsChanged = tagSignature != _tagPresentationSignature;
+    if (tagsChanged) {
+      _tagPresentation = tagPresentation;
+      _tagPresentationSignature = tagSignature;
+    }
 
     // 检测配置变化，需要重新构建列表项
-    if (_hasHydratedInitialListItems && _cachedFormatConfig != formatConfig) {
+    if (_hasHydratedInitialListItems &&
+        (_cachedFormatConfig != formatConfig || tagsChanged)) {
       _updateListItems(formatConfig);
     }
 
     final listItems = _cachedListItems;
+    _observeUnknownTags(listItems);
     final selection = widget.selection;
     if (selection != null) {
       final pruned = selection.updateMessages(
@@ -844,9 +905,19 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  SmartReplyBadge(
-                    key: ValueKey('smart_reply_${widget.conversationId}'),
+                  DialogueOptionsBadge(
+                    key: ValueKey('dialogue_options_${widget.conversationId}'),
                     conversationId: widget.conversationId,
+                    options: latestDialogueOptions(
+                      _stableMessages,
+                      tags: {
+                        ...defaultDialogueOptionTags,
+                        for (final entry in _tagPresentation.entries)
+                          if (entry.value.presentation ==
+                              TagPresentation.options)
+                            entry.key,
+                      },
+                    ),
                     size: _kJumpToBottomButtonSize,
                   ),
                   if (show) ...[
@@ -869,3 +940,8 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     );
   }
 }
+
+String _signTagPresentation(TagPresentationMap map) =>
+    (map.entries.map((e) => '${e.key}=${e.value.presentation.name}:${e.value.title}').toList()
+          ..sort())
+        .join(',');

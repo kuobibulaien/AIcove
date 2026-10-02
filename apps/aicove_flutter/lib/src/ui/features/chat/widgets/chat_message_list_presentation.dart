@@ -66,6 +66,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     _cachedListItems = buildChatMessageListItems(
       messages: timelineMessages,
       config: effectiveConfig,
+      tagPresentation: _tagPresentation,
     );
     _cachedChatImages = collectChatMessageListImages(timelineMessages);
     _hasHydratedInitialListItems = true;
@@ -142,7 +143,8 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
   }
 
   String _buildFormatSignature(MessageFormatConfig config) {
-    return buildMessageFormatProjectionSignature(config);
+    return '${buildMessageFormatProjectionSignature(config)}'
+        '|tags:$_tagPresentationSignature';
   }
 
   SliverChildBuilderDelegate _buildSectionDelegate(
@@ -231,10 +233,26 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     if (item is ChatChunkedMessageItem) {
       final message = item.originalMessage;
       final isMe = message.role == 'user';
+      final chunkId = '${message.id}_chunk_${item.chunkIndex}';
+      final fold = item.fold;
       final chunkMessage = Message(
-        id: '${message.id}_chunk_${item.chunkIndex}',
+        id: chunkId,
         role: message.role,
         content: item.chunkText,
+        // 折叠段用思考块承载，气泡按折叠组件显示。
+        blocks: fold == null
+            ? null
+            : [
+                ThinkingBlock(
+                  id: '${chunkId}_fold',
+                  messageId: chunkId,
+                  content: fold.content,
+                  title: fold.title,
+                  status: fold.closed
+                      ? BlockStatus.success
+                      : BlockStatus.streaming,
+                ),
+              ],
         createdAt: message.createdAt,
         status: message.status,
       );
@@ -257,6 +275,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
             showAvatar: item.showAvatar,
             hideContactAvatar: widget.selection?.active == true,
             chatImages: _cachedChatImages,
+            documentStyle: _documentStyle,
             onRetry: null,
             onLongPress: (bubbleBox, position) => _handleMessageLongPress(
               context,
@@ -316,6 +335,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
         showAvatar: item.showAvatar,
         hideContactAvatar: widget.selection?.active == true,
         chatImages: _cachedChatImages,
+        documentStyle: _documentStyle,
         onRetry: (isMe && message.status == 'failed')
             ? () => actions.recallFailedMessage(message.id)
             : null,

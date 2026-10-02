@@ -13,7 +13,8 @@ const cloudTables = <String, String>{
 /// 同步表的结构版本，写进每条同步记录的 `client_schema`。
 /// 只在同步表的列发生变化时才升，不跟整库版本绑定：整库升级（例如 v18 只新增
 /// 本地表）时，旧版本设备仍能收到聊天记录。收到的列多于本机时，接收端会拒绝。
-const kCloudRowSchema = 17;
+// 18：conversations 新增 chat_display_style（ADR0047）。
+const kCloudRowSchema = 18;
 
 /// 已退役、不再同步的类型（ADR0038）。本地不采集、不上传；
 /// 云端推下来的旧记录只清掉收件箱，不写本地，也不回传删除。
@@ -56,6 +57,10 @@ Future<void> installCloudTracking(GeneratedDatabase db) async {
   await db.customStatement('''CREATE TABLE IF NOT EXISTS cloud_dirty (
     kind TEXT NOT NULL, entity_id TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY(kind, entity_id))''');
+  await db.customStatement('''CREATE TABLE IF NOT EXISTS cloud_setting_times (
+    kind TEXT NOT NULL, entity_id TEXT NOT NULL, field TEXT NOT NULL,
+    at_ms INTEGER NOT NULL, device_id TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY(kind,entity_id,field))''');
   await db.customStatement('''CREATE TABLE IF NOT EXISTS cloud_versions (
     kind TEXT NOT NULL, entity_id TEXT NOT NULL, version INTEGER NOT NULL,
     local_json TEXT, cloud_json TEXT NOT NULL, conflict_id TEXT,
@@ -93,7 +98,9 @@ Future<void> installCloudTracking(GeneratedDatabase db) async {
   // 旧版本在退役表上装过的触发器：表删除前也不能再产生同步记录。
   for (final kind in retiredCloudKinds) {
     for (final operation in ['insert', 'update', 'delete']) {
-      await db.customStatement('DROP TRIGGER IF EXISTS cloud_${kind}_$operation');
+      await db.customStatement(
+        'DROP TRIGGER IF EXISTS cloud_${kind}_$operation',
+      );
     }
   }
   await purgeRetiredCloudKinds(db);
@@ -116,6 +123,28 @@ Future<void> installCloudTracking(GeneratedDatabase db) async {
           ON CONFLICT(kind, entity_id) DO UPDATE SET revision=revision+1;
           ${owner != null && operation == 'UPDATE' ? "INSERT INTO cloud_dirty(kind,entity_id,revision) SELECT 'messages',OLD.$entity,1 WHERE OLD.$entity<>NEW.$entity ON CONFLICT(kind,entity_id) DO UPDATE SET revision=revision+1;" : ''}
         END''');
+    }
+  }
+  // Only actual local UPDATEs get a clock. Importing an initial/default row
+  // does not pretend every field was edited at import time.
+  for (final kind in ['conversations', 'providers']) {
+    final columns = await db.customSelect('PRAGMA table_info("$kind")').get();
+    for (final column in columns) {
+      final field = column.data['name'] as String;
+      if (const {'id', 'created_at', 'updated_at'}.contains(field)) continue;
+      await db.customStatement(
+        '''CREATE TRIGGER IF NOT EXISTS cloud_time_${kind}_$field
+        AFTER UPDATE OF "$field" ON "$kind"
+        WHEN (SELECT suspended FROM cloud_client_state WHERE id=1)=0
+          AND OLD."$field" IS NOT NEW."$field"
+        BEGIN
+          INSERT INTO cloud_setting_times(kind,entity_id,field,at_ms,device_id)
+          VALUES('$kind',NEW.id,'$field',
+            CAST((julianday('now')-2440587.5)*86400000 AS INTEGER),'')
+          ON CONFLICT(kind,entity_id,field) DO UPDATE SET
+            at_ms=MAX(excluded.at_ms,cloud_setting_times.at_ms+1),device_id='';
+        END''',
+      );
     }
   }
 }

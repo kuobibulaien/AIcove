@@ -94,7 +94,13 @@ void main() {
             expect((lens.renderObject as RenderBox).size.height, lessThan(800));
           }
           expect(root.shadows, isEmpty);
-          expect(find.byType(BackdropFilter), findsWidgets);
+          if (width >= 900) {
+            expect(root.blurEnabled, isNull);
+            expect(find.byType(BackdropFilter), findsWidgets);
+          } else {
+            // Full-screen narrow roots paint the plain page color.
+            expect(root.blurEnabled, isFalse);
+          }
           // The search field retains its own liquid material.
           expect(find.byType(MoeLiquidGlass), findsWidgets);
           expect(tester.takeException(), isNull);

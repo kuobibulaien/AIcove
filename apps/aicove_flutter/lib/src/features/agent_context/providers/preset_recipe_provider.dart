@@ -3,7 +3,9 @@ library;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../content_tags/domain/tag_presentation.dart';
 import '../data/silly_tavern_preset_store.dart';
+import '../domain/preset_tag_mapping.dart';
 import '../domain/silly_tavern_preset.dart';
 import '../domain/tavern_compatibility_port.dart';
 
@@ -29,9 +31,12 @@ class PresetRecipeSummary {
     return PresetRecipeSummary(
       id: preset.id,
       name: preset.name,
-      description:
-          '${preset.enabledPromptCount} 个启用节点 · 顺序组 ${preset.selectedOrder.sourceIndex + 1}'
-          '${preset.regexScriptCount > 0 ? ' · regex ${preset.regexAuthorized ? '已授权' : '未授权'}' : ''}',
+      description: [
+        '${preset.enabledPromptCount} 条提示词',
+        if (preset.regexScriptCount > 0)
+          '${preset.regexScriptCount} 条正则${preset.regexAuthorized ? '' : '（未开启）'}',
+        if (preset.worldBooks.isNotEmpty) '${preset.worldBooks.length} 本世界书',
+      ].join(' · '),
       warningCount: preset.warnings.length,
       regexScriptCount: preset.regexScriptCount,
       regexAuthorized: preset.regexAuthorized,
@@ -65,6 +70,32 @@ final presetRecipeProvider = FutureProvider.family<SillyTavernPreset?, String>((
 ) async {
   return ref.read(sillyTavernPresetStoreProvider).get(recipeId);
 });
+
+/// 聊天中发现、映射里还没有的标签（ADR0048）：按会话绑定的 recipeId 分组，
+/// 空字符串表示“使用默认预设”。只存内存、不写预设，用户在标签页归类后
+/// 才写入 `tagDisplay` 覆盖。
+final observedUnknownTagsProvider =
+    StateProvider<Map<String, Set<String>>>((ref) => const {});
+
+String observedTagsKey(String? recipeId) => recipeId?.trim() ?? '';
+
+/// 聊天显示用的标签呈现映射（ADR0046）：会话绑定预设（未绑定时用默认预设）
+/// 的推断与用户覆盖，内置常用名打底。插件关闭或读取失败时只用内置常用名。
+final tagPresentationForRecipeProvider =
+    FutureProvider.family<TagPresentationMap, String?>((ref, recipeId) async {
+      final builtin = builtinPresetTagMapping.presentationMap;
+      final settings = await ref.watch(tavernPluginSettingsProvider.future);
+      if (!settings.enabled) return builtin;
+      final trimmed = recipeId?.trim();
+      final id = trimmed != null && trimmed.isNotEmpty
+          ? trimmed
+          : settings.defaultPresetId;
+      if (id == null) return builtin;
+      final preset = await ref.watch(presetRecipeProvider(id).future);
+      return preset == null
+          ? builtin
+          : inferPresetTagMapping(preset).presentationMap;
+    });
 
 final presetRecipeImportControllerProvider =
     AsyncNotifierProvider<PresetRecipeImportController, void>(

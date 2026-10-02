@@ -1,8 +1,6 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -40,6 +38,8 @@ class CloudSyncController extends StateNotifier<CloudProgress> {
   final Ref ref;
   CloudSyncEngine? _engine;
   CloudSyncScheduler? _scheduler;
+  CloudApi? _api;
+  AccountConnection? _connected;
   String? _token;
   Future<void>? _connecting;
   int _generation = 0;
@@ -50,6 +50,19 @@ class CloudSyncController extends StateNotifier<CloudProgress> {
   Future<void> connect(AccountConnection? connection) {
     if (_token == connection?.token) return _connecting ?? Future.value();
     _token = connection?.token;
+    final current = _connected;
+    if (_api != null &&
+        connection != null &&
+        connection.hasSession &&
+        current != null &&
+        current.owns(connection.server, connection.user)) {
+      // A renewed token for the same account keeps the running engine.
+      _api!.updateToken(connection.token!);
+      _connected = connection;
+      return synchronize();
+    }
+    _api = null;
+    _connected = null;
     final generation = ++_generation;
     _scheduler?.close();
     _scheduler = null;
@@ -67,22 +80,20 @@ class CloudSyncController extends StateNotifier<CloudProgress> {
         final preferences = await SharedPreferences.getInstance();
         final documents = await getApplicationDocumentsDirectory();
         final support = await getApplicationSupportDirectory();
-        final device = await MediaStore.localDeviceId;
         if (!mounted || generation != _generation) return;
-        final media = MediaStore(
-          Directory(p.join(support.path, 'cloud_media')),
-          device,
-        );
-        MediaStore.use(media);
+        final media = await MediaStore.shared;
+        if (!mounted || generation != _generation) return;
         final local = CloudLocalStore(
           ref.read(databaseProvider),
           preferences,
           documents,
           support,
         );
+        _api = CloudApi(connection!);
+        _connected = connection;
         _engine = CloudSyncEngine(
           local,
-          CloudApi(connection!),
+          _api!,
           media,
           cloudObjectId(
             '${connection.server}/${connection.user.id}/${connection.user.uniqueId}',

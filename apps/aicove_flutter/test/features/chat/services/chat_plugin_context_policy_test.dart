@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_plugin_context_policy.dart';
 
 void main() {
-  const off = ChatPluginContextPolicy(imageEnabled: false, ttsEnabled: false);
+  final off = ChatPluginContextPolicy.firstParty(activeProviderIds: {});
   test('disabled tags remove bodies, attributes, nesting and unfinished bodies',
       () {
     expect(
@@ -20,15 +20,15 @@ void main() {
       () {
     const original = 'a<image>image</image>b<tts>voice</tts>c';
     expect(
-        const ChatPluginContextPolicy(imageEnabled: true, ttsEnabled: false)
+        ChatPluginContextPolicy.firstParty(activeProviderIds: {'image'})
             .filterText(original),
         'a<image>image</image>bc');
     expect(
-        const ChatPluginContextPolicy(imageEnabled: false, ttsEnabled: true)
+        ChatPluginContextPolicy.firstParty(activeProviderIds: {'tts'})
             .filterText(original),
         'ab<tts>voice</tts>c');
     expect(
-        const ChatPluginContextPolicy(imageEnabled: true, ttsEnabled: true)
+        ChatPluginContextPolicy.firstParty(activeProviderIds: {'image', 'tts'})
             .filterText(original),
         original);
   });
@@ -98,7 +98,7 @@ void main() {
   });
   test('retired memory tools are dropped in pairs even when all plugins are on',
       () {
-    const on = ChatPluginContextPolicy(imageEnabled: true, ttsEnabled: true);
+    final on = ChatPluginContextPolicy.firstParty(activeProviderIds: {'image', 'tts'});
     final messages = <Map<String, dynamic>>[
       {'role': 'user', 'content': '还记得吗'},
       {

@@ -1,6 +1,17 @@
+import '../../content_tags/domain/content_tag_scanner.dart';
+import '../../content_tags/domain/content_tag_spec.dart';
+import '../plugin_content_tags.dart';
+
 /// TTS 文本解析器
 /// 负责解析 <tts></tts> 标记和文本拆分
 class TtsParser {
+  /// 顶层、已闭合的语音标签（ADR0044）。语音插件与落库拆分共用这一口径，
+  /// 保证语音事件与语音段一一对齐。
+  static bool isSpeechElement(ContentTagSegment segment) =>
+      segment is ContentTagElement &&
+      segment.closed &&
+      segment.spec.display == ContentTagDisplay.tts;
+
   /// MiniMax 支持的语气词标签列表
   /// 文档: https://platform.minimaxi.com/docs/api-reference/speech-t2a-http
   static const _minimaxMoodTags = [
@@ -63,26 +74,26 @@ class TtsParser {
   /// 解析文本中的 TTS 标记
   /// 返回标记列表和移除标记后的纯文本
   static TtsParseResult parse(String text) {
-    final matches = RegExp(r'<tts>(.*?)</tts>', dotAll: true).allMatches(text);
-
     final segments = <TtsSegment>[];
-    for (final match in matches) {
-      final content = match.group(1)?.trim() ?? '';
+    final cleanText = StringBuffer();
+    for (final segment in firstPartyContentTagScanner.scan(text)) {
+      if (!isSpeechElement(segment)) {
+        cleanText.write(segment.raw);
+        continue;
+      }
+      final content = (segment as ContentTagElement).inner.trim();
       if (content.isNotEmpty) {
         segments.add(TtsSegment(
           text: content,
-          startIndex: match.start,
-          endIndex: match.end,
+          startIndex: segment.start,
+          endIndex: segment.end,
         ));
       }
     }
 
-    // 移除所有 TTS 标记
-    final cleanText = text.replaceAll(RegExp(r'<tts>.*?</tts>', dotAll: true), '').trim();
-
     return TtsParseResult(
       segments: segments,
-      cleanText: cleanText,
+      cleanText: cleanText.toString().trim(),
       originalText: text,
     );
   }

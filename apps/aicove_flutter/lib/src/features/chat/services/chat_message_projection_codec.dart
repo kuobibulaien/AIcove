@@ -34,6 +34,7 @@ class ChatMessageProjectionCodec {
   static const int rawPayloadVersion = 1;
   static const String _versionKey = 'version';
   static const String _rawReplyTextKey = 'rawReplyText';
+  static const String _displayReplyTextKey = 'displayReplyText';
   static const String _processedTextKey = 'processedText';
   static const String _hiddenThoughtPartsKey = 'hiddenThoughtParts';
   static const String _pluginEventsKey = 'pluginEvents';
@@ -51,6 +52,7 @@ class ChatMessageProjectionCodec {
       _versionKey: rawPayloadVersion,
       _rawReplyTextKey: apiResult.rawReplyText,
       _processedTextKey: apiResult.processedText,
+      _displayReplyTextKey: apiResult.replyText,
       _hiddenThoughtPartsKey: <Map<String, dynamic>>[
         for (final part in apiResult.hiddenThoughtParts)
           Map<String, dynamic>.from(part),
@@ -172,6 +174,12 @@ class ChatMessageProjectionCodec {
   static String? rawReplyText(Map<String, dynamic>? rawPayload) {
     final value = rawPayload?[_rawReplyTextKey];
     return value is String ? value : null;
+  }
+
+  /// Display-regex output before multimedia tags are consumed by plugins.
+  static String? displayReplyText(Map<String, dynamic>? rawPayload) {
+    final value = rawPayload?[_displayReplyTextKey];
+    return value is String ? value : processedText(rawPayload);
   }
 
   static String? processedText(Map<String, dynamic>? rawPayload) {

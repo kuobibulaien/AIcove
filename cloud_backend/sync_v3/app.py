@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from auth import login, get_current_user_info, TokenResponse, UserResponse
+from auth import login, refresh_access_token, get_current_user_info, TokenResponse, UserResponse
 from .admin import router as admin_router
 from database import init_db, SessionLocal
 from .api import router
@@ -38,6 +38,7 @@ if origins:
     app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=False,
                        allow_methods=['GET', 'POST', 'PUT'], allow_headers=['Authorization', 'Content-Type'])
 app.add_api_route('/api/v1/auth/login', login, methods=['POST'], response_model=TokenResponse, tags=['认证'])
+app.add_api_route('/api/v1/auth/refresh', refresh_access_token, methods=['POST'], response_model=TokenResponse, tags=['认证'])
 app.add_api_route('/api/v1/auth/me', get_current_user_info, methods=['GET'], response_model=UserResponse, tags=['认证'])
 app.include_router(admin_router)
 app.include_router(router)

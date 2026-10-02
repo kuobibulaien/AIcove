@@ -96,7 +96,7 @@ String _boundPresetId(SegmentedChatFixture fixture) {
 Future<void> _openPresetPicker(WidgetTester tester) async {
   await tester.tap(find.byTooltip('更多'));
   await tester.pumpAndSettle();
-  await tester.tap(find.text('绘图预设'));
+  await tester.tap(find.text('绘图风格'));
   await tester.pumpAndSettle();
 }
 
@@ -121,11 +121,23 @@ void main() {
     await _disposeFixture(tester, fixture);
   });
 
+  testWidgets('聊天菜单「酒馆预设」打开本角色的预设页', (tester) async {
+    final fixture = await _mount(tester);
+    await tester.tap(find.byTooltip('更多'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('酒馆预设'));
+    await tester.pumpAndSettle();
+    expect(find.text('当前预设'), findsOneWidget);
+    expect(find.text('跟随默认酒馆预设'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await _disposeFixture(tester, fixture);
+  });
+
   testWidgets('角色禁用绘图插件时菜单不显示快捷入口', (tester) async {
     final fixture = await _mount(tester, enabledPlugins: const []);
     await tester.tap(find.byTooltip('更多'));
     await tester.pumpAndSettle();
-    expect(find.text('绘图预设'), findsNothing);
+    expect(find.text('绘图风格'), findsNothing);
     expect(tester.takeException(), isNull);
     await _disposeFixture(tester, fixture);
   });

@@ -144,7 +144,7 @@ class _ProgressiveEdge extends StatelessWidget {
         ? MoeFrostedMaterial.blurSigmaForSetting(blurSetting)
         : MoeMaterialBaseline.text.blurSigma(blurSetting);
     final baseTint = frosted
-        ? MoeFrostedMaterial.surfaceTint(brightness)
+        ? MoeFrostedMaterial.surfaceTint(brightness, sigma: sigma)
         : colors.glassTintForSigma(
             blurSetting,
             baseline: MoeMaterialBaseline.text,

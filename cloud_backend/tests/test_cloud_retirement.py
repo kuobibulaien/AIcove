@@ -18,7 +18,7 @@ class CloudRetirementTest(unittest.TestCase):
         self.assertIn('/api/v1/sync/v3/push', paths)
         for path in paths:
             self.assertTrue(path in {'/health', '/docs', '/docs/oauth2-redirect',
-                                    '/openapi.json', '/redoc', '/api/v1/auth/login',
+                                    '/openapi.json', '/redoc', '/api/v1/auth/login', '/api/v1/auth/refresh',
                                     '/api/v1/auth/me', '/api/v1/admin/users',
                                     '/api/v1/admin/users/{user_id}/active'}
                             or path.startswith('/api/v1/sync/v3/'), path)

@@ -1,14 +1,16 @@
 # 酒馆兼容插件（测试）
 
-日期：2026-09-06。范围：标准聊天中的预设、正则、世界书实际上下文装配及逐条开关；不是完整 SillyTavern 复刻。
+日期：2026-09-29。范围：标准聊天中的预设、正则、世界书实际上下文装配及逐条开关；不是完整 SillyTavern 复刻。
 
 ## 使用入口
 
-1. 聊天插件 → **酒馆兼容插件（测试）**，与绘图、语音并列。
-2. 导入 Chat Completion / Prompt Manager 预设 JSON，或者创建基础组合。
-3. 进入组合的「预设／正则／世界书」标签，导入资源、查看内容并逐条开关。修改自动保存，共享此组合的角色从下一次请求起生效。
-4. 角色编辑页仅选择酒馆预设绑定；未绑定时使用插件页标星的默认预设。没设默认预设或总开关关闭时使用 AIcove 原模式。
-5. 正则须额外授权整个预设运行；未授权时即使单条开启也不执行。明确绑定丢失不静默换预设，应重新选择。总配置损坏可在插件页确认停用并重置默认选择，不删除资源和角色绑定。
+界面于 2026-09-29 重写，沿用设置页分组卡片与 Moe 组件：
+
+1. 聊天插件 → **酒馆兼容插件（测试）**，与绘图、语音并列。首页「我的预设」列出全部预设，标着「默认」的就是默认预设；行尾「更多」或长按可设为／取消默认。
+2. 「导入预设」选择 Chat Completion / Prompt Manager 预设 JSON，确认条目数与提示后导入；只用正则或世界书时选「新建空白预设」。
+3. 预设详情顶部分段切换「提示词／正则／世界书／标签」：提示词逐条开关、点开看正文，底部「预设信息」看来源与参数生效情况；正则先打开「允许运行正则」再逐条开关；世界书点进单本后开关条目，条目多时可搜索；标签可改正文／折叠／选项或恢复自动识别。修改自动保存，共享此预设的角色从下一次请求起生效。
+4. 角色编辑页仅选择酒馆预设绑定；未绑定时「跟随默认酒馆预设」。没设默认预设或总开关关闭时使用 AIcove 原模式。
+5. 正则须额外允许整个预设运行；未允许时即使单条开启也不执行。明确绑定丢失不静默换预设，应重新选择。总配置损坏可在插件页「重置默认选择」，不删除资源和角色绑定。
 
 “插件预设”在这里是一个完整组合：原始酒馆提示词预设 + 导入正则 + 世界书 + 各类条目开关。角色沿用 `Conversation.recipeId`，不增加第二份独立绑定，也不添加没有实际工具权限意义的角色插件勾选框。
 
@@ -28,17 +30,37 @@
 
 世界书关键词支持 `{{char}}`、`{{user}}`、`{{description}}`、`{{scenario}}` 常见替换；注入正文继续通过既有宏求值器。相同位置／深度条目组合后作为系统或指定角色消息发送。
 
+## QuickJS / 小猫首批（2026-09-28）
+
+已接入 Reborn2.3 / Meowssiah1.1 默认配置所需的 SPreset 纯逻辑流程：消息数组或合并文本后处理、按节点启用的 JS 工具工厂与 action、merge_tools、工具正文解包、输出脚本的 buffer/hold/state/final。原始函数不翻译、不靠名称识别。导入原 JSON 后沿用原有角色绑定和正则授权入口，不需要生成文本降级版。
+
+浏览器 loader 不运行，模型凭证不进入脚本；JS 异常终止发送/处理，不静默跳过。高级选项的精确边界见 [ADR0042](../../../../../docs/项目记忆/决策记录/0042-QuickJS预设纯逻辑运行时.md)。小猫原有工具内正文等参数完整后显示；Kemini 传输正文增量显示见下一节。发送前重新估算脚本处理后的消息和完整工具定义，超限从原文副本恢复一次，仍超限则停止。
+
+生命周期：ApiConfig 固定配置 → ChatSendApiRunner 创建 QuickJsPresetRuntime → 每轮 canonical 副本处理 → 输出解码 → finally 释放。JS 改写不回写已有消息；解码后的新正文才作为本次 rawReplyText。native library 与脚本资产随应用打包，无运行时 CDN 依赖。
+
+## Kemini v3.1 B1：正文传输（2026-09-29）
+
+已接入原版 Kemini Dramatron v3.1 的“防截断传输”链路：仅按脚本 ID／协议标记识别并读取配置，在 QuickJS 宿主运行通用正文传输协议，不执行整段 Tavern Helper。不限制脚本版本、文件名或内容哈希。匹配多份取第一份已启用的；锚点缺失追加控制提示词并记录 `transport_anchor_missing`；未识别或读取失败诊断后正常发送。
+
+传输函数只承载正文，不进入业务工具 action。它可在预设 `function_calling=false` 时使用；模型 tools 能力不足或模型禁用工具时跳过，保留正常聊天并记录 `transport_skipped_model_without_tools`。原有业务工具与小猫工厂权限沿用旧规则。控制提示词、tool choice 和工具声明仅作用于本次请求副本。
+
+OpenAI／Gemini 流式、非流式回复都经过解包，截断参数尝试恢复已收到的 content。普通正文与传输正文选最长者，避免重复；同轮业务调用保留并执行，后续请求不带已消费的传输封套。**OpenAI arguments delta／Gemini partialArgs 按约 50ms 合并后增量显示；Gemini 仅提供整块 args 时仍在结束后显示。** 普通正文立即参与最长选择，等长优先传输，不拼接。未完整的转义与 Unicode 不提前显示；预览不落库，最终保存以结束后解包为准。 原始聊天历史不改写，新回复的 rawReplyText 保存解包正文。
+
+精确版本、配置读取、协议行为、回滚和作用域由 [ADR0043](../../../../../docs/项目记忆/决策记录/0043-预设传输工具与业务工具作用域.md) 统一规定。B2 显示顺序与历史重算尚未实施，行动选项和原生折叠尚未实现；面板联动、脚本变量持久化、事件桥接另行立项。可执行 HTML 继续清除。
+
+本批验证：直接读取归档原版预设，使用真实 QuickJS／发送服务／Provider adapter 与 HTTP 边界替身；Kemini、既有小猫及相关流式／生图／压缩回归共 **98 项通过**。定向静态检查 0 error、0 warning，保留 11 条既有 `prefer_initializing_formals` info。证据位于仓库 `.codex-temp/kemini-b1-2026-09-29/` 的 `offline-regression-final.log`、`analyze-final.log` 和 `extraction-probe.json`。**真实模型请求未做**（当前会话环境未提供模型凭证），Debug 会话已停止，未构建、安装或宣称运行中的应用通过验收。
+
 ## 明确后推
 
 - 世界书递归、向量检索、包含组、粘性／冷却／延迟、角色过滤、作者注、示例对话、Outlet 及非 normal 专用触发。依赖未支持位置或条件的条目在导入警告/条目说明中标记并跳过；递归开关只提示本版扫描聊天，不递归触发。
-- 正则 JavaScript 扩展／可执行 HTML／不支持的 flags、正则模式内宏替换 `substituteRegex`，以及完整的编辑事件语义。已有 regex 引擎安全边界继续保留。
+- 可执行 HTML、正则模式内宏替换 `substituteRegex`，以及完整的编辑事件语义仍后推；正则匹配改由 QuickJS，flags 按引擎实际支持编译。
 - 高级可视化编辑、全资源库复用/删除/导出、云同步、角色包自动携带组合依赖、后台主动关怀/Analyzer 装配权限拓展。现有通用备份并不等于已携带本插件资源。
 - 原有显示正则到气泡的完整重投影不是本批目标；既有审计记录的“清空显示文本回露原文／多模态分段绕过显示正则”不得因此被标成已修复。本批验收重点是最终请求上下文。
 
 ## 分层与存储
 
 ```text
-TavernPluginDetailPage / PresetRecipeSection
+TavernPluginDetailPage / TavernPresetDetailPage / TavernWorldBookPage / 角色预设选择弹窗
   → PresetRecipeImportController
   → TavernCompatibilityPort
   → SillyTavernPresetStore（本地JSON）
@@ -49,7 +71,8 @@ ChatSendBackendService.prepareApiConfig
   → TavernWorldScannerPort：有界世界书扫描
   → 已授权 WORLD_INFO 正则
   → SillyTavernPresetAssembler：有序节点、marker、深度、宏、预算
-  → ApiConfig（含固定的显示正则快照）→ 原有 Provider Adapter
+  → ApiConfig（含固定的显示正则与 JS 配置快照）
+  → ChatSendApiRunner / QuickJsPresetRuntime → Provider Adapter
 ```
 
 存储目录：应用 documents 下 `aicove/sillytavern_presets/`。
@@ -57,7 +80,7 @@ ChatSendBackendService.prepareApiConfig
 - `st_preset_<hash>.json`：沿用既有预设信封；原始 `rawPreset` 保持不变，新增 `compatibilityData` 保存 `promptEnabled`、`regexEnabled`、`importedRegex`、`worldBooks`（源JSON、整本开关、entryEnabled）。既有 schemaVersion=2 信封的新增可选字段，旧文件无需迁移。
 - `plugin_settings.json`：总开关和默认预设 ID。默认启用但没有默认预设，保留既有显式角色绑定行为，不自动把新预设应用到所有角色。
 - 本进程所有仓库实例串行写；读取校验信封ID与文件名一致，防止损坏信封将A的开关写进B；读-改-写在串行区中完成，临时文件flush后原子rename。写入/重导入失败不覆盖正常文件；队列空闲后释放Future。未承诺多进程同时编辑或断电的完整恢复保证。
-- 单次导入≤2MiB；每书≤2000条、每组合≤32本、regex≤1000条、组合附加资源≤16MiB。世界书和正则匹配在可终止isolate中执行，超1500ms停止并附警告；扫描窗口文本另有2M字符上限。
+- 单次导入≤2MiB；每书≤2000条、每组合≤32本、regex≤1000条、组合附加资源≤16MiB。世界书在可终止isolate中执行；正则由后台 QuickJS 执行，每次 native 调用1秒中断、批次1500ms预算并附失败警告；扫描窗口文本另有2M字符上限。
 - 不改聊天DB schema、不更改raw message/blocks、不覆盖角色提示词，不把正则结果写成canonical历史。
 
 诊断复用现有 `promptAssembly.sillyTavernPreset`：新增 effectivePresetId、worldInfo 的命中/跳过原因、位置、估算token；实际插入位置由 entries/finalMessages核对。`activated` 表示扫描命中，不保证marker开启或最终内容非空；最终装配结果才是模型收到的内容。未增加逐token或独立聊天正文日志。
@@ -78,6 +101,16 @@ flutter test --no-pub test/features/agent_context \
 UI测试通过真实导入按钮及文件选择替身导入三类JSON，验证逐条开关/授权/默认选择与文件重开，覆盖360/1000px，以及320px大字号1.8；角色选择另覆盖100条列表。Android验证用正常主入口 `flutter run --no-resident -d e949b887`，不是以测试页面代替正式应用。
 
 交付记录：相关122项通过，核心与新UI静态检查无问题；同级列表保留3条既有info。活跃工作树全量当时1156过133失败，包含旧审计与并行改造，不是本批通过声明；最终仅承诺上述相关回归。PKX110正常Debug主入口构建7ac8fdbd…已安装启动，收尾诊断`cb277496a62d4b56a255adaf7535bac5`确认构建期源码未变化、当前源码0差异。没有用真实模型请求替代离线最终messages断言。
+
+### QuickJS 首批验收记录（2026-09-28）
+
+- 58 项定向测试通过：原生超时/内存/异步/无宿主I/O、原始小猫回调、实际prompt正则与深度、工具工厂状态隔离、流式/非流式正文解码、回退、变换后预算、既有图像工具与上下文恢复。
+- 额外请求组装检查4过1失败：停用酒馆后仍残留`B_MAIN`。将本批5个集成文件恢复为HEAD源码的隔离副本中，同一断言仍失败；这是已有缺口，不计为本批通过。
+- 改动范围静态检查无error/warning，11条既有构造参数风格info。最终macOS与Android ARM64 Debug构建通过；Mac产物内真实QuickJS动态库再次执行两份原始输出回调通过，两端打包JS资产与源码一致。
+- Android引擎动态库1,043,776字节，Mac引擎1,066,608字节（Debug产物；不是整个安装包增量或Release体积）。引擎源码版本/SHA/许可证随本地包保存。
+- 未安装新应用、未重新导入原始预设、未调用生产模型；不宣称手机运行或真实生成验收。工具参数须完整后才能解包成正文；高级SPreset配置边界见ADR0042。
+
+证据归档：仓库`.codex-temp/js-sandbox-research-2026-09-28/implementation-evidence/`及`packaged-runtime-results.json`。这批不改变此前发现的显示重投影缺口。
 
 ## 官方参考
 

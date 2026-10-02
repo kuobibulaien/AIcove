@@ -3,6 +3,7 @@ import 'package:aicove_flutter/src/features/agent_context/providers/preset_recip
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
 import 'package:aicove_flutter/src/ui/features/character/pages/contact_edit_page.dart';
 import 'package:aicove_flutter/src/ui/features/character/services/contact_edit_snapshot_store.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/moe_app_bar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -50,7 +51,7 @@ void main() {
     );
 
     expect(find.text('正在准备编辑界面'), findsOneWidget);
-    expect(find.text('编辑角色'), findsOneWidget);
+    expect(_headerNameField(), findsOneWidget);
     expect(find.byTooltip('保存'), findsNothing);
     expect(find.text('角色描述'), findsNothing);
 
@@ -59,8 +60,8 @@ void main() {
 
     expect(find.text('正在准备编辑界面'), findsNothing);
     expect(find.text('角色描述'), findsNothing);
-    expect(find.text('壁纸'), findsOneWidget);
-    expect(find.text('插件'), findsOneWidget);
+    expect(find.text('壁纸'), findsNothing);
+    expect(find.text('已开启插件'), findsOneWidget);
   });
 
   testWidgets('角色编辑页命中持久快照后首帧直接显示完整表单', (tester) async {
@@ -88,12 +89,12 @@ void main() {
 
     expect(find.text('正在准备编辑界面'), findsNothing);
     expect(find.text('角色描述'), findsNothing);
-    expect(find.text('编辑角色'), findsOneWidget);
-    expect(find.text('壁纸'), findsOneWidget);
-    expect(find.text('插件'), findsOneWidget);
+    expect(_headerNameField(), findsOneWidget);
+    expect(find.text('壁纸'), findsNothing);
+    expect(find.text('已开启插件'), findsOneWidget);
 
-    await tester.ensureVisible(find.text('背景信息补充'));
-    await tester.tap(find.text('背景信息补充'));
+    await tester.ensureVisible(find.text('角色卡信息'));
+    await tester.tap(find.text('角色卡信息'));
     await tester.pumpAndSettle();
     expect(find.text('温柔，聪明，善于倾听。'), findsOneWidget);
   });
@@ -126,11 +127,11 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.scrollUntilVisible(
-      find.text('跟随插件默认预设'),
+      find.text('跟随默认酒馆预设'),
       500,
       scrollable: find.byType(Scrollable).first,
     );
-    await tester.tap(find.text('跟随插件默认预设'));
+    await tester.tap(find.text('跟随默认酒馆预设'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('酒馆测试预设'));
     await tester.pumpAndSettle();
@@ -145,3 +146,8 @@ void main() {
     expect(find.text('退出编辑'), findsNothing);
   });
 }
+
+Finder _headerNameField() => find.descendant(
+  of: find.byType(MoeAppBar),
+  matching: find.byType(TextField),
+);

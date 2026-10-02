@@ -171,11 +171,16 @@ class ThinkingBlock extends MessageBlock {
   /// 思考耗时（毫秒）
   final int? durationMs;
 
+  /// 折叠气泡标题；预设语义标签（思维链、状态栏、摘要等）投影时填写，
+  /// 为空时显示“思考过程”。
+  final String? title;
+
   ThinkingBlock({
     super.id,
     required super.messageId,
     required this.content,
     this.durationMs,
+    this.title,
     super.status,
   }) : super(
           type: BlockType.thinking,
@@ -187,6 +192,7 @@ class ThinkingBlock extends MessageBlock {
       messageId: json['messageId'] as String,
       content: json['content'] as String,
       durationMs: json['durationMs'] as int?,
+      title: json['title'] as String?,
       status: BlockStatus.values.firstWhere(
         (e) => e.name == json['status'],
         orElse: () => BlockStatus.success,
@@ -202,6 +208,7 @@ class ThinkingBlock extends MessageBlock {
         'status': status.name,
         'content': content,
         'durationMs': durationMs,
+        if (title != null) 'title': title,
         'createdAt': createdAt.toIso8601String(),
       };
 }

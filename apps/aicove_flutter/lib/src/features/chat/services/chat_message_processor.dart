@@ -16,6 +16,9 @@ import '../domain/message.dart';
 import '../id_gen.dart';
 import '../../plugins/domain/plugin.dart';
 import '../../plugins/domain/plugin_content.dart';
+import '../../content_tags/domain/content_tag_scanner.dart';
+import '../../plugins/image/image_plugin.dart';
+import '../../plugins/plugin_content_tags.dart';
 import '../../plugins/tts/tts_parser.dart';
 import '../../../core/models/message_block.dart';
 import '../../../core/api/providers/provider_adapter.dart'
@@ -55,32 +58,12 @@ class _Seg {
   const _Seg(this.type, this.content, {this.data});
 }
 
-/// 内部标记位置（用于排序和去重叠）
-class _Marker {
-  final int start;
-  final int end;
-  final _SegType type;
-  final String content;
-  final Map<String, dynamic>? data;
-  const _Marker({
-    required this.start,
-    required this.end,
-    required this.type,
-    required this.content,
-    this.data,
-  });
-}
-
 /// 助手消息处理服务
 ///
 /// 提供消息构建、文本处理等无状态工具方法
 /// 注意：普通分段逻辑已移至 UI 层，但多模态标签（TTS、表情包）必须在存储时拆分
 class ChatMessageProcessor {
   const ChatMessageProcessor();
-  static final RegExp _inlineImageTagRegex = RegExp(
-    r'<image>([\s\S]*?)</image>',
-    caseSensitive: false,
-  );
   static final RegExp _imagePlaceholderRegex = RegExp(
     r'(?:<image>\s*</image>|\[(?:图片|image)(?:\s*:[^\]]*)?\])',
     caseSensitive: false,
@@ -97,6 +80,7 @@ class ChatMessageProcessor {
   AssistantMessageBuildResult buildAssistantMessages({
     required String replyText,
     required String processedText,
+    String? displayReplyText,
     required List<PluginEvent> pluginEvents,
     List<PluginContent>? contents,
     List<ToolAudioResult> toolAudioResults = const [],
@@ -135,7 +119,9 @@ class ChatMessageProcessor {
       if (hasMultimodal) {
         // 有多模态标签：按标签位置拆分，保证语序正确
         // TTS 段由 ChatTtsHandler 顺序处理，这里跳过
-        final segments = _parseMultimodalSegments(replyText, pluginEvents);
+        final segments = _parseMultimodalSegments(
+          displayReplyText ?? replyText, pluginEvents,
+        );
         var audioContentIndex = 0;
         var toolAudioIndex = 0;
         var imageContentIndex = 0;
@@ -225,7 +211,10 @@ class ChatMessageProcessor {
       } else {
         // 无多模态标签：保持消息完整
         var sourceText =
-            selectAssistantText(processedText, pluginEvents, replyText);
+            selectAssistantText(
+              processedText, pluginEvents, replyText,
+              processedTextProvided: displayReplyText != null,
+            );
 
         // 如果文本为空但有 trigger 事件，生成确认消息
         if (sourceText.isEmpty) {
@@ -384,109 +373,70 @@ class ChatMessageProcessor {
       }
     }
 
-    // 收集所有标记位置
-    final markers = <_Marker>[];
-
-    // TTS 标记
-    final ttsRegex = RegExp(r'<tts>(.*?)</tts>', dotAll: true);
-    for (final match in ttsRegex.allMatches(cleanedText)) {
-      final content = match.group(1)?.trim() ?? '';
-      if (content.isNotEmpty) {
-        markers.add(_Marker(
-          start: match.start,
-          end: match.end,
-          type: _SegType.tts,
-          content: content,
-        ));
-      }
-    }
-
-    // 表情包标记（只匹配已确认的表情包标签）
-    final stickerRegex = RegExp(r'\[([^\[\]]+)\]');
-    for (final match in stickerRegex.allMatches(cleanedText)) {
-      final tag = match.group(1)?.trim() ?? '';
-      if (stickerDataByTag.containsKey(tag)) {
-        markers.add(_Marker(
-          start: match.start,
-          end: match.end,
-          type: _SegType.sticker,
-          content: tag,
-          data: stickerDataByTag[tag],
-        ));
-      }
-    }
-
-    // 图片标记（只匹配本轮确认过的 image_generate 事件）
+    // 图片段只对应本轮确认过的 image_generate 事件
     final imageEvents = pluginEvents
         .where((event) => event.type == 'image_generate')
         .toList(growable: false);
     var imageEventIndex = 0;
-    final imageRegex = RegExp(
-      r'<image>([\s\S]*?)</image>',
-      caseSensitive: false,
-    );
-    for (final match in imageRegex.allMatches(cleanedText)) {
-      final prompt = (match.group(1) ?? '').trim();
-      if (prompt.isEmpty || imageEventIndex >= imageEvents.length) {
-        continue;
-      }
-      markers.add(_Marker(
-        start: match.start,
-        end: match.end,
-        type: _SegType.image,
-        content: prompt,
-        data: imageEvents[imageEventIndex].data,
-      ));
-      imageEventIndex += 1;
+
+    final segments = <_Seg>[];
+    final pendingText = StringBuffer();
+
+    void addText(String value) {
+      final trimmed = value.trim();
+      if (trimmed.isNotEmpty) segments.add(_Seg(_SegType.text, trimmed));
     }
 
-    // 移除被 TTS 标记包含的表情包 / 图片标记（嵌套场景）
-    markers.removeWhere((m) {
-      if (m.type != _SegType.sticker && m.type != _SegType.image) {
-        return false;
+    // 表情包只在标签外的文本里识别；语音、图片正文里的 [tag] 属于其内容
+    void flushText() {
+      final chunk = pendingText.toString();
+      pendingText.clear();
+      var cursor = 0;
+      for (final match in _stickerTagRegex.allMatches(chunk)) {
+        final tag = match.group(1)?.trim() ?? '';
+        final data = stickerDataByTag[tag];
+        if (data == null) continue;
+        addText(chunk.substring(cursor, match.start));
+        segments.add(_Seg(_SegType.sticker, tag, data: data));
+        cursor = match.end;
       }
-      return markers.any((other) =>
-          other.type == _SegType.tts &&
-          m.start >= other.start &&
-          m.end <= other.end);
-    });
+      addText(chunk.substring(cursor));
+    }
 
-    // 按位置排序
-    markers.sort((a, b) => a.start.compareTo(b.start));
-
-    // 按标记位置切分文本
-    final segments = <_Seg>[];
-    int lastEnd = 0;
-
-    for (final marker in markers) {
-      // 标记前的文本
-      if (marker.start > lastEnd) {
-        final beforeText = cleanedText.substring(lastEnd, marker.start).trim();
-        if (beforeText.isNotEmpty) {
-          segments.add(_Seg(_SegType.text, beforeText));
+    for (final segment in firstPartyContentTagScanner.scan(cleanedText)) {
+      if (TtsParser.isSpeechElement(segment)) {
+        final content = (segment as ContentTagElement).inner.trim();
+        if (content.isNotEmpty) {
+          flushText();
+          segments.add(_Seg(_SegType.tts, content));
+          continue;
+        }
+      } else if (_isInlineImageElement(segment) &&
+          imageEventIndex < imageEvents.length) {
+        final prompt = (segment as ContentTagElement).inner.trim();
+        if (prompt.isNotEmpty) {
+          flushText();
+          segments.add(_Seg(
+            _SegType.image,
+            prompt,
+            data: imageEvents[imageEventIndex].data,
+          ));
+          imageEventIndex += 1;
+          continue;
         }
       }
-
-      // 多模态段
-      segments.add(_Seg(
-        marker.type,
-        marker.content,
-        data: marker.data,
-      ));
-
-      lastEnd = marker.end;
+      pendingText.write(segment.raw);
     }
-
-    // 最后一个标记后的文本
-    if (lastEnd < cleanedText.length) {
-      final afterText = cleanedText.substring(lastEnd).trim();
-      if (afterText.isNotEmpty) {
-        segments.add(_Seg(_SegType.text, afterText));
-      }
-    }
-
+    flushText();
     return segments;
   }
+
+  static final RegExp _stickerTagRegex = RegExp(r'\[([^\[\]]+)\]');
+
+  static bool _isInlineImageElement(ContentTagSegment segment) =>
+      segment is ContentTagElement &&
+      segment.closed &&
+      ImagePlugin.isInlineImageElement(segment);
 
   /// 移除非多模态的插件标签（保留 TTS / 图片 / 表情包标签）
   ///
@@ -694,10 +644,11 @@ class ChatMessageProcessor {
   String selectAssistantText(
     String processedText,
     List<PluginEvent> pluginEvents,
-    String replyText,
-  ) {
+    String replyText, {
+    bool processedTextProvided = false,
+  }) {
     final trimmedProcessed = processedText.trim();
-    if (trimmedProcessed.isNotEmpty) {
+    if (processedTextProvided || trimmedProcessed.isNotEmpty) {
       return trimmedProcessed;
     }
 
@@ -715,20 +666,22 @@ class ChatMessageProcessor {
   /// 对于 TTS 标签内的内容，还会清理 MiniMax 专有标签（语气词、停顿控制）
   String stripPluginTags(String text) {
     if (text.isEmpty) return text;
-    var result = text;
-
-    // 移除 <tts>...</tts> 标签，但保留内容（清理 MiniMax 专有标签后）
-    final ttsRegex = RegExp(r'<tts>(.*?)</tts>', dotAll: true);
-    final ttsMatches = ttsRegex
-        .allMatches(result)
-        .map((m) {
-          final content = m.group(1)?.trim();
-          if (content == null || content.isEmpty) return null;
-          return TtsParser.stripMinimaxTags(content);
-        })
-        .where((v) => v != null && v.isNotEmpty)
-        .toList();
-    result = result.replaceAll(ttsRegex, '');
+    final ttsMatches = <String>[];
+    final kept = StringBuffer();
+    for (final segment in firstPartyContentTagScanner.scan(text)) {
+      if (TtsParser.isSpeechElement(segment)) {
+        // 移除 <tts>...</tts> 标签，但保留内容（清理 MiniMax 专有标签后）
+        final content = (segment as ContentTagElement).inner.trim();
+        if (content.isEmpty) continue;
+        final spoken = TtsParser.stripMinimaxTags(content);
+        if (spoken.isNotEmpty) ttsMatches.add(spoken);
+        continue;
+      }
+      // 只移除快速模式 <image>...</image>，带属性的图片上下文记录原样保留
+      if (_isInlineImageElement(segment)) continue;
+      kept.write(segment.raw);
+    }
+    var result = kept.toString();
 
     // 移除 <create_trigger ... /> 标签
     result = result.replaceAll(
@@ -738,17 +691,11 @@ class ChatMessageProcessor {
     result = result.replaceAll(
         RegExp(r'<delete_trigger\s[^>]*?/?>', caseSensitive: false), '');
 
-    // 只移除标准 <image>...</image>，避免误吞带属性的其他内容
-    result = result.replaceAll(
-      _inlineImageTagRegex,
-      '',
-    );
-
     result = result.trim();
 
     // 如果移除标签后为空，但有 TTS 内容，返回 TTS 内容
     if (result.isEmpty && ttsMatches.isNotEmpty) {
-      return ttsMatches.cast<String>().join('\n\n');
+      return ttsMatches.join('\n\n');
     }
 
     return result;
@@ -769,13 +716,9 @@ class ChatMessageProcessor {
     }
 
     if (segments.isEmpty) {
-      final regex = RegExp(r'<tts>(.*?)</tts>', dotAll: true);
-      for (final match in regex.allMatches(replyText)) {
-        final value = match.group(1)?.trim();
-        if (value != null && value.isNotEmpty) {
-          segments.add(value);
-        }
-      }
+      segments.addAll(
+        TtsParser.parse(replyText).segments.map((segment) => segment.text),
+      );
     }
 
     return segments;

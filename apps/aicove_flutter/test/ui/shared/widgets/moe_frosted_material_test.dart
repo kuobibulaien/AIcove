@@ -4,24 +4,34 @@ import 'dart:ui' as ui;
 import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 import 'package:aicove_flutter/src/ui/theme/moe_frosted_material.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 void main() {
-  test('blurSigmaForSetting maps the 10..100% range onto the Cupertino recipe', () {
-    expect(MoeFrostedMaterial.blurSigmaForSetting(0), 3);
-    expect(MoeFrostedMaterial.blurSigmaForSetting(3.2), 3);
-    expect(MoeFrostedMaterial.blurSigmaForSetting(16), 15);
-    expect(MoeFrostedMaterial.blurSigmaForSetting(32), 30);
-    expect(MoeFrostedMaterial.blurSigmaForSetting(100), 30);
-    expect(MoeFrostedMaterial.blurSigmaForSetting(-8), 3);
+  test('blurSigmaForSetting maps the 10..100% range onto the thin recipe', () {
+    expect(MoeFrostedMaterial.blurSigmaForSetting(0), 2);
+    expect(MoeFrostedMaterial.blurSigmaForSetting(3.2), 2);
+    expect(MoeFrostedMaterial.blurSigmaForSetting(16), 10);
+    expect(MoeFrostedMaterial.blurSigmaForSetting(32), 20);
+    expect(MoeFrostedMaterial.blurSigmaForSetting(100), 20);
+    expect(MoeFrostedMaterial.blurSigmaForSetting(-8), 2);
+  });
+
+  test('tint thins out with the blur and stays below popup opacity', () {
+    for (final brightness in Brightness.values) {
+      final clear = MoeFrostedMaterial.surfaceTint(brightness, sigma: 2);
+      final medium = MoeFrostedMaterial.surfaceTint(brightness, sigma: 10);
+      final heavy = MoeFrostedMaterial.surfaceTint(brightness, sigma: 20);
+      expect(clear.a, lessThan(medium.a));
+      expect(medium.a, lessThan(heavy.a));
+      expect(heavy.a, lessThan(0.8));
+    }
   });
 
   for (final brightness in Brightness.values) {
-    testWidgets('frosted strength pixels track Cupertino popup $brightness', (
+    testWidgets('frosted strength pixels match the shared recipe $brightness', (
       tester,
     ) async {
       tester.view.devicePixelRatio = 1;
@@ -71,11 +81,25 @@ void main() {
         ),
       );
       final regionChecksums = <double, int>{};
-      final strengths = {0.0: 3.0, 3.2: 3.0, 16.0: 15.0, 32.0: 30.0};
+      final strengths = {0.0: 2.0, 3.2: 2.0, 16.0: 10.0, 32.0: 20.0};
       for (final MapEntry(key: sigma, value: expectedSigma)
           in strengths.entries) {
         final reference = await render(
-          CupertinoPopupSurface(blurSigma: expectedSigma, child: content),
+          ClipRect(
+            child: BackdropFilter(
+              filter: MoeFrostedMaterial.surfaceFilter(
+                brightness,
+                sigma: expectedSigma,
+              ),
+              child: ColoredBox(
+                color: MoeFrostedMaterial.surfaceTint(
+                  brightness,
+                  sigma: expectedSigma,
+                ),
+                child: content,
+              ),
+            ),
+          ),
         );
         for (final baseline in [
           MoeMaterialBaseline.none,
@@ -114,7 +138,7 @@ void main() {
                     actual.getUint8(offset + c),
                     closeTo(reference.getUint8(offset + c), 1),
                     reason:
-                        'Cupertino parity at $x,$y, sigma=$sigma, liquid=$liquid',
+                        'Recipe parity at $x,$y, sigma=$sigma, liquid=$liquid',
                   );
                 }
               }

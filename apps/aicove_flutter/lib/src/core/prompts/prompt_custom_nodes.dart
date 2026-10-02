@@ -1,4 +1,4 @@
-import '../sync/cloud_local_write.dart';
+import '../sync/cloud_setting_policy.dart';
 import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
@@ -13,8 +13,8 @@ class PromptCustomNode {
     this.variables = const <String>[],
     DateTime? createdAt,
     DateTime? updatedAt,
-  })  : createdAt = createdAt ?? updatedAt,
-        updatedAt = updatedAt ?? createdAt;
+  }) : createdAt = createdAt ?? updatedAt,
+       updatedAt = updatedAt ?? createdAt;
 
   final String id;
   final String title;
@@ -84,7 +84,7 @@ class PromptCustomNodeStore {
 
   Future<void> clearForTesting({SharedPreferences? preferences}) async {
     final prefs = preferences ?? await SharedPreferences.getInstance();
-    await cloudLocalWrite(() => prefs.remove(storageKey));
+    await saveCloudPreference(prefs, storageKey, null);
   }
 
   static PromptCustomNode _normalize(PromptCustomNode node) {
@@ -125,9 +125,10 @@ class PromptCustomNodeStore {
       if (decoded is! List) return const <PromptCustomNode>[];
       return decoded
           .whereType<Map>()
-          .map((entry) => PromptCustomNode.fromJson(
-                Map<String, Object?>.from(entry),
-              ))
+          .map(
+            (entry) =>
+                PromptCustomNode.fromJson(Map<String, Object?>.from(entry)),
+          )
           .where((node) => node.id.trim().isNotEmpty)
           .toList(growable: false)
         ..sort((a, b) => a.id.compareTo(b.id));
@@ -140,12 +141,13 @@ class PromptCustomNodeStore {
     SharedPreferences prefs,
     List<PromptCustomNode> nodes,
   ) async {
-    await cloudLocalWrite(() => prefs.setString(
+    await saveCloudPreference(
+      prefs,
       storageKey,
       jsonEncode(<Map<String, Object?>>[
         for (final node in nodes) node.toJson(),
       ]),
-    ));
+    );
   }
 }
 

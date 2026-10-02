@@ -310,6 +310,9 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
       ((data['stream_segment_delay_seconds'] as num?)?.toDouble() ?? 0.0)
           .clamp(0.0, 5.0)
           .toDouble();
+  final chatDisplayStyle =
+      ChatDisplayStyle.fromValue(data['chat_display_style'] as String?) ??
+          ChatDisplayStyle.bubble;
   final chatBackgroundColor = ChatBackgroundColor.fromValue(
     data['chat_background_color'] as String?,
   );
@@ -374,8 +377,6 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
   final skipVisionCompatDialog = data['skip_vision_compat_dialog'] == true;
 
   return AppSettings(
-    smartReplyEnabled: data['smart_reply_enabled'] == true,
-    smartReplyModel: (data['smart_reply_model'] as String?) ?? '',
     compactionModel: (data['compaction_model'] as String?) ?? '',
     memoryModel: (data['memory_model'] as String?) ?? '',
     ttsEnabled: true,
@@ -428,6 +429,7 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     enhancedDialogueSettings: enhancedDialogueSettings,
     callFlowSettings: callFlowSettings,
     streamSegmentDelaySeconds: streamSegmentDelaySeconds,
+    chatDisplayStyle: chatDisplayStyle,
   );
 }
 
@@ -466,14 +468,6 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
       return rawModelId;
     }
     return settings.buildModelRef(providerId, rawModelId);
-  }
-
-  Future<void> setSmartReplyEnabled(bool enabled) async {
-    await _commit(() => _api.updatePartial({'smart_reply_enabled': enabled}));
-  }
-
-  Future<void> setSmartReplyModel(String modelRef) async {
-    await _commit(() => _api.updatePartial({'smart_reply_model': modelRef.trim()}));
   }
 
   /// 空字符串表示跟随默认聊天模型。
@@ -1032,6 +1026,12 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     final value = seconds.clamp(0.0, 5.0);
     await _commit(
       () => _api.updatePartial({'stream_segment_delay_seconds': value}),
+    );
+  }
+
+  Future<void> setChatDisplayStyle(ChatDisplayStyle style) async {
+    await _commit(
+      () => _api.updatePartial({'chat_display_style': style.name}),
     );
   }
 

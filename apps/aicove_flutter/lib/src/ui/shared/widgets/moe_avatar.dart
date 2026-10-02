@@ -25,7 +25,15 @@ class MoeAvatar extends StatelessWidget {
                 characterImage: characterImage,
                 displayName: name)
             .buildAvatarWidget(
-          fallback: ColoredBox(color: context.moeColors.surfaceAlt),
+          // Placeholder must stand out from both the page and card colors.
+          fallback: ColoredBox(
+            color: context.moeColors.border,
+            child: Icon(
+              Icons.person_rounded,
+              size: size * 0.6,
+              color: context.moeColors.muted,
+            ),
+          ),
         ),
       ),
     );

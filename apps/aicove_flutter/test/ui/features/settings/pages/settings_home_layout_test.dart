@@ -26,6 +26,7 @@ const _entryStyles = <String, (IconData, int)>{
   '模型': (Icons.layers_rounded, 0xFF5856D6),
   '通用': (Icons.tune_rounded, 0xFF32ADE6),
   '插件': (Icons.extension_rounded, 0xFFAF52DE),
+  '局域网同步': (Icons.devices_rounded, 0xFF34C759),
   '调试': (Icons.terminal_rounded, 0xFFFF9500),
 };
 
@@ -54,9 +55,9 @@ void main() {
         await tester.pumpAndSettle();
         final card = find.byKey(_profileCard);
         final cardRect = tester.getRect(card);
-        final search = find.byType(TextField);
-        expect(cardRect.left, tester.getRect(search).left);
-        expect(cardRect.right, tester.getRect(search).right);
+        expect(find.byType(TextField), findsNothing, reason: '设置页不放搜索框');
+        expect(cardRect.left, 12);
+        expect(cardRect.right, width - 12);
         if (scale == 1) expect(cardRect.height, 88);
         final container = find.byKey(_entryContainer);
         expect(container, findsOneWidget);
@@ -77,7 +78,14 @@ void main() {
         final rows = tester
             .widgetList<MoeSettingsRow>(find.byType(MoeSettingsRow))
             .toList();
-        expect(rows.map((e) => e.label), ['账号', '模型', '通用', '插件', '调试']);
+        expect(rows.map((e) => e.label), [
+          '账号',
+          '模型',
+          '通用',
+          '插件',
+          '局域网同步',
+          '调试',
+        ]);
         for (final row in rows) {
           expect(
             tester.getRect(find.byWidget(row.iconWidget!)).left,
@@ -119,26 +127,6 @@ void main() {
           expect(tester.getRect(arrows.at(i)).right, right);
         }
         expect(tester.takeException(), isNull);
-        await tester.enterText(search, '深色');
-        await tester.pumpAndSettle();
-        expect(find.byType(MoeAvatar), findsNothing);
-        expect(card, findsNothing);
-        expect(find.byType(MoeSettingsRow), findsOneWidget);
-        expect(find.text('通用'), findsOneWidget);
-        expect(container, findsOneWidget);
-        expect(
-          find.descendant(
-            of: container,
-            matching: find.byType(MoeSettingsRow),
-          ),
-          findsOneWidget,
-        );
-        final searchCardRect = tester.getRect(container);
-        expect(searchCardRect.left, cardRect.left);
-        expect(searchCardRect.right, cardRect.right);
-        await tester.tap(find.byTooltip('清除搜索'));
-        await tester.pumpAndSettle();
-        expect(find.byType(MoeAvatar), findsOneWidget);
         expect(tester.takeException(), isNull);
       });
     }
@@ -171,7 +159,7 @@ void main() {
     final rows = tester
         .widgetList<MoeSettingsRow>(find.byType(MoeSettingsRow))
         .toList();
-    expect(rows.length, 5);
+    expect(rows.length, 6);
     for (final row in rows) {
       final tile = row.iconWidget! as Container;
       final decoration = tile.decoration! as MoeG2Decoration;
@@ -256,7 +244,7 @@ void main() {
     expect(containerRect.right, cardRect.right);
     expect(cardRect.left, 24);
     expect(cardRect.right, 360);
-    expect(find.byType(MoeSettingsRow), findsNWidgets(5));
+    expect(find.byType(MoeSettingsRow), findsNWidgets(6));
     expect(tester.takeException(), isNull);
   });
 }

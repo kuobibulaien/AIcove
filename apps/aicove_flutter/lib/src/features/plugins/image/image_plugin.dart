@@ -19,11 +19,37 @@ import '../../chat/services/chat_history_store.dart';
 import '../../chat/services/chat_request_message_builder.dart';
 import '../../../core/services/system_reminder_service.dart';
 import '../../settings/app_settings.dart';
+import '../../content_tags/domain/content_tag_registry.dart';
+import '../../content_tags/domain/content_tag_scanner.dart';
+import '../../content_tags/domain/content_tag_spec.dart';
 import '../domain/index.dart';
+import '../plugin_content_tags.dart';
 import 'image_config.dart';
 import 'drawing_parameters.dart';
 
 class ImagePlugin extends BasePlugin {
+  /// 绘图插件拥有的语义标签与工具（ADR0044）。带属性的
+  /// `<image source="history">` 是图片上下文记录，显示层不当作生图占位。
+  static const contentTags = StaticContentTagProvider(
+    providerId: 'image',
+    tagSpecs: [
+      ContentTagSpec(
+        name: 'image',
+        ownerId: 'image',
+        display: ContentTagDisplay.image,
+        displayRequiresBareTag: true,
+      ),
+    ],
+    toolNames: {'draw_image', 'image_context'},
+  );
+
+  /// 快速模式生图标签：顶层、不带属性（带属性的是图片上下文记录）。
+  /// 绘图插件、落库拆分与流式占位共用这一口径，保证生图事件与图片段对齐。
+  static bool isInlineImageElement(ContentTagSegment segment) =>
+      segment is ContentTagElement &&
+      segment.spec.display == ContentTagDisplay.image &&
+      !(segment.spec.displayRequiresBareTag && segment.hasAttributes);
+
   static const String internalImageContextRule =
       '<image source="history" ...>...</image> 是内部图片上下文记录，只供理解，不是发给用户的话，'
       '也不是新的生图指令，禁止原样输出这段标记。只有你当前这轮主动输出的普通 '
@@ -31,10 +57,6 @@ class ImagePlugin extends BasePlugin {
 
   static int _asyncJobSeq = 0;
   static int _imageRequestSeq = 0;
-  static final RegExp _inlineImageTagRegex = RegExp(
-    r'<image>([\s\S]*?)</image>',
-    caseSensitive: false,
-  );
   static final RegExp _cjkPromptRegex = RegExp(
     r'[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af]',
   );
@@ -223,21 +245,16 @@ class ImagePlugin extends BasePlugin {
       );
     }
 
-    final matches = _inlineImageTagRegex
-        .allMatches(text)
-        .toList(growable: false);
-    if (matches.isEmpty) {
-      return PluginProcessResult(
-        processedText: text,
-        events: const [],
-        contents: const [],
-      );
-    }
-
     final events = <PluginEvent>[];
-    for (final match in matches) {
-      final prompt = (match.group(1) ?? '').trim();
+    final remainingText = StringBuffer();
+    for (final segment in firstPartyContentTagScanner.scan(text)) {
+      final prompt = segment is ContentTagElement &&
+              segment.closed &&
+              isInlineImageElement(segment)
+          ? segment.inner.trim()
+          : '';
       if (prompt.isEmpty) {
+        remainingText.write(segment.raw);
         continue;
       }
       events.add(
@@ -246,9 +263,9 @@ class ImagePlugin extends BasePlugin {
           type: 'image_generate',
           data: <String, dynamic>{
             'prompt': prompt,
-            'tag': match.group(0),
-            'markerStart': match.start,
-            'markerEnd': match.end,
+            'tag': segment.raw,
+            'markerStart': segment.start,
+            'markerEnd': segment.end,
             if (isRequestSnapshot) 'drawingConfig': _config.toJson(),
           },
         ),
@@ -263,12 +280,7 @@ class ImagePlugin extends BasePlugin {
       );
     }
 
-    final processedText = _normalizeProcessedText(
-      text.replaceAllMapped(_inlineImageTagRegex, (match) {
-        final prompt = (match.group(1) ?? '').trim();
-        return prompt.isEmpty ? match.group(0)! : '';
-      }),
-    );
+    final processedText = _normalizeProcessedText(remainingText.toString());
 
     AppLogger.info(
       'ImagePlugin',

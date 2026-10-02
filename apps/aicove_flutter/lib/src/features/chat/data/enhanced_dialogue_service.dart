@@ -4,6 +4,7 @@ import '../../../core/prompts/prompt_builtin_defaults.g.dart';
 import '../../../core/prompts/prompt_template_renderer.dart';
 import '../domain/conversation.dart';
 import '../domain/message.dart';
+import '../domain/conversation_context_window.dart';
 import '../id_gen.dart';
 
 /// 增强对话拼接结果
@@ -139,15 +140,7 @@ class EnhancedDialogueService {
     required List<Message> messages,
     required String? contextStartMessageId,
   }) {
-    if (contextStartMessageId == null || contextStartMessageId.isEmpty) {
-      return messages;
-    }
-    final markerIndex =
-        messages.lastIndexWhere((m) => m.id == contextStartMessageId);
-    if (markerIndex >= 0 && markerIndex + 1 < messages.length) {
-      return messages.sublist(markerIndex + 1);
-    }
-    return messages;
+    return sliceConversationContext(messages, contextStartMessageId);
   }
 
   List<Message> _selectRecentRounds(List<Message> messages,

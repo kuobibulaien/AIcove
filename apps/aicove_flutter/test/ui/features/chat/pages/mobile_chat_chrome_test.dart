@@ -109,7 +109,7 @@ void main() {
           await tester.pumpAndSettle();
           expect(find.text('多选'), findsNothing);
           expect(find.text('详情'), findsOneWidget);
-          expect(find.text('绘图预设'), findsOneWidget);
+          expect(find.text('绘图风格'), findsOneWidget);
           expect(find.text('聊天设置'), findsNothing);
           expect(find.text('关闭聊天'), findsNothing);
           navigator.currentState!.pop();

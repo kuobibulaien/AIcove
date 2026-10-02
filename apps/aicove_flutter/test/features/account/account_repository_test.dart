@@ -41,6 +41,21 @@ class RemoteAccount implements AccountRemotePort {
     if (refreshError != null) throw refreshError!;
     return user;
   }
+
+  bool renewSupported = true;
+  Exception? renewError;
+  int renewals = 0;
+  @override
+  Future<AuthResponse?> renew(String server, String token) async {
+    if (renewError != null) throw renewError!;
+    if (!renewSupported) return null;
+    renewals++;
+    return AuthResponse(
+      accessToken: 'renewed-token-$renewals',
+      tokenType: 'bearer',
+      user: user,
+    );
+  }
 }
 
 void main() {
@@ -122,6 +137,56 @@ void main() {
     },
   );
 
+  test('refresh renews the session token and persists it', () async {
+    final storage = MemoryStorage();
+    final remote = RemoteAccount();
+    final repo = AccountRepository(storage, remote);
+    await repo.load();
+    await repo.login('https://example.test', 'fixture', 'test-password');
+    await repo.refresh();
+    expect(repo.connection!.token, 'renewed-token-1');
+    expect(storage.value, contains('renewed-token-1'));
+    await repo.refresh();
+    expect(repo.connection!.token, 'renewed-token-2');
+  });
+
+  test('server without renewal keeps the current token', () async {
+    final storage = MemoryStorage();
+    final remote = RemoteAccount()..renewSupported = false;
+    final repo = AccountRepository(storage, remote);
+    await repo.load();
+    await repo.login('https://example.test', 'fixture', 'test-password');
+    await repo.refresh();
+    expect(repo.connection!.token, 'fixture-token');
+  });
+
+  test(
+    'rejected or foreign renewal logs out; offline renewal keeps session',
+    () async {
+      final storage = MemoryStorage();
+      final remote = RemoteAccount();
+      final repo = AccountRepository(storage, remote);
+      await repo.load();
+      await repo.login('https://example.test', 'fixture', 'test-password');
+      remote.renewError = const AccountFailure('offline');
+      await expectLater(repo.refresh(), throwsA(isA<AccountFailure>()));
+      expect(repo.connection!.token, 'fixture-token');
+      remote.renewError = const ExpiredAccountSession();
+      await expectLater(repo.refresh(), throwsA(isA<AccountFailure>()));
+      expect(repo.connection!.hasSession, false);
+      expect(repo.connection!.user.id, 12);
+
+      remote.renewError = null;
+      await repo.login('https://example.test', 'fixture', 'test-password');
+      final renewUser = remote.user;
+      remote.user = UserModel(id: 13, username: 'other', uniqueId: 'uid-13');
+      final foreign = AccountRepository(storage, _ForeignRenewal(renewUser));
+      await foreign.load();
+      await expectLater(foreign.refresh(), throwsA(isA<AccountFailure>()));
+      expect(foreign.connection!.hasSession, false);
+    },
+  );
+
   test('secure storage failures cannot falsely complete a binding', () async {
     final storage = MemoryStorage()..failWrite = true;
     final repo = AccountRepository(storage, RemoteAccount());
@@ -153,10 +218,20 @@ void main() {
       server.listen((request) async {
         requests.add(request.uri.path);
         request.response.headers.contentType = ContentType.json;
-        if (request.uri.path.endsWith('/login')) {
+        if (request.uri.path.endsWith('/login') ||
+            request.uri.path.endsWith('/refresh')) {
+          if (request.uri.path.endsWith('/refresh')) {
+            expect(request.method, 'POST');
+            expect(
+              request.headers.value('authorization'),
+              'Bearer only-for-this-server',
+            );
+            await utf8.decoder.bind(request).join();
+          } else {
           expect(request.headers.value('authorization'), isNull);
           final body = jsonDecode(await utf8.decoder.bind(request).join());
           expect(body['password'], 'test-password');
+          }
           request.response.write(
             jsonEncode({
               'access_token': 'only-for-this-server',
@@ -183,7 +258,13 @@ void main() {
       final base = 'http://127.0.0.1:${server.port}/cloud';
       final result = await api.login(base, 'fixture', 'test-password');
       expect((await api.currentUser(base, result.accessToken)).id, 12);
-      expect(requests, ['/cloud/api/v1/auth/login', '/cloud/api/v1/auth/me']);
+      final renewed = await api.renew(base, result.accessToken);
+      expect(renewed!.accessToken, 'only-for-this-server');
+      expect(requests, [
+        '/cloud/api/v1/auth/login',
+        '/cloud/api/v1/auth/me',
+        '/cloud/api/v1/auth/refresh',
+      ]);
     },
   );
 
@@ -204,4 +285,18 @@ void main() {
       }
     },
   );
+}
+
+/// Renewal that claims to be another account must not be accepted.
+class _ForeignRenewal extends RemoteAccount {
+  _ForeignRenewal(UserModel owner) {
+    user = owner;
+  }
+  @override
+  Future<AuthResponse?> renew(String server, String token) async =>
+      AuthResponse(
+        accessToken: 'foreign-token',
+        tokenType: 'bearer',
+        user: UserModel(id: 13, username: 'other', uniqueId: 'uid-13'),
+      );
 }

@@ -28,7 +28,7 @@ import '../../../../core/services/attachment_picker_service.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../settings/app_settings.dart';
-import '../../../smart_reply/application/smart_reply_controller.dart';
+import '../../../dialogue_options/application/dialogue_options_providers.dart';
 import '../../chat_actions.dart';
 import '../../application/chat_edit.dart';
 import '../../chat_layer_providers.dart';
@@ -1074,13 +1074,19 @@ class _ComposerState extends ConsumerState<Composer> {
   Widget build(BuildContext context) {
     final editOwner = ref.watch(activeConversationProvider)?.id;
     if (editOwner != null) {
-      ref.listen<String?>(smartReplyDraftProvider(editOwner), (_, text) {
-        if (text == null || _readCurrentConversationId() != editOwner) return;
-        ref.read(smartReplyDraftProvider(editOwner).notifier).state = null;
+      ref.listen<DialogueOptionPick?>(dialogueOptionPickProvider(editOwner), (
+        _,
+        pick,
+      ) {
+        if (pick == null || _readCurrentConversationId() != editOwner) return;
+        ref.read(dialogueOptionPickProvider(editOwner).notifier).state = null;
         if (_editDraft != null || widget.disabled) {
-          MoeToast.brief(context, '请先完成当前编辑，再使用辅助回答');
+          MoeToast.brief(context, '请先完成当前编辑，再使用对话选项');
           return;
         }
+        ref.read(dialogueOptionsConsumedProvider(editOwner).notifier).state =
+            pick.signature;
+        final text = pick.text;
         final draft = _ctrl.text;
         final next = draft.isEmpty ? text : '$draft\n$text';
         _ctrl.value = TextEditingValue(

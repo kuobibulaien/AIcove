@@ -1,4 +1,4 @@
-import '../../core/sync/cloud_local_write.dart';
+import '../../core/sync/cloud_setting_policy.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class DirectConfig {
@@ -37,20 +37,20 @@ Future<DirectConfig> loadDirectConfig() async {
 
 Future<void> setDirectEnabled(bool v) async {
   final prefs = await SharedPreferences.getInstance();
-  await cloudLocalWrite(() => prefs.setBool(_kDirectEnabled, v));
+  await saveCloudPreference(prefs, _kDirectEnabled, v);
 }
 
 Future<void> setDirectApiBase(String v) async {
   final prefs = await SharedPreferences.getInstance();
-  await cloudLocalWrite(() => prefs.setString(_kDirectApiBase, v.trim()));
+  await saveCloudPreference(prefs, _kDirectApiBase, v.trim());
 }
 
 Future<void> setDirectApiKey(String v) async {
   final prefs = await SharedPreferences.getInstance();
-  await cloudLocalWrite(() => prefs.setString(_kDirectApiKey, v.trim()));
+  await saveCloudPreference(prefs, _kDirectApiKey, v.trim());
 }
 
 Future<void> setDirectModel(String v) async {
   final prefs = await SharedPreferences.getInstance();
-  await cloudLocalWrite(() => prefs.setString(_kDirectModel, v.trim()));
+  await saveCloudPreference(prefs, _kDirectModel, v.trim());
 }

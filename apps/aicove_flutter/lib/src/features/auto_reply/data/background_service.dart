@@ -22,8 +22,12 @@ import '../../../core/prompts/prompt_builtin_defaults.g.dart';
 import '../../../core/prompts/prompt_template_renderer.dart';
 import '../../../core/services/system_reminder_service.dart';
 import '../../chat/domain/message.dart' as chat;
+import '../../chat/domain/conversation_context_window.dart';
 import '../../chat/domain/persona_prompt_codec.dart';
 import '../../chat/services/chat_message_processor.dart';
+import '../../content_tags/domain/content_tag_scanner.dart';
+import '../../plugins/image/image_plugin.dart' show ImagePlugin;
+import '../../plugins/plugin_content_tags.dart';
 import '../../chat/services/chat_message_projection_codec.dart';
 import '../../chat/services/chat_types.dart';
 import '../../settings/app_settings.dart';
@@ -41,10 +45,6 @@ const String _uiModelsStoreKey = 'aicove.ui_models.v1';
 const String _triggerStoreKey = 'aicove.auto_triggers.v1';
 final AutoReplyTriggerStorage _historyStorage = AutoReplyTriggerStorage();
 const SystemReminderService _systemReminderService = SystemReminderService();
-final RegExp _backgroundInlineImageTagRegex = RegExp(
-  r'<image>([\s\S]*?)</image>',
-  caseSensitive: false,
-);
 
 @visibleForTesting
 class BackgroundAssistantStoragePayload {
@@ -368,7 +368,12 @@ String _resolveBackgroundDisplayText({
   if (processedText.isNotEmpty) {
     return processedText;
   }
-  if (_backgroundInlineImageTagRegex.hasMatch(rawText)) {
+  if (firstPartyContentTagScanner.scan(rawText).any(
+    (segment) =>
+        segment is ContentTagElement &&
+        segment.closed &&
+        ImagePlugin.isInlineImageElement(segment),
+  )) {
     return '[图片]';
   }
   return rawText;
@@ -961,16 +966,7 @@ List<chat.Message> _sliceCanonicalContextWindow({
   required String? contextStartId,
   required int limit,
 }) {
-  var contextWindow = allMessages;
-  final normalizedContextStartId = contextStartId?.trim() ?? '';
-  if (normalizedContextStartId.isNotEmpty) {
-    final markerIndex = allMessages.lastIndexWhere(
-      (message) => message.id == normalizedContextStartId,
-    );
-    if (markerIndex >= 0 && markerIndex + 1 < allMessages.length) {
-      contextWindow = allMessages.sublist(markerIndex + 1);
-    }
-  }
+  final contextWindow = sliceConversationContext(allMessages, contextStartId);
 
   if (limit <= 0 || contextWindow.length <= limit) {
     return contextWindow;

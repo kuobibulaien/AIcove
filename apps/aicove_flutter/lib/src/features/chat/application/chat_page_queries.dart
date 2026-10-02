@@ -8,12 +8,14 @@ import '../services/conversation_short_window_store.dart';
 class ChatPageMessageSearchItem {
   const ChatPageMessageSearchItem({
     required this.id,
+    required this.conversationId,
     required this.role,
     required this.content,
     required this.createdAt,
   });
 
   final String id;
+  final String conversationId;
   final String role;
   final String content;
   final DateTime createdAt;
@@ -111,6 +113,17 @@ class ChatPageQueries {
     return rows.map(_mapSearchItem).toList(growable: false);
   }
 
+  /// 联系人页全局搜索：跨会话按关键词匹配聊天记录。
+  Future<List<ChatPageMessageSearchItem>> searchAllMessages(
+    String keyword, {
+    int limit = 100,
+  }) async {
+    final rows = await _ref
+        .read(messageRepositoryProvider)
+        .searchAll(keyword, limit: limit);
+    return rows.map(_mapSearchItem).toList(growable: false);
+  }
+
   static ({int? startMs, int? endMs}) _buildSearchRange(DateTime? date) {
     if (date == null) {
       return (startMs: null, endMs: null);
@@ -125,6 +138,7 @@ class ChatPageQueries {
   static ChatPageMessageSearchItem _mapSearchItem(db.Message row) {
     return ChatPageMessageSearchItem(
       id: row.id,
+      conversationId: row.conversationId,
       role: row.role,
       content: row.content,
       createdAt: DateTime.fromMillisecondsSinceEpoch(row.createdAt),

@@ -70,6 +70,7 @@ enum DiagnosticReason {
   joinedExisting,
   providerCompleted,
   providerReturnedEmpty,
+  invalidFormat,
   timeout,
   ownerRejected,
   callbackOnly,

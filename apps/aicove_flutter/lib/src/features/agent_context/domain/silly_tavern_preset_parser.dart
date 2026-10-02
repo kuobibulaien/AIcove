@@ -666,7 +666,7 @@ class SillyTavernPresetParser {
         const SillyTavernParameterCompatibility(
           field: 'extensions.tavern_helper',
           status: SillyTavernParameterStatus.intentionallyUnsupported,
-          reason: '第三方任意 JavaScript 不执行',
+          reason: '不执行浏览器脚本加载器；SPreset 纯逻辑配置由 QuickJS 宿主处理',
         ),
       );
     }
@@ -677,11 +677,15 @@ class SillyTavernPresetParser {
       result.add(
         SillyTavernParameterCompatibility(
           field: 'extensions.SPreset.ChatSquash',
-          status: chatSquash['enabled'] == true
-              ? SillyTavernParameterStatus.intentionallyUnsupported
+          status:
+              chatSquash['enabled'] == true ||
+                  chatSquash['squashed_post_script_enable'] == true
+              ? SillyTavernParameterStatus.applied
               : SillyTavernParameterStatus.notApplicable,
-          reason: chatSquash['enabled'] == true
-              ? 'SPreset 第三方聊天压缩脚本不执行'
+          reason:
+              chatSquash['enabled'] == true ||
+                  chatSquash['squashed_post_script_enable'] == true
+              ? 'QuickJS 执行消息合并及原始后处理函数；未支持的选项会阻止发送并报错'
               : '扩展声明为 disabled',
         ),
       );
@@ -695,13 +699,24 @@ class SillyTavernPresetParser {
         ),
       );
     }
+    for (final field in ['OutputPreprocessing', 'ForcedPostProcessing']) {
+      if (sPreset[field] is Map) {
+        result.add(
+          SillyTavernParameterCompatibility(
+            field: 'extensions.SPreset.$field',
+            status: SillyTavernParameterStatus.applied,
+            reason: 'QuickJS 请求级宿主处理；未支持的配置明确报错',
+          ),
+        );
+      }
+    }
     final toolBindings = sPreset['ToolBindings'];
     if (toolBindings is Map && toolBindings.isNotEmpty) {
       result.add(
         const SillyTavernParameterCompatibility(
           field: 'extensions.SPreset.ToolBindings',
-          status: SillyTavernParameterStatus.intentionallyUnsupported,
-          reason: '第三方工具绑定不执行',
+          status: SillyTavernParameterStatus.applied,
+          reason: '按启用的 prompt 节点执行原始工具工厂与 action，需要模型支持工具调用',
         ),
       );
     }

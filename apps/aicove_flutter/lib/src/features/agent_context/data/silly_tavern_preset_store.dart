@@ -9,6 +9,8 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 
 import '../../../core/app_logger.dart';
+import '../../content_tags/domain/tag_presentation.dart';
+import '../domain/preset_tag_mapping.dart';
 import '../domain/silly_tavern_preset.dart';
 import '../domain/silly_tavern_preset_parser.dart';
 import '../domain/silly_tavern_world_book.dart';
@@ -297,6 +299,24 @@ class SillyTavernPresetStore implements TavernCompatibilityPort {
     (data.putIfAbsent('regexEnabled', () => <String, dynamic>{})
             as Map)[scriptId] =
         enabled;
+  });
+
+  @override
+  Future<void> setTagPresentation(
+    String presetId,
+    String tagName,
+    TagPresentation? presentation,
+  ) => _mutate(presetId, (data, _) {
+    final name = tagName.trim().toLowerCase();
+    if (name.isEmpty) throw StateError('标签名为空');
+    final overrides =
+        data.putIfAbsent(presetTagDisplayOverridesKey, () => <String, dynamic>{})
+            as Map;
+    if (presentation == null) {
+      overrides.remove(name);
+    } else {
+      overrides[name] = presentation.name;
+    }
   });
 
   dynamic _decodeResource(String source) {

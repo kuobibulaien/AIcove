@@ -30,5 +30,9 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>与同一网络内已配对的设备直接同步角色、聊天和附件。</string>
+	<key>NSBonjourServices</key>
+	<array><string>_aicove-sync._tcp</string></array>
 </dict>
 </plist>

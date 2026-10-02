@@ -1,3 +1,4 @@
+import 'package:aicove_flutter/src/core/database/database.dart' as db;
 import 'package:aicove_flutter/src/ui/features/chat/widgets/chat_message_list.dart';
 import 'package:aicove_flutter/src/features/chat/presentation/widgets/composer.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/desktop_window_frame.dart';
@@ -34,6 +35,19 @@ void main() {
         final fixture = (await tester.runAsync(
           () => SegmentedChatFixture.create(historyCount: 4),
         ))!;
+        await tester.runAsync(
+          () => fixture.database
+              .into(fixture.database.messages)
+              .insert(
+                db.MessagesCompanion.insert(
+                  id: 'search-hit',
+                  conversationId: fixture.conversation.id,
+                  role: 'user',
+                  content: '昨天一起喝的橘子汽水很好喝',
+                  createdAt: DateTime.now().millisecondsSinceEpoch,
+                ),
+              ),
+        );
         final navigator = GlobalKey<NavigatorState>();
         final observer = MoeDetailStackObserver();
         final router = GoRouter(
@@ -133,16 +147,7 @@ void main() {
 
         expectPrimaryPage('聊天');
         expect(find.byType(CharacterListItem), findsOneWidget);
-        final search = find.descendant(
-          of: find.byType(MoeSearchField),
-          matching: find.byType(TextField),
-        );
-        await tester.enterText(search, '不存在的联系人');
-        await tester.pump();
-        expect(find.byType(CharacterListItem), findsNothing);
-        await tester.tap(find.byTooltip('清除搜索'));
-        await tester.pump();
-        expect(find.byType(CharacterListItem), findsOneWidget);
+        expect(find.byType(MoeSearchField), findsNothing, reason: '聊天页不放搜索框');
         expect(find.text('全部聊天'), findsNothing);
         expect(find.text('未读'), findsNothing);
         await tester.tap(find.byType(CharacterListItem));
@@ -169,13 +174,7 @@ void main() {
         expect(tester.takeException(), isNull);
         await tester.tap(find.byTooltip('更多'));
         await tester.pumpAndSettle();
-        const menuLabels = [
-          '详情',
-          '壁纸',
-          '绘图预设',
-          '清空历史记录',
-          '删除该角色',
-        ];
+        const menuLabels = ['详情', '壁纸', '绘图风格', '酒馆预设', '清空历史记录', '删除该角色'];
         for (final label in menuLabels) {
           expect(find.text(label), findsOneWidget);
         }
@@ -242,7 +241,14 @@ void main() {
           matching: find.byType(MoeSettingsRow),
         );
         final rows = tester.widgetList<MoeSettingsRow>(rootEntries).toList();
-        expect(rows.map((row) => row.label), ['账号', '模型', '界面', '插件', '调试']);
+        expect(rows.map((row) => row.label), [
+          '账号',
+          '模型',
+          '通用',
+          '插件',
+          '局域网同步',
+          '调试',
+        ]);
         expect(rows.every((row) => row.subtitle == null), isTrue);
         final profileAvatar = tester.getRect(
           find.descendant(
@@ -265,66 +271,19 @@ void main() {
           );
         }
 
-        final settingsSearch = find.descendant(
-          of: find.byType(SettingsContent),
-          matching: find.byType(TextField),
-        );
-        final profileCard = tester.getRect(
+        expect(
           find.descendant(
-            of: find.byType(SettingsContent),
-            matching: find.byType(InkWell),
+            of: find.byType(SettingsPage),
+            matching: find.byType(MoeSearchField),
           ),
+          findsNothing,
+          reason: '只有角色页保留搜索框',
         );
-        final searchRect = tester.getRect(settingsSearch);
-        expect(profileCard.left, searchRect.left);
-        expect(profileCard.right, searchRect.right);
         await tester.tap(find.text('编辑头像和名字'));
         await tester.pumpAndSettle();
         expect(find.byType(ProfilePage), findsOneWidget);
         await navigator.currentState!.maybePop();
         await tester.pumpAndSettle();
-        await tester.enterText(settingsSearch, '  深色  ');
-        await tester.pump();
-        expect(
-          tester
-              .widgetList<MoeSettingsRow>(rootEntries)
-              .map((row) => row.label),
-          ['界面'],
-        );
-        await tester.enterText(settingsSearch, '头像');
-        await tester.pump();
-        expect(
-          tester
-              .widgetList<MoeSettingsRow>(rootEntries)
-              .map((row) => row.label),
-          ['个人资料'],
-        );
-        await tester.tap(find.text('个人资料'));
-        await tester.pumpAndSettle();
-        expect(find.byType(ProfilePage), findsOneWidget);
-        await navigator.currentState!.maybePop();
-        await tester.pumpAndSettle();
-        expect(tester.widget<TextField>(settingsSearch).controller!.text, '头像');
-        await tester.enterText(settingsSearch, '不存在的设置');
-        await tester.pump();
-        expect(find.text('没有找到相关设置'), findsOneWidget);
-        await tester.enterText(settingsSearch, 'API KEY');
-        await tester.pump();
-        expect(
-          tester
-              .widgetList<MoeSettingsRow>(rootEntries)
-              .map((row) => row.label),
-          ['模型'],
-        );
-        await tester.tap(find.byTooltip('清除搜索'));
-        await tester.pump();
-        expect(
-          tester
-              .widgetList<MoeSettingsRow>(rootEntries)
-              .map((row) => row.label),
-          ['账号', '模型', '界面', '插件', '调试'],
-        );
-
         expect(find.text('提示词节点'), findsNothing);
         expect(find.text('编辑头像和名字'), findsOneWidget);
         await tester.tap(find.text('模型'));
@@ -338,7 +297,7 @@ void main() {
         await navigator.currentState!.maybePop();
         await tester.pumpAndSettle();
 
-        await tester.tap(find.text('界面'));
+        await tester.tap(find.text('通用'));
         await tester.pumpAndSettle();
         expect(find.byType(UiSettingsPage), findsOneWidget);
         await tester.tap(find.text('个人资料'));
@@ -420,10 +379,29 @@ void main() {
         );
         await tester.enterText(roleSearch, '不存在的角色');
         await tester.pumpAndSettle();
-        expect(find.text('没有找到角色'), findsOneWidget);
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 50)),
+        );
+        await tester.pump();
+        expect(find.text('没有找到角色或聊天记录'), findsOneWidget);
         expect(roleRow, findsNothing);
+        await tester.enterText(roleSearch, '橘子汽水');
+        await tester.pump(const Duration(milliseconds: 300));
+        for (var i = 0; i < 5 && find.text('聊天记录').evaluate().isEmpty; i++) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 50)),
+          );
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+        expect(find.text('聊天记录'), findsOneWidget);
+        expect(roleRow, findsNothing, reason: '名字不匹配时不显示角色行');
+        expect(
+          find.byKey(const ValueKey('message-hit-search-hit')),
+          findsOneWidget,
+        );
         await tester.tap(find.byTooltip('清除搜索'));
         await tester.pumpAndSettle();
+        expect(find.text('聊天记录'), findsNothing);
         expect(roleRow, findsOneWidget);
         await tester.tap(
           find.descendant(of: roleRow, matching: find.byType(MoeAvatar)),

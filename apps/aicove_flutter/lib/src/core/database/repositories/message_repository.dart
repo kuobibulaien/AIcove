@@ -118,6 +118,21 @@ class MessageRepository {
     return query.get();
   }
 
+  /// 跨会话按关键词搜索用户与助手消息，最新的在前。
+  Future<List<Message>> searchAll(String keyword, {int limit = 100}) {
+    final k = keyword.trim();
+    if (k.isEmpty) return Future.value(const <Message>[]);
+    final query = _db.select(_db.messages)
+      ..where((t) =>
+          t.deletedAt.isNull() &
+          t.replacedBy.isNull() &
+          t.role.isIn(const ['user', 'assistant']) &
+          t.content.like('%$k%'))
+      ..orderBy([(t) => OrderingTerm.desc(t.createdAt)])
+      ..limit(limit);
+    return query.get();
+  }
+
   /// 获取单条消息
   Future<Message?> getById(String id) async {
     return (_db.select(_db.messages)..where((t) => t.id.equals(id)))

@@ -70,9 +70,12 @@ export 'moe_content_surface.dart';
 export 'moe_liquid_glass.dart';
 export 'moe_chat_header.dart';
 export 'moe_chat_wallpaper.dart';
+export 'moe_collapsible_bubble.dart';
 export 'moe_avatar.dart';
 export 'moe_scroll_edge.dart';
 export 'moe_search_field.dart';
 export 'form/moe_auto_save.dart';
 
 export 'moe_page_scaffold.dart';
+export 'moe_code_block.dart';
+export 'moe_markdown_view.dart';

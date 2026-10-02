@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../../content_tags/domain/content_tag_registry.dart';
+import '../../content_tags/domain/content_tag_spec.dart';
 import '../domain/index.dart';
 import '../../../core/app_logger.dart';
 import '../../../core/prompts/prompt_builtin_defaults.g.dart';
@@ -14,6 +16,19 @@ import 'voice_request.dart';
 /// 重构说明：API Key 和 URL 现在从统一模型管理（ProviderAuth）获取，
 /// 通过构造函数传入，不再存储在 TtsConfig 中。
 class TtsPlugin extends BasePlugin {
+  /// 语音插件拥有的语义标签与工具（ADR0044）。
+  static const contentTags = StaticContentTagProvider(
+    providerId: 'tts',
+    tagSpecs: [
+      ContentTagSpec(
+        name: 'tts',
+        ownerId: 'tts',
+        display: ContentTagDisplay.tts,
+      ),
+    ],
+    toolNames: {'speak'},
+  );
+
   static String get _minimaxGuide =>
       PromptBuiltinDefaults.requireTemplate('tts.minimax_guide');
 

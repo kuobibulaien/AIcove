@@ -107,6 +107,7 @@ class _SplitInlineImageStreamingClient extends AgentApiClient {
     List<Map<String, dynamic>>? tools,
     void Function(String delta)? onTextDelta,
     void Function()? onToolCallsDetected,
+    void Function(List<ToolCall> Function() snapshot)? onToolCallProgress,
     TraceLogger? trace,
     String? turnId,
     int? roundIndex,
@@ -168,6 +169,7 @@ class _SplitThinkStreamingClient extends AgentApiClient {
     List<Map<String, dynamic>>? tools,
     void Function(String delta)? onTextDelta,
     void Function()? onToolCallsDetected,
+    void Function(List<ToolCall> Function() snapshot)? onToolCallProgress,
     TraceLogger? trace,
     String? turnId,
     int? roundIndex,
@@ -179,6 +181,68 @@ class _SplitThinkStreamingClient extends AgentApiClient {
 
     return const SendMessageRichResult(
       text: '第一句。<think>内部思考过程</think>第二句。',
+      toolResults: <Map<String, dynamic>>[],
+    );
+  }
+}
+
+class _SplitOptionsStreamingClient extends AgentApiClient {
+  _SplitOptionsStreamingClient(Duration timeout) : super(timeout: timeout);
+
+  @override
+  Future<SendMessageRichResult> sendMessageRich({
+    required String agentId,
+    required String sessionId,
+    required String modelFullId,
+    required List<Map<String, dynamic>> messages,
+    required String userText,
+    double? temperature,
+    double? topP,
+    String? token,
+    Map<String, dynamic>? toolPrefs,
+    String? providerApiBase,
+    String? providerApiKey,
+    Map<String, dynamic>? customConfig,
+    ProviderChatRequestOptions? requestOptions,
+    List<Map<String, dynamic>>? tools,
+    TraceLogger? trace,
+    String? turnId,
+    int? roundIndex,
+    String? traceId,
+  }) {
+    throw UnsupportedError('这个测试只应该命中流式调用');
+  }
+
+  @override
+  Future<SendMessageRichResult> sendMessageRichStream({
+    required String agentId,
+    required String sessionId,
+    required String modelFullId,
+    required List<Map<String, dynamic>> messages,
+    required String userText,
+    double? temperature,
+    double? topP,
+    String? token,
+    Map<String, dynamic>? toolPrefs,
+    String? providerApiBase,
+    String? providerApiKey,
+    Map<String, dynamic>? customConfig,
+    ProviderChatRequestOptions? requestOptions,
+    List<Map<String, dynamic>>? tools,
+    void Function(String delta)? onTextDelta,
+    void Function()? onToolCallsDetected,
+    void Function(List<ToolCall> Function() snapshot)? onToolCallProgress,
+    TraceLogger? trace,
+    String? turnId,
+    int? roundIndex,
+    String? traceId,
+  }) async {
+    onTextDelta?.call('正文。<opt');
+    onTextDelta?.call('ions><option>靠近</option>');
+    onTextDelta?.call('<option>离开</option></options>');
+
+    return const SendMessageRichResult(
+      text: '正文。<options><option>靠近</option><option>离开</option></options>',
       toolResults: <Map<String, dynamic>>[],
     );
   }
@@ -229,6 +293,7 @@ class _StrayThinkCloseStreamingClient extends AgentApiClient {
     List<Map<String, dynamic>>? tools,
     void Function(String delta)? onTextDelta,
     void Function()? onToolCallsDetected,
+    void Function(List<ToolCall> Function() snapshot)? onToolCallProgress,
     TraceLogger? trace,
     String? turnId,
     int? roundIndex,
@@ -289,6 +354,7 @@ class _AttributeImageTagStreamingClient extends AgentApiClient {
     List<Map<String, dynamic>>? tools,
     void Function(String delta)? onTextDelta,
     void Function()? onToolCallsDetected,
+    void Function(List<ToolCall> Function() snapshot)? onToolCallProgress,
     TraceLogger? trace,
     String? turnId,
     int? roundIndex,
@@ -388,6 +454,7 @@ class _StrayImageCloseStreamingClient extends AgentApiClient {
     List<Map<String, dynamic>>? tools,
     void Function(String delta)? onTextDelta,
     void Function()? onToolCallsDetected,
+    void Function(List<ToolCall> Function() snapshot)? onToolCallProgress,
     TraceLogger? trace,
     String? turnId,
     int? roundIndex,
@@ -400,6 +467,44 @@ class _StrayImageCloseStreamingClient extends AgentApiClient {
 
     return const SendMessageRichResult(
       text: '第一句。</image><image source="history">保留这段</image>尾部</image>完',
+      toolResults: <Map<String, dynamic>>[],
+    );
+  }
+}
+
+class _SplitPresetThinkStreamingClient extends AgentApiClient {
+  _SplitPresetThinkStreamingClient(Duration timeout) : super(timeout: timeout);
+
+  @override
+  Future<SendMessageRichResult> sendMessageRichStream({
+    required String agentId,
+    required String sessionId,
+    required String modelFullId,
+    required List<Map<String, dynamic>> messages,
+    required String userText,
+    double? temperature,
+    double? topP,
+    String? token,
+    Map<String, dynamic>? toolPrefs,
+    String? providerApiBase,
+    String? providerApiKey,
+    Map<String, dynamic>? customConfig,
+    ProviderChatRequestOptions? requestOptions,
+    List<Map<String, dynamic>>? tools,
+    void Function(String delta)? onTextDelta,
+    void Function()? onToolCallsDetected,
+    void Function(List<ToolCall> Function() snapshot)? onToolCallProgress,
+    TraceLogger? trace,
+    String? turnId,
+    int? roundIndex,
+    String? traceId,
+  }) async {
+    onTextDelta?.call('<think');
+    onTextDelta?.call('_nya~>想一想</think_nya~>');
+    onTextDelta?.call('<thinking>再想</thinking>正文。');
+
+    return const SendMessageRichResult(
+      text: '<think_nya~>想一想</think_nya~><thinking>再想</thinking>正文。',
       toolResults: <Map<String, dynamic>>[],
     );
   }
@@ -610,6 +715,72 @@ void main() {
     expect(
       streamedDeltas.join(),
       '第一句。<image source="history">保留这段</image>尾部完',
+    );
+  });
+
+  test('stream callback hides dialogue options but keeps them in the reply',
+      () async {
+    final config = ApiConfig(
+      settings: _buildTestSettings(),
+      modelFullId: 'openai:gpt-3.5-turbo',
+      providerApiBase: 'https://api.openai.com/v1',
+      providerApiKey: 'test-key',
+      customConfig: const <String, dynamic>{},
+      toolPrefs: const <String, dynamic>{},
+      messages: const <Map<String, dynamic>>[
+        <String, dynamic>{'role': 'user', 'content': '接下来呢'},
+      ],
+    );
+    final runner = ChatSendApiRunner.withAgentClientFactory(
+      agentClientFactory: (timeout) => _SplitOptionsStreamingClient(timeout),
+    );
+    final streamedDeltas = <String>[];
+
+    final result = await runner.executeApiCall(
+      config: config,
+      sessionId: 'conv_stream_filter_options',
+      userText: '接下来呢',
+      effectivePlugins: const <Plugin>[],
+      enableStreaming: true,
+      onStreamTextDelta: streamedDeltas.add,
+      maxRounds: 1,
+    );
+
+    expect(streamedDeltas.join(), '正文。');
+    expect(result.replyText, contains('<option>离开</option></options>'));
+  });
+
+  test('stream callback keeps preset thinking tags for the fold projection',
+      () async {
+    final config = ApiConfig(
+      settings: _buildTestSettings(),
+      modelFullId: 'openai:gpt-3.5-turbo',
+      providerApiBase: 'https://api.openai.com/v1',
+      providerApiKey: 'test-key',
+      customConfig: const <String, dynamic>{},
+      toolPrefs: const <String, dynamic>{},
+      messages: const <Map<String, dynamic>>[
+        <String, dynamic>{'role': 'user', 'content': '在吗'},
+      ],
+    );
+    final runner = ChatSendApiRunner.withAgentClientFactory(
+      agentClientFactory: (timeout) => _SplitPresetThinkStreamingClient(timeout),
+    );
+    final streamedDeltas = <String>[];
+
+    await runner.executeApiCall(
+      config: config,
+      sessionId: 'conv_stream_filter_preset_think',
+      userText: '在吗',
+      effectivePlugins: const <Plugin>[],
+      enableStreaming: true,
+      onStreamTextDelta: streamedDeltas.add,
+      maxRounds: 1,
+    );
+
+    expect(
+      streamedDeltas.join(),
+      '<think_nya~>想一想</think_nya~><thinking>再想</thinking>正文。',
     );
   });
 }

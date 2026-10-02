@@ -1,0 +1,11 @@
+name: aicove_quickjs
+description: Bounded, isolated QuickJS execution for AIcove context scripts.
+version: 0.1.0
+publish_to: none
+environment:
+  sdk: ^3.12.2
+dependencies:
+  ffi: ^2.1.4
+  code_assets: ^1.0.0
+  hooks: ^1.0.0
+  native_toolchain_c: ^0.17.4

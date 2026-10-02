@@ -9,8 +9,9 @@ import 'cloud_document.dart';
 /// Only attachment references are rewritten; prompt text, tags and call
 /// arguments retain their original structure and values.
 class CloudMediaCodec {
-  CloudMediaCodec(this.media);
+  CloudMediaCodec(this.media, {this.allowNetworkDownload = true});
   final MediaStore media;
+  final bool allowNetworkDownload;
 
   static const _jsonColumns = {
     'raw_payload',
@@ -63,6 +64,40 @@ class CloudMediaCodec {
     'localAudioPath',
     'promptAudioUrl',
   };
+
+  /// A remote attachment must never address a file on the receiving device.
+  static void validateWirePaths(Map<String, dynamic> payload) {
+    void visit(Object? value, String key) {
+      if (value is Map) {
+        for (final entry in value.entries) {
+          visit(entry.value, entry.key.toString());
+        }
+      } else if (value is List) {
+        for (final item in value) {
+          visit(item, key);
+        }
+      } else if (value is String && value.isNotEmpty) {
+        if (_jsonColumns.contains(key) || key == 'json_value') {
+          Object? decoded;
+          try {
+            decoded = jsonDecode(value);
+          } on FormatException {
+            return;
+          }
+          visit(decoded, '');
+        } else if ((_imageKeys.contains(key) ||
+                _fileKeys.contains(key) ||
+                key == 'images') &&
+            (p.posix.isAbsolute(value) ||
+                p.windows.isAbsolute(value) ||
+                Uri.tryParse(value)?.scheme == 'file')) {
+          throw const FormatException('Remote attachment uses a local path');
+        }
+      }
+    }
+
+    visit(payload, '');
+  }
 
   Future<CloudWireDocument> encode(CloudLocalDocument document) async {
     final ids = <String>{};
@@ -226,6 +261,7 @@ class CloudMediaCodec {
           createdAtMs: at,
           inlineImage: inline,
           originalRequired: originalRequired,
+          allowNetworkDownload: allowNetworkDownload,
         );
       } on IOException {
         record = await media.unavailable(

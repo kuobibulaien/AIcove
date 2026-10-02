@@ -56,15 +56,12 @@ class ContactsListContent extends ConsumerStatefulWidget {
   /// 如果不提供，则使用默认行为（跳转到聊天页面）
   final void Function(String conversationId, WidgetRef ref)? onContactTap;
 
-  /// 搜索关键字（可选）——用于前端本地过滤（按显示名）
-  final String? searchQuery;
   final SortMode sortMode;
   final bool isAscending;
 
   const ContactsListContent({
     super.key,
     this.onContactTap,
-    this.searchQuery,
     this.sortMode = SortMode.latest,
     this.isAscending = false,
   });
@@ -143,17 +140,8 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => Center(child: Text('加载失败: $e')),
       data: (list) {
-        // 按搜索关键字进行本地过滤（大小写不敏感）
-        final q = (widget.searchQuery ?? '').trim().toLowerCase();
-        var filtered = q.isEmpty
-            ? list
-            : [
-                for (final c in list)
-                  if (c.displayName.toLowerCase().contains(q)) c,
-              ];
-
         // 排序：置顶的在前，然后根据 sortMode 和 isAscending 排序
-        filtered = [...filtered]
+        final filtered = [...list]
           ..sort((a, b) {
             // 1. 置顶优先
             if (a.isPinned != b.isPinned) {
@@ -190,10 +178,10 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
         }
 
         if (filtered.isEmpty) {
-          return Center(
+          return const Center(
             child: Text(
-              q.isEmpty ? '暂无角色' : '未找到匹配的角色',
-              style: const TextStyle(color: moeMuted, fontSize: 14),
+              '暂无角色',
+              style: TextStyle(color: moeMuted, fontSize: 14),
             ),
           );
         }

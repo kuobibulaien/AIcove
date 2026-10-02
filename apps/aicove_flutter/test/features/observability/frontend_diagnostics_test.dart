@@ -52,7 +52,7 @@ void main() {
       error: StateError(
           'private conversation Authorization: Bearer secret https://secret.example'),
       stackTrace: StackTrace.fromString(
-          '#0 private (/Users/patient/private.dart:2:3)\n#1 f (package:aicove_flutter/page.dart:4:5)'),
+          '#0 private (/home/kuobibulaien/private.dart:2:3)\n#1 f (package:aicove_flutter/page.dart:4:5)'),
     );
     await Future<void>.delayed(Duration.zero);
     final raw = jsonEncode(logs.single.toJson());

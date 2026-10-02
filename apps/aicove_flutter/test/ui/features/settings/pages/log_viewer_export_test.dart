@@ -43,7 +43,7 @@ void main() {
       final result = await LogViewerExportService.exportEntries(
         entries: entries,
         now: DateTime(2026, 3, 19, 9, 8, 7),
-        initialDirectory: r'C:\Users\developer\Downloads',
+        initialDirectory: r'C:\Users\Administrator\Downloads',
         writeBytesInPicker: false,
         saveFile: ({
           String? dialogTitle,
@@ -61,7 +61,7 @@ void main() {
           expect(allowedExtensions, const <String>['txt']);
           expect(bytes, isNull);
           expect(lockParentWindow, isTrue);
-          return r'C:\Users\developer\Downloads\aicove_logs_20260319_090807.txt';
+          return r'C:\Users\Administrator\Downloads\aicove_logs_20260319_090807.txt';
         },
         writeFileBytes: (path, bytes) async {
           writtenPath = path;
@@ -69,9 +69,9 @@ void main() {
         },
       );
 
-      expect(pickedInitialDirectory, r'C:\Users\developer\Downloads');
+      expect(pickedInitialDirectory, r'C:\Users\Administrator\Downloads');
       expect(writtenPath,
-          r'C:\Users\developer\Downloads\aicove_logs_20260319_090807.txt');
+          r'C:\Users\Administrator\Downloads\aicove_logs_20260319_090807.txt');
       expect(utf8.decode(writtenBytes!), contains('第一条完整内容'));
       expect(result, isNotNull);
       expect(result!.savedPath, writtenPath);

@@ -19,6 +19,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aicove_flutter/src/core/app_logger.dart';
+import 'package:aicove_flutter/src/features/agent_context/domain/preset_script_runtime.dart';
 import 'package:aicove_flutter/src/core/database/database.dart'
     hide Conversation, Message;
 import 'package:aicove_flutter/src/core/database/database_provider.dart';
@@ -278,6 +279,7 @@ class _ScriptedStreamingSendService extends ChatSendService {
     this._settings, {
     required this.script,
     required this.replyText,
+    this.presetScript,
     this.processedText,
     this.pluginEvents = const <PluginEvent>[],
     /// Optional: per-execute-call scripts (1-based call order → 0-index).
@@ -295,6 +297,7 @@ class _ScriptedStreamingSendService extends ChatSendService {
   final AppSettings _settings;
   final List<_StreamStep> script;
   final String replyText;
+  final PresetScriptSnapshot? presetScript;
   final String? processedText;
   final List<PluginEvent> pluginEvents;
   final List<List<_StreamStep>>? scriptsByCall;
@@ -392,6 +395,7 @@ class _ScriptedStreamingSendService extends ChatSendService {
       modelTemperature: null,
       modelTopP: null,
       modelContextMessageLimit: null,
+      presetScript: presetScript,
     );
   }
 
@@ -707,6 +711,7 @@ Future<_Harness> _buildHarness({
   required AppSettings settings,
   required List<_StreamStep> script,
   required String replyText,
+  PresetScriptSnapshot? presetScript,
   String? processedText,
   List<PluginEvent> pluginEvents = const <PluginEvent>[],
   bool recordTts = false,
@@ -721,6 +726,7 @@ Future<_Harness> _buildHarness({
   bool switchableActiveConversation = false,
   List<Conversation>? extraConversations,
   List<Override> extraOverrides = const <Override>[],
+  ChatDisplayStyle? chatDisplayStyle,
 }) async {
   final now = DateTime.now();
   final conv = Conversation(
@@ -732,6 +738,7 @@ Future<_Harness> _buildHarness({
     messages: const [],
     lastMessage: '',
     lastMessageTime: now,
+    chatDisplayStyle: chatDisplayStyle,
   );
   final allConvs = <Conversation>[conv, ...?extraConversations];
 
@@ -769,6 +776,7 @@ Future<_Harness> _buildHarness({
         settings,
         script: script,
         replyText: replyText,
+        presetScript: presetScript,
         processedText: processedText,
         pluginEvents: pluginEvents,
         scriptsByCall: scriptsByCall,
@@ -876,6 +884,54 @@ void main() {
       expect(user.content, contains('用户与「小林」的聊天记录'));
       if (note.isNotEmpty) expect(user.content, contains(note));
       expect((await harness.loadTimeline(sourceId)).where((m) => m.role == 'user'), isEmpty);
+    });
+  }
+
+  for (final channel in [false, true]) {
+    test('transport streams unfinished text with chunking on (channel=$channel)', () async {
+      const fullText = '清晨花园里的露珠';
+      final harness = await _buildHarness(
+        convId: 'transport_chunk_$channel',
+        settings: _buildTestSettings(enableChunking: true),
+        presetScript: const PresetScriptSnapshot(
+          '{"transport":{"protocol":"content_tool_v1","enabled":true}}',
+        ),
+        script: const [
+          _DeltaStep('清晨'),
+          _DelayStep(Duration(milliseconds: 350)),
+          _DeltaStep('花园里的'),
+          _DelayStep(Duration(milliseconds: 350)),
+          _DeltaStep('露珠'),
+          _DelayStep(Duration(milliseconds: 350)),
+        ],
+        replyText: fullText,
+        extraOverrides: [
+          streamProjectionPolicyProvider.overrideWithValue(
+            StreamProjectionPolicy(useActiveStreamChannel: channel),
+          ),
+        ],
+      );
+      addTearDown(harness.dispose);
+      harness.startSend(text: 'transport preview');
+      final observed = <String>[];
+      for (var i = 0; i < 20; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 70));
+        if (channel) {
+          final live = harness.container.read(activeStreamProjectionsProvider)[harness.conv.id];
+          if (live?.phase == ActiveStreamPhase.streamingTail) observed.add(live!.tailText);
+        } else {
+          final timeline = await harness.loadTimeline();
+          observed.addAll(timeline.where((m) => m.role == 'assistant' && m.status == 'sending' && !_isGeneratingPlaceholder(m)).map((m) => m.displayText));
+        }
+      }
+      await harness.awaitActiveSend();
+      final visible = observed.where((text) => text.isNotEmpty).toList();
+      expect(visible.toSet(), containsAll(['清晨', '清晨花园里的']));
+      for (var i = 1; i < visible.length; i++) {
+        expect(visible[i].startsWith(visible[i - 1]), isTrue);
+      }
+      expect(_assistantRealText(await harness.loadTimeline()).map((m) => m.displayText).join(), fullText);
+      expect(harness.container.read(appSettingsProvider).requireValue.messageFormatConfig.enableChunking, isTrue);
     });
   }
 
@@ -3734,6 +3790,133 @@ void main() {
               ' maxConsecutive=$maxConsecutive hits=$staleShellHits',
         );
       }
+    });
+  });
+
+  group('ADR0047 conversation chat display style', () {
+    test('document override streams one unsplit reply despite global chunking',
+        () async {
+      final settings = _buildTestSettings(
+        enableChunking: true,
+        minSegmentLength: 1,
+        streamSegmentDelaySeconds: 0,
+      );
+      const reply = '第一句。第二句。第三句。';
+      final harness = await _buildHarness(
+        convId: 'adr0047_doc_${DateTime.now().microsecondsSinceEpoch}',
+        settings: settings,
+        script: const <_StreamStep>[
+          _DeltaStep('第一句。第二句。'),
+          _DelayStep(Duration(milliseconds: 220)),
+          _DeltaStep('第三句。'),
+          _DelayStep(Duration(milliseconds: 220)),
+        ],
+        replyText: reply,
+        chatDisplayStyle: ChatDisplayStyle.document,
+      );
+      addTearDown(harness.dispose);
+
+      await harness.runSend(
+        text: 'doc',
+        sampleInterval: const Duration(milliseconds: 80),
+        sampleTicks: 10,
+      );
+      final finalTexts = _assistantRealText(await harness.loadTimeline())
+          .map((m) => m.displayText.trim())
+          .toList();
+      expect(finalTexts, <String>[reply]);
+    });
+  });
+
+  group('ADR0047 protected components in stream chunking', () {
+    test('fold tag is never split across stream projections', () async {
+      final settings = _buildTestSettings(
+        enableChunking: true,
+        minSegmentLength: 1,
+        streamSegmentDelaySeconds: 0,
+      );
+      const reply = '前言。<thinking>第一句。第二句。</thinking>正文一。正文二。';
+      final script = <_StreamStep>[
+        const _DeltaStep('前言。<thinking>第一句。'),
+        const _DelayStep(Duration(milliseconds: 220)),
+        const _DeltaStep('第二句。'),
+        const _DelayStep(Duration(milliseconds: 220)),
+        const _DeltaStep('</thinking>正文一。'),
+        const _DelayStep(Duration(milliseconds: 220)),
+        const _DeltaStep('正文二。'),
+        const _DelayStep(Duration(milliseconds: 220)),
+      ];
+      final harness = await _buildHarness(
+        convId: 'adr0047_fold_${DateTime.now().microsecondsSinceEpoch}',
+        settings: settings,
+        script: script,
+        replyText: reply,
+      );
+      addTearDown(harness.dispose);
+
+      final probe = await harness.runSend(
+        text: 'fold',
+        sampleInterval: const Duration(milliseconds: 80),
+        sampleTicks: 16,
+      );
+
+      for (final snap in probe.snapshots) {
+        for (final m in _assistantRealText(snap)) {
+          final t = m.displayText;
+          final opens = '<thinking>'.allMatches(t).length;
+          final closes = '</thinking>'.allMatches(t).length;
+          expect(opens, closes, reason: '折叠标签被切开：$t');
+          expect(t.contains('第一句。') && !t.contains('第二句。'), isFalse,
+              reason: '标签内部被切开：$t');
+        }
+      }
+      final finalTexts =
+          _assistantRealText(await harness.loadTimeline()).map((m) => m.displayText.trim()).toList();
+      expect(finalTexts, contains('<thinking>第一句。第二句。</thinking>'));
+      expect(finalTexts, containsAll(<String>['前言。', '正文一。', '正文二。']));
+    });
+
+    test('fenced code is never split across stream projections', () async {
+      final settings = _buildTestSettings(
+        enableChunking: true,
+        minSegmentLength: 1,
+        streamSegmentDelaySeconds: 0,
+      );
+      const code = '```py\nprint(1)。\nprint(2)！\n```';
+      const reply = '看这里。\n$code\n完成。';
+      final script = <_StreamStep>[
+        const _DeltaStep('看这里。\n```py\nprint(1)。\n'),
+        const _DelayStep(Duration(milliseconds: 220)),
+        const _DeltaStep('print(2)！\n```\n'),
+        const _DelayStep(Duration(milliseconds: 220)),
+        const _DeltaStep('完成。'),
+        const _DelayStep(Duration(milliseconds: 220)),
+      ];
+      final harness = await _buildHarness(
+        convId: 'adr0047_code_${DateTime.now().microsecondsSinceEpoch}',
+        settings: settings,
+        script: script,
+        replyText: reply,
+      );
+      addTearDown(harness.dispose);
+
+      final probe = await harness.runSend(
+        text: 'code',
+        sampleInterval: const Duration(milliseconds: 80),
+        sampleTicks: 12,
+      );
+
+      for (final snap in probe.snapshots) {
+        for (final m in _assistantRealText(snap)) {
+          final t = m.displayText;
+          if (t.contains('print(')) {
+            expect(t, code, reason: '代码块被切开或未闭合就上屏：$t');
+          }
+        }
+      }
+      final finalTexts =
+          _assistantRealText(await harness.loadTimeline()).map((m) => m.displayText.trim()).toList();
+      expect(finalTexts, <String>['看这里。', code, '完成。']);
     });
   });
 }

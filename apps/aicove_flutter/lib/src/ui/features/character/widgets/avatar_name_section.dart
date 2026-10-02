@@ -1,8 +1,7 @@
-/// AvatarNameSection - 角色编辑页：立绘 + 名称区域
+/// AvatarNameSection - 角色编辑页：立绘区域
 ///
 /// 合并了原来的头像区域和立绘区域，改为：
 /// - 上方：无边框大立绘图（宽度约占屏幕50%）
-/// - 中间：角色名称输入框（居中）
 /// - 下方：更换/清空立绘操作按钮
 ///
 /// 头像不再单独展示，但数据仍保留用于消息列表等场景。
@@ -10,10 +9,10 @@
 /// 重构记录：
 /// - 2025-12-31: 从 ContactEditPage 拆分，负责头像预览/选取 + 名称输入
 /// - 2026-03-03: 合并头像和立绘区域，改为"大立绘 + 名称"垂直布局
+/// - 2026-10-01: 名称输入移到页面标题栏
 library;
 
 import 'package:flutter/material.dart';
-import 'package:aicove_flutter/src/ui/shared/widgets/form/moe_input_decoration.dart';
 
 import '../../../../core/utils/avatar_helper.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
@@ -93,27 +92,6 @@ class AvatarNameSection extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 16),
-
-        // 名称输入（居中）
-        TextField(
-          controller: nameCtrl,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 22,
-            fontWeight: MoeFontWeights.emphasis,
-            color: colors.text,
-          ),
-          decoration: MoeInputDecoration(
-            hintText: '输入角色名称',
-            hintStyle: TextStyle(
-              fontSize: 22,
-              fontWeight: MoeFontWeights.normal,
-              color: colors.muted,
-            ),
-            contentPadding: const EdgeInsets.symmetric(vertical: 8),
-          ),
-        ),
-        const SizedBox(height: 8),
 
         // 操作按钮
         Wrap(

@@ -5,6 +5,21 @@ import 'package:aicove_flutter/src/features/chat/services/chat_types.dart';
 
 void main() {
   group('ChatMessageProjectionCodec', () {
+    test('preserves explicit empty display output separately from canonical raw', () {
+      final payload = ChatMessageProjectionCodec.buildRawAssistantPayload(
+        apiResult: const ApiCallResult(
+          rawReplyText: 'SECRET', replyText: '', processedText: '',
+          pluginEvents: [], toolResults: [],
+        ),
+      );
+      expect(ChatMessageProjectionCodec.rawReplyText(payload), 'SECRET');
+      expect(ChatMessageProjectionCodec.displayReplyText(payload), '');
+    });
+    test('legacy payload distinguishes missing processing from empty processing', () {
+      expect(ChatMessageProjectionCodec.displayReplyText({'rawReplyText': 'old'}), isNull);
+      expect(ChatMessageProjectionCodec.displayReplyText({'processedText': ''}), '');
+    });
+
     test('buildRawAssistantPayload should persist hidden thought parts', () {
       final payload = ChatMessageProjectionCodec.buildRawAssistantPayload(
         apiResult: const ApiCallResult(

@@ -32,6 +32,9 @@ class CloudApi implements CloudRemote {
   final Dio _dio;
   bool _gzip = false, _batch = false;
 
+  void updateToken(String token) =>
+      _dio.options.headers['Authorization'] = 'Bearer $token';
+
   Future<T> _call<T>(Future<T> Function() operation) async {
     try {
       return await operation();

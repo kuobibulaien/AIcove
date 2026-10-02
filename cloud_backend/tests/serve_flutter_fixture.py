@@ -32,7 +32,7 @@ for middleware in app.user_middleware:
 
 init_db()
 with SessionLocal.begin() as db:
-    for number in range(1, 20):
+    for number in range(1, 33):
         db.add(User(id=number, username=f'fixture{number}', unique_id=f'test-{number}',
                     password_hash=get_password_hash('integration-test-password')))
 listener = socket.socket()

@@ -16,6 +16,11 @@ from models import User
 SECRET_KEY = os.getenv("SECRET_KEY", "change-this-secret-key")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "10080"))
+PERSISTENT_SESSION_USER_IDS = frozenset(
+    int(value.strip())
+    for value in os.getenv("PERSISTENT_SESSION_USER_IDS", "").split(',')
+    if value.strip()
+)
 
 # 密码加密
 # Existing bcrypt hashes remain compatible with the direct bcrypt API.
@@ -73,11 +78,16 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     to_encode = data.copy()
     if 'sub' in to_encode:
         to_encode['sub'] = str(to_encode['sub'])
-    if expires_delta:
+    if expires_delta is not None:
         expire = datetime.utcnow() + expires_delta
-    else:
+        to_encode["exp"] = expire
+    elif to_encode.get('sub') not in {str(user_id) for user_id in PERSISTENT_SESSION_USER_IDS}:
         expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
+        to_encode["exp"] = expire
+    else:
+        # Explicitly configured accounts retain their session across long
+        # offline periods. Every request still checks the account's active flag.
+        to_encode.pop("exp", None)
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
@@ -158,6 +168,20 @@ async def login(
     
     return {
         "access_token": access_token,
+        "token_type": "bearer",
+        "user": user.to_dict()
+    }
+
+
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh_access_token(
+    user_id: int = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """用仍有效的Token换取新Token（滑动续期，过期后必须重新登录）"""
+    user = db.query(User).filter(User.id == user_id).first()
+    return {
+        "access_token": create_access_token(data={"sub": user.id}),
         "token_type": "bearer",
         "user": user.to_dict()
     }

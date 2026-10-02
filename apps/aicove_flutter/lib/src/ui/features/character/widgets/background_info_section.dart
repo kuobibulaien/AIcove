@@ -1,6 +1,6 @@
-/// BackgroundInfoSection - 角色编辑页：背景信息补充
+/// BackgroundInfoSection - 角色编辑页：角色卡信息
 ///
-/// 折叠行，展开后可编辑人设提示词与角色专属绘图要求。
+/// 折叠行，展开后可编辑人设提示词与绘图提示。
 library;
 
 import 'package:flutter/material.dart';
@@ -36,8 +36,7 @@ class BackgroundInfoSection extends StatelessWidget {
       margin: EdgeInsets.zero,
       children: [
         MoeSettingsRow(
-          icon: Icons.edit_note,
-          label: '背景信息补充',
+          label: '角色卡信息',
           subtitle: _statusText(hasPersona, hasDrawing),
           showDivider: expanded,
           trailingType: MoeSettingsRowTrailing.custom,
@@ -65,7 +64,7 @@ class BackgroundInfoSection extends StatelessWidget {
                     ),
                     _editorRow(
                       colors,
-                      label: '角色专属绘图要求',
+                      label: '绘图提示',
                       text: drawingText,
                       placeholder: '仅本角色：外貌、服装等生图补充要求',
                       onTap: onEditDrawing,
@@ -80,10 +79,10 @@ class BackgroundInfoSection extends StatelessWidget {
   }
 
   String _statusText(bool hasPersona, bool hasDrawing) {
-    if (hasPersona && hasDrawing) return '已填写人设提示词与绘图要求';
+    if (hasPersona && hasDrawing) return '已填写人设提示词与绘图提示';
     if (hasPersona) return '已填写人设提示词';
-    if (hasDrawing) return '已填写绘图要求';
-    return '人设提示词与绘图要求，未填写';
+    if (hasDrawing) return '已填写绘图提示';
+    return '人设提示词与绘图提示，未填写';
   }
 
   Widget _editorRow(
@@ -106,7 +105,9 @@ class BackgroundInfoSection extends StatelessWidget {
           style: TextStyle(
             fontSize: 13,
             height: 1.4,
-            color: hasContent ? colors.muted : colors.muted.withValues(alpha: 0.7),
+            color: hasContent
+                ? colors.muted
+                : colors.muted.withValues(alpha: 0.7),
           ),
         ),
       ),

@@ -45,6 +45,7 @@ class ChatFrontendMessageProjectionService {
               rawMessage.content,
           processedText:
               ChatMessageProjectionCodec.processedText(payload) ?? '',
+          displayReplyText: ChatMessageProjectionCodec.displayReplyText(payload),
           pluginEvents: ChatMessageProjectionCodec.pluginEvents(payload),
           contents: const [],
           toolAudioResults: const [],
@@ -63,7 +64,8 @@ class ChatFrontendMessageProjectionService {
         replyText: ChatMessageProjectionCodec.rawReplyText(payload) ??
             rawMessage.content,
         processedText: ChatMessageProjectionCodec.processedText(payload) ?? '',
-        pluginEvents: ChatMessageProjectionCodec.pluginEvents(payload),
+        displayReplyText: ChatMessageProjectionCodec.displayReplyText(payload),
+          pluginEvents: ChatMessageProjectionCodec.pluginEvents(payload),
         contents: ChatMessageProjectionCodec.pluginContents(payload),
         toolAudioResults: ChatMessageProjectionCodec.toolAudioResults(payload),
         toolCalls: ChatMessageProjectionCodec.toolCalls(payload),
@@ -77,6 +79,9 @@ class ChatFrontendMessageProjectionService {
       }
     }
 
+    if (ChatMessageProjectionCodec.displayReplyText(payload) != null) {
+      return const <Message>[];
+    }
     final mixedProjection = _projectMixedImageMessage(rawMessage);
     if (mixedProjection.isNotEmpty) {
       return _normalizeProjectionFromRawMessage(rawMessage, mixedProjection);

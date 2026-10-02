@@ -6,6 +6,7 @@ import 'package:drift/drift.dart';
 import '../database.dart' as db;
 import '../../../features/chat/domain/conversation.dart' as domain;
 import '../../../features/chat/domain/message.dart' as domain;
+import '../../../features/chat/domain/chat_display_policy.dart';
 import '../../../core/models/message_block.dart';
 import '../../api/thinking/thinking_level.dart';
 
@@ -44,6 +45,7 @@ class ConversationConverter {
                   e.key: e.value.storageValue,
               }),
       ),
+      chatDisplayStyle: Value(c.chatDisplayStyle?.name),
       contextStartMessageId: Value(c.contextStartMessageId),
       lastMessage: Value(c.lastMessage),
       lastMessageTime: Value(c.lastMessageTime?.millisecondsSinceEpoch),
@@ -81,6 +83,7 @@ class ConversationConverter {
           : null,
       recipeId: c.recipeId,
       thinkingLevels: decodeThinkingLevels(c.thinkingLevels),
+      chatDisplayStyle: ChatDisplayStyle.fromValue(c.chatDisplayStyle),
       contextStartMessageId: c.contextStartMessageId,
       lastMessage: c.lastMessage,
       lastMessageTime: c.lastMessageTime != null

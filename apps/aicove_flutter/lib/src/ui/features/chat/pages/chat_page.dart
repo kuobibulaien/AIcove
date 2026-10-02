@@ -4,6 +4,7 @@ import '../widgets/chat_share_sheet.dart';
 import '../../plugins/widgets/drawing_preset_picker_sheet.dart';
 import '../widgets/chat_message_selection.dart';
 import 'chat_background_settings_page.dart';
+import 'chat_tavern_preset_page.dart';
 import 'dart:async';
 import 'dart:io';
 import '../../../shared/widgets/desktop_window_frame.dart';
@@ -21,6 +22,7 @@ import '../../../../features/chat/conversation_providers.dart'
     show
         activeConversationIdProvider,
         activeConversationProvider,
+        chatDisplayPolicyProvider,
         conversationsProvider,
         resolvedConversationByIdProvider;
 import '../../../../features/chat/conversation_timeline_providers.dart'
@@ -298,6 +300,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       wallpaper: wallpaper,
       wallpaperMaskOpacity: conv.chatBackgroundMaskOpacity ?? 0.8,
       wallpaperBlurSigma: conv.chatBackgroundBlurSigma ?? 0,
+      documentStyle: ref
+              .read(chatDisplayPolicyProvider(conv.chatDisplayStyle))
+              .style ==
+          ChatDisplayStyle.document,
     ));
   }
 
@@ -380,7 +386,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         ),
         if (conv.allowsPlugin('image'))
           MoePopupMenuItem(
-            label: '绘图预设',
+            label: '绘图风格',
             onTap: () => showDrawingPresetPicker(
               context: context,
               ref: ref,
@@ -388,6 +394,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               onSelected: (presetId) => _switchDrawingPreset(conv, presetId),
             ),
           ),
+        MoePopupMenuItem(
+          label: '聊天样式',
+          onTap: () => _showChatDisplayStyleSheet(conv),
+        ),
+        MoePopupMenuItem(
+          label: '酒馆预设',
+          onTap: () => MoeWorkspace.open(
+            context,
+            ChatTavernPresetPage(conversationId: conv.id),
+          ),
+        ),
         MoePopupMenuItem(
           label: '清空历史记录',
           onTap: () async {
@@ -427,6 +444,43 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     );
   }
 
+  /// 会话级聊天样式（ADR0047）：跟随默认或单独设为气泡／文档。
+  Future<void> _showChatDisplayStyleSheet(Conversation conv) async {
+    final globalStyle =
+        ref.read(appSettingsProvider).valueOrNull?.chatDisplayStyle ??
+            ChatDisplayStyle.bubble;
+    String styleName(ChatDisplayStyle style) =>
+        style == ChatDisplayStyle.bubble ? '气泡' : '文档';
+    Future<void> apply(ChatDisplayStyle? style) => ref
+        .read(conversationsProvider.notifier)
+        .setConversationChatDisplayStyle(conv.id, style);
+    final current = conv.chatDisplayStyle;
+    // 选项单里带图标的项会改成左对齐，当前项用文字标注而不是勾选图标。
+    String mark(bool selected, String label) =>
+        selected ? '$label（当前）' : label;
+    await showMoeActionSheet(
+      context: context,
+      title: '聊天样式',
+      description: '只对当前会话生效',
+      actions: [
+        MoeSheetAction(
+          label: mark(current == null, '跟随默认（${styleName(globalStyle)}）'),
+          onTap: () => apply(null),
+        ),
+        MoeSheetAction(
+          label: mark(current == ChatDisplayStyle.bubble, '气泡'),
+          subtitle: '按句分段，像聊天软件一样一条条冒出来',
+          onTap: () => apply(ChatDisplayStyle.bubble),
+        ),
+        MoeSheetAction(
+          label: mark(current == ChatDisplayStyle.document, '文档'),
+          subtitle: '不分段，长文和代码块完整显示',
+          onTap: () => apply(ChatDisplayStyle.document),
+        ),
+      ],
+    );
+  }
+
   Future<void> _switchDrawingPreset(
     Conversation conv,
     String? presetId,
@@ -457,7 +511,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               ?.name;
       MoeToast.brief(
         context,
-        presetName == null ? '绘图预设已切换' : '绘图预设：$presetName',
+        presetName == null ? '绘图风格已切换' : '绘图风格：$presetName',
       );
     } catch (_) {
       if (mounted) MoeToast.error(context, '切换失败，请重试');
@@ -1623,6 +1677,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                             child: ChatMessageList(
                               key: ValueKey(conv.id),
                               conversationId: conv.id,
+                              recipeId: conv.recipeId,
+                              chatDisplayStyle: conv.chatDisplayStyle,
                               selection: _selection,
                               messages: messages,
                               isInitialLoading:

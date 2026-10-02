@@ -124,6 +124,10 @@ class GeminiAdapter implements ProviderAdapter {
         'tools': [
           {'functionDeclarations': geminiTools}
         ],
+      if (geminiTools != null && requestOptions?.toolChoice != null)
+        'toolConfig': {
+          'functionCallingConfig': {'mode': requestOptions!.toolChoice!.toUpperCase()},
+        },
       'generationConfig': generationConfig,
     };
 
@@ -222,6 +226,8 @@ class GeminiAdapter implements ProviderAdapter {
             id: fc['id']?.toString() ?? '',
             name: fc['name']?.toString() ?? '',
             arguments: _parseArguments(fc['args']),
+            rawArguments: fc['args'] is String ? fc['args'] as String : null,
+            thoughtSignature: part['thoughtSignature']?.toString(),
           ));
         }
       }

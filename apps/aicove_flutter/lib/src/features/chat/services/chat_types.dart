@@ -6,6 +6,8 @@
 /// - 2025-12-31: 从 chat_actions.dart 提取
 library;
 
+import '../../agent_context/domain/preset_script_runtime.dart';
+
 import '../../context/domain/context_summary.dart' show RuntimeContextPort;
 
 import 'dart:async';
@@ -105,6 +107,8 @@ class ApiCallResult {
 
 /// API 配置参数
 class ApiConfig {
+  final PresetScriptSnapshot? presetScript;
+  final int? requestInputTokenLimit;
   final RuntimeContextPort? runtimeContext;
   final AppSettings settings;
   final String modelFullId;
@@ -136,6 +140,8 @@ class ApiConfig {
   final VoiceRequest? voiceRequest;
 
   const ApiConfig({
+    this.presetScript,
+    this.requestInputTokenLimit,
     this.runtimeContext,
     required this.settings,
     required this.modelFullId,
@@ -189,13 +195,9 @@ class TtsAudioResult {
   final bool success;
   final String? error;
 
-  const TtsAudioResult.success(this.message)
-      : success = true,
-        error = null;
+  const TtsAudioResult.success(this.message) : success = true, error = null;
 
-  const TtsAudioResult.failure([this.error])
-      : success = false,
-        message = null;
+  const TtsAudioResult.failure([this.error]) : success = false, message = null;
 }
 
 /// 助手消息交付结果

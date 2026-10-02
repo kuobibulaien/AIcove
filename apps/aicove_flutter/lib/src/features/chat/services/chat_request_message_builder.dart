@@ -115,7 +115,7 @@ class ChatRequestMessageBuilder {
       }
 
       if (block is ImageBlock) {
-        if (message.role == 'assistant' && pluginPolicy?.imageEnabled == false) continue;
+        if (message.role == 'assistant' && pluginPolicy?.includesGeneratedImages == false) continue;
         if (!supportsVision) {
           final description = block.prompt;
           final fallbackText = buildNonVisionImageMessageText(

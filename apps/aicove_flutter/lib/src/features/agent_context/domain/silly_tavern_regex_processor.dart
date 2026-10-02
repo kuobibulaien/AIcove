@@ -1,7 +1,8 @@
 library;
 
 import 'dart:async';
-import 'dart:isolate';
+import 'dart:convert';
+import 'package:aicove_quickjs/aicove_quickjs.dart';
 
 import 'silly_tavern_preset.dart';
 import 'silly_tavern_world_book.dart';
@@ -32,7 +33,7 @@ class SillyTavernRegexMessagesResult {
 
 /// 在独立 isolate 中执行已授权的 SillyTavern regex。
 ///
-/// 工作 isolate 超时会被立即终止，避免病态正则阻塞聊天主 isolate。
+/// QuickJS 在后台 isolate 执行，以引擎中断和内存限额约束正则。
 class SillyTavernRegexProcessor {
   static const Duration executionTimeout = Duration(milliseconds: 1500);
   static const int maxInputCharacters = 512 * 1024;
@@ -276,26 +277,18 @@ class SillyTavernRegexProcessor {
         warnings: <String>[],
       );
     }
-    final receivePort = ReceivePort();
-    Isolate? isolate;
+    QuickJsSession? session;
     try {
-      isolate = await Isolate.spawn<List<dynamic>>(
-        _sillyTavernRegexWorker,
-        <dynamic>[
-          receivePort.sendPort,
-          <String, dynamic>{
-            'items': items,
-            'scripts': scripts.map((script) => script.toWorkerJson()).toList(),
-            'maxInputCharacters': maxInputCharacters,
-            'maxPatternCharacters': maxPatternCharacters,
-            'maxReplacementCharacters': maxReplacementCharacters,
-          },
-        ],
+      session = await QuickJsSession.open();
+      return _RegexWorkerResult.fromJson(
+        await _runRegexBatch(session, {
+          'items': items,
+          'scripts': scripts.map((script) => script.toWorkerJson()).toList(),
+          'maxInputCharacters': maxInputCharacters,
+          'maxPatternCharacters': maxPatternCharacters,
+          'maxReplacementCharacters': maxReplacementCharacters,
+        }),
       );
-      final rawResult = await receivePort.first.timeout(executionTimeout);
-      if (rawResult is! Map) throw const FormatException('regex worker result');
-      final result = Map<String, dynamic>.from(rawResult);
-      return _RegexWorkerResult.fromJson(result);
     } on TimeoutException {
       return _RegexWorkerResult(
         items: items,
@@ -317,8 +310,7 @@ class SillyTavernRegexProcessor {
         warnings: const <String>['regex 执行异常，已保留原文'],
       );
     } finally {
-      isolate?.kill(priority: Isolate.immediate);
-      receivePort.close();
+      await session?.close();
     }
   }
 }
@@ -351,142 +343,169 @@ class _RegexWorkerResult {
   }
 }
 
-void _sillyTavernRegexWorker(List<dynamic> arguments) {
-  final sendPort = arguments[0] as SendPort;
-  try {
-    final payload = Map<String, dynamic>.from(arguments[1] as Map);
-    final items = (payload['items'] as List? ?? const <dynamic>[])
-        .whereType<Map>()
-        .map((item) => Map<String, dynamic>.from(item))
+Future<Map<String, dynamic>> _runRegexBatch(
+  QuickJsSession session,
+  Map<String, dynamic> payload,
+) async {
+  final stopwatch = Stopwatch()..start();
+  final items = (payload['items'] as List? ?? const <dynamic>[])
+      .whereType<Map>()
+      .map((item) => Map<String, dynamic>.from(item))
+      .toList(growable: false);
+  final scripts = (payload['scripts'] as List? ?? const <dynamic>[])
+      .whereType<Map>()
+      .map((item) => Map<String, dynamic>.from(item))
+      .toList(growable: false);
+  final maxInputCharacters = payload['maxInputCharacters'] as int;
+  final maxPatternCharacters = payload['maxPatternCharacters'] as int;
+  final maxReplacementCharacters = payload['maxReplacementCharacters'] as int;
+  final traces = <Map<String, dynamic>>[];
+  final warnings = <String>[];
+  final outputItems = <Map<String, dynamic>>[];
+  for (final item in items) {
+    var text = item['text']?.toString() ?? '';
+    if (text.length > maxInputCharacters) {
+      traces.add(<String, dynamic>{
+        'key': item['key'],
+        'status': 'skipped',
+        'reason': 'input_too_large',
+      });
+      warnings.add('${item['key']} 超过 regex 输入上限，已保留原文');
+      outputItems.add(<String, dynamic>{...item, 'text': text});
+      continue;
+    }
+    final modes = (item['modes'] as List? ?? const <dynamic>[])
+        .map((mode) => mode.toString())
         .toList(growable: false);
-    final scripts = (payload['scripts'] as List? ?? const <dynamic>[])
-        .whereType<Map>()
-        .map((item) => Map<String, dynamic>.from(item))
-        .toList(growable: false);
-    final maxInputCharacters = payload['maxInputCharacters'] as int;
-    final maxPatternCharacters = payload['maxPatternCharacters'] as int;
-    final maxReplacementCharacters = payload['maxReplacementCharacters'] as int;
-    final traces = <Map<String, dynamic>>[];
-    final warnings = <String>[];
-    final outputItems = <Map<String, dynamic>>[];
-    for (final item in items) {
-      var text = item['text']?.toString() ?? '';
-      if (text.length > maxInputCharacters) {
-        traces.add(<String, dynamic>{
-          'key': item['key'],
-          'status': 'skipped',
-          'reason': 'input_too_large',
-        });
-        warnings.add('${item['key']} 超过 regex 输入上限，已保留原文');
-        outputItems.add(<String, dynamic>{...item, 'text': text});
-        continue;
-      }
-      final modes = (item['modes'] as List? ?? const <dynamic>[])
-          .map((mode) => mode.toString())
-          .toList(growable: false);
-      modeLoop:
-      for (final mode in modes) {
-        for (final script in scripts) {
-          // SillyTavern's runRegexScript returns immediately for an empty
-          // source. Once an earlier script removes the whole message, later
-          // scripts must not repopulate it with a ^$ replacement.
-          if (text.isEmpty) break modeLoop;
-          final decision = _regexDecision(
-            script,
-            placement: item['placement'] as int,
-            depth: item['depth'] as int,
-            mode: mode,
-          );
-          if (!decision.run) {
-            if (decision.trace) {
-              traces.add(<String, dynamic>{
-                'key': item['key'],
-                'scriptId': script['id'],
-                'scriptName': script['name'],
-                'mode': mode,
-                'status': 'skipped',
-                'reason': decision.reason,
-              });
-            }
-            continue;
-          }
-          final findRegex = script['findRegex']?.toString() ?? '';
-          final rawReplaceString = script['replaceString']?.toString() ?? '';
-          final replaceString = _sanitizeReplacementMarkup(rawReplaceString);
-          final executableMarkupRemoved = replaceString != rawReplaceString;
-          if (executableMarkupRemoved) {
-            warnings.add('${script['name']} 的可执行 HTML 已移除，只保留静态替换内容');
-          }
-          if (findRegex.length > maxPatternCharacters ||
-              replaceString.length > maxReplacementCharacters) {
+    modeLoop:
+    for (final mode in modes) {
+      for (final script in scripts) {
+        // SillyTavern's runRegexScript returns immediately for an empty
+        // source. Once an earlier script removes the whole message, later
+        // scripts must not repopulate it with a ^$ replacement.
+        if (text.isEmpty) break modeLoop;
+        final decision = _regexDecision(
+          script,
+          placement: item['placement'] as int,
+          depth: item['depth'] as int,
+          mode: mode,
+        );
+        if (!decision.run) {
+          if (decision.trace) {
             traces.add(<String, dynamic>{
               'key': item['key'],
               'scriptId': script['id'],
               'scriptName': script['name'],
               'mode': mode,
-              'status': 'error',
-              'reason': 'script_too_large',
+              'status': 'skipped',
+              'reason': decision.reason,
             });
-            warnings.add('${script['name']} 超过 regex 安全上限，已跳过');
-            continue;
           }
-          try {
-            final compiled = _compileJsRegex(findRegex);
-            final before = text;
-            final trimStrings =
-                (script['trimStrings'] as List? ?? const <dynamic>[])
-                    .map((item) => item.toString())
-                    .toList(growable: false);
-            String replacement(Match match) =>
-                _expandReplacement(replaceString, match, trimStrings);
-            text = compiled.global
-                ? text.replaceAllMapped(compiled.regex, replacement)
-                : text.replaceFirstMapped(compiled.regex, replacement);
-            traces.add(<String, dynamic>{
-              'key': item['key'],
-              'scriptId': script['id'],
-              'scriptName': script['name'],
-              'source': script['source'],
-              'mode': mode,
-              'status': 'applied',
-              'changed': before != text,
-              if (executableMarkupRemoved) 'executableMarkupRemoved': true,
-            });
-          } catch (error) {
-            traces.add(<String, dynamic>{
-              'key': item['key'],
-              'scriptId': script['id'],
-              'scriptName': script['name'],
-              'mode': mode,
-              'status': 'error',
-              'reason': 'invalid_regex',
-              'errorType': error.runtimeType.toString(),
-            });
-            warnings.add('${script['name']} 无法编译，已跳过');
+          continue;
+        }
+        final findRegex = script['findRegex']?.toString() ?? '';
+        final rawReplaceString = script['replaceString']?.toString() ?? '';
+        final replaceString = _sanitizeReplacementMarkup(rawReplaceString);
+        final executableMarkupRemoved = replaceString != rawReplaceString;
+        if (executableMarkupRemoved) {
+          warnings.add('${script['name']} 的可执行 HTML 已移除，只保留静态替换内容');
+        }
+        if (findRegex.length > maxPatternCharacters ||
+            replaceString.length > maxReplacementCharacters) {
+          traces.add(<String, dynamic>{
+            'key': item['key'],
+            'scriptId': script['id'],
+            'scriptName': script['name'],
+            'mode': mode,
+            'status': 'error',
+            'reason': 'script_too_large',
+          });
+          warnings.add('${script['name']} 超过 regex 安全上限，已跳过');
+          continue;
+        }
+        try {
+          if (stopwatch.elapsed > SillyTavernRegexProcessor.executionTimeout) {
+            throw TimeoutException('regex batch timeout');
           }
+          final before = text;
+          final value =
+              jsonDecode(
+                    await session.evaluate(
+                      '($_jsReplace)(${jsonEncode({'text': text, 'source': findRegex, 'replacement': replaceString, 'trim': script['trimStrings'] ?? [], 'maxOutput': maxInputCharacters})})',
+                    ),
+                  )
+                  as Map;
+          if (value['error'] != null) {
+            throw FormatException(value['error'] as String);
+          }
+          text = value['text'] as String;
+          traces.add(<String, dynamic>{
+            'key': item['key'],
+            'scriptId': script['id'],
+            'scriptName': script['name'],
+            'source': script['source'],
+            'mode': mode,
+            'status': 'applied',
+            'changed': before != text,
+            if (executableMarkupRemoved) 'executableMarkupRemoved': true,
+          });
+        } on QuickJsException {
+          rethrow;
+        } on TimeoutException {
+          rethrow;
+        } catch (error) {
+          traces.add(<String, dynamic>{
+            'key': item['key'],
+            'scriptId': script['id'],
+            'scriptName': script['name'],
+            'mode': mode,
+            'status': 'error',
+            'reason': 'invalid_regex',
+            'errorType': error.runtimeType.toString(),
+          });
+          warnings.add('${script['name']} 无法编译，已跳过');
         }
       }
-      outputItems.add(<String, dynamic>{...item, 'text': text});
     }
-    sendPort.send(<String, dynamic>{
-      'items': outputItems,
-      'traces': traces,
-      'warnings': warnings.toSet().toList(growable: false),
-    });
-  } catch (error) {
-    sendPort.send(<String, dynamic>{
-      'items': const <Map<String, dynamic>>[],
-      'traces': <Map<String, dynamic>>[
-        <String, dynamic>{
-          'status': 'error',
-          'reason': 'worker_failure',
-          'errorType': error.runtimeType.toString(),
-        },
-      ],
-      'warnings': const <String>['regex worker 异常，已保留原文'],
-    });
+    outputItems.add(<String, dynamic>{...item, 'text': text});
   }
+  return <String, dynamic>{
+    'items': outputItems,
+    'traces': traces,
+    'warnings': warnings.toSet().toList(growable: false),
+  };
 }
+
+// SillyTavern uses its own $0 / {{match}} / trimStrings replacement contract.
+// Compile and match in JavaScript without translating patterns to Dart RegExp.
+const _jsReplace = r'''function(input) {
+  let pattern = input.source, flags = '';
+  if (pattern.startsWith('/')) {
+    let end = -1;
+    for(let i=pattern.length-1;i>0;i--) {
+      if(pattern[i] !== '/') continue;
+      let n=0; for(let j=i-1;j>=0 && pattern[j]==='\\';j--) n++;
+      if(n%2===0) { end=i; break; }
+    }
+    if(end<1) return JSON.stringify({error:'Missing regex slash'});
+    flags=pattern.slice(end+1); pattern=pattern.slice(1,end);
+  }
+  let re;
+  try { re=new RegExp(pattern,flags); }
+  catch(e) { return JSON.stringify({error:String(e)}); }
+  const replacement=input.replacement.replace(/{{match}}/gi,'$0');
+  const text=input.text.replace(re,(...args)=>{
+    const groups=typeof args[args.length-1]==='object' ? args.pop() : {};
+    const captures=args.slice(0,-2);
+    return replacement.replace(/\$(\d+)|\$<([^>]+)>/g,(_,number,name)=>{
+      let value=(number !== undefined ? captures[Number(number)] : groups[name]) ?? '';
+      for(const trim of input.trim) value=value.split(trim).join('');
+      return value;
+    });
+  });
+  if(text.length>input.maxOutput) throw Error('Regex output limit exceeded');
+  return JSON.stringify({text});
+}''';
 
 ({bool run, bool trace, String reason}) _regexDecision(
   Map<String, dynamic> script, {
@@ -524,92 +543,6 @@ void _sillyTavernRegexWorker(List<dynamic> arguments) {
   return contextMatches
       ? (run: true, trace: true, reason: '')
       : (run: false, trace: false, reason: 'phase_mismatch');
-}
-
-class _CompiledRegex {
-  final RegExp regex;
-  final bool global;
-
-  const _CompiledRegex(this.regex, {required this.global});
-}
-
-_CompiledRegex _compileJsRegex(String source) {
-  var pattern = source;
-  var flags = '';
-  if (source.startsWith('/')) {
-    final closingSlash = _findClosingSlash(source);
-    if (closingSlash <= 0) throw const FormatException('missing regex slash');
-    pattern = source.substring(1, closingSlash);
-    flags = source.substring(closingSlash + 1);
-  }
-  final seenFlags = <String>{};
-  for (final rune in flags.runes) {
-    final flag = String.fromCharCode(rune);
-    if (!const <String>{'g', 'i', 'm', 's', 'u'}.contains(flag) ||
-        !seenFlags.add(flag)) {
-      throw FormatException('unsupported regex flag: $flag');
-    }
-  }
-  // JavaScript's `[^]` means any character; Dart rejects that spelling.
-  pattern = pattern.replaceAll('[^]', r'[\s\S]');
-  return _CompiledRegex(
-    RegExp(
-      pattern,
-      caseSensitive: !seenFlags.contains('i'),
-      multiLine: seenFlags.contains('m'),
-      dotAll: seenFlags.contains('s'),
-      unicode: true,
-    ),
-    global: seenFlags.contains('g'),
-  );
-}
-
-int _findClosingSlash(String source) {
-  for (var index = source.length - 1; index > 0; index--) {
-    if (source.codeUnitAt(index) != 47) continue;
-    var backslashes = 0;
-    for (
-      var before = index - 1;
-      before >= 0 && source.codeUnitAt(before) == 92;
-      before--
-    ) {
-      backslashes++;
-    }
-    if (backslashes.isEven) return index;
-  }
-  return -1;
-}
-
-String _expandReplacement(
-  String replacement,
-  Match match,
-  List<String> trimStrings,
-) {
-  final normalized = replacement.replaceAll(
-    RegExp(r'\{\{match\}\}', caseSensitive: false),
-    r'$0',
-  );
-  return normalized.replaceAllMapped(RegExp(r'\$(\d+)|\$<([^>]+)>'), (
-    placeholder,
-  ) {
-    String? value;
-    final number = placeholder.group(1);
-    final name = placeholder.group(2);
-    try {
-      if (number != null) {
-        value = match.group(int.parse(number));
-      } else if (name != null && match is RegExpMatch) {
-        value = match.namedGroup(name);
-      }
-    } catch (_) {
-      value = null;
-    }
-    var filtered = value ?? '';
-    for (final trimString in trimStrings) {
-      filtered = filtered.replaceAll(trimString, '');
-    }
-    return filtered;
-  });
 }
 
 String _sanitizeReplacementMarkup(String source) {

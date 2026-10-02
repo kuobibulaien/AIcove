@@ -284,6 +284,8 @@ class _VisibleAssistantStreamFilter {
     // 原样透传（由 _attributedImageDepth 深度计数保证其配对闭标签不被剥离）。
     _HiddenStreamTagSpec(openTagPrefix: '<image>', closeTag: '</image>'),
     _HiddenStreamTagSpec(openTagPrefix: '<think', closeTag: '</think>'),
+    // 对话选项由右下角选项气泡展示（ADR0045），生成中不在气泡里闪现。
+    _HiddenStreamTagSpec(openTagPrefix: '<options', closeTag: '</options>'),
   ];
 
   String _pending = '';
@@ -378,7 +380,7 @@ class _VisibleAssistantStreamFilter {
   _HiddenTagMatch? _findNextHiddenTag(String lowerPending) {
     _HiddenTagMatch? firstMatch;
     for (final spec in _hiddenTagSpecs) {
-      final index = lowerPending.indexOf(spec.openTagPrefix);
+      final index = _indexOfOpenTag(lowerPending, spec.openTagPrefix);
       if (index < 0) continue;
       if (firstMatch == null || index < firstMatch.openIndex) {
         firstMatch = _HiddenTagMatch(
@@ -388,6 +390,25 @@ class _VisibleAssistantStreamFilter {
       }
     }
     return firstMatch;
+  }
+
+  /// 标签名必须完整匹配：`<think` 之后要紧跟 `>`、空白或 `/`，
+  /// 否则 `<thinking>`、`<think_nya~>` 等预设标签会被误当成 `<think>`
+  /// 一直等不到 `</think>` 而吞掉后文。前缀恰在末尾时先视为命中，等下一片。
+  static int _indexOfOpenTag(String lowerPending, String prefix) {
+    if (prefix.endsWith('>')) return lowerPending.indexOf(prefix);
+    var from = 0;
+    while (true) {
+      final index = lowerPending.indexOf(prefix, from);
+      if (index < 0) return -1;
+      final next = index + prefix.length;
+      if (next >= lowerPending.length ||
+          const {' ', '\t', '\r', '\n', '/', '>'}
+              .contains(lowerPending[next])) {
+        return index;
+      }
+      from = index + 1;
+    }
   }
 
   _HiddenTagMatch? _findNextHiddenCloseTag(String lowerPending) {

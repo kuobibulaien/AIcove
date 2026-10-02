@@ -63,6 +63,18 @@ class Mutation(Contract):
     def bounded_payload(cls, value):
         if len(canonical(value).encode()) > MAX_DOCUMENT_BYTES:
             raise ValueError('document too large')
+        if 'setting_times_version' in value:
+            if type(value['setting_times_version']) is not int or value['setting_times_version'] != 1:
+                raise ValueError('unsupported setting times version')
+            times = value.get('setting_times')
+            if not isinstance(times, dict) or len(times) > 1000:
+                raise ValueError('invalid setting times')
+            for key, stamp in times.items():
+                if (not isinstance(key, str) or not 1 <= len(key) <= 200
+                        or not isinstance(stamp, dict) or set(stamp) != {'at_ms', 'device_id'}
+                        or type(stamp['at_ms']) is not int or not 0 <= stamp['at_ms'] <= 253402300799999
+                        or not isinstance(stamp['device_id'], str) or len(stamp['device_id']) > 100):
+                    raise ValueError('invalid setting edit stamp')
         return value
 
     @field_validator('blob_ids', 'media_ids')

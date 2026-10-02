@@ -13,7 +13,10 @@ import '../../../core/database/database_provider.dart';
 import '../../../core/database/converters/database_converters.dart';
 import '../../../core/models/message_block.dart';
 import '../../plugins/domain/plugin_content.dart';
+import '../../plugins/plugin_content_tags.dart';
+import '../../plugins/tts/tts_parser.dart';
 import '../domain/message.dart';
+import '../domain/conversation_context_window.dart';
 import 'chat_frontend_message_projection_service.dart';
 import 'chat_message_processor.dart';
 import 'chat_message_projection_codec.dart';
@@ -1444,16 +1447,7 @@ class ChatHistoryStore {
     required String? contextStartId,
     required int limit,
   }) {
-    var contextWindow = allMessages;
-    final normalizedContextStartId = contextStartId?.trim() ?? '';
-    if (normalizedContextStartId.isNotEmpty) {
-      final markerIndex = allMessages.lastIndexWhere(
-        (message) => message.id == normalizedContextStartId,
-      );
-      if (markerIndex >= 0) {
-        contextWindow = allMessages.sublist(markerIndex + 1);
-      }
-    }
+    final contextWindow = sliceConversationContext(allMessages, contextStartId);
 
     if (limit <= 0 || contextWindow.length <= limit) {
       return contextWindow;
@@ -1919,7 +1913,9 @@ class ChatHistoryStore {
     final rawReplyText =
         ChatMessageProjectionCodec.rawReplyText(payload) ?? rawMessage.content;
     // 仅 TTS 标签需要强制保留分段；<image> 无论是否带属性都不阻止纯文本折叠。
-    return rawReplyText.contains('<tts>');
+    return firstPartyContentTagScanner
+        .scan(rawReplyText)
+        .any(TtsParser.isSpeechElement);
   }
 
   List<Message> _rebuildAssistantMessagesFromPayload(Message rawMessage) {
@@ -1931,6 +1927,7 @@ class ChatHistoryStore {
       replyText: ChatMessageProjectionCodec.rawReplyText(payload) ??
           rawMessage.content,
       processedText: ChatMessageProjectionCodec.processedText(payload) ?? '',
+      displayReplyText: ChatMessageProjectionCodec.displayReplyText(payload),
       pluginEvents: ChatMessageProjectionCodec.pluginEvents(payload),
       contents: ChatMessageProjectionCodec.pluginContents(payload),
       toolAudioResults: ChatMessageProjectionCodec.toolAudioResults(payload),

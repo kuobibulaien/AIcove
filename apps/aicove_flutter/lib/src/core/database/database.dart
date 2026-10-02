@@ -5,6 +5,7 @@ library;
 
 import 'dart:io';
 import '../sync/cloud_tracking.dart';
+import '../sync/lan_tracking.dart';
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:path_provider/path_provider.dart';
@@ -46,6 +47,8 @@ class Conversations extends Table {
       text().nullable()(); // SillyTavern preset recipe ID
   // 会话级思考档位：JSON 对象 {modelRef: ThinkingLevel.name}
   TextColumn get thinkingLevels => text().nullable()();
+  // 会话级聊天样式覆盖：'bubble' | 'document'，null 跟随全局（ADR0047）
+  TextColumn get chatDisplayStyle => text().nullable()();
 
   // 会话摘要缓存
   TextColumn get lastMessage => text().nullable()();
@@ -226,7 +229,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(QueryExecutor executor) : super(executor);
 
   @override
-  int get schemaVersion => 18;
+  int get schemaVersion => 19;
 
   @override
   MigrationStrategy get migration {
@@ -300,6 +303,10 @@ class AppDatabase extends _$AppDatabase {
         if (from < 18) {
           await _ensureContextMemoryTables();
         }
+        // v18 -> v19: 会话级聊天样式覆盖（ADR0047）
+        if (from < 19) {
+          await _safeAddColumn('conversations', 'chat_display_style TEXT');
+        }
       },
       // 只补物理访问索引，不改变表/记录格式或user_version。
       // 已有v16也能获得索引，且回退到此前v16应用无需降级数据库。
@@ -312,6 +319,7 @@ class AppDatabase extends _$AppDatabase {
       try {
         await transaction(() async {
           await installCloudTracking(this);
+          await installLanTracking(this);
           // 默认ASC与隐含rowid同向；倒序扫描即可匹配created_at DESC,
           // rowid DESC。显式把时间列改成DESC反而会为同时间戳二次排序。
           await customStatement('''

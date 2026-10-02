@@ -1,11 +1,26 @@
 import unittest
+from datetime import timedelta
+from unittest.mock import patch
 
-from auth import get_password_hash, verify_password
+from auth import create_access_token, decode_token, get_password_hash, verify_password
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 
 class AccountSecurityTest(unittest.TestCase):
+    def test_persistent_session_is_scoped_and_stable_without_renewal(self):
+        with patch('auth.PERSISTENT_SESSION_USER_IDS', frozenset({12})):
+            token = create_access_token({'sub': 12})
+            self.assertEqual(decode_token(token), {'sub': '12'})
+            self.assertEqual(create_access_token({'sub': 12}), token)
+            self.assertIn('exp', decode_token(create_access_token({'sub': 13})))
+
+    def test_explicit_expiration_still_applies_to_persistent_accounts(self):
+        with patch('auth.PERSISTENT_SESSION_USER_IDS', frozenset({12})):
+            with self.assertRaises(HTTPException) as raised:
+                decode_token(create_access_token({'sub': 12}, timedelta(seconds=-1)))
+            self.assertEqual(raised.exception.status_code, 401)
+
     def test_explicit_short_password_provisioning_keeps_default_policy(self):
         with self.assertRaises(HTTPException):
             get_password_hash('839274')

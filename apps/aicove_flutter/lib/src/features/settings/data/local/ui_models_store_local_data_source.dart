@@ -1,4 +1,5 @@
 import '../../../../core/sync/cloud_local_write.dart';
+import '../../../../core/sync/cloud_setting_policy.dart';
 import '../../../../core/api/image_providers/comfyui_workflow.dart';
 import 'dart:convert';
 
@@ -561,8 +562,10 @@ class UiModelsStoreLocalDataSource {
     Map<String, dynamic> data,
   ) async {
     final normalized = normalizeUiModelsStoreData(data);
-    if (!await cloudLocalWrite(
-      () => prefs.setString(kUiModelsStoreKey, jsonEncode(normalized)),
+    if (!await saveCloudPreference(
+      prefs,
+      kUiModelsStoreKey,
+      jsonEncode(normalized),
     )) {
       throw StateError('设置写入失败');
     }

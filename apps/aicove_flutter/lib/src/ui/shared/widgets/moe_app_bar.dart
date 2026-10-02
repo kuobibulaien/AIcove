@@ -14,6 +14,9 @@ import 'moe_scroll_edge.dart';
 /// extending their body behind the bar (see [moeUnderBarPadding]).
 class MoeAppBar extends StatelessWidget implements PreferredSizeWidget {
   final String title;
+
+  /// Replaces the [title] text, e.g. an inline name field on edit pages.
+  final Widget? titleWidget;
   final bool showBackButton;
   final Widget? leading;
   final double? leadingWidth;
@@ -29,6 +32,7 @@ class MoeAppBar extends StatelessWidget implements PreferredSizeWidget {
   const MoeAppBar({
     super.key,
     required this.title,
+    this.titleWidget,
     this.showBackButton = false,
     this.leading,
     this.leadingWidth,
@@ -83,17 +87,19 @@ class MoeAppBar extends StatelessWidget implements PreferredSizeWidget {
         toolbarHeight: telegramChatHeaderHeight,
         title: Padding(
           padding: EdgeInsets.only(left: centerTitle ? 0 : 8),
-          child: Text(
-            title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: centerTitle ? TextAlign.center : TextAlign.start,
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-              color: colors.headerContentColor,
-            ),
-          ),
+          child:
+              titleWidget ??
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: centerTitle ? TextAlign.center : TextAlign.start,
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: colors.headerContentColor,
+                ),
+              ),
         ),
         actions: actions ?? const [],
       );
@@ -125,16 +131,18 @@ class MoeAppBar extends StatelessWidget implements PreferredSizeWidget {
         padding: EdgeInsets.only(
           left: centerTitle || hasLeading ? 0 : titleLeftPadding,
         ),
-        child: Text(
-          title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w600,
-            color: colors.headerContentColor,
-          ),
-        ),
+        child:
+            titleWidget ??
+            Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: colors.headerContentColor,
+              ),
+            ),
       ),
       centerTitle: centerTitle,
       actions: actions,

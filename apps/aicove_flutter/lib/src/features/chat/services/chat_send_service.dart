@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 
 import '../domain/conversation.dart';
 import '../domain/message.dart';
+import '../domain/conversation_context_window.dart';
 import '../id_gen.dart';
 import '../../settings/app_settings.dart';
 import '../../observability/trace_models.dart';
@@ -25,6 +26,7 @@ import 'chat_history_store.dart';
 import 'chat_message_projection_codec.dart';
 import 'chat_message_processor.dart';
 import 'chat_plugin_context_builder.dart';
+import '../../dialogue_options/domain/dialogue_options.dart';
 import 'chat_request_message_builder.dart';
 import 'chat_send_backend_service.dart';
 import 'chat_types.dart';
@@ -342,6 +344,7 @@ class ChatSendService {
 
     final projectedResult = chatMessageProcessor.buildAssistantMessages(
       replyText: apiResult.rawReplyText,
+      displayReplyText: apiResult.replyText,
       processedText: apiResult.processedText,
       pluginEvents: apiResult.pluginEvents,
       contents: apiResult.pluginContents,
@@ -471,8 +474,9 @@ class ChatSendService {
     }
     final effectiveProjectedMessages =
         projectedMessages ?? buildResult.messages;
-    final effectiveLastMessagePreview =
-        lastMessagePreview ?? buildResult.lastMessageText;
+    final effectiveLastMessagePreview = stripDialogueOptions(
+      lastMessagePreview ?? buildResult.lastMessageText,
+    );
     final forwardTrace = trace?.startChild('deliver message to user');
     forwardTrace?.info('消息分段完成', metadata: {
       'chunksCount': effectiveProjectedMessages.length,
@@ -588,16 +592,7 @@ class ChatSendService {
     required List<Message> allMessages,
     required String? contextStartId,
   }) {
-    var contextWindow = allMessages;
-    if (contextStartId != null && contextStartId.isNotEmpty) {
-      final markerIndex =
-          allMessages.lastIndexWhere((m) => m.id == contextStartId);
-      if (markerIndex >= 0) {
-        contextWindow = allMessages.sublist(markerIndex + 1);
-      }
-    }
-
-    return contextWindow;
+    return sliceConversationContext(allMessages, contextStartId);
   }
 }
 

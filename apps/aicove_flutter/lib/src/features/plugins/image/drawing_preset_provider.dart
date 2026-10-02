@@ -1,4 +1,4 @@
-import '../../../core/sync/cloud_local_write.dart';
+import '../../../core/sync/cloud_setting_policy.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -61,8 +61,10 @@ class PreferencesDrawingPresetStore implements DrawingPresetStore {
   @override
   Future<void> save(DrawingPresetCatalog catalog) async {
     final prefs = await SharedPreferences.getInstance();
-    if (!await cloudLocalWrite(
-      () => prefs.setString(storageKey, jsonEncode(catalog.toJson())),
+    if (!await saveCloudPreference(
+      prefs,
+      storageKey,
+      jsonEncode(catalog.toJson()),
     )) {
       throw StateError('绘图预设未能保存，请重试');
     }

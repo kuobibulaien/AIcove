@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 import '../../../core/media/media_asset.dart';
 import '../../../core/sync/cloud_local_write.dart';
 import '../../../core/sync/cloud_tracking.dart';
+import '../../../core/sync/cloud_setting_policy.dart';
 import '../../../core/media/media_store.dart';
 import 'cloud_api.dart';
 import 'cloud_document.dart';
@@ -60,6 +61,7 @@ class CloudSyncEngine {
   bool _running = false, _closed = false;
   String? _epoch;
   bool _indexedRead = false, _probeBlobs = false;
+  bool _settingTimes = false;
   int _mediaPriority = 0;
   Future<void>? _mediaWork;
 
@@ -136,6 +138,7 @@ class CloudSyncEngine {
       _epoch = status['epoch'] as String;
       _indexedRead = status['indexed_read_version'] == 1;
       _probeBlobs = status['blob_probe_version'] == 1;
+      _settingTimes = status['setting_times_version'] == 1;
       if (state['account_key'] != null && state['account_key'] != accountKey) {
         throw const CloudSyncFailure('本机数据属于另一账号，已停止同步');
       }
@@ -196,8 +199,8 @@ class CloudSyncEngine {
           );
         },
       );
-      await local.captureExternal();
-      await local.pruneUnchangedReceiverEdits();
+      await local.captureExternal(trackSettingTimes: _settingTimes);
+      await local.pruneUnchangedReceiverEdits(trackSettingTimes: _settingTimes);
       if (_indexedRead && (await local.state())['mode'] == 'receive') {
         final window = await local.rows(
           'SELECT stage FROM cloud_read_state WHERE id=1',
@@ -624,8 +627,9 @@ class CloudSyncEngine {
       [kind, id],
     );
     if (pending.isEmpty ||
-        (pending.single['version'] as int) > (document['version'] as int))
+        (pending.single['version'] as int) > (document['version'] as int)) {
       return;
+    }
     final current = await local.read(kind, id);
     if (current == null) return;
     final incoming = await codec.decode(
@@ -739,6 +743,63 @@ class CloudSyncEngine {
     ],
   );
 
+  Future<Map<String, dynamic>> _keepNewerLocalSettings(
+    String kind,
+    String id,
+    Map<String, dynamic> incoming,
+  ) async {
+    final current = await local.read(kind, id);
+    if (current == null) return incoming;
+    final localTimes = await local.settingTimes(kind, id, media.deviceId);
+    final times = Map<String, dynamic>.from(
+      incoming['setting_times'] as Map? ?? {},
+    );
+    final row = kind == 'conversations' || kind == 'providers';
+    final key = incoming['key'] as String? ?? '';
+    Map<String, dynamic> fields(Map<String, dynamic> payload) => row
+        ? Map<String, dynamic>.from(payload['row'] as Map)
+        : cloudPreferenceFields(key, payload['json_value']);
+    final merged = fields(incoming), localFields = fields(current.payload);
+    for (final entry in localTimes.entries) {
+      final stamp = entry.value as Map;
+      final remote = times[entry.key] as Map? ?? {};
+      final at = (stamp['at_ms'] as num?)?.toInt() ?? 0;
+      final otherAt = (remote['at_ms'] as num?)?.toInt() ?? 0;
+      final newer =
+          at > otherAt ||
+          (at == otherAt &&
+              (stamp['device_id'] as String).compareTo(
+                    remote['device_id'] as String? ?? '',
+                  ) >
+                  0);
+      if (!newer) continue;
+      if (localFields.containsKey(entry.key)) {
+        merged[entry.key] = localFields[entry.key];
+      } else {
+        merged.remove(entry.key);
+      }
+      times[entry.key] = entry.value;
+    }
+    final payload = {...incoming, 'setting_times': times};
+    if (row) {
+      payload['row'] = merged;
+    } else {
+      final value = incoming['json_value'];
+      var objectValue = false;
+      if (value is String) {
+        try {
+          objectValue = jsonDecode(value) is Map;
+        } on FormatException {
+          /* Plain string. */
+        }
+      }
+      payload['json_value'] = objectValue
+          ? canonicalSettingJson(merged)
+          : merged['value'];
+    }
+    return payload;
+  }
+
   Future<void> _sendOutbox() async {
     while (true) {
       final pending = await local.rows(
@@ -777,33 +838,115 @@ class CloudSyncEngine {
         for (final result in response['results'] as List)
           result['op_id']: result,
       };
-      await local.db.transaction(() async {
-        for (final row in batch) {
-          final result = results[row['op_id']];
-          if (result == null) throw const CloudSyncFailure('服务器未确认完整批次，稍后安全重试');
-          final conflict = result['status'] == 'conflict';
-          final document = Map<String, dynamic>.from(
-            result[conflict ? 'current' : 'document'] as Map,
+      final mergedPayloads = <String, Map<String, dynamic>>{};
+      for (final row in batch) {
+        final result = results[row['op_id']];
+        if (result?['status'] == 'merged') {
+          mergedPayloads[row['op_id'] as String] = await codec.decode(
+            row['kind'] as String,
+            Map<String, dynamic>.from(result['document']['payload'] as Map),
           );
-          await _remember(
-            document,
-            (await local.rows(
-                  'SELECT local_json FROM cloud_outbox WHERE op_id=?',
-                  [row['op_id']],
-                )).single['local_json']
-                as String?,
-            conflict: result['conflict_id'] as String?,
-          );
-          await _acknowledge(document);
-          await local.execute(
-            'DELETE FROM cloud_dirty WHERE kind=? AND entity_id=? AND revision=?',
-            [row['kind'], row['entity_id'], row['revision']],
-          );
-          await local.execute('DELETE FROM cloud_outbox WHERE op_id=?', [
-            row['op_id'],
-          ]);
         }
-      });
+      }
+      final appliedKinds = <String>{};
+      await cloudLocalWrite(
+        () => local.db.transaction(() async {
+          for (final row in batch) {
+            final result = results[row['op_id']];
+            if (result == null) {
+              throw const CloudSyncFailure('服务器未确认完整批次，稍后安全重试');
+            }
+            final conflict = result['status'] == 'conflict';
+            final document = Map<String, dynamic>.from(
+              result[conflict ? 'current' : 'document'] as Map,
+            );
+            final frozen =
+                (await local.rows(
+                      'SELECT local_json FROM cloud_outbox WHERE op_id=?',
+                      [row['op_id']],
+                    )).single['local_json']
+                    as String?;
+            var rememberedLocal = frozen;
+            final merged = mergedPayloads[row['op_id']];
+            if (merged != null) {
+              final deletedDuringUpload =
+                  frozen != null &&
+                  await local.read(
+                        row['kind'] as String,
+                        row['entity_id'] as String,
+                      ) ==
+                      null;
+              final payload = await _keepNewerLocalSettings(
+                row['kind'] as String,
+                row['entity_id'] as String,
+                merged,
+              );
+              await local.execute(
+                'UPDATE cloud_client_state SET suspended=1 WHERE id=1',
+              );
+              try {
+                if (!deletedDuringUpload) {
+                  await local.apply(
+                    row['kind'] as String,
+                    row['entity_id'] as String,
+                    payload,
+                    false,
+                  );
+                  appliedKinds.add(row['kind'] as String);
+                }
+                // Compare against the receipt, not the overlay containing an
+                // edit made during upload, or receiver pruning loses that edit.
+                final baseline = Map<String, dynamic>.from(merged)
+                  ..remove('setting_times_version')
+                  ..remove('setting_times');
+                if (baseline['storage'] == 'preference') {
+                  baseline['json_value'] = projectCloudPreference(
+                    baseline['key'] as String,
+                    baseline['json_value'],
+                  );
+                }
+                rememberedLocal = CloudLocalDocument(
+                  row['kind'] as String,
+                  row['entity_id'] as String,
+                  baseline,
+                ).localJson;
+              } finally {
+                await local.execute(
+                  'UPDATE cloud_client_state SET suspended=0 WHERE id=1',
+                );
+              }
+            } else if (!conflict &&
+                (document['payload'] as Map)['setting_times_version'] == 1 &&
+                (await local.read(
+                      row['kind'] as String,
+                      row['entity_id'] as String,
+                    ))?.localJson ==
+                    frozen) {
+              // An identical receipt may already carry another device's clocks.
+              // Inherit them only while the frozen local value is still current.
+              await local.rememberSettingTimes(
+                row['kind'] as String,
+                row['entity_id'] as String,
+                Map<String, dynamic>.from(document['payload'] as Map),
+              );
+            }
+            await _remember(
+              document,
+              rememberedLocal,
+              conflict: result['conflict_id'] as String?,
+            );
+            await _acknowledge(document);
+            await local.execute(
+              'DELETE FROM cloud_dirty WHERE kind=? AND entity_id=? AND revision=?',
+              [row['kind'], row['entity_id'], row['revision']],
+            );
+            await local.execute('DELETE FROM cloud_outbox WHERE op_id=?', [
+              row['op_id'],
+            ]);
+          }
+        }),
+      );
+      if (appliedKinds.isNotEmpty) onApplied?.call(appliedKinds);
       _completed += batch.length;
       _confirmedMessages += batch
           .where((row) => row['kind'] == 'messages')
@@ -998,7 +1141,19 @@ class CloudSyncEngine {
         'base_version': known?['version'] ?? 0,
         'action': document == null ? 'delete' : 'put',
         'payload_version': 1,
-        'payload': wire?.payload ?? <String, dynamic>{},
+        'payload': {
+          ...?wire?.payload,
+          if (_settingTimes &&
+              document != null &&
+              const {
+                'conversations',
+                'providers',
+                'settings',
+              }.contains(kind)) ...{
+            'setting_times_version': 1,
+            'setting_times': await local.settingTimes(kind, id, media.deviceId),
+          },
+        },
         'blob_ids': <String>[],
         'media_ids': wire?.mediaIds ?? <String>[],
       };

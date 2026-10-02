@@ -30,22 +30,44 @@ import 'package:flutter/cupertino.dart';
 
 import 'tokens.dart';
 
-/// Fixed pre-Liquid-Glass Cupertino material recipes.
-/// Popup tint and saturation matrices are copied from Flutter's dialog.dart.
-/// Only the host clipping shape is supplied by AIcove. These are Flutter's
-/// public iOS approximations, not Apple's unpublished UIKit filter internals.
+/// Pre-Liquid-Glass Cupertino material, tuned toward Apple's thin bar
+/// materials instead of the thick alert popup. Saturation matrices are copied
+/// from Flutter's dialog.dart; blur range and tint opacity are AIcove's.
+/// These are approximations, not Apple's unpublished UIKit filter internals.
 abstract final class MoeFrostedMaterial {
-  static const double surfaceSigma = CupertinoPopupSurface.defaultBlurSigma;
+  /// Heaviest blur. Flutter's popup recipe uses 30, which reads as opaque.
+  static const double surfaceSigma = 20;
 
   static const double minStrength = 0.1;
+
+  static const double _minTintOpacity = 0.42;
+  static const double _maxTintOpacity = 0.72;
+
+  // Dark containers are #1C1C1C over a pure black page.
+  static const int _darkContainerLevel = 0x1C;
 
   static double blurSigmaForSetting(double sigma) =>
       surfaceSigma * (sigma / kMaxGlassBlurSigma).clamp(minStrength, 1.0);
 
-  static Color surfaceTint(Brightness brightness) =>
-      brightness == Brightness.dark
-      ? const Color(0xCC2D2D2D)
-      : const Color(0xCCF2F2F2);
+  /// Tint thins out with the blur, so lighter settings read through like
+  /// Apple's ultra-thin material while heavy stays readable.
+  static Color surfaceTint(
+    Brightness brightness, {
+    double sigma = surfaceSigma,
+  }) {
+    final t =
+        ((sigma / surfaceSigma).clamp(minStrength, 1.0) - minStrength) /
+        (1 - minStrength);
+    final alpha =
+        (255 * (_minTintOpacity + (_maxTintOpacity - _minTintOpacity) * t))
+            .round();
+    if (brightness == Brightness.light) {
+      return Color.fromARGB(alpha, 0xF8, 0xF8, 0xF8);
+    }
+    // Derived so the tint over the black page equals the solid container.
+    final level = (_darkContainerLevel * 255 / alpha).round();
+    return Color.fromARGB(alpha, level, level, level);
+  }
 
   static ui.ImageFilter surfaceFilter(
     Brightness brightness, {

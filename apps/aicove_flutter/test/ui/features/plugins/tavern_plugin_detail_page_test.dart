@@ -10,6 +10,7 @@ import 'package:aicove_flutter/src/features/agent_context/data/silly_tavern_pres
 import 'package:aicove_flutter/src/features/agent_context/providers/preset_recipe_provider.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/tavern_plugin_detail_page.dart';
 import 'package:aicove_flutter/src/ui/features/settings/pages/chat_plugin_settings_page.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 
 class _Picker extends FilePicker {
@@ -48,15 +49,11 @@ Future<void> settle(WidgetTester tester) async {
 }
 
 Future<void> tapTab(WidgetTester tester, String label) async {
-  final finder = find.text(label);
-  final tabScrollable = find.descendant(
-    of: find.byType(TabBar),
-    matching: find.byType(Scrollable),
+  final finder = find.descendant(
+    of: find.byWidgetPredicate((w) => w is MoeToggleBar),
+    matching: find.text(label),
   );
-  if (tabScrollable.evaluate().isNotEmpty) {
-    await tester.scrollUntilVisible(finder, 120, scrollable: tabScrollable);
-    await tester.pumpAndSettle();
-  }
+  await tester.ensureVisible(finder);
   await tester.tap(finder);
 }
 
@@ -167,7 +164,7 @@ void main() {
       var preset = (await tester.runAsync(store.list))!.single;
       expect(preset.enabledPrompts.any((p) => p.identifier == 'main'), isFalse);
 
-      await tapTab(tester, '正则 0');
+      await tapTab(tester, '正则');
       await settle(tester);
       picker.source =
           '{"id":"r","scriptName":"用户替换","findRegex":"猫","replaceString":"狗","placement":[1],"promptOnly":true}';
@@ -179,7 +176,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('regex-r')));
       await settle(tester);
 
-      await tapTab(tester, '世界书 0');
+      await tapTab(tester, '世界书');
       await settle(tester);
       picker.source =
           '{"name":"测试世界","entries":{"0":{"uid":0,"constant":true,"comment":"背景条目","content":"世界正文","position":4,"depth":0}}}';
@@ -187,6 +184,8 @@ void main() {
       await settle(tester);
       preset = (await tester.runAsync(store.list))!.single;
       final book = preset.worldBooks.single;
+      await tester.tap(find.text('测试世界'));
+      await settle(tester);
       expect(find.text('背景条目'), findsOneWidget);
       await tester.tap(find.byKey(ValueKey('world-${book.id}-0')));
       await settle(tester);
@@ -201,9 +200,14 @@ void main() {
       expect(tester.takeException(), isNull);
       await tester.pageBack();
       await settle(tester);
-      await tester.ensureVisible(find.byTooltip('设为默认预设'));
-      await tester.tap(find.byTooltip('设为默认预设'));
+      await tester.pageBack();
       await settle(tester);
+      await tester.ensureVisible(find.byTooltip('更多操作'));
+      await tester.tap(find.byTooltip('更多操作'));
+      await settle(tester);
+      await tester.tap(find.text('设为默认'));
+      await settle(tester);
+      expect(find.text('默认'), findsOneWidget);
       expect(
         (await tester.runAsync(reopened.loadPluginSettings))!.defaultPresetId,
         preset.id,

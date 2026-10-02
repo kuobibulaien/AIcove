@@ -1,4 +1,5 @@
 import '../../../core/sync/cloud_local_write.dart';
+import '../../../core/sync/cloud_setting_policy.dart';
 import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
@@ -41,7 +42,7 @@ class AutoReplyTriggerStorage {
   Future<void> saveTriggers(List<AutoReplyTrigger> triggers) async {
     final prefs = await SharedPreferences.getInstance();
     final payload = jsonEncode(triggers.map((e) => e.toJson()).toList());
-    await cloudLocalWrite(() => prefs.setString(_triggerStoreKey, payload));
+    await saveCloudPreference(prefs, _triggerStoreKey, payload);
   }
 
   Future<List<AutoReplyTriggerLog>> loadLogs() async {

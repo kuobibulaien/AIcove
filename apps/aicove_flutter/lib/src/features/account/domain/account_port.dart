@@ -70,6 +70,10 @@ abstract interface class AccountStoragePort {
 abstract interface class AccountRemotePort {
   Future<AuthResponse> login(String server, String username, String password);
   Future<UserModel> currentUser(String server, String token);
+
+  /// Exchanges a still-valid token for a fresh one. Returns null when the
+  /// server predates token renewal, so the current token stays in use.
+  Future<AuthResponse?> renew(String server, String token);
 }
 
 abstract interface class AccountPort {

@@ -28,6 +28,7 @@ class _AgentApiStreamSupport {
     ProviderChatRequestOptions? requestOptions,
     void Function(String delta)? onTextDelta,
     void Function()? onToolCallsDetected,
+    void Function(List<ToolCall> Function() snapshot)? onToolCallProgress,
     TraceLogger? trace,
     String? turnId,
     int? roundIndex,
@@ -242,6 +243,7 @@ class _AgentApiStreamSupport {
         if (rawCalls is List) {
           if (rawCalls.isEmpty) return;
           toolAggregator.consumeToolCalls(rawCalls);
+          onToolCallProgress?.call(toolAggregator.build);
           markToolCallsObserved();
         }
       }
@@ -249,6 +251,7 @@ class _AgentApiStreamSupport {
       void consumeLegacyFunctionCall(dynamic rawCall) {
         if (rawCall is Map) {
           toolAggregator.consumeLegacyFunctionCall(rawCall);
+          onToolCallProgress?.call(toolAggregator.build);
           markToolCallsObserved();
         }
       }
@@ -286,6 +289,7 @@ class _AgentApiStreamSupport {
               thoughtSignature: part['thoughtSignature']?.toString() ??
                   part['thought_signature']?.toString(),
             );
+            onToolCallProgress?.call(geminiToolAggregator.buildPartial);
             markToolCallsObserved();
           }
         }
@@ -364,6 +368,7 @@ class _AgentApiStreamSupport {
               thoughtSignature: evt['thoughtSignature']?.toString() ??
                   evt['thought_signature']?.toString(),
             );
+            onToolCallProgress?.call(geminiToolAggregator.buildPartial);
             markToolCallsObserved();
           }
 
@@ -959,7 +964,9 @@ class _StreamingToolCallState {
       final map = Map<String, dynamic>.from(function.cast<String, dynamic>());
       final namePart = map['name']?.toString() ?? '';
       if (namePart.isNotEmpty) {
-        _name = _name.isEmpty ? namePart : '$_name$namePart';
+        if (_name != namePart) {
+          _name = _name.isEmpty ? namePart : '$_name$namePart';
+        }
       }
       final argsPart = map['arguments']?.toString() ?? '';
       if (argsPart.isNotEmpty) {
@@ -996,6 +1003,7 @@ class _StreamingToolCallState {
       id: _id.isNotEmpty ? _id : 'stream_tool_call_$fallbackIndex',
       name: _name,
       arguments: _parseArguments(_arguments.toString()),
+      rawArguments: _arguments.toString(),
     );
   }
 
@@ -1122,18 +1130,46 @@ class _AnthropicStreamingToolUseState {
 class _GeminiStreamingFunctionCallAggregator {
   final List<ToolCall> _calls = <ToolCall>[];
   final Map<String, int> _callIndexBySignature = <String, int>{};
+  final Map<int, _GeminiPartialFunctionCall> _partialCalls = {};
+  final Map<String, int> _partialIndexById = {};
+  int? _activePartialIndex;
 
   void consumeFunctionCall(
     Map<String, dynamic> rawCall, {
     String? thoughtSignature,
   }) {
-    final name = rawCall['name']?.toString().trim() ??
+    final name =
+        rawCall['name']?.toString().trim() ??
         rawCall['functionName']?.toString().trim() ??
         '';
+    final id = rawCall['id']?.toString().trim() ?? '';
+    final knownPartial = id.isEmpty ? null : _partialIndexById[id];
+    if (rawCall['willContinue'] == true ||
+        rawCall['partialArgs'] is List ||
+        knownPartial != null ||
+        (name.isEmpty && _activePartialIndex != null)) {
+      var index = knownPartial ?? _activePartialIndex;
+      if (name.isNotEmpty &&
+          (index == null ||
+              _partialCalls[index]!.name != name ||
+              (id.isNotEmpty && _partialCalls[index]!.id != id))) {
+        index = _calls.length;
+        _calls.add(ToolCall(id: id, name: name, arguments: const {}));
+        _partialCalls[index] = _GeminiPartialFunctionCall(
+          name,
+          id.isEmpty ? 'gemini_tool_call_${index + 1}' : id,
+        );
+        if (id.isNotEmpty) _partialIndexById[id] = index;
+      }
+      if (index == null) return;
+      _partialCalls[index]!.consume(rawCall, thoughtSignature);
+      _activePartialIndex = rawCall['willContinue'] == true ? index : null;
+      return;
+    }
+    _activePartialIndex = null;
     if (name.isEmpty) return;
 
     final arguments = _parseArguments(rawCall['args'] ?? rawCall['arguments']);
-    final id = rawCall['id']?.toString().trim() ?? '';
     final callKey = '$name:${jsonEncode(arguments)}';
     final existingIndex = _callIndexBySignature[callKey];
     if (existingIndex != null) {
@@ -1143,6 +1179,7 @@ class _GeminiStreamingFunctionCallAggregator {
         name: existing.name,
         arguments: existing.arguments,
         thoughtSignature: existing.thoughtSignature ?? thoughtSignature,
+        rawArguments: existing.rawArguments,
       );
       return;
     }
@@ -1154,20 +1191,29 @@ class _GeminiStreamingFunctionCallAggregator {
         name: name,
         arguments: arguments,
         thoughtSignature: thoughtSignature,
+        rawArguments: (rawCall['args'] ?? rawCall['arguments']) is String
+            ? (rawCall['args'] ?? rawCall['arguments']) as String
+            : null,
       ),
     );
   }
 
-  List<ToolCall> build() => List<ToolCall>.from(_calls);
+  List<ToolCall> buildPartial() => [
+    for (final call in _partialCalls.values)
+      if (call.hasPartialArgs) call.build(),
+  ];
+
+  List<ToolCall> build() => [
+    for (var i = 0; i < _calls.length; i++)
+      _partialCalls[i]?.build() ?? _calls[i],
+  ];
 
   Map<String, dynamic> _parseArguments(dynamic rawArgs) {
     if (rawArgs is Map<String, dynamic>) {
       return Map<String, dynamic>.from(rawArgs);
     }
     if (rawArgs is Map) {
-      return rawArgs.map(
-        (key, value) => MapEntry(key.toString(), value),
-      );
+      return rawArgs.map((key, value) => MapEntry(key.toString(), value));
     }
     if (rawArgs is String && rawArgs.trim().isNotEmpty) {
       try {
@@ -1176,15 +1222,63 @@ class _GeminiStreamingFunctionCallAggregator {
           return decoded;
         }
         if (decoded is Map) {
-          return decoded.map(
-            (key, value) => MapEntry(key.toString(), value),
-          );
+          return decoded.map((key, value) => MapEntry(key.toString(), value));
         }
       } catch (_) {
         return <String, dynamic>{'_raw': rawArgs};
       }
     }
     return <String, dynamic>{};
+  }
+}
+
+/// Buffers Gemini's named opening and anonymous argument fragments until EOF.
+class _GeminiPartialFunctionCall {
+  _GeminiPartialFunctionCall(this.name, this.id);
+  final String name;
+  final String id;
+  final Map<String, dynamic> arguments = {};
+  final StringBuffer raw = StringBuffer();
+  String? signature;
+  bool hasPartialArgs = false;
+
+  void consume(Map<String, dynamic> call, String? thoughtSignature) {
+    signature ??= thoughtSignature;
+    final args = call['args'];
+    if (args is Map) arguments.addAll(Map<String, dynamic>.from(args));
+    if (args is String) raw.write(args);
+    final fragments = call['partialArgs'];
+    if (fragments is! List) return;
+    hasPartialArgs = true;
+    for (final fragment in fragments.whereType<Map>()) {
+      final path = fragment['jsonPath'];
+      final value = fragment['stringValue'];
+      // B1 only needs the complete top-level content string. Empty markers
+      // finish the argument without adding text or replacing prior fragments.
+      if (path == r'$.content' && value is String) {
+        arguments['content'] = '${arguments['content'] ?? ''}$value';
+      }
+    }
+  }
+
+  ToolCall build() {
+    if (raw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw.toString());
+        if (decoded is Map) {
+          arguments.addAll(Map<String, dynamic>.from(decoded));
+        }
+      } catch (_) {
+        /* The transport decoder recovers truncated JSON. */
+      }
+    }
+    return ToolCall(
+      id: id,
+      name: name,
+      arguments: Map.of(arguments),
+      rawArguments: raw.isEmpty ? null : raw.toString(),
+      thoughtSignature: signature,
+    );
   }
 }
 

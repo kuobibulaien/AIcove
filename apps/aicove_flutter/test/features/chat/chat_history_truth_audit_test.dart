@@ -148,11 +148,10 @@ void main() {
         .read(conversationRepositoryProvider)
         .getById('a');
     expect(persisted!.contextStartMessageId, 'a0');
-    final context = await store().loadCanonicalContextMessages('a');
-    expect(
-      context.map((m) => m.content),
-      isNot(contains('旧话题用户')),
-      reason: '有显式边界但marker失效时应拒绝或显式修复，不得当无边界发送',
+    await expectLater(
+      store().loadCanonicalContextMessages('a'),
+      throwsStateError,
+      reason: '有显式边界但marker失效时应拒绝，不得当无边界发送',
     );
   });
 

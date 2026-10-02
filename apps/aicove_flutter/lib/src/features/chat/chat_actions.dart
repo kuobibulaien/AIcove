@@ -42,6 +42,7 @@ import 'services/chat_types.dart'
         isProviderRefreshTimingError;
 import 'services/chat_tts_handler.dart';
 import 'domain/message.dart';
+import 'domain/chat_display_policy.dart';
 import 'domain/conversation.dart';
 import '../settings/app_settings.dart';
 import 'conversation_providers.dart';
@@ -61,7 +62,17 @@ import '../observability/trace_models.dart';
 import '../observability/frontend_diagnostics_port.dart';
 import '../observability/frontend_diagnostics_provider.dart';
 import '../observability/trace_store.dart';
+import '../content_tags/domain/content_tag_scanner.dart';
+import '../content_tags/domain/content_tag_spec.dart';
+import '../content_tags/domain/tag_presentation.dart';
+import '../agent_context/domain/preset_tag_mapping.dart'
+    show builtinPresetTagMapping;
+import '../agent_context/providers/preset_recipe_provider.dart'
+    show tagPresentationForRecipeProvider;
+import '../plugins/image/image_plugin.dart' show ImagePlugin;
 import '../plugins/domain/plugin.dart' show PluginEvent;
+import '../plugins/plugin_content_tags.dart';
+import '../dialogue_options/domain/dialogue_options.dart';
 
 // 重新导出公共类型，保持向后兼容
 export 'chat_providers.dart';
@@ -309,6 +320,33 @@ class ChatActions {
     _generationInterruptCleanups[convId] = cleanup;
   }
 
+  /// 流式分段配置取会话显示策略（ADR0047）：文档模式强制不分段。
+  MessageFormatConfig _streamFormatConfig(String convId, AppSettings settings) {
+    return ChatDisplayPolicy.resolve(
+      formatConfig: settings.messageFormatConfig,
+      globalStyle: settings.chatDisplayStyle,
+      conversationStyle:
+          _ref.read(conversationSnapshotByIdProvider(convId))?.chatDisplayStyle,
+    ).effectiveFormatConfig;
+  }
+
+  /// 流式分段用的标签呈现映射（ADR0047），与聊天列表同源（聊天页已在监听，
+  /// 通常已有缓存）。生成不能被它卡住：未就绪时最多等 1 秒，失败或超时退回内置常用名。
+  Future<TagPresentationMap> _streamTagPresentation(String convId) async {
+    final recipeId =
+        _ref.read(conversationSnapshotByIdProvider(convId))?.recipeId;
+    final provider = tagPresentationForRecipeProvider(recipeId);
+    final cached = _ref.read(provider).valueOrNull;
+    if (cached != null) return cached;
+    try {
+      return await _ref
+          .read(provider.future)
+          .timeout(const Duration(seconds: 1));
+    } catch (_) {
+      return builtinPresetTagMapping.presentationMap;
+    }
+  }
+
   bool _isGenerationCurrent(String convId, int runId) =>
       _activeGenerations[convId]?.id == runId;
 
@@ -523,9 +561,11 @@ class ChatActions {
         for (final message in pendingStreamTtsMessages) message.id,
       },
     );
-    final finalMessagePreview = buildResult.lastMessageText.trim().isNotEmpty
-        ? buildResult.lastMessageText
-        : finalTimelineMessages.last.displayText;
+    final finalMessagePreview = stripDialogueOptions(
+      buildResult.lastMessageText.trim().isNotEmpty
+          ? buildResult.lastMessageText
+          : finalTimelineMessages.last.displayText,
+    );
     await _historyPort.appendAssistantRawMessage(
       conversationId: convId,
       userMessageId: userMsgId,
@@ -891,7 +931,8 @@ class ChatActions {
       convId: convId,
       generationSeq: runId,
       diagnosticContext: _diagnostics.forTurn(traceContext?.turnId),
-      formatConfig: initialSettings.messageFormatConfig,
+      formatConfig: _streamFormatConfig(convId, initialSettings),
+      tagPresentation: await _streamTagPresentation(convId),
       enableTtsPlaceholders: initialSettings.ttsEnabled,
       segmentDelay: Duration(
         milliseconds:
@@ -933,7 +974,8 @@ class ChatActions {
               convId: convId,
               generationSeq: runId,
               diagnosticContext: _diagnostics.forTurn(traceContext?.turnId),
-              formatConfig: settings.messageFormatConfig,
+              formatConfig: _streamFormatConfig(convId, settings),
+              tagPresentation: await _streamTagPresentation(convId),
               enableTtsPlaceholders: settings.ttsEnabled,
               segmentDelay: Duration(
                 milliseconds:
@@ -972,7 +1014,12 @@ class ChatActions {
               convId: convId,
               modelsToTry: modelsToTry,
               buildConfig: buildConfig,
-              execute: execute,
+              execute: (config) {
+                streamDelivery?.setTransportStreaming(
+                  config.presetScript?.hasContentTransport ?? false,
+                );
+                return execute(config);
+              },
               settings: settings,
             ),
             prepareStreaming: (_) async {},

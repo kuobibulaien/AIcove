@@ -79,6 +79,12 @@ class ApiClient {
     return response.data as Map<String, dynamic>;
   }
 
+  /// 用当前有效 Token 换取新 Token
+  Future<Map<String, dynamic>> refreshToken() async {
+    final response = await _dio.post('/api/v1/auth/refresh');
+    return response.data as Map<String, dynamic>;
+  }
+
   /// 获取当前用户信息
   Future<Map<String, dynamic>> getCurrentUser() async {
     final response = await _dio.get('/api/v1/auth/me');

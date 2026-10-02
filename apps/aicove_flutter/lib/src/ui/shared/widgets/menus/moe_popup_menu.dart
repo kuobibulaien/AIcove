@@ -53,6 +53,8 @@ class MoePopupMenu {
   /// [targetBox] 目标元素的 RenderBox，菜单会显示在其上方或下方
   /// [globalPosition] 实际点击或长按位置；未提供时锚定目标控件边缘。
   /// [items] 菜单项列表
+  /// [maxWidth] 竖向菜单按文字内容自适应宽度的上限（不小于默认 180，
+  /// 且不超出屏幕安全区）；为空时保持固定 180。
   static Future<void> show(
     BuildContext context, {
     required RenderBox targetBox,
@@ -60,6 +62,7 @@ class MoePopupMenu {
     required List<MoePopupMenuItem> items,
     bool vertical = true,
     bool alignToEnd = false,
+    double? maxWidth,
   }) async {
     if (items.isEmpty || !targetBox.attached) return;
     if (vertical) {
@@ -93,6 +96,7 @@ class MoePopupMenu {
                   0,
                 ),
           alignToEnd: alignToEnd,
+          maxWidth: maxWidth,
         ),
         transitionBuilder: (context, animation, secondaryAnimation, child) =>
             child,
@@ -421,11 +425,34 @@ class _VerticalMenu extends StatelessWidget {
     required this.items,
     required this.anchor,
     required this.alignToEnd,
+    this.maxWidth,
   });
   final Animation<double> animation;
   final List<MoePopupMenuItem> items;
   final Rect anchor;
   final bool alignToEnd;
+  final double? maxWidth;
+
+  static const double _defaultWidth = 180;
+  static const TextStyle _labelStyle = TextStyle(fontSize: 14);
+
+  /// 最长一行标签不换行所需的菜单宽度（含列表与菜单项内边距、勾选列）。
+  double _contentWidth(BuildContext context) {
+    final style = DefaultTextStyle.of(context).style.merge(_labelStyle);
+    final scaler = MediaQuery.textScalerOf(context);
+    var widest = 0.0;
+    for (final item in items) {
+      final painter = TextPainter(
+        text: TextSpan(text: item.label, style: style),
+        textDirection: Directionality.of(context),
+        textScaler: scaler,
+      )..layout();
+      widest = math.max(widest, painter.width);
+      painter.dispose();
+    }
+    final checkColumn = items.any((item) => item.checked != null) ? 24 : 0;
+    return (widest + 4 * 2 + 10 * 2 + checkColumn).ceilToDouble() + 1;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -450,7 +477,15 @@ class _VerticalMenu extends StatelessWidget {
                   8,
             ),
           );
-          final width = math.min(bounds.width, 180.0);
+          final limit = maxWidth;
+          final width = math.min(
+            bounds.width,
+            limit == null
+                ? _defaultWidth
+                : _contentWidth(context)
+                      .clamp(_defaultWidth, math.max(_defaultWidth, limit))
+                      .toDouble(),
+          );
           final x = (alignToEnd ? anchor.right - width : anchor.left).clamp(
             bounds.left,
             bounds.right - width,
@@ -557,9 +592,7 @@ class _VerticalMenu extends StatelessWidget {
                                             Expanded(
                                               child: Text(
                                                 items[index].label,
-                                                style: const TextStyle(
-                                                  fontSize: 14,
-                                                ),
+                                                style: _labelStyle,
                                               ),
                                             ),
                                           ],

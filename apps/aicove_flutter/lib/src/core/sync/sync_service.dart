@@ -199,6 +199,7 @@ class SyncService {
       defaultProvider: Value(data['default_provider'] as String?),
       sessionProvider: Value(data['session_provider'] as String?),
       thinkingLevels: Value(data['thinking_levels'] as String?),
+      chatDisplayStyle: Value(data['chat_display_style'] as String?),
       isPinned: Value(data['is_pinned'] as bool? ?? false),
       isFavorite: Value(data['is_favorite'] as bool? ?? false),
       isMuted: Value(data['is_muted'] as bool? ?? false),

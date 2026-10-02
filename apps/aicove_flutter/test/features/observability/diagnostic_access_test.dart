@@ -26,7 +26,7 @@ void main() {
         },
         'codeLocations': [
           'package:app/main.dart:1:2',
-          '/Users/private/file.dart:2'
+          '/home/kuobibulaien/file.dart:2'
         ],
       },
     }, 'app_2026-09-10.jsonl')!;

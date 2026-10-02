@@ -105,9 +105,12 @@ class _MoeFloatingSurfaceState extends State<MoeFloatingSurface> {
     final surfaceMaterial = Material(
       color: isBlurEnabled
           ? (isFrosted
-                ? MoeFrostedMaterial.surfaceTint(brightness)
+                ? MoeFrostedMaterial.surfaceTint(
+                    brightness,
+                    sigma: effectiveSigma,
+                  )
                 : colors.glassTintForSigma(effectiveSigma, baseline: baseline))
-          : (solidColor ?? colors.surface).withValues(alpha: 1),
+          : (solidColor ?? colors.componentBackground).withValues(alpha: 1),
       shape: RoundedRectangleBorder(
         borderRadius: effectiveRadius,
         side:

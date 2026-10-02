@@ -9,11 +9,13 @@ library;
 import 'package:flutter/material.dart';
 import '../../core/api/thinking/thinking_level.dart';
 import '../../core/utils/message_formatter.dart';
+import '../chat/domain/chat_display_policy.dart';
 import '../../core/utils/token_estimator.dart';
 import '../../core/prompts/prompt_builtin_defaults.g.dart';
 import '../../ui/theme/tokens.dart';
 
 export '../../core/api/thinking/thinking_level.dart' show ThinkingLevel;
+export '../chat/domain/chat_display_policy.dart' show ChatDisplayStyle;
 
 /// 模型类型枚举
 enum ModelType {
@@ -1017,9 +1019,6 @@ enum WindowControlButtonSide {
 
 /// 应用设置数据类
 class AppSettings {
-  final bool smartReplyEnabled;
-  final String smartReplyModel;
-
   /// 压缩 Agent 使用的模型；空表示跟随默认聊天模型。
   final String compactionModel;
 
@@ -1107,9 +1106,10 @@ class AppSettings {
   /// 0 表示关闭延迟。
   final double streamSegmentDelaySeconds;
 
+  /// 新会话默认聊天样式；会话可单独覆盖（ADR0047）。
+  final ChatDisplayStyle chatDisplayStyle;
+
   const AppSettings({
-    this.smartReplyEnabled = false,
-    this.smartReplyModel = '',
     this.compactionModel = '',
     this.memoryModel = '',
     required this.ttsEnabled,
@@ -1153,6 +1153,7 @@ class AppSettings {
     this.enhancedDialogueSettings = const EnhancedDialogueSettings(),
     this.callFlowSettings = const CallFlowSettings(),
     this.streamSegmentDelaySeconds = 0,
+    this.chatDisplayStyle = ChatDisplayStyle.bubble,
     this.userAvatar,
     this.userName,
   });
@@ -1175,8 +1176,6 @@ class AppSettings {
       : interfaceSkin.chatBackground;
 
   AppSettings copyWith({
-    bool? smartReplyEnabled,
-    String? smartReplyModel,
     String? compactionModel,
     String? memoryModel,
     bool? ttsEnabled,
@@ -1220,11 +1219,10 @@ class AppSettings {
     EnhancedDialogueSettings? enhancedDialogueSettings,
     CallFlowSettings? callFlowSettings,
     double? streamSegmentDelaySeconds,
+    ChatDisplayStyle? chatDisplayStyle,
     String? userAvatar,
     String? userName,
   }) => AppSettings(
-    smartReplyEnabled: smartReplyEnabled ?? this.smartReplyEnabled,
-    smartReplyModel: smartReplyModel ?? this.smartReplyModel,
     compactionModel: compactionModel ?? this.compactionModel,
     memoryModel: memoryModel ?? this.memoryModel,
     ttsEnabled: ttsEnabled ?? this.ttsEnabled,
@@ -1274,6 +1272,7 @@ class AppSettings {
     callFlowSettings: callFlowSettings ?? this.callFlowSettings,
     streamSegmentDelaySeconds:
         streamSegmentDelaySeconds ?? this.streamSegmentDelaySeconds,
+    chatDisplayStyle: chatDisplayStyle ?? this.chatDisplayStyle,
     userAvatar: userAvatar ?? this.userAvatar,
     userName: userName ?? this.userName,
   );

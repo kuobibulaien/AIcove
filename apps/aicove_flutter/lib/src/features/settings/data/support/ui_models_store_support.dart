@@ -220,6 +220,7 @@ Map<String, dynamic> buildDefaultUiModelsStoreData() => <String, dynamic>{
   'message_chunking_enabled': false,
   'message_format_config': null,
   'stream_segment_delay_seconds': 0.0,
+  'chat_display_style': 'bubble',
   'text_scale_factor': 1.0,
   'ui_scale_factor': 1.0,
   'windows_window_controls_side': WindowControlButtonSide.left.value,

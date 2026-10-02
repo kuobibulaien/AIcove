@@ -386,7 +386,7 @@ void main() {
   });
 
   group('酒馆插件真实 store', () {
-    testWidgets('主页与三级详情三个 tab 同宽', (tester) async {
+    testWidgets('主页与预设详情四个分区同宽', (tester) async {
       final temp = (await tester.runAsync(
         () => Directory.systemTemp.createTemp('tavern_layout_'),
       ))!;
@@ -407,8 +407,13 @@ void main() {
       await tester.tap(find.text('布局预设'));
       await _settle(tester);
       expect(tester.takeException(), isNull);
-      for (final tab in ['预设', '正则', '世界书']) {
-        await tester.tap(find.textContaining(tab).first);
+      for (final tab in ['提示词', '正则', '世界书', '标签']) {
+        await tester.tap(
+          find.descendant(
+            of: find.byWidgetPredicate((w) => w is MoeToggleBar),
+            matching: find.text(tab),
+          ),
+        );
         await _settle(tester);
         expect(tester.takeException(), isNull);
         _expectUnifiedSurfaceWidth(tester);

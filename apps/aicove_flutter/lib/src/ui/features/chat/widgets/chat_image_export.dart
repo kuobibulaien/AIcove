@@ -25,6 +25,7 @@ Future<Uint8List> renderChatImage({
   ImageProvider? wallpaper,
   double wallpaperMaskOpacity = 0.8,
   double wallpaperBlurSigma = 0,
+  bool documentStyle = false,
 }) async {
   if (messages.isEmpty) throw StateError('请先选择消息');
   final container = ProviderScope.containerOf(context, listen: false);
@@ -168,6 +169,7 @@ Future<Uint8List> renderChatImage({
                                       ? null
                                       : title,
                                   showName: false,
+                                  documentStyle: documentStyle,
                                 ),
                               ),
                           ],

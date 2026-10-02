@@ -370,6 +370,17 @@ void main() {
     );
   });
 
+  test('边界原文缺失时阻止发送，不请求摘要模型', () async {
+    await owner('a', start: 'missing');
+    await message('m1');
+    await expectLater(
+      service.manualSummary('a', 'missing', []),
+      throwsA(isA<ContextCompactionException>()),
+    );
+    expect(summary.seen, isNull);
+    expect(compacted, isEmpty);
+  });
+
   test('来源编辑后旧摘要不再注入，必须先撤销再整理', () async {
     await owner('a');
     await message('m1');

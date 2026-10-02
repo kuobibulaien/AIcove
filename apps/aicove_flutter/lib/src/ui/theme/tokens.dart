@@ -68,7 +68,9 @@ const moeFocus = Color(0xFF3390EC); // 聚焦/按钮颜色
 const moePrimaryDark = Color(0xFF6BA1D8); // 主色调蓝色（暗色版，稍微降低亮度）
 const moeSurfaceDark = Color(0xFF000000); // 表面背景色（纯黑）
 const moeSurfaceAltDark = moeSurfaceDark; // 次级表面沿用统一基础色
-const moePanelDark = moeSurfaceDark; // 容器背景（卡片/聊天面板）
+// 暗色容器必须比页面底色浅一档，纯色材质下才能与纯黑背景分层；
+// 模糊材质暗色底色按此值反推，叠在纯黑上与实色容器一致。
+const moePanelDark = Color(0xFF1C1C1C); // 容器背景（卡片/聊天面板）
 const moeBgMainDark = moeSurfaceDark; // 主背景色
 const moeTextDark = Color(0xFFE5E8EB); // 主文本颜色（浅色文字）
 const moeTextSecondaryDark = Color(0xFFADB5BD); // 次要文本颜色
@@ -161,10 +163,10 @@ final moeTalkColorSchemeDark = ColorScheme.fromSeed(
   seedColor: moePrimaryDark,
   brightness: Brightness.dark,
   primary: moePrimaryDark,
-  surface: moePanelDark,
-  surfaceDim: moePanelDark,
+  surface: moeSurfaceDark,
+  surfaceDim: moeSurfaceDark,
   surfaceBright: moePanelDark,
-  surfaceContainerLowest: moePanelDark,
+  surfaceContainerLowest: moeSurfaceDark,
   surfaceContainerLow: moePanelDark,
   surfaceContainer: moePanelDark,
   surfaceContainerHigh: moePanelDark,

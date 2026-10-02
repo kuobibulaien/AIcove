@@ -146,7 +146,11 @@ class ContextManager implements ManualCompactionPort, ConversationContextPort {
         final again = await store.manualFor(ownerId, boundaryId);
         if (again != null) return again;
         final all = await _loadThrough(ownerId, boundaryId);
-        if (all == null) return null;
+        if (all == null) {
+          throw const ContextCompactionException(
+            '话题边界已失效，请先恢复或撤销上次压缩，本轮未发送。',
+          );
+        }
         final eligible = all
             .where(
               (m) =>

@@ -7,6 +7,7 @@ import 'package:aicove_flutter/src/features/agent_context/domain/tavern_compatib
 import 'package:aicove_flutter/src/features/agent_context/providers/preset_recipe_provider.dart';
 import 'package:aicove_flutter/src/ui/features/character/widgets/character_plugins_section.dart';
 import 'package:aicove_flutter/src/ui/features/settings/pages/chat_plugin_settings_page.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 
 void main() {
@@ -16,43 +17,55 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
   });
 
-  testWidgets('七项插件按序渲染，允许后展开绑定行', (tester) async {
+  testWidgets('已开启插件各占一个容器，按序展开绑定行', (tester) async {
     await tester.pumpWidget(const _TestApp());
     await tester.pumpAndSettle();
 
-    for (final label in ['音色', '生图', '记忆', '酒馆', '表情包', '主动关怀', '时间感知']) {
+    // 主动关怀全局未开启，不算已开启：六个插件容器 + 全部插件容器
+    final labels = ['音色', '生图', '记忆', '酒馆', '表情包', '时间感知'];
+    for (final label in labels) {
       expect(find.text(label), findsOneWidget, reason: label);
     }
+    expect(find.text('主动关怀'), findsNothing);
+    expect(find.byType(MoeSettingsGroup), findsNWidgets(labels.length + 1));
+    final ys = [
+      for (final label in labels) tester.getTopLeft(find.text(label)).dy,
+    ];
+    expect(ys, [...ys]..sort());
 
-    // 默认全部允许：音色行下展开绑定预设
     expect(find.text('音色配置包'), findsOneWidget);
     expect(find.text('跟随默认音色配置包'), findsOneWidget);
-    // 生图/记忆同样展开绑定行
     expect(find.text('绘图配置包'), findsOneWidget);
     expect(find.text('角色记忆文档'), findsOneWidget);
-    // 酒馆行直接显示绑定预设
-    expect(find.text('跟随插件默认预设'), findsOneWidget);
+    expect(find.text('跟随默认酒馆预设'), findsOneWidget);
+    expect(find.byIcon(Icons.record_voice_over_outlined), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('关闭插件开关后收起绑定行并回调', (tester) async {
+  testWidgets('关闭后容器消失，在全部插件里重新开启后恢复', (tester) async {
     await tester.pumpWidget(const _TestApp());
     await tester.pumpAndSettle();
 
     final host = tester.state<_TestAppState>(find.byType(_TestApp));
 
-    // 关闭音色开关：行仍在，绑定行消失
     await tester.tap(find.text('音色'));
     await tester.pumpAndSettle();
-
     expect(host.selectedPluginIds.contains('tts'), isFalse);
+    expect(find.text('音色'), findsNothing);
     expect(find.text('音色配置包'), findsNothing);
 
-    // 重新打开：绑定行恢复
-    await tester.tap(find.text('音色'));
+    await tester.tap(find.text('全部插件'));
     await tester.pumpAndSettle();
+    final ttsRow = find.byKey(const ValueKey('all-plugins-tts'));
+    await tester.ensureVisible(ttsRow);
+    await tester.tap(ttsRow);
+    await tester.pumpAndSettle();
+
     expect(host.selectedPluginIds.contains('tts'), isTrue);
     expect(find.text('音色配置包'), findsOneWidget);
+    // 全部插件列表与已开启容器里各有一处
+    expect(find.text('音色'), findsNWidgets(2));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('酒馆行点击打开预设选择弹窗', (tester) async {
@@ -63,7 +76,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('选择酒馆预设'), findsOneWidget);
-    expect(find.text('跟随插件默认预设'), findsWidgets);
+    expect(find.text('跟随默认酒馆预设'), findsWidgets);
     await tester.tap(find.text('通用剧情 v2'));
     await tester.pumpAndSettle();
 

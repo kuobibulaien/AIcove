@@ -2,6 +2,7 @@ import hashlib
 import os
 import tempfile
 import unittest
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,7 +12,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from auth import create_access_token, get_password_hash, router as auth_router
+from auth import create_access_token, decode_token, get_password_hash, router as auth_router
 from database import Base, get_db
 from models import User
 from sync_v3.api import router
@@ -75,6 +76,42 @@ class SyncHttpTest(unittest.TestCase):
         notification = self.client.get(self.base + '/wait', headers=self.headers,
                                        params={'epoch': self.epoch, 'after': 0, 'timeout': 0}).json()
         self.assertEqual(notification['cursor'], 1)
+
+    def test_persistent_login_works_without_refresh_and_disabled_account_is_rejected(self):
+        with self.sessions.begin() as db:
+            db.get(User, 1).password_hash = get_password_hash('fixture-password')
+        with patch('auth.PERSISTENT_SESSION_USER_IDS', frozenset({1})):
+            response = self.client.post('/api/v1/auth/login', json={
+                'username': 'user1', 'password': 'fixture-password'})
+            self.assertEqual(response.status_code, 200)
+            token = response.json()['access_token']
+            self.assertNotIn('exp', decode_token(token))
+            headers = {'Authorization': 'Bearer ' + token}
+            # A far-future decode does not require a renewal endpoint.
+            with patch('jose.jwt.timegm', return_value=4102444800):
+                self.assertEqual(self.client.get(self.base + '/status', headers=headers).status_code, 200)
+            renewed = self.client.post('/api/v1/auth/refresh', headers=headers)
+            self.assertEqual(renewed.status_code, 200)
+            self.assertEqual(renewed.json()['access_token'], token)
+        with self.sessions.begin() as db:
+            db.get(User, 1).is_active = False
+        self.assertEqual(self.client.get(self.base + '/status', headers=headers).status_code, 403)
+        self.assertEqual(self.client.get('/api/v1/auth/me', headers=headers).status_code, 403)
+
+    def test_refresh_renews_valid_token_and_rejects_expired_or_disabled(self):
+        renewed = self.client.post('/api/v1/auth/refresh', headers=self.headers)
+        self.assertEqual(renewed.status_code, 200, renewed.text)
+        self.assertEqual(renewed.json()['user']['id'], 1)
+        token = renewed.json()['access_token']
+        self.assertEqual(self.client.get(self.base + '/status',
+                                         headers={'Authorization': 'Bearer ' + token}).status_code, 200)
+        expired = create_access_token({'sub': '1'}, timedelta(seconds=-1))
+        self.assertEqual(self.client.post('/api/v1/auth/refresh',
+                                          headers={'Authorization': 'Bearer ' + expired}).status_code, 401)
+        self.assertIn(self.client.post('/api/v1/auth/refresh').status_code, (401, 403))
+        with self.sessions.begin() as db:
+            db.get(User, 1).is_active = False
+        self.assertEqual(self.client.post('/api/v1/auth/refresh', headers=self.headers).status_code, 403)
 
     def test_missing_credentials_and_cross_account_files_and_snapshots(self):
         self.assertIn(self.client.get(self.base + '/status').status_code, (401, 403))

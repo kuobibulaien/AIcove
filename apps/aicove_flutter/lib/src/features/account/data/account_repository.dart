@@ -61,6 +61,24 @@ class CloudAccountApi implements AccountRemotePort {
     }
   }
 
+  @override
+  Future<AuthResponse?> renew(String server, String token) async {
+    final api = ApiClient(baseUrl: server, useSecureTokenStore: false);
+    try {
+      await api.saveToken(token);
+      return AuthResponse.fromJson(await api.refreshToken());
+    } on DioException catch (error) {
+      final status = error.response?.statusCode;
+      if (status == 401 || status == 403) throw const ExpiredAccountSession();
+      if (status == 404 || status == 405) return null;
+      throw _failure(error);
+    } catch (_) {
+      throw const AccountFailure('服务器返回的账号信息无效');
+    } finally {
+      api.close();
+    }
+  }
+
   AccountFailure _failure(DioException error) =>
       AccountFailure(switch (error.response?.statusCode) {
         401 => '用户名或密码不正确',
@@ -138,11 +156,19 @@ class AccountRepository implements AccountPort {
       if (!current.owns(current.server, user)) {
         throw const ExpiredAccountSession();
       }
+      // Sliding renewal: every successful check extends the session, so only
+      // a device left unused past the server token lifetime must log in again.
+      final renewed = await _remote.renew(current.server, current.token!);
+      if (renewed != null &&
+          (renewed.accessToken.isEmpty ||
+              !current.owns(current.server, renewed.user))) {
+        throw const ExpiredAccountSession();
+      }
       await _save(
         AccountConnection(
           server: current.server,
-          user: user,
-          token: current.token,
+          user: renewed?.user ?? user,
+          token: renewed?.accessToken ?? current.token,
         ),
       );
     } on ExpiredAccountSession {

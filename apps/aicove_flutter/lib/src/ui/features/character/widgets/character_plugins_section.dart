@@ -1,8 +1,9 @@
-/// CharacterPluginsSection - 角色编辑页：插件列表
+/// CharacterPluginsSection - 角色编辑页：插件
 ///
-/// 每行一个插件，顺序：音色、生图、记忆、酒馆、表情包、主动关怀、时间感知。
-/// 开关控制「本角色是否允许使用」；允许后才展开一行当前绑定的预设/入口。
-/// 酒馆没有按角色开关位，单行直接显示绑定预设（未绑定时跟随插件默认预设）。
+/// 已开启的插件各占一个容器（顺序：音色、生图、记忆、酒馆、表情包、主动关怀、
+/// 时间感知），容器内是开关和当前绑定的预设/入口；末尾「全部插件」容器展开后
+/// 逐项开关，开启后对应容器动态出现在上方。
+/// 酒馆没有按角色开关位，始终单独成一个容器显示绑定预设（未绑定时跟随默认酒馆预设）。
 library;
 
 import 'package:flutter/material.dart';
@@ -20,7 +21,7 @@ import '../../plugins/widgets/drawing_preset_picker_sheet.dart';
 import '../../plugins/widgets/voice_preset_list.dart';
 import 'preset_recipe_section.dart';
 
-class CharacterPluginsSection extends ConsumerWidget {
+class CharacterPluginsSection extends ConsumerStatefulWidget {
   final Set<String> selectedPluginIds;
   final String? boundVoiceId;
   final List<VoicePreset> voicePresets;
@@ -54,15 +55,21 @@ class CharacterPluginsSection extends ConsumerWidget {
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<CharacterPluginsSection> createState() =>
+      _CharacterPluginsSectionState();
+}
+
+class _CharacterPluginsSectionState
+    extends ConsumerState<CharacterPluginsSection> {
+  bool _allExpanded = false;
+
+  @override
+  Widget build(BuildContext context) {
     final colors = context.moeColors;
 
-    final entries = <Widget>[
-      _pluginEntry(
-        ref,
-        colors,
-        pluginId: 'tts',
-        icon: Icons.record_voice_over_outlined,
+    final plugins = <_PluginSpec>[
+      _PluginSpec(
+        id: 'tts',
         label: '音色',
         binding: _BindingSpec(
           label: '音色配置包',
@@ -70,131 +77,165 @@ class CharacterPluginsSection extends ConsumerWidget {
           onTap: () => _showVoicePicker(context),
         ),
       ),
-      _pluginEntry(
-        ref,
-        colors,
-        pluginId: 'image',
-        icon: Icons.draw_outlined,
+      _PluginSpec(
+        id: 'image',
         label: '生图',
         binding: _BindingSpec(
           label: '绘图配置包',
-          value: _drawingPresetDisplayName(ref),
+          value: _drawingPresetDisplayName(),
           onTap: () => showDrawingPresetPicker(
             context: context,
             ref: ref,
-            personaPrompt: drawingPersonaPrompt,
-            onSelected: onDrawingPresetChanged,
+            personaPrompt: widget.drawingPersonaPrompt,
+            onSelected: widget.onDrawingPresetChanged,
           ),
         ),
       ),
-      _pluginEntry(
-        ref,
-        colors,
-        pluginId: 'memory',
-        icon: Icons.psychology_outlined,
+      _PluginSpec(
+        id: 'memory',
         label: '记忆',
         binding: _BindingSpec(
           label: '角色记忆文档',
-          value: memoryDocAvailable ? '' : '开始聊天后可编辑',
-          onTap: memoryDocAvailable ? onOpenMemoryDoc : null,
+          value: widget.memoryDocAvailable ? '' : '开始聊天后可编辑',
+          onTap: widget.memoryDocAvailable ? widget.onOpenMemoryDoc : null,
         ),
       ),
-      _tavernEntry(context, ref),
-      _pluginEntry(
-        ref,
-        colors,
-        pluginId: 'sticker',
-        icon: Icons.emoji_emotions_outlined,
-        label: '表情包',
-      ),
-      _pluginEntry(
-        ref,
-        colors,
-        pluginId: 'trigger',
-        icon: Icons.favorite_outline,
-        label: '主动关怀',
-      ),
-      _pluginEntry(
-        ref,
-        colors,
-        pluginId: 'time_awareness',
-        icon: Icons.schedule_outlined,
-        label: '时间感知',
-      ),
+      const _PluginSpec(id: 'sticker', label: '表情包'),
+      const _PluginSpec(id: 'trigger', label: '主动关怀'),
+      const _PluginSpec(id: 'time_awareness', label: '时间感知'),
     ];
 
-    return MoeSettingsGroup(
-      margin: EdgeInsets.zero,
-      title: '插件',
+    final cards = <Widget>[
+      for (final plugin in plugins.take(3))
+        if (_isActive(plugin.id)) _enabledCard(colors, plugin),
+      _tavernCard(context),
+      for (final plugin in plugins.skip(3))
+        if (_isActive(plugin.id)) _enabledCard(colors, plugin),
+      _allPluginsCard(colors, plugins),
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (var i = 0; i < entries.length; i++) ...[
-          if (i > 0)
-            Divider(height: 0.5, thickness: 0.5, color: colors.divider),
-          entries[i],
+        Padding(
+          padding: const EdgeInsets.only(left: 12, right: 12, bottom: 8),
+          child: Text(
+            '已开启插件',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: MoeFontWeights.emphasis,
+              color: colors.primary,
+            ),
+          ),
+        ),
+        for (var i = 0; i < cards.length; i++) ...[
+          if (i > 0) const SizedBox(height: 12),
+          cards[i],
         ],
       ],
     );
   }
 
-  // ==================== 开关插件行 ====================
+  bool _isActive(String pluginId) =>
+      widget.selectedPluginIds.contains(pluginId) &&
+      _isPluginGloballyEnabled(pluginId);
 
-  Widget _pluginEntry(
-    WidgetRef ref,
-    MoeColors colors, {
-    required String pluginId,
-    required IconData icon,
-    required String label,
-    _BindingSpec? binding,
-  }) {
-    final globallyEnabled = _isPluginGloballyEnabled(ref, pluginId);
-    final allowed = selectedPluginIds.contains(pluginId);
+  // ==================== 已开启插件容器 ====================
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
+  Widget _enabledCard(MoeColors colors, _PluginSpec plugin) {
+    return MoeSettingsGroup(
+      margin: EdgeInsets.zero,
       children: [
         MoeSettingsRow(
-          icon: icon,
-          label: label,
-          subtitle: globallyEnabled ? null : '全局未开启，需先在聊天插件中启用',
-          enabled: globallyEnabled,
+          label: plugin.label,
           showDivider: false,
           trailingType: MoeSettingsRowTrailing.switchControl,
-          switchValue: allowed,
-          onSwitchChanged: globallyEnabled
-              ? (value) => _togglePlugin(pluginId, value)
-              : null,
+          switchValue: true,
+          onSwitchChanged: (value) => _togglePlugin(plugin.id, value),
         ),
-        if (allowed && globallyEnabled && binding != null)
-          _bindingLine(colors, binding),
+        if (plugin.binding != null) _bindingLine(colors, plugin.binding!),
       ],
     );
   }
 
+  // ==================== 全部插件容器 ====================
+
+  Widget _allPluginsCard(MoeColors colors, List<_PluginSpec> plugins) {
+    return MoeSettingsGroup(
+      margin: EdgeInsets.zero,
+      children: [
+        MoeSettingsRow(
+          label: '全部插件',
+          showDivider: _allExpanded,
+          trailingType: MoeSettingsRowTrailing.custom,
+          trailing: AnimatedRotation(
+            turns: _allExpanded ? 0.5 : 0,
+            duration: kAnimFast,
+            child: Icon(Icons.expand_more, size: 20, color: colors.muted),
+          ),
+          onTap: () => setState(() => _allExpanded = !_allExpanded),
+        ),
+        AnimatedSize(
+          duration: kAnimFast,
+          curve: Curves.easeOut,
+          child: _allExpanded
+              ? Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (var i = 0; i < plugins.length; i++)
+                      _switchRow(
+                        plugins[i],
+                        showDivider: i < plugins.length - 1,
+                      ),
+                  ],
+                )
+              : const SizedBox(width: double.infinity),
+        ),
+      ],
+    );
+  }
+
+  Widget _switchRow(_PluginSpec plugin, {required bool showDivider}) {
+    final globallyEnabled = _isPluginGloballyEnabled(plugin.id);
+    return MoeSettingsRow(
+      key: ValueKey('all-plugins-${plugin.id}'),
+      label: plugin.label,
+      subtitle: globallyEnabled ? null : '全局未开启，需先在聊天插件中启用',
+      enabled: globallyEnabled,
+      showDivider: showDivider,
+      trailingType: MoeSettingsRowTrailing.switchControl,
+      switchValue: widget.selectedPluginIds.contains(plugin.id),
+      onSwitchChanged: globallyEnabled
+          ? (value) => _togglePlugin(plugin.id, value)
+          : null,
+    );
+  }
+
   void _togglePlugin(String pluginId, bool value) {
-    final next = Set<String>.from(selectedPluginIds);
+    final next = Set<String>.from(widget.selectedPluginIds);
     if (value) {
       next.add(pluginId);
     } else {
       next.remove(pluginId);
     }
-    onPluginIdsChanged(next);
+    widget.onPluginIdsChanged(next);
   }
 
   /// 普通聊天插件恒为全局开启，仅主动关怀仍受全局服务开关约束。
-  bool _isPluginGloballyEnabled(WidgetRef ref, String pluginId) {
+  bool _isPluginGloballyEnabled(String pluginId) {
     if (pluginId != 'trigger') return true;
     return ref.read(appSettingsProvider).value?.autoReplySettings.enabled ??
         false;
   }
 
-  /// 绑定行：缩进到主行文字下方，一行展示当前绑定，点击更换。
+  /// 绑定行：对齐主行文字，一行展示当前绑定，点击更换。
   Widget _bindingLine(MoeColors colors, _BindingSpec spec) {
     final enabled = spec.onTap != null;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: spec.onTap,
       child: Padding(
-        padding: const EdgeInsets.only(left: 48, right: 12, bottom: 8),
+        padding: const EdgeInsets.only(left: 12, right: 12, bottom: 8),
         child: Row(
           children: [
             Text(
@@ -224,36 +265,40 @@ class CharacterPluginsSection extends ConsumerWidget {
     );
   }
 
-  // ==================== 酒馆行（无开关，直接显示绑定预设） ====================
+  // ==================== 酒馆容器（无开关，直接显示绑定预设） ====================
 
-  Widget _tavernEntry(BuildContext context, WidgetRef ref) {
+  Widget _tavernCard(BuildContext context) {
     final presetsAsync = ref.watch(presetRecipeListProvider);
     final presets = presetsAsync.valueOrNull ?? const <PresetRecipeSummary>[];
 
-    return MoeSettingsRow(
-      icon: Icons.menu_book_outlined,
-      label: '酒馆',
-      subtitle: presetsAsync.hasError ? '预设列表读取失败，请到管理页检查' : null,
-      showDivider: false,
-      trailingType: MoeSettingsRowTrailing.text,
-      detailText: presetsAsync.isLoading
-          ? '正在加载…'
-          : tavernPresetDisplayName(presets, selectedRecipeId),
-      onTap: () => showTavernPresetPicker(
-        context: context,
-        selectedRecipeId: selectedRecipeId,
-        onChanged: onRecipeChanged,
-      ),
+    return MoeSettingsGroup(
+      margin: EdgeInsets.zero,
+      children: [
+        MoeSettingsRow(
+          label: '酒馆',
+          subtitle: presetsAsync.hasError ? '预设列表读取失败，请到管理页检查' : null,
+          showDivider: false,
+          trailingType: MoeSettingsRowTrailing.text,
+          detailText: presetsAsync.isLoading
+              ? '正在加载…'
+              : tavernPresetDisplayName(presets, widget.selectedRecipeId),
+          onTap: () => showTavernPresetPicker(
+            context: context,
+            selectedRecipeId: widget.selectedRecipeId,
+            onChanged: widget.onRecipeChanged,
+          ),
+        ),
+      ],
     );
   }
 
   // ==================== 音色 ====================
 
   String _voiceDisplayName() {
-    final id = boundVoiceId;
+    final id = widget.boundVoiceId;
     if (id == null || id.isEmpty) return '跟随默认音色配置包';
 
-    for (final preset in voicePresets) {
+    for (final preset in widget.voicePresets) {
       if (preset.id == id) return preset.name;
     }
 
@@ -272,8 +317,8 @@ class CharacterPluginsSection extends ConsumerWidget {
           final settings = ref.watch(appSettingsProvider).valueOrNull;
           final config = ref.watch(ttsPluginConfigProvider);
           return VoicePresetList(
-            presets: voicePresets,
-            selectedId: boundVoiceId,
+            presets: widget.voicePresets,
+            selectedId: widget.boundVoiceId,
             defaultId: config.defaultVoicePresetId,
             allowDefault: true,
             providerNames: {
@@ -289,23 +334,25 @@ class CharacterPluginsSection extends ConsumerWidget {
 
     if (selected == null || !context.mounted) return;
     if (selected == followGlobalToken) {
-      onVoiceChanged(null);
+      widget.onVoiceChanged(null);
     } else {
-      onVoiceChanged(selected);
+      widget.onVoiceChanged(selected);
     }
   }
 
   // ==================== 生图 ====================
 
   bool get _drawingFollowsDefault {
-    final parts = PersonaPromptCodec.parse(drawingPersonaPrompt);
+    final parts = PersonaPromptCodec.parse(widget.drawingPersonaPrompt);
     return (parts.drawingPresetId?.isEmpty ?? true) &&
         (parts.drawingToolPresetName?.isEmpty ?? true) &&
         (parts.drawingArtistPresetName?.isEmpty ?? true);
   }
 
-  String _drawingPresetDisplayName(WidgetRef ref) {
-    final selected = ref.watch(roleDrawingPresetProvider(drawingPersonaPrompt));
+  String _drawingPresetDisplayName() {
+    final selected = ref.watch(
+      roleDrawingPresetProvider(widget.drawingPersonaPrompt),
+    );
     final catalog = ref.watch(drawingPresetCatalogProvider);
     if (!catalog.hasValue) return '配置包读取中…';
     return selected.when(
@@ -315,6 +362,14 @@ class CharacterPluginsSection extends ConsumerWidget {
           _drawingFollowsDefault ? '跟随默认 · ${preset.name}' : preset.name,
     );
   }
+}
+
+class _PluginSpec {
+  final String id;
+  final String label;
+  final _BindingSpec? binding;
+
+  const _PluginSpec({required this.id, required this.label, this.binding});
 }
 
 class _BindingSpec {

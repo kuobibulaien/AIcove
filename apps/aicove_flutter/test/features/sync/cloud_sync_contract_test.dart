@@ -18,6 +18,7 @@ import 'package:aicove_flutter/src/features/sync/data/cloud_api.dart';
 import 'package:aicove_flutter/src/features/sync/data/cloud_local_store.dart';
 import 'package:aicove_flutter/src/features/sync/data/cloud_sync_engine.dart';
 import 'package:aicove_flutter/src/features/sync/data/cloud_sync_scheduler.dart';
+import 'package:aicove_flutter/src/core/sync/cloud_setting_policy.dart';
 
 class MemoryPreferences implements SharedPreferences {
   final values = <String, Object>{};
@@ -25,6 +26,8 @@ class MemoryPreferences implements SharedPreferences {
   Set<String> getKeys() => values.keys.toSet();
   @override
   Object? get(String key) => values[key];
+  @override
+  String? getString(String key) => values[key] as String?;
   @override
   Future<void> reload() async {}
   @override
@@ -56,10 +59,12 @@ class DropResponse implements CloudRemote {
   DropResponse(this.api);
   final CloudRemote api;
   bool dropNextMessage = false, dropNextUpload = false;
+  bool dropNextSetting = false;
   int pushRequests = 0, receivedBusinessDocuments = 0;
   int activeDownloads = 0, peakDownloads = 0;
   Completer<void>? downloadGate;
   Future<void> Function()? afterMessagePush;
+  Future<void> Function()? afterSettingPush;
   bool failDownloads = false;
   final uploadBatchSizes = <int>[];
   final uploadedDigests = <String>[];
@@ -78,6 +83,18 @@ class DropResponse implements CloudRemote {
       );
     }
     final result = await api.post(path, body);
+    if (path == 'push' &&
+        (body['mutations'] as List).any((m) => m['kind'] == 'conversations')) {
+      final callback = afterSettingPush;
+      afterSettingPush = null;
+      await callback?.call();
+      if (dropNextSetting) {
+        dropNextSetting = false;
+        throw const SocketException(
+          'fixture setting response lost after server commit',
+        );
+      }
+    }
     if (path == 'push' &&
         (body['mutations'] as List).any((m) => m['kind'] == 'messages')) {
       final callback = afterMessagePush;
@@ -299,6 +316,283 @@ void main() {
       );
     }
   }
+
+  Future<void> editSetting(
+    Device device,
+    String field,
+    String? value,
+    int at,
+  ) async {
+    await device.local.execute(
+      'UPDATE conversations SET "$field"=? WHERE id=?',
+      [value, 'role'],
+    );
+    await device.local.execute(
+      'UPDATE cloud_setting_times SET at_ms=? WHERE kind=? AND entity_id=? AND field=?',
+      [at, 'conversations', 'role', field],
+    );
+  }
+
+  test(
+    'field edit clocks merge offline settings and apply receipts on both devices',
+    () async {
+      final phone = await device('phone');
+      await seed(phone);
+      await phone.sync.enable();
+      final mac = await device('mac');
+      await mac.sync.enable();
+      await editSetting(phone, 'chat_background_image', 'phone-wallpaper', 200);
+      await editSetting(mac, 'voice_file', 'mac-voice', 300);
+      await phone.sync.synchronize();
+      await mac.sync.synchronize();
+      await phone.sync.synchronize();
+      for (final device in [phone, mac]) {
+        final row = (await device.local.rows(
+          "SELECT chat_background_image,voice_file FROM conversations WHERE id='role'",
+        )).single;
+        expect(row['chat_background_image'], 'phone-wallpaper');
+        expect(row['voice_file'], 'mac-voice');
+        expect((await device.sync.previewConflicts())['conflicts'], isEmpty);
+      }
+      await editSetting(mac, 'chat_background_image', 'older-wallpaper', 100);
+      await mac.sync.synchronize();
+      expect(
+        (await mac.local.rows(
+          "SELECT chat_background_image FROM conversations WHERE id='role'",
+        )).single['chat_background_image'],
+        'phone-wallpaper',
+      );
+      await editSetting(mac, 'chat_background_image', null, 400);
+      await mac.sync.synchronize();
+      await phone.sync.synchronize();
+      expect(
+        (await phone.local.rows(
+          "SELECT chat_background_image FROM conversations WHERE id='role'",
+        )).single['chat_background_image'],
+        isNull,
+      );
+    },
+  );
+
+  test(
+    'new local edit during a merged upload survives receipt and converges',
+    () async {
+      final phone = await device('phone');
+      await seed(phone);
+      await phone.sync.enable();
+      final mac = await device('mac');
+      await mac.sync.enable();
+      await editSetting(phone, 'chat_background_image', 'phone-wallpaper', 200);
+      await editSetting(mac, 'voice_file', 'frozen-voice', 300);
+      await phone.sync.synchronize();
+      mac.remote.afterSettingPush = () =>
+          editSetting(mac, 'voice_file', 'newer-voice', 400);
+      await mac.sync.synchronize();
+      var row = (await mac.local.rows(
+        "SELECT chat_background_image,voice_file FROM conversations WHERE id='role'",
+      )).single;
+      expect(row['chat_background_image'], 'phone-wallpaper');
+      expect(row['voice_file'], 'newer-voice');
+      await mac.sync.synchronize();
+      await phone.sync.synchronize();
+      row = (await phone.local.rows(
+        "SELECT voice_file FROM conversations WHERE id='role'",
+      )).single;
+      expect(row['voice_file'], 'newer-voice');
+    },
+  );
+
+  test(
+    'returning to the original value still publishes the newer edit time',
+    () async {
+      final phone = await device('phone');
+      await seed(phone);
+      await editSetting(phone, 'voice_file', 'A', 100);
+      await saveCloudPreference(
+        phone.local.preferences,
+        cloudUiModelsKey,
+        jsonEncode({'default_model': 'A'}),
+        atMs: 100,
+      );
+      await phone.sync.enable();
+      final mac = await device('mac');
+      await mac.sync.enable();
+      await editSetting(mac, 'voice_file', 'B', 250);
+      await editSetting(mac, 'voice_file', 'A', 300);
+      await saveCloudPreference(
+        mac.local.preferences,
+        cloudUiModelsKey,
+        jsonEncode({'default_model': 'B'}),
+        atMs: 250,
+      );
+      await saveCloudPreference(
+        mac.local.preferences,
+        cloudUiModelsKey,
+        jsonEncode({'default_model': 'A'}),
+        atMs: 300,
+      );
+      await mac.sync.synchronize();
+      await editSetting(phone, 'voice_file', 'late-B', 200);
+      await saveCloudPreference(
+        phone.local.preferences,
+        cloudUiModelsKey,
+        jsonEncode({'default_model': 'late-B'}),
+        atMs: 200,
+      );
+      await phone.sync.synchronize();
+      expect(
+        (await phone.local.rows(
+          "SELECT voice_file FROM conversations WHERE id='role'",
+        )).single['voice_file'],
+        'A',
+      );
+      expect(
+        (jsonDecode(phone.local.preferences.get(cloudUiModelsKey) as String)
+            as Map)['default_model'],
+        'A',
+      );
+    },
+  );
+
+  test(
+    'a role deleted during a merged upload is not recreated by the receipt',
+    () async {
+      final phone = await device('phone');
+      await seed(phone);
+      await phone.sync.enable();
+      final mac = await device('mac');
+      await mac.sync.enable();
+      await editSetting(phone, 'chat_background_image', 'phone-wallpaper', 200);
+      await editSetting(mac, 'voice_file', 'mac-voice', 300);
+      await phone.sync.synchronize();
+      mac.remote.afterSettingPush = () async {
+        await mac.local.execute(
+          "DELETE FROM messages WHERE conversation_id='role'",
+        );
+        await mac.local.execute("DELETE FROM conversations WHERE id='role'");
+      };
+      await mac.sync.synchronize();
+      expect(
+        await mac.local.rows("SELECT id FROM conversations WHERE id='role'"),
+        isEmpty,
+      );
+      await mac.sync.synchronize();
+      await phone.sync.synchronize();
+      expect(
+        await phone.local.rows("SELECT id FROM conversations WHERE id='role'"),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'General fields never upload or replace local values while model settings sync',
+    () async {
+      final phone = await device('phone');
+      await seed(phone);
+      await phone.sync.enable();
+      final mac = await device('mac');
+      await mac.sync.enable();
+      await saveCloudPreference(
+        phone.local.preferences,
+        cloudUiModelsKey,
+        jsonEncode({
+          'default_model': 'phone-model',
+          'text_scale_factor': 1.1,
+          'is_dark_mode': false,
+        }),
+        atMs: 200,
+      );
+      await mac.local.preferences.setString(
+        cloudUiModelsKey,
+        jsonEncode({
+          'default_model': 'initial-model',
+          'text_scale_factor': 1.8,
+          'is_dark_mode': true,
+        }),
+      );
+      final outgoing = (await phone.local.external()).singleWhere(
+        (doc) => doc.payload['key'] == cloudUiModelsKey,
+      );
+      expect(jsonDecode(outgoing.payload['json_value'] as String), {
+        'default_model': 'phone-model',
+      });
+      await phone.sync.synchronize();
+      await mac.sync.synchronize();
+      final stored =
+          jsonDecode(mac.local.preferences.getString(cloudUiModelsKey)!) as Map;
+      expect(stored['default_model'], 'phone-model');
+      expect(stored['text_scale_factor'], 1.8);
+      expect(stored['is_dark_mode'], true);
+      final before = mac.remote.pushRequests;
+      await saveCloudPreference(
+        mac.local.preferences,
+        cloudUiModelsKey,
+        jsonEncode({...stored, 'text_scale_factor': 2.0}),
+        atMs: 500,
+      );
+      await mac.sync.synchronize();
+      expect(mac.remote.pushRequests, before);
+    },
+  );
+
+  test(
+    'lost merged setting receipt retries without conflict or losing a newer local edit',
+    () async {
+      final phone = await device('phone');
+      await seed(phone);
+      await phone.sync.enable();
+      final mac = await device('mac');
+      await mac.sync.enable();
+      await editSetting(phone, 'chat_background_image', 'phone-wallpaper', 200);
+      await editSetting(mac, 'voice_file', 'frozen-voice', 300);
+      await phone.sync.synchronize();
+      mac.remote.dropNextSetting = true;
+      mac.remote.afterSettingPush = () =>
+          editSetting(mac, 'voice_file', 'newer-voice', 400);
+      await expectLater(
+        mac.sync.synchronize(),
+        throwsA(isA<SocketException>()),
+      );
+      expect(await mac.local.rows('SELECT 1 FROM cloud_outbox'), isNotEmpty);
+      await mac.sync.synchronize();
+      await phone.sync.synchronize();
+      for (final device in [phone, mac]) {
+        final row = (await device.local.rows(
+          "SELECT chat_background_image,voice_file FROM conversations WHERE id='role'",
+        )).single;
+        expect(row['chat_background_image'], 'phone-wallpaper');
+        expect(row['voice_file'], 'newer-voice');
+        expect((await device.sync.previewConflicts())['conflicts'], isEmpty);
+      }
+    },
+  );
+
+  test(
+    'an identical applied receipt inherits existing setting edit times',
+    () async {
+      final phone = await device('phone');
+      await seed(phone);
+      await editSetting(phone, 'voice_file', 'shared-voice', 100);
+      await phone.sync.enable();
+      final mac = await device('mac');
+      await mac.sync.enable();
+      await mac.local.execute('DELETE FROM cloud_setting_times');
+      await mac.local.execute(
+        "UPDATE cloud_versions SET local_json=NULL WHERE kind='conversations'",
+      );
+      await mac.local.execute(
+        "UPDATE conversations SET voice_file=voice_file WHERE id='role'",
+      );
+      await mac.sync.synchronize();
+      final times = await mac.local.settingTimes(
+        'conversations',
+        'role',
+        'mac',
+      );
+      expect((times['voice_file'] as Map)['at_ms'], 100);
+    },
+  );
 
   test('confirmed source revisions are not downloaded back', () async {
     final phone = await device('phone');
@@ -884,8 +1178,12 @@ void main() {
         {'n': 3},
       ]);
       expect(
-        desktop.local.preferences.get('aicove.ui_models.v1'),
-        phone.local.preferences.get('aicove.ui_models.v1'),
+        jsonDecode(
+          desktop.local.preferences.get('aicove.ui_models.v1') as String,
+        ),
+        jsonDecode(
+          phone.local.preferences.get('aicove.ui_models.v1') as String,
+        ),
       );
       for (final plugin in [
         'tts',

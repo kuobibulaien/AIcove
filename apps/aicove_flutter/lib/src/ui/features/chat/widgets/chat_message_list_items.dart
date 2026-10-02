@@ -8,6 +8,8 @@ import '../../../../core/models/message_block.dart';
 import '../../../../core/utils/data_image.dart';
 import '../../../../core/utils/message_formatter.dart';
 import '../../../../features/chat/domain/message.dart';
+import '../../../../features/content_tags/domain/tag_presentation.dart';
+import '../../../../features/dialogue_options/domain/dialogue_options.dart';
 import '../../../../features/chat/presentation/widgets/message_bubble.dart';
 import '../../../../ui/shared/widgets/media/moe_image_preview.dart';
 
@@ -35,6 +37,7 @@ class ChatChunkedMessageItem extends ChatMessageListItem {
     required this.totalChunks,
     this.showCorner = false,
     this.showAvatar = true,
+    this.fold,
   });
 
   final Message originalMessage;
@@ -43,6 +46,9 @@ class ChatChunkedMessageItem extends ChatMessageListItem {
   final int totalChunks;
   final bool showCorner;
   final bool showAvatar;
+
+  /// 非空时这一段是折叠气泡（预设语义标签投影，ADR0046）。
+  final TagFoldPart? fold;
 }
 
 class ChatTimeDividerItem extends ChatMessageListItem {
@@ -82,12 +88,20 @@ Message? chatListItemSelectionMessage(ChatMessageListItem item) {
 List<ChatMessageListItem> buildChatMessageListItems({
   required List<Message> messages,
   MessageFormatConfig? config,
+  TagPresentationMap tagPresentation = const {},
 }) {
   final items = <ChatMessageListItem>[];
   final enableChunking = config?.enableChunking ?? true;
 
   for (var index = 0; index < messages.length; index++) {
-    final currentMessage = messages[index];
+    final currentMessage = stripDialogueOptionsForDisplay(messages[index]);
+    // 只有选项的回复段交给对话选项气泡展示，不留空气泡。
+    if (!identical(currentMessage, messages[index]) &&
+        currentMessage.status != 'sending' &&
+        _resolveChunkSourceText(currentMessage).trim().isEmpty &&
+        !_hasNonTextBlocks(currentMessage)) {
+      continue;
+    }
     var hasTimeDivider = false;
 
     if (index == 0) {
@@ -127,6 +141,50 @@ List<ChatMessageListItem> buildChatMessageListItems({
         currentMessage.status != 'sending' &&
         !_hasNonTextBlocks(currentMessage) &&
         chunkSourceText.trim().isNotEmpty;
+
+    // 预设语义标签：折叠标签单独成折叠气泡，正文标签去壳，其余照常分段。
+    final tagParts = currentMessage.role == 'assistant' &&
+            !_hasNonTextBlocks(currentMessage)
+        ? _projectTagParts(
+            chunkSourceText,
+            tagPresentation,
+            // 生成中只用发送前定好的映射，不临时判断未知外壳。
+            allowUnwrap: currentMessage.status != 'sending',
+          )
+        : null;
+    if (tagParts != null) {
+      final pieces = <(String, TagFoldPart?)>[
+        for (final part in tagParts)
+          ...switch (part) {
+            TagFoldPart() => [(part.content, part)],
+            TagBodyPart(:final text) => [
+                for (final chunk in shouldChunk && config != null
+                    ? _chunkTextMemoized(text, config)
+                    : [text])
+                  (chunk, null),
+              ],
+          },
+      ];
+      for (var pieceIndex = 0; pieceIndex < pieces.length; pieceIndex++) {
+        items.add(
+          ChatChunkedMessageItem(
+            originalMessage: currentMessage,
+            chunkText: pieces[pieceIndex].$1,
+            chunkIndex: pieceIndex,
+            totalChunks: pieces.length,
+            showCorner: _resolveShowCornerForChunk(
+              messages: messages,
+              currentMessageIndex: index,
+              chunkIndex: pieceIndex,
+              chunkCount: pieces.length,
+            ),
+            showAvatar: pieceIndex == 0 && showAvatar,
+            fold: pieces[pieceIndex].$2,
+          ),
+        );
+      }
+      continue;
+    }
 
     if (shouldChunk && config != null) {
       final chunks = _chunkTextMemoized(chunkSourceText, config);
@@ -207,6 +265,54 @@ ImageProvider? resolveChatMessageListImageProvider(MessageBlock block) {
     return null;
   }
   return null;
+}
+
+/// 已生成完的助手回复里出现、映射里没有的顶层标签名（ADR0048，“聊天中发现”）。
+/// 输入角色名（user/char 等）是模型回显，不提示。
+Set<String> collectUnknownReplyTags(
+  List<Message> messages,
+  TagPresentationMap tagPresentation,
+) {
+  final names = <String>{};
+  for (final message in messages) {
+    if (message.role != 'assistant' || message.status == 'sending') continue;
+    final text = _resolveChunkSourceText(message);
+    if (!text.contains('<')) continue;
+    for (final tag in findUnknownTopLevelTags(text, tagPresentation)) {
+      if (!_echoedRoleTags.contains(tag.name)) names.add(tag.name);
+    }
+  }
+  return names;
+}
+
+const Set<String> _echoedRoleTags = {
+  'user', 'char', 'system', 'assistant', 'human', 'model',
+};
+
+/// 文本里有映射到的语义标签时返回投影片段；没有可处理的标签时返回 null，
+/// 走原来的整条／分段显示。
+List<TagDisplayPart>? _projectTagParts(
+  String text,
+  TagPresentationMap tagPresentation, {
+  required bool allowUnwrap,
+}) {
+  if (!text.contains('<')) return null;
+  // 无损兜底（ADR0048）：只剩一个未知外层标签且包着主要内容时去壳当正文。
+  final wrapper =
+      allowUnwrap ? soleUnknownBodyWrapper(text, tagPresentation) : null;
+  final map = wrapper == null
+      ? tagPresentation
+      : {
+          ...tagPresentation,
+          wrapper: const TagPresentationEntry(TagPresentation.body, '正文'),
+        };
+  if (map.isEmpty) return null;
+  final parts = projectTagPresentation(text, map);
+  if (parts.isEmpty) return null;
+  final unchanged = parts.length == 1 &&
+      parts.single is TagBodyPart &&
+      (parts.single as TagBodyPart).text == text.trim();
+  return unchanged ? null : parts;
 }
 
 bool _hasNonTextBlocks(Message message) {

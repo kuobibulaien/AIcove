@@ -38,12 +38,16 @@ class ToolCall {
   final String id;
   final String name;
   final Map<String, dynamic> arguments;
+
+  /// Original argument bytes for transport recovery; business handlers still use arguments.
+  final String? rawArguments;
   final String? thoughtSignature;
 
   const ToolCall({
     required this.id,
     required this.name,
     required this.arguments,
+    this.rawArguments,
     this.thoughtSignature,
   });
 
@@ -69,6 +73,7 @@ class ToolCall {
       id: json['id']?.toString() ?? '',
       name: function['name']?.toString() ?? '',
       arguments: args,
+      rawArguments: rawArgs is String ? rawArgs : null,
       thoughtSignature: json['thoughtSignature']?.toString() ??
           json['thought_signature']?.toString(),
     );
@@ -117,6 +122,9 @@ class ProviderChatRequestOptions {
   final int? seed;
   final int? maxOutputTokens;
 
+  /// Per-request tool policy, never persisted into channel configuration.
+  final String? toolChoice;
+
   /// SillyTavern 预设的原始 `reasoning_effort` 字符串；仅在 [thinkingLevel]
   /// 为空时由 OpenAI 系 adapter 回退使用。
   final String? reasoningEffort;
@@ -137,12 +145,14 @@ class ProviderChatRequestOptions {
     this.presencePenalty,
     this.seed,
     this.maxOutputTokens,
+    this.toolChoice,
     this.reasoningEffort,
     this.thinkingLevel,
     this.thinkingScheme,
   });
 
   ProviderChatRequestOptions copyWith({
+    String? toolChoice,
     ThinkingLevel? thinkingLevel,
     ThinkingScheme? thinkingScheme,
   }) =>
@@ -158,6 +168,7 @@ class ProviderChatRequestOptions {
         presencePenalty: presencePenalty,
         seed: seed,
         maxOutputTokens: maxOutputTokens,
+        toolChoice: toolChoice ?? this.toolChoice,
         reasoningEffort: reasoningEffort,
         thinkingLevel: thinkingLevel ?? this.thinkingLevel,
         thinkingScheme: thinkingScheme ?? this.thinkingScheme,
@@ -175,6 +186,7 @@ class ProviderChatRequestOptions {
         if (presencePenalty != null) 'presencePenalty': presencePenalty,
         if (seed != null) 'seed': seed,
         if (maxOutputTokens != null) 'maxOutputTokens': maxOutputTokens,
+        if (toolChoice != null) 'toolChoice': toolChoice,
         if (reasoningEffort?.isNotEmpty == true)
           'reasoningEffort': reasoningEffort,
         if (thinkingLevel != null) 'thinkingLevel': thinkingLevel!.name,

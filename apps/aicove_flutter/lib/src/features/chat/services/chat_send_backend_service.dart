@@ -1,5 +1,7 @@
 library;
 
+import '../../agent_context/domain/preset_script_runtime.dart';
+import '../../agent_context/domain/preset_tag_mapping.dart';
 import 'dart:async';
 import '../../context/application/runtime_context_service.dart';
 import '../../context/domain/context_window_policy.dart';
@@ -252,10 +254,11 @@ class ChatSendBackendService {
     // 旧选择已经在预设迁移中收成值，不能在执行时再覆盖快照。
     const String? boundImageToolPresetName = null;
     const String? boundImageArtistPresetName = null;
-    final supportsToolCalling =
-        boundPreset?.functionCalling != false &&
+    final modelSupportsTools =
         settings.hasChatModelCapability(modelRef, ChatModelCapability.tools) &&
         !settings.isModelToolCallingDisabled(modelRef);
+    final supportsToolCalling =
+        boundPreset?.functionCalling != false && modelSupportsTools;
     final enabledPluginIds = conv.enabledPlugins?.toSet();
     final voiceRequest = await _ref
         .read(voicePresetApplicationProvider)
@@ -287,10 +290,11 @@ class ChatSendBackendService {
         )
         .toList(growable: false);
     final imagePlugin = effectivePlugins.whereType<ImagePlugin>().firstOrNull;
-    final ttsPlugin = effectivePlugins.whereType<TtsPlugin>().firstOrNull;
-    final contextPolicy = ChatPluginContextPolicy(
-      imageEnabled: imagePlugin?.enabled ?? false,
-      ttsEnabled: ttsPlugin?.enabled ?? false,
+    final contextPolicy = ChatPluginContextPolicy.firstParty(
+      activeProviderIds: {
+        for (final plugin in effectivePlugins)
+          if (plugin.enabled) plugin.id,
+      },
     );
     var reqMessages = await _requestMessageBuilder.buildRequestMessages(
       history,
@@ -728,6 +732,22 @@ class ChatSendBackendService {
     }
 
     return ApiConfig(
+      requestInputTokenLimit: inputLimit,
+      presetScript: PresetScriptSnapshot.fromPreset(
+        boundPreset,
+        toolsAllowed: supportsToolCalling,
+        modelSupportsTools: modelSupportsTools,
+        macros: {
+          'char': conv.displayName.trim().isEmpty
+              ? conv.title
+              : conv.displayName,
+          'user': settings.userName?.trim().isNotEmpty == true
+              ? settings.userName!.trim()
+              : '用户',
+          'description': contextPolicy.filterText(personaParts.userPrompt),
+          'scenario': conv.description?.trim() ?? '',
+        },
+      ),
       runtimeContext: runtimeContext,
       settings: settings,
       modelFullId: modelFull,
@@ -748,8 +768,12 @@ class ChatSendBackendService {
       modelTopP: boundPreset?.topP ?? requestConfig.modelTopP,
       modelContextMessageLimit: requestConfig.modelContextMessageLimit,
       providerRequestOptions: providerRequestOptions,
-      presetRegexScripts:
-          boundPreset?.regexScripts ?? const <SillyTavernRegexScript>[],
+      // 显示美化正则输出的 HTML 界面无法渲染，已由语义标签组件接管的不再执行，
+      // 保留原标签交给聊天列表投影为折叠／正文／选项（ADR0046）。
+      presetRegexScripts: boundPreset == null
+          ? const <SillyTavernRegexScript>[]
+          : inferPresetTagMapping(boundPreset)
+              .displayScripts(boundPreset.regexScripts),
       presetRegexAuthorized: boundPreset?.regexAuthorized ?? false,
       presetStreamResponse: boundPreset?.streamResponse,
       traceContext: traceContext,

@@ -274,7 +274,8 @@ extension ChatActionsActionOps on ChatActions {
                 convId: convId,
                 generationSeq: runId,
                 diagnosticContext: _diagnostics.forTurn(traceContext?.turnId),
-                formatConfig: settings.messageFormatConfig,
+                formatConfig: _streamFormatConfig(convId, settings),
+                tagPresentation: await _streamTagPresentation(convId),
                 enableTtsPlaceholders: settings.ttsEnabled,
                 segmentDelay: Duration(
                   milliseconds:
@@ -666,7 +667,8 @@ extension ChatActionsActionOps on ChatActions {
                 convId: convId,
                 generationSeq: runId,
                 diagnosticContext: _diagnostics.forTurn(traceContext?.turnId),
-                formatConfig: settings.messageFormatConfig,
+                formatConfig: _streamFormatConfig(convId, settings),
+                tagPresentation: await _streamTagPresentation(convId),
                 enableTtsPlaceholders: settings.ttsEnabled,
                 segmentDelay: Duration(
                   milliseconds:

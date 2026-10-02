@@ -159,4 +159,26 @@ void main() {
       expect(result.text, isEmpty);
     },
   );
+  test('native JS identity escapes work without forced unicode mode', () async {
+    final result = await processor.applyToPromptMessages(
+      messages: const [
+        {
+          'role': 'assistant',
+          'content': '<think_nya~>秘密</think_nya~><summary>花开了</summary>',
+        },
+      ],
+      scripts: [
+        script(
+          id: 'summary',
+          find: r'/[\s\S]*?\<summary\>([\s\S]*?)\<\/summary\>[\s\S]*/g',
+          replace: r'$1',
+          placements: [2],
+          promptOnly: true,
+        ),
+      ],
+      authorized: true,
+    );
+    expect(result.messages.single['content'], '花开了');
+    expect(result.warnings, isEmpty);
+  });
 }

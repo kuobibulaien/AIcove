@@ -121,6 +121,6 @@ void main() {
     ));
     await tester.pumpAndSettle();
     expect(find.text('旧配置 · 旧画师'), findsOneWidget);
-    expect(find.textContaining('跟随默认'), findsNothing);
+    expect(find.textContaining('跟随默认绘图'), findsNothing);
   });
 }

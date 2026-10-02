@@ -8,7 +8,7 @@
 
 排查项目的手机运行问题时，先实时抓取当前已落盘日志，再结合源码定位。包括卡顿、闪退/异常、聊天生成、分段、图片或音频问题，以及运行时改动的复现与验收。首次保全现场后，在关键复现步骤前后按需再次执行采集；保留各次独立诊断包，用运行编号与操作编号比较，避免覆盖原故障证据。当前是按需快照，不是持续流或逐帧采样，不要无目的高频轮询。
 
-1. 检查已授权ADB设备，沿用用户已确认的目标，多设备不要猜。应用运行即自动提供通道，不要求用户打开开关、换Debug包、手动导出或逐张截图；结束排查也不关闭服务。
+1. 检查已授权ADB设备，沿用用户已确认的目标，多设备不要猜。`adb devices` 为空时，先用 `lsof -nP -iTCP -sTCP:LISTEN | grep adb` 检查是否有其他 ADB 服务（如另一会话在 5038 端口启动的）占着设备，有就用 `ADB_SERVER_SOCKET=tcp:localhost:<端口>` 复用它（采集脚本同样继承该变量），不要关闭它，也不要让用户重插线。应用运行即自动提供通道，不要求用户打开开关、换Debug包、手动导出或逐张截图；结束排查也不关闭服务。
 2. 优先使用当前会话已有的读取凭证或现有 `AICOVE_DIAGNOSTIC_TOKEN`。缺少凭证时，如果已获授权操作手机界面，Agent自行进入「设置→调试中心→诊断导出与电脑读取」读取电脑命令；这是获取凭证，不是开启服务。不要把命令中的凭证回显、提交或写入长期记忆；如果生成了含凭证的临时UI文件，使用后清理。凭证确实无法获取、设备未连接/未授权时，说明具体阻碍，仅请用户完成必要的一步。
 3. 从Flutter目录执行下面的命令，检查 `summary.json` / `manifest.json` 的构建身份、记录覆盖及 `sourceCoverage`，然后沿 `operations.jsonl` 的事件、耗时、traceId/operationId分析。权限拒绝、通道不可达、截断或空结果都不等于没有发生故障。
 
@@ -153,7 +153,7 @@ python3 tool/collect_diagnostics.py --from-dir "$HOME/Library/Containers/com.exa
 
 服务名统一为 `dart`。所有入口最终执行 [`tool/dart_mcp_server`](dart_mcp_server)，通过 `flutterw --dart mcp-server` 使用项目 SDK，工作目录固定为当前副本的 Flutter 工程。服务使用 stdio（标准输入输出），每个 harness 自行持有一个 MCP 子进程，不需要常驻端口或共享后台服务器。stdout 仅供 MCP 协议使用，不在启动脚本中打印提示或加载交互式 shell 配置。
 
-以仓库根目录打开项目或启动 harness。配置没有写死 `/Users/...` 路径：终端入口通过 Git 定位当前仓库，编辑器入口使用 `${workspaceFolder}`；复制仓库／创建 worktree 后指向各自的脚本。SDK 位置覆盖沿用上节 `AICOVE_FLUTTER_SDK`。
+以仓库根目录打开项目或启动 harness。配置没有写死 `/home/kuobibulaien` 路径：终端入口通过 Git 定位当前仓库，编辑器入口使用 `${workspaceFolder}`；复制仓库／创建 worktree 后指向各自的脚本。SDK 位置覆盖沿用上节 `AICOVE_FLUTTER_SDK`。
 
 | Harness | 仓库内配置 | 加载说明 |
 |---|---|---|

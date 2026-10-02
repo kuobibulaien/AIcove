@@ -554,7 +554,7 @@ void main() {
     ];
     final result = await builder.buildRequestMessages(history,
       settings: fakeSettings(defaultModelName: 'openai:gpt-4o'),
-      pluginPolicy: const ChatPluginContextPolicy(imageEnabled: false, ttsEnabled: false));
+      pluginPolicy: ChatPluginContextPolicy.firstParty(activeProviderIds: {}));
     expect(imageReads, 0);
     expect(result.first, {'role': 'assistant', 'content': 'text'});
     expect(result.last['content'], hasLength(2));
@@ -568,7 +568,7 @@ void main() {
     await expectLater(builder.buildRequestMessages([
       msg('old', 'previous question', now), msg('new', '<tts>hidden</tts>', now),
     ], settings: fakeSettings(defaultModelName: 'openai:gpt-4o'),
-      pluginPolicy: const ChatPluginContextPolicy(imageEnabled: false, ttsEnabled: false)),
+      pluginPolicy: ChatPluginContextPolicy.firstParty(activeProviderIds: {})),
       throwsA(isA<StateError>()));
   });
 

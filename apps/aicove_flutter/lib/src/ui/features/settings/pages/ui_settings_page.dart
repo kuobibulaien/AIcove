@@ -11,7 +11,6 @@ import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import 'custom_skin_page.dart';
 import 'profile_page.dart';
-import '../widgets/smart_reply_settings_group.dart';
 
 bool get _isWindowsDesktop => defaultTargetPlatform == TargetPlatform.windows;
 
@@ -63,7 +62,6 @@ class UiSettingsPage extends ConsumerWidget {
             MoeSettingsLayout.verticalListPadding,
           ),
           children: [
-            SmartReplySettingsGroup(settings: settings),
             MoeSettingsGroup(
               children: [
                 MoeSettingsRow(
@@ -248,13 +246,36 @@ class UiSettingsPage extends ConsumerWidget {
               ],
             ),
 
-            // ========== 消息分段 ==========
+            // ========== 聊天样式与消息分段 ==========
             MoeSettingsGroup(
-              title: '消息分段',
+              title: '聊天样式与分段',
               children: [
                 MoeSettingsRow(
+                  label: '新会话默认样式',
+                  subtitle: '文档样式不分段，长文和代码块完整显示；聊天菜单里可为单个会话另设',
+                  trailingType: MoeSettingsRowTrailing.custom,
+                  trailing: MoeToggleBar<ChatDisplayStyle>(
+                    key: const ValueKey('chat_display_style_toggle'),
+                    expanded: false,
+                    value: settings.chatDisplayStyle,
+                    items: const [
+                      MoeToggleItem(
+                        value: ChatDisplayStyle.bubble,
+                        label: '气泡',
+                      ),
+                      MoeToggleItem(
+                        value: ChatDisplayStyle.document,
+                        label: '文档',
+                      ),
+                    ],
+                    onChanged: (style) => ref
+                        .read(appSettingsProvider.notifier)
+                        .setChatDisplayStyle(style),
+                  ),
+                ),
+                MoeSettingsRow(
                   label: '启用消息分段',
-                  subtitle: '按标点符号自动分段显示 AI 回复',
+                  subtitle: '气泡样式下按标点符号自动分段显示 AI 回复',
                   trailingType: MoeSettingsRowTrailing.switchControl,
                   switchValue: chunkConfig.enableChunking,
                   onSwitchChanged: (value) async {

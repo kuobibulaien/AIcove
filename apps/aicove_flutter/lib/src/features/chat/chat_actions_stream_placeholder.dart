@@ -75,20 +75,14 @@ class _RawStreamSegment {
   final String content;
 }
 
-final RegExp _streamHiddenImageTagRegex = RegExp(
-  r'<image>([\s\S]*?)</image>',
-  caseSensitive: false,
-);
-
 String _stripHiddenImageTagsForDisplay(String value) {
   if (value.isEmpty) return value;
-  var result = value.replaceAll(_streamHiddenImageTagRegex, '');
-  final lower = result.toLowerCase();
-  final openIndex = lower.lastIndexOf('<image>');
-  if (openIndex >= 0 && lower.indexOf('</image>', openIndex) < 0) {
-    result = result.substring(0, openIndex);
-  }
-  return result;
+  return firstPartyContentTagScanner
+      .scan(value)
+      // 未闭合的快速模式生图标签同样隐藏，不外泄提示词
+      .where((segment) => !ImagePlugin.isInlineImageElement(segment))
+      .map((segment) => segment.raw)
+      .join();
 }
 
 class _StreamPlaceholderDelivery {
@@ -98,6 +92,7 @@ class _StreamPlaceholderDelivery {
     required this.generationSeq,
     required this.formatConfig,
     required this.enableTtsPlaceholders,
+    this.tagPresentation = const {},
     this.segmentDelay = Duration.zero,
     this.onPendingAudioAppeared,
     this.diagnosticContext,
@@ -143,7 +138,20 @@ class _StreamPlaceholderDelivery {
             }));
   }
 
+  bool _transportStreaming = false;
+
+  void setTransportStreaming(bool enabled) {
+    if (_transportStreaming == enabled) return;
+    _transportStreaming = enabled;
+    _parsedRawText = null;
+    _parsedTimeline = null;
+  }
+
   final MessageFormatConfig formatConfig;
+
+  /// 会话的语义标签呈现映射，本轮生成开始时读取后固定；折叠与选项标签
+  /// 在自动分段中整块保护（ADR0047）。
+  final TagPresentationMap tagPresentation;
   final bool enableTtsPlaceholders;
   final Duration segmentDelay;
   final void Function(Message pendingMessage)? onPendingAudioAppeared;
@@ -756,7 +764,9 @@ class _StreamPlaceholderDelivery {
         forceSealTail: sealTail || hasFollowingBoundary,
       );
       orderedDescriptors.addAll(described.sealed);
-      if (!sealTail && !formatConfig.enableChunking && !hasFollowingBoundary) {
+      if (!sealTail &&
+          (!formatConfig.enableChunking || _transportStreaming) &&
+          !hasFollowingBoundary) {
         activeText = described.active;
       }
     }
@@ -932,79 +942,44 @@ class _StreamPlaceholderDelivery {
   List<_RawStreamSegment> _extractRawSegments(String rawText) {
     if (rawText.isEmpty) return const <_RawStreamSegment>[];
     final segments = <_RawStreamSegment>[];
-    final lowerRaw = rawText.toLowerCase();
-    var cursor = 0;
-    parseLoop:
-    while (cursor < rawText.length) {
-      final ttsOpenIndex = lowerRaw.indexOf('<tts>', cursor);
-      final imageOpenIndex = lowerRaw.indexOf('<image>', cursor);
-      final openIndex = switch ((ttsOpenIndex, imageOpenIndex)) {
-        (>= 0, >= 0) =>
-          ttsOpenIndex < imageOpenIndex ? ttsOpenIndex : imageOpenIndex,
-        (>= 0, _) => ttsOpenIndex,
-        (_, >= 0) => imageOpenIndex,
-        _ => -1,
-      };
-      if (openIndex < 0) {
-        final tail = enableTtsPlaceholders
-            ? _sanitizeVisibleTextFragment(rawText.substring(cursor))
-            : _renderTtsAsPlainText(rawText.substring(cursor));
-        if (tail.trim().isNotEmpty) {
-          segments.add(_RawStreamSegment(_RawStreamSegmentKind.text, tail));
-        }
-        break;
+    final pendingText = StringBuffer();
+    void flushText() {
+      final text = _sanitizeVisibleTextFragment(pendingText.toString());
+      pendingText.clear();
+      if (text.trim().isNotEmpty) {
+        segments.add(_RawStreamSegment(_RawStreamSegmentKind.text, text));
       }
-      final beforeText = _sanitizeVisibleTextFragment(
-        rawText.substring(cursor, openIndex),
-      );
-      if (beforeText.trim().isNotEmpty) {
-        segments.add(_RawStreamSegment(_RawStreamSegmentKind.text, beforeText));
-      }
-      if (openIndex == ttsOpenIndex) {
-        final closeIndex = lowerRaw.indexOf('</tts>', openIndex + 5);
-        if (closeIndex < 0) {
+    }
+
+    for (final segment in firstPartyContentTagScanner.scan(rawText)) {
+      if (segment is ContentTagElement &&
+          segment.spec.display == ContentTagDisplay.tts) {
+        flushText();
+        if (!segment.closed) {
           if (enableTtsPlaceholders) {
             segments
                 .add(const _RawStreamSegment(_RawStreamSegmentKind.tts, ''));
           }
-          break parseLoop;
+          break;
         }
-        final ttsText = rawText.substring(openIndex + 5, closeIndex).trim();
+        final ttsText = segment.inner.trim();
         if (enableTtsPlaceholders) {
           segments.add(_RawStreamSegment(_RawStreamSegmentKind.tts, ttsText));
         } else if (ttsText.isNotEmpty) {
           segments.add(_RawStreamSegment(_RawStreamSegmentKind.text, ttsText));
         }
-        cursor = closeIndex + 6;
         continue;
       }
-      final openTagEnd = lowerRaw.indexOf('>', openIndex);
-      if (openTagEnd < 0) {
+      if (ImagePlugin.isInlineImageElement(segment)) {
+        flushText();
         segments.add(const _RawStreamSegment(_RawStreamSegmentKind.image, ''));
-        break;
+        if (!(segment as ContentTagElement).closed) break;
+        continue;
       }
-      final closeIndex = lowerRaw.indexOf('</image>', openTagEnd + 1);
-      segments.add(const _RawStreamSegment(_RawStreamSegmentKind.image, ''));
-      if (closeIndex < 0) {
-        break;
-      }
-      cursor = closeIndex + 8;
+      pendingText.write(segment.raw);
     }
+    flushText();
     return segments;
-  }
-
-  String _renderTtsAsPlainText(String rawText) {
-    if (rawText.isEmpty) return rawText;
-    var result = rawText.replaceAllMapped(
-      RegExp(r'<tts>(.*?)</tts>', caseSensitive: false, dotAll: true),
-      (match) => (match.group(1) ?? '').trim(),
-    );
-    final lower = result.toLowerCase();
-    final openIndex = lower.lastIndexOf('<tts>');
-    if (openIndex >= 0 && lower.indexOf('</tts>', openIndex) < 0) {
-      result = result.substring(0, openIndex);
-    }
-    return _sanitizeVisibleTextFragment(result);
   }
 
   String _sanitizeVisibleTextFragment(String value) {
@@ -1038,7 +1013,8 @@ class _StreamPlaceholderDelivery {
   }) {
     final text = _sanitizeVisibleTextFragment(value).trim();
     if (text.isEmpty) return const _TextSegmentDescriptors();
-    if (!formatConfig.enableChunking) {
+    if (!formatConfig.enableChunking ||
+        (_transportStreaming && !forceSealTail)) {
       if (forceSealTail) {
         return _TextSegmentDescriptors(
           sealed: <_StreamDescriptor>[
@@ -1058,9 +1034,16 @@ class _StreamPlaceholderDelivery {
         ),
       );
     }
-    final chunks = MessageFormatter.formatAndChunkText(text, formatConfig)
-        .map((chunk) => chunk.trim())
-        .where((chunk) => chunk.isNotEmpty)
+    final chunks = MessageFormatter.formatAndChunk(
+      text,
+      formatConfig,
+      protectedRanges: protectedTagRanges(text, tagPresentation),
+    )
+        .map((chunk) => MessageChunk(
+              chunk.text.trim(),
+              openEnded: chunk.openEnded,
+            ))
+        .where((chunk) => chunk.text.isNotEmpty)
         .toList(growable: false);
     if (chunks.isEmpty) return const _TextSegmentDescriptors();
     if (forceSealTail) {
@@ -1068,7 +1051,7 @@ class _StreamPlaceholderDelivery {
         sealed: <_StreamDescriptor>[
           for (final chunk in chunks)
             _StreamDescriptor.text(
-              content: chunk,
+              content: chunk.text,
               messageStatus: 'sent',
               textStatus: BlockStatus.success,
             ),
@@ -1078,16 +1061,18 @@ class _StreamPlaceholderDelivery {
     final sealed = <_StreamDescriptor>[
       for (final chunk in chunks.take(chunks.length - 1))
         _StreamDescriptor.text(
-          content: chunk,
+          content: chunk.text,
           messageStatus: 'sent',
           textStatus: BlockStatus.success,
         ),
     ];
     final lastChunk = chunks.last;
-    if (streamTextEndsWithChunkBoundary(lastChunk, formatConfig)) {
+    // 未闭合的组件还会继续增长，不能提前封口。
+    if (!lastChunk.openEnded &&
+        streamTextEndsWithChunkBoundary(lastChunk.text, formatConfig)) {
       sealed.add(
         _StreamDescriptor.text(
-          content: lastChunk,
+          content: lastChunk.text,
           messageStatus: 'sent',
           textStatus: BlockStatus.success,
         ),

@@ -91,6 +91,88 @@ void main() {
     });
   });
 
+  group('MessageFormatter protected components (ADR0047)', () {
+    test('fenced code block stays one chunk, prose around it still splits', () {
+      const text = '先看代码。然后运行。\n```dart\nfinal a = 1。\nfinal b = 2！\n```\n跑完了。再见。';
+      expect(MessageFormatter.formatAndChunkText(text, cfg), [
+        '先看代码。',
+        '然后运行。',
+        '```dart\nfinal a = 1。\nfinal b = 2！\n```',
+        '跑完了。',
+        '再见。',
+      ]);
+    });
+
+    test('unclosed fence is protected to the end and marked open', () {
+      final chunks = MessageFormatter.formatAndChunk(
+        '说明。\n```\n第一行。\n第二行。',
+        cfg,
+      );
+      expect(chunks.map((c) => c.text), ['说明。', '```\n第一行。\n第二行。']);
+      expect(chunks.map((c) => c.openEnded), [false, true]);
+    });
+
+    test('code inside a component keeps escapes and spacing untouched', () {
+      const code = '```\nprint("a\\nb")\n    indented。x\n```';
+      expect(MessageFormatter.formatAndChunkText(code, cfg), [code]);
+    });
+
+    test('caller ranges protect tag components', () {
+      const text = '前言。<t>第一句。第二句。</t>结尾。收尾。';
+      final start = text.indexOf('<t>');
+      final end = text.indexOf('</t>') + 4;
+      expect(
+        MessageFormatter.formatAndChunkText(
+          text,
+          cfg,
+          protectedRanges: [ProtectedTextRange(start, end)],
+        ),
+        ['前言。', '<t>第一句。第二句。</t>', '结尾。', '收尾。'],
+      );
+    });
+
+    test('ranges starting inside a code block are code text, not components', () {
+      const text = '```\n<t>代码。\n```\n<t>正文里的组件。还在。</t>';
+      final inner = text.indexOf('<t>');
+      final outer = text.lastIndexOf('<t>');
+      expect(
+        MessageFormatter.formatAndChunkText(
+          text,
+          cfg,
+          protectedRanges: [
+            ProtectedTextRange(inner, text.length, closed: false),
+            ProtectedTextRange(outer, text.length),
+          ],
+        ),
+        ['```\n<t>代码。\n```', '<t>正文里的组件。还在。</t>'],
+      );
+    });
+
+    test('components are not merged with short neighbours or filtered', () {
+      final config = cfg.copyWith(
+        minSegmentLength: 10,
+        filterPunctuation: true,
+        filterPunctuations: const ['。'],
+      );
+      const text = '好，\n```\nx。\n```';
+      expect(MessageFormatter.formatAndChunkText(text, config), [
+        '好，',
+        '```\nx。\n```',
+      ]);
+    });
+
+    test('chunking disabled returns the raw text untouched', () {
+      const text = '一句。\n```\n两句。\n```';
+      expect(
+        MessageFormatter.formatAndChunkText(
+          text,
+          cfg.copyWith(enableChunking: false),
+        ),
+        [text],
+      );
+    });
+  });
+
   group('MessageFormatConfig punctuation sets', () {
     test('should read active punctuation set from json', () {
       final config = MessageFormatConfig.fromJson({

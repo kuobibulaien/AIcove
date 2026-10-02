@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'features/sync/providers/cloud_sync_provider.dart';
+import 'features/sync/providers/lan_sync_provider.dart';
 
 import 'package:aicove_flutter/src/ui/theme/moe_interaction_theme.dart';
 
@@ -66,6 +67,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       ref.read(cloudSyncProvider);
+      ref.read(lanSyncPortProvider);
       unawaited(_retireLegacyMemory());
       _requestRecentConversationsWarmup();
       unawaited(_syncAndroidKeepAliveGuard());
@@ -113,10 +115,12 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused) {
+      unawaited(ref.read(lanSyncPortProvider.future).then((port) => port.foreground(false)).catchError((Object _) {}));
       ref.read(chatActionsProvider).onAppBackground();
       // 日志已改为实时存储，无需在后台保存
     }
     if (state == AppLifecycleState.resumed) {
+      unawaited(ref.read(lanSyncPortProvider.future).then((port) => port.foreground(true)).catchError((Object _) {}));
       unawaited(ref.read(cloudSyncProvider.notifier).synchronize());
       // 从后台恢复时，内存 ImageCache 可能已被系统回收；提前把"最近会话"的图片重新解码进缓存，
       // 让用户点进聊天页时尽量不出现"占位→图片跳出来"的闪一下。
@@ -505,10 +509,10 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       brightness: isDark ? Brightness.dark : Brightness.light,
       primary: seed,
       // MoeTalk 仍然用自定义 surface/onSurface 来保持整体灰阶风格一致
-      surface: isDark ? moePanelDark : moePanel,
-      surfaceDim: isDark ? moePanelDark : moePanel,
+      surface: isDark ? moeSurfaceDark : moeSurface,
+      surfaceDim: isDark ? moeSurfaceDark : moeSurface,
       surfaceBright: isDark ? moePanelDark : moePanel,
-      surfaceContainerLowest: isDark ? moePanelDark : moePanel,
+      surfaceContainerLowest: isDark ? moeSurfaceDark : moeSurface,
       surfaceContainerLow: isDark ? moePanelDark : moePanel,
       surfaceContainer: isDark ? moePanelDark : moePanel,
       surfaceContainerHigh: isDark ? moePanelDark : moePanel,

@@ -10,6 +10,7 @@ import '../../../core/database/database.dart';
 import '../../../core/media/embedded_media_store.dart';
 import '../../../core/media/media_store.dart';
 import '../../../core/sync/cloud_tracking.dart';
+import '../../../core/sync/cloud_setting_policy.dart';
 import 'cloud_document.dart';
 
 /// Files and preferences retain their existing owners. Their last synchronized
@@ -102,7 +103,7 @@ class CloudLocalStore {
         CloudLocalDocument('settings', cloudObjectId('preference:$key'), {
           'storage': 'preference',
           'key': key,
-          'json_value': preferences.get(key),
+          'json_value': projectCloudPreference(key, preferences.get(key)),
         }),
       );
     }
@@ -117,12 +118,16 @@ class CloudLocalStore {
             .split(p.relative(entity.path, from: entry.value.path))
             .join('/');
         result.add(
-          CloudLocalDocument('plugin_presets', cloudObjectId('${entry.key}:$relative'), {
-            'storage': 'file',
-            'root': entry.key,
-            'path': relative,
-            'json_value': await entity.readAsString(),
-          }),
+          CloudLocalDocument(
+            'plugin_presets',
+            cloudObjectId('${entry.key}:$relative'),
+            {
+              'storage': 'file',
+              'root': entry.key,
+              'path': relative,
+              'json_value': await entity.readAsString(),
+            },
+          ),
         );
       }
     }
@@ -135,7 +140,89 @@ class CloudLocalStore {
     [kind, id],
   );
 
-  Future<void> captureExternal() async {
+  Future<Map<String, dynamic>> settingTimes(
+    String kind,
+    String id,
+    String device,
+  ) async {
+    if (kind == 'conversations' || kind == 'providers') {
+      return {
+        for (final row in await rows(
+          'SELECT field,at_ms,device_id FROM cloud_setting_times WHERE kind=? AND entity_id=?',
+          [kind, id],
+        ))
+          row['field'] as String: {
+            'at_ms': row['at_ms'],
+            'device_id': row['device_id'] == '' ? device : row['device_id'],
+          },
+      };
+    }
+    final doc = await read(kind, id);
+    if (kind == 'settings' && doc?.payload['storage'] == 'preference') {
+      final key = doc!.payload['key'] as String;
+      return cloudPreferenceTimes(
+        preferences,
+        key,
+        preferences.get(key),
+        device,
+      );
+    }
+    return {};
+  }
+
+  Future<void> rememberSettingTimes(
+    String kind,
+    String id,
+    Map<String, dynamic> payload,
+  ) async {
+    if (payload['setting_times_version'] != 1) return;
+    final times = payload['setting_times'] as Map;
+    if (kind == 'conversations' || kind == 'providers') {
+      await execute(
+        'DELETE FROM cloud_setting_times WHERE kind=? AND entity_id=?',
+        [kind, id],
+      );
+      for (final entry in times.entries) {
+        final stamp = entry.value as Map;
+        await execute(
+          'INSERT INTO cloud_setting_times(kind,entity_id,field,at_ms,device_id) VALUES(?,?,?,?,?)',
+          [kind, id, entry.key, stamp['at_ms'], stamp['device_id']],
+        );
+      }
+    } else if (kind == 'settings' && payload['storage'] == 'preference') {
+      final key = payload['key'] as String;
+      await rememberCloudPreferenceTimes(
+        preferences,
+        key,
+        preferences.get(key),
+        times,
+      );
+    }
+  }
+
+  Future<bool> hasChangedSettingTimes(
+    String kind,
+    String id,
+    String? cloudJson,
+  ) async {
+    if (!const {'conversations', 'providers', 'settings'}.contains(kind)) {
+      return false;
+    }
+    final remote = cloudJson == null
+        ? const {}
+        : (jsonDecode(cloudJson) as Map)['payload'] as Map;
+    final times = remote['setting_times'] as Map? ?? {};
+    for (final entry in (await settingTimes(kind, id, '')).entries) {
+      if ((entry.value as Map)['at_ms'] > 0 &&
+          canonicalSettingJson(entry.value) !=
+              canonicalSettingJson(times[entry.key])) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Future<void> captureExternal({bool trackSettingTimes = false}) async {
     final documents = await external();
     final current = {for (final doc in documents) '${doc.kind}/${doc.id}': doc};
     final previous = await rows(
@@ -147,9 +234,17 @@ class CloudLocalStore {
     for (final key in {...current.keys, ...known.keys}) {
       final local = current[key];
       final old = known[key];
-      if (local?.localJson == old?['local_json']) continue;
       final kind = local?.kind ?? old!['kind'] as String;
       final id = local?.id ?? old!['entity_id'] as String;
+      if (local?.localJson == old?['local_json'] &&
+          !(trackSettingTimes &&
+              await hasChangedSettingTimes(
+                kind,
+                id,
+                old?['cloud_json'] as String?,
+              ))) {
+        continue;
+      }
       // Existing dirty rows already own the pending change; avoid revising them
       // on every poll while an immutable outbox operation is being retried.
       if ((await rows(
@@ -258,10 +353,12 @@ class CloudLocalStore {
     });
   }
 
-  Future<void> pruneUnchangedReceiverEdits() async {
+  Future<void> pruneUnchangedReceiverEdits({
+    bool trackSettingTimes = false,
+  }) async {
     if ((await state())['mode'] != 'receive') return;
     final candidates = await rows(
-      """SELECT d.kind,d.entity_id,d.revision,v.local_json FROM cloud_dirty d
+      """SELECT d.kind,d.entity_id,d.revision,v.local_json,v.cloud_json FROM cloud_dirty d
       JOIN cloud_versions v USING(kind,entity_id)
       LEFT JOIN cloud_outbox o USING(kind,entity_id)
       WHERE v.conflict_id IS NULL AND o.op_id IS NULL""",
@@ -273,6 +370,14 @@ class CloudLocalStore {
           item['entity_id'] as String,
         );
         if (current?.localJson != item['local_json']) return;
+        if (trackSettingTimes &&
+            await hasChangedSettingTimes(
+              item['kind'] as String,
+              item['entity_id'] as String,
+              item['cloud_json'] as String?,
+            )) {
+          return;
+        }
         await execute(
           'DELETE FROM cloud_dirty WHERE kind=? AND entity_id=? AND revision=?',
           [item['kind'], item['entity_id'], item['revision']],
@@ -509,6 +614,7 @@ class CloudLocalStore {
           }
         }
       }
+      await rememberSettingTimes(kind, id, payload);
       return;
     }
     if (payload['storage'] == 'preference') {
@@ -516,9 +622,26 @@ class CloudLocalStore {
       if (!syncPreference(key) || id != cloudObjectId('preference:$key')) {
         throw const CloudSyncFailure('云端设置标识无效');
       }
-      final value = payload['json_value'];
+      final value = keepLocalGeneralSettings(
+        key,
+        payload['json_value'],
+        preferences.get(key),
+      );
       final bool saved;
-      if (deleted) {
+      if (deleted && key == cloudUiModelsKey) {
+        final local = preferences.getString(key);
+        final fields = local == null
+            ? <String, dynamic>{}
+            : Map<String, dynamic>.from(jsonDecode(local) as Map);
+        saved = await preferences.setString(
+          key,
+          jsonEncode({
+            for (final entry in fields.entries)
+              if (localGeneralSettings.contains(entry.key))
+                entry.key: entry.value,
+          }),
+        );
+      } else if (deleted) {
         saved = await preferences.remove(key);
       } else if (value is String) {
         saved = await preferences.setString(key, value);
@@ -534,6 +657,7 @@ class CloudLocalStore {
         throw const CloudSyncFailure('云端设置类型无效');
       }
       if (!saved) throw const CloudSyncFailure('设置保存失败，稍后继续同步');
+      await rememberSettingTimes(kind, id, payload);
       return;
     }
     final rootName = payload['root'] as String;

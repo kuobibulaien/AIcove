@@ -1,46 +1,42 @@
-/// Request-scoped filtering. Never writes filtered content back to raw history.
-class ChatPluginContextPolicy {
-  const ChatPluginContextPolicy(
-      {required this.imageEnabled, required this.ttsEnabled});
+import '../../content_tags/domain/content_tag_registry.dart';
+import '../../content_tags/domain/content_tag_scanner.dart';
+import '../../plugins/image/image_plugin.dart';
+import '../../plugins/plugin_content_tags.dart';
 
-  final bool imageEnabled;
-  final bool ttsEnabled;
+/// Request-scoped filtering. Never writes filtered content back to raw history.
+///
+/// 标签与工具的归属来自内容扩展注册表（ADR0044）：归属方本轮未生效时，
+/// 其标签连同正文、其工具调用与结果成对移除。
+class ChatPluginContextPolicy {
+  ChatPluginContextPolicy(ContentTagRegistry registry)
+      : _registry = registry,
+        _scanner = ContentTagScanner(registry);
+
+  /// 第一方插件：[activeProviderIds] 为本轮有效插件 id（全局开启且角色允许）。
+  factory ChatPluginContextPolicy.firstParty({
+    required Set<String> activeProviderIds,
+  }) =>
+      ChatPluginContextPolicy(ContentTagRegistry(
+        firstPartyContentTagProviders,
+        activeProviderIds: activeProviderIds,
+      ));
+
+  final ContentTagRegistry _registry;
+  final ContentTagScanner _scanner;
 
   /// 已下线的旧记忆工具（ADR0038）：历史里残留的调用与结果成对从请求中去掉。
   static const retiredTools = {'memory_search', 'memory_read', 'context_read'};
 
   bool allowsTool(String name) =>
-      !retiredTools.contains(name) &&
-      (imageEnabled || !const {'draw_image', 'image_context'}.contains(name)) &&
-      (ttsEnabled || name != 'speak');
+      !retiredTools.contains(name) && _registry.allowsTool(name);
+
+  /// 关闭绘图时不读取或描述 assistant 生成的图片块（ADR0017）。
+  bool get includesGeneratedImages =>
+      _registry.isOwnerActive(ImagePlugin.contentTags.providerId);
 
   /// Removes the entire disabled tag, including attributes and nested content.
   /// An unfinished opening tag hides the remaining text rather than leaking it.
-  String filterText(String text) {
-    if ((imageEnabled && ttsEnabled) || !text.contains('<')) return text;
-    for (final tag in [if (!imageEnabled) 'image', if (!ttsEnabled) 'tts']) {
-      final tokens = RegExp(
-        '<(/?)$tag(?=[\\s/>])(?:"[^"]*"|\'[^\']*\'|[^\'">])*?>',
-        caseSensitive: false,
-      );
-      final output = StringBuffer();
-      var depth = 0;
-      var cursor = 0;
-      for (final match in tokens.allMatches(text)) {
-        if (depth == 0) output.write(text.substring(cursor, match.start));
-        final closing = match.group(1) == '/';
-        if (closing) {
-          if (depth > 0) depth--;
-        } else if (!match.group(0)!.endsWith('/>')) {
-          depth++;
-        }
-        cursor = match.end;
-      }
-      if (depth == 0) output.write(text.substring(cursor));
-      text = output.toString();
-    }
-    return text;
-  }
+  String filterText(String text) => _scanner.filterForRequest(text);
 
   dynamic _filterValue(dynamic value) {
     if (value is String) return filterText(value);

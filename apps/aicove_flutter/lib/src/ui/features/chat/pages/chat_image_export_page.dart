@@ -17,6 +17,7 @@ class ChatImageExportPage extends StatefulWidget {
     this.wallpaper,
     this.wallpaperMaskOpacity = 0.8,
     this.wallpaperBlurSigma = 0,
+    this.documentStyle = false,
   });
 
   final List<Message> messages;
@@ -26,6 +27,9 @@ class ChatImageExportPage extends StatefulWidget {
   final ImageProvider? wallpaper;
   final double wallpaperMaskOpacity;
   final double wallpaperBlurSigma;
+
+  /// 与聊天页当前样式一致（ADR0047），文档模式导出无气泡的 Markdown 正文。
+  final bool documentStyle;
 
   @override
   State<ChatImageExportPage> createState() => _ChatImageExportPageState();
@@ -55,6 +59,7 @@ class _ChatImageExportPageState extends State<ChatImageExportPage> {
         wallpaper: widget.wallpaper,
         wallpaperMaskOpacity: widget.wallpaperMaskOpacity,
         wallpaperBlurSigma: widget.wallpaperBlurSigma,
+        documentStyle: widget.documentStyle,
       );
       if (mounted) setState(() => _bytes = bytes);
     } catch (error) {

@@ -1,4 +1,5 @@
 import '../../core/sync/cloud_local_write.dart';
+import '../../core/sync/cloud_setting_policy.dart';
 // ignore_for_file: avoid_print
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -92,8 +93,10 @@ class TtsPluginConfigNotifier extends StateNotifier<TtsConfig> {
           throw StateError('旧语音配置备份失败，未修改配置');
         }
       }
-      if (!await cloudLocalWrite(
-        () => prefs.setString(_storageKey, jsonEncode(next.toJson())),
+      if (!await saveCloudPreference(
+        prefs,
+        _storageKey,
+        jsonEncode(next.toJson()),
       )) {
         throw StateError('语音配置保存失败');
       }
@@ -219,7 +222,7 @@ class TtsPluginConfigNotifier extends StateNotifier<TtsConfig> {
   Future<void> _saveConfig() async {
     final data = jsonEncode(state.toJson());
     final prefs = await SharedPreferences.getInstance();
-    if (!await cloudLocalWrite(() => prefs.setString(_storageKey, data))) {
+    if (!await saveCloudPreference(prefs, _storageKey, data)) {
       throw StateError('配置写入失败');
     }
   }
@@ -462,7 +465,7 @@ class TriggerPluginConfigNotifier extends StateNotifier<TriggerConfig> {
   Future<void> _saveConfig() async {
     final data = jsonEncode(state.toJson());
     final prefs = await SharedPreferences.getInstance();
-    if (!await cloudLocalWrite(() => prefs.setString(_storageKey, data))) {
+    if (!await saveCloudPreference(prefs, _storageKey, data)) {
       throw StateError('配置写入失败');
     }
   }
@@ -504,7 +507,7 @@ class StickerPluginConfigNotifier extends StateNotifier<StickerConfig> {
   Future<void> _saveConfig() async {
     final data = jsonEncode(state.toJson());
     final prefs = await SharedPreferences.getInstance();
-    if (!await cloudLocalWrite(() => prefs.setString(_storageKey, data))) {
+    if (!await saveCloudPreference(prefs, _storageKey, data)) {
       throw StateError('配置写入失败');
     }
   }
@@ -543,7 +546,7 @@ class ImagePluginConfigNotifier extends StateNotifier<ImageConfig> {
   Future<void> updateConfig(ImageConfig config) async {
     final data = jsonEncode(config.toJson());
     final prefs = await SharedPreferences.getInstance();
-    if (!await cloudLocalWrite(() => prefs.setString(_storageKey, data))) {
+    if (!await saveCloudPreference(prefs, _storageKey, data)) {
       throw StateError('配置写入失败');
     }
     state = config;
@@ -552,7 +555,7 @@ class ImagePluginConfigNotifier extends StateNotifier<ImageConfig> {
   Future<void> _saveConfig() async {
     final data = jsonEncode(state.toJson());
     final prefs = await SharedPreferences.getInstance();
-    if (!await cloudLocalWrite(() => prefs.setString(_storageKey, data))) {
+    if (!await saveCloudPreference(prefs, _storageKey, data)) {
       throw StateError('配置写入失败');
     }
   }
@@ -704,7 +707,7 @@ class TimeAwarenessPluginConfigNotifier
   Future<void> _saveConfig() async {
     final data = jsonEncode(state.toJson());
     final prefs = await SharedPreferences.getInstance();
-    if (!await cloudLocalWrite(() => prefs.setString(_storageKey, data))) {
+    if (!await saveCloudPreference(prefs, _storageKey, data)) {
       throw StateError('配置写入失败');
     }
   }

@@ -265,8 +265,8 @@ void main() {
           final capture = GlobalKey();
           const background = Color(0xff607d8b);
           final surface = dark
-              ? MoeColors.dark().surface
-              : MoeColors.light().surface;
+              ? MoeColors.dark().componentBackground
+              : MoeColors.light().componentBackground;
           await tester.pumpWidget(
             _app(
               RepaintBoundary(

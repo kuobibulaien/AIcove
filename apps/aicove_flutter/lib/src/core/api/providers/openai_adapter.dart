@@ -75,6 +75,11 @@ class OpenAIAdapter implements ProviderAdapter {
     if (customConfig != null && customConfig.isNotEmpty) {
       body.addAll(customConfig);
     }
+    if (requestOptions?.toolChoice != null) {
+      // The request-owned transport must survive unrelated channel defaults.
+      body['messages'] = messages;
+      if (hasTools) body['tools'] = tools;
+    }
     _applyRequestOptions(body, requestOptions);
     return body;
   }
@@ -84,6 +89,7 @@ class OpenAIAdapter implements ProviderAdapter {
     ProviderChatRequestOptions? options,
   ) {
     if (options == null) return;
+    if (options.toolChoice != null) body['tool_choice'] = options.toolChoice;
     if (options.temperature != null) {
       body['temperature'] = options.temperature;
     }
@@ -161,6 +167,8 @@ class OpenAIAdapter implements ProviderAdapter {
             id: '',
             name: functionCall['name']?.toString() ?? '',
             arguments: _parseArguments(functionCall['arguments']),
+            rawArguments: functionCall['arguments'] is String
+                ? functionCall['arguments'] as String : null,
           ));
         }
       }

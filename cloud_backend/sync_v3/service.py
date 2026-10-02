@@ -9,6 +9,8 @@ from sqlalchemy.exc import IntegrityError
 from .contracts import KINDS, Mutation, Push, Restore, canonical
 from .models import Account, Blob, Change, Entity, Receipt, Snapshot, ReadEntry
 from .reads import index_document, read_page
+from .setting_merge import merge_settings, content, media_references, explicit_setting_edit, SETTING_KINDS
+from .general_settings import project_payload, public_document
 
 
 class SyncError(Exception):
@@ -46,6 +48,7 @@ class SyncEngine:
                   'json_gzip': True, 'blob_batch_version': 1,
                   'message_snapshot_version': 1, 'media_usage_version': 1,
                   'indexed_read_version': 1, 'blob_probe_version': 1}
+        result['setting_times_version'] = 1
         self.db.commit()
         return result
 
@@ -54,7 +57,7 @@ class SyncEngine:
             raise SyncError('epoch_mismatch', '服务器数据代次已变化，请重新绑定并完整同步')
 
     def _decode(self, entity):
-        return self.vault.open(entity.document) if entity else None
+        return public_document(self.vault.open(entity.document)) if entity else None
 
     def _write(self, account, kind, entity_id, payload, blob_ids, deleted=False, media_ids=None):
         entity = self.db.get(Entity, (self.user, kind, entity_id))
@@ -81,7 +84,12 @@ class SyncEngine:
         receipt = self.db.get(Receipt, (self.user, op_id))
         if receipt and receipt.request_hash != fingerprint:
             raise SyncError('op_id_reused', '同一操作编号不能用于不同内容')
-        return fingerprint, self.vault.open(receipt.result) if receipt else None
+        result = self.vault.open(receipt.result) if receipt else None
+        if result is not None:
+            for key in ('document', 'current'):
+                if key in result:
+                    result[key] = public_document(result[key])
+        return fingerprint, result
 
     def _save_receipt(self, op_id, fingerprint, result):
         self.db.add(Receipt(user_id=self.user, op_id=op_id, request_hash=fingerprint,
@@ -93,9 +101,16 @@ class SyncEngine:
         fingerprint, previous = self._receipt(mutation.op_id, request)
         if previous is not None:
             return previous
+        # Fingerprint the original immutable request above, then enforce the
+        # current scope on values we publish. Retried legacy requests stay safe.
+        mutation = mutation.model_copy(update={'payload': project_payload(mutation.kind, mutation.payload)})
+        if mutation.kind == 'settings' and mutation.payload.get('key') == 'aicove.ui_models.v1':
+            mutation = mutation.model_copy(update={'media_ids': sorted(
+                set(mutation.media_ids) & media_references(mutation.payload))})
         entity = self.db.get(Entity, (self.user, mutation.kind, mutation.entity_id))
         current = self._decode(entity)
         version = entity.version if entity else 0
+        merged = None
         if (mutation.kind == 'messages' and mutation.action == 'put' and current
                 and current['payload'].get('message_snapshot_version') == 1
                 and mutation.payload.get('message_snapshot_version') != 1):
@@ -116,6 +131,9 @@ class SyncEngine:
             media = self.db.get(Entity, (self.user, 'media_assets', media_id))
             if media is None or media.deleted:
                 raise SyncError('missing_media', '请先同步图片或附件的身份信息')
+        if mutation.action == 'put' and current:
+            merged = merge_settings(mutation.kind, current, mutation.payload,
+                                    mutation.blob_ids, mutation.media_ids)
         if mutation.kind == 'media_assets' and mutation.action == 'put' and current and not current['deleted']:
             # Media identity is immutable; availability is additive across devices.
             # An old thumbnail-only client must never remove an uploaded original.
@@ -140,7 +158,27 @@ class SyncEngine:
             else:
                 document = self._write(account, mutation.kind, mutation.entity_id, payload, blobs)
             result = {'op_id': mutation.op_id, 'status': 'applied', 'document': document}
-        elif version != mutation.base_version:
+        elif (mutation.action == 'put' and current and not current['deleted']
+              and canonical(content(mutation.payload) if mutation.kind in SETTING_KINDS else mutation.payload)
+                  == canonical(content(current['payload']) if mutation.kind in SETTING_KINDS else current['payload'])
+              and set(mutation.blob_ids) == set(current['blob_ids'])
+              and set(mutation.media_ids) == set(current.get('media_ids', []))
+              and not (mutation.kind in SETTING_KINDS
+                       and mutation.payload.get('setting_times') != current['payload'].get('setting_times')
+                       and any(stamp['at_ms'] > 0 for stamp in mutation.payload.get('setting_times', {}).values()))):
+            # A second device can publish the same content from an older
+            # baseline. A receipt is durable; a new revision is unnecessary.
+            result = {'op_id': mutation.op_id, 'status': 'applied', 'document': current}
+        elif merged is not None:
+            payload, references = merged
+            document = current if (canonical(payload) == canonical(current['payload'])
+                                   and set(references) == set(current.get('media_ids', []))) else self._write(
+                account, mutation.kind, mutation.entity_id, payload, mutation.blob_ids, media_ids=references)
+            result = {'op_id': mutation.op_id, 'status': 'merged', 'document': document}
+        elif (version != mutation.base_version or
+              (mutation.action == 'put' and mutation.kind in SETTING_KINDS and current
+               and current['payload'].get('setting_times_version') == 1
+               and mutation.payload.get('setting_times_version') != 1)):
             # Keep the original ID and its references stable. Conflicts are
             # separate durable records, never silently duplicated chat rows.
             conflict_id = str(uuid.uuid4())
@@ -206,7 +244,7 @@ class SyncEngine:
         rows = self.db.scalars(query).yield_per(1)
         try:
             for row in rows:
-                document = self.vault.open(row.document)
+                document = public_document(self.vault.open(row.document))
                 document_size = len(canonical(document).encode())
                 if docs and (len(docs) >= limit or size + document_size > 8 * 1024 * 1024):
                     more = True
@@ -258,17 +296,23 @@ class SyncEngine:
             if conflict is None or conflict['deleted']:
                 raise SyncError('missing_conflict', '冲突不存在或已处理', 404)
             incoming = Mutation(**conflict['payload']['incoming'])
+            current = self._decode(self.db.get(Entity, (self.user, incoming.kind, incoming.entity_id)))
             if use_incoming:
                 payload, blobs = incoming.payload, incoming.blob_ids
                 if incoming.action == 'delete':
                     current = self._decode(self.db.get(Entity, (self.user, incoming.kind, incoming.entity_id)))
                     payload, blobs = current['payload'], current['blob_ids']
+                if incoming.action != 'delete':
+                    payload = explicit_setting_edit(incoming.kind, payload, current['payload'],
+                                                    request.device_id, int(time.time() * 1000))
                 self._write(account, incoming.kind, incoming.entity_id, payload,
                             blobs, incoming.action == 'delete',
                             current.get('media_ids', []) if incoming.action == 'delete' else incoming.media_ids)
             else:
                 current = self._decode(self.db.get(Entity, (self.user, incoming.kind, incoming.entity_id)))
-                self._write(account, incoming.kind, incoming.entity_id, current['payload'],
+                payload = current['payload'] if current['deleted'] else explicit_setting_edit(
+                    incoming.kind, current['payload'], current['payload'], request.device_id, int(time.time() * 1000))
+                self._write(account, incoming.kind, incoming.entity_id, payload,
                             current['blob_ids'], current['deleted'], current.get('media_ids', []))
             self._write(account, '_conflicts', conflict_id, conflict['payload'], conflict['blob_ids'], True, conflict.get('media_ids', []))
             result = {'status': 'resolved', 'cursor': account.cursor}
@@ -339,7 +383,11 @@ class SyncEngine:
                 for document in page['entities']:
                     key = (document['kind'], document['entity_id'])
                     saved.add(key)
-                    self._write(account, *key, document['payload'], document['blob_ids'], document['deleted'], document.get('media_ids', []))
+                    current = self._decode(self.db.get(Entity, (self.user, *key)))
+                    payload = document['payload'] if document['deleted'] else explicit_setting_edit(
+                        document['kind'], document['payload'], current['payload'] if current else None,
+                        request.device_id, int(time.time() * 1000))
+                    self._write(account, *key, payload, document['blob_ids'], document['deleted'], document.get('media_ids', []))
             current = self.db.execute(select(Entity.kind, Entity.entity_id).where(Entity.user_id == self.user)).all()
             for key in current:
                 if key in saved:

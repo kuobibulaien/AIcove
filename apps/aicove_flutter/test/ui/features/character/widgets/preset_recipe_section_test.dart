@@ -10,7 +10,8 @@ import 'package:aicove_flutter/src/features/agent_context/domain/silly_tavern_pr
 import 'package:aicove_flutter/src/features/agent_context/domain/tavern_compatibility_port.dart';
 import 'package:aicove_flutter/src/features/agent_context/providers/preset_recipe_provider.dart';
 import 'package:aicove_flutter/src/ui/features/character/widgets/character_plugins_section.dart';
-import 'package:aicove_flutter/src/ui/features/character/widgets/preset_recipe_section.dart';
+import 'package:aicove_flutter/src/ui/features/plugins/widgets/tavern_common.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 
 Widget _host({
@@ -27,18 +28,14 @@ Widget _host({
 }) {
   return ProviderScope(
     overrides: [
-      presetRecipeListProvider.overrideWith(
-        (ref) async => presets,
-      ),
+      presetRecipeListProvider.overrideWith((ref) async => presets),
       tavernPluginSettingsProvider.overrideWith(
         (ref) async => const TavernPluginSettings(enabled: true),
       ),
     ],
     child: MaterialApp(
       theme: ThemeData(
-        extensions: <ThemeExtension<dynamic>>[
-          MoeColors.light(),
-        ],
+        extensions: <ThemeExtension<dynamic>>[MoeColors.light()],
       ),
       home: Scaffold(
         body: SingleChildScrollView(
@@ -70,29 +67,30 @@ void main() {
 
   for (final size in <Size>[const Size(390, 844), const Size(1200, 900)]) {
     testWidgets(
-        'renders bound preset without overflow at width ${size.width}',
-        (tester) async {
-      tester.view.physicalSize = size;
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
+      'renders bound preset without overflow at width ${size.width}',
+      (tester) async {
+        tester.view.physicalSize = size;
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
 
-      await tester.pumpWidget(
-        _host(
-          selectedRecipeId: 'st_preset_aaaaaaaaaaaaaaaaaaaaaaaa',
-          onChanged: (_) {},
-        ),
-      );
-      await tester.pumpAndSettle();
+        await tester.pumpWidget(
+          _host(
+            selectedRecipeId: 'st_preset_aaaaaaaaaaaaaaaaaaaaaaaa',
+            onChanged: (_) {},
+          ),
+        );
+        await tester.pumpAndSettle();
 
-      expect(find.text('酒馆'), findsOneWidget);
-      expect(find.text('酒馆测试预设'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    });
+        expect(find.text('酒馆'), findsOneWidget);
+        expect(find.text('酒馆测试预设'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
 
-    testWidgets(
-        'renders actual import compatibility summary at width ${size.width}',
-        (tester) async {
+    testWidgets('renders actual preset info at width ${size.width}', (
+      tester,
+    ) async {
       tester.view.physicalSize = size;
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
@@ -116,10 +114,8 @@ void main() {
             body: Center(
               child: Padding(
                 padding: const EdgeInsets.all(16),
-                child: PresetImportSummary(
-                  preset: preset,
-                  regexAuthorized: false,
-                  onRegexAuthorizationChanged: (_) {},
+                child: SingleChildScrollView(
+                  child: TavernPresetInfo(preset: preset),
                 ),
               ),
             ),
@@ -129,18 +125,15 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
 
       expect(find.textContaining('47 个顶层字段'), findsOneWidget);
-      expect(find.textContaining('已应用 12 · 不适用 35'), findsOneWidget);
-      expect(find.text('查看参数生效明细'), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('authorize-preset-regex')),
-        findsOneWidget,
-      );
+      expect(find.textContaining('生效 12 · 不适用 35'), findsOneWidget);
+      expect(find.text('参数生效情况'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   }
 
-  testWidgets('picker can clear binding back to AIcove default',
-      (tester) async {
+  testWidgets('picker can clear binding back to AIcove default', (
+    tester,
+  ) async {
     String? changed = 'unchanged';
     await tester.pumpWidget(
       _host(
@@ -152,14 +145,15 @@ void main() {
 
     await tester.tap(find.text('酒馆测试预设'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('跟随插件默认预设').last);
+    await tester.tap(find.text('跟随默认酒馆预设').last);
     await tester.pumpAndSettle();
 
     expect(changed, isNull);
   });
 
-  testWidgets('picker selection immediately replaces AIcove default label',
-      (tester) async {
+  testWidgets('picker selection immediately replaces AIcove default label', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -215,12 +209,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('跟随插件默认预设'), findsOneWidget);
-    await tester.tap(find.text('跟随插件默认预设'));
+    expect(find.text('跟随默认酒馆预设'), findsOneWidget);
+    await tester.tap(find.text('跟随默认酒馆预设'));
     await tester.pumpAndSettle();
     final importedPresetTile = find.ancestor(
       of: find.text('酒馆测试预设'),
-      matching: find.byType(ListTile),
+      matching: find.byType(MoeListTile),
     );
     expect(importedPresetTile, findsOneWidget);
     expect(
@@ -232,11 +226,12 @@ void main() {
 
     expect(selectedRecipeId, 'st_preset_aaaaaaaaaaaaaaaaaaaaaaaa');
     expect(find.text('酒馆测试预设'), findsOneWidget);
-    expect(find.text('跟随插件默认预设'), findsNothing);
+    expect(find.text('跟随默认酒馆预设'), findsNothing);
   });
 
-  testWidgets('empty preset library shows follow-default label',
-      (tester) async {
+  testWidgets('empty preset library shows follow-default label', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       _host(
         selectedRecipeId: null,
@@ -246,7 +241,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('跟随插件默认预设'), findsOneWidget);
+    expect(find.text('跟随默认酒馆预设'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

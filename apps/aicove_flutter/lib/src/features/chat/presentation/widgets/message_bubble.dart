@@ -20,6 +20,7 @@ import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:aicove_flutter/src/core/utils/data_image.dart';
+import 'package:aicove_flutter/src/core/utils/markdown_fence.dart';
 import '../../../../ui/theme/skin_provider.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
@@ -39,9 +40,6 @@ final audioMessageTextExpandedProvider = StateProvider.family<bool?, String>(
 /// 消息气泡组件（支持多模态）
 /// 遵循单一职责原则(S)：只负责消息的UI渲染
 class MessageBubble extends ConsumerWidget {
-  static const double _kDefaultFontSize = 15.0;
-  static const double _kBubbleHorizontalPadding = 10.0;
-  static const double _kBubbleVerticalPadding = 7.0;
   static const double _kMediaBlockVerticalPadding = 2.0;
   static const double _kRichBlockVerticalPadding = 4.0;
 
@@ -73,6 +71,10 @@ class MessageBubble extends ConsumerWidget {
   final bool showAvatar;
   final bool hideContactAvatar;
 
+  /// 文档模式（ADR0047）：助手消息不画气泡、占满宽度、按 Markdown 渲染；
+  /// 用户消息改为中性浅色块。
+  final bool documentStyle;
+
   const MessageBubble({
     super.key,
     required this.isMe,
@@ -82,13 +84,14 @@ class MessageBubble extends ConsumerWidget {
     this.onRetry,
     this.onLongPress,
     this.onMediaLongPress,
-    this.fontSize = _kDefaultFontSize,
+    this.fontSize = MoeBubbleStyle.defaultFontSize,
     this.chatImages,
     this.showCorner = false,
     this.showName = false,
     this.showAvatar = true,
     this.selectionWrapper,
     this.hideContactAvatar = false,
+    this.documentStyle = false,
   });
 
   /// 向后兼容：纯文本构造函数
@@ -101,13 +104,14 @@ class MessageBubble extends ConsumerWidget {
     this.onRetry,
     this.onLongPress,
     this.onMediaLongPress,
-    this.fontSize = _kDefaultFontSize,
+    this.fontSize = MoeBubbleStyle.defaultFontSize,
     this.chatImages,
     this.showCorner = false,
     this.showName = false,
     this.showAvatar = true,
     this.selectionWrapper,
     this.hideContactAvatar = false,
+    this.documentStyle = false,
   }) : message = Message.text(
          id: DateTime.now().millisecondsSinceEpoch.toString(),
          role: isMe ? 'user' : 'assistant',
@@ -124,8 +128,13 @@ class MessageBubble extends ConsumerWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     // 从 MoeColors 读取气泡颜色（已适配深浅模式）
-    final bubbleColor = isMe ? colors.bubbleRightBg : colors.bubbleLeftBg;
-    final fg = isMe ? Colors.white : colors.bubbleLeftFg;
+    final documentAssistant = documentStyle && !isMe;
+    final bubbleColor = documentStyle
+        ? (isMe ? colors.text.withValues(alpha: 0.07) : Colors.transparent)
+        : (isMe ? colors.bubbleRightBg : colors.bubbleLeftBg);
+    final fg = documentStyle
+        ? colors.text
+        : (isMe ? Colors.white : colors.bubbleLeftFg);
 
     final align = isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start;
 
@@ -233,6 +242,9 @@ class MessageBubble extends ConsumerWidget {
               blocks,
               imagePreviewScale: imagePreviewScale,
             ),
+            // 折叠块（思维链、状态栏等）自成一个折叠气泡，不再套普通气泡。
+            for (final block in blocks.whereType<ThinkingBlock>())
+              _buildFoldBubble(context, block),
             // Render non-image blocks in bubble (text, audio, etc.)
             if (_shouldShowBubble(
               blocks,
@@ -265,15 +277,17 @@ class MessageBubble extends ConsumerWidget {
                           : null,
                       child: Container(
                         key: ValueKey<String>('message_bubble_${message.id}'),
+                        width: documentAssistant ? double.infinity : null,
                         margin: const EdgeInsets.symmetric(vertical: 0),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: _kBubbleHorizontalPadding,
-                          vertical: _kBubbleVerticalPadding,
-                        ),
-                        decoration: MoeG2Decoration(
-                          radius: bubbleRadius,
-                          color: bubbleColor,
-                        ),
+                        padding: documentAssistant
+                            ? const EdgeInsets.symmetric(vertical: 2)
+                            : MoeBubbleStyle.padding,
+                        decoration: documentAssistant
+                            ? null
+                            : MoeG2Decoration(
+                                radius: bubbleRadius,
+                                color: bubbleColor,
+                              ),
                         // Non-image content (text, audio, etc.)
                         child: hasBlocks
                             ? _buildNonImageBlocksContent(
@@ -293,17 +307,17 @@ class MessageBubble extends ConsumerWidget {
                                       '[空消息]',
                                       style: TextStyle(
                                         color: fg.withValues(alpha: 0.5),
-                                        height: 1.42,
+                                        height: MoeBubbleStyle.textHeight,
                                         fontSize: fontSize - 1,
                                         fontStyle: FontStyle.italic,
                                       ),
                                     );
                                   }
-                                  return _buildMessageText(
+                                  return _buildBodyText(
                                     text,
                                     TextStyle(
                                       color: fg,
-                                      height: 1.42,
+                                      height: MoeBubbleStyle.textHeight,
                                       fontSize: fontSize,
                                     ),
                                   );
@@ -331,9 +345,39 @@ class MessageBubble extends ConsumerWidget {
     }
     // 只要存在可视化内容块才显示气泡，避免 ToolBlock 等内部块形成空壳气泡。
     return blocks.any(
-      (block) => isRenderableBlock(
-        block,
-        allowStreamingPlaceholder: allowStreamingPlaceholder,
+      (block) =>
+          block is! ThinkingBlock &&
+          isRenderableBlock(
+            block,
+            allowStreamingPlaceholder: allowStreamingPlaceholder,
+          ),
+    );
+  }
+
+  Widget _buildFoldBubble(BuildContext context, ThinkingBlock block) {
+    final title = block.title?.trim();
+    return Builder(
+      builder: (context) => GestureDetector(
+        onLongPressStart: onLongPress == null
+            ? null
+            : (details) {
+                final box = context.findRenderObject() as RenderBox?;
+                if (box != null) onLongPress!(box, details.globalPosition);
+              },
+        child: MoeCollapsibleBubble(
+          key: ValueKey<String>('fold_bubble_${block.id}'),
+          isMe: isMe,
+          title: title == null || title.isEmpty ? '思考过程' : title,
+          content: block.content,
+          fontSize: fontSize,
+          child: documentStyle && !isMe
+              ? MoeMarkdownView(
+                  block.content,
+                  fontSize: fontSize,
+                  color: context.moeColors.bubbleLeftFg,
+                )
+              : null,
+        ),
       ),
     );
   }
@@ -369,7 +413,12 @@ class MessageBubble extends ConsumerWidget {
   }) {
     // Filter to only non-image and non-sticker blocks
     final nonMediaBlocks = blocks
-        .where((block) => block is! ImageBlock && block is! EmojiBlock)
+        .where(
+          (block) =>
+              block is! ImageBlock &&
+              block is! EmojiBlock &&
+              block is! ThinkingBlock,
+        )
         .toList();
     final filteredBlocks = nonMediaBlocks
         .where(
@@ -450,15 +499,19 @@ class MessageBubble extends ConsumerWidget {
           child: TypingDotsIndicator(
             color: textColor,
             dotSize: fontSize * 0.4,
-            height: fontSize * 1.42, // 与文字行高一致
+            height: fontSize * MoeBubbleStyle.textHeight, // 与文字行高一致
           ),
         );
       }
       return Padding(
         padding: EdgeInsets.only(bottom: isLast ? 0 : 3),
-        child: _buildMessageText(
+        child: _buildBodyText(
           block.content,
-          TextStyle(color: textColor, height: 1.42, fontSize: fontSize),
+          TextStyle(
+            color: textColor,
+            height: MoeBubbleStyle.textHeight,
+            fontSize: fontSize,
+          ),
         ),
       );
     } else if (block is ImageBlock || block is EmojiBlock) {
@@ -473,8 +526,6 @@ class MessageBubble extends ConsumerWidget {
       );
     } else if (block is CodeBlock) {
       return _buildCodeBlock(block, textColor);
-    } else if (block is ThinkingBlock) {
-      return _buildThinkingBlock(block, textColor);
     } else if (block is ErrorBlock) {
       return _buildErrorBlock(block);
     }
@@ -849,7 +900,11 @@ class MessageBubble extends ConsumerWidget {
             ),
             child: _buildMessageText(
               audioText,
-              TextStyle(color: textColor, height: 1.42, fontSize: fontSize),
+              TextStyle(
+                color: textColor,
+                height: MoeBubbleStyle.textHeight,
+                fontSize: fontSize,
+              ),
             ),
           ),
         ],
@@ -859,58 +914,53 @@ class MessageBubble extends ConsumerWidget {
 
   /// 渲染代码块
   Widget _buildCodeBlock(CodeBlock block, Color textColor) {
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: _kRichBlockVerticalPadding),
-      padding: const EdgeInsets.all(12),
-      decoration: MoeG2Decoration(
-        radius: 8,
-        color: Colors.black.withValues(alpha: 0.8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            block.language,
-            style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
-          ),
-          const SizedBox(height: 8),
-          _buildMessageText(
-            block.content,
-            const TextStyle(
-              color: Colors.white,
-              fontFamily: 'monospace',
-              fontSize: 14,
-            ),
-          ),
-        ],
-      ),
+    return MoeCodeBlock(
+      code: block.content,
+      language: block.language,
+      foregroundColor: textColor,
     );
   }
 
-  /// 渲染思考过程块（可折叠）
-  Widget _buildThinkingBlock(ThinkingBlock block, Color textColor) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: _kRichBlockVerticalPadding),
-      child: ExpansionTile(
-        tilePadding: EdgeInsets.zero,
-        title: Text(
-          '思考过程',
-          style: TextStyle(color: textColor, fontSize: fontSize + 1),
-        ),
-        children: [
-          _buildMessageText(
-            block.content,
-            TextStyle(
-              color: textColor.withValues(alpha: 0.8),
-              fontSize: fontSize,
-            ),
-          ),
-        ],
-      ),
-    );
+  /// 消息正文：文档模式的助手消息按 Markdown 渲染，其余走 [_buildMessageText]。
+  Widget _buildBodyText(String text, TextStyle style) {
+    if (documentStyle && !isMe) {
+      return MoeMarkdownView(
+        text,
+        fontSize: style.fontSize ?? fontSize,
+        color: style.color,
+      );
+    }
+    return _buildMessageText(text, style);
   }
 
+  /// 正文里的围栏代码块用 [MoeCodeBlock] 渲染，其余保持纯文本（ADR0047）。
   Widget _buildMessageText(String text, TextStyle style) {
+    final parts = text.contains('```') || text.contains('~~~')
+        ? splitFencedText(text)
+        : null;
+    if (parts == null ||
+        (parts.length == 1 && parts.single is FencedProsePart)) {
+      return _buildPlainMessageText(text, style);
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final part in parts)
+          switch (part) {
+            FencedProsePart(:final text) => _buildPlainMessageText(text, style),
+            FencedCodePart(:final block) => MoeCodeBlock(
+                code: block.code,
+                language: block.language,
+                foregroundColor: style.color,
+                fontSize: (style.fontSize ?? fontSize) - 2,
+              ),
+          },
+      ],
+    );
+  }
+
+  Widget _buildPlainMessageText(String text, TextStyle style) {
     if (text.length >= 512 && text.contains('\n')) {
       return IncrementalMessageText(text, style: style);
     }
