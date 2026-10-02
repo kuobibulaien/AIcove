@@ -63,11 +63,24 @@ void main() {
       debugPrint('AUDIT clipboard after drag: $copiedText');
       expect(models.indexOf('audit-model-0'), greaterThan(0));
       expect(copiedText, isNull);
+      expect(tester.widgetList<ModelRowTile>(find.byType(ModelRowTile))
+          .map((row) => row.model).toList(), models,
+          reason: 'rendered order must match persisted drag order');
       await saveReleaseSourcePreview(tester, previewKey, 'model-reorder-$width');
       final movedRow = find.ancestor(of: find.text('audit-model-0'), matching: find.byType(ModelRowTile));
       await tester.tap(find.descendant(of: movedRow, matching: find.byIcon(Icons.copy_outlined)));
       await tester.pumpAndSettle(const Duration(seconds: 3));
       expect(copiedText, 'audit-model-0');
+      await tester.pumpWidget(const SizedBox.shrink());
+      debugClearProviderDetailWarmCache();
+      await tester.pumpWidget(const ProviderScope(child: MaterialApp(
+        home: ProviderDetailPage(providerId: 'openai'))));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('模型'));
+      await tester.pumpAndSettle();
+      expect(tester.widgetList<ModelRowTile>(find.byType(ModelRowTile))
+          .map((row) => row.model).toList(), models,
+          reason: 'cold page must retain the persisted drag order');
       expect(tester.takeException(), isNull);
     });
   }

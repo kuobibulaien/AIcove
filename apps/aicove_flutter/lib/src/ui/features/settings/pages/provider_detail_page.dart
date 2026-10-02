@@ -928,12 +928,7 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage>
                 displayName: displayNames[modelId] ?? '',
               ),
             )
-            .toList(growable: false)
-          ..sort((a, b) {
-            final nameA = a.sortName;
-            final nameB = b.sortName;
-            return nameA.compareTo(nameB);
-          });
+            .toList(growable: false);
 
     _cachedModelEntriesSignature = signature;
     _cachedModelEntries = List<_ProviderModelEntry>.unmodifiable(entries);
@@ -973,9 +968,6 @@ class _ProviderModelEntry {
 
   final String modelId;
   final String displayName;
-
-  String get sortName =>
-      (displayName.isEmpty ? modelId : displayName).toLowerCase();
 }
 
 class _ProviderDetailWarmCacheEntry {

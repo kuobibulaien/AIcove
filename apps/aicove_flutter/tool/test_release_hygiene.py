@@ -50,6 +50,19 @@ class ReleaseHygieneTest(unittest.TestCase):
         if remote:
             self.assertFalse((repo_root / 'opusdocs').exists(),
                              'opusdocs/ must not exist in the public repository checkout')
+            for path in (APP_ROOT / 'test').rglob('*.dart'):
+                self.assertNotIn('opusdocs', path.read_text(),
+                                 f'public test depends on private opusdocs: {path}')
+
+    def test_private_preset_audits_are_excluded_from_archives(self):
+        repo_root = APP_ROOT.parent.parent
+        attributes = (repo_root / '.gitattributes').read_text().splitlines()
+        for name in ('silly_tavern_actual_presets_test.dart',
+                     'preset_tag_mapping_local_presets_test.dart'):
+            self.assertIn(
+                f'apps/aicove_flutter/test/features/agent_context/domain/{name} export-ignore',
+                attributes,
+            )
 
     def test_default_api_urls_resolve_to_localhost(self):
         for name in ('_defaultApiUrl', '_localApiUrl', '_lanApiUrl'):

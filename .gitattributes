@@ -1,3 +1,5 @@
 # Local-only material: never included in git archive exports synced to the public repository.
 opusdocs export-ignore
 opusdocs/** export-ignore
+apps/aicove_flutter/test/features/agent_context/domain/silly_tavern_actual_presets_test.dart export-ignore
+apps/aicove_flutter/test/features/agent_context/domain/preset_tag_mapping_local_presets_test.dart export-ignore

@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -88,7 +88,7 @@ void main() {
       },
     );
 
-    testWidgets('renders actual preset info at width ${size.width}', (
+    testWidgets('renders synthetic preset info at width ${size.width}', (
       tester,
     ) async {
       tester.view.physicalSize = size;
@@ -96,15 +96,50 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
       final preset = const SillyTavernPresetParser().parseSource(
-        File('../../opusdocs/预设与正则/ARGO-1.5.json').readAsStringSync(),
-        sourceFileName: 'ARGO-1.5.json',
+        jsonEncode({
+          'prompts': [
+            {
+              'identifier': 'audit-main',
+              'role': 'system',
+              'content': 'audit rule',
+            },
+          ],
+          'prompt_order': [
+            {'identifier': 'audit-main', 'enabled': true},
+          ],
+          'temperature': 0.65,
+          'continue_prefill': 'audit continuation',
+          'unknown_audit_field': true,
+        }),
+        sourceFileName: 'synthetic-info.json',
       );
       final topLevelClassified = SillyTavernParameterStatus.values.fold<int>(
         0,
         (count, status) =>
             count + preset.parameterStatusCount(status, topLevelOnly: true),
       );
-      expect(topLevelClassified, 47);
+      expect(topLevelClassified, 5);
+      expect(
+        preset.parameterStatusCount(
+          SillyTavernParameterStatus.applied,
+          topLevelOnly: true,
+        ),
+        3,
+      );
+      expect(
+        preset.parameterStatusCount(
+          SillyTavernParameterStatus.notApplicable,
+          topLevelOnly: true,
+        ),
+        1,
+      );
+      expect(
+        preset.parameterStatusCount(
+          SillyTavernParameterStatus.intentionallyUnsupported,
+          topLevelOnly: true,
+        ),
+        1,
+      );
       await tester.pumpWidget(
         MaterialApp(
           theme: ThemeData(
@@ -124,8 +159,8 @@ void main() {
       );
       await tester.pump(const Duration(milliseconds: 400));
 
-      expect(find.textContaining('47 个顶层字段'), findsOneWidget);
-      expect(find.textContaining('生效 12 · 不适用 35'), findsOneWidget);
+      expect(find.textContaining('5 个顶层字段'), findsOneWidget);
+      expect(find.textContaining('生效 3 · 不适用 1 · 不支持 1'), findsOneWidget);
       expect(find.text('参数生效情况'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
