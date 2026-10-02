@@ -201,7 +201,7 @@ void main() {
     expect(history.map((m) => m.id).toList(), ['m2', 'm3', 'm4', 'm5']);
   });
 
-  test('prepareHistory keeps full history when marker is missing', () {
+  test('prepareHistory rejects a missing explicit context boundary', () {
     final now = DateTime.now();
     final conv = Conversation(
       id: 'conv_3',
@@ -222,12 +222,15 @@ void main() {
     addTearDown(container.dispose);
     final service = container.read(chatSendServiceProvider);
 
-    final history = service.prepareHistory(
-      conv: conv,
-      userMsg: userMsg,
+    expect(
+      () => service.prepareHistory(conv: conv, userMsg: userMsg),
+      throwsA(isA<StateError>().having(
+        (error) => error.message,
+        'message',
+        contains('话题边界已失效'),
+      )),
+      reason: 'Explicit boundaries must not silently resend the old topic.',
     );
-
-    expect(history.map((m) => m.id).toList(), ['m1', 'm2', 'm3', 'm4']);
   });
 
   test('prepareHistoryFromStore uses full persisted history, not UI page',
