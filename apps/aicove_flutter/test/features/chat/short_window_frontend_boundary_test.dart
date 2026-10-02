@@ -1,6 +1,7 @@
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:aicove_flutter/src/core/database/converters/database_converters.dart';
 import 'package:aicove_flutter/src/core/database/database.dart' as db;
@@ -56,6 +57,7 @@ Future<void> _persistMessage(
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() => SharedPreferences.setMockInitialValues({}));
 
   test('conversationHasImageMessages 只按前端时间线缓存语义判断', () async {
     final database = db.AppDatabase.forTesting(NativeDatabase.memory());

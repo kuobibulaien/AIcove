@@ -1,7 +1,14 @@
 import 'package:aicove_flutter/src/features/chat/application/chat_page_conversation_actions.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 // 离线审计：失败断言表示尚未修复的安全/持久化契约，不改为迁就现状的断言。
-import 'package:dio/dio.dart';
+import 'dart:io';
+
+import 'package:aicove_flutter/src/core/media/media_store.dart';
+import 'package:aicove_flutter/src/features/sync/data/cloud_local_store.dart';
+import 'package:aicove_flutter/src/features/sync/data/cloud_media_codec.dart';
+import 'package:aicove_flutter/src/features/sync/data/lan_repository.dart';
+import '../sync/lan_repository_test.dart'
+    show LanMemoryPreferences, lanTestDevice, seedLan, copyLan;
 import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,7 +16,6 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aicove_flutter/src/core/database/database.dart' as db;
 import 'package:aicove_flutter/src/core/database/database_provider.dart';
-import 'package:aicove_flutter/src/core/sync/sync_service.dart';
 import 'package:aicove_flutter/src/core/models/message_block.dart';
 import 'package:aicove_flutter/src/features/agent_context/domain/silly_tavern_preset.dart';
 import 'package:aicove_flutter/src/features/agent_context/domain/silly_tavern_regex_processor.dart';
@@ -242,41 +248,35 @@ void main() {
     expect(bubbles.map((m) => m.displayText).join(), isNot(contains('SECRET')));
   });
 
-  test('A08 v2拉取不得忽略raw_payload', () async {
-    final dio = Dio(BaseOptions(baseUrl: 'https://audit.invalid'));
-    addTearDown(() => dio.close(force: true));
-    // 拦截器直接提供内存响应，不执行网络/生产请求。
-    dio.interceptors.add(
-      InterceptorsWrapper(
-        onRequest: (options, handler) {
-          handler.resolve(
-            Response(
-              requestOptions: options,
-              statusCode: 200,
-              data: {
-                'messages': [
-                  {
-                    'id': 'remote',
-                    'conversation_id': 'a',
-                    'role': 'assistant',
-                    'content': '原文',
-                    'created_at': time.millisecondsSinceEpoch,
-                    'raw_payload': '{"rawReplyText":"原文","processedText":"显示"}',
-                    'blocks': [],
-                  },
-                ],
-                'cursors': {'messages': 1},
-              },
-            ),
-          );
-        },
-      ),
+  test('A08 当前LAN拉取不得忽略raw_payload', () async {
+    final root = await Directory.systemTemp.createTemp('chat-sync-raw-audit-');
+    final source = await lanTestDevice(root, 'source');
+    final target = await lanTestDevice(root, 'target');
+    addTearDown(() async {
+      for (final device in [source, target]) {
+        await device.media.close();
+        await device.local.db.close();
+      }
+      await root.delete(recursive: true);
+    });
+    await seedLan(source);
+    const payload = '{"rawReplyText":"原文","processedText":"显示"}';
+    await source.local.execute('UPDATE messages SET raw_payload=? WHERE id=?', [
+      payload,
+      'message',
+    ]);
+    await copyLan(source, target);
+    final row =
+        (await target.local.read('messages', 'message'))!.payload['row'] as Map;
+    expect(row['raw_payload'], payload);
+    expect(row['content'], '原文');
+    expect(
+      (await source.local.read(
+        'messages',
+        'message',
+      ))!.payload['row']['raw_payload'],
+      payload,
     );
-    await SyncService(database, dio, 'offline-audit').pull();
-    final message = await container
-        .read(messageRepositoryProvider)
-        .getById('remote');
-    expect(message!.rawPayload, isNotNull);
   });
 
   for (final stage in ['first_insert', 'tool_insert', 'delete']) {
@@ -430,7 +430,7 @@ void main() {
     );
   });
 
-  test('A09 普通聊天落库应产生可同步待办', () async {
+  test('A09 普通聊天落库应进入当前LAN同步待办', () async {
     await store().appendUserMessage(
       conversationId: 'a',
       message: Message(
@@ -442,10 +442,39 @@ void main() {
       displayText: '需要同步的消息',
     );
     expect(await store().loadAllRawMessages('a'), hasLength(1));
-    expect(
-      await database.select(database.pendingOperations).get(),
-      isNotEmpty,
-      reason: 'v2 push只读取pending_operations，空队列不会上传本地聊天',
+    final dirty = await database
+        .customSelect(
+          "SELECT * FROM lan_dirty WHERE kind='messages' AND entity_id='u0'",
+        )
+        .get();
+    expect(dirty, isNotEmpty, reason: '当前LAN同步必须捕获新落库的聊天');
+    final root = await Directory.systemTemp.createTemp(
+      'chat-sync-write-audit-',
     );
+    final media = MediaStore(Directory('${root.path}/media'), 'chat-audit');
+    addTearDown(() async {
+      await media.close();
+      await root.delete(recursive: true);
+    });
+    final local = CloudLocalStore(
+      database,
+      LanMemoryPreferences(),
+      Directory('${root.path}/docs')..createSync(),
+      Directory('${root.path}/support')..createSync(),
+    );
+    final repo = LanRepository(
+      local,
+      CloudMediaCodec(media, allowNetworkDownload: false),
+      'chat-audit',
+    );
+    await repo.capture();
+    final manifest = await repo.manifest();
+    final item = (manifest['items'] as List).cast<Map>().singleWhere(
+      (item) => item['kind'] == 'messages' && item['entity_id'] == 'u0',
+    );
+    final revision = await repo.revision(
+      (item['hashes'] as List).single as String,
+    );
+    expect((revision.payload['row'] as Map)['content'], '需要同步的消息');
   });
 }

@@ -33,6 +33,12 @@ class _RecordingChatActions extends ChatActions {
   final List<String?> sentOwners = [];
   final List<String> sentTexts = [];
   @override
+  Future<void> sendWithImage(String path, {String? text}) async {
+    sentOwners.add(auditRef.read(activeConversationProvider)?.id);
+    sentTexts.add(text ?? path);
+  }
+
+  @override
   Future<void> send(String text) async {
     sentOwners.add(auditRef.read(activeConversationProvider)?.id);
     sentTexts.add(text);
@@ -112,9 +118,7 @@ Widget _buildHost({
     container: container,
     child: MaterialApp(
       theme: ThemeData(
-        extensions: <ThemeExtension<dynamic>>[
-          MoeColors.light(),
-        ],
+        extensions: <ThemeExtension<dynamic>>[MoeColors.light()],
       ),
       home: ChatPage(
         conversationId: conversation.id,
@@ -125,116 +129,176 @@ Widget _buildHost({
 }
 
 void main() {
-  testWidgets('chat send compatibility result after page disposal is ignored',
+  for (final image in [false, true]) {
+    testWidgets(
+      'chat send compatibility result after page disposal is ignored image=$image',
       (tester) async {
-    final now = DateTime(2026, 9, 6);
-    final conversation = Conversation(
-        id: 'audit-send',
-        title: 'Synthetic',
-        displayName: 'Synthetic',
-        createdAt: now,
-        updatedAt: now);
-    final database = db.AppDatabase.forTesting(NativeDatabase.memory());
-    addTearDown(database.close);
-    final pending = Completer<ChatPageVisionCompatibilityDecision>();
-    late _AlwaysAllowChatPageSendSupport support;
-    late _RecordingChatActions actions;
-    final container = ProviderContainer(overrides: [
-      databaseProvider.overrideWithValue(database),
-      appSettingsProvider
-          .overrideWith(() => _FakeAppSettingsNotifier(_buildTestSettings())),
-      chatActionsProvider
-          .overrideWith((ref) => actions = _RecordingChatActions(ref)),
-      chatPageSendSupportProvider.overrideWith(
-          (ref) => support = _AlwaysAllowChatPageSendSupport(ref, pending)),
-      activeConversationProvider.overrideWith((ref) => conversation),
-      resolvedConversationByIdProvider(conversation.id)
-          .overrideWith((ref) => conversation),
-      conversationMessagesProvider(conversation.id)
-          .overrideWith((ref) => const AsyncValue.data(<Message>[])),
-      conversationHasMoreProvider(conversation.id).overrideWith((ref) => false),
-    ]);
-    addTearDown(container.dispose);
-    await tester.pumpWidget(
-        _buildHost(container: container, conversation: conversation));
-    await tester.pump();
-    final composer = tester.widget<Composer>(find.byType(Composer));
-    Object? failure;
-    final send = Future<void>.sync(() => composer.onSend('Synthetic message'))
-        .catchError((Object error) {
-      failure = error;
-    });
-    await tester.pump();
-    expect(support.calls, 1);
-    expect(tester.takeException(), isNull);
-    await tester.pumpWidget(const MaterialApp(home: Scaffold()));
-    pending.complete(const ChatPageVisionCompatibilityDecision.allow());
-    await send;
-    await tester.pump();
-    expect(failure, isNull,
-        reason: 'late compatibility approval must not access disposed chat UI');
-    expect(actions.sentTexts, isEmpty);
-  });
-  testWidgets(
-      'chat send remains bound to originating conversation during compatibility check',
+        final now = DateTime(2026, 9, 6);
+        final conversation = Conversation(
+          id: 'audit-send',
+          title: 'Synthetic',
+          displayName: 'Synthetic',
+          createdAt: now,
+          updatedAt: now,
+        );
+        final database = db.AppDatabase.forTesting(NativeDatabase.memory());
+        addTearDown(database.close);
+        final pending = Completer<ChatPageVisionCompatibilityDecision>();
+        late _AlwaysAllowChatPageSendSupport support;
+        late _RecordingChatActions actions;
+        final container = ProviderContainer(
+          overrides: [
+            databaseProvider.overrideWithValue(database),
+            appSettingsProvider.overrideWith(
+              () => _FakeAppSettingsNotifier(_buildTestSettings()),
+            ),
+            chatActionsProvider.overrideWith(
+              (ref) => actions = _RecordingChatActions(ref),
+            ),
+            chatPageSendSupportProvider.overrideWith(
+              (ref) => support = _AlwaysAllowChatPageSendSupport(ref, pending),
+            ),
+            activeConversationProvider.overrideWith((ref) => conversation),
+            resolvedConversationByIdProvider(
+              conversation.id,
+            ).overrideWith((ref) => conversation),
+            conversationMessagesProvider(
+              conversation.id,
+            ).overrideWith((ref) => const AsyncValue.data(<Message>[])),
+            conversationHasMoreProvider(
+              conversation.id,
+            ).overrideWith((ref) => false),
+          ],
+        );
+        addTearDown(container.dispose);
+        await tester.pumpWidget(
+          _buildHost(container: container, conversation: conversation),
+        );
+        await tester.pump();
+        final composer = tester.widget<Composer>(find.byType(Composer));
+        Object? failure;
+        final send =
+            Future<void>.sync(
+              () => image
+                  ? composer.onImageSelected!(
+                      '/tmp/synthetic.png',
+                      text: 'Synthetic message',
+                    )
+                  : composer.onSend('Synthetic message'),
+            ).catchError((Object error) {
+              failure = error;
+            });
+        await tester.pump();
+        expect(support.calls, 1);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const MaterialApp(home: Scaffold()));
+        pending.complete(const ChatPageVisionCompatibilityDecision.allow());
+        await send;
+        await tester.pump();
+        expect(
+          failure,
+          isNull,
+          reason:
+              'late compatibility approval must not access disposed chat UI',
+        );
+        expect(actions.sentTexts, isEmpty);
+      },
+    );
+    testWidgets(
+      'chat send remains bound to originating conversation during compatibility check image=$image',
       (tester) async {
-    final now = DateTime(2026, 9, 6);
-    final conversation = Conversation(
-        id: 'audit-send',
-        title: 'Synthetic',
-        displayName: 'Synthetic',
-        createdAt: now,
-        updatedAt: now);
-    final other =
-        conversation.copyWith(id: 'audit-other', displayName: 'Other');
-    final current = StateProvider<Conversation>((ref) => conversation);
-    final database = db.AppDatabase.forTesting(NativeDatabase.memory());
-    addTearDown(database.close);
-    final pending = Completer<ChatPageVisionCompatibilityDecision>();
-    late _AlwaysAllowChatPageSendSupport support;
-    late _RecordingChatActions actions;
-    final container = ProviderContainer(overrides: [
-      databaseProvider.overrideWithValue(database),
-      appSettingsProvider
-          .overrideWith(() => _FakeAppSettingsNotifier(_buildTestSettings())),
-      chatActionsProvider
-          .overrideWith((ref) => actions = _RecordingChatActions(ref)),
-      chatPageSendSupportProvider.overrideWith(
-          (ref) => support = _AlwaysAllowChatPageSendSupport(ref, pending)),
-      activeConversationProvider.overrideWith((ref) => ref.watch(current)),
-      resolvedConversationByIdProvider(conversation.id)
-          .overrideWith((ref) => conversation),
-      conversationMessagesProvider(conversation.id)
-          .overrideWith((ref) => const AsyncValue.data(<Message>[])),
-      conversationHasMoreProvider(conversation.id).overrideWith((ref) => false),
-      resolvedConversationByIdProvider(other.id).overrideWith((ref) => other),
-      conversationMessagesProvider(other.id)
-          .overrideWith((ref) => const AsyncValue.data(<Message>[])),
-      conversationHasMoreProvider(other.id).overrideWith((ref) => false),
-    ]);
-    addTearDown(container.dispose);
-    await tester.pumpWidget(
-        _buildHost(container: container, conversation: conversation));
-    await tester.pump();
-    final composer = tester.widget<Composer>(find.byType(Composer));
-    Object? failure;
-    final send = Future<void>.sync(() => composer.onSend('Synthetic message'))
-        .catchError((Object error) {
-      failure = error;
-    });
-    await tester.pump();
-    expect(support.calls, 1);
-    expect(tester.takeException(), isNull);
-    container.read(current.notifier).state = other;
-    await tester
-        .pumpWidget(_buildHost(container: container, conversation: other));
-    await tester.pump();
-    expect(container.read(activeConversationProvider)?.id, other.id);
-    pending.complete(const ChatPageVisionCompatibilityDecision.allow());
-    await send;
-    await tester.pump();
-    expect(failure, isNull, reason: 'switching conversation must not throw');
-    expect(actions.sentOwners, isNot(contains(other.id)),
-        reason: 'an operation started for A must not dispatch to B');
-  });
+        final now = DateTime(2026, 9, 6);
+        final conversation = Conversation(
+          id: 'audit-send',
+          title: 'Synthetic',
+          displayName: 'Synthetic',
+          createdAt: now,
+          updatedAt: now,
+        );
+        final other = conversation.copyWith(
+          id: 'audit-other',
+          displayName: 'Other',
+        );
+        final current = StateProvider<Conversation>((ref) => conversation);
+        final database = db.AppDatabase.forTesting(NativeDatabase.memory());
+        addTearDown(database.close);
+        final pending = Completer<ChatPageVisionCompatibilityDecision>();
+        late _AlwaysAllowChatPageSendSupport support;
+        late _RecordingChatActions actions;
+        final container = ProviderContainer(
+          overrides: [
+            databaseProvider.overrideWithValue(database),
+            appSettingsProvider.overrideWith(
+              () => _FakeAppSettingsNotifier(_buildTestSettings()),
+            ),
+            chatActionsProvider.overrideWith(
+              (ref) => actions = _RecordingChatActions(ref),
+            ),
+            chatPageSendSupportProvider.overrideWith(
+              (ref) => support = _AlwaysAllowChatPageSendSupport(ref, pending),
+            ),
+            activeConversationProvider.overrideWith(
+              (ref) => ref.watch(current),
+            ),
+            resolvedConversationByIdProvider(
+              conversation.id,
+            ).overrideWith((ref) => conversation),
+            conversationMessagesProvider(
+              conversation.id,
+            ).overrideWith((ref) => const AsyncValue.data(<Message>[])),
+            conversationHasMoreProvider(
+              conversation.id,
+            ).overrideWith((ref) => false),
+            resolvedConversationByIdProvider(
+              other.id,
+            ).overrideWith((ref) => other),
+            conversationMessagesProvider(
+              other.id,
+            ).overrideWith((ref) => const AsyncValue.data(<Message>[])),
+            conversationHasMoreProvider(other.id).overrideWith((ref) => false),
+          ],
+        );
+        addTearDown(container.dispose);
+        await tester.pumpWidget(
+          _buildHost(container: container, conversation: conversation),
+        );
+        await tester.pump();
+        final composer = tester.widget<Composer>(find.byType(Composer));
+        Object? failure;
+        final send =
+            Future<void>.sync(
+              () => image
+                  ? composer.onImageSelected!(
+                      '/tmp/synthetic.png',
+                      text: 'Synthetic message',
+                    )
+                  : composer.onSend('Synthetic message'),
+            ).catchError((Object error) {
+              failure = error;
+            });
+        await tester.pump();
+        expect(support.calls, 1);
+        expect(tester.takeException(), isNull);
+        container.read(current.notifier).state = other;
+        await tester.pumpWidget(
+          _buildHost(container: container, conversation: other),
+        );
+        await tester.pump();
+        expect(container.read(activeConversationProvider)?.id, other.id);
+        pending.complete(const ChatPageVisionCompatibilityDecision.allow());
+        await send;
+        await tester.pump();
+        expect(
+          failure,
+          isNull,
+          reason: 'switching conversation must not throw',
+        );
+        expect(
+          actions.sentOwners,
+          isNot(contains(other.id)),
+          reason: 'an operation started for A must not dispatch to B',
+        );
+      },
+    );
+  }
 }

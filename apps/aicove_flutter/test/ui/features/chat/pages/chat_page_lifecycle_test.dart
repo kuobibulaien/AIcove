@@ -2,6 +2,7 @@ import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:aicove_flutter/src/core/database/database.dart' as db;
 import 'package:aicove_flutter/src/core/database/database_provider.dart';
@@ -165,6 +166,7 @@ Widget _buildHost({
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() => SharedPreferences.setMockInitialValues({}));
 
   testWidgets('进入页面时会话激活应延后到首帧后执行', (tester) async {
     final container = ProviderContainer();

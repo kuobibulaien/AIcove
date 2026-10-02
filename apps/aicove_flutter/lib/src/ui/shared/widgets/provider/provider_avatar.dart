@@ -251,16 +251,17 @@ class ProviderAvatar extends StatelessWidget {
 
   /// 获取首字母
   String _getInitials(String name) {
-    if (name.isEmpty) return '?';
+    final words = name.trim().split(RegExp(r'[\s\-_]+'))
+        .where((word) => word.isNotEmpty).toList(growable: false);
+    if (words.isEmpty) return '?';
 
-    // 尝试获取英文首字母
-    final words = name.split(RegExp(r'[\s\-_]+'));
+    // 按用户可见字符取首字母，保留完整 Unicode 字符。
     if (words.length >= 2) {
-      return '${words[0][0]}${words[1][0]}'.toUpperCase();
+      return '${words[0].characters.first}${words[1].characters.first}'.toUpperCase();
     }
 
     // 单词或中文，取第一个字符
-    return name[0].toUpperCase();
+    return words.first.characters.first.toUpperCase();
   }
 
   @override

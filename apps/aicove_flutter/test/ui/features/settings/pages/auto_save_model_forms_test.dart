@@ -52,7 +52,7 @@ void main() {
               .getModelDisplayName('openai:test-model'),
           'first alias');
       await tester.enterText(find.byType(TextField).first, 'final alias');
-      await tester.tap(find.byIcon(Icons.close));
+      await tester.tap(find.byTooltip('关闭'));
       await tester.pumpAndSettle();
       final fresh = ProviderContainer();
       addTearDown(fresh.dispose);

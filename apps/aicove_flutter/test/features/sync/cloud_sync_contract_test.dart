@@ -170,7 +170,7 @@ class Device {
 
 void main() {
   final now = DateTime.utc(2026, 9, 13);
-  late Process server;
+  Process? server;
   late String address;
   late Directory temporary;
   final devices = <Device>[];
@@ -185,14 +185,15 @@ void main() {
         'Set AICOVE_SYNC_TEST_BACKEND and AICOVE_SYNC_TEST_PYTHON to the backend checkout and its Python executable',
       );
     }
-    server = await Process.start(python, [
+    final startedServer = await Process.start(python, [
       '$backend/tests/serve_flutter_fixture.py',
     ], workingDirectory: backend);
-    server.stderr.transform(utf8.decoder).listen((text) {
+    server = startedServer;
+    startedServer.stderr.transform(utf8.decoder).listen((text) {
       stderr.write(text);
     });
     final ready = Completer<String>();
-    server.stdout
+    startedServer.stdout
         .transform(utf8.decoder)
         .transform(const LineSplitter())
         .listen((line) {
@@ -204,8 +205,10 @@ void main() {
         'http://127.0.0.1:${await ready.future.timeout(const Duration(seconds: 20))}';
   });
   tearDownAll(() async {
-    server.kill();
-    await server.exitCode;
+    final startedServer = server;
+    if (startedServer == null) return;
+    startedServer.kill();
+    await startedServer.exitCode;
   });
   setUp(() async {
     account++;

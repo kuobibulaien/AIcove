@@ -100,6 +100,9 @@ enum ComposerPanelType { none, keyboard, more }
 class Composer extends ConsumerStatefulWidget {
   final bool disabled;
   final FutureOr<void> Function(String) onSend;
+  /// False means the page did not accept the submission; retain its draft.
+  final FutureOr<bool> Function(String)? onSubmitText;
+  final FutureOr<bool> Function(String imagePath, {String? text})? onSubmitImage;
   final FutureOr<void> Function(String imagePath, {String? text})?
   onImageSelected;
   final FutureOr<void> Function(String filePath, {String? text})?
@@ -117,6 +120,8 @@ class Composer extends ConsumerStatefulWidget {
     required this.onSend,
     this.disabled = false,
     this.onImageSelected,
+    this.onSubmitText,
+    this.onSubmitImage,
     this.onFileSelected,
     this.onSubmitEdit,
     this.onHeightChanged,
@@ -139,6 +144,7 @@ class _ComposerState extends ConsumerState<Composer> {
   ChatEditDraft? _editDraft;
   bool _invalidEditDraft = false;
   bool _editSubmitting = false;
+  int? _plainSubmittingEpoch;
   bool _draftLoading = false;
   int _editSeedSerial = 0;
   int _draftScopeEpoch = 0;
@@ -978,8 +984,13 @@ class _ComposerState extends ConsumerState<Composer> {
 
   Future<void> _submit() async {
     final attachment = _selectedAttachment;
-    final text = _ctrl.text.trim();
-    if (_editSubmitting || _draftLoading) return;
+    final draftText = _ctrl.text;
+    final text = draftText.trim();
+    final scopeId = _readCurrentConversationId();
+    final scopeEpoch = _draftScopeEpoch;
+    if (_editSubmitting || _plainSubmittingEpoch == scopeEpoch || _draftLoading) {
+      return;
+    }
     if (_invalidEditDraft) {
       MoeToast.error(context, '编辑草稿或附件失效，请取消后重新编辑');
       return;
@@ -1024,37 +1035,56 @@ class _ComposerState extends ConsumerState<Composer> {
       return;
     }
 
-    if (attachment != null) {
-      if (attachment.type == AttachmentType.image &&
-          widget.onImageSelected != null) {
-        await widget.onImageSelected!(
-          attachment.path,
-          text: text.isNotEmpty ? text : null,
-        );
-      } else if (attachment.type == AttachmentType.file ||
-          attachment.type == AttachmentType.audio ||
-          attachment.type == AttachmentType.video) {
-        if (widget.onFileSelected == null) {
-          MoeToast.brief(context, '当前页面暂未接入文件发送');
-          return;
-        }
-        await widget.onFileSelected!(
-          attachment.path,
-          text: text.isNotEmpty ? text : null,
-        );
-      }
-      if (!mounted) return;
-      setState(() => _selectedAttachment = null);
-      _ctrl.clear();
-      unawaited(_clearDraft());
-      return;
-    }
+    bool draftUnchanged() =>
+        mounted &&
+        _draftScopeEpoch == scopeEpoch &&
+        _readCurrentConversationId() == scopeId &&
+        _ctrl.text == draftText &&
+        identical(_selectedAttachment, attachment);
 
-    if (text.isEmpty || widget.disabled) return;
-    await widget.onSend(text);
-    if (!mounted) return;
-    _ctrl.clear();
-    unawaited(_clearDraft());
+    _plainSubmittingEpoch = scopeEpoch;
+    try {
+      if (attachment != null) {
+        if (attachment.type == AttachmentType.image) {
+          final submit = widget.onSubmitImage;
+          if (submit != null) {
+            final accepted = await submit(
+              attachment.path, text: text.isEmpty ? null : text,
+            );
+            if (!accepted) return;
+          } else if (widget.onImageSelected != null) {
+            await widget.onImageSelected!(
+              attachment.path, text: text.isEmpty ? null : text,
+            );
+          } else {
+            return;
+          }
+        } else {
+          if (widget.onFileSelected == null) {
+            MoeToast.brief(context, '当前页面暂未接入文件发送');
+            return;
+          }
+          await widget.onFileSelected!(
+            attachment.path, text: text.isEmpty ? null : text,
+          );
+        }
+        if (!draftUnchanged()) return;
+        setState(() => _selectedAttachment = null);
+      } else {
+        if (text.isEmpty || widget.disabled) return;
+        final submit = widget.onSubmitText;
+        if (submit != null) {
+          if (!await submit(text)) return;
+        } else {
+          await widget.onSend(text);
+        }
+        if (!draftUnchanged()) return;
+      }
+      _ctrl.clear();
+      unawaited(_clearDraft(scopeId: scopeId));
+    } finally {
+      if (_plainSubmittingEpoch == scopeEpoch) _plainSubmittingEpoch = null;
+    }
   }
 
   void _onMorePressed() {

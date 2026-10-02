@@ -5,6 +5,7 @@ import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:aicove_flutter/src/core/app_logger.dart';
 import 'package:aicove_flutter/src/core/database/database.dart' as db;
 import 'package:aicove_flutter/src/core/database/database_provider.dart';
@@ -59,6 +60,8 @@ Future<void> _seed(db.AppDatabase database) async {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() => SharedPreferences.setMockInitialValues({}));
   test('冷加载仅记一组数值阶段，并发进入共享读取，热重进不增加记录', () async {
     final database = db.AppDatabase.forTesting(NativeDatabase.memory());
     await _seed(database);

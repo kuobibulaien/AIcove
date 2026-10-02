@@ -801,16 +801,53 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     MoeToast.brief(context, 'Please wait for current message to finish');
   }
 
+  bool _isCurrentSendOwner(String conversationId) =>
+      mounted &&
+      _resolveCurrentConversationId() == conversationId &&
+      ref.read(activeConversationProvider)?.id == conversationId;
+
   Future<bool> _preparePlainTextSend() async {
+    if (!mounted) return false;
     if (ref.read(sendingProvider)) {
       _showSendingInProgressToast();
       return false;
     }
     final conv = ref.read(activeConversationProvider);
-    if (conv != null) {
-      final ok = await _checkVisionCompat(conv: conv);
-      if (!ok) return false;
+    if (conv == null || !_isCurrentSendOwner(conv.id)) return false;
+    final ok = await _checkVisionCompat(conv: conv);
+    return ok && _isCurrentSendOwner(conv.id) && !ref.read(sendingProvider);
+  }
+
+  Future<bool> _submitPlainTextSend(String text) async {
+    if (!mounted) return false;
+    final owner = ref.read(activeConversationProvider)?.id;
+    if (owner == null || !await _preparePlainTextSend()) return false;
+    if (!_isCurrentSendOwner(owner) || ref.read(sendingProvider)) return false;
+    _dispatchPlainTextSend(text);
+    return true;
+  }
+
+  Future<bool> _submitImageSend(String imagePath, {String? text}) async {
+    if (!mounted) return false;
+    if (ref.read(sendingProvider)) {
+      _showSendingInProgressToast();
+      return false;
     }
+    final conv = ref.read(activeConversationProvider);
+    if (conv == null || !_isCurrentSendOwner(conv.id)) return false;
+    final ok = await _checkVisionCompat(
+      conv: conv,
+      currentMessageHasImage: true,
+    );
+    if (!ok || !_isCurrentSendOwner(conv.id) || ref.read(sendingProvider)) {
+      return false;
+    }
+    _diagnostics.begin(
+      FrontendStage.sendRequested,
+      conversationId: conv.id,
+    );
+    _forceChatListToBottom();
+    unawaited(ref.read(chatActionsProvider).sendWithImage(imagePath, text: text));
     return true;
   }
 
@@ -838,16 +875,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           conversation: conv,
           currentMessageHasImage: currentMessageHasImage,
         );
-    if (decision.canSend) {
-      return true;
-    }
-
-    if (!mounted) return false;
+    if (!mounted || !_isCurrentSendOwner(conv.id)) return false;
+    if (decision.canSend) return true;
     final confirmed = await _showVisionCompatDialog(
       context: context,
       modelName: decision.modelDisplayName ?? '当前模型',
     );
-    return confirmed == true;
+    return confirmed == true && _isCurrentSendOwner(conv.id);
   }
 
   Future<void> _cancelModelFailoverRequest(
@@ -1776,30 +1810,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                         },
                         onInputTap: _resumeChatListAutoScroll,
                         onSend: (text) async {
-                          final canSend = await _preparePlainTextSend();
-                          if (!canSend) return;
-                          _dispatchPlainTextSend(text);
+                          await _submitPlainTextSend(text);
                         },
+                        onSubmitText: _submitPlainTextSend,
                         onImageSelected: (imagePath, {String? text}) async {
-                          if (ref.read(sendingProvider)) {
-                            _showSendingInProgressToast();
-                            return;
-                          }
-                          final conv = ref.read(activeConversationProvider);
-                          if (conv != null) {
-                            final ok = await _checkVisionCompat(
-                              conv: conv,
-                              currentMessageHasImage: true,
-                            );
-                            if (!ok) return;
-                          }
-                          _diagnostics.begin(
-                            FrontendStage.sendRequested,
-                            conversationId: _resolveCurrentConversationId(),
-                          );
-                          _forceChatListToBottom();
-                          actions.sendWithImage(imagePath, text: text);
+                          await _submitImageSend(imagePath, text: text);
                         },
+                        onSubmitImage: _submitImageSend,
                         onFileSelected: (filePath, {String? text}) {
                           if (ref.read(sendingProvider)) {
                             _showSendingInProgressToast();

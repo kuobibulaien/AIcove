@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -134,15 +135,30 @@ void main() {
 
     await tester.tap(find.text('新增自定义节点'));
     await tester.pumpAndSettle();
-    final fields = find.byType(TextField);
-    await tester.enterText(fields.at(0), 'custom.test.node');
-    await tester.enterText(fields.at(1), '测试自定义节点');
-    await tester.enterText(fields.at(3), '测试说明');
-    await tester.enterText(fields.at(4), 'name, context');
-    await tester.enterText(fields.at(5), '你好 {name}');
+    Finder field(String label) => find.descendant(
+      of: find.byWidgetPredicate(
+        (widget) => widget is MoeTextField && widget.label == label,
+      ),
+      matching: find.byType(TextField),
+    );
+    await tester.enterText(field('节点 ID'), 'custom.test.node');
+    await tester.enterText(field('标题'), '测试自定义节点');
+    await tester.enterText(field('说明'), '测试说明');
+    await tester.enterText(field('变量'), 'name, context');
+    await tester.scrollUntilVisible(
+      find.text('提示词模板'),
+      150,
+      scrollable: find
+          .descendant(
+            of: find.byType(ListView).last,
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    await tester.enterText(field('提示词模板'), '你好 {name}');
     await tester.drag(find.byType(ListView).last, const Offset(0, -500));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('保存').last);
+    await tester.tap(find.text('创建节点').last);
     await tester.pumpAndSettle();
     await tester.pump(const Duration(seconds: 3));
 
@@ -161,13 +177,28 @@ void main() {
 
     await tester.tap(find.text('新增自定义节点'));
     await tester.pumpAndSettle();
-    final fields = find.byType(TextField);
-    await tester.enterText(fields.at(0), 'auto_reply.analyzer.default');
-    await tester.enterText(fields.at(1), '冲突节点');
-    await tester.enterText(fields.at(5), '不会保存');
+    Finder field(String label) => find.descendant(
+      of: find.byWidgetPredicate(
+        (widget) => widget is MoeTextField && widget.label == label,
+      ),
+      matching: find.byType(TextField),
+    );
+    await tester.enterText(field('节点 ID'), 'auto_reply.analyzer.default');
+    await tester.enterText(field('标题'), '冲突节点');
+    await tester.scrollUntilVisible(
+      find.text('提示词模板'),
+      150,
+      scrollable: find
+          .descendant(
+            of: find.byType(ListView).last,
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    await tester.enterText(field('提示词模板'), '不会保存');
     await tester.drag(find.byType(ListView).last, const Offset(0, -500));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('保存').last);
+    await tester.tap(find.text('创建节点').last);
     await tester.pumpAndSettle();
     await tester.pump(const Duration(seconds: 3));
 

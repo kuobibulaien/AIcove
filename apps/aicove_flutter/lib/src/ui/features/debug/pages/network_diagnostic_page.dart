@@ -28,9 +28,12 @@ class _NetworkDiagnosticPageState extends State<NetworkDiagnosticPage> {
 
   String _method = 'GET';
   bool _testing = false;
+  http.Client? _client;
 
   @override
   void dispose() {
+    _client?.close();
+    _client = null;
     _urlController.dispose();
     _headerKeyController.dispose();
     _headerValueController.dispose();
@@ -38,6 +41,7 @@ class _NetworkDiagnosticPageState extends State<NetworkDiagnosticPage> {
   }
 
   Future<void> _runTest() async {
+    if (!mounted || _testing) return;
     final url = _urlController.text.trim();
     if (url.isEmpty) return;
 
@@ -46,6 +50,7 @@ class _NetworkDiagnosticPageState extends State<NetworkDiagnosticPage> {
     final result = _DiagnosticResult(url: url, method: _method);
     final stopwatch = Stopwatch()..start();
     final client = http.Client();
+    _client = client;
 
     try {
       final uri = Uri.parse(url);
@@ -86,9 +91,13 @@ class _NetworkDiagnosticPageState extends State<NetworkDiagnosticPage> {
       result.duration = stopwatch.elapsed;
       result.error = e.toString();
     } finally {
-      client.close();
+      if (identical(_client, client)) {
+        client.close();
+        _client = null;
+      }
     }
 
+    if (!mounted) return;
     setState(() {
       _results.insert(0, result);
       _testing = false;

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -73,6 +74,7 @@ Conversation _buildConversation(String id) {
 
 Widget _buildHost({
   required Conversation conversation,
+  FutureOr<bool> Function(String)? onSubmitText,
 }) {
   final settings = _buildSettings();
   return ProviderScope(
@@ -89,6 +91,7 @@ Widget _buildHost({
         home: Scaffold(
           body: Composer(
             onSend: (_) {},
+            onSubmitText: onSubmitText,
             onImageSelected: (_, {String? text}) {},
             onFileSelected: (_, {String? text}) {},
           ),
@@ -99,21 +102,104 @@ Widget _buildHost({
 }
 
 void main() {
+  for (final accepted in [false, true]) {
+    testWidgets(
+      'pending text submission retains newer edits accepted=$accepted',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({});
+        final pending = Completer<bool>();
+        var calls = 0;
+        await tester.pumpWidget(
+          _buildHost(
+            conversation: _buildConversation('audit'),
+            onSubmitText: (_) {
+              calls++;
+              return pending.future;
+            },
+          ),
+        );
+        await tester.pumpAndSettle();
+        final input = find.byType(TextField).first;
+        await tester.enterText(input, 'original draft');
+        await tester.tap(find.byTooltip('发送'));
+        await tester.pump();
+        await tester.tap(find.byTooltip('发送'));
+        expect(calls, 1, reason: 'one pending submission per draft scope');
+        await tester.enterText(input, 'newer unsent draft');
+        pending.complete(accepted);
+        await tester.pumpAndSettle();
+        expect(
+          tester.widget<TextField>(input).controller!.text,
+          'newer unsent draft',
+        );
+        await tester.pump(const Duration(milliseconds: 700));
+        final prefs = await SharedPreferences.getInstance();
+        expect(
+          (jsonDecode(prefs.getString(composerDraftStorageKey('audit'))!)
+              as Map)['text'],
+          'newer unsent draft',
+        );
+      },
+    );
+  }
+  testWidgets('accepted text submission clears unchanged owner draft', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(
+      _buildHost(
+        conversation: _buildConversation('audit'),
+        onSubmitText: (_) => true,
+      ),
+    );
+    await tester.pumpAndSettle();
+    final input = find.byType(TextField).first;
+    await tester.enterText(input, 'accepted draft');
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(input).controller!.text, isEmpty);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString(composerDraftStorageKey('audit')), isNull);
+  });
+  testWidgets('rejected text submission preserves unchanged draft', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(
+      _buildHost(
+        conversation: _buildConversation('audit'),
+        onSubmitText: (_) => false,
+      ),
+    );
+    await tester.pumpAndSettle();
+    final input = find.byType(TextField).first;
+    await tester.enterText(input, 'cancelled draft');
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(input).controller!.text, 'cancelled draft');
+  });
+
   for (final delay in [Duration.zero, const Duration(milliseconds: 650)]) {
     testWidgets('composer draft survives removal after $delay', (tester) async {
       SharedPreferences.setMockInitialValues({});
-      await tester
-          .pumpWidget(_buildHost(conversation: _buildConversation('audit')));
+      await tester.pumpWidget(
+        _buildHost(conversation: _buildConversation('audit')),
+      );
       await tester.pumpAndSettle();
       await tester.enterText(
-          find.byType(TextField).first, 'synthetic unsent draft');
+        find.byType(TextField).first,
+        'synthetic unsent draft',
+      );
       await tester.pump(delay);
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump(const Duration(milliseconds: 700));
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(composerDraftStorageKey('audit'));
-      expect(raw, isNotNull,
-          reason: 'removing composer must retain unsent text');
+      expect(
+        raw,
+        isNotNull,
+        reason: 'removing composer must retain unsent text',
+      );
       expect((jsonDecode(raw!) as Map)['text'], 'synthetic unsent draft');
     });
   }

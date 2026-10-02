@@ -236,9 +236,9 @@ void main() {
       expect(tester.getRect(find.text('只看异常')).right, lessThanOrEqualTo(width));
       await tester.tap(find.text('前端').first);
       await _pumpFrames(tester);
-      expect(find.text('聊天列表完成布局 · 120ms'), findsOneWidget);
+      expect(find.text('聊天列表完成布局 · 累计 120ms'), findsOneWidget);
       expect(find.textContaining('test_operation_123'), findsNothing);
-      await tester.tap(find.text('聊天列表完成布局 · 120ms'));
+      await tester.tap(find.text('聊天列表完成布局 · 累计 120ms'));
       await tester.pump();
       expect(find.textContaining('test_operation_123'), findsOneWidget);
       expect(tester.takeException(), isNull);

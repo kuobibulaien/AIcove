@@ -90,7 +90,24 @@ void main() {
 
     expect(find.byType(MoeBottomSheet), findsOneWidget);
     expect(find.byType(MoeTextField), findsNWidgets(2));
-    expect(find.text('保存'), findsOneWidget);
+    await tester.enterText(find.byType(TextField).first, 'updated alias');
+    await tester.pump(const Duration(milliseconds: 700));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'final alias');
+    await tester.tap(find.byTooltip('关闭'));
+    await tester.pumpAndSettle();
+    final preferences = await SharedPreferences.getInstance();
+    final saved =
+        jsonDecode(preferences.getString('aicove.ui_models.v1')!) as Map;
+    final provider = (saved['providers'] as List).cast<Map>().singleWhere(
+      (entry) => entry['id'] == 'openai',
+    );
+    final entries =
+        (provider['custom_config'] as Map)['multi_key_items'] as List;
+    expect((entries.single as Map)['alias'], 'final alias');
+    expect((entries.single as Map)['key'], 'sk-test-1');
+    expect(find.text('编辑 Key'), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 }
 

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:aicove_flutter/src/core/database/database.dart' as db;
 import 'package:aicove_flutter/src/core/database/database_provider.dart';
 import 'package:aicove_flutter/src/features/chat/application/chat_ports.dart';
@@ -143,6 +144,7 @@ void main() {
   }
 
   setUp(() async {
+    SharedPreferences.setMockInitialValues({});
     diagnosticEntries.clear();
     database = db.AppDatabase.forTesting(NativeDatabase.memory());
     await database.into(database.conversations).insert(
