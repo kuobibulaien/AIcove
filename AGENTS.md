@@ -88,7 +88,7 @@
 源码可以公开，隐私不能公开。公开仓库为 GitHub `kuobibulaien/AIcove`，本地仓库不设 remote，本地 main 含私人历史，**禁止直接 push**。
 
 - 提交：本地照常提交；`docs/项目记忆/需求日志.md`、`历史任务/旧工作日志-2026-07.md` 只存本地，不 `git add -f`；提交前用 `git ls-files -ci --exclude-standard` 确认没有被忽略却仍被跟踪的文件。本地抓取的第三方资料不入库。
-- 上传源码：在不含用户名的隔离目录（如 `/private/tmp/aicove-release-<日期>/publish`）克隆公开仓库，用本地 `git archive HEAD` 覆盖同步（同步删除），再脱敏：用户名改 `kuobibulaien`，本机路径改 `/path/to/aicove`，设备序列号改 `<设备号>`；`git grep` 本机用户名、邮箱、`/home/` 须 0 命中；第三方酒馆预设原件与片段不公开（2026-09-29 用户裁决），同步后删除 `opusdocs/预设与正则/*.json`、`apps/aicove_flutter/test/fixtures/preset_runtime/`、`test/fixtures/preset_tags/` 及引用它们的测试（`git grep -l "fixtures/preset_runtime\|fixtures/preset_tags\|kemini_fixture"` 查找）；`python3 apps/aicove_flutter/tool/test_release_hygiene.py` 通过后，在公开仓库以快进方式提交并推送。
+- 上传源码：在不含用户名的隔离目录（如 `/private/tmp/aicove-release-<日期>/publish`）克隆公开仓库，用本地 `git archive HEAD` 覆盖同步（同步删除），再脱敏：用户名改 `kuobibulaien`，本机路径改 `/path/to/aicove`，设备序列号改 `<设备号>`；`git grep` 本机用户名、邮箱、`/home/` 须 0 命中；`opusdocs/` 整体只存本地（2026-10-02 用户裁决），由根 `.gitattributes` 的 `export-ignore` 排除出 `git archive`，公开仓库不得出现；第三方酒馆预设原件与片段不公开（2026-09-29 用户裁决），同步后删除 `apps/aicove_flutter/test/fixtures/preset_runtime/`、`test/fixtures/preset_tags/` 及引用它们的测试（`git grep -l "fixtures/preset_runtime\|fixtures/preset_tags\|kemini_fixture"` 查找）；`python3 apps/aicove_flutter/tool/test_release_hygiene.py` 通过后，在公开仓库以快进方式提交并推送。
 - 安装包：公开 APK/Mac 包只在上述隔离目录构建，上传前按[经验教训「公开安装包不能在本机仓库路径下构建」](docs/项目记忆/经验教训.md)检查 0 命中；与 `SHA256SUMS` 一起上传 GitHub Release，下载回验哈希。完整测试未全绿时标记为预发布。
 # MCP 服务
 

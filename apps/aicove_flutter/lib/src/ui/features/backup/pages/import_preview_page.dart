@@ -6,6 +6,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../../../features/backup/models/export_format.dart';
 import '../../../../features/backup/backup_providers.dart';
+import '../../../../features/backup/data/transfer_safety.dart';
 import '../../../../features/chat/conversation_providers.dart';
 import '../../../shared/effects/smooth_clip.dart';
 import '../../../shared/widgets/index.dart';
@@ -37,6 +38,13 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
       if (!mounted) return;
       ref.read(importConflictResolutionsProvider.notifier).clear();
       ref
+          .read(importScopesProvider.notifier)
+          .setScopes(
+            widget.preview.includedScopes.where(
+              supportedTransferScopes.contains,
+            ),
+          );
+      ref
           .read(importSelectedConversationsProvider.notifier)
           .selectAll(widget.preview.conversations.map((c) => c.id).toList());
     });
@@ -66,6 +74,15 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
                   if (!widget.preview.isCompatible) ...[
                     _buildWarningCard(context),
                     const SizedBox(height: 24),
+                  ],
+
+                  const Text(transferCoverageNotice),
+                  const SizedBox(height: 16),
+                  if (!widget.preview.includedScopes.any(
+                    supportedTransferScopes.contains,
+                  )) ...[
+                    const Text('此文件没有当前支持的恢复内容'),
+                    const SizedBox(height: 16),
                   ],
 
                   // 导入范围选择
@@ -183,7 +200,11 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
               color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
-          Text(value, style: theme.textTheme.bodySmall),
+          const SizedBox(width: 12),
+          Flexible(
+            child: Text(value, textAlign: TextAlign.end,
+                style: theme.textTheme.bodySmall),
+          ),
         ],
       ),
     );
@@ -255,13 +276,6 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
             LucideIcons.settings,
             selectedScopes.contains(SyncScope.characterSettings),
           ),
-        if (availableScopes.contains(SyncScope.memory))
-          _buildScopeItem(
-            context,
-            SyncScope.memory,
-            LucideIcons.brain,
-            selectedScopes.contains(SyncScope.memory),
-          ),
       ],
     );
   }
@@ -310,11 +324,14 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
         ),
         const SizedBox(width: 8),
         Text('全选', style: theme.textTheme.bodyMedium),
-        const Spacer(),
-        Text(
-          '已选 ${selectedIds.length}/${allIds.length}',
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            '已选 ${selectedIds.length}/${allIds.length}',
+            textAlign: TextAlign.end,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
           ),
         ),
       ],
@@ -415,7 +432,12 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
     final canImport =
         widget.preview.isCompatible &&
         selectedIds.isNotEmpty &&
-        selectedScopes.isNotEmpty;
+        selectedScopes.isNotEmpty &&
+        selectedScopes.every(
+          (scope) =>
+              supportedTransferScopes.contains(scope) &&
+              widget.preview.includedScopes.contains(scope),
+        );
 
     return SafeArea(
       child: Padding(
@@ -433,7 +455,14 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
     final selectedIds = ref.read(importSelectedConversationsProvider);
     final selectedScopes = ref.read(importScopesProvider);
 
-    if (selectedIds.isEmpty || selectedScopes.isEmpty) return;
+    if (selectedIds.isEmpty || selectedScopes.isEmpty ||
+        !selectedScopes.every(
+          (scope) =>
+              supportedTransferScopes.contains(scope) &&
+              widget.preview.includedScopes.contains(scope),
+        )) {
+      return;
+    }
 
     setState(() => _isImporting = true);
 

@@ -52,14 +52,16 @@ class ChatPreviewPage extends ConsumerWidget {
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
                 const SizedBox(width: 6),
-                Text(
-                  messagesAsync.when(
-                    data: (messages) => '只读预览模式 · ${messages.length} 条消息',
-                    loading: () => '只读预览模式 · 加载中',
-                    error: (_, __) => '只读预览模式 · 加载失败',
-                  ),
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
+                Flexible(
+                  child: Text(
+                    messagesAsync.when(
+                      data: (messages) => '只读预览模式 · ${messages.length} 条消息',
+                      loading: () => '只读预览模式 · 加载中',
+                      error: (_, __) => '只读预览模式 · 加载失败',
+                    ),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
               ],
@@ -110,10 +112,12 @@ class ChatPreviewPage extends ConsumerWidget {
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
                 const SizedBox(width: 6),
-                Text(
-                  '预览模式下无法发送消息',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
+                Flexible(
+                  child: Text(
+                    '预览模式下无法发送消息',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
               ],

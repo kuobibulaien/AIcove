@@ -38,6 +38,29 @@ const _settingsKeys = {
   'notification_sound',
 };
 
+/// Selecting a supported scope must not silently discard unsupported content.
+void validateTransferConversation(
+  Map<String, dynamic> source,
+  Set<String> scopes,
+) {
+  final unsupported = <String>{
+    if (scopes.contains(SyncScope.characterSettings)) ...[
+      'session_provider',
+      'enabled_plugins',
+      'recipe_id',
+      'thinking_levels',
+      'chat_background_blur_sigma',
+    ],
+    if (scopes.contains(SyncScope.chatHistory)) ...[
+      'context_start_message_id',
+      'context_summaries',
+    ],
+  }.where((key) => source[key] != null);
+  if (unsupported.isNotEmpty) {
+    throw const FormatException('暂不支持恢复角色模型、插件设置或话题边界与摘要。请使用不含这些内容的备份；现有数据不会被修改。');
+  }
+}
+
 /// 身份信息用于选择目标，其余字段必须按白名单分域，而不是信任旧包的标签。
 Map<String, dynamic> filterTransferConversation(
   Map<String, dynamic> source,

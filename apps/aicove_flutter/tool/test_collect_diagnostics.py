@@ -93,7 +93,7 @@ class CollectorTest(unittest.TestCase):
 
     def test_allowlist_drops_all_free_text_and_private_payloads(self):
         event = self.event(state={'pending': True, 'apiKey': 'SECRET', 'count': 3},
-                           authorization='Bearer SECRET', codeLocations=['/home/kuobibulaien', 'package:app/main.dart:12:3'])
+                           authorization='Bearer SECRET', codeLocations=['/path/to/home', 'package:app/main.dart:12:3'])
         event['message'] = '患者聊天正文 SECRET'
         normalized = collector.normalize(event, {'file': 'app_2026-09-05.jsonl'}, timezone.utc)
         serialized = json.dumps(normalized, ensure_ascii=False)

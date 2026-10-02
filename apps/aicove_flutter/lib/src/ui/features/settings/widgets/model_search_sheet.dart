@@ -25,21 +25,20 @@ Future<void> showModelSearchSheet(BuildContext context, WidgetRef ref) async {
     title: '搜索模型',
     showCloseButton: true,
     maxHeight: MediaQuery.sizeOf(context).height * 0.85,
-    builder: (context) => _ModelSearchContent(ref: ref),
+    builder: (context) => const _ModelSearchContent(),
   );
 }
 
 /// 搜索弹窗内容
-class _ModelSearchContent extends StatefulWidget {
-  final WidgetRef ref;
-
-  const _ModelSearchContent({required this.ref});
+class _ModelSearchContent extends ConsumerStatefulWidget {
+  const _ModelSearchContent();
 
   @override
-  State<_ModelSearchContent> createState() => _ModelSearchContentState();
+  ConsumerState<_ModelSearchContent> createState() =>
+      _ModelSearchContentState();
 }
 
-class _ModelSearchContentState extends State<_ModelSearchContent> {
+class _ModelSearchContentState extends ConsumerState<_ModelSearchContent> {
   final _searchCtrl = TextEditingController();
   String _searchQuery = '';
 
@@ -51,7 +50,7 @@ class _ModelSearchContentState extends State<_ModelSearchContent> {
 
   @override
   Widget build(BuildContext context) {
-    final settingsAsync = widget.ref.watch(appSettingsProvider);
+    final settingsAsync = ref.watch(appSettingsProvider);
 
     return Column(
       children: [
@@ -94,7 +93,7 @@ class _ModelSearchContentState extends State<_ModelSearchContent> {
                 separatorBuilder: (_, __) => const SizedBox(height: 8),
                 itemBuilder: (context, index) {
                   final result = searchResults[index];
-                  return _SearchResultRow(result: result, ref: widget.ref);
+                  return _SearchResultRow(result: result, ref: ref);
                 },
               );
             },
@@ -107,7 +106,6 @@ class _ModelSearchContentState extends State<_ModelSearchContent> {
   /// 构建搜索结果
   List<_ModelSearchResult> _buildSearchResults(AppSettings settings) {
     final results = <_ModelSearchResult>[];
-    final seenModels = <String>{};
 
     for (final provider in settings.providers) {
       final allModels = <String>{
@@ -117,10 +115,9 @@ class _ModelSearchContentState extends State<_ModelSearchContent> {
       };
 
       for (final modelId in allModels) {
-        if (seenModels.contains(modelId)) continue;
-        seenModels.add(modelId);
-
-        final displayName = settings.modelDisplayNames[modelId];
+        final modelRef = settings.buildModelRef(provider.id, modelId);
+        final resolvedName = settings.getModelDisplayName(modelRef);
+        final displayName = resolvedName == modelId ? null : resolvedName;
         final isVisible = provider.visibleModels.contains(modelId);
 
         // 搜索匹配逻辑

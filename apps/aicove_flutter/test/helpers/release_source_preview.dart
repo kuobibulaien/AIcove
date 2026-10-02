@@ -19,6 +19,9 @@ Future<void> loadReleasePreviewFonts(WidgetTester tester) async {
         'ReleasePreview',
       )..addFont(font.readAsBytes().then(ByteData.sublistView))).load();
     }
+    await (FontLoader('packages/lucide_icons/Lucide')
+      ..addFont(rootBundle.load('packages/lucide_icons/assets/lucide.ttf')))
+        .load();
     final sdk = Platform.environment['FLUTTER_ROOT'];
     if (sdk != null) {
       final icons = File(

@@ -15,6 +15,8 @@ import 'package:aicove_flutter/src/ui/features/backup/pages/export_character_pag
 import 'package:aicove_flutter/src/ui/features/backup/pages/chat_preview_page.dart';
 import 'package:aicove_flutter/src/ui/features/backup/pages/import_preview_page.dart';
 
+import '../../../helpers/release_source_preview.dart';
+
 Conversation conversation(int i) => Conversation(
     id: 'audit-$i',
     title: 'Audit $i',
@@ -54,6 +56,8 @@ void main() {
     for (final scale in [1.2, 1.8]) {
       for (final page in ['scope', 'export', 'preview', 'import']) {
         testWidgets('backup $page size=$size scale=$scale', (tester) async {
+          await loadReleasePreviewFonts(tester);
+          final previewKey = GlobalKey();
           await tester.binding.setSurfaceSize(size);
           addTearDown(() => tester.binding.setSurfaceSize(null));
           final Widget home = switch (page) {
@@ -79,12 +83,17 @@ void main() {
                 conversationsProvider.overrideWith(AuditConversations.new),
                 chatHistoryStoreProvider.overrideWithValue(AuditHistory()),
               ],
-              child: MaterialApp(
+              child: RepaintBoundary(
+                key: previewKey,
+                child: MaterialApp(
+                  theme: captureReleaseSourcePreview
+                      ? ThemeData(fontFamily: 'ReleasePreview')
+                      : null,
                   builder: (context, child) => MediaQuery(
                       data: MediaQuery.of(context)
                           .copyWith(textScaler: TextScaler.linear(scale)),
                       child: child!),
-                  home: home)));
+                  home: home))));
           await tester.pumpAndSettle();
           if (page == 'export') {
             final container = ProviderScope.containerOf(
@@ -95,6 +104,8 @@ void main() {
             await tester.pumpAndSettle();
           }
           expect(tester.takeException(), isNull);
+          await saveReleaseSourcePreview(tester, previewKey,
+              'backup-$page-${size.width.toInt()}-$scale');
           if (page == 'export' || page == 'import') {
             await tester.scrollUntilVisible(find.text('Audit 99'), 350,
                 scrollable: find.byType(Scrollable).first, maxScrolls: 100);

@@ -1,5 +1,7 @@
 import 'dart:ui' as ui;
 
+import 'package:aicove_flutter/src/features/account/domain/account_port.dart';
+import 'package:aicove_flutter/src/features/account/providers/account_provider.dart';
 import 'package:aicove_flutter/src/ui/features/debug/pages/debug_center_page.dart';
 import 'package:aicove_flutter/src/ui/features/backup/pages/data_management_page.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_adaptive_shell.dart';
@@ -8,6 +10,7 @@ import 'package:aicove_flutter/src/ui/shared/widgets/moe_page_scaffold.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_app_bar.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 
@@ -123,9 +126,11 @@ void main() {
         ],
       )
     ]);
-    await tester.pumpWidget(MaterialApp.router(
-        routerConfig: router,
-        theme: ThemeData(extensions: [MoeColors.light()])));
+    await tester.pumpWidget(ProviderScope(
+        overrides: [accountRepositoryProvider.overrideWithValue(_NoAccount())],
+        child: MaterialApp.router(
+            routerConfig: router,
+            theme: ThemeData(extensions: [MoeColors.light()]))));
     await tester.pumpAndSettle();
     MoeWorkspace.open(
         tester.element(find.text('手机一级页')), const DebugCenterPage());
@@ -136,8 +141,8 @@ void main() {
         of: find.byKey(const ValueKey('workspace-background')),
         matching: find.byType(ColoredBox));
     expect(tester.getRect(background), const Rect.fromLTWH(0, 0, 1000, 800));
-    await tester.ensureVisible(find.text('数据管理'));
-    await tester.tap(find.text('数据管理'));
+    await tester.ensureVisible(find.text('同步与备份'));
+    await tester.tap(find.text('同步与备份'));
     await tester.pumpAndSettle();
     expect(find.byType(DataManagementPage), findsOneWidget);
     expect(observer.background.value, isNotNull);
@@ -159,4 +164,17 @@ void main() {
     router.dispose();
     observer.dispose();
   });
+}
+
+class _NoAccount implements AccountPort {
+  @override
+  AccountConnection? get connection => null;
+  @override
+  Future<void> load() async {}
+  @override
+  Future<void> refresh() async {}
+  @override
+  Future<void> login(String server, String username, String password) async {}
+  @override
+  Future<void> logout() async {}
 }

@@ -123,6 +123,8 @@ final importConflictResolutionsProvider = StateNotifierProvider<
 
 /// 选中的导入 Scope
 class ImportScopesNotifier extends StateNotifier<Set<String>> {
+  void setScopes(Iterable<String> scopes) => state = Set<String>.from(scopes);
+
   ImportScopesNotifier() : super({SyncScope.chatHistory, SyncScope.characterCards});
 
   void toggle(String scope) {

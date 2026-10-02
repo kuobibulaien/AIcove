@@ -1,0 +1,3 @@
+# Local-only material: never included in git archive exports synced to the public repository.
+opusdocs export-ignore
+opusdocs/** export-ignore

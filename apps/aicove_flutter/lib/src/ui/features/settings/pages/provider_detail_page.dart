@@ -888,6 +888,7 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage>
                         providerId: provider.id,
                         model: visible[index].modelId,
                         displayName: visible[index].displayName,
+                        copyOnLongPress: false,
                       ),
                     );
                   },

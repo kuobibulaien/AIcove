@@ -3,6 +3,8 @@ import 'dart:ui' as ui;
 
 import 'package:aicove_flutter/src/features/chat/conversation_providers.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
+import 'package:aicove_flutter/src/features/chat/presentation/widgets/custom_bottom_nav.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/buttons/moe_button_surface.dart';
 import 'package:aicove_flutter/src/ui/features/home/pages/main_page.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_floating_surface.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_adaptive_shell.dart';
@@ -42,7 +44,7 @@ void main() {
   for (final width in [420.0, 1000.0]) {
     for (final dark in [false, true]) {
       testWidgets(
-        'root background has no lens while controls retain liquid: $dark $width',
+        'root background and empty-state controls share material: $dark $width',
         (tester) async {
           tester.view.devicePixelRatio = 1;
           tester.view.physicalSize = Size(width, 800);
@@ -101,8 +103,16 @@ void main() {
             // Full-screen narrow roots paint the plain page color.
             expect(root.blurEnabled, isFalse);
           }
-          // The search field retains its own liquid material.
-          expect(find.byType(MoeLiquidGlass), findsWidgets);
+          // The empty contact list has no search field. Its navigation buttons
+          // inherit the root surface instead of creating duplicate lens layers.
+          expect(find.text('暂无角色'), findsOneWidget);
+          expect(find.byType(TextField), findsNothing);
+          final navigation = find.byType(CustomBottomNav);
+          expect(find.descendant(of: navigation,
+              matching: find.byType(MoeButtonSurface)), findsNWidgets(3));
+          expect(find.descendant(of: navigation,
+              matching: find.byType(MoeFloatingSurface)), findsNothing);
+          expect(find.byType(MoeLiquidGlass), findsNothing);
           expect(tester.takeException(), isNull);
           if (capture) {
             await tester.runAsync(() async {

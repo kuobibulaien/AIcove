@@ -37,6 +37,9 @@ class ExportScopePage extends ConsumerWidget {
                   ),
                   const SizedBox(height: 16),
 
+                  const Text(transferCoverageNotice),
+                  const SizedBox(height: 16),
+
                   // Scope 选择
                   MoeSettingsGroup(
                     margin: EdgeInsets.zero,

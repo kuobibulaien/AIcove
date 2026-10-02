@@ -52,7 +52,7 @@ class _AccountPageState extends ConsumerState<AccountPage> {
     final colors = context.moeColors;
     return MoePageScaffold(
       extendBodyBehindAppBar: true,
-      appBar: const MoeAppBar(title: '账号', showBackButton: true),
+      appBar: const MoeAppBar(title: '云同步', showBackButton: true),
       body: Builder(
         builder: (context) => SingleChildScrollView(
           keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,

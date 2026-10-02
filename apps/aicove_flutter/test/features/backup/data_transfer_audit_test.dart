@@ -4,7 +4,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:archive/archive.dart';
-import 'package:drift/drift.dart';
+import 'package:drift/drift.dart' hide isNull;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
@@ -157,7 +157,7 @@ void main() {
     'chat_background_blur_sigma',
     'context_start_message_id'
   ]) {
-    test('T04 round trip preserves $field', () async {
+    test('T04 unsupported $field restore is rejected', () async {
       final values = <String, Object>{
         'session_provider': 'provider/model',
         'enabled_plugins': '["memory"]',
@@ -169,11 +169,22 @@ void main() {
       await source.customStatement(
           'UPDATE conversations SET $field = ? WHERE id = ?',
           [values[field], 'a']);
-      await restore(await export());
-      final result = await target.customSelect(
-          'SELECT $field FROM conversations WHERE id = ?',
-          variables: [Variable.withString('a')]).getSingle();
-      expect(result.data[field], values[field]);
+      final file = await export();
+      final data = await entry(file, 'conversations.json');
+      final card = (data['conversations'] as List).single as Map;
+      expect(
+        card.containsKey(field),
+        isFalse,
+        reason: 'v1 must not claim to preserve extended settings',
+      );
+      card[field] = values[field];
+      final unsupported = await rewrite(file, 'conversations.json', data);
+      await expectLater(
+        restore(unsupported),
+        throwsA(predicate((e) => e.toString().contains('暂不支持'))),
+      );
+      expect(await target.select(target.conversations).get(), isEmpty);
+      expect(await target.select(target.messages).get(), isEmpty);
     });
   }
   test('T05 asset avatar and remote poster survive round trip', () async {
@@ -186,13 +197,33 @@ void main() {
     expect([restored!.avatarUrl, restored.characterImage],
         ['assets/characters/Arona.webp', 'https://example.invalid/poster.png']);
   });
-  test('T06 raw payload survives round trip', () async {
-    const payload = '{"reasoningContent":"thinking","custom":"raw-evidence"}';
+  test(
+    'T06 raw secrets are excluded while supported text and media restore', () async {
+    const payload =
+          '{"reasoningContent":"synthetic-secret-thinking","custom":"synthetic-secret-raw"}';
     await source
         .update(source.messages)
         .write(const MessagesCompanion(rawPayload: Value(payload)));
-    await restore(await export());
-    expect((await MessageRepository(target).getById('m'))!.rawPayload, payload);
+    await block('text', 'text', {'content': '秘密聊天'});
+      final media = File(p.join(root.path, 'raw-whitelist-image.png'));
+      await media.writeAsBytes([7, 8, 9]);
+      await block('image', 'image', {'localPath': media.path});
+      final file = await export();
+      final json = jsonEncode(await entry(file, 'messages.json'));
+    expect(json, isNot(contains('synthetic-secret')));
+      expect(json, isNot(contains('raw_payload')));
+      await restore(file);
+      final restored = (await MessageRepository(target).getById('m'))!;
+      expect(restored.content, '秘密聊天');
+      expect(restored.rawPayload ?? '', isNot(contains('synthetic-secret')));
+      final image = (await target.select(target.messageBlocks).get())
+          .singleWhere((b) => b.type == 'image');
+      expect(await File(jsonDecode(image.data)['localPath']).readAsBytes(), [
+        7,
+        8,
+        9,
+      ]);
+    expect((await MessageRepository(source).getById('m'))!.rawPayload, payload);
   });
   test('T07 memory scope is still rejected instead of silently dropped',
       () async {
@@ -200,16 +231,25 @@ void main() {
     await expectLater(
         export(selected: [...scopes, SyncScope.memory]), throwsA(anything));
   });
-  test('T09 merge applies explicitly selected character settings', () async {
+  test('T09 settings merge is rejected without modifying local data', () async {
     await conversation(target, 'a', name: 'old');
     await source
         .update(source.conversations)
         .write(const ConversationsCompanion(isMuted: Value(true)));
-    await restore(await export(),
+    await message(target, 'original', content: 'must survive');
+    await expectLater(
+      restore(await export(),
         selected: [SyncScope.characterSettings],
-        conflicts: {'a': ImportConflictResolution.merge});
+        conflicts: {'a': ImportConflictResolution.merge}),
+      throwsA(predicate((e) => e.toString().contains('合并'))),
+    );
+    final existing = (await ConversationRepository(target).getById('a'))!;
+    expect(existing.isMuted, isFalse);
+    expect(existing.displayName, 'old');
     expect(
-        (await ConversationRepository(target).getById('a'))!.isMuted, isTrue);
+      (await MessageRepository(target).getById('original'))!.content,
+      'must survive',
+    );
   });
   test('T10 replace failure leaves original chat intact', () async {
     await conversation(target, 'a');
@@ -295,16 +335,39 @@ void main() {
     });
     await expectLater(restore(file), throwsA(anything));
   });
-  test('T16 includeVideo must copy local video and thumbnail', () async {
+  test('T16 native video export is explicitly rejected', () async {
     final video = File(p.join(root.path, 'clip.mp4'));
     final thumb = File(p.join(root.path, 'thumb.jpg'));
     await video.writeAsBytes([1, 2, 3]);
     await thumb.writeAsBytes([4, 5, 6]);
     await block(
         'video', 'video', {'url': video.path, 'thumbnailPath': thumb.path});
-    final archive =
-        ZipDecoder().decodeBytes(await (await export()).readAsBytes());
-    expect(archive.files.where((f) => f.name.startsWith('files/')).length, 2);
+    await expectLater(
+      export(),
+      throwsA(predicate((e) => e.toString().contains('视频'))));
+    final output = Directory(p.join(root.path, 'output'));
+    expect(await output.exists() ? await output.list().toList() : [], isEmpty);
+    expect(await video.readAsBytes(), [1, 2, 3]);
+    expect(await thumb.readAsBytes(), [4, 5, 6]);
+    // Card-only backup remains usable: it makes no claim to include the chat.
+    final cardOnly = await export(selected: [SyncScope.characterCards]);
+    expect((await entry(cardOnly, 'messages.json'))['messages'], isEmpty);
+  });
+  test('T16 cached native video cannot silently disappear from backup', () async {
+    await source.update(source.messages).write(MessagesCompanion(
+      rawPayload: Value(jsonEncode({
+        'projectedMessages': [
+          {
+            'blocks': [
+              {'type': 'video', 'url': '/synthetic-video.mp4'}
+            ]
+          }
+        ]
+      })),
+    ));
+    await expectLater(export(),
+        throwsA(predicate((e) => e.toString().contains('视频'))));
+    expect(await target.select(target.messages).get(), isEmpty);
   });
   test('T17 included local image and audio physically restore', () async {
     final image = File(p.join(root.path, 'image.png'));
@@ -336,7 +399,9 @@ void main() {
     final file = await export();
     await restore(file);
     final result =
-        await restore(file, conflicts: {'a': ImportConflictResolution.merge});
+        await restore(file,
+      selected: [SyncScope.characterCards, SyncScope.chatHistory],
+      conflicts: {'a': ImportConflictResolution.merge});
     expect(result.messagesImported, 0);
     expect(result.skipped, 1);
     expect((await target.select(target.messages).get()).length, 1);
@@ -362,15 +427,35 @@ void main() {
     expect(b.id, isNot('linked'));
     expect(jsonDecode(b.data)['messageId'], msg.id);
   });
-  test('T22 topic handoff summary survives round trip', () async {
-    await source.customStatement('''INSERT INTO topic_handoffs
-      (id, owner_id, boundary_id, summary, source_ids, source_digest, created_at, memory_state)
+  test(
+    'T22 current context summaries are excluded and restore is refused', () async {
+    await source.customStatement(
+        '''INSERT INTO context_summaries
+      (id, owner_id, kind, boundary_id, summary, source_ids, source_digest, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
-        ['handoff', 'a', 'm', '承接摘要', '["m"]', 'digest', 2000, 'none']);
-    await restore(await export());
-    final rows =
-        await target.customSelect('SELECT summary FROM topic_handoffs').get();
-    expect(rows.map((r) => r.read<String>('summary')), ['承接摘要']);
+        ['summary', 'a', 'topic', 'm', '承接摘要', '["m"]', 'digest', 2000]);
+      final original = await export();
+      final archive = ZipDecoder().decodeBytes(await original.readAsBytes());
+      expect(archive.findFile('context_summaries.json'), isNull);
+    final data = await entry(original, 'conversations.json');
+      ((data['conversations'] as List).single as Map)['context_summaries'] = [
+        {'id': 'summary', 'owner_id': 'a', 'summary': '承接摘要'},
+      ];
+      await expectLater(
+        restore(await rewrite(original, 'conversations.json', data)),
+        throwsA(predicate((e) => e.toString().contains('暂不支持'))),
+      );
+      expect(
+        await target.customSelect('SELECT * FROM context_summaries').get(),
+        isEmpty,
+      );
+    expect(await target.select(target.conversations).get(), isEmpty);
+      expect((await source
+                .customSelect('SELECT summary FROM context_summaries')
+                .getSingle())
+            .read<String>('summary'),
+        '承接摘要',
+      );
   });
   test('T23 basic card and legacy settings round trip', () async {
     await source.update(source.conversations).write(

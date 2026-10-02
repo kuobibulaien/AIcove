@@ -73,9 +73,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(enabled(), false,
         reason: 'late status update must preserve the newer enabled flag');
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
   });
 
-  testWidgets('batch key detection stops after leaving page', (tester) async {
+  for (final width in [800.0, 320.0]) {
+  testWidgets(width == 800.0 ? 'batch key detection stops after leaving page' : 'compact batch key detection stops after leaving page', (tester) async {
+    await tester.binding.setSurfaceSize(Size(width, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final store = jsonDecode(jsonEncode(_mockStore)) as Map<String, dynamic>;
     final provider = (store['providers'] as List).first;
     final items = provider['custom_config']['multi_key_items'] as List;
@@ -95,8 +101,19 @@ void main() {
         child: const MaterialApp(
             home: MultiKeyManagerPage(providerId: 'openai'))));
     await tester.pumpAndSettle();
-    await tester.tap(find.descendant(
-        of: find.byType(MoeAppBar), matching: find.byTooltip('检测')));
+    if (width < 480) {
+      await tester.tap(find.byTooltip('更多 Key 操作'));
+      await tester.pumpAndSettle();
+      expect(find.text('添加'), findsOneWidget);
+      expect(find.text('删除错误 Key'), findsOneWidget);
+      await tester.tap(find.text('检测全部 Key'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump();
+    } else {
+      await tester.tap(find.descendant(
+          of: find.byType(MoeAppBar), matching: find.byTooltip('检测')));
+    }
     await tester.pump();
     expect(actions.requests, 1);
     await tester.pumpWidget(const MaterialApp(home: Scaffold()));
@@ -106,6 +123,8 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(actions.requests, 1);
   });
+
+  }
 
   for (final waitForSave in [false, true]) {
     testWidgets('provider edit survives back wait=$waitForSave',

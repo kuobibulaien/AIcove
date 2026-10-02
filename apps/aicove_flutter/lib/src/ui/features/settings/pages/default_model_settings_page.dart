@@ -31,6 +31,7 @@ class _DefaultModelSettingsPageState
     with MoeAutoSaveState<DefaultModelSettingsPage> {
   /// 本地状态：选中的聊天模型列表（有序）
   List<String>? _localChatModels;
+  bool _savingChatModels = false;
 
   /// 本地状态：上下文窗口
   late TextEditingController _contextWindowCtrl;
@@ -73,7 +74,7 @@ class _DefaultModelSettingsPageState
       builder: (context) => ListView(
         padding: moeUnderBarPadding(
           context,
-          EdgeInsets.fromLTRB(16, 12, 16, 24),
+          const EdgeInsets.fromLTRB(16, 12, 16, 24),
         ),
         children: [
           // ============ 默认聊天模型 ============
@@ -98,6 +99,7 @@ class _DefaultModelSettingsPageState
                   );
                   final order = selectedChatModels.indexOf(entry.modelRef);
                   return MoeSettingsRow(
+                    enabled: !_savingChatModels,
                     iconWidget: _buildOrderBadge(isSelected, order, colors),
                     iconContainerWidth: 28,
                     label: entry.displayName,
@@ -105,6 +107,7 @@ class _DefaultModelSettingsPageState
                     trailingType: MoeSettingsRowTrailing.custom,
                     trailing: MoeCheckbox(
                       value: isSelected,
+                      enabled: !_savingChatModels,
                       onChanged: (_) =>
                           _toggleChatModel(entry.modelRef, settings),
                       size: MoeCheckboxSize.md,
@@ -126,7 +129,9 @@ class _DefaultModelSettingsPageState
                 subtitle: '压缩模型、记忆模型与上下文窗口',
                 trailingType: MoeSettingsRowTrailing.chevron,
                 onTap: () async {
-                  if (!await autoSave.flush() || !mounted) return;
+                  if (!await autoSave.flush() || !mounted || !context.mounted) {
+                    return;
+                  }
                   await Navigator.of(context).push(
                     ParallaxSlidePageRoute(
                       page: const ContextMemorySettingsPage(),
@@ -304,7 +309,8 @@ class _DefaultModelSettingsPageState
     );
   }
 
-  void _toggleChatModel(String modelRef, AppSettings settings) {
+  Future<void> _toggleChatModel(String modelRef, AppSettings settings) async {
+    if (_savingChatModels) return;
     setState(() {
       final current = List<String>.from(
         _localChatModels ?? settings.defaultChatModels,
@@ -315,12 +321,24 @@ class _DefaultModelSettingsPageState
         current.add(modelRef);
       }
       _localChatModels = current;
+      _savingChatModels = true;
     });
 
-    // 保存
-    ref
-        .read(appSettingsProvider.notifier)
-        .setDefaultChatModels(_localChatModels!);
+    try {
+      await ref
+          .read(appSettingsProvider.notifier)
+          .setDefaultChatModels(_localChatModels!);
+    } catch (error) {
+      if (mounted) MoeToast.error(context, '保存默认模型失败：$error');
+    } finally {
+      if (mounted) {
+        setState(() {
+          // Persisted normalization may retain a fallback when all were cleared.
+          _localChatModels = null;
+          _savingChatModels = false;
+        });
+      }
+    }
   }
 
   Future<void> _saveContextWindowTokens() async {

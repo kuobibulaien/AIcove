@@ -242,11 +242,9 @@ void main() {
         );
         final rows = tester.widgetList<MoeSettingsRow>(rootEntries).toList();
         expect(rows.map((row) => row.label), [
-          '账号',
           '模型',
           '通用',
           '插件',
-          '局域网同步',
           '调试',
         ]);
         expect(rows.every((row) => row.subtitle == null), isTrue);
@@ -339,9 +337,9 @@ void main() {
         await navigator.currentState!.maybePop();
         await tester.pumpAndSettle();
         expect(find.byType(DebugCenterPage), findsOneWidget);
-        await tester.ensureVisible(find.text('数据管理'));
+        await tester.ensureVisible(find.text('同步与备份'));
         await tester.pumpAndSettle();
-        expect(find.text('数据管理').hitTestable(), findsOneWidget);
+        expect(find.text('同步与备份').hitTestable(), findsOneWidget);
         await navigator.currentState!.maybePop();
         await tester.pumpAndSettle();
         expectPrimaryPage('设置');

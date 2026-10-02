@@ -55,18 +55,24 @@ class MoeToast {
 
     final overlay = Overlay.of(context);
 
-    _currentEntry = OverlayEntry(
+    late final OverlayEntry entry;
+    entry = OverlayEntry(
       builder: (context) => _ToastWidget(
         message: message,
         type: type,
         icon: icon,
-        onDismiss: _dismiss,
+        onDismiss: () => _dismissFor(entry),
       ),
     );
 
-    overlay.insert(_currentEntry!);
+    _currentEntry = entry;
+    overlay.insert(entry);
 
-    _timer = Timer(duration, _dismiss);
+    _timer = Timer(duration, () => _dismissFor(entry));
+  }
+
+  static void _dismissFor(OverlayEntry entry) {
+    if (identical(_currentEntry, entry)) _dismiss();
   }
 
   static void _dismiss() {
@@ -136,21 +142,23 @@ class MoeToast {
 
     final overlay = Overlay.of(context);
 
-    _currentEntry = OverlayEntry(
+    late final OverlayEntry entry;
+    entry = OverlayEntry(
       builder: (context) => _DismissibleToastWidget(
         message: message,
         type: type,
-        onDismiss: _dismiss,
+        onDismiss: () => _dismissFor(entry),
         onDismissForever: () async {
           await onDismissForever();
-          _dismiss();
+          _dismissFor(entry);
         },
       ),
     );
 
-    overlay.insert(_currentEntry!);
+    _currentEntry = entry;
+    overlay.insert(entry);
 
-    _timer = Timer(duration, _dismiss);
+    _timer = Timer(duration, () => _dismissFor(entry));
   }
 }
 

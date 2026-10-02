@@ -202,7 +202,10 @@ void main() {
                 .descendant(of: sheetSurface, matching: find.byType(Material))
                 .first,
           );
-          expect(material.color!.a, closeTo(0.1, 0.0001));
+          // A draggable sheet stays opaque under the shared motion guard.
+          expect(material.color!.a, closeTo(1, 0.0001));
+          expect(find.descendant(of: sheetSurface,
+              matching: find.byType(BackdropFilter)), findsNothing);
           final sheetRect = tester.getRect(sheetSurface);
           expect(
             sheetRect.height,

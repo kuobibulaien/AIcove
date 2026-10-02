@@ -886,13 +886,17 @@ void main() {
       {...msg('second'), 'source_message_id': ''},
     ]);
     expect(
-        (await restore(file, resolution: ImportConflictResolution.merge))
+        (await restore(file,
+          scopes: [SyncScope.characterCards, SyncScope.chatHistory],
+          resolution: ImportConflictResolution.merge))
             .messagesImported,
         2);
     expect((await MessageRepository(db).getById('second'))!.sourceMessageId,
         'second');
     final again =
-        await restore(file, resolution: ImportConflictResolution.merge);
+        await restore(file,
+        scopes: [SyncScope.characterCards, SyncScope.chatHistory],
+        resolution: ImportConflictResolution.merge);
     expect([again.messagesImported, again.skipped], [0, 2]);
   });
   for (final field in ['source_message_id', 'source_block_id']) {
@@ -1047,7 +1051,9 @@ void main() {
       }
     ]);
     final result =
-        await restore(file, resolution: ImportConflictResolution.merge);
+        await restore(file,
+      scopes: [SyncScope.characterCards, SyncScope.chatHistory],
+      resolution: ImportConflictResolution.merge);
     expect([result.messagesImported, result.skipped], [0, 1]);
     expect((await db.select(db.messages).get()).length, 1);
   });
@@ -1059,7 +1065,9 @@ void main() {
       msg('missing-predecessor', created: 2),
       {...msg('local', created: 2), 'content': 'local chat'}
     ]);
-    await expectLater(restore(file, resolution: ImportConflictResolution.merge),
+    await expectLater(restore(file,
+          scopes: [SyncScope.characterCards, SyncScope.chatHistory],
+          resolution: ImportConflictResolution.merge),
         throwsA(isA<ImportException>()));
     expect((await db.select(db.messages).get()).single.id, 'local');
   });
@@ -1071,11 +1079,15 @@ void main() {
       msg('later', created: 2)
     ]);
     expect(
-        (await restore(file, resolution: ImportConflictResolution.merge))
+        (await restore(file,
+          scopes: [SyncScope.characterCards, SyncScope.chatHistory],
+          resolution: ImportConflictResolution.merge))
             .messagesImported,
         1);
     expect(
-        (await restore(file, resolution: ImportConflictResolution.merge))
+        (await restore(file,
+          scopes: [SyncScope.characterCards, SyncScope.chatHistory],
+          resolution: ImportConflictResolution.merge))
             .messagesImported,
         0);
     expect(
@@ -1088,7 +1100,9 @@ void main() {
     await seed();
     await ConversationRepository(db).softDelete('a', 1, 9999999999999);
     await expectLater(
-        restore(await bundle(), resolution: ImportConflictResolution.merge),
+        restore(await bundle(),
+          scopes: [SyncScope.characterCards, SyncScope.chatHistory],
+          resolution: ImportConflictResolution.merge),
         throwsA(isA<ImportException>()));
     expect(await MessageRepository(db).getById('imported'), isNull);
     expect((await ConversationRepository(db).getById('a'))!.deletedAt, 1);
@@ -1117,7 +1131,9 @@ void main() {
         createdAt: 2));
     final file = await bundle(
         messages: [msg('later', created: 2), msg('local', created: 2)]);
-    await expectLater(restore(file, resolution: ImportConflictResolution.merge),
+    await expectLater(restore(file,
+          scopes: [SyncScope.characterCards, SyncScope.chatHistory],
+          resolution: ImportConflictResolution.merge),
         throwsA(isA<ImportException>()));
   });
   test('V07 older distinct timestamp can merge before local history', () async {
@@ -1125,6 +1141,7 @@ void main() {
     final result = await restore(
         await bundle(
             messages: [msg('older', created: 1), msg('local', created: 2)]),
+      scopes: [SyncScope.characterCards, SyncScope.chatHistory],
         resolution: ImportConflictResolution.merge);
     expect(result.messagesImported, 1);
     expect(

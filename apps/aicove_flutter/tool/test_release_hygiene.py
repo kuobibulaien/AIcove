@@ -1,4 +1,5 @@
 import re
+import subprocess
 from pathlib import Path
 from urllib.parse import urlparse
 import unittest
@@ -37,6 +38,18 @@ class ReleaseHygieneTest(unittest.TestCase):
                          'root assets/ entry would bundle local_keys.json automatically')
         for entry in entries:
             self.assertNotIn('local_keys', entry)
+
+    def test_local_only_opusdocs_is_not_published(self):
+        repo_root = APP_ROOT.parent.parent
+        attributes = (repo_root / '.gitattributes').read_text().splitlines()
+        self.assertIn('opusdocs export-ignore', attributes)
+        self.assertIn('opusdocs/** export-ignore', attributes)
+        # The private working repository has no remote; the public checkout does.
+        remote = subprocess.run(['git', '-C', str(repo_root), 'remote'],
+                                capture_output=True, text=True).stdout.strip()
+        if remote:
+            self.assertFalse((repo_root / 'opusdocs').exists(),
+                             'opusdocs/ must not exist in the public repository checkout')
 
     def test_default_api_urls_resolve_to_localhost(self):
         for name in ('_defaultApiUrl', '_localApiUrl', '_lanApiUrl'):

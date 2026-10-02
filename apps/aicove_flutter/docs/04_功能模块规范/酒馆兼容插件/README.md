@@ -9,7 +9,7 @@
 1. 聊天插件 → **酒馆兼容插件（测试）**，与绘图、语音并列。首页「我的预设」列出全部预设，标着「默认」的就是默认预设；行尾「更多」或长按可设为／取消默认。
 2. 「导入预设」选择 Chat Completion / Prompt Manager 预设 JSON，确认条目数与提示后导入；只用正则或世界书时选「新建空白预设」。
 3. 预设详情顶部分段切换「提示词／正则／世界书／标签」：提示词逐条开关、点开看正文，底部「预设信息」看来源与参数生效情况；正则先打开「允许运行正则」再逐条开关；世界书点进单本后开关条目，条目多时可搜索；标签可改正文／折叠／选项或恢复自动识别。修改自动保存，共享此预设的角色从下一次请求起生效。
-4. 角色编辑页仅选择酒馆预设绑定；未绑定时「跟随默认酒馆预设」。没设默认预设或总开关关闭时使用 AIcove 原模式。
+4. 角色编辑页仅选择酒馆预设绑定；未绑定时「跟随默认酒馆预设」。没设默认预设且角色未显式绑定时使用 AIcove 原模式。酒馆兼容常开，没有全局总开关；旧 enabled=false 会被忽略。条目/世界书/正则仍可分别启停。
 5. 正则须额外允许整个预设运行；未允许时即使单条开启也不执行。明确绑定丢失不静默换预设，应重新选择。总配置损坏可在插件页「重置默认选择」，不删除资源和角色绑定。
 
 “插件预设”在这里是一个完整组合：原始酒馆提示词预设 + 导入正则 + 世界书 + 各类条目开关。角色沿用 `Conversation.recipeId`，不增加第二份独立绑定，也不添加没有实际工具权限意义的角色插件勾选框。
@@ -66,7 +66,7 @@ TavernPluginDetailPage / TavernPresetDetailPage / TavernWorldBookPage / 角色�
   → SillyTavernPresetStore（本地JSON）
 
 ChatSendBackendService.prepareApiConfig
-  → resolvePreset(owner.recipeId)：总开关 + 显式绑定/默认值，一次性读取
+  → resolvePreset(owner.recipeId)：显式绑定/默认值，一次性读取（兼容常开）
   → canonical raw派生历史 → 已授权消息正则
   → TavernWorldScannerPort：有界世界书扫描
   → 已授权 WORLD_INFO 正则
@@ -78,7 +78,7 @@ ChatSendBackendService.prepareApiConfig
 存储目录：应用 documents 下 `aicove/sillytavern_presets/`。
 
 - `st_preset_<hash>.json`：沿用既有预设信封；原始 `rawPreset` 保持不变，新增 `compatibilityData` 保存 `promptEnabled`、`regexEnabled`、`importedRegex`、`worldBooks`（源JSON、整本开关、entryEnabled）。既有 schemaVersion=2 信封的新增可选字段，旧文件无需迁移。
-- `plugin_settings.json`：总开关和默认预设 ID。默认启用但没有默认预设，保留既有显式角色绑定行为，不自动把新预设应用到所有角色。
+- `plugin_settings.json`：默认预设 ID；旧 enabled 字段不再控制全局启停。默认没有默认预设，保留既有显式角色绑定行为，不自动把新预设应用到所有角色。
 - 本进程所有仓库实例串行写；读取校验信封ID与文件名一致，防止损坏信封将A的开关写进B；读-改-写在串行区中完成，临时文件flush后原子rename。写入/重导入失败不覆盖正常文件；队列空闲后释放Future。未承诺多进程同时编辑或断电的完整恢复保证。
 - 单次导入≤2MiB；每书≤2000条、每组合≤32本、regex≤1000条、组合附加资源≤16MiB。世界书在可终止isolate中执行；正则由后台 QuickJS 执行，每次 native 调用1秒中断、批次1500ms预算并附失败警告；扫描窗口文本另有2M字符上限。
 - 不改聊天DB schema、不更改raw message/blocks、不覆盖角色提示词，不把正则结果写成canonical历史。
@@ -96,7 +96,7 @@ flutter test --no-pub test/features/agent_context \
   test/ui/features/character/widgets/preset_recipe_section_test.dart
 ```
 
-领域测试覆盖触发条件、扫描窗口、超时、大小写/整词/regex、概率、预算顺序、角色卡映射、并发开关保存/重开恢复、默认与显式绑定、请求快照不变。真实 `prepareApiConfig` 测试验证消息正则→世界书命中→世界书正则→最终消息，并与条目关闭、角色B及插件关闭结果对照；未发远端模型请求。
+领域测试覆盖触发条件、扫描窗口、超时、大小写/整词/regex、概率、预算顺序、角色卡映射、并发开关保存/重开恢复、默认与显式绑定、请求快照不变。真实 `prepareApiConfig` 测试验证消息正则→世界书命中→世界书正则→最终消息，并与条目关闭、角色B及旧 enabled=false 仍常开的结果对照；未发远端模型请求。
 
 UI测试通过真实导入按钮及文件选择替身导入三类JSON，验证逐条开关/授权/默认选择与文件重开，覆盖360/1000px，以及320px大字号1.8；角色选择另覆盖100条列表。Android验证用正常主入口 `flutter run --no-resident -d e949b887`，不是以测试页面代替正式应用。
 
@@ -105,7 +105,7 @@ UI测试通过真实导入按钮及文件选择替身导入三类JSON，验证�
 ### QuickJS 首批验收记录（2026-09-28）
 
 - 58 项定向测试通过：原生超时/内存/异步/无宿主I/O、原始小猫回调、实际prompt正则与深度、工具工厂状态隔离、流式/非流式正文解码、回退、变换后预算、既有图像工具与上下文恢复。
-- 额外请求组装检查4过1失败：停用酒馆后仍残留`B_MAIN`。将本批5个集成文件恢复为HEAD源码的隔离副本中，同一断言仍失败；这是已有缺口，不计为本批通过。
+- 额外请求组装检查4过1失败：停用酒馆后仍残留`B_MAIN`。将本批5个集成文件恢复为HEAD源码的隔离副本中，同一断言仍失败；这是当时旧总开关断言的失败记录，不计为该批通过。2026-10-02 首版口径明确兼容常开，旧 enabled=false 不应停用角色绑定；对应集成测试改验常开及条目开关，当前修理验证另记。
 - 改动范围静态检查无error/warning，11条既有构造参数风格info。最终macOS与Android ARM64 Debug构建通过；Mac产物内真实QuickJS动态库再次执行两份原始输出回调通过，两端打包JS资产与源码一致。
 - Android引擎动态库1,043,776字节，Mac引擎1,066,608字节（Debug产物；不是整个安装包增量或Release体积）。引擎源码版本/SHA/许可证随本地包保存。
 - 未安装新应用、未重新导入原始预设、未调用生产模型；不宣称手机运行或真实生成验收。工具参数须完整后才能解包成正文；高级SPreset配置边界见ADR0042。

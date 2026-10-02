@@ -3,6 +3,7 @@ library;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../chat/conversation_providers.dart';
 import '../../content_tags/domain/tag_presentation.dart';
 import '../data/silly_tavern_preset_store.dart';
 import '../domain/preset_tag_mapping.dart';
@@ -74,8 +75,9 @@ final presetRecipeProvider = FutureProvider.family<SillyTavernPreset?, String>((
 /// 聊天中发现、映射里还没有的标签（ADR0048）：按会话绑定的 recipeId 分组，
 /// 空字符串表示“使用默认预设”。只存内存、不写预设，用户在标签页归类后
 /// 才写入 `tagDisplay` 覆盖。
-final observedUnknownTagsProvider =
-    StateProvider<Map<String, Set<String>>>((ref) => const {});
+final observedUnknownTagsProvider = StateProvider<Map<String, Set<String>>>(
+  (ref) => const {},
+);
 
 String observedTagsKey(String? recipeId) => recipeId?.trim() ?? '';
 
@@ -172,6 +174,29 @@ class PresetRecipeImportController extends AsyncNotifier<void> {
       {"identifier":"chatHistory","enabled":true}]}''',
     sourceFileName: '基础上下文.json',
   );
+
+  /// 删除预设。仍有角色明确绑定时拒绝，避免这些角色请求时报“预设丢失”。
+  Future<void> deletePreset(String presetId) async {
+    state = const AsyncLoading();
+    try {
+      final roles = await ref.read(conversationsProvider.future);
+      final references = [
+        for (final role in roles)
+          if (role.recipeId?.trim() == presetId) role.displayName,
+      ];
+      if (references.isNotEmpty) {
+        throw StateError('角色「${references.join('、')}」仍在使用此预设，请先在角色卡更换酒馆预设');
+      }
+      await ref.read(sillyTavernPresetStoreProvider).deletePreset(presetId);
+      ref.invalidate(presetRecipeListProvider);
+      ref.invalidate(tavernPluginSettingsProvider);
+      ref.invalidate(presetRecipeProvider(presetId));
+      state = const AsyncData(null);
+    } catch (error, stackTrace) {
+      state = AsyncError(error, stackTrace);
+      rethrow;
+    }
+  }
 
   Future<void> setRegexAuthorization(String presetId, bool authorized) async {
     state = const AsyncLoading();

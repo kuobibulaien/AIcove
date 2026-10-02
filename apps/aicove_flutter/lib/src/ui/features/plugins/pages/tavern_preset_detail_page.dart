@@ -123,6 +123,28 @@ class _TavernPresetDetailPageState
               ),
             ),
           ),
+          MoeSettingsRow(
+            key: ValueKey('delete-tavern-preset-$_id'),
+            label: '删除预设',
+            labelColor: Theme.of(context).colorScheme.error,
+            trailingType: MoeSettingsRowTrailing.none,
+            onTap: () async {
+              final isDefault =
+                  ref
+                      .read(tavernPluginSettingsProvider)
+                      .valueOrNull
+                      ?.defaultPresetId ==
+                  _id;
+              final deleted = await confirmDeleteTavernPreset(
+                context,
+                ref,
+                presetId: _id,
+                name: preset.name,
+                isDefault: isDefault,
+              );
+              if (deleted && mounted) Navigator.of(context).maybePop();
+            },
+          ),
         ],
       ),
     ];
@@ -292,12 +314,11 @@ class _TavernPresetDetailPageState
     final observed = ref.watch(observedUnknownTagsProvider);
     final isDefault =
         ref.watch(tavernPluginSettingsProvider).valueOrNull?.defaultPresetId ==
-            _id;
+        _id;
     final discovered = {
       ...?observed[observedTagsKey(_id)],
       if (isDefault) ...?observed[observedTagsKey(null)],
-    }.difference(mapped).toList()
-      ..sort();
+    }.difference(mapped).toList()..sort();
     final pending = mapping.candidates.where((n) => !mapped.contains(n));
     return [
       TavernNote(

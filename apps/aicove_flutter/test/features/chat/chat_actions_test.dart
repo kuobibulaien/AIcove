@@ -2246,6 +2246,70 @@ class _TrackingDelayedTtsService extends TtsService {
   }
 }
 
+const _inlineImageTransportKey = #inlineImageTransport;
+
+// Keep owner-bound ImagePlugin snapshots real; intercept only their HTTP I/O.
+void _testWithImageTransport(String name, Future<void> Function() body) {
+  test(name, () async {
+    final transport = _InlineImageTransport();
+    final client = MockClient(transport.respond);
+    addTearDown(client.close);
+    await runZoned(
+      () => http.runWithClient(body, () => client),
+      zoneValues: {_inlineImageTransportKey: transport},
+    );
+  });
+}
+
+AppSettings _imageDeliverySettings() {
+  final settings = _buildTestSettings();
+  const model = 'openai:test-image';
+  return settings.copyWith(
+    imageGenerationEnabled: true,
+    modelList: [...settings.modelList, model],
+    allKnownModels: [...settings.allKnownModels, model],
+    modelTypes: {...settings.modelTypes, model: 'image'},
+    modelProviderMap: {...settings.modelProviderMap, model: 'openai'},
+    providers: [
+      settings.providers.first.copyWith(
+        apiBaseUrl: 'https://image-audit.invalid/v1',
+        models: ['gpt-4o-mini', 'test-image'],
+        visibleModels: ['gpt-4o-mini', 'test-image'],
+      ),
+    ],
+  );
+}
+
+class _InlineImageTransport {
+  _DelayedInlineImagePlugin? fixture;
+
+  Future<http.Response> respond(http.Request request) async {
+    expect(request.method, 'POST');
+    expect(request.url.host, 'image-audit.invalid');
+    expect(request.url.path, '/v1/images/generations');
+    expect(request.headers['Authorization'], 'Bearer test-key');
+    final payload = jsonDecode(request.body) as Map<String, dynamic>;
+    expect(payload['model'], 'test-image');
+    final prompt = payload['prompt'] as String;
+    final current = fixture;
+    expect(current, isNotNull);
+    current!.prompts.add(prompt);
+    await Future<void>.delayed(current.delaysByPrompt[prompt] ?? current.delay);
+    final bytes =
+        await File(current.localPathByPrompt[prompt] ?? current.localPath)
+            .readAsBytes();
+    return http.Response(
+      jsonEncode({
+        'data': [
+          {'b64_json': base64Encode(bytes)},
+        ],
+      }),
+      200,
+      headers: {'content-type': 'application/json'},
+    );
+  }
+}
+
 class _DelayedInlineImagePlugin extends ImagePlugin {
   _DelayedInlineImagePlugin({
     required this.delay,
@@ -2253,7 +2317,10 @@ class _DelayedInlineImagePlugin extends ImagePlugin {
     this.delaysByPrompt = const <String, Duration>{},
     this.localPathByPrompt = const <String, String>{},
     required Ref ref,
-  }) : super(const ImageConfig(), ref);
+  }) : super(const ImageConfig(), ref) {
+    (Zone.current[_inlineImageTransportKey] as _InlineImageTransport).fixture =
+        this;
+  }
 
   final Duration delay;
   final String localPath;
@@ -2263,23 +2330,6 @@ class _DelayedInlineImagePlugin extends ImagePlugin {
 
   @override
   bool get enabled => true;
-
-  @override
-  Future<InlineImageGenerationResult> generateInlineImage({
-    required String prompt,
-    String? roleArtistPresetName,
-  }) async {
-    prompts.add(prompt);
-    await Future<void>.delayed(delaysByPrompt[prompt] ?? delay);
-    return InlineImageGenerationResult.success(
-      localPath: localPathByPrompt[prompt] ?? localPath,
-      rawPrompt: prompt,
-      prompt: prompt,
-      negativePrompt: '',
-      artistPresetName: roleArtistPresetName,
-      artistPresetSource: 'test',
-    );
-  }
 }
 
 class _DelayedWatchConversationTimelineCache extends ConversationTimelineCache {
@@ -5922,7 +5972,11 @@ void main() {
         .expand((message) =>
             message.blocks?.whereType<AudioBlock>() ?? const <AudioBlock>[])
         .single;
-    expect(persistedAudio.url, finalAudioBlock.url);
+    expect(
+      await File(persistedAudio.url).readAsBytes(),
+      Uri.parse(finalAudioBlock.url).data!.contentAsBytes(),
+      reason: 'Cold-loaded media must retain the exact synthesized bytes.',
+    );
     expect(persistedAudio.status, BlockStatus.success);
     expect(await db.customSelect('PRAGMA foreign_key_check').get(), isEmpty);
   });
@@ -6452,7 +6506,7 @@ void main() {
     expect(audioBlocks.every((block) => block.url.isNotEmpty), isTrue);
   });
 
-  test('deliverSegmentedMessages 在流式后补时，图片生成不会阻塞 TTS 占位更新', () async {
+  _testWithImageTransport('deliverSegmentedMessages 在流式后补时，图片生成不会阻塞 TTS 占位更新', () async {
     final now = DateTime.now();
     final conv = Conversation(
       id: 'conv_stream_tts_image_parallel',
@@ -6464,8 +6518,7 @@ void main() {
       lastMessage: '',
       lastMessageTime: now,
     );
-    final settings =
-        _buildTestSettings().copyWith(imageGenerationEnabled: true);
+    final settings = _imageDeliverySettings();
     final db = AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(db.close);
     await _insertConversation(db, conv);
@@ -6775,7 +6828,7 @@ void main() {
     );
   });
 
-  test('后补图片应谁先生成谁先发送，不必等待更慢的图片一起完成', () async {
+  _testWithImageTransport('后补图片应谁先生成谁先发送，不必等待更慢的图片一起完成', () async {
     final now = DateTime.now();
     final conv = Conversation(
       id: 'conv_post_stream_images_independent',
@@ -6787,8 +6840,7 @@ void main() {
       lastMessage: '',
       lastMessageTime: now,
     );
-    final settings =
-        _buildTestSettings().copyWith(imageGenerationEnabled: true);
+    final settings = _imageDeliverySettings();
     final db = AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(db.close);
     await _insertConversation(db, conv);
@@ -6948,7 +7000,7 @@ void main() {
     }
   });
 
-  test('后补图片接管占位时，不应先清空临时层再等待稳定时间线补位', () async {
+  _testWithImageTransport('后补图片接管占位时，不应先清空临时层再等待稳定时间线补位', () async {
     final now = DateTime.now();
     final conv = Conversation(
       id: 'conv_post_stream_image_handoff',
@@ -6960,8 +7012,7 @@ void main() {
       lastMessage: '',
       lastMessageTime: now,
     );
-    final settings =
-        _buildTestSettings().copyWith(imageGenerationEnabled: true);
+    final settings = _imageDeliverySettings();
     final db = AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(db.close);
     await _insertConversation(db, conv);
@@ -7092,7 +7143,7 @@ void main() {
     }
   });
 
-  test('非流式混排遇到 TTS 和慢图时，应先发语音占位与后续文本，图片完成后再直出最终图', () async {
+  _testWithImageTransport('非流式混排遇到 TTS 和慢图时，应先发语音占位与后续文本，图片完成后再直出最终图', () async {
     final now = DateTime.now();
     final conv = Conversation(
       id: 'conv_non_stream_mixed_tts_image',
@@ -7104,8 +7155,7 @@ void main() {
       lastMessage: '',
       lastMessageTime: now,
     );
-    final settings =
-        _buildTestSettings().copyWith(imageGenerationEnabled: true);
+    final settings = _imageDeliverySettings();
     final db = AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(db.close);
     await _insertConversation(db, conv);
@@ -7394,7 +7444,7 @@ void main() {
     }
   });
 
-  test('send 遇到 `<tts>...<image>...文本` 混排时，应先落完后续文本，再等待慢图直出最终图', () async {
+  _testWithImageTransport('send 遇到 `<tts>...<image>...文本` 混排时，应先落完后续文本，再等待慢图直出最终图', () async {
     final now = DateTime.now();
     final conv = Conversation(
       id: 'conv_stream_mixed_tts_image_tail',
@@ -7406,8 +7456,7 @@ void main() {
       lastMessage: '',
       lastMessageTime: now,
     );
-    final settings =
-        _buildTestSettings().copyWith(imageGenerationEnabled: true);
+    final settings = _imageDeliverySettings();
     final db = AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(db.close);
     await _insertConversation(db, conv);
@@ -7675,7 +7724,7 @@ void main() {
     expect(container.read(chatStatusProvider), ChatStatus.idle);
   });
 
-  test('send 遇到仅有 <tts> + <image> 的流式回复时，不应因缺少文本锚点而失败', () async {
+  _testWithImageTransport('send 遇到仅有 <tts> + <image> 的流式回复时，不应因缺少文本锚点而失败', () async {
     final now = DateTime.now();
     final conv = Conversation(
       id: 'conv_stream_only_multimodal',
@@ -7687,8 +7736,7 @@ void main() {
       lastMessage: '',
       lastMessageTime: now,
     );
-    final settings =
-        _buildTestSettings().copyWith(imageGenerationEnabled: true);
+    final settings = _imageDeliverySettings();
     final db = AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(db.close);
     await _insertConversation(db, conv);

@@ -21,7 +21,8 @@ class ImageCropDialog extends StatefulWidget {
   State<ImageCropDialog> createState() => _ImageCropDialogState();
 }
 
-class _ImageCropDialogState extends State<ImageCropDialog> with SingleTickerProviderStateMixin {
+class _ImageCropDialogState extends State<ImageCropDialog>
+    with SingleTickerProviderStateMixin {
   final CropController _cropController = CropController();
   bool _isImageReady = false;
   late AnimationController _fadeController;
@@ -30,15 +31,12 @@ class _ImageCropDialogState extends State<ImageCropDialog> with SingleTickerProv
   @override
   void initState() {
     super.initState();
-    _fadeController = AnimationController(
-      vsync: this,
-      duration: kAnimSlow,
-    );
+    _fadeController = AnimationController(vsync: this, duration: kAnimSlow);
     _fadeAnimation = CurvedAnimation(
       parent: _fadeController,
       curve: Curves.easeIn,
     );
-    
+
     // 延迟一小段时间让图片准备好，然后开始淡入动画
     Future.delayed(kAnimXFast, () {
       if (mounted) {
@@ -69,12 +67,12 @@ class _ImageCropDialogState extends State<ImageCropDialog> with SingleTickerProv
                 valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
               ),
             ),
-          
+
           // 裁剪区域（淡入动画）
           if (_isImageReady)
-            FadeTransition(
-              opacity: _fadeAnimation,
-              child: Positioned.fill(
+            Positioned.fill(
+              child: FadeTransition(
+                opacity: _fadeAnimation,
                 child: Crop(
                   controller: _cropController,
                   image: widget.imageBytes,
@@ -103,95 +101,97 @@ class _ImageCropDialogState extends State<ImageCropDialog> with SingleTickerProv
                   radius: radiusBubble.x,
                   fixCropRect: true,
                   // 隐藏裁剪框的控制点
-                  cornerDotBuilder: (size, edgeAlignment) => const SizedBox.shrink(),
+                  cornerDotBuilder: (size, edgeAlignment) =>
+                      const SizedBox.shrink(),
                 ),
               ),
             ),
-          
+
           // 顶部工具栏（淡入动画）
           if (_isImageReady)
-            FadeTransition(
-              opacity: _fadeAnimation,
-              child: Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: Container(
-              padding: EdgeInsets.only(
-                top: MediaQuery.paddingOf(context).top + 8,
-                left: 16,
-                right: 16,
-                bottom: 16,
-              ),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.black.withValues(alpha: 0.7),
-                    Colors.transparent,
-                  ],
-                ),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white),
-                    onPressed: () => Navigator.pop(context),
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: FadeTransition(
+                opacity: _fadeAnimation,
+                child: Container(
+                  padding: EdgeInsets.only(
+                    top: MediaQuery.paddingOf(context).top + 8,
+                    left: 16,
+                    right: 16,
+                    bottom: 16,
                   ),
-                  const Text(
-                    '裁剪头像',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: MoeFontWeights.emphasis,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.black.withValues(alpha: 0.7),
+                        Colors.transparent,
+                      ],
                     ),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.check, color: Colors.white),
-                    onPressed: () => _cropController.crop(),
-                  ),
-                ],
-              ),
-            ),
-              ),
-            ),
-          
-          // 底部提示（淡入动画）
-          if (_isImageReady)
-            FadeTransition(
-              opacity: _fadeAnimation,
-              child: Center(
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 80),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      // 占位空间，推算裁剪区域大小
-                      SizedBox(
-                        height: MediaQuery.sizeOf(context).width * 0.8,
+                      IconButton(
+                        icon: const Icon(Icons.close, color: Colors.white),
+                        onPressed: () => Navigator.pop(context),
                       ),
-                      const SizedBox(height: 24),
-                      // 提示文字
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 10,
+                      const Text(
+                        '裁剪头像',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: MoeFontWeights.emphasis,
                         ),
-                        decoration: MoeG2Decoration(
-                          radius: 20,
-                          color: Colors.black.withValues(alpha: 0.6),
-                        ),
-                        child: const Text(
-                          '双指缩放和移动图片以调整裁剪区域',
-                          style: TextStyle(
-                            color: Colors.white70,
-                            fontSize: 13,
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.check, color: Colors.white),
+                        onPressed: () => _cropController.crop(),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+          // Keep guidance inside the viewport without intercepting crop gestures.
+          if (_isImageReady)
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: 24,
+              child: FadeTransition(
+                opacity: _fadeAnimation,
+                child: IgnorePointer(
+                  child: SafeArea(
+                    top: false,
+                    child: Align(
+                      alignment: Alignment.bottomCenter,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 480),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 10,
+                          ),
+                          decoration: MoeG2Decoration(
+                            radius: 20,
+                            color: Colors.black.withValues(alpha: 0.6),
+                          ),
+                          child: const Text(
+                            '双指缩放和移动图片以调整裁剪区域',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 13,
+                            ),
                           ),
                         ),
                       ),
-                    ],
+                    ),
                   ),
                 ),
               ),

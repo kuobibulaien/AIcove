@@ -184,6 +184,18 @@ class _PresetRow extends ConsumerWidget {
               label: isDefault ? '取消默认' : '设为默认',
               onTap: () => _setDefault(context, ref),
             ),
+          MoePopupMenuItem(
+            key: ValueKey('delete-tavern-preset-${preset.id}'),
+            label: '删除',
+            danger: true,
+            onTap: () => confirmDeleteTavernPreset(
+              context,
+              ref,
+              presetId: preset.id,
+              name: preset.name,
+              isDefault: isDefault,
+            ),
+          ),
         ],
       );
 

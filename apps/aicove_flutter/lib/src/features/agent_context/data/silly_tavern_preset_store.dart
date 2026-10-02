@@ -137,6 +137,31 @@ class SillyTavernPresetStore implements TavernCompatibilityPort {
     }
   }
 
+  /// 删除一套预设文件；同时清掉指向它的默认选择。角色绑定由调用方先行拦截。
+  Future<void> deletePreset(String id) => _serialized(() async {
+    final normalizedId = id.trim();
+    if (!RegExp(r'^st_preset_[a-f0-9]{24}$').hasMatch(normalizedId)) {
+      throw StateError('预设编号无效');
+    }
+    final directory = await _directory();
+    final file = File('${directory.path}/$normalizedId.json');
+    final settingsFile = File('${directory.path}/plugin_settings.json');
+    await cloudLocalWrite(() async {
+      if (await settingsFile.exists()) {
+        final data = jsonDecode(await settingsFile.readAsString());
+        if (data is Map && data['defaultPresetId'] == normalizedId) {
+          final temp = File('${settingsFile.path}.tmp');
+          await temp.writeAsString(
+            jsonEncode(const TavernPluginSettings().toJson()),
+            flush: true,
+          );
+          await temp.rename(settingsFile.path);
+        }
+      }
+      if (await file.exists()) await file.delete();
+    });
+  });
+
   Future<SillyTavernPreset?> get(String id) async {
     final normalizedId = id.trim();
     if (!RegExp(r'^st_preset_[a-f0-9]{24}$').hasMatch(normalizedId)) {
@@ -310,7 +335,10 @@ class SillyTavernPresetStore implements TavernCompatibilityPort {
     final name = tagName.trim().toLowerCase();
     if (name.isEmpty) throw StateError('标签名为空');
     final overrides =
-        data.putIfAbsent(presetTagDisplayOverridesKey, () => <String, dynamic>{})
+        data.putIfAbsent(
+              presetTagDisplayOverridesKey,
+              () => <String, dynamic>{},
+            )
             as Map;
     if (presentation == null) {
       overrides.remove(name);

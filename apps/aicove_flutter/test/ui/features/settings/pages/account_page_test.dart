@@ -6,6 +6,8 @@ import 'package:aicove_flutter/src/features/account/domain/account_port.dart';
 import 'package:aicove_flutter/src/features/account/providers/account_provider.dart';
 import 'package:aicove_flutter/src/features/sync/models/user_model.dart';
 import 'package:aicove_flutter/src/ui/features/settings/pages/account_page.dart';
+import 'package:aicove_flutter/src/ui/features/backup/pages/data_management_page.dart';
+import 'package:aicove_flutter/src/ui/features/debug/pages/debug_center_page.dart';
 import 'package:aicove_flutter/src/ui/features/settings/pages/settings_page.dart';
 
 class FixtureAccount implements AccountPort {
@@ -34,8 +36,12 @@ class FixtureAccount implements AccountPort {
 }
 
 void main() {
-  testWidgets('settings root and search open the account page', (tester) async {
+  testWidgets('account lives under debug sync and backup, not settings root', (
+    tester,
+  ) async {
     SharedPreferences.setMockInitialValues({});
+    await tester.binding.setSurfaceSize(const Size(390, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -45,8 +51,17 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('账号'), findsOneWidget);
-    await tester.tap(find.text('账号'));
+    expect(find.text('账号'), findsNothing);
+    expect(find.text('局域网同步'), findsNothing);
+    await tester.tap(find.text('调试'));
+    await tester.pumpAndSettle();
+    expect(find.byType(DebugCenterPage), findsOneWidget);
+    await tester.tap(find.text('同步与备份'));
+    await tester.pumpAndSettle();
+    expect(find.byType(DataManagementPage), findsOneWidget);
+    expect(find.text('局域网同步'), findsOneWidget);
+    expect(find.text('导出数据'), findsOneWidget);
+    await tester.tap(find.text('云同步'));
     await tester.pumpAndSettle();
     expect(find.byType(AccountPage), findsOneWidget);
     expect(find.text('登录你的账号'), findsOneWidget);

@@ -17,6 +17,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:aicove_flutter/src/core/database/database.dart' as db;
 import 'package:aicove_flutter/src/core/database/database_provider.dart';
 import 'package:aicove_flutter/src/core/models/message_block.dart';
+import 'package:aicove_flutter/src/core/models/block_status.dart';
 import 'package:aicove_flutter/src/features/agent_context/domain/silly_tavern_preset.dart';
 import 'package:aicove_flutter/src/features/agent_context/domain/silly_tavern_regex_processor.dart';
 import 'package:aicove_flutter/src/features/chat/chat_actions.dart';
@@ -429,6 +430,59 @@ void main() {
       hasLength(1),
     );
   });
+
+  for (final resultKind in ['audioResult', 'insertOp']) {
+    for (final status in [BlockStatus.pending, BlockStatus.success]) {
+      test('S02 带URL的音频只在完成后进入语义结果及补充操作: $resultKind $status', () async {
+        final raw = Message(
+          id: 'audio-raw',
+          role: 'assistant',
+          content: '原始正文',
+          createdAt: time,
+          rawPayload: const {'rawReplyText': '原始正文'},
+        );
+        await store().appendAssistantRawMessage(
+          conversationId: 'a',
+          userMessageId: '',
+          rawMessage: raw,
+          projectedMessages: const [],
+          lastMessagePreview: '原始正文',
+        );
+        await store().appendMessage(
+          conversationId: 'a',
+          message: Message.fromBlocks(
+            id: 'audio-projection',
+            role: 'assistant',
+            createdAt: time,
+            blocks: [
+              AudioBlock(
+                messageId: 'audio-projection',
+                url: 'file:///synthetic/audio.mp3',
+                text: '待合成文本',
+                status: status,
+              ),
+            ],
+          ).copyWith(sourceMessageId: raw.id),
+        );
+        final stored = await store().loadMessageById(
+          raw.id,
+          conversationId: 'a',
+          preferProjection: false,
+        );
+        final expected = status == BlockStatus.pending ? 0 : 1;
+        expect(
+          resultKind == 'audioResult'
+              ? ChatMessageProjectionCodec.toolAudioResults(stored!.rawPayload)
+              : ChatMessageProjectionCodec.supplementInsertOps(
+                  stored!.rawPayload,
+                ),
+          hasLength(expected),
+        );
+        expect(stored.content, '原始正文');
+        expect(stored.rawPayload!['rawReplyText'], '原始正文');
+      });
+    }
+  }
 
   test('A09 普通聊天落库应进入当前LAN同步待办', () async {
     await store().appendUserMessage(

@@ -33,12 +33,14 @@ class ModelRowTile extends ConsumerWidget {
   final String providerId;
   final String model;
   final String? displayName;
+  final bool copyOnLongPress;
 
   const ModelRowTile({
     super.key,
     required this.providerId,
     required this.model,
     required this.displayName,
+    this.copyOnLongPress = true,
   });
 
   @override
@@ -127,7 +129,7 @@ class ModelRowTile extends ConsumerWidget {
         currentType: modelType,
         currentConfig: modelConfig,
       ),
-      onLongPress: () => _copyModelId(context, model),
+      onLongPress: copyOnLongPress ? () => _copyModelId(context, model) : null,
     );
   }
 

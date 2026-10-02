@@ -20,7 +20,7 @@ import 'message_segmentation_debug_page.dart';
 import 'stream_monitor_debug_page.dart';
 import '../../../../ui/shared/widgets/moe_scroll_edge.dart';
 
-/// 调试中心 - 整合日志、组件库、提示词节点与数据管理
+/// 调试中心 - 整合日志、组件库、提示词节点与同步备份
 class DebugCenterPage extends StatelessWidget {
   const DebugCenterPage({super.key});
 
@@ -144,8 +144,8 @@ class DebugCenterPage extends StatelessWidget {
                 ),
                 MoeSettingsRow(
                   icon: Icons.cloud_sync_outlined,
-                  label: '数据管理',
-                  subtitle: '备份、导入导出、云同步',
+                  label: DataManagementPage.title,
+                  subtitle: '云同步账号、局域网同步、离线导入导出',
                   trailingType: MoeSettingsRowTrailing.chevron,
                   onTap: () => Navigator.of(context).push(
                     ParallaxSlidePageRoute(page: const DataManagementPage()),

@@ -107,6 +107,10 @@ class ConversationExporter {
         final messageIds = dbMsgs.map((m) => m.id).toList();
         final dbBlocks = await _blockRepo.getByMessages(messageIds);
 
+        if (dbBlocks.any((block) => block.type == 'video')) {
+          throw const FormatException('暂不支持备份视频块及缩略图，请取消聊天记录；不会生成不完整的备份。');
+        }
+
         // (注释已丢失)
         final blocksByMsgId = <String, List<Map<String, dynamic>>>{};
         for (final dbBlock in dbBlocks) {
@@ -456,6 +460,9 @@ class ConversationExporter {
     final media = <Map<String, dynamic>>[];
     void collect(dynamic kind, Map<String, dynamic> item,
         {String audioKey = 'url', bool nativeBlock = false}) {
+      if (kind == 'video') {
+        throw const FormatException('暂不支持备份视频块及缩略图，请取消聊天记录；不会生成不完整的备份。');
+      }
       final selected = switch (kind) {
         'image' => options.includeImages,
         'audio' => options.includeAudio,

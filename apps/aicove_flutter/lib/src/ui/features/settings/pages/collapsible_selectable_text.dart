@@ -42,11 +42,17 @@ class _CollapsibleSelectableTextState extends State<CollapsibleSelectableText> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final painter = TextPainter(
-          text: TextSpan(text: widget.content, style: widget.style),
+          text: TextSpan(
+            text: widget.content,
+            style: DefaultTextStyle.of(context).style.merge(widget.style),
+          ),
           maxLines: widget.collapsedLines,
           textDirection: Directionality.of(context),
+          textScaler: MediaQuery.textScalerOf(context),
+          locale: Localizations.maybeLocaleOf(context),
         )..layout(maxWidth: constraints.maxWidth);
         final canToggle = painter.didExceedMaxLines;
+        painter.dispose();
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,

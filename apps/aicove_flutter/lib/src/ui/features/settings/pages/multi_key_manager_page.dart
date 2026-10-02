@@ -128,6 +128,48 @@ class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
     MoeToast.show(context, '已切换为${providerMultiKeyStrategyLabel(selected)}');
   }
 
+  Future<bool> _recordDetectionResult(
+    ProviderAuth testedProvider,
+    ProviderMultiKeyItem testedItem,
+    bool ok,
+  ) async {
+    if (!mounted) return false;
+    final current = ref
+        .read(appSettingsProvider)
+        .asData
+        ?.value
+        .getProvider(widget.providerId);
+    if (current == null ||
+        current.apiBaseUrl != testedProvider.apiBaseUrl ||
+        resolveProviderDetailChatProvider(current) !=
+            resolveProviderDetailChatProvider(testedProvider) ||
+        resolveProviderDetailChatApiPath(current) !=
+            resolveProviderDetailChatApiPath(testedProvider)) {
+      return false;
+    }
+    final items = providerMultiKeyItemsFromProvider(current);
+    final target = items.where((item) => item.id == testedItem.id).firstOrNull;
+    if (target == null || target.key.trim() != testedItem.key.trim())
+      return false;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final updated = target.copyWith(
+      status: ok ? ProviderMultiKeyStatus.normal : ProviderMultiKeyStatus.error,
+      totalRequests: target.totalRequests + 1,
+      successRequests: target.successRequests + (ok ? 1 : 0),
+      failedRequests: target.failedRequests + (ok ? 0 : 1),
+      consecutiveFailures: ok ? 0 : target.consecutiveFailures + 1,
+      lastUsedAt: now,
+      lastError: ok ? null : '检测失败',
+      clearLastError: ok,
+      updatedAt: now,
+    );
+    await _saveItems(current, [
+      for (final item in items)
+        if (item.id == target.id) updated else item,
+    ]);
+    return true;
+  }
+
   Future<void> _detectAll(
     ProviderAuth provider,
     List<ProviderMultiKeyItem> items,
@@ -137,51 +179,44 @@ class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
       MoeToast.show(context, '请先给渠道添加模型', type: ToastType.warning);
       return;
     }
-    if (_detecting) return;
-
-    setState(() {
-      _detecting = true;
-      _testingKeyId = null;
-    });
-
-    final next = List<ProviderMultiKeyItem>.from(items);
+    if (_detecting || _testingKeyId != null) return;
+    setState(() => _detecting = true);
     var successCount = 0;
+    var testedCount = 0;
     try {
-      for (var i = 0; i < next.length; i++) {
-        final item = next[i];
-        final key = item.key.trim();
-        if (key.isEmpty) continue;
-
+      for (final queuedItem in items) {
+        if (!mounted) return;
+        final current = ref
+            .read(appSettingsProvider)
+            .asData
+            ?.value
+            .getProvider(widget.providerId);
+        if (current == null) return;
+        final item = providerMultiKeyItemsFromProvider(
+          current,
+        ).where((item) => item.id == queuedItem.id).firstOrNull;
+        if (item == null || item.key.trim().isEmpty) continue;
         setState(() => _testingKeyId = item.id);
-        final ok = await _testKey(provider, modelId: modelId, apiKey: key);
-        if (ok) successCount++;
-        final now = DateTime.now().millisecondsSinceEpoch;
-        next[i] = item.copyWith(
-          status: ok
-              ? ProviderMultiKeyStatus.normal
-              : ProviderMultiKeyStatus.error,
-          totalRequests: item.totalRequests + 1,
-          successRequests: item.successRequests + (ok ? 1 : 0),
-          failedRequests: item.failedRequests + (ok ? 0 : 1),
-          consecutiveFailures: ok ? 0 : item.consecutiveFailures + 1,
-          lastUsedAt: now,
-          lastError: ok ? null : '检测失败',
-          clearLastError: ok,
-          updatedAt: now,
+        final ok = await _testKey(
+          current,
+          modelId: modelId,
+          apiKey: item.key.trim(),
         );
+        if (!mounted) return;
+        if (await _recordDetectionResult(current, item, ok)) {
+          testedCount++;
+          if (ok) successCount++;
+        }
+        if (!mounted) return;
         await Future<void>.delayed(const Duration(milliseconds: 80));
       }
-      await _saveItems(provider, next);
-      if (mounted) {
-        MoeToast.show(context, '检测完成：$successCount/${next.length} 正常');
-      }
+      if (mounted) MoeToast.show(context, '检测完成：$successCount/$testedCount 正常');
     } finally {
-      if (mounted) {
+      if (mounted)
         setState(() {
           _detecting = false;
           _testingKeyId = null;
         });
-      }
     }
   }
 
@@ -195,8 +230,7 @@ class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
       MoeToast.show(context, '请先给渠道添加模型', type: ToastType.warning);
       return;
     }
-    if (_detecting) return;
-
+    if (_detecting || _testingKeyId != null) return;
     setState(() => _testingKeyId = target.id);
     try {
       final ok = await _testKey(
@@ -204,27 +238,10 @@ class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
         modelId: modelId,
         apiKey: target.key.trim(),
       );
-      final now = DateTime.now().millisecondsSinceEpoch;
-      final next = items.map((item) {
-        if (item.id != target.id) return item;
-        return item.copyWith(
-          status: ok
-              ? ProviderMultiKeyStatus.normal
-              : ProviderMultiKeyStatus.error,
-          totalRequests: item.totalRequests + 1,
-          successRequests: item.successRequests + (ok ? 1 : 0),
-          failedRequests: item.failedRequests + (ok ? 0 : 1),
-          consecutiveFailures: ok ? 0 : item.consecutiveFailures + 1,
-          lastUsedAt: now,
-          lastError: ok ? null : '检测失败',
-          clearLastError: ok,
-          updatedAt: now,
-        );
-      }).toList();
-      await _saveItems(provider, next);
-      if (mounted) {
+      if (!mounted) return;
+      final applied = await _recordDetectionResult(provider, target, ok);
+      if (mounted && applied)
         MoeToast.show(context, ok ? 'Key 可用' : 'Key 检测失败');
-      }
     } finally {
       if (mounted) setState(() => _testingKeyId = null);
     }
@@ -495,13 +512,34 @@ class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
           providerMultiKeyStrategy(provider),
         );
 
-        return MoePageScaffold(
+        return LayoutBuilder(builder: (context, constraints) {
+          return MoePageScaffold(
           extendBodyBehindAppBar: true,
           backgroundColor: colors.surface,
           appBar: MoeAppBar(
             title: '多 Key 管理',
             showBackButton: true,
             actions: [
+              if (constraints.maxWidth < 480)
+                Builder(builder: (buttonContext) => IconButton(
+                  tooltip: '更多 Key 操作',
+                  icon: Icon(Icons.more_horiz, color: colors.text),
+                  onPressed: () => MoePopupMenu.show(buttonContext,
+                    targetBox: buttonContext.findRenderObject()! as RenderBox,
+                    alignToEnd: true,
+                    items: [
+                      MoePopupMenuItem(icon: Icons.add, label: '添加',
+                        onTap: () { if (mounted) _addKeys(provider, items); }),
+                      MoePopupMenuItem(icon: Icons.monitor_heart_outlined,
+                        label: _detecting ? '检测中...' : '检测全部 Key',
+                        onTap: () { if (mounted && !_detecting) _detectAll(provider, items); }),
+                      MoePopupMenuItem(icon: Icons.delete_outline,
+                        label: '删除错误 Key', danger: true,
+                        onTap: () { if (mounted) _deleteErrorKeys(provider, items); }),
+                    ],
+                  ),
+                ))
+              else ...[
               IconButton(
                 icon: Icon(Icons.delete_outline, color: colors.text),
                 tooltip: '删除错误 Key',
@@ -528,6 +566,7 @@ class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
                 tooltip: '添加',
                 onPressed: () => _addKeys(provider, items),
               ),
+              ],
             ],
           ),
           body: Builder(
@@ -608,7 +647,8 @@ class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
               ),
             ),
           ),
-        );
+          );
+        });
       },
     );
   }
@@ -638,7 +678,7 @@ class _MultiKeyFormSheet extends StatelessWidget {
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         child: ConstrainedBox(
-          constraints: BoxConstraints(minWidth: constraints.maxWidth),
+          constraints: BoxConstraints(minWidth: (constraints.maxWidth - 32).clamp(0.0, double.infinity)),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -723,76 +763,66 @@ class _MultiKeyRow extends StatelessWidget {
         ? '${item.alias} · ${maskProviderMultiKeyValue(item.key)}'
         : maskProviderMultiKeyValue(item.key);
 
+    final details = <Widget>[
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: statusColor.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Text(statusText, style: TextStyle(
+          color: statusColor, fontSize: 12,
+          fontWeight: MoeFontWeights.emphasis,
+        )),
+      ),
+      const SizedBox(width: 8),
+      Expanded(child: Text(title, maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(color: colors.text, fontSize: 16,
+          fontWeight: MoeFontWeights.emphasis),
+      )),
+    ];
+    final actions = <Widget>[
+      MoeSwitch(value: item.enabled, onChanged: onToggleEnabled),
+      if (testing)
+        SizedBox(width: 48, height: 48,
+          child: Center(child: SizedBox(width: 18, height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2,
+              color: colors.primary),
+          )),
+        )
+      else
+        IconButton(
+          icon: Icon(Icons.monitor_heart_outlined, color: colors.textSecondary),
+          tooltip: '检测', onPressed: onDetect,
+        ),
+      IconButton(
+        icon: Icon(Icons.edit_outlined, color: colors.textSecondary),
+        tooltip: '编辑', onPressed: onEdit,
+      ),
+      IconButton(
+        icon: Icon(Icons.delete_outline, color: colors.toastError),
+        tooltip: '删除', onPressed: onDelete,
+      ),
+    ];
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: statusColor.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: Text(
-              statusText,
-              style: TextStyle(
-                color: statusColor,
-                fontSize: 12,
-                fontWeight: MoeFontWeights.emphasis,
+      child: LayoutBuilder(builder: (context, constraints) {
+        if (constraints.maxWidth < 480) {
+          return Column(crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(children: details),
+              const SizedBox(height: 6),
+              Align(alignment: Alignment.centerRight,
+                child: Wrap(spacing: 4, runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: actions),
               ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: colors.text,
-                fontSize: 16,
-                fontWeight: MoeFontWeights.emphasis,
-              ),
-            ),
-          ),
-          MoeSwitch(value: item.enabled, onChanged: onToggleEnabled),
-          const SizedBox(width: 4),
-          if (testing)
-            SizedBox(
-              width: 32,
-              height: 32,
-              child: Center(
-                child: SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: colors.primary,
-                  ),
-                ),
-              ),
-            )
-          else
-            IconButton(
-              icon: Icon(
-                Icons.monitor_heart_outlined,
-                color: colors.textSecondary,
-              ),
-              tooltip: '检测',
-              onPressed: onDetect,
-            ),
-          IconButton(
-            icon: Icon(Icons.edit_outlined, color: colors.textSecondary),
-            tooltip: '编辑',
-            onPressed: onEdit,
-          ),
-          IconButton(
-            icon: Icon(Icons.delete_outline, color: colors.toastError),
-            tooltip: '删除',
-            onPressed: onDelete,
-          ),
-        ],
-      ),
+            ],
+          );
+        }
+        return Row(children: [...details, const SizedBox(width: 4), ...actions]);
+      }),
     );
   }
 }

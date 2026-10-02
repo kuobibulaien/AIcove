@@ -227,12 +227,16 @@ class _MoePrimaryButtonState extends State<MoePrimaryButton> {
                         ),
                         const SizedBox(width: 8),
                       ],
-                      Text(
-                        widget.label,
-                        style: TextStyle(
-                          fontSize: _fontSize,
-                          fontWeight: MoeFontWeights.emphasis,
-                          color: currentFg,
+                      Flexible(
+                        child: Text(
+                          widget.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: _fontSize,
+                            fontWeight: MoeFontWeights.emphasis,
+                            color: currentFg,
+                          ),
                         ),
                       ),
                     ],

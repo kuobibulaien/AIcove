@@ -4,6 +4,10 @@
 /// 当前导出格式版本
 const int kExportFormatVersion = 1;
 
+/// First-release coverage, shared by export and restore entry points.
+const transferCoverageNotice =
+    '仅包含所选角色卡、聊天记录及基本偏好。角色模型、插件/预设绑定、思考档位、背景模糊、话题边界与摘要不在恢复范围内；暂不支持视频。基本偏好合并暂不支持，可导入新副本或替换。';
+
 /// 导出文件扩展名
 const String kExportFileExtension = '.aicove';
 
@@ -42,7 +46,7 @@ class SyncScope {
       case characterCards:
         return '角色卡';
       case characterSettings:
-        return '角色设置';
+        return '基本偏好';
       case providersConfig:
         return '模型配置';
       case providersKeys:

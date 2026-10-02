@@ -1733,9 +1733,13 @@ void main() {
     expect(bResult.messages.first['content'], 'B_MAIN');
     expect(bResult.messages.map((m) => m['content']).join(), isNot(contains('DEPTH')));
     await store.savePluginSettings(TavernPluginSettings(enabled: false, defaultPresetId: preset.id));
-    final off = await service.prepareApiConfig(conv: b, history: history, userText: '猫');
-    expect(off.messages.map((m) => m['content']).join(), isNot(contains('B_MAIN')));
-    expect(off.presetRegexScripts, isEmpty);
+    // The plugin is always on. A legacy enabled=false cannot override an owner binding.
+    final legacyDisabled = await service.prepareApiConfig(conv: b, history: history, userText: '猫');
+    expect(legacyDisabled.messages.first['content'], 'B_MAIN');
+    expect(legacyDisabled.messages.map((m) => m['content']).join(), isNot(contains('DEPTH')));
+    expect((await store.loadPluginSettings()).enabled, isTrue);
+    expect(first.messages.map((m) => m['content']), contents,
+        reason: 'entry edits and legacy flags must not mutate the captured request');
   });
 
   test('prepareApiConfig rejects a missing explicit preset instead of changing context silently', () async {

@@ -22,11 +22,9 @@ const _profileCard = ValueKey('settings-profile-card');
 const _entryContainer = ValueKey('settings-entry-container');
 
 const _entryStyles = <String, (IconData, int)>{
-  '账号': (Icons.person_rounded, 0xFF007AFF),
   '模型': (Icons.layers_rounded, 0xFF5856D6),
   '通用': (Icons.tune_rounded, 0xFF32ADE6),
   '插件': (Icons.extension_rounded, 0xFFAF52DE),
-  '局域网同步': (Icons.devices_rounded, 0xFF34C759),
   '调试': (Icons.terminal_rounded, 0xFFFF9500),
 };
 
@@ -79,11 +77,9 @@ void main() {
             .widgetList<MoeSettingsRow>(find.byType(MoeSettingsRow))
             .toList();
         expect(rows.map((e) => e.label), [
-          '账号',
           '模型',
           '通用',
           '插件',
-          '局域网同步',
           '调试',
         ]);
         for (final row in rows) {
@@ -159,7 +155,7 @@ void main() {
     final rows = tester
         .widgetList<MoeSettingsRow>(find.byType(MoeSettingsRow))
         .toList();
-    expect(rows.length, 6);
+    expect(rows.length, 4);
     for (final row in rows) {
       final tile = row.iconWidget! as Container;
       final decoration = tile.decoration! as MoeG2Decoration;
@@ -244,7 +240,7 @@ void main() {
     expect(containerRect.right, cardRect.right);
     expect(cardRect.left, 24);
     expect(cardRect.right, 360);
-    expect(find.byType(MoeSettingsRow), findsNWidgets(6));
+    expect(find.byType(MoeSettingsRow), findsNWidgets(4));
     expect(tester.takeException(), isNull);
   });
 }

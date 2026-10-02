@@ -21,7 +21,13 @@ void main() {
     await tester.pumpWidget(_buildApp());
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('添加'));
+    if (find.byTooltip('更多 Key 操作').evaluate().isNotEmpty) {
+      await tester.tap(find.byTooltip('更多 Key 操作'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('添加'));
+    } else {
+      await tester.tap(find.byTooltip('添加'));
+    }
     await tester.pumpAndSettle();
 
     expect(find.byType(MoeBottomSheet), findsOneWidget);
@@ -46,7 +52,13 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('添加'));
+    if (find.byTooltip('更多 Key 操作').evaluate().isNotEmpty) {
+      await tester.tap(find.byTooltip('更多 Key 操作'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('添加'));
+    } else {
+      await tester.tap(find.byTooltip('添加'));
+    }
     await tester.pumpAndSettle();
 
     expect(find.byType(MoeBottomSheet), findsOneWidget);
@@ -63,7 +75,13 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('添加'));
+    if (find.byTooltip('更多 Key 操作').evaluate().isNotEmpty) {
+      await tester.tap(find.byTooltip('更多 Key 操作'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('添加'));
+    } else {
+      await tester.tap(find.byTooltip('添加'));
+    }
     await tester.pumpAndSettle();
 
     expect(find.byType(MoeBottomSheet), findsOneWidget);

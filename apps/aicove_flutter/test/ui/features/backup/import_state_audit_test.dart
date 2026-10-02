@@ -41,19 +41,29 @@ ImportPreview preview(
 
 void main() {
   for (final width in [360.0, 1000.0]) {
-    testWidgets('U01 memory-only preview selects available scopes width=$width',
+    testWidgets(
+      'U01 unsupported memory-only preview blocks import width=$width',
         (tester) async {
       await tester.binding.setSurfaceSize(Size(width, 800));
       addTearDown(() => tester.binding.setSurfaceSize(null));
-      await tester.pumpWidget(ProviderScope(
-          child: MaterialApp(
+        final importer = PendingImporter();
+        await tester.pumpWidget(ProviderScope(
+            overrides: [
+              conversationImporterProvider.overrideWithValue(importer),
+            ],
+            child: MaterialApp(
               home: ImportPreviewPage(
                   file: File('/synthetic-not-opened.aicove'),
                   preview: preview(scopes: [SyncScope.memory])))));
       await tester.pumpAndSettle();
       final container = ProviderScope.containerOf(
           tester.element(find.byType(ImportPreviewPage)));
-      expect(container.read(importScopesProvider), {SyncScope.memory});
+      expect(container.read(importScopesProvider), isEmpty);
+        expect(find.text('此文件没有当前支持的恢复内容'), findsOneWidget);
+        await tester.tap(find.text('导入 1 个角色'));
+        await tester.pump();
+        expect(importer.calls, 0);
+        expect(tester.takeException(), isNull);
     });
   }
   testWidgets('U02 incompatible preview must not invoke import',

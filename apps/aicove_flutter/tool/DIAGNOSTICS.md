@@ -153,7 +153,7 @@ python3 tool/collect_diagnostics.py --from-dir "$HOME/Library/Containers/com.exa
 
 服务名统一为 `dart`。所有入口最终执行 [`tool/dart_mcp_server`](dart_mcp_server)，通过 `flutterw --dart mcp-server` 使用项目 SDK，工作目录固定为当前副本的 Flutter 工程。服务使用 stdio（标准输入输出），每个 harness 自行持有一个 MCP 子进程，不需要常驻端口或共享后台服务器。stdout 仅供 MCP 协议使用，不在启动脚本中打印提示或加载交互式 shell 配置。
 
-以仓库根目录打开项目或启动 harness。配置没有写死 `/home/kuobibulaien` 路径：终端入口通过 Git 定位当前仓库，编辑器入口使用 `${workspaceFolder}`；复制仓库／创建 worktree 后指向各自的脚本。SDK 位置覆盖沿用上节 `AICOVE_FLUTTER_SDK`。
+以仓库根目录打开项目或启动 harness。配置没有写死 `/path/to/home` 路径：终端入口通过 Git 定位当前仓库，编辑器入口使用 `${workspaceFolder}`；复制仓库／创建 worktree 后指向各自的脚本。SDK 位置覆盖沿用上节 `AICOVE_FLUTTER_SDK`。
 
 | Harness | 仓库内配置 | 加载说明 |
 |---|---|---|

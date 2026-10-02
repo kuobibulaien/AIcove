@@ -5,8 +5,10 @@ import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../features/agent_context/domain/silly_tavern_preset.dart';
+import '../../../../features/agent_context/providers/preset_recipe_provider.dart';
 import '../../../shared/widgets/index.dart';
 import '../../../theme/tokens.dart';
 
@@ -43,6 +45,37 @@ Future<void> runTavernAction(
   } catch (error) {
     if (context.mounted) MoeToast.error(context, _describeError(error));
   }
+}
+
+/// 确认后删除一套酒馆预设；成功返回 true。仍被角色绑定时由应用层拒绝并提示。
+Future<bool> confirmDeleteTavernPreset(
+  BuildContext context,
+  WidgetRef ref, {
+  required String presetId,
+  required String name,
+  required bool isDefault,
+}) async {
+  final confirmed = await showMeoTalkDialog(
+    context: context,
+    title: '删除酒馆预设？',
+    content: Text(
+      '确定删除「$name」？提示词、正则和世界书会一起删除，无法恢复。'
+      '${isDefault ? '它是默认预设，删除后没绑定预设的角色按 AIcove 原来的方式聊天。' : ''}'
+      '仍有角色绑定的预设不会被删除。',
+    ),
+    cancelText: '取消',
+    confirmText: '删除',
+    isDanger: true,
+  );
+  if (confirmed != true || !context.mounted) return false;
+  var deleted = false;
+  await runTavernAction(context, () async {
+    await ref
+        .read(presetRecipeImportControllerProvider.notifier)
+        .deletePreset(presetId);
+    deleted = true;
+  }, success: '预设已删除');
+  return deleted;
 }
 
 String _describeError(Object error) => switch (error) {

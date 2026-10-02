@@ -120,11 +120,14 @@ class _ExportCharacterPageState extends ConsumerState<ExportCharacterPage> {
             '全选',
             style: theme.textTheme.bodyMedium,
           ),
-          const Spacer(),
-          Text(
-            '已选 ${selectedIds.length}/${conversations.length}',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              '已选 ${selectedIds.length}/${conversations.length}',
+              textAlign: TextAlign.end,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
           ),
         ],

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../../../../helpers/release_source_preview.dart';
 import 'package:flutter/services.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:aicove_flutter/src/ui/features/settings/widgets/model_row_tile.dart';
@@ -14,6 +15,8 @@ void main() {
   for (final width in [360.0, 1000.0]) {
     testWidgets('provider model list supports drag reorder width=$width',
         (tester) async {
+      await loadReleasePreviewFonts(tester);
+      final previewKey = GlobalKey();
       String? copiedText;
       tester.binding.defaultBinaryMessenger
           .setMockMethodCallHandler(SystemChannels.platform, (call) async {
@@ -32,8 +35,10 @@ void main() {
       provider['visible_models'] = provider['models'];
       SharedPreferences.setMockInitialValues(
           {'aicove.ui_models.v1': jsonEncode(store)});
-      await tester.pumpWidget(const ProviderScope(
-          child: MaterialApp(home: ProviderDetailPage(providerId: 'openai'))));
+      await tester.pumpWidget(ProviderScope(
+          child: RepaintBoundary(key: previewKey, child: MaterialApp(
+            theme: ThemeData(fontFamily: captureReleaseSourcePreview ? 'ReleasePreview' : null),
+            home: const ProviderDetailPage(providerId: 'openai')))));
       await tester.pumpAndSettle();
       await tester.tap(find.text('模型'));
       await tester.pumpAndSettle();
@@ -57,6 +62,13 @@ void main() {
           .visibleModels;
       debugPrint('AUDIT clipboard after drag: $copiedText');
       expect(models.indexOf('audit-model-0'), greaterThan(0));
+      expect(copiedText, isNull);
+      await saveReleaseSourcePreview(tester, previewKey, 'model-reorder-$width');
+      final movedRow = find.ancestor(of: find.text('audit-model-0'), matching: find.byType(ModelRowTile));
+      await tester.tap(find.descendant(of: movedRow, matching: find.byIcon(Icons.copy_outlined)));
+      await tester.pumpAndSettle(const Duration(seconds: 3));
+      expect(copiedText, 'audit-model-0');
+      expect(tester.takeException(), isNull);
     });
   }
 
@@ -66,6 +78,8 @@ void main() {
         testWidgets(
             '${keys ? "multi-key" : "model-test"} width=$width scale=$scale long list',
             (tester) async {
+          await loadReleasePreviewFonts(tester);
+          final previewKey = GlobalKey();
           await tester.binding.setSurfaceSize(Size(width, 700));
           addTearDown(() => tester.binding.setSurfaceSize(null));
           final store =
@@ -87,20 +101,24 @@ void main() {
           SharedPreferences.setMockInitialValues(
               {'aicove.ui_models.v1': jsonEncode(store)});
           await tester.pumpWidget(ProviderScope(
-              child: MaterialApp(
+              child: RepaintBoundary(key: previewKey, child: MaterialApp(
+                  theme: ThemeData(fontFamily: captureReleaseSourcePreview ? 'ReleasePreview' : null),
                   builder: (context, child) => MediaQuery(
                       data: MediaQuery.of(context)
                           .copyWith(textScaler: TextScaler.linear(scale)),
                       child: child!),
                   home: keys
                       ? const MultiKeyManagerPage(providerId: 'openai')
-                      : const ProviderDetailPage(providerId: 'openai'))));
+                      : const ProviderDetailPage(providerId: 'openai')))));
           await tester.pumpAndSettle();
           if (!keys) {
             await tester.tap(find.byTooltip('测试模型'));
             await tester.pumpAndSettle();
           }
           expect(tester.takeException(), isNull);
+          if (keys && (scale == 1.2 || scale == 1.8)) {
+            await saveReleaseSourcePreview(tester, previewKey, 'multi-key-$width-$scale');
+          }
         });
       }
     }

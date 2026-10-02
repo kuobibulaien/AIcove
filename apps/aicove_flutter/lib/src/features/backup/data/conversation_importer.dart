@@ -204,8 +204,11 @@ class ConversationImporter {
       // (注释已丢失)
       final selectedConvs = convList
           .where((c) => selectedConversationIds.contains(c['id']))
-          .map((c) => filterTransferConversation(
-              Map<String, dynamic>.from(c as Map), scopes))
+          .map((c) {
+            final source = Map<String, dynamic>.from(c as Map);
+            validateTransferConversation(source, scopes);
+            return filterTransferConversation(source, scopes);
+          })
           .toList();
       if (selectedConvs.length != selectedConversationIds.length ||
           selectedConvs.map((c) => c['id']).toSet().length !=
@@ -249,6 +252,10 @@ class ConversationImporter {
                 (resolution == ImportConflictResolution.merge ||
                     resolution == ImportConflictResolution.replace)) {
               throw ImportException('目标角色在回收站中，请先恢复角色或导入为新副本');
+            }
+            if (resolution == ImportConflictResolution.merge &&
+                scopes.contains(SyncScope.characterSettings)) {
+              throw ImportException('暂不支持合并基本偏好。请取消基本偏好，或选择新副本/替换；现有数据不会被修改。');
             }
             conflicts.add(ImportConflict(
               type: 'conversation',

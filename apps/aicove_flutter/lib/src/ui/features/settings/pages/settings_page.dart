@@ -4,7 +4,6 @@ import '../../../../features/settings/app_settings.dart';
 import '../../../shared/widgets/moe_avatar.dart';
 import '../../../shared/widgets/moe_scroll_edge.dart';
 import 'profile_page.dart';
-import 'account_page.dart';
 import '../../../shared/widgets/moe_floating_surface.dart';
 
 import '../../../../ui/theme/tokens.dart';
@@ -17,7 +16,6 @@ import '../../debug/pages/debug_center_page.dart';
 import 'chat_plugin_settings_page.dart';
 import 'model_list_page.dart';
 import 'ui_settings_page.dart';
-import 'lan_sync_page.dart';
 
 /// 窄屏与宽屏左侧共用的设置根页。
 class SettingsPage extends StatelessWidget {
@@ -51,12 +49,6 @@ class _SettingsContentState extends ConsumerState<SettingsContent> {
 
   static const _entries = [
     (
-      label: '账号',
-      icon: Icons.person_rounded,
-      color: Color(0xFF007AFF),
-      page: AccountPage(),
-    ),
-    (
       label: '模型',
       icon: Icons.layers_rounded,
       color: Color(0xFF5856D6),
@@ -73,12 +65,6 @@ class _SettingsContentState extends ConsumerState<SettingsContent> {
       icon: Icons.extension_rounded,
       color: Color(0xFFAF52DE),
       page: ChatPluginSettingsPage(),
-    ),
-    (
-      label: '局域网同步',
-      icon: Icons.devices_rounded,
-      color: Color(0xFF34C759),
-      page: LanSyncPage(),
     ),
     (
       label: '调试',
