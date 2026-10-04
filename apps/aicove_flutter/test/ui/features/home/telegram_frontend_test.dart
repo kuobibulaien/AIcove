@@ -14,7 +14,7 @@ import 'package:aicove_flutter/src/ui/features/settings/pages/ui_settings_page.d
 import 'package:aicove_flutter/src/ui/features/settings/pages/profile_page.dart';
 import 'package:aicove_flutter/src/ui/features/settings/pages/chat_plugin_settings_page.dart';
 import 'package:aicove_flutter/src/ui/features/debug/pages/debug_center_page.dart';
-import 'package:aicove_flutter/src/ui/features/debug/pages/prompt_node_management_page.dart';
+import 'package:aicove_flutter/src/ui/features/debug/pages/contact_context_page.dart';
 import 'package:aicove_flutter/src/ui/shared/animations/parallax_slide_page_route.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
@@ -174,7 +174,7 @@ void main() {
         expect(tester.takeException(), isNull);
         await tester.tap(find.byTooltip('更多'));
         await tester.pumpAndSettle();
-        const menuLabels = ['详情', '壁纸', '绘图风格', '酒馆预设', '清空历史记录', '删除该角色'];
+        const menuLabels = ['详情', '聊天界面', '绘图风格', '酒馆预设', '清空历史记录', '删除该角色'];
         for (final label in menuLabels) {
           expect(find.text(label), findsOneWidget);
         }
@@ -282,7 +282,7 @@ void main() {
         expect(find.byType(ProfilePage), findsOneWidget);
         await navigator.currentState!.maybePop();
         await tester.pumpAndSettle();
-        expect(find.text('提示词节点'), findsNothing);
+        expect(find.text('联系人上下文'), findsNothing);
         expect(find.text('编辑头像和名字'), findsOneWidget);
         await tester.tap(find.text('模型'));
         await tester.pumpAndSettle();
@@ -298,12 +298,7 @@ void main() {
         await tester.tap(find.text('通用'));
         await tester.pumpAndSettle();
         expect(find.byType(UiSettingsPage), findsOneWidget);
-        await tester.tap(find.text('个人资料'));
-        await tester.pumpAndSettle();
-        expect(find.byType(ProfilePage), findsOneWidget);
-        await navigator.currentState!.maybePop();
-        await tester.pumpAndSettle();
-        expect(find.byType(UiSettingsPage), findsOneWidget);
+        expect(find.text('个人资料'), findsNothing);
         await navigator.currentState!.maybePop();
         await tester.pumpAndSettle();
 
@@ -316,10 +311,10 @@ void main() {
         await tester.tap(find.text('调试'));
         await tester.pumpAndSettle();
         expect(find.byType(DebugCenterPage), findsOneWidget);
-        await tester.ensureVisible(find.text('提示词节点'));
-        await tester.tap(find.text('提示词节点'));
+        await tester.ensureVisible(find.text('联系人上下文'));
+        await tester.tap(find.text('联系人上下文'));
         await tester.pump();
-        // 实际资产从宿主文件系统读取，给测试的真实异步区留出完成机会。
+        // 联系人从真实存储异步读取，给测试的真实异步区留出完成机会。
         for (var attempt = 0; attempt < 50; attempt++) {
           await tester.runAsync(
             () => Future<void>.delayed(const Duration(milliseconds: 10)),
@@ -329,9 +324,9 @@ void main() {
         }
         expect(find.byType(MoeLoadingIndicator), findsNothing);
         await tester.pumpAndSettle();
-        expect(find.byType(PromptNodeManagementPage), findsOneWidget);
+        expect(find.byType(ContactContextListPage), findsOneWidget);
         expect(
-          tester.getRect(find.byType(PromptNodeManagementPage)).left,
+          tester.getRect(find.byType(ContactContextListPage)).left,
           width >= 900 ? telegramPrimaryWidth + telegramWorkspaceInset * 2 : 0,
         );
         await navigator.currentState!.maybePop();

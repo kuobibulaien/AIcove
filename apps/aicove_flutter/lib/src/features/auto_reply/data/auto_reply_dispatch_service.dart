@@ -129,16 +129,6 @@ class AutoReplyDispatchService {
     }
 
     final settings = await _ref.read(appSettingsProvider.future);
-    if (!settings.autoReplySettings.enabled) {
-      await _appendHistoryLog(
-        event: 'dispatch_skipped_auto_reply_disabled',
-        message: '跳过主动回复发送：总开关已关闭',
-        trigger: trigger,
-        success: false,
-        level: AutoReplyTriggerLogLevel.warning,
-      );
-      return const AutoReplyDispatchResult.skipped('auto_reply_disabled');
-    }
     if (trigger.source == TriggerSource.aiScheduler &&
         conversation.blocksPlugin(_triggerPluginId)) {
       await _appendHistoryLog(

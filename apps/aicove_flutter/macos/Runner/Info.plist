@@ -34,5 +34,7 @@
 	<string>与同一网络内已配对的设备直接同步角色、聊天和附件。</string>
 	<key>NSBonjourServices</key>
 	<array><string>_aicove-sync._tcp</string></array>
+	<key>NSCameraUsageDescription</key>
+	<string>扫描另一台设备上的局域网配对二维码。</string>
 </dict>
 </plist>

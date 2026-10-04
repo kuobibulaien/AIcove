@@ -6,6 +6,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'dart:math';
+
+import 'package:crypto/crypto.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../../core/app_logger.dart';
@@ -17,6 +20,45 @@ import '../domain/silly_tavern_world_book.dart';
 import '../domain/tavern_compatibility_port.dart';
 
 typedef PresetDocumentsDirectoryResolver = Future<Directory> Function();
+
+/// 没有外部提示词预设时使用的最小组合：只装配人设、场景、世界书与聊天记录。
+const String kBasicContextPresetSource =
+    '''{"name":"基础上下文","prompts":[
+      {"identifier":"worldInfoBefore","name":"世界书：角色定义前","marker":true},
+      {"identifier":"charDescription","name":"角色定义","marker":true},
+      {"identifier":"scenario","name":"场景","marker":true},
+      {"identifier":"worldInfoAfter","name":"世界书：角色定义后","marker":true},
+      {"identifier":"chatHistory","name":"聊天记录","marker":true}],
+      "prompt_order":[{"identifier":"worldInfoBefore","enabled":true},
+      {"identifier":"charDescription","enabled":true},
+      {"identifier":"scenario","enabled":true},
+      {"identifier":"worldInfoAfter","enabled":true},
+      {"identifier":"chatHistory","enabled":true}]}''';
+
+/// 角色卡资源并入专用组合的结果。
+class CardPresetImportResult {
+  const CardPresetImportResult({
+    required this.preset,
+    required this.baseName,
+    required this.addedRegexCount,
+    required this.skippedRegexCount,
+    required this.worldEntryCount,
+    required this.warnings,
+  });
+
+  final SillyTavernPreset preset;
+
+  /// 复制来源；null 表示以内置「基础上下文」为底。
+  final String? baseName;
+  final int addedRegexCount;
+
+  /// 与底预设同 ID 或缺少 findRegex 而跳过的卡内正则。
+  final int skippedRegexCount;
+  final int worldEntryCount;
+
+  /// 副本装配缺口：缺启用的人设／聊天记录／世界书节点等，供界面提示。
+  final List<String> warnings;
+}
 
 /// 酒馆预设本地仓库。原始 JSON 是持久真相源，运行时模型由统一解析器重建。
 class SillyTavernPresetStore implements TavernCompatibilityPort {
@@ -327,6 +369,16 @@ class SillyTavernPresetStore implements TavernCompatibilityPort {
   });
 
   @override
+  Future<void> setUserNameMacroEnabled(String presetId, bool enabled) =>
+      _mutate(presetId, (data, _) {
+        if (enabled) {
+          data.remove(presetUserNameMacroKey);
+        } else {
+          data[presetUserNameMacroKey] = false;
+        }
+      });
+
+  @override
   Future<void> setTagPresentation(
     String presetId,
     String tagName,
@@ -353,6 +405,119 @@ class SillyTavernPresetStore implements TavernCompatibilityPort {
     }
     return jsonDecode(source);
   }
+
+  /// 角色专用组合的复制来源：显式绑定→默认预设→内置基础上下文。
+  /// 显式绑定缺失或损坏时报错，不回退（ADR0010）。
+  Future<SillyTavernPreset> resolveCardPresetBase(String? explicitBaseId) async {
+    final settings = await loadPluginSettings();
+    final baseId = explicitBaseId?.trim().isNotEmpty == true
+        ? explicitBaseId!.trim()
+        : settings.defaultPresetId;
+    if (baseId == null) {
+      return previewSource(
+        kBasicContextPresetSource,
+        sourceFileName: '基础上下文.json',
+      );
+    }
+    final found = await get(baseId);
+    if (found == null) throw StateError('绑定的酒馆预设不存在或损坏，请重新选择');
+    return found;
+  }
+
+  /// 以 [resolveCardPresetBase] 的结果为底建立角色专用组合副本，
+  /// 并把卡内正则与世界书一次写入。底预设本身不被修改。
+  /// [regexAuthorized] 为 null 时沿用底预设的授权（基础上下文为未授权）。
+  Future<CardPresetImportResult> createCardPreset({
+    required String? explicitBaseId,
+    required String name,
+    required List<Map<String, dynamic>> regexScripts,
+    required Map<String, dynamic>? characterBook,
+    bool? regexAuthorized,
+  }) => _serialized(() async {
+    final base = await resolveCardPresetBase(explicitBaseId);
+    final fromTemplate = !(await _exists(base.id));
+    final authorized = regexAuthorized ?? (!fromTemplate && base.regexAuthorized);
+
+    final data = Map<String, dynamic>.from(
+      jsonDecode(jsonEncode(base.compatibilityData)) as Map,
+    );
+    final knownIds = {for (final script in base.regexScripts) script.id};
+    final imported =
+        data.putIfAbsent('importedRegex', () => <dynamic>[]) as List;
+    var added = 0;
+    var skipped = 0;
+    for (final script in regexScripts) {
+      final find = script['findRegex'];
+      final rawId = script['id']?.toString().trim() ?? '';
+      // 无 ID 时与解析器同样按内容哈希生成，避免误把不同规则当成同一条。
+      final id = rawId.isNotEmpty
+          ? rawId
+          : 'regex_${sha256.convert(utf8.encode(jsonEncode(script))).toString().substring(0, 24)}';
+      if (find is! String || find.isEmpty || !knownIds.add(id)) {
+        skipped++;
+        continue;
+      }
+      imported.add(script);
+      added++;
+    }
+    if (imported.length > 1000) throw const FormatException('正则超过 1000 条，已拒绝导入');
+    if (imported.isEmpty) data.remove('importedRegex');
+
+    var worldEntryCount = 0;
+    if (characterBook != null) {
+      final source = <String, dynamic>{'character_book': characterBook};
+      final fileName = '$name.json';
+      final book = TavernWorldBook.parse(source, fileName);
+      worldEntryCount = book.entries.length;
+      final books = data.putIfAbsent('worldBooks', () => <dynamic>[]) as List;
+      if (books.length >= 32) throw const FormatException('每套预设最多 32 本世界书');
+      books.add({
+        'id': book.id,
+        'fileName': fileName,
+        'source': source,
+        'enabled': true,
+        'entryEnabled': <String, dynamic>{},
+      });
+    }
+    if (utf8.encode(jsonEncode(data)).length > 16 * 1024 * 1024) {
+      throw const FormatException('此组合资源超过 16 MB，请拆分预设');
+    }
+    final resourceBytes = utf8.encode(
+      jsonEncode({'r': regexScripts, 'b': characterBook}),
+    ).length;
+    if (resourceBytes > SillyTavernPresetParser.maxSourceBytes) {
+      throw const FormatException('卡内资源超过 2 MB，已拒绝导入');
+    }
+
+    final now = DateTime.now();
+    final seed =
+        '${base.id}|$name|${now.microsecondsSinceEpoch}|${Random.secure().nextInt(1 << 32)}';
+    final id =
+        'st_preset_${sha256.convert(utf8.encode(seed)).toString().substring(0, 24)}';
+    final preset = _parser.parseMap(
+      base.rawPreset,
+      sourceFileName: base.sourceFileName,
+      storedId: id,
+      storedName: name,
+      importedAt: now,
+      regexAuthorized: authorized,
+      compatibilityData: data,
+    );
+    final directory = await _ensureDirectory();
+    await _writePreset(
+      File('${directory.path}/$id.json'),
+      preset,
+      regexAuthorized: authorized,
+    );
+    return CardPresetImportResult(
+      preset: preset,
+      baseName: fromTemplate ? null : base.name,
+      addedRegexCount: added,
+      skippedRegexCount: skipped,
+      worldEntryCount: worldEntryCount,
+      warnings: _cardPresetWarnings(preset, hasWorldBook: characterBook != null),
+    );
+  });
 
   @override
   Future<void> importRegex(String presetId, String source) async {
@@ -489,6 +654,26 @@ class SillyTavernPresetStore implements TavernCompatibilityPort {
         if (preset == null) throw StateError('绑定的酒馆预设不存在或损坏，请在角色或插件设置中重新选择');
         return preset;
       });
+
+  static List<String> _cardPresetWarnings(
+    SillyTavernPreset preset, {
+    required bool hasWorldBook,
+  }) {
+    bool enabled(String id) => preset.selectedOrder.entries.any(
+      (entry) => entry.identifier == id && entry.enabled,
+    );
+    return [
+      if (!enabled('charDescription')) '预设未启用「角色定义」节点，人设可能不会发给模型',
+      if (!enabled('chatHistory')) '预设未启用「聊天记录」节点，开场白和聊天历史不会发给模型',
+      if (hasWorldBook &&
+          !enabled('worldInfoBefore') &&
+          !enabled('worldInfoAfter'))
+        '预设未启用世界书节点，只有按深度注入的条目会生效',
+    ];
+  }
+
+  Future<bool> _exists(String id) async =>
+      File('${(await _directory()).path}/$id.json').exists();
 
   Future<Directory> _directory() async {
     final root = await _documentsDirectoryResolver();

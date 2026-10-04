@@ -15,6 +15,7 @@ import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:aicove_flutter/src/ui/features/chat/pages/chat_page.dart';
+import 'package:aicove_flutter/src/ui/features/chat/widgets/chat_message_list.dart';
 import 'package:aicove_flutter/src/features/chat/presentation/widgets/composer.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 
@@ -129,6 +130,69 @@ Widget _buildHost({
 }
 
 void main() {
+  for (final autoScroll in [true, false]) {
+    testWidgets('chat send follows autoScrollOnSend=$autoScroll', (
+      tester,
+    ) async {
+      final now = DateTime(2026, 10, 3);
+      final conversation = Conversation(
+        id: 'audit-scroll',
+        title: 'Synthetic',
+        displayName: 'Synthetic',
+        createdAt: now,
+        updatedAt: now,
+      );
+      final database = db.AppDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(database.close);
+      final pending = Completer<ChatPageVisionCompatibilityDecision>()
+        ..complete(const ChatPageVisionCompatibilityDecision.allow());
+      late _RecordingChatActions actions;
+      final container = ProviderContainer(
+        overrides: [
+          databaseProvider.overrideWithValue(database),
+          appSettingsProvider.overrideWith(
+            () => _FakeAppSettingsNotifier(
+              _buildTestSettings().copyWith(autoScrollOnSend: autoScroll),
+            ),
+          ),
+          chatActionsProvider.overrideWith(
+            (ref) => actions = _RecordingChatActions(ref),
+          ),
+          chatPageSendSupportProvider.overrideWith(
+            (ref) => _AlwaysAllowChatPageSendSupport(ref, pending),
+          ),
+          activeConversationProvider.overrideWith((ref) => conversation),
+          resolvedConversationByIdProvider(
+            conversation.id,
+          ).overrideWith((ref) => conversation),
+          conversationMessagesProvider(
+            conversation.id,
+          ).overrideWith((ref) => const AsyncValue.data(<Message>[])),
+          conversationHasMoreProvider(
+            conversation.id,
+          ).overrideWith((ref) => false),
+        ],
+      );
+      addTearDown(container.dispose);
+      await tester.pumpWidget(
+        _buildHost(container: container, conversation: conversation),
+      );
+      await tester.pump();
+      final viewport = tester
+          .widget<ChatMessageList>(find.byType(ChatMessageList))
+          .viewportController;
+      viewport.onUserGesture();
+      final serialBefore = viewport.scrollToBottomRequestSerial;
+      await tester.widget<Composer>(find.byType(Composer)).onSend('Hello');
+      await tester.pump();
+      expect(actions.sentTexts, ['Hello']);
+      expect(
+        viewport.scrollToBottomRequestSerial,
+        autoScroll ? serialBefore + 1 : serialBefore,
+      );
+      expect(viewport.isDetached, !autoScroll);
+    });
+  }
   for (final image in [false, true]) {
     testWidgets(
       'chat send compatibility result after page disposal is ignored image=$image',

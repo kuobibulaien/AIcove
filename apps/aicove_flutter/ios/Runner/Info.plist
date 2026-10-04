@@ -50,7 +50,7 @@
 	<key>NSBonjourServices</key>
 	<array><string>_aicove-sync._tcp</string></array>
 	<key>NSCameraUsageDescription</key>
-	<string>拍摄另一台设备上的局域网配对二维码。</string>
+	<string>扫描另一台设备上的局域网配对二维码。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>选择保存的局域网配对二维码。</string>
 	<key>NSAppTransportSecurity</key>

@@ -247,6 +247,28 @@ void main() {
     expect(container.read(conversationSendingProvider(conv.id)), isFalse);
   });
 
+  test('生成中编辑先停止旧轮次，晚到读取不截断编辑历史', () async {
+    final history = AuditHistory([user, ai])
+      ..pendingRead = Completer<List<Message>>();
+    container.dispose();
+    container = makeContainer(history: history);
+    final actions = container.read(chatActionsProvider);
+    final pending = actions.regenerate(ai.id);
+    await Future<void>.delayed(Duration.zero);
+    try {
+      expect(await actions.editMessage(user.id), user.content);
+      expect(container.read(conversationSendingProvider(conv.id)), isFalse);
+      expect(container.read(chatEditSeedProvider(conv.id))?.draft.messageId,
+          user.id);
+      expect((await container.read(chatHistoryStoreProvider)
+          .loadAllRawMessages(conv.id)).map((m) => m.id), [user.id, ai.id]);
+    } finally {
+      history.pendingRead!.complete([user, ai]);
+      await pending;
+    }
+    expect(history.truncations, 0);
+  });
+
   test('R07 历史读取失败也必须正常报告并释放状态', () async {
     final history = AuditHistory([user, ai])..failRead = true;
     container.dispose();

@@ -17,10 +17,14 @@ class ImportPreviewPage extends ConsumerStatefulWidget {
   final File file;
   final ImportPreview preview;
 
+  /// 加密备份的密码；未加密为 null
+  final String? password;
+
   const ImportPreviewPage({
     super.key,
     required this.file,
     required this.preview,
+    this.password,
   });
 
   @override
@@ -475,6 +479,7 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
         selectedScopes: selectedScopes.toList(),
         selectedConversationIds: selectedIds.toList(),
         conflictResolutions: conflictResolutions,
+        password: widget.password,
         onProgress: (progress) {
           if (!mounted) return;
           ref.read(importProgressProvider.notifier).state = progress;

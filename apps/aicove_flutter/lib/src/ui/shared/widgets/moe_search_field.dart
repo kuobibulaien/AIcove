@@ -180,7 +180,7 @@ class _MoeSearchFieldState extends State<MoeSearchField> {
                 ),
               );
               return MoeFloatingSurface(
-                baseline: MoeMaterialBaseline.text,
+                baseline: MoeMaterialBaseline.background,
                 radius: 100,
                 solidColor: colors.surface,
                 shadows: const [],

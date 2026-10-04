@@ -1,15 +1,16 @@
-import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:pretty_qr_code/pretty_qr_code.dart';
 import '../../../../features/sync/domain/lan_contract.dart';
 import '../../../../features/sync/domain/lan_sync_port.dart';
 import '../../../../features/sync/providers/lan_sync_provider.dart';
+import '../../../shared/animations/parallax_slide_page_route.dart';
 import '../../../shared/widgets/index.dart';
 import '../../../theme/tokens.dart';
+import 'lan_scan_page.dart';
+import '../../../../features/sync/data/device_names.dart';
 
 class LanSyncPage extends ConsumerStatefulWidget {
   const LanSyncPage({super.key});
@@ -28,6 +29,8 @@ class _LanSyncPageState extends ConsumerState<LanSyncPage> {
     _code.dispose();
     super.dispose();
   }
+
+  bool _showItems = false;
 
   Future<void> _run(Future<void> Function(LanSyncPort) operation) async {
     if (_action) return;
@@ -49,28 +52,23 @@ class _LanSyncPageState extends ConsumerState<LanSyncPage> {
     }
   }
 
-  Future<void> _image(bool camera) => _run((port) async {
-    Uint8List? bytes;
-    if (camera) {
-      final photo = await ImagePicker().pickImage(
-        source: ImageSource.camera,
-        maxWidth: 1600,
-        maxHeight: 1600,
-        imageQuality: 95,
-      );
-      bytes = await photo?.readAsBytes();
-    } else {
-      final files = await FilePicker.platform.pickFiles(
-        type: FileType.image,
-        withData: true,
-      );
-      bytes = files?.files.single.bytes;
-    }
+  Future<void> _image() => _run((port) async {
+    final files = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      withData: true,
+    );
+    final bytes = files?.files.single.bytes;
     if (bytes == null) return;
-    final code = await port.decodeQr(bytes);
-    if (mounted) _code.text = code;
-    await port.pair(code);
+    await port.pair(await port.decodeQr(bytes));
   });
+
+  Future<void> _scan() async {
+    final code = await Navigator.of(
+      context,
+    ).push<String>(ParallaxSlidePageRoute(page: const LanScanPage()));
+    if (code != null && mounted) await _run((port) => port.pair(code));
+  }
+
   Future<void> _forget(LanPeerView peer) async {
     final approved = await showDialog<bool>(
       context: context,
@@ -146,7 +144,8 @@ class _LanSyncPageState extends ConsumerState<LanSyncPage> {
     );
     if (selected != null) {
       await _run(
-        (port) => port.resolve(selected, versions.map((v) => v.hash).toList()),
+        (port) =>
+            port.resolve([(selected, versions.map((v) => v.hash).toList())]),
       );
     }
   }
@@ -169,24 +168,33 @@ class _LanSyncPageState extends ConsumerState<LanSyncPage> {
     return '模型或插件设置：${version.id}';
   }
 
-  String _versionSource(LanRevision version, List<LanRevision> versions) {
-    final state = ref.read(lanSyncStateProvider).valueOrNull;
+  /// Devices whose counter in [version] is ahead of every other version.
+  Set<String> _authors(LanRevision version, List<LanRevision> versions) {
     final others = versions.where((v) => v.hash != version.hash);
-    final authors = version.vector.entries.where(
-      (entry) =>
-          others.every((other) => (other.vector[entry.key] ?? 0) < entry.value),
+    return {
+      for (final entry in version.vector.entries)
+        if (others.every(
+          (other) => (other.vector[entry.key] ?? 0) < entry.value,
+        ))
+          entry.key,
+    };
+  }
+
+  String _deviceName(String id) {
+    final state = ref.read(lanSyncStateProvider).valueOrNull;
+    return deviceLabel(
+      id,
+      ownId: state?.deviceId,
+      ownName: state?.name,
+      names: ref.read(deviceNamesProvider).valueOrNull ?? const {},
+      peerNames: {
+        for (final p in state?.peers ?? <LanPeerView>[]) p.id: p.name,
+      },
     );
-    final names = authors
-        .map(
-          (entry) => entry.key == state?.deviceId
-              ? state!.name
-              : state?.peers
-                        .where((p) => p.id == entry.key)
-                        .firstOrNull
-                        ?.name ??
-                    '另一台设备',
-        )
-        .toSet();
+  }
+
+  String _versionSource(LanRevision version, List<LanRevision> versions) {
+    final names = _authors(version, versions).map(_deviceName).toSet();
     return names.isEmpty
         ? '原有版本'
         : names.length == 1
@@ -194,9 +202,44 @@ class _LanSyncPageState extends ConsumerState<LanSyncPage> {
         : '多台设备合并的版本';
   }
 
+  /// The version each device alone wrote, per conflict, for one-tap resolving.
+  Map<String, List<(LanRevision, List<String>)>> _byDevice(
+    List<List<LanRevision>> conflicts,
+  ) {
+    final result = <String, List<(LanRevision, List<String>)>>{};
+    for (final versions in conflicts) {
+      final hashes = versions.map((v) => v.hash).toList();
+      for (final version in versions) {
+        final authors = _authors(version, versions);
+        if (authors.length == 1) {
+          result.putIfAbsent(authors.single, () => []).add((version, hashes));
+        }
+      }
+    }
+    return result;
+  }
+
+  Future<void> _useDevice(
+    String name,
+    List<(LanRevision, List<String>)> choices,
+    int total,
+  ) async {
+    final approved = await showMeoTalkConfirm(
+      context: context,
+      title: '以「$name」为准？',
+      message: choices.length == total
+          ? '全部 $total 项都采用这台设备的版本。'
+          : '采用这台设备的 ${choices.length} 项；其余 ${total - choices.length} 项它没有修改，继续留在列表里。',
+      hint: '被替换的版本不会被删除，仍保留在同步记录中。',
+      confirmText: '开始处理',
+    );
+    if (approved == true) await _run((port) => port.resolve(choices));
+  }
+
   @override
   Widget build(BuildContext context) {
     final async = ref.watch(lanSyncStateProvider);
+    final names = ref.watch(deviceNamesProvider).valueOrNull ?? const {};
     final state = async.valueOrNull;
     if (state != null && !_seeded) {
       _seeded = true;
@@ -230,7 +273,9 @@ class _LanSyncPageState extends ConsumerState<LanSyncPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Text('设备之间直接同步，不需要云账号。两端连接同一 Wi-Fi 或热点，并保持应用打开。'),
+                    const Text(
+                      '设备之间直接同步，不需要云账号。两端连接同一 Wi-Fi 或热点；配对后会一直保持连接，有改动自动同步。',
+                    ),
                     const SizedBox(height: 16),
                     if (state == null) ...[
                       if (async.hasError) const Text('局域网同步初始化失败，请重试'),
@@ -282,7 +327,7 @@ class _LanSyncPageState extends ConsumerState<LanSyncPage> {
                         ),
                         const SizedBox(height: 10),
                         MoePrimaryButton(
-                          label: '显示配对二维码',
+                          label: '显示配对码',
                           onPressed: _action
                               ? null
                               : () => _run((port) => port.invite()),
@@ -297,9 +342,24 @@ class _LanSyncPageState extends ConsumerState<LanSyncPage> {
                               child: PrettyQrView.data(data: state.invitation!),
                             ),
                           ),
+                          if (state.pin != null) ...[
+                            const SizedBox(height: 12),
+                            Text(
+                              '${state.pin!.substring(0, 3)} ${state.pin!.substring(3)}',
+                              textAlign: TextAlign.center,
+                              style: Theme.of(context).textTheme.headlineMedium
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                    letterSpacing: 6,
+                                    fontFeatures: const [
+                                      FontFeature.tabularFigures(),
+                                    ],
+                                  ),
+                            ),
+                          ],
                           const SizedBox(height: 6),
                           const Text(
-                            '请用另一台设备拍摄或导入二维码；配对码十分钟后失效。',
+                            '在另一台设备上扫一扫，或输入这 6 位数字；十分钟内有效，只能用一次。',
                             textAlign: TextAlign.center,
                           ),
                           TextButton(
@@ -312,8 +372,9 @@ class _LanSyncPageState extends ConsumerState<LanSyncPage> {
                         const SizedBox(height: 12),
                         MoeTextField(
                           controller: _code,
-                          label: '粘贴另一台设备的配对码',
+                          label: '输入 6 位数字，或粘贴配对码',
                           maxLines: 3,
+                          minLines: 1,
                           enabled: !_action,
                         ),
                         const SizedBox(height: 10),
@@ -330,13 +391,13 @@ class _LanSyncPageState extends ConsumerState<LanSyncPage> {
                                     }),
                               child: const Text('连接设备'),
                             ),
-                            if (Platform.isAndroid || Platform.isIOS)
+                            if (LanScanPage.supported)
                               TextButton(
-                                onPressed: _action ? null : () => _image(true),
-                                child: const Text('拍摄二维码'),
+                                onPressed: _action ? null : _scan,
+                                child: const Text('扫一扫'),
                               ),
                             TextButton(
-                              onPressed: _action ? null : () => _image(false),
+                              onPressed: _action ? null : _image,
                               child: const Text('导入二维码'),
                             ),
                           ],
@@ -358,7 +419,7 @@ class _LanSyncPageState extends ConsumerState<LanSyncPage> {
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
                                 Text(
-                                  peer.name,
+                                  names[peer.id] ?? peer.name,
                                   style: Theme.of(context).textTheme.titleSmall,
                                 ),
                                 const SizedBox(height: 4),
@@ -413,22 +474,72 @@ class _LanSyncPageState extends ConsumerState<LanSyncPage> {
                           '需要选择的内容',
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
-                        for (final conflict in state.conflicts)
-                          ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            title: Text(
-                              conflict.first.kind == 'messages'
-                                  ? '聊天同时被修改'
-                                  : '设置或预设同时被修改',
-                            ),
-                            subtitle: Text(
-                              _description(conflict.first),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            trailing: const Icon(Icons.chevron_right),
-                            onTap: _action ? null : () => _conflict(conflict),
+                        const SizedBox(height: 4),
+                        Text(
+                          '共 ${state.conflicts.length} 项被多台设备同时修改。选择一台设备，以它的版本为准一次处理完。',
+                          style: TextStyle(color: colors.muted),
+                        ),
+                        const SizedBox(height: 12),
+                        for (final MapEntry(key: id, value: choices)
+                            in _byDevice(state.conflicts).entries) ...[
+                          MoeSettingsGroup(
+                            margin: EdgeInsets.zero,
+                            padding: const EdgeInsets.all(16),
+                            children: [
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Text(
+                                    _deviceName(id),
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.titleMedium,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    '${choices.length} 项修改与其他设备不同',
+                                    style: TextStyle(color: colors.muted),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  MoeSecondaryButton(
+                                    label: '以此设备为准处理差异',
+                                    enabled: !_action,
+                                    onPressed: () => _useDevice(
+                                      _deviceName(id),
+                                      choices,
+                                      state.conflicts.length,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
                           ),
+                          const SizedBox(height: 12),
+                        ],
+                        if (state.conflicts.length > 5)
+                          MoeSecondaryButton(
+                            label: _showItems ? '收起逐项列表' : '逐项选择',
+                            enabled: !_action,
+                            onPressed: () =>
+                                setState(() => _showItems = !_showItems),
+                          ),
+                        if (state.conflicts.length <= 5 || _showItems)
+                          for (final conflict in state.conflicts)
+                            ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(
+                                conflict.first.kind == 'messages'
+                                    ? '聊天同时被修改'
+                                    : '设置或预设同时被修改',
+                              ),
+                              subtitle: Text(
+                                _description(conflict.first),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: _action ? null : () => _conflict(conflict),
+                            ),
                       ],
                       const SizedBox(height: 20),
                       Text(

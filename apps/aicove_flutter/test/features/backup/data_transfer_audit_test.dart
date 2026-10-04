@@ -624,4 +624,58 @@ void main() {
     await expectLater(restore(changed), throwsA(isA<ImportException>()));
     expect(await target.select(target.conversations).get(), isEmpty);
   });
+  test('T33 export writes a plain .zip that any unzip tool can read', () async {
+    final file = await export();
+    expect(p.extension(file.path), '.zip');
+    expect(await entry(file, 'manifest.json'), isNotEmpty);
+  });
+  test('T34 password export is AES-encrypted and needs the password back',
+      () async {
+    final file = File((await exporter.exportConversations(
+            conversationIds: ['a'],
+            options: const ExportOptions(scopes: scopes, password: 'p@ss 1')))
+        .filePath);
+    final raw = ZipDecoder().decodeBytes(await file.readAsBytes());
+    expect(() => raw.findFile('messages.json')!.content, throwsA(anything));
+    expect(utf8.decode(await file.readAsBytes(), allowMalformed: true),
+        isNot(contains('人物设定')));
+
+    await expectLater(importer.preview(file),
+        throwsA(isA<BackupPasswordRequiredException>()));
+    await expectLater(
+        importer.preview(file, password: 'wrong'),
+        throwsA(isA<BackupPasswordRequiredException>()
+            .having((e) => e.message, 'message', contains('密码错误'))));
+    expect((await importer.preview(file, password: 'p@ss 1')).isCompatible,
+        isTrue);
+    await expectLater(restore(file), throwsA(isA<ImportException>()));
+    expect(await target.select(target.messages).get(), isEmpty);
+    await importer.import(
+        file: file,
+        selectedScopes: scopes,
+        selectedConversationIds: ['a'],
+        password: 'p@ss 1');
+    expect((await target.select(target.messages).get()).single.content,
+        '秘密聊天');
+  });
+  test('T35 empty password exports unencrypted; non-ASCII is rejected',
+      () async {
+    final plain = File((await exporter.exportConversations(
+            conversationIds: ['a'],
+            options: const ExportOptions(scopes: scopes, password: '')))
+        .filePath);
+    expect((await importer.preview(plain)).isCompatible, isTrue);
+    await expectLater(
+        exporter.exportConversations(
+            conversationIds: ['a'],
+            options: const ExportOptions(scopes: scopes, password: '密码')),
+        throwsA(isA<FormatException>()));
+  });
+  test('T36 legacy .aicove backups still import', () async {
+    final file = await export();
+    final legacy = await file.copy(p.join(root.path, 'old.aicove'));
+    expect(isBackupFilePath(legacy.path), isTrue);
+    await restore(legacy);
+    expect(await target.select(target.messages).get(), hasLength(1));
+  });
 }

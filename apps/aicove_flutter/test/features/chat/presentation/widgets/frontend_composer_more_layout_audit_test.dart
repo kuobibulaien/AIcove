@@ -26,11 +26,11 @@ void main() {
         ));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
-        final label = find.text('视频');
+        final label = find.text('通话');
         await tester.ensureVisible(label);
         await tester.pumpAndSettle();
         await tester.tap(label);
-        expect(selected, ComposerAction.video);
+        expect(selected, ComposerAction.call);
         final paragraph = tester.renderObject<RenderParagraph>(label);
         final fullHeight =
             paragraph.getMaxIntrinsicHeight(paragraph.size.width);

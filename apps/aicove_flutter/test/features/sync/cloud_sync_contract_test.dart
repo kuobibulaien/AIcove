@@ -18,6 +18,7 @@ import 'package:aicove_flutter/src/features/sync/data/cloud_api.dart';
 import 'package:aicove_flutter/src/features/sync/data/cloud_local_store.dart';
 import 'package:aicove_flutter/src/features/sync/data/cloud_sync_engine.dart';
 import 'package:aicove_flutter/src/features/sync/data/cloud_sync_scheduler.dart';
+import 'package:aicove_flutter/src/features/sync/data/device_names.dart';
 import 'package:aicove_flutter/src/core/sync/cloud_setting_policy.dart';
 
 class MemoryPreferences implements SharedPreferences {
@@ -28,6 +29,8 @@ class MemoryPreferences implements SharedPreferences {
   Object? get(String key) => values[key];
   @override
   String? getString(String key) => values[key] as String?;
+  @override
+  int? getInt(String key) => values[key] as int?;
   @override
   Future<void> reload() async {}
   @override
@@ -606,7 +609,7 @@ void main() {
   });
 
   test(
-    'automatic message delivery works in both directions without manual sync',
+    'scheduled rounds deliver both directions and edits wait for the next round',
     () async {
       final phone = await device('phone');
       await seed(phone);
@@ -616,16 +619,20 @@ void main() {
       await phone.sync.synchronize();
       await phone.sync.waitForMedia();
       await mac.sync.waitForMedia();
-      final sender = CloudSyncScheduler(phone.local, phone.sync.synchronize)
-        ..start();
-      final receiver = CloudSyncScheduler(mac.local, mac.sync.synchronize)
-        ..start();
+      var clock = DateTime(2026, 10, 4, 9);
+      CloudSyncScheduler scheduled(Device d) =>
+          CloudSyncScheduler(d.local, () async {
+            await d.sync.synchronize();
+            return true;
+          }, now: () => clock);
+      final sender = scheduled(phone), receiver = scheduled(mac);
       try {
-        for (final (from, to, id) in [
-          (phone, mac, 'phone-live'),
-          (mac, phone, 'mac-live'),
+        await sender.synchronize();
+        await receiver.synchronize();
+        for (final (from, to, id, out, back) in [
+          (phone, mac, 'phone-live', sender, receiver),
+          (mac, phone, 'mac-live', receiver, sender),
         ]) {
-          final clock = Stopwatch()..start();
           await from.local.db
               .into(from.local.db.messages)
               .insert(
@@ -633,29 +640,27 @@ void main() {
                   id: id,
                   conversationId: 'role',
                   role: 'user',
-                  content: 'automatic fixture',
+                  content: 'scheduled fixture',
                   createdAt: now.millisecondsSinceEpoch,
                 ),
               );
-          final arrived = await to.local.db
-              .select(to.local.db.messages)
-              .watch()
-              .firstWhere((rows) => rows.any((row) => row.id == id))
-              .timeout(const Duration(seconds: 8));
+          final pushes = from.remote.pushRequests;
+          await out.synchronizeIfDue();
+          expect(from.remote.pushRequests, pushes, reason: 'not due yet');
+          clock = clock.add(const Duration(hours: 8));
+          await out.synchronizeIfDue();
+          await back.synchronizeIfDue();
+          await to.sync.waitForMedia();
           expect(
-            arrived.singleWhere((row) => row.id == id).content,
-            'automatic fixture',
-          );
-          // ignore: avoid_print
-          print(
-            'AUTOMATIC_SYNC_${id.toUpperCase()}_MS=${clock.elapsedMilliseconds}',
+            (await to.local.rows('SELECT content FROM messages WHERE id=?', [
+              id,
+            ])).single['content'],
+            'scheduled fixture',
           );
         }
       } finally {
         sender.close();
         receiver.close();
-        await sender.synchronize();
-        await receiver.synchronize();
       }
     },
   );
@@ -1352,6 +1357,160 @@ void main() {
       expect((await desktop.remote.get('conflicts'))['conflicts'], isEmpty);
     },
   );
+  test('each device publishes its own name without conflicts', () async {
+    final phone = await device('phone'), desktop = await device('desktop');
+    await seed(phone);
+    await phone.sync.enable();
+    await desktop.sync.enable();
+    for (final (d, name) in [
+      (phone, 'OnePlus 13T'),
+      (desktop, 'MacBook Pro'),
+    ]) {
+      await d.local.preferences.setString(lanNameKey, name);
+      await publishDeviceName(d.local.preferences, d.sync.media.deviceId);
+    }
+    for (var round = 0; round < 2; round++) {
+      await phone.sync.synchronize();
+      await desktop.sync.synchronize();
+    }
+    final expected = {
+      phone.sync.media.deviceId: 'OnePlus 13T',
+      desktop.sync.media.deviceId: 'MacBook Pro',
+    };
+    expect(readDeviceNames(phone.local.preferences), expected);
+    expect(readDeviceNames(desktop.local.preferences), expected);
+    expect((await desktop.remote.get('conflicts'))['conflicts'], isEmpty);
+  });
+  Future<void> lanApply(Device d, String content, Duration relayIn) async {
+    await d.local.execute('UPDATE cloud_client_state SET suspended=1');
+    await d.local.execute("UPDATE messages SET content=? WHERE id='text'", [
+      content,
+    ]);
+    await d.local.execute('UPDATE cloud_client_state SET suspended=0');
+    await d.local.markRelay(
+      'messages',
+      'text',
+      DateTime.now().add(relayIn).millisecondsSinceEpoch,
+    );
+  }
+
+  Future<String> cloudText(Device d) async =>
+      (await d.local.rows(
+            "SELECT content FROM messages WHERE id='text'",
+          )).single['content']
+          as String;
+
+  test(
+    'a LAN-received edit its origin already uploaded is not uploaded again',
+    () async {
+      final phone = await device('phone'), desktop = await device('desktop');
+      await seed(phone);
+      await phone.sync.enable();
+      await phone.sync.waitForMedia();
+      await desktop.sync.enable();
+      await desktop.sync.waitForMedia();
+      await phone.local.execute(
+        "UPDATE messages SET content='from phone' WHERE id='text'",
+      );
+      await phone.sync.synchronize();
+      await lanApply(desktop, 'from phone', const Duration(hours: 24));
+      final pushes = desktop.remote.pushRequests;
+      await desktop.sync.synchronize();
+      expect(desktop.remote.pushRequests, pushes);
+      expect(
+        await desktop.local.rows(
+          "SELECT 1 FROM cloud_dirty WHERE kind='messages' AND entity_id='text'",
+        ),
+        isEmpty,
+      );
+      expect((await desktop.remote.get('conflicts'))['conflicts'], isEmpty);
+    },
+  );
+
+  test(
+    'a LAN-received edit waits for its origin, then is relayed as fallback',
+    () async {
+      final phone = await device('phone'), desktop = await device('desktop');
+      await seed(phone);
+      await phone.sync.enable();
+      await phone.sync.waitForMedia();
+      await desktop.sync.enable();
+      await desktop.sync.waitForMedia();
+      await lanApply(
+        desktop,
+        'phone stayed offline',
+        const Duration(hours: 24),
+      );
+      final pushes = desktop.remote.pushRequests;
+      await desktop.sync.synchronize();
+      expect(desktop.remote.pushRequests, pushes, reason: 'origin may upload');
+      await lanApply(
+        desktop,
+        'phone stayed offline',
+        -const Duration(minutes: 1),
+      );
+      await desktop.sync.synchronize();
+      expect(desktop.remote.pushRequests, greaterThan(pushes));
+      await phone.sync.synchronize();
+      expect(await cloudText(phone), 'phone stayed offline');
+
+      // An own edit after a LAN edit is uploaded immediately.
+      await lanApply(desktop, 'lan again', const Duration(hours: 24));
+      await desktop.local.execute(
+        "UPDATE messages SET content='desktop own' WHERE id='text'",
+      );
+      await desktop.sync.synchronize();
+      await phone.sync.synchronize();
+      expect(await cloudText(phone), 'desktop own');
+      expect((await desktop.remote.get('conflicts'))['conflicts'], isEmpty);
+    },
+  );
+
+  test('choosing a device resolves all its conflicts in one batch', () async {
+    final phone = await device('phone'), desktop = await device('desktop');
+    await seed(phone);
+    await phone.local.execute(
+      'INSERT INTO messages(id,conversation_id,role,content,created_at,raw_payload) VALUES(?,?,?,?,?,?)',
+      ['text2', 'role', 'assistant', 'second', 0, '{}'],
+    );
+    await phone.sync.enable();
+    await phone.sync.waitForMedia();
+    await desktop.sync.enable();
+    await desktop.sync.waitForMedia();
+    for (final id in ['text', 'text2']) {
+      await phone.local.execute('UPDATE messages SET content=? WHERE id=?', [
+        'phone $id',
+        id,
+      ]);
+      await desktop.local.execute('UPDATE messages SET content=? WHERE id=?', [
+        'desktop $id',
+        id,
+      ]);
+    }
+    await phone.sync.synchronize();
+    await phone.sync.waitForMedia();
+    await desktop.sync.synchronize();
+    await desktop.sync.waitForMedia();
+    final preview = await desktop.sync.previewConflicts();
+    final conflicts = (preview['conflicts'] as List).cast<Map>();
+    expect(conflicts, hasLength(2));
+    final progress = <int>[];
+    await desktop.sync.resolveConflicts(preview, {
+      for (final c in conflicts)
+        c['conflict_id'] as String:
+            c['device_id'] == desktop.sync.media.deviceId,
+    }, onProgress: (done, _) => progress.add(done));
+    expect(progress, [1, 2]);
+    expect((await desktop.remote.get('conflicts'))['conflicts'], isEmpty);
+    await phone.sync.synchronize();
+    await phone.sync.waitForMedia();
+    expect(
+      (await phone.local.rows(
+        'SELECT id,content FROM messages ORDER BY id',
+      )).map((row) => row['content']),
+      ['desktop text', 'desktop text2'],
+    );
+  });
   test(
     'voice sample files transfer in full and an old settings image keeps its identity after download',
     () async {

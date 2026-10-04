@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_app_bar.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/moe_chat_header.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_scroll_edge.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_search_field.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
@@ -155,6 +156,36 @@ void main() {
         of: find.byType(MoeScrollEdgeBackdrop),
         matching: find.byType(BackdropFilter),
       ),
+      findsNothing,
+    );
+  });
+
+  testWidgets('聊天标题栏纯色时控件自带底色，滑过内容也不铺整条背板', (tester) async {
+    await tester.pumpWidget(
+      app(
+        material: MoeSurfaceMaterial.solid,
+        home: Scaffold(
+          extendBodyBehindAppBar: true,
+          appBar: const MoeChatHeader(
+            title: Text('text1'),
+            actions: [Icon(Icons.more_horiz)],
+            showBackButton: true,
+            nativeInset: 0,
+            toolbarHeight: telegramChatHeaderHeight,
+          ),
+          body: Builder(builder: (context) => rows(context, reverse: true)),
+        ),
+      ),
+    );
+    await tester.drag(find.byType(ListView), const Offset(0, -10));
+    await tester.pumpAndSettle();
+    final backdrop = find.byType(MoeScrollEdgeBackdrop);
+    expect(
+      find.descendant(of: backdrop, matching: find.byType(DecoratedBox)),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: backdrop, matching: find.byType(BackdropFilter)),
       findsNothing,
     );
   });

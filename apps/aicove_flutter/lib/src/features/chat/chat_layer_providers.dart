@@ -27,6 +27,9 @@ final chatSendPortProvider = Provider<ChatSendPort>((ref) {
   return ChatSendServiceAdapter(sendService);
 });
 
+final chatContextPreviewPortProvider = Provider<ChatContextPreviewPort>(
+    (ref) => ChatContextPreviewAdapter(ref.watch(chatSendServiceProvider)));
+
 final chatSendUseCaseProvider = Provider<ChatSendUseCase>((ref) {
   final sendPort = ref.watch(chatSendPortProvider);
   return ChatSendUseCase(sendPort);

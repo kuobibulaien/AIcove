@@ -73,7 +73,21 @@ class MainActivity : FlutterActivity() {
                         "androidApi" to Build.VERSION.SDK_INT,
                         "identityScope" to "android_source_snapshot_no_hot_reload"
                     ))
+                } else if (call.method == "publishAccessToken") {
+                    DiagnosticTokenProvider.token = call.arguments as? String
+                    result.success(null)
                 } else result.notImplemented()
+            }
+
+        // 设备显示名：系统“关于手机”里的设备名，读不到时用厂商+型号；无需权限。
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "aicove/device_name")
+            .setMethodCallHandler { call, result ->
+                if (call.method != "read") return@setMethodCallHandler result.notImplemented()
+                val named = Settings.Global.getString(contentResolver, "device_name")
+                result.success(
+                    named?.takeIf { it.isNotBlank() }
+                        ?: "${Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${Build.MODEL}"
+                )
             }
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SYSTEM_PROXY_CHANNEL)
@@ -230,6 +244,7 @@ class MainActivity : FlutterActivity() {
             "guardEnabled" to KeepAliveConfig.isGuardEnabled(this),
             "generationActive" to PersistentGuardService.isGenerationActive(),
             "serviceRunning" to PersistentGuardService.isForegroundActive(),
+            "generationWakeLockHeld" to PersistentGuardService.isGenerationWakeLockHeld(),
             "batteryOptimizationIgnored" to isBatteryOptimizationIgnored(),
             "canScheduleExactAlarms" to canScheduleExactAlarms(),
             "notificationPermissionGranted" to notificationPermissionGranted,

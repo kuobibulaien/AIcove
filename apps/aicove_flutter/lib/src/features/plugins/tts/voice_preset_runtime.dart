@@ -209,8 +209,8 @@ class VoicePresetRuntime implements VoicePresetRuntimePort {
         speed: synthesis.speed,
         maxCharsPerChunk: synthesis.maxCharsPerChunk,
         voiceFrequency: synthesis.voiceFrequency,
-        systemPromptTemplate:
-            synthesis.systemPromptTemplate ?? config.systemPromptTemplate,
+        // <tts> 标签说明全局一份，请求时由插件提示词覆盖。
+        systemPromptTemplate: config.systemPromptTemplate,
       ),
     );
   }

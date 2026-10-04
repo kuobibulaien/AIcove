@@ -80,7 +80,7 @@ class _TavernWorldBookPageState extends ConsumerState<TavernWorldBookPage> {
                   label: '启用这本世界书',
                   subtitleWidget: tavernSubtitle(
                     context,
-                    '$enabled/${book.entries.length} 个条目开启 · 每本最多 ${book.tokenBudget} token',
+                    '$enabled/${book.entries.length} 个条目开启 · ${book.tokenBudget == null ? '共用全局预算' : '每本最多 ${book.tokenBudget} token'}',
                     warnings: book.warnings,
                   ),
                   trailingType: MoeSettingsRowTrailing.custom,

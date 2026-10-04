@@ -7,6 +7,10 @@ import 'cloud_document.dart';
 import 'cloud_local_store.dart';
 import 'cloud_media_codec.dart';
 
+/// How long a LAN-received edit waits for its origin to reach the cloud
+/// before this device uploads it as the fallback.
+const lanRelayDelay = Duration(hours: 24);
+
 class LanRepository {
   LanRepository(this.local, this.codec, this.deviceId, {this.onApplied});
   final CloudLocalStore local;
@@ -28,8 +32,13 @@ class LanRepository {
     return result.future;
   }
 
-  Future<void> capture() => _serial(_capture);
-  Future<void> _capture({String? kind, String? id}) async {
+  Future<void> capture({bool scanExternal = true}) =>
+      _serial(() => _capture(scanExternal: scanExternal));
+  Future<void> _capture({
+    String? kind,
+    String? id,
+    bool scanExternal = true,
+  }) async {
     final state = (await local.rows(
       'SELECT * FROM lan_state WHERE id=1',
     )).single;
@@ -49,34 +58,56 @@ class LanRepository {
       }
       _seeded = true;
     }
-    final external = await local.external();
-    final old = await local.rows(
-      "SELECT kind,entity_id FROM lan_entities WHERE kind IN ('settings','plugin_presets')",
-    );
-    final keys = {
-      for (final d in external) '${d.kind}/${d.id}': (d.kind, d.id),
-      for (final row in old)
-        '${row['kind']}/${row['entity_id']}': (
-          row['kind'] as String,
-          row['entity_id'] as String,
-        ),
-    };
-    for (final key in keys.values) {
+    final targeted = kind != null && id != null;
+    Map<String, CloudLocalDocument>? external;
+    if (targeted) {
+      // Preserve edits to this entity before merging, including untracked files.
+      // Unrelated dirty entities remain queued for the next ordinary capture.
       await local.execute(
         'INSERT OR IGNORE INTO lan_dirty(kind,entity_id) VALUES(?,?)',
-        [key.$1, key.$2],
+        [kind, id],
       );
+    } else if (scanExternal) {
+      external = {
+        for (final doc in await local.external()) '${doc.kind}/${doc.id}': doc,
+      };
+      final old = await local.rows(
+        "SELECT kind,entity_id FROM lan_entities WHERE kind IN ('settings','plugin_presets')",
+      );
+      final keys = {
+        for (final doc in external.values)
+          '${doc.kind}/${doc.id}': (doc.kind, doc.id),
+        for (final row in old)
+          '${row['kind']}/${row['entity_id']}': (
+            row['kind'] as String,
+            row['entity_id'] as String,
+          ),
+      };
+      for (final key in keys.values) {
+        await local.execute(
+          'INSERT OR IGNORE INTO lan_dirty(kind,entity_id) VALUES(?,?)',
+          [key.$1, key.$2],
+        );
+      }
     }
-    final dirty = await local.rows(
-      '''SELECT * FROM lan_dirty ORDER BY CASE WHEN kind=? AND entity_id=? THEN 0 ELSE 1 END,kind,entity_id LIMIT 500''',
-      [kind, id],
-    );
+    final dirty = targeted
+        ? await local.rows(
+            'SELECT * FROM lan_dirty WHERE kind=? AND entity_id=?',
+            [kind, id],
+          )
+        : await local.rows(
+            'SELECT * FROM lan_dirty ORDER BY kind,entity_id LIMIT 500',
+          );
     for (final item in dirty) {
       await cloudLocalWrite(
         () => local.db.transaction(() async {
           final kind = item['kind'] as String, id = item['entity_id'] as String;
           if (!lanKinds.contains(kind)) return;
-          final current = await local.read(kind, id);
+          final current =
+              external != null &&
+                  (kind == 'settings' || kind == 'plugin_presets')
+              ? external['$kind/$id']
+              : await local.read(kind, id);
           final known = await _entity(kind, id);
           final fingerprint = await _fingerprint(current, kind, id);
           if (fingerprint != known?['local_fingerprint']) {
@@ -102,11 +133,7 @@ class LanRepository {
                       ...wire!.payload,
                       if (lanSettingKinds.contains(kind)) ...{
                         'setting_times_version': 1,
-                        'setting_times': await local.settingTimes(
-                          kind,
-                          id,
-                          deviceId,
-                        ),
+                        'setting_times': await _settingTimes(current, kind, id),
                       },
                     };
               final revision = LanRevision(
@@ -141,9 +168,26 @@ class LanRepository {
           canonicalJson({
             'payload': current.payload,
             if (lanSettingKinds.contains(kind))
-              'setting_times': await local.settingTimes(kind, id, deviceId),
+              'setting_times': await _settingTimes(current, kind, id),
           }),
         );
+
+  Future<Map<String, dynamic>> _settingTimes(
+    CloudLocalDocument current,
+    String kind,
+    String id,
+  ) async {
+    if (kind == 'settings' && current.payload['storage'] == 'preference') {
+      final key = current.payload['key'] as String;
+      return cloudPreferenceTimes(
+        local.preferences,
+        key,
+        local.preferences.get(key),
+        deviceId,
+      );
+    }
+    return local.settingTimes(kind, id, deviceId);
+  }
 
   Future<Map<String, dynamic>?> _entity(String kind, String id) async =>
       (await local.rows(
@@ -315,7 +359,11 @@ class LanRepository {
             // restored by an explicit choice, never a stale disconnected edit.
             await local.apply(chosen.kind, chosen.id, payload, chosen.deleted);
             if ((await local.state())['enabled'] == 1) {
-              await local.mark(chosen.kind, chosen.id);
+              await local.markRelay(
+                chosen.kind,
+                chosen.id,
+                DateTime.now().add(lanRelayDelay).millisecondsSinceEpoch,
+              );
             }
             applied.add(chosen.kind);
           } finally {

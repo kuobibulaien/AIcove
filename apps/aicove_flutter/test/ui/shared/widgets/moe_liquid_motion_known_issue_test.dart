@@ -71,7 +71,7 @@ void main() {
                         key: panel,
                         width: 180,
                         height: 90,
-                        baseline: MoeMaterialBaseline.text,
+                        baseline: MoeMaterialBaseline.background,
                         blurSigma: 3.52,
                         shadows: const [],
                         border: BorderSide.none,
@@ -169,10 +169,9 @@ void main() {
                           borderRadius: 20,
                         ),
                         settings: LiquidGlassSettings(
-                          blur: MoeMaterialBaseline.text.blurSigma(3.52),
-                          glassColor: MoeColors.dark().glassTintForSigma(
-                            3.52,
-                            baseline: MoeMaterialBaseline.text,
+                          blur: MoeMaterialBaseline.background.blurSigma(3.52),
+                          glassColor: MoeColors.dark().glassTintForFill(
+                            3.52 / kMaxGlassBlurSigma,
                           ),
                         ),
                         child: const SizedBox.expand(),

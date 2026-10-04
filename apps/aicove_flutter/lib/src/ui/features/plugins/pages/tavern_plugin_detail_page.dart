@@ -28,7 +28,7 @@ class TavernPluginDetailPage extends ConsumerWidget {
     return MoePageScaffold(
       extendBodyBehindAppBar: true,
       backgroundColor: colors.surface,
-      appBar: const MoeAppBar(title: '酒馆兼容插件（测试）', showBackButton: true),
+      appBar: const MoeAppBar(title: '酒馆相关', showBackButton: true),
       body: MoeSettingsContent(
         child: Builder(
           builder: (context) => ListView(
@@ -90,56 +90,13 @@ class TavernPluginDetailPage extends ConsumerWidget {
     );
   }
 
-  Future<void> _import(
-    BuildContext context,
-    WidgetRef ref,
-  ) => runTavernAction(context, () async {
-    final file = await pickTavernJson();
-    if (file == null || !context.mounted) return;
-    final controller = ref.read(presetRecipeImportControllerProvider.notifier);
-    final preview = controller.previewSource(
-      file.source,
-      sourceFileName: file.name,
-    );
-    final colors = context.moeColors;
-    final confirmed = await showMeoTalkDialog(
-      context: context,
-      title: '导入「${preview.name}」',
-      cancelText: '取消',
-      confirmText: '导入',
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(PresetRecipeSummary.fromPreset(preview).description),
-          const SizedBox(height: 8),
-          Text(
-            preview.regexScriptCount > 0
-                ? '导入后可以逐条开关。正则默认不运行，需要到「正则」里手动允许。'
-                : '导入后可以逐条开关。',
-            style: TextStyle(fontSize: 13, color: colors.muted),
-          ),
-          if (preview.warnings.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(
-              [
-                for (final warning in preview.warnings.take(3)) '· $warning',
-                if (preview.warnings.length > 3)
-                  '另有 ${preview.warnings.length - 3} 条提示，导入后可在「预设信息」查看',
-              ].join('\n'),
-              style: TextStyle(fontSize: 13, color: colors.toastWarning),
-            ),
-          ],
-        ],
-      ),
-    );
-    if (confirmed != true || !context.mounted) return;
-    final preset = await controller.importSource(
-      file.source,
-      sourceFileName: file.name,
-    );
-    if (context.mounted) openTavernPreset(context, preset.id);
-  });
+  Future<void> _import(BuildContext context, WidgetRef ref) =>
+      runTavernAction(context, () async {
+        final preset = await importTavernPresetWithPreview(context, ref);
+        if (preset != null && context.mounted) {
+          openTavernPreset(context, preset.id);
+        }
+      });
 }
 
 void openTavernPreset(BuildContext context, String id) => Navigator.of(

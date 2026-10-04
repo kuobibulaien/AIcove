@@ -109,10 +109,17 @@ class TtsPlugin extends BasePlugin {
   final Future<void> Function(VoicePreset updatedPreset)? _onVoiceCreated;
   final VoiceRequest? voiceRequest;
 
-  factory TtsPlugin.forRequest(VoiceRequest request) {
+  /// [systemPromptTemplate] 为全局 `<tts>` 标签说明，不随音色预设变化。
+  factory TtsPlugin.forRequest(
+    VoiceRequest request, {
+    String? systemPromptTemplate,
+  }) {
     final service = request.service;
+    final config = service?.config ?? TtsConfig(enabled: false);
     return TtsPlugin(
-      service?.config ?? TtsConfig(enabled: false),
+      systemPromptTemplate == null
+          ? config
+          : config.copyWith(systemPromptTemplate: systemPromptTemplate),
       apiKey: service?.apiKey,
       requestUrl: service?.requestUrl ?? '',
       requestFormat: service?.requestFormat ?? 'openai_tts',

@@ -7,6 +7,7 @@ import '../../../core/media/media_store.dart';
 import '../../../core/storage/device_credential_storage.dart';
 import '../data/cloud_local_store.dart';
 import '../data/cloud_media_codec.dart';
+import '../data/device_names.dart';
 import '../data/lan_discovery.dart';
 import '../data/lan_repository.dart';
 import '../data/lan_service.dart';
@@ -48,4 +49,23 @@ final lanSyncStateProvider = StreamProvider<LanSyncState>((ref) async* {
   final service = await ref.watch(lanSyncPortProvider.future);
   yield service.state;
   yield* service.changes;
+});
+
+/// Paired LAN devices stay connected, so Android keeps the process alive.
+final lanKeepsAliveProvider = Provider<bool>(
+  (ref) => ref.watch(
+    lanSyncStateProvider.select(
+      (state) =>
+          state.valueOrNull?.enabled == true &&
+          state.valueOrNull!.peers.any((peer) => !peer.pending),
+    ),
+  ),
+);
+
+/// Synced device names, re-read per page visit and on every LAN state change.
+final deviceNamesProvider = FutureProvider.autoDispose<Map<String, String>>((
+  ref,
+) async {
+  ref.watch(lanSyncStateProvider);
+  return readDeviceNames(await SharedPreferences.getInstance());
 });

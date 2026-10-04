@@ -315,9 +315,13 @@ List<TagDisplayPart>? _projectTagParts(
   return unchanged ? null : parts;
 }
 
+/// 消息里有文字以外的可见块（语音、图片、文件等）时整条显示，不分段也不投影。
+/// 工具块不显示（如生图完成后补在锚点文字消息上的图片上下文），不能让它
+/// 挡住标签投影，否则预设正文标签会原样露出。
 bool _hasNonTextBlocks(Message message) {
   final blocks = message.blocks;
-  return blocks?.any((block) => block is! TextBlock) ?? false;
+  return blocks?.any((block) => block is! TextBlock && block is! ToolBlock) ??
+      false;
 }
 
 // 分段是多组正则＋颗文字保护的纯函数；列表每次结构变化（历史翻页、流式

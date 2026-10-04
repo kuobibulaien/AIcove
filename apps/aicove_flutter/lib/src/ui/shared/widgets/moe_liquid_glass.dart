@@ -28,7 +28,7 @@ class MoeLiquidGlass extends StatelessWidget {
     this.thickness = 20.0,
     this.refractiveIndex = 1.25,
     this.blurSigma,
-    this.baseline = MoeMaterialBaseline.none,
+    this.baseline = MoeMaterialBaseline.component,
     this.quality = GlassQuality.premium,
     this.settings,
     this.enabled,
@@ -63,7 +63,7 @@ class MoeLiquidGlass extends StatelessWidget {
   /// 模糊强度（未显式指定时继承全局 [MoeGlassTheme.blurSigma]）
   final double? blurSigma;
 
-  /// Independent blur and tint minimums for this component.
+  /// Blur minimum of this layer; tint always follows the global fill.
   final MoeMaterialBaseline baseline;
 
   /// 请求质量档位，默认 [GlassQuality.premium] 请求完整着色器管道
@@ -120,6 +120,7 @@ class MoeLiquidGlass extends StatelessWidget {
             glassTheme?.blurSigma ?? kDefaultGlassBlurSigma,
           )
         : blurSigma ?? glassTheme?.blurSigma ?? kDefaultGlassBlurSigma;
+    final tintFill = glassTheme?.tintFill ?? kDefaultGlassTintFill;
 
     final effectiveShape =
         shape ??
@@ -141,15 +142,7 @@ class MoeLiquidGlass extends StatelessWidget {
     if (padding != null) {
       content = Padding(padding: padding!, child: content);
     }
-    content = Material(
-      type: MaterialType.transparency,
-      child: Ink(
-        color: !isFrosted && baseline == MoeMaterialBaseline.text
-            ? colors.textMaterialTint
-            : Colors.transparent,
-        child: content,
-      ),
-    );
+    content = Material(type: MaterialType.transparency, child: content);
 
     Widget surfaceWidget;
 
@@ -158,14 +151,8 @@ class MoeLiquidGlass extends StatelessWidget {
       final fallbackSurface = Material(
         color: isGlassEnabled
             ? (isFrosted
-                  ? MoeFrostedMaterial.surfaceTint(
-                      brightness,
-                      sigma: effectiveSigma,
-                    )
-                  : colors.glassTintForSigma(
-                      effectiveSigma,
-                      baseline: baseline,
-                    ))
+                  ? MoeFrostedMaterial.surfaceTint(brightness, fill: tintFill)
+                  : colors.glassTintForFill(tintFill))
             : colors.componentBackground.withValues(alpha: 1),
         shape: surfaceShape.copyWith(
           side:
@@ -214,10 +201,7 @@ class MoeLiquidGlass extends StatelessWidget {
             thickness: thickness,
             refractiveIndex: refractiveIndex,
             blur: baseline.blurSigma(effectiveSigma),
-            glassColor: colors.glassTintForSigma(
-              effectiveSigma,
-              baseline: baseline,
-            ),
+            glassColor: colors.glassTintForFill(tintFill),
             bodyMode: GlassBodyMode.adaptive,
           );
 

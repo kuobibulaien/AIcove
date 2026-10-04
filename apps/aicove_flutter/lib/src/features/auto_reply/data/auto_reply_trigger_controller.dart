@@ -421,7 +421,6 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
     if (current == null || current.isEmpty) return;
     final settings = await ref.read(appSettingsProvider.future);
     final autoReplySettings = settings.autoReplySettings;
-    if (!autoReplySettings.enabled) return;
 
     final now = DateTime.now();
     final quietHoursActive = autoReplySettings.quietHoursEnabled &&

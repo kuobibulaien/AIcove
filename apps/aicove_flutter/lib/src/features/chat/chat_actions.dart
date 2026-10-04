@@ -810,8 +810,15 @@ class ChatActions {
     _setConversationSending(owner, true);
     final accepted = Completer<void>();
     Message? committed;
+    var submissionReleased = false;
+    void releaseSubmission() {
+      if (submissionReleased) return;
+      submissionReleased = true;
+      _editSubmissions.remove(owner);
+    }
     void onCommitted(Message message) {
       committed = message;
+      releaseSubmission();
       if (!accepted.isCompleted) accepted.complete();
     }
 
@@ -849,7 +856,7 @@ class ChatActions {
         } else if (generation == null) {
           _setConversationSending(owner, false);
         }
-        _editSubmissions.remove(owner);
+        releaseSubmission();
       }
     }());
     return accepted.future;

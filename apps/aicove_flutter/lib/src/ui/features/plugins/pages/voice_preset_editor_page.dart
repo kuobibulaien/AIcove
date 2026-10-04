@@ -31,8 +31,7 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
       _url,
       _text,
       _emotion,
-      _chunk,
-      _prompt;
+      _chunk;
   final _sample = TextEditingController(text: '你好，很高兴见到你。今天想聊些什么？');
   String? _provider, _model, _localPath, _audio, _error;
   List<VoiceChannelBinding> _bindings = [];
@@ -59,9 +58,6 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
     _localPath = _original.localAudioPath;
     _speed = (synthesis?.speed ?? 1).clamp(0.5, 2);
     _frequency = (synthesis?.voiceFrequency ?? 60).clamp(0, 100);
-    _prompt = TextEditingController(
-      text: synthesis?.systemPromptTemplate ?? '',
-    );
     _bindings = _original.bindings;
     _useEmotion = _original.useEmoText;
     _source = synthesis?.voiceId?.isNotEmpty == true
@@ -74,7 +70,7 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
     autoSave.configure(
       save: _save,
       snapshot: () => moeAutoSaveSignature(_draft().toJson()),
-      fields: [_name, _voice, _url, _text, _emotion, _chunk, _prompt],
+      fields: [_name, _voice, _url, _text, _emotion, _chunk],
     );
   }
 
@@ -88,7 +84,6 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
       _emotion,
       _chunk,
       _sample,
-      _prompt,
     ]) {
       c.dispose();
     }
@@ -112,9 +107,8 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
                 : null,
             speed: _speed,
             voiceFrequency: _frequency,
-            systemPromptTemplate: _prompt.text.trim().isEmpty
-                ? null
-                : _prompt.text,
+            // 旧字段原样保留，运行时改用全局 <tts> 标签说明。
+            systemPromptTemplate: _original.synthesis?.systemPromptTemplate,
             maxCharsPerChunk: int.tryParse(_chunk.text) ?? 0,
           ),
     promptAudioUrl: _source == VoiceSourceType.url ? _url.text.trim() : null,
@@ -731,16 +725,6 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
                                         (int.tryParse(v ?? '') ?? 0) <= 0
                                         ? '请输入正整数'
                                         : null,
-                                  ),
-                                  TextFormField(
-                                    controller: _prompt,
-                                    minLines: 3,
-                                    maxLines: 8,
-                                    decoration: const InputDecoration(
-                                      labelText: '语音提示词（可选）',
-                                      helperText:
-                                          '留空沿用默认；支持 {voice_frequency}、{max_chars_per_chunk}',
-                                    ),
                                   ),
                                   Text('语音使用频率 $_frequency%（0 为不主动发语音）'),
                                   MoeSlider(

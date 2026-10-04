@@ -26,6 +26,7 @@ class ProviderAdapterFactory {
   static const Set<String> _requestLocalOnlyKeys = <String>{
     'requestFormat',
     'apiPath',
+    'extraBody',
     'vertexExpress',
     'defaultImageModel',
     'tts_models',

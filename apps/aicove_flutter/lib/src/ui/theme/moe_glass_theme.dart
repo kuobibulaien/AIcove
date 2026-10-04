@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+/// Default tint fill (0..1), matching the tint the default blur used to imply.
+const double kDefaultGlassTintFill = 0.5;
+
 /// 全局玻璃材质效果配置（用于控制悬浮栏、导航背景等的毛玻璃效果和模糊强度）
 enum MoeSurfaceMaterial {
   solid('纯色'),
@@ -15,26 +18,12 @@ enum MoeSurfaceMaterial {
   }) => !enabled ? solid : (liquid ? MoeSurfaceMaterial.liquid : frosted);
 }
 
-/// Ordered glass presets. Existing stored sigma values use the nearest preset
-/// for display and rendering without rewriting preferences on read.
-enum MoeGlassThickness {
-  clear('通透', 0),
-  medium('中等', 16),
-  heavy('厚重', 32);
-
-  const MoeGlassThickness(this.label, this.sigma);
-  final String label;
-  final double sigma;
-
-  static MoeGlassThickness fromSigma(double sigma) =>
-      values[(sigma / 16).round().clamp(0, 2)];
-}
-
 class MoeGlassTheme extends InheritedWidget {
   const MoeGlassTheme({
     super.key,
     required this.enabled,
     required this.blurSigma,
+    this.tintFill = kDefaultGlassTintFill,
     this.useLiquidGlass = false,
     required super.child,
   });
@@ -44,6 +33,9 @@ class MoeGlassTheme extends InheritedWidget {
 
   /// 毛玻璃模糊强度（sigma）
   final double blurSigma;
+
+  /// 底色填充程度（0..1），与 [blurSigma] 独立
+  final double tintFill;
 
   /// 是否使用液态玻璃材质（透镜物理折射，关闭时回退常规毛玻璃）
   final bool useLiquidGlass;
@@ -67,6 +59,7 @@ class MoeGlassTheme extends InheritedWidget {
   bool updateShouldNotify(MoeGlassTheme oldWidget) {
     return enabled != oldWidget.enabled ||
         blurSigma != oldWidget.blurSigma ||
+        tintFill != oldWidget.tintFill ||
         useLiquidGlass != oldWidget.useLiquidGlass;
   }
 }

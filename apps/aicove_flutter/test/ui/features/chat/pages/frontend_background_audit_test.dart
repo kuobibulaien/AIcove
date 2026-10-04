@@ -1,11 +1,12 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:async';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:aicove_flutter/src/ui/features/chat/pages/chat_background_settings_page.dart';
+import 'package:aicove_flutter/src/ui/features/chat/pages/chat_interface_settings_page.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
+
+import 'chat_interface_test_support.dart';
 
 class DeferredFilePicker extends FilePicker {
   final result = Completer<FilePickerResult?>();
@@ -44,9 +45,15 @@ void main() {
     final picker = DeferredFilePicker();
     FilePicker.platform = picker;
     addTearDown(() => FilePicker.platform = original);
-    await tester.pumpWidget(_scope(MaterialApp(
-        home: ChatBackgroundSettingsPage(
-            conversation: syntheticConversation()))));
+    await tester.pumpWidget(
+      _scope(
+        MaterialApp(
+          home: ChatInterfaceSettingsPage(
+            conversation: syntheticConversation(),
+          ),
+        ),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
     await tester.tap(find.text('选择背景图片'));
@@ -68,14 +75,21 @@ void main() {
           (tester) async {
         await tester.binding.setSurfaceSize(size);
         addTearDown(() => tester.binding.setSurfaceSize(null));
-        await tester.pumpWidget(_scope(MaterialApp(
-          builder: (context, child) => MediaQuery(
-              data: MediaQuery.of(context)
-                  .copyWith(textScaler: TextScaler.linear(scale)),
-              child: child!),
-          home:
-              ChatBackgroundSettingsPage(conversation: syntheticConversation()),
-        )));
+        await tester.pumpWidget(
+          _scope(
+            MaterialApp(
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(
+                  context,
+                ).copyWith(textScaler: TextScaler.linear(scale)),
+                child: child!,
+              ),
+              home: ChatInterfaceSettingsPage(
+                conversation: syntheticConversation(),
+              ),
+            ),
+          ),
+        );
         await tester.pumpAndSettle();
         await tester.pump(const Duration(milliseconds: 450));
         expect(tester.takeException(), isNull);
@@ -84,4 +98,5 @@ void main() {
   }
 }
 
-Widget _scope(Widget child) => ProviderScope(child: child);
+Widget _scope(Widget child) =>
+    chatInterfaceTestScope(conversation: syntheticConversation(), child: child);

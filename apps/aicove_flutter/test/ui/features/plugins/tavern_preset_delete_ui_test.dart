@@ -90,7 +90,7 @@ void main() {
     await tester.tap(find.text('删除').last);
     await _settle(tester);
 
-    expect(find.text('酒馆兼容插件（测试）'), findsOneWidget);
+    expect(find.text('酒馆相关'), findsOneWidget);
     expect(find.text('待删预设'), findsNothing);
     expect((await tester.runAsync(store.list))!, isEmpty);
     expect(tester.takeException(), isNull);

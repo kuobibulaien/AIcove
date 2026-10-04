@@ -194,22 +194,21 @@ class _CloudSyncSettings extends ConsumerWidget {
               ? ref.read(cloudSyncProvider.notifier).synchronize()
               : ref.read(cloudSyncProvider.notifier).enable(),
         ),
-        if (state.enabled)
-          TextButton(
-            onPressed: state.busy
-                ? null
-                : () => Navigator.of(context).push(
-                    ParallaxSlidePageRoute<void>(
-                      page: const CloudConflictsPage(),
-                    ),
-                  ),
-            child: const Text('处理同时修改'),
+        if (state.enabled) ...[
+          const SizedBox(height: 12),
+          MoeSecondaryButton(
+            label: '处理同时修改',
+            enabled: !state.busy,
+            onPressed: () => Navigator.of(context).push(
+              ParallaxSlidePageRoute<void>(page: const CloudConflictsPage()),
+            ),
           ),
-        if (state.enabled)
-          TextButton(
+          const SizedBox(height: 12),
+          MoeSecondaryButton(
+            label: '暂停自动同步',
             onPressed: () => ref.read(cloudSyncProvider.notifier).pause(),
-            child: const Text('暂停自动同步'),
           ),
+        ],
       ],
     );
   }

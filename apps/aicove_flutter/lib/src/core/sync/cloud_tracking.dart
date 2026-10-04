@@ -57,6 +57,24 @@ Future<void> installCloudTracking(GeneratedDatabase db) async {
   await db.customStatement('''CREATE TABLE IF NOT EXISTS cloud_dirty (
     kind TEXT NOT NULL, entity_id TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY(kind, entity_id))''');
+  // LAN-received edits wait for their origin device to upload them; this
+  // device relays only after relay_until, and only if no own edit followed
+  // (an own edit advances revision past relay_revision).
+  final dirtyColumns = {
+    for (final row
+        in await db.customSelect('PRAGMA table_info(cloud_dirty)').get())
+      row.data['name'],
+  };
+  if (!dirtyColumns.contains('relay_until')) {
+    await db.customStatement(
+      'ALTER TABLE cloud_dirty ADD COLUMN relay_until INTEGER NOT NULL DEFAULT 0',
+    );
+  }
+  if (!dirtyColumns.contains('relay_revision')) {
+    await db.customStatement(
+      'ALTER TABLE cloud_dirty ADD COLUMN relay_revision INTEGER NOT NULL DEFAULT -1',
+    );
+  }
   await db.customStatement('''CREATE TABLE IF NOT EXISTS cloud_setting_times (
     kind TEXT NOT NULL, entity_id TEXT NOT NULL, field TEXT NOT NULL,
     at_ms INTEGER NOT NULL, device_id TEXT NOT NULL DEFAULT '',

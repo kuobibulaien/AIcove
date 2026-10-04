@@ -7,7 +7,7 @@ import re
 import urllib.request
 from pathlib import Path
 
-from collect_diagnostics import Adb, choose_device
+from collect_diagnostics import Adb, choose_device, resolve_token
 
 
 def main():
@@ -15,10 +15,8 @@ def main():
     parser.add_argument('--device')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
-    token = os.environ.get('AICOVE_DIAGNOSTIC_TOKEN', '')
-    if not re.fullmatch(r'[A-Za-z0-9_-]{43}', token):
-        parser.error('Set AICOVE_DIAGNOSTIC_TOKEN to the existing device credential')
-    device = Adb(choose_device(args.device), 'com.example.aicove_flutter')
+    device = Adb(choose_device(args.device or 'auto'), 'com.example.aicove_flutter')
+    token = resolve_token(device)
     forwarded = device.run('forward', 'tcp:0', 'tcp:48631')
     if not re.fullmatch(r'\d{1,5}', forwarded):
         raise RuntimeError('Invalid ADB forwarded port')

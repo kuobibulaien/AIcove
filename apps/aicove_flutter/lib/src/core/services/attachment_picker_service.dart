@@ -114,48 +114,20 @@ class AttachmentPickerService {
     }
   }
 
-  /// 选择文件
-  static Future<AttachmentPickResult> pickFile({int maxMb = 10}) async {
-    return _pickCustomFile(
-      maxMb: maxMb,
-      type: AttachmentType.file,
-      allowedExtensions: supportedTextFileExts.toList(growable: false),
-      restrictPicker: false,
-    );
-  }
+  static const supportedImageFileExts = <String>{
+    'jpg',
+    'jpeg',
+    'png',
+    'webp',
+    'gif',
+    'heic',
+    'heif',
+  };
 
-  /// 选择音频
-  static Future<AttachmentPickResult> pickAudio({int maxMb = 10}) async {
-    return _pickCustomFile(
-      maxMb: maxMb,
-      type: AttachmentType.audio,
-      allowedExtensions: supportedAudioFileExts.toList(growable: false),
-    );
-  }
-
-  /// 选择视频
-  static Future<AttachmentPickResult> pickVideo({int maxMb = 10}) async {
-    return _pickCustomFile(
-      maxMb: maxMb,
-      type: AttachmentType.video,
-      allowedExtensions: supportedVideoFileExts.toList(growable: false),
-    );
-  }
-
-  static Future<AttachmentPickResult> _pickCustomFile({
-    required int maxMb,
-    required AttachmentType type,
-    required List<String> allowedExtensions,
-    bool restrictPicker = true,
-  }) async {
+  /// 选择附件：文本、音频、视频或图片，按扩展名归类。
+  static Future<AttachmentPickResult> pickAttachment({int maxMb = 10}) async {
     try {
-      final result = restrictPicker
-          ? await FilePicker.platform.pickFiles(
-              withData: false,
-              type: FileType.custom,
-              allowedExtensions: allowedExtensions,
-            )
-          : await FilePicker.platform.pickFiles(withData: false);
+      final result = await FilePicker.platform.pickFiles(withData: false);
       if (result == null || result.files.isEmpty) {
         return AttachmentPickCancelled();
       }
@@ -173,9 +145,8 @@ class AttachmentPickerService {
 
       final ext = (file.extension ?? p.extension(path).replaceFirst('.', ''))
           .toLowerCase();
-      if (ext.isNotEmpty && !allowedExtensions.contains(ext)) {
-        return AttachmentUnsupportedType(ext);
-      }
+      final type = attachmentTypeForExtension(ext);
+      if (type == null) return AttachmentUnsupportedType(ext);
 
       return AttachmentPickSuccess(SelectedAttachment(
         path: path,
@@ -186,5 +157,22 @@ class AttachmentPickerService {
     } catch (e) {
       return AttachmentPickError('选择文件失败：$e');
     }
+  }
+
+  /// Extensionless files keep the previous plain-text file behavior.
+  static AttachmentType? attachmentTypeForExtension(String ext) {
+    final normalized = ext.toLowerCase();
+    if (normalized.isEmpty) return AttachmentType.file;
+    if (supportedTextFileExts.contains(normalized)) return AttachmentType.file;
+    if (supportedAudioFileExts.contains(normalized)) {
+      return AttachmentType.audio;
+    }
+    if (supportedVideoFileExts.contains(normalized)) {
+      return AttachmentType.video;
+    }
+    if (supportedImageFileExts.contains(normalized)) {
+      return AttachmentType.image;
+    }
+    return null;
   }
 }

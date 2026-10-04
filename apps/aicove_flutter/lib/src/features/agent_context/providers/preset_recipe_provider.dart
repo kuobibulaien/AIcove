@@ -159,19 +159,38 @@ class PresetRecipeImportController extends AsyncNotifier<void> {
     }
   }
 
+  /// 建立角色卡专用组合副本（含卡内正则与世界书）。
+  Future<CardPresetImportResult> createCardPreset({
+    required String? explicitBaseId,
+    required String name,
+    required List<Map<String, dynamic>> regexScripts,
+    required Map<String, dynamic>? characterBook,
+    bool? regexAuthorized,
+  }) async {
+    state = const AsyncLoading();
+    try {
+      final result = await ref
+          .read(sillyTavernPresetStoreProvider)
+          .createCardPreset(
+            explicitBaseId: explicitBaseId,
+            name: name,
+            regexScripts: regexScripts,
+            characterBook: characterBook,
+            regexAuthorized: regexAuthorized,
+          );
+      ref.invalidate(presetRecipeListProvider);
+      ref.invalidate(presetRecipeProvider(result.preset.id));
+      state = const AsyncData(null);
+      return result;
+    } catch (error, stackTrace) {
+      state = AsyncError(error, stackTrace);
+      rethrow;
+    }
+  }
+
   /// 没有外部提示词预设时，也可建立一套仅使用正则／世界书的组合。
   Future<SillyTavernPreset> createBasicPreset() => importSource(
-    '''{"name":"基础上下文","prompts":[
-      {"identifier":"worldInfoBefore","name":"世界书：角色定义前","marker":true},
-      {"identifier":"charDescription","name":"角色定义","marker":true},
-      {"identifier":"scenario","name":"场景","marker":true},
-      {"identifier":"worldInfoAfter","name":"世界书：角色定义后","marker":true},
-      {"identifier":"chatHistory","name":"聊天记录","marker":true}],
-      "prompt_order":[{"identifier":"worldInfoBefore","enabled":true},
-      {"identifier":"charDescription","enabled":true},
-      {"identifier":"scenario","enabled":true},
-      {"identifier":"worldInfoAfter","enabled":true},
-      {"identifier":"chatHistory","enabled":true}]}''',
+    kBasicContextPresetSource,
     sourceFileName: '基础上下文.json',
   );
 

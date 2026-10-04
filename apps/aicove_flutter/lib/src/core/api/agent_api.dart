@@ -12,6 +12,8 @@ import 'image_providers/image_provider_adapter_factory.dart';
 import 'providers/google_api_mode.dart';
 import 'providers/provider_chat_api_path.dart';
 import 'providers/provider_adapter_factory.dart';
+import 'providers/provider_extra_body.dart';
+import 'providers/builtin_web_search_suppressor.dart';
 import 'providers/provider_adapter.dart'
     show ProviderAdapter, ProviderChatRequestOptions, ToolCall;
 import '../../features/observability/trace_models.dart';
@@ -573,6 +575,10 @@ class AgentApiClient {
       tools: tools,
       requestOptions: requestOptions,
     );
+    applyProviderExtraBody(payload, customConfig);
+    if (requestOptions?.disableBuiltinWebSearch == true) {
+      stripBuiltinWebSearch(payload);
+    }
     if (streaming && adapter.name != 'gemini') {
       payload['stream'] = true;
     }

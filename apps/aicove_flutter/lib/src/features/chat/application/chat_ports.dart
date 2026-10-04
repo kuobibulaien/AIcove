@@ -3,6 +3,7 @@ library;
 import '../../../core/app_logger.dart' show TraceLogger;
 import '../../observability/trace_models.dart' show TraceContext;
 import '../../settings/app_settings.dart';
+import '../domain/chat_context_preview.dart';
 import '../domain/conversation.dart';
 import '../domain/message.dart';
 import '../services/chat_types.dart'
@@ -41,6 +42,11 @@ abstract interface class ChatHistoryPort {
     required String conversationId,
     required String anchorMessageId,
   });
+}
+
+/// 只读查看联系人发给模型的完整上下文。
+abstract interface class ChatContextPreviewPort {
+  Future<ChatContextPreview> preview(Conversation conversation);
 }
 
 abstract interface class ChatSendPort {

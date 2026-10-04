@@ -312,7 +312,8 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
           .toDouble();
   final chatDisplayStyle =
       ChatDisplayStyle.fromValue(data['chat_display_style'] as String?) ??
-          ChatDisplayStyle.bubble;
+      ChatDisplayStyle.bubble;
+  final autoScrollOnSend = data['auto_scroll_on_send'] != false;
   final chatBackgroundColor = ChatBackgroundColor.fromValue(
     data['chat_background_color'] as String?,
   );
@@ -331,6 +332,12 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
   final glassBlurSigma =
       ((data['glass_blur_sigma'] as num?)?.toDouble() ?? kDefaultGlassBlurSigma)
           .clamp(kMinGlassBlurSigma, kMaxGlassBlurSigma)
+          .toDouble();
+  // Before the fill slider existed, tint followed the blur setting.
+  final glassTintFill =
+      ((data['glass_tint_fill'] as num?)?.toDouble() ??
+              glassBlurSigma / kMaxGlassBlurSigma)
+          .clamp(0.0, 1.0)
           .toDouble();
   final useLiquidGlass = data['use_liquid_glass'] != false;
 
@@ -421,6 +428,7 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     interfaceSkin: interfaceSkin,
     glassEffectEnabled: glassEffectEnabled,
     glassBlurSigma: glassBlurSigma,
+    glassTintFill: glassTintFill,
     useLiquidGlass: useLiquidGlass,
     userAvatar: userAvatar,
     userName: userName,
@@ -430,6 +438,7 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     callFlowSettings: callFlowSettings,
     streamSegmentDelaySeconds: streamSegmentDelaySeconds,
     chatDisplayStyle: chatDisplayStyle,
+    autoScrollOnSend: autoScrollOnSend,
   );
 }
 
@@ -1035,6 +1044,10 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     );
   }
 
+  Future<void> setAutoScrollOnSend(bool enabled) async {
+    await _commit(() => _api.updatePartial({'auto_scroll_on_send': enabled}));
+  }
+
   Future<void> setGlobalBackgroundColor(GlobalBackgroundColor color) async {
     await _commit(
       () => _api.updatePartial({'global_background_color': color.value}),
@@ -1092,7 +1105,19 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     final clamped = sigma
         .clamp(kMinGlassBlurSigma, kMaxGlassBlurSigma)
         .toDouble();
-    await _commit(() => _api.updatePartial({'glass_blur_sigma': clamped}));
+    // Pin the fill too, so a legacy fill derived from blur stays independent.
+    final fill = state.value?.glassTintFill;
+    await _commit(
+      () => _api.updatePartial({
+        'glass_blur_sigma': clamped,
+        if (fill != null) 'glass_tint_fill': fill,
+      }),
+    );
+  }
+
+  Future<void> setGlassTintFill(double fill) async {
+    final clamped = fill.clamp(0.0, 1.0).toDouble();
+    await _commit(() => _api.updatePartial({'glass_tint_fill': clamped}));
   }
 
   Future<void> setUseLiquidGlass(bool useLiquid) async {

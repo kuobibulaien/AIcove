@@ -19,6 +19,7 @@ import '../data/cloud_document.dart';
 import '../data/cloud_local_store.dart';
 import '../data/cloud_sync_engine.dart';
 import '../data/cloud_sync_scheduler.dart';
+import '../data/device_names.dart';
 
 export '../data/cloud_sync_engine.dart' show CloudProgress;
 
@@ -59,7 +60,7 @@ class CloudSyncController extends StateNotifier<CloudProgress> {
       // A renewed token for the same account keeps the running engine.
       _api!.updateToken(connection.token!);
       _connected = connection;
-      return synchronize();
+      return synchronizeIfDue();
     }
     _api = null;
     _connected = null;
@@ -106,8 +107,12 @@ class CloudSyncController extends StateNotifier<CloudProgress> {
             handleApplied(kinds);
           },
         );
-        _scheduler = CloudSyncScheduler(local, _engine!.synchronize)..start();
-        await synchronize();
+        await publishDeviceName(preferences, media.deviceId);
+        final engine = _engine!;
+        _scheduler = CloudSyncScheduler(local, () async {
+          await engine.synchronize();
+          return mounted && state.error == null;
+        })..start();
       } catch (_) {
         if (mounted && generation == _generation) {
           state = const CloudProgress('云同步初始化失败，请稍后重试');
@@ -202,6 +207,20 @@ class CloudSyncController extends StateNotifier<CloudProgress> {
     await _engine?.resolveConflict(preview, id, incoming: incoming);
   }
 
+  Future<void> resolveAll(
+    Map<String, dynamic> preview,
+    Map<String, bool> useIncoming, {
+    void Function(int done, int total)? onProgress,
+  }) async {
+    await _engine?.resolveConflicts(
+      preview,
+      useIncoming,
+      onProgress: onProgress,
+    );
+  }
+
+  String? get deviceId => _engine?.media.deviceId;
+
   Future<void> enable() async {
     await _connecting;
     try {
@@ -211,9 +230,19 @@ class CloudSyncController extends StateNotifier<CloudProgress> {
     }
   }
 
+  /// Manual sync: always runs a round now.
   Future<void> synchronize() async {
     try {
       await _scheduler?.synchronize();
+    } catch (_) {
+      /* Retry on the next timer. */
+    }
+  }
+
+  /// Launch/resume: runs only when the next automatic round is due.
+  Future<void> synchronizeIfDue() async {
+    try {
+      await _scheduler?.synchronizeIfDue();
     } catch (_) {
       /* Retry on the next timer. */
     }

@@ -57,14 +57,6 @@ extension ChatActionsActionOps on ChatActions {
         convId: targetConvId,
         task: () async {
           final settings = await _ref.read(appSettingsProvider.future);
-          if (!settings.autoReplySettings.enabled) {
-            AppLogger.info(
-                'ChatActions', 'Skip proactive trigger: auto-reply disabled',
-                metadata: {
-                  'triggerId': trigger.id,
-                });
-            return const ProactiveSendResult.skipped('auto_reply_disabled');
-          }
 
           if (trigger.hasCachedContent) {
             final cachedReply = trigger.cachedContent!.trim();
@@ -909,7 +901,13 @@ extension ChatActionsActionOps on ChatActions {
     if (conv == null) return null;
     final convId = conv.id;
     if (_ref.read(conversationSendingProvider(convId))) {
-      throw StateError('当前会话正在生成，请结束后再编辑');
+      await interruptCurrentGeneration(convId: convId);
+      if (_ref.read(conversationSendingProvider(convId))) {
+        throw StateError('当前会话正在生成，请结束后再编辑');
+      }
+    }
+    if (_ref.read(activeConversationProvider)?.id != convId) {
+      throw StateError('会话状态已变化，未进入编辑');
     }
     final historyStore = _ref.read(chatHistoryStoreProvider);
     final frontendMessage = await historyStore.loadFrontendMessageById(

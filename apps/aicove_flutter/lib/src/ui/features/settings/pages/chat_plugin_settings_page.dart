@@ -1,23 +1,22 @@
 /// 聊天插件设置页面
 ///
 /// 整合所有聊天相关插件的入口：
-/// - 记忆库、表情包、主动关怀、语音设置、绘图设置
+/// - 记忆库、主动关怀、表情包、语音设置、绘图设置、时间感知、联网搜索、酒馆相关
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_page_scaffold.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../ui/theme/tokens.dart';
-import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/moe_app_bar.dart';
 import '../../../../ui/shared/widgets/list/moe_settings_group.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
-import '../../../../features/settings/app_settings.dart';
 import '../../plugins/pages/image_plugin_detail_page.dart';
 import 'context_memory_settings_page.dart';
 import '../../plugins/pages/time_awareness_plugin_detail_page.dart';
 import '../../plugins/pages/tts_plugin_detail_page.dart';
 import '../../plugins/pages/sticker_settings_page.dart';
 import '../../plugins/pages/tavern_plugin_detail_page.dart';
+import '../../plugins/pages/plugin_prompts_page.dart';
+import '../../plugins/pages/web_search_plugin_detail_page.dart';
 import '../../auto_reply/pages/auto_reply_settings_page.dart';
 import '../../../../ui/shared/widgets/moe_scroll_edge.dart';
 
@@ -73,18 +72,24 @@ const chatPluginItems = [
     icon: Icons.brush_outlined,
   ),
   ChatPluginItem(
-    id: 'tavern_compatibility',
-    name: '酒馆兼容插件（测试）',
-    subtitle: '预设、正则、世界书',
-    icon: Icons.menu_book_outlined,
-    // 使用角色现有 recipeId 单独绑定，不伪装成工具权限开关。
-    conversationSelectable: false,
-  ),
-  ChatPluginItem(
     id: 'time_awareness',
     name: '时间感知',
     subtitle: '当前时间、消息时间线',
     icon: Icons.schedule_outlined,
+  ),
+  ChatPluginItem(
+    id: 'web_search',
+    name: '联网搜索',
+    subtitle: '多家搜索供应商',
+    icon: Icons.travel_explore,
+  ),
+  ChatPluginItem(
+    id: 'tavern_compatibility',
+    name: '酒馆相关',
+    subtitle: '预设、正则、世界书',
+    icon: Icons.menu_book_outlined,
+    // 使用角色现有 recipeId 单独绑定，不伪装成工具权限开关。
+    conversationSelectable: false,
   ),
 ];
 
@@ -92,11 +97,11 @@ final List<ChatPluginItem> conversationScopedChatPluginItems = chatPluginItems
     .where((item) => item.conversationSelectable)
     .toList(growable: false);
 
-class ChatPluginSettingsPage extends ConsumerWidget {
+class ChatPluginSettingsPage extends StatelessWidget {
   const ChatPluginSettingsPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final colors = context.moeColors;
 
     return MoePageScaffold(
@@ -127,65 +132,30 @@ class ChatPluginSettingsPage extends ConsumerWidget {
                     Builder(
                       builder: (context) {
                         final item = chatPluginItems[index];
-                        final isEnabled = _isPluginEnabled(ref, item.id);
 
-                        return ListTile(
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                          ),
-                          title: Text(
-                            item.name,
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: MoeFontWeights.emphasis,
-                              color: colors.text,
-                            ),
-                          ),
-                          subtitle: Wrap(
-                            spacing: 8,
-                            runSpacing: 4,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: [
-                              Text(
-                                item.subtitle,
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: colors.muted,
-                                ),
-                              ),
-                              if (isEnabled != null)
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
-                                    vertical: 2,
-                                  ),
-                                  decoration: MoeG2Decoration(
-                                    radius: 4,
-                                    color: isEnabled
-                                        ? colors.primary.withOpacity(0.1)
-                                        : colors.muted.withOpacity(0.1),
-                                  ),
-                                  child: Text(
-                                    isEnabled ? '已启用' : '已禁用',
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      color: isEnabled
-                                          ? colors.primary
-                                          : colors.muted,
-                                    ),
-                                  ),
-                                ),
-                            ],
-                          ),
-                          trailing: Icon(
-                            Icons.chevron_right,
-                            color: colors.muted,
-                          ),
+                        return _buildEntryTile(
+                          colors: colors,
+                          title: item.name,
+                          subtitle: item.subtitle,
                           onTap: () => _navigateToPlugin(context, item),
                         );
                       },
                     ),
                   ],
+                ],
+              ),
+              const SizedBox(height: 16),
+              MoeSettingsGroup(
+                children: [
+                  _buildEntryTile(
+                    colors: colors,
+                    title: PluginPromptsPage.title,
+                    subdued: true,
+                    subtitle: '插件标签说明，所有角色共用',
+                    onTap: () => Navigator.of(context).push(
+                      ParallaxSlidePageRoute(page: const PluginPromptsPage()),
+                    ),
+                  ),
                 ],
               ),
             ],
@@ -195,15 +165,32 @@ class ChatPluginSettingsPage extends ConsumerWidget {
     );
   }
 
-  /// 获取插件启用状态；只有保留全局开关的主动关怀返回状态，
-  /// 其余插件常开、由角色卡选择控制，不显示徽标
-  bool? _isPluginEnabled(WidgetRef ref, String pluginId) {
-    switch (pluginId) {
-      case 'trigger':
-        return ref.watch(appSettingsProvider).value?.autoReplySettings.enabled;
-      default:
-        return null;
-    }
+  /// 聊天插件页入口行；[subdued] 用于全局工具提示词这类辅助入口，弱化标题存在感
+  Widget _buildEntryTile({
+    required MoeColors colors,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+    bool subdued = false,
+  }) {
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+      title: Text(
+        title,
+        style: TextStyle(
+          fontSize: 15,
+          fontWeight: subdued ? MoeFontWeights.normal : MoeFontWeights.emphasis,
+          fontStyle: subdued ? FontStyle.italic : FontStyle.normal,
+          color: subdued ? colors.textSecondary : colors.text,
+        ),
+      ),
+      subtitle: Text(
+        subtitle,
+        style: TextStyle(fontSize: 13, color: colors.muted),
+      ),
+      trailing: Icon(Icons.chevron_right, color: colors.muted),
+      onTap: onTap,
+    );
   }
 
   /// 导航到插件详情页
@@ -230,6 +217,9 @@ class ChatPluginSettingsPage extends ConsumerWidget {
         break;
       case 'time_awareness':
         page = const TimeAwarenessPluginDetailPage();
+        break;
+      case 'web_search':
+        page = const WebSearchPluginDetailPage();
         break;
     }
 

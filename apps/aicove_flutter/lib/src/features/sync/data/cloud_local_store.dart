@@ -12,6 +12,7 @@ import '../../../core/media/media_store.dart';
 import '../../../core/sync/cloud_tracking.dart';
 import '../../../core/sync/cloud_setting_policy.dart';
 import 'cloud_document.dart';
+import 'device_names.dart';
 
 /// Files and preferences retain their existing owners. Their last synchronized
 /// value is compared before every remote write, so an offline edit is queued.
@@ -21,11 +22,15 @@ class CloudLocalStore {
   final SharedPreferences preferences;
   final Directory documents, support;
   final _columns = <String, Set<Object?>>{};
+  // Unchanged size and modification time mean unchanged content, so a scan
+  // reads only files written since the previous one.
+  final _files = <String, (int, DateTime, String)>{};
 
   static bool syncPreference(String key) =>
       key == 'aicove.ui_models.v1' ||
       key == 'aicove.prompt_custom_nodes.v1' ||
       key == 'aicove.auto_triggers.v1' ||
+      key == deviceNamesKey ||
       (key.startsWith('aicove.plugins.') && !key.contains('.backup')) ||
       const {
         'direct.enable',
@@ -125,7 +130,7 @@ class CloudLocalStore {
               'storage': 'file',
               'root': entry.key,
               'path': relative,
-              'json_value': await entity.readAsString(),
+              'json_value': await _readCached(entity),
             },
           ),
         );
@@ -134,10 +139,34 @@ class CloudLocalStore {
     return result;
   }
 
+  Future<String> _readCached(File file) async {
+    final stat = await file.stat();
+    final cached = _files[file.path];
+    if (cached != null &&
+        cached.$1 == stat.size &&
+        cached.$2 == stat.modified) {
+      return cached.$3;
+    }
+    final text = await file.readAsString();
+    _files[file.path] = (stat.size, stat.modified, text);
+    return text;
+  }
+
   Future<void> mark(String kind, String id) => execute(
     '''INSERT INTO cloud_dirty(kind,entity_id,revision)
     VALUES(?,?,1) ON CONFLICT(kind,entity_id) DO UPDATE SET revision=revision+1''',
     [kind, id],
+  );
+
+  /// Queues an edit received over LAN. Its origin normally uploads it first;
+  /// this device uploads only once [until] passes without that happening.
+  Future<void> markRelay(String kind, String id, int until) => execute(
+    '''INSERT INTO cloud_dirty(kind,entity_id,revision,relay_until,relay_revision)
+    VALUES(?,?,1,?,1) ON CONFLICT(kind,entity_id) DO UPDATE SET
+      relay_until=CASE WHEN revision=relay_revision THEN excluded.relay_until ELSE relay_until END,
+      relay_revision=CASE WHEN revision=relay_revision THEN revision+1 ELSE relay_revision END,
+      revision=revision+1''',
+    [kind, id, until],
   );
 
   Future<Map<String, dynamic>> settingTimes(
@@ -393,15 +422,24 @@ class CloudLocalStore {
     required MediaStore mediaStore,
     void Function(int, int)? onProgress,
   }) async {
+    // After the one-time full pass, only messages with pending edits can hold
+    // new inline media, so routine syncs never rescan the whole history.
+    final incremental = (await rows(
+      "SELECT 1 FROM cloud_local_migrations WHERE name='embedded_media_scanned_v1'",
+    )).isNotEmpty;
+    const dirtyMessages =
+        "SELECT entity_id FROM cloud_dirty WHERE kind='messages'";
     final targets = <(String, String, String)>[];
     for (final entry in {
-      'messages': 'raw_payload',
-      'message_blocks': 'data',
+      'messages': ('raw_payload', 'id'),
+      'message_blocks': ('data', 'message_id'),
     }.entries) {
+      final (column, owner) = entry.value;
       for (final row in await rows(
-        "SELECT id FROM ${entry.key} WHERE instr(${entry.value},'data:audio/')>0 OR instr(${entry.value},'data:image/')>0 OR instr(${entry.value},'data:video/')>0",
+        "SELECT id FROM ${entry.key} WHERE (instr($column,'data:audio/')>0 OR instr($column,'data:image/')>0 OR instr($column,'data:video/')>0)"
+        "${incremental ? ' AND $owner IN ($dirtyMessages)' : ''}",
       )) {
-        targets.add((entry.key, entry.value, row['id'] as String));
+        targets.add((entry.key, column, row['id'] as String));
       }
     }
     if (targets.isEmpty) {
@@ -487,6 +525,9 @@ class CloudLocalStore {
   }
 
   Future<void> _finishMediaCompaction() async {
+    await execute(
+      "INSERT OR IGNORE INTO cloud_local_migrations VALUES('embedded_media_scanned_v1')",
+    );
     final names = (await rows(
       "SELECT name FROM cloud_local_migrations WHERE name IN ('embedded_media_backup_v1','embedded_media_compacted_v1')",
     )).map((row) => row['name']).toSet();

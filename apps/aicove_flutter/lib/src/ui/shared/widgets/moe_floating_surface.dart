@@ -15,7 +15,7 @@ class MoeFloatingSurface extends StatefulWidget {
     required this.child,
     this.radius = 28,
     this.blurSigma,
-    this.baseline = MoeMaterialBaseline.none,
+    this.baseline = MoeMaterialBaseline.component,
     this.blurEnabled,
     this.useLiquid,
     this.borderRadius,
@@ -30,7 +30,7 @@ class MoeFloatingSurface extends StatefulWidget {
   final double radius;
   final double? blurSigma;
 
-  /// Independent blur and tint minimums for this component.
+  /// Blur minimum of this layer; tint always follows the global fill.
   final MoeMaterialBaseline baseline;
   final bool? blurEnabled;
 
@@ -77,6 +77,7 @@ class _MoeFloatingSurfaceState extends State<MoeFloatingSurface> {
             glassTheme?.blurSigma ?? kDefaultGlassBlurSigma,
           )
         : blurSigma ?? glassTheme?.blurSigma ?? kDefaultGlassBlurSigma;
+    final tintFill = glassTheme?.tintFill ?? kDefaultGlassTintFill;
 
     final isLiquid =
         !isFrosted &&
@@ -105,11 +106,8 @@ class _MoeFloatingSurfaceState extends State<MoeFloatingSurface> {
     final surfaceMaterial = Material(
       color: isBlurEnabled
           ? (isFrosted
-                ? MoeFrostedMaterial.surfaceTint(
-                    brightness,
-                    sigma: effectiveSigma,
-                  )
-                : colors.glassTintForSigma(effectiveSigma, baseline: baseline))
+                ? MoeFrostedMaterial.surfaceTint(brightness, fill: tintFill)
+                : colors.glassTintForFill(tintFill))
           : (solidColor ?? colors.componentBackground).withValues(alpha: 1),
       shape: RoundedRectangleBorder(
         borderRadius: effectiveRadius,
@@ -124,12 +122,7 @@ class _MoeFloatingSurfaceState extends State<MoeFloatingSurface> {
                     width: 0.6,
                   )),
       ),
-      child: Ink(
-        color: !isFrosted && baseline == MoeMaterialBaseline.text
-            ? colors.textMaterialTint
-            : Colors.transparent,
-        child: content,
-      ),
+      child: content,
     );
 
     return DecoratedBox(

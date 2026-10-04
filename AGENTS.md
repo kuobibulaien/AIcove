@@ -11,7 +11,7 @@
 
 - 排查卡顿、异常、聊天、音频或其它手机运行问题时，**先抓当前日志再定位代码**；复现前后、修复验收时按需再次采集，不把抓日志、筛选、导出或截图交给用户。
 - Release 已支持应用启动自动开启电脑读取，持续有效、重启自动恢复。**不要求切换 Debug，不要求开启开关，排查结束不要关闭读取服务。** 电脑仍需已授权 ADB 与本机读取凭证；多设备必须明确设备号。
-- 在 `apps/aicove_flutter/` 执行 `python3 tool/collect_diagnostics.py --release --since 2h --print`（已有 `AICOVE_DIAGNOSTIC_TOKEN` 时）；也可使用诊断页面提供的带凭证命令。凭证获取、故障处理与完整流程见 [Agent 日志采集说明](apps/aicove_flutter/tool/DIAGNOSTICS.md)。不要把凭证写入文档或提交。
+- 在 `apps/aicove_flutter/` 执行 `python3 tool/collect_diagnostics.py --release --since 2h --print`，脚本经 ADB 自动读取凭证，不需要进诊断页面复制命令（ADR0055）。凭证获取、故障处理与完整流程见 [Agent 日志采集说明](apps/aicove_flutter/tool/DIAGNOSTICS.md)。不要把凭证写入文档或提交。
 - 先保全现场再重启/重装/清理；读取 `summary.json`、`manifest.json` 核对构建与覆盖缺口，再沿 `operations.jsonl` 的事件和关联编号分析。这里的“实时抓取”是按需读取当前已落盘的快照，可重复执行，不是持续推送或完整逐帧录像。
 
 # Mac 调试与界面验收：默认不抢前台（2026-09-11）

@@ -119,7 +119,7 @@ class FrostedGlassCard extends StatelessWidget {
                 ),
 
               MoeFloatingSurface(
-                baseline: MoeMaterialBaseline.text,
+                baseline: MoeMaterialBaseline.background,
                 radius: borderRadius,
                 blurSigma: MoeGlassTheme.maybeOf(context)?.blurSigma ?? blurSigma,
                 shadows: const [],
@@ -168,7 +168,7 @@ class FrostedGlassContainer extends StatelessWidget {
       width: width,
       height: height,
       child: MoeFloatingSurface(
-        baseline: MoeMaterialBaseline.text,
+        baseline: MoeMaterialBaseline.background,
         radius: borderRadius,
         padding: padding,
         shadows: const [],

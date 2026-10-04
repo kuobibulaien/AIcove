@@ -28,7 +28,7 @@ PERSISTENT_SESSION_USER_IDS = frozenset(
 # HTTP Bearer认证
 security = HTTPBearer()
 
-router = APIRouter()
+router = APIRouter(prefix='/api/v1/auth', tags=['认证'])
 
 
 # ============ Pydantic模型 ============

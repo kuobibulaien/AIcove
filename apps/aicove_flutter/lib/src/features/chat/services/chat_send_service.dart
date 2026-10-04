@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 
+import '../domain/chat_context_preview.dart';
 import '../domain/conversation.dart';
 import '../domain/message.dart';
 import '../domain/conversation_context_window.dart';
@@ -209,6 +210,18 @@ class ChatSendService {
         conversationId: conversationId,
         traceContext: traceContext,
       );
+
+  /// 按当前设置预览联系人下一次请求的完整上下文，不发送、不写数据。
+  Future<ChatContextPreview> previewContext(Conversation conv) async {
+    final all = await loadConversationMessagesFromStore(conv: conv);
+    return _backendService.previewContext(
+      conv: conv,
+      history: _sliceContextWindow(
+        allMessages: all,
+        contextStartId: conv.contextStartMessageId,
+      ),
+    );
+  }
 
   Future<ApiCallResult> executeApiCall({
     required ApiConfig config,

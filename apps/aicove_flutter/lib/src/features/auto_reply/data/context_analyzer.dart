@@ -65,9 +65,6 @@ class ContextAnalyzer {
   }) async {
     final settings = await _ref.read(appSettingsProvider.future);
     final autoReplySettings = settings.autoReplySettings;
-    if (!autoReplySettings.enabled) {
-      return null;
-    }
 
     final recent =
         await _ref.read(chatHistoryStoreProvider).loadCanonicalContextMessages(

@@ -293,7 +293,7 @@ class _PopupMenuContent extends StatelessWidget {
         if (!placeAbove) _buildArrow(bgColor, pointUp: true),
         // 菜单主体
         MoeFloatingSurface(
-          baseline: MoeMaterialBaseline.text,
+          baseline: MoeMaterialBaseline.background,
           radius: 10,
           child: MoeG2ClipRRect(
             radius: 10,
@@ -508,7 +508,7 @@ class _VerticalMenu extends StatelessWidget {
                 child: SizedBox(
                   width: width,
                   child: MoeFloatingSurface(
-                    baseline: MoeMaterialBaseline.text,
+                    baseline: MoeMaterialBaseline.background,
                     radius: 14,
                     child: Shortcuts(
                       shortcuts: const {

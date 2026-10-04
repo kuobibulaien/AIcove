@@ -11,7 +11,6 @@ import '../../auto_reply/data/auto_reply_trigger.dart';
 import '../../auto_reply/data/auto_reply_trigger_controller.dart';
 import '../../chat/conversation_providers.dart';
 import '../../chat/services/chat_history_store.dart';
-import '../../settings/app_settings.dart';
 
 /// (注释已丢失)
 class TriggerPlugin extends BasePlugin {
@@ -194,11 +193,6 @@ class TriggerPlugin extends BasePlugin {
   // ========== 工具处理函数 ==========
 
   Future<String?> _handleCreateReminder(Map<String, dynamic> args) async {
-    final settings = await _ref.read(appSettingsProvider.future);
-    if (!settings.autoReplySettings.enabled) {
-      return jsonEncode({'ok': false, 'error': '主动回复已关闭，无法创建提醒'});
-    }
-
     final title = args['title'] as String? ?? '';
     final timeStr = args['time'] as String? ?? '';
     final prompt = args['prompt'] as String?;

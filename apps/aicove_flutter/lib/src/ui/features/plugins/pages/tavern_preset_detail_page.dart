@@ -108,6 +108,17 @@ class _TavernPresetDetailPageState
         title: '关于这套预设',
         children: [
           MoeSettingsRow(
+            label: '{{user}} 替换为我的名称',
+            trailingType: MoeSettingsRowTrailing.custom,
+            trailing: MoeSwitch(
+              key: const ValueKey('user-name-macro'),
+              value: preset.userNameMacroEnabled,
+              semanticLabel: '{{user}} 替换为我的名称',
+              onChanged: (v) =>
+                  _change((port) => port.setUserNameMacroEnabled(_id, v)),
+            ),
+          ),
+          MoeSettingsRow(
             label: '预设信息',
             subtitle: preset.warnings.isEmpty
                 ? '来源文件与参数生效情况'
@@ -153,7 +164,7 @@ class _TavernPresetDetailPageState
   // ==================== 正则 ====================
 
   List<Widget> _regex(SillyTavernPreset preset) {
-    final superseded = inferPresetTagMapping(preset).supersededScriptIds;
+    final mapping = inferPresetTagMapping(preset);
     final busy = ref.watch(presetRecipeImportControllerProvider).isLoading;
     final colors = context.moeColors;
     return [
@@ -181,7 +192,11 @@ class _TavernPresetDetailPageState
         title: '规则 ${preset.regexScripts.length} 条',
         children: [
           for (final script in preset.regexScripts)
-            _regexRow(script, superseded.contains(script.id)),
+            _regexRow(
+              script,
+              superseded: mapping.supersededScriptIds.contains(script.id),
+              hidden: mapping.hiddenScriptIds.contains(script.id),
+            ),
           MoeSettingsRow(
             label: '导入正则',
             subtitle: '单条规则、规则数组或整份预设都可以',
@@ -202,7 +217,11 @@ class _TavernPresetDetailPageState
     ];
   }
 
-  Widget _regexRow(SillyTavernRegexScript script, bool superseded) {
+  Widget _regexRow(
+    SillyTavernRegexScript script, {
+    required bool superseded,
+    required bool hidden,
+  }) {
     final where = script.placements.map(_placementLabel).join('、');
     final phase = script.promptOnly
         ? '只改发给模型的内容'
@@ -217,7 +236,10 @@ class _TavernPresetDetailPageState
         '${where.isEmpty ? '未指定位置' : where} · $phase',
         warnings: [
           if (script.substituteRegex != 0) '用到正则宏替换，暂不支持，不会运行',
-          if (superseded) '已交给「标签」显示，不再运行',
+          if (hidden)
+            '换出的网页显示不了，显示时直接隐藏'
+          else if (superseded)
+            '已交给「标签」显示，不再运行',
         ],
       ),
       trailingType: MoeSettingsRowTrailing.custom,
@@ -320,10 +342,13 @@ class _TavernPresetDetailPageState
       if (isDefault) ...?observed[observedTagsKey(null)],
     }.difference(mapped).toList()..sort();
     final pending = mapping.candidates.where((n) => !mapped.contains(n));
+    final taken =
+        mapping.supersededScriptIds.length - mapping.hiddenScriptIds.length;
     return [
       TavernNote(
         '模型回复里的标签怎么显示：正文照常显示，折叠收进可展开的小块，选项放进回复旁的选项气泡。按预设正则自动识别，也可以手动改，从下一条回复起生效。'
-        '${mapping.supersededScriptIds.isEmpty ? '' : '\n\n有 ${mapping.supersededScriptIds.length} 条输出网页样式的显示正则已由这里接管，不再运行。'}',
+        '${taken == 0 ? '' : '\n\n有 $taken 条输出网页样式的显示正则已由这里接管，不再运行。'}'
+        '${mapping.hiddenScriptIds.isEmpty ? '' : '\n\n有 ${mapping.hiddenScriptIds.length} 条正则只是把占位符换成网页，网页显示不了，显示时直接隐藏。'}',
       ),
       MoeSettingsGroup(
         title: '标签 ${mapping.rules.length} 个',

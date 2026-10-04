@@ -114,9 +114,8 @@ class _ThemedSettings extends ConsumerWidget {
     return MoeGlassTheme(
       enabled: settings?.glassEffectEnabled ?? false,
       useLiquidGlass: settings?.useLiquidGlass ?? false,
-      blurSigma: MoeGlassThickness.fromSigma(
-        settings?.glassBlurSigma ?? 16,
-      ).sigma,
+      blurSigma: settings?.glassBlurSigma ?? 16,
+      tintFill: settings?.glassTintFill ?? kDefaultGlassTintFill,
       child: const UiSettingsPage(),
     );
   }

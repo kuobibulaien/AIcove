@@ -33,6 +33,7 @@ class ChatRequestMessageBuilder {
     required AppSettings settings,
     bool supportsVision = true,
     ChatPluginContextPolicy? pluginPolicy,
+    bool inlineImagePrompts = true,
   }) async {
     final reqMessages = <Map<String, dynamic>>[];
     for (final message in history) {
@@ -41,6 +42,7 @@ class ChatRequestMessageBuilder {
         settings: settings,
         supportsVision: supportsVision,
         pluginPolicy: pluginPolicy,
+        inlineImagePrompts: inlineImagePrompts,
       );
       if (pluginPolicy != null && identical(message, history.last) &&
           message.role == 'user' && convertedMessages.isEmpty &&
@@ -92,6 +94,7 @@ class ChatRequestMessageBuilder {
     required AppSettings settings,
     bool supportsVision = true,
     ChatPluginContextPolicy? pluginPolicy,
+    bool inlineImagePrompts = true,
   }) async {
     final blocks = message.blocks;
     if (blocks == null || blocks.isEmpty) {
@@ -115,7 +118,17 @@ class ChatRequestMessageBuilder {
       }
 
       if (block is ImageBlock) {
-        if (message.role == 'assistant' && pluginPolicy?.includesGeneratedImages == false) continue;
+        if (message.role == 'assistant') {
+          if (pluginPolicy?.includesGeneratedImages == false) continue;
+          // 模型自己生成的图只以它写过的标签回放，不论是否支持看图，
+          // 让历史保持「回复里带 <image>」的样子，避免模型逐渐漏写标签。
+          final tag = buildGeneratedImageTag(
+            block.prompt,
+            inlinePrompt: inlineImagePrompts,
+          );
+          if (tag != null) parts.add({'type': 'text', 'text': tag});
+          continue;
+        }
         if (!supportsVision) {
           final description = block.prompt;
           final fallbackText = buildNonVisionImageMessageText(
@@ -239,6 +252,18 @@ class ChatRequestMessageBuilder {
       if (parts.isNotEmpty || toolCalls.isNotEmpty) assistantMessage,
       ...toolResultMessages
     ];
+  }
+
+  /// 快速模式回放 `<image>提示词</image>`；稳定模式提示词在 draw_image
+  /// 调用里，正文只回放发送占位 `<image></image>`。
+  static String? buildGeneratedImageTag(
+    String? prompt, {
+    required bool inlinePrompt,
+  }) {
+    if (!inlinePrompt) return '<image></image>';
+    final normalized = prompt?.trim();
+    if (normalized == null || normalized.isEmpty) return null;
+    return '<image>$normalized</image>';
   }
 
   static String? buildNonVisionImageMessageText({

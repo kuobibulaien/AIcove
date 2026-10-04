@@ -304,6 +304,38 @@ class CloudSyncEngine {
     await synchronize();
   }
 
+  /// Resolves many conflicts against one preview, then synchronizes once.
+  /// Each resolve advances the cursor, so the next request expects the cursor
+  /// returned by the previous one; any outside change stops the batch.
+  Future<void> resolveConflicts(
+    Map<String, dynamic> preview,
+    Map<String, bool> useIncoming, {
+    void Function(int done, int total)? onProgress,
+  }) async {
+    if (_running) throw const CloudSyncFailure('请等待本轮同步完成后处理');
+    _running = true;
+    var cursor = preview['cursor'];
+    var done = 0;
+    try {
+      for (final entry in useIncoming.entries) {
+        final result = await remote.post(
+          'conflicts/${entry.key}/resolve?use_incoming=${entry.value}',
+          {
+            'op_id': const Uuid().v4(),
+            'device_id': media.deviceId,
+            'epoch': preview['epoch'],
+            'expected_cursor': cursor,
+          },
+        );
+        cursor = result['cursor'];
+        onProgress?.call(++done, useIncoming.length);
+      }
+    } finally {
+      _running = false;
+    }
+    await synchronize();
+  }
+
   Future<void> _readInitialState({bool initial = true}) async {
     if ((await local.rows('SELECT 1 FROM cloud_read_state')).isEmpty) {
       final status = await remote.get('status');
@@ -1079,7 +1111,9 @@ class CloudSyncEngine {
       '''SELECT d.*,m.created_at AS message_time FROM cloud_dirty d LEFT JOIN cloud_versions v
       ON d.kind=v.kind AND d.entity_id=v.entity_id
       LEFT JOIN messages m ON d.kind='messages' AND d.entity_id=m.id
-      WHERE v.conflict_id IS NULL''',
+      WHERE v.conflict_id IS NULL
+        AND NOT (d.revision=d.relay_revision AND d.relay_until>?)''',
+      [DateTime.now().millisecondsSinceEpoch],
     );
     _totalMessages =
         _confirmedMessages +

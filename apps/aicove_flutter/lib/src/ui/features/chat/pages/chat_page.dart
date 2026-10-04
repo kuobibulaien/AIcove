@@ -3,7 +3,7 @@ import 'chat_image_export_page.dart';
 import '../widgets/chat_share_sheet.dart';
 import '../../plugins/widgets/drawing_preset_picker_sheet.dart';
 import '../widgets/chat_message_selection.dart';
-import 'chat_background_settings_page.dart';
+import 'chat_interface_settings_page.dart';
 import 'chat_tavern_preset_page.dart';
 import 'dart:async';
 import 'dart:io';
@@ -44,7 +44,6 @@ import '../../../../ui/shared/widgets/index.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../../core/models/message_block.dart';
 import '../../../../core/services/attachment_picker_service.dart';
-import '../../../../core/utils/blurred_background_service.dart';
 import '../../../../core/utils/data_image.dart';
 import '../../../../core/utils/image_preheat_queue.dart';
 import '../../../../features/observability/trace_models.dart';
@@ -55,9 +54,11 @@ import '../../../../features/observability/trace_store.dart';
 import '../../../../ui/features/settings/pages/log_formatters.dart';
 import 'deferred_conversation_activation.dart';
 import '../widgets/chat_message_list.dart';
+import '../widgets/model_failover_error_content.dart';
 import '../widgets/topic_compaction_button.dart';
 import '../widgets/frontend_message_probe.dart';
 import '../widgets/chat_viewport_controller.dart';
+import '../widgets/chat_wallpaper_background.dart';
 
 const Duration kChatPageImagePrecacheDelay = Duration(milliseconds: 180);
 const Duration kChatPageUnreadClearDelay = Duration(milliseconds: 160);
@@ -265,10 +266,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final bytes = raw == null ? null : decodeDataImage(raw);
     final wallpaper = raw == null || raw.isEmpty ? null
         : bytes != null ? MemoryImage(bytes) : _getImageProvider(raw);
-    final setting = ref.read(appSettingsProvider).valueOrNull?.lightChatBackground;
-    final fallback = Theme.of(context).brightness == Brightness.dark
-        ? telegramChatBackgroundDark
-        : setting == null || setting == Colors.white ? telegramChatBackground : setting;
+    final fallback = resolveChatBackgroundColor(
+      context,
+      ref.read(appSettingsProvider).valueOrNull?.lightChatBackground,
+    );
     final background = wallpaper == null &&
         (fallback == telegramChatBackground || fallback == telegramChatBackgroundDark)
         ? Theme.of(context).scaffoldBackgroundColor : fallback;
@@ -378,10 +379,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           onTap: () => _openCharacterSettings(conv),
         ),
         MoePopupMenuItem(
-          label: '壁纸',
+          label: '聊天界面',
           onTap: () => MoeWorkspace.open(
             context,
-            ChatBackgroundSettingsPage(conversation: conv),
+            ChatInterfaceSettingsPage(conversation: conv),
           ),
         ),
         if (conv.allowsPlugin('image'))
@@ -394,10 +395,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               onSelected: (presetId) => _switchDrawingPreset(conv, presetId),
             ),
           ),
-        MoePopupMenuItem(
-          label: '聊天样式',
-          onTap: () => _showChatDisplayStyleSheet(conv),
-        ),
         MoePopupMenuItem(
           label: '酒馆预设',
           onTap: () => MoeWorkspace.open(
@@ -439,43 +436,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               if (mounted) MoeToast.error(context, '删除失败，请重试');
             }
           },
-        ),
-      ],
-    );
-  }
-
-  /// 会话级聊天样式（ADR0047）：跟随默认或单独设为气泡／文档。
-  Future<void> _showChatDisplayStyleSheet(Conversation conv) async {
-    final globalStyle =
-        ref.read(appSettingsProvider).valueOrNull?.chatDisplayStyle ??
-            ChatDisplayStyle.bubble;
-    String styleName(ChatDisplayStyle style) =>
-        style == ChatDisplayStyle.bubble ? '气泡' : '文档';
-    Future<void> apply(ChatDisplayStyle? style) => ref
-        .read(conversationsProvider.notifier)
-        .setConversationChatDisplayStyle(conv.id, style);
-    final current = conv.chatDisplayStyle;
-    // 选项单里带图标的项会改成左对齐，当前项用文字标注而不是勾选图标。
-    String mark(bool selected, String label) =>
-        selected ? '$label（当前）' : label;
-    await showMoeActionSheet(
-      context: context,
-      title: '聊天样式',
-      description: '只对当前会话生效',
-      actions: [
-        MoeSheetAction(
-          label: mark(current == null, '跟随默认（${styleName(globalStyle)}）'),
-          onTap: () => apply(null),
-        ),
-        MoeSheetAction(
-          label: mark(current == ChatDisplayStyle.bubble, '气泡'),
-          subtitle: '按句分段，像聊天软件一样一条条冒出来',
-          onTap: () => apply(ChatDisplayStyle.bubble),
-        ),
-        MoeSheetAction(
-          label: mark(current == ChatDisplayStyle.document, '文档'),
-          subtitle: '不分段，长文和代码块完整显示',
-          onTap: () => apply(ChatDisplayStyle.document),
         ),
       ],
     );
@@ -591,8 +551,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   Animation<double>? _entryRouteAnimation;
   String? _pendingUnreadConversationId;
   bool _imagePrecachePending = false;
-  String? _staticBackgroundBlurSource;
-  ImageProvider? _staticBackgroundBlurProvider;
   bool _deferredEntryShellActive = false;
   String? _entrySideEffectsConversationId;
   String? _timelineDisplayCacheConversationId;
@@ -794,6 +752,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   void _forceChatListToBottom() {
+    final autoScroll =
+        ref.read(appSettingsProvider).valueOrNull?.autoScrollOnSend ?? true;
+    if (!autoScroll) return;
     _viewportController.onUserSend();
   }
 
@@ -926,10 +887,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           Navigator.of(context, rootNavigator: true).pop();
           unawaited(_cancelModelFailoverRequest(request));
         },
-        content: Text(
-          '当前模型“${request.failedModelName}”这次请求失败。\n'
-          '要继续重试当前模型，还是改为尝试下一个模型“${request.nextModelName}”？',
-        ),
+        content: ModelFailoverErrorContent(request: request),
       );
 
       if (!mounted) {
@@ -1177,27 +1135,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   /// (注释已丢失)
-  ImageProvider? _getImageProvider(String url) {
-    final trimmed = url.trim();
-    if (trimmed.isEmpty) return null;
-
-    // (注释已丢失)
-    if (trimmed.startsWith('data:image')) return null;
-
-    final isNetwork =
-        trimmed.startsWith('http://') || trimmed.startsWith('https://');
-    final isAsset =
-        trimmed.startsWith('assets/') || trimmed.startsWith('packages/');
-
-    if (isNetwork) {
-      return CachedNetworkImageProvider(trimmed);
-    } else if (isAsset) {
-      return AssetImage(trimmed);
-    } else {
-      // (注释已丢失)
-      return FileImage(File(trimmed));
-    }
-  }
+  ImageProvider? _getImageProvider(String url) => chatImageProviderFor(url);
 
   /// (注释已丢失)
   ImageProvider? _getBlockImageProvider(MessageBlock block) {
@@ -1228,170 +1166,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     required Color fallbackColor,
     required Widget child,
   }) {
-    final raw = conv?.chatBackgroundImage?.trim();
-    if (raw == null || raw.isEmpty) {
-      if (fallbackColor == telegramChatBackground ||
-          fallbackColor == telegramChatBackgroundDark) {
-        return MoeWorkspaceBackground(
-          background: const MoeChatWallpaper(child: SizedBox.expand()),
-          child: child,
-        );
-      }
-      return MoeWorkspaceBackground(
-        background: ColoredBox(color: fallbackColor),
-        child: child,
-      );
-    }
-
-    final image = _buildBackgroundImage(raw);
-    if (image == null) {
-      return MoeWorkspaceBackground(
-        background: ColoredBox(color: fallbackColor),
-        child: child,
-      );
-    }
-    final maskOpacity = (conv?.chatBackgroundMaskOpacity ?? 0.8).clamp(
-      0.0,
-      1.0,
-    );
-    final topMaskOpacity = (maskOpacity + 0.12).clamp(0.0, 1.0);
-    final blurSigma = (conv?.chatBackgroundBlurSigma ?? 0.0).clamp(0.0, 30.0);
-    final blurOverlayOpacity = _staticBlurOverlayOpacity(blurSigma);
-    final blurOverlay = blurOverlayOpacity > 0
-        ? _buildStaticBackgroundBlurLayer(raw, opacity: blurOverlayOpacity)
-        : null;
-
     return MoeWorkspaceBackground(
-      background: Container(
-        color: fallbackColor,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            image,
-            if (blurOverlay != null) blurOverlay,
-            IgnorePointer(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      fallbackColor.withValues(alpha: topMaskOpacity),
-                      fallbackColor.withValues(
-                        alpha: (maskOpacity * 0.9).clamp(0.0, 1.0),
-                      ),
-                      fallbackColor.withValues(alpha: maskOpacity),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
+      background: ChatWallpaperLayer.forConversation(
+        conversation: conv,
+        fallbackColor: fallbackColor,
       ),
       child: child,
-    );
-  }
-
-  double _staticBlurOverlayOpacity(double blurSigma) {
-    if (blurSigma <= 0.1) return 0;
-    return Curves.easeOut.transform((blurSigma / 30).clamp(0.0, 1.0));
-  }
-
-  Widget? _buildStaticBackgroundBlurLayer(
-    String source, {
-    required double opacity,
-  }) {
-    final blurAsset = BlurredBackgroundService.deriveBlurAssetPath(source);
-    if (blurAsset == null) {
-      _scheduleStaticBackgroundBlur(source);
-    }
-    Widget? layer;
-    if (blurAsset != null) {
-      layer = SizedBox.expand(
-        child: Image.asset(
-          blurAsset,
-          fit: BoxFit.cover,
-          gaplessPlayback: true,
-          filterQuality: FilterQuality.medium,
-          errorBuilder: (_, __, ___) {
-            final provider = _resolveStaticBackgroundBlurProvider(source);
-            if (provider == null) return const SizedBox.shrink();
-            return _buildStaticBackgroundBlurImage(provider);
-          },
-        ),
-      );
-    } else {
-      final provider = _resolveStaticBackgroundBlurProvider(source);
-      if (provider != null) {
-        layer = _buildStaticBackgroundBlurImage(provider);
-      }
-    }
-
-    if (layer == null) return null;
-    return IgnorePointer(
-      child: Opacity(
-        key: const ValueKey<String>('chat_page_static_blur_layer'),
-        opacity: opacity,
-        child: layer,
-      ),
-    );
-  }
-
-  ImageProvider? _resolveStaticBackgroundBlurProvider(String source) {
-    if (_staticBackgroundBlurSource != source) return null;
-    return _staticBackgroundBlurProvider;
-  }
-
-  Widget _buildStaticBackgroundBlurImage(ImageProvider provider) {
-    return SizedBox.expand(
-      child: Image(
-        image: provider,
-        fit: BoxFit.cover,
-        gaplessPlayback: true,
-        filterQuality: FilterQuality.medium,
-        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-      ),
-    );
-  }
-
-  void _scheduleStaticBackgroundBlur(String source) {
-    if (_staticBackgroundBlurSource == source) return;
-    _staticBackgroundBlurSource = source;
-    _staticBackgroundBlurProvider = null;
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _staticBackgroundBlurSource != source) return;
-      unawaited(
-        BlurredBackgroundService.ensureBlur(source).then((provider) {
-          if (!mounted || _staticBackgroundBlurSource != source) return;
-          if (identical(_staticBackgroundBlurProvider, provider)) return;
-          setState(() {
-            _staticBackgroundBlurProvider = provider;
-          });
-        }),
-      );
-    });
-  }
-
-  Widget? _buildBackgroundImage(String raw) {
-    final bytes = decodeDataImage(raw);
-    if (bytes != null) {
-      return Image.memory(
-        bytes,
-        fit: BoxFit.cover,
-        gaplessPlayback: true,
-        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-      );
-    }
-
-    final provider = _getImageProvider(raw);
-    if (provider == null) return null;
-    return Image(
-      image: provider,
-      fit: BoxFit.cover,
-      gaplessPlayback: true,
-      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
     );
   }
 
@@ -1548,13 +1328,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       }
     });
 
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final chatBgColor = isDark
-        ? telegramChatBackgroundDark
-        : (chatBackgroundColorSetting == null ||
-              chatBackgroundColorSetting == Colors.white)
-        ? telegramChatBackground
-        : chatBackgroundColorSetting;
+    final chatBgColor = resolveChatBackgroundColor(
+      context,
+      chatBackgroundColorSetting,
+    );
     final textScaler = MediaQuery.textScalerOf(context);
     final toolbarHeight = MoeChatHeader.heightFor(textScaler);
     final listTopSpacing =

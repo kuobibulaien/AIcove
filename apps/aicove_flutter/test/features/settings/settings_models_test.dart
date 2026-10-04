@@ -12,6 +12,34 @@ void main() {
     expect(ModelType.inferFromModelId('openai:fable'), ModelType.tts);
   });
 
+  group('inferChatModelCapabilities', () {
+    test('unrecognized model defaults to vision, tools and reasoning', () {
+      expect(inferChatModelCapabilities('my-custom-model'), [
+        ChatModelCapability.vision,
+        ChatModelCapability.tools,
+        ChatModelCapability.reasoning,
+      ]);
+    });
+
+    test('recognized model keeps inferred capabilities only', () {
+      expect(inferChatModelCapabilities('deepseek-flash'),
+          [ChatModelCapability.tools]);
+    });
+
+    test('web capability no longer exists and stored values are dropped', () {
+      expect(ChatModelCapability.fromValue('web'), isNull);
+      expect(
+        ChatModelCapability.normalizeValues(<String>['vision', 'web']),
+        <String>['vision'],
+      );
+      expect(inferChatModelCapabilities('sonar-pro'), [
+        ChatModelCapability.vision,
+        ChatModelCapability.tools,
+        ChatModelCapability.reasoning,
+      ]);
+    });
+  });
+
   group('ModelConfig.thinkingLevel', () {
     test('json round-trip and isDefault', () {
       const config = ModelConfig(thinkingLevel: ThinkingLevel.xhigh);

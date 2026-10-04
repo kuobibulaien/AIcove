@@ -1,33 +1,33 @@
-/// AddProviderSheet - 娣诲姞渚涘簲鍟嗗簳閮ㄥ脊绐?
+/// AddProviderSheet - 添加供应商底部弹窗
 ///
-/// 璁捐鐗圭偣锛?
-/// - 搴曢儴寮圭獥褰㈠紡
-/// - 绗竴姝ワ細閫夋嫨 API 鏍煎紡锛圤penAI/Claude/Gemini锛?
-/// - 绗簩姝ワ細濉啓鍩虹閰嶇疆锛堟樉绀哄悕绉般€丄PI Key銆丄PI 鍦板潃锛?
-/// - 绗笁姝ワ細閫夋嫨妯″瀷鐢ㄩ€旓紙瀵硅瘽/宓屽叆/鍥剧墖/璇煶锛屽崟閫夛級
+/// 设计特点：
+/// - 第一行选择供应商分类：对话 / 绘图 / 语音
+/// - 第二行按分类切换 API 格式（ComfyUI、NovelAI 只属于绘图）
+/// - 基础配置输入框占满标题以外的宽度
+/// - 绘图／语音供应商导入时整体定型为对应分类
 ///
-/// 鏇存柊璁板綍锛?
-/// - 2026-02-21: NovelAI 绉诲叆鍐呯疆渚涘簲鍟嗗垪琛紝姝ゅ浠呬繚鐣?3 绉嶆爣鍑?API 鏍煎紡
-/// - 2026-01-31: 绉婚櫎TTS鐢ㄩ€旂殑浜岀骇API鏍煎紡閫夋嫨
-/// - 2026-01-25: 鐢ㄩ€旀敼涓哄閫夛紝涓€琛屼竴涓竷灞€
-/// - 2026-01-22: 鐢ㄩ€旀敼涓哄崟閫夛紝API鏍煎紡鏀逛负涓夐€変竴鍒囨崲妗?
-/// - 2026-01-21: 鍒涘缓娣诲姞渚涘簲鍟嗗簳閮ㄥ脊绐?
+/// 更新记录：
+/// - 2026-10-04: 重写；新增分类选择，ComfyUI 移出对话格式，输入框自适应宽度
+/// - 2026-02-21: NovelAI 移入内置供应商列表
+/// - 2026-01-21: 创建添加供应商底部弹窗
 library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/api/image_providers/comfyui_image_adapter.dart';
+import '../../../../core/api/image_providers/comfyui_workflow.dart';
 import '../../../../core/api/providers/google_api_mode.dart';
 import '../../../../core/api/providers/provider_chat_api_path.dart';
 import '../../../../features/settings/app_settings.dart';
-import '../../../theme/tokens.dart';
+import '../../../../features/settings/data/support/ui_models_store_support.dart'
+    show kNovelAiDefaultModels;
 import '../../../shared/effects/smooth_clip.dart';
 import '../../../shared/widgets/index.dart';
-import '../../../../core/api/image_providers/comfyui_workflow.dart';
-import '../../../../core/api/image_providers/comfyui_image_adapter.dart';
+import '../../../theme/tokens.dart';
 import '../widgets/comfyui_workflow_editor.dart';
 
-/// 鏄剧ず娣诲姞渚涘簲鍟嗗簳閮ㄥ脊绐?
+/// 显示添加供应商底部弹窗
 Future<bool?> showAddProviderSheet(BuildContext context) {
   return showModalBottomSheet<bool>(
     context: context,
@@ -37,62 +37,146 @@ Future<bool?> showAddProviderSheet(BuildContext context) {
   );
 }
 
-/// API 鏍煎紡
-class ApiFormat {
-  const ApiFormat._(
-    this.value,
-    this.label,
-    this.defaultBaseUrl,
-    this.defaultApiPath,
-  );
+/// 供应商分类，值与 provider capabilities 一致
+enum ProviderCategory {
+  chat('chat', '对话'),
+  image('image', '绘图'),
+  tts('tts', '语音');
 
-  static const openai = ApiFormat._(
-    'openai',
-    'OpenAI',
-    'https://api.openai.com/v1',
-    '/chat/completions',
-  );
-  static const claude = ApiFormat._(
-    'claude',
-    'Claude',
-    'https://api.anthropic.com/v1',
-    '/messages',
-  );
-  static const gemini = ApiFormat._(
-    'gemini',
-    'Gemini',
-    kGeminiDeveloperApiBase,
-    '/models/{model}:generateContent',
-  );
-  static const novelai = ApiFormat._(
-    'novelai',
-    'NovelAI',
-    'https://image.novelai.net',
-    '',
-  );
-
-  static const comfyui = ApiFormat._(
-    'comfyui',
-    'ComfyUI',
-    'http://127.0.0.1:8188',
-    '',
-  );
-
-  static const chatFormats = <ApiFormat>[openai, claude, gemini];
-  static const imageFormats = <ApiFormat>[openai, novelai, comfyui];
-
-  static List<ApiFormat> forCapability(String capability) {
-    if (capability == 'image') return imageFormats;
-    return chatFormats;
-  }
+  const ProviderCategory(this.value, this.label);
 
   final String value;
   final String label;
-  final String defaultBaseUrl;
-  final String defaultApiPath;
 }
 
-/// 娣诲姞渚涘簲鍟嗗簳閮ㄥ脊绐?
+/// API 格式
+class ApiFormat {
+  const ApiFormat._({
+    required this.value,
+    required this.label,
+    required this.defaultBaseUrl,
+    String? providerId,
+    this.defaultApiPath = '',
+    this.defaultModels = const <String>[],
+    this.apiKeyOptional = false,
+  }) : providerId = providerId ?? value;
+
+  /// 写入 customConfig.requestFormat 的值
+  final String value;
+  final String label;
+  final String defaultBaseUrl;
+
+  /// 导入时的渠道 id 前缀（重名时自动追加序号）
+  final String providerId;
+
+  /// 对话请求路径；为空表示该格式不需要填写路径
+  final String defaultApiPath;
+
+  /// 拉取不到对应分类模型时使用的默认模型
+  final List<String> defaultModels;
+  final bool apiKeyOptional;
+
+  bool get showsApiPath => defaultApiPath.isNotEmpty;
+
+  static const openai = ApiFormat._(
+    value: 'openai',
+    label: 'OpenAI',
+    defaultBaseUrl: 'https://api.openai.com/v1',
+    defaultApiPath: '/chat/completions',
+  );
+  static const claude = ApiFormat._(
+    value: 'claude',
+    label: 'Claude',
+    defaultBaseUrl: 'https://api.anthropic.com/v1',
+    defaultApiPath: '/messages',
+  );
+  static const gemini = ApiFormat._(
+    value: 'gemini',
+    label: 'Gemini',
+    defaultBaseUrl: kGeminiDeveloperApiBase,
+    defaultApiPath: '/models/{model}:generateContent',
+  );
+
+  static const openaiImage = ApiFormat._(
+    value: 'openai',
+    label: 'OpenAI',
+    defaultBaseUrl: 'https://api.openai.com/v1',
+    defaultModels: <String>['gpt-image-1'],
+  );
+  static const novelai = ApiFormat._(
+    value: 'novelai',
+    label: 'NovelAI',
+    defaultBaseUrl: 'https://image.novelai.net',
+    defaultModels: kNovelAiDefaultModels,
+  );
+  static const comfyui = ApiFormat._(
+    value: 'comfyui',
+    label: 'ComfyUI',
+    defaultBaseUrl: 'http://127.0.0.1:8188',
+    apiKeyOptional: true,
+  );
+
+  static const openaiTts = ApiFormat._(
+    value: 'openai_tts',
+    providerId: 'openai',
+    label: 'OpenAI',
+    defaultBaseUrl: 'https://api.openai.com/v1',
+    defaultModels: <String>['gpt-4o-mini-tts', 'tts-1', 'tts-1-hd'],
+  );
+  static const minimaxTts = ApiFormat._(
+    value: 'minimax',
+    label: 'MiniMax',
+    defaultBaseUrl: 'https://api.minimaxi.com/v1',
+    defaultModels: <String>['speech-2.8-hd', 'speech-2.8-turbo'],
+  );
+  static const siliconflowTts = ApiFormat._(
+    value: 'siliconflow_indextts',
+    providerId: 'siliconflow',
+    label: '硅基流动',
+    defaultBaseUrl: 'https://api.siliconflow.cn/v1',
+    defaultModels: <String>[
+      'IndexTeam/IndexTTS-2',
+      'FunAudioLLM/CosyVoice2-0.5B',
+    ],
+  );
+  // 阿里云按模型名区分 CosyVoice / Qwen-TTS，requestFormat 留默认交给 URL 识别。
+  static const aliyunTts = ApiFormat._(
+    value: 'openai_tts',
+    providerId: 'aliyun',
+    label: '阿里云',
+    defaultBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    defaultModels: <String>[
+      'cosyvoice-v3-plus',
+      'qwen3-tts-vc-realtime-2026-01-15',
+    ],
+  );
+  static const fishAudioTts = ApiFormat._(
+    value: 'fish_audio',
+    label: 'Fish Audio',
+    defaultBaseUrl: 'https://api.fish.audio/v1',
+    defaultModels: <String>['s2.1-pro-free', 's2.1-pro'],
+  );
+
+  static const chatFormats = <ApiFormat>[openai, claude, gemini];
+  static const imageFormats = <ApiFormat>[openaiImage, novelai, comfyui];
+  static const ttsFormats = <ApiFormat>[
+    openaiTts,
+    minimaxTts,
+    siliconflowTts,
+    aliyunTts,
+    fishAudioTts,
+  ];
+
+  static List<ApiFormat> forCategory(ProviderCategory category) {
+    return switch (category) {
+      ProviderCategory.chat => chatFormats,
+      ProviderCategory.image => imageFormats,
+      ProviderCategory.tts => ttsFormats,
+    };
+  }
+}
+
+/// 添加供应商底部弹窗
 class AddProviderSheet extends ConsumerStatefulWidget {
   const AddProviderSheet({super.key});
 
@@ -108,6 +192,7 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
     text: ApiFormat.openai.defaultApiPath,
   );
 
+  ProviderCategory _category = ProviderCategory.chat;
   ApiFormat _selectedFormat = ApiFormat.openai;
   bool _submitting = false;
   Map<String, dynamic> _comfyConfig = {};
@@ -122,6 +207,11 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
     super.dispose();
   }
 
+  void _onCategoryChanged(ProviderCategory category) {
+    _category = category;
+    _onFormatChanged(ApiFormat.forCategory(category).first);
+  }
+
   void _onFormatChanged(ApiFormat format) {
     setState(() {
       _selectedFormat = format;
@@ -131,6 +221,9 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
   }
 
   List<String> _pickDefaultVisibleModels(List<String> models) {
+    if (_category != ProviderCategory.chat) {
+      return models.take(3).toList();
+    }
     final selected = <String>[];
     final pickedTypes = <ModelType>{};
     for (final model in models) {
@@ -145,21 +238,32 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
     return selected;
   }
 
+  /// 绘图／语音只保留对应分类的模型，ComfyUI 的工作流模型不按名字过滤。
+  List<String> _filterByCategory(List<String> models) {
+    if (_category == ProviderCategory.chat || _isComfyUI) return models;
+    return models
+        .where(
+          (model) => ModelType.inferFromModelId(model).value == _category.value,
+        )
+        .toList();
+  }
+
   Future<void> _submit() async {
+    final format = _selectedFormat;
     final apiKey = _keyCtrl.text.trim();
     final apiBaseUrl = _urlCtrl.text.trim();
-    final apiPath = _pathCtrl.text.trim();
+    final apiPath = format.showsApiPath ? _pathCtrl.text.trim() : '';
     final displayName = _displayCtrl.text.trim();
 
-    if (apiKey.isEmpty && !_isComfyUI) {
-      MoeToast.show(context, '\u8bf7\u8f93\u5165 API Key');
+    if (apiKey.isEmpty && !format.apiKeyOptional) {
+      MoeToast.show(context, '请输入 API Key');
       return;
     }
     if (apiBaseUrl.isEmpty) {
-      MoeToast.show(context, '\u8bf7\u8f93\u5165 API \u5730\u5740');
+      MoeToast.show(context, '请输入 API 地址');
       return;
     }
-    if (apiPath.isEmpty && !_isComfyUI) {
+    if (apiPath.isEmpty && format.showsApiPath) {
       MoeToast.show(context, '请输入 API 路径');
       return;
     }
@@ -177,49 +281,55 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
 
     try {
       final notifier = ref.read(appSettingsProvider.notifier);
-      var warningMessage = '';
-      List<String> allModels = const <String>[];
-      List<String> visibleModels = const <String>[];
+      var previewFailed = false;
+      var allModels = const <String>[];
       final customConfig = copyCustomConfigWithProviderChatApiPath(
         <String, dynamic>{
-          'requestFormat': _selectedFormat.value,
+          'requestFormat': format.value,
           if (_isComfyUI) ..._comfyConfig,
         },
         apiPath,
       );
 
       try {
-        final preview = await notifier.previewProviderModels(
-          providerId: _selectedFormat.value,
-          apiKey: apiKey,
-          apiBaseUrl: apiBaseUrl,
-          customConfig: customConfig,
+        allModels = _filterByCategory(
+          await notifier.previewProviderModels(
+            providerId: format.providerId,
+            apiKey: apiKey,
+            apiBaseUrl: apiBaseUrl,
+            customConfig: customConfig,
+          ),
         );
-        allModels = preview;
-        visibleModels = _pickDefaultVisibleModels(preview);
       } catch (_) {
-        warningMessage =
-            '\u65e0\u6cd5\u8fde\u63a5\u5230\u6a21\u578b\u670d\u52a1\uff0c\u5df2\u5148\u4fdd\u5b58\u6e20\u9053\u3002\u8bf7\u68c0\u67e5 API \u5730\u5740\u6216 Key\uff0c\u53ef\u5728\u8be6\u60c5\u9875\u5237\u65b0\u6a21\u578b\u5217\u8868\u3002';
+        previewFailed = true;
+      }
+      if (allModels.isEmpty && format.defaultModels.isNotEmpty) {
+        allModels = List<String>.of(format.defaultModels);
+        previewFailed = false;
       }
 
       await notifier.importCustomModel(
         name: null,
         apiKey: apiKey,
         apiBaseUrl: apiBaseUrl,
-        provider: _selectedFormat.value,
+        provider: format.providerId,
         displayName: displayName.isNotEmpty ? displayName : null,
         allModels: allModels,
-        visibleModels: visibleModels,
+        visibleModels: _pickDefaultVisibleModels(allModels),
         customConfig: customConfig,
-        capabilities: _isComfyUI ? const ['image'] : null,
+        capabilities: <String>[_category.value],
       );
 
       if (!mounted) return;
       Navigator.of(context).pop(true);
-      if (warningMessage.isEmpty) {
-        MoeToast.show(context, '\u6dfb\u52a0\u6210\u529f');
+      if (previewFailed) {
+        MoeToast.show(
+          context,
+          '无法连接到模型服务，已先保存渠道。请检查 API 地址或 Key，可在详情页刷新模型列表。',
+          type: ToastType.warning,
+        );
       } else {
-        MoeToast.show(context, warningMessage, type: ToastType.warning);
+        MoeToast.show(context, '添加成功');
       }
     } catch (e) {
       if (mounted) {
@@ -239,9 +349,9 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
   String _buildSubmitErrorMessage(Object error) {
     final raw = error.toString();
     if (raw.contains('provider_id') && raw.contains('api_key')) {
-      return '\u6dfb\u52a0\u5931\u8d25\uff1aAPI Key \u4e0d\u80fd\u4e3a\u7a7a';
+      return '添加失败：API Key 不能为空';
     }
-    return '\u6dfb\u52a0\u5931\u8d25\uff1a$raw';
+    return '添加失败：$raw';
   }
 
   @override
@@ -250,14 +360,13 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
     final viewInsets = MediaQuery.of(context).viewInsets;
     final screenHeight = MediaQuery.of(context).size.height;
 
-    // 涓嶆妸鏁翠釜 sheet 寰€涓婇《锛氬彧鍦ㄥ唴閮ㄥ唴瀹瑰尯缁欓敭鐩樿浣嶏紝瑙傛劅鏇村儚"杈撳叆鍖烘姮璧?銆?
+    // 不把整个 sheet 往上顶：只在内部内容区给键盘让位。
     return MoeFloatingSurface(
       baseline: MoeMaterialBaseline.background,
       radius: 24,
       borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       child: Container(
         constraints: BoxConstraints(maxHeight: screenHeight * 0.85),
-
         child: SafeArea(
           child: AnimatedPadding(
             duration: kAnimFast,
@@ -266,7 +375,6 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // 瑁呴グ鏉?
                 Container(
                   margin: const EdgeInsets.only(top: 12, bottom: 8),
                   width: 32,
@@ -276,8 +384,6 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                     color: colors.border.withValues(alpha: 0.5),
                   ),
                 ),
-
-                // 鏍囬
                 Padding(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 20,
@@ -286,7 +392,7 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                   child: Row(
                     children: [
                       Text(
-                        '\u6dfb\u52a0\u4f9b\u5e94\u5546',
+                        '添加供应商',
                         style: TextStyle(
                           fontSize: 18,
                           fontWeight: MoeFontWeights.emphasis,
@@ -302,148 +408,74 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                     ],
                   ),
                 ),
-
                 const Divider(height: 1),
-
                 Flexible(
                   child: SingleChildScrollView(
                     padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // 1. 閫夋嫨 API 鏍煎紡
-                        _buildSectionTitle('API \u683c\u5f0f', colors),
+                        _buildSectionTitle('类型与格式', colors),
                         const SizedBox(height: 8),
                         MoeSettingsGroup(
                           margin: EdgeInsets.zero,
                           padding: const EdgeInsets.all(12),
                           borderRadius: BorderRadius.circular(20),
                           children: [
-                            MoeToggleBar<ApiFormat>(
+                            MoeToggleBar<ProviderCategory>(
+                              value: _category,
+                              items: ProviderCategory.values
+                                  .map(
+                                    (c) =>
+                                        MoeToggleItem(value: c, label: c.label),
+                                  )
+                                  .toList(),
+                              onChanged: _onCategoryChanged,
+                            ),
+                            const SizedBox(height: 10),
+                            _FormatBar(
                               value: _selectedFormat,
-                              items:
-                                  [...ApiFormat.chatFormats, ApiFormat.comfyui]
-                                      .map(
-                                        (f) => MoeToggleItem(
-                                          value: f,
-                                          label: f.label,
-                                        ),
-                                      )
-                                      .toList(),
+                              formats: ApiFormat.forCategory(_category),
                               onChanged: _onFormatChanged,
                             ),
                           ],
                         ),
-
                         const SizedBox(height: 20),
-
-                        // 2. 鍩虹閰嶇疆
-                        _buildSectionTitle('\u57fa\u7840\u914d\u7f6e', colors),
+                        _buildSectionTitle('基础配置', colors),
                         const SizedBox(height: 8),
                         MoeSettingsGroup(
                           margin: EdgeInsets.zero,
                           children: [
-                            MoeSettingsRow(
+                            _buildInputRow(
+                              colors,
                               icon: Icons.badge_outlined,
-                              label: '\u663e\u793a\u540d\u79f0',
-                              trailingType: MoeSettingsRowTrailing.custom,
-                              trailing: SizedBox(
-                                width: 160,
-                                child: TextField(
-                                  controller: _displayCtrl,
-                                  textAlign: TextAlign.end,
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: colors.text,
-                                  ),
-                                  decoration: MoeInputDecoration(
-                                    hintText: '\u53ef\u7559\u7a7a',
-                                    hintStyle: TextStyle(
-                                      color: colors.muted,
-                                      fontSize: 14,
-                                    ),
-                                    isDense: true,
-                                    contentPadding: EdgeInsets.zero,
-                                  ),
-                                ),
-                              ),
+                              label: '显示名称',
+                              controller: _displayCtrl,
+                              hintText: '可留空',
                             ),
-                            MoeSettingsRow(
+                            _buildInputRow(
+                              colors,
                               icon: Icons.key_outlined,
                               label: 'API Key',
-                              trailingType: MoeSettingsRowTrailing.custom,
-                              trailing: SizedBox(
-                                width: 160,
-                                child: TextField(
-                                  controller: _keyCtrl,
-                                  obscureText: false,
-                                  textAlign: TextAlign.end,
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: colors.text,
-                                  ),
-                                  decoration: MoeInputDecoration(
-                                    hintText: _isComfyUI
-                                        ? '可选（Bearer Token）'
-                                        : '\u5fc5\u586b',
-                                    hintStyle: TextStyle(
-                                      color: colors.muted,
-                                      fontSize: 14,
-                                    ),
-                                    isDense: true,
-                                    contentPadding: EdgeInsets.zero,
-                                  ),
-                                ),
-                              ),
+                              controller: _keyCtrl,
+                              hintText: _selectedFormat.apiKeyOptional
+                                  ? '可选（Bearer Token）'
+                                  : '必填',
                             ),
-                            MoeSettingsRow(
+                            _buildInputRow(
+                              colors,
                               icon: Icons.link_outlined,
                               label: '基础 URL',
-                              trailingType: MoeSettingsRowTrailing.custom,
-                              trailing: SizedBox(
-                                width: 180,
-                                child: TextField(
-                                  controller: _urlCtrl,
-                                  textAlign: TextAlign.end,
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: colors.text,
-                                  ),
-                                  decoration: MoeInputDecoration(
-                                    hintStyle: TextStyle(
-                                      color: colors.muted,
-                                      fontSize: 14,
-                                    ),
-                                    isDense: true,
-                                    contentPadding: EdgeInsets.zero,
-                                  ),
-                                ),
-                              ),
+                              controller: _urlCtrl,
+                              showDivider: _selectedFormat.showsApiPath,
                             ),
-                            if (!_isComfyUI)
-                              MoeSettingsRow(
+                            if (_selectedFormat.showsApiPath)
+                              _buildInputRow(
+                                colors,
                                 icon: Icons.route_outlined,
                                 label: 'API 路径',
-                                trailingType: MoeSettingsRowTrailing.custom,
-                                trailing: SizedBox(
-                                  width: 180,
-                                  child: TextField(
-                                    controller: _pathCtrl,
-                                    textAlign: TextAlign.end,
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      color: colors.text,
-                                    ),
-                                    decoration: MoeInputDecoration(
-                                      hintStyle: TextStyle(
-                                        color: colors.muted,
-                                        fontSize: 14,
-                                      ),
-                                      isDense: true,
-                                      contentPadding: EdgeInsets.zero,
-                                    ),
-                                  ),
-                                ),
+                                controller: _pathCtrl,
+                                showDivider: false,
                               ),
                           ],
                         ),
@@ -457,7 +489,8 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                                 detailText: _comfyConfig.isEmpty
                                     ? '导入并绑定提示词'
                                     : '已配置',
-                                trailingType: MoeSettingsRowTrailing.chevron,
+                                trailingType: MoeSettingsRowTrailing.text,
+                                showDivider: false,
                                 onTap: () async {
                                   final config =
                                       await showComfyUIWorkflowEditor(
@@ -471,9 +504,9 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                               ),
                             ],
                           ),
-                          const SizedBox(height: 8),
-                          const Text(
+                          _buildHint(
                             '同机可用 127.0.0.1；手机连接电脑时填写电脑的局域网地址。模型与 LoRA 由工作流指定。',
+                            colors,
                           ),
                         ],
                         ValueListenableBuilder<TextEditingValue>(
@@ -483,58 +516,25 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                                 !shouldSuggestOpenAiBaseUrlV1(value.text)) {
                               return const SizedBox.shrink();
                             }
-                            return Padding(
-                              padding: const EdgeInsets.only(top: 8),
-                              child: Container(
-                                width: double.infinity,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 10,
-                                ),
-                                decoration: MoeG2Decoration(
-                                  radius: MoeRadii.md,
-                                  color: colors.surfaceAlt.withValues(
-                                    alpha: 0.72,
-                                  ),
-                                  border: Border.all(
-                                    color: colors.border.withValues(
-                                      alpha: 0.45,
-                                    ),
-                                    width: 1,
-                                  ),
-                                ),
-                                child: Text(
-                                  'OpenAI 格式推荐让基础 URL 以 /v1 结尾，模型预览会更稳。',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: colors.textSecondary,
-                                    height: 1.35,
-                                  ),
-                                ),
-                              ),
+                            return _buildHint(
+                              'OpenAI 格式推荐让基础 URL 以 /v1 结尾，模型预览会更稳。',
+                              colors,
                             );
                           },
                         ),
-
-                        const SizedBox(height: 20),
-
-                        const SizedBox(height: 24),
-
-                        // 鎻愪氦鎸夐挳
+                        const SizedBox(height: 32),
                         Row(
                           children: [
                             Expanded(
                               child: MoeSecondaryButton(
-                                label: '\u53d6\u6d88',
+                                label: '取消',
                                 onPressed: () => Navigator.of(context).pop(),
                               ),
                             ),
                             const SizedBox(width: 16),
                             Expanded(
                               child: MoePrimaryButton(
-                                label: _submitting
-                                    ? '\u6dfb\u52a0\u4e2d...'
-                                    : '\u7acb\u5373\u6dfb\u52a0',
+                                label: _submitting ? '添加中...' : '立即添加',
                                 onPressed: _submitting ? null : _submit,
                               ),
                             ),
@@ -552,6 +552,61 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
     );
   }
 
+  /// 输入框占满标题右侧的全部空间，长 URL 也能尽量完整显示。
+  Widget _buildInputRow(
+    MoeColors colors, {
+    required IconData icon,
+    required String label,
+    required TextEditingController controller,
+    String? hintText,
+    bool showDivider = true,
+  }) {
+    return MoeSettingsRow(
+      icon: icon,
+      label: label,
+      showDivider: showDivider,
+      trailingType: MoeSettingsRowTrailing.custom,
+      expandTrailing: true,
+      trailing: TextField(
+        controller: controller,
+        textAlign: TextAlign.end,
+        style: TextStyle(fontSize: 14, color: colors.text),
+        decoration: MoeInputDecoration(
+          hintText: hintText,
+          hintStyle: TextStyle(color: colors.muted, fontSize: 14),
+          isDense: true,
+          contentPadding: EdgeInsets.zero,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHint(String text, MoeColors colors) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: MoeG2Decoration(
+          radius: MoeRadii.md,
+          color: colors.surfaceAlt.withValues(alpha: 0.72),
+          border: Border.all(
+            color: colors.border.withValues(alpha: 0.45),
+            width: 1,
+          ),
+        ),
+        child: Text(
+          text,
+          style: TextStyle(
+            fontSize: 12,
+            color: colors.textSecondary,
+            height: 1.35,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildSectionTitle(String title, MoeColors colors) {
     return Padding(
       padding: const EdgeInsets.only(left: 4),
@@ -563,6 +618,44 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
           color: colors.textSecondary,
         ),
       ),
+    );
+  }
+}
+
+/// API 格式切换条：放得下时等分撑满，放不下时改为横向滚动。
+class _FormatBar extends StatelessWidget {
+  const _FormatBar({
+    required this.value,
+    required this.formats,
+    required this.onChanged,
+  });
+
+  static const double _minItemWidth = 84;
+
+  final ApiFormat value;
+  final List<ApiFormat> formats;
+  final ValueChanged<ApiFormat> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final items = formats
+        .map((f) => MoeToggleItem(value: f, label: f.label))
+        .toList();
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final fits = constraints.maxWidth / formats.length >= _minItemWidth;
+        final bar = MoeToggleBar<ApiFormat>(
+          value: value,
+          items: items,
+          expanded: fits,
+          onChanged: onChanged,
+        );
+        if (fits) return bar;
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: bar,
+        );
+      },
     );
   }
 }

@@ -22,7 +22,10 @@ final _exportConversationMessageCountProvider =
 
 /// 导出角色选择页面
 class ExportCharacterPage extends ConsumerStatefulWidget {
-  const ExportCharacterPage({super.key});
+  const ExportCharacterPage({super.key, this.password = ''});
+
+  /// 备份 ZIP 密码，空字符串表示不加密
+  final String password;
 
   @override
   ConsumerState<ExportCharacterPage> createState() => _ExportCharacterPageState();
@@ -268,7 +271,9 @@ class _ExportCharacterPageState extends ConsumerState<ExportCharacterPage> {
 
     try {
       final exporter = ref.read(conversationExporterProvider);
-      final options = ref.read(exportOptionsProvider);
+      final options = ref
+          .read(exportOptionsProvider)
+          .copyWith(password: widget.password);
 
       final result = await exporter.exportConversations(
         conversationIds: selectedIds.toList(),
@@ -317,6 +322,7 @@ class _ExportCharacterPageState extends ConsumerState<ExportCharacterPage> {
             Text('角色数：${result.conversationCount}'),
             Text('消息数：${result.messageCount}'),
             Text('文件大小：${_formatSize(result.sizeBytes)}'),
+            Text(widget.password.isEmpty ? '未加密' : '已用密码加密'),
           ],
         ),
         actions: [

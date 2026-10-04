@@ -33,6 +33,55 @@ Future<({String name, String source})?> pickTavernJson() async {
   return (name: file.name, source: utf8.decode(bytes));
 }
 
+/// 选择预设 JSON、预览确认后导入；取消返回 null，失败直接抛出，
+/// 由调用方用 [runTavernAction] 提示。
+Future<SillyTavernPreset?> importTavernPresetWithPreview(
+  BuildContext context,
+  WidgetRef ref,
+) async {
+  final file = await pickTavernJson();
+  if (file == null || !context.mounted) return null;
+  final controller = ref.read(presetRecipeImportControllerProvider.notifier);
+  final preview = controller.previewSource(
+    file.source,
+    sourceFileName: file.name,
+  );
+  final colors = context.moeColors;
+  final confirmed = await showMeoTalkDialog(
+    context: context,
+    title: '导入「${preview.name}」',
+    cancelText: '取消',
+    confirmText: '导入',
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(PresetRecipeSummary.fromPreset(preview).description),
+        const SizedBox(height: 8),
+        Text(
+          preview.regexScriptCount > 0
+              ? '导入后可以逐条开关。正则默认不运行，需要到「正则」里手动允许。'
+              : '导入后可以逐条开关。',
+          style: TextStyle(fontSize: 13, color: colors.muted),
+        ),
+        if (preview.warnings.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(
+            [
+              for (final warning in preview.warnings.take(3)) '· $warning',
+              if (preview.warnings.length > 3)
+                '另有 ${preview.warnings.length - 3} 条提示，导入后可在「预设信息」查看',
+            ].join('\n'),
+            style: TextStyle(fontSize: 13, color: colors.toastWarning),
+          ),
+        ],
+      ],
+    ),
+  );
+  if (confirmed != true || !context.mounted) return null;
+  return controller.importSource(file.source, sourceFileName: file.name);
+}
+
 /// 执行一次用户操作，失败时用提示条说明原因。
 Future<void> runTavernAction(
   BuildContext context,

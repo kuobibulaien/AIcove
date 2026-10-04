@@ -132,7 +132,7 @@ class _MoeSliderState extends State<MoeSlider> {
                             MoeGlassTheme.maybeOf(context)?.enabled ?? true,
                         quality: GlassQuality.standard,
                         radius: 8,
-                        baseline: MoeMaterialBaseline.none,
+                        baseline: MoeMaterialBaseline.component,
                         child: const SizedBox.expand(),
                       ),
                     ),

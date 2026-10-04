@@ -86,14 +86,17 @@ void main() {
             alignment: 0.03,
           );
           await tester.pumpAndSettle();
-          final slider = find.byKey(const ValueKey('glass-thickness-slider'));
-          expect(tester.widget<MoeSlider>(slider).value, 19);
+          final slider = find.byKey(const ValueKey('material-blur-slider'));
+          expect(
+            tester.widget<MoeSlider>(slider).value,
+            moreOrLessEquals(19 / 32 * 100, epsilon: 1e-6),
+          );
           expect(
             container.read(appSettingsProvider).requireValue.glassBlurSigma,
             19,
             reason: 'Reading old settings must not rewrite persisted data',
           );
-          for (final label in ['纯色', '模糊', '玻璃', '通透', '中等', '厚重']) {
+          for (final label in ['纯色', '模糊', '玻璃', '模糊度', '底色填充']) {
             expect(find.text(label), findsOneWidget);
           }
           expect(tester.takeException(), isNull);
@@ -171,18 +174,18 @@ void main() {
             alignment: 0.03,
           );
           await tester.pumpAndSettle();
-          final slider = find.byKey(const ValueKey('frosted-blur-slider'));
+          final slider = find.byKey(const ValueKey('material-blur-slider'));
           expect(slider, findsOneWidget);
           expect(
-            find.byKey(const ValueKey('glass-thickness-slider')),
-            findsNothing,
+            find.byKey(const ValueKey('material-tint-slider')),
+            findsOneWidget,
           );
           final widget = tester.widget<MoeSlider>(slider);
           expect(widget.min, 10);
           expect(widget.max, 100);
           expect(widget.divisions, isNull, reason: '模糊度为 10..100 连续滑条');
           expect(widget.value, moreOrLessEquals(59.375, epsilon: 1e-6));
-          for (final label in ['纯色', '模糊', '玻璃', '模糊度', '59%', '10%', '100%']) {
+          for (final label in ['纯色', '模糊', '玻璃', '模糊度', '底色填充']) {
             expect(find.text(label), findsOneWidget);
           }
           for (final label in ['通透', '中等', '厚重']) {

@@ -120,20 +120,20 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        // Three header capsules, one composer capsule, one panel and seven tiles.
-        expect(find.byType(MoeFloatingSurface), findsNWidgets(12));
-        await tester.tap(find.byIcon(Icons.call_outlined));
+        // Three header capsules, one composer capsule, one panel and five tiles.
+        expect(find.byType(MoeFloatingSurface), findsNWidgets(10));
+        await tester.tap(find.byIcon(Icons.call_outlined).first);
         await tester.tap(find.text('相册'));
         expect(taps, 2);
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
         await tester.tap(find.byIcon(Icons.more_horiz));
         await tester.pumpAndSettle();
-        expect(find.byType(MoeFloatingSurface), findsNWidgets(13));
+        expect(find.byType(MoeFloatingSurface), findsNWidgets(11));
         await tester.tap(find.text('详情'));
         await tester.pumpAndSettle();
         expect(taps, 3);
-        expect(find.byType(MoeFloatingSurface), findsNWidgets(12));
+        expect(find.byType(MoeFloatingSurface), findsNWidgets(10));
         if (capture && liquid) {
           await tester.runAsync(() async {
             final render =

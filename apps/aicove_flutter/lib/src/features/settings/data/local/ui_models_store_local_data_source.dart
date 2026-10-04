@@ -11,6 +11,14 @@ import '../support/ui_models_store_support.dart';
 
 const _legacyTriggerConfigKey = 'aicove.plugins.trigger.config';
 
+/// 导入时只声明了单一绘图／语音能力，返回该能力；否则返回 null。
+String? _singleMediaCapability(List<String>? capabilities) {
+  final cleaned = cleanSettingsStrings(capabilities);
+  if (cleaned.length != 1) return null;
+  final only = cleaned.single;
+  return only == 'image' || only == 'tts' ? only : null;
+}
+
 /// 设置模块本地存储数据源。
 /// 只负责 SharedPreferences 持久化、默认值兜底和本地 key 注入。
 class UiModelsStoreLocalDataSource {
@@ -61,9 +69,13 @@ class UiModelsStoreLocalDataSource {
         requestFormat == 'nai';
 
     final isComfyUI = ComfyUIWorkflow.isProvider(providerId, customConfig);
-    if (isComfyUI) {
+    // 绘图／语音供应商按导入时选的分类整体定型，避免模型名推断成对话。
+    final forcedModelType = isComfyUI
+        ? 'image'
+        : _singleMediaCapability(capabilities);
+    if (forcedModelType != null) {
       for (final model in models) {
-        modelTypes['$providerId:$model'] = 'image';
+        modelTypes['$providerId:$model'] = forcedModelType;
       }
       current['model_types'] = modelTypes;
     }
@@ -131,9 +143,9 @@ class UiModelsStoreLocalDataSource {
     providers.removeWhere((p) => p['id'] == providerId);
     providers.add(entry);
     current['providers'] = providers;
-    if (!isComfyUI && visible.isNotEmpty) {
+    if (forcedModelType == null && visible.isNotEmpty) {
       current['default_model'] = visible.first;
-    } else if (!isComfyUI && models.isNotEmpty) {
+    } else if (forcedModelType == null && models.isNotEmpty) {
       current['default_model'] = models.first;
     }
 

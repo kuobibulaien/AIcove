@@ -19,6 +19,7 @@ class PendingImporter extends Fake implements ConversationImporter {
       required List<String> selectedScopes,
       required List<String> selectedConversationIds,
       Map<String, ImportConflictResolution> conflictResolutions = const {},
+      String? password,
       void Function(ImportProgress)? onProgress}) {
     calls++;
     progress = onProgress;

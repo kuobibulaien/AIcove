@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:crypto/crypto.dart';
 import 'package:image/image.dart' as img;
 import 'package:zxing2/qrcode.dart';
+import 'package:aicove_flutter/src/features/sync/data/lan_crypto.dart';
 import 'package:aicove_flutter/src/features/sync/data/lan_discovery.dart';
 import 'package:aicove_flutter/src/features/sync/data/lan_media.dart';
 import 'package:aicove_flutter/src/features/sync/data/lan_service.dart';
@@ -13,6 +14,7 @@ import 'lan_transport_test.dart' show LanMemoryCredentials;
 
 class LanTestDiscovery implements LanDiscovery {
   bool active = false;
+  void Function(String, List<LanEndpoint>)? found;
   @override
   Future<void> start(
     String id,
@@ -20,6 +22,7 @@ class LanTestDiscovery implements LanDiscovery {
     void Function(String, List<LanEndpoint>) found,
   ) async {
     active = true;
+    this.found = found;
   }
 
   @override
@@ -82,6 +85,56 @@ void main() {
     expect(sb.peers.peers['a']!.error, isNull);
   }
 
+  test(
+    'six-digit code pairs a nearby device through an X25519 exchange',
+    () async {
+      await seedLan(a);
+      await sa.invite();
+      final pin = sa.state.pin!;
+      expect(pin, matches(RegExp(r'^\d{6}$')));
+      db.found!('a', [LanEndpoint('127.0.0.1', sa.transport.port)]);
+      await sb.pair('${pin.substring(0, 3)} ${pin.substring(3)}');
+      expect(sb.state.error, isNull);
+      expect(sb.state.peers.single.name, sa.state.name);
+      expect(sb.state.peers.single.pending, true);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(sa.state.peers.single.incoming, true);
+      expect(sa.state.pin, isNull);
+      final key = sb.peers.peers['a']!.key;
+      expect(sa.peers.peers['b']!.key, key);
+      expect(
+        key,
+        isNot(await LanCrypto.pinKey(pin, 'a')),
+        reason: 'the pair key must not be derivable from the short code alone',
+      );
+      await sa.approve('b');
+      await sb.synchronize();
+      expect(sb.peers.peers['a']!.error, isNull);
+      expect(
+        (await b.local.read('messages', 'message'))!.payload['row']['content'],
+        '原文',
+      );
+    },
+  );
+  test('wrong six-digit codes burn the code after five attempts', () async {
+    await sa.invite();
+    final pin = sa.state.pin!;
+    final wrong = ((int.parse(pin) + 1) % 1000000).toString().padLeft(6, '0');
+    db.found!('a', [LanEndpoint('127.0.0.1', sa.transport.port)]);
+    for (var i = 0; i < lanPinAttempts; i++) {
+      await sb.pair(wrong);
+      expect(sb.state.error, contains('数字配对码不正确'));
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(sa.state.pin, isNull);
+    await sb.pair(pin);
+    expect(sb.state.error, contains('附近没有找到'));
+    expect(sb.state.peers, isEmpty);
+    expect(sa.state.peers, isEmpty);
+    // The QR code stays usable; only the guessable code is closed.
+    await sb.pair(sa.state.invitation!);
+    expect(sb.state.error, isNull);
+  });
   test(
     'image pairing decodes a complete invitation without camera or network',
     () async {
@@ -147,6 +200,30 @@ void main() {
         }))['text'],
         '局域网原文',
       );
+    },
+  );
+  test(
+    'six-digit code finds the host by subnet sweep when Bonjour is silent',
+    () async {
+      final hostStore = LanPeerStore(LanMemoryCredentials());
+      final guestStore = LanPeerStore(LanMemoryCredentials());
+      final host = LanTransport('host', hostStore, (p, b) async => {}, () {});
+      final guest = LanTransport('guest', guestStore, (p, b) async => {}, () {});
+      await host.start();
+      await guest.start();
+      addTearDown(() async {
+        await host.stop();
+        await guest.stop();
+      });
+      if ((await host.addresses()).isEmpty ||
+          host.port != lanPreferredPort) {
+        markTestSkipped('No IPv4 LAN interface or the fixed port is taken');
+        return;
+      }
+      await host.invite('电脑');
+      await guest.pairPin(host.invitation!.pin!, '手机', const []);
+      expect(guestStore.peers['host']!.name, '电脑');
+      expect(hostStore.peers['guest']!.key, guestStore.peers['host']!.key);
     },
   );
   test(
@@ -349,12 +426,12 @@ void main() {
         (group) => group.first.kind == 'conversations',
       );
       final retained = role.firstWhere((r) => !r.deleted);
-      await sb.resolve(retained, role.map((r) => r.hash).toList());
+      await sb.resolve([(retained, role.map((r) => r.hash).toList())]);
       final message = (await b.repo.conflicts()).firstWhere(
         (group) => group.first.kind == 'messages',
       );
       final edit = message.firstWhere((r) => !r.deleted);
-      await sb.resolve(edit, message.map((r) => r.hash).toList());
+      await sb.resolve([(edit, message.map((r) => r.hash).toList())]);
       await sb.synchronize();
       await sa.synchronize();
       expect(await a.local.read('conversations', 'role'), isNotNull);

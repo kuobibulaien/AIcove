@@ -100,9 +100,11 @@ enum ComposerPanelType { none, keyboard, more }
 class Composer extends ConsumerStatefulWidget {
   final bool disabled;
   final FutureOr<void> Function(String) onSend;
+
   /// False means the page did not accept the submission; retain its draft.
   final FutureOr<bool> Function(String)? onSubmitText;
-  final FutureOr<bool> Function(String imagePath, {String? text})? onSubmitImage;
+  final FutureOr<bool> Function(String imagePath, {String? text})?
+  onSubmitImage;
   final FutureOr<void> Function(String imagePath, {String? text})?
   onImageSelected;
   final FutureOr<void> Function(String filePath, {String? text})?
@@ -988,7 +990,9 @@ class _ComposerState extends ConsumerState<Composer> {
     final text = draftText.trim();
     final scopeId = _readCurrentConversationId();
     final scopeEpoch = _draftScopeEpoch;
-    if (_editSubmitting || _plainSubmittingEpoch == scopeEpoch || _draftLoading) {
+    if (_editSubmitting ||
+        _plainSubmittingEpoch == scopeEpoch ||
+        _draftLoading) {
       return;
     }
     if (_invalidEditDraft) {
@@ -1049,12 +1053,14 @@ class _ComposerState extends ConsumerState<Composer> {
           final submit = widget.onSubmitImage;
           if (submit != null) {
             final accepted = await submit(
-              attachment.path, text: text.isEmpty ? null : text,
+              attachment.path,
+              text: text.isEmpty ? null : text,
             );
             if (!accepted) return;
           } else if (widget.onImageSelected != null) {
             await widget.onImageSelected!(
-              attachment.path, text: text.isEmpty ? null : text,
+              attachment.path,
+              text: text.isEmpty ? null : text,
             );
           } else {
             return;
@@ -1065,7 +1071,8 @@ class _ComposerState extends ConsumerState<Composer> {
             return;
           }
           await widget.onFileSelected!(
-            attachment.path, text: text.isEmpty ? null : text,
+            attachment.path,
+            text: text.isEmpty ? null : text,
           );
         }
         if (!draftUnchanged()) return;
@@ -1473,14 +1480,10 @@ class _ComposerState extends ConsumerState<Composer> {
         _openThinkingLevelFromMorePanel();
       case ComposerAction.gallery:
         _pickImage(ImageSource.gallery);
-      case ComposerAction.camera:
-        _pickImage(ImageSource.camera);
-      case ComposerAction.file:
-        _pickFile();
-      case ComposerAction.audio:
-        _pickAudio();
-      case ComposerAction.video:
-        _pickVideo();
+      case ComposerAction.attachment:
+        _pickAttachment();
+      case ComposerAction.call:
+        MoeToast.brief(context, '通话功能即将上线');
     }
   }
 
@@ -1691,11 +1694,11 @@ class _ComposerState extends ConsumerState<Composer> {
     }
   }
 
-  Future<void> _pickFile() async {
+  Future<void> _pickAttachment() async {
     final settings = ref.read(appSettingsProvider).valueOrNull;
     final maxMb = settings?.maxFileUploadMB ?? 10;
 
-    final result = await AttachmentPickerService.pickFile(maxMb: maxMb);
+    final result = await AttachmentPickerService.pickAttachment(maxMb: maxMb);
     if (!mounted) return;
 
     switch (result) {
@@ -1705,74 +1708,15 @@ class _ComposerState extends ConsumerState<Composer> {
       case AttachmentFileTooLarge(:final maxMb):
         await showMeoTalkAlert(
           context: context,
-          title: '文件太大',
+          title: '附件太大',
           message: '当前最大支持 ${maxMb}MB，已拦截发送。',
         );
       case AttachmentUnsupportedType():
         await showMeoTalkAlert(
           context: context,
-          title: '暂不支持该文件',
-          message: '目前仅支持 txt/md/json/csv 等纯文本文件；该格式无法让 AI 正确读取。',
-        );
-      case AttachmentPickError(:final message):
-        MoeToast.error(context, message);
-      case _:
-        break;
-    }
-  }
-
-  Future<void> _pickAudio() async {
-    final settings = ref.read(appSettingsProvider).valueOrNull;
-    final maxMb = settings?.maxFileUploadMB ?? 10;
-
-    final result = await AttachmentPickerService.pickAudio(maxMb: maxMb);
-    if (!mounted) return;
-
-    switch (result) {
-      case AttachmentPickSuccess(:final attachment):
-        await _setSelectedAttachment(attachment);
-        _showKeyboardWithPreAnimation();
-      case AttachmentFileTooLarge(:final maxMb):
-        await showMeoTalkAlert(
-          context: context,
-          title: '音频太大',
-          message: '当前最大支持 ${maxMb}MB，已拦截发送。',
-        );
-      case AttachmentUnsupportedType():
-        await showMeoTalkAlert(
-          context: context,
-          title: '暂不支持该音频',
-          message: '目前仅支持 mp3/wav/m4a/ogg/opus 等常见音频格式。',
-        );
-      case AttachmentPickError(:final message):
-        MoeToast.error(context, message);
-      case _:
-        break;
-    }
-  }
-
-  Future<void> _pickVideo() async {
-    final settings = ref.read(appSettingsProvider).valueOrNull;
-    final maxMb = settings?.maxFileUploadMB ?? 10;
-
-    final result = await AttachmentPickerService.pickVideo(maxMb: maxMb);
-    if (!mounted) return;
-
-    switch (result) {
-      case AttachmentPickSuccess(:final attachment):
-        await _setSelectedAttachment(attachment);
-        _showKeyboardWithPreAnimation();
-      case AttachmentFileTooLarge(:final maxMb):
-        await showMeoTalkAlert(
-          context: context,
-          title: '视频太大',
-          message: '当前最大支持 ${maxMb}MB，已拦截发送。',
-        );
-      case AttachmentUnsupportedType():
-        await showMeoTalkAlert(
-          context: context,
-          title: '暂不支持该视频',
-          message: '目前仅支持 mp4/mov/webm/mkv/avi 等常见视频格式。',
+          title: '暂不支持该附件',
+          message:
+              '目前支持 txt/md/json/csv 等纯文本、mp3/wav/m4a 等音频、mp4/mov/webm 等视频及常见图片。',
         );
       case AttachmentPickError(:final message):
         MoeToast.error(context, message);

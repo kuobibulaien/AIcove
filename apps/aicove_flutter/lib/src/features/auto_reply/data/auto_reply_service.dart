@@ -4,6 +4,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/app_logger.dart';
+import '../../../core/services/android_keep_alive_manager.dart';
+import '../../chat/conversation_providers.dart';
+import '../../sync/providers/lan_sync_provider.dart';
 import 'analyzer_scheduler.dart';
 import 'auto_reply_dispatch_service.dart';
 import 'background_message_reprocessor.dart';
@@ -13,8 +16,33 @@ import 'auto_reply_trigger_controller.dart';
 final autoReplyServiceProvider = Provider((ref) {
   final service = AutoReplyService(ref);
   ref.onDispose(service.dispose);
+  ref.listen<bool>(
+    androidGuardNeededProvider,
+    (_, inUse) => unawaited(
+      AndroidKeepAliveManager.syncGuard(inUse).catchError((Object _) {}),
+    ),
+    fireImmediately: true,
+  );
   return service;
 });
+
+/// 是否有联系人启用了主动关怀插件；主动关怀没有全局开关，由角色卡逐个勾选。
+final proactiveCareInUseProvider = Provider<bool>((ref) {
+  return ref.watch(
+    conversationsProvider.select(
+      (listAsync) =>
+          listAsync.valueOrNull?.any(
+            (conversation) => conversation.allowsPlugin('trigger'),
+          ) ??
+          false,
+    ),
+  );
+});
+
+/// Android 常驻守护：主动关怀在用，或局域网同步已有配对设备时开启。
+final androidGuardNeededProvider = Provider<bool>(
+  (ref) => ref.watch(proactiveCareInUseProvider) || ref.watch(lanKeepsAliveProvider),
+);
 
 /// 串行事件队列：按入队顺序逐个 await 处理，避免并发处理触发器事件
 /// 造成状态机写入竞争或乱序（AR-034）。

@@ -74,6 +74,11 @@ class PersistentGuardService : Service() {
         fun setGenerationActive(context: Context, active: Boolean): Boolean {
             generationActive = active
             if (active) {
+                val current = instance
+                if (current != null && foregroundActive) {
+                    current.refreshForegroundState()
+                    return foregroundActive && isGenerationWakeLockHeld()
+                }
                 val started = start(context)
                 if (!started) {
                     generationActive = false
@@ -91,6 +96,8 @@ class PersistentGuardService : Service() {
         fun isForegroundActive(): Boolean = foregroundActive
 
         fun isGenerationActive(): Boolean = generationActive
+
+        fun isGenerationWakeLockHeld(): Boolean = instance?.generationWakeLock?.isHeld == true
 
         fun getLastStartError(): String? = lastStartError
 

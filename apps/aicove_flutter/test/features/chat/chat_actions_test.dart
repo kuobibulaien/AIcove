@@ -84,6 +84,8 @@ class _SpyModelFailoverPromptController extends ModelFailoverPromptController {
     required String failedModelName,
     required String nextModelName,
     required String errorMessage,
+    String? errorDetail,
+    DateTime? roundStartedAt,
   }) async {
     requestCalls += 1;
     return ModelFailoverDecision.tryNext;
@@ -100,6 +102,8 @@ class _BlockingModelFailoverPromptController
     required String failedModelName,
     required String nextModelName,
     required String errorMessage,
+    String? errorDetail,
+    DateTime? roundStartedAt,
   }) {
     requestCalls += 1;
     return super.request(
@@ -107,6 +111,8 @@ class _BlockingModelFailoverPromptController
       failedModelName: failedModelName,
       nextModelName: nextModelName,
       errorMessage: errorMessage,
+      errorDetail: errorDetail,
+      roundStartedAt: roundStartedAt,
     );
   }
 }
@@ -3581,7 +3587,7 @@ void main() {
     );
     final settings = _buildTestSettings().copyWith(
       ttsEnabled: false,
-      autoReplySettings: const AutoReplySettings(enabled: true),
+      autoReplySettings: const AutoReplySettings(),
     );
 
     late _RecordingImageConfigSendService sendService;
@@ -3643,7 +3649,7 @@ void main() {
     );
     final settings = _buildTestSettings().copyWith(
       ttsEnabled: false,
-      autoReplySettings: const AutoReplySettings(enabled: true),
+      autoReplySettings: const AutoReplySettings(),
     );
 
     late _RetryOnceProviderRefreshImageSendService sendService;

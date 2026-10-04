@@ -29,26 +29,17 @@ void main() {
       );
     await icons.load();
   });
-  test('every layer responds continuously and preserves its tint order', () {
-    for (final colors in [MoeColors.light(), MoeColors.dark()]) {
-      final previous = <double>[-1, -1, -1];
-      for (var value = 0; value <= 100; value++) {
-        final layers = [
-          MoeMaterialBaseline.none,
-          MoeMaterialBaseline.background,
-          MoeMaterialBaseline.text,
-        ];
-        final alphas = layers
-            .map(
-              (b) => colors.glassTintForSigma(value / 100 * 32, baseline: b).a,
-            )
-            .toList();
-        expect(alphas[0], lessThan(alphas[1]));
-        expect(alphas[1], lessThan(alphas[2]));
-        for (var i = 0; i < layers.length; i++) {
-          expect(alphas[i], greaterThan(previous[i]));
-          previous[i] = alphas[i];
-        }
+  test('every layer blurs continuously; background keeps its minimum', () {
+    final previous = <double>[-1, -1];
+    for (var value = 0; value <= 100; value++) {
+      final blurs = [
+        MoeMaterialBaseline.component,
+        MoeMaterialBaseline.background,
+      ].map((b) => b.blurSigma(value / 100 * 32)).toList();
+      if (value < 100) expect(blurs[0], lessThan(blurs[1]));
+      for (var i = 0; i < blurs.length; i++) {
+        expect(blurs[i], greaterThanOrEqualTo(previous[i]));
+        previous[i] = blurs[i];
       }
     }
   });
@@ -74,7 +65,7 @@ void main() {
           find.byType(MoeFloatingSurface),
         );
         expect(surface.blurSigma, sigma);
-        expect(surface.baseline, MoeMaterialBaseline.text);
+        expect(surface.baseline, MoeMaterialBaseline.background);
       }
     },
   );
@@ -104,6 +95,7 @@ void main() {
                     useLiquidGlass: true,
                     enabled: true,
                     blurSigma: value,
+                    tintFill: value / kMaxGlassBlurSigma,
                     child: RepaintBoundary(
                       key: key,
                       child: Stack(
@@ -220,10 +212,10 @@ void main() {
                 .widgetList<MoeFloatingSurface>(find.byType(MoeFloatingSurface))
                 .toList();
             expect(surfaces.map((s) => s.baseline), [
-              MoeMaterialBaseline.none,
+              MoeMaterialBaseline.component,
               MoeMaterialBaseline.background,
-              MoeMaterialBaseline.text,
-              MoeMaterialBaseline.text,
+              MoeMaterialBaseline.background,
+              MoeMaterialBaseline.background,
             ]);
             for (final surface in surfaces) {
               final material = tester.widget<Material>(
@@ -237,7 +229,7 @@ void main() {
               expect(
                 material.color!.a,
                 closeTo(
-                  colors.glassTintForSigma(value, baseline: surface.baseline).a,
+                  colors.glassTintForFill(value / kMaxGlassBlurSigma).a,
                   0.0001,
                 ),
               );

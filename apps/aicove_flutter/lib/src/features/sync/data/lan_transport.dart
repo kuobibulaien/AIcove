@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 import 'package:uuid/uuid.dart';
 import '../../../core/storage/device_credential_storage.dart';
@@ -8,6 +9,10 @@ import '../domain/lan_contract.dart';
 import 'lan_crypto.dart';
 
 const lanRequestLimit = 8 * 1024 * 1024;
+
+/// Fixed port lets a numeric code find the host when Bonjour is blocked.
+const lanPreferredPort = 47231;
+const lanPinAttempts = 5;
 
 bool lanAddress(String host, {bool loopback = false}) {
   final ip = InternetAddress.tryParse(host);
@@ -56,6 +61,7 @@ class LanPeer {
   DateTime? lastSync;
   String? error;
   bool online = false;
+  LanEndpoint? _verifiedEndpoint;
   Map<String, dynamic> toJson() => {
     'id': id,
     'name': name,
@@ -110,10 +116,24 @@ class LanPeerStore {
 }
 
 class LanInvitation {
-  LanInvitation(this.id, this.name, this.key, this.expires, this.endpoints);
+  LanInvitation(
+    this.id,
+    this.name,
+    this.key,
+    this.expires,
+    this.endpoints, {
+    this.pin,
+    this.pinKey,
+  });
   final String id, name, key;
   final DateTime expires;
   final List<LanEndpoint> endpoints;
+  final String? pin, pinKey;
+  int pinFailures = 0;
+  bool get pinOpen =>
+      pin != null &&
+      pinFailures < lanPinAttempts &&
+      expires.isAfter(DateTime.now());
   String get code => Uri(
     scheme: 'aicove-lan',
     host: 'pair',
@@ -198,12 +218,14 @@ class LanTransport {
     this.handle,
     this.changed, {
     this.loopback = false,
+    this.preferredPort = lanPreferredPort,
   });
   final String deviceId;
   final LanPeerStore store;
   final LanRpcHandler handle;
   final void Function() changed;
   final bool loopback;
+  final int preferredPort;
   HttpServer? _server;
   HttpClient? _client;
   LanInvitation? invitation;
@@ -217,9 +239,8 @@ class LanTransport {
   Future<void> start() async {
     if (_server != null) return;
     final generation = ++_generation;
-    final server = await HttpServer.bind(
+    final server = await _bind(
       loopback ? InternetAddress.loopbackIPv4 : InternetAddress.anyIPv4,
-      0,
     );
     if (generation != _generation) {
       await server.close(force: true);
@@ -229,11 +250,33 @@ class LanTransport {
     _client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 5)
       ..findProxy = (_) => 'DIRECT';
-    server.listen((request) {
-      final operation = _serve(request);
-      _activeRequests.add(operation);
-      operation.whenComplete(() => _activeRequests.remove(operation));
-    });
+    server.listen(
+      (request) {
+        final operation = _serve(request);
+        _activeRequests.add(operation);
+        operation.whenComplete(() => _activeRequests.remove(operation));
+      },
+      onError: (Object _) {},
+      onDone: () {
+        // The OS may reclaim the socket in the background; start() rebinds.
+        if (!identical(_server, server)) return;
+        _server = null;
+        _client?.close(force: true);
+        _client = null;
+        changed();
+      },
+    );
+  }
+
+  Future<HttpServer> _bind(InternetAddress address) async {
+    if (preferredPort > 0) {
+      try {
+        return await HttpServer.bind(address, preferredPort);
+      } on SocketException {
+        /* Another instance holds the port; Bonjour still advertises ours. */
+      }
+    }
+    return HttpServer.bind(address, 0);
   }
 
   Future<void> stop() async {
@@ -265,14 +308,149 @@ class LanTransport {
     if (endpoints.isEmpty) {
       throw const LanSyncFailure('没有可用的局域网地址，请连接同一 Wi-Fi 或热点');
     }
+    final pin = Random.secure().nextInt(1000000).toString().padLeft(6, '0');
     invitation = LanInvitation(
       deviceId,
       name,
       await LanCrypto.randomKey(),
       DateTime.now().add(const Duration(minutes: 10)),
       endpoints,
+      pin: pin,
+      pinKey: await LanCrypto.pinKey(pin, deviceId),
     );
     return invitation!.code;
+  }
+
+  /// Pairs with whichever nearby device is showing [pin]. Bonjour results are
+  /// tried first; the subnet sweep covers networks that block multicast.
+  Future<void> pairPin(
+    String pin,
+    String name,
+    Iterable<LanEndpoint> nearby,
+  ) async {
+    if (_client == null) throw const LanSyncFailure('请先开启局域网同步');
+    final tried = <String>{};
+    var alreadyPaired = false, found = false;
+    for (final group in [nearby.toList(), ...await _sweepGroups()]) {
+      final targets = group
+          .where((e) => tried.add('${e.host}:${e.port}'))
+          .toList();
+      final hosts = await _pinHosts(targets);
+      found |= hosts.isNotEmpty;
+      for (final MapEntry(key: id, value: endpoints) in hosts.entries) {
+        if (store.peers[id]?.approved == true) {
+          alreadyPaired = true;
+          continue;
+        }
+        final pinKey = await LanCrypto.pinKey(pin, id);
+        final own = await LanCrypto.exchangeKeyPair();
+        final Map<String, dynamic> reply;
+        try {
+          reply = await _send(
+            LanPeer(id: id, name: id, key: pinKey, endpoints: endpoints),
+            {
+              'name': name,
+              'endpoints': (await addresses()).map((e) => e.toJson()).toList(),
+              'public_key': await LanCrypto.publicKey(own),
+            },
+            'pin',
+            secret: pinKey,
+            transient: true,
+          );
+        } on LanSyncFailure {
+          continue; // Wrong code for this device, or it stopped showing one.
+        }
+        final hostName = reply['name'], hostKey = reply['public_key'];
+        if (hostName is! String ||
+            hostName.isEmpty ||
+            hostName.length > 50 ||
+            hostKey is! String) {
+          throw const LanSyncFailure('另一端的配对应答无效');
+        }
+        store.peers[id] = LanPeer(
+          id: id,
+          name: hostName,
+          key: await LanCrypto.pinPairKey(pinKey, own, hostKey, id, deviceId),
+          endpoints: endpoints,
+          incoming: false,
+        );
+        await store.save();
+        changed();
+        return;
+      }
+    }
+    throw LanSyncFailure(
+      alreadyPaired
+          ? '附近显示配对码的设备已经配对过了'
+          : !found
+          ? '附近没有找到正在显示配对码的设备，请确认两端连接同一 Wi-Fi，或改用扫一扫'
+          : '数字配对码不正确或已失效，请核对另一台设备上的数字',
+    );
+  }
+
+  /// One /24 per local interface, swept lazily so a hit stops the search.
+  Future<List<List<LanEndpoint>>> _sweepGroups() async {
+    if (loopback || preferredPort == 0) return const [];
+    final prefixes = {
+      for (final e in await addresses())
+        if (!e.host.startsWith('169.254.'))
+          e.host.substring(0, e.host.lastIndexOf('.')),
+    };
+    return [
+      for (final prefix in prefixes)
+        [for (var i = 1; i < 255; i++) LanEndpoint('$prefix.$i', preferredPort)],
+    ];
+  }
+
+  Future<Map<String, List<LanEndpoint>>> _pinHosts(
+    List<LanEndpoint> targets,
+  ) async {
+    final hosts = <String, List<LanEndpoint>>{};
+    final queue = targets
+        .where((e) => lanAddress(e.host, loopback: loopback))
+        .toList();
+    final probe = HttpClient()
+      ..connectionTimeout = const Duration(milliseconds: 800)
+      ..findProxy = (_) => 'DIRECT';
+    Future<void> worker() async {
+      while (queue.isNotEmpty) {
+        final endpoint = queue.removeLast();
+        try {
+          final request = await probe
+              .getUrl(endpoint.uri('hello'))
+              .timeout(const Duration(seconds: 1));
+          request.followRedirects = false;
+          final response = await request.close().timeout(
+            const Duration(seconds: 2),
+          );
+          if (response.statusCode != 200) {
+            await response.drain<void>();
+            continue;
+          }
+          final body = await _readJson(
+            response,
+          ).timeout(const Duration(seconds: 2));
+          final id = body['id'];
+          if (id is String &&
+              id.isNotEmpty &&
+              id.length <= 100 &&
+              id != deviceId &&
+              body['protocol'] == lanProtocolVersion &&
+              (hosts[id] ??= []).length < 8) {
+            hosts[id]!.add(endpoint);
+          }
+        } catch (_) {
+          /* Not an AIcove device that is showing a code. */
+        }
+      }
+    }
+
+    try {
+      await Future.wait(List.generate(128, (_) => worker()));
+    } finally {
+      probe.close(force: true);
+    }
+    return hosts;
   }
 
   Future<void> pair(String code, String name) async {
@@ -324,6 +502,7 @@ class LanTransport {
     Map<String, dynamic> body,
     String path, {
     String? secret,
+    bool transient = false,
   }) async {
     final client = _client;
     if (client == null) throw const LanSyncFailure('局域网同步已暂停');
@@ -338,7 +517,16 @@ class LanTransport {
     );
     final bytes = utf8.encode(jsonEncode(envelope));
     if (bytes.length > lanRequestLimit) throw const LanSyncFailure('同步请求过大');
-    for (final endpoint in peer.endpoints) {
+    final offered = List<LanEndpoint>.of(peer.endpoints);
+    final verified = peer._verifiedEndpoint;
+    bool preferred(LanEndpoint endpoint) =>
+        endpoint.host == verified?.host && endpoint.port == verified?.port;
+    // VPN advertisements may put unreachable virtual interfaces first on every
+    // status update. Reuse only an authenticated route still offered by the peer.
+    for (final endpoint in [
+      ...offered.where(preferred),
+      ...offered.where((endpoint) => !preferred(endpoint)),
+    ]) {
       if (!lanAddress(endpoint.host, loopback: loopback)) continue;
       try {
         if (generation != _generation) throw const LanSyncFailure('局域网同步已暂停');
@@ -346,6 +534,8 @@ class LanTransport {
             .postUrl(endpoint.uri(path))
             .timeout(const Duration(seconds: 6));
         request.followRedirects = false;
+        // A restarted peer reuses the fixed port; a pooled socket would be dead.
+        request.persistentConnection = false;
         request.headers.contentType = ContentType.json;
         request.contentLength = bytes.length;
         request.add(bytes);
@@ -364,9 +554,11 @@ class LanTransport {
           requestId: id,
           response: true,
         );
-        if (generation != _generation || store.peers[peer.id] != peer) {
+        if (generation != _generation ||
+            (!transient && store.peers[peer.id] != peer)) {
           throw const LanSyncFailure('局域网连接已停止');
         }
+        peer._verifiedEndpoint = endpoint;
         if (result['error'] is String) {
           throw LanSyncFailure(result['error'] as String);
         }
@@ -394,12 +586,27 @@ class LanTransport {
       if (_active > 4 ||
           _replay.length >= 10000 ||
           _server == null ||
-          request.method != 'POST' ||
           !lanAddress(
             request.connectionInfo?.remoteAddress.address ?? '',
             loopback: loopback,
-          ) ||
-          !{'/lan/v1/rpc', '/lan/v1/pair'}.contains(request.uri.path) ||
+          )) {
+        throw const LanSyncFailure('连接不可用');
+      }
+      if (request.method == 'GET' && request.uri.path == '/lan/v1/hello') {
+        // Only answers while a numeric code is shown, so idle devices stay quiet.
+        if (invitation?.pinOpen != true) throw const LanSyncFailure('连接不可用');
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          jsonEncode({'id': deviceId, 'protocol': lanProtocolVersion}),
+        );
+        return;
+      }
+      if (request.method != 'POST' ||
+          !{
+            '/lan/v1/rpc',
+            '/lan/v1/pair',
+            '/lan/v1/pin',
+          }.contains(request.uri.path) ||
           request.contentLength > lanRequestLimit) {
         throw const LanSyncFailure('连接不可用');
       }
@@ -416,26 +623,38 @@ class LanTransport {
         throw const LanSyncFailure('设备编号无效');
       }
       final invite = invitation;
-      final isPair = request.uri.path.endsWith('/pair');
+      final isPin = request.uri.path.endsWith('/pin');
+      final isPair = isPin || request.uri.path.endsWith('/pair');
       final peer = store.peers[from];
       if (isPair) {
         if (invite == null ||
             !invite.expires.isAfter(DateTime.now()) ||
+            (isPin && !invite.pinOpen) ||
             peer?.approved == true) {
           throw const LanSyncFailure('邀请不可用');
         }
-        secret = invite.key;
+        secret = isPin ? invite.pinKey! : invite.key;
       } else {
         if (peer == null) throw const LanSyncFailure('尚未配对');
         secret = peer.key;
       }
-      final body = await LanCrypto.open(
-        secret,
-        envelope,
-        from: from,
-        to: deviceId,
-        requestId: id,
-      );
+      final Map<String, dynamic> body;
+      try {
+        body = await LanCrypto.open(
+          secret,
+          envelope,
+          from: from,
+          to: deviceId,
+          requestId: id,
+        );
+      } on LanSyncFailure {
+        // A wrong guess burns one of the few attempts a six-digit code allows.
+        if (isPin && identical(invitation, invite)) {
+          invite!.pinFailures++;
+          changed();
+        }
+        rethrow;
+      }
       final now = DateTime.now();
       _replay.removeWhere(
         (_, at) => now.difference(at) > const Duration(minutes: 10),
@@ -458,15 +677,30 @@ class LanTransport {
         if (_server == null || invitation != invite) {
           throw const LanSyncFailure('邀请已停止');
         }
+        final own = isPin ? await LanCrypto.exchangeKeyPair() : null;
         store.peers[from] = LanPeer(
           id: from,
           name: name,
-          key: await LanCrypto.pairKey(secret, from, deviceId),
+          key: own == null
+              ? await LanCrypto.pairKey(secret, from, deviceId)
+              : await LanCrypto.pinPairKey(
+                  secret,
+                  own,
+                  body['public_key'] as String,
+                  from,
+                  deviceId,
+                ),
           endpoints: endpoints,
         );
         await store.save();
         invitation = null;
-        result = {'pending': true};
+        result = {
+          'pending': true,
+          if (own != null) ...{
+            'name': invite!.name,
+            'public_key': await LanCrypto.publicKey(own),
+          },
+        };
         changed();
       } else {
         if (_server == null || store.peers[from] != peer) {
@@ -474,7 +708,7 @@ class LanTransport {
         }
         if (body['method'] == 'status') {
           if (peer!.approved && body['endpoints'] is List) {
-            final endpoints = (body['endpoints'] as List)
+            var endpoints = (body['endpoints'] as List)
                 .map((e) => LanEndpoint.fromJson(e as Map, loopback: loopback))
                 .toList();
             final name = body['name'] as String;
@@ -484,6 +718,11 @@ class LanTransport {
                 name.length > 50) {
               throw const LanSyncFailure('设备名称或地址无效');
             }
+            final observedHost = request.connectionInfo?.remoteAddress.address;
+            endpoints = [
+              ...endpoints.where((endpoint) => endpoint.host == observedHost),
+              ...endpoints.where((endpoint) => endpoint.host != observedHost),
+            ];
             if (jsonEncode(endpoints.map((e) => e.toJson()).toList()) !=
                     jsonEncode(
                       peer.endpoints.map((e) => e.toJson()).toList(),

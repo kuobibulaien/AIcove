@@ -22,6 +22,13 @@ class CloudRetirementTest(unittest.TestCase):
                                     '/api/v1/auth/me', '/api/v1/admin/users',
                                     '/api/v1/admin/users/{user_id}/active'}
                             or path.startswith('/api/v1/sync/v3/'), path)
+        routes = {route.path: route for route in app.routes}
+        for path, method, model in (('/api/v1/auth/login', 'POST', 'TokenResponse'),
+                                    ('/api/v1/auth/refresh', 'POST', 'TokenResponse'),
+                                    ('/api/v1/auth/me', 'GET', 'UserResponse')):
+            self.assertEqual(routes[path].methods, {method})
+            self.assertEqual(routes[path].response_model.__name__, model)
+            self.assertEqual(routes[path].tags, ['认证'])
 
     def test_existing_accounts_and_legacy_tables_survive_initialization(self):
         with tempfile.TemporaryDirectory() as directory:

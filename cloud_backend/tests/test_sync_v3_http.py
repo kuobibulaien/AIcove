@@ -38,7 +38,7 @@ class SyncHttpTest(unittest.TestCase):
             with sessions() as db:
                 yield db
         app = FastAPI()
-        app.include_router(auth_router, prefix='/api/v1/auth')
+        app.include_router(auth_router)
         app.include_router(router)
         app.include_router(admin_router)
         app.dependency_overrides[get_db] = database

@@ -80,7 +80,8 @@ class TavernWorldBook {
   final String id;
   final String name;
   final bool enabled;
-  final int tokenBudget;
+  /// 文件显式声明的单本配额；为空时与酒馆一致，只受全局预算约束。
+  final int? tokenBudget;
   final List<TavernWorldEntry> entries;
   final List<String> warnings;
   final Map<String, dynamic> source;
@@ -158,7 +159,9 @@ class TavernWorldBook {
                   ))
               .toString(),
       enabled: enabled,
-      tokenBudget: _number(body['token_budget'], 2048).clamp(0, 65536),
+      tokenBudget: body['token_budget'] == null
+          ? null
+          : _number(body['token_budget'], 2048).clamp(0, 65536),
       entries: List.unmodifiable(entries),
       warnings: List.unmodifiable(warnings),
       source: source,
@@ -348,15 +351,22 @@ TavernWorldScanResult _scan(
   final injections = <TavernWorldInjection>[];
   final usedByBook = <String, int>{};
   var used = 0;
+  // 与酒馆一致：总预算一旦溢出即停止激活，仅 ignoreBudget 条目继续尝试。
+  var overflowed = false;
   for (final candidate in candidates) {
     final book = candidate.book;
     final entry = candidate.entry;
     final id = '${book.id}/${entry.id}';
     final content = _substitute(entry.content, macros);
     final tokens = estimateTokenCount(content) + 4;
-    if (used + tokens > budget ||
+    final bookBudget = book.tokenBudget;
+    final overTotal = used + tokens > budget;
+    if ((overflowed && !entry.ignoreBudget) ||
+        overTotal ||
         (!entry.ignoreBudget &&
-            (usedByBook[book.id] ?? 0) + tokens > book.tokenBudget)) {
+            bookBudget != null &&
+            (usedByBook[book.id] ?? 0) + tokens > bookBudget)) {
+      if (overTotal) overflowed = true;
       traces.add({'id': id, 'status': 'skipped', 'reason': 'budget'});
       warnings.add('${entry.name} 超过世界书预算，本轮未注入');
       continue;
@@ -386,8 +396,9 @@ TavernWorldScanResult _scan(
     for (var i = 0; i < injections.length; i++) injections[i].id: i,
   };
   injections.sort((a, b) {
+    // 酒馆按 order 降序逐条 unshift，同 order 时入选越晚越靠前。
     final order = a.order.compareTo(b.order);
-    return order != 0 ? order : indices[a.id]!.compareTo(indices[b.id]!);
+    return order != 0 ? order : indices[b.id]!.compareTo(indices[a.id]!);
   });
   return TavernWorldScanResult(injections, traces, warnings.toSet().toList());
 }
@@ -442,8 +453,12 @@ dynamic _field(Map raw, String key, String extensionKey) =>
     raw[key] ??
     (raw['extensions'] is Map ? raw['extensions'][extensionKey] : null);
 int _position(Map raw) {
+  // 独立世界书的顶层数字 position 才是酒馆实际读取值，extensions 可能是角色卡残留；
+  // 角色卡 character_book 顶层只有 before_char/after_char，数字位置在 extensions。
   final extension = raw['extensions'];
-  final p = extension is Map && extension['position'] != null
+  final p = raw['position'] is num
+      ? raw['position']
+      : extension is Map && extension['position'] != null
       ? extension['position']
       : raw['position'];
   if (p == 'before_char') return 0;

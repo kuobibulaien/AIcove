@@ -18,6 +18,7 @@ import 'package:aicove_flutter/src/features/plugins/tts/voice_preset_application
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:aicove_flutter/src/ui/features/auto_reply/pages/auto_reply_history_log_page.dart';
 import 'package:aicove_flutter/src/ui/features/auto_reply/pages/auto_reply_settings_page.dart';
+import 'package:aicove_flutter/src/ui/features/auto_reply/pages/auto_reply_advanced_settings_page.dart';
 import 'package:aicove_flutter/src/ui/features/auto_reply/pages/auto_reply_trigger_list_page.dart';
 import 'package:aicove_flutter/src/ui/features/auto_reply/widgets/auto_reply_settings_cards.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/image_plugin_detail_page.dart';
@@ -35,7 +36,7 @@ class _Settings extends AppSettingsNotifier {
   final bool embedding;
   @override
   Future<AppSettings> build() async => mapUiModelsToAppSettings({}).copyWith(
-    autoReplySettings: const AutoReplySettings(enabled: true),
+    autoReplySettings: const AutoReplySettings(),
     providers: [
       ProviderAuth(
         id: 'a',
@@ -200,6 +201,7 @@ void main() {
     final pages = <String, Widget>{
       'memory': const ContextMemorySettingsPage(),
       'auto-reply': const AutoReplySettingsPage(),
+      'auto-reply-advanced': const AutoReplyAdvancedSettingsPage(),
       'tts': const TtsPluginDetailPage(),
       'tavern': const TavernPluginDetailPage(),
       'time': const TimeAwarenessPluginDetailPage(),
@@ -310,18 +312,21 @@ void main() {
     }
   });
 
-  testWidgets('主动回复开启时全部分组同列等宽', (tester) async {
+  testWidgets('主动关怀首页无总开关，全部分组同列等宽', (tester) async {
     await _mount(tester, const AutoReplySettingsPage());
-    for (final label in ['主动回复', '触发器', '频率与免打扰']) {
+    for (final label in ['待发送的消息', '让 AI 帮你记提醒', '打扰程度', '更多设置']) {
       expect(find.text(label), findsWidgets, reason: label);
     }
-    await tester.scrollUntilVisible(
-      find.text('后台 Agent'),
-      200,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('后台 Agent'), findsOneWidget);
+    expect(find.text('主动回复'), findsNothing);
+    expect(find.byType(Switch), findsNWidgets(2));
+    _expectUnifiedSurfaceWidth(tester);
+  });
+
+  testWidgets('主动关怀更多设置全部分组同列等宽', (tester) async {
+    await _mount(tester, const AutoReplyAdvancedSettingsPage());
+    for (final label in ['判断时机', '使用的模型', '判断提示词', '更准时', '历史记录']) {
+      expect(find.text(label), findsWidgets, reason: label);
+    }
     _expectUnifiedSurfaceWidth(tester);
   });
 

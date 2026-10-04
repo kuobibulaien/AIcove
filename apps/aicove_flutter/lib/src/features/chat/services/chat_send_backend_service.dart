@@ -16,6 +16,7 @@ import '../../agent_context/domain/silly_tavern_regex_processor.dart';
 import '../../agent_context/domain/silly_tavern_world_book.dart';
 import '../../agent_context/providers/preset_recipe_provider.dart';
 import '../domain/conversation.dart';
+import '../domain/chat_context_preview.dart';
 import '../../context/domain/context_summary.dart';
 import '../../context/providers/context_providers.dart';
 import '../domain/message.dart';
@@ -27,7 +28,12 @@ import '../../plugins/image/drawing_preset_provider.dart';
 import '../../plugins/image/image_plugin.dart';
 import '../../plugins/domain/handlers/ai_tool.dart';
 import '../../plugins/plugin_providers.dart';
+import '../../plugins/prompts/plugin_prompts.dart';
+import '../../plugins/sticker/sticker_config.dart';
+import '../../plugins/sticker/sticker_plugin.dart';
+import '../../plugins/time_awareness/time_awareness_config.dart';
 import '../../plugins/time_awareness/time_awareness_plugin.dart';
+import '../../plugins/web_search/web_search_plugin.dart';
 import '../../plugins/tts/tts_plugin.dart';
 import '../../plugins/tts/voice_preset_application.dart';
 import 'tts_fallback_notification.dart';
@@ -39,6 +45,7 @@ import '../../../core/api/providers/provider_adapter.dart'
 import '../../../core/api/providers/provider_adapter_factory.dart';
 import '../../../core/api/thinking/thinking_level_resolver.dart';
 import '../../../core/services/system_reminder_service.dart';
+import 'chat_output_tag_reminder.dart';
 import 'chat_plugin_context_builder.dart';
 import 'chat_plugin_context_policy.dart';
 import 'chat_request_config.dart';
@@ -52,6 +59,12 @@ typedef ChatSupportsNonVisionImageFlow =
 
 typedef ChatPreviousUserMessageTimeResolver =
     DateTime? Function(List<Message> history);
+
+const _inlinePromptPresetName = '辅助提示词';
+
+const _neutralUserNameHint =
+    '提示词中的“$kNeutralUserName”只是对对话另一方的指代，不是对方的名字；'
+    '称呼对方时以角色设定中的称呼为准。';
 
 /// 后台发送执行服务：聊天主链路唯一运行时请求装配入口。
 ///
@@ -127,6 +140,73 @@ class ChatSendBackendService {
     String? conversationId,
     TraceContext? traceContext,
     int compactionPass = 0,
+  }) => _prepareApiConfig(
+    conv: conv,
+    history: history,
+    userText: userText,
+    trace: trace,
+    overrideModel: overrideModel,
+    conversationId: conversationId,
+    traceContext: traceContext,
+    compactionPass: compactionPass,
+  );
+
+  /// 只读预览：走与真实发送相同的装配，返回模型将看到的完整上下文。
+  ///
+  /// 不补摘要、不自动压缩、不写回会话变量、不落追踪、不发送请求。
+  Future<ChatContextPreview> previewContext({
+    required Conversation conv,
+    required List<Message> history,
+  }) async {
+    final collector = _ContextPreviewCollector();
+    final config = await _prepareApiConfig(
+      conv: conv,
+      history: history,
+      userText: null,
+      preview: collector,
+    );
+    final tools = config.tools ?? const <Map<String, dynamic>>[];
+    return ChatContextPreview(
+      modelId: config.modelFullId,
+      presetName: collector.presetName,
+      messages: config.messages,
+      messageTokens: [
+        for (final message in config.messages)
+          renderedContextTokens([message], null),
+      ],
+      tools: tools,
+      sources: [
+        for (final entry in collector.sources)
+          ChatContextSource(
+            label: (entry['pluginName'] ?? entry['label'] ?? entry['source'])
+                .toString(),
+            content: (entry['content'] ?? '').toString(),
+          ),
+      ],
+      plugins: [
+        for (final entry in collector.plugins)
+          ChatContextPluginStatus(
+            name: entry.pluginName,
+            injected: entry.injected,
+            reason: entry.error ?? entry.reason,
+          ),
+      ],
+      inputTokens: renderedContextTokens(config.messages, config.tools),
+      inputLimit: collector.inputLimit,
+      notes: collector.notes,
+    );
+  }
+
+  Future<ApiConfig> _prepareApiConfig({
+    required Conversation conv,
+    required List<Message> history,
+    required String? userText,
+    TraceLogger? trace,
+    String? overrideModel,
+    String? conversationId,
+    TraceContext? traceContext,
+    int compactionPass = 0,
+    _ContextPreviewCollector? preview,
   }) async {
     final resolvedConversationId = (conversationId?.trim().isNotEmpty ?? false)
         ? conversationId!.trim()
@@ -232,11 +312,18 @@ class ChatSendBackendService {
       throw StateError('请求联系人与角色上下文不一致');
     }
     // 边界缺摘要时会先补整理；重放旧轮次时不倒灌之后的摘要。
-    final handoff = await context.manualSummary(
-      resolvedConversationId,
-      conv.contextStartMessageId,
-      history,
-    );
+    final handoff = preview == null
+        ? await context.manualSummary(
+            resolvedConversationId,
+            conv.contextStartMessageId,
+            history,
+          )
+        : await _previewManualSummary(
+            resolvedConversationId,
+            conv.contextStartMessageId,
+            history,
+            preview,
+          );
     final handoffPrompt = [
       handoff?.prompt ?? '',
       automaticHandoff?.prompt ?? '',
@@ -245,12 +332,24 @@ class ChatSendBackendService {
     final imageEnabled =
         settings.imageGenerationEnabled &&
         (conv.enabledPlugins == null || conv.enabledPlugins!.contains('image'));
-    final imageConfig = imageEnabled
-        ? (await _ref
-                  .read(drawingPresetCatalogProvider.notifier)
-                  .resolveForPersona(conv.personaPrompt))
-              .config
-        : _ref.read(imagePluginConfigProvider);
+    // 标签／工具说明全局一份，覆盖预设与插件配置里的旧副本。
+    final pluginPrompts = await _ref.read(pluginPromptsProvider.future);
+    final imageConfig =
+        (imageEnabled
+                ? (await _ref
+                          .read(drawingPresetCatalogProvider.notifier)
+                          .resolveForPersona(conv.personaPrompt))
+                      .config
+                : _ref.read(imagePluginConfigProvider))
+            .copyWith(
+              fastPromptPresets: [
+                DrawingPromptPreset(
+                  name: _inlinePromptPresetName,
+                  content: pluginPrompts.of(PluginPromptSlot.image),
+                ),
+              ],
+              selectedFastPromptPresetName: _inlinePromptPresetName,
+            );
     // 旧选择已经在预设迁移中收成值，不能在执行时再覆盖快照。
     const String? boundImageToolPresetName = null;
     const String? boundImageArtistPresetName = null;
@@ -263,7 +362,8 @@ class ChatSendBackendService {
     final voiceRequest = await _ref
         .read(voicePresetApplicationProvider)
         .forRole(conv);
-    if (voiceRequest.error != null &&
+    if (preview == null &&
+        voiceRequest.error != null &&
         _ref.read(ttsPluginConfigProvider).enabled &&
         (enabledPluginIds == null || enabledPluginIds.contains('tts'))) {
       _ref
@@ -285,7 +385,26 @@ class ChatSendBackendService {
                   isRequestSnapshot: true,
                 )
               : plugin is TtsPlugin
-              ? TtsPlugin.forRequest(voiceRequest)
+              ? TtsPlugin.forRequest(
+                  voiceRequest,
+                  systemPromptTemplate: pluginPrompts.of(PluginPromptSlot.tts),
+                )
+              : plugin is StickerPlugin
+              ? StickerPlugin(
+                  StickerConfig.fromJson(plugin.getConfig()).copyWith(
+                    systemPromptTemplate: pluginPrompts.of(
+                      PluginPromptSlot.sticker,
+                    ),
+                  ),
+                )
+              : plugin is TimeAwarenessPlugin
+              ? TimeAwarenessPlugin(
+                  TimeAwarenessConfig.fromJson(plugin.getConfig()).copyWith(
+                    currentTimePromptTemplate: pluginPrompts.of(
+                      PluginPromptSlot.currentTime,
+                    ),
+                  ),
+                )
               : plugin,
         )
         .toList(growable: false);
@@ -301,6 +420,7 @@ class ChatSendBackendService {
       settings: settings,
       supportsVision: supportsVision,
       pluginPolicy: contextPolicy,
+      inlineImagePrompts: !shouldUseStableImageRoute,
     );
 
     reqMessages = contextPolicy.filterMessages(reqMessages);
@@ -339,6 +459,19 @@ class ChatSendBackendService {
     if (imageFailureReminderContent != null &&
         imageFailureReminderContent.isNotEmpty) {
       reminderContents.add(imageFailureReminderContent);
+    }
+    final imageActive = imagePlugin?.enabled ?? false;
+    final outputTagReminder = buildOutputTagReminder(
+      imageInline: imageActive && shouldUseFastImageRoute,
+      imageTool:
+          imageActive && shouldUseStableImageRoute && supportsToolCalling,
+      tts: effectivePlugins.whereType<TtsPlugin>().any((p) => p.enabled),
+      presetTags: boundPreset == null
+          ? const <String>[]
+          : inferPresetTagMapping(boundPreset).rules.map((rule) => rule.name),
+    );
+    if (outputTagReminder.isNotEmpty) {
+      reminderContents.add(outputTagReminder);
     }
     systemReminderContent = _systemReminderService.mergeReminderContents(
       reminderContents,
@@ -422,7 +555,16 @@ class ChatSendBackendService {
           handoffPrompt: contextPolicy.filterText(handoffPrompt),
           pluginPromptBuild: pluginPromptBuild,
         );
+    // 关闭 {{user}} 名称时预设只拿到中性指代，提示模型称呼仍以角色设定为准。
+    if (boundPreset != null && !boundPreset.userNameMacroEnabled) {
+      systemParts.add(_neutralUserNameHint);
+    }
     systemParts.removeWhere((part) => part.trim().isEmpty);
+    final userName = settings.userName?.trim() ?? '';
+    final promptUserName =
+        boundPreset?.userNameMacroEnabled != false && userName.isNotEmpty
+        ? userName
+        : kNeutralUserName;
     final messagesBeforeSystemCount = reqMessages.length;
     final maxContextTokens = math.min(
       boundPreset?.maxContextTokens ?? settings.getMaxContextTokens(modelRef),
@@ -455,9 +597,7 @@ class ChatSendBackendService {
           'char': conv.displayName.trim().isEmpty
               ? conv.title
               : conv.displayName,
-          'user': settings.userName?.trim().isNotEmpty == true
-              ? settings.userName!.trim()
-              : '用户',
+          'user': promptUserName,
           'description': contextPolicy.filterText(personaParts.userPrompt),
           'scenario': conv.description?.trim() ?? '',
         },
@@ -483,9 +623,7 @@ class ChatSendBackendService {
           characterName: conv.displayName.trim().isEmpty
               ? conv.title
               : conv.displayName,
-          userName: settings.userName?.trim().isNotEmpty == true
-              ? settings.userName!.trim()
-              : '用户',
+          userName: promptUserName,
           characterDescription: contextPolicy.filterText(
             personaParts.userPrompt,
           ),
@@ -556,7 +694,12 @@ class ChatSendBackendService {
       summarizerFactory: () => _ref.read(contextSummarizerProvider.future),
       tools: tools,
     );
-    if (inputTokens >= inputLimit) {
+    if (preview != null) {
+      preview.inputLimit = inputLimit;
+      if (inputTokens >= inputLimit) {
+        preview.notes.add('已达到自动压缩阈值，真实发送前会先压缩，实际内容会比这里短');
+      }
+    } else if (inputTokens >= inputLimit) {
       finalMessages = await runtimeContext.pruneToolResults(finalMessages);
       inputTokens = renderedContextTokens(finalMessages, tools);
     }
@@ -567,7 +710,9 @@ class ChatSendBackendService {
               !(automaticHandoff?.sourceIds.contains(m.id) ?? false),
         )
         .length;
-    if (inputTokens >= inputLimit && uncoveredUsers < 2) {
+    if (preview != null) {
+      // 预览只读，不压缩。
+    } else if (inputTokens >= inputLimit && uncoveredUsers < 2) {
       finalMessages = await runtimeContext.prepare(finalMessages);
     } else if (inputTokens >= inputLimit) {
       AppLogger.info(
@@ -604,7 +749,8 @@ class ChatSendBackendService {
         compactionPass: compactionPass + 1,
       );
     }
-    if (boundPreset != null &&
+    if (preview == null &&
+        boundPreset != null &&
         presetAssembly != null &&
         presetVariableSnapshot != null) {
       try {
@@ -731,6 +877,17 @@ class ChatSendBackendService {
       );
     }
 
+    if (preview != null) {
+      preview
+        ..presetName = boundPreset?.name
+        ..sources = systemAssemblyEntries
+        ..plugins = pluginPromptBuild.entries;
+      preview.notes.addAll([
+        ...?presetAssembly?.warnings,
+        ...?presetRegexPromptResult?.warnings,
+      ]);
+    }
+
     return ApiConfig(
       requestInputTokenLimit: inputLimit,
       presetScript: PresetScriptSnapshot.fromPreset(
@@ -741,9 +898,7 @@ class ChatSendBackendService {
           'char': conv.displayName.trim().isEmpty
               ? conv.title
               : conv.displayName,
-          'user': settings.userName?.trim().isNotEmpty == true
-              ? settings.userName!.trim()
-              : '用户',
+          'user': promptUserName,
           'description': contextPolicy.filterText(personaParts.userPrompt),
           'scenario': conv.description?.trim() ?? '',
         },
@@ -767,7 +922,14 @@ class ChatSendBackendService {
           boundPreset?.temperature ?? requestConfig.modelTemperature,
       modelTopP: boundPreset?.topP ?? requestConfig.modelTopP,
       modelContextMessageLimit: requestConfig.modelContextMessageLimit,
-      providerRequestOptions: providerRequestOptions,
+      // 联网搜索插件接管时，本轮去掉模型内置搜索，只走插件工具。
+      providerRequestOptions:
+          supportsToolCalling &&
+              effectivePlugins.whereType<WebSearchPlugin>().any(
+                (plugin) => plugin.replacesModelBuiltinSearch,
+              )
+          ? providerRequestOptions.copyWith(disableBuiltinWebSearch: true)
+          : providerRequestOptions,
       // 显示美化正则输出的 HTML 界面无法渲染，已由语义标签组件接管的不再执行，
       // 保留原标签交给聊天列表投影为折叠／正文／选项（ADR0046）。
       presetRegexScripts: boundPreset == null
@@ -999,8 +1161,35 @@ class ChatSendBackendService {
     ];
   }
 
+  /// 预览只读已保存的话题摘要；缺摘要时真实发送会先整理，这里只提示。
+  Future<ContextSummary?> _previewManualSummary(
+    String ownerId,
+    String? boundaryId,
+    List<Message> history,
+    _ContextPreviewCollector preview,
+  ) async {
+    if (boundaryId == null) return null;
+    final summary = await _ref
+        .read(contextSummaryStoreProvider)
+        .manualFor(ownerId, boundaryId);
+    if (summary == null) {
+      preview.notes.add('话题边界还没有摘要，真实发送前会先自动整理一次');
+      return null;
+    }
+    if (history.any((m) => summary.sourceIds.contains(m.id))) return null;
+    return summary;
+  }
+
   static String _rawModelId(String modelFullId) {
     final idx = modelFullId.indexOf(':');
     return idx < 0 ? modelFullId : modelFullId.substring(idx + 1);
   }
+}
+
+class _ContextPreviewCollector {
+  String? presetName;
+  List<Map<String, dynamic>> sources = const [];
+  List<PluginPromptEntry> plugins = const [];
+  int inputLimit = 0;
+  final notes = <String>[];
 }

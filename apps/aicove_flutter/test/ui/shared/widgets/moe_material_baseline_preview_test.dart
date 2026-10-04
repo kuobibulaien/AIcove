@@ -106,7 +106,9 @@ void main() {
           .widgetList<MoeFloatingSurface>(find.byType(MoeFloatingSurface))
           .toList();
       expect(
-        surfaces.take(3).every((s) => s.baseline == MoeMaterialBaseline.none),
+        surfaces
+            .take(3)
+            .every((s) => s.baseline == MoeMaterialBaseline.component),
         isTrue,
       );
       expect(surfaces.last.baseline, MoeMaterialBaseline.background);

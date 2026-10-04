@@ -7,7 +7,7 @@ void main() {
   for (final dark in [false, true]) {
     for (final mode in MoeSurfaceMaterial.values) {
       testWidgets(
-        'text tint preserves fixed frosted recipe for $mode dark=$dark',
+        'component and background layers share one tint for $mode dark=$dark',
         (tester) async {
           MoeLiquidGlassService.setMockState(available: true);
           addTearDown(
@@ -32,17 +32,13 @@ void main() {
                         baseline: MoeMaterialBaseline.background,
                         child: Text('Background'),
                       ),
-                      MoeFloatingSurface(
-                        baseline: MoeMaterialBaseline.text,
-                        child: Text('Text surface'),
-                      ),
                     ],
                   ),
                 ),
               ),
             );
             await tester.pump();
-            final tints = tester
+            final extraTints = tester
                 .widgetList<Ink>(find.byType(Ink))
                 .where(
                   (ink) =>
@@ -50,18 +46,19 @@ void main() {
                       Colors.transparent,
                 )
                 .toList();
-            if (mode == MoeSurfaceMaterial.frosted) {
-              expect(
-                tints,
-                isEmpty,
-                reason: 'Cupertino supplies the complete tint',
-              );
-            } else {
-              expect(tints, hasLength(1));
-              expect(
-                (tints.single.decoration as BoxDecoration).color,
-                colors.surface.withValues(alpha: 0.06),
-              );
+            expect(extraTints, isEmpty, reason: 'No tint minimum per layer');
+            if (mode != MoeSurfaceMaterial.liquid) {
+              Color tintOf(String label) => tester
+                  .widget<Material>(
+                    find
+                        .ancestor(
+                          of: find.text(label),
+                          matching: find.byType(Material),
+                        )
+                        .first,
+                  )
+                  .color!;
+              expect(tintOf('Background'), tintOf('Floating'));
             }
             expect(tester.takeException(), isNull);
           }

@@ -39,7 +39,6 @@ class _DrawingPresetEditorPageState
     super.initState();
     _config = widget.preset.config;
     _presetId = widget.isNew ? genId('drawing') : widget.preset.id;
-    final blocks = _config.effectiveToolDescriptionBlocks;
     final values = <String, String>{
       'name': widget.isNew ? '${widget.preset.name}副本' : widget.preset.name,
       'style': _config.selectedArtistPreset?.content ?? '',
@@ -51,12 +50,6 @@ class _DrawingPresetEditorPageState
       'guidance_scale': '${_config.defaultGuidanceScale}',
       'count': '${_config.defaultCount}',
       'timeout': '${_config.timeoutSeconds}',
-      'tool': blocks.toolDescription,
-      'prompt': blocks.promptDescription,
-      'negativePrompt': blocks.negativePromptDescription,
-      'widthPrompt': blocks.widthDescription,
-      'heightPrompt': blocks.heightDescription,
-      'inline': _config.effectiveInlinePromptTemplate,
     };
     for (final entry in values.entries) {
       _fields[entry.key] = TextEditingController(text: entry.value);
@@ -164,21 +157,6 @@ class _DrawingPresetEditorPageState
       timeoutSeconds: timeout,
       artistPresets: [style],
       selectedArtistPresetName: style.name,
-      systemPromptPresets: const [],
-      clearSelectedSystemPromptPreset: true,
-      drawingSystemPrompt: ImageConfig.encodeToolDescriptionBlocks(
-        DrawImageToolDescriptionBlocks(
-          toolDescription: _text('tool'),
-          promptDescription: _text('prompt'),
-          negativePromptDescription: _text('negativePrompt'),
-          widthDescription: _text('widthPrompt'),
-          heightDescription: _text('heightPrompt'),
-        ),
-      ),
-      fastPromptPresets: [
-        DrawingPromptPreset(name: '辅助提示词', content: _text('inline')),
-      ],
-      selectedFastPromptPresetName: '辅助提示词',
     );
     final preset = DrawingPreset(
       id: _presetId,
@@ -426,21 +404,11 @@ class _DrawingPresetEditorPageState
                       _field('count', '张数（1–4）', number: true),
                       ExpansionTile(
                         title: const Text('高级'),
-                        subtitle: const Text('生图辅助提示词与其它参数'),
+                        subtitle: const Text('负面提示词与请求超时'),
                         childrenPadding: const EdgeInsets.only(top: 16),
                         children: [
                           _field('negative', '基础负面提示词', lines: 3),
                           _field('timeout', '请求超时（5–600 秒）', number: true),
-                          const Padding(
-                            padding: EdgeInsets.only(bottom: 16),
-                            child: Text('以下为内置辅助提示词，一般无需修改。'),
-                          ),
-                          _field('tool', '工具说明', lines: 4),
-                          _field('prompt', '正面提示词规范', lines: 6),
-                          _field('negativePrompt', '负面提示词规范', lines: 4),
-                          _field('widthPrompt', '宽度说明', lines: 2),
-                          _field('heightPrompt', '高度说明', lines: 2),
-                          _field('inline', '快速模式辅助提示词', lines: 6),
                         ],
                       ),
                       const SizedBox(height: 24),

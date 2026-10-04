@@ -1,16 +1,18 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
-import '../../features/settings/app_settings.dart';
 
-const MethodChannel _keepAliveChannel =
-    MethodChannel('com.example.aicove_flutter/keep_alive');
+const MethodChannel _keepAliveChannel = MethodChannel(
+  'com.example.aicove_flutter/keep_alive',
+);
 
 class AndroidKeepAliveStatus {
   final bool guardEnabled;
   final bool generationActive;
+  final bool generationWakeLockHeld;
   final bool serviceRunning;
   final bool batteryOptimizationIgnored;
   final bool canScheduleExactAlarms;
@@ -26,6 +28,7 @@ class AndroidKeepAliveStatus {
   const AndroidKeepAliveStatus({
     required this.guardEnabled,
     required this.generationActive,
+    this.generationWakeLockHeld = false,
     required this.serviceRunning,
     required this.batteryOptimizationIgnored,
     required this.canScheduleExactAlarms,
@@ -45,6 +48,7 @@ class AndroidKeepAliveStatus {
     return AndroidKeepAliveStatus(
       guardEnabled: map['guardEnabled'] == true,
       generationActive: map['generationActive'] == true,
+      generationWakeLockHeld: map['generationWakeLockHeld'] == true,
       serviceRunning: map['serviceRunning'] == true,
       batteryOptimizationIgnored: map['batteryOptimizationIgnored'] == true,
       canScheduleExactAlarms: map['canScheduleExactAlarms'] == true,
@@ -92,7 +96,20 @@ class AndroidKeepAliveManager {
   static int _nextGenerationLeaseId = 0;
   static final Set<int> _activeGenerationLeaseIds = <int>{};
 
-  static bool get isSupported => Platform.isAndroid;
+  static Future<void> _generationQueue = Future<void>.value();
+
+  static bool get isSupported =>
+      Platform.isAndroid ||
+      debugDefaultTargetPlatformOverride == TargetPlatform.android;
+
+  static Future<T> _serializeGeneration<T>(Future<T> Function() action) {
+    final result = _generationQueue.then((_) => action());
+    _generationQueue = result.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    return result;
+  }
 
   static Future<AndroidKeepAliveStatus?> getStatus() async {
     if (!isSupported) return null;
@@ -113,16 +130,14 @@ class AndroidKeepAliveManager {
     return _waitForStableGuardState(enabled, fallback: status);
   }
 
-  static Future<void> syncWithAutoReplySettings(
-    AutoReplySettings settings,
-  ) async {
+  /// 有联系人启用主动关怀时常驻前台保活，否则关闭。
+  static Future<void> syncGuard(bool desiredEnabled) async {
     if (!isSupported) return;
-    // 主动回复开启后直接拉起前台保活；guardModeEnabled 仅保留旧配置兼容。
-    final desiredEnabled = settings.enabled;
     final status = await getStatus();
     if (status == null) return;
 
-    final needsUpdate = status.guardEnabled != desiredEnabled ||
+    final needsUpdate =
+        status.guardEnabled != desiredEnabled ||
         (desiredEnabled && !status.serviceRunning);
     if (!needsUpdate) return;
 
@@ -134,30 +149,65 @@ class AndroidKeepAliveManager {
   /// 每个调用方必须在生成结束或中断时释放返回的租约。多个并行生成会共享
   /// 同一个原生前台服务，只有最后一个租约释放后才结束“生成中”状态。
   static Future<AndroidGenerationKeepAliveLease?>
-      acquireGenerationLease() async {
+  acquireGenerationLease() async {
     if (!isSupported) return null;
 
-    final leaseId = ++_nextGenerationLeaseId;
-    _activeGenerationLeaseIds.add(leaseId);
-    try {
-      await _keepAliveChannel.invokeMethod<void>(
-        'setGenerationActive',
-        {'active': true},
-      );
-      return AndroidGenerationKeepAliveLease._(leaseId);
-    } catch (_) {
-      _activeGenerationLeaseIds.remove(leaseId);
-      rethrow;
-    }
+    return _serializeGeneration(() async {
+      final leaseId = ++_nextGenerationLeaseId;
+      _activeGenerationLeaseIds.add(leaseId);
+      try {
+        await _keepAliveChannel.invokeMethod<void>('setGenerationActive', {
+          'active': true,
+        });
+        await _waitForGenerationReady();
+        return AndroidGenerationKeepAliveLease._(leaseId);
+      } catch (_) {
+        _activeGenerationLeaseIds.remove(leaseId);
+        if (_activeGenerationLeaseIds.isEmpty) {
+          try {
+            await _keepAliveChannel.invokeMethod<void>('setGenerationActive', {
+              'active': false,
+            });
+          } catch (_) {}
+        }
+        rethrow;
+      }
+    });
   }
 
-  static Future<void> _releaseGenerationLease(int leaseId) async {
-    if (!_activeGenerationLeaseIds.remove(leaseId)) return;
-    if (_activeGenerationLeaseIds.isNotEmpty || !isSupported) return;
+  static Future<void> _releaseGenerationLease(int leaseId) =>
+      _serializeGeneration(() async {
+        if (!_activeGenerationLeaseIds.remove(leaseId)) return;
+        if (_activeGenerationLeaseIds.isNotEmpty || !isSupported) return;
 
-    await _keepAliveChannel.invokeMethod<void>(
-      'setGenerationActive',
-      {'active': false},
+        await _keepAliveChannel.invokeMethod<void>('setGenerationActive', {
+          'active': false,
+        });
+      });
+
+  static Future<void> _waitForGenerationReady() async {
+    for (var attempt = 0; attempt < 8; attempt++) {
+      final status = await getStatus();
+      if (status != null) {
+        if (status.lastStartError.isNotEmpty) {
+          throw PlatformException(
+            code: 'generation_guard_start_failed',
+            message: status.lastStartError,
+          );
+        }
+        if (status.generationActive &&
+            status.serviceRunning &&
+            status.generationWakeLockHeld) {
+          return;
+        }
+      }
+      if (attempt < 7) {
+        await Future<void>.delayed(const Duration(milliseconds: 180));
+      }
+    }
+    throw PlatformException(
+      code: 'generation_guard_not_ready',
+      message: '后台生成守护未就绪',
     );
   }
 
@@ -191,11 +241,14 @@ class AndroidKeepAliveManager {
       if (latest == null) return null;
 
       if (!enabled) {
-        final fullyStopped = !latest.guardEnabled && !latest.serviceRunning;
+        final fullyStopped =
+            !latest.guardEnabled &&
+            (!latest.serviceRunning || latest.generationActive);
         if (fullyStopped) return latest;
       } else {
         final started = latest.guardEnabled && latest.serviceRunning;
-        final failed = latest.lastStartError.trim().isNotEmpty ||
+        final failed =
+            latest.lastStartError.trim().isNotEmpty ||
             (!latest.guardEnabled && attempt > 0);
         if (started || failed) return latest;
       }

@@ -90,6 +90,9 @@ class ModelFailoverPromptRequest {
     required this.failedModelName,
     required this.nextModelName,
     required this.errorMessage,
+    this.errorDetail,
+    this.roundStartedAt,
+    required this.failedAt,
   });
 
   final int requestId;
@@ -97,6 +100,13 @@ class ModelFailoverPromptRequest {
   final String failedModelName;
   final String nextModelName;
   final String errorMessage;
+
+  /// 完整异常文本（含堆栈），复制本轮报错日志时使用。
+  final String? errorDetail;
+
+  /// 本轮请求开始时间，用于截取本轮日志。
+  final DateTime? roundStartedAt;
+  final DateTime failedAt;
 }
 
 class ModelFailoverPromptController
@@ -112,6 +122,8 @@ class ModelFailoverPromptController
     required String failedModelName,
     required String nextModelName,
     required String errorMessage,
+    String? errorDetail,
+    DateTime? roundStartedAt,
   }) async {
     _resolve(ModelFailoverDecision.tryNext);
 
@@ -123,6 +135,9 @@ class ModelFailoverPromptController
       failedModelName: failedModelName,
       nextModelName: nextModelName,
       errorMessage: errorMessage,
+      errorDetail: errorDetail,
+      roundStartedAt: roundStartedAt,
+      failedAt: DateTime.now(),
     );
 
     final decision = await completer.future;

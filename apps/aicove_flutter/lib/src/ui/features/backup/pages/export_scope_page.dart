@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
@@ -11,11 +12,25 @@ import '../../../theme/tokens.dart';
 import 'export_character_page.dart';
 
 /// 导出范围选择页面
-class ExportScopePage extends ConsumerWidget {
+class ExportScopePage extends ConsumerStatefulWidget {
   const ExportScopePage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ExportScopePage> createState() => _ExportScopePageState();
+}
+
+class _ExportScopePageState extends ConsumerState<ExportScopePage> {
+  // 密码只留在本流程页面里，不进全局导出选项。
+  final _password = TextEditingController();
+
+  @override
+  void dispose() {
+    _password.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final options = ref.watch(exportOptionsProvider);
     final theme = Theme.of(context);
 
@@ -119,6 +134,29 @@ class ExportScopePage extends ConsumerWidget {
                     ],
                   ),
 
+                  const SizedBox(height: 24),
+
+                  Text(
+                    '加密（可选）',
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: MoeFontWeights.emphasis,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  MoeTextField(
+                    key: const ValueKey('export-password'),
+                    controller: _password,
+                    label: '备份密码',
+                    hint: '留空则不加密',
+                    helperText: '只能用英文字母、数字和英文符号。忘记密码将无法恢复备份。',
+                    prefixIcon: LucideIcons.lock,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(
+                        backupPasswordCharacters,
+                      ),
+                    ],
+                  ),
+
                   const SizedBox(height: 16),
 
                   // 提示
@@ -163,7 +201,9 @@ class ExportScopePage extends ConsumerWidget {
                     : () {
                         Navigator.of(context).push(
                           ParallaxSlidePageRoute(
-                            page: const ExportCharacterPage(),
+                            page: ExportCharacterPage(
+                              password: _password.text,
+                            ),
                           ),
                         );
                       },

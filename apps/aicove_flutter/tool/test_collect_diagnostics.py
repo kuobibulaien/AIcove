@@ -176,6 +176,22 @@ class CollectorTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             collector.Adb('phone', 'com.example;bad')
 
+    def test_token_read_from_adb_shell_when_not_given(self):
+        device = collector.Adb('phone', 'com.example.app')
+        token = 'c' * 43
+        with patch.dict('os.environ', {}, clear=True), \
+                patch.object(device, 'run', return_value=f'Row: 0 token={token}') as run:
+            self.assertEqual(collector.resolve_token(device), token)
+        run.assert_called_once_with('shell', 'content', 'query', '--uri',
+                                    'content://com.example.app.diagnostics/token')
+        with patch.dict('os.environ', {}, clear=True), \
+                patch.object(device, 'run', return_value='No result found.'):
+            with self.assertRaises(RuntimeError):
+                collector.resolve_token(device)
+        with patch.object(device, 'run') as run:
+            self.assertEqual(collector.resolve_token(device, 'd' * 43), 'd' * 43)
+        run.assert_not_called()
+
     def test_android_ls_columns_and_real_nested_trace_path(self):
         device = collector.Adb('phone', 'com.example.app')
         with patch.object(device, 'run', side_effect=[

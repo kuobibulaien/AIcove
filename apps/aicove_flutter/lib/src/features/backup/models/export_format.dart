@@ -8,8 +8,30 @@ const int kExportFormatVersion = 1;
 const transferCoverageNotice =
     '仅包含所选角色卡、聊天记录及基本偏好。角色模型、插件/预设绑定、思考档位、背景模糊、话题边界与摘要不在恢复范围内；暂不支持视频。基本偏好合并暂不支持，可导入新副本或替换。';
 
-/// 导出文件扩展名
-const String kExportFileExtension = '.aicove';
+/// 导出文件扩展名（标准 ZIP，可选 AES-256 密码）
+const String kExportFileExtension = '.zip';
+
+/// 旧版导出扩展名，内容同为 ZIP，仅用于继续导入旧备份
+const String kLegacyExportFileExtension = '.aicove';
+
+bool isBackupFilePath(String path) {
+  final lower = path.toLowerCase();
+  return lower.endsWith(kExportFileExtension) ||
+      lower.endsWith(kLegacyExportFileExtension);
+}
+
+/// 备份密码只允许可打印 ASCII：archive 按 UTF-16 码元逐字节派生密钥，
+/// 限制后才能与 7-Zip 等工具派生出同一把 AES 密钥。
+final RegExp backupPasswordCharacters = RegExp(r'[\x20-\x7E]');
+
+/// 空密码视为不加密；含不支持字符时抛出 [FormatException]。
+String? normalizeBackupPassword(String? password) {
+  if (password == null || password.isEmpty) return null;
+  if (password.split('').any((c) => !backupPasswordCharacters.hasMatch(c))) {
+    throw const FormatException('备份密码只能使用英文字母、数字和英文符号');
+  }
+  return password;
+}
 
 /// 同步范围（Scope）定义
 /// 基于 docs/备份与同步方案/同步范围清单.md
@@ -93,11 +115,15 @@ class ExportOptions {
   /// 是否包含视频
   final bool includeVideo;
 
+  /// ZIP 密码；为空表示不加密
+  final String? password;
+
   const ExportOptions({
     this.scopes = const [SyncScope.chatHistory, SyncScope.characterCards],
     this.includeImages = true,
     this.includeAudio = true,
     this.includeVideo = true,
+    this.password,
   });
 
   ExportOptions copyWith({
@@ -105,12 +131,14 @@ class ExportOptions {
     bool? includeImages,
     bool? includeAudio,
     bool? includeVideo,
+    String? password,
   }) {
     return ExportOptions(
       scopes: scopes ?? this.scopes,
       includeImages: includeImages ?? this.includeImages,
       includeAudio: includeAudio ?? this.includeAudio,
       includeVideo: includeVideo ?? this.includeVideo,
+      password: password ?? this.password,
     );
   }
 }

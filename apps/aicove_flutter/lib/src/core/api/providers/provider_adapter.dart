@@ -133,6 +133,9 @@ class ProviderChatRequestOptions {
   final ThinkingLevel? thinkingLevel;
   final ThinkingScheme? thinkingScheme;
 
+  /// 联网搜索插件接管搜索时为 true：请求体组装后去掉模型内置搜索参数。
+  final bool disableBuiltinWebSearch;
+
   const ProviderChatRequestOptions({
     this.useSystemPrompt = true,
     this.temperature,
@@ -149,12 +152,14 @@ class ProviderChatRequestOptions {
     this.reasoningEffort,
     this.thinkingLevel,
     this.thinkingScheme,
+    this.disableBuiltinWebSearch = false,
   });
 
   ProviderChatRequestOptions copyWith({
     String? toolChoice,
     ThinkingLevel? thinkingLevel,
     ThinkingScheme? thinkingScheme,
+    bool? disableBuiltinWebSearch,
   }) =>
       ProviderChatRequestOptions(
         useSystemPrompt: useSystemPrompt,
@@ -172,6 +177,8 @@ class ProviderChatRequestOptions {
         reasoningEffort: reasoningEffort,
         thinkingLevel: thinkingLevel ?? this.thinkingLevel,
         thinkingScheme: thinkingScheme ?? this.thinkingScheme,
+        disableBuiltinWebSearch:
+            disableBuiltinWebSearch ?? this.disableBuiltinWebSearch,
       );
 
   Map<String, dynamic> toTraceJson() => <String, dynamic>{
@@ -191,6 +198,7 @@ class ProviderChatRequestOptions {
           'reasoningEffort': reasoningEffort,
         if (thinkingLevel != null) 'thinkingLevel': thinkingLevel!.name,
         if (thinkingScheme != null) 'thinkingScheme': thinkingScheme!.name,
+        if (disableBuiltinWebSearch) 'disableBuiltinWebSearch': true,
       };
 
   List<Map<String, dynamic>> parameterTraceForProvider(String provider) {

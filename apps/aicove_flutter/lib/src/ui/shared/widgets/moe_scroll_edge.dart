@@ -23,12 +23,20 @@ EdgeInsets moeUnderBarPadding(
 /// beneath the bar, a progressive blur appears that is strongest at the top
 /// edge and clears toward the floating controls' center line.
 class MoeScrollEdgeBackdrop extends StatefulWidget {
-  const MoeScrollEdgeBackdrop({super.key, required this.clearFromBottom})
-    : assert(clearFromBottom >= 0);
+  const MoeScrollEdgeBackdrop({
+    super.key,
+    required this.clearFromBottom,
+    this.opaqueFallback = true,
+  }) : assert(clearFromBottom >= 0);
 
   /// Distance from the bar's bottom to the floating controls' center line,
   /// where the blur has faded out.
   final double clearFromBottom;
+
+  /// Whether solid or reduced-transparency surfaces fall back to an opaque
+  /// bar. Bars whose controls all sit on their own opaque surfaces pass false
+  /// and show nothing there instead.
+  final bool opaqueFallback;
 
   @override
   State<MoeScrollEdgeBackdrop> createState() => _MoeScrollEdgeBackdropState();
@@ -83,6 +91,7 @@ class _MoeScrollEdgeBackdropState extends State<MoeScrollEdgeBackdrop> {
         (glass?.enabled ?? true) &&
         !(MediaQuery.maybeHighContrastOf(context) ?? false) &&
         !GlassAccessibilityData.of(context).reduceTransparency;
+    if (!translucent && !widget.opaqueFallback) return const SizedBox.shrink();
     return IgnorePointer(
       child: AnimatedOpacity(
         opacity: _scrolledUnder ? 1 : 0,
@@ -97,6 +106,7 @@ class _MoeScrollEdgeBackdropState extends State<MoeScrollEdgeBackdrop> {
             ? _ProgressiveEdge(
                 material: glass?.material ?? MoeSurfaceMaterial.frosted,
                 blurSetting: glass?.blurSigma ?? kDefaultGlassBlurSigma,
+                tintFill: glass?.tintFill ?? kDefaultGlassTintFill,
                 clearFromBottom: widget.clearFromBottom,
               )
             : DecoratedBox(
@@ -123,11 +133,13 @@ class _ProgressiveEdge extends StatelessWidget {
   const _ProgressiveEdge({
     required this.material,
     required this.blurSetting,
+    required this.tintFill,
     required this.clearFromBottom,
   });
 
   final MoeSurfaceMaterial material;
   final double blurSetting;
+  final double tintFill;
   final double clearFromBottom;
 
   /// (share of the clear line covered, share of the full sigma). The squared
@@ -139,16 +151,13 @@ class _ProgressiveEdge extends StatelessWidget {
     final colors = context.moeColors;
     final brightness = Theme.of(context).brightness;
     final frosted = material == MoeSurfaceMaterial.frosted;
-    // The edge keeps a readable minimum even when floating controls are clear.
+    // Background material: readable blur minimum, tint follows the fill.
     final sigma = frosted
         ? MoeFrostedMaterial.blurSigmaForSetting(blurSetting)
-        : MoeMaterialBaseline.text.blurSigma(blurSetting);
+        : MoeMaterialBaseline.background.blurSigma(blurSetting);
     final baseTint = frosted
-        ? MoeFrostedMaterial.surfaceTint(brightness, sigma: sigma)
-        : colors.glassTintForSigma(
-            blurSetting,
-            baseline: MoeMaterialBaseline.text,
-          );
+        ? MoeFrostedMaterial.surfaceTint(brightness, fill: tintFill)
+        : colors.glassTintForFill(tintFill);
     final tint = baseTint.withValues(
       alpha: baseTint.a * kMoeScrollEdgeTintScale,
     );

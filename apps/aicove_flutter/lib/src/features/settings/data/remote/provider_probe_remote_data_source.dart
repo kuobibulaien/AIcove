@@ -6,6 +6,7 @@ import '../../../../core/api/providers/google_api_mode.dart';
 import '../../../../core/api/providers/minimax_compat.dart';
 import '../../../../core/api/providers/provider_chat_api_path.dart';
 import '../../../../core/api/providers/provider_adapter_factory.dart';
+import '../../../../core/api/providers/provider_extra_body.dart';
 import '../../../../core/api/providers/zai_compat.dart';
 import '../../../../core/network/json_http_client.dart';
 import '../../../../core/api/image_providers/comfyui_workflow.dart';
@@ -140,6 +141,7 @@ class ProviderProbeRemoteDataSource {
         ],
         customConfig: {...?requestCustomConfig, 'max_tokens': 3},
       );
+      applyProviderExtraBody(body, customConfig);
       final uri = adapter.name == 'gemini'
           ? buildGoogleRequestUri(
               endpoint: endpoint,

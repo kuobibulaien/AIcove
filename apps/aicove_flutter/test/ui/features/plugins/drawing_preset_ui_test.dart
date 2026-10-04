@@ -346,7 +346,10 @@ void main() {
         await _scrollTo(tester, find.text('高级'));
         await tester.tap(find.text('高级'));
         await tester.pumpAndSettle();
-        await _scrollTo(tester, find.text('快速模式辅助提示词'));
+        await _scrollTo(tester, find.text('请求超时（5–600 秒）'));
+        // 标签说明全局一份，预设不再携带提示词字段。
+        expect(find.text('快速模式辅助提示词'), findsNothing);
+        expect(find.text('正面提示词规范'), findsNothing);
         expect(tester.takeException(), isNull);
         expect(find.text('保存预设'), findsNothing);
         expect(tester.takeException(), isNull);

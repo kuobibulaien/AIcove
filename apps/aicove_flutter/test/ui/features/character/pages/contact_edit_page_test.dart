@@ -127,11 +127,11 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.scrollUntilVisible(
-      find.text('跟随默认酒馆预设'),
+      find.text('跟随默认 · 空预设'),
       500,
       scrollable: find.byType(Scrollable).first,
     );
-    await tester.tap(find.text('跟随默认酒馆预设'));
+    await tester.tap(find.text('跟随默认 · 空预设'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('酒馆测试预设'));
     await tester.pumpAndSettle();

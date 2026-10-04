@@ -624,10 +624,16 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
             }
             break;
           case MessageAction.regenerate:
-            widget.onRegenerateMessage?.call(message);
-            break;
           case MessageAction.enhanceRegenerate:
-            widget.onEnhanceRegenerateMessage?.call(message);
+            if (ChatPageConversationActions.isCharacterGreeting(message)) {
+              MoeToast.show(context, '开场白不能重新生成');
+              break;
+            }
+            if (action == MessageAction.regenerate) {
+              widget.onRegenerateMessage?.call(message);
+            } else {
+              widget.onEnhanceRegenerateMessage?.call(message);
+            }
             break;
           case MessageAction.quote:
             ref.read(quotedMessageProvider.notifier).state = QuotedMessage(

@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/providers/provider_chat_api_path.dart';
+import '../../../core/api/providers/provider_extra_body.dart';
 import '../app_settings.dart';
 import 'provider_detail_support.dart';
 
@@ -167,6 +168,24 @@ class ProviderDetailActions {
     return _notifier.editProvider(
       providerId: provider.id,
       customConfig: {...latest.customConfig, ...workflow},
+    );
+  }
+
+  Future<void> saveExtraBody(
+    ProviderAuth provider,
+    Map<String, dynamic> extraBody,
+  ) {
+    final latest =
+        _settings?.providers
+            .where((item) => item.id == provider.id)
+            .firstOrNull ??
+        provider;
+    return _notifier.editProvider(
+      providerId: provider.id,
+      customConfig: copyCustomConfigWithProviderExtraBody(
+        latest.customConfig,
+        extraBody,
+      ),
     );
   }
 

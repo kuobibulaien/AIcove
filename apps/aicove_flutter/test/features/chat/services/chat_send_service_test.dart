@@ -456,7 +456,7 @@ void main() {
     expect(chain, isNot(contains('openai:gpt-4o-mini')));
   });
 
-  test('assistant generated image is omitted in non-vision flow', () async {
+  test('assistant generated image replays its <image> prompt tag even with vision', () async {
     final builder = ChatRequestMessageBuilder(
       readImageAsBase64: (_) async => null,
     );
@@ -480,10 +480,50 @@ void main() {
     final result = await builder.buildRequestMessages(
       [message],
       settings: settings,
-      supportsVision: false,
     );
 
-    expect(result, isEmpty);
+    expect(result.single['content'], '<image>黄昏下的城市天际线</image>');
+  });
+
+  test('assistant image tags merge back into the surrounding reply', () async {
+    final builder = ChatRequestMessageBuilder(
+      readImageAsBase64: (_) async => null,
+    );
+    final settings = fakeSettings(defaultModelName: 'openai:gpt-4o');
+    final now = DateTime(2026, 1, 1, 12);
+    final history = [
+      Message(
+          id: 'a1', role: 'assistant', content: '看这个。', createdAt: now),
+      Message.fromBlocks(
+        id: 'a2',
+        role: 'assistant',
+        blocks: [
+          ImageBlock(
+              messageId: 'a2',
+              url: 'https://example.com/a.png',
+              prompt: '1girl, sunset'),
+        ],
+        createdAt: now,
+      ),
+      Message(id: 'a3', role: 'assistant', content: '喜欢吗？', createdAt: now),
+      Message.fromBlocks(
+        id: 'u1',
+        role: 'user',
+        blocks: [
+          ImageBlock(
+              messageId: 'u1', url: 'https://example.com/u.png', prompt: '猫'),
+        ],
+        createdAt: now,
+      ),
+    ];
+
+    final fast = await builder.buildRequestMessages(history, settings: settings);
+    expect(fast.first['content'], '看这个。\n<image>1girl, sunset</image>\n喜欢吗？');
+    expect((fast.last['content'] as List).single['type'], 'image_url');
+
+    final stable = await builder.buildRequestMessages(history,
+        settings: settings, inlineImagePrompts: false);
+    expect(stable.first['content'], '看这个。\n<image></image>\n喜欢吗？');
   });
 
   for (final mime in ['audio/mpeg', 'video/mp4']) {
@@ -1405,7 +1445,6 @@ void main() {
         ),
       },
       autoReplySettings: const AutoReplySettings(
-        enabled: true,
         allowAiSetReminders: true,
       ),
     );
@@ -1465,7 +1504,7 @@ void main() {
   });
 
   test(
-      'prepareApiConfig should still exclude trigger tools when main switch is off',
+      'prepareApiConfig should exclude trigger tools when AI reminders are off',
       () async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     final now = DateTime(2026, 4, 16, 12, 0, 0);
@@ -1478,8 +1517,7 @@ void main() {
         ),
       },
       autoReplySettings: const AutoReplySettings(
-        enabled: false,
-        allowAiSetReminders: true,
+        allowAiSetReminders: false,
       ),
     );
     final conv = Conversation(
@@ -1578,7 +1616,6 @@ void main() {
         ),
       },
       autoReplySettings: const AutoReplySettings(
-        enabled: true,
         allowAiSetReminders: true,
       ),
     ).copyWith(userName: '小云');
@@ -1667,6 +1704,136 @@ void main() {
     expect(presetTrace['assistantPrefillApplied'], isTrue);
     expect(presetTrace['toolsEffectiveCount'], 0);
     expect(presetTrace['entries'], isNotEmpty);
+  });
+
+  test('bound preset gets a soft output tag reminder near the end',
+      () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final temp = await Directory.systemTemp.createTemp('aicove_st_tags_');
+    addTearDown(() async {
+      if (await temp.exists()) await temp.delete(recursive: true);
+    });
+    final previousPathProvider = PathProviderPlatform.instance;
+    PathProviderPlatform.instance = _FakePathProviderPlatform(temp.path);
+    addTearDown(() => PathProviderPlatform.instance = previousPathProvider);
+    final store = SillyTavernPresetStore(
+      documentsDirectoryResolver: () async => temp,
+    );
+    const source = '''
+{
+  "name":"Tag Preset",
+  "prompts":[
+    {"identifier":"main","role":"system","content":"MAIN"},
+    {"identifier":"chatHistory","marker":true},
+    {"identifier":"tail","role":"system","content":"根据剧情生成由<Options>包裹的剧情选项"}
+  ],
+  "prompt_order":[{"order":[
+    {"identifier":"main","enabled":true},
+    {"identifier":"chatHistory","enabled":true},
+    {"identifier":"tail","enabled":true}
+  ]}]
+}
+''';
+    final preset = await store.importSource(source, sourceFileName: 'tags.json');
+    final settings = fakeSettings(defaultModelName: 'openai:gpt-4o-mini');
+    final now = DateTime(2026, 10, 3, 12);
+    final conv = Conversation(
+      id: 'conv_st_tags',
+      title: 'Alice',
+      displayName: 'Alice',
+      recipeId: preset.id,
+      enabledPlugins: const <String>[],
+      createdAt: now,
+      updatedAt: now,
+    );
+    final container = ProviderContainer(
+      overrides: [
+        appSettingsProvider
+            .overrideWith(() => _FakeAppSettingsNotifier(settings)),
+        sillyTavernPresetStoreProvider.overrideWithValue(store),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final apiConfig = await container.read(chatSendServiceProvider)
+        .prepareApiConfig(
+      conv: conv,
+      history: [
+        Message(id: 'u1', role: 'user', content: '你好', createdAt: now),
+      ],
+      userText: '你好',
+    );
+
+    final contents = apiConfig.messages
+        .map((message) => message['content'].toString())
+        .toList();
+    final reminderIndex =
+        contents.indexWhere((content) => content.contains('只是提醒'));
+    // 紧贴最后一条用户消息之前；预设后半段仍排在最后，格式以预设为准。
+    expect(contents[reminderIndex + 1], '你好');
+    expect(contents.last, '根据剧情生成由<Options>包裹的剧情选项');
+    expect(contents[reminderIndex], contains('预设里提到的：<options>'));
+    expect(contents[reminderIndex], isNot(contains('<image>')));
+  });
+
+  test('preset with user name macro off sends neutral {{user}} with naming hint',
+      () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final temp = await Directory.systemTemp.createTemp('aicove_st_user_');
+    addTearDown(() async {
+      if (await temp.exists()) await temp.delete(recursive: true);
+    });
+    final store = SillyTavernPresetStore(
+      documentsDirectoryResolver: () async => temp,
+    );
+    final preset = await store.importSource(
+      '''{"name":"User Macro","function_calling":false,"prompts":[
+        {"identifier":"main","role":"system","content":"不要替{{user}}行动"},
+        {"identifier":"chatHistory","marker":true}
+      ],"prompt_order":[{"order":[
+        {"identifier":"main","enabled":true},
+        {"identifier":"chatHistory","enabled":true}
+      ]}]}''',
+      sourceFileName: 'user_macro.json',
+    );
+    final settings = fakeSettings(
+      defaultModelName: 'openai:gpt-4o-mini',
+      defaultChatModels: const <String>['openai:gpt-4o-mini'],
+    ).copyWith(userName: '小云');
+    await store.setUserNameMacroEnabled(preset.id, false);
+    final now = DateTime(2026, 10, 3, 12);
+    final conv = Conversation(
+      id: 'conv_st_user_macro',
+      title: 'Alice',
+      displayName: '爱丽丝',
+      personaPrompt: '',
+      recipeId: preset.id,
+      createdAt: now,
+      updatedAt: now,
+    );
+    final container = ProviderContainer(
+      overrides: [
+        appSettingsProvider
+            .overrideWith(() => _FakeAppSettingsNotifier(settings)),
+        sillyTavernPresetStoreProvider.overrideWithValue(store),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final apiConfig = await container.read(chatSendServiceProvider)
+        .prepareApiConfig(
+          conv: conv,
+          history: <Message>[
+            Message(id: 'u1', role: 'user', content: '你好', createdAt: now),
+          ],
+          userText: '你好',
+        );
+
+    final joined =
+        apiConfig.messages.map((message) => message['content']).join('\n');
+    expect(apiConfig.messages.first['content'], '不要替用户行动');
+    expect(joined, isNot(contains('小云')));
+    expect(joined, contains('称呼对方时以角色设定中的称呼为准'));
   });
 
   test('tavern final request follows entry switches, world regex, default and owner snapshot', () async {

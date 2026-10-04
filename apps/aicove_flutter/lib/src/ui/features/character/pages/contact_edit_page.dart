@@ -10,12 +10,17 @@ import 'package:go_router/go_router.dart';
 
 import '../../../../core/utils/blurred_background_service.dart';
 import '../../../../core/utils/data_image.dart';
+import '../../../../features/agent_context/data/silly_tavern_character_card_loader.dart';
+import '../../../../features/agent_context/domain/silly_tavern_character_card.dart';
+import '../../../../features/agent_context/providers/preset_recipe_provider.dart';
+import '../../../../features/chat/application/chat_page_conversation_actions.dart';
 import '../../../../features/chat/domain/conversation.dart';
 import '../../../../features/chat/domain/persona_prompt_codec.dart';
 import '../../../../features/chat/presentation/widgets/contact_edit_dialog.dart';
 import '../../../../features/chat/providers2.dart';
 import '../../../../features/plugins/plugin_providers.dart';
 import '../../../../ui/features/settings/pages/chat_plugin_settings_page.dart';
+import '../../plugins/widgets/tavern_common.dart';
 import '../widgets/avatar_name_section.dart';
 import 'contact_memory_page.dart';
 import '../services/contact_edit_snapshot_store.dart';
@@ -23,6 +28,7 @@ import '../services/contact_edit_snapshot_store.dart';
 import '../widgets/background_info_section.dart';
 import '../widgets/character_plugins_section.dart';
 import '../widgets/character_text_editor_sheet.dart';
+import '../widgets/tavern_greeting_picker_sheet.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/index.dart';
 
@@ -31,6 +37,9 @@ import '../../../../ui/shared/widgets/index.dart';
 enum EditMode { create, editConversation, editTemplate }
 
 const Duration _kContactEditDeferredVisualWindow = Duration(milliseconds: 420);
+
+/// 导入酒馆角色卡时背景默认叠加的薄模糊。
+const double _kImportedBackgroundBlurSigma = 6.0;
 
 class ContactEditPage extends ConsumerStatefulWidget {
   final Conversation conversation;
@@ -66,6 +75,22 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
   late final TextEditingController _chatBackgroundCtrl;
 
   Uint8List? _chatBackgroundBytes;
+
+  /// 仅导入角色卡时写入；null 表示沿用会话已有的模糊值。
+  double? _chatBackgroundBlurSigma;
+  bool _importingCard = false;
+  bool _importingPreset = false;
+  bool _submitting = false;
+
+  /// 创建成功后记下 ID，后续步骤失败重试时不再新建角色。
+  String? _createdId;
+
+  /// 导入的角色卡；创建时把卡内正则与世界书并入角色专用组合。
+  SillyTavernCharacterCard? _importedCard;
+
+  /// 导入角色卡带来的开场白；创建角色时把选中的一套写成第一条角色消息。
+  List<String> _cardGreetings = const [];
+  int _greetingIndex = 0;
   late Set<String> _selectedPluginIds;
   String? _boundVoiceId;
   String? _selectedRecipeId;
@@ -112,12 +137,11 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
     final allPluginIds = conversationScopedChatPluginItems
         .map((e) => e.id)
         .toSet();
-    if (conv.enabledPlugins == null) {
+    if (widget.editMode == EditMode.create) {
+      // 新建角色默认不开启任何插件，由用户在「管理开启的插件」中逐项开启
+      _selectedPluginIds = {};
+    } else if (conv.enabledPlugins == null) {
       _selectedPluginIds = {...allPluginIds};
-      // 新建角色时，默认不启用 TTS 插件（需用户手动绑定音色后才开启）
-      if (widget.editMode == EditMode.create) {
-        _selectedPluginIds.remove('tts');
-      }
     } else {
       _selectedPluginIds = {
         for (final id in conv.enabledPlugins!)
@@ -314,7 +338,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
 
             const SizedBox(height: 16),
 
-            // 已开启插件各占一个容器，末尾为全部插件开关列表
+            // 酒馆预设、已开启插件列表，末尾为管理开启的插件开关列表
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: CharacterPluginsSection(
@@ -379,6 +403,23 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
                 ),
               ),
             ),
+
+            if (widget.editMode == EditMode.create) ...[
+              const SizedBox(height: 16),
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _buildTavernCardImportButton(),
+                  _buildTavernPresetImportButton(),
+                ],
+              ),
+              if (_cardGreetings.length > 1) ...[
+                const SizedBox(height: 8),
+                Center(child: _buildGreetingPickerButton()),
+              ],
+            ],
 
             // 底部留白
             const SizedBox(height: 48),
@@ -595,7 +636,9 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
         return [
           _buildCircleButton(
             icon: Icons.check,
-            onTap: _onSave,
+            onTap: _importingCard || _importingPreset || _submitting
+                ? null
+                : _onSave,
             tooltip: '创建角色',
           ),
         ];
@@ -633,7 +676,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
   /// Circular translucent action button
   Widget _buildCircleButton({
     required IconData icon,
-    required VoidCallback onTap,
+    required VoidCallback? onTap,
     String? tooltip,
   }) {
     return IconButton(
@@ -740,6 +783,186 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
       _refImageCtrl.clear();
     });
     _scheduleAutoSave();
+  }
+
+  // ==================== 导入酒馆角色卡 ====================
+
+  Widget _buildTavernCardImportButton() {
+    return OutlinedButton.icon(
+      onPressed: _importingCard ? null : _showTavernCardImportSheet,
+      icon: _importingCard
+          ? const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.file_download_outlined),
+      label: Text(_importingCard ? '正在导入…' : '导入酒馆角色卡'),
+    );
+  }
+
+  Widget _buildTavernPresetImportButton() {
+    return OutlinedButton.icon(
+      onPressed: _importTavernPresetAndBind,
+      icon: const Icon(Icons.tune),
+      label: const Text('导入绑定新预设'),
+    );
+  }
+
+  /// 复用酒馆插件页的导入流程，导入后直接绑定到当前角色卡。
+  Future<void> _importTavernPresetAndBind() async {
+    setState(() => _importingPreset = true);
+    try {
+      await runTavernAction(context, () async {
+        final preset = await importTavernPresetWithPreview(context, ref);
+        if (preset == null || !mounted) return;
+        setState(() => _selectedRecipeId = preset.id);
+        _scheduleAutoSave();
+        MoeToast.success(context, '已导入并绑定「${preset.name}」');
+      });
+    } finally {
+      if (mounted) setState(() => _importingPreset = false);
+    }
+  }
+
+  void _showTavernCardImportSheet() {
+    showMoeActionSheet(
+      context: context,
+      actions: [
+        MoeSheetAction(
+          label: '从图片导入',
+          subtitle: 'PNG 角色卡或角色卡 JSON',
+          icon: Icons.image_outlined,
+          onTap: () => unawaited(_importTavernCardFromFile()),
+        ),
+        MoeSheetAction(
+          label: '从链接导入',
+          subtitle: '角色卡直链或 chub.ai 角色页',
+          icon: Icons.link,
+          onTap: () => unawaited(_importTavernCardFromUrl()),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _importTavernCardFromFile() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['png', 'json'],
+      withData: true,
+    );
+    final bytes = result?.files.firstOrNull?.bytes;
+    if (bytes == null) return;
+    await _runTavernCardImport(
+      () async => SillyTavernCharacterCard.parseBytes(bytes),
+    );
+  }
+
+  Future<void> _importTavernCardFromUrl() async {
+    final urlCtrl = TextEditingController();
+    final confirmed = await showMeoTalkDialog(
+      context: context,
+      title: '从链接导入',
+      confirmText: '导入',
+      content: MoeTextField(
+        controller: urlCtrl,
+        hint: 'https://…',
+        autofocus: true,
+        keyboardType: TextInputType.url,
+      ),
+    );
+    final url = urlCtrl.text.trim();
+    urlCtrl.dispose();
+    if (confirmed != true || url.isEmpty) return;
+    await _runTavernCardImport(
+      () => SillyTavernCharacterCardLoader().load(url),
+    );
+  }
+
+  Future<void> _runTavernCardImport(
+    Future<SillyTavernCharacterCard> Function() load,
+  ) async {
+    setState(() => _importingCard = true);
+    try {
+      final card = await load();
+      if (!mounted) return;
+      _applyTavernCard(card);
+      if (card.greetings.length > 1) await _pickGreeting();
+      if (!mounted) return;
+      MoeToast.success(context, _cardImportedMessage(card));
+    } catch (e) {
+      if (!mounted) return;
+      MoeToast.error(context, e is FormatException ? e.message : '导入失败：$e');
+    } finally {
+      if (mounted) setState(() => _importingCard = false);
+    }
+  }
+
+  static String _cardImportedMessage(SillyTavernCharacterCard card) {
+    final resources = [
+      if (card.regexScripts.isNotEmpty) '${card.regexScripts.length} 条正则',
+      if (card.characterBook != null) '世界书',
+    ];
+    if (resources.isEmpty) return '已导入「${card.name}」';
+    return '已导入「${card.name}」，创建时卡内${resources.join('和')}会放进角色专用预设';
+  }
+
+  /// 角色卡图片直接用作头像与聊天背景，背景默认叠一层薄模糊。
+  void _applyTavernCard(SillyTavernCharacterCard card) {
+    final image = card.imageBytes;
+    setState(() {
+      _importedCard = card;
+      _nameCtrl.text = card.name;
+      _personaCtrl.text = card.composePersonaPrompt();
+      _cardGreetings = card.greetings;
+      _greetingIndex = 0;
+      if (image != null) {
+        final dataUrl = buildDataImage(image, mimeType: _sniffImageMime(image));
+        _avatarCtrl.text = dataUrl;
+        _refImageCtrl.clear();
+        _chatBackgroundCtrl.text = dataUrl;
+        _chatBackgroundBytes = image;
+        _chatBackgroundBlurSigma = _kImportedBackgroundBlurSigma;
+      }
+    });
+    _scheduleBlurEnsure();
+  }
+
+  Widget _buildGreetingPickerButton() {
+    return TextButton.icon(
+      onPressed: _pickGreeting,
+      icon: const Icon(Icons.chat_bubble_outline, size: 18),
+      label: Text(
+        '开场白：第 ${_greetingIndex + 1} 套（共 ${_cardGreetings.length} 套）',
+      ),
+    );
+  }
+
+  /// 关闭弹窗视为沿用当前所选（默认主开场白）。
+  Future<void> _pickGreeting() async {
+    final index = await showTavernGreetingPicker(
+      context,
+      greetings: _cardGreetings,
+      selectedIndex: _greetingIndex,
+    );
+    if (index == null || !mounted) return;
+    setState(() => _greetingIndex = index);
+  }
+
+  static String _sniffImageMime(Uint8List bytes) {
+    if (SillyTavernCharacterCard.isPng(bytes)) return 'image/png';
+    if (bytes.length > 2 && bytes[0] == 0xFF && bytes[1] == 0xD8) {
+      return 'image/jpeg';
+    }
+    if (bytes.length > 12 &&
+        String.fromCharCodes(bytes.sublist(8, 12)) == 'WEBP') {
+      return 'image/webp';
+    }
+    if (bytes.length > 3 &&
+        String.fromCharCodes(bytes.sublist(0, 3)) == 'GIF') {
+      return 'image/gif';
+    }
+    return 'image/png';
   }
 
   // ==================== 保存逻辑 ====================
@@ -851,6 +1074,10 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
           chatBackgroundImage: result.chatBackgroundImage,
           clearChatBackgroundImage: result.clearChatBackgroundImage,
           clearChatBackgroundMaskOpacity: result.clearChatBackgroundImage,
+          chatBackgroundBlurSigma: result.clearChatBackgroundImage
+              ? null
+              : _chatBackgroundBlurSigma,
+          clearChatBackgroundBlurSigma: result.clearChatBackgroundImage,
           selfAddress: result.selfAddress,
           clearSelfAddress: result.clearSelfAddress,
           addressUser: result.addressUser,
@@ -868,21 +1095,94 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
   }
 
   Future<void> _onSave() async {
+    if (_submitting || _importingCard || _importingPreset) return;
     if (!_validateForm()) return;
     final result = _buildEditResult();
 
-    if (widget.editMode == EditMode.create) {
-      final notifier = ref.read(conversationsProvider.notifier);
-      final id = await notifier.createNew();
-      await _applyResult(id, result);
-
-      ref.read(activeConversationIdProvider.notifier).state = id;
-      if (!mounted) return;
-      final conversation = ref.read(resolvedConversationByIdProvider(id));
-      context.replace('/chat/$id', extra: conversation);
-    } else {
+    if (widget.editMode != EditMode.create) {
       _allowAndPop<ContactEditResult>(result);
+      return;
     }
+    setState(() => _submitting = true);
+    try {
+      await _createRole(result);
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  /// 创建角色；角色落库后，专用预设与开场白任一步失败只提示，不阻止进入聊天。
+  Future<void> _createRole(ContactEditResult result) async {
+    // 提交开始即冻结本次要用的卡与开场白，导入中途改动不影响这次提交。
+    final card = _importedCard;
+    final greeting = _cardGreetings.isEmpty
+        ? null
+        : _cardGreetings[_greetingIndex];
+    final controller = ref.read(presetRecipeImportControllerProvider.notifier);
+    final withResources = card != null && card.hasPresetResources;
+
+    final notifier = ref.read(conversationsProvider.notifier);
+    final String id;
+    try {
+      id = _createdId ??= await notifier.createNew();
+      await _applyResult(id, result);
+    } catch (e) {
+      if (mounted) MoeToast.error(context, '创建角色失败，请重试：$e');
+      return;
+    }
+
+    final problems = <String>[];
+    var recipeId = result.recipeId;
+    if (withResources) {
+      try {
+        final created = await controller.createCardPreset(
+          explicitBaseId: result.recipeId,
+          name: '${result.displayName} 专用',
+          regexScripts: card.regexScripts,
+          characterBook: card.characterBook,
+          // 导入卡即视为要用卡内正则：直接允许运行，之后在预设里逐条管理。
+          regexAuthorized: card.regexScripts.isNotEmpty ? true : null,
+        );
+        try {
+          await notifier.applyContactEdit(id, recipeId: created.preset.id);
+          recipeId = created.preset.id;
+          problems.addAll(created.warnings);
+          if (created.skippedRegexCount > 0) {
+            problems.add('${created.skippedRegexCount} 条卡内正则与原预设重复或无效，已跳过');
+          }
+        } catch (e) {
+          await controller.deletePreset(created.preset.id).catchError((_) {});
+          problems.add('专用预设绑定失败：$e');
+        }
+      } catch (e) {
+        problems.add('专用预设未建立：$e');
+      }
+    }
+    if (card != null && card.hasHelperScripts) {
+      problems.add('卡内酒馆助手脚本（变量系统、状态栏）无法运行');
+    }
+    if (greeting != null) {
+      try {
+        await ref
+            .read(chatPageConversationActionsProvider)
+            .appendCharacterGreeting(
+              id,
+              greeting: greeting,
+              charName: result.displayName,
+              recipeId: recipeId,
+            );
+      } catch (e) {
+        problems.add('开场白未写入：$e');
+      }
+    }
+
+    ref.read(activeConversationIdProvider.notifier).state = id;
+    if (!mounted) return;
+    if (problems.isNotEmpty) {
+      MoeToast.warning(context, '角色已创建。${problems.join('；')}');
+    }
+    final conversation = ref.read(resolvedConversationByIdProvider(id));
+    context.replace('/chat/$id', extra: conversation);
   }
 
   Future<void> _onSaveAsNewTemplate() async {

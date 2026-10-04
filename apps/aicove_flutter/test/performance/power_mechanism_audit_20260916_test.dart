@@ -61,11 +61,23 @@ class _RecordingLocalStore extends CloudLocalStore {
     List<Object?> args = const [],
   ]) async {
     queries.add(sql);
+    if (scanned && sql.contains('embedded_media_scanned_v1')) {
+      return [
+        {'1': 1},
+      ];
+    }
     return [];
   }
 
+  bool scanned = false;
+
   @override
   Future<void> execute(String sql, [List<Object?> args = const []]) async {
+    // Only the sync bookkeeping marker for a finished full scan is allowed.
+    if (sql.contains("VALUES('embedded_media_scanned_v1')")) {
+      scanned = true;
+      return;
+    }
     throw StateError('This audit must not write application data');
   }
 }
@@ -303,7 +315,7 @@ void main() {
         );
       }
 
-      testWidgets('idle scheduler dispatches a full pass on fifth polling tick', (
+      testWidgets('idle scheduler stays off the network between daily rounds', (
         tester,
       ) async {
         SharedPreferences.setMockInitialValues({});
@@ -317,20 +329,19 @@ void main() {
           Directory.systemTemp,
           Directory.systemTemp,
         );
-        final modes = <bool>[];
-        final scheduler = CloudSyncScheduler(local, ({
-          bool pollOnly = false,
-        }) async {
-          modes.add(pollOnly);
+        var rounds = 0;
+        final scheduler = CloudSyncScheduler(local, () async {
+          rounds++;
+          return true;
         });
         try {
           scheduler.start();
-          for (var i = 0; i < 5; i++) {
-            await tester.pump(const Duration(seconds: 3));
+          for (var i = 0; i < 8; i++) {
+            await tester.pump(const Duration(minutes: 15));
           }
-          expect(modes, [true, true, true, true, false]);
+          expect(rounds, 1);
           debugPrint(
-            '[PowerMechanism] syntheticIdle15s pollOnlySequence=$modes noDatabaseEdits=true networkCalls=0',
+            '[PowerMechanism] syntheticIdle2h rounds=$rounds noDatabaseEdits=true',
           );
         } finally {
           scheduler.close();
@@ -339,7 +350,7 @@ void main() {
       });
 
       test(
-        'empty media-compaction checks rescan payload columns each invocation',
+        'after the first full pass, media compaction scans only pending edits',
         () async {
           SharedPreferences.setMockInitialValues({});
           final database = AppDatabase.forTesting(NativeDatabase.memory());
@@ -354,16 +365,16 @@ void main() {
             await local.compactEmbeddedMedia(mediaStore: media);
             await local.compactEmbeddedMedia(mediaStore: media);
             final scans = local.queries
-                .where((sql) => sql.contains('WHERE instr('))
+                .where((sql) => sql.contains("instr("))
                 .toList();
             expect(scans.length, 4);
             expect(
-              scans.where((sql) => sql.contains('FROM messages ')).length,
-              2,
+              scans.take(2).where((sql) => sql.contains('cloud_dirty')),
+              isEmpty,
             );
             expect(
-              scans.where((sql) => sql.contains('FROM message_blocks ')).length,
-              2,
+              scans.skip(2).every((sql) => sql.contains('cloud_dirty')),
+              isTrue,
             );
             debugPrint(
               '[PowerMechanism] emptyCompactionInvocations=2 payloadScanQueries=${scans.length} realDatabaseQueries=0 networkCalls=0',

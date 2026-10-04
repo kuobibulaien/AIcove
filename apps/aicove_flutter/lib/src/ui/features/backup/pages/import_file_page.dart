@@ -1,11 +1,14 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:file_picker/file_picker.dart';
 
 import '../../../../features/backup/backup_providers.dart';
+import '../../../../features/backup/data/conversation_importer.dart';
+import '../../../../features/backup/models/export_format.dart';
 import '../../../shared/animations/parallax_slide_page_route.dart';
 import '../../../shared/effects/smooth_clip.dart';
 import '../../../shared/widgets/index.dart';
@@ -44,7 +47,7 @@ class _ImportFilePageState extends ConsumerState<ImportFilePage> {
             ),
             const SizedBox(height: 8),
             Text(
-              '支持 .aicove 格式的备份文件',
+              '支持 .zip 格式的备份文件（旧版 .aicove 仍可导入）',
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
@@ -137,7 +140,7 @@ class _ImportFilePageState extends ConsumerState<ImportFilePage> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '.aicove',
+                  '.zip / .aicove',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
@@ -222,10 +225,10 @@ class _ImportFilePageState extends ConsumerState<ImportFilePage> {
       }
 
       // 检查文件扩展名
-      if (!filePath.toLowerCase().endsWith('.aicove')) {
+      if (!isBackupFilePath(filePath)) {
         setState(() {
           _isLoading = false;
-          _errorMessage = '请选择 .aicove 格式的备份文件';
+          _errorMessage = '请选择 .zip 格式的备份文件';
         });
         return;
       }
@@ -241,7 +244,20 @@ class _ImportFilePageState extends ConsumerState<ImportFilePage> {
 
       // 预览导入文件
       final importer = ref.read(conversationImporterProvider);
-      final preview = await importer.preview(file);
+      String? password;
+      ImportPreview? preview;
+      while (preview == null) {
+        try {
+          preview = await importer.preview(file, password: password);
+        } on BackupPasswordRequiredException catch (e) {
+          if (!mounted) return;
+          password = await _askPassword(password == null ? null : e.message);
+          if (password == null) {
+            setState(() => _isLoading = false);
+            return;
+          }
+        }
+      }
 
       if (!mounted) return;
 
@@ -250,7 +266,11 @@ class _ImportFilePageState extends ConsumerState<ImportFilePage> {
       // 跳转到预览页面
       Navigator.of(context).push(
         ParallaxSlidePageRoute(
-          page: ImportPreviewPage(file: file, preview: preview),
+          page: ImportPreviewPage(
+            file: file,
+            preview: preview,
+            password: password,
+          ),
         ),
       );
     } catch (e) {
@@ -260,5 +280,31 @@ class _ImportFilePageState extends ConsumerState<ImportFilePage> {
         _errorMessage = '读取文件失败: $e';
       });
     }
+  }
+
+  /// 取消返回 null；[error] 用于提示上次密码错误。
+  Future<String?> _askPassword(String? error) async {
+    var password = '';
+    final confirmed = await showMeoTalkDialog(
+      context: context,
+      title: '输入备份密码',
+      confirmText: '解锁',
+      content: MoeTextField(
+        key: const ValueKey('import-password'),
+        label: '备份密码',
+        autofocus: true,
+        errorText: error,
+        inputFormatters: [
+          FilteringTextInputFormatter.allow(backupPasswordCharacters),
+        ],
+        textInputAction: TextInputAction.done,
+        onChanged: (value) => password = value,
+        onSubmitted: (_) =>
+            Navigator.of(context, rootNavigator: true).pop(true),
+      ),
+    );
+    if (confirmed != true) return null;
+    // 空输入按密码错误处理，继续弹窗而不是当作取消。
+    return password;
   }
 }

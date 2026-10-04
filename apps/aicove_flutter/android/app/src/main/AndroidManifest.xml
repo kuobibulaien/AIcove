@@ -59,6 +59,13 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="ongoing_ai_chat_generation_and_proactive_assistant" />
         </service>
+        <!-- 只允许持有 DUMP 的 adb shell 读取诊断凭证，普通应用无法获得该权限。 -->
+        <provider
+            android:name=".DiagnosticTokenProvider"
+            android:authorities="${applicationId}.diagnostics"
+            android:exported="true"
+            android:readPermission="android.permission.DUMP"
+            android:writePermission="android.permission.DUMP" />
         <receiver
             android:name=".BootCompletedReceiver"
             android:enabled="true"
@@ -78,6 +85,10 @@
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https"/>
         </intent>
     </queries>
 </manifest>

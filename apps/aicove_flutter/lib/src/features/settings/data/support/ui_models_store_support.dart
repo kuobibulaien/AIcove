@@ -221,6 +221,7 @@ Map<String, dynamic> buildDefaultUiModelsStoreData() => <String, dynamic>{
   'message_format_config': null,
   'stream_segment_delay_seconds': 0.0,
   'chat_display_style': 'bubble',
+  'auto_scroll_on_send': true,
   'text_scale_factor': 1.0,
   'ui_scale_factor': 1.0,
   'windows_window_controls_side': WindowControlButtonSide.left.value,
@@ -238,8 +239,6 @@ Map<String, dynamic> buildDefaultUiModelsStoreData() => <String, dynamic>{
 };
 
 Map<String, dynamic> _defaultAutoReplySettings() => <String, dynamic>{
-  'enabled': false,
-  'guard_mode_enabled': false,
   'daily_limit': 3,
   'min_interval_minutes': 120,
   'quiet_hours_enabled': true,
@@ -517,8 +516,6 @@ Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
     }
 
     return <String, dynamic>{
-      'enabled': source['enabled'] == true,
-      'guard_mode_enabled': source['guard_mode_enabled'] == true,
       'daily_limit': clampInt(
         source['daily_limit'] as num?,
         1,

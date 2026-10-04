@@ -197,7 +197,7 @@ void main() {
     final glass = tester.widget<MoeLiquidGlass>(inThumb(MoeLiquidGlass));
     expect(glass.radius, 8);
     expect(glass.quality, GlassQuality.standard);
-    expect(glass.baseline, same(MoeMaterialBaseline.none));
+    expect(glass.baseline, same(MoeMaterialBaseline.component));
     expect(tester.takeException(), isNull);
   });
 

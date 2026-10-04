@@ -89,10 +89,12 @@ void main() {
       ProviderScope(
         overrides: [
           appSettingsProvider.overrideWith(_Settings.new),
-          presetRecipeListProvider
-              .overrideWith((ref) async => const <PresetRecipeSummary>[]),
+          presetRecipeListProvider.overrideWith(
+            (ref) async => const <PresetRecipeSummary>[],
+          ),
           tavernPluginSettingsProvider.overrideWith(
-              (ref) async => const TavernPluginSettings(enabled: true)),
+            (ref) async => const TavernPluginSettings(enabled: true),
+          ),
           if (port != null)
             voicePresetApplicationProvider.overrideWithValue(port),
           voicePresetReadyProvider.overrideWith((ref) async {
@@ -206,7 +208,7 @@ void main() {
         count: 2,
       );
       expect(tester.takeException(), isNull);
-      await tester.tap(find.text('音色配置包'));
+      await tester.tap(find.byKey(const ValueKey('enabled-plugin-tts')));
       await tester.pumpAndSettle();
       await tester.enterText(
         find.byKey(const ValueKey('voice-preset-search')),

@@ -41,13 +41,15 @@ void main() {
       expect(state.glassEffectEnabled, choice != '纯色');
       expect(state.useLiquidGlass, choice == '玻璃');
       expect(state.glassBlurSigma, 16);
+      for (final key in ['material-blur-slider', 'material-tint-slider']) {
+        expect(
+          find.byKey(ValueKey(key)),
+          choice == '纯色' ? findsNothing : findsOneWidget,
+        );
+      }
       expect(
-        find.byKey(const ValueKey('glass-thickness-slider')),
+        find.text('玻璃模式功耗较高，可能会引起手机发热。'),
         choice == '玻璃' ? findsOneWidget : findsNothing,
-      );
-      expect(
-        find.byKey(const ValueKey('frosted-blur-slider')),
-        choice == '模糊' ? findsOneWidget : findsNothing,
       );
       expect(tester.takeException(), isNull);
     }
@@ -62,17 +64,15 @@ void main() {
     );
     await tester.tap(find.text('玻璃'));
     await tester.pumpAndSettle();
-    final slider = find.byKey(const ValueKey('glass-thickness-slider'));
+    final slider = find.byKey(const ValueKey('material-blur-slider'));
     expect(slider, findsOneWidget);
-    for (final label in ['通透', '中等', '厚重']) {
-      expect(find.text(label), findsOneWidget);
-    }
-    for (final value in [0.0, 19.0, 32.0]) {
+    expect(tester.widget<MoeSlider>(slider).min, 0);
+    for (final value in [0.0, 60.0, 100.0]) {
       tester.widget<MoeSlider>(slider).onChanged!(value);
       await tester.pumpAndSettle();
       expect(
         container.read(appSettingsProvider).requireValue.glassBlurSigma,
-        value,
+        moreOrLessEquals(value / 100 * kMaxGlassBlurSigma, epsilon: 1e-9),
       );
       expect(tester.widget<MoeSlider>(slider).value, value);
     }
@@ -94,7 +94,7 @@ void main() {
     expect(finalSettings.surfaceMaterial, MoeSurfaceMaterial.frosted);
   });
 
-  testWidgets('frosted blur slider maps 10..100 percent to stored sigma', (
+  testWidgets('blur and tint sliders are independent under frosted', (
     tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(420, 1200));
@@ -114,7 +114,8 @@ void main() {
     );
     await container.read(appSettingsProvider.future);
     await tester.pumpAndSettle();
-    final slider = find.byKey(const ValueKey('frosted-blur-slider'));
+    final slider = find.byKey(const ValueKey('material-blur-slider'));
+    final tint = find.byKey(const ValueKey('material-tint-slider'));
     expect(slider, findsOneWidget);
     final widget = tester.widget<MoeSlider>(slider);
     expect(widget.min, 10);
@@ -124,12 +125,13 @@ void main() {
     expect(widget.label, '50%');
     expect(widget.semanticFormatterCallback!(42), '模糊度 42%');
     expect(find.text('模糊度'), findsOneWidget);
-    expect(find.text('50%'), findsOneWidget);
-    expect(find.text('10%'), findsOneWidget);
-    expect(find.text('100%'), findsOneWidget);
+    expect(find.text('底色填充'), findsOneWidget);
+    // Without a stored fill, the tint keeps the value the blur implied.
+    expect(tester.widget<MoeSlider>(tint).value, 50);
+    expect(tester.widget<MoeSlider>(tint).min, 0, reason: '模糊底色可拉到零');
     expect(
-      find.byKey(const ValueKey('glass-thickness-slider')),
-      findsNothing,
+      tester.widget<MoeSlider>(tint).semanticFormatterCallback!(30),
+      '底色填充 30%',
     );
     for (final entry in {10.0: 3.2, 55.0: 17.6, 100.0: 32.0}.entries) {
       tester.widget<MoeSlider>(slider).onChanged!(entry.key);
@@ -148,6 +150,18 @@ void main() {
     expect(
       (await persisted.read(appSettingsProvider.future)).glassBlurSigma,
       32,
+    );
+    expect(tester.widget<MoeSlider>(tint).value, 50, reason: '模糊不带动底色');
+    tester.widget<MoeSlider>(tint).onChanged!(20);
+    await tester.pumpAndSettle();
+    final afterTint = container.read(appSettingsProvider).requireValue;
+    expect(afterTint.glassTintFill, moreOrLessEquals(0.2, epsilon: 1e-9));
+    expect(afterTint.glassBlurSigma, 32, reason: '底色不带动模糊');
+    final tintPersisted = ProviderContainer();
+    addTearDown(tintPersisted.dispose);
+    expect(
+      (await tintPersisted.read(appSettingsProvider.future)).glassTintFill,
+      moreOrLessEquals(0.2, epsilon: 1e-9),
     );
     await tester.drag(slider, const Offset(-1000, 0));
     await tester.pumpAndSettle();
@@ -186,18 +200,17 @@ void main() {
     );
     await container.read(appSettingsProvider.future);
     await tester.pumpAndSettle();
-    final glassSlider = find.byKey(const ValueKey('glass-thickness-slider'));
+    final glassSlider = find.byKey(const ValueKey('material-blur-slider'));
     expect(tester.widget<MoeSlider>(glassSlider).value, 0);
     expect(tester.widget<MoeSlider>(glassSlider).min, 0);
-    expect(tester.widget<MoeSlider>(glassSlider).max, kMaxGlassBlurSigma);
+    expect(tester.widget<MoeSlider>(glassSlider).max, 100);
     await Scrollable.ensureVisible(
       tester.element(find.text('模糊')),
       alignment: 0.5,
     );
     await tester.tap(find.text('模糊'));
     await tester.pumpAndSettle();
-    final frostedSlider = find.byKey(const ValueKey('frosted-blur-slider'));
-    expect(tester.widget<MoeSlider>(frostedSlider).value, 10);
+    expect(tester.widget<MoeSlider>(glassSlider).value, 10);
     expect(find.text('模糊度'), findsOneWidget);
     expect(
       container.read(appSettingsProvider).requireValue.glassBlurSigma,
@@ -208,11 +221,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.widget<MoeSlider>(glassSlider).value, 0);
     expect(tester.widget<MoeSlider>(glassSlider).min, 0);
-    expect(tester.widget<MoeSlider>(glassSlider).max, kMaxGlassBlurSigma);
-    expect(
-      container.read(appSettingsProvider).requireValue.glassBlurSigma,
-      0,
-    );
+    expect(container.read(appSettingsProvider).requireValue.glassBlurSigma, 0);
     final fresh = ProviderContainer();
     addTearDown(fresh.dispose);
     expect(

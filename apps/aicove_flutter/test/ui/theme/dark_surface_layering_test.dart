@@ -19,11 +19,11 @@ void main() {
 
   test('solid containers match the frosted tint over the dark page', () {
     final colors = MoeColors.dark();
-    for (final setting in [0.0, 16.0, 32.0]) {
+    for (final setting in [3.2, 16.0, 32.0]) {
       final frosted = Color.alphaBlend(
         MoeFrostedMaterial.surfaceTint(
           Brightness.dark,
-          sigma: MoeFrostedMaterial.blurSigmaForSetting(setting),
+          fill: setting / kMaxGlassBlurSigma,
         ),
         colors.surface,
       );

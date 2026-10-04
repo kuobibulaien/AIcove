@@ -76,6 +76,8 @@ void main() {
           useLiquidGlass: true,
           enabled: glassThemeEnabled ?? true,
           blurSigma: glassThemeSigma ?? kDefaultGlassBlurSigma,
+          tintFill:
+              (glassThemeSigma ?? kDefaultGlassBlurSigma) / kMaxGlassBlurSigma,
           child: tree,
         );
       }

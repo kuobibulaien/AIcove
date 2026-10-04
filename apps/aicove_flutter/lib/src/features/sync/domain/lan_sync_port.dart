@@ -24,6 +24,7 @@ class LanSyncState {
     this.name = '',
     this.deviceId = '',
     this.invitation,
+    this.pin,
     this.peers = const [],
     this.conflicts = const [],
     this.pendingFiles = 0,
@@ -33,7 +34,7 @@ class LanSyncState {
   });
   final bool enabled, busy;
   final String name, deviceId;
-  final String? invitation, notice, error;
+  final String? invitation, pin, notice, error;
   final List<LanPeerView> peers;
   final List<List<LanRevision>> conflicts;
   final int pendingFiles, unavailableFiles;
@@ -51,7 +52,11 @@ abstract interface class LanSyncPort {
   Future<void> approve(String peerId);
   Future<void> forget(String peerId);
   Future<void> synchronize();
-  Future<void> resolve(LanRevision selected, List<String> previewHashes);
+
+  /// Each choice pairs the kept version with the hashes shown when choosing.
+  Future<void> resolve(
+    List<(LanRevision selected, List<String> previewHashes)> choices,
+  );
   Future<void> foreground(bool active);
   Future<void> close();
 }

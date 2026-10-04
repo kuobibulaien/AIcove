@@ -124,7 +124,7 @@ class _TipsCard extends StatelessWidget {
     final colors = context.moeColors;
     final promptHint = config.currentTimePromptTemplate.trim().isEmpty
         ? '当前会回退到默认的当前时间模板'
-        : '调试中心里的当前时间模板会直接影响 <system-reminder> 文案';
+        : '「插件 → 工具提示词」里的当前时间模板会直接影响 <system-reminder> 文案';
 
     return MoeSettingsGroup(
       padding: MoeSettingsLayout.contentPadding,

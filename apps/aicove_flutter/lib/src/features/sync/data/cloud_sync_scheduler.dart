@@ -1,73 +1,81 @@
 import 'dart:async';
 
-import '../../../core/sync/cloud_tracking.dart';
 import 'cloud_local_store.dart';
 
-/// Committed database edits wake the uploader. Lightweight remote polls keep
-/// receiving responsive; periodic full scans also capture settings/file edits.
+/// The cloud is the fallback channel; paired devices sync over LAN in real
+/// time. Automatic rounds therefore run only a few times a day: when due on
+/// launch, on resume, or on a cheap local timer that never touches the
+/// network unless a round is due. Manual sync always runs immediately.
 class CloudSyncScheduler {
-  CloudSyncScheduler(this.local, this.run);
+  CloudSyncScheduler(
+    this.local,
+    this.run, {
+    this.interval = const Duration(hours: 8),
+    this.retry = const Duration(hours: 1),
+    DateTime Function()? now,
+  }) : _now = now ?? DateTime.now;
+
+  static const lastSuccessKey = 'aicove.cloud.last_sync_ms';
+  static const lastAttemptKey = 'aicove.cloud.last_attempt_ms';
 
   final CloudLocalStore local;
-  final Future<void> Function({bool pollOnly}) run;
-  StreamSubscription<dynamic>? _changes;
-  Timer? _pollTimer;
-  Timer? _changeTimer;
+
+  /// Runs one round; returns whether it completed without error.
+  final Future<bool> Function() run;
+  final Duration interval, retry;
+  final DateTime Function() _now;
+  Timer? _timer;
   Future<void>? _work;
   bool _closed = false;
-  bool _requested = false;
-  bool _full = false;
-  int _ticks = 0;
 
   void start() {
-    if (_closed || _pollTimer != null) return;
-    _changes = local.db.tableUpdates().listen((updates) {
-      if (updates.any((update) => cloudTables.containsKey(update.table))) {
-        _changeTimer ??= Timer(const Duration(milliseconds: 300), () {
-          _changeTimer = null;
-          unawaited(_checkCommittedEdits());
-        });
-      }
+    if (_closed || _timer != null) return;
+    _timer = Timer.periodic(const Duration(minutes: 30), (_) {
+      unawaited(synchronizeIfDue());
     });
-    _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-      if (_work != null) return;
-      unawaited(synchronize(pollOnly: ++_ticks % 5 != 0));
-    });
+    unawaited(synchronizeIfDue());
   }
 
-  Future<void> _checkCommittedEdits() async {
-    try {
-      final dirty = await local.rows('SELECT 1 FROM cloud_dirty LIMIT 1');
-      // Remote applies notify Drift too, but have no locally dirty revision.
-      if (!_closed && dirty.isNotEmpty) await synchronize();
-    } catch (_) {
-      // Closing the database or a transient read failure is retried by polling.
-    }
+  bool get due {
+    final now = _now().millisecondsSinceEpoch;
+    final success = local.preferences.getInt(lastSuccessKey) ?? 0;
+    final attempt = local.preferences.getInt(lastAttemptKey) ?? 0;
+    return now - success >= interval.inMilliseconds &&
+        now - attempt >= retry.inMilliseconds;
   }
 
-  Future<void> synchronize({bool pollOnly = false}) {
+  Future<void> synchronizeIfDue() async {
+    if (_closed || _work != null || !due) return;
+    await synchronize();
+  }
+
+  /// Runs a round now (manual sync), joining one already in progress.
+  Future<void> synchronize() {
     if (_closed) return _work ?? Future.value();
-    _requested = true;
-    _full |= !pollOnly;
-    return _work ??= _drain().whenComplete(() => _work = null);
+    return _work ??= _round().whenComplete(() => _work = null);
   }
 
-  Future<void> _drain() async {
-    while (_requested && !_closed) {
-      final full = _full;
-      _requested = _full = false;
-      try {
-        await run(pollOnly: !full);
-      } catch (_) {
-        // The engine reports the error and retains pending work for retry.
-      }
+  Future<void> _round() async {
+    await local.preferences.setInt(
+      lastAttemptKey,
+      _now().millisecondsSinceEpoch,
+    );
+    var ok = false;
+    try {
+      ok = await run();
+    } catch (_) {
+      // The engine reports the error and retains pending work for retry.
+    }
+    if (ok && !_closed) {
+      await local.preferences.setInt(
+        lastSuccessKey,
+        _now().millisecondsSinceEpoch,
+      );
     }
   }
 
   void close() {
     _closed = true;
-    _pollTimer?.cancel();
-    _changeTimer?.cancel();
-    unawaited(_changes?.cancel());
+    _timer?.cancel();
   }
 }

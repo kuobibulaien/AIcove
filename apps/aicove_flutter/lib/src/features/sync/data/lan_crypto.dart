@@ -23,6 +23,50 @@ class LanCrypto {
     return base64Url.encode(await derived.extractBytes());
   }
 
+  /// Six-digit codes are short, so the code only authenticates an X25519
+  /// exchange: a passive observer who later guesses it still lacks the pair key.
+  static Future<String> pinKey(String pin, String hostId) async {
+    final derived = await Pbkdf2(
+      macAlgorithm: Hmac.sha256(),
+      iterations: 60000,
+      bits: 256,
+    ).deriveKey(
+      secretKey: SecretKey(utf8.encode(pin)),
+      nonce: utf8.encode('aicove-lan-pin-v1/$hostId'),
+    );
+    return base64Url.encode(await derived.extractBytes());
+  }
+
+  static Future<SimpleKeyPair> exchangeKeyPair() => X25519().newKeyPair();
+
+  static Future<String> publicKey(SimpleKeyPair pair) async =>
+      base64Url.encode((await pair.extractPublicKey()).bytes);
+
+  static Future<String> pinPairKey(
+    String pinKey,
+    SimpleKeyPair own,
+    String remotePublicKey,
+    String a,
+    String b,
+  ) async {
+    final remote = base64Url.decode(remotePublicKey);
+    if (remote.length != 32) throw const LanSyncFailure('配对密钥无效');
+    final shared = await X25519().sharedSecretKey(
+      keyPair: own,
+      remotePublicKey: SimplePublicKey(remote, type: KeyPairType.x25519),
+    );
+    final devices = [a, b]..sort();
+    final derived = await Hkdf(hmac: Hmac.sha256(), outputLength: 32).deriveKey(
+      secretKey: SecretKey([
+        ...await shared.extractBytes(),
+        ...base64Url.decode(pinKey),
+      ]),
+      nonce: utf8.encode('aicove-lan-pin-pair-v1'),
+      info: utf8.encode(canonicalJson(devices)),
+    );
+    return base64Url.encode(await derived.extractBytes());
+  }
+
   static Future<Map<String, dynamic>> seal(
     String secret,
     Map<String, dynamic> value, {

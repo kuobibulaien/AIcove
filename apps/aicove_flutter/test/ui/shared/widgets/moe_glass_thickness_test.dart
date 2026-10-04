@@ -24,32 +24,38 @@ void main() {
                 brightness: dark ? Brightness.dark : Brightness.light,
                 extensions: [dark ? MoeColors.dark() : MoeColors.light()],
               ),
-              home: RepaintBoundary(
-                key: key,
-                child: Stack(
-                  children: [
-                    const Positioned.fill(
-                      child: ColoredBox(color: Color(0xFF808080)),
-                    ),
-                    Positioned(
-                      left: 20,
-                      right: 20,
-                      top: 20,
-                      bottom: 20,
-                      child: MoeFloatingSurface(
-                        blurSigma: sigma,
-                        shadows: const [],
-                        useLiquid: false,
-                        child: const Center(
-                          child: SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: ColoredBox(color: Color(0xFFFF0000)),
+              home: MoeGlassTheme(
+                enabled: true,
+                useLiquidGlass: true,
+                blurSigma: sigma,
+                tintFill: sigma / kMaxGlassBlurSigma,
+                child: RepaintBoundary(
+                  key: key,
+                  child: Stack(
+                    children: [
+                      const Positioned.fill(
+                        child: ColoredBox(color: Color(0xFF808080)),
+                      ),
+                      Positioned(
+                        left: 20,
+                        right: 20,
+                        top: 20,
+                        bottom: 20,
+                        child: MoeFloatingSurface(
+                          blurSigma: sigma,
+                          shadows: const [],
+                          useLiquid: false,
+                          child: const Center(
+                            child: SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: ColoredBox(color: Color(0xFFFF0000)),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -112,7 +118,7 @@ void main() {
         tester
             .widget<MoeFloatingSurface>(find.byType(MoeFloatingSurface))
             .baseline,
-        MoeMaterialBaseline.text,
+        MoeMaterialBaseline.background,
       );
       expect(
         tester.widget<TextField>(find.byType(TextField)).decoration!.fillColor,

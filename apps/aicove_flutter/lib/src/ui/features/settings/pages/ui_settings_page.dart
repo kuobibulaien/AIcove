@@ -10,7 +10,6 @@ import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import 'custom_skin_page.dart';
-import 'profile_page.dart';
 
 bool get _isWindowsDesktop => defaultTargetPlatform == TargetPlatform.windows;
 
@@ -62,17 +61,6 @@ class UiSettingsPage extends ConsumerWidget {
             MoeSettingsLayout.verticalListPadding,
           ),
           children: [
-            MoeSettingsGroup(
-              children: [
-                MoeSettingsRow(
-                  label: '个人资料',
-                  onTap: () => Navigator.of(
-                    context,
-                  ).push(ParallaxSlidePageRoute(page: const ProfilePage())),
-                ),
-              ],
-            ),
-
             // ========== 外观：界面皮肤 / 深色模式 ==========
             MoeSettingsGroup(
               title: '外观',
@@ -472,18 +460,17 @@ class UiSettingsPage extends ConsumerWidget {
     );
   }
 
-  /// 材质等级三选一（纯色／模糊／玻璃）+ 玻璃厚度档位滑块
+  /// 材质等级三选一（纯色／模糊／玻璃）+ 模糊度、底色填充两条独立滑块
   Widget _buildMaterialPicker(
     BuildContext context,
     WidgetRef ref,
     AppSettings settings,
     MoeColors colors,
   ) {
-    final thickness = MoeGlassThickness.fromSigma(settings.glassBlurSigma);
-    final frostedBlurPercent =
-        (settings.glassBlurSigma / kMaxGlassBlurSigma * 100)
-            .clamp(10, 100)
-            .toDouble();
+    final material = settings.surfaceMaterial;
+    // Frosted blur keeps a 10% floor; tint and glass blur may reach zero.
+    final minPercent = material == MoeSurfaceMaterial.frosted ? 10.0 : 0.0;
+    final notifier = ref.read(appSettingsProvider.notifier);
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
       child: Column(
@@ -496,7 +483,7 @@ class UiSettingsPage extends ConsumerWidget {
               for (final material in MoeSurfaceMaterial.values)
                 ButtonSegment(value: material, label: Text(material.label)),
             ],
-            selected: {settings.surfaceMaterial},
+            selected: {material},
             onSelectionChanged: (selection) =>
                 _setSurfaceMaterial(context, ref, selection.first),
             style: withoutHoverFeedback(
@@ -506,112 +493,108 @@ class UiSettingsPage extends ConsumerWidget {
               ),
             ),
           ),
-          if (settings.surfaceMaterial == MoeSurfaceMaterial.liquid) ...[
-            const SizedBox(height: 4),
-            MoeSlider(
-              key: const ValueKey('glass-thickness-slider'),
-              value: settings.glassBlurSigma
-                  .clamp(kMinGlassBlurSigma, kMaxGlassBlurSigma)
-                  .toDouble(),
-              min: kMinGlassBlurSigma,
-              max: kMaxGlassBlurSigma,
-              label: thickness.label,
-              semanticFormatterCallback: (value) =>
-                  MoeGlassThickness.fromSigma(value).label,
-              onChanged: (value) async {
-                try {
-                  await ref
-                      .read(appSettingsProvider.notifier)
-                      .setGlassBlurSigma(value);
-                } catch (_) {
-                  if (context.mounted) {
-                    MoeToast.error(context, '玻璃厚度未保存，请重试');
-                  }
-                }
-              },
-            ),
+          if (material == MoeSurfaceMaterial.liquid) ...[
+            const SizedBox(height: 6),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  for (final level in MoeGlassThickness.values)
-                    Text(
-                      level.label,
+                  Icon(
+                    Icons.warning_amber_rounded,
+                    size: 15,
+                    color: colors.toastWarning,
+                  ),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      '玻璃模式功耗较高，可能会引起手机发热。',
                       style: TextStyle(
-                        fontSize: 13,
-                        color: level == thickness
-                            ? colors.accentColor
-                            : colors.textSecondary,
-                        fontWeight: level == thickness
-                            ? MoeFontWeights.emphasis
-                            : FontWeight.normal,
+                        fontSize: 12,
+                        color: colors.toastWarning,
+                        fontWeight: MoeFontWeights.emphasis,
                       ),
                     ),
+                  ),
                 ],
               ),
             ),
           ],
-          if (settings.surfaceMaterial == MoeSurfaceMaterial.frosted) ...[
-            const SizedBox(height: 4),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    '模糊度',
-                    style: TextStyle(fontSize: 13, color: colors.textSecondary),
-                  ),
-                  Text(
-                    '${frostedBlurPercent.round()}%',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: colors.accentColor,
-                      fontWeight: MoeFontWeights.emphasis,
-                    ),
-                  ),
-                ],
-              ),
+          if (material != MoeSurfaceMaterial.solid) ...[
+            const SizedBox(height: 8),
+            _buildMaterialSlider(
+              context,
+              colors: colors,
+              key: const ValueKey('material-blur-slider'),
+              label: '模糊度',
+              percent: settings.glassBlurSigma / kMaxGlassBlurSigma * 100,
+              minPercent: minPercent,
+              onChanged: (value) =>
+                  notifier.setGlassBlurSigma(value / 100 * kMaxGlassBlurSigma),
             ),
-            MoeSlider(
-              key: const ValueKey('frosted-blur-slider'),
-              value: frostedBlurPercent,
-              min: 10,
-              max: 100,
-              label: '${frostedBlurPercent.round()}%',
-              semanticFormatterCallback: (value) => '模糊度 ${value.round()}%',
-              onChanged: (value) async {
-                try {
-                  await ref
-                      .read(appSettingsProvider.notifier)
-                      .setGlassBlurSigma(value / 100 * kMaxGlassBlurSigma);
-                } catch (_) {
-                  if (context.mounted) {
-                    MoeToast.error(context, '模糊度未保存，请重试');
-                  }
-                }
-              },
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    '10%',
-                    style: TextStyle(fontSize: 13, color: colors.textSecondary),
-                  ),
-                  Text(
-                    '100%',
-                    style: TextStyle(fontSize: 13, color: colors.textSecondary),
-                  ),
-                ],
-              ),
+            _buildMaterialSlider(
+              context,
+              colors: colors,
+              key: const ValueKey('material-tint-slider'),
+              label: '底色填充',
+              percent: settings.glassTintFill * 100,
+              minPercent: 0,
+              onChanged: (value) => notifier.setGlassTintFill(value / 100),
             ),
           ],
         ],
       ),
+    );
+  }
+
+  Widget _buildMaterialSlider(
+    BuildContext context, {
+    required MoeColors colors,
+    required Key key,
+    required String label,
+    required double percent,
+    required double minPercent,
+    required Future<void> Function(double percent) onChanged,
+  }) {
+    final value = percent.clamp(minPercent, 100).toDouble();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                label,
+                style: TextStyle(fontSize: 13, color: colors.textSecondary),
+              ),
+              Text(
+                '${value.round()}%',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: colors.accentColor,
+                  fontWeight: MoeFontWeights.emphasis,
+                ),
+              ),
+            ],
+          ),
+        ),
+        MoeSlider(
+          key: key,
+          value: value,
+          min: minPercent,
+          max: 100,
+          label: '${value.round()}%',
+          semanticFormatterCallback: (v) => '$label ${v.round()}%',
+          onChanged: (v) async {
+            try {
+              await onChanged(v);
+            } catch (_) {
+              if (context.mounted) MoeToast.error(context, '$label未保存，请重试');
+            }
+          },
+        ),
+      ],
     );
   }
 

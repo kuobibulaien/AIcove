@@ -244,6 +244,26 @@ void main() {
     expect(scan.injections, isEmpty);
     expect(scan.warnings.length, 3);
   });
+  test('独立世界书以顶层position为准，忽略残留extensions', () async {
+    final scan = await scanEntries([
+      {
+        'constant': true,
+        'position': 0,
+        'depth': 0,
+        'content': '顶层',
+        'extensions': {'position': 4, 'depth': 3},
+      },
+    ]);
+    expect(scan.injections.single.position, 0);
+  });
+  test('同order条目与酒馆一致：后导入的排在前面', () async {
+    final scan = await scanEntries([
+      {'constant': true, 'order': 3, 'content': 'A'},
+      {'constant': true, 'order': 100, 'content': 'B'},
+      {'constant': true, 'order': 3, 'content': 'C'},
+    ]);
+    expect(scan.injections.map((e) => e.content), ['C', 'A', 'B']);
+  });
   test('预算先按高order入选，最终按order升序插入', () async {
     final scan = await scanEntries([
       {'constant': true, 'order': 1, 'content': 'A'},
@@ -252,6 +272,46 @@ void main() {
     ], budget: 10);
     expect(scan.injections.map((e) => e.content), ['C', 'B']);
     expect(scan.traces, contains(containsPair('reason', 'budget')));
+  });
+  test('未声明token_budget时只受全局预算约束，长条目可注入', () async {
+    final long = '昔' * 8000;
+    final scan = await scanEntries(
+      [
+        {
+          'key': ['昔涟'],
+          'selective': true,
+          'keysecondary': <String>[],
+          'position': 1,
+          'content': long,
+        },
+      ],
+      messages: [
+        {'role': 'user', 'content': '我想cos昔涟'},
+      ],
+      budget: 30000,
+    );
+    expect(scan.injections.single.content, long);
+    final explicit = await const TavernWorldScanner().scan(
+      books: [
+        TavernWorldBook.parse({
+          ...worldSource([
+            {'constant': true, 'content': long},
+          ]),
+          'token_budget': 2048,
+        }, 'book.json'),
+      ],
+      messages: const [],
+      tokenBudget: 30000,
+    );
+    expect(explicit.injections, isEmpty);
+  });
+  test('总预算溢出后停止激活后续条目，ignoreBudget仍可尝试', () async {
+    final scan = await scanEntries([
+      {'constant': true, 'order': 300, 'content': '大' * 20},
+      {'constant': true, 'order': 200, 'content': '小'},
+      {'constant': true, 'order': 100, 'ignoreBudget': true, 'content': '豁'},
+    ], budget: 10);
+    expect(scan.injections.map((e) => e.content), ['豁']);
   });
   test('支持角色卡character_book字段映射', () {
     final book = TavernWorldBook.parse({
@@ -527,6 +587,9 @@ void main() {
       '问题',
     ]);
     expect(assembled.messages[4]['role'], 'assistant');
-    expect(scan.injections.first.content, contains('旧词'));
+    expect(
+      scan.injections.firstWhere((e) => e.position == 0).content,
+      contains('旧词'),
+    );
   });
 }

@@ -49,23 +49,25 @@ abstract final class MoeFrostedMaterial {
   static double blurSigmaForSetting(double sigma) =>
       surfaceSigma * (sigma / kMaxGlassBlurSigma).clamp(minStrength, 1.0);
 
-  /// Tint thins out with the blur, so lighter settings read through like
-  /// Apple's ultra-thin material while heavy stays readable.
-  static Color surfaceTint(
-    Brightness brightness, {
-    double sigma = surfaceSigma,
-  }) {
-    final t =
-        ((sigma / surfaceSigma).clamp(minStrength, 1.0) - minStrength) /
-        (1 - minStrength);
-    final alpha =
-        (255 * (_minTintOpacity + (_maxTintOpacity - _minTintOpacity) * t))
-            .round();
+  /// Tint for the global fill (0..1), set independently of the blur. Low
+  /// fills read through like Apple's ultra-thin material.
+  /// Below [minStrength] the tint fades linearly to fully clear at zero.
+  static Color surfaceTint(Brightness brightness, {double fill = 1}) {
+    final f = fill.clamp(0.0, 1.0);
+    final opacity = f < minStrength
+        ? _minTintOpacity * f / minStrength
+        : _minTintOpacity +
+              (_maxTintOpacity - _minTintOpacity) *
+                  (f - minStrength) /
+                  (1 - minStrength);
+    final alpha = (255 * opacity).round();
     if (brightness == Brightness.light) {
       return Color.fromARGB(alpha, 0xF8, 0xF8, 0xF8);
     }
-    // Derived so the tint over the black page equals the solid container.
-    final level = (_darkContainerLevel * 255 / alpha).round();
+    if (alpha == 0) return const Color(0x00000000);
+    // Derived so the tint over the black page equals the solid container;
+    // very thin fills cap at white and read slightly darker than it.
+    final level = (_darkContainerLevel * 255 / alpha).round().clamp(0, 255);
     return Color.fromARGB(alpha, level, level, level);
   }
 

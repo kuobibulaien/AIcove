@@ -244,8 +244,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('跟随默认酒馆预设'), findsOneWidget);
-    await tester.tap(find.text('跟随默认酒馆预设'));
+    expect(find.text('跟随默认 · 空预设'), findsOneWidget);
+    await tester.tap(find.text('跟随默认 · 空预设'));
     await tester.pumpAndSettle();
     final importedPresetTile = find.ancestor(
       of: find.text('酒馆测试预设'),
@@ -261,7 +261,7 @@ void main() {
 
     expect(selectedRecipeId, 'st_preset_aaaaaaaaaaaaaaaaaaaaaaaa');
     expect(find.text('酒馆测试预设'), findsOneWidget);
-    expect(find.text('跟随默认酒馆预设'), findsNothing);
+    expect(find.text('跟随默认 · 空预设'), findsNothing);
   });
 
   testWidgets('empty preset library shows follow-default label', (
@@ -276,7 +276,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('跟随默认酒馆预设'), findsOneWidget);
+    expect(find.text('跟随默认 · 空预设'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

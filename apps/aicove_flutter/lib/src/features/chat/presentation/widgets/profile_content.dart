@@ -4,16 +4,16 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:aicove_flutter/src/ui/shared/effects/smooth_clip.dart';
 
 import '../../../../ui/theme/tokens.dart';
 import '../../../../core/utils/data_image.dart';
-import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../settings/app_settings.dart';
-import '../../../../ui/features/settings/pages/log_viewer_page.dart';
-import '../../../../ui/features/debug/pages/ui_gallery_page.dart';
 import '../../../../ui/shared/widgets/moe_scroll_edge.dart';
+
+const _githubUrl = 'https://github.com/kuobibulaien/AIcove';
 
 /// 个人中心内容组件（无 AppBar，可复用）
 class ProfileContent extends ConsumerStatefulWidget {
@@ -92,6 +92,17 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
     );
   }
 
+  Future<void> _openGithub() async {
+    final opened = await launchUrl(
+      Uri.parse(_githubUrl),
+      mode: LaunchMode.externalApplication,
+    ).catchError((_) => false);
+    if (opened || !mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('无法打开链接：$_githubUrl')));
+  }
+
   Widget _buildAvatarImage(String? url) {
     if (url == null || url.trim().isEmpty) {
       return const SizedBox.expand();
@@ -151,38 +162,18 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
           // 头像区域
           GestureDetector(
             onTap: _pickImage,
-            child: Stack(
-              children: [
-                Container(
-                  width: 120,
-                  height: 120,
-                  decoration: MoeG2Decoration(
-                    radius: radiusBubble.x,
-                    color: moeSurface,
-                    border: Border.all(color: moeBorder, width: 2),
-                  ),
-                  child: MoeG2ClipRRect(
-                    radius: radiusBubble.x,
-                    child: _buildAvatarImage(userAvatar),
-                  ),
-                ),
-                Positioned(
-                  right: 0,
-                  bottom: 0,
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: const BoxDecoration(
-                      color: moePrimary,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.camera_alt,
-                      size: 20,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-              ],
+            child: Container(
+              width: 120,
+              height: 120,
+              decoration: MoeG2Decoration(
+                radius: radiusBubble.x,
+                color: moeSurface,
+                border: Border.all(color: moeBorder, width: 2),
+              ),
+              child: MoeG2ClipRRect(
+                radius: radiusBubble.x,
+                child: _buildAvatarImage(userAvatar),
+              ),
             ),
           ),
 
@@ -215,52 +206,10 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
             margin: EdgeInsets.zero,
             children: [
               MoeSettingsRow(
-                icon: Icons.person_outline,
-                label: '个人信息',
-                subtitle: userName,
-                onTap: _editName,
-              ),
-              MoeSettingsRow(
-                icon: Icons.photo_library_outlined,
-                label: '更换头像',
-                onTap: _pickImage,
-              ),
-              MoeSettingsRow(
                 icon: Icons.info_outline,
                 label: '关于',
-                subtitle: 'AIcove v1.0.0',
-                onTap: () {
-                  showAboutDialog(
-                    context: context,
-                    applicationName: 'AIcove',
-                    applicationVersion: '1.0.0',
-                    applicationIcon: const Icon(
-                      Icons.chat_bubble_outline,
-                      size: 48,
-                    ),
-                    children: const [Text('一款简单顺手的聊天应用')],
-                  );
-                },
-              ),
-              MoeSettingsRow(
-                icon: Icons.description_outlined,
-                label: '查看日志',
-                subtitle: '查看系统运行日志',
-                onTap: () {
-                  MoeWorkspace.navigatorOf(
-                    context,
-                  ).push(ParallaxSlidePageRoute(page: const LogViewerPage()));
-                },
-              ),
-              MoeSettingsRow(
-                icon: Icons.palette_outlined,
-                label: 'UI 组件库',
-                subtitle: '查看所有公共组件样式',
-                onTap: () {
-                  MoeWorkspace.navigatorOf(
-                    context,
-                  ).push(ParallaxSlidePageRoute(page: const UiGalleryPage()));
-                },
+                subtitle: '在 GitHub 查看项目',
+                onTap: _openGithub,
               ),
             ],
           ),

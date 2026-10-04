@@ -26,6 +26,9 @@ import 'package:aicove_flutter/src/features/chat/services/chat_send_service.dart
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:aicove_flutter/src/features/plugins/plugin_manager.dart';
 import 'package:aicove_flutter/src/features/plugins/plugin_providers.dart';
+import 'package:aicove_flutter/src/features/plugins/prompts/plugin_prompts.dart';
+import 'package:aicove_flutter/src/features/plugins/time_awareness/time_awareness_config.dart';
+import 'package:aicove_flutter/src/features/plugins/time_awareness/time_awareness_plugin.dart';
 import 'package:aicove_flutter/src/features/background_agent/background_agent_service.dart';
 import 'package:aicove_flutter/src/features/observability/trace_store.dart';
 import 'package:aicove_flutter/src/features/agent_context/data/silly_tavern_preset_store.dart';
@@ -572,6 +575,64 @@ void main() {
     container.invalidate(appSettingsProvider);
     await sender.prepareApiConfig(conv: conv, history: history, userText: '继续');
     expect(summary.seen, isNotNull);
+  });
+
+  test('联系人上下文预览只读：超阈值不压缩，边界缺摘要只提示不补整理', () async {
+    _Settings.maxTokens = 1000000;
+    _Settings.window = 1000;
+    await owner('a', start: 'm2');
+    await message('m1');
+    await message('m2', role: 'assistant', at: 2);
+    await message('m3', text: 'a' * 40000, at: 3);
+    final conv = ConversationConverter.fromDb(
+      (await container.read(conversationRepositoryProvider).getById('a'))!,
+    );
+    final preview = await container
+        .read(chatSendServiceProvider)
+        .previewContext(conv);
+
+    expect(summary.seen, isNull);
+    expect(
+      await container.read(contextSummaryStoreProvider).manualFor('a', 'm2'),
+      isNull,
+    );
+    expect(preview.notes, contains(contains('还没有摘要')));
+    expect(preview.notes, contains(contains('自动压缩')));
+    expect(preview.inputTokens, greaterThanOrEqualTo(preview.inputLimit));
+    expect(preview.messageTokens, hasLength(preview.messages.length));
+    expect(preview.messages.first['role'], 'system');
+    expect(preview.sources.first.label, '角色人设');
+    expect(
+      preview.messages.map((m) => '${m['content']}'),
+      isNot(contains(contains('m1：'))),
+    );
+    expect('${preview.messages.last['content']}', contains('a' * 100));
+  });
+
+  test('请求使用全局插件提示词，而不是插件配置里的旧副本', () async {
+    await owner('a');
+    await message('m1', text: '在吗');
+    // 插件配置里的旧模板不能再生效。
+    container
+        .read(pluginManagerProvider)
+        .updatePlugin(
+          TimeAwarenessPlugin(
+            TimeAwarenessConfig(currentTimePromptTemplate: '旧配置时间 {datetime}'),
+          ),
+        );
+    await container
+        .read(pluginPromptsProvider.notifier)
+        .setText(PluginPromptSlot.currentTime, '全局时间说明 {datetime}');
+    final conv = ConversationConverter.fromDb(
+      (await container.read(conversationRepositoryProvider).getById('a'))!,
+    );
+    final preview = await container
+        .read(chatSendServiceProvider)
+        .previewContext(conv);
+    expect(
+      preview.messages.map((m) => '${m['content']}').join('\n'),
+      allOf(contains('全局时间说明 '), isNot(contains('旧配置时间'))),
+    );
   });
 
   test('自动压缩失败阻止请求，不丢弃原文或切换话题', () async {

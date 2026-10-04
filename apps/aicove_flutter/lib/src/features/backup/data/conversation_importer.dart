@@ -36,8 +36,8 @@ class ConversationImporter {
             documentsDirectoryResolver ?? getApplicationDocumentsDirectory;
 
   /// (注释已丢失)
-  Future<ImportPreview> preview(File file) async {
-    final importDir = await _extractToTempDir(file);
+  Future<ImportPreview> preview(File file, {String? password}) async {
+    final importDir = await _extractToTempDir(file, password);
 
     try {
       // 读取 manifest
@@ -145,6 +145,7 @@ class ConversationImporter {
     required List<String> selectedScopes,
     required List<String> selectedConversationIds,
     Map<String, ImportConflictResolution> conflictResolutions = const {},
+    String? password,
     void Function(ImportProgress)? onProgress,
   }) async {
     selectedScopes = List.unmodifiable(selectedScopes);
@@ -164,7 +165,7 @@ class ConversationImporter {
       message: '解压文件...',
     ));
 
-    final importDir = await _extractToTempDir(file);
+    final importDir = await _extractToTempDir(file, password);
     Directory? jobFiles;
     var committed = false;
 
@@ -508,7 +509,7 @@ class ConversationImporter {
   }
 
   /// (注释已丢失)
-  Future<Directory> _extractToTempDir(File file) async {
+  Future<Directory> _extractToTempDir(File file, String? password) async {
     const maxArchiveBytes = 256 * 1024 * 1024;
     const maxExpandedBytes = 512 * 1024 * 1024;
     if (await file.length() > maxArchiveBytes) {
@@ -520,6 +521,11 @@ class ConversationImporter {
     final zipDirectory = ZipDirectory.read(InputStream(bytes));
     if (zipDirectory.fileHeaders.length > 10000) {
       throw ImportException('备份文件数量超过 10000');
+    }
+    final encrypted =
+        zipDirectory.fileHeaders.any((h) => (h.file!.flags & 0x1) != 0);
+    if (encrypted && (password == null || password.isEmpty)) {
+      throw BackupPasswordRequiredException('该备份已加密，请输入密码');
     }
     final tempDir = await _temporaryDirectoryResolver();
     final importDir = await tempDir.createTemp('import_');
@@ -543,7 +549,20 @@ class ConversationImporter {
           throw ImportException('备份解压大小不一致或超过 512 MiB，请拆分后导入');
         }
       }
-      final archive = ZipDecoder().decodeBytes(bytes, verify: true);
+      final Archive archive;
+      try {
+        archive = ZipDecoder().decodeBytes(
+          bytes,
+          verify: true,
+          password: encrypted ? password : null,
+        );
+      } on ArchiveException {
+        rethrow;
+      } catch (_) {
+        // archive 对 AES 密码校验失败只抛普通 Exception。
+        if (!encrypted) rethrow;
+        throw BackupPasswordRequiredException('密码错误，请重新输入');
+      }
       var written = 0;
       for (final item in archive) {
         final path = safeArchivePath(importDir, item.name);
@@ -939,4 +958,9 @@ class ImportException implements Exception {
 
   @override
   String toString() => message;
+}
+
+/// 备份已加密但未提供密码或密码错误；界面据此弹出密码输入框。
+class BackupPasswordRequiredException extends ImportException {
+  BackupPasswordRequiredException(super.message);
 }

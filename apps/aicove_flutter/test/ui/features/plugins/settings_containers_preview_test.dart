@@ -31,7 +31,7 @@ import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 class _PreviewSettings extends AppSettingsNotifier {
   @override
   Future<AppSettings> build() async => mapUiModelsToAppSettings({}).copyWith(
-    autoReplySettings: const AutoReplySettings(enabled: true),
+    autoReplySettings: const AutoReplySettings(),
     providers: [
       const ProviderAuth(
         id: 'a',

@@ -35,6 +35,7 @@ class PresetTagMapping {
   const PresetTagMapping({
     required this.rules,
     required this.supersededScriptIds,
+    this.hiddenScriptIds = const {},
     this.candidates = const [],
   });
 
@@ -50,6 +51,10 @@ class PresetTagMapping {
   /// 被界面组件接管、不再执行的显示美化正则 id：它们输出的 HTML 界面无法渲染。
   final Set<String> supersededScriptIds;
 
+  /// [supersededScriptIds] 中只是把占位符换成网页、不用原文的规则：
+  /// 显示时把匹配内容换成空，而不是露出占位符。
+  final Set<String> hiddenScriptIds;
+
   /// 本轮显示用的呈现映射：内置常用名打底，预设推断与用户覆盖优先。
   /// 写入助手 rawPayload 作为显示快照。
   TagPresentationMap get presentationMap => {
@@ -57,7 +62,7 @@ class PresetTagMapping {
         for (final rule in rules) rule.name: rule.entry,
       };
 
-  /// 只执行未被接管的显示正则。
+  /// 只执行未被接管的显示正则；占位网页规则改为替换成空。
   List<SillyTavernRegexScript> displayScripts(
     List<SillyTavernRegexScript> scripts,
   ) =>
@@ -65,7 +70,10 @@ class PresetTagMapping {
           ? scripts
           : [
               for (final script in scripts)
-                if (!supersededScriptIds.contains(script.id)) script,
+                if (hiddenScriptIds.contains(script.id))
+                  script.withReplacement('')
+                else if (!supersededScriptIds.contains(script.id))
+                  script,
             ];
 }
 
@@ -127,9 +135,26 @@ final RegExp _optionalGroupPattern = RegExp(r'\(\?:([^()|]*)\)\?');
 /// 未转义时结束标签名的正则元字符与分隔符。
 const String _nameTerminators = ' \t\r\n<>/\\()[]{}|^\$*+?."\'=';
 final RegExp _htmlOutputPattern = RegExp(
-  r'<(?:div|span|style|details|summary|button|table|html|!doctype|ruby|p|br|svg|img|section)\b',
+  r'```\s*html\b|<(?:div|span|style|details|summary|button|table|html|!doctype|ruby|p|br|svg|img|section|body|head|script|iframe|link|meta|canvas|video|audio|form|input)\b',
   caseSensitive: false,
 );
+
+/// 替换结果引用了匹配原文（`$1`、`$&`、`$<名>`、`{{match}}`）。
+final RegExp _captureReferencePattern = RegExp(
+  r'\$(?:\d|&|<)|\{\{\s*match\s*\}\}',
+  caseSensitive: false,
+);
+
+/// 查找规则里的捕获组 `(...)`（不含 `(?:` 等非捕获写法）：作者要取用原文。
+final RegExp _captureGroupPattern = RegExp(r'(?<!\\)\((?!\?)');
+
+/// 只把占位符（无成对标签、无捕获组、不引用原文）换成网页：网页显示不了，
+/// 占位符本身也没有可读内容，显示时整段隐藏。
+bool _isPlaceholderWebpage(SillyTavernRegexScript script) =>
+    !_captureReferencePattern.hasMatch(script.replaceString) &&
+    !_captureGroupPattern.hasMatch(script.findRegex) &&
+    !script.findRegex.contains('</') &&
+    !script.findRegex.contains(r'<\/');
 final RegExp _summaryPattern = RegExp(
   r'<summary[^>]*>([\s\S]*?)</summary>',
   caseSensitive: false,
@@ -145,6 +170,7 @@ final RegExp _markupPattern = RegExp(r'<[^>]*>');
 PresetTagMapping inferPresetTagMapping(SillyTavernPreset preset) {
   final rules = <String, PresetTagRule>{};
   final superseded = <String>{};
+  final hidden = <String>{};
 
   void put(
     String name,
@@ -178,6 +204,10 @@ PresetTagMapping inferPresetTagMapping(SillyTavernPreset preset) {
     if (replacement.trim().isEmpty) continue;
     if (!_htmlOutputPattern.hasMatch(replacement)) continue;
     superseded.add(script.id);
+    if (_isPlaceholderWebpage(script)) {
+      hidden.add(script.id);
+      continue;
+    }
     // 预设作者给正则起的名字（“行动选项”“正文美化”“思维链折叠”）是标签意图
     // 的直接说明，比替换结果里的按钮、样式更可靠。
     final declared = _classifyByWords(script.name);
@@ -235,6 +265,7 @@ PresetTagMapping inferPresetTagMapping(SillyTavernPreset preset) {
   return PresetTagMapping(
     rules: sorted,
     supersededScriptIds: superseded,
+    hiddenScriptIds: hidden,
     candidates: (candidates..removeAll(rules.keys)).toList()..sort(),
   );
 }

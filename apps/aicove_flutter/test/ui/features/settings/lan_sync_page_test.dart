@@ -65,8 +65,12 @@ class PreviewLanPort implements LanSyncPort {
   }
 
   @override
-  Future<void> resolve(LanRevision selected, List<String> hashes) async {
-    actions.add('resolve:${selected.hash}');
+  Future<void> resolve(
+    List<(LanRevision selected, List<String> previewHashes)> choices,
+  ) async {
+    for (final (selected, _) in choices) {
+      actions.add('resolve:${selected.hash}');
+    }
   }
 
   @override
@@ -123,7 +127,7 @@ void main() {
       );
       await mount(tester, port, width);
       expect(find.text('局域网同步'), findsOneWidget);
-      await tester.tap(find.text('显示配对二维码'));
+      await tester.tap(find.text('显示配对码'));
       await tester.pumpAndSettle();
       expect(port.actions, contains('invite'));
       await tester.ensureVisible(find.text('确认配对'));
@@ -139,6 +143,27 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+  testWidgets('host shows a six-digit code and the joiner can type it', (
+    tester,
+  ) async {
+    final port = PreviewLanPort(
+      const LanSyncState(
+        enabled: true,
+        name: '电脑',
+        invitation: 'aicove-lan://pair?v=1&data=e30',
+        pin: '048213',
+      ),
+    );
+    await mount(tester, port, 360);
+    expect(find.text('048 213'), findsOneWidget);
+    await tester.enterText(find.byType(TextField).last, '048 213');
+    await tester.ensureVisible(find.text('连接设备'));
+    await tester.tap(find.text('连接设备'));
+    await tester.pumpAndSettle();
+    expect(port.actions, contains('pair:048 213'));
+    expect(find.text('拍摄二维码'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
   testWidgets('LAN page supports large text and name edits auto-save', (
     tester,
   ) async {
@@ -169,6 +194,43 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+  testWidgets('choosing a device resolves all of its versions at once', (
+    tester,
+  ) async {
+    LanRevision rev(String id, String device, String text) => LanRevision(
+      kind: 'messages',
+      id: id,
+      vector: {device: 2},
+      payload: {
+        'row': {'content': text},
+      },
+    );
+    final port = PreviewLanPort(
+      LanSyncState(
+        enabled: true,
+        name: '电脑',
+        deviceId: 'pc',
+        peers: const [LanPeerView('phone', '我的手机')],
+        conflicts: [
+          for (var i = 0; i < 8; i++)
+            [rev('m$i', 'pc', '电脑$i'), rev('m$i', 'phone', '手机$i')],
+        ],
+      ),
+    );
+    await mount(tester, port, 360);
+    expect(find.text('本机 · 电脑'), findsOneWidget);
+    expect(find.text('手机0'), findsNothing);
+    final button = find.text('以此设备为准处理差异').at(1);
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('开始处理'));
+    await tester.pumpAndSettle();
+    expect(port.actions.where((a) => a.startsWith('resolve:')), [
+      for (var i = 0; i < 8; i++) 'resolve:${rev('m$i', 'phone', '手机$i').hash}',
+    ]);
+    expect(tester.takeException(), isNull);
+  });
   testWidgets(
     'conflict choice passes all preview hashes and correct complete revision',
     (tester) async {
@@ -241,6 +303,7 @@ void main() {
           enabled: true,
           name: '我的电脑',
           invitation: width == 1040 ? code : null,
+          pin: width == 1040 ? '048213' : null,
           peers: [
             LanPeerView(
               'phone',
@@ -249,10 +312,31 @@ void main() {
               lastSync: DateTime(2026, 10, 1, 14, 30),
             ),
           ],
-          notice: '两端连接同一 Wi-Fi 或热点，打开应用即可同步',
+          notice: '两端连接同一 Wi-Fi 或热点，配对后自动保持连接',
+          deviceId: 'pc',
+          conflicts: width == 360
+              ? [
+                  for (var i = 0; i < 12; i++)
+                    [
+                      for (final device in ['pc', 'phone'])
+                        LanRevision(
+                          kind: 'conversations',
+                          id: 'r$i',
+                          vector: {device: 2},
+                          payload: {
+                            'row': {'display_name': '角色$i'},
+                          },
+                        ),
+                    ],
+                ]
+              : const [],
         ),
       );
       await mount(tester, port, width, boundary: key);
+      if (width == 360) {
+        await tester.drag(find.byType(Scrollable).first, const Offset(0, -900));
+        await tester.pumpAndSettle();
+      }
       expect(tester.takeException(), isNull);
       await tester.runAsync(() async {
         final boundary =

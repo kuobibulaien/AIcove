@@ -115,13 +115,12 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused) {
-      unawaited(ref.read(lanSyncPortProvider.future).then((port) => port.foreground(false)).catchError((Object _) {}));
       ref.read(chatActionsProvider).onAppBackground();
       // 日志已改为实时存储，无需在后台保存
     }
     if (state == AppLifecycleState.resumed) {
       unawaited(ref.read(lanSyncPortProvider.future).then((port) => port.foreground(true)).catchError((Object _) {}));
-      unawaited(ref.read(cloudSyncProvider.notifier).synchronize());
+      unawaited(ref.read(cloudSyncProvider.notifier).synchronizeIfDue());
       // 从后台恢复时，内存 ImageCache 可能已被系统回收；提前把"最近会话"的图片重新解码进缓存，
       // 让用户点进聊天页时尽量不出现"占位→图片跳出来"的闪一下。
       _requestRecentConversationsWarmup();
@@ -141,9 +140,9 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
     _keepAliveSyncInFlight = true;
     try {
-      final settings = await ref.read(appSettingsProvider.future);
-      await AndroidKeepAliveManager.syncWithAutoReplySettings(
-        settings.autoReplySettings,
+      await ref.read(conversationsProvider.future);
+      await AndroidKeepAliveManager.syncGuard(
+        ref.read(androidGuardNeededProvider),
       );
     } catch (_) {
       // 守护模式同步失败不影响主流程
@@ -476,6 +475,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
                   blurSigma: settings.glassBlurSigma
                       .clamp(kMinGlassBlurSigma, kMaxGlassBlurSigma)
                       .toDouble(),
+                  tintFill: settings.glassTintFill,
                   useLiquidGlass: settings.useLiquidGlass,
                   child: DesktopWindowFrame(
                     windowControlsOnRight: settings.windowsWindowControlsSide ==

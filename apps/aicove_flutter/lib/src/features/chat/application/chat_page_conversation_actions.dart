@@ -1,7 +1,17 @@
 import '../services/chat_history_store.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../agent_context/domain/preset_tag_mapping.dart';
+import '../../agent_context/domain/silly_tavern_character_card.dart';
+import '../../agent_context/domain/silly_tavern_preset.dart';
+import '../../agent_context/domain/silly_tavern_regex_processor.dart';
+import '../../agent_context/providers/preset_recipe_provider.dart';
+import '../../settings/app_settings.dart';
 import '../conversation_providers.dart';
+import '../domain/message.dart';
+import '../services/chat_frontend_message_projection_service.dart';
+import '../services/chat_message_projection_codec.dart';
+import '../services/chat_types.dart';
 
 class ChatPageConversationActions {
   const ChatPageConversationActions(this._ref);
@@ -99,6 +109,73 @@ class ChatPageConversationActions {
         .read(chatHistoryStoreProvider)
         .hideMessagesInFrontendTimeline(conversationId, messageIds);
   }
+
+  /// 把角色卡开场白写成会话里的第一条角色消息（与酒馆建聊一致，宏在写入时替换）。
+  ///
+  /// 原文进 raw 消息供请求装配；显示副本按角色最终有效预设的已授权显示正则生成，
+  /// 与普通回复同构。消息 ID 按会话固定，失败重试只会覆盖同一条。
+  Future<void> appendCharacterGreeting(
+    String conversationId, {
+    required String greeting,
+    required String charName,
+    String? recipeId,
+  }) async {
+    final settings = await _ref.read(appSettingsProvider.future);
+    final preset = await _ref
+        .read(tavernCompatibilityPortProvider)
+        .resolvePreset(recipeId);
+    final userName = settings.userName?.trim() ?? '';
+    final text = SillyTavernCharacterCard.renderGreeting(
+      greeting,
+      charName: charName,
+      userName: preset?.userNameMacroEnabled != false && userName.isNotEmpty
+          ? userName
+          : kNeutralUserName,
+    );
+    final display = preset == null
+        ? text
+        : (await const SillyTavernRegexProcessor().applyToDisplayText(
+            text: text,
+            scripts: inferPresetTagMapping(
+              preset,
+            ).displayScripts(preset.regexScripts),
+            authorized: preset.regexAuthorized,
+          )).text;
+    final rawMessage = Message(
+      id: greetingMessageId(conversationId),
+      role: 'assistant',
+      content: text,
+      createdAt: DateTime.now(),
+      status: 'sent',
+      rawPayload: ChatMessageProjectionCodec.buildRawAssistantPayload(
+        apiResult: ApiCallResult(
+          rawReplyText: text,
+          replyText: display,
+          processedText: display,
+          pluginEvents: const [],
+          toolResults: const [],
+        ),
+      ),
+    );
+    await _ref
+        .read(chatHistoryStoreProvider)
+        .appendAssistantRawMessage(
+          conversationId: conversationId,
+          userMessageId: '',
+          rawMessage: rawMessage,
+          projectedMessages: _ref
+              .read(chatFrontendMessageProjectionServiceProvider)
+              .projectMessage(rawMessage),
+          lastMessagePreview: display.trim(),
+        );
+  }
+
+  static String greetingMessageId(String conversationId) =>
+      'msg_greeting_$conversationId';
+
+  /// 开场白之前没有用户消息，不能重新生成。
+  static bool isCharacterGreeting(Message message) =>
+      message.sourceMessageIdOrSelf.startsWith('msg_greeting_');
 
   Future<void> clearMessages(String conversationId) {
     return _ref

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:isolate';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import '../../core/storage/device_credential_storage.dart';
 import 'diagnostic_access_port.dart';
@@ -95,6 +96,7 @@ class DiagnosticAccessService implements DiagnosticAccessPort {
     );
     _server = server;
     _session.value = DiagnosticAccessSession(server.port, token);
+    if (Platform.isAndroid) unawaited(_publishToAdbShell(token));
     server.listen(
       (request) => unawaited(_handle(request)),
       onError: (Object _) => unawaited(_recover()),
@@ -105,6 +107,17 @@ class DiagnosticAccessService implements DiagnosticAccessPort {
     final automatic = _automatic;
     await stop();
     if (automatic) startAutomatically();
+  }
+
+  /// 交给 native 的 DUMP 权限 ContentProvider，电脑插线后由采集脚本经 adb 自取。
+  static Future<void> _publishToAdbShell(String token) async {
+    try {
+      await const MethodChannel(
+        'com.example.aicove_flutter/diagnostic_identity',
+      ).invokeMethod<void>('publishAccessToken', token);
+    } catch (_) {
+      // 旧壳或通道异常时仍可用诊断页面提供的带凭证命令。
+    }
   }
 
   static Future<String> _persistentToken() {

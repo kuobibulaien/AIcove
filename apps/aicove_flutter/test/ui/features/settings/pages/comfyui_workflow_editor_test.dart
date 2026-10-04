@@ -117,6 +117,8 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(wrap(const AddProviderSheet()));
+    await tester.tap(find.text('绘图'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('ComfyUI'));
     await tester.pumpAndSettle();
     expect(find.text('API 路径'), findsNothing);

@@ -110,7 +110,19 @@ ThemeData withMoeInteractionTheme(ThemeData theme) {
     filledButtonTheme: FilledButtonThemeData(style: primaryButtons),
     outlinedButtonTheme: OutlinedButtonThemeData(style: buttons),
     elevatedButtonTheme: ElevatedButtonThemeData(style: primaryButtons),
-    segmentedButtonTheme: SegmentedButtonThemeData(style: buttons),
+    // SegmentedButton drops backgroundBuilder, so the selected tint must be
+    // expressed through backgroundColor.
+    segmentedButtonTheme: SegmentedButtonThemeData(
+      style: buttons.copyWith(
+        backgroundColor: WidgetStateProperty.resolveWith(
+          (states) =>
+              states.contains(WidgetState.selected) &&
+                  !states.contains(WidgetState.disabled)
+              ? colors.accentColor.withValues(alpha: 0.22)
+              : Colors.transparent,
+        ),
+      ),
+    ),
     chipTheme: theme.chipTheme.copyWith(
       backgroundColor: Colors.transparent,
       disabledColor: Colors.transparent,

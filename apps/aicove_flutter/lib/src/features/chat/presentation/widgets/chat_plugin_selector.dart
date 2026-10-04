@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../ui/shared/widgets/index.dart';
-import '../../../settings/app_settings.dart';
 import '../../../../ui/features/settings/pages/chat_plugin_settings_page.dart';
 
 Future<void> showChatPluginSelector({
@@ -68,17 +67,6 @@ class _PluginSelectorSheetState extends State<_PluginSelectorSheet>
     );
   }
 
-  /// 普通聊天插件恒为全局开启，仅主动关怀仍受全局服务开关约束。
-  bool _isPluginGlobalEnabled(String pluginId) {
-    if (pluginId != 'trigger') return true;
-    return widget.ref
-            .read(appSettingsProvider)
-            .value
-            ?.autoReplySettings
-            .enabled ??
-        false;
-  }
-
   @override
   Widget build(BuildContext context) {
     return autoSavePage(
@@ -94,23 +82,18 @@ class _PluginSelectorSheetState extends State<_PluginSelectorSheet>
                 itemCount: conversationScopedChatPluginItems.length,
                 itemBuilder: (context, index) {
                   final item = conversationScopedChatPluginItems[index];
-                  final enabled = _isPluginGlobalEnabled(item.id);
                   return MoeSettingsRow(
                     icon: item.icon,
                     label: item.name,
-                    subtitle: enabled ? null : '全局未开启，需先在聊天插件中启用',
-                    enabled: enabled,
                     trailingType: MoeSettingsRowTrailing.switchControl,
                     switchValue: _selected.contains(item.id),
-                    onSwitchChanged: enabled
-                        ? (value) => setState(() {
-                            if (value) {
-                              _selected.add(item.id);
-                            } else {
-                              _selected.remove(item.id);
-                            }
-                          })
-                        : null,
+                    onSwitchChanged: (value) => setState(() {
+                      if (value) {
+                        _selected.add(item.id);
+                      } else {
+                        _selected.remove(item.id);
+                      }
+                    }),
                   );
                 },
               ),

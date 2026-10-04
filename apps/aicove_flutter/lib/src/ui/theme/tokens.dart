@@ -211,22 +211,20 @@ const double kMaxGlassBlurSigma = 32.0;
 
 const double kMaxContentSurfaceBlurSigma = 8.0;
 
-/// Per-component minimums; floating controls intentionally have no baseline.
+/// Blur minimum of an advanced-material layer. Tint never has a minimum, so
+/// every layer shares the global fill and reads as one colour.
 @immutable
 class MoeMaterialBaseline {
-  const MoeMaterialBaseline({this.blurFactor = 0, this.tintOpacity = 0})
-    : assert(blurFactor >= 0 && blurFactor <= 1),
-      assert(tintOpacity >= 0 && tintOpacity <= 1);
+  const MoeMaterialBaseline({this.blurFactor = 0})
+    : assert(blurFactor >= 0 && blurFactor <= 1);
 
-  static const none = MoeMaterialBaseline();
-  static const background = MoeMaterialBaseline(
-    blurFactor: 0.1,
-    tintOpacity: 0.1,
-  );
-  static const text = MoeMaterialBaseline(blurFactor: 0.25, tintOpacity: 0.25);
+  /// 组件材质: static floating controls follow the global material as is.
+  static const component = MoeMaterialBaseline();
+
+  /// 背景材质: text-bearing backgrounds keep a readable blur minimum.
+  static const background = MoeMaterialBaseline(blurFactor: 0.25);
 
   final double blurFactor;
-  final double tintOpacity;
 
   /// Setting strength in 0..1 after this component's minimum is applied.
   double strength(double sigma) =>
@@ -279,20 +277,9 @@ class MoeColors extends ThemeExtension<MoeColors> {
   /// 悬浮控制面板底色（玻璃材质）
   final Color glassSurface;
 
-  /// Blend from the component minimum to the existing light/dark tint token.
-  Color glassTintForSigma(
-    double sigma, {
-    MoeMaterialBaseline baseline = MoeMaterialBaseline.none,
-  }) => surface.withValues(
-    alpha:
-        baseline.tintOpacity +
-        (1 - baseline.tintOpacity) *
-            glassSurface.a *
-            (sigma / kMaxGlassBlurSigma).clamp(0.0, 1.0),
-  );
-
-  /// Subtle theme-aware backing painted above text-bearing materials.
-  Color get textMaterialTint => surface.withValues(alpha: 0.06);
+  /// Glass tint for the global fill (0..1), shared by every material layer.
+  Color glassTintForFill(double fill) =>
+      surface.withValues(alpha: glassSurface.a * fill.clamp(0.0, 1.0));
 
   /// 悬浮面板细边框
   final Color glassBorder;

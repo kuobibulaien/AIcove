@@ -1,4 +1,5 @@
 import 'package:drift/native.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import 'dart:io';
 import 'package:aicove_flutter/src/core/models/message_block.dart';
@@ -60,6 +61,14 @@ class _EditSendPort implements ChatSendPort {
       throw StateError('离线测试禁止额外发送或网络请求');
 }
 
+class _SequentialEditSendPort extends _EditSendPort {
+  int serial = 0;
+  @override
+  Message createUserMessage({required String? text, required String? imagePath}) =>
+      Message(id: 'edit-${++serial}', role: 'user', content: text ?? '',
+          createdAt: DateTime.fromMillisecondsSinceEpoch(10 + serial));
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late db.AppDatabase database;
@@ -73,6 +82,7 @@ void main() {
   Future<List<String>> ids() async =>
       (await store().loadAllRawMessages('a')).map((m) => m.id).toList();
   setUp(() async {
+    SharedPreferences.setMockInitialValues({});
     database = db.AppDatabase.forTesting(NativeDatabase.memory());
     await database.customStatement('PRAGMA foreign_keys = ON');
     container = ProviderContainer(
@@ -164,6 +174,41 @@ void main() {
       }
     });
   }
+
+  test('中断已受理编辑后可再次提交，不等待旧模型请求结束', () async {
+    final ready = Completer<AppSettings>();
+    unawaited(ready.future.then<void>((_) {}, onError: (Object _, StackTrace __) {}));
+    container.dispose();
+    container = ProviderContainer(overrides: [
+      databaseProvider.overrideWithValue(database),
+      activeConversationProvider.overrideWith((ref) => Conversation(
+          id: 'a', title: 'a', displayName: 'a',
+          createdAt: DateTime(2026), updatedAt: DateTime(2026))),
+      appSettingsProvider.overrideWith(() => _OfflineSettings(ready)),
+      chatSendPortProvider.overrideWithValue(_SequentialEditSendPort()),
+    ]);
+    final actions = container.read(chatActionsProvider);
+    try {
+      final draft = await store().prepareEdit('a', 'm2');
+      await actions.submitEditedMessage(draft, text: '第一次编辑')
+          .timeout(const Duration(seconds: 5));
+      expect(await actions.interruptCurrentGeneration(convId: 'a'), isTrue);
+      final next = await store().prepareEdit('a', 'edit-1');
+      final accepted = actions.submitEditedMessage(next, text: '第二次编辑');
+      await expectLater(actions.submitEditedMessage(next, text: '重复'), throwsStateError);
+      await accepted.timeout(const Duration(seconds: 5));
+      expect(await ids(), ['m0', 'm1', 'edit-2']);
+      expect(container.read(conversationSendingProvider('a')), isTrue);
+    } finally {
+      ready.completeError(StateError('offline model preparation failure'));
+      for (var i = 0; i < 100 && container.read(conversationSendingProvider('a')); i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    expect(container.read(conversationSendingProvider('a')), isFalse);
+    expect(await ids(), ['m0', 'm1', 'edit-2']);
+  });
 
   test('准备编辑与恢复标识均不改变原历史', () async {
     final draft = await store().prepareEdit('a', 'm2');

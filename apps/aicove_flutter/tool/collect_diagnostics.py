@@ -310,15 +310,32 @@ def validate_bundle(data):
     return bundle
 
 
+def resolve_token(device, explicit=None):
+    """显式凭证优先；否则经 adb shell（持有 DUMP）从运行中的应用读取，无需操作手机界面。"""
+    token = explicit or os.environ.get('AICOVE_DIAGNOSTIC_TOKEN', '')
+    if not token:
+        try:
+            output = device.run('shell', 'content', 'query', '--uri',
+                                f'content://{device.package}.diagnostics/token')
+        except RuntimeError:
+            output = ''
+        match = re.search(r'\btoken=([A-Za-z0-9_-]{43})\b', output)
+        if not match:
+            raise RuntimeError('未能自动读取凭证：请确认应用已更新到支持插线直读的版本并正在运行；'
+                               '旧版本可复制手机“诊断导出与电脑读取”中的电脑命令')
+        token = match.group(1)
+    if not re.fullmatch(r'[A-Za-z0-9_-]{43}', token):
+        raise ValueError('读取凭证格式不正确')
+    return token
+
+
 def fetch_release_bundle(args):
     """仅转发到手机 loopback；无需 run-as，不更改 app 或系统权限。"""
-    token = getattr(args, 'token', None) or os.environ.get('AICOVE_DIAGNOSTIC_TOKEN', '')
-    if not re.fullmatch(r'[A-Za-z0-9_-]{43}', token):
-        raise ValueError('请复制手机“诊断导出与电脑读取”中的电脑命令；也可用 AICOVE_DIAGNOSTIC_TOKEN')
     port = getattr(args, 'port', 48631)
     if not 1 <= port <= 65535:
         raise ValueError('端口必须在 1..65535 之间')
     device = Adb(choose_device(args.device), args.package)
+    token = resolve_token(device, getattr(args, 'token', None))
     forwarded = device.run('forward', 'tcp:0', f'tcp:{port}')
     if not re.fullmatch(r'\d{1,5}', forwarded) or not 1 <= int(forwarded) <= 65535:
         raise RuntimeError('ADB 未返回有效的本地转发端口')
@@ -335,7 +352,7 @@ def fetch_release_bundle(args):
                 data = response.read(MAX_OUTPUT + 1)
         except urllib.error.HTTPError as error:
             if error.code == 401:
-                raise RuntimeError('读取凭证已失效或不匹配，请复制手机上的新命令') from None
+                raise RuntimeError('读取凭证已失效或不匹配；去掉 --token／AICOVE_DIAGNOSTIC_TOKEN 让脚本自动读取') from None
             if error.code == 409:
                 raise RuntimeError('手机正在生成另一个诊断包，请稍后重试') from None
             raise RuntimeError(f'诊断通道返回 HTTP {error.code}') from None
@@ -526,7 +543,7 @@ def main():
     parser.add_argument('--from-bundle', help='读取手机保存的诊断包 JSON，无需连接手机')
     parser.add_argument('--release', action='store_true', help='通过自动读取通道采集，Debug/Release 均可用')
     parser.add_argument('--port', type=int, default=48631, help='手机读取通道端口')
-    parser.add_argument('--token', help='本机读取凭证；可改用 AICOVE_DIAGNOSTIC_TOKEN 环境变量')
+    parser.add_argument('--token', help='本机读取凭证；省略时自动经 adb 从运行中的应用读取')
     parser.add_argument('--print', action='store_true', dest='print_records', help='终端展示最近200条受控事件')
     parser.add_argument('--event', help='终端输出仅显示指定事件（诊断包仍保留完整关联证据）')
     parser.add_argument('--trace', help='终端输出仅显示指定 traceId')

@@ -23,6 +23,8 @@ import 'image/image_plugin.dart';
 import 'image/image_config.dart';
 import 'time_awareness/time_awareness_plugin.dart';
 import 'time_awareness/time_awareness_config.dart';
+import 'web_search/web_search_config.dart';
+import 'web_search/web_search_plugin.dart';
 
 /// (注释已丢失)
 final pluginManagerProvider = Provider<PluginManager>((ref) {
@@ -32,12 +34,7 @@ final pluginManagerProvider = Provider<PluginManager>((ref) {
   final stickerConfig = ref.watch(stickerPluginConfigProvider);
   final imageConfig = ref.watch(imagePluginConfigProvider);
   final timeAwarenessConfig = ref.watch(timeAwarenessPluginConfigProvider);
-
-  final appSettingsAsync = ref.watch(appSettingsProvider);
-  final autoReplySettings = appSettingsAsync.valueOrNull?.autoReplySettings;
-  final effectiveTriggerConfig = triggerConfig.copyWith(
-    enabled: triggerConfig.enabled && (autoReplySettings?.enabled ?? false),
-  );
+  final webSearchConfig = ref.watch(webSearchPluginConfigProvider);
 
   // Keep PluginManager as singleton to avoid recreating plugin instances.
   _pluginManagerSingleton ??= PluginManager();
@@ -47,7 +44,7 @@ final pluginManagerProvider = Provider<PluginManager>((ref) {
     TtsPlugin(ttsConfig),
   );
   _pluginManagerSingleton!.updatePlugin(
-    TriggerPlugin(effectiveTriggerConfig, ref),
+    TriggerPlugin(triggerConfig, ref),
   );
   _pluginManagerSingleton!.updatePlugin(MemoryPlugin(ref));
   _pluginManagerSingleton!.updatePlugin(StickerPlugin(stickerConfig));
@@ -55,6 +52,7 @@ final pluginManagerProvider = Provider<PluginManager>((ref) {
   _pluginManagerSingleton!.updatePlugin(
     TimeAwarenessPlugin(timeAwarenessConfig),
   );
+  _pluginManagerSingleton!.updatePlugin(WebSearchPlugin(webSearchConfig));
 
   return _pluginManagerSingleton!;
 });
@@ -725,5 +723,87 @@ class TimeAwarenessPluginConfigNotifier
   Future<void> setCurrentTimePromptTemplate(String template) async {
     state = state.copyWith(currentTimePromptTemplate: template);
     await _saveConfig();
+  }
+}
+
+/// 联网搜索插件配置 Provider
+final webSearchPluginConfigProvider =
+    StateNotifierProvider<WebSearchPluginConfigNotifier, WebSearchConfig>(
+      (ref) => WebSearchPluginConfigNotifier(),
+    );
+
+/// 联网搜索插件配置 Notifier
+class WebSearchPluginConfigNotifier extends StateNotifier<WebSearchConfig> {
+  static const _storageKey = 'aicove.plugins.web_search.config';
+
+  late final Future<void> ready;
+
+  WebSearchPluginConfigNotifier() : super(const WebSearchConfig()) {
+    ready = _loadConfig();
+  }
+
+  Future<void> _loadConfig() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final json = prefs.getString(_storageKey);
+      if (json != null && json.isNotEmpty) {
+        state = WebSearchConfig.fromJson(
+          jsonDecode(json) as Map<String, dynamic>,
+        );
+      }
+    } catch (e) {
+      AppLogger.warning('WebSearchPluginConfigNotifier', '读取配置失败', metadata: {
+        'error': e.toString(),
+      });
+    }
+  }
+
+  Future<void> updateConfig(WebSearchConfig config) async {
+    await ready;
+    final prefs = await SharedPreferences.getInstance();
+    if (!await saveCloudPreference(
+      prefs,
+      _storageKey,
+      jsonEncode(config.toJson()),
+    )) {
+      throw StateError('联网搜索配置写入失败');
+    }
+    if (mounted) state = config;
+  }
+
+  Future<void> setReplaceModelBuiltinSearch(bool value) =>
+      updateConfig(state.copyWith(replaceModelBuiltinSearch: value));
+
+  Future<void> saveProvider(WebSearchProviderEntry entry) {
+    final exists = state.providers.any((p) => p.id == entry.id);
+    return updateConfig(
+      state.copyWith(
+        providers: [
+          for (final p in state.providers) p.id == entry.id ? entry : p,
+          if (!exists) entry,
+        ],
+      ),
+    );
+  }
+
+  Future<void> removeProvider(String id) => updateConfig(
+    state.copyWith(
+      providers: [
+        for (final p in state.providers)
+          if (p.id != id) p,
+      ],
+    ),
+  );
+
+  Future<void> reorderProviders(List<String> orderedIds) {
+    final byId = {for (final p in state.providers) p.id: p};
+    return updateConfig(
+      state.copyWith(
+        providers: [
+          for (final id in orderedIds) ?byId.remove(id),
+          ...byId.values,
+        ],
+      ),
+    );
   }
 }

@@ -33,6 +33,8 @@ import '../widgets/model_test_sheet.dart';
 import 'multi_key_manager_page.dart';
 import '../../../../core/api/image_providers/comfyui_workflow.dart';
 import '../widgets/comfyui_workflow_editor.dart';
+import '../../../../core/api/providers/provider_extra_body.dart';
+import '../widgets/provider_extra_body_editor.dart';
 
 /// 供应商详情页
 class ProviderDetailPage extends ConsumerStatefulWidget {
@@ -221,6 +223,27 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage>
 
   void _onPageChanged(int index) {
     setState(() => _tabIndex = index);
+  }
+
+  String _extraBodySummary(ProviderAuth provider) {
+    final keys = providerExtraBody(provider.customConfig).keys;
+    if (keys.isEmpty) return '未设置';
+    return keys.join('、');
+  }
+
+  Future<void> _editExtraBody(ProviderAuth provider) async {
+    final extraBody = await showProviderExtraBodyEditor(
+      context,
+      provider.customConfig,
+    );
+    if (extraBody == null || !mounted) return;
+    try {
+      await _actions.saveExtraBody(provider, extraBody);
+    } catch (error) {
+      if (mounted) {
+        MoeToast.show(context, '保存失败：$error', type: ToastType.error);
+      }
+    }
   }
 
   Future<void> _testConnection(ProviderAuth provider) async {
@@ -803,6 +826,13 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage>
                   label: '多 Key 管理',
                   trailingType: MoeSettingsRowTrailing.chevron,
                   onTap: () => _openMultiKeyManager(provider),
+                ),
+              if (showChatApiPath)
+                MoeSettingsRow(
+                  label: '额外请求参数',
+                  detailText: _extraBodySummary(provider),
+                  trailingType: MoeSettingsRowTrailing.text,
+                  onTap: () => _editExtraBody(provider),
                 ),
             ],
           ),

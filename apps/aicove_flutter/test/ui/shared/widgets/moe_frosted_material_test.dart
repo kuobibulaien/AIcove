@@ -19,14 +19,18 @@ void main() {
     expect(MoeFrostedMaterial.blurSigmaForSetting(-8), 2);
   });
 
-  test('tint thins out with the blur and stays below popup opacity', () {
+  test('tint follows the fill and stays below popup opacity', () {
     for (final brightness in Brightness.values) {
-      final clear = MoeFrostedMaterial.surfaceTint(brightness, sigma: 2);
-      final medium = MoeFrostedMaterial.surfaceTint(brightness, sigma: 10);
-      final heavy = MoeFrostedMaterial.surfaceTint(brightness, sigma: 20);
+      final clear = MoeFrostedMaterial.surfaceTint(brightness, fill: 0.1);
+      final medium = MoeFrostedMaterial.surfaceTint(brightness, fill: 0.5);
+      final heavy = MoeFrostedMaterial.surfaceTint(brightness, fill: 1);
       expect(clear.a, lessThan(medium.a));
       expect(medium.a, lessThan(heavy.a));
       expect(heavy.a, lessThan(0.8));
+      expect(MoeFrostedMaterial.surfaceTint(brightness, fill: 0).a, 0);
+      final faint = MoeFrostedMaterial.surfaceTint(brightness, fill: 0.05);
+      expect(faint.a, greaterThan(0));
+      expect(faint.a, lessThan(clear.a));
     }
   });
 
@@ -94,7 +98,7 @@ void main() {
               child: ColoredBox(
                 color: MoeFrostedMaterial.surfaceTint(
                   brightness,
-                  sigma: expectedSigma,
+                  fill: sigma / kMaxGlassBlurSigma,
                 ),
                 child: content,
               ),
@@ -102,15 +106,15 @@ void main() {
           ),
         );
         for (final baseline in [
-          MoeMaterialBaseline.none,
+          MoeMaterialBaseline.component,
           MoeMaterialBaseline.background,
-          MoeMaterialBaseline.text,
         ]) {
           for (final liquid in [false, true]) {
             final actual = await render(
               MoeGlassTheme(
                 enabled: true,
                 blurSigma: sigma,
+                tintFill: sigma / kMaxGlassBlurSigma,
                 child: liquid
                     ? MoeLiquidGlass(
                         radius: 28,
@@ -143,13 +147,14 @@ void main() {
                 }
               }
             }
-            if (baseline == MoeMaterialBaseline.none && !liquid) {
+            if (baseline == MoeMaterialBaseline.component && !liquid) {
               regionChecksums[sigma] = checksum;
             }
           }
         }
       }
-      expect(regionChecksums[0], regionChecksums[3.2]);
+      // Blur floors at 10%, but the tint fill may still go fully clear.
+      expect(regionChecksums[0], isNot(regionChecksums[3.2]));
       expect(regionChecksums[0], isNot(regionChecksums[16]));
       expect(regionChecksums[0], isNot(regionChecksums[32]));
       expect(regionChecksums[3.2], isNot(regionChecksums[16]));

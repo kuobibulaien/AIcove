@@ -58,88 +58,77 @@ void main() {
       )
       .then((_) {});
 
-  test(
-    'a committed message wakes upload without waiting for the periodic timer',
-    () async {
-      final uploaded = Completer<void>();
-      scheduler = CloudSyncScheduler(local, ({bool pollOnly = false}) async {
-        expect(pollOnly, isFalse);
-        expect(
-          (await local.rows("SELECT 1 FROM messages WHERE id='new'")).length,
-          1,
-        );
-        uploaded.complete();
-      })..start();
-      final entered = Completer<void>();
-      final release = Completer<void>();
-      final transaction = database.transaction(() async {
-        await message('new');
-        entered.complete();
-        await release.future;
-      });
-      await entered.future;
-      await Future<void>.delayed(const Duration(milliseconds: 400));
-      expect(
-        uploaded.isCompleted,
-        isFalse,
-        reason: 'Uncommitted content must stay local',
-      );
-      release.complete();
-      await transaction;
-      await uploaded.future.timeout(const Duration(seconds: 2));
-    },
-  );
+  var clock = DateTime(2026, 10, 4, 9);
+  CloudSyncScheduler make(Future<bool> Function() run) =>
+      scheduler = CloudSyncScheduler(local, run, now: () => clock);
 
   test(
-    'edits during an active network request trigger a follow-up without overlap',
+    'first launch runs one round, then waits for the daily interval',
     () async {
-      final entered = Completer<void>();
-      final release = Completer<void>();
-      final second = Completer<void>();
-      var active = 0;
       var calls = 0;
-      scheduler = CloudSyncScheduler(local, ({bool pollOnly = false}) async {
-        expect(++active, 1);
+      make(() async {
         calls++;
-        if (calls == 1) {
-          entered.complete();
-          await release.future;
-        } else {
-          expect(pollOnly, isFalse);
-          second.complete();
-        }
-        active--;
-      })..start();
-      final running = scheduler!.synchronize(pollOnly: true);
-      await entered.future;
-      await message('while-running');
-      await Future<void>.delayed(const Duration(milliseconds: 500));
+        return true;
+      }).start();
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
       expect(calls, 1);
-      release.complete();
-      await second.future.timeout(const Duration(seconds: 2));
-      await running;
+      clock = clock.add(const Duration(hours: 7, minutes: 59));
+      await scheduler!.synchronizeIfDue();
+      expect(calls, 1);
+      clock = clock.add(const Duration(minutes: 1));
+      await scheduler!.synchronizeIfDue();
       expect(calls, 2);
     },
   );
 
-  test(
-    'remote applies do not cause an upload echo and disposal cancels wakeups',
-    () async {
-      var calls = 0;
-      scheduler = CloudSyncScheduler(local, ({bool pollOnly = false}) async {
-        calls++;
-      })..start();
-      await database.transaction(() async {
-        await local.execute('UPDATE cloud_client_state SET suspended=1');
-        await message('remote');
-        await local.execute('UPDATE cloud_client_state SET suspended=0');
-      });
-      await Future<void>.delayed(const Duration(milliseconds: 500));
-      expect(calls, 0);
-      await message('local');
-      scheduler!.close();
-      await Future<void>.delayed(const Duration(milliseconds: 500));
-      expect(calls, 0);
-    },
-  );
+  test('a failed round retries after an hour, not on every resume', () async {
+    var calls = 0;
+    make(() async {
+      calls++;
+      return false;
+    });
+    await scheduler!.synchronizeIfDue();
+    clock = clock.add(const Duration(minutes: 59));
+    await scheduler!.synchronizeIfDue();
+    expect(calls, 1);
+    clock = clock.add(const Duration(minutes: 1));
+    await scheduler!.synchronizeIfDue();
+    expect(calls, 2);
+  });
+
+  test('local edits never wake the network; manual sync always runs', () async {
+    var calls = 0;
+    make(() async {
+      calls++;
+      return true;
+    });
+    await scheduler!.synchronize();
+    await message('local');
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    await scheduler!.synchronizeIfDue();
+    expect(calls, 1);
+    await scheduler!.synchronize();
+    expect(calls, 2);
+  });
+
+  test('concurrent requests join one round and disposal stops it', () async {
+    final release = Completer<void>();
+    var active = 0, calls = 0;
+    make(() async {
+      expect(++active, 1);
+      calls++;
+      await release.future;
+      active--;
+      return true;
+    });
+    final first = scheduler!.synchronize();
+    final second = scheduler!.synchronize();
+    release.complete();
+    await Future.wait([first, second]);
+    expect(calls, 1);
+    scheduler!.close();
+    await scheduler!.synchronize();
+    expect(calls, 1);
+  });
 }

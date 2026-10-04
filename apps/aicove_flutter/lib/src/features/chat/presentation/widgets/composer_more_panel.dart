@@ -1,14 +1,16 @@
 /// Composer 更多面板
 ///
-/// 显示模型选择、相册、拍照、文件等操作入口
+/// 显示模型、思考、相册、附件与通话入口
 library;
+
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/index.dart';
 
 /// 更多面板操作类型
-enum ComposerAction { model, thinking, gallery, camera, file, audio, video }
+enum ComposerAction { model, thinking, gallery, attachment, call }
 
 /// Composer 更多面板
 class ComposerMorePanel extends StatelessWidget {
@@ -35,76 +37,133 @@ class ComposerMorePanel extends StatelessWidget {
         onTap: () => onAction(ComposerAction.gallery),
       ),
       _MoreActionSpec(
-        icon: Icons.photo_camera_outlined,
-        label: '拍照',
-        onTap: () => onAction(ComposerAction.camera),
-      ),
-      _MoreActionSpec(
         icon: Icons.attach_file,
-        label: '文件',
-        onTap: () => onAction(ComposerAction.file),
+        label: '附件',
+        onTap: () => onAction(ComposerAction.attachment),
       ),
       _MoreActionSpec(
-        icon: Icons.audiotrack_outlined,
-        label: '音频',
-        onTap: () => onAction(ComposerAction.audio),
-      ),
-      _MoreActionSpec(
-        icon: Icons.movie_outlined,
-        label: '视频',
-        onTap: () => onAction(ComposerAction.video),
+        icon: Icons.call_outlined,
+        label: '通话',
+        onTap: () => onAction(ComposerAction.call),
       ),
     ];
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        const horizontalPadding = 12.0;
-        const topPadding = 14.0;
-        const bottomPadding = 12.0;
-        const spacing = 10.0;
-        const labelTopGap = 8.0;
-        final labelHeight = (MediaQuery.textScalerOf(context).scale(12) * 1.5)
-            .ceilToDouble();
-        const buttonSide = 64.0; // ~= 1.5 * composer input min height (42)
+        final width = constraints.maxWidth;
+        final height = constraints.maxHeight;
 
-        final usableWidth = (constraints.maxWidth - horizontalPadding * 2)
-            .clamp(0.0, 2000.0)
-            .toDouble();
-        final columns = usableWidth >= 360 ? 4 : 3;
-        final rawItemWidth = columns == 4
-            ? (usableWidth - spacing * 3) / 4
-            : (usableWidth - spacing * 2) / 3;
-        final itemWidth = rawItemWidth.clamp(0.0, 260.0).toDouble();
-        final itemHeight = buttonSide + labelTopGap + labelHeight;
-
-        return SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(
-            horizontalPadding,
-            topPadding,
-            horizontalPadding,
-            bottomPadding,
+        // Folder-style grid that spans the panel: the outer margin, the row
+        // gap and the column gap are one value. The preferred tile side grows
+        // with the panel width inside a comfortable band, and the leftover
+        // width becomes the gap; at least three columns, wide panels add
+        // columns, and large text drops columns so labels still fit.
+        final preferredTile = (width * _tileWidthRatio).clamp(
+          _preferredTileMin,
+          _preferredTileMax,
+        );
+        final minTile = math.max(
+          _minTileSide,
+          _moreActionContentHeight(context) + 2 * _tilePadding,
+        );
+        final fitColumns = math.max(
+          1,
+          ((width - _minGridGap) / (minTile + _minGridGap)).floor(),
+        );
+        final columns = math.min(
+          math.max(
+            _gridColumns,
+            ((width - _minGridGap) / (preferredTile + _minGridGap)).floor(),
           ),
-          child: Wrap(
-            spacing: spacing,
-            runSpacing: spacing,
+          fitColumns,
+        );
+        final tileSide = math.max(
+          minTile,
+          math.min(
+            preferredTile,
+            (width - (columns + 1) * _minGridGap) / columns,
+          ),
+        );
+        final gap = math.max(
+          0.0,
+          (width - columns * tileSide) / (columns + 1),
+        );
+        final rows = (actions.length / columns).ceil();
+
+        final grid = Padding(
+          padding: EdgeInsets.all(gap),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              for (final action in actions)
-                SizedBox(
-                  width: itemWidth,
-                  height: itemHeight,
-                  child: MoreActionTile(
-                    icon: action.icon,
-                    label: action.label,
-                    onTap: action.onTap,
+              for (var row = 0; row < rows; row++)
+                Padding(
+                  padding: EdgeInsets.only(top: row == 0 ? 0 : gap),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (var column = 0; column < columns; column++)
+                        Padding(
+                          padding: EdgeInsets.only(
+                            left: column == 0 ? 0 : gap,
+                          ),
+                          child: SizedBox.square(
+                            dimension: tileSide,
+                            child: switch (row * columns + column) {
+                              final index when index < actions.length =>
+                                MoreActionTile(
+                                  icon: actions[index].icon,
+                                  label: actions[index].label,
+                                  onTap: actions[index].onTap,
+                                ),
+                              _ => null,
+                            },
+                          ),
+                        ),
+                    ],
                   ),
                 ),
             ],
+          ),
+        );
+
+        // Scrolling is only an overflow fallback for short panels or very
+        // large text, so the tiles keep the global material instead of the
+        // moving-surface fill.
+        return SingleChildScrollView(
+          child: MoeRarelyScrolledRegion(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                minWidth: width,
+                minHeight: height.isFinite ? height : 0,
+              ),
+              child: Align(alignment: Alignment.topLeft, child: grid),
+            ),
           ),
         );
       },
     );
   }
 }
+
+const _gridColumns = 3;
+const _minGridGap = 16.0;
+const _preferredTileMin = 80.0;
+const _preferredTileMax = 90.0;
+const _tileWidthRatio = 0.22;
+const _minTileSide = 64.0;
+const _tilePadding = 8.0;
+const _tileRadius = 20.0;
+const _iconSize = 26.0;
+const _iconLabelGap = 6.0;
+const _labelFontSize = 13.0;
+
+double _moreActionLabelHeight(BuildContext context) =>
+    (MediaQuery.textScalerOf(context).scale(_labelFontSize) * 1.5)
+        .ceilToDouble();
+
+double _moreActionContentHeight(BuildContext context) =>
+    _iconSize + _iconLabelGap + _moreActionLabelHeight(context);
 
 class _MoreActionSpec {
   final IconData icon;
@@ -118,7 +177,7 @@ class _MoreActionSpec {
   });
 }
 
-/// 更多面板操作按钮
+/// 更多面板操作按钮：图标与名称同在一块正方形材质内。
 class MoreActionTile extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -134,50 +193,37 @@ class MoreActionTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
-    const radius = 14.0;
-    const maxButtonSide = 64.0;
-    const minButtonSide = 52.0;
-    const labelTopGap = 8.0;
-    final labelHeight = (MediaQuery.textScalerOf(context).scale(12) * 1.5)
-        .ceilToDouble();
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final side = constraints.maxWidth.clamp(minButtonSide, maxButtonSide);
-        return Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(radius),
-            canRequestFocus: false,
-            splashFactory: NoSplash.splashFactory,
-            splashColor: Colors.transparent,
-            highlightColor: Colors.transparent,
-            hoverColor: Colors.transparent,
-            focusColor: Colors.transparent,
-            overlayColor: WidgetStateProperty.all(Colors.transparent),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(_tileRadius),
+        canRequestFocus: false,
+        splashFactory: NoSplash.splashFactory,
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+        hoverColor: Colors.transparent,
+        focusColor: Colors.transparent,
+        overlayColor: WidgetStateProperty.all(Colors.transparent),
+        child: MoeButtonSurface(
+          shareParentSurface: false,
+          radius: _tileRadius,
+          padding: const EdgeInsets.all(_tilePadding),
+          child: Center(
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
+                Icon(icon, size: _iconSize, color: colors.accentColor),
+                const SizedBox(height: _iconLabelGap),
                 SizedBox(
-                  width: side,
-                  height: side,
-                  child: MoeButtonSurface(
-                    shareParentSurface: false,
-                    radius: radius,
-                    child: Center(
-                      child: Icon(icon, size: 30, color: colors.accentColor),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: labelTopGap),
-                SizedBox(
-                  height: labelHeight,
+                  height: _moreActionLabelHeight(context),
                   child: Text(
                     label,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      fontSize: 12,
+                      fontSize: _labelFontSize,
                       color: colors.text,
                       fontWeight: MoeFontWeights.emphasis,
                     ),
@@ -186,8 +232,8 @@ class MoreActionTile extends StatelessWidget {
               ],
             ),
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 }

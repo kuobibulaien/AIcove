@@ -11,6 +11,7 @@ import 'lan_discovery.dart';
 import 'lan_media.dart';
 import 'lan_repository.dart';
 import 'lan_transport.dart';
+import 'device_names.dart';
 
 class LanService implements LanSyncPort {
   LanService(
@@ -41,18 +42,18 @@ class LanService implements LanSyncPort {
   StreamSubscription<dynamic>? _dbChanges;
   Future<void>? _work, _files, _initializing, _backup;
   bool _enabled = false, _foreground = true, _closed = false;
-  String _name = '', _notice = '两端连接同一 Wi-Fi 或热点，打开应用即可同步';
+  String _name = '', _notice = '两端连接同一 Wi-Fi 或热点，配对后自动保持连接';
   String? _error;
   Future<void> _lifecycle = Future.value();
+  final _nearby = <String, List<LanEndpoint>>{};
   bool get _active =>
       _enabled && _foreground && !_closed && transport.listening;
 
   @override
   Future<void> initialize() => _initializing ??= () async {
     await peers.load();
-    _name =
-        repository.local.preferences.getString('aicove.lan.name') ??
-        (Platform.isAndroid || Platform.isIOS ? '我的手机或平板' : '我的电脑');
+    _name = await ownDeviceName(repository.local.preferences);
+    await publishDeviceName(repository.local.preferences, repository.deviceId);
     _enabled =
         repository.local.preferences.getBool('aicove.lan.enabled') == true;
     await _reconcile();
@@ -70,6 +71,9 @@ class LanService implements LanSyncPort {
       deviceId: repository.deviceId,
       invitation: transport.invitation?.expires.isAfter(DateTime.now()) == true
           ? transport.invitation?.code
+          : null,
+      pin: transport.invitation?.pinOpen == true
+          ? transport.invitation?.pin
           : null,
       peers: peers.peers.values
           .map(
@@ -103,6 +107,7 @@ class LanService implements LanSyncPort {
         _dbChanges = null;
         if (!_enabled || !_foreground || _closed) {
           await discovery.stop();
+          _nearby.clear();
           await transport.stop();
           await _work;
           await _files;
@@ -117,18 +122,24 @@ class LanService implements LanSyncPort {
             id,
             endpoints,
           ) {
+            _nearby[id] = endpoints;
             final peer = peers.peers[id];
             if (peer == null || !_active) return;
             peer.endpoints = endpoints;
             unawaited(peers.save().catchError((Object _) {}));
             if (automatic) unawaited(synchronize());
           });
-          _notice = '两端连接同一 Wi-Fi 或热点，打开应用即可同步';
+          _notice = '两端连接同一 Wi-Fi 或热点，配对后自动保持连接';
         } catch (_) {
           _notice = '自动发现暂不可用，仍可通过配对码连接；地址变化后需要重新配对';
         }
         if (automatic && _active) {
           _timer = Timer.periodic(const Duration(seconds: 3), (_) {
+            // Paired devices stay connected: rebind if the OS dropped the socket.
+            if (!transport.listening) {
+              unawaited(_reconcile());
+              return;
+            }
             unawaited(_publish());
             unawaited(synchronize());
           });
@@ -182,13 +193,14 @@ class LanService implements LanSyncPort {
       throw const LanSyncFailure('设备名称需要 1～50 个字');
     }
     if (!await repository.local.preferences.setString(
-      'aicove.lan.name',
+      lanNameKey,
       value,
     )) {
       throw const LanSyncFailure('设备名称保存失败');
     }
     _name = value;
     transport.invitation = null;
+    await publishDeviceName(repository.local.preferences, repository.deviceId);
   });
   @override
   Future<void> invite() => _action(() async {
@@ -197,7 +209,12 @@ class LanService implements LanSyncPort {
   @override
   Future<void> pair(String code) => _action(() async {
     if (!_active) throw const LanSyncFailure('请先开启局域网同步');
-    await transport.pair(code, _name);
+    final pin = code.replaceAll(RegExp(r'[\s-]'), '');
+    if (RegExp(r'^\d{6}$').hasMatch(pin)) {
+      await transport.pairPin(pin, _name, _nearby.values.expand((e) => e));
+    } else {
+      await transport.pair(code, _name);
+    }
     _notice = '已发出配对请求，请在另一台设备确认';
   });
   @override
@@ -248,6 +265,7 @@ class LanService implements LanSyncPort {
       throw const LanSyncFailure('设备连接已停止');
     }
     await repository.receive(revision);
+    _startFiles();
     unawaited(_publish());
   }
 
@@ -282,8 +300,11 @@ class LanService implements LanSyncPort {
   ) async {
     switch (body['method']) {
       case 'manifest':
-        await repository.capture();
-        return repository.manifest(after: body['after'] as String? ?? '');
+        final after = body['after'] as String? ?? '';
+        // Later pages still drain committed DB edits, but need not fingerprint
+        // every unchanged preference/preset again for the same manifest walk.
+        await repository.capture(scanExternal: after.isEmpty);
+        return repository.manifest(after: after);
       case 'missing':
         final hashes = (body['hashes'] as List).cast<String>();
         if (hashes.length > 200 ||
@@ -325,10 +346,35 @@ class LanService implements LanSyncPort {
   @override
   Future<void> synchronize() {
     if (!_active || peers.peers.isEmpty) return Future.value();
+    // An existing metadata round must not block persisted attachment work.
+    _startFiles();
     return _work ??= _sync().whenComplete(() {
       _work = null;
       unawaited(_publish());
     });
+  }
+
+  void _startFiles() {
+    if (!_active ||
+        _files != null ||
+        !peers.peers.values.any((peer) => peer.approved && peer.online)) {
+      return;
+    }
+    _files = _transferFiles().catchError((Object _) {}).whenComplete(() {
+      _files = null;
+      unawaited(_publish());
+    });
+  }
+
+  Future<void> _transferFiles() async {
+    while (_active) {
+      final before = await media.counts();
+      await media.drain(peers.peers, () => _active);
+      final after = await media.counts();
+      // Continue successful batches immediately; unavailable/offline files retry
+      // on the normal wake-up rather than spinning in a tight retry loop.
+      if (after.$1 == 0 || after.$1 >= before.$1) return;
+    }
   }
 
   Future<void> _sync() async {
@@ -351,6 +397,7 @@ class LanService implements LanSyncPort {
             await peers.save();
           }
           await _ensureBackup(peer);
+          _startFiles();
           var after = '';
           do {
             final page = await transport.rpc(peer, {
@@ -390,21 +437,34 @@ class LanService implements LanSyncPort {
           after = '';
           do {
             final page = await repository.manifest(after: after);
-            for (final item in page['items'] as List) {
-              final hashes = (item['hashes'] as List).cast<String>();
+            final hashes = {
+              for (final item in page['items'] as List)
+                ...(item['hashes'] as List).cast<String>(),
+            }.toList();
+            final missingHashes = <String>{};
+            // Existing peers already accept up to 200 hashes per request.
+            // Avoid a network round-trip for every unchanged message.
+            for (var offset = 0; offset < hashes.length; offset += 200) {
+              final end = offset + 200 < hashes.length
+                  ? offset + 200
+                  : hashes.length;
+              final batch = hashes.sublist(offset, end);
               final missing = await transport.rpc(peer, {
                 'method': 'missing',
-                'hashes': hashes,
+                'hashes': batch,
               });
               for (final hash in (missing['hashes'] as List).cast<String>()) {
-                if (!hashes.contains(hash)) {
+                if (!batch.contains(hash)) {
                   throw const LanSyncFailure('同步摘要应答无效');
                 }
-                await transport.rpc(peer, {
-                  'method': 'put',
-                  'revision': (await repository.revision(hash)).toJson(),
-                });
+                missingHashes.add(hash);
               }
+            }
+            for (final hash in hashes.where(missingHashes.contains)) {
+              await transport.rpc(peer, {
+                'method': 'put',
+                'revision': (await repository.revision(hash)).toJson(),
+              });
             }
             after = page['after'] as String;
             if (page['has_more'] != true) break;
@@ -418,31 +478,38 @@ class LanService implements LanSyncPort {
         }
       }
       _error = null;
-      if (_active) {
-        _files ??= media
-            .drain(peers.peers, () => _active)
-            .catchError((Object _) {})
-            .whenComplete(() {
-              _files = null;
-              unawaited(_publish());
-            });
-      }
+      _startFiles();
     } catch (e) {
       _error = _message(e);
     }
   }
 
   @override
-  Future<void> resolve(LanRevision selected, List<String> previewHashes) =>
-      _action(() async {
+  Future<void> resolve(
+    List<(LanRevision selected, List<String> previewHashes)> choices,
+  ) => _action(() async {
+    // A batch keeps going past items that changed meanwhile; they stay listed.
+    Object? failure;
+    var failed = 0;
+    for (final (selected, previewHashes) in choices) {
+      try {
         await repository.resolve(
           selected.kind,
           selected.id,
           selected.hash,
           previewHashes,
         );
-        if (automatic) unawaited(synchronize());
-      });
+      } catch (e) {
+        failure ??= e;
+        failed++;
+      }
+    }
+    if (automatic) unawaited(synchronize());
+    if (failure != null) {
+      if (choices.length == 1) throw failure;
+      throw LanSyncFailure('有 $failed 项内容已有新修改，请再处理一次');
+    }
+  });
   @override
   Future<String> decodeQr(Uint8List bytes) async {
     if (bytes.length > 20 * 1024 * 1024) {

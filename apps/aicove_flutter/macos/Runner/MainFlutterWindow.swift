@@ -3,6 +3,7 @@ import FlutterMacOS
 
 class MainFlutterWindow: NSWindow {
   private var chromeChannel: FlutterMethodChannel?
+  private var deviceNameChannel: FlutterMethodChannel?
   private var trafficLightsHost: NSView?
   private var windowObservers: [NSObjectProtocol] = []
   private var alignmentScheduled = false
@@ -23,6 +24,16 @@ class MainFlutterWindow: NSWindow {
       }
       self?.alignTrafficLightsForCurrentSize()
       result(nil)
+    }
+
+    // The computer name shown in Sharing settings, e.g. "MacBook Pro".
+    deviceNameChannel = FlutterMethodChannel(name: "aicove/device_name", binaryMessenger: flutterViewController.engine.binaryMessenger)
+    deviceNameChannel?.setMethodCallHandler { call, result in
+      guard call.method == "read" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      result(Host.current().localizedName)
     }
 
     super.awakeFromNib()

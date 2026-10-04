@@ -288,7 +288,7 @@ class _MoeTextFieldState extends State<MoeTextField> {
         
         // 输入框
         MoeFloatingSurface(
-          baseline: MoeMaterialBaseline.text,
+          baseline: MoeMaterialBaseline.background,
           radius: g2Radius,
           borderRadius: radius,
           solidColor: currentFill,

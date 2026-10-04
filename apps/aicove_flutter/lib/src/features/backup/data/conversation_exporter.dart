@@ -55,6 +55,7 @@ class ConversationExporter {
   }) async {
     conversationIds = List.unmodifiable(conversationIds);
     validateTransferScopes(options.scopes);
+    final password = normalizeBackupPassword(options.password);
     if (conversationIds.isEmpty ||
         conversationIds.toSet().length != conversationIds.length) {
       throw const FormatException('请选择有效且不重复的角色');
@@ -275,7 +276,7 @@ class ConversationExporter {
       final archive = Archive();
       await _addDirectoryToArchive(archive, exportDir, exportDir.path);
 
-      final zipBytes = ZipEncoder().encode(archive);
+      final zipBytes = ZipEncoder(password: password).encode(archive);
       if (zipBytes == null) {
         throw Exception('ZIP 压缩失败');
       }

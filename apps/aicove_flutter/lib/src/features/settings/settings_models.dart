@@ -158,8 +158,7 @@ final _imagePatterns = RegExp(
 enum ChatModelCapability {
   vision('vision'),
   tools('tools'),
-  reasoning('reasoning'),
-  web('web');
+  reasoning('reasoning');
 
   const ChatModelCapability(this.value);
   final String value;
@@ -257,18 +256,6 @@ final _chatReasoningPatterns = RegExp(
   caseSensitive: false,
 );
 
-final _chatWebPatterns = RegExp(
-  r'\b('
-  r'search|'
-  r'online|'
-  r'web|'
-  r'sonar|'
-  r'realtime|'
-  r'perplexity'
-  r')\b',
-  caseSensitive: false,
-);
-
 List<ChatModelCapability> inferChatModelCapabilities(String modelId) {
   final id = modelId.toLowerCase();
   final result = <ChatModelCapability>[];
@@ -281,8 +268,13 @@ List<ChatModelCapability> inferChatModelCapabilities(String modelId) {
   if (_chatReasoningPatterns.hasMatch(id)) {
     result.add(ChatModelCapability.reasoning);
   }
-  if (_chatWebPatterns.hasMatch(id)) {
-    result.add(ChatModelCapability.web);
+  // 未识别的模型默认开启视觉、工具与思考，用户可在模型设置中手动关闭。
+  if (result.isEmpty) {
+    return const <ChatModelCapability>[
+      ChatModelCapability.vision,
+      ChatModelCapability.tools,
+      ChatModelCapability.reasoning,
+    ];
   }
   return result;
 }
@@ -404,8 +396,6 @@ Color _hexToColor(String hex) {
 
 /// 自动回复设置
 class AutoReplySettings {
-  final bool enabled;
-  final bool guardModeEnabled;
   final int dailyLimit;
   final int minIntervalMinutes;
   final bool quietHoursEnabled;
@@ -421,8 +411,6 @@ class AutoReplySettings {
       PromptBuiltinDefaults.autoReplyAnalyzerDefault;
 
   const AutoReplySettings({
-    this.enabled = false,
-    this.guardModeEnabled = false,
     this.dailyLimit = 3,
     this.minIntervalMinutes = 120,
     this.quietHoursEnabled = true,
@@ -436,8 +424,6 @@ class AutoReplySettings {
   });
 
   AutoReplySettings copyWith({
-    bool? enabled,
-    bool? guardModeEnabled,
     int? dailyLimit,
     int? minIntervalMinutes,
     bool? quietHoursEnabled,
@@ -452,8 +438,6 @@ class AutoReplySettings {
     bool clearAnalyzerProvider = false,
   }) {
     return AutoReplySettings(
-      enabled: enabled ?? this.enabled,
-      guardModeEnabled: guardModeEnabled ?? this.guardModeEnabled,
       dailyLimit: dailyLimit ?? this.dailyLimit,
       minIntervalMinutes: minIntervalMinutes ?? this.minIntervalMinutes,
       quietHoursEnabled: quietHoursEnabled ?? this.quietHoursEnabled,
@@ -472,8 +456,6 @@ class AutoReplySettings {
   }
 
   Map<String, dynamic> toJson() => {
-    'enabled': enabled,
-    'guard_mode_enabled': guardModeEnabled,
     'daily_limit': dailyLimit,
     'min_interval_minutes': minIntervalMinutes,
     'quiet_hours_enabled': quietHoursEnabled,
@@ -516,8 +498,6 @@ class AutoReplySettings {
     }
 
     return AutoReplySettings(
-      enabled: json['enabled'] == true,
-      guardModeEnabled: json['guard_mode_enabled'] == true,
       dailyLimit: clampInt(json['daily_limit'] as num?, 1, 10, 3),
       minIntervalMinutes: clampInt(
         json['min_interval_minutes'] as num?,
@@ -1086,6 +1066,9 @@ class AppSettings {
   /// 玻璃厚度的兼容存储值（sigma）；界面与渲染映射为三个档位。
   final double glassBlurSigma;
 
+  /// 高级材质底色填充程度（0..1），与模糊度独立调节。
+  final double glassTintFill;
+
   /// 是否使用液态玻璃材质（透镜物理折射，关闭时为常规平整毛玻璃）
   final bool useLiquidGlass;
 
@@ -1108,6 +1091,9 @@ class AppSettings {
 
   /// 新会话默认聊天样式；会话可单独覆盖（ADR0047）。
   final ChatDisplayStyle chatDisplayStyle;
+
+  /// 发送消息后是否自动回到聊天底部；关闭后保持当前阅读位置。
+  final bool autoScrollOnSend;
 
   const AppSettings({
     this.compactionModel = '',
@@ -1147,6 +1133,7 @@ class AppSettings {
     this.expandAudioText = true,
     this.glassEffectEnabled = true,
     this.glassBlurSigma = kDefaultGlassBlurSigma,
+    this.glassTintFill = kDefaultGlassTintFill,
     this.useLiquidGlass = true,
     this.defaultChatModels = const <String>[],
     this.skipVisionCompatDialog = false,
@@ -1154,6 +1141,7 @@ class AppSettings {
     this.callFlowSettings = const CallFlowSettings(),
     this.streamSegmentDelaySeconds = 0,
     this.chatDisplayStyle = ChatDisplayStyle.bubble,
+    this.autoScrollOnSend = true,
     this.userAvatar,
     this.userName,
   });
@@ -1213,6 +1201,7 @@ class AppSettings {
     bool? expandAudioText,
     bool? glassEffectEnabled,
     double? glassBlurSigma,
+    double? glassTintFill,
     bool? useLiquidGlass,
     List<String>? defaultChatModels,
     bool? skipVisionCompatDialog,
@@ -1220,6 +1209,7 @@ class AppSettings {
     CallFlowSettings? callFlowSettings,
     double? streamSegmentDelaySeconds,
     ChatDisplayStyle? chatDisplayStyle,
+    bool? autoScrollOnSend,
     String? userAvatar,
     String? userName,
   }) => AppSettings(
@@ -1263,6 +1253,7 @@ class AppSettings {
     expandAudioText: expandAudioText ?? this.expandAudioText,
     glassEffectEnabled: glassEffectEnabled ?? this.glassEffectEnabled,
     glassBlurSigma: glassBlurSigma ?? this.glassBlurSigma,
+    glassTintFill: glassTintFill ?? this.glassTintFill,
     useLiquidGlass: useLiquidGlass ?? this.useLiquidGlass,
     defaultChatModels: defaultChatModels ?? this.defaultChatModels,
     skipVisionCompatDialog:
@@ -1273,6 +1264,7 @@ class AppSettings {
     streamSegmentDelaySeconds:
         streamSegmentDelaySeconds ?? this.streamSegmentDelaySeconds,
     chatDisplayStyle: chatDisplayStyle ?? this.chatDisplayStyle,
+    autoScrollOnSend: autoScrollOnSend ?? this.autoScrollOnSend,
     userAvatar: userAvatar ?? this.userAvatar,
     userName: userName ?? this.userName,
   );

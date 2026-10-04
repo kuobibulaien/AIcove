@@ -53,6 +53,7 @@ class MoeChatHeader extends StatelessWidget implements PreferredSizeWidget {
             child: MoeScrollEdgeBackdrop(
               clearFromBottom:
                   telegramChatHeaderVerticalInset + toolbarHeight / 2,
+              opaqueFallback: false,
             ),
           ),
           _buildControls(),

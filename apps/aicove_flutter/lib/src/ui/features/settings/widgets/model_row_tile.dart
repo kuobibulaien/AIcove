@@ -11,7 +11,7 @@
 ///
 /// 更新记录：
 /// - 2026-01-27: 添加模型类型标签、复制按钮、类型编辑功能
-/// - 2026-01-25: 添加模型特性标签显示（视觉/工具/思考/联网）
+/// - 2026-01-25: 添加模型特性标签显示（视觉/工具/思考）
 /// - 2025-12-31: 从 model_list_page.dart 提取
 library;
 
@@ -527,7 +527,7 @@ class ModelRowTile extends ConsumerWidget {
                                 ),
                               ),
                               Text(
-                                '关闭后可手动选择：视觉 / 工具 / 推理 / 联网',
+                                '关闭后可手动选择：视觉 / 工具 / 思考',
                                 style: TextStyle(
                                   fontSize: 11,
                                   color: context.moeColors.muted,

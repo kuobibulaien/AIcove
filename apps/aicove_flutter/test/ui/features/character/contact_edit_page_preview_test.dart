@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:aicove_flutter/src/features/agent_context/data/silly_tavern_preset_store.dart';
 import 'package:aicove_flutter/src/features/agent_context/domain/tavern_compatibility_port.dart';
 import 'package:aicove_flutter/src/features/agent_context/providers/preset_recipe_provider.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
@@ -11,6 +12,7 @@ import 'package:aicove_flutter/src/features/plugins/image/image_config.dart';
 import 'package:aicove_flutter/src/features/plugins/tts/tts_config.dart';
 import 'package:aicove_flutter/src/ui/features/character/pages/contact_edit_page.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -27,12 +29,12 @@ void main() {
     final tempDir = await Directory.systemTemp.createTemp('edit_preview_');
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(pathChannel, (call) async {
-      if (call.method == 'getApplicationDocumentsDirectory' ||
-          call.method == 'getTemporaryDirectory') {
-        return tempDir.path;
-      }
-      return null;
-    });
+          if (call.method == 'getApplicationDocumentsDirectory' ||
+              call.method == 'getTemporaryDirectory') {
+            return tempDir.path;
+          }
+          return null;
+        });
   });
 
   setUpAll(() async {
@@ -58,8 +60,18 @@ void main() {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(420, 900);
 
-    final portrait = _pngDataUri(240, 320, const (248, 176, 190), const (255, 226, 232));
-    final wallpaper = _pngDataUri(480, 640, const (214, 196, 240), const (146, 180, 226));
+    final portrait = _pngDataUri(
+      240,
+      320,
+      const (248, 176, 190),
+      const (255, 226, 232),
+    );
+    final wallpaper = _pngDataUri(
+      480,
+      640,
+      const (214, 196, 240),
+      const (146, 180, 226),
+    );
 
     final drawingCatalog = DrawingPresetCatalog(
       presets: const [
@@ -68,11 +80,7 @@ void main() {
           name: '默认绘图',
           config: ImageConfig(),
         ),
-        DrawingPreset(
-          id: 'preset_anime',
-          name: '二次元立绘',
-          config: ImageConfig(),
-        ),
+        DrawingPreset(id: 'preset_anime', name: '二次元立绘', config: ImageConfig()),
       ],
       defaultPresetId: 'drawing_default',
       legacyConfig: const ImageConfig(),
@@ -90,8 +98,9 @@ void main() {
       'aicove.ui_models.v1': jsonEncode({
         'auto_reply_settings': {'enabled': true},
       }),
-      'aicove.plugins.image.drawing_presets.v1':
-          jsonEncode(drawingCatalog.toJson()),
+      'aicove.plugins.image.drawing_presets.v1': jsonEncode(
+        drawingCatalog.toJson(),
+      ),
       'aicove.plugins.tts.config': jsonEncode(ttsConfig.toJson()),
     });
 
@@ -109,13 +118,7 @@ void main() {
         customDrawingPrompt: 'nahida_(genshin_impact)，白色长发侧马尾，绿瞳',
         drawingPresetId: 'preset_anime',
       ),
-      enabledPlugins: const [
-        'tts',
-        'image',
-        'memory',
-        'sticker',
-        'trigger',
-      ],
+      enabledPlugins: const ['tts', 'image', 'memory', 'sticker', 'trigger'],
       recipeId: 'recipe_story',
       createdAt: DateTime(2026, 9, 1),
       updatedAt: DateTime(2026, 9, 15),
@@ -135,8 +138,10 @@ void main() {
             ],
           ),
           tavernPluginSettingsProvider.overrideWith(
-            (ref) async =>
-                const TavernPluginSettings(enabled: true, defaultPresetId: 'recipe_story'),
+            (ref) async => const TavernPluginSettings(
+              enabled: true,
+              defaultPresetId: 'recipe_story',
+            ),
           ),
         ],
         child: MaterialApp(
@@ -163,7 +168,9 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
     await tester.pumpAndSettle();
     // Image.memory/解码走真实异步，pumpAndSettle 不会等待——截图前留出真实时间。
-    await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 400)));
+    await tester.runAsync(
+      () => Future.delayed(const Duration(milliseconds: 400)),
+    );
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
     expect(find.text('已开启插件'), findsOneWidget);
@@ -188,8 +195,8 @@ void main() {
       await _capture(tester, boundaryKey, 'contact-edit-expanded');
     }
 
-    await tester.ensureVisible(find.text('全部插件'));
-    await tester.tap(find.text('全部插件'));
+    await tester.ensureVisible(find.text('管理开启的插件'));
+    await tester.tap(find.text('管理开启的插件'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('all-plugins-tts')), findsOneWidget);
     if (capture) {
@@ -204,6 +211,127 @@ void main() {
     }
 
     // BlurredBackgroundService.ensureBlur 内部有 3s 超时定时器，结束前排空。
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('create page imports tavern card and binds new preset', (
+    tester,
+  ) async {
+    addTearDown(tester.view.reset);
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(420, 900);
+    SharedPreferences.setMockInitialValues({});
+    final temp = (await tester.runAsync(
+      () => Directory.systemTemp.createTemp('create_preset_'),
+    ))!;
+    addTearDown(() => temp.delete(recursive: true));
+    final store = SillyTavernPresetStore(
+      documentsDirectoryResolver: () async => temp,
+    );
+    final picker = _JsonPicker(
+      '{"name":"新角色专用预设","prompts":[{"identifier":"main","content":"规则","role":"system"},'
+      '{"identifier":"chatHistory","marker":true}],"prompt_order":['
+      '{"identifier":"main","enabled":true},{"identifier":"chatHistory","enabled":true}]}',
+    );
+    FilePicker.platform = picker;
+
+    final boundaryKey = GlobalKey();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sillyTavernPresetStoreProvider.overrideWithValue(store),
+          tavernPluginSettingsProvider.overrideWith(
+            (ref) async => const TavernPluginSettings(enabled: false),
+          ),
+        ],
+        child: MaterialApp(
+          theme: ThemeData(
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: const Color(0xFFFC96AA),
+              primary: const Color(0xFFFC96AA),
+            ),
+            scaffoldBackgroundColor: moeSurface,
+            fontFamily: capture ? 'EditPreview' : null,
+            extensions: [MoeColors.light()],
+          ),
+          builder: (context, child) =>
+              RepaintBoundary(key: boundaryKey, child: child!),
+          home: ContactEditPage(
+            conversation: Conversation(
+              id: 'new_conv',
+              title: '',
+              displayName: '',
+              personaPrompt: '',
+              createdAt: DateTime(2026, 10, 3),
+              updatedAt: DateTime(2026, 10, 3),
+            ),
+            editMode: EditMode.create,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    final importButton = find.text('导入酒馆角色卡');
+    expect(importButton, findsOneWidget);
+    await tester.ensureVisible(importButton);
+    await tester.pumpAndSettle();
+    if (capture) {
+      await _capture(tester, boundaryKey, 'contact-create-import');
+    }
+
+    await tester.tap(importButton);
+    await tester.pumpAndSettle();
+    expect(find.text('从图片导入'), findsOneWidget);
+    expect(find.text('从链接导入'), findsOneWidget);
+    if (capture) {
+      await _capture(tester, boundaryKey, 'contact-create-import-sheet');
+    }
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('新角色专用预设'), findsNothing);
+    await tester.tap(find.text('导入绑定新预设'));
+    for (var i = 0; i < 10; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(find.text('导入「新角色专用预设」'), findsOneWidget);
+    await tester.tap(find.text('导入').last);
+    for (var i = 0; i < 20; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    for (var i = 0; i < 20; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(picker.lastExtensions, ['json']);
+    expect(find.textContaining('跟随默认'), findsNothing);
+    expect(
+      find.text('新角色专用预设'),
+      findsOneWidget,
+      reason: tester
+          .widgetList<Text>(find.byType(Text))
+          .map((t) => t.data)
+          .join(' | '),
+    );
+    await tester.ensureVisible(find.text('导入绑定新预设'));
+    await tester.pumpAndSettle();
+    if (capture) {
+      await _capture(tester, boundaryKey, 'contact-create-preset-bound');
+    }
+
     await tester.pump(const Duration(seconds: 4));
     await tester.pumpAndSettle();
   });
@@ -228,7 +356,12 @@ Future<void> _capture(
 }
 
 /// 生成线性渐变 PNG 的 data URI，避免在测试里依赖真实图片文件。
-String _pngDataUri(int width, int height, (int, int, int) top, (int, int, int) bottom) {
+String _pngDataUri(
+  int width,
+  int height,
+  (int, int, int) top,
+  (int, int, int) bottom,
+) {
   final image = img.Image(width: width, height: height);
   for (var y = 0; y < height; y++) {
     final t = height <= 1 ? 0.0 : y / (height - 1);
@@ -246,4 +379,33 @@ String _pngDataUri(int width, int height, (int, int, int) top, (int, int, int) b
   }
   final png = img.encodePng(image);
   return 'data:image/png;base64,${base64Encode(png)}';
+}
+
+class _JsonPicker extends FilePicker {
+  _JsonPicker(this.source);
+
+  final String source;
+  List<String>? lastExtensions;
+
+  @override
+  Future<FilePickerResult?> pickFiles({
+    String? dialogTitle,
+    String? initialDirectory,
+    FileType type = FileType.any,
+    List<String>? allowedExtensions,
+    Function(FilePickerStatus)? onFileLoading,
+    bool allowCompression = true,
+    int compressionQuality = 30,
+    bool allowMultiple = false,
+    bool withData = false,
+    bool withReadStream = false,
+    bool lockParentWindow = false,
+    bool readSequential = false,
+  }) async {
+    lastExtensions = allowedExtensions;
+    final bytes = Uint8List.fromList(utf8.encode(source));
+    return FilePickerResult([
+      PlatformFile(name: 'preset.json', size: bytes.length, bytes: bytes),
+    ]);
+  }
 }

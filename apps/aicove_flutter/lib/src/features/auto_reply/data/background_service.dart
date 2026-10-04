@@ -14,6 +14,7 @@ import 'package:workmanager/workmanager.dart';
 
 import '../../../core/api/providers/provider_chat_api_path.dart';
 import '../../../core/api/providers/provider_adapter_factory.dart';
+import '../../../core/api/providers/provider_extra_body.dart';
 import '../../../core/database/converters/database_converters.dart';
 import '../../../core/database/database.dart' hide MessageBlock;
 import '../../../core/database/repositories/repositories.dart';
@@ -494,21 +495,6 @@ Future<void> _handleActiveReplyTask(Map<String, dynamic> data) async {
     return;
   }
 
-  final autoReplyEnabled = await _isAutoReplyEnabled();
-  if (!autoReplyEnabled) {
-    print('[Background] Auto-reply disabled, skip task.');
-    await _appendHistoryLog(
-      event: 'task_skipped_auto_reply_disabled',
-      message: '后台主动回复任务已跳过：总开关关闭',
-      triggerId: triggerId,
-      title: triggerTitle,
-      conversationId: convId,
-      success: false,
-      level: AutoReplyTriggerLogLevel.warning,
-    );
-    return;
-  }
-
   if (triggerId.isNotEmpty) {
     final active = await _isTriggerStillActive(triggerId, convId);
     if (!active) {
@@ -872,6 +858,7 @@ Future<String?> _fetchAiReply(
       temperature: 0.7,
       customConfig: requestCustomConfig,
     );
+    applyProviderExtraBody(body, customConfig);
 
     final response = await http.post(
       Uri.parse(endpoint),
@@ -1074,23 +1061,6 @@ Future<String?> _loadTriggerTitle(
   } catch (e) {
     print('[Background] Failed to load trigger title: $e');
     return null;
-  }
-}
-
-Future<bool> _isAutoReplyEnabled() async {
-  try {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.reload();
-    final raw = prefs.getString(_uiModelsStoreKey);
-    if (raw == null || raw.isEmpty) return false;
-    final data = jsonDecode(raw);
-    if (data is! Map) return false;
-    final settings = data['auto_reply_settings'];
-    if (settings is! Map) return false;
-    return settings['enabled'] == true;
-  } catch (e) {
-    print('[Background] Failed to read auto-reply setting: $e');
-    return false;
   }
 }
 

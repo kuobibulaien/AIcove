@@ -5,12 +5,23 @@ import '../../observability/trace_models.dart' show TraceContext;
 import '../../settings/app_settings.dart';
 import '../application/chat_ports.dart';
 import '../application/chat_edit.dart';
+import '../domain/chat_context_preview.dart';
 import '../domain/conversation.dart';
 import '../domain/message.dart';
 import '../services/chat_history_store.dart';
 import '../services/chat_send_service.dart';
 import '../services/chat_types.dart'
     show ApiCallResult, ApiConfig, AssistantMessageBuildResult;
+
+class ChatContextPreviewAdapter implements ChatContextPreviewPort {
+  const ChatContextPreviewAdapter(this._sendService);
+
+  final ChatSendService _sendService;
+
+  @override
+  Future<ChatContextPreview> preview(Conversation conversation) =>
+      _sendService.previewContext(conversation);
+}
 
 class ChatHistoryStoreAdapter implements ChatHistoryPort, ChatEditPort {
   const ChatHistoryStoreAdapter(this._historyStore);

@@ -17,7 +17,7 @@ python -m uvicorn sync_v3.app:app --env-file .env --host 127.0.0.1 --port 8000
 
 `init-config` 不覆盖既有 `.env`；账号命令交互读取密码。默认不开公开注册。保留登录、当前账号查询及同步账号停用/恢复能力，用于同步数据归属与访问隔离，不提供会员等级。
 
-`main:app` 与 `python main.py` 兼容入口均使用同一套同步服务。`start.sh` / `start.ps1` 和 Docker 也只启动 v3；容器配置见 `docker-compose.yml`，配置字段见 `sync-v3.env.example`。
+`main:app` 与 `python main.py` 兼容入口均使用同一套同步服务。`start.sh` / `start.ps1` 和 Docker 也只启动 v3；容器配置见 `docker-compose.yml`，配置字段见 `.env.example`。
 
 ## 本地验证
 

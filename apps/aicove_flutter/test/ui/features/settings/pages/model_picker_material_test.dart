@@ -180,7 +180,14 @@ void main() {
           final sheetSurface = find.byWidgetPredicate(
             (widget) =>
                 widget is MoeFloatingSurface &&
-                widget.baseline == MoeMaterialBaseline.background,
+                widget.baseline == MoeMaterialBaseline.background &&
+                find
+                    .descendant(
+                      of: find.byWidget(widget),
+                      matching: find.byType(MoeSearchField),
+                    )
+                    .evaluate()
+                    .isNotEmpty,
           );
           expect(sheetSurface, findsOneWidget);
           expect(

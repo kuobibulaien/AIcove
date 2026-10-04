@@ -87,6 +87,26 @@ void main() {
     );
   });
 
+  test('hidden tool blocks do not stop tag projection', () {
+    // 生图完成后会在锚点文字消息上补一个不显示的图片上下文工具块。
+    final message = Message.fromBlocks(
+      id: 'a1',
+      role: 'assistant',
+      blocks: [
+        TextBlock(messageId: 'a1', content: '<zw>她笑了。</zw>'),
+        ToolBlock(messageId: 'a1', toolName: 'image_context', result: {}),
+      ],
+      createdAt: DateTime(2026, 10, 2),
+      status: 'sent',
+    );
+    final chunk = buildChatMessageListItems(
+      messages: [message],
+      tagPresentation: _map,
+    ).whereType<ChatChunkedMessageItem>().single;
+    expect(chunk.chunkText, '她笑了。');
+    expect(chunk.originalMessage.id, 'a1');
+  });
+
   test('streaming reply shows an unfinished fold', () {
     final items = buildChatMessageListItems(
       messages: [_assistant('a1', '<think_nya~>还在想', status: 'sending')],

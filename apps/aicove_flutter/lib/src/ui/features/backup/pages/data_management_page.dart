@@ -64,14 +64,14 @@ class DataManagementPage extends ConsumerWidget {
                 MoeSettingsRow(
                   icon: Icons.upload_outlined,
                   label: '导出数据',
-                  subtitle: '将角色和聊天记录打包为 .aicove 文件',
+                  subtitle: '将角色和聊天记录打包为 .zip 文件，可设密码',
                   trailingType: MoeSettingsRowTrailing.chevron,
                   onTap: () => _open(context, const ExportScopePage()),
                 ),
                 MoeSettingsRow(
                   icon: Icons.download_outlined,
                   label: '导入数据',
-                  subtitle: '从 .aicove 文件还原，可合并或新建角色',
+                  subtitle: '从 .zip 备份还原，可合并或新建角色',
                   trailingType: MoeSettingsRowTrailing.chevron,
                   showDivider: false,
                   onTap: () => _open(context, const ImportFilePage()),

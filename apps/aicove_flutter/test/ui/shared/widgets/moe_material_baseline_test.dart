@@ -6,57 +6,45 @@ import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 
 void main() {
   test('glass blur stays see-through through the lower half', () {
-    const none = MoeMaterialBaseline.none;
-    expect(none.blurSigma(8), closeTo(0.75, 0.0001));
-    expect(none.blurSigma(kDefaultGlassBlurSigma), closeTo(3, 0.0001));
-    expect(none.blurSigma(kMaxGlassBlurSigma), kMaxLiquidGlassBlurSigma);
-    expect(MoeMaterialBaseline.text.blurSigma(16), lessThan(5));
+    const component = MoeMaterialBaseline.component;
+    expect(component.blurSigma(8), closeTo(0.75, 0.0001));
+    expect(component.blurSigma(kDefaultGlassBlurSigma), closeTo(3, 0.0001));
+    expect(component.blurSigma(kMaxGlassBlurSigma), kMaxLiquidGlassBlurSigma);
+    expect(MoeMaterialBaseline.background.blurSigma(16), lessThan(5));
   });
   for (final baseline in [
-    MoeMaterialBaseline.none,
+    MoeMaterialBaseline.component,
     MoeMaterialBaseline.background,
-    MoeMaterialBaseline.text,
-    const MoeMaterialBaseline(blurFactor: 0.2, tintOpacity: 0.05),
   ]) {
-    for (final dark in [false, true]) {
-      test(
-        'independent minimums dark=$dark blur=${baseline.blurFactor} tint=${baseline.tintOpacity}',
-        () {
-          final colors = dark ? MoeColors.dark() : MoeColors.light();
-          expect(
-            baseline.blurSigma(0),
-            closeTo(
-              kMaxLiquidGlassBlurSigma *
-                  baseline.blurFactor *
-                  baseline.blurFactor,
-              0.0001,
-            ),
-          );
-          expect(
-            colors.glassTintForSigma(0, baseline: baseline).a,
-            closeTo(baseline.tintOpacity, 0.0001),
-          );
-          expect(baseline.blurSigma(32), kMaxLiquidGlassBlurSigma);
-          expect(
-            colors.glassTintForSigma(32, baseline: baseline).a,
-            closeTo(
-              baseline.tintOpacity +
-                  (1 - baseline.tintOpacity) * colors.glassSurface.a,
-              0.0001,
-            ),
-          );
-          expect(baseline.blurSigma(16), greaterThan(baseline.blurSigma(0)));
-          expect(
-            colors.glassTintForSigma(16, baseline: baseline).a,
-            greaterThan(colors.glassTintForSigma(0, baseline: baseline).a),
-          );
-        },
+    test('blur minimum only blur=${baseline.blurFactor}', () {
+      expect(
+        baseline.blurSigma(0),
+        closeTo(
+          kMaxLiquidGlassBlurSigma * baseline.blurFactor * baseline.blurFactor,
+          0.0001,
+        ),
       );
-    }
+      expect(baseline.blurSigma(32), kMaxLiquidGlassBlurSigma);
+      expect(baseline.blurSigma(16), greaterThan(baseline.blurSigma(0)));
+    });
+  }
+  for (final dark in [false, true]) {
+    test('tint follows the fill alone dark=$dark', () {
+      final colors = dark ? MoeColors.dark() : MoeColors.light();
+      expect(colors.glassTintForFill(0).a, 0);
+      expect(
+        colors.glassTintForFill(1).a,
+        closeTo(colors.glassSurface.a, 0.0001),
+      );
+      expect(
+        colors.glassTintForFill(0.5).a,
+        closeTo(colors.glassSurface.a / 2, 0.0001),
+      );
+    });
   }
   for (final liquid in [false, true]) {
     testWidgets(
-      'text opt-in and floating zero remain separate liquid=$liquid',
+      'background keeps a blur minimum but no tint minimum liquid=$liquid',
       (tester) async {
         MoeLiquidGlassService.setMockState(
           initialized: true,
@@ -73,6 +61,7 @@ void main() {
             home: MoeGlassTheme(
               enabled: true,
               blurSigma: 0,
+              tintFill: 0,
               useLiquidGlass: true,
               child: const Column(
                 children: [
@@ -89,19 +78,15 @@ void main() {
               .toList();
           expect(surfaces[0].settings.glassColor.a, 0);
           expect(surfaces[0].settings.blur, 0);
-          expect(surfaces[1].settings.glassColor.a, closeTo(0.1, 0.0001));
-          expect(surfaces[1].settings.blur, closeTo(0.12, 0.0001));
+          expect(surfaces[1].settings.glassColor.a, 0);
+          expect(surfaces[1].settings.blur, closeTo(0.75, 0.0001));
         } else {
           expect(find.byType(BackdropFilter), findsOneWidget);
           final surfaces = tester
               .widgetList<Material>(find.byType(Material))
               .where((m) => m.color != null)
               .toList();
-          expect(surfaces.any((m) => m.color!.a == 0), isTrue);
-          expect(
-            surfaces.any((m) => (m.color!.a - 0.1).abs() < 0.0001),
-            isTrue,
-          );
+          expect(surfaces.every((m) => m.color!.a == 0), isTrue);
         }
         expect(tester.takeException(), isNull);
       },

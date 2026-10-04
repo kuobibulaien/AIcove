@@ -12,11 +12,15 @@ class ToolParameter {
   /// 枚举值（可选）
   final List<String>? enumValues;
 
+  /// 数组元素的 JSON Schema（type 为 array 时使用，部分供应商要求必填）
+  final Map<String, dynamic>? items;
+
   const ToolParameter({
     required this.type,
     required this.description,
     this.required = false,
     this.enumValues,
+    this.items,
   });
 
   /// 转为 JSON Schema 格式
@@ -28,6 +32,10 @@ class ToolParameter {
     
     if (enumValues != null && enumValues!.isNotEmpty) {
       schema['enum'] = enumValues;
+    }
+
+    if (items != null) {
+      schema['items'] = items;
     }
     
     return schema;

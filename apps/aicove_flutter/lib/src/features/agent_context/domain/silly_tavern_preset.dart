@@ -2,6 +2,12 @@ library;
 
 import 'silly_tavern_world_book.dart';
 
+/// compatibilityData 中记录 {{user}} 名称开关的键。
+const String presetUserNameMacroKey = 'userNameMacro';
+
+/// 预设关闭 {{user}} 名称或用户未设置名称时使用的中性指代。
+const String kNeutralUserName = '用户';
+
 enum SillyTavernParameterStatus {
   applied,
   notApplicable,
@@ -58,6 +64,24 @@ class SillyTavernRegexScript {
     required this.markdownOnly,
     required this.promptOnly,
   });
+
+  SillyTavernRegexScript withReplacement(String replacement) =>
+      SillyTavernRegexScript(
+        id: id,
+        name: name,
+        source: source,
+        disabled: disabled,
+        runOnEdit: runOnEdit,
+        findRegex: findRegex,
+        replaceString: replacement,
+        trimStrings: trimStrings,
+        placements: placements,
+        substituteRegex: substituteRegex,
+        minDepth: minDepth,
+        maxDepth: maxDepth,
+        markdownOnly: markdownOnly,
+        promptOnly: promptOnly,
+      );
 
   Map<String, dynamic> toWorkerJson() => <String, dynamic>{
     'id': id,
@@ -210,6 +234,10 @@ class SillyTavernPreset {
     this.compatibilityData = const {},
     this.worldBooks = const [],
   });
+
+  /// {{user}} 是否替换为用户名称；关闭后替换为 [kNeutralUserName]，称呼交给角色卡。
+  bool get userNameMacroEnabled =>
+      compatibilityData[presetUserNameMacroKey] != false;
 
   SillyTavernPromptOrderGroup get selectedOrder =>
       promptOrderGroups[selectedOrderIndex];

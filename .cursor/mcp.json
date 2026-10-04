@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "dart": {
-      "type": "stdio",
-      "command": "bash",
-      "args": ["${workspaceFolder}/apps/aicove_flutter/tool/dart_mcp_server"]
-    }
-  }
-}

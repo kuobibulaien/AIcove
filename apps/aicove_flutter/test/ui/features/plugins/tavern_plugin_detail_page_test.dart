@@ -64,7 +64,8 @@ void main() {
     final tavern = chatPluginItems.singleWhere(
       (p) => p.id == 'tavern_compatibility',
     );
-    expect(tavern.name, '酒馆兼容插件（测试）');
+    expect(tavern.name, '酒馆相关');
+    expect(chatPluginItems.last.id, tavern.id);
     expect(
       chatPluginItems.map((p) => p.id),
       containsAll(['image', 'tts', tavern.id]),
@@ -141,7 +142,7 @@ void main() {
         ),
       );
       await settle(tester);
-      expect(find.text('酒馆兼容插件（测试）'), findsOneWidget);
+      expect(find.text('酒馆相关'), findsOneWidget);
       picker.source = '''{"name":"界面测试预设","prompts":[
         {"identifier":"main","content":"规则","role":"system"},
         {"identifier":"chatHistory","marker":true}],"prompt_order":[
