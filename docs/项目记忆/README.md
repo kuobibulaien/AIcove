@@ -110,8 +110,8 @@ UI / Page
 
 - 项目级 Dart MCP 已接入，所有 harness 共用 SDK 启动入口；原生配置、无 MCP 的命令行调用及验收边界见 [DIAGNOSTICS.md「项目级 Dart MCP」](../../apps/aicove_flutter/tool/DIAGNOSTICS.md#dart-mcp)。已实测连接 AIcove Mac Debug 读取组件树与运行时异常，宿主展示／其它平台不据此宣称通过。决定见 ADR0022。
 - 项目 Flutter SDK 已切换为独立入口 `apps/aicove_flutter/tool/flutterw`；命令与版本唯一说明见 [DIAGNOSTICS.md「项目 Flutter SDK」](../../apps/aicove_flutter/tool/DIAGNOSTICS.md#项目-flutter-sdk2026-09-12)，升级决定见 ADR0020。不要使用机器全局旧版 Flutter，也不把 SDK 升级当作应用已安装更新。
-- Mac 调试与界面验收默认不抢前台：行为规则见根 [AGENTS.md](../../AGENTS.md)。代码生效与 MCP 校验、热重载／热重启、构建／安装及外观／性能的选择，唯一依据是根 [README.md 项目宪法第 7 条](../../README.md)，本页不复制流程。
-- 根说明与项目宪法：`README.md`
+- Mac 调试与界面验收默认不抢前台：行为规则见根 [AGENTS.md](../../AGENTS.md)。代码生效与 MCP 校验、热重载／热重启、构建／安装及外观／性能的选择，唯一依据是 [DEVELOPMENT.md 项目宪法第 7 条](../../DEVELOPMENT.md#项目宪法)，本页不复制流程。
+- 产品介绍：根 `README.md`；架构约束与项目宪法：`DEVELOPMENT.md`（2026-10-03 从根 README 拆出）
 - Flutter 文档库：`apps/aicove_flutter/docs/README.md`；涉及界面读 `apps/aicove_flutter/docs/界面布局说明.md`，`公共组件总览.md` 只查用到的组件章节
 - 云端说明：`cloud_backend/README.md`
 - 回查历史对话原文：`trellis mem search <关键词>`（全局 CLI，读取各 agent 自己的会话日志）

@@ -17,7 +17,7 @@ tool/flutterw run -d macos     # 人工试跑；终端按 r 热重载、R 热重
 tool/flutterw run -d <设备号>  # Android 真机
 ```
 
-Agent 日常开发使用常驻调试会话与 Dart MCP，命令见根 [README.md「快速开始」](../../README.md#快速开始macos)，规则见根 README 项目宪法第 7 条。
+Agent 日常开发使用常驻调试会话与 Dart MCP，命令见 [DEVELOPMENT.md「快速开始」](../../DEVELOPMENT.md#快速开始macos)，规则见 [DEVELOPMENT.md 项目宪法第 7 条](../../DEVELOPMENT.md#项目宪法)。
 
 ## 目录
 
@@ -30,7 +30,7 @@ Agent 日常开发使用常驻调试会话与 Dart MCP，命令见根 [README.md
 - `tool/`：开发工具与说明（[DIAGNOSTICS.md](tool/DIAGNOSTICS.md)）
 - `third_party/`：本地补丁依赖
 
-完整目录树与分层解释见根 [README.md「目录结构」](../../README.md#目录结构)。
+完整目录树与分层解释见 [DEVELOPMENT.md「目录结构」](../../DEVELOPMENT.md#目录结构)。
 
 ## 文档索引
 

@@ -1,6 +1,6 @@
 # GEMINI 协作说明
 
-全局协作规则以根目录 `AGENTS.md` 为唯一权威口径（`CLAUDE.md` 也只是指向它的指针）。开工前先读 `AGENTS.md` 和根 `README.md`（含项目宪法）。工作流程、确认机制、报错处理、编码规范以 `AGENTS.md` 为准，验证流程以根 `README.md` 项目宪法第 7 条为准，本文件不再重复，旧版本文件中与 `AGENTS.md` 冲突的规则一律作废。
+全局协作规则以根目录 `AGENTS.md` 为唯一权威口径（`CLAUDE.md` 也只是指向它的指针）。开工前先读 `AGENTS.md` 和 `DEVELOPMENT.md`（含项目宪法）。工作流程、确认机制、报错处理、编码规范以 `AGENTS.md` 为准，验证流程以 `DEVELOPMENT.md` 项目宪法第 7 条为准，本文件不再重复，旧版本文件中与 `AGENTS.md` 冲突的规则一律作废。
 
 以下两节是本文件独有的补充，仍然有效。
 

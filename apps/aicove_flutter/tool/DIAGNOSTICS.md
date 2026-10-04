@@ -119,7 +119,7 @@ tool/flutterw test
 
 ## Mac 持续调试会话（日常 Dart 迭代，2026-09-12）
 
-何时热重载、热重启、重新构建或安装，以及 MCP／外观／性能的验收边界，统一按根 [README.md 项目宪法第 7 条](../../../README.md)。本节只说明现有 Mac Debug 会话的具体操作。
+何时热重载、热重启、重新构建或安装，以及 MCP／外观／性能的验收边界，统一按 [DEVELOPMENT.md 项目宪法第 7 条](../../../DEVELOPMENT.md#项目宪法)。本节只说明现有 Mac Debug 会话的具体操作。
 
 统一使用 [mac_debug_session.py](mac_debug_session.py) 管理会话。`start` 自动复用当前项目目录已有的会话；首次启动才运行 `flutter run -d macos --debug --machine`。状态与独立运行日志保存在当前目录的 `build/mac-debug-session/`，不同 checkout 不共用文件；同一目录的命令加锁串行执行。不要同时手动启动同目录的 Flutter 或绕过脚本操作会话。
 
@@ -138,7 +138,7 @@ python3 tool/collect_diagnostics.py --from-dir "$HOME/Library/Containers/com.exa
 - 默认启动等待上限 300 秒、其它操作 60 秒，可用 `--timeout 秒数` 调整。启动失败或超时保留日志；超时后重复 `start` 继续等待同一进程。重载超时后用 `python3 tool/mac_debug_session.py wait` 继续确认，不重复发送请求；收到明确失败响应后可直接修复并重试。仅查看状态时用 `status`，不会启动应用。
 - 运行时异常、断言与 `debugPrint` 在命令返回的 `log` 路径中，机器模式通常包装为 `app.log` 事件；需要持续观察时对该路径执行 `tail -f`，结束 tail 不影响会话。这是原始调试日志，可能包含正文或本机调试连接凭证，不提交或整份贴出；受控分享继续用采集器。
 - **收工不默认结束会话。** 只有原生／依赖变化需要重新构建、切换目标版本（Profile／Release）、或用户明确要求时才执行 `python3 tool/mac_debug_session.py stop`，并说明原因。停止会保留日志，后续 `start` 创建新日志；如需 `flutter clean`，先停止会话并保全需要的日志，再清理包含会话记录的 `build/`。脚本不会接管旧 `/tmp/aicove_debug.pid` 或手动启动的会话，迁移前先核对并结束旧会话，不直接删除 PID 文件后另起进程。
-- 热重载不重建 native，也不更新构建指纹；不能用它证明设备上的 Dart 版本与工作树一致（见下文「采集与版本边界」）。交付验收仍按根 `README.md` 项目宪法第 7 条重新构建目标版本。
+- 热重载不重建 native，也不更新构建指纹；不能用它证明设备上的 Dart 版本与工作树一致（见下文「采集与版本边界」）。交付验收仍按 `DEVELOPMENT.md` 项目宪法第 7 条重新构建目标版本。
 - 这个会话是 Debug 模式，不用它下性能结论；卡顿、动画用 `--profile` 单独构建并读取帧耗时。
 - 脚本不包含窗口激活或鼠标键盘操作；首次启动 Flutter 仍可能展示应用窗口，不能把后台进程理解为首次启动也绝不影响前台。界面核验按 AGENTS「Mac 调试与界面验收：默认不抢前台」执行。
 - 容器路径以实际 bundle id 为准；找不到时用 `ls ~/Library/Containers | rg -i aicove` 确认，不要猜。
@@ -172,7 +172,7 @@ python3 tool/collect_diagnostics.py --from-dir "$HOME/Library/Containers/com.exa
 
 **代码修改后的操作顺序**：在 Flutter 工程内执行 `python3 tool/mac_debug_session.py reload`（需重新初始化时用 `restart`）；只在收到匹配本次请求的成功响应后，读取下面的 MCP 异常／组件树并检查目标行为。已有 pending 请求先执行 `wait`，超时或失败不当作修改已生效，也不绕过管理脚本再发 MCP 重载。MCP 工具不会监视文件并自动应用源码。
 
-**只读取当前状态**时，直接从以下连接步骤开始，不运行重载命令。重新加载 harness 的 MCP 配置只影响工具连接，与 Flutter 热重载、应用安装是三件独立的事。验证范围仍以根 [README.md 项目宪法第 7 条](../../../README.md)为准。
+**只读取当前状态**时，直接从以下连接步骤开始，不运行重载命令。重新加载 harness 的 MCP 配置只影响工具连接，与 Flutter 热重载、应用安装是三件独立的事。验证范围仍以 [DEVELOPMENT.md 项目宪法第 7 条](../../../DEVELOPMENT.md#项目宪法)为准。
 
 1. 先查看 `dart` 的实际工具列表。SDK 版本决定工具和参数；本机当前默认返回 13 个工具，不按上游最新 README 猜测工具名称。
 2. 源码分析根目录使用当前副本的 `apps/aicove_flutter`。客户端支持 MCP roots 时提供该目录；否则调用 `roots`，参数 `{"command":"add","uris":["file:///当前仓库/apps/aicove_flutter"]}`。
