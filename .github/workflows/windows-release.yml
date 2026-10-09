@@ -80,7 +80,7 @@ jobs:
           import 'dart:ffi';
           import 'dart:io';
 
-          typedef _Malloc = Pointer<Uint8> Function(IntPtr);
+          typedef _Malloc = Pointer<Uint8> Function(int);
           void main(List<String> args) {
             final crt = DynamicLibrary.open('ucrtbase.dll');
             final malloc = crt.lookupFunction<Pointer<Uint8> Function(IntPtr), _Malloc>('malloc');
