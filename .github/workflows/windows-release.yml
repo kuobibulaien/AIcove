@@ -69,6 +69,49 @@ jobs:
             exit 1
           }
 
+      - name: Probe script engine DLL
+        if: always()
+        working-directory: apps/aicove_flutter
+        run: |
+          dll="$(pwd)/build/windows/x64/runner/Release/aicove_quickjs.dll"
+          ls -la "$(dirname "$dll")"
+          mkdir -p "$RUNNER_TEMP/probe" && cd "$RUNNER_TEMP/probe"
+          cat > probe.dart <<'DART'
+          import 'dart:ffi';
+          import 'dart:io';
+
+          typedef _Malloc = Pointer<Uint8> Function(IntPtr);
+          void main(List<String> args) {
+            final crt = DynamicLibrary.open('ucrtbase.dll');
+            final malloc = crt.lookupFunction<Pointer<Uint8> Function(IntPtr), _Malloc>('malloc');
+            final lib = DynamicLibrary.open(args.first);
+            stdout.writeln('loaded');
+            final create = lib.lookupFunction<Pointer<Void> Function(), Pointer<Void> Function()>('aqjs_create');
+            final eval = lib.lookupFunction<Pointer<Uint8> Function(Pointer<Void>, Pointer<Uint8>, IntPtr),
+                Pointer<Uint8> Function(Pointer<Void>, Pointer<Uint8>, int)>('aqjs_eval');
+            final destroy = lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('aqjs_destroy');
+            final s = create();
+            stdout.writeln('created ${s.address}');
+            for (final src in ['1+2', 'JSON.stringify({a:[1,2],b:"x"})', '(async()=>40+2)()', 'new Date(0).toISOString()', '/a(b)c/.exec("zabc")[1]', '(0.1+0.2).toString()']) {
+              final units = src.codeUnits;
+              final buf = malloc(units.length + 1);
+              for (var i = 0; i < units.length; i++) buf[i] = units[i];
+              buf[units.length] = 0;
+              stdout.writeln('eval $src');
+              final out = eval(s, buf, units.length);
+              var n = 0; final codes = <int>[];
+              while (out != nullptr && out[n] != 0) { codes.add(out[n]); n++; }
+              stdout.writeln(' -> ${String.fromCharCodes(codes)}');
+            }
+            destroy(s);
+            stdout.writeln('done');
+          }
+          DART
+          sed -i 's/^          //' probe.dart
+          set +e
+          dart run probe.dart "$dll"
+          echo "probe exit code: $?"
+
       - name: Check script engine on Windows
         working-directory: apps/aicove_flutter
         run: flutter test --reporter expanded test/core/runtime/quickjs_test.dart
