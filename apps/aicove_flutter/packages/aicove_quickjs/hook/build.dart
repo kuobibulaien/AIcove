@@ -61,7 +61,15 @@ Future<void> _buildWindows(BuildInput input, BuildOutputBuilder output) async {
   final config = File.fromUri(outDir.resolve('aicove_quickjs_config.h'));
   await config.writeAsString('#define CONFIG_VERSION "$_quickJsVersion"\n');
   final dll = outDir.resolve('aicove_quickjs.dll');
-  final sources = [..._sources, 'src/win_compat/win_compat.c'];
+  final engine = await _patchEnumBitfields(
+    File.fromUri(root.resolve('src/quickjs/quickjs.c')),
+    File.fromUri(outDir.resolve('quickjs_msvc_abi.c')),
+  );
+  final sources = [
+    for (final source in _sources)
+      if (source == 'src/quickjs/quickjs.c') engine.path else root.resolve(source).toFilePath(),
+    root.resolve('src/win_compat/win_compat.c').toFilePath(),
+  ];
 
   final builtins = await _findClangBuiltins(clang, target, environment);
   final result = await Process.run(
@@ -80,7 +88,7 @@ Future<void> _buildWindows(BuildInput input, BuildOutputBuilder output) async {
       '/FI${config.path}',
       '/I${root.resolve('src/win_compat').toFilePath()}',
       '/I${root.resolve('src/quickjs').toFilePath()}',
-      for (final source in sources) root.resolve(source).toFilePath(),
+      ...sources,
       '/Fo${objDir.toFilePath()}',
       '/Fe${dll.toFilePath()}',
       '/link',
@@ -98,7 +106,8 @@ Future<void> _buildWindows(BuildInput input, BuildOutputBuilder output) async {
   }
 
   output.dependencies.addAll([
-    for (final source in sources) root.resolve(source),
+    for (final source in _sources) root.resolve(source),
+    root.resolve('src/win_compat/win_compat.c'),
     root.resolve('src/win_compat/prelude.h'),
     root.resolve('src/win_compat/pthread.h'),
     root.resolve('src/win_compat/sys/time.h'),
@@ -111,6 +120,32 @@ Future<void> _buildWindows(BuildInput input, BuildOutputBuilder output) async {
       file: dll,
     ),
   );
+}
+
+/// In the Microsoft ABI an enum bit-field is signed, so
+/// `JSClosureTypeEnum closure_type : 3` reads values 4-7 back as negative and
+/// js_closure2() aborts on the first global variable access. GCC/Clang on
+/// other targets treat these fields as unsigned. Compile a copy with the enum
+/// bit-fields declared `unsigned int` (same storage unit, so the layout is
+/// unchanged); the vendored file itself stays untouched.
+Future<File> _patchEnumBitfields(File source, File target) async {
+  final pattern = RegExp(
+    r'^(\s+)(?:\w+Enum|JSModuleStatus)(\s+\w+\s*:\s*\d+\s*;)',
+    multiLine: true,
+  );
+  final text = await source.readAsString();
+  final patched = text.replaceAllMapped(
+    pattern,
+    (m) => '${m[1]}unsigned int${m[2]}',
+  );
+  if (!patched.contains('unsigned int closure_type : 3;')) {
+    throw Exception(
+      'aicove_quickjs: closure_type bit-field not found; re-check the '
+      'Windows enum bit-field patch after a QuickJS upgrade',
+    );
+  }
+  await target.writeAsString(patched);
+  return target;
 }
 
 Future<Uri> _findClangBuiltins(
