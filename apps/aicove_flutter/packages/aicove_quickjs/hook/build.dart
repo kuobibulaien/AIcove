@@ -1,25 +1,32 @@
+import 'dart:io';
+
 import 'package:code_assets/code_assets.dart';
 import 'package:hooks/hooks.dart';
 import 'package:native_toolchain_c/native_toolchain_c.dart';
 
+const _assetName = 'src/bindings.dart';
+const _quickJsVersion = '2026-06-04';
+const _sources = [
+  'src/bridge.c',
+  'src/quickjs/quickjs.c',
+  'src/quickjs/dtoa.c',
+  'src/quickjs/libregexp.c',
+  'src/quickjs/libunicode.c',
+  'src/quickjs/cutils.c',
+];
+
 void main(List<String> args) async {
   await build(args, (input, output) async {
+    if (input.config.code.targetOS == OS.windows) {
+      await _buildWindows(input, output);
+      return;
+    }
     await CBuilder.library(
       name: 'aicove_quickjs',
-      assetName: 'src/bindings.dart',
-      sources: [
-        'src/bridge.c',
-        for (final name in [
-          'quickjs',
-          'dtoa',
-          'libregexp',
-          'libunicode',
-          'cutils',
-        ])
-          'src/quickjs/$name.c',
-      ],
+      assetName: _assetName,
+      sources: _sources,
       includes: ['src/quickjs'],
-      defines: {'_GNU_SOURCE': null, 'CONFIG_VERSION': '"2026-06-04"'},
+      defines: {'_GNU_SOURCE': null, 'CONFIG_VERSION': '"$_quickJsVersion"'},
       flags: ['-fwrapv'],
       libraries: [
         if (input.config.code.targetOS == OS.android ||
@@ -28,4 +35,129 @@ void main(List<String> args) async {
       ],
     ).run(input: input, output: output);
   });
+}
+
+/// QuickJS relies on GCC/Clang extensions (computed goto, __builtin_*,
+/// __attribute__) and POSIX headers, so MSVC's cl.exe cannot compile it.
+/// On Windows we build with clang-cl inside the MSVC developer environment
+/// and supply a small POSIX shim (src/win_compat) instead.
+Future<void> _buildWindows(BuildInput input, BuildOutputBuilder output) async {
+  final compiler = input.config.code.cCompiler;
+  final prompt = compiler?.windows.developerCommandPrompt;
+  final environment = prompt == null
+      ? <String, String>{}
+      : await _batchEnvironment(prompt.script, prompt.arguments);
+  final clang = _findClangCl(compiler?.compiler, environment);
+  final target = switch (input.config.code.targetArchitecture) {
+    Architecture.arm64 => 'aarch64-pc-windows-msvc',
+    Architecture.ia32 => 'i686-pc-windows-msvc',
+    _ => 'x86_64-pc-windows-msvc',
+  };
+
+  final root = input.packageRoot;
+  final outDir = input.outputDirectory;
+  final objDir = outDir.resolve('obj/');
+  await Directory.fromUri(objDir).create(recursive: true);
+  final config = File.fromUri(outDir.resolve('aicove_quickjs_config.h'));
+  await config.writeAsString('#define CONFIG_VERSION "$_quickJsVersion"\n');
+  final dll = outDir.resolve('aicove_quickjs.dll');
+  final sources = [..._sources, 'src/win_compat/win_compat.c'];
+
+  final result = await Process.run(
+    clang.toFilePath(),
+    [
+      '--target=$target',
+      '/nologo',
+      '/O2',
+      '/MD',
+      '/LD',
+      '/w',
+      '/clang:-fwrapv',
+      '/DNDEBUG',
+      '/D_GNU_SOURCE',
+      '/FI${config.path}',
+      '/I${root.resolve('src/win_compat').toFilePath()}',
+      '/I${root.resolve('src/quickjs').toFilePath()}',
+      for (final source in sources) root.resolve(source).toFilePath(),
+      '/Fo${objDir.toFilePath()}',
+      '/Fe${dll.toFilePath()}',
+      '/link',
+      '/NOIMPLIB',
+      '/NOEXP',
+    ],
+    environment: environment,
+  );
+  if (result.exitCode != 0) {
+    throw Exception(
+      'clang-cl failed (${result.exitCode}):\n${result.stdout}\n${result.stderr}',
+    );
+  }
+
+  output.dependencies.addAll([
+    for (final source in sources) root.resolve(source),
+    root.resolve('src/win_compat/pthread.h'),
+    root.resolve('src/win_compat/sys/time.h'),
+  ]);
+  output.assets.code.add(
+    CodeAsset(
+      package: input.packageName,
+      name: _assetName,
+      linkMode: DynamicLoadingBundled(),
+      file: dll,
+    ),
+  );
+}
+
+Uri _findClangCl(Uri? msvcCompiler, Map<String, String> environment) {
+  final candidates = <String>[
+    if (environment['VCINSTALLDIR'] case final vc?) ...[
+      '${vc}Tools\\Llvm\\x64\\bin\\clang-cl.exe',
+      '${vc}Tools\\Llvm\\bin\\clang-cl.exe',
+    ],
+    // cl.exe lives in VC\Tools\MSVC\<version>\bin\Host<arch>\<arch>\.
+    if (msvcCompiler != null) ...[
+      msvcCompiler.resolve('../../../../../Llvm/x64/bin/clang-cl.exe').toFilePath(),
+      msvcCompiler.resolve('../../../../../Llvm/bin/clang-cl.exe').toFilePath(),
+    ],
+    r'C:\Program Files\LLVM\bin\clang-cl.exe',
+  ];
+  for (final candidate in candidates) {
+    if (File(candidate).existsSync()) return File(candidate).uri;
+  }
+  final where = Process.runSync('where', ['clang-cl'], runInShell: true);
+  if (where.exitCode == 0) {
+    return File((where.stdout as String).split(RegExp(r'\r?\n')).first.trim()).uri;
+  }
+  throw Exception(
+    'aicove_quickjs needs clang-cl on Windows. Install the Visual Studio '
+    'component "C++ Clang tools for Windows" or LLVM. Searched: $candidates',
+  );
+}
+
+/// Environment variables added or changed by a Visual Studio vcvars script.
+Future<Map<String, String>> _batchEnvironment(
+  Uri script,
+  List<String> arguments,
+) async {
+  const separator = '=======';
+  final result = await Process.run(
+    'set && echo $separator && "${script.toFilePath()}" ${arguments.join(' ')} > nul && set',
+    [],
+    runInShell: true,
+  );
+  if (result.exitCode != 0) {
+    throw Exception('vcvars failed: ${result.stderr}');
+  }
+  final parts = (result.stdout as String).split(separator);
+  Map<String, String> parse(String text) => {
+    for (final line in text.trim().split(RegExp(r'\r?\n')))
+      if (line.indexOf('=') case final i when i > 0)
+        line.substring(0, i): line.substring(i + 1),
+  };
+  final before = parse(parts.first);
+  final after = parse(parts.last);
+  return {
+    for (final MapEntry(:key, :value) in after.entries)
+      if (before[key] != value) key: value,
+  };
 }
