@@ -21,6 +21,8 @@ import '../../../../features/chat/application/active_stream_projection.dart';
 import '../../../../features/chat/application/chat_media_regeneration.dart';
 import '../../../../features/chat/application/chat_message_list_queries.dart';
 import '../../../../features/chat/application/chat_page_conversation_actions.dart';
+import '../../../../features/chat/data/enhanced_dialogue_service.dart'
+    show kEnhancedRegenerateAvailable;
 import '../../../../features/chat/domain/message.dart';
 import '../../../../features/agent_context/domain/preset_tag_mapping.dart';
 import '../../../../features/agent_context/providers/preset_recipe_provider.dart';
@@ -47,6 +49,7 @@ import 'chat_message_selection.dart';
 import 'chat_selection_region.dart';
 import 'chat_message_list_media_save.dart';
 import 'chat_viewport_controller.dart';
+import 'regenerate_guidance_dialog.dart';
 import 'frontend_message_probe.dart';
 import '../../../../features/observability/frontend_diagnostics_port.dart';
 import '../../../../features/observability/frontend_diagnostics_provider.dart';
@@ -367,7 +370,8 @@ class ChatMessageList extends ConsumerStatefulWidget {
   final double topOverlayHeight;
   final double bottomOverlayHeight;
   final void Function(Message message)? onEditMessage;
-  final void Function(Message message)? onRegenerateMessage;
+  /// [guidance] 为重新生成弹窗里填写的指导意见，未填写时为 null。
+  final void Function(Message message, String? guidance)? onRegenerateMessage;
   final void Function(Message message)? onEnhanceRegenerateMessage;
 
   /// 上下文截断点消息ID（此消息之后为新话题）

@@ -29,6 +29,8 @@ class Conversation {
 
   // Conversation-level settings
   final bool isPinned;
+  // 移入隐私空间：只从联系人列表隐藏（ADR0070）
+  final bool isHidden;
   final bool isFavorite;
   final bool isMuted;
   final bool notificationSound;
@@ -74,6 +76,7 @@ class Conversation {
     this.defaultProvider,
     this.sessionProvider,
     this.isPinned = false,
+    this.isHidden = false,
     this.isFavorite = false,
     this.isMuted = false,
     this.notificationSound = true,
@@ -123,6 +126,7 @@ class Conversation {
     Object? defaultProvider = _sentinel,
     Object? sessionProvider = _sentinel,
     bool? isPinned,
+    bool? isHidden,
     bool? isFavorite,
     bool? isMuted,
     bool? notificationSound,
@@ -173,6 +177,7 @@ class Conversation {
           ? this.sessionProvider
           : sessionProvider as String?,
       isPinned: isPinned ?? this.isPinned,
+      isHidden: isHidden ?? this.isHidden,
       isFavorite: isFavorite ?? this.isFavorite,
       isMuted: isMuted ?? this.isMuted,
       notificationSound: notificationSound ?? this.notificationSound,

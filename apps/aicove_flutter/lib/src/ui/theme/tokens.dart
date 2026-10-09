@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 export 'moe_glass_theme.dart';
+export 'moe_wallpaper.dart';
 export 'moe_liquid_glass_service.dart';
 
 // ===== 主题色预设 =====

@@ -72,7 +72,8 @@ class MeoTalkDialog extends StatelessWidget {
                 // Keep long content scrollable within the available dialog height.
                 Flexible(child: SingleChildScrollView(child: Align(
                   alignment: Alignment.centerLeft,
-                  child: DefaultTextStyle(
+                  // Merge so content keeps the theme font fallback stack.
+                  child: DefaultTextStyle.merge(
                     style: TextStyle(
                       fontSize: 15,
                       color: colors.textSecondary,

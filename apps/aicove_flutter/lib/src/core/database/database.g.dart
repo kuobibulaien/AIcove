@@ -109,6 +109,16 @@ class $ConversationsTable extends Conversations
       defaultConstraints:
           GeneratedColumn.constraintIsAlways('CHECK ("is_pinned" IN (0, 1))'),
       defaultValue: const Constant(false));
+  static const VerificationMeta _isHiddenMeta =
+      const VerificationMeta('isHidden');
+  @override
+  late final GeneratedColumn<bool> isHidden = GeneratedColumn<bool>(
+      'is_hidden', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("is_hidden" IN (0, 1))'),
+      defaultValue: const Constant(false));
   static const VerificationMeta _isFavoriteMeta =
       const VerificationMeta('isFavorite');
   @override
@@ -249,6 +259,7 @@ class $ConversationsTable extends Conversations
         defaultProvider,
         sessionProvider,
         isPinned,
+        isHidden,
         isFavorite,
         isMuted,
         notificationSound,
@@ -370,6 +381,10 @@ class $ConversationsTable extends Conversations
     if (data.containsKey('is_pinned')) {
       context.handle(_isPinnedMeta,
           isPinned.isAcceptableOrUnknown(data['is_pinned']!, _isPinnedMeta));
+    }
+    if (data.containsKey('is_hidden')) {
+      context.handle(_isHiddenMeta,
+          isHidden.isAcceptableOrUnknown(data['is_hidden']!, _isHiddenMeta));
     }
     if (data.containsKey('is_favorite')) {
       context.handle(
@@ -514,6 +529,8 @@ class $ConversationsTable extends Conversations
           DriftSqlType.string, data['${effectivePrefix}session_provider']),
       isPinned: attachedDatabase.typeMapping
           .read(DriftSqlType.bool, data['${effectivePrefix}is_pinned'])!,
+      isHidden: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}is_hidden'])!,
       isFavorite: attachedDatabase.typeMapping
           .read(DriftSqlType.bool, data['${effectivePrefix}is_favorite'])!,
       isMuted: attachedDatabase.typeMapping
@@ -578,6 +595,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
   final String? defaultProvider;
   final String? sessionProvider;
   final bool isPinned;
+  final bool isHidden;
   final bool isFavorite;
   final bool isMuted;
   final bool notificationSound;
@@ -613,6 +631,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       this.defaultProvider,
       this.sessionProvider,
       required this.isPinned,
+      required this.isHidden,
       required this.isFavorite,
       required this.isMuted,
       required this.notificationSound,
@@ -674,6 +693,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       map['session_provider'] = Variable<String>(sessionProvider);
     }
     map['is_pinned'] = Variable<bool>(isPinned);
+    map['is_hidden'] = Variable<bool>(isHidden);
     map['is_favorite'] = Variable<bool>(isFavorite);
     map['is_muted'] = Variable<bool>(isMuted);
     map['notification_sound'] = Variable<bool>(notificationSound);
@@ -760,6 +780,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           ? const Value.absent()
           : Value(sessionProvider),
       isPinned: Value(isPinned),
+      isHidden: Value(isHidden),
       isFavorite: Value(isFavorite),
       isMuted: Value(isMuted),
       notificationSound: Value(notificationSound),
@@ -829,6 +850,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       defaultProvider: serializer.fromJson<String?>(json['defaultProvider']),
       sessionProvider: serializer.fromJson<String?>(json['sessionProvider']),
       isPinned: serializer.fromJson<bool>(json['isPinned']),
+      isHidden: serializer.fromJson<bool>(json['isHidden']),
       isFavorite: serializer.fromJson<bool>(json['isFavorite']),
       isMuted: serializer.fromJson<bool>(json['isMuted']),
       notificationSound: serializer.fromJson<bool>(json['notificationSound']),
@@ -874,6 +896,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       'defaultProvider': serializer.toJson<String?>(defaultProvider),
       'sessionProvider': serializer.toJson<String?>(sessionProvider),
       'isPinned': serializer.toJson<bool>(isPinned),
+      'isHidden': serializer.toJson<bool>(isHidden),
       'isFavorite': serializer.toJson<bool>(isFavorite),
       'isMuted': serializer.toJson<bool>(isMuted),
       'notificationSound': serializer.toJson<bool>(notificationSound),
@@ -913,6 +936,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           Value<String?> defaultProvider = const Value.absent(),
           Value<String?> sessionProvider = const Value.absent(),
           bool? isPinned,
+          bool? isHidden,
           bool? isFavorite,
           bool? isMuted,
           bool? notificationSound,
@@ -961,6 +985,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
             ? sessionProvider.value
             : this.sessionProvider,
         isPinned: isPinned ?? this.isPinned,
+        isHidden: isHidden ?? this.isHidden,
         isFavorite: isFavorite ?? this.isFavorite,
         isMuted: isMuted ?? this.isMuted,
         notificationSound: notificationSound ?? this.notificationSound,
@@ -1029,6 +1054,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           ? data.sessionProvider.value
           : this.sessionProvider,
       isPinned: data.isPinned.present ? data.isPinned.value : this.isPinned,
+      isHidden: data.isHidden.present ? data.isHidden.value : this.isHidden,
       isFavorite:
           data.isFavorite.present ? data.isFavorite.value : this.isFavorite,
       isMuted: data.isMuted.present ? data.isMuted.value : this.isMuted,
@@ -1089,6 +1115,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           ..write('defaultProvider: $defaultProvider, ')
           ..write('sessionProvider: $sessionProvider, ')
           ..write('isPinned: $isPinned, ')
+          ..write('isHidden: $isHidden, ')
           ..write('isFavorite: $isFavorite, ')
           ..write('isMuted: $isMuted, ')
           ..write('notificationSound: $notificationSound, ')
@@ -1129,6 +1156,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
         defaultProvider,
         sessionProvider,
         isPinned,
+        isHidden,
         isFavorite,
         isMuted,
         notificationSound,
@@ -1168,6 +1196,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           other.defaultProvider == this.defaultProvider &&
           other.sessionProvider == this.sessionProvider &&
           other.isPinned == this.isPinned &&
+          other.isHidden == this.isHidden &&
           other.isFavorite == this.isFavorite &&
           other.isMuted == this.isMuted &&
           other.notificationSound == this.notificationSound &&
@@ -1205,6 +1234,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
   final Value<String?> defaultProvider;
   final Value<String?> sessionProvider;
   final Value<bool> isPinned;
+  final Value<bool> isHidden;
   final Value<bool> isFavorite;
   final Value<bool> isMuted;
   final Value<bool> notificationSound;
@@ -1241,6 +1271,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     this.defaultProvider = const Value.absent(),
     this.sessionProvider = const Value.absent(),
     this.isPinned = const Value.absent(),
+    this.isHidden = const Value.absent(),
     this.isFavorite = const Value.absent(),
     this.isMuted = const Value.absent(),
     this.notificationSound = const Value.absent(),
@@ -1278,6 +1309,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     this.defaultProvider = const Value.absent(),
     this.sessionProvider = const Value.absent(),
     this.isPinned = const Value.absent(),
+    this.isHidden = const Value.absent(),
     this.isFavorite = const Value.absent(),
     this.isMuted = const Value.absent(),
     this.notificationSound = const Value.absent(),
@@ -1319,6 +1351,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     Expression<String>? defaultProvider,
     Expression<String>? sessionProvider,
     Expression<bool>? isPinned,
+    Expression<bool>? isHidden,
     Expression<bool>? isFavorite,
     Expression<bool>? isMuted,
     Expression<bool>? notificationSound,
@@ -1359,6 +1392,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       if (defaultProvider != null) 'default_provider': defaultProvider,
       if (sessionProvider != null) 'session_provider': sessionProvider,
       if (isPinned != null) 'is_pinned': isPinned,
+      if (isHidden != null) 'is_hidden': isHidden,
       if (isFavorite != null) 'is_favorite': isFavorite,
       if (isMuted != null) 'is_muted': isMuted,
       if (notificationSound != null) 'notification_sound': notificationSound,
@@ -1400,6 +1434,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       Value<String?>? defaultProvider,
       Value<String?>? sessionProvider,
       Value<bool>? isPinned,
+      Value<bool>? isHidden,
       Value<bool>? isFavorite,
       Value<bool>? isMuted,
       Value<bool>? notificationSound,
@@ -1438,6 +1473,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       defaultProvider: defaultProvider ?? this.defaultProvider,
       sessionProvider: sessionProvider ?? this.sessionProvider,
       isPinned: isPinned ?? this.isPinned,
+      isHidden: isHidden ?? this.isHidden,
       isFavorite: isFavorite ?? this.isFavorite,
       isMuted: isMuted ?? this.isMuted,
       notificationSound: notificationSound ?? this.notificationSound,
@@ -1514,6 +1550,9 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     }
     if (isPinned.present) {
       map['is_pinned'] = Variable<bool>(isPinned.value);
+    }
+    if (isHidden.present) {
+      map['is_hidden'] = Variable<bool>(isHidden.value);
     }
     if (isFavorite.present) {
       map['is_favorite'] = Variable<bool>(isFavorite.value);
@@ -1596,6 +1635,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
           ..write('defaultProvider: $defaultProvider, ')
           ..write('sessionProvider: $sessionProvider, ')
           ..write('isPinned: $isPinned, ')
+          ..write('isHidden: $isHidden, ')
           ..write('isFavorite: $isFavorite, ')
           ..write('isMuted: $isMuted, ')
           ..write('notificationSound: $notificationSound, ')
@@ -4911,6 +4951,7 @@ typedef $$ConversationsTableCreateCompanionBuilder = ConversationsCompanion
   Value<String?> defaultProvider,
   Value<String?> sessionProvider,
   Value<bool> isPinned,
+  Value<bool> isHidden,
   Value<bool> isFavorite,
   Value<bool> isMuted,
   Value<bool> notificationSound,
@@ -4949,6 +4990,7 @@ typedef $$ConversationsTableUpdateCompanionBuilder = ConversationsCompanion
   Value<String?> defaultProvider,
   Value<String?> sessionProvider,
   Value<bool> isPinned,
+  Value<bool> isHidden,
   Value<bool> isFavorite,
   Value<bool> isMuted,
   Value<bool> notificationSound,
@@ -5003,6 +5045,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             Value<String?> defaultProvider = const Value.absent(),
             Value<String?> sessionProvider = const Value.absent(),
             Value<bool> isPinned = const Value.absent(),
+            Value<bool> isHidden = const Value.absent(),
             Value<bool> isFavorite = const Value.absent(),
             Value<bool> isMuted = const Value.absent(),
             Value<bool> notificationSound = const Value.absent(),
@@ -5040,6 +5083,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             defaultProvider: defaultProvider,
             sessionProvider: sessionProvider,
             isPinned: isPinned,
+            isHidden: isHidden,
             isFavorite: isFavorite,
             isMuted: isMuted,
             notificationSound: notificationSound,
@@ -5077,6 +5121,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             Value<String?> defaultProvider = const Value.absent(),
             Value<String?> sessionProvider = const Value.absent(),
             Value<bool> isPinned = const Value.absent(),
+            Value<bool> isHidden = const Value.absent(),
             Value<bool> isFavorite = const Value.absent(),
             Value<bool> isMuted = const Value.absent(),
             Value<bool> notificationSound = const Value.absent(),
@@ -5114,6 +5159,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             defaultProvider: defaultProvider,
             sessionProvider: sessionProvider,
             isPinned: isPinned,
+            isHidden: isHidden,
             isFavorite: isFavorite,
             isMuted: isMuted,
             notificationSound: notificationSound,
@@ -5218,6 +5264,11 @@ class $$ConversationsTableFilterComposer
 
   ColumnFilters<bool> get isPinned => $state.composableBuilder(
       column: $state.table.isPinned,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get isHidden => $state.composableBuilder(
+      column: $state.table.isHidden,
       builder: (column, joinBuilders) =>
           ColumnFilters(column, joinBuilders: joinBuilders));
 
@@ -5426,6 +5477,11 @@ class $$ConversationsTableOrderingComposer
 
   ColumnOrderings<bool> get isPinned => $state.composableBuilder(
       column: $state.table.isPinned,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get isHidden => $state.composableBuilder(
+      column: $state.table.isHidden,
       builder: (column, joinBuilders) =>
           ColumnOrderings(column, joinBuilders: joinBuilders));
 

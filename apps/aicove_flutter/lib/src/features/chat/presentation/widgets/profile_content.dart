@@ -11,6 +11,8 @@ import '../../../../ui/theme/tokens.dart';
 import '../../../../core/utils/data_image.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../settings/app_settings.dart';
+import '../../../app_update/app_update_dialog.dart';
+import '../../../app_update/app_update_service.dart';
 import '../../../../ui/shared/widgets/moe_scroll_edge.dart';
 
 const _githubUrl = 'https://github.com/kuobibulaien/AIcove';
@@ -24,6 +26,8 @@ class ProfileContent extends ConsumerStatefulWidget {
 }
 
 class _ProfileContentState extends ConsumerState<ProfileContent> {
+  bool _checkingUpdate = false;
+
   Future<void> _pickImage() async {
     // 与"添加角色"一致：使用 FilePicker 获取字节并存为 data:image/... 的数据URL
     // 这样可以避免 Android 上 content:// 或云盘返回的无效路径导致的 PlatformException
@@ -101,6 +105,31 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('无法打开链接：$_githubUrl')));
+  }
+
+  Future<void> _checkForUpdate() async {
+    if (_checkingUpdate) return;
+    final service = AppUpdateService();
+    if (!service.canCheck) {
+      MoeToast.show(context, '开发版本不检查更新');
+      return;
+    }
+    setState(() => _checkingUpdate = true);
+    try {
+      final release = await service.checkForUpdate(manual: true);
+      if (!mounted) return;
+      if (release == null) {
+        MoeToast.show(context, '已是最新版本', type: ToastType.success);
+      } else {
+        await showAppUpdateDialog(context, release);
+      }
+    } catch (_) {
+      if (mounted) {
+        MoeToast.show(context, '检查更新失败，请稍后再试', type: ToastType.error);
+      }
+    } finally {
+      if (mounted) setState(() => _checkingUpdate = false);
+    }
   }
 
   Widget _buildAvatarImage(String? url) {
@@ -210,6 +239,16 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
                 label: '关于',
                 subtitle: '在 GitHub 查看项目',
                 onTap: _openGithub,
+              ),
+              MoeSettingsRow(
+                icon: Icons.system_update_outlined,
+                label: '检查更新',
+                subtitle: _checkingUpdate
+                    ? '检查中…'
+                    : kAppReleaseTag.isEmpty
+                        ? '开发版本'
+                        : '当前版本 $kAppReleaseTag',
+                onTap: _checkForUpdate,
               ),
             ],
           ),

@@ -1,5 +1,6 @@
 library;
 
+import '../../conversation_state/domain/mvu_content.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -488,7 +489,7 @@ class ChatSendService {
     final effectiveProjectedMessages =
         projectedMessages ?? buildResult.messages;
     final effectiveLastMessagePreview = stripDialogueOptions(
-      lastMessagePreview ?? buildResult.lastMessageText,
+      stripMvuUpdateBlocks(lastMessagePreview ?? buildResult.lastMessageText),
     );
     final forwardTrace = trace?.startChild('deliver message to user');
     forwardTrace?.info('消息分段完成', metadata: {

@@ -207,6 +207,7 @@ abstract interface class TavernWorldScannerPort {
     required List<Map<String, dynamic>> messages,
     required int tokenBudget,
     Map<String, String> macroValues = const {},
+    Map<String, String> entrySkips = const {},
   });
 }
 
@@ -219,6 +220,8 @@ class TavernWorldScanner implements TavernWorldScannerPort {
     required List<Map<String, dynamic>> messages,
     required int tokenBudget,
     Map<String, String> macroValues = const {},
+    /// `书id/条目id` → 跳过提示（空串只记 trace 不提示），由调用方按插件状态给出。
+    Map<String, String> entrySkips = const {},
   }) async {
     if (!books.any((b) => b.enabled)) {
       return const TavernWorldScanResult([], [], []);
@@ -247,6 +250,7 @@ class TavernWorldScanner implements TavernWorldScannerPort {
         texts,
         tokenBudget,
         macroValues,
+        entrySkips,
       ]);
       final result = await port.first.timeout(
         const Duration(milliseconds: 1500),
@@ -273,6 +277,7 @@ void _scanWorker(List<dynamic> args) {
         args[2] as List<String>,
         args[3] as int,
         args[4] as Map<String, String>,
+        args[5] as Map<String, String>,
       ),
     );
   } catch (_) {
@@ -285,6 +290,7 @@ TavernWorldScanResult _scan(
   List<String> texts,
   int budget,
   Map<String, String> macros,
+  Map<String, String> entrySkips,
 ) {
   final candidates =
       <({TavernWorldBook book, TavernWorldEntry entry, int index})>[];
@@ -302,6 +308,12 @@ TavernWorldScanResult _scan(
               ? 'disabled'
               : 'unsupported',
         });
+        continue;
+      }
+      final skip = entrySkips[id];
+      if (skip != null) {
+        if (skip.isNotEmpty) warnings.add(skip);
+        traces.add({'id': id, 'status': 'skipped', 'reason': 'plugin'});
         continue;
       }
       try {

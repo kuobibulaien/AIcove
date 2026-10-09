@@ -33,6 +33,7 @@ const _settingsKeys = {
   'chat_background_mask_opacity',
   'default_provider',
   'is_pinned',
+  'is_hidden',
   'is_favorite',
   'is_muted',
   'notification_sound',

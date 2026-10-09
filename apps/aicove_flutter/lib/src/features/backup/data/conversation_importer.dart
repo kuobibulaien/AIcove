@@ -807,6 +807,7 @@ class ConversationImporter {
       createdAt: conv['created_at'] as int? ?? nowMs,
       updatedAt: nowMs,
       isPinned: Value(conv['is_pinned'] as bool? ?? false),
+      isHidden: Value(conv['is_hidden'] as bool? ?? false),
       isFavorite: Value(conv['is_favorite'] as bool? ?? false),
       isMuted: Value(conv['is_muted'] as bool? ?? false),
       notificationSound: Value(conv['notification_sound'] as bool? ?? true),

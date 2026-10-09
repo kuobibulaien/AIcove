@@ -158,6 +158,10 @@ class ContentTagScanner {
         continue;
       }
       if (!identical(spec, active)) continue;
+      if (active.jsonPayload &&
+          isInsideJsonString(text, open!.end, match.start)) {
+        continue;
+      }
       if (closing) {
         depth--;
         if (depth == 0) {
@@ -237,4 +241,37 @@ class ContentTagScanner {
     }
     return output.toString();
   }
+}
+
+/// [index] 处是否位于 JSON（含 JSON5 单引号）字符串字面量内，从 [start] 起算。
+/// 单引号只在值的开头才算字符串，避免 YAML 里的 `it's` 吞掉结束标签。
+bool isInsideJsonString(String text, int start, int index) {
+  String? quote;
+  var escaped = false;
+  for (var i = start; i < index && i < text.length; i++) {
+    final char = text[i];
+    if (quote != null) {
+      if (escaped) {
+        escaped = false;
+      } else if (char == '\\') {
+        escaped = true;
+      } else if (char == quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (char == '"' || (char == "'" && _atValueStart(text, start, i))) {
+      quote = char;
+    }
+  }
+  return quote != null;
+}
+
+bool _atValueStart(String text, int start, int index) {
+  for (var j = index - 1; j >= start; j--) {
+    final c = text[j];
+    if (c == ' ' || c == '\t' || c == '\r' || c == '\n') continue;
+    return c == '[' || c == '{' || c == ',' || c == ':';
+  }
+  return true;
 }

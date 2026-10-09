@@ -9,6 +9,8 @@ import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../settings/pages/log_viewer_page.dart';
 import 'contact_context_page.dart';
 import '../../backup/pages/data_management_page.dart';
+import '../../../../features/chat/data/enhanced_dialogue_service.dart'
+    show kEnhancedRegenerateAvailable;
 import 'enhanced_dialogue_page.dart';
 import 'call_flow_management_page.dart';
 import 'message_segmentation_debug_page.dart';
@@ -57,15 +59,18 @@ class DebugCenterPage extends StatelessWidget {
                     ),
                   ),
                 ),
-                MoeSettingsRow(
-                  icon: Icons.auto_awesome_outlined,
-                  label: '增强对话',
-                  subtitle: '配置增强生成（系统提示词 / 第一条用户消息 / 最近轮数）',
-                  trailingType: MoeSettingsRowTrailing.chevron,
-                  onTap: () => Navigator.of(context).push(
-                    ParallaxSlidePageRoute(page: const EnhancedDialoguePage()),
+                if (kEnhancedRegenerateAvailable)
+                  MoeSettingsRow(
+                    icon: Icons.auto_awesome_outlined,
+                    label: '增强对话',
+                    subtitle: '配置增强生成（系统提示词 / 第一条用户消息 / 最近轮数）',
+                    trailingType: MoeSettingsRowTrailing.chevron,
+                    onTap: () => Navigator.of(context).push(
+                      ParallaxSlidePageRoute(
+                        page: const EnhancedDialoguePage(),
+                      ),
+                    ),
                   ),
-                ),
                 MoeSettingsRow(
                   icon: Icons.route_outlined,
                   label: '调用超时管理',

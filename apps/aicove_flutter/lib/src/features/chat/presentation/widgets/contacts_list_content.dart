@@ -12,9 +12,11 @@ import '../../application/chat_page_queries.dart';
 import '../../domain/conversation.dart';
 import '../../domain/sort_mode.dart';
 import 'character_list_item.dart';
+import 'privacy_space_pull_detector.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/moe_adaptive_shell.dart';
 import '../../../../ui/shared/widgets/moe_scroll_edge.dart';
+import '../../../../ui/features/home/pages/privacy_space_page.dart';
 
 @visibleForTesting
 VoidCallback scheduleConversationTapWarmup(
@@ -141,7 +143,7 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
       error: (e, _) => Center(child: Text('加载失败: $e')),
       data: (list) {
         // 排序：置顶的在前，然后根据 sortMode 和 isAscending 排序
-        final filtered = [...list]
+        final filtered = list.where((c) => !c.isHidden).toList()
           ..sort((a, b) {
             // 1. 置顶优先
             if (a.isPinned != b.isPinned) {
@@ -178,10 +180,13 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
         }
 
         if (filtered.isEmpty) {
-          return const Center(
-            child: Text(
-              '暂无角色',
-              style: TextStyle(color: moeMuted, fontSize: 14),
+          return PrivacySpacePullDetector(
+            onTriggered: () => openPrivacySpace(context, ref),
+            child: const Center(
+              child: Text(
+                '暂无角色',
+                style: TextStyle(color: moeMuted, fontSize: 14),
+              ),
             ),
           );
         }
@@ -200,108 +205,129 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
 
         // 列表铺满容器；顶部只保留半透明标题栏让出的距离，内容可从栏下滑过。
         final underBarPadding = moeUnderBarPadding(context);
-        return MediaQuery.removePadding(
-          context: context,
-          removeTop: true,
-          removeBottom: true,
-          removeLeft: true,
-          removeRight: true,
-          child: ScrollConfiguration(
-            behavior: ScrollConfiguration.of(
-              context,
-            ).copyWith(scrollbars: false),
-            child: ListView.builder(
-              padding: underBarPadding,
-              itemCount: filtered.length,
-              itemBuilder: (context, index) {
-                final c = filtered[index];
-                return Slidable(
-                  key: ValueKey(c.id),
-                  endActionPane: ActionPane(
-                    motion: const ScrollMotion(),
-                    children: [
-                      // 置顶/取消置顶
-                      SlidableAction(
-                        onPressed: (context) async {
-                          await ref
-                              .read(conversationsProvider.notifier)
-                              .updateConversationSettings(
-                                c.id,
-                                isPinned: !c.isPinned,
-                              );
-                        },
-                        backgroundColor: const Color(0xFF4C5B6F),
-                        foregroundColor: Colors.white,
-                        icon: c.isPinned
-                            ? Icons.push_pin
-                            : Icons.push_pin_outlined,
-                        label: c.isPinned ? '取消置顶' : '置顶',
-                      ),
-                      // 删除
-                      SlidableAction(
-                        onPressed: (context) async {
-                          // 显示确认对话框
-                          final confirmed = await showDialog<bool>(
-                            context: context,
-                            builder: (context) => AlertDialog(
-                              title: const Text('确认删除'),
-                              content: Text(
-                                '确定要删除 "${c.displayName}" 吗？删除后无法恢复。',
-                              ),
-                              actions: [
-                                TextButton(
-                                  onPressed: () =>
-                                      Navigator.pop(context, false),
-                                  child: const Text('取消'),
-                                ),
-                                TextButton(
-                                  onPressed: () => Navigator.pop(context, true),
-                                  style: withoutHoverFeedback(
-                                    TextButton.styleFrom(
-                                      foregroundColor: Colors.red,
-                                    ),
-                                  ),
-                                  child: const Text('删除'),
-                                ),
-                              ],
-                            ),
-                          );
-                          if (confirmed == true) {
+        return PrivacySpacePullDetector(
+          topInset: underBarPadding.top,
+          onTriggered: () => openPrivacySpace(context, ref),
+          child: MediaQuery.removePadding(
+            context: context,
+            removeTop: true,
+            removeBottom: true,
+            removeLeft: true,
+            removeRight: true,
+            child: ScrollConfiguration(
+              behavior: ScrollConfiguration.of(
+                context,
+              ).copyWith(scrollbars: false),
+              child: ListView.builder(
+                padding: underBarPadding,
+                itemCount: filtered.length,
+                itemBuilder: (context, index) {
+                  final c = filtered[index];
+                  return Slidable(
+                    key: ValueKey(c.id),
+                    endActionPane: ActionPane(
+                      motion: const ScrollMotion(),
+                      extentRatio: 0.66,
+                      children: [
+                        // 置顶/取消置顶
+                        SlidableAction(
+                          onPressed: (context) async {
                             await ref
                                 .read(conversationsProvider.notifier)
-                                .deleteConversation(c.id);
-                          }
-                        },
-                        backgroundColor: const Color(0xFFFF4D4F),
-                        foregroundColor: Colors.white,
-                        icon: Icons.delete_outline,
-                        label: '删除',
-                      ),
-                    ],
-                  ),
-                  child: CharacterListItem(
-                    conversation: c,
-                    isActive: c.id == highlightId,
-                    onTap: () {
-                      if (widget.onContactTap != null) {
-                        // 使用自定义回调（宽屏模式）
-                        widget.onContactTap!(c.id, ref);
-                      } else {
-                        // 默认行为：跳转到聊天页面（窄屏模式）
-                        ref.read(activeConversationIdProvider.notifier).state =
-                            c.id;
-                        // 传入初始会话数据，避免新页面首帧先渲染到顶部/错误位置再跳动
-                        MoeWorkspace.openLocation(
-                          context,
-                          '/chat/${c.id}',
-                          extra: c,
-                        );
-                      }
-                    },
-                    // 移除 onEdit 参数 - 编辑功能改到聊天界面
-                  ),
-                );
-              },
+                                .updateConversationSettings(
+                                  c.id,
+                                  isPinned: !c.isPinned,
+                                );
+                          },
+                          backgroundColor: const Color(0xFF4C5B6F),
+                          foregroundColor: Colors.white,
+                          icon: c.isPinned
+                              ? Icons.push_pin
+                              : Icons.push_pin_outlined,
+                          label: c.isPinned ? '取消置顶' : '置顶',
+                        ),
+                        // 隐藏到隐私空间
+                        SlidableAction(
+                          // 动作按钮随面板收起而卸载，弹窗链路要用列表自身的 context。
+                          onPressed: (_) => hideConversationToPrivacySpace(
+                            this.context,
+                            ref,
+                            c.id,
+                          ),
+                          backgroundColor: const Color(0xFF7A6FAE),
+                          foregroundColor: Colors.white,
+                          icon: Icons.visibility_off_outlined,
+                          label: '隐藏',
+                        ),
+                        // 删除
+                        SlidableAction(
+                          onPressed: (context) async {
+                            // 显示确认对话框
+                            final confirmed = await showDialog<bool>(
+                              context: context,
+                              builder: (context) => AlertDialog(
+                                title: const Text('确认删除'),
+                                content: Text(
+                                  '确定要删除 "${c.displayName}" 吗？删除后无法恢复。',
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.pop(context, false),
+                                    child: const Text('取消'),
+                                  ),
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.pop(context, true),
+                                    style: withoutHoverFeedback(
+                                      TextButton.styleFrom(
+                                        foregroundColor: Colors.red,
+                                      ),
+                                    ),
+                                    child: const Text('删除'),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (confirmed == true) {
+                              await ref
+                                  .read(conversationsProvider.notifier)
+                                  .deleteConversation(c.id);
+                            }
+                          },
+                          backgroundColor: const Color(0xFFFF4D4F),
+                          foregroundColor: Colors.white,
+                          icon: Icons.delete_outline,
+                          label: '删除',
+                        ),
+                      ],
+                    ),
+                    child: CharacterListItem(
+                      conversation: c,
+                      isActive: c.id == highlightId,
+                      onTap: () {
+                        if (widget.onContactTap != null) {
+                          // 使用自定义回调（宽屏模式）
+                          widget.onContactTap!(c.id, ref);
+                        } else {
+                          // 默认行为：跳转到聊天页面（窄屏模式）
+                          ref
+                                  .read(activeConversationIdProvider.notifier)
+                                  .state =
+                              c.id;
+                          // 传入初始会话数据，避免新页面首帧先渲染到顶部/错误位置再跳动
+                          MoeWorkspace.openLocation(
+                            context,
+                            '/chat/${c.id}',
+                            extra: c,
+                          );
+                        }
+                      },
+                      // 移除 onEdit 参数 - 编辑功能改到聊天界面
+                    ),
+                  );
+                },
+              ),
             ),
           ),
         );

@@ -1523,12 +1523,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                                   }
                                 }
                               },
-                              onRegenerateMessage: (message) async {
+                              onRegenerateMessage: (message, guidance) async {
                                 if (ref.read(sendingProvider)) {
                                   _showSendingInProgressToast();
                                   return;
                                 }
-                                await actions.regenerate(message.id);
+                                await actions.regenerate(
+                                  message.id,
+                                  guidance: guidance,
+                                );
                               },
                               onEnhanceRegenerateMessage: (message) {
                                 if (ref.read(sendingProvider)) {

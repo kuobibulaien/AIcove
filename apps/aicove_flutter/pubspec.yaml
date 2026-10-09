@@ -57,6 +57,7 @@ dependencies:
   drift: ^2.18.0
   sqlite3_flutter_libs: ^0.5.0  # Android/iOS/macOS/Windows SQLite
   path: ^1.9.0
+  yaml: ^3.1.2  # MVU 变量初始化与宏输出（ADR0071）
   # 数据备份导入导出
   archive: ^3.6.0  # ZIP 压缩解压
   share_plus: ^9.0.0  # 分享文件
@@ -98,6 +99,7 @@ flutter:
     - assets/characters/images/
     - assets/characters/prompts/
     - assets/ui/
+    - assets/wallpapers/
     - assets/emoji/
     - assets/stickers/nahida/
     - assets/icons/providers/

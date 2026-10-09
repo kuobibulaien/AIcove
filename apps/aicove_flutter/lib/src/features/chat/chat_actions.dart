@@ -13,6 +13,7 @@
 /// - 2026-01-28: 使用 deliverSegmentedMessages 统一消息交付，移除占位符机制
 library;
 
+import '../conversation_state/domain/mvu_content.dart';
 import '../plugins/tts/voice_request.dart';
 
 import 'dart:async';
@@ -32,6 +33,7 @@ import 'application/standard_chat_agent.dart';
 import 'id_gen.dart' show genId;
 import 'chat_layer_providers.dart';
 import 'services/chat_history_store.dart';
+import 'application/regenerate_guidance.dart';
 import 'services/chat_media_regeneration.dart';
 import 'services/chat_send_service.dart' show chatSendServiceProvider;
 import 'services/chat_types.dart'
@@ -575,9 +577,11 @@ class ChatActions {
       },
     );
     final finalMessagePreview = stripDialogueOptions(
-      buildResult.lastMessageText.trim().isNotEmpty
-          ? buildResult.lastMessageText
-          : finalTimelineMessages.last.displayText,
+      stripMvuUpdateBlocks(
+        buildResult.lastMessageText.trim().isNotEmpty
+            ? buildResult.lastMessageText
+            : finalTimelineMessages.last.displayText,
+      ),
     );
     await _historyPort.appendAssistantRawMessage(
       conversationId: convId,

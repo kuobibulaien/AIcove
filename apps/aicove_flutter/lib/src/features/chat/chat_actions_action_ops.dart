@@ -385,8 +385,14 @@ extension ChatActionsActionOps on ChatActions {
   }
 
   /// 重新生成AI回复（删除指定AI消息及其后的所有消息，重新生成）
-  Future<void> regenerate(String aiMessageId) async {
-    await _regenerateInternal(aiMessageId, useEnhancement: false);
+  ///
+  /// [guidance] 为用户本次填写的指导意见，只进入请求，不写入历史。
+  Future<void> regenerate(String aiMessageId, {String? guidance}) async {
+    await _regenerateInternal(
+      aiMessageId,
+      useEnhancement: false,
+      guidance: guidance,
+    );
   }
 
   /// 预检普通文本重新生成是否可改走现有发送链。
@@ -480,6 +486,7 @@ extension ChatActionsActionOps on ChatActions {
   Future<void> _regenerateInternal(
     String aiMessageId, {
     required bool useEnhancement,
+    String? guidance,
   }) async {
     final conv = _ref.read(activeConversationProvider);
     if (conv == null) return;
@@ -497,6 +504,7 @@ extension ChatActionsActionOps on ChatActions {
         facts: DiagnosticFacts(state: {
           'regenerate': true,
           'enhanced': useEnhancement,
+          'guided': normalizeRegenerateGuidance(guidance) != null,
         }));
     final runId = await _startGeneration(convId: convId);
     TraceContext? traceContext;
@@ -584,9 +592,13 @@ extension ChatActionsActionOps on ChatActions {
               if (!canUseEnhancement) {
                 return ChatPreparedTurn(
                   requestConversation: updatedConv,
-                  history: await _sendPort.prepareHistoryFromStore(
-                    conv: updatedConv,
-                    userMsg: userMsg,
+                  history: applyRegenerateGuidance(
+                    await _sendPort.prepareHistoryFromStore(
+                      conv: updatedConv,
+                      userMsg: userMsg,
+                    ),
+                    userMessageId: userMsg.id,
+                    guidance: guidance,
                   ),
                   sessionId: convId,
                   modelsToTry: _resolvePreferredChatModels(settings),

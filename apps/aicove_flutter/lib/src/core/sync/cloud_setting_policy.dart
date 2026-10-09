@@ -6,6 +6,9 @@ import 'cloud_local_write.dart';
 const cloudUiModelsKey = 'aicove.ui_models.v1';
 const cloudPreferenceTimesKey = 'aicove.sync.setting_times.v1';
 
+/// 隐私空间密码哈希，随设置同步（ADR0070）。
+const privacySpacePasswordKey = 'aicove.privacy_space.v1';
+
 /// Fields owned by the General page remain on the current device. Model,
 /// provider and plugin configuration keep their own scope.
 const localGeneralSettings = <String>{
@@ -20,6 +23,7 @@ const localGeneralSettings = <String>{
   'windows_window_controls_side',
   'chat_background_color',
   'global_background_color',
+  'global_wallpaper',
   'is_dark_mode',
   'use_system_theme',
   'hide_user_avatar',

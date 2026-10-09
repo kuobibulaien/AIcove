@@ -44,7 +44,7 @@ class _RecordingChatActions extends ChatActions {
     return '这句原话会被错误地重发';
   }
 
-  Future<void> regenerate(String aiMessageId) async {
+  Future<void> regenerate(String aiMessageId, {String? guidance}) async {
     regenerateIds.add(aiMessageId);
   }
 

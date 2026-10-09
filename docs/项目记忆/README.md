@@ -80,6 +80,7 @@ UI / Page
 | NovelAI V5 Full 默认生图模型 | 进行中 | `历史任务/08-21-novelai-v5-full-default/` |
 | AIcove 2.0：Agent 运行时 | 10-07 定为 Dart 微内核＋全插件化（QuickJS 脚本插件、MCP），取代 DSH 方案；第一批（内核循环与插件宿主，从现有 runner 等价抽取为固定阶段管线）方案第三版经 Codex 两轮复核；10-07 完成 1a 纯 Dart 内核包 `apps/aicove_flutter/packages/aicove_agent_kernel`（26 项测试通过）；1b 后台接线与离线差分完成（开关 `AICOVE_AGENT_KERNEL_BG` 默认关，真实模型对照未做），1c 前台与预设／生图待做 | ADR0064（取代 0001）、ADR0060、[第一批方案](../../apps/aicove_flutter/docs/02_前后端分离与架构规范/Agent运行时第一批实施方案.md) |
 | 酒馆兼容插件（测试） | 预设／正则／世界书核心接入与逐条开关已实现（09-06）；高级世界书条件后推，不宣称全量 ST 兼容 | [模块说明](../../apps/aicove_flutter/docs/04_功能模块规范/酒馆兼容插件/README.md)、ADR0010 |
+| MVU 变量与表格记忆（酒馆兼容） | 10-09 B1（MVU 变量：解析、按消息快照 v21、宏注入、历史清理、EJS 检测跳过）已实施，离线 62 项通过；真实模型请求与实机未验；B2 表格、B3 只读状态面板待做 | ADR0071、[方案](../../apps/aicove_flutter/docs/04_功能模块规范/酒馆兼容插件/MVU变量与表格记忆兼容方案.md) |
 | 前端性能观测打点（FrameTiming、重建计数） | 方案阶段 | `历史任务/07-26-perf-observability/` |
 | 手机前端响应日志 | 低频页面/气泡/滚动/音频记录与单轮导出已实现并真机确认（09-05）；高频采样不在本批 | ADR0005 |
 | Agent 自动抓日志 | 第一批采集器与 Release 电脑读取通道已交付并自动开启（09-10）；故障缓冲/帧摘要待第二批 | ADR0006、ADR0013、[DIAGNOSTICS.md](../../apps/aicove_flutter/tool/DIAGNOSTICS.md) |

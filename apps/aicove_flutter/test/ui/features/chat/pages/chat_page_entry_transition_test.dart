@@ -88,8 +88,18 @@ void main() {
         await tester.pump(const Duration(milliseconds: 200));
         final after = List.of(phases);
         await tester.pumpWidget(const SizedBox.shrink());
-        await tester.pump();
-        await tester.runAsync(fixture.dispose);
+        // 页面在假时钟里排下的数据库工作要靠 pump 推进；只在 runAsync 里
+        // 关闭会让 database.close 永远等不到它们完成。
+        var disposed = false;
+        final cleanup = fixture.dispose().then((_) => disposed = true);
+        for (var attempt = 0; attempt < 100 && !disposed; attempt++) {
+          await tester.pump(const Duration(milliseconds: 16));
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 5)),
+          );
+        }
+        expect(disposed, isTrue);
+        await cleanup;
         expect(during, isEmpty, reason: '160ms清未读会与尚未完成的左移动画争抢');
         expect(after, earlyPop ? isEmpty : [AnimationStatus.completed]);
         expect(imagesDuring, isEmpty);

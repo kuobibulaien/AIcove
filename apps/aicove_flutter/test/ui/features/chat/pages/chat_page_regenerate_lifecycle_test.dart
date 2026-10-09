@@ -85,7 +85,7 @@ void main() {
             tester.widget<ChatMessageList>(find.byType(ChatMessageList));
         final action = enhanced
             ? list.onEnhanceRegenerateMessage!
-            : list.onRegenerateMessage!;
+            : (Message message) => list.onRegenerateMessage!(message, null);
         // 业务链含插件/SQLite异步：在真实时钟中启动，避免跨fakeAsync等待。
         await tester.runAsync(() async {
           action(ai);

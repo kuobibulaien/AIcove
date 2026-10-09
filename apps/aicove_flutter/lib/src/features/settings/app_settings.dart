@@ -320,6 +320,9 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
   final globalBackgroundColor = GlobalBackgroundColor.fromValue(
     data['global_background_color'] as String?,
   );
+  final globalWallpaper = GlobalWallpaper.fromValue(
+    data['global_wallpaper'] as String?,
+  );
   final isDarkMode = (data['is_dark_mode'] as bool?) ?? false;
   final useSystemTheme = (data['use_system_theme'] as bool?) ?? true;
   // 支持十六进制颜色值（如 'FC96AA'）或旧枚举值（如 'pink'）
@@ -421,6 +424,7 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     expandAudioText: expandAudioText,
     autoReplySettings: autoReplySettings,
     globalBackgroundColor: globalBackgroundColor,
+    globalWallpaper: globalWallpaper,
     chatBackgroundColor: chatBackgroundColor,
     isDarkMode: isDarkMode,
     useSystemTheme: useSystemTheme,
@@ -1051,6 +1055,12 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
   Future<void> setGlobalBackgroundColor(GlobalBackgroundColor color) async {
     await _commit(
       () => _api.updatePartial({'global_background_color': color.value}),
+    );
+  }
+
+  Future<void> setGlobalWallpaper(GlobalWallpaper wallpaper) async {
+    await _commit(
+      () => _api.updatePartial({'global_wallpaper': wallpaper.value}),
     );
   }
 

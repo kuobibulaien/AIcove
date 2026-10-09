@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../../theme/tokens.dart';
 import 'moe_adaptive_shell.dart';
+import 'moe_chat_wallpaper.dart';
 
 /// Shared page surface. The detail route owns its background across the whole
 /// workspace; its controls and Scaffold remain inside the detail pane.
@@ -28,9 +30,15 @@ class MoePageScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = backgroundColor ?? Theme.of(context).scaffoldBackgroundColor;
+    final scaffoldColor = Theme.of(context).scaffoldBackgroundColor;
+    final color = backgroundColor ?? scaffoldColor;
+    // Pages passing the theme's own page color still count as uncustomized.
+    final usesDefault =
+        color == scaffoldColor || color == context.moeColors.surface;
     return MoeWorkspaceBackground(
-      background: ColoredBox(color: color),
+      background: usesDefault
+          ? MoeGlobalWallpaper(slot: GlobalWallpaperSlot.page, color: color)
+          : ColoredBox(color: color),
       child: Scaffold(
         backgroundColor: Colors.transparent,
         appBar: appBar,

@@ -7,6 +7,10 @@ import '../domain/message.dart';
 import '../domain/conversation_context_window.dart';
 import '../id_gen.dart';
 
+/// 增强重新生成暂时屏蔽：与预设能力重复且部分冲突（2026-10-09）。
+/// 关闭期间隐藏消息菜单入口与调试中心配置页，生成链路代码保留。
+const bool kEnhancedRegenerateAvailable = false;
+
 /// 增强对话拼接结果
 class EnhancedDialogueContext {
   final Conversation conversation;

@@ -1,5 +1,7 @@
 library;
 
+import '../../conversation_state/domain/mvu_content.dart';
+
 typedef SillyTavernRandomIndexPicker = int Function(int length);
 
 class SillyTavernMacroEvaluationResult {
@@ -39,6 +41,7 @@ class SillyTavernMacroEvaluator {
     required Map<String, String> variables,
     required SillyTavernRandomIndexPicker randomIndexPicker,
     required List<String> warnings,
+    Map<String, Object?>? messageVariables,
   }) {
     final applied = <String>{};
     final unknown = <String>{};
@@ -63,6 +66,7 @@ class SillyTavernMacroEvaluator {
           warnings: warnings,
           applied: applied,
           unknown: unknown,
+          messageVariables: messageVariables,
         );
         if (!replacement.handled) continue;
         output =
@@ -106,6 +110,7 @@ class SillyTavernMacroEvaluator {
     required List<String> warnings,
     required Set<String> applied,
     required Set<String> unknown,
+    Map<String, Object?>? messageVariables,
   }) {
     if (body.startsWith('//')) {
       applied.add('//');
@@ -160,6 +165,26 @@ class SillyTavernMacroEvaluator {
         final key = parts.sublist(1).join('::').trim();
         applied.add(name);
         return _MacroReplacement(variables[key] ?? '', handled: true);
+      case 'get_message_variable':
+      case 'format_message_variable':
+        // MVU 楼层变量（ADR0071）：只读请求固定的状态，不与 setvar/getvar 混用。
+        if (messageVariables == null) {
+          if (unknown.add(name)) {
+            warnings.add('$promptId 使用了 MVU 变量宏，本角色未启用 MVU，已保留 $rawMacro');
+          }
+          return _MacroReplacement(rawMacro, handled: false);
+        }
+        final path = parts.sublist(1).join('::').trim();
+        final value = readMessageVariableMacro(
+          messageVariables,
+          path,
+          yaml: name == 'format_message_variable',
+        );
+        if (value == null) {
+          warnings.add('$promptId 的 $rawMacro 路径不存在，已替换为空文本');
+        }
+        applied.add(name);
+        return _MacroReplacement(value ?? '', handled: true);
       case 'random':
       case 'pick':
         if (parts.length < 2) {

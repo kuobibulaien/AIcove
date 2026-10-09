@@ -201,6 +201,7 @@ class SyncService {
       thinkingLevels: Value(data['thinking_levels'] as String?),
       chatDisplayStyle: Value(data['chat_display_style'] as String?),
       isPinned: Value(data['is_pinned'] as bool? ?? false),
+      isHidden: Value(data['is_hidden'] as bool? ?? false),
       isFavorite: Value(data['is_favorite'] as bool? ?? false),
       isMuted: Value(data['is_muted'] as bool? ?? false),
       notificationSound: Value(data['notification_sound'] as bool? ?? true),

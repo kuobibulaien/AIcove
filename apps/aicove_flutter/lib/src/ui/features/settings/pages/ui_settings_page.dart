@@ -71,6 +71,8 @@ class UiSettingsPage extends ConsumerWidget {
               children: [
                 _buildSkinPicker(ref, settings, colors),
                 _divider(colors),
+                _buildWallpaperPicker(context, ref, settings, colors),
+                _divider(colors),
                 MoeSettingsRow(
                   label: '深色模式',
                   subtitle: settings.useSystemTheme ? '当前跟随系统设置' : '手动控制',
@@ -443,6 +445,109 @@ class UiSettingsPage extends ConsumerWidget {
                   color: isSelected ? colors.text : colors.textSecondary,
                 ),
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 全局壁纸：未自定义背景的界面统一使用；缩略图取该组的展示图。
+  Widget _buildWallpaperPicker(
+    BuildContext context,
+    WidgetRef ref,
+    AppSettings settings,
+    MoeColors colors,
+  ) {
+    final current = settings.globalWallpaper;
+    final brightness = Theme.of(context).brightness;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _blockLabel(colors, '全局壁纸'),
+          const SizedBox(height: 4),
+          Text(
+            '所有界面的默认背景，已单独设置背景的聊天不受影响',
+            style: TextStyle(fontSize: 12, color: colors.textSecondary),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              for (final wallpaper in GlobalWallpaper.values)
+                Expanded(
+                  child: _buildWallpaperTile(
+                    ref,
+                    colors,
+                    wallpaper,
+                    asset: wallpaper.assetFor(
+                      GlobalWallpaperSlot.empty,
+                      brightness,
+                    ),
+                    isSelected: wallpaper == current,
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWallpaperTile(
+    WidgetRef ref,
+    MoeColors colors,
+    GlobalWallpaper wallpaper, {
+    required String? asset,
+    required bool isSelected,
+  }) {
+    final borderWidth = isSelected ? 2.0 : 1.0;
+    return GestureDetector(
+      key: ValueKey('global-wallpaper-${wallpaper.value}'),
+      onTap: isSelected
+          ? null
+          : () => ref
+                .read(appSettingsProvider.notifier)
+                .setGlobalWallpaper(wallpaper),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 3),
+            child: Container(
+              height: 64,
+              padding: EdgeInsets.all(borderWidth),
+              decoration: MoeG2Decoration(
+                radius: 12,
+                color: isSelected ? colors.accentColor : colors.borderLight,
+              ),
+              child: MoeG2ClipRRect(
+                radius: 12 - borderWidth,
+                child: SizedBox.expand(
+                  child: asset == null
+                      ? ColoredBox(
+                          color: colors.surface,
+                          child: Icon(
+                            Icons.block_rounded,
+                            size: 18,
+                            color: colors.textSecondary,
+                          ),
+                        )
+                      : Image.asset(asset, fit: BoxFit.cover, cacheWidth: 240),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            wallpaper.label,
+            maxLines: 1,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: isSelected
+                  ? MoeFontWeights.emphasis
+                  : MoeFontWeights.normal,
+              color: isSelected ? colors.text : colors.textSecondary,
             ),
           ),
         ],

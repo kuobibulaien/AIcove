@@ -13,6 +13,7 @@ import '../../../core/database/database_provider.dart';
 import '../../../core/database/converters/database_converters.dart';
 import '../../../core/models/message_block.dart';
 import '../../../core/models/block_status.dart';
+import '../../conversation_state/providers/conversation_state_providers.dart';
 import '../../plugins/domain/plugin_content.dart';
 import '../../plugins/plugin_content_tags.dart';
 import '../../plugins/tts/tts_parser.dart';
@@ -539,6 +540,10 @@ class ChatHistoryStore {
             rawMessage.createdAt.millisecondsSinceEpoch,
           );
     });
+    // 原文提交之后把会话状态算到链尾（ADR0071）；失败只记日志，下次读取自愈。
+    unawaited(
+      _ref.read(conversationStatePortProvider).refresh(conversationId),
+    );
 
     if (projectedMessages.isNotEmpty) {
       await _syncProjectionMappingsForRawMessage(

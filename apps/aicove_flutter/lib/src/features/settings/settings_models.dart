@@ -14,6 +14,9 @@ import '../../core/utils/token_estimator.dart';
 import '../../core/prompts/prompt_builtin_defaults.g.dart';
 import '../../ui/theme/tokens.dart';
 
+export '../../ui/theme/moe_wallpaper.dart'
+    show GlobalWallpaper, GlobalWallpaperSlot;
+
 export '../../core/api/thinking/thinking_level.dart' show ThinkingLevel;
 export '../chat/domain/chat_display_policy.dart' show ChatDisplayStyle;
 
@@ -1050,6 +1053,9 @@ class AppSettings {
   final String? userName;
   final AutoReplySettings autoReplySettings;
   final GlobalBackgroundColor globalBackgroundColor;
+
+  /// 未自定义背景的界面默认使用的全局壁纸。
+  final GlobalWallpaper globalWallpaper;
   final ChatBackgroundColor chatBackgroundColor;
   final bool isDarkMode;
   final bool useSystemTheme;
@@ -1124,6 +1130,7 @@ class AppSettings {
     this.windowsWindowControlsSide = WindowControlButtonSide.left,
     required this.autoReplySettings,
     required this.globalBackgroundColor,
+    this.globalWallpaper = GlobalWallpaper.none,
     required this.chatBackgroundColor,
     required this.isDarkMode,
     required this.useSystemTheme,
@@ -1192,6 +1199,7 @@ class AppSettings {
     WindowControlButtonSide? windowsWindowControlsSide,
     AutoReplySettings? autoReplySettings,
     GlobalBackgroundColor? globalBackgroundColor,
+    GlobalWallpaper? globalWallpaper,
     ChatBackgroundColor? chatBackgroundColor,
     bool? isDarkMode,
     bool? useSystemTheme,
@@ -1244,6 +1252,7 @@ class AppSettings {
         windowsWindowControlsSide ?? this.windowsWindowControlsSide,
     autoReplySettings: autoReplySettings ?? this.autoReplySettings,
     globalBackgroundColor: globalBackgroundColor ?? this.globalBackgroundColor,
+    globalWallpaper: globalWallpaper ?? this.globalWallpaper,
     chatBackgroundColor: chatBackgroundColor ?? this.chatBackgroundColor,
     isDarkMode: isDarkMode ?? this.isDarkMode,
     useSystemTheme: useSystemTheme ?? this.useSystemTheme,

@@ -381,6 +381,60 @@ void main() {
   );
 
   test(
+    'privacy space hide flag merges by field clock and password hash syncs',
+    () async {
+      final phone = await device('phone');
+      await seed(phone);
+      await phone.sync.enable();
+      final mac = await device('mac');
+      await mac.sync.enable();
+      Future<void> setHidden(Device device, bool hidden, int at) async {
+        await device.local.execute(
+          'UPDATE conversations SET is_hidden=? WHERE id=?',
+          [hidden ? 1 : 0, 'role'],
+        );
+        await device.local.execute(
+          'UPDATE cloud_setting_times SET at_ms=? WHERE kind=? AND entity_id=? AND field=?',
+          [at, 'conversations', 'role', 'is_hidden'],
+        );
+      }
+
+      Future<Object?> hidden(Device device) async => (await device.local.rows(
+        "SELECT is_hidden FROM conversations WHERE id='role'",
+      )).single['is_hidden'];
+
+      await setHidden(phone, true, 200);
+      await phone.local.preferences.setString(
+        privacySpacePasswordKey,
+        r'v1$salt$hash',
+      );
+      await editSetting(mac, 'voice_file', 'mac-voice', 300);
+      await phone.sync.synchronize();
+      await mac.sync.synchronize();
+      await phone.sync.synchronize();
+      for (final device in [phone, mac]) {
+        expect(await hidden(device), 1);
+        expect(
+          (await device.local.rows(
+            "SELECT voice_file FROM conversations WHERE id='role'",
+          )).single['voice_file'],
+          'mac-voice',
+        );
+        expect((await device.sync.previewConflicts())['conflicts'], isEmpty);
+      }
+      expect(
+        mac.local.preferences.getString(privacySpacePasswordKey),
+        r'v1$salt$hash',
+      );
+
+      await setHidden(mac, false, 400);
+      await mac.sync.synchronize();
+      await phone.sync.synchronize();
+      expect(await hidden(phone), 0);
+    },
+  );
+
+  test(
     'new local edit during a merged upload survives receipt and converges',
     () async {
       final phone = await device('phone');

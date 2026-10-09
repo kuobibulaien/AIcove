@@ -9,6 +9,9 @@ import 'dart:math' as math;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../conversation_state/domain/conversation_state_port.dart';
+import '../../conversation_state/domain/mvu_content.dart';
+import '../../conversation_state/providers/conversation_state_providers.dart';
 import '../../agent_context/data/silly_tavern_variable_store.dart';
 import '../../agent_context/domain/silly_tavern_preset.dart';
 import '../../agent_context/domain/silly_tavern_preset_assembler.dart';
@@ -425,6 +428,8 @@ class ChatSendBackendService {
     );
 
     reqMessages = contextPolicy.filterMessages(reqMessages);
+    // 历史回复里的 MVU 更新块只在请求副本中去掉，状态改由宏注入（ADR0071）。
+    reqMessages = stripMvuUpdatesFromHistory(reqMessages);
     final includeInternalImageRule = _containsInternalImageContext(reqMessages);
     final systemParts = <String>[];
     if (boundPreset == null && personaParts.userPrompt.isNotEmpty) {
@@ -579,6 +584,13 @@ class ChatSendBackendService {
     TavernWorldScanResult? worldScan;
     List<Map<String, dynamic>> truncatedMessages;
     if (boundPreset != null) {
+      final mvuView = await _readMvuState(
+        conv: conv,
+        conversationId: resolvedConversationId,
+        preset: boundPreset,
+        userName: promptUserName,
+      );
+      final mvuState = mvuView.active ? mvuView.mvu : null;
       presetRegexPromptResult = await _sillyTavernRegexProcessor
           .applyToPromptMessages(
             messages: reqMessages,
@@ -602,6 +614,10 @@ class ChatSendBackendService {
           'description': contextPolicy.filterText(personaParts.userPrompt),
           'scenario': conv.description?.trim() ?? '',
         },
+        entrySkips: mvuWorldEntrySkips(
+          boundPreset.worldBooks,
+          mvuActive: mvuState != null,
+        ),
       );
       worldScan = await _sillyTavernRegexProcessor.applyToWorldInfo(
         scan: worldScan,
@@ -640,8 +656,12 @@ class ChatSendBackendService {
           initialWarnings: [
             ...presetVariableSnapshot.warnings,
             ...worldScan.warnings,
+            ...mvuView.diagnostics,
           ],
           worldInjections: worldScan.injections,
+          messageVariables: mvuState == null
+              ? null
+              : <String, Object?>{'stat_data': mvuState.statData},
         ),
         maxContextTokens: maxContextTokens,
         reserveTokens: boundPreset.maxOutputTokens ?? 2048,
@@ -1160,6 +1180,41 @@ class ChatSendBackendService {
           return schema;
         }(),
     ];
+  }
+
+  /// 本轮 MVU 状态（ADR0071）：按请求 owner 的预设与名字固定来源；读取失败不阻塞发送。
+  Future<ConversationStateView> _readMvuState({
+    required Conversation conv,
+    required String conversationId,
+    required SillyTavernPreset preset,
+    required String userName,
+  }) async {
+    if (!mvuAllowedFor(conv, preset)) {
+      return const ConversationStateView.inactive();
+    }
+    try {
+      return await _ref
+          .read(conversationStatePortProvider)
+          .read(
+            conversationId,
+            sources: buildMvuSourceSnapshot(
+              preset: preset,
+              characterName: conv.displayName.trim().isEmpty
+                  ? conv.title
+                  : conv.displayName,
+              userName: userName,
+            ),
+          );
+    } catch (error) {
+      AppLogger.warning(
+        _logTag,
+        '读取 MVU 状态失败，本轮按未启用处理',
+        metadata: {'errorType': error.runtimeType.toString()},
+      );
+      return const ConversationStateView.inactive(
+        diagnostics: ['MVU 状态读取失败，本轮未注入变量'],
+      );
+    }
   }
 
   /// 预览只读已保存的话题摘要；缺摘要时真实发送会先整理，这里只提示。

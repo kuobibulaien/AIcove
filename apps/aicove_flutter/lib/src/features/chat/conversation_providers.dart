@@ -269,6 +269,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
   Future<void> updateConversationSettings(
     String id, {
     bool? isPinned,
+    bool? isHidden,
     bool? isFavorite,
     bool? isMuted,
     bool? notificationSound,
@@ -279,6 +280,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
         id,
         (c) => c.copyWith(
               isPinned: isPinned ?? c.isPinned,
+              isHidden: isHidden ?? c.isHidden,
               isFavorite: isFavorite ?? c.isFavorite,
               isMuted: isMuted ?? c.isMuted,
               notificationSound: notificationSound ?? c.notificationSound,

@@ -83,12 +83,12 @@ void main() {
 
   test('全新安装直接建齐新表，没有旧记忆表；关闭再打开仍正常', () async {
     var database = db.AppDatabase.forTesting(NativeDatabase(dbFile()));
-    expect(await _version(database), 19);
+    expect(await _version(database), 21);
     expect(await _tables(database), containsAll(_newTables));
     expect(await _tables(database), isNot(contains('memories')));
     await database.close();
     database = db.AppDatabase.forTesting(NativeDatabase(dbFile()));
-    expect(await _version(database), 19);
+    expect(await _version(database), 21);
     await database.close();
   });
 
@@ -123,7 +123,7 @@ void main() {
     await File('${notebooks.path}/MEMORY.md').writeAsString('# 旧 MD');
 
     final database = db.AppDatabase.forTesting(NativeDatabase(dbFile()));
-    expect(await _version(database), 19);
+    expect(await _version(database), 21);
     final tables = await _tables(database);
     expect(tables, containsAll(_newTables));
     // onUpgrade 不直接删旧表，交给退役流程先备份。
@@ -176,7 +176,7 @@ void main() {
     await database.close();
 
     final reopened = db.AppDatabase.forTesting(NativeDatabase(dbFile()));
-    expect(await _version(reopened), 19);
+    expect(await _version(reopened), 21);
     expect(await _tables(reopened), containsAll(_newTables));
     await reopened.close();
   });
@@ -205,7 +205,7 @@ void main() {
   });
 
   test('同步载荷的表结构版本与整库版本解耦', () {
-    expect(kCloudRowSchema, 18);
+    expect(kCloudRowSchema, 19);
     expect(cloudTables.keys, isNot(contains('topic_handoffs')));
     expect(retiredCloudKinds, containsAll(['memories', 'contact_memory']));
   });

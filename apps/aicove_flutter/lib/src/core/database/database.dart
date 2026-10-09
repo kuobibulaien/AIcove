@@ -37,6 +37,8 @@ class Conversations extends Table {
   TextColumn get defaultProvider => text().nullable()();
   TextColumn get sessionProvider => text().nullable()();
   BoolColumn get isPinned => boolean().withDefault(const Constant(false))();
+  // 移入隐私空间：只从联系人列表隐藏，随同步走（ADR0070）
+  BoolColumn get isHidden => boolean().withDefault(const Constant(false))();
   BoolColumn get isFavorite => boolean().withDefault(const Constant(false))();
   BoolColumn get isMuted => boolean().withDefault(const Constant(false))();
   BoolColumn get notificationSound =>
@@ -229,7 +231,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(QueryExecutor executor) : super(executor);
 
   @override
-  int get schemaVersion => 19;
+  int get schemaVersion => 21;
 
   @override
   MigrationStrategy get migration {
@@ -238,6 +240,7 @@ class AppDatabase extends _$AppDatabase {
         await m.createAll();
         await _ensureAutoReplyClaimTable();
         await _ensureContextMemoryTables();
+        await _ensureMessageStateTable();
       },
       onUpgrade: (Migrator m, int from, int to) async {
         // v1 -> v2 的旧记忆表已随 v18 退役（ADR0038），不再创建。
@@ -306,6 +309,15 @@ class AppDatabase extends _$AppDatabase {
         // v18 -> v19: 会话级聊天样式覆盖（ADR0047）
         if (from < 19) {
           await _safeAddColumn('conversations', 'chat_display_style TEXT');
+        }
+        // v19 -> v20: 隐私空间隐藏标记（ADR0070）
+        if (from < 20) {
+          await _safeAddColumn('conversations',
+              'is_hidden INTEGER NOT NULL DEFAULT 0 CHECK (is_hidden IN (0, 1))');
+        }
+        // v20 -> v21: 会话状态快照（MVU 变量等，ADR0071），只存本机不同步
+        if (from < 21) {
+          await _ensureMessageStateTable();
         }
       },
       // 只补物理访问索引，不改变表/记录格式或user_version。
@@ -393,6 +405,29 @@ CREATE TABLE IF NOT EXISTS memory_progress (
   last_error TEXT,
   updated_at INTEGER NOT NULL
 )''');
+  }
+
+  /// 会话状态快照（ADR0071）：冻结基线（anchor_id = '__init__'）与按消息的
+  /// 可重算缓存。由 SqliteConversationStateStore 以参数化 SQL 访问；不同步。
+  Future<void> _ensureMessageStateTable() async {
+    await customStatement('''
+CREATE TABLE IF NOT EXISTS message_states (
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  anchor_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  prev_anchor_id TEXT,
+  raw_hash TEXT NOT NULL,
+  engine_version INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  data_json TEXT,
+  diagnostics_json TEXT NOT NULL DEFAULT '[]',
+  sources_json TEXT,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (conversation_id, anchor_id, kind)
+)''');
+    await customStatement('''
+CREATE INDEX IF NOT EXISTS message_states_conversation_kind
+ON message_states(conversation_id, kind)''');
   }
 
   /// 主动回复触发器执行权认领表：前台轮询与后台 WorkManager 发送前

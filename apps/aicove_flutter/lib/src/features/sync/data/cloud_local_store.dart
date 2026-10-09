@@ -31,6 +31,7 @@ class CloudLocalStore {
       key == 'aicove.prompt_custom_nodes.v1' ||
       key == 'aicove.auto_triggers.v1' ||
       key == deviceNamesKey ||
+      key == privacySpacePasswordKey ||
       (key.startsWith('aicove.plugins.') && !key.contains('.backup')) ||
       const {
         'direct.enable',

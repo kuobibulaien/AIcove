@@ -1,8 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../features/app_update/app_update_dialog.dart';
+import '../../../../features/app_update/app_update_service.dart';
 import '../../../../features/chat/presentation/widgets/custom_bottom_nav.dart';
 import '../../../theme/tokens.dart';
+import '../../../shared/widgets/moe_chat_wallpaper.dart';
 import '../../../shared/widgets/moe_floating_surface.dart';
 import '../../../shared/widgets/moe_adaptive_shell.dart';
 import '../../character/pages/role_card_page.dart';
@@ -18,7 +23,24 @@ class MainPage extends ConsumerStatefulWidget {
 
 class _MainPageState extends ConsumerState<MainPage> {
   final _visited = <int>{0};
+  // Keeps tab state when the wallpaper branch swaps the surrounding surface.
+  final _contentKey = GlobalKey();
   int _currentIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_checkForUpdate());
+  }
+
+  /// Release builds look for a newer GitHub release once per launch.
+  Future<void> _checkForUpdate() async {
+    final service = AppUpdateService();
+    if (!service.canCheck) return;
+    final release = await service.checkForUpdate();
+    if (release == null || !mounted) return;
+    await showAppUpdateDialog(context, release);
+  }
 
   void _switchTab(int index) {
     if (_currentIndex == index) return;
@@ -33,6 +55,61 @@ class _MainPageState extends ConsumerState<MainPage> {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
     final isWide = MoeWorkspace.maybeOf(context)?.isWide == true;
+    final content = MoeSurfaceGroup(
+      key: _contentKey,
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: IndexedStack(
+          index: _currentIndex,
+          children: [
+            const ContactsPage(),
+            _visited.contains(1)
+                ? const RoleCardPage()
+                : const SizedBox.shrink(),
+            _visited.contains(2)
+                ? const SettingsPage()
+                : const SizedBox.shrink(),
+          ],
+        ),
+        bottomNavigationBar: CustomBottomNav(
+          currentIndex: _currentIndex,
+          onTap: _switchTab,
+          items: const [
+            BottomNavItem(
+              icon: Icons.chat_bubble_outline_rounded,
+              activeIcon: Icons.chat_bubble_rounded,
+              label: '聊天',
+            ),
+            BottomNavItem(
+              icon: Icons.people_outline_rounded,
+              activeIcon: Icons.people_rounded,
+              label: '角色',
+            ),
+            BottomNavItem(
+              icon: Icons.settings_outlined,
+              activeIcon: Icons.settings,
+              label: '设置',
+            ),
+          ],
+        ),
+      ),
+    );
+    // A full-screen narrow page has no backdrop of its own; with a global
+    // wallpaper it paints that wallpaper under the material tint instead.
+    final glass = MoeGlassTheme.maybeOf(context);
+    if (!isWide &&
+        (glass?.enabled ?? true) &&
+        MoeGlobalWallpaper.isActive(context)) {
+      final fill = glass?.tintFill ?? kDefaultGlassTintFill;
+      return MoeGlobalWallpaper(
+        slot: GlobalWallpaperSlot.home,
+        color: colors.surface,
+        child: ColoredBox(
+          color: colors.glassTintForFill(fill),
+          child: content,
+        ),
+      );
+    }
     return MoeFloatingSurface(
       baseline: MoeMaterialBaseline.background,
       // Page backgrounds keep blur and tint without a lens rim at the edges.
@@ -44,33 +121,7 @@ class _MainPageState extends ConsumerState<MainPage> {
       solidColor: colors.surface,
       border: BorderSide.none,
       shadows: const [],
-      child: MoeSurfaceGroup(
-        child: Scaffold(
-      backgroundColor: Colors.transparent,
-          body: IndexedStack(index: _currentIndex, children: [
-        const ContactsPage(),
-        _visited.contains(1) ? const RoleCardPage() : const SizedBox.shrink(),
-        _visited.contains(2) ? const SettingsPage() : const SizedBox.shrink(),
-      ]),
-      bottomNavigationBar: CustomBottomNav(
-        currentIndex: _currentIndex,
-        onTap: _switchTab,
-        items: const [
-          BottomNavItem(
-              icon: Icons.chat_bubble_outline_rounded,
-              activeIcon: Icons.chat_bubble_rounded,
-              label: '聊天'),
-          BottomNavItem(
-              icon: Icons.people_outline_rounded,
-              activeIcon: Icons.people_rounded,
-              label: '角色'),
-          BottomNavItem(
-              icon: Icons.settings_outlined,
-              activeIcon: Icons.settings,
-              label: '设置'),
-        ],
-      ),
-    )),
+      child: content,
     );
   }
 }

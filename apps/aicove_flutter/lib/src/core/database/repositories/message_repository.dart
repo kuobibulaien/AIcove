@@ -285,20 +285,33 @@ class MessageRepository {
         .get();
   }
 
-  /// 物理删除过期数据
+  /// 物理删除过期数据；同一事务里删掉这些消息的会话状态缓存，保留会话基线（ADR0071）。
   Future<int> purgeExpired() async {
     final now = DateTime.now().millisecondsSinceEpoch;
-    return (_db.delete(_db.messages)
-          ..where((t) =>
-              t.purgeAt.isNotNull() & t.purgeAt.isSmallerOrEqualValue(now)))
-        .go();
+    return _db.transaction(() async {
+      await _db.customStatement(
+        'DELETE FROM message_states WHERE anchor_id IN '
+        '(SELECT id FROM messages WHERE purge_at IS NOT NULL AND purge_at <= ?)',
+        [now],
+      );
+      return (_db.delete(_db.messages)
+            ..where((t) =>
+                t.purgeAt.isNotNull() & t.purgeAt.isSmallerOrEqualValue(now)))
+          .go();
+    });
   }
 
-  /// 删除会话的所有消息
+  /// 删除会话的所有消息；视为会话状态重置，连同基线删除全部状态行（ADR0071）。
   Future<int> deleteByConversation(String conversationId) async {
-    return (_db.delete(_db.messages)
-          ..where((t) => t.conversationId.equals(conversationId)))
-        .go();
+    return _db.transaction(() async {
+      await _db.customStatement(
+        'DELETE FROM message_states WHERE conversation_id = ?',
+        [conversationId],
+      );
+      return (_db.delete(_db.messages)
+            ..where((t) => t.conversationId.equals(conversationId)))
+          .go();
+    });
   }
 
   /// 软删除会话的所有消息
@@ -332,6 +345,21 @@ class MessageRepository {
       limit: null,
       descending: false,
     );
+  }
+
+  /// 当前有效消息链里已发送的 AI 回复（稳定排序），供会话状态重放（ADR0071）。
+  Future<List<Message>> getSentAssistantChainStable(
+      String conversationId) async {
+    final rows = await _queryStableConversationMessages(
+      conversationId: conversationId,
+      limit: null,
+      role: 'assistant',
+      descending: false,
+    );
+    return [
+      for (final row in rows)
+        if (row.status == 'sent') row,
+    ];
   }
 
   Future<int> countByConversation(String conversationId) async {

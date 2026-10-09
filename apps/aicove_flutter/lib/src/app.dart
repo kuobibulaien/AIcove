@@ -477,7 +477,9 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
                       .toDouble(),
                   tintFill: settings.glassTintFill,
                   useLiquidGlass: settings.useLiquidGlass,
-                  child: DesktopWindowFrame(
+                  child: MoeWallpaperTheme(
+                    wallpaper: settings.globalWallpaper,
+                    child: DesktopWindowFrame(
                     windowControlsOnRight: settings.windowsWindowControlsSide ==
                         WindowControlButtonSide.right,
                     child: _GlobalUiScale(
@@ -487,6 +489,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
                         child: child ?? const SizedBox.shrink(),
                       ),
                     ),
+                  ),
                   ),
                 ),
               );

@@ -3,6 +3,7 @@ library;
 import 'dart:math';
 
 import '../../../core/utils/token_estimator.dart';
+import '../../conversation_state/domain/mvu_content.dart';
 import 'silly_tavern_macro_evaluator.dart';
 import 'silly_tavern_preset.dart';
 import 'silly_tavern_world_book.dart';
@@ -19,6 +20,9 @@ class SillyTavernAssemblyContext {
   final List<String> initialWarnings;
   final List<TavernWorldInjection> worldInjections;
 
+  /// MVU 楼层变量 `{'stat_data': …}`（ADR0071）；null 表示本请求 MVU 未生效。
+  final Map<String, Object?>? messageVariables;
+
   const SillyTavernAssemblyContext({
     required this.characterName,
     required this.userName,
@@ -30,6 +34,7 @@ class SillyTavernAssemblyContext {
     this.initialVariables = const <String, String>{},
     this.initialWarnings = const <String>[],
     this.worldInjections = const [],
+    this.messageVariables,
   });
 }
 
@@ -235,6 +240,7 @@ class SillyTavernPresetAssembler {
         variables: variables,
         randomIndexPicker: effectiveRandomIndexPicker,
         warnings: warnings,
+        messageVariables: context.messageVariables,
       );
       appliedMacros.addAll(result.appliedMacros);
       unknownMacros.addAll(result.unknownMacros);
@@ -349,6 +355,7 @@ class SillyTavernPresetAssembler {
       variables: variables,
       randomIndexPicker: effectiveRandomIndexPicker,
       warnings: warnings,
+      messageVariables: context.messageVariables,
     );
     appliedMacros.addAll(prefillResult.appliedMacros);
     unknownMacros.addAll(prefillResult.unknownMacros);
@@ -489,6 +496,14 @@ class SillyTavernPresetAssembler {
           content = prompt.content;
         }
     }
+    if (containsEjs(content)) {
+      warnings.add('${prompt.name} 含 EJS 模板（<% %>），本期不支持，已跳过该条目');
+      return '';
+    }
+    if (context.messageVariables == null && isMvuSpecificContent(content)) {
+      warnings.add('${prompt.name} 属于 MVU 变量，本角色未启用 MVU，已跳过');
+      return '';
+    }
     final values = _buildMacroValues(context, lastUserMessage);
     final result = _macroEvaluator.evaluate(
       content,
@@ -497,6 +512,7 @@ class SillyTavernPresetAssembler {
       variables: variables,
       randomIndexPicker: randomIndexPicker,
       warnings: warnings,
+      messageVariables: context.messageVariables,
     );
     appliedMacros.addAll(result.appliedMacros);
     unknownMacros.addAll(result.unknownMacros);

@@ -565,6 +565,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
   }) async {
     final actions = ref.read(chatActionsProvider);
     final enableEnhancedRegenerate =
+        kEnhancedRegenerateAvailable &&
         ref
             .read(appSettingsProvider)
             .valueOrNull
@@ -630,7 +631,12 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
               break;
             }
             if (action == MessageAction.regenerate) {
-              widget.onRegenerateMessage?.call(message);
+              final guidance = await showRegenerateGuidanceDialog(context);
+              if (guidance == null || !context.mounted) break;
+              widget.onRegenerateMessage?.call(
+                message,
+                guidance.isEmpty ? null : guidance,
+              );
             } else {
               widget.onEnhanceRegenerateMessage?.call(message);
             }

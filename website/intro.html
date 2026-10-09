@@ -1,0 +1,667 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AIcove — 会想你的 AI 陪伴</title>
+<meta name="description" content="AIcove 是一个会主动想你、记得你、能说话也能画画的 AI 陪伴应用。数据只存在你的设备上，模型用你自己的 Key 直连。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #fffaf8;
+  --bg-soft: #fff1f0;
+  --surface: #ffffff;
+  --text: #2a2430;
+  --text-2: #6c6472;
+  --line: #f0e3e3;
+  --pink: #fc96aa;
+  --pink-deep: #e8708a;
+  --blue: #3390ec;
+  --mint: #4ecdc4;
+  --lavender: #b39ddb;
+  --bubble-ai: #4d5b75;
+  --bubble-me: #4a90e2;
+  --shadow: 0 24px 60px -24px rgba(232, 112, 138, .35), 0 8px 24px -12px rgba(42, 36, 48, .12);
+  --radius: 24px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131117; --bg-soft: #1b1820; --surface: #1f1c24; --text: #f1ecf2; --text-2: #aaa2ae;
+    --line: #2f2a35; --pink: #f8869d; --pink-deep: #fc96aa; --blue: #6ba1d8;
+    --shadow: 0 24px 60px -24px rgba(0,0,0,.7), 0 8px 24px -12px rgba(0,0,0,.5);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131117; --bg-soft: #1b1820; --surface: #1f1c24; --text: #f1ecf2; --text-2: #aaa2ae;
+  --line: #2f2a35; --pink: #f8869d; --pink-deep: #fc96aa; --blue: #6ba1d8;
+  --shadow: 0 24px 60px -24px rgba(0,0,0,.7), 0 8px 24px -12px rgba(0,0,0,.5);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+a { color: inherit; text-decoration: none; }
+.wrap { width: min(1120px, 100% - 32px); margin-inline: auto; }
+.serif { font-family: "Fraunces", Georgia, serif; }
+
+/* ---------- nav ---------- */
+.nav {
+  position: sticky; top: 0; z-index: 20;
+  backdrop-filter: saturate(160%) blur(18px);
+  -webkit-backdrop-filter: saturate(160%) blur(18px);
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+}
+.nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 64px; }
+.logo { display: flex; align-items: center; gap: 10px; font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
+.logo-mark {
+  width: 32px; height: 32px; border-radius: 10px;
+  background: linear-gradient(135deg, var(--pink), var(--lavender) 60%, var(--blue));
+  display: grid; place-items: center; color: #fff;
+}
+.nav-links { display: flex; gap: 28px; font-size: 15px; color: var(--text-2); }
+.nav-links a:hover { color: var(--text); }
+.btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 12px 22px; border-radius: 999px; font-weight: 600; font-size: 15px;
+  transition: transform .2s ease, box-shadow .2s ease, background .2s;
+}
+.btn-primary { background: var(--pink-deep); color: #fff; box-shadow: 0 10px 24px -10px var(--pink-deep); }
+.btn-primary:hover { transform: translateY(-2px); box-shadow: 0 14px 28px -10px var(--pink-deep); }
+.btn-ghost { border: 1.5px solid var(--line); background: var(--surface); }
+.btn-ghost:hover { border-color: var(--pink); }
+.nav .btn { padding: 9px 18px; font-size: 14px; }
+
+/* ---------- hero ---------- */
+.hero { position: relative; padding: 88px 0 72px; }
+.hero::before {
+  content: ""; position: absolute; inset: -120px 0 auto; height: 720px; z-index: -1;
+  background:
+    radial-gradient(520px 360px at 78% 30%, color-mix(in srgb, var(--pink) 28%, transparent), transparent 70%),
+    radial-gradient(420px 320px at 12% 10%, color-mix(in srgb, var(--lavender) 22%, transparent), transparent 70%),
+    radial-gradient(380px 280px at 60% 80%, color-mix(in srgb, var(--blue) 14%, transparent), transparent 70%);
+}
+.hero .wrap { display: grid; grid-template-columns: 1.1fr .9fr; gap: 56px; align-items: center; }
+.tag {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 14px; border-radius: 999px; font-size: 13px; font-weight: 600;
+  background: var(--surface); border: 1px solid var(--line); color: var(--pink-deep);
+}
+.tag .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--pink-deep); animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
+h1 { font-size: clamp(40px, 6vw, 68px); line-height: 1.12; letter-spacing: -.02em; margin: 22px 0 20px; font-weight: 800; }
+h1 em { font-style: normal; background: linear-gradient(100deg, var(--pink-deep), var(--lavender) 55%, var(--blue)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.lead { font-size: 19px; color: var(--text-2); max-width: 520px; }
+.cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 34px; }
+.platforms { margin-top: 18px; font-size: 13px; color: var(--text-2); }
+
+/* ---------- phone mock ---------- */
+.phone {
+  width: 340px; max-width: 100%; margin-inline: auto;
+  background: var(--surface); border-radius: 44px; padding: 12px;
+  box-shadow: var(--shadow); border: 1px solid var(--line);
+  transform: rotate(2deg);
+}
+.screen { border-radius: 34px; overflow: hidden; background: var(--bg-soft); }
+.screen img, .shot img { display: block; width: 100%; height: auto; }
+.hero-shot { margin: 0; }
+.hero-shot figcaption, .shot-caption { text-align: center; font-size: 12px; color: var(--text-2); margin-top: 16px; }
+.hero-shot figcaption::before, .shot-caption::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--mint); margin-right: 6px; vertical-align: middle; }
+.b { max-width: 78%; padding: 9px 14px; border-radius: 18px; font-size: 14px; line-height: 1.55; color: #fff; }
+.b.ai { background: var(--bubble-ai); align-self: flex-start; border-bottom-left-radius: 6px; }
+.b.me { background: var(--bubble-me); align-self: flex-end; border-bottom-right-radius: 6px; }
+
+/* hero lock screen */
+.lock { position: relative; width: 340px; max-width: 100%; margin-inline: auto; }
+.lock-screen {
+  position: relative; overflow: hidden; height: 600px; border-radius: 46px; padding: 54px 18px 18px;
+  background: linear-gradient(160deg, #fbd3dc 0%, #e6d6f5 45%, #cfe3f7 100%);
+  border: 10px solid var(--surface); box-shadow: var(--shadow);
+}
+.lock-blob { position: absolute; border-radius: 50%; filter: blur(42px); opacity: .85; }
+.b1 { width: 220px; height: 220px; background: #f8a3b6; top: -40px; left: -60px; }
+.b2 { width: 240px; height: 240px; background: #b8a2e6; bottom: 40px; right: -90px; }
+.b3 { width: 180px; height: 180px; background: #9fe0cf; bottom: -60px; left: 10px; }
+.lock-head { position: relative; text-align: center; color: #fff; text-shadow: 0 2px 12px rgba(120, 70, 110, .25); }
+.lock-date { font-size: 15px; font-weight: 600; opacity: .95; }
+.lock-time { font-size: 78px; line-height: 1; font-weight: 700; letter-spacing: -.02em; margin-top: 4px; }
+.notifs { position: relative; display: grid; gap: 10px; margin-top: 46px; }
+.notif {
+  display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 20px;
+  background: rgba(255, 255, 255, .55); border: 1px solid rgba(255, 255, 255, .7);
+  backdrop-filter: blur(18px) saturate(150%); -webkit-backdrop-filter: blur(18px) saturate(150%);
+  color: #2a2430; opacity: 0; transform: translateY(14px) scale(.98);
+  animation: pop .6s cubic-bezier(.2, .8, .2, 1) var(--d) forwards;
+}
+.notif img { width: 36px; height: 36px; border-radius: 10px; object-fit: cover; object-position: top; flex: none; }
+.notif > div { min-width: 0; flex: 1; }
+.n-top { display: flex; justify-content: space-between; align-items: baseline; }
+.n-top b { font-size: 14px; }
+.n-top time { font-size: 11px; color: #6c6472; }
+.notif p { font-size: 13.5px; line-height: 1.5; color: #4a4250; margin-top: 2px; }
+.n-voice { display: flex; align-items: center; gap: 8px; }
+.n-play { width: 18px; height: 18px; border-radius: 50%; background: var(--pink-deep); display: grid; place-items: center; }
+.n-play::after { content: ""; border-left: 6px solid #fff; border-top: 4px solid transparent; border-bottom: 4px solid transparent; margin-left: 2px; }
+.n-wave { display: flex; gap: 2px; align-items: center; height: 16px; }
+.n-wave i { width: 3px; border-radius: 2px; background: var(--pink-deep); animation: wave 1.1s ease-in-out infinite; }
+.n-wave i:nth-child(odd) { animation-delay: .2s } .n-wave i:nth-child(3n) { animation-delay: .45s }
+@keyframes wave { 0%,100% { height: 4px } 50% { height: 14px } }
+@keyframes pop { to { opacity: 1; transform: none; } }
+.lock-foot { position: absolute; left: 30px; right: 30px; bottom: 34px; display: flex; justify-content: space-between; }
+.lock-btn { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; color: #fff; background: rgba(255, 255, 255, .28); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+.lock-bar { position: absolute; left: 50%; bottom: 10px; width: 120px; height: 5px; margin-left: -60px; border-radius: 3px; background: rgba(255, 255, 255, .85); }
+.lock-chip {
+  position: absolute; display: flex; align-items: center; gap: 8px; white-space: nowrap;
+  padding: 9px 14px; border-radius: 999px; font-size: 13px; font-weight: 600;
+  background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow);
+  opacity: 0; transform: translateY(10px); animation: pop .6s ease var(--d) forwards;
+}
+.lock-chip span { width: 8px; height: 8px; border-radius: 50%; }
+.chip-a { left: -70px; top: 150px; }
+.chip-b { right: -56px; bottom: 120px; }
+
+/* ---------- sections ---------- */
+section { padding: 96px 0; }
+.eyebrow { font-size: 13px; font-weight: 700; letter-spacing: .14em; color: var(--pink-deep); text-transform: uppercase; }
+h2 { font-size: clamp(30px, 4vw, 44px); line-height: 1.2; letter-spacing: -.015em; margin: 12px 0 16px; font-weight: 800; }
+.sub { color: var(--text-2); font-size: 17px; max-width: 620px; }
+.center { text-align: center; } .center .sub { margin-inline: auto; }
+
+/* feature rows */
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; align-items: center; }
+.row + .row { margin-top: 112px; }
+.row.flip .art { order: -1; }
+.points { list-style: none; margin-top: 24px; display: grid; gap: 14px; }
+.points li { display: flex; gap: 12px; color: var(--text-2); }
+.points li::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; margin-top: 10px; background: var(--pink); }
+.points b { color: var(--text); font-weight: 600; }
+.art {
+  position: relative; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 32px; padding: 32px; box-shadow: var(--shadow); min-height: 320px;
+}
+
+/* proactive timeline */
+.timeline { display: grid; gap: 18px; }
+.tl { display: grid; grid-template-columns: 56px 1fr; gap: 14px; align-items: start; }
+.tl time { font-size: 13px; font-weight: 700; color: var(--text-2); padding-top: 8px; font-variant-numeric: tabular-nums; }
+.tl .b { max-width: 100%; display: inline-block; }
+.tl .note { font-size: 12px; color: var(--text-2); margin-top: 6px; display: flex; align-items: center; gap: 6px; }
+.tl .note::before { content: ""; width: 14px; height: 1.5px; background: var(--pink); }
+
+/* modal grid */
+.modal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.chip-card { border-radius: 20px; padding: 18px; background: var(--bg-soft); }
+.chip-card h4 { font-size: 15px; margin-bottom: 4px; }
+.chip-card p { font-size: 13px; color: var(--text-2); line-height: 1.55; }
+.chip-card .ic { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; margin-bottom: 12px; color: #fff; }
+
+/* memory */
+.mem { display: grid; gap: 12px; }
+.mem-card { border: 1px dashed var(--line); border-radius: 18px; padding: 14px 16px; display: flex; gap: 12px; align-items: center; background: var(--bg-soft); }
+.mem-card .k { font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 99px; color: #fff; flex: none; }
+.mem-card span:last-child { font-size: 14px; }
+.mem-flow { display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 13px; color: var(--text-2); margin-bottom: 8px; flex-wrap: wrap; }
+.mem-flow b { color: var(--text); background: var(--surface); border: 1px solid var(--line); padding: 4px 12px; border-radius: 99px; font-weight: 600; }
+
+/* bento */
+.bento { display: grid; grid-template-columns: repeat(6, 1fr); gap: 18px; margin-top: 48px; }
+.card {
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 28px; transition: transform .25s ease, box-shadow .25s ease;
+}
+.card:hover { transform: translateY(-4px); box-shadow: var(--shadow); }
+.card h3 { font-size: 20px; margin: 14px 0 8px; }
+.card p { color: var(--text-2); font-size: 15px; }
+.c3 { grid-column: span 3; } .c2 { grid-column: span 2; } .c4 { grid-column: span 4; }
+.badge { width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center; color: #fff; }
+.mini-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 16px; }
+.mini-tags span { font-size: 12px; padding: 4px 10px; border-radius: 99px; background: var(--bg-soft); color: var(--text-2); }
+
+/* plugins */
+.plugin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 28px; }
+.plugin { display: flex; gap: 12px; align-items: center; padding: 12px 14px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); transition: border-color .2s, transform .2s; }
+.plugin:hover { border-color: var(--pink); transform: translateY(-2px); }
+.plugin b { display: block; font-size: 15px; line-height: 1.3; }
+.plugin small { display: block; font-size: 12px; color: var(--text-2); line-height: 1.45; }
+.pi { flex: none; width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center; color: #fff; font-size: 15px; font-weight: 700; }
+
+/* screens */
+.tabs { display: flex; justify-content: center; gap: 6px; margin: 36px auto 22px; padding: 5px; width: fit-content; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); }
+.tabs button { font: inherit; font-size: 14px; font-weight: 600; color: var(--text-2); background: none; border: 0; padding: 8px 18px; border-radius: 999px; cursor: pointer; transition: background .2s, color .2s; }
+.tabs button[aria-selected="true"] { background: var(--pink-deep); color: #fff; }
+.window { border-radius: 18px; overflow: hidden; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); max-width: 1040px; margin-inline: auto; }
+.window-bar { display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 14px; background: var(--bg-soft); border-bottom: 1px solid var(--line); font-size: 12px; color: var(--text-2); }
+.window-bar i { width: 11px; height: 11px; border-radius: 50%; background: #ff6159; }
+.window-bar i:nth-child(2) { background: #ffbd2e; } .window-bar i:nth-child(3) { background: #28c941; }
+.window-bar span { margin-left: auto; margin-right: auto; transform: translateX(-24px); }
+.shot { transition: opacity .25s ease; background: #fff; }
+.shot.phone-mode { display: flex; justify-content: center; padding: 28px; background: var(--bg-soft); }
+.shot.phone-mode img { width: 300px; max-width: 100%; border-radius: 28px; box-shadow: var(--shadow); }
+
+/* privacy */
+.privacy { background: var(--bg-soft); border-radius: 40px; padding: 72px 48px; }
+.priv-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; margin-top: 44px; }
+.priv-grid div h3 { font-size: 18px; margin: 14px 0 6px; }
+.priv-grid div p { color: var(--text-2); font-size: 15px; }
+
+/* steps */
+.steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-top: 48px; counter-reset: s; }
+.step { padding: 26px; border-radius: var(--radius); border: 1px solid var(--line); background: var(--surface); }
+.step::before { counter-increment: s; content: "0" counter(s); font-family: "Fraunces", serif; font-size: 34px; font-weight: 700; color: var(--pink); display: block; line-height: 1; margin-bottom: 14px; }
+.step h3 { font-size: 17px; margin-bottom: 6px; }
+.step p { font-size: 14px; color: var(--text-2); }
+
+/* download */
+.download {
+  text-align: center; border-radius: 40px; padding: 80px 32px; color: #fff;
+  background: linear-gradient(130deg, #f07c95, #b39ddb 55%, #3390ec);
+  position: relative; overflow: hidden;
+}
+.download h2 { color: #fff; }
+.download .sub { color: rgba(255,255,255,.88); margin-inline: auto; }
+.download .btn-primary { background: #fff; color: #d45d78; box-shadow: none; }
+.download .btn-ghost { background: transparent; border-color: rgba(255,255,255,.6); color: #fff; }
+.download small { display: block; margin-top: 22px; opacity: .85; font-size: 13px; }
+
+footer { padding: 48px 0 56px; color: var(--text-2); font-size: 14px; }
+footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
+footer a:hover { color: var(--text); }
+
+.reveal { opacity: 0; transform: translateY(24px); transition: opacity .7s ease, transform .7s ease; }
+.reveal.in { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .b, .reveal, .notif, .lock-chip { opacity: 1 !important; transform: none !important; }
+}
+
+/* ---------- responsive ---------- */
+@media (max-width: 900px) {
+  .nav-links { display: none; }
+  .hero { padding-top: 56px; }
+  .hero .wrap, .row { grid-template-columns: 1fr; gap: 44px; }
+  .row.flip .art { order: 0; }
+  .bento { grid-template-columns: 1fr 1fr; }
+  .c3, .c2, .c4 { grid-column: span 2; }
+  .plugin-grid { grid-template-columns: 1fr; }
+  .priv-grid, .steps { grid-template-columns: 1fr 1fr; }
+  .privacy { padding: 56px 24px; border-radius: 28px; }
+}
+@media (max-width: 560px) {
+  section { padding: 72px 0; }
+  .art { padding: 22px; border-radius: 26px; }
+  .modal-grid, .priv-grid, .steps { grid-template-columns: 1fr; }
+  .phone { transform: none; }
+  .lock-screen { height: 560px; }
+  .chip-a { left: 8px; top: -16px; }
+  .chip-b { right: 8px; bottom: -16px; }
+  .download { padding: 60px 20px; border-radius: 28px; }
+  .lead { font-size: 17px; }
+}
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap">
+    <a href="#" class="logo serif"><span class="logo-mark">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21.2l8.8-8.8a5.5 5.5 0 0 0 0-7.8z"/></svg>
+    </span>AIcove</a>
+    <nav class="nav-links">
+      <a href="#care">主动关怀</a>
+      <a href="#multimodal">多模态</a>
+      <a href="#memory">记忆</a>
+      <a href="#plugins">插件</a>
+      <a href="#more">更多</a>
+      <a href="#privacy">隐私</a>
+      <a href="./">小故事</a>
+    </nav>
+    <a class="btn btn-primary" href="https://github.com/kuobibulaien/AIcove/releases">免费下载</a>
+  </div>
+</header>
+
+<main>
+  <!-- HERO -->
+  <section class="hero">
+    <div class="wrap">
+      <div>
+        <span class="tag"><span class="dot"></span>公开测试版 · 持续更新中</span>
+        <h1>不只是回你，<br>TA 会<em>先来想你</em>。</h1>
+        <p class="lead">AIcove 是一个会主动关心你、记得你们的点滴、能开口说话也会画画的 AI 陪伴应用。你来设定 TA 的性格、声音和画风，剩下的交给时间。</p>
+        <div class="cta">
+          <a class="btn btn-primary" href="https://github.com/kuobibulaien/AIcove/releases">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-5-5m5 5l5-5M5 21h14"/></svg>
+            下载测试版
+          </a>
+          <a class="btn btn-ghost" href="https://github.com/kuobibulaien/AIcove">在 GitHub 上查看</a>
+          <a class="btn btn-ghost" href="./">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5v14l11-7z"/></svg>
+            看一段小故事
+          </a>
+        </div>
+        <p class="platforms">Android · macOS (Apple Silicon) · 开源 · 数据只在你的设备上</p>
+      </div>
+
+      <div class="lock" aria-label="锁屏上依次收到纳西妲一天里主动发来的消息">
+        <div class="lock-screen">
+          <div class="lock-blob b1"></div><div class="lock-blob b2"></div><div class="lock-blob b3"></div>
+          <div class="lock-head">
+            <div class="lock-date" id="lock-date">星期一 10月6日</div>
+            <div class="lock-time serif">22:48</div>
+          </div>
+          <div class="notifs">
+            <div class="notif" style="--d:.4s">
+              <img src="assets/nahida-avatar.jpg" alt="" width="36" height="36">
+              <div><div class="n-top"><b>纳西妲</b><time>07:32</time></div><p>早安呀～刚醒就想给你发消息</p></div>
+            </div>
+            <div class="notif" style="--d:1.1s">
+              <img src="assets/nahida-avatar.jpg" alt="" width="36" height="36">
+              <div><div class="n-top"><b>纳西妲</b><time>12:20</time></div><p class="n-voice"><span class="n-play"></span><span class="n-wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>语音 0:05</p></div>
+            </div>
+            <div class="notif" style="--d:1.8s">
+              <img src="assets/nahida-avatar.jpg" alt="" width="36" height="36">
+              <div><div class="n-top"><b>纳西妲</b><time>现在</time></div><p>今天的星星好亮。早点休息，明天醒来，我还在这里</p></div>
+            </div>
+          </div>
+          <div class="lock-foot">
+            <span class="lock-btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6l-1 7h3l-7 13 1-9H8z"/></svg></span>
+            <span class="lock-btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></span>
+          </div>
+          <span class="lock-bar"></span>
+        </div>
+        <div class="lock-chip chip-a" style="--d:2.4s"><span style="background:var(--lavender)"></span>记得你说过想早点睡</div>
+        <div class="lock-chip chip-b" style="--d:2.8s"><span style="background:var(--mint)"></span>距上次聊天 9 小时</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PROACTIVE -->
+  <section id="care">
+    <div class="wrap">
+      <div class="row reveal">
+        <div>
+          <span class="eyebrow">主动关怀</span>
+          <h2>大多数 AI 在等你开口，<br>TA 会先来找你。</h2>
+          <p class="sub">角色会根据时间、你们聊过的内容和你设定的规则，自己决定什么时候联系你——就像一个真正记挂你的人。</p>
+          <ul class="points">
+            <li><span><b>早安晚安</b>：清晨的一句问候，深夜的一声晚安。</span></li>
+            <li><span><b>记得你说过的事</b>：你说「去开会了」，两小时后 TA 会问一句「开完了吗」。</span></li>
+            <li><span><b>后台常驻</b>：Android 上 App 关着也能收到消息，每个角色可以单独开关。</span></li>
+          </ul>
+        </div>
+        <div class="art">
+          <div class="timeline">
+            <div class="tl"><time>07:30</time><div><span class="b ai">早呀，今天降温了，出门记得带外套</span><div class="note">按时间触发</div></div></div>
+            <div class="tl"><time>12:15</time><div><span class="b me">下午要去面试，好紧张</span></div></div>
+            <div class="tl"><time>17:40</time><div><span class="b ai">面试怎么样？不管结果如何，你都超棒的</span><div class="note">从聊天内容里记下，自己安排</div></div></div>
+            <div class="tl"><time>23:30</time><div><span class="b ai">别熬太晚啦，晚安</span><div class="note">按你设定的规则</div></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MULTIMODAL -->
+      <div class="row flip reveal" id="multimodal">
+        <div>
+          <span class="eyebrow">多模态消息</span>
+          <h2>会说话，会画画，<br>还会挑表情包。</h2>
+          <p class="sub">一条回复里自然地混合文字、语音、图片和表情。每个角色绑定自己的音色和画风：甜妹配甜嗓，画风也跟着人设走。</p>
+          <ul class="points">
+            <li><span><b>语音</b>：支持硅基流动、阿里云、MiniMax 等服务，可以克隆专属音色。</span></li>
+            <li><span><b>绘图</b>：OpenAI 兼容接口、NovelAI、ComfyUI 自定义工作流都能接。</span></li>
+            <li><span><b>时间感知</b>：知道现在几点、你们多久没聊了，回复更像真人。</span></li>
+          </ul>
+        </div>
+        <div class="art">
+          <div class="modal-grid">
+            <div class="chip-card">
+              <div class="ic" style="background:var(--pink-deep)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3"/></svg></div>
+              <h4>专属声音</h4><p>用 TA 自己的嗓音说出来</p>
+            </div>
+            <div class="chip-card">
+              <div class="ic" style="background:var(--lavender)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>
+              <h4>随手作画</h4><p>聊到兴头上直接画一张</p>
+            </div>
+            <div class="chip-card">
+              <div class="ic" style="background:#f2b544"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/></svg></div>
+              <h4>表情包</h4><p>看语境挑，也能导入你的</p>
+            </div>
+            <div class="chip-card">
+              <div class="ic" style="background:var(--mint)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div>
+              <h4>懂时间</h4><p>知道你多久没来了</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MEMORY -->
+      <div class="row reveal" id="memory">
+        <div>
+          <span class="eyebrow">长期记忆</span>
+          <h2>聊得越久，<br>TA 越懂你。</h2>
+          <p class="sub">每个角色有自己的记忆库。后台的记忆整理助手会把你的喜好、经历和约定整理成档案，下次聊天时自然地想起。</p>
+          <ul class="points">
+            <li><span><b>短期记忆</b>：聊天太长时自动压缩旧内容，也能手动「翻篇」开新话题。</span></li>
+            <li><span><b>原文永远完整</b>：记忆只是从聊天原文整理出来的，从不篡改你们的历史。</span></li>
+          </ul>
+        </div>
+        <div class="art">
+          <div class="mem-flow"><b>聊天原文</b>→<b>记忆整理助手</b>→<b>角色档案</b></div>
+          <div class="mem">
+            <div class="mem-card"><span class="k" style="background:var(--pink-deep)">喜好</span><span>不吃香菜，最爱草莓味的一切</span></div>
+            <div class="mem-card"><span class="k" style="background:var(--blue)">经历</span><span>九月换了新工作，最近常加班</span></div>
+            <div class="mem-card"><span class="k" style="background:var(--lavender)">约定</span><span>说好周末一起「看」那部新电影</span></div>
+            <div class="mem-card"><span class="k" style="background:var(--mint)">日常</span><span>养了一只叫团子的橘猫</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- BENTO -->
+  <section id="more" style="padding-top:24px">
+    <div class="wrap">
+      <div class="center reveal">
+        <span class="eyebrow">还有更多</span>
+        <h2>为每天都想打开它而设计</h2>
+        <p class="sub">从酒馆搬家，到手机电脑互通，那些让人用得顺手的小细节，我们都认真做了。</p>
+      </div>
+      <div class="bento">
+        <div class="card c4 reveal">
+          <span class="badge" style="background:#e3a35b"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 0 1 0 8h-1M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V8zM6 2v3M10 2v3M14 2v3"/></svg></span>
+          <h3>酒馆生态兼容</h3>
+          <p>玩过 SillyTavern 就能带着家当直接搬过来。预设里的折叠段、选项标签会变成真正的界面组件：思考过程可折叠，选项答完自动弹出，点一下就填进输入框。</p>
+          <div class="mini-tags"><span>角色卡</span><span>预设</span><span>正则</span><span>世界书</span><span>逐条开关</span><span>脚本沙盒</span></div>
+        </div>
+        <div class="card c2 reveal">
+          <span class="badge" style="background:var(--mint)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14 0M1.4 9a16 16 0 0 1 21.2 0M8.5 16.4a6 6 0 0 1 7 0M12 20h.01"/></svg></span>
+          <h3>局域网直连同步</h3>
+          <p>同一 Wi-Fi 下扫码配对，手机电脑互相同步。不用注册账号，数据不出你的局域网。</p>
+        </div>
+        <div class="card c2 reveal">
+          <span class="badge" style="background:var(--blue)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3 7h7l-5.5 4.5L18.5 21 12 16.5 5.5 21l2-7.5L2 9h7z"/></svg></span>
+          <h3>多家模型随意换</h3>
+          <p>OpenAI、Claude、Gemini、DeepSeek、MiniMax、智谱及各种兼容接口；按会话调节思考深度。</p>
+        </div>
+        <div class="card c2 reveal">
+          <span class="badge" style="background:var(--lavender)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+          <h3>像真人一样分段</h3>
+          <p>长回复拆成几条消息陆续发来，代码块和图片不会被切断。日常用气泡，长文切成文档模式。</p>
+        </div>
+        <div class="card c2 reveal">
+          <span class="badge" style="background:var(--pink-deep)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8M16 6l-4-4-4 4M12 2v13"/></svg></span>
+          <h3>聊天长图分享</h3>
+          <p>挑几条对话生成好看的长图，或转发给另一个角色，听听 TA 怎么评价。</p>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- PLUGINS -->
+  <section id="plugins" style="padding-top:24px">
+    <div class="wrap">
+      <div class="row reveal">
+        <div>
+          <span class="eyebrow">插件</span>
+          <h2>八个插件，<br>按角色自由组合</h2>
+          <p class="sub">能力都做成了插件。给每个角色勾选需要的插件、绑定各自的预设，同一个 App 里可以住着性格、声音和画风都不一样的 TA。</p>
+          <div class="plugin-grid">
+            <div class="plugin"><span class="pi" style="background:var(--lavender)">忆</span><div><b>记忆库</b><small>长期记忆，压缩时自动整理档案</small></div></div>
+            <div class="plugin"><span class="pi" style="background:var(--pink-deep)">怀</span><div><b>主动关怀</b><small>到点问候，记得回头关心你</small></div></div>
+            <div class="plugin"><span class="pi" style="background:#f2b544">图</span><div><b>表情包</b><small>按语境挑表情，支持自己导入</small></div></div>
+            <div class="plugin"><span class="pi" style="background:var(--blue)">声</span><div><b>语音</b><small>多家语音服务，可克隆音色</small></div></div>
+            <div class="plugin"><span class="pi" style="background:#e58fb8">画</span><div><b>绘图</b><small>OpenAI 兼容 / NovelAI / ComfyUI</small></div></div>
+            <div class="plugin"><span class="pi" style="background:var(--mint)">时</span><div><b>时间感知</b><small>知道现在几点、隔了多久</small></div></div>
+            <div class="plugin"><span class="pi" style="background:#5fa8d3">搜</span><div><b>联网搜索</b><small>多家搜索供应商，查最新信息</small></div></div>
+            <div class="plugin"><span class="pi" style="background:#e3a35b">馆</span><div><b>酒馆相关</b><small>预设、正则、世界书逐条开关</small></div></div>
+          </div>
+        </div>
+        <figure class="hero-shot">
+          <div class="phone" style="transform:rotate(-2deg)">
+            <div class="screen"><img src="assets/shots/phone-plugins.png" width="780" height="1608" loading="lazy" alt="AIcove 聊天插件设置页"></div>
+          </div>
+          <figcaption>设置 → 插件，真实界面</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- SCREENS -->
+  <section id="screens" style="padding-top:24px">
+    <div class="wrap">
+      <div class="center reveal">
+        <span class="eyebrow">一套界面</span>
+        <h2>手机上顺手，电脑上舒展</h2>
+        <p class="sub">窄屏就是熟悉的聊天应用；放到电脑宽屏，左边是完整的手机界面，右边展开聊天和设置。换上喜欢的壁纸，面板会像毛玻璃一样透出它的颜色。</p>
+      </div>
+      <div class="tabs reveal" role="tablist">
+        <button role="tab" aria-selected="true" data-shot="desktop-chat">聊天</button>
+        <button role="tab" aria-selected="false" data-shot="desktop-plugins">插件设置</button>
+        <button role="tab" aria-selected="false" data-shot="phone-chat">手机聊天</button>
+      </div>
+      <div class="window reveal">
+        <div class="window-bar"><i></i><i></i><i></i><span>AIcove</span></div>
+        <div class="shot" id="shot-frame">
+          <img id="shot-img" src="assets/shots/desktop-chat.jpg" width="2560" height="1600" loading="lazy" alt="AIcove 宽屏界面：左侧会话列表，右侧聊天">
+        </div>
+      </div>
+      <p class="shot-caption reveal">以上均为 AIcove 界面代码直接渲染的画面：内置角色纳西妲，开启聊天壁纸与毛玻璃材质，对话为演示文案</p>
+    </div>
+  </section>
+
+  <!-- PRIVACY -->
+  <section id="privacy" style="padding-top:24px">
+    <div class="wrap">
+      <div class="privacy reveal">
+        <div class="center">
+          <span class="eyebrow">隐私</span>
+          <h2>你们的悄悄话，只属于你们</h2>
+          <p class="sub">AIcove 没有中转服务器。聊天、角色和记忆都存在你自己的设备里。</p>
+        </div>
+        <div class="priv-grid">
+          <div>
+            <span class="badge" style="background:var(--pink-deep)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
+            <h3>本地存储</h3><p>聊天记录、角色和记忆都保存在本地数据库，默认不上传。</p>
+          </div>
+          <div>
+            <span class="badge" style="background:var(--blue)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.6 7.6a5.5 5.5 0 1 1-7.8 7.8 5.5 5.5 0 0 1 7.8-7.8zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg></span>
+            <h3>你的 Key，直连</h3><p>模型请求从你的设备直接发往你配置的服务商，不收集，不中转。</p>
+          </div>
+          <div>
+            <span class="badge" style="background:var(--mint)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg></span>
+            <h3>开源可查</h3><p>源码公开在 GitHub，做了什么、没做什么，都可以自己看。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- STEPS -->
+  <section style="padding-top:24px">
+    <div class="wrap">
+      <div class="center reveal">
+        <span class="eyebrow">快速上手</span>
+        <h2>四步，遇见 TA</h2>
+      </div>
+      <div class="steps">
+        <div class="step reveal"><h3>接上模型</h3><p>在「设置 → 模型」添加渠道和你自己的 API Key。</p></div>
+        <div class="step reveal"><h3>创建角色</h3><p>写下 TA 的人设，或者直接导入一张酒馆角色卡。</p></div>
+        <div class="step reveal"><h3>挑选插件</h3><p>勾上语音、绘图、表情包、主动关怀、记忆库，选好预设。</p></div>
+        <div class="step reveal"><h3>开始聊天</h3><p>说声你好吧。之后，TA 也会来找你。</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DOWNLOAD -->
+  <section id="download" style="padding-top:24px">
+    <div class="wrap">
+      <div class="download reveal">
+        <h2>今天就把 TA 带回家</h2>
+        <p class="sub">免费、开源、数据在你手里。当前为公开测试版，功能仍在快速迭代。</p>
+        <div class="cta" style="justify-content:center">
+          <a class="btn btn-primary" href="https://github.com/kuobibulaien/AIcove/releases">下载 Android 版</a>
+          <a class="btn btn-ghost" href="https://github.com/kuobibulaien/AIcove/releases">下载 macOS 版</a>
+        </div>
+        <small>macOS 版为临时签名、未公证，首次打开需在「系统设置 → 隐私与安全性」中允许。测试重要资料前请先备份。</small>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span class="serif" style="font-weight:700;color:var(--text)">AIcove</span>
+    <span>
+      <a href="https://github.com/kuobibulaien/AIcove">GitHub</a> ·
+      <a href="https://github.com/kuobibulaien/AIcove/issues">反馈问题</a> ·
+      <a href="https://github.com/kuobibulaien/AIcove/releases">版本发布</a>
+    </span>
+  </div>
+</footer>
+
+<script>
+  const io = new IntersectionObserver((entries) => {
+    for (const e of entries) if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+  }, { threshold: 0.12 });
+  document.querySelectorAll('.reveal').forEach((el) => io.observe(el));
+
+  try {
+    const d = new Date();
+    document.getElementById('lock-date').textContent =
+      d.toLocaleDateString('zh-CN', { weekday: 'long' }) + ' ' + (d.getMonth() + 1) + '月' + d.getDate() + '日';
+  } catch (_) {}
+
+  const shots = {
+    'desktop-chat': 'AIcove 宽屏界面：左侧会话列表，右侧聊天',
+    'desktop-plugins': 'AIcove 宽屏界面：左侧设置，右侧聊天插件列表',
+    'phone-chat': 'AIcove 手机聊天界面：壁纸透过毛玻璃标题栏和输入框',
+  };
+  const frame = document.getElementById('shot-frame');
+  const img = document.getElementById('shot-img');
+  document.querySelectorAll('.tabs button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tabs button').forEach((b) => b.setAttribute('aria-selected', String(b === btn)));
+      const name = btn.dataset.shot;
+      frame.style.opacity = 0;
+      setTimeout(() => {
+        img.src = `assets/shots/${name}.${name.endsWith("plugins") ? "png" : "jpg"}`;
+        img.alt = shots[name];
+        frame.classList.toggle('phone-mode', name.startsWith('phone'));
+        frame.style.opacity = 1;
+      }, 180);
+    });
+  });
+</script>
+</body>
+</html>

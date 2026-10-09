@@ -114,7 +114,7 @@ void main() {
                           viewportController: viewport,
                           messages: [message],
                           hasMoreMessages: false,
-                          onRegenerateMessage: (_) => wholeReplyCalls++))))));
+                          onRegenerateMessage: (_, __) => wholeReplyCalls++))))));
       await tester.pump(const Duration(milliseconds: 400));
       final gesture = await tester.startGesture(
           tester.getCenter(find.byType(AudioPlayerWidget)),

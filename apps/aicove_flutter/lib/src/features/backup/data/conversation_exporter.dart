@@ -426,6 +426,7 @@ class ConversationExporter {
       'created_at': _toEpochMillis(dbConv.createdAt),
       'updated_at': _toEpochMillis(dbConv.updatedAt),
       'is_pinned': dbConv.isPinned,
+      'is_hidden': dbConv.isHidden,
       'is_favorite': dbConv.isFavorite,
       'is_muted': dbConv.isMuted,
       'notification_sound': dbConv.notificationSound,

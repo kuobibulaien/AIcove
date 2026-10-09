@@ -600,7 +600,10 @@ class MoeWorkspacePlaceholder extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: MoeWorkspaceBackground(
-        background: const MoeChatWallpaper(child: SizedBox.expand()),
+        background: const MoeChatWallpaper(
+          slot: GlobalWallpaperSlot.empty,
+          child: SizedBox.expand(),
+        ),
         child: Center(
           child: Container(
             margin: const EdgeInsets.all(24),

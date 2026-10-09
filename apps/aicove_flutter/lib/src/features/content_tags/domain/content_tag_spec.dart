@@ -40,6 +40,7 @@ class ContentTagSpec {
     this.requestWhenInactive = ContentTagRequestAction.strip,
     this.display = ContentTagDisplay.text,
     this.displayRequiresBareTag = false,
+    this.jsonPayload = false,
   });
 
   /// 小写标签名。
@@ -58,6 +59,9 @@ class ContentTagSpec {
   /// 为 true 时，带属性的同名标签（如 `<image source="history">`）不按
   /// [display] 呈现，而是作为普通文本保留。
   final bool displayRequiresBareTag;
+
+  /// 正文是 JSON 数据（如 `<JSONPatch>`）：字符串字面量里出现的闭标签不算结束。
+  final bool jsonPayload;
 
   static const String builtinOwnerId = 'builtin';
 

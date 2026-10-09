@@ -1,3 +1,4 @@
+import '../../conversation_state/domain/mvu_content.dart';
 import '../services/chat_history_store.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -166,7 +167,7 @@ class ChatPageConversationActions {
           projectedMessages: _ref
               .read(chatFrontendMessageProjectionServiceProvider)
               .projectMessage(rawMessage),
-          lastMessagePreview: display.trim(),
+          lastMessagePreview: stripMvuUpdateBlocks(display).trim(),
         );
   }
 

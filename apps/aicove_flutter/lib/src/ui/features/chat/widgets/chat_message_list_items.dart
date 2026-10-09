@@ -1,3 +1,4 @@
+import '../../../../features/conversation_state/domain/mvu_content.dart';
 import 'dart:collection';
 import 'dart:io';
 
@@ -94,7 +95,9 @@ List<ChatMessageListItem> buildChatMessageListItems({
   final enableChunking = config?.enableChunking ?? true;
 
   for (var index = 0; index < messages.length; index++) {
-    final currentMessage = stripDialogueOptionsForDisplay(messages[index]);
+    final currentMessage = stripDialogueOptionsForDisplay(
+      stripMvuUpdatesForDisplay(messages[index]),
+    );
     // 只有选项的回复段交给对话选项气泡展示，不留空气泡。
     if (!identical(currentMessage, messages[index]) &&
         currentMessage.status != 'sending' &&
