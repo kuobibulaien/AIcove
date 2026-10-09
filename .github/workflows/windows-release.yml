@@ -71,7 +71,7 @@ jobs:
 
       - name: Check script engine on Windows
         working-directory: apps/aicove_flutter
-        run: flutter test test/core/runtime/quickjs_test.dart
+        run: flutter test --reporter expanded test/core/runtime/quickjs_test.dart
 
       - name: Package
         shell: pwsh
