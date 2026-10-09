@@ -6,8 +6,10 @@ Stages (each resumes from its done marker in the work directory):
            -> sync into a fresh clone of the public repository -> hygiene test
   test     full Flutter suite on a copy of the sanitized source (runs in
            parallel with build; skip with --skip-tests)
-  build    Android APK + macOS app from a sanitized copy, strip and re-sign
-           the Mac app, privacy-scan both packages, write SHA256SUMS
+  build    Android APK + macOS app + unsigned iOS IPA from a sanitized copy,
+           strip (and re-sign the Mac app), privacy-scan all packages,
+           write SHA256SUMS. The Windows ZIP is built afterwards by
+           .github/workflows/windows-release.yml in the public repository.
   publish  only with --publish: commit and push the public repository,
            create the GitHub release, download it again and verify hashes
 
@@ -119,6 +121,20 @@ def scan_tree(root, private):
     return hits
 
 
+def strip_macho(bundle):
+    """Strip debug and local symbols from every Mach-O file in an app bundle."""
+    for path in bundle.rglob('*'):
+        if not path.is_file() or path.is_symlink():
+            continue
+        with path.open('rb') as stream:
+            if stream.read(4) not in MACHO_MAGIC:
+                continue
+        before = subprocess.check_output(['nm', '-gjU', str(path)], stderr=subprocess.DEVNULL)
+        run(['strip', '-S', '-x', str(path)], capture_output=True)
+        if subprocess.check_output(['nm', '-gjU', str(path)], stderr=subprocess.DEVNULL) != before:
+            sys.exit(f'build: stripping changed exported symbols of {path.name}')
+
+
 class Release:
     def __init__(self, args):
         self.args = args
@@ -131,6 +147,7 @@ class Release:
         self.assets = self.work / 'assets'
         self.apk_name = f'AIcove-{self.version}-android.apk'
         self.zip_name = f'AIcove-{self.version}-macos-arm64.zip'
+        self.ipa_name = f'AIcove-{self.version}-ios-unsigned.ipa'
         self.private = Private()
 
     def done(self, stage):
@@ -265,6 +282,8 @@ class Release:
         run(['tool/flutterw', 'build', 'apk', *flags], cwd=app, log_file=self.work / 'android-build.log')
         log('build: macOS app (log: macos-build.log)')
         run(['tool/flutterw', 'build', 'macos', *flags], cwd=app, log_file=self.work / 'macos-build.log')
+        log('build: iOS app without code signing (log: ios-build.log)')
+        run(['tool/flutterw', 'build', 'ios', '--no-codesign', *flags], cwd=app, log_file=self.work / 'ios-build.log')
         if self.assets.exists():
             shutil.rmtree(self.assets)
         self.assets.mkdir()
@@ -272,8 +291,9 @@ class Release:
         shutil.copy2(app / 'build/app/outputs/flutter-apk/app-release.apk', apk)
         self.check_apk(apk)
         self.package_mac(app / 'build/macos/Build/Products/Release/AIcove.app')
+        self.package_ios(app / 'build/ios/iphoneos/Runner.app')
         sums = []
-        for name in (self.apk_name, self.zip_name):
+        for name in (self.apk_name, self.zip_name, self.ipa_name):
             sums.append(f'{hashlib.sha256((self.assets / name).read_bytes()).hexdigest()}  {name}')
         (self.assets / 'SHA256SUMS').write_text('\n'.join(sums) + '\n')
         log('build: assets ready in ' + str(self.assets))
@@ -304,16 +324,7 @@ class Release:
             shutil.rmtree(app.parent)
         app.parent.mkdir()
         run(['ditto', str(source), str(app)])
-        for path in app.rglob('*'):
-            if not path.is_file() or path.is_symlink():
-                continue
-            with path.open('rb') as stream:
-                if stream.read(4) not in MACHO_MAGIC:
-                    continue
-            before = subprocess.check_output(['nm', '-gjU', str(path)], stderr=subprocess.DEVNULL)
-            run(['strip', '-S', '-x', str(path)], capture_output=True)
-            if subprocess.check_output(['nm', '-gjU', str(path)], stderr=subprocess.DEVNULL) != before:
-                sys.exit(f'build: stripping changed exported symbols of {path.name}')
+        strip_macho(app)
         entitlements = subprocess.check_output(['codesign', '-d', '--entitlements', ':-', str(source)],
                                                stderr=subprocess.DEVNULL)
         entitlements_file = self.work / 'mac-entitlements.plist'
@@ -330,6 +341,22 @@ class Release:
             sys.exit(f'build: Mac app privacy scan failed: {hits}')
         run(['ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', str(app), str(self.assets / self.zip_name)])
         log('build: Mac app stripped, re-signed with original entitlements, scan 0 hits')
+
+    def package_ios(self, source):
+        if source.is_symlink() or not source.is_dir():
+            sys.exit(f'build: {source} is not a real app directory')
+        root = self.work / 'ios-package'
+        if root.exists():
+            shutil.rmtree(root)
+        app = root / 'Payload/Runner.app'
+        app.parent.mkdir(parents=True)
+        run(['ditto', str(source), str(app)])
+        strip_macho(app)
+        hits = scan_tree(app, self.private)
+        if hits:
+            sys.exit(f'build: iOS app privacy scan failed: {hits}')
+        run(['ditto', '-c', '-k', '--norsrc', '--keepParent', 'Payload', str(self.assets / self.ipa_name)], cwd=root)
+        log('build: iOS app stripped, packed as unsigned IPA, scan 0 hits')
 
     def release_notes(self):
         notes = Path(self.args.notes).read_text(encoding='utf-8').strip()
@@ -348,6 +375,9 @@ class Release:
                     f'- Android APK：{self.version.split("-")[0]}，构建号 {self.args.build_number}；'
                     f'签名证书与之前公开测试版相同。\n'
                     f'- macOS Apple Silicon ZIP：临时签名、未公证，沙盒与网络权限保留。\n'
+                    f'- iOS IPA：未签名，需自行签名或侧载安装。\n'
+                    f'- Windows x64 ZIP：发布后由 GitHub Actions 构建并追加，约需 15 分钟；未签名，'
+                    f'首次运行可能出现 SmartScreen 提示。\n'
                     f'- SHA256SUMS：文件校验值；安装包个人路径扫描 0 命中。')
         text = f'{notes}\n\n{verify}\n\n{download}\n'
         (self.work / 'release-notes.md').write_text(text, encoding='utf-8')
@@ -380,7 +410,8 @@ class Release:
         cmd = ['gh', 'release', 'create', tag, '-R', PUBLIC_REPO, '--target', 'main',
                '--title', self.args.title or f'AIcove {self.version}',
                '--notes-file', str(self.work / 'release-notes.md'),
-               str(self.assets / self.apk_name), str(self.assets / self.zip_name), str(self.assets / 'SHA256SUMS')]
+               str(self.assets / self.apk_name), str(self.assets / self.zip_name), str(self.assets / self.ipa_name),
+               str(self.assets / 'SHA256SUMS')]
         if self.prerelease():
             cmd.insert(4, '--prerelease')
         run(cmd)

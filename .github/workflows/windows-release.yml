@@ -1,0 +1,79 @@
+# Builds the Windows package for a published GitHub release and attaches it
+# to that release. The Android/macOS/iOS packages are built locally by
+# apps/aicove_flutter/tool/publish_release.py; Flutter cannot cross-compile
+# Windows apps, so this one runs on a GitHub-hosted Windows runner.
+name: Windows release package
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build and attach, e.g. v0.2.0-test.1
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Resolve version
+        run: |
+          version="${TAG#v}"
+          created=$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json createdAt -q .createdAt)
+          {
+            echo "VERSION=$version"
+            echo "BUILD_NAME=${version%%-*}"
+            echo "BUILD_NUMBER=$(echo "$created" | cut -c1-10 | tr -d -)01"
+            echo "ZIP_NAME=AIcove-$version-windows-x64.zip"
+          } >> "$GITHUB_ENV"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.6
+          channel: stable
+          cache: true
+
+      - name: Build
+        working-directory: apps/aicove_flutter
+        run: |
+          flutter pub get
+          flutter build windows --release \
+            --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER" \
+            --dart-define=AICOVE_RELEASE_TAG="$VERSION"
+
+      - name: Package
+        shell: pwsh
+        working-directory: apps/aicove_flutter
+        run: |
+          $out = "build/package/AIcove"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item -Recurse -Path "build/windows/x64/runner/Release/*" -Destination $out
+          Compress-Archive -Path $out -DestinationPath "build/package/$env:ZIP_NAME" -Force
+
+      - name: Attach to release
+        working-directory: apps/aicove_flutter/build/package
+        run: |
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p SHA256SUMS
+          grep -v " $ZIP_NAME\$" SHA256SUMS > SHA256SUMS.new || true
+          sha256sum "$ZIP_NAME" | sed 's/ \*/  /' >> SHA256SUMS.new
+          mv SHA256SUMS.new SHA256SUMS
+          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" "$ZIP_NAME" SHA256SUMS --clobber
