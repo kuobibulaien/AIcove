@@ -63,6 +63,7 @@ Future<void> _buildWindows(BuildInput input, BuildOutputBuilder output) async {
   final dll = outDir.resolve('aicove_quickjs.dll');
   final sources = [..._sources, 'src/win_compat/win_compat.c'];
 
+  final builtins = await _findClangBuiltins(clang, target, environment);
   final result = await Process.run(
     clang.toFilePath(),
     [
@@ -85,6 +86,8 @@ Future<void> _buildWindows(BuildInput input, BuildOutputBuilder output) async {
       '/link',
       '/NOIMPLIB',
       '/NOEXP',
+      // 128-bit division in dtoa.c needs compiler-rt (__udivti3).
+      builtins.toFilePath(),
     ],
     environment: environment,
   );
@@ -107,6 +110,30 @@ Future<void> _buildWindows(BuildInput input, BuildOutputBuilder output) async {
       linkMode: DynamicLoadingBundled(),
       file: dll,
     ),
+  );
+}
+
+Future<Uri> _findClangBuiltins(
+  Uri clang,
+  String target,
+  Map<String, String> environment,
+) async {
+  final printed = await Process.run(clang.toFilePath(), [
+    '/clang:-print-resource-dir',
+  ], environment: environment);
+  final resourceDir = Directory(
+    '${(printed.stdout as String).trim()}${Platform.pathSeparator}lib',
+  );
+  final arch = target.split('-').first;
+  if (resourceDir.existsSync()) {
+    for (final entity in resourceDir.listSync(recursive: true)) {
+      final name = entity.uri.pathSegments.last;
+      final perTarget = name == 'clang_rt.builtins.lib' && entity.path.contains(target);
+      if (perTarget || name == 'clang_rt.builtins-$arch.lib') return entity.uri;
+    }
+  }
+  throw Exception(
+    'aicove_quickjs: clang_rt.builtins for $target not found under ${resourceDir.path}',
   );
 }
 
