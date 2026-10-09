@@ -61,6 +61,8 @@ jobs:
             --dart-define=AICOVE_RELEASE_TAG="$VERSION" > build.log 2>&1 || {
             grep -n -i -E "error|fatal|failed" build.log | head -200
             tail -80 build.log
+            find .dart_tool/hooks_runner -type f \( -name "*.txt" -o -name "*.log" -o -name "*.json" \) -path "*quickjs*" \
+              -exec sh -c 'echo "== $1"; grep -v "^\s*$" "$1" | grep -i -E "error|warning|fatal" | head -60' _ {} \;
             exit 1
           }
 
