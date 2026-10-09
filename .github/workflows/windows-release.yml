@@ -56,9 +56,13 @@ jobs:
         working-directory: apps/aicove_flutter
         run: |
           flutter pub get
-          flutter build windows --release \
+          flutter build windows --release -v \
             --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER" \
-            --dart-define=AICOVE_RELEASE_TAG="$VERSION"
+            --dart-define=AICOVE_RELEASE_TAG="$VERSION" > build.log 2>&1 || {
+            grep -n -i -E "error|fatal|failed" build.log | head -200
+            tail -80 build.log
+            exit 1
+          }
 
       - name: Package
         shell: pwsh
