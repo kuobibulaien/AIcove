@@ -75,6 +75,7 @@ Future<void> _buildWindows(BuildInput input, BuildOutputBuilder output) async {
       '/clang:-fwrapv',
       '/DNDEBUG',
       '/D_GNU_SOURCE',
+      '/FI${root.resolve('src/win_compat/prelude.h').toFilePath()}',
       '/FI${config.path}',
       '/I${root.resolve('src/win_compat').toFilePath()}',
       '/I${root.resolve('src/quickjs').toFilePath()}',
@@ -95,6 +96,7 @@ Future<void> _buildWindows(BuildInput input, BuildOutputBuilder output) async {
 
   output.dependencies.addAll([
     for (final source in sources) root.resolve(source),
+    root.resolve('src/win_compat/prelude.h'),
     root.resolve('src/win_compat/pthread.h'),
     root.resolve('src/win_compat/sys/time.h'),
   ]);
