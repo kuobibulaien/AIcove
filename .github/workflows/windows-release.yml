@@ -92,25 +92,49 @@ jobs:
             final destroy = lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('aqjs_destroy');
             final s = create();
             stdout.writeln('created ${s.address}');
-            for (final src in ['1+2', 'JSON.stringify({a:[1,2],b:"x"})', '(async()=>40+2)()', 'new Date(0).toISOString()', '/a(b)c/.exec("zabc")[1]', '(0.1+0.2).toString()']) {
-              final units = src.codeUnits;
-              final buf = malloc(units.length + 1);
-              for (var i = 0; i < units.length; i++) buf[i] = units[i];
-              buf[units.length] = 0;
-              stdout.writeln('eval $src');
-              final out = eval(s, buf, units.length);
-              var n = 0; final codes = <int>[];
-              while (out != nullptr && out[n] != 0) { codes.add(out[n]); n++; }
-              stdout.writeln(' -> ${String.fromCharCodes(codes)}');
-            }
+            final src = args[1];
+            final units = src.codeUnits;
+            final buf = malloc(units.length + 1);
+            for (var i = 0; i < units.length; i++) buf[i] = units[i];
+            buf[units.length] = 0;
+            final out = eval(s, buf, units.length);
+            var n = 0; final codes = <int>[];
+            while (out != nullptr && out[n] != 0) { codes.add(out[n]); n++; }
+            stdout.writeln(' -> ${String.fromCharCodes(codes)}');
             destroy(s);
             stdout.writeln('done');
           }
           DART
           sed -i 's/^          //' probe.dart
           set +e
-          dart run probe.dart "$dll"
-          echo "probe exit code: $?"
+          dart compile exe probe.dart -o probe.exe > /dev/null
+          while IFS= read -r src; do
+            ./probe.exe "$dll" "$src" > o.txt 2>&1; code=$?
+            echo "PROBE [$src] exit=$code $(tr '\n' ' ' < o.txt)"
+          done <<'SNIPPETS'
+          1+2
+          "a"+"b"
+          [1,2].length
+          ({a:1}).a
+          Object.keys({a:1}).length
+          JSON.stringify(1)
+          JSON.stringify("x")
+          JSON.stringify([])
+          JSON.stringify([1])
+          JSON.stringify({})
+          JSON.stringify({a:1})
+          [1,2].join()
+          String(1.5)
+          (0.1+0.2).toString()
+          String(123456789012345)
+          (12345678901234567890n).toString()
+          new Date(0).toISOString()
+          /a(b)c/.exec("zabc")[1]
+          "abc".replace(/b/g,"x")
+          [3,1,2].sort().join()
+          (function f(n){return n?f(n-1):0})(100)
+          (async()=>40+2)()
+          SNIPPETS
 
       - name: Check script engine on Windows
         working-directory: apps/aicove_flutter
