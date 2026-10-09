@@ -183,6 +183,7 @@ class MoeLiquidGlass extends StatelessWidget {
                       ? MoeFrostedMaterial.surfaceFilter(
                           brightness,
                           sigma: effectiveSigma,
+                          fill: tintFill,
                         )
                       : ui.ImageFilter.blur(
                           sigmaX: baseline.blurSigma(effectiveSigma),

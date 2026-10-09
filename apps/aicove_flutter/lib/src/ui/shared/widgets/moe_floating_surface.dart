@@ -143,6 +143,7 @@ class _MoeFloatingSurfaceState extends State<MoeFloatingSurface> {
                         ? MoeFrostedMaterial.surfaceFilter(
                             brightness,
                             sigma: effectiveSigma,
+                            fill: tintFill,
                           )
                         : ui.ImageFilter.blur(
                             sigmaX: baseline.blurSigma(effectiveSigma),

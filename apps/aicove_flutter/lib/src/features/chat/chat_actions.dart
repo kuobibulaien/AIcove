@@ -165,6 +165,19 @@ class ChatActions {
       const EnhancedDialogueService();
   int _generationSerial = 0;
   final Map<String, _GenerationTask> _activeGenerations = {};
+
+  Future<void> recoverInterruptedUserMessages(String conversationId) {
+    return _historyPort.recoverInterruptedUserMessages(
+      conversationId,
+      isActiveSend: (messageId) {
+        final task = _activeGenerations[conversationId];
+        // Regeneration registers its task before resolving the source user.
+        return task != null &&
+            (task.userMsgId == null || task.userMsgId == messageId);
+      },
+    );
+  }
+
   final Map<String, Future<void> Function()> _generationInterruptCleanups = {};
   final Map<int, Future<AndroidGenerationKeepAliveLease?>>
       _generationKeepAliveLeases = {};

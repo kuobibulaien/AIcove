@@ -368,6 +368,12 @@ class _MoeAdaptiveShellState extends State<MoeAdaptiveShell> {
               ? media.padding.copyWith(
                   left: isDetail ? 0 : media.padding.left,
                   right: isDetail ? media.padding.right : 0,
+                  // Floating detail headers align with the primary panel's top edge.
+                  top: isDetail
+                      ? media.padding.top +
+                            telegramWorkspaceInset -
+                            telegramChatHeaderVerticalInset
+                      : media.padding.top,
                 )
               : media.padding,
         ),

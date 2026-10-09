@@ -7,7 +7,6 @@ import 'package:http/http.dart' as http;
 
 import 'package:aicove_flutter/src/core/api/agent_api.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
-import 'package:aicove_flutter/src/features/chat/services/chat_send_api_runner.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_types.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/base_plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/handlers/ai_tool.dart';
@@ -16,6 +15,7 @@ import 'package:aicove_flutter/src/features/plugins/domain/plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin_content.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin_metadata.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
+import 'api_runner_variants.dart';
 
 const _tinyPngBase64 =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+cN5kAAAAASUVORK5CYII=';
@@ -376,7 +376,7 @@ Future<String> _writeTinyPng(Directory dir, String name) async {
   return path;
 }
 
-void main() {
+void _runAll(RunnerFactory createRunner) {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test('stable vision draw_image should review image before deciding to send',
@@ -413,7 +413,7 @@ void main() {
       ],
     );
 
-    final runner = ChatSendApiRunner.withAgentClientFactory(
+    final runner = createRunner(
       agentClientFactory: (timeout) => AgentApiClient(
         client: fakeHttpClient,
         timeout: timeout,
@@ -489,7 +489,7 @@ void main() {
       ],
     );
 
-    final runner = ChatSendApiRunner.withAgentClientFactory(
+    final runner = createRunner(
       agentClientFactory: (timeout) => AgentApiClient(
         client: fakeHttpClient,
         timeout: timeout,
@@ -522,4 +522,10 @@ void main() {
     expect(result.processedText, contains('这张手有问题'));
     expect(result.processedText, contains('这版可以发给你了'));
   });
+}
+
+void main() {
+  for (final (variant, createRunner) in apiRunnerVariants) {
+    group(variant, () => _runAll(createRunner));
+  }
 }

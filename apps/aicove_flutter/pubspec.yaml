@@ -8,6 +8,8 @@ environment:
   flutter: '>=3.44.6'
 
 dependencies:
+  aicove_agent_kernel:
+    path: packages/aicove_agent_kernel
   aicove_quickjs:
     path: packages/aicove_quickjs
   mime: ^1.0.6

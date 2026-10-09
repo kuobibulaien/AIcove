@@ -7,10 +7,11 @@ import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 void main() {
   test('glass blur stays see-through through the lower half', () {
     const component = MoeMaterialBaseline.component;
-    expect(component.blurSigma(8), closeTo(0.75, 0.0001));
-    expect(component.blurSigma(kDefaultGlassBlurSigma), closeTo(3, 0.0001));
+    expect(component.blurSigma(8), closeTo(1.25, 0.0001));
+    // The recommended midpoint is liquid_glass_widgets' iOS 26 default.
+    expect(component.blurSigma(kDefaultGlassBlurSigma), closeTo(5, 0.0001));
     expect(component.blurSigma(kMaxGlassBlurSigma), kMaxLiquidGlassBlurSigma);
-    expect(MoeMaterialBaseline.background.blurSigma(16), lessThan(5));
+    expect(MoeMaterialBaseline.background.blurSigma(16), lessThan(8));
   });
   for (final baseline in [
     MoeMaterialBaseline.component,
@@ -79,7 +80,7 @@ void main() {
           expect(surfaces[0].settings.glassColor.a, 0);
           expect(surfaces[0].settings.blur, 0);
           expect(surfaces[1].settings.glassColor.a, 0);
-          expect(surfaces[1].settings.blur, closeTo(0.75, 0.0001));
+          expect(surfaces[1].settings.blur, closeTo(1.25, 0.0001));
         } else {
           expect(find.byType(BackdropFilter), findsOneWidget);
           final surfaces = tester

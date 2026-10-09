@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 import '../../../core/storage/device_credential_storage.dart';
 import '../domain/lan_contract.dart';
 import 'lan_crypto.dart';
+import 'lan_replay_guard.dart';
 
 const lanRequestLimit = 8 * 1024 * 1024;
 
@@ -229,7 +230,7 @@ class LanTransport {
   HttpServer? _server;
   HttpClient? _client;
   LanInvitation? invitation;
-  final _replay = <String, DateTime>{};
+  final _replay = LanReplayGuard();
   final _activeRequests = <Future<void>>{};
   int _active = 0;
   int _generation = 0;
@@ -544,6 +545,9 @@ class LanTransport {
         );
         if (response.statusCode != 200) {
           await response.drain<void>().timeout(const Duration(seconds: 3));
+          if (response.statusCode == HttpStatus.tooManyRequests) {
+            throw const LanSyncFailure('另一端正在处理大量同步请求，稍后自动重试');
+          }
           throw const LanSyncFailure('另一端拒绝连接，请核对是否已确认或已取消配对');
         }
         final result = await LanCrypto.open(
@@ -581,16 +585,17 @@ class LanTransport {
     _active++;
     String? secret, from, id;
     try {
-      final cutoff = DateTime.now().subtract(const Duration(minutes: 10));
-      _replay.removeWhere((_, at) => at.isBefore(cutoff));
-      if (_active > 4 ||
-          _replay.length >= 10000 ||
-          _server == null ||
+      if (_server == null ||
           !lanAddress(
             request.connectionInfo?.remoteAddress.address ?? '',
             loopback: loopback,
           )) {
         throw const LanSyncFailure('连接不可用');
+      }
+      if (_active > 4 || _replay.atCapacity) {
+        request.response.statusCode = HttpStatus.tooManyRequests;
+        request.response.headers.set(HttpHeaders.retryAfterHeader, '1');
+        return;
       }
       if (request.method == 'GET' && request.uri.path == '/lan/v1/hello') {
         // Only answers while a numeric code is shown, so idle devices stay quiet.
@@ -655,13 +660,8 @@ class LanTransport {
         }
         rethrow;
       }
-      final now = DateTime.now();
-      _replay.removeWhere(
-        (_, at) => now.difference(at) > const Duration(minutes: 10),
-      );
       final replayId = '$from/$id';
-      if (_replay.containsKey(replayId)) throw const LanSyncFailure('重复连接请求');
-      _replay[replayId] = now;
+      if (!_replay.accept(replayId)) throw const LanSyncFailure('重复连接请求');
       Map<String, dynamic> result;
       if (isPair) {
         final name = body['name'] as String;

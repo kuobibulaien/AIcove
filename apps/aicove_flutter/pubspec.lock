@@ -9,6 +9,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "67.0.0"
+  aicove_agent_kernel:
+    dependency: "direct main"
+    description:
+      path: "packages/aicove_agent_kernel"
+      relative: true
+    source: path
+    version: "0.1.0"
   aicove_quickjs:
     dependency: "direct main"
     description:

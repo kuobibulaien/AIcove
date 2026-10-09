@@ -4,12 +4,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:aicove_flutter/src/core/api/agent_api.dart';
 import 'package:aicove_flutter/src/features/agent_context/domain/preset_script_runtime.dart';
-import 'package:aicove_flutter/src/features/chat/services/chat_send_api_runner.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_types.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/handlers/ai_tool.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 
 import '../../../support/transport_preset_fixture.dart';
+import 'api_runner_variants.dart';
 
 /// HTTP boundary fake: real AgentApiClient, provider adapters, stream parsers,
 /// QuickJS runtime and business tool loop all run normally; no network I/O.
@@ -227,7 +227,7 @@ class _TransportServer extends http.BaseClient {
   }
 }
 
-void main() {
+void _runAll(RunnerFactory createRunner) {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   Future<void> verify(
@@ -277,7 +277,7 @@ void main() {
     final previews = <String>[];
     var beforeEnd = false;
     final result =
-        await ChatSendApiRunner.withAgentClientFactory(
+        await createRunner(
           agentClientFactory: (_) => AgentApiClient(client: server),
         ).executeApiCall(
           config: ApiConfig(
@@ -407,4 +407,10 @@ void main() {
     'Gemini JSON array response stream decodes',
     () => verify('gemini', stream: true, jsonArray: true),
   );
+}
+
+void main() {
+  for (final (variant, createRunner) in apiRunnerVariants) {
+    group(variant, () => _runAll(createRunner));
+  }
 }

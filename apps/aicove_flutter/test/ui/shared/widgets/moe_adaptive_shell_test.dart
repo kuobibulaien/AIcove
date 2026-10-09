@@ -2,6 +2,7 @@ import 'package:aicove_flutter/src/ui/shared/animations/parallax_slide_page_rout
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_adaptive_shell.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_app_bar.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/desktop_window_frame.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/moe_floating_surface.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -143,6 +144,17 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('编辑详情'), findsOneWidget);
+      if (width >= 900) {
+        final titleSurface = find.ancestor(
+          of: find.text('编辑详情'),
+          matching: find.byType(MoeFloatingSurface),
+        );
+        expect(
+          tester.getRect(titleSurface.first).top,
+          primary.top,
+          reason: '宽屏右侧悬浮标题与左侧手机面板顶部留白一致',
+        );
+      }
       expect(
         find.byType(BackButton),
         width >= 900 ? findsNothing : findsOneWidget,

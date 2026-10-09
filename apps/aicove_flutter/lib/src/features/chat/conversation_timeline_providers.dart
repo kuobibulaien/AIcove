@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'chat_actions.dart' show chatActionsProvider;
 import 'domain/message.dart';
 import 'services/chat_history_store.dart';
 import 'services/conversation_short_window_store.dart';
@@ -18,10 +19,12 @@ final conversationVisibleCountProvider =
 /// raw database as a second UI-state source.
 final conversationMessageWindowProvider =
     StreamProvider.autoDispose.family<ConversationMessageWindow, String>(
-  (ref, conversationId) {
+  (ref, conversationId) async* {
     final limit = ref.watch(conversationVisibleCountProvider(conversationId));
-    return ref
-        .watch(conversationTimelineCacheProvider)
+    final timeline = ref.watch(conversationTimelineCacheProvider);
+    final actions = ref.read(chatActionsProvider);
+    await actions.recoverInterruptedUserMessages(conversationId);
+    yield* timeline
         .watchWindow(
           conversationId: conversationId,
           limit: limit,

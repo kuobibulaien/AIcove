@@ -1,7 +1,9 @@
 ---
-status: proposed
+status: superseded
 date: 2026-08-21
 ---
+
+> 2026-10-07 由 [ADR0064](0064-Dart微内核Agent运行时与全插件化.md) 取代：内核改为 Dart 微内核，运行时可加载插件放入 QuickJS 沙箱，App 内不使用 Node／DSH。原状态 proposed，Phase 0 未开工。以下保留历史原文。
 
 # 官方 DSH 作为唯一 Agent 驱动运行时
 

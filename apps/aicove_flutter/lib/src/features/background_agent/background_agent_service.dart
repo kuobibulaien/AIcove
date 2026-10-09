@@ -10,7 +10,7 @@ import '../../core/api/providers/provider_adapter.dart'
     show ProviderChatRequestOptions;
 import '../chat/domain/message.dart';
 import '../chat/services/chat_history_store.dart';
-import '../chat/services/chat_send_api_runner.dart';
+import '../chat/services/api_runner.dart';
 import '../chat/services/chat_types.dart';
 import '../observability/trace_models.dart';
 import '../observability/trace_store.dart';
@@ -41,8 +41,14 @@ typedef BackgroundAgentExecutor = Future<ApiCallResult> Function({
   required int maxRounds,
 });
 
+/// Runner used by background agents; the kernel is selected by the
+/// `AICOVE_AGENT_KERNEL_BG` compile-time switch (ADR0064, batch 1b).
+final backgroundApiRunnerProvider = Provider<ApiRunner>(
+  (ref) => createApiRunner(useKernel: kAgentKernelBackground),
+);
+
 final backgroundAgentServiceProvider = Provider<BackgroundAgentService>((ref) {
-  const runner = ChatSendApiRunner();
+  final runner = ref.watch(backgroundApiRunnerProvider);
   return BackgroundAgentService(
     loadRecentMessages: (conversationId, limit) =>
         ref.read(chatHistoryStoreProvider).loadCanonicalContextMessages(
@@ -104,7 +110,7 @@ class BackgroundAgentService {
     required String sessionId,
     required int maxRounds,
   }) {
-    return const ChatSendApiRunner().executeApiCall(
+    return createApiRunner(useKernel: kAgentKernelBackground).executeApiCall(
       config: config,
       sessionId: sessionId,
       userText: null,

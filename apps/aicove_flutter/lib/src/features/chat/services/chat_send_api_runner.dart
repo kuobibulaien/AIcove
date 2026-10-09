@@ -1,6 +1,7 @@
 library;
 
 import 'dart:async';
+import 'package:aicove_agent_kernel/aicove_agent_kernel.dart' as kernel;
 import '../../agent_context/infrastructure/quickjs_preset_runtime.dart';
 import '../../context/domain/context_window_policy.dart';
 import '../../../core/media/media_resolver.dart';
@@ -13,7 +14,7 @@ import '../../plugins/domain/plugin.dart';
 import '../../plugins/domain/plugin_content.dart';
 import '../../../core/api/agent_api.dart';
 import '../../../core/api/providers/provider_adapter.dart'
-    show ToolCall, ToolResult, ProviderChatRequestOptions;
+    show ProviderAdapter, ToolCall, ToolResult, ProviderChatRequestOptions;
 import '../../../core/api/providers/provider_adapter_factory.dart';
 import '../../../core/api_logger.dart';
 import '../../../core/app_logger.dart';
@@ -24,11 +25,13 @@ import '../../observability/trace_models.dart';
 import '../../observability/trace_store.dart';
 import '../../agent_context/domain/silly_tavern_regex_processor.dart';
 import 'chat_tool_fallback_parser.dart';
+import 'api_runner.dart';
 import 'chat_types.dart';
 import 'stream_monitor_service.dart';
 
 part 'chat_send_api_runner_tool_support.dart';
 part 'chat_send_api_runner_text_support.dart';
+part 'chat_send_api_runner_kernel.dart';
 
 typedef _AgentClientFactory = AgentApiClient Function(Duration timeout);
 
@@ -36,7 +39,7 @@ typedef _AgentClientFactory = AgentApiClient Function(Duration timeout);
 ///
 /// 将 ChatSendService 中最复杂的“模型调用 -> 工具执行 -> 回写工具结果 -> 再调用”
 /// 主循环独立出来，降低服务类体积并隔离高风险逻辑。
-class ChatSendApiRunner {
+class ChatSendApiRunner implements ApiRunner {
   const ChatSendApiRunner() : _agentClientFactory = _defaultAgentClientFactory;
 
   ChatSendApiRunner.withAgentClientFactory({
@@ -64,6 +67,7 @@ class ChatSendApiRunner {
 
   final _AgentClientFactory _agentClientFactory;
 
+  @override
   Future<ApiCallResult> executeApiCall({
     required ApiConfig config,
     required String sessionId,

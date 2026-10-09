@@ -42,6 +42,16 @@ class ChatHistoryStoreAdapter implements ChatHistoryPort, ChatEditPort {
   }
 
   @override
+  Future<void> recoverInterruptedUserMessages(
+    String conversationId, {
+    required bool Function(String messageId) isActiveSend,
+  }) =>
+      _historyStore.recoverInterruptedUserMessages(
+        conversationId,
+        isActiveSend: isActiveSend,
+      );
+
+  @override
   Future<void> markMessageStatus({
     required String conversationId,
     required String messageId,

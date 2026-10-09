@@ -65,6 +65,9 @@ class CloudLocalStore {
   Future<Map<String, dynamic>> state() async =>
       (await rows('SELECT * FROM cloud_client_state WHERE id=1')).single;
 
+  /// Reads the actual local value, including legacy incoming sending messages.
+  /// Outgoing collectors must defer [CloudLocalDocument.isSendingMessage],
+  /// not turn it into null: null denotes a deletion in both sync engines.
   Future<CloudLocalDocument?> read(
     String kind,
     String id, {
@@ -398,6 +401,7 @@ class CloudLocalStore {
           item['kind'] as String,
           item['entity_id'] as String,
         );
+        if (current?.isSendingMessage == true) return;
         if (current?.localJson != item['local_json']) return;
         if (trackSettingTimes &&
             await hasChangedSettingTimes(

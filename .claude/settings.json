@@ -28,7 +28,7 @@
     ]
   },
   "enabledPlugins": {
-    "codex@openai-codex": true
+    "codex@openai-codex": false
   },
   "enabledMcpjsonServers": ["dart"],
   "permissions": {

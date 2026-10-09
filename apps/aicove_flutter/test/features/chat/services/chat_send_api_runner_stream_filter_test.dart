@@ -5,12 +5,12 @@ import 'package:aicove_flutter/src/core/api/agent_api.dart';
 import 'package:aicove_flutter/src/core/api/providers/provider_adapter.dart';
 import 'package:aicove_flutter/src/core/app_logger.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
-import 'package:aicove_flutter/src/features/chat/services/chat_send_api_runner.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_types.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/base_plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin_metadata.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
+import 'api_runner_variants.dart';
 
 AppSettings _buildTestSettings() {
   const modelRef = 'openai:gpt-3.5-turbo';
@@ -510,7 +510,7 @@ class _SplitPresetThinkStreamingClient extends AgentApiClient {
   }
 }
 
-void main() {
+void _runAll(RunnerFactory createRunner) {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
@@ -532,7 +532,7 @@ void main() {
       ],
     );
 
-    final runner = ChatSendApiRunner.withAgentClientFactory(
+    final runner = createRunner(
       agentClientFactory: (timeout) =>
           _SplitInlineImageStreamingClient(timeout),
     );
@@ -571,7 +571,7 @@ void main() {
       ],
     );
 
-    final runner = ChatSendApiRunner.withAgentClientFactory(
+    final runner = createRunner(
       agentClientFactory: (timeout) => _SplitThinkStreamingClient(timeout),
     );
     final streamedDeltas = <String>[];
@@ -612,7 +612,7 @@ void main() {
       ],
     );
 
-    final runner = ChatSendApiRunner.withAgentClientFactory(
+    final runner = createRunner(
       agentClientFactory: (timeout) => _StrayThinkCloseStreamingClient(timeout),
     );
     final streamedDeltas = <String>[];
@@ -650,7 +650,7 @@ void main() {
       ],
     );
 
-    final runner = ChatSendApiRunner.withAgentClientFactory(
+    final runner = createRunner(
       agentClientFactory: (timeout) =>
           _AttributeImageTagStreamingClient(timeout),
     );
@@ -697,7 +697,7 @@ void main() {
       ],
     );
 
-    final runner = ChatSendApiRunner.withAgentClientFactory(
+    final runner = createRunner(
       agentClientFactory: (timeout) => _StrayImageCloseStreamingClient(timeout),
     );
     final streamedDeltas = <String>[];
@@ -731,7 +731,7 @@ void main() {
         <String, dynamic>{'role': 'user', 'content': '接下来呢'},
       ],
     );
-    final runner = ChatSendApiRunner.withAgentClientFactory(
+    final runner = createRunner(
       agentClientFactory: (timeout) => _SplitOptionsStreamingClient(timeout),
     );
     final streamedDeltas = <String>[];
@@ -763,7 +763,7 @@ void main() {
         <String, dynamic>{'role': 'user', 'content': '在吗'},
       ],
     );
-    final runner = ChatSendApiRunner.withAgentClientFactory(
+    final runner = createRunner(
       agentClientFactory: (timeout) => _SplitPresetThinkStreamingClient(timeout),
     );
     final streamedDeltas = <String>[];
@@ -783,4 +783,10 @@ void main() {
       '<think_nya~>想一想</think_nya~><thinking>再想</thinking>正文。',
     );
   });
+}
+
+void main() {
+  for (final (variant, createRunner) in apiRunnerVariants) {
+    group(variant, () => _runAll(createRunner));
+  }
 }

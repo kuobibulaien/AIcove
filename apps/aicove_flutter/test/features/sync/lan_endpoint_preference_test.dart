@@ -1,5 +1,7 @@
 import 'dart:io';
+import 'dart:convert';
 
+import 'package:aicove_flutter/src/features/sync/data/lan_crypto.dart';
 import 'package:aicove_flutter/src/features/sync/data/lan_transport.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -130,6 +132,36 @@ void main() {
       peer.endpoints = await host.addresses();
       expect((await guest.rpc(peer, {'method': 'data'}))['ok'], true);
       expect(staleRequests, 0);
+    },
+  );
+
+  test(
+    'bulk sync exceeds ten thousand requests without disabling replay protection',
+    () async {
+      final peer = guestStore.peers['host']!;
+      for (var i = 0; i < 10001; i++) {
+        expect((await guest.rpc(peer, {'method': 'status'}))['approved'], true);
+      }
+      final envelope = await LanCrypto.seal(
+        peer.key,
+        {'method': 'status'},
+        from: 'guest',
+        to: 'host',
+        requestId: 'bulk-replay-check',
+      );
+      final client = HttpClient();
+      addTearDown(() => client.close(force: true));
+      Future<int> replay() async {
+        final request = await client.postUrl(peer.endpoints.first.uri('rpc'));
+        request.persistentConnection = false;
+        request.write(jsonEncode(envelope));
+        final response = await request.close();
+        await response.drain<void>();
+        return response.statusCode;
+      }
+
+      expect(await replay(), 200);
+      expect(await replay(), 403);
     },
   );
 }

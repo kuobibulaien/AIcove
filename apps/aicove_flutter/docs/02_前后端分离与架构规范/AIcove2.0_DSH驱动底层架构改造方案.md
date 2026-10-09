@@ -1,6 +1,7 @@
 # AIcove 2.0：DeepSeek Harness 驱动底层架构改造方案
 
-> 状态：Proposed（架构规划，尚未进入产品代码实施）  
+> 状态：Superseded（2026-10-07 由 ADR0064 取代，改为 Dart 微内核＋QuickJS 插件沙箱，不再内嵌 DSH／Node；本文仅作历史参考）  
+> 原状态：Proposed（架构规划，尚未进入产品代码实施）  
 > 适用范围：AIcove 2.0 Agent Runtime、Android 本地运行时、插件体系、聊天与后台 Agent 迁移  
 > 首要平台：Android arm64-v8a  
 > 核心上游：官方 `@deepseek-ai/dsh`  

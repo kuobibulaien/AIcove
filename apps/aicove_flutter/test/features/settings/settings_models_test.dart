@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
+import 'package:aicove_flutter/src/features/settings/data/support/ui_models_store_support.dart';
+import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 
 void main() {
   test('claude-fable-5 should infer as chat instead of TTS', () {
@@ -69,6 +71,18 @@ void main() {
       final settings = mapUiModelsToAppSettings({});
       expect(settings.glassEffectEnabled, isTrue);
       expect(settings.glassBlurSigma, 16.0);
+    });
+
+    test('fresh install store starts on the recommended frosted step', () {
+      final settings = mapUiModelsToAppSettings(buildDefaultUiModelsStoreData());
+      expect(settings.surfaceMaterial, MoeSurfaceMaterial.frosted);
+      expect(settings.glassBlurSigma, kDefaultGlassBlurSigma);
+      expect(settings.glassTintFill, kDefaultGlassTintFill);
+    });
+
+    test('stored settings without material keys keep the glass fallback', () {
+      final settings = mapUiModelsToAppSettings({});
+      expect(settings.surfaceMaterial, MoeSurfaceMaterial.liquid);
     });
 
     test('mapUiModelsToAppSettings parses custom values within clamped bounds', () {

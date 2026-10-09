@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -34,7 +35,91 @@ void main() {
     }
   });
 
+  test('recommended midpoint carries the full iOS-like recipe', () {
+    expect(MoeFrostedMaterial.recommendedFill, kDefaultGlassTintFill);
+    expect(MoeFrostedMaterial.saturationAmount(0), 0);
+    expect(MoeFrostedMaterial.saturationAmount(0.25), 0.5);
+    expect(MoeFrostedMaterial.saturationAmount(0.5), 1);
+    expect(MoeFrostedMaterial.saturationAmount(1), 1);
+    expect(
+      MoeFrostedMaterial.blurSigmaForSetting(kDefaultGlassBlurSigma),
+      10,
+      reason: 'CupertinoNavigationBar blur',
+    );
+    for (final brightness in Brightness.values) {
+      expect(
+        MoeFrostedMaterial.surfaceTint(brightness, fill: 0.5).a,
+        closeTo(0.55, 0.005),
+      );
+    }
+  });
+
   for (final brightness in Brightness.values) {
+    testWidgets(
+      'zero fill leaves a pure blur without colour cast $brightness',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(120, 80);
+        addTearDown(tester.view.reset);
+        final key = GlobalKey();
+
+        Future<ByteData> render(ui.ImageFilter filter) async {
+          await tester.pumpWidget(
+            RepaintBoundary(
+              key: key,
+              child: Stack(
+                textDirection: TextDirection.ltr,
+                children: [
+                  const Positioned.fill(
+                    child: CustomPaint(painter: _Backdrop()),
+                  ),
+                  Positioned.fill(
+                    child: ClipRect(
+                      child: BackdropFilter(
+                        filter: filter,
+                        child: const SizedBox.expand(),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+          final boundary =
+              key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+          final image = (await tester.runAsync(() => boundary.toImage()))!;
+          final bytes = (await tester.runAsync(
+            () => image.toByteData(format: ui.ImageByteFormat.rawRgba),
+          ))!;
+          image.dispose();
+          return bytes;
+        }
+
+        const sigma = 10.0;
+        final plain = await render(
+          ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+        );
+        final clear = await render(
+          MoeFrostedMaterial.surfaceFilter(brightness, sigma: sigma, fill: 0),
+        );
+        final recommended = await render(
+          MoeFrostedMaterial.surfaceFilter(brightness, sigma: sigma, fill: 0.5),
+        );
+        var maxClearDiff = 0;
+        var maxRecommendedDiff = 0;
+        for (var i = 0; i < plain.lengthInBytes; i++) {
+          final p = plain.getUint8(i);
+          maxClearDiff = math.max(maxClearDiff, (clear.getUint8(i) - p).abs());
+          maxRecommendedDiff = math.max(
+            maxRecommendedDiff,
+            (recommended.getUint8(i) - p).abs(),
+          );
+        }
+        expect(maxClearDiff, lessThanOrEqualTo(1));
+        expect(maxRecommendedDiff, greaterThan(10));
+      },
+    );
+
     testWidgets('frosted strength pixels match the shared recipe $brightness', (
       tester,
     ) async {
@@ -94,6 +179,7 @@ void main() {
               filter: MoeFrostedMaterial.surfaceFilter(
                 brightness,
                 sigma: expectedSigma,
+                fill: sigma / kMaxGlassBlurSigma,
               ),
               child: ColoredBox(
                 color: MoeFrostedMaterial.surfaceTint(

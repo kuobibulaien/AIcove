@@ -184,6 +184,7 @@ class _ProgressiveEdge extends StatelessWidget {
                         ? MoeFrostedMaterial.surfaceFilter(
                             brightness,
                             sigma: sigma * share,
+                            fill: tintFill,
                             tileMode: TileMode.mirror,
                           )
                         : ui.ImageFilter.blur(

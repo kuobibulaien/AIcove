@@ -14,6 +14,10 @@ import 'custom_skin_page.dart';
 bool get _isWindowsDesktop => defaultTargetPlatform == TargetPlatform.windows;
 
 /// 通用设置页面
+/// Slider position of the recommended, iOS-closest material step.
+const int _kRecommendedMaterialPercent = 50;
+const double _kRecommendedMaterialSnap = 2;
+
 class UiSettingsPage extends ConsumerWidget {
   const UiSettingsPage({super.key});
 
@@ -403,7 +407,10 @@ class UiSettingsPage extends ConsumerWidget {
                       child: ColoredBox(
                         color: lightBg,
                         child: Center(
-                          child: _skinDot(resolved.lightAccentColor, isSelected),
+                          child: _skinDot(
+                            resolved.lightAccentColor,
+                            isSelected,
+                          ),
                         ),
                       ),
                     ),
@@ -460,7 +467,8 @@ class UiSettingsPage extends ConsumerWidget {
     );
   }
 
-  /// 材质等级三选一（纯色／模糊／玻璃）+ 模糊度、底色填充两条独立滑块
+  /// 材质等级三选一（纯色／模糊／玻璃）+ 模糊度、底色填充两条独立滑块；
+  /// 两条滑块的 50% 为推荐档，即最接近 iOS 的参数。
   Widget _buildMaterialPicker(
     BuildContext context,
     WidgetRef ref,
@@ -556,20 +564,22 @@ class UiSettingsPage extends ConsumerWidget {
     required Future<void> Function(double percent) onChanged,
   }) {
     final value = percent.clamp(minPercent, 100).toDouble();
+    final isRecommended = value.round() == _kRecommendedMaterialPercent;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                label,
-                style: TextStyle(fontSize: 13, color: colors.textSecondary),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(fontSize: 13, color: colors.textSecondary),
+                ),
               ),
               Text(
-                '${value.round()}%',
+                isRecommended ? '${value.round()}% · 推荐' : '${value.round()}%',
                 style: TextStyle(
                   fontSize: 13,
                   color: colors.accentColor,
@@ -587,8 +597,14 @@ class UiSettingsPage extends ConsumerWidget {
           label: '${value.round()}%',
           semanticFormatterCallback: (v) => '$label ${v.round()}%',
           onChanged: (v) async {
+            // Snap onto the recommended iOS-like midpoint so it is easy to hit.
+            final snapped =
+                (v - _kRecommendedMaterialPercent).abs() <
+                    _kRecommendedMaterialSnap
+                ? _kRecommendedMaterialPercent.toDouble()
+                : v;
             try {
-              await onChanged(v);
+              await onChanged(snapped);
             } catch (_) {
               if (context.mounted) MoeToast.error(context, '$label未保存，请重试');
             }

@@ -350,6 +350,21 @@ class _MemoryChatHistoryPort implements ChatHistoryPort {
   final List<Message> _messages;
 
   @override
+  Future<void> recoverInterruptedUserMessages(
+    String conversationId, {
+    required bool Function(String messageId) isActiveSend,
+  }) async {
+    for (var i = 0; i < _messages.length; i++) {
+      final message = _messages[i];
+      if (message.role == 'user' &&
+          message.status == 'sending' &&
+          !isActiveSend(message.id)) {
+        _messages[i] = message.copyWith(status: 'failed');
+      }
+    }
+  }
+
+  @override
   Future<List<Message>> loadRawMessages(String conversationId) async {
     return List<Message>.from(_messages);
   }
@@ -415,6 +430,12 @@ class _EditMessageFastPathHistoryPort implements ChatHistoryPort {
   int loadRawMessagesCallCount = 0;
   int truncateFromMessageCallCount = 0;
   Future<void> Function()? onTruncateFromMessage;
+
+  @override
+  Future<void> recoverInterruptedUserMessages(
+    String conversationId, {
+    required bool Function(String messageId) isActiveSend,
+  }) async {}
 
   @override
   Future<List<Message>> loadRawMessages(String conversationId) async {

@@ -235,9 +235,10 @@ class MoeMaterialBaseline {
   ///
   /// iOS 26 Liquid Glass reads through: refraction and specular edges carry
   /// the material, blur only softens. The stored 0..32 setting is mapped onto
-  /// a squared curve so the lower half stays nearly clear, the midpoint lands
-  /// on liquid_glass_widgets' iOS-calibrated default (sigma 3), and the
-  /// heaviest step stays well below the frosted popup recipe (sigma 30).
+  /// a squared curve so the lower half stays nearly clear, the recommended
+  /// midpoint lands on liquid_glass_widgets 1.5's iOS 26-calibrated default
+  /// (sigma 5), and the heaviest step stays below the frosted popup recipe
+  /// (sigma 30).
   double blurSigma(double sigma) {
     final s = strength(sigma);
     return kMaxLiquidGlassBlurSigma * s * s;
@@ -245,7 +246,7 @@ class MoeMaterialBaseline {
 }
 
 /// Upper bound of [MoeMaterialBaseline.blurSigma] for the glass material.
-const double kMaxLiquidGlassBlurSigma = 12.0;
+const double kMaxLiquidGlassBlurSigma = 20.0;
 
 // ===== 主题扩展 - 让整个应用响应暗色模式 =====
 class MoeColors extends ThemeExtension<MoeColors> {

@@ -3,6 +3,7 @@ import '../../../../core/api/providers/google_api_mode.dart';
 import '../../../../core/api/providers/provider_adapter_factory.dart';
 import '../../../../core/api/providers/zai_compat.dart';
 import '../../../../core/prompts/prompt_builtin_defaults.g.dart';
+import '../../../../ui/theme/tokens.dart';
 
 /// SharedPreferences 键名，统一管理模型与渠道配置。
 const kUiModelsStoreKey = 'aicove.ui_models.v1';
@@ -236,6 +237,12 @@ Map<String, dynamic> buildDefaultUiModelsStoreData() => <String, dynamic>{
   'user_avatar': null,
   'user_name': null,
   'skip_vision_compat_dialog': false,
+  // Fresh installs start on the frosted material at its recommended,
+  // iOS-closest midpoint; stores without these keys keep their old fallback.
+  'glass_effect_enabled': true,
+  'use_liquid_glass': false,
+  'glass_blur_sigma': kDefaultGlassBlurSigma,
+  'glass_tint_fill': kDefaultGlassTintFill,
 };
 
 Map<String, dynamic> _defaultAutoReplySettings() => <String, dynamic>{

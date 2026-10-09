@@ -126,6 +126,18 @@ class PersistentGuardService : Service() {
         foregroundActive = false
         running = false
         ensureNotificationChannel()
+        // Package replacement and Dart initialization can race with the saved
+        // enable flag. Satisfy Android's foreground-start deadline first; the
+        // start command may then stop an unwanted guard without a late crash.
+        try {
+            startForegroundCompat()
+            running = true
+            foregroundActive = true
+            lastStartError = null
+        } catch (t: Throwable) {
+            lastStartError = t.readableMessage()
+            stopSelf()
+        }
     }
 
     override fun onDestroy() {

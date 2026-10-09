@@ -300,6 +300,35 @@ class ChatHistoryStore {
     return _buildRawMessagesFromDb(dbMessages);
   }
 
+  Future<void> recoverInterruptedUserMessages(
+    String conversationId, {
+    required bool Function(String messageId) isActiveSend,
+  }) async {
+    final recovered = await _ref
+        .read(messageRepositoryProvider)
+        .recoverInterruptedUserMessages(
+          conversationId,
+          isActiveSend: isActiveSend,
+        );
+    if (recovered.isEmpty) return;
+
+    // Patch only affected messages: reloading the entire timeline would drop
+    // a different, still-live send's transient assistant placeholders.
+    final messages = <Message>[];
+    for (final id in recovered) {
+      messages.addAll(await _loadFrontendMessagesForMessageId(
+        id,
+        conversationId: conversationId,
+      ));
+    }
+    if (messages.isNotEmpty) {
+      await _ref.read(conversationTimelineCacheProvider).upsertMessages(
+            conversationId: conversationId,
+            messages: messages,
+          );
+    }
+  }
+
   Future<List<Message>> loadCanonicalContextMessages(
     String conversationId, {
     int limit = 30,

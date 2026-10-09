@@ -663,7 +663,7 @@ class CloudSyncEngine {
       return;
     }
     final current = await local.read(kind, id);
-    if (current == null) return;
+    if (current == null || current.isSendingMessage) return;
     final incoming = await codec.decode(
       kind,
       Map<String, dynamic>.from(document['payload'] as Map),
@@ -1112,6 +1112,7 @@ class CloudSyncEngine {
       ON d.kind=v.kind AND d.entity_id=v.entity_id
       LEFT JOIN messages m ON d.kind='messages' AND d.entity_id=m.id
       WHERE v.conflict_id IS NULL
+        AND m.status IS NOT 'sending'
         AND NOT (d.revision=d.relay_revision AND d.relay_until>?)''',
       [DateTime.now().millisecondsSinceEpoch],
     );
@@ -1159,6 +1160,9 @@ class CloudSyncEngine {
         continue;
       }
       final document = await local.read(kind, id);
+      // Recheck the snapshot: status may change after the pending query.
+      // Do not freeze, acknowledge, or mistake a deferred row for a deletion.
+      if (document?.isSendingMessage == true) continue;
       final known = await _version(kind, id);
       if (document == null && known == null) {
         await local.execute(

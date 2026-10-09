@@ -12,6 +12,13 @@ import '../services/chat_types.dart'
 abstract interface class ChatHistoryPort {
   Future<List<Message>> loadRawMessages(String conversationId);
 
+  /// Restore interrupted user sends before opening a conversation timeline.
+  /// [isActiveSend] must read live process state, not a captured UI snapshot.
+  Future<void> recoverInterruptedUserMessages(
+    String conversationId, {
+    required bool Function(String messageId) isActiveSend,
+  });
+
   Future<void> markMessageStatus({
     required String conversationId,
     required String messageId,

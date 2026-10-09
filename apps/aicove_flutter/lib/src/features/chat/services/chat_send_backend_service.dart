@@ -50,7 +50,7 @@ import 'chat_plugin_context_builder.dart';
 import 'chat_plugin_context_policy.dart';
 import 'chat_request_config.dart';
 import 'chat_request_message_builder.dart';
-import 'chat_send_api_runner.dart';
+import 'api_runner.dart';
 import 'chat_send_trace_payload_builder.dart';
 import 'chat_types.dart';
 
@@ -78,7 +78,7 @@ class ChatSendBackendService {
     required ChatSupportsNonVisionImageFlow shouldUseNonVisionImageFlow,
     required ChatPreviousUserMessageTimeResolver
     resolveTimeAwarenessPreviousUserMessageTime,
-    ChatSendApiRunner apiRunner = const ChatSendApiRunner(),
+    ApiRunner? apiRunner,
     ChatPluginContextBuilder pluginContextBuilder =
         const ChatPluginContextBuilder(),
     ChatRequestConfigBuilder? requestConfigBuilder,
@@ -95,7 +95,8 @@ class ChatSendBackendService {
        _shouldUseNonVisionImageFlow = shouldUseNonVisionImageFlow,
        _resolveTimeAwarenessPreviousUserMessageTime =
            resolveTimeAwarenessPreviousUserMessageTime,
-       _apiRunner = apiRunner,
+       _apiRunner =
+           apiRunner ?? createApiRunner(useKernel: kAgentKernelChat),
        _pluginContextBuilder = pluginContextBuilder,
        _requestConfigBuilder =
            requestConfigBuilder ?? ChatRequestConfigBuilder(),
@@ -112,7 +113,7 @@ class ChatSendBackendService {
   final ChatSupportsNonVisionImageFlow _shouldUseNonVisionImageFlow;
   final ChatPreviousUserMessageTimeResolver
   _resolveTimeAwarenessPreviousUserMessageTime;
-  final ChatSendApiRunner _apiRunner;
+  final ApiRunner _apiRunner;
   final ChatPluginContextBuilder _pluginContextBuilder;
   final ChatRequestConfigBuilder _requestConfigBuilder;
   final ChatSendTracePayloadBuilder _tracePayloadBuilder;

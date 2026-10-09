@@ -1,0 +1,8 @@
+name: aicove_agent_kernel
+description: Pure Dart agent loop, stage pipeline and plugin host for AIcove (ADR0064).
+version: 0.1.0
+publish_to: none
+environment:
+  sdk: ^3.12.2
+dev_dependencies:
+  test: ^1.29.0

@@ -11,7 +11,11 @@ import 'package:aicove_flutter/src/features/background_agent/background_agent_se
 import 'package:aicove_flutter/src/features/background_agent/domain/background_agent_definition.dart';
 import 'package:aicove_flutter/src/features/background_agent/domain/background_context_spec.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
+import 'package:aicove_flutter/src/features/chat/services/api_runner.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_send_api_runner.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../chat/services/api_runner_variants.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_types.dart';
 import 'package:aicove_flutter/src/features/observability/trace_models.dart';
 import 'package:aicove_flutter/src/features/observability/trace_store.dart';
@@ -336,9 +340,10 @@ void main() {
       expect(payload['rawContext'], contains('我喜欢喝美式'));
     });
 
-    test('通过 availableTools 可在无插件执行链下完成工具调用', () async {
+    for (final (variant, createRunner) in apiRunnerVariants) {
+    test('[$variant] 通过 availableTools 可在无插件执行链下完成工具调用', () async {
       final client = _SequencedToolCallClient();
-      final runner = ChatSendApiRunner.withAgentClientFactory(
+      final runner = createRunner(
         agentClientFactory: (timeout) => AgentApiClient(
           client: client,
           timeout: timeout,
@@ -445,6 +450,7 @@ void main() {
         ]),
       );
     });
+    }
 
     test('传入指定上下文时不再回退到最近消息加载器', () async {
       ApiConfig? capturedConfig;
@@ -586,6 +592,19 @@ void main() {
           contains('角色：[2026-09-23 14:41]: 好，等你回来'),
         ),
       );
+    });
+    test('后台执行器默认走旧执行器，开关为真时为内核执行器', () {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      expect(kAgentKernelBackground, isFalse);
+      expect(container.read(backgroundApiRunnerProvider), isA<ChatSendApiRunner>());
+      expect(createApiRunner(useKernel: true), isA<KernelApiRunner>());
+      expect(createApiRunner(useKernel: false), isA<ChatSendApiRunner>());
+    });
+
+    test('内核执行器只在轮次上限小于 1 时回退旧执行器', () {
+      expect(KernelApiRunner.needsLegacyRunner(maxRounds: 0), isTrue);
+      expect(KernelApiRunner.needsLegacyRunner(maxRounds: 1), isFalse);
     });
   });
 }

@@ -118,12 +118,14 @@ class SegmentedChatFixture {
     String personaPrompt = '',
     List<String>? enabledPlugins,
     List<Override> extraOverrides = const [],
+    List<Message>? historyMessages,
+    Conversation Function(Conversation conversation)? decorate,
   }) async {
     // 整个探针是独立入口；连插件/主动回复的旁路偏好也只用内存替身。
     // ignore: invalid_use_of_visible_for_testing_member
     SharedPreferences.setMockInitialValues({});
     final now = DateTime.now();
-    final history = List.generate(
+    final history = historyMessages ?? List.generate(
         historyCount,
         (index) => Message.text(
               id: 'probe_history_$index',
@@ -131,18 +133,19 @@ class SegmentedChatFixture {
               content: '第 $index 条历史消息：用于验证一次生成不断分成多个气泡时是否跟手。',
               createdAt: now.subtract(Duration(minutes: historyCount - index)),
             ));
-    final conversation = Conversation(
+    final base = Conversation(
       id: 'offline_segmented_probe',
       title: '离线多气泡测试',
       displayName: '离线多气泡测试',
       createdAt: now,
       updatedAt: now,
       messages: history,
-      lastMessage: '',
-      lastMessageTime: now,
+      lastMessage: history.isEmpty ? '' : history.last.displayText,
+      lastMessageTime: history.isEmpty ? now : history.last.createdAt,
       personaPrompt: personaPrompt,
       enabledPlugins: enabledPlugins,
     );
+    final conversation = decorate?.call(base) ?? base;
     final database = db.AppDatabase.forTesting(NativeDatabase.memory());
     await database.customStatement('PRAGMA foreign_keys = ON');
     await database.into(database.conversations).insert(
@@ -191,7 +194,7 @@ class SegmentedChatFixture {
       fixture.timeline.value = window.messages;
     });
     await fixture
-        .waitUntil(() => fixture.timeline.value.length == historyCount);
+        .waitUntil(() => fixture.timeline.value.length >= history.length);
     return fixture;
   }
 

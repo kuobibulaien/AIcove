@@ -5,7 +5,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 
 import 'package:aicove_flutter/src/core/api/agent_api.dart';
-import 'package:aicove_flutter/src/features/chat/services/chat_send_api_runner.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_types.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/base_plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/handlers/ai_tool.dart';
@@ -13,6 +12,7 @@ import 'package:aicove_flutter/src/features/plugins/domain/plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin_metadata.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
+import 'api_runner_variants.dart';
 
 AppSettings _buildTestSettings({
   CallFlowMode mode = CallFlowMode.auto,
@@ -541,7 +541,7 @@ class _MixedToolClient extends http.BaseClient {
   }
 }
 
-void main() {
+void _runAll(RunnerFactory createRunner) {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
@@ -582,7 +582,7 @@ void main() {
       ],
     );
 
-    final runner = ChatSendApiRunner.withAgentClientFactory(
+    final runner = createRunner(
       agentClientFactory: (timeout) => AgentApiClient(
         client: fakeHttpClient,
         timeout: timeout,
@@ -641,7 +641,7 @@ void main() {
       ],
     );
 
-    final runner = ChatSendApiRunner.withAgentClientFactory(
+    final runner = createRunner(
       agentClientFactory: (timeout) => AgentApiClient(
         client: fakeHttpClient,
         timeout: timeout,
@@ -686,7 +686,7 @@ void main() {
       ],
     );
 
-    final runner = ChatSendApiRunner.withAgentClientFactory(
+    final runner = createRunner(
       agentClientFactory: (timeout) => AgentApiClient(
         client: fakeHttpClient,
         timeout: timeout,
@@ -742,7 +742,7 @@ void main() {
       ],
     );
 
-    final runner = ChatSendApiRunner.withAgentClientFactory(
+    final runner = createRunner(
       agentClientFactory: (timeout) => AgentApiClient(
         client: fakeHttpClient,
         timeout: timeout,
@@ -792,7 +792,7 @@ void main() {
       ],
     );
 
-    final runner = ChatSendApiRunner.withAgentClientFactory(
+    final runner = createRunner(
       agentClientFactory: (timeout) => AgentApiClient(
         client: fakeHttpClient,
         timeout: timeout,
@@ -811,4 +811,10 @@ void main() {
     expect(result.processedText, isNot(contains('"action":"lookup_schedule"')));
     expect(result.processedText.trim(), '查好了，你今晚八点有空。');
   });
+}
+
+void main() {
+  for (final (variant, createRunner) in apiRunnerVariants) {
+    group(variant, () => _runAll(createRunner));
+  }
 }

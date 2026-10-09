@@ -96,7 +96,13 @@ class LanRepository {
             [kind, id],
           )
         : await local.rows(
-            'SELECT * FROM lan_dirty ORDER BY kind,entity_id LIMIT 500',
+            // Filter before LIMIT: a backlog of in-flight rows must not starve
+            // terminal messages or tombstones later in the journal.
+            '''SELECT d.* FROM lan_dirty d
+            WHERE NOT EXISTS (
+              SELECT 1 FROM messages m WHERE d.kind='messages'
+              AND m.id=d.entity_id AND m.status='sending'
+            ) ORDER BY d.kind,d.entity_id LIMIT 500''',
           );
     for (final item in dirty) {
       await cloudLocalWrite(
@@ -108,6 +114,9 @@ class LanRepository {
                   (kind == 'settings' || kind == 'plugin_presets')
               ? external['$kind/$id']
               : await local.read(kind, id);
+          // Also covers targeted capture and writes after the journal query.
+          // Keep the dirty revision and any previous immutable heads intact.
+          if (current?.isSendingMessage == true) return;
           final known = await _entity(kind, id);
           final fingerprint = await _fingerprint(current, kind, id);
           if (fingerprint != known?['local_fingerprint']) {
@@ -255,18 +264,30 @@ class LanRepository {
       throw const LanSyncFailure('摘要分页参数无效');
     }
     final rows = await local.rows(
-      "SELECT kind,entity_id,heads_json FROM lan_entities WHERE kind||'/'||entity_id>? ORDER BY kind,entity_id LIMIT ?",
+      // Old peers/versions may have persisted sending heads. Retain them for
+      // causal comparison, but do not advertise them for onward transmission.
+      // Keep the original page cursor even when every head on a page is hidden.
+      r"""SELECT e.kind,e.entity_id,
+      CASE WHEN e.kind='messages' THEN (
+        SELECT json_group_array(h.value) FROM json_each(e.heads_json) h
+        JOIN lan_revisions r ON r.hash=h.value
+        WHERE json_extract(r.document_json,'$.deleted')=1
+          OR json_extract(r.document_json,'$.payload.row.status') IS NOT 'sending'
+      ) ELSE e.heads_json END AS heads_json
+      FROM lan_entities e WHERE e.kind||'/'||e.entity_id>?
+      ORDER BY e.kind,e.entity_id LIMIT ?""",
       [after, limit + 1],
     );
     final selected = rows.take(limit).toList();
     return {
       'items': [
         for (final row in selected)
-          {
-            'kind': row['kind'],
-            'entity_id': row['entity_id'],
-            'hashes': jsonDecode(row['heads_json'] as String),
-          },
+          if ((jsonDecode(row['heads_json'] as String) as List).isNotEmpty)
+            {
+              'kind': row['kind'],
+              'entity_id': row['entity_id'],
+              'hashes': jsonDecode(row['heads_json'] as String),
+            },
       ],
       'after': selected.isEmpty
           ? after
@@ -294,11 +315,20 @@ class LanRepository {
       [hash],
     );
     if (rows.isEmpty) throw const LanSyncFailure('同步修订已变化，请重试');
-    return LanRevision.fromJson(
+    final revision = LanRevision.fromJson(
       Map<String, dynamic>.from(
         jsonDecode(rows.single['document_json'] as String) as Map,
       ),
     );
+    if (!revision.deleted &&
+        CloudLocalDocument(
+          revision.kind,
+          revision.id,
+          revision.payload,
+        ).isSendingMessage) {
+      throw const LanSyncFailure('消息仍在本机发送中，终态后再同步');
+    }
+    return revision;
   });
 
   /// Persist incoming revisions before applying. A failed apply can be retried

@@ -7,6 +7,10 @@ class CloudLocalDocument {
   final String kind;
   final String id;
   final Map<String, dynamic> payload;
+
+  /// Device-local intermediate state, never an outgoing put or a deletion.
+  bool get isSendingMessage =>
+      kind == 'messages' && (payload['row'] as Map?)?['status'] == 'sending';
   // This value is a comparison token, not a second copy of raw history.
   String get localJson => 'sha256:${cloudObjectId(canonicalJson(payload))}';
 }

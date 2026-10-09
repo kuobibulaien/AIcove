@@ -2,11 +2,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:aicove_flutter/src/core/api/agent_api.dart';
 import 'package:aicove_flutter/src/core/api/providers/provider_adapter.dart';
 import 'package:aicove_flutter/src/core/app_logger.dart';
-import 'package:aicove_flutter/src/features/chat/services/chat_send_api_runner.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_types.dart';
 import 'package:aicove_flutter/src/features/context/domain/context_summary.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/handlers/ai_tool.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
+import 'api_runner_variants.dart';
 
 class OverflowClient extends AgentApiClient {
   OverflowClient() : super();
@@ -69,7 +69,7 @@ class Context implements RuntimeContextPort {
   }
 }
 
-void main() {
+void _runAll(RunnerFactory createRunner) {
   TestWidgetsFlutterBinding.ensureInitialized();
   for (final fail in [false, true]) {
     test('服务器超限只重试模型，不重复成功工具；持续超限=$fail', () async {
@@ -86,7 +86,7 @@ void main() {
         },
       );
       final settings = mapUiModelsToAppSettings({});
-      final runner = ChatSendApiRunner.withAgentClientFactory(
+      final runner = createRunner(
         agentClientFactory: (_) => client,
       );
       final future = runner.executeApiCall(
@@ -118,5 +118,11 @@ void main() {
       expect(context.recoveries, 1);
       expect(context.checks, 3);
     });
+  }
+}
+
+void main() {
+  for (final (variant, createRunner) in apiRunnerVariants) {
+    group(variant, () => _runAll(createRunner));
   }
 }

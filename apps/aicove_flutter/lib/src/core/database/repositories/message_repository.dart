@@ -2,13 +2,22 @@ import 'package:drift/drift.dart';
 import '../database.dart';
 import '../../media/embedded_media_store.dart';
 
+/// 正常生成与工具循环预期不会持续 30 分钟；为另一设备阈值内的在途
+/// 发送保留保护期，避免仅因本机没有任务就误判。设备归属另见 ADR0068。
+const kInterruptedSendRecoveryThreshold = Duration(minutes: 30);
+
 /// 消息 Repository
 class MessageRepository {
   final AppDatabase _db;
 
-  MessageRepository(this._db, {EmbeddedMediaStore? mediaStore})
-      : _mediaStore = mediaStore ?? EmbeddedMediaStore.shared;
+  MessageRepository(
+    this._db, {
+    EmbeddedMediaStore? mediaStore,
+    DateTime Function()? now,
+  })  : _mediaStore = mediaStore ?? EmbeddedMediaStore.shared,
+        _now = now ?? DateTime.now;
   final EmbeddedMediaStore _mediaStore;
+  final DateTime Function() _now;
 
   Future<MessagesCompanion> _compact(MessagesCompanion data) async {
     final raw = data.rawPayload;
@@ -162,6 +171,47 @@ class MessageRepository {
   Future<void> updateStatus(String id, String status) async {
     await (_db.update(_db.messages)..where((t) => t.id.equals(id)))
         .write(MessagesCompanion(status: Value(status)));
+  }
+
+  /// Recover only user sends older than the threshold without a live owner.
+  /// The live predicate is evaluated after the read, inside the transaction:
+  /// sends started while waiting for the database must not be recovered.
+  Future<List<String>> recoverInterruptedUserMessages(
+    String conversationId, {
+    required bool Function(String messageId) isActiveSend,
+  }) {
+    return _db.transaction(() async {
+      final table = _db.messages;
+      final cutoff = _now()
+          .subtract(kInterruptedSendRecoveryThreshold)
+          .millisecondsSinceEpoch;
+      final candidates = await (_db.selectOnly(table)
+            ..addColumns([table.id])
+            ..where(
+              table.conversationId.equals(conversationId) &
+                  table.role.equals('user') &
+                  table.status.equals('sending') &
+                  table.createdAt.isSmallerThanValue(cutoff) &
+                  table.deletedAt.isNull() &
+                  table.replacedBy.isNull(),
+            ))
+          .get();
+      final recovered = <String>[];
+      for (final row in candidates) {
+        final id = row.read(table.id)!;
+        if (isActiveSend(id)) continue;
+        final changed = await (_db.update(table)
+              ..where((t) =>
+                  t.id.equals(id) &
+                  t.status.equals('sending') &
+                  t.createdAt.isSmallerThanValue(cutoff) &
+                  t.deletedAt.isNull() &
+                  t.replacedBy.isNull()))
+            .write(const MessagesCompanion(status: Value('failed')));
+        if (changed > 0) recovered.add(id);
+      }
+      return recovered;
+    });
   }
 
   /// 软删除消息

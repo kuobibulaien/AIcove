@@ -1134,7 +1134,7 @@ class AppSettings {
     this.glassEffectEnabled = true,
     this.glassBlurSigma = kDefaultGlassBlurSigma,
     this.glassTintFill = kDefaultGlassTintFill,
-    this.useLiquidGlass = true,
+    this.useLiquidGlass = false,
     this.defaultChatModels = const <String>[],
     this.skipVisionCompatDialog = false,
     this.enhancedDialogueSettings = const EnhancedDialogueSettings(),
