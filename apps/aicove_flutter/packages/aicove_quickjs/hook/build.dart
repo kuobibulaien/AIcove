@@ -140,10 +140,13 @@ Future<Map<String, String>> _batchEnvironment(
   List<String> arguments,
 ) async {
   const separator = '=======';
+  // Run from the script's directory by file name: cmd.exe mangles quoted
+  // paths containing spaces when they arrive through Process.run.
   final result = await Process.run(
-    'set && echo $separator && "${script.toFilePath()}" ${arguments.join(' ')} > nul && set',
+    'set && echo $separator && ${script.pathSegments.last} ${arguments.join(' ')} > nul && set',
     [],
     runInShell: true,
+    workingDirectory: script.resolve('.').toFilePath(),
   );
   if (result.exitCode != 0) {
     throw Exception('vcvars failed: ${result.stderr}');
