@@ -501,7 +501,7 @@ class SillyTavernPresetAssembler {
       return '';
     }
     if (context.messageVariables == null && isMvuSpecificContent(content)) {
-      warnings.add('${prompt.name} 属于 MVU 变量，本角色未启用 MVU，已跳过');
+      warnings.add('${prompt.name} 是 MVU 变量专用内容，本会话未启用 MVU 变量，已跳过');
       return '';
     }
     final values = _buildMacroValues(context, lastUserMessage);

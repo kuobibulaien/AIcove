@@ -5,6 +5,9 @@ import 'silly_tavern_world_book.dart';
 /// compatibilityData 中记录 {{user}} 名称开关的键。
 const String presetUserNameMacroKey = 'userNameMacro';
 
+/// compatibilityData 中记录 MVU 变量开关的键（ADR0071）；缺省为开。
+const String presetMvuKey = 'mvu';
+
 /// 预设关闭 {{user}} 名称或用户未设置名称时使用的中性指代。
 const String kNeutralUserName = '用户';
 
@@ -238,6 +241,9 @@ class SillyTavernPreset {
   /// {{user}} 是否替换为用户名称；关闭后替换为 [kNeutralUserName]，称呼交给角色卡。
   bool get userNameMacroEnabled =>
       compatibilityData[presetUserNameMacroKey] != false;
+
+  /// 是否解析与维护 MVU 变量；只在世界书有 `[InitVar]` 条目或开场白带初始化／更新块时才实际生效。
+  bool get mvuEnabled => compatibilityData[presetMvuKey] != false;
 
   SillyTavernPromptOrderGroup get selectedOrder =>
       promptOrderGroups[selectedOrderIndex];

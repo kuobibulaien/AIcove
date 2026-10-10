@@ -44,7 +44,6 @@ import '../../../../ui/shared/widgets/index.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../../core/models/message_block.dart';
 import '../../../../core/services/attachment_picker_service.dart';
-import '../../../../core/utils/data_image.dart';
 import '../../../../core/utils/image_preheat_queue.dart';
 import '../../../../features/observability/trace_models.dart';
 import '../../../../features/observability/frontend_diagnostics_port.dart';
@@ -262,17 +261,14 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   Future<void> _showShareSheet(Conversation conv) async {
     final messages = List<Message>.of(_selection.selectedMessages);
-    final raw = conv.chatBackgroundImage?.trim();
-    final bytes = raw == null ? null : decodeDataImage(raw);
-    final wallpaper = raw == null || raw.isEmpty ? null
-        : bytes != null ? MemoryImage(bytes) : _getImageProvider(raw);
-    final fallback = resolveChatBackgroundColor(
-      context,
-      ref.read(appSettingsProvider).valueOrNull?.lightChatBackground,
+    final chatSize = context.size ?? MediaQuery.sizeOf(context);
+    final background = ChatWallpaperLayer.forConversation(
+      conversation: conv,
+      fallbackColor: resolveChatBackgroundColor(
+        context,
+        ref.read(appSettingsProvider).valueOrNull?.lightChatBackground,
+      ),
     );
-    final background = wallpaper == null &&
-        (fallback == telegramChatBackground || fallback == telegramChatBackgroundDark)
-        ? Theme.of(context).scaffoldBackgroundColor : fallback;
     final height = MediaQuery.sizeOf(context).height * 0.85;
     final exported = await showMoeBottomSheet<String>(
       context: context,
@@ -296,11 +292,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     MoeWorkspace.open(context, ChatImageExportPage(
       messages: messages,
       title: conv.displayName,
-      avatarUrl: conv.avatarUrl ?? conv.characterImage,
+      avatarUrl: conv.avatarUrl,
+      characterImage: conv.characterImage,
       background: background,
-      wallpaper: wallpaper,
-      wallpaperMaskOpacity: conv.chatBackgroundMaskOpacity ?? 0.8,
-      wallpaperBlurSigma: conv.chatBackgroundBlurSigma ?? 0,
+      chatSize: chatSize,
+      showBackButton: MoeWorkspace.showsBackButton(context),
       documentStyle: ref
               .read(chatDisplayPolicyProvider(conv.chatDisplayStyle))
               .style ==

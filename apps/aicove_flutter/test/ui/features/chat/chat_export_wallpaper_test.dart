@@ -1,9 +1,10 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:aicove_flutter/src/ui/features/chat/pages/chat_image_export_page.dart';
 import 'package:aicove_flutter/src/ui/features/chat/widgets/chat_image_export.dart';
-import 'package:aicove_flutter/src/ui/features/chat/widgets/chat_export_wallpaper.dart';
+import 'package:aicove_flutter/src/ui/features/chat/widgets/chat_wallpaper_background.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -47,34 +48,7 @@ void main() {
     }
   });
 
-  testWidgets('背景等比逐张接续，末张裁切而不拉伸', (tester) async {
-    await tester.runAsync(() async {
-      final tile = await wallpaper();
-      final recorder = ui.PictureRecorder();
-      final canvas = Canvas(recorder);
-      ChatExportWallpaperPainter(
-        image: tile,
-        background: Colors.white,
-        maskOpacity: 0.4,
-        blurSigma: 0,
-      ).paint(canvas, const Size(100, 450));
-      final picture = recorder.endRecording();
-      final image = await picture.toImage(100, 450);
-      final rgba = (await image.toByteData())!.buffer.asUint8List();
-      List<int> pixel(int y) =>
-          rgba.sublist((y * 100 + 1) * 4, (y * 100 + 2) * 4);
-      expect(pixel(25), pixel(225));
-      expect(pixel(25), pixel(425));
-      expect(pixel(149), pixel(349));
-      expect(pixel(49), pixel(449), reason: '最后一张只绘制前50px');
-      expect(pixel(25), isNot(pixel(149)));
-      image.dispose();
-      picture.dispose();
-      tile.dispose();
-    });
-  });
-
-  testWidgets('长图使用当前背景，预览头尾控件随图片滚动', (tester) async {
+  testWidgets('长图沿用聊天背景并按屏高循环，预览在固定标题与保存按钮之间滚动', (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(390, 800);
     addTearDown(tester.view.reset);
@@ -89,7 +63,6 @@ void main() {
       tile.dispose();
       return bytes;
     }))!;
-    late BuildContext host;
     await tester.pumpWidget(
       UncontrolledProviderScope(
         container: fixture.container,
@@ -101,43 +74,34 @@ void main() {
               fontFamily: output.isEmpty ? null : 'ExportPreview',
               extensions: [MoeColors.light()],
             ),
-            home: Builder(
-              builder: (context) {
-                host = context;
-                return ChatImageExportPage(
-                  messages: fixture.conversation.messages,
-                  title: '与小林的聊天',
-                  background: Colors.white,
-                  wallpaper: MemoryImage(png),
-                  wallpaperMaskOpacity: 0.2,
-                );
-              },
+            home: ChatImageExportPage(
+              messages: fixture.conversation.messages,
+              title: '与小林的聊天',
+              background: ChatWallpaperLayer(
+                image: 'data:image/png;base64,${base64Encode(png)}',
+                fallbackColor: Colors.white,
+                maskOpacity: 0.2,
+              ),
+              chatSize: const Size(390, 800),
             ),
           ),
         ),
       ),
     );
-    for (var i = 0; i < 150; i++) {
-      await tester.pump(const Duration(milliseconds: 20));
+    final save = find.byKey(const ValueKey('chat-export-save'));
+    for (var i = 0; i < 200 && find.text('保存图片').evaluate().isEmpty; i++) {
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 20)),
       );
-      if (find
-          .byKey(const ValueKey('chat-export-preview'))
-          .evaluate()
-          .isNotEmpty) {
-        break;
-      }
+      await tester.pump(const Duration(milliseconds: 60));
     }
-    await tester.pumpAndSettle();
+    expect(find.text('保存图片'), findsOneWidget);
     final preview = find.byKey(const ValueKey('chat-export-preview'));
-    expect(preview, findsOneWidget);
-    final imageRect = tester.getRect(preview);
+    final scroll = find.byKey(const ValueKey('chat-export-scroll'));
     final header = find.text('导出图片');
-    final save = find.byKey(const ValueKey('chat-export-save'));
-    expect(tester.getRect(header).bottom, lessThan(imageRect.top));
-    expect(tester.getRect(save).top, greaterThanOrEqualTo(imageRect.bottom));
-    expect(imageRect.height, greaterThan(800));
+    expect(tester.getRect(header).bottom, lessThan(tester.getRect(scroll).top));
+    expect(tester.getRect(save).top, greaterThanOrEqualTo(tester.getRect(scroll).bottom));
+    expect(tester.getRect(preview).height, greaterThan(1200));
     Future<void> capture(String name) async {
       if (output.isEmpty) return;
       final boundary = tester.renderObject<RenderRepaintBoundary>(
@@ -153,21 +117,12 @@ void main() {
       });
     }
 
-    await capture('export-head');
-    await tester.ensureVisible(save);
-    await tester.pumpAndSettle();
-    expect(tester.getRect(header).bottom, lessThan(0));
-    expect(tester.getRect(save).bottom, lessThanOrEqualTo(800));
-    await capture('export-tail');
+    await capture('export-page');
+    final canvas = tester.renderObject<RenderRepaintBoundary>(
+      find.ancestor(of: preview, matching: find.byType(RepaintBoundary)).first,
+    );
     await tester.runAsync(() async {
-      final bytes = await renderChatImage(
-        context: host,
-        messages: fixture.conversation.messages,
-        title: '与小林的聊天',
-        background: Colors.white,
-        wallpaper: MemoryImage(png),
-        wallpaperMaskOpacity: 0.2,
-      );
+      final bytes = await captureChatExportImage(canvas, pixelRatio: 2);
       if (output.isNotEmpty) {
         await File('$output/export-long.png').writeAsBytes(bytes);
       }
@@ -176,8 +131,9 @@ void main() {
       final rgba = (await image.toByteData())!.buffer.asUint8List();
       List<int> pixel(int y) =>
           rgba.sublist(y * image.width * 4, y * image.width * 4 + 4);
-      expect(pixel(100), pixel(1780), reason: '420逻辑宽、2倍像素比，每张背景高1680像素');
-      expect(pixel(100), isNot([255, 255, 255, 255]));
+      expect(image.width, 780);
+      expect(pixel(300), pixel(1900), reason: '每张背景占聊天页一屏，2倍像素比下高1600像素');
+      expect(pixel(300), isNot([255, 255, 255, 255]));
       image.dispose();
       codec.dispose();
     });

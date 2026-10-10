@@ -279,7 +279,7 @@ class Release:
         flags = ['--release', '--build-name', self.version.split('-')[0], '--build-number', self.args.build_number,
                  f'--dart-define=AICOVE_RELEASE_TAG={self.version}']
         log('build: Android APK (log: android-build.log)')
-        run(['tool/flutterw', 'build', 'apk', *flags], cwd=app, log_file=self.work / 'android-build.log')
+        run(['tool/flutterw', 'build', 'apk', '--target-platform', 'android-arm64', *flags], cwd=app, log_file=self.work / 'android-build.log')
         log('build: macOS app (log: macos-build.log)')
         run(['tool/flutterw', 'build', 'macos', *flags], cwd=app, log_file=self.work / 'macos-build.log')
         log('build: iOS app without code signing (log: ios-build.log)')
@@ -302,6 +302,9 @@ class Release:
     def check_apk(self, apk):
         hits = []
         with zipfile.ZipFile(apk) as archive:
+            abis = {entry.split('/')[1] for entry in archive.namelist() if entry.startswith('lib/')}
+            if abis != {'arm64-v8a'}:
+                sys.exit(f'build: APK must contain only arm64-v8a native libs, got {sorted(abis)}')
             for entry in archive.namelist():
                 # Only Dart code embeds build paths; third-party libs may contain "/home/" legitimately.
                 found = self.private.hits(archive.read(entry), include_users_dir=entry.endswith('libapp.so'))

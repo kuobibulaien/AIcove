@@ -11,6 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 Widget _host(
   Widget child, {
   GlobalWallpaper wallpaper = GlobalWallpaper.mist,
+  String? customImagePath,
   bool dark = false,
 }) {
   return MaterialApp(
@@ -18,7 +19,12 @@ Widget _host(
       brightness: dark ? Brightness.dark : Brightness.light,
       extensions: [dark ? MoeColors.dark() : MoeColors.light()],
     ),
-    home: MoeWallpaperTheme(wallpaper: wallpaper, child: child),
+    home: MoeWallpaperTheme(
+      wallpaper: wallpaper,
+      customImagePath: customImagePath,
+      customMask: 0.4,
+      child: child,
+    ),
   );
 }
 
@@ -35,7 +41,8 @@ void main() {
       for (final slot in GlobalWallpaperSlot.values) {
         for (final brightness in Brightness.values) {
           final asset = wallpaper.assetFor(slot, brightness);
-          if (wallpaper == GlobalWallpaper.none) {
+          if (wallpaper == GlobalWallpaper.none ||
+              wallpaper == GlobalWallpaper.custom) {
             expect(asset, isNull);
           } else {
             expect(File(asset!).existsSync(), isTrue, reason: asset);
@@ -53,6 +60,23 @@ void main() {
       GlobalWallpaper.none,
     );
     expect(localGeneralSettings, contains('global_wallpaper'));
+
+    final custom = mapUiModelsToAppSettings({
+      'global_wallpaper': 'custom',
+      'global_wallpaper_custom_image': '/tmp/w.png',
+      'global_wallpaper_mask': 1.5,
+    });
+    expect(custom.globalWallpaper, GlobalWallpaper.custom);
+    expect(custom.globalWallpaperCustomImage, '/tmp/w.png');
+    expect(custom.globalWallpaperMask, 1.0);
+    expect(
+      mapUiModelsToAppSettings({}).globalWallpaperMask,
+      kDefaultCustomWallpaperMask,
+    );
+    expect(
+      localGeneralSettings,
+      containsAll(['global_wallpaper_custom_image', 'global_wallpaper_mask']),
+    );
   });
 
   testWidgets('default page background uses the page wallpaper', (
@@ -106,5 +130,40 @@ void main() {
       ),
     );
     expect(_assetNames(tester), {'assets/wallpapers/apricot_2_light.webp'});
+  });
+
+  testWidgets('custom wallpaper covers every page with a readability mask', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(
+        const MoePageScaffold(body: SizedBox()),
+        wallpaper: GlobalWallpaper.custom,
+        customImagePath: '/tmp/aicove-custom-wallpaper.png',
+      ),
+    );
+    final image = tester.widget<Image>(find.byType(Image)).image as FileImage;
+    expect(image.file.path, '/tmp/aicove-custom-wallpaper.png');
+    final scaffoldColor = Theme.of(
+      tester.element(find.byType(Scaffold)),
+    ).scaffoldBackgroundColor;
+    expect(
+      find.byWidgetPredicate(
+        (w) => w is ColoredBox && w.color == scaffoldColor.withValues(alpha: 0.4),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('custom wallpaper without an image keeps the plain color', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(
+        const MoeChatWallpaper(child: SizedBox()),
+        wallpaper: GlobalWallpaper.custom,
+      ),
+    );
+    expect(find.byType(Image), findsNothing);
   });
 }

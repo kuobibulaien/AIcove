@@ -15,7 +15,7 @@ import '../../core/prompts/prompt_builtin_defaults.g.dart';
 import '../../ui/theme/tokens.dart';
 
 export '../../ui/theme/moe_wallpaper.dart'
-    show GlobalWallpaper, GlobalWallpaperSlot;
+    show GlobalWallpaper, GlobalWallpaperSlot, kDefaultCustomWallpaperMask;
 
 export '../../core/api/thinking/thinking_level.dart' show ThinkingLevel;
 export '../chat/domain/chat_display_policy.dart' show ChatDisplayStyle;
@@ -1056,6 +1056,12 @@ class AppSettings {
 
   /// 未自定义背景的界面默认使用的全局壁纸。
   final GlobalWallpaper globalWallpaper;
+
+  /// 自定义全局壁纸在本机的图片路径（仅本机，不同步）。
+  final String? globalWallpaperCustomImage;
+
+  /// 自定义全局壁纸的底色遮罩不透明度（0..1）。
+  final double globalWallpaperMask;
   final ChatBackgroundColor chatBackgroundColor;
   final bool isDarkMode;
   final bool useSystemTheme;
@@ -1131,6 +1137,8 @@ class AppSettings {
     required this.autoReplySettings,
     required this.globalBackgroundColor,
     this.globalWallpaper = GlobalWallpaper.none,
+    this.globalWallpaperCustomImage,
+    this.globalWallpaperMask = kDefaultCustomWallpaperMask,
     required this.chatBackgroundColor,
     required this.isDarkMode,
     required this.useSystemTheme,
@@ -1200,6 +1208,8 @@ class AppSettings {
     AutoReplySettings? autoReplySettings,
     GlobalBackgroundColor? globalBackgroundColor,
     GlobalWallpaper? globalWallpaper,
+    String? globalWallpaperCustomImage,
+    double? globalWallpaperMask,
     ChatBackgroundColor? chatBackgroundColor,
     bool? isDarkMode,
     bool? useSystemTheme,
@@ -1253,6 +1263,9 @@ class AppSettings {
     autoReplySettings: autoReplySettings ?? this.autoReplySettings,
     globalBackgroundColor: globalBackgroundColor ?? this.globalBackgroundColor,
     globalWallpaper: globalWallpaper ?? this.globalWallpaper,
+    globalWallpaperCustomImage:
+        globalWallpaperCustomImage ?? this.globalWallpaperCustomImage,
+    globalWallpaperMask: globalWallpaperMask ?? this.globalWallpaperMask,
     chatBackgroundColor: chatBackgroundColor ?? this.chatBackgroundColor,
     isDarkMode: isDarkMode ?? this.isDarkMode,
     useSystemTheme: useSystemTheme ?? this.useSystemTheme,

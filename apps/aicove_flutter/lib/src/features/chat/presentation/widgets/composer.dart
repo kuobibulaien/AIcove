@@ -797,15 +797,8 @@ class _ComposerState extends ConsumerState<Composer> {
     };
   }
 
-  Widget _buildComposerGlassLayer({required Widget child}) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 4, 12, 14),
-      child: MoeFloatingSurface(
-        key: const ValueKey('composer-floating-surface'),
-        child: child,
-      ),
-    );
-  }
+  Widget _buildComposerGlassLayer({required Widget child}) =>
+      ComposerGlassLayer(child: child);
 
   void _showKeyboardWithPreAnimation() {
     _requestPanelIntent(
@@ -1723,6 +1716,65 @@ class _ComposerState extends ConsumerState<Composer> {
       case _:
         break;
     }
+  }
+}
+
+/// Floating glass surface around the composer input row.
+class ComposerGlassLayer extends StatelessWidget {
+  const ComposerGlassLayer({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(12, 4, 12, 14),
+    child: MoeFloatingSurface(
+      key: const ValueKey('composer-floating-surface'),
+      child: child,
+    ),
+  );
+}
+
+/// Idle composer appearance without input state, for static reproductions of
+/// the chat screen such as the long-image export.
+class ComposerIdlePreview extends StatelessWidget {
+  const ComposerIdlePreview({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.moeColors;
+    Widget icon(IconData data, Color color) => SizedBox.square(
+      dimension: 42,
+      child: Icon(data, color: color, size: 24),
+    );
+    return ComposerGlassLayer(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        child: Row(
+          children: [
+            icon(Icons.add_rounded, colors.muted),
+            const SizedBox(width: 2),
+            Expanded(
+              child: Container(
+                constraints: const BoxConstraints(minHeight: 42),
+                alignment: Alignment.centerLeft,
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                child: Text(
+                  '消息',
+                  style: TextStyle(
+                    fontSize: 16,
+                    height: 1.4,
+                    color: colors.muted,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 2),
+            icon(Icons.arrow_upward_rounded, colors.accentColor),
+          ],
+        ),
+      ),
+    );
   }
 }
 

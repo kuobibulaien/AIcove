@@ -233,29 +233,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     if (item is ChatChunkedMessageItem) {
       final message = item.originalMessage;
       final isMe = message.role == 'user';
-      final chunkId = '${message.id}_chunk_${item.chunkIndex}';
-      final fold = item.fold;
-      final chunkMessage = Message(
-        id: chunkId,
-        role: message.role,
-        content: item.chunkText,
-        // 折叠段用思考块承载，气泡按折叠组件显示。
-        blocks: fold == null
-            ? null
-            : [
-                ThinkingBlock(
-                  id: '${chunkId}_fold',
-                  messageId: chunkId,
-                  content: fold.content,
-                  title: fold.title,
-                  status: fold.closed
-                      ? BlockStatus.success
-                      : BlockStatus.streaming,
-                ),
-              ],
-        createdAt: message.createdAt,
-        status: message.status,
-      );
+      final chunkMessage = chatChunkDisplayMessage(item);
       final bubbleWidget = Padding(
         padding: const EdgeInsets.symmetric(
           vertical: _kMessageItemVerticalPadding,

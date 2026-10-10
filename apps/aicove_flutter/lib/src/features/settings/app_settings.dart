@@ -5,11 +5,13 @@
 library;
 
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/utils/message_formatter.dart';
 import '../../ui/theme/tokens.dart';
+import 'custom_wallpaper_store.dart';
 import 'settings_models.dart';
 import 'ui_models_api.dart';
 
@@ -323,6 +325,13 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
   final globalWallpaper = GlobalWallpaper.fromValue(
     data['global_wallpaper'] as String?,
   );
+  final globalWallpaperCustomImage =
+      data['global_wallpaper_custom_image'] as String?;
+  final globalWallpaperMask =
+      ((data['global_wallpaper_mask'] as num?)?.toDouble() ??
+              kDefaultCustomWallpaperMask)
+          .clamp(0.0, 1.0)
+          .toDouble();
   final isDarkMode = (data['is_dark_mode'] as bool?) ?? false;
   final useSystemTheme = (data['use_system_theme'] as bool?) ?? true;
   // 支持十六进制颜色值（如 'FC96AA'）或旧枚举值（如 'pink'）
@@ -425,6 +434,8 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     autoReplySettings: autoReplySettings,
     globalBackgroundColor: globalBackgroundColor,
     globalWallpaper: globalWallpaper,
+    globalWallpaperCustomImage: globalWallpaperCustomImage,
+    globalWallpaperMask: globalWallpaperMask,
     chatBackgroundColor: chatBackgroundColor,
     isDarkMode: isDarkMode,
     useSystemTheme: useSystemTheme,
@@ -1061,6 +1072,29 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
   Future<void> setGlobalWallpaper(GlobalWallpaper wallpaper) async {
     await _commit(
       () => _api.updatePartial({'global_wallpaper': wallpaper.value}),
+    );
+  }
+
+  /// 保存用户选的图片为自定义全局壁纸并切换过去；旧图随之删除。
+  Future<void> setCustomGlobalWallpaper(Uint8List bytes, String fileName) async {
+    final previous = state.valueOrNull?.globalWallpaperCustomImage;
+    final path = await saveCustomWallpaperFile(bytes, fileName);
+    await _commit(
+      () => _api.updatePartial({
+        'global_wallpaper': GlobalWallpaper.custom.value,
+        'global_wallpaper_custom_image': path,
+      }),
+    );
+    if (previous != null && previous != path) {
+      await deleteCustomWallpaperFile(previous);
+    }
+  }
+
+  Future<void> setGlobalWallpaperMask(double opacity) async {
+    await _commit(
+      () => _api.updatePartial({
+        'global_wallpaper_mask': opacity.clamp(0.0, 1.0),
+      }),
     );
   }
 

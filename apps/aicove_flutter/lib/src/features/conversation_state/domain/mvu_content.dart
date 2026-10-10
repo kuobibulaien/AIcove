@@ -12,16 +12,16 @@ import '../../content_tags/domain/content_tag_scanner.dart';
 import '../../content_tags/domain/content_tag_spec.dart';
 import 'state_path.dart';
 
-const String mvuPluginId = 'mvu';
+const String mvuTagOwnerId = 'mvu';
 
 /// 历史消息与显示用：更新块与补丁块整块去掉。思考区不在此处理。
 const ContentTagProvider mvuUpdateTagProvider = StaticContentTagProvider(
-  providerId: mvuPluginId,
+  providerId: mvuTagOwnerId,
   tagSpecs: [
     ContentTagSpec(
       name: 'updatevariable',
       aliases: {'variableupdate'},
-      ownerId: mvuPluginId,
+      ownerId: mvuTagOwnerId,
       requestWhenActive: ContentTagRequestAction.strip,
       requestWhenInactive: ContentTagRequestAction.strip,
       display: ContentTagDisplay.hidden,
@@ -29,7 +29,7 @@ const ContentTagProvider mvuUpdateTagProvider = StaticContentTagProvider(
     ContentTagSpec(
       name: 'jsonpatch',
       aliases: {'json_patch'},
-      ownerId: mvuPluginId,
+      ownerId: mvuTagOwnerId,
       requestWhenActive: ContentTagRequestAction.strip,
       requestWhenInactive: ContentTagRequestAction.strip,
       display: ContentTagDisplay.hidden,
@@ -154,7 +154,7 @@ Map<String, String> mvuWorldEntrySkips(
       } else if (containsEjs(entry.content)) {
         skips[id] = '${entry.name} 含 EJS 模板（<% %>），本期不支持，已跳过该条目';
       } else if (!mvuActive && isMvuSpecificContent(entry.content)) {
-        skips[id] = '${entry.name} 属于 MVU 变量，本角色未启用 MVU，已跳过';
+        skips[id] = '${entry.name} 是 MVU 变量专用内容，本会话未启用 MVU 变量，已跳过';
       }
     }
   }

@@ -170,7 +170,7 @@ class SillyTavernMacroEvaluator {
         // MVU 楼层变量（ADR0071）：只读请求固定的状态，不与 setvar/getvar 混用。
         if (messageVariables == null) {
           if (unknown.add(name)) {
-            warnings.add('$promptId 使用了 MVU 变量宏，本角色未启用 MVU，已保留 $rawMacro');
+            warnings.add('$promptId 使用了 MVU 变量宏，本会话未启用 MVU 变量，已保留 $rawMacro');
           }
           return _MacroReplacement(rawMacro, handled: false);
         }

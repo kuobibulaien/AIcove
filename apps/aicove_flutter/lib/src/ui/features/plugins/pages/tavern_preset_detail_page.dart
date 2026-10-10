@@ -6,6 +6,7 @@ import '../../../../features/agent_context/domain/silly_tavern_preset.dart';
 import '../../../../features/agent_context/domain/tavern_compatibility_port.dart';
 import '../../../../features/agent_context/providers/preset_recipe_provider.dart';
 import '../../../../features/content_tags/domain/tag_presentation.dart';
+import '../../../../features/conversation_state/domain/mvu_content.dart';
 import '../../../shared/animations/parallax_slide_page_route.dart';
 import '../../../shared/widgets/index.dart';
 import '../../../theme/tokens.dart';
@@ -236,10 +237,7 @@ class _TavernPresetDetailPageState
         '${where.isEmpty ? '未指定位置' : where} · $phase',
         warnings: [
           if (script.substituteRegex != 0) '用到正则宏替换，暂不支持，不会运行',
-          if (hidden)
-            '换出的网页显示不了，显示时直接隐藏'
-          else if (superseded)
-            '已交给「标签」显示，不再运行',
+          if (hidden) '换出的网页显示不了，显示时直接隐藏' else if (superseded) '已交给「标签」显示，不再运行',
         ],
       ),
       trailingType: MoeSettingsRowTrailing.custom,
@@ -263,7 +261,28 @@ class _TavernPresetDetailPageState
   List<Widget> _worldBooks(SillyTavernPreset preset) {
     final busy = ref.watch(presetRecipeImportControllerProvider).isLoading;
     final colors = context.moeColors;
+    final initVarCount = mvuInitVarEntries(preset.worldBooks).length;
     return [
+      MoeSettingsGroup(
+        children: [
+          MoeSettingsRow(
+            label: 'MVU 变量',
+            labelMaxLines: 1,
+            subtitle: !preset.mvuEnabled
+                ? '关着时不解析变量，MVU 专用条目也不发给模型'
+                : initVarCount > 0
+                ? '已找到 $initVarCount 个 [InitVar] 初始变量条目，聊天时自动维护变量'
+                : '已启用的世界书里没有 [InitVar] 条目；开场白带初始变量时同样生效',
+            trailingType: MoeSettingsRowTrailing.custom,
+            trailing: MoeSwitch(
+              key: const ValueKey('mvu-enabled'),
+              value: preset.mvuEnabled,
+              semanticLabel: 'MVU 变量',
+              onChanged: (v) => _change((port) => port.setMvuEnabled(_id, v)),
+            ),
+          ),
+        ],
+      ),
       MoeSettingsGroup(
         title: '世界书 ${preset.worldBooks.length} 本',
         children: [

@@ -45,22 +45,6 @@ class SillyTavernCharacterCard {
 
   bool get hasCharacterBook => characterBook != null;
 
-  /// 卡片是否使用 MVU 变量：卡内世界书有 `[InitVar]` 条目，或开场白带初始化／更新块（ADR0071）。
-  bool get usesMvu {
-    final entries = characterBook?['entries'];
-    final items = entries is Map ? entries.values : (entries is List ? entries : const []);
-    for (final item in items) {
-      if (item is! Map) continue;
-      final name = (item['comment'] ?? item['name'] ?? '').toString();
-      if (name.toLowerCase().contains('[initvar]')) return true;
-    }
-    final markup = RegExp(
-      r'<\s*(?:initvar|updatevariable|json_?patch)\b',
-      caseSensitive: false,
-    );
-    return greetings.any(markup.hasMatch);
-  }
-
   /// 卡内是否带需要并入组合预设的资源。
   bool get hasPresetResources => hasCharacterBook || regexScripts.isNotEmpty;
 

@@ -2,7 +2,6 @@
 ///
 /// 整合所有聊天相关插件的入口：
 /// - 记忆库、主动关怀、表情包、语音设置、绘图设置、时间感知、联网搜索、酒馆相关
-import '../../../../features/conversation_state/domain/mvu_content.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_page_scaffold.dart';
 import 'package:flutter/material.dart';
 
@@ -47,12 +46,6 @@ const chatPluginItems = [
     name: '记忆库',
     subtitle: '长期记忆设置',
     icon: Icons.psychology_outlined,
-  ),
-  ChatPluginItem(
-    id: mvuPluginId,
-    name: 'MVU 变量',
-    subtitle: '角色卡变量与状态（ADR0071）',
-    icon: Icons.data_object_outlined,
   ),
   ChatPluginItem(
     id: 'trigger',

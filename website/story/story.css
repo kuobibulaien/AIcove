@@ -33,7 +33,7 @@ a { color: inherit; text-decoration: none; }
 }
 
 /* ---------- room ---------- */
-#room { position: absolute; inset: 0; transform-origin: 50% 50%; }
+#room { position: absolute; inset: 0; transform-origin: 50% 50%; opacity: 0; } /* faded in once its art is placed */
 #room .layer { position: absolute; inset: 0; pointer-events: none; }
 #room .layer > * { pointer-events: auto; }
 .paint { position: absolute; inset: 0; }
@@ -178,9 +178,13 @@ a { color: inherit; text-decoration: none; }
 /* ---------- title ---------- */
 #title {
   position: absolute; inset: 0; z-index: 20;
+  /* hidden until the fonts are in, so the title never reflows from a fallback face */
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   text-align: center; color: #f2ece2; background: radial-gradient(circle at 50% 46%, rgba(27, 26, 40, .35), rgba(27, 26, 40, .82) 70%);
 }
+#title > * { opacity: 0; transition: opacity .8s ease; }
+#title.fonts > * { opacity: 1; }
+#title.fonts > small { opacity: .65; }
 #title h1 { font-family: "Fraunces", Georgia, serif; font-weight: 900; font-size: 150px; line-height: 1; font-variation-settings: "SOFT" 100, "WONK" 1, "opsz" 144; letter-spacing: -.02em; }
 #title p { margin-top: 18px; font-size: 30px; letter-spacing: .2em; }
 #start {
@@ -188,8 +192,17 @@ a { color: inherit; text-decoration: none; }
   font-size: 24px; letter-spacing: .4em; text-indent: .4em; color: #f2ece2;
   transition: background .3s, color .3s;
 }
-#start:hover { background: #f2ece2; color: var(--night); }
-#title small { margin-top: 30px; font-size: 16px; letter-spacing: .16em; opacity: .65; }
+#start:not(:disabled):hover { background: #f2ece2; color: var(--night); }
+/* both labels are laid out from the start (one cell, the wider sets the size), so the swap never moves anything */
+#start { display: inline-grid; transition: background .3s, color .3s, border-color .6s; }
+#start > span { grid-area: 1 / 1; transition: opacity .6s ease; }
+#start b { font-weight: inherit; display: inline-block; min-width: 1.6em; text-indent: 0; letter-spacing: 0; }
+#start .go { opacity: 0; }
+#start:disabled { cursor: default; border-color: rgba(242, 236, 226, .45); }
+#start:disabled .wait { opacity: .7; }
+#start:not(:disabled) .wait { opacity: 0; }
+#start:not(:disabled) .go { opacity: 1; }
+#title small { margin-top: 30px; font-size: 16px; letter-spacing: .16em; }
 
 /* ---------- chat extras ---------- */
 .chip { align-self: center; flex: none; display: flex; align-items: center; gap: 6px; font-family: "ZCOOL XiaoWei", serif; font-size: 12px; color: #9a92a2; letter-spacing: .12em; }
@@ -241,7 +254,8 @@ a { color: inherit; text-decoration: none; }
 .cam-top { height: 48px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 22px; }
 .cam-top svg { width: 20px; height: 20px; fill: none; stroke: #f2ece2; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 .cam-top .live { width: 18px; height: 18px; border-radius: 50%; border: 2px dashed #f2ece2; }
-.finder { position: relative; height: 560px; flex: none; overflow: hidden; -webkit-backdrop-filter: blur(16px) saturate(1.1); backdrop-filter: blur(16px) saturate(1.1); background: rgba(40, 32, 50, .12); }
+.finder { position: relative; height: 560px; flex: none; overflow: hidden; background: #2b2c45; }
+.finder .backdrop { position: absolute; width: 1600px; height: 900px; filter: blur(16px) saturate(1.1); }
 .focus { position: absolute; left: 160px; top: 150px; width: 110px; height: 110px; border: 2px solid #f5cf6a; opacity: 0; }
 #selfie { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 30%; opacity: 0; }
 .flash { position: absolute; inset: 0; background: #fff; opacity: 0; }

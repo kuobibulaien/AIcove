@@ -24,6 +24,8 @@ const localGeneralSettings = <String>{
   'chat_background_color',
   'global_background_color',
   'global_wallpaper',
+  'global_wallpaper_custom_image',
+  'global_wallpaper_mask',
   'is_dark_mode',
   'use_system_theme',
   'hide_user_avatar',

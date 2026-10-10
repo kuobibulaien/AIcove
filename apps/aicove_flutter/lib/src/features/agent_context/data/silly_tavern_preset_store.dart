@@ -379,6 +379,16 @@ class SillyTavernPresetStore implements TavernCompatibilityPort {
       });
 
   @override
+  Future<void> setMvuEnabled(String presetId, bool enabled) =>
+      _mutate(presetId, (data, _) {
+        if (enabled) {
+          data.remove(presetMvuKey);
+        } else {
+          data[presetMvuKey] = false;
+        }
+      });
+
+  @override
   Future<void> setTagPresentation(
     String presetId,
     String tagName,

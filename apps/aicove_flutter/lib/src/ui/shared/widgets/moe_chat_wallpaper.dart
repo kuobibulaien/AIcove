@@ -35,30 +35,34 @@ class MoeGlobalWallpaper extends StatelessWidget {
   final Color color;
   final Widget? child;
 
-  /// Whether a global wallpaper is active in this context.
+  /// Whether a global wallpaper image is active in this context.
   static bool isActive(BuildContext context) =>
-      MoeWallpaperTheme.of(context) != GlobalWallpaper.none;
+      MoeWallpaperTheme.maybeOf(
+        context,
+      )?.imageFor(GlobalWallpaperSlot.page, Brightness.light) !=
+      null;
 
   @override
   Widget build(BuildContext context) {
-    final asset = MoeWallpaperTheme.of(
-      context,
-    ).assetFor(slot, Theme.of(context).brightness);
+    final theme = MoeWallpaperTheme.maybeOf(context);
+    final image = theme?.imageFor(slot, Theme.of(context).brightness);
+    final mask = theme?.maskOpacity ?? 0;
     return ColoredBox(
       color: color,
-      child: asset == null
+      child: image == null
           ? child
           : Stack(
               fit: StackFit.expand,
               children: [
-                Image.asset(
-                  asset,
-                  key: ValueKey(asset),
+                Image(
+                  image: image,
+                  key: ValueKey(image),
                   fit: BoxFit.cover,
                   gaplessPlayback: true,
                   filterQuality: FilterQuality.medium,
                   errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                 ),
+                if (mask > 0) ColoredBox(color: color.withValues(alpha: mask)),
                 ?child,
               ],
             ),

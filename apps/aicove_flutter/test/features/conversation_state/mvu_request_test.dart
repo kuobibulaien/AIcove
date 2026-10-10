@@ -248,12 +248,56 @@ void main() {
     });
   });
 
-  test('关闭时：MVU 专属条目不进请求，历史更新块照样去掉', () async {
+  test('角色插件列表不影响 MVU：它跟随酒馆预设', () async {
     await (database.update(
       database.conversations,
     )..where((c) => c.id.equals('a'))).write(
       const db.ConversationsCompanion(enabledPlugins: Value('["memory"]')),
     );
+    expect(await requestText(), contains('当前变量：15'));
+  });
+
+  test('关闭期间不写状态；残留的 mvu 插件勾选不起作用；重开后等于整链重放', () async {
+    expect(await requestText(), contains('当前变量：15'));
+    final port = container.read(conversationStatePortProvider);
+    final presetId =
+        (await container.read(conversationRepositoryProvider).getById('a'))!
+            .recipeId!;
+    final presets = container.read(sillyTavernPresetStoreProvider);
+    await presets.setMvuEnabled(presetId, false);
+    await (database.update(
+      database.conversations,
+    )..where((c) => c.id.equals('a'))).write(
+      const db.ConversationsCompanion(enabledPlugins: Value('["mvu"]')),
+    );
+    await message('u2', 'user', '再逗她');
+    await message(
+      'a2',
+      'assistant',
+      "她又笑了。<UpdateVariable>_.add('理.好感度', 100);</UpdateVariable>",
+    );
+    await port.refresh('a');
+    final a2Rows = await database
+        .customSelect(
+          "SELECT COUNT(*) AS n FROM message_states WHERE anchor_id = 'a2'",
+        )
+        .getSingle();
+    expect(a2Rows.read<int>('n'), 0, reason: '关闭时 refresh 不解析新回复');
+    expect((await port.read('a')).active, isFalse);
+    expect(await requestText(), isNot(contains('当前变量')));
+
+    await presets.setMvuEnabled(presetId, true);
+    expect(await requestText(), contains('当前变量：115'));
+    expect(await requestText(), contains('当前变量：115'), reason: '重复读取不重复累加');
+  });
+
+  test('预设关掉 MVU 时：MVU 专属条目不进请求，历史更新块照样去掉', () async {
+    final conv = (await container
+        .read(conversationRepositoryProvider)
+        .getById('a'))!;
+    await container
+        .read(sillyTavernPresetStoreProvider)
+        .setMvuEnabled(conv.recipeId!, false);
     final text = await requestText();
     expect(text, isNot(contains('当前变量')));
     expect(text, isNot(contains('<UpdateVariable>')));

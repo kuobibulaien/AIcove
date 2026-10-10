@@ -29,7 +29,7 @@ class ConversationStateView {
       anchorMessageId = null,
       status = '';
 
-  /// MVU 在本会话生效（插件开启、绑定了酒馆预设、初始化成功）。
+  /// MVU 在本会话生效（会话用上的酒馆预设——角色绑定或默认预设——没关 MVU，且初始化成功）。
   final bool active;
   final MvuState? mvu;
 

@@ -5,7 +5,6 @@ import '../../../core/database/database_provider.dart';
 import '../../agent_context/domain/silly_tavern_preset.dart';
 import '../../agent_context/providers/preset_recipe_provider.dart';
 import '../../chat/application/chat_page_conversation_actions.dart';
-import '../../chat/domain/conversation.dart';
 import '../../settings/app_settings.dart';
 import '../data/sqlite_conversation_state_store.dart';
 import '../domain/conversation_state_port.dart';
@@ -20,9 +19,9 @@ final conversationStatePortProvider = Provider<ConversationStatePort>(
   ),
 );
 
-/// MVU 在本会话是否可能生效：角色允许 MVU 插件且绑定了酒馆预设（ADR0071）。
-bool mvuAllowedFor(Conversation conversation, SillyTavernPreset? preset) =>
-    preset != null && conversation.allowsPlugin(mvuPluginId);
+/// MVU 是酒馆兼容的一部分：会话用上了酒馆预设且该预设没关 MVU 时才可能生效（ADR0071）。
+bool mvuAllowedFor(SillyTavernPreset? preset) =>
+    preset != null && preset.mvuEnabled;
 
 /// 按请求 owner 的预设与名字组装初始化来源；一次请求内固定。
 MvuSourceSnapshot buildMvuSourceSnapshot({
@@ -56,7 +55,7 @@ Future<MvuSourceSnapshot?> resolveMvuSources(
   final preset = await ref
       .read(tavernCompatibilityPortProvider)
       .resolvePreset(conversation.recipeId?.trim());
-  if (!mvuAllowedFor(conversation, preset)) return null;
+  if (!mvuAllowedFor(preset)) return null;
   final settings = await ref.read(appSettingsProvider.future);
   final userName = settings.userName?.trim() ?? '';
   return buildMvuSourceSnapshot(

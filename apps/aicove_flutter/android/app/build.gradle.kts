@@ -67,6 +67,9 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         buildConfigField("String", "DIAGNOSTIC_BUILD_ID", "\"$diagnosticBuildId\"")
+        // Ship 64-bit ARM only. Overrides the Flutter plugin's default ABI list, which would
+        // otherwise also package plugin prebuilt libs for armeabi-v7a and x86_64.
+        ndk { abiFilters.clear(); abiFilters += "arm64-v8a" }
     }
 
     buildTypes {

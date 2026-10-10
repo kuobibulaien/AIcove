@@ -36,6 +36,9 @@ abstract interface class TavernCompatibilityPort {
   /// 设置这套预设的 {{user}} 是否替换为用户名称。
   Future<void> setUserNameMacroEnabled(String presetId, bool enabled);
 
+  /// 设置这套预设是否启用 MVU 变量（ADR0071）。
+  Future<void> setMvuEnabled(String presetId, bool enabled);
+
   /// 用户指定某个语义标签的界面呈现；[presentation] 为 null 时恢复自动推断。
   Future<void> setTagPresentation(
     String presetId,

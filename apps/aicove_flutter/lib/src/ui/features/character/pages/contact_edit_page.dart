@@ -1,4 +1,3 @@
-import '../../../../features/conversation_state/domain/mvu_content.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
@@ -913,7 +912,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
     final image = card.imageBytes;
     setState(() {
       _importedCard = card;
-      if (card.usesMvu) _selectedPluginIds.add(mvuPluginId);
       _nameCtrl.text = card.name;
       _personaCtrl.text = card.composePersonaPrompt();
       _cardGreetings = card.greetings;

@@ -479,6 +479,8 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
                   useLiquidGlass: settings.useLiquidGlass,
                   child: MoeWallpaperTheme(
                     wallpaper: settings.globalWallpaper,
+                    customImagePath: settings.globalWallpaperCustomImage,
+                    customMask: settings.globalWallpaperMask,
                     child: DesktopWindowFrame(
                     windowControlsOnRight: settings.windowsWindowControlsSide ==
                         WindowControlButtonSide.right,

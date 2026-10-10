@@ -80,10 +80,11 @@ class _NavItem extends StatelessWidget {
         splashColor: Colors.transparent,
         highlightColor: Colors.transparent,
         child: Center(
-          child: MoeButtonSurface(
+          // The bar already sits on the page's shared material; a per-icon
+          // button surface would paint its own glass disc under each icon.
+          child: SizedBox(
             width: 44,
             height: 44,
-            radius: 999,
             child: Center(
               child: Icon(
                 icon,

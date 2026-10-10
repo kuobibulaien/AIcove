@@ -109,7 +109,7 @@ void main() {
           expect(find.byType(TextField), findsNothing);
           final navigation = find.byType(CustomBottomNav);
           expect(find.descendant(of: navigation,
-              matching: find.byType(MoeButtonSurface)), findsNWidgets(3));
+              matching: find.byType(MoeButtonSurface)), findsNothing);
           expect(find.descendant(of: navigation,
               matching: find.byType(MoeFloatingSurface)), findsNothing);
           expect(find.byType(MoeLiquidGlass), findsNothing);

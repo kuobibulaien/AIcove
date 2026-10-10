@@ -32,12 +32,16 @@ async function tryImage(src) {
     const res = await fetch(src, { method: 'HEAD' });
     if (!res.ok) return null;
     // onload rather than decode(): decode() can stall while the tab is in the background
-    return await new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = () => resolve(null);
-      img.src = src;
+    const img = await new Promise((resolve) => {
+      const im = new Image();
+      im.onload = () => resolve(im);
+      im.onerror = () => resolve(null);
+      im.src = src;
     });
+    // decode off the main thread now rather than on first draw, where it stalls a frame;
+    // capped because decode() can hang while the tab is in the background
+    if (img) await Promise.race([img.decode().catch(() => {}), new Promise((r) => setTimeout(r, 1500))]);
+    return img;
   } catch {
     return null;
   }

@@ -37,7 +37,6 @@ import '../../../../ui/shared/widgets/moe_toast.dart';
 import '../../../../ui/shared/widgets/media/moe_image_preview.dart';
 import '../../../../core/utils/message_formatter.dart';
 import '../../../../features/settings/app_settings.dart';
-import '../../../../core/models/block_status.dart';
 import '../../../../core/models/message_block.dart';
 import 'animated_message_item.dart';
 import '../../../../features/dialogue_options/domain/dialogue_options.dart';

@@ -7,7 +7,6 @@
 /// 也不出现在管理列表里。
 library;
 
-import '../../../../features/conversation_state/domain/mvu_content.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -112,7 +111,6 @@ class _CharacterPluginsSectionState
           ),
         ),
       ),
-      const _PluginSpec(id: mvuPluginId, label: 'MVU 变量'),
       const _PluginSpec(id: 'sticker', label: '表情包'),
       const _PluginSpec(id: 'trigger', label: '主动关怀'),
       const _PluginSpec(id: 'time_awareness', label: '时间感知'),

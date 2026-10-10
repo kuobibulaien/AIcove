@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
+import '../../../../core/models/block_status.dart';
 import '../../../../core/models/message_block.dart';
 import '../../../../core/utils/data_image.dart';
 import '../../../../core/utils/message_formatter.dart';
@@ -73,17 +74,34 @@ Message? chatListItemSelectionMessage(ChatMessageListItem item) {
   if (item is ChatMessageItem) {
     return MessageBubble.hasVisibleContent(item.message) ? item.message : null;
   }
-  if (item is ChatChunkedMessageItem) {
-    final message = item.originalMessage;
-    return Message(
-      id: '${message.id}_chunk_${item.chunkIndex}',
-      role: message.role,
-      content: item.chunkText,
-      createdAt: message.createdAt,
-      status: message.status,
-    );
-  }
+  if (item is ChatChunkedMessageItem) return chatChunkDisplayMessage(item);
   return null;
+}
+
+/// The message a chunk bubble renders; fold chunks carry a thinking block so
+/// the bubble draws the fold component (ADR0046).
+Message chatChunkDisplayMessage(ChatChunkedMessageItem item) {
+  final message = item.originalMessage;
+  final chunkId = '${message.id}_chunk_${item.chunkIndex}';
+  final fold = item.fold;
+  return Message(
+    id: chunkId,
+    role: message.role,
+    content: item.chunkText,
+    blocks: fold == null
+        ? null
+        : [
+            ThinkingBlock(
+              id: '${chunkId}_fold',
+              messageId: chunkId,
+              content: fold.content,
+              title: fold.title,
+              status: fold.closed ? BlockStatus.success : BlockStatus.streaming,
+            ),
+          ],
+    createdAt: message.createdAt,
+    status: message.status,
+  );
 }
 
 List<ChatMessageListItem> buildChatMessageListItems({

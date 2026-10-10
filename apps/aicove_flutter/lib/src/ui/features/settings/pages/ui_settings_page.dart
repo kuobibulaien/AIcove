@@ -1,4 +1,7 @@
 import 'package:aicove_flutter/src/ui/theme/moe_interaction_theme.dart';
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform;
@@ -72,6 +75,8 @@ class UiSettingsPage extends ConsumerWidget {
                 _buildSkinPicker(ref, settings, colors),
                 _divider(colors),
                 _buildWallpaperPicker(context, ref, settings, colors),
+                if (settings.globalWallpaper == GlobalWallpaper.custom)
+                  _buildWallpaperMaskSlider(context, ref, settings, colors),
                 _divider(colors),
                 MoeSettingsRow(
                   label: '深色模式',
@@ -478,38 +483,116 @@ class UiSettingsPage extends ConsumerWidget {
               for (final wallpaper in GlobalWallpaper.values)
                 Expanded(
                   child: _buildWallpaperTile(
+                    context,
                     ref,
+                    settings,
                     colors,
                     wallpaper,
-                    asset: wallpaper.assetFor(
-                      GlobalWallpaperSlot.empty,
-                      brightness,
-                    ),
+                    preview: _wallpaperPreview(settings, wallpaper, brightness),
                     isSelected: wallpaper == current,
                   ),
                 ),
             ],
           ),
+          if (current == GlobalWallpaper.custom) ...[
+            const SizedBox(height: 4),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => _pickCustomWallpaper(context, ref),
+                icon: const Icon(Icons.image_outlined, size: 18),
+                label: const Text('更换图片'),
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
 
-  Widget _buildWallpaperTile(
+  ImageProvider? _wallpaperPreview(
+    AppSettings settings,
+    GlobalWallpaper wallpaper,
+    Brightness brightness,
+  ) {
+    final ImageProvider? image;
+    if (wallpaper == GlobalWallpaper.custom) {
+      final path = settings.globalWallpaperCustomImage?.trim();
+      image = path == null || path.isEmpty ? null : FileImage(File(path));
+    } else {
+      final asset = wallpaper.assetFor(GlobalWallpaperSlot.empty, brightness);
+      image = asset == null ? null : AssetImage(asset);
+    }
+    return image == null ? null : ResizeImage(image, width: 240);
+  }
+
+  Future<void> _pickCustomWallpaper(BuildContext context, WidgetRef ref) async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      withData: true,
+    );
+    final file = picked?.files.firstOrNull;
+    final bytes = file?.bytes;
+    if (file == null || bytes == null || bytes.isEmpty || !context.mounted) {
+      return;
+    }
+    await ref
+        .read(appSettingsProvider.notifier)
+        .setCustomGlobalWallpaper(bytes, file.name);
+  }
+
+  /// 自定义壁纸的遮罩：用页面底色盖住照片，数值越大越淡。
+  Widget _buildWallpaperMaskSlider(
+    BuildContext context,
     WidgetRef ref,
+    AppSettings settings,
+    MoeColors colors,
+  ) {
+    final notifier = ref.read(appSettingsProvider.notifier);
+    final value = settings.globalWallpaperMask.clamp(0.0, 0.9).toDouble();
+    return _buildScaleSlider(
+      colors: colors,
+      label: '壁纸遮罩',
+      value: value,
+      min: 0,
+      max: 0.9,
+      divisions: 18,
+      note: '照片较花时调高，让文字更清楚',
+      onChanged: notifier.setGlobalWallpaperMask,
+      onValueTap: () => _showScaleInputDialog(
+        context,
+        title: '输入壁纸遮罩',
+        hint: '范围 0 ~ 0.9',
+        min: 0,
+        max: 0.9,
+        current: value,
+        onSave: notifier.setGlobalWallpaperMask,
+      ),
+    );
+  }
+
+  Widget _buildWallpaperTile(
+    BuildContext context,
+    WidgetRef ref,
+    AppSettings settings,
     MoeColors colors,
     GlobalWallpaper wallpaper, {
-    required String? asset,
+    required ImageProvider? preview,
     required bool isSelected,
   }) {
     final borderWidth = isSelected ? 2.0 : 1.0;
+    final isCustom = wallpaper == GlobalWallpaper.custom;
+    // 自定义还没有图片时，点一下直接去选图。
+    final VoidCallback? onTap = isCustom && preview == null
+        ? () => _pickCustomWallpaper(context, ref)
+        : isSelected
+        ? null
+        : () => ref
+              .read(appSettingsProvider.notifier)
+              .setGlobalWallpaper(wallpaper);
     return GestureDetector(
       key: ValueKey('global-wallpaper-${wallpaper.value}'),
-      onTap: isSelected
-          ? null
-          : () => ref
-                .read(appSettingsProvider.notifier)
-                .setGlobalWallpaper(wallpaper),
+      onTap: onTap,
       child: Column(
         children: [
           Padding(
@@ -524,16 +607,23 @@ class UiSettingsPage extends ConsumerWidget {
               child: MoeG2ClipRRect(
                 radius: 12 - borderWidth,
                 child: SizedBox.expand(
-                  child: asset == null
+                  child: preview == null
                       ? ColoredBox(
                           color: colors.surface,
                           child: Icon(
-                            Icons.block_rounded,
+                            isCustom
+                                ? Icons.add_photo_alternate_outlined
+                                : Icons.block_rounded,
                             size: 18,
                             color: colors.textSecondary,
                           ),
                         )
-                      : Image.asset(asset, fit: BoxFit.cover, cacheWidth: 240),
+                      : Image(
+                          image: preview,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) =>
+                              ColoredBox(color: colors.surface),
+                        ),
                 ),
               ),
             ),

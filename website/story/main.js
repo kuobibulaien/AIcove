@@ -9,8 +9,49 @@ const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const AT = Number(params.get('at') || 0);
 let chapter = 0;
 const fast = () => chapter < AT;
-const sleep = (ms) => new Promise((r) => setTimeout(r, fast() ? 30 : reduceMotion ? ms / 3 : ms));
+// waits run on GSAP's clock, so the story and its animations pause together when the tab is hidden and stay in step
+const sleep = (ms) => new Promise((r) => gsap.delayedCall(fast() ? 0.03 * gsap.globalTimeline.timeScale() : ms / 1000, r));
 const speed = () => gsap.globalTimeline.timeScale(fast() ? 40 : reduceMotion ? 3 : 1);
+
+/* ---------- preload ----------
+ * Everything the story uses starts downloading the moment the page opens, all at once, and the start
+ * button waits for it, so no scene ever stops to fetch a file.
+ */
+const FINALE_ITEMS = [
+  ['tavern', '酒馆', 360, 140], ['search', '搜索', 250, 360], ['brush', '画画', 380, 560],
+  ['record', '声音', 1090, 140], ['diary', '记忆', 1200, 360], ['chest', '工具箱 · MCP', 1070, 560],
+];
+// first URL that answers, as an in-memory blob URL (blobs also keep audio seekable; see bgm)
+const fetchBlob = async (urls) => {
+  for (const url of urls) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) return URL.createObjectURL(await res.blob());
+    } catch { /* try the next one */ }
+  }
+  return null;
+};
+const imageLoaded = (img) => (img.complete ? Promise.resolve() : new Promise((r) => { img.onload = img.onerror = r; }));
+const preload = {
+  bgm: Object.fromEntries(['night', 'home', 'finale'].map((n) => [n, fetchBlob([`assets/story/bgm/${n}.m4a`, `assets/story/bgm/${n}.mp3`])])),
+  voice: fetchBlob(['assets/story/voice-hello.mp3']),
+  bubble: prop('note-bubble', () => paintBubble(2)),
+  icons: Promise.all(FINALE_ITEMS.map(([kind]) => prop(`plugin-${kind}`, () => paintPlugin(kind, 2)))),
+};
+// the start button counts the downloads in and unlocks once they are all here (or after a long wait on a slow line)
+const startGate = (roomReady) => {
+  const jobs = [roomReady, ...Object.values(preload.bgm), preload.voice, preload.bubble, preload.icons,
+    imageLoaded(document.querySelector('#selfie')), document.fonts.ready];
+  const btn = document.querySelector('#start');
+  const pct = btn.querySelector('b');
+  let done = 0;
+  const show = () => { pct.textContent = Math.round((done / jobs.length) * 100); };
+  show();
+  jobs.forEach((j) => Promise.resolve(j).catch(() => {}).finally(() => { done++; show(); }));
+  return Promise.race([Promise.allSettled(jobs), new Promise((r) => setTimeout(r, 20000))]).then(() => {
+    btn.disabled = false;
+  });
+};
 
 /* ---------- stage fit ---------- */
 const stage = $('#stage');
@@ -21,7 +62,11 @@ fit();
 /* ---------- paint the room ---------- */
 const artScale = Math.min(2, Math.max(1, (devicePixelRatio || 1) * Math.min(innerWidth / 1600, innerHeight / 900)));
 // artwork files in assets/story/ win over the brush; see artwork.js
-const room = await roomLayers(paintRoom, artScale);
+const roomReady = roomLayers(paintRoom, artScale);
+const ready = startGate(roomReady);
+// show the title once its fonts are in (with a cap, so a blocked font host can't hide it)
+Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 2500))]).then(() => $('#title').classList.add('fonts'));
+const room = await roomReady;
 room.girl.className = 'girl';
 const fx = (cls) => Object.assign(document.createElement('div'), { className: cls });
 const depth = (el, d) => { el.dataset.depth = d; return el; };
@@ -34,6 +79,8 @@ depth(room.frontDark, 1);
 depth(room.frontLit, 1);
 $('#darkRoom').append(room.backDark, room.frontDark);
 $('#litRoom').append(room.backLit, girlWrap, room.frontLit, fx('vignette'), depth(fx('pool'), 1), depth(fx('cone'), 1), depth(fx('bulb'), 1));
+// the room fades up behind the title instead of popping in mid-load
+gsap.to('#room', { opacity: 1, duration: 1.2, ease: 'sine.out' });
 
 /* ---------- parallax: near things drift more than far ones ---------- */
 const movers = [...document.querySelectorAll('[data-depth]')].map((el) => ({
@@ -58,44 +105,38 @@ for (let i = 0; i < 26; i++) {
 }
 
 /* ---------- background music ----------
- * Optional tracks in assets/story/bgm/ (m4a or mp3): night, home, missing, finale. Prompts: 配乐提示词.md.
+ * Optional tracks in assets/story/bgm/ (m4a or mp3): night, home, finale. Chapter four plays the quiet opening of finale,
+ * so the story only changes track twice. Prompts: 配乐提示词.md.
  * When a track exists it replaces the synthesised pad and music box; sound effects stay synthesised.
  */
 const bgm = {
-  names: ['night', 'home', 'missing', 'finale'],
+  names: ['night', 'home', 'finale'],
   tracks: {},
   current: null,
   level: 0.6,
   ducked: false,
   scene: 1, // per-scene loudness: the quiet stretch of chapter four sits low, the reunion swells back up
-  target() { return audio.muted ? 0 : this.level * this.scene * (this.ducked ? 0.22 : 1); },
+  target() { return audio.muted ? 0 : this.level * this.scene * (this.ducked ? 0.6 : 1); }, // her voice carries on its own; only ease the music back
   // ride the volume of whatever is playing without switching tracks
   swell(scene, seconds) {
     this.scene = scene;
     if (this.current) gsap.to(this.current, { volume: this.target(), duration: seconds, ease: 'sine.inOut', overwrite: 'auto' });
   },
-  found: new Set(), // tracks whose files exist (known as soon as their headers arrive)
+  found: new Set(), // tracks whose files have arrived
   pending: {},       // name -> promise of the ready <audio>, or null
   want: null,        // the track the story most recently asked for
-  // Each track downloads on its own; nothing waits for all four.
+  // The files were already requested by the preloader at page open; this only wraps them as players.
   load() {
     for (const n of this.names) {
-      this.pending[n] = (async () => {
-        for (const ext of ['m4a', 'mp3']) {
-          try {
-            const res = await fetch(`assets/story/bgm/${n}.${ext}`);
-            if (!res.ok) continue;
-            this.found.add(n);
-            // play from an in-memory blob: the host answers range requests with the whole file, which makes <audio> unseekable
-            const el = new Audio(URL.createObjectURL(await res.blob()));
-            el.loop = true;
-            el.volume = 0;
-            this.tracks[n] = el;
-            return el;
-          } catch { /* try the next format */ }
-        }
-        return null;
-      })();
+      this.pending[n] = preload.bgm[n].then((url) => {
+        if (!url) return null;
+        this.found.add(n);
+        const el = new Audio(url);
+        el.loop = true;
+        el.volume = 0;
+        this.tracks[n] = el;
+        return el;
+      });
     }
     // the story may start once the first track is in hand (or after a short wait)
     return Promise.race([this.pending.night, sleep(4000)]);
@@ -112,26 +153,51 @@ const bgm = {
     if (this.current === next) return;
     const prev = this.current;
     this.current = next;
-    if (prev) gsap.to(prev, { volume: 0, duration: fade, ease: 'sine.inOut', onComplete: () => prev.pause() });
+    // roughly equal-power crossfade: the old track holds on while the new one rises, so the overlap never dips
+    if (prev) gsap.to(prev, { volume: 0, duration: fade, ease: 'sine.in', overwrite: 'auto', onComplete: () => prev.pause() });
     // seeking before metadata has loaded is silently ignored, so wait for it when needed
     const seek = () => { next.currentTime = from; };
     if (next.readyState >= 1) seek();
     else next.addEventListener('loadedmetadata', seek, { once: true });
     next.play().catch(() => {});
-    gsap.to(next, { volume: this.target(), duration: fade, ease: 'sine.inOut' });
+    gsap.to(next, { volume: this.target(), duration: fade, ease: 'sine.out', overwrite: 'auto' });
   },
-  // resolve when the current track reaches `t` seconds; falls back to a timer if the music isn't actually playing
-  reach(t, fallbackMs) {
-    const el = this.current;
-    if (!el || el.paused) return sleep(fallbackMs);
-    return new Promise((resolve) => {
-      const started = performance.now();
-      const tick = () => {
-        if (el.currentTime >= t || el.paused || performance.now() - started > fallbackMs + 1500) resolve();
-        else setTimeout(tick, 30);
-      };
-      tick();
-    });
+  // Keep the current track circling between `from` and `to` (seconds), crossfading a second copy back to `from`
+  // each time, so a quiet passage can wait as long as the viewer needs.
+  hold(from, to, fade = 3) {
+    this.release();
+    const tick = () => {
+      const el = this.current;
+      if (el && !el.paused && el.currentTime >= to - fade) this.handover(from, fade, fade);
+    };
+    this.holding = setInterval(tick, 100);
+  },
+  release() {
+    clearInterval(this.holding);
+    this.holding = null;
+  },
+  // jump the current track to `at` through a crossfade with a fresh copy of itself
+  handover(at, fadeIn, fadeOut) {
+    const prev = this.current;
+    if (!prev) return;
+    const next = new Audio(prev.src);
+    next.loop = true;
+    next.volume = 0;
+    this.current = next;
+    gsap.to(prev, { volume: 0, duration: fadeOut, ease: 'sine.in', overwrite: 'auto', onComplete: () => prev.pause() });
+    const go = () => {
+      next.currentTime = at;
+      next.play().catch(() => {});
+      gsap.to(next, { volume: this.target(), duration: fadeIn, ease: 'sine.out', overwrite: 'auto' });
+    };
+    if (next.readyState >= 1) go();
+    else next.addEventListener('loadedmetadata', go, { once: true });
+  },
+  // land on the track's turn right now, at full scene loudness
+  turn(at) {
+    this.release();
+    this.scene = 1;
+    if (this.current) this.handover(at, 0.9, 1.4);
   },
   setMuted() {
     if (this.current) gsap.to(this.current, { volume: this.target(), duration: 0.4, overwrite: 'auto' });
@@ -149,13 +215,16 @@ const bgm = {
 const bgmReady = bgm.load();
 // seconds into finale.m4a where the music opens up (the original Sunlight_Through_Leaves turns at about 34 s; 3 s were trimmed)
 const FINALE_TURN = 31.0;
+// the quiet stretch of finale's opening that chapter four circles in while it waits for your answer
+const FINALE_HOLD = [2, 23];
 if (AT) window.__bgm = bgm; // review hook
 
 // her recorded voice for the chapter-two voice message
-const voice = new Audio('assets/story/voice-hello.mp3');
+const voice = new Audio();
 voice.preload = 'auto';
 let voiceOk = true;
 voice.addEventListener('error', () => { voiceOk = false; });
+preload.voice.then((url) => { if (url) voice.src = url; else voiceOk = false; });
 
 /* ---------- sound effects: synthesised, no audio files ---------- */
 const audio = {
@@ -229,14 +298,14 @@ const audio = {
     o.start(t);
     o.stop(t + dur + 0.05);
   },
-  thump(freq = 60, vol = 0.6, dur = 0.28, delay = 0) {
+  thump(freq = 60, vol = 0.6, dur = 0.28, delay = 0, attack = 0.01) {
     if (!this.ctx) return;
     const c = this.ctx, t = c.currentTime + delay;
     const o = c.createOscillator(), g = c.createGain();
     o.frequency.setValueAtTime(freq * 1.6, t);
     o.frequency.exponentialRampToValueAtTime(freq * 0.6, t + dur);
     g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(vol, t + 0.01);
+    g.gain.linearRampToValueAtTime(vol, t + attack);
     g.gain.exponentialRampToValueAtTime(0.001, t + dur);
     o.connect(g).connect(this.master);
     o.start(t);
@@ -262,9 +331,11 @@ const audio = {
     src.connect(flt).connect(g).connect(this.master);
     src.start(t);
   },
+  // a felt pulse under the music rather than a sound effect; it rests while her voice plays
   heartbeat(v = 1) {
-    this.thump(54, 0.4 * v, 0.18);
-    this.thump(47, 0.25 * v, 0.2, 0.19);
+    if (bgm.ducked) return;
+    this.thump(54, 0.13 * v, 0.2, 0, 0.03);
+    this.thump(47, 0.08 * v, 0.22, 0.19, 0.03);
   },
   key() { this.tone(1700 + Math.random() * 500, 0.02, 0.04, 0, 'triangle'); },
   sent() { this.noise(0.35, 900, 3400, 0.05); this.tone(1046.5, 0.05, 0.25, 0.05); },
@@ -453,7 +524,10 @@ function skipAhead(label) {
   }
 }
 
+// resolves once she has been heard through to the end
 function voiceBubble() {
+  let heard;
+  const played = new Promise((r) => { heard = r; });
   const el = document.createElement('div');
   el.className = 'b ai voice invite';
   const bars = [6, 10, 14, 9, 16, 12, 7, 13, 17, 10, 6, 11, 8, 5];
@@ -468,9 +542,10 @@ function voiceBubble() {
       el.classList.remove('playing');
       bgm.duck(false);
       if (audio.ctx && audio.padGain) audio.ramp(audio.master.gain, audio.muted ? 0 : 0.9, 1.5);
+      heard();
     };
     bgm.duck(true);
-    if (audio.ctx && audio.padGain) audio.ramp(audio.master.gain, audio.muted ? 0 : 0.3, 0.5);
+    if (audio.ctx && audio.padGain) audio.ramp(audio.master.gain, audio.muted ? 0 : 0.6, 0.5);
     if (!voiceOk) return audio.hum(done);
     // fade her voice in and out so the breath at either end doesn't click on or off
     const full = audio.muted ? 0 : 1;
@@ -487,7 +562,8 @@ function voiceBubble() {
     voice.play().then(() => gsap.to(voice, { volume: full, duration: 0.35, ease: 'sine.out', overwrite: 'auto' }))
       .catch(() => audio.hum(done));
   });
-  return el;
+  if (fast()) heard();
+  return played;
 }
 
 function picBubble(src) {
@@ -616,7 +692,7 @@ async function chapterHello() {
   ecg.phase = 0.12;
   gsap.to(ecg, { amp: 1, duration: 0.4 });
   audio.warm();
-  bgm.play('home', 3);
+  bgm.play('home', 5);
   setTimeout(() => audio.melody(), 1400);
   await sleep(1300);
   gsap.to('#litRoom .girl', { opacity: 0.92, duration: 2.6, ease: 'sine.inOut' });
@@ -640,7 +716,7 @@ async function chapterVoice() {
   narrate('她的声音，藏在那台旧收音机里。');
   // a note bubble drifts up out of the radio
   const bub = $('#bubble');
-  if (!bub.firstChild) bub.append(await prop('note-bubble', () => paintBubble(2)));
+  if (!bub.firstChild) bub.append(await preload.bubble);
   audio.chime(659.25, 0.05);
   await gsap.fromTo(bub, { opacity: 0, scale: 0.2, y: 90 }, { opacity: 1, scale: 1, y: 0, duration: 1.4, ease: 'back.out(1.6)' });
   const drift = gsap.to(bub, { y: -12, x: 6, duration: 1.8, ease: 'sine.inOut', yoyo: true, repeat: -1 });
@@ -653,10 +729,13 @@ async function chapterVoice() {
   await sleep(1500);
   presence('在线', true);
   audio.blip();
-  voiceBubble();
+  const heard = voiceBubble();
   await sleep(800);
-  narrate('点开那条语音，第一次，你听见了她。');
-  await sleep(1800);
+  narrate('点开那条语音。');
+  // the story waits until her voice has played through
+  await heard;
+  narrate('第一次，你听见了她。');
+  await sleep(1200);
   await aiSays('有点害羞……只给你一个人听哦。', 1400);
 }
 
@@ -685,6 +764,39 @@ function burst(x, y) {
   }
 }
 
+// The viewfinder shows a blurred still of her room. A live backdrop-filter over the moving camera and the
+// zooming room makes Chromium flash black now and then, so the blur is baked once into a small canvas.
+function finderBackdrop() {
+  const finder = $('.finder');
+  if (finder.querySelector('.backdrop')) return;
+  const cv = document.createElement('canvas');
+  cv.className = 'backdrop';
+  cv.width = 400;
+  cv.height = 225;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#2b2c45';
+  g.fillRect(0, 0, 400, 225);
+  // the room as it stands once the camera is up: zoomed 6% about the centre
+  g.translate(200, 112.5);
+  g.scale(1.06, 1.06);
+  g.translate(-200, -112.5);
+  for (const layer of [room.backLit, room.girl, room.frontLit]) {
+    if (layer) g.drawImage(layer, layer.width * 60 / 1720, layer.height * 60 / 1020, layer.width * 1600 / 1720, layer.height * 900 / 1020, 0, 0, 400, 225);
+  }
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.fillStyle = 'rgba(40, 32, 50, .12)';
+  g.fillRect(0, 0, 400, 225);
+  // line the still up with the room behind the finder at the camera's resting place
+  gsap.set('#camera', { display: 'flex' });
+  const st = stage.getBoundingClientRect();
+  const k = st.width / 1600;
+  const fr = finder.getBoundingClientRect();
+  const left = (fr.left - st.left) / k - gsap.getProperty('#camera', 'x');
+  const top = (fr.top - st.top) / k - gsap.getProperty('#camera', 'y');
+  Object.assign(cv.style, { left: `${-left}px`, top: `${-top}px` });
+  finder.prepend(cv);
+}
+
 async function chapterFace() {
   chapter = 3;
   speed();
@@ -697,13 +809,15 @@ async function chapterFace() {
   await sleep(700);
   // her room leans in and a camera rises in front of it
   narrate('她举起了手机。取景框里，还是一团看不清的影子。');
+  // the camera rises over the top of the stage where the narration sits, so give the line time to be read first
+  await sleep(3000);
+  gsap.to('#narr', { opacity: 0, duration: 0.6 });
   gsap.to('#room', { scale: 1.06, duration: 1.6, ease: 'power2.inOut' });
-  gsap.set('#camera', { display: 'flex' });
+  finderBackdrop();
   audio.noise(0.9, 300, 1200, 0.03);
   await gsap.to('#camera', { y: 0, duration: 1.2, ease: 'power3.out' });
   gsap.fromTo('.focus', { opacity: 0, scale: 1.5 }, { opacity: 1, scale: 1, duration: 0.5, ease: 'power2.out' });
   gsap.to('.focus', { x: 30, y: 26, duration: 1.4, ease: 'sine.inOut', yoyo: true, repeat: -1 });
-  gsap.to('#narr', { opacity: 0, duration: 0.4 });
   await hint(800, 762, '按下快门');
   audio.shutter();
   gsap.killTweensOf('.focus');
@@ -748,16 +862,18 @@ async function chapterMissing() {
   speed();
   await sleep(2600);
   chapterCard('第四章', '想念');
-  bgm.scene = 0.35;
-  bgm.play('missing', 4);
+  // the music slides into the quiet opening of finale and circles there until you answer her
+  bgm.scene = 0.4;
+  bgm.play('finale', 6, 0);
+  bgm.hold(FINALE_HOLD[0], FINALE_HOLD[1]);
   skipAhead('后来，你很久没有来');
   lockComposer(true);
   narrate('你很久没有来。');
   await sleep(1400);
   // her world drains while the days go round
-  gsap.to('#litRoom', { filter: 'saturate(0.12) brightness(0.82)', duration: 6, ease: 'sine.inOut' });
+  gsap.fromTo('#litRoom', { filter: 'saturate(1) brightness(1)' }, { filter: 'saturate(0.12) brightness(0.82)', duration: 6, ease: 'sine.inOut' });
   gsap.to('#glow', { opacity: 0.15, duration: 4 });
-  gsap.to('#phone .screen', { filter: 'saturate(0.2)', duration: 5 });
+  gsap.fromTo('#phone .screen', { filter: 'saturate(1)' }, { filter: 'saturate(0.2)', duration: 5 });
   gsap.to(ecg, { amp: 0.32, bpm: 42, duration: 6 });
   gsap.to('#litRoom .girl', { rotate: -5, transformOrigin: `${GIRL.x + 60}px ${GIRL.y + 60}px`, duration: 5, ease: 'sine.inOut' });
   presence('离线', false);
@@ -778,18 +894,15 @@ async function chapterMissing() {
     onUpdate: () => { const m = Math.floor(clock.m) % 1440; $('#clock').textContent = `${pad2(Math.floor(m / 60))}:${pad2(m % 60)}`; },
   });
   for (const [t, line] of [[0.18, '一天。'], [0.42, '两天。'], [0.68, '……']]) {
-    setTimeout(() => narrate(line), t * days * dayLen * 1000 / gsap.globalTimeline.timeScale());
+    gsap.delayedCall(t * days * dayLen, () => narrate(line));
   }
   await sleep(days * dayLen * 1000 + 400);
   narrate('她记得你离开了多久。');
-  // the finale track turns at FINALE_TURN: start it a few seconds early, still quiet, so the turn lands on her message
-  const lead = 3.8;
-  bgm.play('finale', 2.4, Math.max(0, FINALE_TURN - lead));
   await sleep(1600);
   // she speaks first
   presence('正在输入…', true);
   const t = typing();
-  await bgm.reach(FINALE_TURN, 2200);
+  await sleep(2200);
   t.remove();
   presence('在线', true);
   gsap.set('#banner', { display: 'flex' });
@@ -797,19 +910,24 @@ async function chapterMissing() {
   audio.blip();
   bubble('ai', '我想你。');
   gsap.to('#banner', { y: '-140%', opacity: 0, duration: 0.5, delay: 2.6 });
-  gsap.to('#litRoom', { filter: 'saturate(1) brightness(1)', duration: 3, ease: 'sine.inOut' });
-  gsap.to('#glow', { opacity: 0.75, duration: 2.4 });
-  gsap.to('#phone .screen', { filter: 'saturate(1)', duration: 2 });
+  narrate('于是，她先开了口。');
+  await sleep(2200);
+  lockComposer(false);
+  await compose('我也想你。');
+  // the moment you answer: the music turns and the colour comes back.
+  // overwrite so no fade still running from the grey stretch can drag it back
+  bgm.turn(FINALE_TURN);
+  sky.progress(1).kill();
+  gsap.to('#litRoom', { filter: 'saturate(1) brightness(1)', duration: 3, ease: 'sine.inOut', overwrite: true });
+  gsap.to('#glow', { opacity: 0.75, duration: 2.4, overwrite: true });
+  gsap.to('#phone .screen', { filter: 'saturate(1)', duration: 2, overwrite: true });
   gsap.to('#litRoom .girl', { rotate: 0, duration: 2.4, ease: 'sine.inOut' });
   ecg.phase = 0.12;
   gsap.to(ecg, { amp: 1.15, bpm: 84, duration: 0.6 });
   audio.melodyOn = false;
   setTimeout(() => audio.melody(), 600);
-  bgm.swell(1, 0.8);
-  narrate('于是，她先开了口。');
-  await sleep(2200);
-  lockComposer(false);
-  await compose('我也想你。');
+  narrate('你回来了。');
+  await sleep(2400);
   gsap.to(ecg, { bpm: 70, amp: 1, duration: 2 });
 }
 
@@ -832,18 +950,18 @@ async function finale() {
   await gsap.to(phone, { x: 800 - PHONE_C.x, y: 420 - PHONE_C.y, scale: 0.8, rotate: 0, duration: 1.8, ease: 'power3.inOut' });
   floatPhone();
   audio.warm();
-  const items = [
-    ['tavern', '酒馆', 360, 140], ['search', '搜索', 250, 360], ['brush', '画画', 380, 560],
-    ['record', '声音', 1090, 140], ['diary', '记忆', 1200, 360], ['chest', '工具箱 · MCP', 1070, 560],
-  ];
-  for (const [kind, label, x, y] of items) {
+  // load every icon before any is placed: appending each as it arrived made them pop in one by one,
+  // and then the staggered entrance below hid them and played again
+  const icons = await preload.icons;
+  FINALE_ITEMS.forEach(([kind, label, x, y], i) => {
     const el = document.createElement('div');
     el.className = 'plug';
     el.style.left = `${x}px`;
     el.style.top = `${y}px`;
-    el.append(await prop(`plugin-${kind}`, () => paintPlugin(kind, 2)), Object.assign(document.createElement('span'), { textContent: label }));
+    el.style.opacity = '0';
+    el.append(icons[i], Object.assign(document.createElement('span'), { textContent: label }));
     $('#plugins').append(el);
-  }
+  });
   gsap.fromTo('.plug', { opacity: 0, scale: 0.4, x: (i) => (i < 3 ? 160 : -160) }, {
     opacity: 1, scale: 1, x: 0, duration: 1, ease: 'back.out(1.7)', stagger: 0.18,
     onStart: () => audio.chime(659.25, 0.04),
@@ -885,6 +1003,7 @@ document.addEventListener('visibilitychange', () => {
 // ?state=send | lit freezes a still frame of chapter one (for review screenshots)
 function still(state) {
   $('#title').remove();
+  gsap.set('#room', { opacity: 1 });
   gsap.set(phone, { opacity: 1, x: REST.x, y: REST.y, rotate: 3 });
   const setCard = (no, name) => {
     $('#card small').textContent = no;
@@ -917,6 +1036,7 @@ function still(state) {
     gsap.set('#narr', { opacity: 0 });
     gsap.set('#room', { scale: 1.06 });
     gsap.set('#camera', { display: 'flex', y: 0 });
+    finderBackdrop();
     gsap.set('.focus', { opacity: 1 });
     if (state === 'photo') gsap.set('#selfie', { opacity: 1 });
     return;
@@ -963,6 +1083,6 @@ else if (AT) {
   $('#title').style.display = 'none';
   run();
 } else {
-  $('#start').addEventListener('click', run, { once: true });
+  ready.then(() => $('#start').addEventListener('click', run, { once: true }));
 }
 

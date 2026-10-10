@@ -1189,7 +1189,7 @@ class ChatSendBackendService {
     required SillyTavernPreset preset,
     required String userName,
   }) async {
-    if (!mvuAllowedFor(conv, preset)) {
+    if (!mvuAllowedFor(preset)) {
       return const ConversationStateView.inactive();
     }
     try {
