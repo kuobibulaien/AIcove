@@ -117,4 +117,4 @@ AIcove 使用 Flutter 开发，以 macOS 为基准平台，各端共用同一套
 
 ## 友情链接
 
-- [LINUX DO](https://linux.do) — 新的理想型社区
+- 作者活跃于 [LINUX DO](https://linux.do/u/koubibulaien/summary) 社区
