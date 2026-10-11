@@ -6,6 +6,8 @@
 
 [下载最新测试版](https://github.com/kuobibulaien/AIcove/releases) · Android · macOS (Apple Silicon)
 
+内测反馈 QQ 群：**1121312961**
+
 </div>
 
 ---
@@ -108,4 +110,11 @@ AIcove 使用 Flutter 开发，以 macOS 为基准平台，各端共用同一套
 
 架构说明、目录结构、本地运行方式和开发规范请看 **[开发者指南（DEVELOPMENT.md）](DEVELOPMENT.md)**，更多模块文档在 [apps/aicove_flutter/docs](apps/aicove_flutter/docs/README.md)。
 
-欢迎通过 [Issues](https://github.com/kuobibulaien/AIcove/issues) 反馈问题和建议。
+## 交流反馈
+
+- 内测反馈 QQ 群：**1121312961**
+- 也欢迎通过 [Issues](https://github.com/kuobibulaien/AIcove/issues) 反馈问题和建议
+
+## 友情链接
+
+- [LINUX DO](https://linux.do) — 新的理想型社区
