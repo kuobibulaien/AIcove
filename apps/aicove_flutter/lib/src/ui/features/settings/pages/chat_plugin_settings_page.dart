@@ -1,7 +1,7 @@
 /// 聊天插件设置页面
 ///
 /// 整合所有聊天相关插件的入口：
-/// - 记忆库、主动关怀、表情包、语音设置、绘图设置、时间感知、联网搜索、酒馆相关
+/// - 记忆库、主动关怀、表情包、语音设置、绘图设置、时间感知、联网搜索、MCP 连接器、酒馆相关
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_page_scaffold.dart';
 import 'package:flutter/material.dart';
 
@@ -17,6 +17,7 @@ import '../../plugins/pages/sticker_settings_page.dart';
 import '../../plugins/pages/tavern_plugin_detail_page.dart';
 import '../../plugins/pages/plugin_prompts_page.dart';
 import '../../plugins/pages/web_search_plugin_detail_page.dart';
+import '../../plugins/pages/mcp_connectors_page.dart';
 import '../../auto_reply/pages/auto_reply_settings_page.dart';
 import '../../../../ui/shared/widgets/moe_scroll_edge.dart';
 
@@ -82,6 +83,14 @@ const chatPluginItems = [
     name: '联网搜索',
     subtitle: '多家搜索供应商',
     icon: Icons.travel_explore,
+  ),
+  ChatPluginItem(
+    id: 'mcp',
+    name: McpConnectorsPage.title,
+    subtitle: '接入外部工具服务',
+    icon: Icons.hub_outlined,
+    // 每个连接器在角色里单独开关（id 为 mcp:<连接器id>），这里只是管理入口。
+    conversationSelectable: false,
   ),
   ChatPluginItem(
     id: 'tavern_compatibility',
@@ -220,6 +229,9 @@ class ChatPluginSettingsPage extends StatelessWidget {
         break;
       case 'web_search':
         page = const WebSearchPluginDetailPage();
+        break;
+      case 'mcp':
+        page = const McpConnectorsPage();
         break;
     }
 

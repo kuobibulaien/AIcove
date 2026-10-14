@@ -117,6 +117,7 @@ class MoePrimaryButton extends StatefulWidget {
 
 class _MoePrimaryButtonState extends State<MoePrimaryButton> {
   bool _pressed = false;
+  bool _focused = false;
 
   double get _height {
     switch (widget.size) {
@@ -180,7 +181,9 @@ class _MoePrimaryButtonState extends State<MoePrimaryButton> {
     final userDecoration = widget.decoration;
     final effectiveBorder =
         userDecoration?.border ??
-        (widget.border != null ? Border.fromBorderSide(widget.border!) : null);
+        (widget.border != null
+            ? Border.fromBorderSide(widget.border!)
+            : (_focused ? Border.all(color: colors.accentColor) : null));
     final effectiveShadow =
         userDecoration?.boxShadow ?? (_isEnabled ? shadow : null);
 
@@ -189,58 +192,80 @@ class _MoePrimaryButtonState extends State<MoePrimaryButton> {
         ? widget.pressedScale
         : 1.0;
 
-    return GestureDetector(
-      onTapDown: _isEnabled ? (_) => setState(() => _pressed = true) : null,
-      onTapUp: _isEnabled ? (_) => setState(() => _pressed = false) : null,
-      onTapCancel: _isEnabled ? () => setState(() => _pressed = false) : null,
-      onTap: _isEnabled ? widget.onPressed : null,
-      child: AnimatedScale(
-        scale: scale,
-        duration: kAnimFast,
-        child: MoeButtonSurface(
-          tintColor: currentBg,
-          borderRadius: radius,
-          border: effectiveBorder,
-          shadows: effectiveShadow,
-          width: widget.width,
-          height: _height,
-          padding: _padding,
-          child: Center(
-            child: widget.isLoading
-                ? SizedBox(
-                    width: _fontSize + 4,
-                    height: _fontSize + 4,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation(currentFg),
-                    ),
-                  )
-                : Row(
-                    mainAxisSize: MainAxisSize.min,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      if (widget.icon != null) ...[
-                        Icon(
-                          widget.icon,
-                          size: _fontSize + 2,
-                          color: currentFg,
+    return Semantics(
+      button: true,
+      enabled: _isEnabled,
+      child: FocusableActionDetector(
+        enabled: _isEnabled,
+        mouseCursor: _isEnabled
+            ? SystemMouseCursors.click
+            : SystemMouseCursors.basic,
+        onShowFocusHighlight: (focused) => setState(() => _focused = focused),
+        actions: <Type, Action<Intent>>{
+          ActivateIntent: CallbackAction<ActivateIntent>(
+            onInvoke: (_) {
+              if (_isEnabled) widget.onPressed?.call();
+              return null;
+            },
+          ),
+        },
+        child: GestureDetector(
+          onTapDown: _isEnabled ? (_) => setState(() => _pressed = true) : null,
+          onTapUp: _isEnabled ? (_) => setState(() => _pressed = false) : null,
+          onTapCancel: _isEnabled
+              ? () => setState(() => _pressed = false)
+              : null,
+          onTap: _isEnabled ? widget.onPressed : null,
+          child: AnimatedScale(
+            scale: scale,
+            duration: kAnimFast,
+            child: MoeButtonSurface(
+              shareParentSurface: false,
+              tintColor: currentBg,
+              borderRadius: radius,
+              border: effectiveBorder,
+              shadows: effectiveShadow,
+              width: widget.width,
+              height: _height,
+              padding: _padding,
+              child: Center(
+                child: widget.isLoading
+                    ? SizedBox(
+                        width: _fontSize + 4,
+                        height: _fontSize + 4,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation(currentFg),
                         ),
-                        const SizedBox(width: 8),
-                      ],
-                      Flexible(
-                        child: Text(
-                          widget.label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: _fontSize,
-                            fontWeight: MoeFontWeights.emphasis,
-                            color: currentFg,
+                      )
+                    : Row(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          if (widget.icon != null) ...[
+                            Icon(
+                              widget.icon,
+                              size: _fontSize + 2,
+                              color: currentFg,
+                            ),
+                            const SizedBox(width: 8),
+                          ],
+                          Flexible(
+                            child: Text(
+                              widget.label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: _fontSize,
+                                fontWeight: MoeFontWeights.emphasis,
+                                color: currentFg,
+                              ),
+                            ),
                           ),
-                        ),
+                        ],
                       ),
-                    ],
-                  ),
+              ),
+            ),
           ),
         ),
       ),

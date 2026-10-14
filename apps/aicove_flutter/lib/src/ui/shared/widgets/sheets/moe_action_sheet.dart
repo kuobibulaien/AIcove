@@ -284,7 +284,7 @@ class _ActionItemState extends State<_ActionItem> {
     }
 
     final bgColor = _pressed && isEnabled
-        ? colors.surfaceAlt.withValues(alpha: 0.5)
+        ? colors.text.withValues(alpha: 0.06)
         : Colors.transparent;
 
     return GestureDetector(

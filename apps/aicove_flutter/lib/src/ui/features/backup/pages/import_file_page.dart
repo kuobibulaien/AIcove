@@ -47,13 +47,15 @@ class _ImportFilePageState extends ConsumerState<ImportFilePage> {
             ),
             const SizedBox(height: 8),
             Text(
-              '支持 .zip 格式的备份文件（旧版 .aicove 仍可导入）',
+              // 旧版 .aicove 已写在选择卡片里；这里保持一行，矮屏大字号时选择
+              // 按钮仍在首屏。
+              '支持 .zip 格式的备份文件',
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
 
-            const SizedBox(height: 32),
+            const SizedBox(height: 16),
 
             // 选择文件按钮
             _buildFilePickerCard(context),
@@ -86,11 +88,6 @@ class _ImportFilePageState extends ConsumerState<ImportFilePage> {
                 ),
               ),
             ],
-
-            const SizedBox(height: 24),
-
-            // 帮助信息
-            _buildHelpSection(context),
           ],
         ),
       ),
@@ -107,7 +104,8 @@ class _ImportFilePageState extends ConsumerState<ImportFilePage> {
         child: InkWell(
           onTap: _isLoading ? null : _pickFile,
           child: MoeButtonSurface(
-            padding: const EdgeInsets.all(32),
+            shareParentSurface: false,
+            padding: const EdgeInsets.all(24),
             radius: 16,
             border: Border.all(
               color: theme.colorScheme.outline.withValues(alpha: 0.3),
@@ -149,51 +147,6 @@ class _ImportFilePageState extends ConsumerState<ImportFilePage> {
             ),
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildHelpSection(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: MoeG2Decoration(
-        radius: 12,
-        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                LucideIcons.helpCircle,
-                size: 16,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  '如何获取备份文件？',
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    fontWeight: MoeFontWeights.emphasis,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            '• 在其他设备上使用"导出数据"功能\n'
-            '• 通过微信/QQ/邮件等方式传输文件\n'
-            '• 从网盘下载之前保存的备份',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-              height: 1.5,
-            ),
-          ),
-        ],
       ),
     );
   }

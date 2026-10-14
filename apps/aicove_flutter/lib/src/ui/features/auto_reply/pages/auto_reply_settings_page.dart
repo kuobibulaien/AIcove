@@ -7,6 +7,7 @@
 ///   模型、提示词、准时提醒、后台运行与历史记录收进「更多设置」
 library;
 
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -16,6 +17,7 @@ import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../../features/auto_reply/data/auto_reply_trigger.dart';
 import '../../../../features/auto_reply/data/auto_reply_trigger_controller.dart';
+import '../../../../features/auto_reply/data/proactive_call.dart';
 import '../widgets/auto_reply_settings_cards.dart';
 import 'auto_reply_advanced_settings_page.dart';
 import 'auto_reply_trigger_list_page.dart';
@@ -68,6 +70,7 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage> {
   }
 
   Widget _buildContent(AutoReplySettings current) {
+    final callsSupported = proactiveCallsSupported(defaultTargetPlatform);
     final pendingCount =
         ref
             .watch(autoReplyTriggersProvider)
@@ -109,6 +112,29 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage> {
               ],
             ),
             const AutoReplySectionFooter('在角色资料的插件里打开「主动关怀」，这个角色才会主动找你。'),
+            const SizedBox(height: MoeSettingsLayout.sectionGap),
+
+            MoeSettingsGroup(
+              children: [
+                MoeSettingsRow(
+                  key: const ValueKey('auto-reply-allow-calls'),
+                  label: '允许主动打电话',
+                  enabled: callsSupported,
+                  trailingType: MoeSettingsRowTrailing.switchControl,
+                  switchValue: callsSupported && current.allowProactiveCalls,
+                  onSwitchChanged: callsSupported
+                      ? (value) =>
+                            _save(current.copyWith(allowProactiveCalls: value))
+                      : null,
+                ),
+              ],
+            ),
+            AutoReplySectionFooter(
+              callsSupported
+                  ? '打开后，角色会按自己的性格决定要不要给你打电话，可能会比较频繁；免打扰时段不会响铃。'
+                        '角色要开着语音、用 Fish Audio 音色，并配好语音识别才打得出来。'
+                  : '这台设备暂不支持角色主动来电。',
+            ),
             const SizedBox(height: MoeSettingsLayout.sectionGap),
 
             MoeSettingsGroup(

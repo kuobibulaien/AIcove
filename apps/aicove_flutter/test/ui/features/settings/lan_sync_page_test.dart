@@ -137,7 +137,7 @@ void main() {
       await tester.tap(find.text('取消配对'));
       await tester.pumpAndSettle();
       expect(find.text('取消与我的手机的配对？'), findsOneWidget);
-      await tester.tap(find.widgetWithText(TextButton, '保留'));
+      await tester.tap(find.text('保留'));
       await tester.pumpAndSettle();
       expect(port.actions.any((a) => a.startsWith('forget:')), false);
       expect(tester.takeException(), isNull);

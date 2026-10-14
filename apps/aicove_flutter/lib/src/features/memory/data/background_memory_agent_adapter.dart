@@ -3,12 +3,12 @@ import 'dart:convert';
 import '../../../core/utils/token_estimator.dart';
 import '../../background_agent/background_agent_service.dart';
 import '../../background_agent/domain/background_agent_definition.dart';
-import '../../background_agent/domain/background_context_spec.dart';
 import '../../chat/domain/message.dart';
 import '../../plugins/domain/handlers/ai_tool.dart';
 import '../../plugins/domain/handlers/tool_parameter.dart';
 import '../domain/memory_item.dart';
 import '../domain/memory_ports.dart';
+import '../../agent_context/domain/agent_runtime_contracts.dart';
 
 const kMemoryAgentId = 'local.memory_keeper';
 
@@ -112,12 +112,14 @@ class BackgroundMemoryAgentAdapter implements MemoryAgentPort {
             modelRef: modelRef,
             temperature: 0.2,
             maxRounds: 4,
-            contextSpec: const BackgroundContextSpec(
-              lastMessages: 1,
-              includeUser: true,
-              includeAssistant: false,
-              includeSystem: false,
-              includeTimestamps: false,
+            contextProfile: ContextProfile.background(
+              const ConversationWindowSpec(
+                lastMessages: 1,
+                includeUser: true,
+                includeAssistant: false,
+                includeSystem: false,
+                includeTimestamps: false,
+              ),
             ),
           ),
           conversationId: ownerId,

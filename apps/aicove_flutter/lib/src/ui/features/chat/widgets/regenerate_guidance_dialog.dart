@@ -43,7 +43,6 @@ class _RegenerateGuidanceDialogState extends State<RegenerateGuidanceDialog> {
       content: MoeTextField(
         controller: _controller,
         hint: '可选：希望这次怎么回，例如更简短、换个语气',
-        helperText: '不填也可以，直接重新生成；意见只用于本次，不会保存到聊天记录',
         minLines: 2,
         maxLines: 5,
         autofocus: true,

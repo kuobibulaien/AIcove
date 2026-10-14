@@ -19,15 +19,13 @@ import '../../../core/api/providers/provider_adapter.dart'
     show ToolCall, ToolResult;
 import '../../../core/models/message_block.dart';
 import '../../../core/utils/mime_utils.dart';
-import '../../plugins/domain/plugin.dart' show PluginEvent;
-import '../../plugins/domain/plugin_content.dart';
 import '../../plugins/plugin_providers.dart';
-import '../../plugins/tts/tts_plugin.dart';
+import '../../agent_plugins/plugin_response.dart';
+import '../../agent_plugins/plugin_runtime.dart';
 import '../../plugins/tts/voice_preset_application.dart';
 import 'chat_history_store.dart';
 import 'chat_message_projection_codec.dart';
 import 'chat_message_processor.dart';
-import 'chat_plugin_context_builder.dart';
 import '../../dialogue_options/domain/dialogue_options.dart';
 import 'chat_request_message_builder.dart';
 import 'chat_send_backend_service.dart';
@@ -201,6 +199,9 @@ class ChatSendService {
     String? overrideModel,
     String? conversationId,
     TraceContext? traceContext,
+    DateTime? requestTime,
+    bool persistSideEffects = true,
+    bool deferReminders = false,
   }) =>
       _backendService.prepareApiConfig(
         conv: conv,
@@ -210,6 +211,9 @@ class ChatSendService {
         overrideModel: overrideModel,
         conversationId: conversationId,
         traceContext: traceContext,
+        requestTime: requestTime,
+        persistSideEffects: persistSideEffects,
+        deferReminders: deferReminders,
       );
 
   /// 按当前设置预览联系人下一次请求的完整上下文，不发送、不写数据。
@@ -273,37 +277,28 @@ class ChatSendService {
     }
 
     final voiceRequest = await _ref.read(voicePresetApplicationProvider).forRole(conv);
-    final pluginManager = _ref.read(pluginManagerProvider);
-    const pluginContextBuilder = ChatPluginContextBuilder();
-    final effectivePlugins = pluginContextBuilder.getEffectivePlugins(
-      pluginManager: pluginManager,
-      enabledPluginIds: conv.enabledPlugins?.toSet(),
+    // Same processors and traversal as a request reply; drawing has no
+    // request snapshot here and uses live configuration.
+    final pluginRuntime = PluginRuntime.fromPlugins(
+      _ref.read(pluginManagerProvider).getAllPlugins(),
     );
-
-    var currentText = normalizedReply;
-    final allEvents = <PluginEvent>[];
-    final allContents = <PluginContent>[];
-    for (final registered in effectivePlugins) {
-      final plugin = registered is TtsPlugin ? TtsPlugin.forRequest(voiceRequest) : registered;
-      try {
-        final result = await plugin.processResponse(currentText);
-        currentText = result.processedText;
-        allEvents.addAll(result.events);
-        allContents.addAll(result.contents);
-      } catch (e) {
-        AppLogger.warning(_logTag, '缓存回复插件响应处理失败', metadata: {
-          'pluginId': plugin.id,
-          'error': e.toString(),
-        });
-      }
-    }
+    final result = await runResponseProcessors(
+      pluginRuntime.responseProcessors(
+        pluginRuntime.snapshot(),
+        pluginRuntime.selectForRole(conv.enabledPlugins?.toSet()),
+        PluginResponseInputs(ref: _ref, voiceRequest: voiceRequest),
+      ),
+      normalizedReply,
+      logTag: _logTag,
+      failureMessage: '缓存回复插件响应处理失败',
+    );
 
     return ApiCallResult(
       rawReplyText: normalizedReply,
       replyText: normalizedReply,
-      processedText: currentText,
-      pluginEvents: allEvents,
-      pluginContents: allContents,
+      processedText: result.processedText,
+      pluginEvents: result.events,
+      pluginContents: result.contents,
       toolResults: const [],
     );
   }

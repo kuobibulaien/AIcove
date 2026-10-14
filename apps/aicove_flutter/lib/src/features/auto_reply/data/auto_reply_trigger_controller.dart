@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
@@ -8,9 +9,11 @@ import '../../../core/database/database_provider.dart';
 import '../../chat/providers2.dart';
 import '../../chat/services/chat_history_store.dart';
 import 'auto_reply_claim_store.dart';
+import 'auto_reply_dispatch_service.dart';
 import 'auto_reply_trigger.dart';
 import 'auto_reply_trigger_storage.dart';
 import 'background_service.dart';
+import 'proactive_planner.dart';
 import '../../settings/app_settings.dart';
 
 final autoReplyTriggerEventProvider =
@@ -51,6 +54,23 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
   final _uuid = const Uuid();
   Timer? _ticker;
   late AutoReplyTriggerStorage _storage;
+
+  /// Triggers whose send is under way in this process. The trigger stays
+  /// active until delivery (2f: fired is marked after delivery); this keeps
+  /// the ticker from re-firing it meanwhile. Entries lapse with the claim
+  /// lease, so a send that never reported back is retried like a killed
+  /// process would be.
+  final Map<String, ({DateTime since, String token})> _inFlight = {};
+
+  bool _isInFlight(String id, DateTime now) {
+    final entry = _inFlight[id];
+    if (entry == null) return false;
+    if (now.difference(entry.since) < AutoReplyClaimStore.lease) return true;
+    _inFlight.remove(id);
+    return false;
+  }
+
+
 
   AutoReplyClaimStore get _claimStore =>
       AutoReplyClaimStore(ref.read(databaseProvider));
@@ -184,6 +204,7 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
     String? cachedContent,
     DateTime? preparedAt,
     AutoReplyTriggerStatus? status,
+    ProactiveAction action = ProactiveAction.sendMessage,
   }) async {
     final normalizedConversationId = conversationId.trim();
     if (normalizedConversationId.isEmpty) {
@@ -215,6 +236,10 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
       cachedContent:
           cachedContent?.trim().isEmpty ?? true ? null : cachedContent!.trim(),
       preparedAt: preparedAt,
+      // A call without its opening line cannot ring; it is written live.
+      action: cachedContent?.trim().isEmpty ?? true
+          ? ProactiveAction.sendMessage
+          : action,
     );
 
     final current = state.valueOrNull ?? const <AutoReplyTrigger>[];
@@ -416,6 +441,9 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
     _pollDueTriggers(); // run immediately once
   }
 
+  @visibleForTesting
+  Future<void> pollDueTriggersForTest() => _pollDueTriggers();
+
   Future<void> _pollDueTriggers() async {
     final current = state.valueOrNull;
     if (current == null || current.isEmpty) return;
@@ -423,10 +451,11 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
     final autoReplySettings = settings.autoReplySettings;
 
     final now = DateTime.now();
-    final quietHoursActive = autoReplySettings.quietHoursEnabled &&
-        _isInQuietHours(now,
-            start: autoReplySettings.quietHoursStart,
-            end: autoReplySettings.quietHoursEnd);
+    final quietHoursActive = QuietHours.parse(
+      enabled: autoReplySettings.quietHoursEnabled,
+      start: autoReplySettings.quietHoursStart,
+      end: autoReplySettings.quietHoursEnd,
+    ).contains(now);
 
     final firedTodayCount = current.where((t) {
       if (t.status != AutoReplyTriggerStatus.fired || t.lastFiredAt == null) {
@@ -462,6 +491,15 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
 
     // 触发到期的触发器
     for (final trigger in current) {
+      // 正在发送的触发器不参与本轮任何判断（含精确窗口作废）。
+      if (_isInFlight(trigger.id, now)) continue;
+      // 已开始送达（可能是另一进程或被杀的上一次）：只按送达记录收尾。
+      // 读到之后对方才开始送达的情况，由下面的作废先认领来挡。
+      if (trigger.isActive &&
+          !trigger.nextFireAt.isAfter(now) &&
+          await _settleStartedDelivery(trigger, now)) {
+        continue;
+      }
       if (quietHoursActive && !trigger.allowNight) {
         continue;
       }
@@ -473,7 +511,7 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
       if (trigger.requireExact &&
           autoReplySettings.allowExactAlarm &&
           now.difference(trigger.nextFireAt) > const Duration(minutes: 2)) {
-        await expireTrigger(trigger.id, '错过精确触发窗口');
+        await _expireUnderClaim(trigger, '错过精确触发窗口', now);
         continue;
       }
 
@@ -483,7 +521,7 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
             await _checkShouldExpire(trigger, activeChatId);
         if (expireCheckResult != null) {
           // 应该作废，不触发
-          await expireTrigger(trigger.id, expireCheckResult);
+          await _expireUnderClaim(trigger, expireCheckResult, now);
           continue;
         }
         // ===== 作废检查结束 =====
@@ -498,30 +536,6 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
 
   bool _isSameDay(DateTime a, DateTime b) {
     return a.year == b.year && a.month == b.month && a.day == b.day;
-  }
-
-  bool _isInQuietHours(DateTime now,
-      {required String start, required String end}) {
-    int parseMinutes(String value, int fallbackHour, int fallbackMinute) {
-      final parts = value.split(':');
-      if (parts.length != 2) return fallbackHour * 60 + fallbackMinute;
-      final hour = int.tryParse(parts[0]);
-      final minute = int.tryParse(parts[1]);
-      if (hour == null || minute == null) {
-        return fallbackHour * 60 + fallbackMinute;
-      }
-      return hour.clamp(0, 23).toInt() * 60 + minute.clamp(0, 59).toInt();
-    }
-
-    final nowMinutes = now.hour * 60 + now.minute;
-    final startMinutes = parseMinutes(start, 22, 0);
-    final endMinutes = parseMinutes(end, 8, 0);
-
-    if (startMinutes == endMinutes) return false;
-    if (startMinutes < endMinutes) {
-      return nowMinutes >= startMinutes && nowMinutes < endMinutes;
-    }
-    return nowMinutes >= startMinutes || nowMinutes < endMinutes;
   }
 
   /// 检查触发器是否应该作废
@@ -577,9 +591,16 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
     if (current == null || current.isEmpty) return;
 
     final cutoffTime = now.subtract(const Duration(hours: 24));
-    // 同步清理过期的执行权认领记录
+    // 同步清理过期的执行权认领记录；仍有效的触发器的认领保留，免得清掉
+    // “已开始送达”的记录后又被重新认领、重复发送。
     try {
-      await _claimStore.cleanupBefore(cutoffTime);
+      await _claimStore.cleanupBefore(
+        cutoffTime,
+        keepTriggerIds: {
+          for (final trigger in current)
+            if (trigger.isActive) trigger.id,
+        },
+      );
     } catch (e) {
       AppLogger.warning('AutoReplyTrigger', 'Claim cleanup failed',
           metadata: {'error': e.toString()});
@@ -610,16 +631,17 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
     final current = await _storage.loadTriggers();
     if (current.isEmpty) return;
     final latest = current.where((t) => t.id == id).firstOrNull;
-    if (latest == null || !latest.isActive) {
+    if (latest == null || !latest.isActive || _isInFlight(id, DateTime.now())) {
       return;
     }
 
     // 执行权认领：与后台 WorkManager 链路互斥，认领失败说明后台已在执行
-    final claimed = await _claimStore.tryClaim(
+    final token = await _claimStore.tryClaim(
       triggerId: id,
       claimedBy: AutoReplyClaimOwner.foreground,
     );
-    if (!claimed) {
+    if (token == null) {
+      if (await _settleStartedDelivery(latest, DateTime.now())) return;
       AppLogger.info('AutoReplyTrigger', 'Fire skipped: claimed elsewhere',
           metadata: {'triggerId': id});
       await _appendHistoryLog(
@@ -635,19 +657,13 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
       return;
     }
 
-    var changed = false;
-    final updated = current.map((trigger) {
-      if (trigger.id != id) return trigger;
-      changed = true;
-      return trigger.copyWith(
-        status: AutoReplyTriggerStatus.fired,
-        lastFiredAt: firedAt,
-      );
-    }).toList();
-    if (!changed) return;
-    await _persist(updated);
-
-    final fired = updated.firstWhere((e) => e.id == id);
+    // 送达后才标记 fired（completeTriggeredSend）；发送期间保持原状态，
+    // 进程中途被杀时触发器仍有效，租约过期后可被前台或后台重新认领。
+    _inFlight[id] = (since: DateTime.now(), token: token);
+    final fired = latest.copyWith(
+      status: AutoReplyTriggerStatus.fired,
+      lastFiredAt: firedAt,
+    );
     AppLogger.info('AutoReplyTrigger', 'Trigger due, dispatching send',
         metadata: {
           'triggerId': fired.id,
@@ -665,7 +681,7 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
         'firedAt': firedAt.toIso8601String(),
       },
     );
-    _emitEvent(AutoReplyTriggerEventType.fired, fired);
+    _emitEvent(AutoReplyTriggerEventType.fired, fired, claimToken: token);
   }
 
   Future<void> completeTriggeredSend({
@@ -674,10 +690,31 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
     required bool success,
     required bool retryable,
     required String reason,
+    required String? claimToken,
   }) async {
+    // 只清掉本次发送自己的记录；同一触发器可能已有新的发送在进行。
+    if (claimToken != null && _inFlight[triggerId]?.token == claimToken) {
+      _inFlight.remove(triggerId);
+    }
+    // 执行权已被另一方接管，那边负责收尾；生成超过租约后才返回的旧发送
+    // （空内容、异常等没经过 beginDelivery 的失败）同样不得改触发器。
+    // 先续租：续上了，一个租约内没人能接管，确认与写入之间不会被插队。
+    // 续不上而令牌仍是当前认领，说明本次已开始送达，这条认领永不再被接管。
+    if (reason == AutoReplyDispatchResult.supersededReason) return;
+    if (claimToken == null ||
+        !await _holdClaimForCompletion(triggerId, claimToken)) {
+      AppLogger.info('AutoReplyTrigger', 'Stale send completion ignored',
+          metadata: {'triggerId': triggerId, 'reason': reason});
+      return;
+    }
     final current = state.valueOrNull ?? const <AutoReplyTrigger>[];
     final target = current.where((t) => t.id == triggerId).firstOrNull;
-    if (target == null) return;
+    if (target == null) {
+      if (!success) {
+        await _claimStore.release(triggerId, claimToken);
+      }
+      return;
+    }
 
     final now = DateTime.now();
     List<AutoReplyTrigger> updated = current;
@@ -707,6 +744,9 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
           'reason': reason,
         },
       );
+    } else if (retryable && !target.isActive) {
+      // 发送期间用户已暂停或作废：只释放认领，保留用户的决定。
+      await _claimStore.release(triggerId, claimToken);
     } else if (retryable) {
       final retryAt = now.add(const Duration(minutes: 1));
       updated = current.map((t) {
@@ -720,7 +760,7 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
       }).toList();
       await _persist(updated);
       // 释放执行权认领，让重试可以重新认领
-      await _claimStore.release(triggerId);
+      await _claimStore.release(triggerId, claimToken);
       final retryTrigger = updated.where((t) => t.id == triggerId).firstOrNull;
       if (retryTrigger != null) {
         await _scheduleBackgroundTaskForTrigger(retryTrigger);
@@ -783,6 +823,119 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
         },
       );
     }
+  }
+
+  /// 自动作废与送达争同一个执行权：先认领，认领到了才作废，认领留着挡住
+  /// 之后的 `beginDelivery`；没认领到说明另一方正在生成或已开始送达，本轮
+  /// 不作废，已开始送达的按送达记录收尾。
+  Future<void> _expireUnderClaim(
+    AutoReplyTrigger trigger,
+    String reason,
+    DateTime now,
+  ) async {
+    // 已暂停、已发或已作废的不再认领，免得留下无用的认领。
+    final latest = (state.valueOrNull ?? const <AutoReplyTrigger>[])
+        .where((t) => t.id == trigger.id)
+        .firstOrNull;
+    if (latest == null || !latest.isActive) return;
+    String? token;
+    try {
+      token = await _claimStore.tryClaim(
+        triggerId: trigger.id,
+        claimedBy: AutoReplyClaimOwner.foreground,
+        now: now,
+      );
+    } catch (e) {
+      AppLogger.warning('AutoReplyTrigger', 'Claim before expiry failed',
+          metadata: {'triggerId': trigger.id, 'error': e.toString()});
+      return;
+    }
+    if (token == null) {
+      await _settleStartedDelivery(trigger, now);
+      return;
+    }
+    await expireTrigger(trigger.id, reason);
+  }
+
+  /// 触发器已开始送达时返回 true：一个租约内对方可能还在写，交给对方收尾；
+  /// 超过租约视为进程已被杀，不重试，按记下的消息是否存在补成终态。
+  /// 认领状态读不到也返回 true，本轮跳过这条触发器。
+  Future<bool> _settleStartedDelivery(
+    AutoReplyTrigger trigger,
+    DateTime now,
+  ) async {
+    final AutoReplyClaimState claim;
+    try {
+      claim = await _claimStore.stateOf(trigger.id, now: now);
+    } catch (e) {
+      AppLogger.warning('AutoReplyTrigger', 'Claim state read failed',
+          metadata: {'triggerId': trigger.id, 'error': e.toString()});
+      return true;
+    }
+    if (claim is! AutoReplyClaimDelivered) return false;
+    if (claim.isStalled(now)) {
+      await _finalizeInterruptedDelivery(trigger, claim);
+    }
+    return true;
+  }
+
+  Future<bool> _holdClaimForCompletion(String triggerId, String token) async {
+    try {
+      return await _claimStore.renew(triggerId, token) ||
+          await _claimStore.isCurrent(triggerId, token);
+    } catch (e) {
+      // 读不到就当已被接管：不改状态，租约过期后由下一次认领处理。
+      AppLogger.warning('AutoReplyTrigger', 'Claim check failed',
+          metadata: {'triggerId': triggerId, 'error': e.toString()});
+      return false;
+    }
+  }
+
+  /// 开始送达后中断的触发器：开始送达时记下的消息（旧记录按后台固定编号）
+  /// 已在就算送达，否则记为中断作废（开始写入后不重试，宁缺不重）。
+  Future<void> _finalizeInterruptedDelivery(
+    AutoReplyTrigger trigger,
+    AutoReplyClaimDelivered claim,
+  ) async {
+    // 只收尾仍未结束的触发器；已发或已作废的不再改写时间和日志。
+    final latest = (state.valueOrNull ?? const <AutoReplyTrigger>[])
+        .where((t) => t.id == trigger.id)
+        .firstOrNull;
+    if (latest == null || !latest.isActive) return;
+    final delivered = await ref.read(messageRepositoryProvider).getById(
+              claim.messageId ?? backgroundTriggerMessageId(trigger.id),
+            ) !=
+        null;
+    if (delivered) {
+      final current = state.valueOrNull ?? const <AutoReplyTrigger>[];
+      await _persist([
+        for (final t in current)
+          t.id == trigger.id
+              ? t.copyWith(
+                  status: AutoReplyTriggerStatus.fired,
+                  lastFiredAt: DateTime.now(),
+                  expireReason: null,
+                )
+              : t,
+      ]);
+    } else {
+      await expireTrigger(trigger.id, interruptedDeliveryReason);
+    }
+    await _appendHistoryLog(
+      category: AutoReplyTriggerLogCategory.delivery,
+      event: 'delivery_interrupted_finalized',
+      message: delivered
+          ? '上次送达后中断，补记为已送达：${trigger.title}'
+          : '上次开始送达后中断，不重试：${trigger.title}',
+      triggerId: trigger.id,
+      title: trigger.title,
+      conversationId: trigger.conversationId,
+      source: trigger.source,
+      success: delivered,
+      level: delivered
+          ? AutoReplyTriggerLogLevel.info
+          : AutoReplyTriggerLogLevel.warning,
+    );
   }
 
   Future<void> _persist(List<AutoReplyTrigger> triggers) async {
@@ -871,7 +1024,7 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
   }
 
   void _emitEvent(AutoReplyTriggerEventType type, AutoReplyTrigger trigger,
-      {String? reason}) {
+      {String? reason, String? claimToken}) {
     final event = AutoReplyTriggerEvent(
       type: type,
       triggerId: trigger.id,
@@ -880,6 +1033,7 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
       conversationId: trigger.conversationId,
       source: trigger.source,
       reason: reason,
+      claimToken: claimToken,
     );
     ref.read(autoReplyTriggerEventBusProvider).emit(event);
     ref.read(autoReplyTriggerEventProvider.notifier).state = event;

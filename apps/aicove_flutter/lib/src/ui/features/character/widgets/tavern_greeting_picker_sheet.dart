@@ -38,20 +38,12 @@ class TavernGreetingPickerList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.moeColors;
     return ListView.separated(
       shrinkWrap: true,
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-      itemCount: greetings.length + 1,
+      itemCount: greetings.length,
       separatorBuilder: (_, _) => const SizedBox(height: 10),
-      itemBuilder: (context, i) {
-        if (i == 0) {
-          return Text(
-            '这张角色卡有 ${greetings.length} 套开场白，选中的一套会作为角色的第一条消息出现在聊天里。',
-            style: TextStyle(fontSize: 13, color: colors.muted),
-          );
-        }
-        final index = i - 1;
+      itemBuilder: (context, index) {
         return _GreetingCard(
           index: index,
           text: greetings[index],

@@ -202,7 +202,7 @@ void main() {
   });
 
   for (final dark in [false, true]) {
-    testWidgets('滑钮在全局三态下始终不采样背景 dark=$dark', (tester) async {
+    testWidgets('滑钮在全局三态下跟随高级材质并在无障碍时降级 dark=$dark', (tester) async {
       Widget slider() =>
           MoeSlider(value: 16, min: 0, max: 32, onChanged: (_) {});
 
@@ -213,13 +213,13 @@ void main() {
       await tester.pumpWidget(
         themed(slider(), dark: dark, enabled: true, useLiquid: false),
       );
-      expect(inThumb(BackdropFilter), findsNothing);
+      expect(inThumb(BackdropFilter), findsOneWidget);
       expect(inThumb(AdaptiveGlass), findsNothing);
 
       await tester.pumpWidget(
         themed(slider(), dark: dark, enabled: true, useLiquid: true),
       );
-      expect(inThumb(AdaptiveGlass), findsNothing);
+      expect(inThumb(AdaptiveGlass), findsOneWidget);
       expect(inThumb(BackdropFilter), findsNothing);
 
       MoeLiquidGlassService.setMockState(available: false);
@@ -227,7 +227,7 @@ void main() {
         themed(slider(), dark: dark, enabled: true, useLiquid: true),
       );
       expect(inThumb(AdaptiveGlass), findsNothing);
-      expect(inThumb(BackdropFilter), findsNothing);
+      expect(inThumb(BackdropFilter), findsOneWidget);
       MoeLiquidGlassService.setMockState(available: true);
 
       await tester.pumpWidget(
@@ -257,7 +257,7 @@ void main() {
     });
   }
 
-  testWidgets('滑钮在全局强度 0/16/32 下保持不透明', (tester) async {
+  testWidgets('滑钮在全局强度 0/16/32 下使用 standard 液态材质', (tester) async {
     for (final sigma in [0.0, 16.0, 32.0]) {
       await tester.pumpWidget(
         themed(
@@ -266,10 +266,9 @@ void main() {
           sigma: sigma,
         ),
       );
-      expect(inThumb(AdaptiveGlass), findsNothing);
+      final glass = tester.widget<AdaptiveGlass>(inThumb(AdaptiveGlass));
+      expect(glass.quality, GlassQuality.standard);
       expect(inThumb(BackdropFilter), findsNothing);
-      final surfaces = tester.widgetList<Material>(inThumb(Material));
-      expect(surfaces.where((surface) => surface.color?.a == 1), isNotEmpty);
     }
     expect(tester.takeException(), isNull);
   });
@@ -979,7 +978,7 @@ void main() {
         );
         expect(shaderProblems, isEmpty);
         expect(thumb(), findsNWidgets(6));
-        expect(find.byType(LightweightLiquidGlass), findsNothing);
+        expect(find.byType(AdaptiveGlass), findsNWidgets(2));
 
         final presses = <TestGesture>[];
         for (final i in [1, 3, 5]) {

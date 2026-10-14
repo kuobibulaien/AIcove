@@ -4,6 +4,7 @@ import 'thinking_level.dart';
 String thinkingLevelTitle(ThinkingLevel level, {required bool isNative}) {
   return switch (level) {
     ThinkingLevel.auto => '跟随上游',
+    ThinkingLevel.lowest => '最低',
     ThinkingLevel.off => '关',
     ThinkingLevel.minimal => isNative ? 'minimal' : '极低',
     ThinkingLevel.low => isNative ? 'low' : '低',
@@ -18,6 +19,7 @@ String thinkingLevelTitle(ThinkingLevel level, {required bool isNative}) {
 String thinkingLevelHint(ThinkingLevel level) {
   return switch (level) {
     ThinkingLevel.auto => '不发送思考参数，由服务商自己决定',
+    ThinkingLevel.lowest => '能关就关，关不掉用最低档',
     ThinkingLevel.off => '不思考，回复最快最省',
     ThinkingLevel.minimal => '几乎不思考，适合简单问答',
     ThinkingLevel.low => '轻度思考，日常对话足够',

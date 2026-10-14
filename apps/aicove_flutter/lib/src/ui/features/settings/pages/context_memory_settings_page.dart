@@ -63,19 +63,6 @@ class _ContextMemorySettingsPageState
         padding: MoeSettingsLayout.verticalListPadding,
         children: [
           MoeSettingsGroup(
-            padding: MoeSettingsLayout.contentPadding,
-            children: [
-              Text(
-                '短期记忆：聊天快装不下时，较早的对话会被整理成摘要（自动压缩）；'
-                '也可以在聊天页手动「压缩并开启新话题」。原始聊天记录始终完整保留。\n'
-                '长期记忆：每次压缩后，记忆模型会在后台把刚整理过的对话提炼进该角色的记忆，'
-                '聊天时自动带上相关内容。聊天模型本身不会调用记忆工具。',
-                style: TextStyle(color: colors.text, fontSize: 13, height: 1.5),
-              ),
-            ],
-          ),
-          const SizedBox(height: MoeSettingsLayout.sectionGap),
-          MoeSettingsGroup(
             title: '模型',
             children: [
               MoeSettingsRow(
@@ -121,7 +108,7 @@ class _ContextMemorySettingsPageState
                   controller: _contextWindowCtrl,
                   label: '窗口大小（k tokens）',
                   hint: '272',
-                  helperText: '默认 272k；与默认模型设置中的上下文窗口共用',
+                  helperText: '默认 272k，对话快满时自动整理旧消息',
                   keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
                   ),
@@ -130,20 +117,6 @@ class _ContextMemorySettingsPageState
                     FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
                   ],
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: MoeSettingsLayout.sectionGap),
-          const MoeSettingsGroup(
-            title: '规则',
-            padding: MoeSettingsLayout.contentPadding,
-            children: [
-              Text(
-                '实际窗口受当前聊天模型及预设容量限制。达到窗口约 80% 或扣除输出预留后的上限时自动压缩，'
-                '近期原文约保留窗口的 16%。压缩失败不会删除原始聊天，可更换压缩模型后重试。\n'
-                '长期记忆分「常驻」和「档案」：常驻约 2000 tokens，每轮都带；档案按当前话题检索后带上最相关的几条。'
-                '只有在角色的插件列表里打开「记忆库」的角色才会整理和使用长期记忆，'
-                '可在角色资料的记忆页查看、编辑或从聊天记录重建。',
               ),
             ],
           ),

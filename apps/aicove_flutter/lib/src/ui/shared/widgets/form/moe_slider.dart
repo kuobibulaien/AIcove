@@ -65,6 +65,7 @@ class _MoeSliderState extends State<MoeSlider> {
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final theme = SliderTheme.of(context);
     final inheritedVertical = theme.padding?.resolve(
       Directionality.of(context),
@@ -133,7 +134,36 @@ class _MoeSliderState extends State<MoeSlider> {
                         quality: GlassQuality.standard,
                         radius: 8,
                         baseline: MoeMaterialBaseline.component,
-                        child: const SizedBox.expand(),
+                        border: BorderSide(
+                          color: isDark
+                              ? Colors.white.withValues(alpha: 0.28)
+                              : Colors.black.withValues(alpha: 0.16),
+                          width: 0.8,
+                        ),
+                        shadows: [
+                          BoxShadow(
+                            color: Colors.black.withValues(
+                              alpha: isDark ? 0.32 : 0.16,
+                            ),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                          BoxShadow(
+                            color: Colors.black.withValues(
+                              alpha: isDark ? 0.18 : 0.08,
+                            ),
+                            blurRadius: 2,
+                            offset: const Offset(0, 1),
+                          ),
+                        ],
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: colors.componentBackground.withValues(
+                              alpha: isDark ? 0.45 : 0.65,
+                            ),
+                          ),
+                          child: const SizedBox.expand(),
+                        ),
                       ),
                     ),
                   ),

@@ -242,7 +242,9 @@ Map<String, dynamic> buildDefaultUiModelsStoreData() => <String, dynamic>{
   'glass_effect_enabled': true,
   'use_liquid_glass': false,
   'glass_blur_sigma': kDefaultGlassBlurSigma,
+  'frosted_blur_sigma': kDefaultGlassBlurSigma,
   'glass_tint_fill': kDefaultGlassTintFill,
+  'frosted_tint_fill': kDefaultGlassTintFill,
 };
 
 Map<String, dynamic> _defaultAutoReplySettings() => <String, dynamic>{
@@ -253,7 +255,7 @@ Map<String, dynamic> _defaultAutoReplySettings() => <String, dynamic>{
   'quiet_hours_end': '08:00',
   'allow_exact_alarm': false,
   'allow_ai_set_reminders': true,
-  'analyzer_prompt': AutoReplySettings.defaultAnalyzerPrompt,
+  'allow_proactive_calls': false,
   'analyzer_model': null,
   'analyzer_provider': null,
 };
@@ -546,10 +548,7 @@ Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
       ),
       'allow_exact_alarm': source['allow_exact_alarm'] == true,
       'allow_ai_set_reminders': source['allow_ai_set_reminders'] != false,
-      'analyzer_prompt':
-          (source['analyzer_prompt'] as String?)?.trim().isNotEmpty == true
-          ? (source['analyzer_prompt'] as String).trim()
-          : defaults['analyzer_prompt'],
+      'allow_proactive_calls': source['allow_proactive_calls'] == true,
       'analyzer_model':
           (source['analyzer_model'] as String?)?.trim().isNotEmpty == true
           ? (source['analyzer_model'] as String).trim()

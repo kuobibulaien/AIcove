@@ -114,6 +114,7 @@ class _MoeTileButtonState extends State<MoeTileButton> {
       onTapCancel: _isEnabled ? () => setState(() => _pressed = false) : null,
       onTap: _isEnabled ? widget.onTap : null,
       child: MoeButtonSurface(
+        shareParentSurface: false,
         tintColor: currentBg,
         borderRadius: radius,
         border: widget.border == null

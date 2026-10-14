@@ -9,6 +9,9 @@ import 'package:aicove_flutter/src/ui/features/home/pages/main_page.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_floating_surface.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_adaptive_shell.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_liquid_glass.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/moe_chat_wallpaper.dart';
+import 'package:aicove_flutter/src/ui/theme/moe_frosted_material.dart';
+import 'package:aicove_flutter/src/ui/theme/moe_wallpaper.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -99,6 +102,24 @@ void main() {
           if (width >= 900) {
             expect(root.blurEnabled, isNull);
             expect(find.byType(BackdropFilter), findsWidgets);
+            // The glass level paints the root with the frosted tint, not the
+            // thin glass tint, so list text stays readable over wallpapers.
+            expect(root.frostedOnly, isTrue);
+            final rootMaterial = tester.widget<Material>(
+              find
+                  .descendant(
+                    of: find.byWidget(root),
+                    matching: find.byType(Material),
+                  )
+                  .first,
+            );
+            expect(
+              rootMaterial.color,
+              MoeFrostedMaterial.surfaceTint(
+                dark ? Brightness.dark : Brightness.light,
+                fill: kDefaultGlassTintFill,
+              ),
+            );
           } else {
             // Full-screen narrow roots paint the plain page color.
             expect(root.blurEnabled, isFalse);
@@ -134,5 +155,57 @@ void main() {
         },
       );
     }
+  }
+
+  for (final (enabled, liquid) in [(false, false), (true, false), (true, true)]) {
+    testWidgets(
+      'narrow root shows the global wallpaper without its own tint: '
+      'enabled=$enabled liquid=$liquid',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(420, 800);
+        addTearDown(tester.view.reset);
+        const style = WallpaperStyle(mask: 0.2, blur: 0);
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              conversationsProvider.overrideWith(_EmptyConversations.new),
+            ],
+            child: MaterialApp(
+              theme: ThemeData(extensions: [MoeColors.light()]),
+              home: MoeWallpaperTheme(
+                wallpaper: GlobalWallpaper.catnap,
+                style: style,
+                child: MoeGlassTheme(
+                  enabled: enabled,
+                  useLiquidGlass: liquid,
+                  blurSigma: 16,
+                  child: MoeWorkspace(
+                    navigatorKey: GlobalKey<NavigatorState>(),
+                    isWide: false,
+                    isDetail: false,
+                    child: const MainPage(),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        final wallpaper = find.byType(MoeGlobalWallpaper);
+        expect(wallpaper, findsOneWidget);
+        expect(find.byType(MoeFloatingSurface), findsNothing);
+        // Only the wallpaper's own mask covers the image.
+        final masks = tester
+            .widgetList<ColoredBox>(
+              find.descendant(of: wallpaper, matching: find.byType(ColoredBox)),
+            )
+            .where((box) => box.color.a > 0 && box.color.a < 1)
+            .map((box) => box.color.a);
+        expect(masks, isNotEmpty);
+        expect(masks, everyElement(closeTo(style.mask, 0.01)));
+        expect(tester.takeException(), isNull);
+      },
+    );
   }
 }

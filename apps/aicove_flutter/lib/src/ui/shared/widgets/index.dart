@@ -24,6 +24,7 @@ export 'form/moe_switch.dart';
 export 'form/moe_checkbox.dart';
 export 'form/moe_toggle_bar.dart';
 export 'form/moe_slider.dart';
+export 'form/moe_labeled_slider_row.dart';
 
 // === 列表组件 ===
 export 'list/moe_settings_group.dart';
@@ -71,7 +72,10 @@ export 'moe_content_surface.dart';
 export 'moe_liquid_glass.dart';
 export 'moe_chat_header.dart';
 export 'moe_chat_wallpaper.dart';
+export 'moe_static_blur_layer.dart';
+export 'moe_wallpaper_view.dart';
 export 'moe_collapsible_bubble.dart';
+export 'moe_quote_block.dart';
 export 'moe_avatar.dart';
 export 'moe_scroll_edge.dart';
 export 'moe_search_field.dart';

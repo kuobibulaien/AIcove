@@ -232,7 +232,7 @@ class _MoeAutoSaveScopeState extends State<MoeAutoSaveScope>
           Flexible(child: widget.child),
           if (widget.controller.error != null)
             Material(
-              color: context.moeColors.surfaceAlt,
+              color: context.moeColors.componentBackground,
               child: SafeArea(
                   top: false,
                   child: Padding(

@@ -9,14 +9,19 @@ class KernelApiRunner implements ApiRunner {
   const KernelApiRunner()
     : _agentClientFactory = ChatSendApiRunner._defaultAgentClientFactory,
       _legacy = const ChatSendApiRunner(),
-      _scopeFactory = kernel.KernelScope.new;
+      _scopeFactory = kernel.KernelScope.new,
+      _openPresetRuntime = null;
 
-  /// [scopeFactory] lets tests observe when the run scope is released.
+  /// [scopeFactory] and [openPresetRuntime] let tests observe when the run
+  /// scope is released and whether the preset runtime is still open;
+  /// [openPresetRuntime] takes precedence over the configured service.
   KernelApiRunner.withAgentClientFactory({
     required AgentApiClient Function(Duration timeout) agentClientFactory,
     kernel.KernelScope Function() scopeFactory = kernel.KernelScope.new,
+    PresetRuntimeOpener? openPresetRuntime,
   }) : _agentClientFactory = agentClientFactory,
        _scopeFactory = scopeFactory,
+       _openPresetRuntime = openPresetRuntime,
        _legacy = ChatSendApiRunner.withAgentClientFactory(
          agentClientFactory: agentClientFactory,
        );
@@ -26,6 +31,23 @@ class KernelApiRunner implements ApiRunner {
   final _AgentClientFactory _agentClientFactory;
   final ChatSendApiRunner _legacy;
   final kernel.KernelScope Function() _scopeFactory;
+  final PresetRuntimeOpener? _openPresetRuntime;
+
+  /// Loop diagnostics kept in the app log (batch 2 plan §3.8): only names
+  /// and counts, never message or argument text.
+  static Future<void> _recordDiagnostics(kernel.KernelEvent event) async {
+    if (event is kernel.FinishReasonMismatch) {
+      AppLogger.warning(
+        _logTag,
+        '结束原因与工具调用不一致，工具照常执行',
+        metadata: {
+          'round': event.round,
+          'finishReason': event.finishReason.name,
+          'toolCalls': event.toolCalls,
+        },
+      );
+    }
+  }
 
   /// A run with no rounds never reaches the kernel loop; the legacy runner
   /// already defines that degenerate result.
@@ -36,7 +58,7 @@ class KernelApiRunner implements ApiRunner {
     required ApiConfig config,
     required String sessionId,
     required String? userText,
-    required List<Plugin> effectivePlugins,
+    required List<PluginResponseProcessor> responseProcessors,
     List<AITool>? availableTools,
     String? turnId,
     TraceLogger? trace,
@@ -59,7 +81,7 @@ class KernelApiRunner implements ApiRunner {
         config: config,
         sessionId: sessionId,
         userText: userText,
-        effectivePlugins: effectivePlugins,
+        responseProcessors: responseProcessors,
         availableTools: availableTools,
         turnId: turnId,
         trace: trace,
@@ -76,16 +98,21 @@ class KernelApiRunner implements ApiRunner {
 
     final scope = _scopeFactory();
     try {
+      // The preset runtime comes from the tavern compatibility plugin's
+      // service, fixed into the config at prepare.
+      final openPresetRuntime = _openPresetRuntime ??
+          config.openPresetRuntime ??
+          QuickJsPresetRuntime.open;
       final presetRuntime = config.presetScript == null
           ? null
-          : await QuickJsPresetRuntime.open(config.presetScript!);
+          : await openPresetRuntime(config.presetScript!);
       if (presetRuntime != null) scope.addCloser(presetRuntime.close);
       final run = _KernelRun(
         presetRuntime: presetRuntime,
         config: config,
         sessionId: sessionId,
         userText: userText,
-        effectivePlugins: effectivePlugins,
+        responseProcessors: responseProcessors,
         availableTools: availableTools ?? config.boundTools,
         turnId: turnId,
         trace: trace,
@@ -106,11 +133,12 @@ class KernelApiRunner implements ApiRunner {
           unpacker: run,
           resolver: run,
           preTool: run,
-          tools: run,
+          tools: _gated(run, config.toolPolicy),
           postTool: run,
           encoder: run,
         ),
         maxRounds: maxRounds,
+        observers: const [_recordDiagnostics],
       );
       final kernel.AgentLoopResult result;
       try {
@@ -134,6 +162,21 @@ class KernelApiRunner implements ApiRunner {
   }
 }
 
+/// Applies the run's tool policy to ⑦: redaction inside, the gate outside, so
+/// a denied call never runs and an allowed one is redacted before the model
+/// sees it. Without a policy ⑦ is the run itself, as before.
+kernel.ToolBatchExecutor _gated(_KernelRun run, AgentToolPolicy? policy) {
+  if (policy == null) return run;
+  final redactor = policy.redactor;
+  return kernel.GatedToolExecutor(
+    redactor == null ? run : kernel.RedactingToolExecutor(run, redactor),
+    gate: policy.gate,
+    effectOf: run.effectOf,
+    approvals: policy.approvals,
+    approvalTimeout: policy.approvalTimeout,
+  );
+}
+
 /// Mutable state of one kernel run plus every stage implementation. Each
 /// method mirrors a section of [ChatSendApiRunner.executeApiCall].
 class _KernelRun
@@ -151,7 +194,7 @@ class _KernelRun
     required this.config,
     required this.sessionId,
     required this.userText,
-    required this.effectivePlugins,
+    required this.responseProcessors,
     required List<AITool>? availableTools,
     required String? turnId,
     required TraceLogger? trace,
@@ -167,10 +210,7 @@ class _KernelRun
   }) : _trace = trace {
     final preset = presetRuntime;
     if (preset != null && preset.businessTools.isNotEmpty) {
-      availableTools = [
-        ...availableTools ??
-            effectivePlugins.expand((plugin) => plugin.getTools()),
-      ];
+      availableTools = [...?availableTools];
     }
     requestTools = [...?config.tools, ...?preset?.tools];
     final toolNames = <String>{};
@@ -255,11 +295,11 @@ class _KernelRun
   static const String _logTag = ChatSendApiRunner._logTag;
   static const bool _supportsTextToolFallback = true;
 
-  final QuickJsPresetRuntime? presetRuntime;
+  final PresetScriptRuntime? presetRuntime;
   final ApiConfig config;
   final String sessionId;
   final String? userText;
-  final List<Plugin> effectivePlugins;
+  final List<PluginResponseProcessor> responseProcessors;
   late final List<AITool>? availableTools;
   late final ProviderChatRequestOptions? requestOptions;
   final TraceLogger? _trace;
@@ -444,6 +484,7 @@ class _KernelRun
         toolCalls: [for (final call in rich.toolCalls) _toKernelCall(call)],
         hiddenThoughtParts: rich.hiddenThoughtParts,
         raw: rich,
+        finishReason: rich.finishReason,
       );
     } catch (error, stack) {
       if (isContextOverflow(error)) {
@@ -481,7 +522,6 @@ class _KernelRun
       temperature: config.effectiveTemperature,
       topP: config.modelTopP,
       token: config.settings.backendApiKey,
-      toolPrefs: config.toolPrefs,
       providerApiBase: config.providerApiBase,
       providerApiKey: config.providerApiKey,
       customConfig: config.customConfig,
@@ -513,7 +553,6 @@ class _KernelRun
           temperature: config.effectiveTemperature,
           topP: config.modelTopP,
           token: config.settings.backendApiKey,
-          toolPrefs: config.toolPrefs,
           providerApiBase: config.providerApiBase,
           providerApiKey: config.providerApiKey,
           customConfig: config.customConfig,
@@ -639,6 +678,7 @@ class _KernelRun
             if (!response.consumedIndexes.contains(i)) rich.toolCalls[i],
         ],
         hiddenThoughtParts: rich.hiddenThoughtParts,
+        rawFinishReason: rich.rawFinishReason,
       );
     }
     lastRich = rich;
@@ -655,6 +695,7 @@ class _KernelRun
       hiddenThoughtParts: rich.hiddenThoughtParts,
       raw: rich,
       presetConsumed: consumedPresetOutput,
+      finishReason: rich.finishReason,
     );
   }
 
@@ -830,6 +871,15 @@ class _KernelRun
 
   // ⑦ ------------------------------------------------------------------
 
+  /// Declared effect of the tool a call names; unknown tools count as
+  /// external, the default for undeclared tools.
+  kernel.ToolEffect effectOf(kernel.KernelToolCall call) {
+    for (final tool in availableTools ?? const <AITool>[]) {
+      if (tool.name == call.name) return tool.effect;
+    }
+    return kernel.ToolEffect.external;
+  }
+
   @override
   kernel.BatchMode modeFor(
     List<kernel.KernelToolCall> calls,
@@ -843,7 +893,6 @@ class _KernelRun
   ) async {
     final outcome = await _executeToolCall(
       toolCall: call.origin! as ToolCall,
-      effectivePlugins: effectivePlugins,
       availableTools: availableTools,
       toolTimeout: toolTimeout,
       flowSettings: flowSettings,
@@ -856,12 +905,35 @@ class _KernelRun
       traceContext: traceContext,
       round: ctx.round,
       useFastToolRoute: useFastToolRoute,
+      redactForLog: config.toolPolicy?.redactor?.redact ?? _unredacted,
     );
     return kernel.KernelToolResult(
       callId: outcome.toolResult.toolCallId,
       name: outcome.toolResult.name,
       content: outcome.toolResult.result,
       payload: outcome,
+    );
+  }
+
+  /// The model sees only [kernel.KernelToolResult.content]: a gate or a
+  /// redactor may have replaced it, and a call the gate stopped carries no
+  /// execution outcome at all.
+  static _ToolExecutionOutcome _outcomeOf(kernel.KernelToolResult result) {
+    final payload = result.payload;
+    final toolResult = ToolResult(
+      toolCallId: result.callId,
+      name: result.name,
+      result: result.content,
+    );
+    if (payload is! _ToolExecutionOutcome) {
+      return _ToolExecutionOutcome(toolResult: toolResult);
+    }
+    if (payload.toolResult.result == result.content) return payload;
+    return _ToolExecutionOutcome(
+      toolResult: toolResult,
+      audioResult: payload.audioResult,
+      imageContents: payload.imageContents,
+      isAsyncAcceptedDrawImage: payload.isAsyncAcceptedDrawImage,
     );
   }
 
@@ -901,9 +973,7 @@ class _KernelRun
   ) async {
     final round = ctx.round;
     final currentToolCalls = _toolCallsOf(calls);
-    final toolOutcomes = [
-      for (final result in results) result.payload! as _ToolExecutionOutcome,
-    ];
+    final toolOutcomes = [for (final result in results) _outcomeOf(result)];
     final toolResults = <ToolResult>[];
     for (final outcome in toolOutcomes) {
       _collectToolOutcome(outcome, toolResults);
@@ -1152,9 +1222,10 @@ class _KernelRun
     );
     apiCallTrace?.end(additionalMessage: 'API调用成功');
     final pluginTrace = _trace?.startChild('运行插件');
-    final pluginResult = await legacy._processResponseWithPlugins(
-      effectivePlugins,
+    final pluginResult = await runResponseProcessors(
+      responseProcessors,
       finalAssistantText,
+      logTag: ChatSendApiRunner._logTag,
     );
     pluginTrace?.note(
       '插件处理',

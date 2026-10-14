@@ -22,12 +22,9 @@
 library;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import '../../../theme/tokens.dart';
-import '../buttons/moe_button_surface.dart';
-import '../moe_floating_surface.dart';
+import '../form/moe_toggle_bar.dart';
 
-/// 分段选择器组件
+/// 分段选择器组件（底层统一复用 [MoeToggleBar]）
 class MoeSegTabBar extends StatelessWidget {
   const MoeSegTabBar({
     super.key,
@@ -51,72 +48,24 @@ class MoeSegTabBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.moeColors;
-
-    final content = MoeFloatingSurface(
-      radius: 20,
-      padding: const EdgeInsets.all(3),
-      child: SizedBox(
-        height: 30,
-        child: Row(
-          mainAxisSize: scrollable ? MainAxisSize.min : MainAxisSize.max,
-          children: List.generate(tabs.length, (index) {
-            final isSelected = currentIndex == index;
-            return scrollable
-                ? _buildTab(context, index, isSelected, colors)
-                : Expanded(
-                    child: _buildTab(context, index, isSelected, colors),
-                  );
-          }),
-        ),
-      ),
+    final bar = MoeToggleBar<int>(
+      value: currentIndex,
+      expanded: !scrollable,
+      items: [
+        for (var i = 0; i < tabs.length; i++)
+          MoeToggleItem<int>(value: i, label: tabs[i]),
+      ],
+      onChanged: onTap,
     );
-
-    if (scrollable) {
-      return SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: content,
-      );
-    }
-
-    return content;
-  }
-
-  Widget _buildTab(
-    BuildContext context,
-    int index,
-    bool isSelected,
-    MoeColors colors,
-  ) {
-    return GestureDetector(
-      onTap: () {
-        if (currentIndex != index) {
-          HapticFeedback.lightImpact();
-          onTap(index);
-        }
-      },
-      child: MoeButtonSurface(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        radius: 15,
-        tintColor: isSelected ? colors.focus : Colors.transparent,
-        shadows: const [],
-        alignment: Alignment.center,
-        child: Text(
-          tabs[index],
-          style: TextStyle(
-            fontSize: 13,
-            color: isSelected ? colors.text : colors.textSecondary,
-            fontWeight: isSelected
-                ? MoeFontWeights.emphasis
-                : MoeFontWeights.normal,
-          ),
-        ),
-      ),
+    if (!scrollable) return bar;
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: bar,
     );
   }
 }
 
-/// 带图标的分段选择器
+/// 带图标的分段选择器（底层统一复用 [MoeToggleBar]）
 class MoeSegTabBarWithIcon extends StatelessWidget {
   const MoeSegTabBarWithIcon({
     super.key,
@@ -140,80 +89,23 @@ class MoeSegTabBarWithIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.moeColors;
-
-    final content = MoeFloatingSurface(
-      radius: 20,
-      padding: const EdgeInsets.all(3),
-      child: SizedBox(
-        height: 34,
-        child: Row(
-          mainAxisSize: scrollable ? MainAxisSize.min : MainAxisSize.max,
-          children: List.generate(tabs.length, (index) {
-            final isSelected = currentIndex == index;
-            final tab = tabs[index];
-            return scrollable
-                ? _buildTab(context, index, tab, isSelected, colors)
-                : Expanded(
-                    child: _buildTab(context, index, tab, isSelected, colors),
-                  );
-          }),
-        ),
-      ),
+    final bar = MoeToggleBar<int>(
+      value: currentIndex,
+      expanded: !scrollable,
+      items: [
+        for (var i = 0; i < tabs.length; i++)
+          MoeToggleItem<int>(
+            value: i,
+            label: tabs[i].label,
+            icon: tabs[i].icon,
+          ),
+      ],
+      onChanged: onTap,
     );
-
-    if (scrollable) {
-      return SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: content,
-      );
-    }
-
-    return content;
-  }
-
-  Widget _buildTab(
-    BuildContext context,
-    int index,
-    MoeSegTabItem tab,
-    bool isSelected,
-    MoeColors colors,
-  ) {
-    return GestureDetector(
-      onTap: () {
-        if (currentIndex != index) {
-          HapticFeedback.lightImpact();
-          onTap(index);
-        }
-      },
-      child: MoeButtonSurface(
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        radius: 17,
-        tintColor: isSelected ? colors.focus : Colors.transparent,
-        shadows: const [],
-        alignment: Alignment.center,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              tab.icon,
-              size: 16,
-              color: isSelected ? colors.text : colors.muted,
-            ),
-            const SizedBox(width: 6),
-            Text(
-              tab.label,
-              style: TextStyle(
-                fontSize: 13,
-                color: isSelected ? colors.text : colors.textSecondary,
-                fontWeight: isSelected
-                    ? MoeFontWeights.emphasis
-                    : MoeFontWeights.normal,
-              ),
-            ),
-          ],
-        ),
-      ),
+    if (!scrollable) return bar;
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: bar,
     );
   }
 }

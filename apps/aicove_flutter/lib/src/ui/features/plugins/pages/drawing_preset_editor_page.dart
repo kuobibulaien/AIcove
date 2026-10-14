@@ -175,49 +175,37 @@ class _DrawingPresetEditorPageState
         ))
           (provider: provider, model: model),
     ];
-    final selected = await showModalBottomSheet<String>(
+    final selected = await showMoeBottomSheet<String>(
       context: context,
-      isScrollControlled: true,
-      builder: (ctx) => SafeArea(
-        child: SizedBox(
-          height: MediaQuery.sizeOf(ctx).height * .7,
-          child: Column(
-            children: [
-              const Padding(
-                padding: EdgeInsets.all(16),
-                child: Text('选择绘图渠道与模型'),
+      title: '选择绘图渠道与模型',
+      showCloseButton: true,
+      maxHeight: MediaQuery.sizeOf(context).height * .7,
+      builder: (ctx) => entries.isEmpty
+          ? const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Text('暂无绘图模型，请先在渠道管理中添加并显示生图模型。'),
               ),
-              Expanded(
-                child: entries.isEmpty
-                    ? const Center(
-                        child: Padding(
-                          padding: EdgeInsets.all(24),
-                          child: Text('暂无绘图模型，请先在渠道管理中添加并显示生图模型。'),
-                        ),
-                      )
-                    : ListView.builder(
-                        itemCount: entries.length,
-                        itemBuilder: (_, i) {
-                          final entry = entries[i];
-                          final modelRef = settings.buildModelRef(
-                            entry.provider.id,
-                            entry.model,
-                          );
-                          return ListTile(
-                            title: Text(settings.getModelDisplayName(modelRef)),
-                            subtitle: Text(
-                              '${entry.provider.displayName ?? entry.provider.id} / ${entry.model}',
-                            ),
-                            selected: modelRef == _config.selectedModelId,
-                            onTap: () => Navigator.pop(ctx, modelRef),
-                          );
-                        },
-                      ),
-              ),
-            ],
-          ),
-        ),
-      ),
+            )
+          : ListView.builder(
+              shrinkWrap: true,
+              itemCount: entries.length,
+              itemBuilder: (_, i) {
+                final entry = entries[i];
+                final modelRef = settings.buildModelRef(
+                  entry.provider.id,
+                  entry.model,
+                );
+                return ListTile(
+                  title: Text(settings.getModelDisplayName(modelRef)),
+                  subtitle: Text(
+                    '${entry.provider.displayName ?? entry.provider.id} / ${entry.model}',
+                  ),
+                  selected: modelRef == _config.selectedModelId,
+                  onTap: () => Navigator.pop(ctx, modelRef),
+                );
+              },
+            ),
     );
     if (selected == null || !mounted) return;
     setState(() {
@@ -312,16 +300,16 @@ class _DrawingPresetEditorPageState
           title: widget.isNew ? '新建绘图预设' : '编辑绘图预设',
           showBackButton: true,
           actions: [
-            IconButton(
-              icon: const Icon(Icons.play_circle_outline),
+            MoeIconButton(
+              icon: Icons.play_circle_outline,
               tooltip: '生图测试',
-              onPressed: () => _test(context),
+              onTap: () => _test(context),
             ),
             if (!widget.isNew)
-              IconButton(
-                icon: const Icon(Icons.copy_outlined),
+              MoeIconButton(
+                icon: Icons.copy_outlined,
                 tooltip: '复制预设',
-                onPressed: () => _copy(context),
+                onTap: () => _copy(context),
               ),
           ],
         ),
@@ -391,10 +379,7 @@ class _DrawingPresetEditorPageState
                         '参考参数',
                         style: TextStyle(fontWeight: FontWeight.bold),
                       ),
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 12),
-                        child: Text('模型可按画面需要合理调整；未传参数时使用这里的值。'),
-                      ),
+                      const SizedBox(height: 12),
                       _field('width', '宽度（256–2048）', number: true),
                       _field('height', '高度（256–2048）', number: true),
                       if (sampling) ...[

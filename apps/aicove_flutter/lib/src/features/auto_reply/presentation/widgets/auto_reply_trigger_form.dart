@@ -305,7 +305,7 @@ class _CreateTriggerSheetState extends ConsumerState<_CreateTriggerSheet> {
 
       final result = await ref
           .read(autoReplyDispatchServiceProvider)
-          .dispatchTrigger(trigger);
+          .dispatchTestTrigger(trigger);
       if (result.success) {
         if (mounted) {
           MoeToast.success(context, '后台 Agent 已发送测试主动消息');

@@ -3,9 +3,6 @@ import 'package:flutter/material.dart';
 import 'plugin.dart';
 import 'plugin_metadata.dart';
 import 'plugin_state.dart';
-import 'handlers/command_handler.dart';
-import 'handlers/ai_tool.dart';
-import 'handlers/llm_hook.dart';
 
 /// 插件基类的默认实现
 /// 提供状态管理、配置管理的默认实现，简化插件开发
@@ -80,15 +77,4 @@ abstract class BasePlugin implements Plugin {
 
   @override
   Future<void> onConfigChanged(Map<String, dynamic> newConfig) async {}
-
-  // ========== 功能注册方法提供默认空实现 ==========
-
-  @override
-  List<CommandHandler> getCommands() => [];
-
-  @override
-  List<AITool> getTools() => [];
-
-  @override
-  List<LLMHook> getHooks() => [];
 }

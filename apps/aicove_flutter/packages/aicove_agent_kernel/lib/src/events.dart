@@ -38,6 +38,20 @@ class ToolBatchFinished extends KernelEvent {
   final List<KernelToolResult> results;
 }
 
+/// Diagnostic: the provider said the turn ended normally ([FinishReason.stop]
+/// or [FinishReason.length]) although it carries tool calls. The calls still
+/// run; whether to refuse them is decided after real provider checks.
+class FinishReasonMismatch extends KernelEvent {
+  const FinishReasonMismatch(
+    super.round, {
+    required this.finishReason,
+    required this.toolCalls,
+  });
+
+  final FinishReason finishReason;
+  final int toolCalls;
+}
+
 class RoundCompleted extends KernelEvent {
   const RoundCompleted(super.round, {required this.hadTools, this.verdict});
   final bool hadTools;
@@ -63,3 +77,25 @@ class RunFailed extends KernelEvent {
 
 /// Observers are awaited in order, so trace writes keep their timing.
 typedef KernelObserver = Future<void> Function(KernelEvent event);
+
+enum GateOutcome { allowed, denied, approved, rejected, timedOut, cancelled }
+
+/// A [ToolGate] decision for one call. Carries no arguments or results so it
+/// stays within the diagnostics whitelist (ADR0065).
+///
+/// An allowed or approved call cancelled before it starts gets a second event
+/// with [GateOutcome.cancelled]; the last event for a [callId] is final.
+class ToolGated extends KernelEvent {
+  const ToolGated(
+    super.round, {
+    required this.callId,
+    required this.toolName,
+    required this.effect,
+    required this.outcome,
+  });
+
+  final String callId;
+  final String toolName;
+  final String effect;
+  final GateOutcome outcome;
+}

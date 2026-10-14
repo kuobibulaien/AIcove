@@ -1,3 +1,4 @@
+import '../providers/provider_adapter.dart';
 import 'thinking_level.dart';
 import 'thinking_level_catalog.dart';
 import 'thinking_level_labels.dart';
@@ -55,4 +56,26 @@ EffectiveThinkingLevel resolveEffectiveThinkingLevel({
     source: ThinkingLevelSource.softwareDefault,
     options: options,
   );
+}
+
+extension EffectiveThinkingRequest on EffectiveThinkingLevel {
+  /// 把生效档位写进请求选项：`lowest` 展开为候选链并先发第一档，
+  /// 其余档位直接发送并清掉旧候选链。
+  ProviderChatRequestOptions applyTo(ProviderChatRequestOptions? base) {
+    final options = base ?? const ProviderChatRequestOptions();
+    if (!level.isLowest) {
+      return options.copyWith(
+        thinkingLevel: level,
+        thinkingScheme: this.options.scheme,
+        clearThinkingCandidates: true,
+      );
+    }
+    final candidates = this.options.lowestCandidates;
+    return options.copyWith(
+      thinkingLevel: candidates.isEmpty ? ThinkingLevel.auto : candidates.first,
+      thinkingScheme: this.options.scheme,
+      thinkingCandidates: candidates,
+      clearThinkingCandidates: candidates.isEmpty,
+    );
+  }
 }

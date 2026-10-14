@@ -292,6 +292,14 @@ a { color: inherit; text-decoration: none; }
 .btn.primary { background: #5b6487; color: #fbf6ee; }
 .btn:hover { transform: translateY(-2px); }
 
+.qq-dialog { margin: auto; width: min(340px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; padding: 20px; border: 2.5px solid var(--ink); border-radius: 22px;
+  background: var(--paper); color: var(--ink); text-align: center; box-shadow: 6px 8px 0 rgba(44, 40, 56, .25); }
+.qq-dialog::backdrop { background: rgba(20, 18, 28, .6); }
+.qq-dialog img { display: block; width: 100%; height: auto; border-radius: 14px; }
+.qq-dialog p { margin: 12px 0 14px; font-size: 14px; letter-spacing: .06em; color: #6f6878; }
+.qq-dialog .qq-actions { display: flex; gap: 12px; justify-content: center; }
+.qq-dialog .btn { font-size: 15px; padding: 7px 20px; letter-spacing: .12em; }
+
 /* ---------- corner controls ---------- */
 .ctl { position: fixed; z-index: 60; display: flex; align-items: center; gap: 10px; font-size: 17px; letter-spacing: .12em; color: #f2ece2; mix-blend-mode: difference; }
 .skip { top: 22px; right: 28px; }

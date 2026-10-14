@@ -9,6 +9,9 @@ class FakePreparer implements RoundPreparer {
   final bool canRecoverOverflow;
   final List<PrepareMode> modes = [];
 
+  /// Runs inside a recovery prepare, before it returns.
+  void Function()? onRecovery;
+
   @override
   Future<PreparedRound> prepare(
     List<KernelMessage> running,
@@ -16,6 +19,7 @@ class FakePreparer implements RoundPreparer {
     TurnContext ctx,
   ) async {
     modes.add(mode);
+    if (mode == PrepareMode.recovery) onRecovery?.call();
     return PreparedRound(running: running, request: List.of(running));
   }
 }
@@ -70,9 +74,11 @@ class FakeTools implements ToolBatchExecutor {
 }
 
 class FakePost implements PostToolDecision {
-  FakePost([this.verdict = const TurnVerdict.proceed()]);
+  FakePost([this.verdict = const TurnVerdict.proceed(), this.onAfter]);
 
   final TurnVerdict verdict;
+  final FutureOr<void> Function()? onAfter;
+  int calls = 0;
 
   @override
   Future<TurnVerdict> afterTools(
@@ -80,11 +86,30 @@ class FakePost implements PostToolDecision {
     ResolvedToolCalls calls,
     List<KernelToolResult> results,
     TurnContext ctx,
-  ) async =>
-      verdict;
+  ) async {
+    this.calls++;
+    await onAfter?.call();
+    return verdict;
+  }
+}
+
+class FakePreTool implements PreToolDecision {
+  int calls = 0;
+
+  @override
+  Future<void> beforeTools(
+    AssistantTurn turn,
+    ResolvedToolCalls calls,
+    TurnContext ctx,
+  ) async {
+    this.calls++;
+  }
 }
 
 class FakeEncoder implements ContinuationEncoder {
+  FakeEncoder([this.onEncode]);
+
+  final FutureOr<void> Function()? onEncode;
   int calls = 0;
 
   @override
@@ -95,6 +120,7 @@ class FakeEncoder implements ContinuationEncoder {
     TurnContext ctx,
   ) async {
     calls++;
+    await onEncode?.call();
     return [
       {'role': 'assistant', 'content': turn.text},
       for (final r in results) {'role': 'tool', 'content': r.content},
@@ -109,7 +135,11 @@ class Harness {
     FakePost? post,
     bool canRecover = true,
     this.maxRounds = 5,
+    this.unpacker = const PassThroughUnpacker(),
+    this.onEvent,
+    FutureOr<void> Function()? onEncode,
   })  : model = ScriptedModel(steps),
+        encoder = FakeEncoder(onEncode),
         tools = tools ?? FakeTools(),
         post = post ?? FakePost(),
         preparer = FakePreparer(canRecoverOverflow: canRecover);
@@ -119,19 +149,31 @@ class Harness {
   final FakeTools tools;
   final FakePost post;
   final FakePreparer preparer;
-  final FakeEncoder encoder = FakeEncoder();
+  final ResponseUnpacker unpacker;
+
+  /// Runs inside the observer after the event is recorded.
+  final FutureOr<void> Function(KernelEvent event)? onEvent;
+  final FakeEncoder encoder;
+  final FakePreTool preTool = FakePreTool();
   final List<KernelEvent> events = [];
 
   late final AgentLoop loop = AgentLoop(
     stages: StagePipeline(
       preparer: preparer,
       model: model,
+      unpacker: unpacker,
+      preTool: preTool,
       tools: tools,
       postTool: post,
       encoder: encoder,
     ),
     maxRounds: maxRounds,
-    observers: [(event) async => events.add(event)],
+    observers: [
+      (event) async {
+        events.add(event);
+        await onEvent?.call(event);
+      },
+    ],
   );
 
   Future<AgentLoopResult> run({KernelCancellation? cancellation}) => loop.run(
@@ -153,4 +195,17 @@ Future<AssistantTurn> Function(TurnContext) blockedOn(
     await gate.future;
     return turn;
   };
+}
+
+/// Unpacker that runs [onUnpack] before passing the turn through.
+class HookUnpacker implements ResponseUnpacker {
+  HookUnpacker(this.onUnpack);
+
+  final FutureOr<void> Function(TurnContext ctx) onUnpack;
+
+  @override
+  Future<AssistantTurn> unpack(AssistantTurn raw, TurnContext ctx) async {
+    await onUnpack(ctx);
+    return raw;
+  }
 }

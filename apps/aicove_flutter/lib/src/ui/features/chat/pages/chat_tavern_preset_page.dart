@@ -85,7 +85,7 @@ class ChatTavernPresetPage extends ConsumerWidget {
               ),
               ...switch (preset) {
                 null => const [
-                  TavernNote('还没有可用的酒馆预设，本角色按 AIcove 原来的方式聊天。可以在插件页导入预设或设置默认预设。'),
+                  TavernNote('还没有可用的酒馆预设，可在插件页导入。'),
                 ],
                 AsyncValue(isLoading: true, hasValue: false) => const [
                   Padding(
@@ -101,9 +101,6 @@ class ChatTavernPresetPage extends ConsumerWidget {
                   ),
                 ],
                 AsyncValue(:final valueOrNull) => [
-                  const TavernNote(
-                    '关掉的条目不会发给模型。开关改的是预设本身，所有用这套预设的角色都会跟着变，从下一条消息起生效。',
-                  ),
                   TavernPromptList(preset: valueOrNull!),
                 ],
               },

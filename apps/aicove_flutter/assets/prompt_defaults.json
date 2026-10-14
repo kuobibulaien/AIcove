@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-06-13",
+  "updatedAt": "2026-10-14",
   "variables": [
     {
       "name": "assistant_name",
@@ -363,47 +363,6 @@
       }
     },
     {
-      "name": "state_json",
-      "label": "运行态 JSON",
-      "description": "主动回复上下文分析器的当前运行状态 JSON",
-      "sampleValue": "{\n  \"conversation_id\": \"conv_demo\",\n  \"current_role_persona\": \"你是一个温柔、耐心、会认真倾听用户的角色。\",\n  \"trigger_list\": [\n    {\n      \"id\": \"trigger_1\",\n      \"title\": \"稍后问候\",\n      \"status\": \"pending\",\n      \"source\": \"aiScheduler\",\n      \"priority\": \"medium\",\n      \"next_fire_at\": \"2026-05-06T21:30:00+08:00\",\n      \"delay_minutes\": 45,\n      \"allow_night\": false,\n      \"require_exact\": false,\n      \"manual\": false,\n      \"system_reminder\": \"距离用户说去吃饭已经过了一段时间，适合轻问一句。\"\n    }\n  ],\n  \"device_local_time\": \"2026-05-06T20:45:00+08:00\",\n  \"device_timezone_name\": \"CST\",\n  \"device_timezone_offset\": \"+08:00\",\n  \"mode\": \"active\",\n  \"unreplied_count\": 1,\n  \"last_user_message_id\": \"msg_user_1\",\n  \"last_user_at\": \"2026-05-06T20:15:00+08:00\",\n  \"last_proactive_at\": null,\n  \"silence_until\": null,\n  \"pending_auto_trigger_id\": \"trigger_1\"\n}",
-      "usage": "runtime_contract",
-      "valueSource": "ContextAnalyzer._buildRuntimeStateJson serializes current proactive runtime state.",
-      "runtimeShape": {
-        "type": "json_string",
-        "runtimeBuilder": "ContextAnalyzer._buildRuntimeStateJson",
-        "fields": {
-          "conversation_id": "string",
-          "current_role_persona": "string, truncated to 600 chars",
-          "trigger_list": "array<trigger_summary>",
-          "device_local_time": "ISO-8601 local DateTime string",
-          "device_timezone_name": "string",
-          "device_timezone_offset": "+HH:MM string",
-          "mode": "active | silent | dormant",
-          "unreplied_count": "int",
-          "last_user_message_id": "string | null",
-          "last_user_at": "ISO-8601 string | null",
-          "last_proactive_at": "ISO-8601 string | null",
-          "silence_until": "ISO-8601 string | null",
-          "pending_auto_trigger_id": "string | null"
-        },
-        "triggerSummaryFields": {
-          "id": "string",
-          "title": "string",
-          "status": "pending | paused | fired | expired | cancelled",
-          "source": "string",
-          "priority": "low | medium | high",
-          "next_fire_at": "ISO-8601 string",
-          "delay_minutes": "int",
-          "allow_night": "bool",
-          "require_exact": "bool",
-          "manual": "bool",
-          "system_reminder": "string, truncated to 220 chars"
-        }
-      },
-      "runtimeSampleValue": "{\n  \"conversation_id\": \"conv_demo\",\n  \"current_role_persona\": \"你是一个温柔、耐心、会认真倾听用户的角色。\",\n  \"trigger_list\": [\n    {\n      \"id\": \"trigger_1\",\n      \"title\": \"稍后问候\",\n      \"status\": \"pending\",\n      \"source\": \"aiScheduler\",\n      \"priority\": \"medium\",\n      \"next_fire_at\": \"2026-05-06T21:30:00+08:00\",\n      \"delay_minutes\": 45,\n      \"allow_night\": false,\n      \"require_exact\": false,\n      \"manual\": false,\n      \"system_reminder\": \"距离用户说去吃饭已经过了一段时间，适合轻问一句。\"\n    }\n  ],\n  \"device_local_time\": \"2026-05-06T20:45:00+08:00\",\n  \"device_timezone_name\": \"CST\",\n  \"device_timezone_offset\": \"+08:00\",\n  \"mode\": \"active\",\n  \"unreplied_count\": 1,\n  \"last_user_message_id\": \"msg_user_1\",\n  \"last_user_at\": \"2026-05-06T20:15:00+08:00\",\n  \"last_proactive_at\": null,\n  \"silence_until\": null,\n  \"pending_auto_trigger_id\": \"trigger_1\"\n}"
-    },
-    {
       "name": "old_content",
       "label": "旧记忆内容",
       "description": "待合并的旧记忆正文",
@@ -600,44 +559,205 @@
       "runtimeShape": {
         "type": "string"
       }
+    },
+    {
+      "name": "now",
+      "label": "当前时间",
+      "description": "判断时的本地时间，带星期和时段",
+      "sampleValue": "10月12日 周日 晚上 21:30",
+      "usage": "prompt_placeholder",
+      "valueSource": "Proactive decision facts format the device local time.",
+      "runtimeShape": {
+        "type": "string"
+      }
+    },
+    {
+      "name": "last_user_ago",
+      "label": "用户上次说话",
+      "description": "用户最后一条消息距今多久",
+      "sampleValue": "12 分钟前",
+      "usage": "prompt_placeholder",
+      "valueSource": "Proactive decision facts format the gap since the last user message.",
+      "runtimeShape": {
+        "type": "string"
+      }
+    },
+    {
+      "name": "unreplied_count",
+      "label": "未回复主动消息数",
+      "description": "用户上次说话后角色已主动发了几条",
+      "sampleValue": "0",
+      "usage": "prompt_placeholder",
+      "valueSource": "Conversation proactive state.",
+      "runtimeShape": {
+        "type": "string"
+      }
+    },
+    {
+      "name": "last_proactive_ago",
+      "label": "上次主动联系",
+      "description": "角色上一次主动联系距今多久",
+      "sampleValue": "还没有过",
+      "usage": "prompt_placeholder",
+      "valueSource": "Conversation proactive state, formatted as a relative time.",
+      "runtimeShape": {
+        "type": "string"
+      }
+    },
+    {
+      "name": "transcript",
+      "label": "聊天记录",
+      "description": "最近若干条聊天，每行一条，带时间和说话人",
+      "sampleValue": "[10-12 21:03] 用户：我去洗个澡",
+      "usage": "prompt_placeholder",
+      "valueSource": "Proactive decision facts render recent canonical messages.",
+      "runtimeShape": {
+        "type": "string"
+      }
+    },
+    {
+      "name": "state",
+      "label": "判断事实",
+      "description": "渲染好的 auto_reply.decision.state",
+      "sampleValue": "（见 auto_reply.decision.state）",
+      "usage": "prompt_placeholder",
+      "valueSource": "Rendered decision facts.",
+      "runtimeShape": {
+        "type": "string"
+      }
+    },
+    {
+      "name": "questions",
+      "label": "判断题目",
+      "description": "按题目定义渲染的问题与选项",
+      "sampleValue": "1. kind：……",
+      "usage": "prompt_placeholder",
+      "valueSource": "ProactiveDecisionQuestions rendered as text.",
+      "runtimeShape": {
+        "type": "string"
+      }
+    },
+    {
+      "name": "answer_format",
+      "label": "回答格式",
+      "description": "要求聊天模型输出的一行 JSON 样例",
+      "sampleValue": "{\"kind\": \"...\", \"timing\": \"...\"}",
+      "usage": "prompt_placeholder",
+      "valueSource": "ProactiveDecisionQuestions renders the expected JSON keys.",
+      "runtimeShape": {
+        "type": "string"
+      }
+    },
+    {
+      "name": "fire_time",
+      "label": "发送时间",
+      "description": "这条主动消息计划发出的本地时间",
+      "sampleValue": "10月12日 周日 晚上 22:10",
+      "usage": "prompt_placeholder",
+      "valueSource": "Proactive pipeline formats the planned fire time.",
+      "runtimeShape": {
+        "type": "string"
+      }
+    },
+    {
+      "name": "gap",
+      "label": "间隔",
+      "description": "发送时刻距用户最后一条消息多久",
+      "sampleValue": "一个小时左右",
+      "usage": "prompt_placeholder",
+      "valueSource": "Proactive pipeline formats the gap at fire time.",
+      "runtimeShape": {
+        "type": "string"
+      }
+    },
+    {
+      "name": "kind_hint",
+      "label": "开口方式提示",
+      "description": "按主动类型补的一小句",
+      "sampleValue": "，接着刚才没聊完的说",
+      "usage": "prompt_placeholder",
+      "valueSource": "Proactive pipeline picks a hint by kind.",
+      "runtimeShape": {
+        "type": "string"
+      }
     }
   ],
   "prompts": [
     {
-      "id": "auto_reply.analyzer.default",
-      "dartName": "autoReplyAnalyzerDefault",
-      "title": "分析当前状态并决定是否触发主动回复",
+      "id": "auto_reply.decision.state",
+      "dartName": "autoReplyDecisionState",
+      "title": "主动回复判断时交给决策模型的事实",
       "category": "auto_reply",
-      "variables": [
-        "state_json",
-        "current_role_persona",
-        "trigger_list"
-      ],
-      "template": "你是主动回复调度器，根据对话状态决定是否创建 AI 主动回复触发器。\n\n## 输入数据\n\n【当前运行态】\n{state_json}\n\n【当前触发器列表】\n{trigger_list}\n\n## 核心职责\n\n1. 判断当前是否适合创建主动回复触发器\n2. 如果适合，调用 `preview_proactive_reply` 预生成候选回复\n3. 审核候选回复的内容、语气和触发时机\n4. 审核通过后调用 `create_proactive_trigger_from_preview` 确认入库\n5. 如果不适合或工具不可用，输出 JSON 决策\n\n## 工作流程\n\n### 优先：工具流程（推荐）\n\n1. **预览**：调用 `preview_proactive_reply`，传入：\n   - `kind`: continue_chat / check_in / new_topic\n   - `delay_minutes`: 从现在起延迟分钟数\n   - `background_narration`: 客观旁白，描述触发时刻的背景\n   - `allow_night`: 是否允许夜间触发\n   - `priority`: low / medium / high\n\n2. **审核**：检查返回的 `candidate_reply`：\n   - 内容是否自然、不过度打扰\n   - 是否与预计触发时间匹配\n   - 是否有质问、催促用户的语气\n   - `background_narration` 是否准确客观\n\n3. **调整**：如不合适，调整参数后重新预览（最多3次）\n\n4. **确认**：审核通过后调用 `create_proactive_trigger_from_preview`，传入：\n   - `preview_id`: 审核通过的预览 ID\n   - `approval_reason`: 为什么这个回复和时机合适\n\n### 回退：JSON 输出（工具不可用时）\n\n```json\n{\n  \"session_patch\": {\n    \"mode\": \"active | silent | dormant\",\n    \"silence_minutes\": 0,\n    \"reason\": \"...\"\n  },\n  \"trigger_ops\": [\n    {\n      \"op\": \"replace\",\n      \"kind\": \"continue_chat | check_in | new_topic | stay_silent\",\n      \"title\": \"简短标题\",\n      \"delay_minutes\": 1,\n      \"allow_night\": false,\n      \"priority\": \"low | medium | high\",\n      \"system_reminder\": \"客观旁白\"\n    }\n  ]\n}\n```\n\n注意：\n- `trigger_ops` 最多1条，不适合时返回空数组 `[]`\n- 不要输出 `cached_content` 字段\n- 只输出 JSON，不要 Markdown 或解释\n\n## 时间规则\n\n1. **时间基准**：使用 `state_json` 中的 `device_local_time` 作为唯一基准\n2. **延迟计算**：`delay_minutes` = 预计发送时间 - 当前本地时间\n3. **语义匹配**：确保 `background_narration` 的时间描述与预计发送时间一致\n   - \"早上再问候\" → 触发时间应在早上\n   - \"午饭后问一句\" → 触发时间应在中午或午后\n   - \"第二天再联系\" → 触发时间应在第二天早晨\n\n## 判断原则\n\n**适合创建触发器：**\n- `continue_chat`：对话短暂停顿，1~5分钟后顺接\n- `check_in`：用户说去做某事（洗澡/吃饭/开会），事情结束后回访\n- `new_topic`：对话自然结束，8~24小时后重新开启\n\n**保持沉默：**\n- 用户可能只是忙或想静一静\n- 近期已经主动打扰较多\n- 对话刚结束不久且无明确后续\n\n**触发器管理：**\n- 检查现有触发器是否已覆盖本轮目标\n- 不要重复创建相同目的的触发器\n- 新触发器会自动替换旧的 AI 自动触发器\n- 用户手动或高优先级触发器默认保留\n\n## background_narration 写法\n\n**只写客观旁白，不写指令**\n\n✅ 允许描述：\n- 已经过去了多久\n- 预计触发时是什么时间/时段\n- 用户之前提过什么事\n\n❌ 禁止写：\n- \"你要怎么说\" / \"你要安慰她\"\n- \"你现在应该发早安\"\n- 任何直接台词指令或建议\n\n**示例：**\n- \"现在是第二天早上，用户昨晚说先睡了，距离上一轮对话已过一夜\"\n- \"距离用户说去看电影已过两小时，按当前时间看大概率已结束\"\n- \"话题停在未完全收束的位置，只过去几分钟\"\n\n## 优先级说明\n\n- `high`：用户明确要求稍后提醒，或强约束事件\n- `medium`：普通顺接/回访\n- `low`：轻量新话题，不发也无妨\n\n## 注意事项\n\n- 不要因为用户没回复就推断\"出事了\" / \"情绪失控\"\n- 默认低压、不过度打扰\n- 输出只给程序解析，不直接发给用户"
-    },
-    {
-      "id": "auto_reply.agent.objective",
-      "dartName": "autoReplyAgentObjective",
-      "title": "生成要发给用户的主动回复内容",
-      "category": "auto_reply",
-      "variables": [
-        "assistant_name"
-      ],
-      "template": "你是主动回复生成器，负责生成要发给用户的主动回复内容。\n\n<system-reminder> 中包含触发时刻的客观背景信息，如：\n- 距离上次对话过去了多久\n- 当前是什么时间\n- 用户之前提到了什么事\n\n请根据这些背景信息，自然地生成一条主动回复。不要复述 <system-reminder> 的内容，而是基于它来决定如何回复。"
-    },
-    {
-      "id": "auto_reply.background.objective",
-      "dartName": "autoReplyBackgroundObjective",
-      "category": "auto_reply",
-      "title": "主动回复后台生成系统提示词",
-      "description": "WorkManager 后台 isolate 即时生成主动回复时的系统提示词：注入角色人设、当前时间与后台纯文本输出约束。",
-      "template": "你正在扮演「{assistant_name}」，正在和「{user_name}」聊天。\n\n【当前角色人设】\n{current_role_persona}\n\n【当前时间】\n{datetime}\n\n你现在要主动给对方发一条消息（这不是在回复对方的新消息）。<system-reminder> 中是触发时刻的客观背景信息：请基于它自然地组织这条主动消息，不要复述其内容。\n\n输出约束（后台模式）：\n1. 只输出要发送的消息正文，纯文本。\n2. 不要使用 <tts>、<image>、<emoji> 等任何标签。\n3. 不要调用工具，不要输出 JSON、前缀或解释。\n4. 保持角色口吻，长度贴近日常聊天消息。",
       "variables": [
         "assistant_name",
-        "user_name",
-        "current_role_persona",
-        "datetime"
-      ]
+        "now",
+        "last_user_ago",
+        "unreplied_count",
+        "last_proactive_ago",
+        "trigger_list",
+        "transcript"
+      ],
+      "template": "下面是用户和 AI 角色「{assistant_name}」的聊天。用户有一阵子没说话了，要决定角色要不要主动找他。\n\n现在是 {now}。\n用户最后一次说话是 {last_user_ago}。\n这之后角色已经主动发过 {unreplied_count} 条，用户还没回。\n角色上一次主动找用户：{last_proactive_ago}。\n\n已经定好、还没发的提醒：\n{trigger_list}\n\n最近的聊天：\n{transcript}"
+    },
+    {
+      "id": "auto_reply.decision.chat_fallback",
+      "dartName": "autoReplyDecisionChatFallback",
+      "title": "没有决策模型时让聊天模型做主动回复判断",
+      "category": "auto_reply",
+      "variables": [
+        "assistant_name",
+        "state",
+        "questions",
+        "answer_format"
+      ],
+      "template": "你在帮一个聊天应用拿主意：用户有一阵子没说话了，AI 角色「{assistant_name}」要不要主动找他、什么时候找。你只做判断，不用写要发的话。\n\n{state}\n\n回答下面几个问题：\n\n{questions}\n\n拿不准就选 stay_silent。少打扰一次没关系，打扰错了用户会烦。\n\n只回一行 JSON，别的什么都不要写：\n{answer_format}"
+    },
+    {
+      "id": "auto_reply.reach_out.reminder",
+      "dartName": "autoReplyReachOutReminder",
+      "title": "预生成主动消息时给聊天模型的提醒",
+      "category": "auto_reply",
+      "variables": [
+        "fire_time",
+        "gap",
+        "kind_hint"
+      ],
+      "template": "（这条不是用户发的。）\n用户有一阵子没说话了。现在是 {fire_time}，离用户最后一条消息过去了 {gap}。你想主动给对方发条消息{kind_hint}。\n就像你自己突然想起对方那样，自然地开口。对方没回可能只是在忙，别追问为什么不回，也别解释你为什么现在发消息，更不要提到这条说明。"
+    },
+    {
+      "id": "auto_reply.decision.call_welcome",
+      "dartName": "autoReplyDecisionCallWelcome",
+      "title": "判断时说明用户欢迎主动来电",
+      "category": "auto_reply",
+      "variables": [
+        "assistant_name",
+        "current_role_persona"
+      ],
+      "template": "用户打开了「允许角色主动打电话」，欢迎被主动找。要不要找、多久找一次，可以更多按「{assistant_name}」的性格来：\n{current_role_persona}"
+    },
+    {
+      "id": "auto_reply.reach_out.call_hint",
+      "dartName": "autoReplyReachOutCallHint",
+      "title": "预生成时告诉聊天模型可以打电话",
+      "category": "auto_reply",
+      "variables": [],
+      "template": "这次也可以用 call_user 直接打电话。电话比消息更打扰人：只有按你的性格，这会儿真的会忍不住直接打过去，才打；不确定就照常写消息。"
+    },
+    {
+      "id": "auto_reply.tool.call_user",
+      "dartName": "autoReplyToolCallUser",
+      "title": "打电话工具的说明",
+      "category": "auto_reply",
+      "variables": [],
+      "template": "直接给对方打电话。对方接起来以后，你说的第一句话就是 opening_line。打不打完全看你的性格：爱打电话、黏人的会常打，文静、怕打扰人的多半只发消息。"
+    },
+    {
+      "id": "auto_reply.tool.call_user.opening_line",
+      "dartName": "autoReplyToolCallUserOpeningLine",
+      "title": "打电话工具的开场白参数说明",
+      "category": "auto_reply",
+      "variables": [],
+      "template": "接通后你说的第一句话。是在打电话，要像说话一样：短一点，口语一点，不要用表情、括号里的动作和任何标签。别解释为什么打来。"
     },
     {
       "id": "enhanced_dialogue.system.default",
@@ -803,12 +923,12 @@
     {
       "id": "system_reminder.semantics",
       "dartName": "systemReminderSemantics",
-      "title": "告诉 AI 不要复述 <system-reminder> 的内容",
+      "title": "告诉 AI 背景说明不是对方说的话",
       "category": "system",
       "variables": [
         "tag_name"
       ],
-      "template": "<{tag_name}> 中的内容是系统补充信息，请据此理解上下文，不要原样复述。"
+      "template": "<{tag_name}> 里是应用附上的背景说明，不是对方说的话。心里有数就好，别照着念，也别提到它。"
     },
     {
       "id": "prompt_tag_semantics.lead_in",

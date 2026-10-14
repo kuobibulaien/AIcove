@@ -147,6 +147,18 @@ python3 tool/collect_diagnostics.py --from-dir "$HOME/Library/Containers/com.exa
 
 <a id="dart-mcp"></a>
 
+## Agent 内核真实数据验收（2026-10-12）
+
+不点界面、用用户真实配置验证聊天发送链路（ADR0064 第一批 1c 首次用于此）。入口 [kernel_acceptance_main.dart](kernel_acceptance_main.dart)：按真实 `main` 启动整个 App，经 `ChatActions.send`（与输入框发送同一入口）依次发送脚本消息，等发送结束后把报告写到应用文档目录 `kernel_acceptance_report.json` 并退出。
+
+1. **只用数据副本。** 临时把 `macos/Runner/Configs/AppInfo.xcconfig` 的 Bundle ID 改成独立值（文件是 CRLF，用 `perl` 匹配 `\r`），构建后核对产物 `CFBundleIdentifier`，再 `git checkout` 还原该文件。副本准备方式与注意事项见[经验教训「Computer Use 拒绝开发目录启动的应用」](../../../docs/项目记忆/经验教训.md)：`sqlite3 .backup` 复制数据库，剔除 `local_credentials/`，关闭局域网同步；准备好后在副本的 `Documents/` 下建空文件 `kernel_acceptance_isolated` 作为隔离标记。
+2. **构建**：`tool/flutterw build macos --debug -t tool/kernel_acceptance_main.dart --dart-define=AICOVE_AGENT_KERNEL_CHAT=true --dart-define=AICOVE_ACCEPTANCE_BUNDLE_ID=<副本 Bundle ID> "--dart-define=AICOVE_ACCEPTANCE_SCENARIOS=<场景>"`。场景格式 `编号|会话ID|调用流程(fast/auto/空)|期望生图路线(fast/stable/空)|消息`，多个用 `;;` 分隔；期望路线与默认模型不符时该场景跳过并写明原因，结束时恢复原调用流程设置。
+   **启动自检**（2026-10-12 补，第一批审查 P1-1）：碰任何业务存储前，入口先核对实际 Bundle ID 等于 `AICOVE_ACCEPTANCE_BUNDLE_ID` 且不是正式版 ID、文档与支持目录都在该 ID 的沙箱容器内、隔离标记存在、`local_credentials/` 里除启动时本机生成的诊断令牌外没有任何凭证；任一不满足就在标准错误输出原因并以退出码 2 退出，不写报告。通过后云同步与局域网同步在 `ProviderContainer` 中被覆盖为永不连接。
+3. **运行**：`open -g <构建目录>/<产品名>.app`，窗口在后台出现、不抢焦点，进程跑完自行退出。
+4. **核对**：报告只说明“发出且结束”，通过与否以副本数据为准——`messages`／`message_blocks`（回复、`raw_payload` 中的 `toolCalls`／`rawToolResults`、工具块配对）、`logs/app_*.jsonl`（`ImagePlugin` 的 `requestSource`／`flowMode`、稳定路线“held for review／approved”）、`logs/api_*.jsonl`（每次请求的工具列表与是否返回工具调用）。
+
+已知限制：模型会模仿会话历史，历史里全是 `<image>` 标签时稳定路线下也可能不调用 `draw_image`，验证工具路线要选没有该历史的会话并在消息里明确要求调用。
+
 ## 项目级 Dart MCP（2026-09-12）
 
 ### 统一入口与客户端配置
@@ -270,3 +282,18 @@ flutter test --no-pub test/core/database/chat_entry_indexes_test.dart test/featu
 ### 快速返回转场的终端证据（2026-09-10）
 
 已注入FrontendDiagnosticsPort的路由（含主入口、聊天与新角色Page）在程序返回中断尚未完成的横向入场时，通过现有前端诊断通道追加event=`routePopInterrupted`，state只含entryProgress（controller进度0–1）、exitDurationMs（计划退出时长）。诊断启用时另用debugPrint镜像一条`RouteTransition`数值日志到Release logcat；AppLogger本身仅在Debug输出控制台。未注入诊断的helper路由仍执行修复，但不输出该事件。可在已授权设备上用当前PID的`adb logcat -d --pid=<PID> -v brief`筛选`[RouteTransition]`，无需截图或数据库权限。该行证明修复分支触发，不证明真机逐帧位移；连续性和最初32ms位移由路由几何回归验证。没有该行也可能是入场已完成、手势返回、未实际返回或logcat被轮转，不能直接判为失败。
+
+## 公开发布
+
+源码可以公开，隐私不能公开。公开仓库：GitHub `kuobibulaien/AIcove`；本地仓库不设 remote，禁止直接 push。
+
+```bash
+python3 apps/aicove_flutter/tool/publish_release.py 0.1.0-test.5          # 停在发布前
+python3 apps/aicove_flutter/tool/publish_release.py 0.1.0-test.5 --notes <说明文件> --publish
+```
+
+- 脚本在 `/private/tmp/aicove-release-<版本>/` 隔离目录里依次完成：`git archive`、删除第三方预设原件及引用它们的测试、脱敏（本机用户名、git 邮箱、`/home/` 路径、设备序列号；额外的私密词放在 `~/.config/aicove/release_private.json`，不入库）、隐私扫描、同步公开仓库、卫生测试。为什么必须在隔离目录构建，见[经验教训「公开安装包不能在本机仓库路径下构建」](../../../docs/项目记忆/经验教训.md)。
+- 完整测试与构建并行；完整测试没全绿时，自动标为预发布。`--skip-tests` 跳过完整测试。构建时注入 `--dart-define=AICOVE_RELEASE_TAG=<版本>`，应用内更新检测（`features/app_update/`）拿它和 GitHub Release 的 `v<版本>` 标签比较，所以标签必须保持这个格式。
+- 产物：Android APK、macOS ZIP、未签名 iOS IPA（签名与侧载由用户自理）。安装包剥离符号，按原 entitlements 重签，扫描结果必须为 0 命中，最后生成 `SHA256SUMS`。Windows ZIP 由公开仓库的 `.github/workflows/windows-release.yml` 在 Release 发布后追加。
+- 说明文件只写「新增与改进」。加 `--publish` 后会推送公开仓库、创建 Release，并下载回来核对哈希。各阶段都有完成标记，中断后用相同参数重跑即可续做。
+- `opusdocs/` 由根 `.gitattributes` 的 `export-ignore` 排除，公开仓库里不得出现。

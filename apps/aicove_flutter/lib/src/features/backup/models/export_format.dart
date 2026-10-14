@@ -5,8 +5,7 @@
 const int kExportFormatVersion = 1;
 
 /// First-release coverage, shared by export and restore entry points.
-const transferCoverageNotice =
-    '仅包含所选角色卡、聊天记录及基本偏好。角色模型、插件/预设绑定、思考档位、背景模糊、话题边界与摘要不在恢复范围内；暂不支持视频。基本偏好合并暂不支持，可导入新副本或替换。';
+const transferCoverageNotice = '支持备份与恢复角色卡、聊天记录和基础设置。';
 
 /// 导出文件扩展名（标准 ZIP，可选 AES-256 密码）
 const String kExportFileExtension = '.zip';

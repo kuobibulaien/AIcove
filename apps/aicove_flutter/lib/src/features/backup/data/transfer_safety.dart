@@ -31,6 +31,7 @@ const _cardKeys = {
 const _settingsKeys = {
   'chat_background_image_file',
   'chat_background_mask_opacity',
+  'chat_background_framing',
   'default_provider',
   'is_pinned',
   'is_hidden',

@@ -9,6 +9,7 @@ import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/chat/presentation/widgets/message_bubble.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/moe_quote_block.dart';
 import 'package:aicove_flutter/src/ui/theme/skin_provider.dart';
 import 'package:aicove_flutter/src/ui/theme/skins/moetalk_skin.dart';
 
@@ -114,6 +115,7 @@ Widget _buildSingleBubbleHost({
   required bool hideUserAvatar,
   required double width,
   required Message message,
+  bool isMe = false,
 }) {
   final settings = _buildSettings(hideUserAvatar: hideUserAvatar);
   return ProviderScope(
@@ -130,7 +132,7 @@ Widget _buildSingleBubbleHost({
             child: SizedBox(
               width: width,
               child: MessageBubble(
-                isMe: false,
+                isMe: isMe,
                 message: message,
                 showAvatar: true,
               ),
@@ -160,6 +162,44 @@ void main() {
     ]);
     await tester.pumpWidget(_buildSingleBubbleHost(hideUserAvatar: true, width: 360, message: message));
     expect(find.byType(CloudImage), findsOneWidget);
+  });
+
+  testWidgets('用户的引用回复在气泡内画成引用块，不露出原始前缀', (tester) async {
+    await tester.pumpWidget(
+      _buildSingleBubbleHost(
+        hideUserAvatar: true,
+        width: 360,
+        isMe: true,
+        message: Message.text(
+          id: 'quote_case',
+          role: 'user',
+          content: '> Quote: 上一条引用消息\n\n继续往下说',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(MoeQuoteBlock), findsOneWidget);
+    expect(find.text('上一条引用消息'), findsOneWidget);
+    expect(find.text('继续往下说'), findsOneWidget);
+    expect(find.textContaining('> Quote:'), findsNothing);
+  });
+
+  testWidgets('助手消息里的同样文本不识别为引用块', (tester) async {
+    await tester.pumpWidget(
+      _buildSingleBubbleHost(
+        hideUserAvatar: true,
+        width: 360,
+        message: Message.text(
+          id: 'assistant_quote_case',
+          role: 'assistant',
+          content: '> Quote: 上一条\n\n正文',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(MoeQuoteBlock), findsNothing);
   });
 
   testWidgets('双头像模式下，左右消息气泡最大宽度应一致', (tester) async {

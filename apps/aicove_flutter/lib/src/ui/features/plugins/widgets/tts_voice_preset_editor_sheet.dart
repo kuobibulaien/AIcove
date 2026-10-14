@@ -641,7 +641,13 @@ class _TtsVoicePresetEditorSheetContentState
                       ),
                     ),
                     if (!_isBuiltIn)
-                      GestureDetector(
+                      MoeIconButton(
+                        icon: Icons.close,
+                        size: 18,
+                        padding: const EdgeInsets.all(4),
+                        minTouchTarget: 28,
+                        color: colors.muted,
+                        enabled: !_submitting,
                         onTap: _submitting
                             ? null
                             : () {
@@ -654,17 +660,6 @@ class _TtsVoicePresetEditorSheetContentState
                                   _localAudioFileName = null;
                                 });
                               },
-                        child: MoeButtonSurface(
-                          radius: 999,
-                          child: Padding(
-                            padding: const EdgeInsets.all(4),
-                            child: Icon(
-                              Icons.close,
-                              color: colors.muted,
-                              size: 18,
-                            ),
-                          ),
-                        ),
                       ),
                   ],
                 ),
@@ -893,19 +888,14 @@ class _TtsVoicePresetEditorSheetContentState
                   ),
                 ),
                 if (!_isBuiltIn)
-                  GestureDetector(
+                  MoeIconButton(
+                    icon: Icons.delete_outline,
+                    size: 18,
+                    padding: const EdgeInsets.all(4),
+                    minTouchTarget: 28,
+                    color: colors.muted,
+                    enabled: !_submitting,
                     onTap: _submitting ? null : () => _removeBinding(binding),
-                    child: MoeButtonSurface(
-                      radius: 999,
-                      child: Padding(
-                        padding: const EdgeInsets.all(4),
-                        child: Icon(
-                          Icons.delete_outline,
-                          color: colors.muted,
-                          size: 18,
-                        ),
-                      ),
-                    ),
                   ),
               ],
             ),

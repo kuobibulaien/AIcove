@@ -6,7 +6,6 @@ import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../features/backup/models/export_format.dart';
 import '../../../../features/backup/backup_providers.dart';
 import '../../../shared/animations/parallax_slide_page_route.dart';
-import '../../../shared/effects/smooth_clip.dart';
 import '../../../shared/widgets/index.dart';
 import '../../../theme/tokens.dart';
 import 'export_character_page.dart';
@@ -148,43 +147,13 @@ class _ExportScopePageState extends ConsumerState<ExportScopePage> {
                     controller: _password,
                     label: '备份密码',
                     hint: '留空则不加密',
-                    helperText: '只能用英文字母、数字和英文符号。忘记密码将无法恢复备份。',
+                    helperText: '仅限英文、数字和符号；忘记密码无法恢复',
                     prefixIcon: LucideIcons.lock,
                     inputFormatters: [
                       FilteringTextInputFormatter.allow(
                         backupPasswordCharacters,
                       ),
                     ],
-                  ),
-
-                  const SizedBox(height: 16),
-
-                  // 提示
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: MoeG2Decoration(
-                      radius: 8,
-                      color: theme.colorScheme.surfaceContainerHighest
-                          .withValues(alpha: 0.5),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          LucideIcons.info,
-                          size: 16,
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            '包含媒体文件会增加导出文件体积',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
                   ),
                 ],
               ),

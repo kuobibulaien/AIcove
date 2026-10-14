@@ -10,8 +10,10 @@ library;
 import 'dart:convert';
 
 import '../thinking/thinking_level.dart';
+import 'finish_reason.dart';
 
 export '../thinking/thinking_level.dart' show ThinkingLevel, ThinkingScheme;
+export 'finish_reason.dart';
 
 /// API 调用结果
 class ApiCallResult {
@@ -21,13 +23,19 @@ class ApiCallResult {
   final List<Map<String, dynamic>> hiddenThoughtParts;
   final Map<String, dynamic>? rawResponse;
 
+  /// The provider's own finish reason, unchanged; null when absent.
+  final String? rawFinishReason;
+
   const ApiCallResult({
     required this.text,
     this.toolResults = const [],
     this.toolCalls = const [],
     this.hiddenThoughtParts = const [],
     this.rawResponse,
+    this.rawFinishReason,
   });
+
+  FinishReason? get finishReason => normalizeFinishReason(rawFinishReason);
 
   /// 是否包含工具调用请求
   bool get hasToolCalls => toolCalls.isNotEmpty;
@@ -133,6 +141,11 @@ class ProviderChatRequestOptions {
   final ThinkingLevel? thinkingLevel;
   final ThinkingScheme? thinkingScheme;
 
+  /// 「最低」档展开后的候选档位，按顺序尝试；非空时由 AgentApiClient
+  /// 逐个替换 [thinkingLevel] 发请求，上游拒绝就换下一档（见
+  /// `thinking_fallback_runner.dart`）。
+  final List<ThinkingLevel>? thinkingCandidates;
+
   /// 联网搜索插件接管搜索时为 true：请求体组装后去掉模型内置搜索参数。
   final bool disableBuiltinWebSearch;
 
@@ -152,6 +165,7 @@ class ProviderChatRequestOptions {
     this.reasoningEffort,
     this.thinkingLevel,
     this.thinkingScheme,
+    this.thinkingCandidates,
     this.disableBuiltinWebSearch = false,
   });
 
@@ -159,6 +173,8 @@ class ProviderChatRequestOptions {
     String? toolChoice,
     ThinkingLevel? thinkingLevel,
     ThinkingScheme? thinkingScheme,
+    List<ThinkingLevel>? thinkingCandidates,
+    bool clearThinkingCandidates = false,
     bool? disableBuiltinWebSearch,
   }) =>
       ProviderChatRequestOptions(
@@ -177,6 +193,9 @@ class ProviderChatRequestOptions {
         reasoningEffort: reasoningEffort,
         thinkingLevel: thinkingLevel ?? this.thinkingLevel,
         thinkingScheme: thinkingScheme ?? this.thinkingScheme,
+        thinkingCandidates: clearThinkingCandidates
+            ? null
+            : (thinkingCandidates ?? this.thinkingCandidates),
         disableBuiltinWebSearch:
             disableBuiltinWebSearch ?? this.disableBuiltinWebSearch,
       );
@@ -198,6 +217,10 @@ class ProviderChatRequestOptions {
           'reasoningEffort': reasoningEffort,
         if (thinkingLevel != null) 'thinkingLevel': thinkingLevel!.name,
         if (thinkingScheme != null) 'thinkingScheme': thinkingScheme!.name,
+        if (thinkingCandidates?.isNotEmpty == true)
+          'thinkingCandidates': [
+            for (final level in thinkingCandidates!) level.name,
+          ],
         if (disableBuiltinWebSearch) 'disableBuiltinWebSearch': true,
       };
 

@@ -885,6 +885,59 @@ class ChatHistoryStore {
         .upsertMessage(conversationId: conversationId, message: replacement);
   }
 
+  /// 把挂断后整理好的摘要补进通话气泡（ADR0074 决定 4）。
+  ///
+  /// 只在气泡仍然有效、仍是这通电话时写：已删、被编辑替换或块已变化就放弃。
+  /// 只改这一块，不改会话预览和时间。返回是否写入。
+  Future<bool> attachCallSummary({
+    required String conversationId,
+    required String messageId,
+    required String callId,
+    required String summary,
+  }) async {
+    Message? updated;
+    await _db.transaction(() async {
+      if (!await isRawMessageActive(
+        conversationId: conversationId,
+        messageId: messageId,
+      )) {
+        return;
+      }
+      final raw = await loadMessageById(
+        messageId,
+        conversationId: conversationId,
+        preferProjection: false,
+      );
+      final blocks = raw?.blocks;
+      final index = blocks?.indexWhere(
+            (b) => b is CallRecordBlock && b.callId == callId,
+          ) ??
+          -1;
+      if (raw == null || index < 0) return;
+      final block = (blocks![index] as CallRecordBlock).withSummary(summary);
+      updated = raw.copyWith(
+        content: block.content,
+        blocks: [...blocks]..[index] = block,
+      );
+      await _upsertSingleMessage(conversationId, updated!);
+    });
+    final message = updated;
+    if (message == null) return false;
+    // 事务之后又被删掉的，不再放回聊天缓存。
+    if (!await isRawMessageActive(
+      conversationId: conversationId,
+      messageId: messageId,
+    )) {
+      return true;
+    }
+    final frontend = _projectRawMessagesForFrontendSurface([message]);
+    await _ref.read(conversationTimelineCacheProvider).upsertMessages(
+          conversationId: conversationId,
+          messages: frontend.isNotEmpty ? frontend : [message],
+        );
+    return true;
+  }
+
   Message _replaceRawMediaAttachment(Message raw, List<Message> siblings,
       MediaRegenerationTarget target, GeneratedChatMedia result) {
     bool matches(MessageBlock block) =>

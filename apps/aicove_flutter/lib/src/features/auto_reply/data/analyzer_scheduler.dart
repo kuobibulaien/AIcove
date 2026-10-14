@@ -512,24 +512,6 @@ class AnalyzerScheduler {
     final conversationId = conversation.id;
     final controller = _ref.read(autoReplyTriggersProvider.notifier);
 
-    final createdTriggerId = decision.createdTriggerId?.trim();
-    if (createdTriggerId != null && createdTriggerId.isNotEmpty) {
-      final nextState = currentState.copyWith(
-        mode: ConversationProactiveMode.active,
-        silenceUntil: null,
-        pendingAutoTriggerId: createdTriggerId,
-      );
-      await _setState(nextState);
-      await _appendHistoryLog(
-        category: AutoReplyTriggerLogCategory.analyzer,
-        event: 'trigger_created_by_tool',
-        message: '分析完成：后台 Agent 已通过工具创建自动触发器',
-        conversationId: conversationId,
-        triggerId: createdTriggerId,
-      );
-      return;
-    }
-
     final triggerPlan = decision.triggerPlan;
     if (triggerPlan == null) {
       final nextState = _applySessionPatch(
@@ -560,8 +542,8 @@ class AnalyzerScheduler {
       message: '分析完成：已生成新的自动触发计划「${triggerPlan.title}」',
       conversationId: conversationId,
       metadata: {
-        'kind': triggerPlan.kind.name,
-        'delayMinutes': triggerPlan.delayMinutes,
+        'kind': triggerPlan.kind.label,
+        'fireAt': triggerPlan.fireAt.toIso8601String(),
         'allowNight': triggerPlan.allowNight,
         'priority': triggerPlan.priority.name,
       },
@@ -575,12 +557,31 @@ class AnalyzerScheduler {
     final lastUserMessage = await _ref
         .read(chatHistoryStoreProvider)
         .getLastUserMessage(conversationId);
-    final cachedContent =
-        await _ref.read(proactiveMessagePregeneratorProvider).generate(
-              conversation: conversation,
-              contextMessages: decision.contextMessages,
-              systemReminder: triggerPlan.systemReminder,
-            );
+    // Step ⑤: written for the fire time. An empty draft still schedules the
+    // trigger; the reply is then written live at fire time.
+    final draft = await _ref
+        .read(proactiveMessagePregeneratorProvider)
+        .generate(
+          conversation: conversation,
+          systemReminder: triggerPlan.systemReminder,
+          fireAt: triggerPlan.fireAt,
+          allowCall: triggerPlan.allowCall,
+        );
+    final cachedContent = draft?.text;
+
+    // The user may have spoken while the reply was being written.
+    final currentLastUserMessage = await _ref
+        .read(chatHistoryStoreProvider)
+        .getLastUserMessage(conversationId);
+    if (currentLastUserMessage?.id != lastUserMessage?.id) {
+      await _appendHistoryLog(
+        category: AutoReplyTriggerLogCategory.analyzer,
+        event: 'trigger_plan_skipped_stale_context',
+        message: '跳过创建主动回复触发器：生成期间用户发了新消息',
+        conversationId: conversationId,
+      );
+      return;
+    }
 
     final existingTrigger = _findActiveAiTriggerForConversation(conversationId);
     if (existingTrigger != null) {
@@ -600,12 +601,14 @@ class AnalyzerScheduler {
     final createdTrigger = await controller.createTrigger(
       title: triggerPlan.title,
       type: AutoReplyTriggerType.delay,
-      nextFireAt: DateTime.now().add(
-        Duration(minutes: triggerPlan.delayMinutes),
-      ),
+      nextFireAt: triggerPlan.fireAt,
       allowNight: triggerPlan.allowNight,
       requireExact: false,
-      delayMinutes: triggerPlan.delayMinutes,
+      delayMinutes: triggerPlan.fireAt
+          .difference(DateTime.now())
+          .inMinutes
+          .clamp(1, 100000)
+          .toInt(),
       prompt: triggerPlan.systemReminder,
       priority: triggerPlan.priority,
       source: TriggerSource.aiScheduler,
@@ -613,7 +616,10 @@ class AnalyzerScheduler {
       contextLastUserMessageId: lastUserMessage?.id,
       contextLastUserMessageAt: lastUserMessage?.createdAt,
       cachedContent: cachedContent,
-      preparedAt: cachedContent == null ? null : DateTime.now(),
+      // The reply is written for the fire time, so freshness is measured
+      // from there: a reply sent on time is fresh however early it was written.
+      preparedAt: cachedContent == null ? null : triggerPlan.fireAt,
+      action: draft?.action ?? ProactiveAction.sendMessage,
     );
     // 后台 WorkManager 任务由 createTrigger 内部统一注册，这里不再重复注册
 

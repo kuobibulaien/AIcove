@@ -23,7 +23,6 @@ class OverflowClient extends AgentApiClient {
     double? temperature,
     double? topP,
     String? token,
-    Map<String, dynamic>? toolPrefs,
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
@@ -95,7 +94,6 @@ void _runAll(RunnerFactory createRunner) {
           modelFullId: settings.defaultModelName,
           providerApiBase: 'https://invalid.test',
           customConfig: const {},
-          toolPrefs: const {},
           messages: const [
             {'role': 'user', 'content': '读一次'},
           ],
@@ -105,7 +103,7 @@ void _runAll(RunnerFactory createRunner) {
         ),
         sessionId: 'a',
         userText: '读一次',
-        effectivePlugins: const [],
+        responseProcessors: const [],
         enableStreaming: false,
       );
       if (fail) {

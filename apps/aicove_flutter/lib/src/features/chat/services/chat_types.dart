@@ -13,6 +13,8 @@ import '../../context/domain/context_summary.dart' show RuntimeContextPort;
 import 'dart:async';
 import '../domain/conversation.dart';
 import '../domain/message.dart';
+import '../../agent_plugins/plugin_response.dart';
+import '../../agent_plugins/tool_policy.dart';
 import '../../plugins/domain/plugin.dart';
 import '../../plugins/image/image_config.dart';
 import '../../plugins/tts/voice_request.dart';
@@ -108,6 +110,11 @@ class ApiCallResult {
 /// API 配置参数
 class ApiConfig {
   final PresetScriptSnapshot? presetScript;
+
+  /// The preset runtime service from the tavern compatibility plugin; null
+  /// when assembled without the plugin runtime (the runner then opens the
+  /// default runtime).
+  final PresetRuntimeOpener? openPresetRuntime;
   final int? requestInputTokenLimit;
   final RuntimeContextPort? runtimeContext;
   final AppSettings settings;
@@ -119,7 +126,6 @@ class ApiConfig {
   final int? providerApiKeyItemIndex;
   final String? providerApiKeyStrategy;
   final Map<String, dynamic> customConfig;
-  final Map<String, dynamic> toolPrefs;
   final List<Map<String, dynamic>> messages;
   final List<Map<String, dynamic>>? tools;
 
@@ -139,8 +145,21 @@ class ApiConfig {
   final ImageConfig? drawingConfig;
   final VoiceRequest? voiceRequest;
 
+  /// Reply processors fixed when the request was prepared, so plugin
+  /// changes after prepare do not affect this turn.
+  final List<PluginResponseProcessor> responseProcessors;
+
+  /// Tool authorization of this run (kernel runner only). Null runs tools
+  /// as before the gate existed, which is ordinary chat.
+  final AgentToolPolicy? toolPolicy;
+
+  /// 装配时要求延后的插件提醒（时间感知等），按给定时刻现算；null 表示提醒
+  /// 已经插进 [messages]。给每轮在不同时刻发出的同一份快照用（通话）。
+  final String Function(DateTime requestTime)? reminders;
+
   const ApiConfig({
     this.presetScript,
+    this.openPresetRuntime,
     this.requestInputTokenLimit,
     this.runtimeContext,
     required this.settings,
@@ -152,7 +171,6 @@ class ApiConfig {
     this.providerApiKeyItemIndex,
     this.providerApiKeyStrategy,
     required this.customConfig,
-    required this.toolPrefs,
     required this.messages,
     this.tools,
     this.boundTools,
@@ -169,9 +187,53 @@ class ApiConfig {
     this.boundImageArtistPresetName,
     this.drawingConfig,
     this.voiceRequest,
+    this.responseProcessors = const [],
+    this.toolPolicy,
+    this.reminders,
   });
 
   double? get effectiveTemperature => modelTemperature ?? settings.temperature;
+
+  /// 在装配结果上换掉消息、工具或请求选项，其余字段原样保留。
+  ApiConfig copyWith({
+    List<Map<String, dynamic>>? messages,
+    bool clearTools = false,
+    List<Map<String, dynamic>>? tools,
+    List<AITool>? boundTools,
+    ProviderChatRequestOptions? providerRequestOptions,
+    bool? presetStreamResponse,
+  }) => ApiConfig(
+    presetScript: presetScript,
+    requestInputTokenLimit: requestInputTokenLimit,
+    runtimeContext: runtimeContext,
+    settings: settings,
+    modelFullId: modelFullId,
+    providerApiBase: providerApiBase,
+    providerApiKey: providerApiKey,
+    providerId: providerId,
+    providerApiKeyItemId: providerApiKeyItemId,
+    providerApiKeyItemIndex: providerApiKeyItemIndex,
+    providerApiKeyStrategy: providerApiKeyStrategy,
+    customConfig: customConfig,
+    messages: messages ?? this.messages,
+    tools: clearTools ? null : (tools ?? this.tools),
+    boundTools: clearTools ? null : (boundTools ?? this.boundTools),
+    enabledPluginIds: enabledPluginIds,
+    modelTemperature: modelTemperature,
+    modelTopP: modelTopP,
+    modelContextMessageLimit: modelContextMessageLimit,
+    providerRequestOptions:
+        providerRequestOptions ?? this.providerRequestOptions,
+    presetRegexScripts: presetRegexScripts,
+    presetRegexAuthorized: presetRegexAuthorized,
+    presetStreamResponse: presetStreamResponse ?? this.presetStreamResponse,
+    traceContext: traceContext,
+    boundImageToolPresetName: boundImageToolPresetName,
+    boundImageArtistPresetName: boundImageArtistPresetName,
+    drawingConfig: drawingConfig,
+    voiceRequest: voiceRequest,
+    reminders: reminders,
+  );
 }
 
 /// 待处理的 TTS 音频信息

@@ -158,6 +158,7 @@ class AutoReplyService {
       final result =
           await _ref.read(autoReplyDispatchServiceProvider).dispatchTrigger(
                 trigger,
+                claimToken: event.claimToken,
               );
       await _ref.read(autoReplyTriggersProvider.notifier).completeTriggeredSend(
             triggerId: trigger.id,
@@ -165,6 +166,7 @@ class AutoReplyService {
             success: result.success,
             retryable: result.retryable,
             reason: result.reason,
+            claimToken: event.claimToken,
           );
       await _ref.read(analyzerSchedulerProvider).onAutoTriggerSendCompleted(
             trigger: trigger,
@@ -181,6 +183,28 @@ class AutoReplyService {
           'error': e.toString(),
         },
       );
+      // 派发本身抛异常也要收尾：释放认领并按可重试处理，免得等满租约。
+      try {
+        await _ref
+            .read(autoReplyTriggersProvider.notifier)
+            .completeTriggeredSend(
+              triggerId: trigger.id,
+              firedAt: event.timestamp,
+              success: false,
+              retryable: true,
+              reason: e.toString(),
+              claimToken: event.claimToken,
+            );
+      } catch (finishError) {
+        AppLogger.error(
+          'AutoReplyService',
+          'Failed to finish fired trigger after error',
+          metadata: {
+            'triggerId': trigger.id,
+            'error': finishError.toString(),
+          },
+        );
+      }
     }
   }
 

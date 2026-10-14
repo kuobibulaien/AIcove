@@ -547,6 +547,9 @@ class _SpyStreamingSendService extends _InMemoryHistorySendService {
     String? overrideModel,
     String? conversationId,
     TraceContext? traceContext,
+    DateTime? requestTime,
+    bool persistSideEffects = true,
+    bool deferReminders = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -554,7 +557,6 @@ class _SpyStreamingSendService extends _InMemoryHistorySendService {
       providerApiBase: _settings.apiBaseUrl,
       providerApiKey: null,
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[],
       tools: null,
       enabledPluginIds: null,
@@ -629,6 +631,9 @@ class _FallbackAfterDeltaSendService extends _InMemoryHistorySendService {
     String? overrideModel,
     String? conversationId,
     TraceContext? traceContext,
+    DateTime? requestTime,
+    bool persistSideEffects = true,
+    bool deferReminders = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -636,7 +641,6 @@ class _FallbackAfterDeltaSendService extends _InMemoryHistorySendService {
       providerApiBase: _settings.apiBaseUrl,
       providerApiKey: null,
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[],
       tools: null,
       enabledPluginIds: null,
@@ -720,6 +724,9 @@ class _MultiDeltaStreamingSendService extends _InMemoryHistorySendService {
     String? overrideModel,
     String? conversationId,
     TraceContext? traceContext,
+    DateTime? requestTime,
+    bool persistSideEffects = true,
+    bool deferReminders = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -727,7 +734,6 @@ class _MultiDeltaStreamingSendService extends _InMemoryHistorySendService {
       providerApiBase: _settings.apiBaseUrl,
       providerApiKey: null,
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[],
       tools: null,
       enabledPluginIds: null,
@@ -801,6 +807,9 @@ class _SlowMultiDeltaStreamingSendService extends _InMemoryHistorySendService {
     String? overrideModel,
     String? conversationId,
     TraceContext? traceContext,
+    DateTime? requestTime,
+    bool persistSideEffects = true,
+    bool deferReminders = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -808,7 +817,6 @@ class _SlowMultiDeltaStreamingSendService extends _InMemoryHistorySendService {
       providerApiBase: _settings.apiBaseUrl,
       providerApiKey: null,
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[],
       tools: null,
       enabledPluginIds: null,
@@ -882,6 +890,9 @@ class _SingleDeltaSlowFinalizeSendService extends _InMemoryHistorySendService {
     String? overrideModel,
     String? conversationId,
     TraceContext? traceContext,
+    DateTime? requestTime,
+    bool persistSideEffects = true,
+    bool deferReminders = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -889,7 +900,6 @@ class _SingleDeltaSlowFinalizeSendService extends _InMemoryHistorySendService {
       providerApiBase: _settings.apiBaseUrl,
       providerApiKey: null,
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[],
       tools: null,
       enabledPluginIds: null,
@@ -960,6 +970,9 @@ class _DelayedFirstSentenceSendService extends _InMemoryHistorySendService {
     String? overrideModel,
     String? conversationId,
     TraceContext? traceContext,
+    DateTime? requestTime,
+    bool persistSideEffects = true,
+    bool deferReminders = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -967,7 +980,6 @@ class _DelayedFirstSentenceSendService extends _InMemoryHistorySendService {
       providerApiBase: _settings.apiBaseUrl,
       providerApiKey: null,
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[],
       tools: null,
       enabledPluginIds: null,
@@ -1064,6 +1076,9 @@ class _DelayedMultiSentenceSendService extends _InMemoryHistorySendService {
     String? overrideModel,
     String? conversationId,
     TraceContext? traceContext,
+    DateTime? requestTime,
+    bool persistSideEffects = true,
+    bool deferReminders = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -1071,7 +1086,6 @@ class _DelayedMultiSentenceSendService extends _InMemoryHistorySendService {
       providerApiBase: _settings.apiBaseUrl,
       providerApiKey: null,
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[],
       tools: null,
       enabledPluginIds: null,
@@ -1146,6 +1160,9 @@ class _ChunkBoundarySentenceSendService extends _InMemoryHistorySendService {
     String? overrideModel,
     String? conversationId,
     TraceContext? traceContext,
+    DateTime? requestTime,
+    bool persistSideEffects = true,
+    bool deferReminders = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -1153,7 +1170,6 @@ class _ChunkBoundarySentenceSendService extends _InMemoryHistorySendService {
       providerApiBase: _settings.apiBaseUrl,
       providerApiKey: null,
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[],
       tools: null,
       enabledPluginIds: null,
@@ -1229,6 +1245,9 @@ class _NoBoundarySlowDeltaSendService extends _InMemoryHistorySendService {
     String? overrideModel,
     String? conversationId,
     TraceContext? traceContext,
+    DateTime? requestTime,
+    bool persistSideEffects = true,
+    bool deferReminders = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -1236,7 +1255,6 @@ class _NoBoundarySlowDeltaSendService extends _InMemoryHistorySendService {
       providerApiBase: _settings.apiBaseUrl,
       providerApiKey: null,
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[],
       tools: null,
       enabledPluginIds: null,
@@ -1312,6 +1330,9 @@ class _StreamingTtsSendService extends _InMemoryHistorySendService {
     String? overrideModel,
     String? conversationId,
     TraceContext? traceContext,
+    DateTime? requestTime,
+    bool persistSideEffects = true,
+    bool deferReminders = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -1319,7 +1340,6 @@ class _StreamingTtsSendService extends _InMemoryHistorySendService {
       providerApiBase: _settings.apiBaseUrl,
       providerApiKey: null,
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[],
       tools: null,
       enabledPluginIds: null,
@@ -1405,6 +1425,9 @@ class _StreamingLeadingTtsSendService extends _InMemoryHistorySendService {
     String? overrideModel,
     String? conversationId,
     TraceContext? traceContext,
+    DateTime? requestTime,
+    bool persistSideEffects = true,
+    bool deferReminders = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -1412,7 +1435,6 @@ class _StreamingLeadingTtsSendService extends _InMemoryHistorySendService {
       providerApiBase: _settings.apiBaseUrl,
       providerApiKey: null,
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[],
       tools: null,
       enabledPluginIds: null,
@@ -1507,6 +1529,9 @@ class _SlowTailStreamingTtsSendService extends _InMemoryHistorySendService {
     String? overrideModel,
     String? conversationId,
     TraceContext? traceContext,
+    DateTime? requestTime,
+    bool persistSideEffects = true,
+    bool deferReminders = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -1514,7 +1539,6 @@ class _SlowTailStreamingTtsSendService extends _InMemoryHistorySendService {
       providerApiBase: _settings.apiBaseUrl,
       providerApiKey: null,
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[],
       tools: null,
       enabledPluginIds: null,
@@ -1627,6 +1651,9 @@ class _StreamingInlineImageSendService extends _InMemoryHistorySendService {
     String? overrideModel,
     String? conversationId,
     TraceContext? traceContext,
+    DateTime? requestTime,
+    bool persistSideEffects = true,
+    bool deferReminders = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -1634,7 +1661,6 @@ class _StreamingInlineImageSendService extends _InMemoryHistorySendService {
       providerApiBase: _settings.apiBaseUrl,
       providerApiKey: null,
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[],
       tools: null,
       enabledPluginIds: null,
@@ -1720,6 +1746,9 @@ class _StreamingAttributeImageTagSendService
     String? overrideModel,
     String? conversationId,
     TraceContext? traceContext,
+    DateTime? requestTime,
+    bool persistSideEffects = true,
+    bool deferReminders = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -1727,7 +1756,6 @@ class _StreamingAttributeImageTagSendService
       providerApiBase: _settings.apiBaseUrl,
       providerApiKey: null,
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[],
       tools: null,
       enabledPluginIds: null,
@@ -1804,6 +1832,9 @@ class _StreamingMixedTtsImageTailSendService
     String? overrideModel,
     String? conversationId,
     TraceContext? traceContext,
+    DateTime? requestTime,
+    bool persistSideEffects = true,
+    bool deferReminders = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -1811,7 +1842,6 @@ class _StreamingMixedTtsImageTailSendService
       providerApiBase: _settings.apiBaseUrl,
       providerApiKey: null,
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[],
       tools: null,
       enabledPluginIds: null,
@@ -1912,6 +1942,9 @@ class _StreamingOnlyTtsSendService extends _InMemoryHistorySendService {
     String? overrideModel,
     String? conversationId,
     TraceContext? traceContext,
+    DateTime? requestTime,
+    bool persistSideEffects = true,
+    bool deferReminders = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -1919,7 +1952,6 @@ class _StreamingOnlyTtsSendService extends _InMemoryHistorySendService {
       providerApiBase: _settings.apiBaseUrl,
       providerApiKey: null,
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[],
       tools: null,
       enabledPluginIds: null,
@@ -1993,6 +2025,9 @@ class _StreamingOnlyTtsAndImageSendService extends _InMemoryHistorySendService {
     String? overrideModel,
     String? conversationId,
     TraceContext? traceContext,
+    DateTime? requestTime,
+    bool persistSideEffects = true,
+    bool deferReminders = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -2000,7 +2035,6 @@ class _StreamingOnlyTtsAndImageSendService extends _InMemoryHistorySendService {
       providerApiBase: _settings.apiBaseUrl,
       providerApiKey: null,
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[],
       tools: null,
       enabledPluginIds: null,
@@ -2149,6 +2183,9 @@ class _RecordingImageConfigSendService extends _InMemoryHistorySendService {
     String? overrideModel,
     String? conversationId,
     TraceContext? traceContext,
+    DateTime? requestTime,
+    bool persistSideEffects = true,
+    bool deferReminders = false,
   }) async {
     lastOverrideModel = overrideModel;
     lastConversationId = conversationId;
@@ -2160,7 +2197,6 @@ class _RecordingImageConfigSendService extends _InMemoryHistorySendService {
       providerApiBase: 'https://api.openai.com/v1',
       providerApiKey: null,
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[
         {'role': 'user', 'content': 'stub'},
       ],
@@ -2474,6 +2510,9 @@ class _RetryOnceProviderRefreshImageSendService
     String? overrideModel,
     String? conversationId,
     TraceContext? traceContext,
+    DateTime? requestTime,
+    bool persistSideEffects = true,
+    bool deferReminders = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -2481,7 +2520,6 @@ class _RetryOnceProviderRefreshImageSendService
       providerApiBase: _settings.apiBaseUrl,
       providerApiKey: null,
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[],
       tools: null,
       enabledPluginIds: null,

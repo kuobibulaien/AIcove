@@ -2,11 +2,12 @@ import 'package:flutter/material.dart';
 import '../../../core/prompts/prompt_builtin_defaults.g.dart';
 import '../../../core/prompts/prompt_template_renderer.dart';
 import '../../../core/services/system_reminder_service.dart';
+import '../../agent_plugins/aicove_plugin.dart';
 import '../domain/base_plugin.dart';
-import '../domain/plugin.dart';
 import '../domain/plugin_metadata.dart';
 import '../domain/config/config_field.dart';
 import '../domain/config/config_field_type.dart';
+import 'time_awareness_agent_plugin.dart';
 import 'time_awareness_config.dart';
 
 /// 时间增强插件
@@ -54,6 +55,11 @@ class TimeAwarenessPlugin extends BasePlugin {
 
   @override
   bool get enabled => _config.enabled;
+
+  TimeAwarenessConfig get config => _config;
+
+  @override
+  AicovePlugin get agentPlugin => timeAwarenessAgentPlugin(this);
 
   /// 是否需要为消息添加时间戳
   bool get shouldIncludeTimestamp => enabled && _config.includeMessageTimestamp;
@@ -126,14 +132,6 @@ class TimeAwarenessPlugin extends BasePlugin {
     ].where((part) => part.trim().isNotEmpty).join('\n\n');
   }
 
-  @override
-  Future<String?> getSystemPrompt({
-    String? userMessage,
-    bool supportsToolCalling = false,
-  }) async {
-    return buildTagSemanticsPrompt();
-  }
-
   String _formatDateTime(DateTime dateTime) {
     final y = dateTime.year.toString();
     final m = dateTime.month.toString().padLeft(2, '0');
@@ -188,11 +186,6 @@ class TimeAwarenessPlugin extends BasePlugin {
       return template;
     }
     return '$template {datetime}';
-  }
-
-  @override
-  Future<PluginProcessResult> processResponse(String text) async {
-    return PluginProcessResult(processedText: text, events: []);
   }
 
   @override

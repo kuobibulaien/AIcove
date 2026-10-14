@@ -264,6 +264,7 @@ void main() {
         displayName: '角色',
         createdAt: now,
         updatedAt: now,
+        enabledPlugins: const ['image'],
         personaPrompt: PersonaPromptCodec.compose(
           userPrompt: '温柔',
           customDrawingPrompt: '绿色眼睛',
@@ -291,8 +292,11 @@ void main() {
       );
       await tester.tap(find.text('打开角色'));
       await tester.pumpAndSettle();
-      await _scrollTo(tester, find.text('绘图配置包'));
-      await tester.tap(find.text('绘图配置包'));
+      // The role editor lists enabled plugins as rows without a label since
+      // the 10-04 redesign; the drawing row opens the preset picker.
+      final drawingRow = find.byKey(const ValueKey('enabled-plugin-image'));
+      await _scrollTo(tester, drawingRow);
+      await tester.tap(drawingRow);
       await tester.pumpAndSettle();
       await tester.tap(find.text('另一套绘图'));
       await tester.pumpAndSettle();

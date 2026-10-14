@@ -128,9 +128,12 @@ class _ArtistPresetPageState extends ConsumerState<ArtistPresetPage> {
       label: preset.name,
       subtitle: _presetPreview(preset),
       trailingType: MoeSettingsRowTrailing.custom,
-      trailing: IconButton(
-        icon: Icon(Icons.more_horiz, color: colors.muted),
-        onPressed: () =>
+      trailing: MoeIconButton(
+        icon: Icons.more_horiz,
+        size: 20,
+        color: colors.muted,
+        tooltip: '更多操作',
+        onTap: () =>
             _showSlotActions(context, config, notifier, preset, index),
       ),
       onTap: () => notifier.selectArtistPreset(preset.name),
@@ -197,27 +200,26 @@ class _ArtistPresetPageState extends ConsumerState<ArtistPresetPage> {
         ),
         AnimatedCrossFade(
           firstChild: const SizedBox.shrink(),
-          secondChild: Container(
-            width: double.infinity,
+          secondChild: MoeContentSurface(
+            borderRadius: const BorderRadius.vertical(
+              bottom: Radius.circular(MoeSmoothRadii.sm),
+            ),
             padding: const EdgeInsets.fromLTRB(
               MoeSpacing.md,
               0,
               MoeSpacing.md,
               MoeSpacing.md,
             ),
-            decoration: BoxDecoration(
-              color: colors.componentBackground,
-              borderRadius: const BorderRadius.vertical(
-                bottom: Radius.circular(MoeSmoothRadii.sm),
-              ),
-            ),
-            child: SelectableText(
-              previewText,
-              style: TextStyle(
-                color: colors.text.withOpacity(0.8),
-                fontSize: 12,
-                height: 1.6,
-                fontFamily: 'monospace',
+            child: SizedBox(
+              width: double.infinity,
+              child: SelectableText(
+                previewText,
+                style: TextStyle(
+                  color: colors.text.withValues(alpha: 0.8),
+                  fontSize: 12,
+                  height: 1.6,
+                  fontFamily: 'monospace',
+                ),
               ),
             ),
           ),
@@ -354,33 +356,21 @@ class _ArtistPresetPageState extends ConsumerState<ArtistPresetPage> {
     String initial = '',
   }) async {
     final controller = TextEditingController(text: initial);
-    final result = await showDialog<String>(
+    final confirmed = await showMeoTalkDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: InputDecoration(
-            hintText: hintText,
-            border: const OutlineInputBorder(),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
-            child: const Text('确定'),
-          ),
-        ],
+      title: title,
+      cancelText: '取消',
+      confirmText: '确定',
+      content: MoeTextField(
+        controller: controller,
+        autofocus: true,
+        hint: hintText,
       ),
     );
+    final text = controller.text.trim();
     WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
-    if (result == null || result.trim().isEmpty) return null;
-    return result.trim();
+    if (confirmed != true || text.isEmpty) return null;
+    return text;
   }
 }
 
@@ -501,12 +491,9 @@ class _ArtistPresetEditorPageState
     required TextEditingController controller,
   }) {
     final colors = context.moeColors;
-    return Container(
+    return MoeContentSurface(
+      radius: MoeSmoothRadii.sm,
       padding: const EdgeInsets.all(MoeSpacing.sm),
-      decoration: BoxDecoration(
-        color: colors.componentBackground,
-        borderRadius: BorderRadius.circular(MoeSmoothRadii.sm),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

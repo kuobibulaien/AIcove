@@ -37,7 +37,7 @@ class WebSearchPluginDetailPage extends ConsumerWidget {
                   MoeSettingsRow(
                     key: const ValueKey('web-search-replace-builtin'),
                     label: '关闭模型内置搜索，改用此工具',
-                    subtitle: '开启后，请求会去掉厂商自带的联网搜索参数，统一由下方供应商搜索',
+                    subtitle: '统一使用下方供应商搜索',
                     trailingType: MoeSettingsRowTrailing.switchControl,
                     switchValue: config.replaceModelBuiltinSearch,
                     onSwitchChanged: (value) => _guard(
@@ -97,8 +97,7 @@ class WebSearchPluginDetailPage extends ConsumerWidget {
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 child: Text(
-                  '供应商按列表顺序使用，前一家失败自动换下一家，长按拖动调整顺序。'
-                  '需要所用模型支持工具调用；角色可在「插件」里单独开关。',
+                  '按列表顺序使用，长按拖动可调整顺序。',
                   style: TextStyle(
                     color: colors.textSecondary,
                     fontSize: 13,

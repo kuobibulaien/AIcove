@@ -112,8 +112,7 @@ class OpenAIAdapter implements ProviderAdapter {
     }
     final thinkingLevel = options.thinkingLevel;
     if (thinkingLevel != null) {
-      final effort = _reasoningEffortFor(thinkingLevel, options.thinkingScheme);
-      if (effort != null) body['reasoning_effort'] = effort;
+      _applyThinking(body, thinkingLevel, options.thinkingScheme);
       return;
     }
     final reasoningEffort = options.reasoningEffort?.trim();
@@ -124,18 +123,40 @@ class OpenAIAdapter implements ProviderAdapter {
     }
   }
 
+  /// 档位 → 请求体。`thinkingToggle` 与 `qwenToggle` 用各自的开关字段关思考，
+  /// 其余方案只写 `reasoning_effort`。
+  void _applyThinking(
+    Map<String, dynamic> body,
+    ThinkingLevel level,
+    ThinkingScheme? scheme,
+  ) {
+    if (!level.isConcrete) return;
+    switch (scheme) {
+      case ThinkingScheme.thinkingToggle:
+        body['thinking'] = {'type': level.isOff ? 'disabled' : 'enabled'};
+        if (!level.isOff) {
+          body['reasoning_effort'] = _reasoningEffortFor(level, scheme)!;
+        }
+      case ThinkingScheme.qwenToggle:
+        body['enable_thinking'] = !level.isOff;
+      default:
+        final effort = _reasoningEffortFor(level, scheme);
+        if (effort != null) body['reasoning_effort'] = effort;
+    }
+  }
+
   /// 档位 → `reasoning_effort`。返回 null 表示不发该字段。
   String? _reasoningEffortFor(ThinkingLevel level, ThinkingScheme? scheme) {
-    final isGeneric = scheme == null || scheme == ThinkingScheme.generic;
+    final isNative = scheme == ThinkingScheme.openaiEffort;
     return switch (level) {
-      ThinkingLevel.auto => null,
+      ThinkingLevel.auto || ThinkingLevel.lowest => null,
       ThinkingLevel.off => 'none',
       ThinkingLevel.minimal => 'minimal',
       ThinkingLevel.low => 'low',
       ThinkingLevel.medium => 'medium',
       ThinkingLevel.high => 'high',
-      ThinkingLevel.xhigh => isGeneric ? 'high' : 'xhigh',
-      ThinkingLevel.max => isGeneric ? 'high' : 'max',
+      ThinkingLevel.xhigh => isNative ? 'xhigh' : 'high',
+      ThinkingLevel.max => isNative ? 'max' : 'high',
     };
   }
 
@@ -143,10 +164,12 @@ class OpenAIAdapter implements ProviderAdapter {
   ApiCallResult parseResponse(Map<String, dynamic> response) {
     String text = '';
     final toolCalls = <ToolCall>[];
+    String? rawFinishReason;
 
     final choices = (response['choices'] as List?) ?? const [];
     if (choices.isNotEmpty) {
       final first = choices.first as Map<String, dynamic>;
+      rawFinishReason = first['finish_reason']?.toString();
       final msg = (first['message'] as Map<String, dynamic>?) ??
           const <String, dynamic>{};
       text = _extractText(msg['content']);
@@ -179,6 +202,7 @@ class OpenAIAdapter implements ProviderAdapter {
       toolResults: const [],
       toolCalls: toolCalls,
       rawResponse: response,
+      rawFinishReason: rawFinishReason,
     );
   }
 

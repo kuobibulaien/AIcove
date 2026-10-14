@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/utils/avatar_helper.dart';
 import '../../../../ui/shared/effects/frosted_glass_card.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
+import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/theme/tokens.dart';
 import 'edit_section_title.dart';
 
@@ -87,19 +88,21 @@ class CharacterImageSection extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: OutlinedButton.icon(
+                child: MoeSecondaryButton(
                   onPressed: onPick,
-                  icon: const Icon(Icons.photo_library_outlined),
-                  label: Text(hasCharacterImage ? '更换立绘' : '上传立绘'),
+                  icon: Icons.photo_library_outlined,
+                  label: hasCharacterImage ? '更换立绘' : '上传立绘',
+                  size: MoeSecondaryButtonSize.sm,
                 ),
               ),
               if (hasCharacterImage) ...[
                 const SizedBox(width: 8),
                 Expanded(
-                  child: OutlinedButton.icon(
+                  child: MoeSecondaryButton(
                     onPressed: onClear,
-                    icon: const Icon(Icons.close),
-                    label: const Text('清空立绘'),
+                    icon: Icons.close,
+                    label: '清空立绘',
+                    size: MoeSecondaryButtonSize.sm,
                   ),
                 ),
               ],

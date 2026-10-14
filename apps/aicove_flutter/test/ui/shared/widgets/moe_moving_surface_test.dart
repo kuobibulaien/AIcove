@@ -28,15 +28,26 @@ Widget _app(Widget child, {bool dark = false, bool liquid = true}) =>
       home: Scaffold(body: child),
     );
 
-void _expectSolid(Finder root) {
-  expect(
-    find.descendant(of: root, matching: find.byType(AdaptiveGlass)),
-    findsNothing,
-  );
-  expect(
-    find.descendant(of: root, matching: find.byType(BackdropFilter)),
-    findsNothing,
-  );
+// Scrolling surfaces keep the global material: frosted keeps its blur and
+// liquid switches to the scroll-safe standard shader instead of premium.
+void _expectScrollMaterial(Finder root, {required bool liquid}) {
+  final glass = find.descendant(of: root, matching: find.byType(AdaptiveGlass));
+  if (!liquid) {
+    expect(glass, findsNothing);
+    expect(
+      find.descendant(of: root, matching: find.byType(BackdropFilter)),
+      findsWidgets,
+    );
+    return;
+  }
+  _expectStandardGlass(glass);
+}
+
+void _expectStandardGlass(Finder glass) {
+  expect(glass, findsWidgets);
+  for (final element in glass.evaluate()) {
+    expect((element.widget as AdaptiveGlass).quality, GlassQuality.standard);
+  }
 }
 
 void main() {
@@ -64,7 +75,7 @@ void main() {
     for (final dark in [false, true]) {
       for (final liquid in [false, true]) {
         testWidgets(
-          'moving controls are solid before and during scroll $width $dark $liquid',
+          'scrolling controls keep the global material $width $dark $liquid',
           (tester) async {
             tester.view.devicePixelRatio = 1;
             tester.view.physicalSize = Size(width, 640);
@@ -137,7 +148,7 @@ void main() {
               ),
             );
             await tester.pumpAndSettle();
-            _expectSolid(find.byKey(list));
+            _expectScrollMaterial(find.byKey(list), liquid: liquid);
             await tester.tap(find.text('收藏'));
             expect(selected, 1);
             await tester.tap(find.text('操作'));
@@ -160,7 +171,7 @@ void main() {
               tester.getTopLeft(find.byType(MoeToggleBar<int>)).dy,
               lessThan(before.dy),
             );
-            _expectSolid(find.byKey(list));
+            _expectScrollMaterial(find.byKey(list), liquid: liquid);
             expect(tester.state(find.byType(MoeTextField)), same(fieldState));
             expect(find.text('保留草稿'), findsOneWidget);
             expect(
@@ -227,7 +238,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('sliver and horizontal scrolling surfaces are solid', (
+  testWidgets('sliver and horizontal scrolling surfaces use standard glass', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -249,7 +260,12 @@ void main() {
         ),
       ),
     );
-    _expectSolid(find.byType(CustomScrollView));
+    _expectStandardGlass(
+      find.descendant(
+        of: find.byType(CustomScrollView),
+        matching: find.byType(AdaptiveGlass),
+      ),
+    );
   });
 
   for (final dark in [false, true]) {
@@ -264,9 +280,6 @@ void main() {
           addTearDown(controller.dispose);
           final capture = GlobalKey();
           const background = Color(0xff607d8b);
-          final surface = dark
-              ? MoeColors.dark().componentBackground
-              : MoeColors.light().componentBackground;
           await tester.pumpWidget(
             _app(
               RepaintBoundary(
@@ -326,9 +339,9 @@ void main() {
             for (final x in [90, 150, 210]) {
               expect(
                 pixel(x, 75),
-                surface,
+                isNot(background),
                 reason:
-                    'The new position must contain the solid surface immediately.',
+                    'The new position must contain the surface immediately.',
               );
               expect(
                 pixel(x, 165),
@@ -345,7 +358,7 @@ void main() {
     }
   }
 
-  testWidgets('draggable sheet and nested controls remain solid during drag', (
+  testWidgets('draggable sheet and nested controls use standard glass during drag', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -367,7 +380,7 @@ void main() {
     );
     await tester.tap(find.text('打开'));
     await tester.pumpAndSettle();
-    _expectSolid(find.byType(MoeBottomSheet));
+    _expectScrollMaterial(find.byType(MoeBottomSheet), liquid: true);
     final before = tester.getTopLeft(find.byType(MoeBottomSheet));
     final gesture = await tester.startGesture(before + const Offset(100, 12));
     await gesture.moveBy(const Offset(0, 20));
@@ -378,17 +391,17 @@ void main() {
       tester.getTopLeft(find.byType(MoeBottomSheet)).dy,
       greaterThan(before.dy),
     );
-    _expectSolid(find.byType(MoeBottomSheet));
+    _expectScrollMaterial(find.byType(MoeBottomSheet), liquid: true);
     await gesture.up();
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('slider follower never samples a moving glass backdrop', (
+  testWidgets('slider follower uses standard glass in liquid mode', (
     tester,
   ) async {
     await tester.pumpWidget(_app(MoeSlider(value: .5, onChanged: (_) {})));
-    _expectSolid(find.byType(MoeSlider));
+    _expectScrollMaterial(find.byType(MoeSlider), liquid: true);
   });
 
   testWidgets('reorder overlay retains solid controls outside the viewport', (
@@ -412,14 +425,16 @@ void main() {
         ),
       ),
     );
-    expect(find.byType(AdaptiveGlass), findsNothing);
+    _expectStandardGlass(find.byType(AdaptiveGlass));
+    expect(find.byType(AdaptiveGlass), findsNWidgets(4));
     final gesture = await tester.startGesture(
       tester.getCenter(find.text('项目 0')),
     );
     await tester.pump(const Duration(milliseconds: 600));
     await gesture.moveBy(const Offset(0, 110));
     await tester.pump();
-    expect(find.byType(AdaptiveGlass), findsNothing);
+    // Stationary items keep standard glass; the dragged proxy in Overlay is solid.
+    expect(find.byType(AdaptiveGlass), findsNWidgets(3));
     expect(find.byType(BackdropFilter), findsNothing);
     await gesture.up();
     await tester.pumpAndSettle();

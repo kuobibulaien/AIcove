@@ -1,8 +1,9 @@
 part of 'chat_send_api_runner.dart';
 
+String _unredacted(String text) => text;
+
 Future<_ToolExecutionOutcome> _executeToolCall({
   required ToolCall toolCall,
-  required List<Plugin> effectivePlugins,
   List<AITool>? availableTools,
   required Duration toolTimeout,
   required CallFlowSettings flowSettings,
@@ -15,6 +16,9 @@ Future<_ToolExecutionOutcome> _executeToolCall({
   required TraceContext? traceContext,
   required int round,
   required bool useFastToolRoute,
+  // Applied to tool output before it reaches logs and traces; the kernel
+  // runner passes the run's secret redactor (2d review).
+  String Function(String text) redactForLog = _unredacted,
 }) async {
   final startedAt = DateTime.now();
   if (traceContext != null) {
@@ -42,11 +46,7 @@ Future<_ToolExecutionOutcome> _executeToolCall({
     'toolCallId': toolCall.id,
   };
   try {
-    final tool = _findToolByName(
-      effectivePlugins,
-      toolCall.name,
-      availableTools: availableTools,
-    );
+    final tool = _findToolByName(toolCall.name, availableTools);
     if (tool == null) {
       AppLogger.warning(
         ChatSendApiRunner._logTag,
@@ -89,7 +89,7 @@ Future<_ToolExecutionOutcome> _executeToolCall({
     finishMeta['rawResultLength'] = resultStr.length;
     AppLogger.info(ChatSendApiRunner._logTag, '工具调用完成', metadata: {
       'name': toolCall.name,
-      'result': resultStr,
+      'result': redactForLog(resultStr),
     });
 
     if (toolCall.name == 'speak') {
@@ -184,10 +184,10 @@ Future<_ToolExecutionOutcome> _executeToolCall({
     );
   } catch (e) {
     finishedStatus = TraceEventStatus.failed;
-    finishMeta['error'] = e.toString();
+    finishMeta['error'] = redactForLog(e.toString());
     AppLogger.error(ChatSendApiRunner._logTag, '工具调用失败', metadata: {
       'name': toolCall.name,
-      'error': e.toString(),
+      'error': redactForLog(e.toString()),
     });
     return _ToolExecutionOutcome(
       toolResult: ToolResult(
@@ -216,31 +216,10 @@ Future<_ToolExecutionOutcome> _executeToolCall({
   }
 }
 
-AITool? _findToolByName(
-  List<Plugin> plugins,
-  String name, {
-  List<AITool>? availableTools,
-}) {
-  if (availableTools != null) {
-    for (final tool in availableTools) {
-      if (tool.name == name) return tool;
-    }
-    return null;
-  }
-
-  for (final plugin in plugins) {
-    try {
-      final tools = plugin.getTools();
-      for (final tool in tools) {
-        if (tool.name == name) return tool;
-      }
-    } catch (e) {
-      AppLogger.warning(ChatSendApiRunner._logTag, '插件工具查找失败', metadata: {
-        'pluginId': plugin.id,
-        'toolName': name,
-        'error': e.toString(),
-      });
-    }
+/// Looks up [name] among the tools offered for this request only.
+AITool? _findToolByName(String name, List<AITool>? availableTools) {
+  for (final tool in availableTools ?? const <AITool>[]) {
+    if (tool.name == name) return tool;
   }
   return null;
 }

@@ -127,7 +127,7 @@ void main() {
       greaterThan(viewSize.height * 0.6),
       reason: '预览区应占据一半以上的高度',
     );
-    expect(find.text('更换图片'), findsOneWidget);
+    expect(find.text('编辑壁纸'), findsOneWidget);
     expect(find.text('样式'), findsOneWidget);
     expect(find.text('发送消息自动回底'), findsNothing);
     expect(tester.takeException(), isNull);
@@ -155,7 +155,7 @@ void main() {
     final key = await pumpPage(tester, conversation(), settings: settings);
     await tester.tap(find.text('行为'));
     await tester.pumpAndSettle();
-    expect(find.text('更换图片'), findsNothing);
+    expect(find.text('编辑壁纸'), findsNothing);
     expect(settings.settings.autoScrollOnSend, isTrue);
     await shot(tester, key, 'chat-interface-behavior');
 

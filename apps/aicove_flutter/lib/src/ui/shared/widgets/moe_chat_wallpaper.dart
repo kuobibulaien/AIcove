@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../theme/moe_wallpaper.dart';
+import 'moe_wallpaper_view.dart';
 
 /// Default background shared by the workspace and conversations: the global
 /// wallpaper when one is chosen, otherwise the plain scaffold color.
@@ -45,27 +46,18 @@ class MoeGlobalWallpaper extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = MoeWallpaperTheme.maybeOf(context);
-    final image = theme?.imageFor(slot, Theme.of(context).brightness);
-    final mask = theme?.maskOpacity ?? 0;
-    return ColoredBox(
+    final source = theme?.sourceFor(slot, Theme.of(context).brightness);
+    if (theme == null || source == null) {
+      return ColoredBox(color: color, child: child);
+    }
+    final wallpaper = MoeWallpaperView(
+      source: source,
+      style: theme.style,
       color: color,
-      child: image == null
-          ? child
-          : Stack(
-              fit: StackFit.expand,
-              children: [
-                Image(
-                  image: image,
-                  key: ValueKey(image),
-                  fit: BoxFit.cover,
-                  gaplessPlayback: true,
-                  filterQuality: FilterQuality.medium,
-                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                ),
-                if (mask > 0) ColoredBox(color: color.withValues(alpha: mask)),
-                ?child,
-              ],
-            ),
+      fallbackAlignment: theme.wallpaper.alignment,
     );
+    return child == null
+        ? wallpaper
+        : Stack(fit: StackFit.expand, children: [wallpaper, child!]);
   }
 }

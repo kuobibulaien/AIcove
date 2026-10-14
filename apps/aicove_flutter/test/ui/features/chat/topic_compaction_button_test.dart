@@ -72,15 +72,17 @@ void main() {
         overrides: [manualCompactionProvider.overrideWithValue(port)],
         child: MaterialApp(
             home: Scaffold(
-                appBar: AppBar(actions: [
-          TopicCompactionButton(ownerId: 'a', isGenerating: generating)
-        ])))));
-    if (!generating) await tester.tap(find.byTooltip('压缩并开启新话题'));
+                body: Consumer(
+                    builder: (context, ref, _) => TextButton(
+                        onPressed: () => showTopicCompactionDialog(context, ref,
+                            ownerId: 'a', isGenerating: generating),
+                        child: const Text('打开压缩')))))));
+    await tester.tap(find.text('打开压缩'));
     await tester.pumpAndSettle();
   }
 
   for (final width in [360.0, 1000.0]) {
-    testWidgets('$width：真实右上角入口，摘要预览/编辑/保存，提示会整理长期记忆', (tester) async {
+    testWidgets('$width：更多菜单入口，摘要预览/编辑/保存，提示会整理长期记忆', (tester) async {
       await tester.binding.setSurfaceSize(Size(width, 850));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       final port = _Port();
@@ -134,10 +136,12 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('生成中禁用右上角压缩入口', (tester) async {
+  testWidgets('生成中只提示不打开压缩弹窗', (tester) async {
     await open(tester, _Port(), generating: true);
-    expect(
-        tester.widget<IconButton>(find.byType(IconButton)).onPressed, isNull);
+    expect(find.byType(TopicCompactionDialog), findsNothing);
+    expect(find.text('请等本轮回复结束后再压缩。'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
   });
 
   testWidgets('弹窗复用为 B，A 的迟到摘要不能回填或保存', (tester) async {

@@ -2,6 +2,7 @@ library;
 
 import 'dart:async';
 import 'package:aicove_agent_kernel/aicove_agent_kernel.dart' as kernel;
+import '../../agent_context/domain/preset_script_runtime.dart';
 import '../../agent_context/infrastructure/quickjs_preset_runtime.dart';
 import '../../context/domain/context_window_policy.dart';
 import '../../../core/media/media_resolver.dart';
@@ -10,6 +11,8 @@ import 'dart:io';
 import '../../../core/models/image_generation_snapshot.dart';
 
 import '../../plugins/domain/handlers/ai_tool.dart';
+import '../../agent_plugins/plugin_response.dart';
+import '../../agent_plugins/tool_policy.dart';
 import '../../plugins/domain/plugin.dart';
 import '../../plugins/domain/plugin_content.dart';
 import '../../../core/api/agent_api.dart';
@@ -72,7 +75,7 @@ class ChatSendApiRunner implements ApiRunner {
     required ApiConfig config,
     required String sessionId,
     required String? userText,
-    required List<Plugin> effectivePlugins,
+    required List<PluginResponseProcessor> responseProcessors,
     List<AITool>? availableTools,
     String? turnId,
     TraceLogger? trace,
@@ -87,14 +90,13 @@ class ChatSendApiRunner implements ApiRunner {
   }) async {
     final presetRuntime = config.presetScript == null
         ? null
-        : await QuickJsPresetRuntime.open(config.presetScript!);
+        : await (config.openPresetRuntime ?? QuickJsPresetRuntime.open)(
+            config.presetScript!,
+          );
     try {
       availableTools ??= config.boundTools;
       if (presetRuntime?.businessTools.isNotEmpty ?? false) {
-        availableTools = [
-          ...availableTools ??
-              effectivePlugins.expand((plugin) => plugin.getTools()),
-        ];
+        availableTools = [...?availableTools];
       }
       final requestTools = [...?config.tools, ...?presetRuntime?.tools];
       final toolNames = <String>{};
@@ -364,7 +366,6 @@ class ChatSendApiRunner implements ApiRunner {
               temperature: config.effectiveTemperature,
               topP: config.modelTopP,
               token: config.settings.backendApiKey,
-              toolPrefs: config.toolPrefs,
               providerApiBase: config.providerApiBase,
               providerApiKey: config.providerApiKey,
               customConfig: config.customConfig,
@@ -403,7 +404,6 @@ class ChatSendApiRunner implements ApiRunner {
                   temperature: config.effectiveTemperature,
                   topP: config.modelTopP,
                   token: config.settings.backendApiKey,
-                  toolPrefs: config.toolPrefs,
                   providerApiBase: config.providerApiBase,
                   providerApiKey: config.providerApiKey,
                   customConfig: config.customConfig,
@@ -544,6 +544,7 @@ class ChatSendApiRunner implements ApiRunner {
                   lastRich.toolCalls[i],
             ],
             hiddenThoughtParts: lastRich.hiddenThoughtParts,
+            rawFinishReason: lastRich.rawFinishReason,
           );
         }
         roundTrace?.note(
@@ -668,7 +669,6 @@ class ChatSendApiRunner implements ApiRunner {
             for (final tc in currentToolCalls)
               _executeToolCall(
                 toolCall: tc,
-                effectivePlugins: effectivePlugins,
                 availableTools: availableTools,
                 toolTimeout: toolTimeout,
                 flowSettings: flowSettings,
@@ -691,7 +691,6 @@ class ChatSendApiRunner implements ApiRunner {
           for (final tc in currentToolCalls) {
             final outcome = await _executeToolCall(
               toolCall: tc,
-              effectivePlugins: effectivePlugins,
               availableTools: availableTools,
               toolTimeout: toolTimeout,
               flowSettings: flowSettings,
@@ -946,9 +945,10 @@ class ChatSendApiRunner implements ApiRunner {
       apiCallTrace?.end(additionalMessage: 'API调用成功');
 
       final pluginTrace = trace?.startChild('运行插件');
-      final pluginResult = await _processResponseWithPlugins(
-        effectivePlugins,
+      final pluginResult = await runResponseProcessors(
+        responseProcessors,
         finalAssistantText,
+        logTag: _logTag,
       );
 
       pluginTrace?.note(
@@ -1052,39 +1052,5 @@ class ChatSendApiRunner implements ApiRunner {
     } finally {
       await presetRuntime?.close();
     }
-  }
-
-  Future<PluginProcessResult> _processResponseWithPlugins(
-    List<Plugin> plugins,
-    String text,
-  ) async {
-    if (plugins.isEmpty) {
-      return PluginProcessResult(processedText: text, events: const []);
-    }
-
-    String currentText = text;
-    final allEvents = <PluginEvent>[];
-    final allContents = <PluginContent>[];
-
-    for (final plugin in plugins) {
-      try {
-        final result = await plugin.processResponse(currentText);
-        currentText = result.processedText;
-        allEvents.addAll(result.events);
-        allContents.addAll(result.contents);
-      } catch (e) {
-        AppLogger.warning(
-          _logTag,
-          '插件响应处理失败',
-          metadata: {'pluginId': plugin.id, 'error': e.toString()},
-        );
-      }
-    }
-
-    return PluginProcessResult(
-      processedText: currentText,
-      events: allEvents,
-      contents: allContents,
-    );
   }
 }

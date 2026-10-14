@@ -9,11 +9,13 @@ import '../app_logger.dart';
 import '../utils/content_normalizer.dart';
 import 'image_providers/image_provider_adapter.dart';
 import 'image_providers/image_provider_adapter_factory.dart';
+import 'providers/finish_reason.dart';
 import 'providers/google_api_mode.dart';
 import 'providers/provider_chat_api_path.dart';
 import 'providers/provider_adapter_factory.dart';
 import 'providers/provider_extra_body.dart';
 import 'providers/builtin_web_search_suppressor.dart';
+import 'thinking/thinking_fallback.dart';
 import 'providers/provider_adapter.dart'
     show ProviderAdapter, ProviderChatRequestOptions, ToolCall;
 import '../../features/observability/trace_models.dart';
@@ -30,13 +32,19 @@ class SendMessageRichResult {
   final List<Map<String, dynamic>> hiddenThoughtParts;
   final Map<String, dynamic>? rawResponse; // 原始响应（用于两回合工具调用）
 
+  /// 供应商原样的结束原因；未提供时为 null。
+  final String? rawFinishReason;
+
   const SendMessageRichResult({
     required this.text,
     required this.toolResults,
     this.toolCalls = const [],
     this.hiddenThoughtParts = const [],
     this.rawResponse,
+    this.rawFinishReason,
   });
+
+  FinishReason? get finishReason => normalizeFinishReason(rawFinishReason);
 
   /// 是否有待执行的工具调用
   bool get hasToolCalls => toolCalls.isNotEmpty;
@@ -106,38 +114,6 @@ class AgentApiClient {
     final base = resolvedApiBase();
     final p = path.startsWith('/') ? path : '/$path';
     return Uri.parse('$base$p');
-  }
-
-  Future<Map<String, dynamic>> _postJson(String path, Map<String, dynamic> body,
-      {Map<String, String>? headers}) async {
-    final uri = _uri(path);
-    final payload = jsonEncode(body);
-    final sw = Stopwatch()..start();
-    final res = await _client
-        .post(
-          uri,
-          headers: {
-            'Content-Type': 'application/json',
-            ...?headers,
-          },
-          body: payload,
-        )
-        .timeout(timeout);
-    sw.stop();
-    ApiLogger.add(ApiLogEntry(
-      time: DateTime.now(),
-      method: 'POST',
-      url: uri.toString(),
-      status: res.statusCode,
-      durationMs: sw.elapsedMilliseconds,
-      requestBody: ApiLogger.safeSnippet(payload),
-      responseBody: ApiLogger.safeSnippet(utf8.decode(res.bodyBytes)),
-      ok: res.statusCode >= 200 && res.statusCode < 300,
-    ));
-    if (res.statusCode >= 200 && res.statusCode < 300) {
-      return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
-    }
-    throw Exception('HTTP ${res.statusCode}: ${res.body}');
   }
 
   Future<Map<String, dynamic>> getModels({String? token}) async {
@@ -706,88 +682,6 @@ class AgentApiClient {
     return requestSentAt;
   }
 
-  Future<String> sendMessage({
-    required String agentId,
-    required String sessionId,
-    required String modelFullId, // e.g. openai:gpt-4o-mini
-    required List<Map<String, dynamic>> messages,
-    required String userText,
-    double? temperature,
-    String? token,
-    Map<String, dynamic>? toolPrefs,
-    String? providerApiBase,
-    String? providerApiKey,
-  }) async {
-    final hdrs = token != null && token.trim().isNotEmpty
-        ? {'Authorization': 'Bearer ${token.trim()}'}
-        : null;
-
-    // 1) 优先走统一 /v1/messages 端点
-    try {
-      final data = await _postJson(
-          '/v1/messages',
-          {
-            'model': modelFullId,
-            'messages': messages,
-            if (temperature != null) 'temperature': temperature,
-            'stream': false,
-            if (providerApiBase != null && providerApiBase.trim().isNotEmpty)
-              'api_base': providerApiBase.trim(),
-            if (providerApiKey != null && providerApiKey.trim().isNotEmpty)
-              'api_key': providerApiKey.trim(),
-          },
-          headers: hdrs);
-      final content = (data['content'] as List?) ?? const [];
-      if (content.isNotEmpty) {
-        final first = content.first as Map<String, dynamic>;
-        final text = first['text'] as String?;
-        if (text != null) return text;
-      }
-      return (data['text'] as String?) ?? data.toString();
-    } catch (e) {
-      // 422 或 404 等情况，自动回退到 /api/chat（YAGNI：只做必要兜底）
-    }
-
-    // 2) 回退到 /api/chat 端点
-    String provider = 'openai';
-    String model = modelFullId;
-    final idx = modelFullId.indexOf(':');
-    if (idx > 0) {
-      provider = modelFullId.substring(0, idx);
-      model = modelFullId.substring(idx + 1);
-    }
-
-    // 将多模态对象化的 messages 压平为 {role, content(String)}
-    final history = <Map<String, String>>[
-      for (final m in messages)
-        {
-          'role': (m['role'] as String? ?? 'user'),
-          'content': ContentNormalizer.coerceToText(m['content']),
-        }
-    ];
-
-    final payload = <String, dynamic>{
-      'user_id': agentId,
-      'session_id': sessionId,
-      'message': userText,
-      'history': history,
-      'provider': provider,
-      'model': model,
-      if (toolPrefs != null && toolPrefs.isNotEmpty) 'tool_prefs': toolPrefs,
-    };
-    final trimmedBase = providerApiBase?.trim();
-    if (trimmedBase != null && trimmedBase.isNotEmpty) {
-      payload['api_base'] = trimmedBase;
-    }
-    final trimmedKey = providerApiKey?.trim();
-    if (trimmedKey != null && trimmedKey.isNotEmpty) {
-      payload['api_key'] = trimmedKey;
-    }
-
-    final data = await _postJson('/api/chat', payload, headers: hdrs);
-    return (data['text'] as String?) ?? data.toString();
-  }
-
   Future<SendMessageRichResult> sendMessageRich({
     required String agentId,
     required String sessionId,
@@ -797,7 +691,6 @@ class AgentApiClient {
     double? temperature,
     double? topP, // 核采样参数
     String? token,
-    Map<String, dynamic>? toolPrefs,
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
@@ -808,25 +701,52 @@ class AgentApiClient {
     int? roundIndex,
     String? traceId,
   }) {
-    return _directChatSupport.sendMessageRich(
-      agentId: agentId,
-      sessionId: sessionId,
+    return _withThinkingFallback(
       modelFullId: modelFullId,
-      messages: messages,
-      userText: userText,
-      temperature: temperature,
-      topP: topP,
-      token: token,
-      toolPrefs: toolPrefs,
-      providerApiBase: providerApiBase,
-      providerApiKey: providerApiKey,
-      customConfig: customConfig,
-      tools: tools,
       requestOptions: requestOptions,
-      trace: trace,
-      turnId: turnId,
-      roundIndex: roundIndex,
-      traceId: traceId,
+      send: (options) => _directChatSupport.sendMessageRich(
+        agentId: agentId,
+        sessionId: sessionId,
+        modelFullId: modelFullId,
+        messages: messages,
+        userText: userText,
+        temperature: temperature,
+        topP: topP,
+        token: token,
+        providerApiBase: providerApiBase,
+        providerApiKey: providerApiKey,
+        customConfig: customConfig,
+        tools: tools,
+        requestOptions: options,
+        trace: trace,
+        turnId: turnId,
+        roundIndex: roundIndex,
+        traceId: traceId,
+      ),
+    );
+  }
+
+  /// 「最低」思考档：上游拒绝当前档位时换下一档重发（流式请求在收到
+  /// 非 2xx 时尚未输出任何增量，重发不会重复显示）。
+  Future<SendMessageRichResult> _withThinkingFallback({
+    required String modelFullId,
+    required ProviderChatRequestOptions? requestOptions,
+    required Future<SendMessageRichResult> Function(
+      ProviderChatRequestOptions? options,
+    ) send,
+  }) {
+    return runWithThinkingFallback(
+      modelFullId: modelFullId,
+      options: requestOptions,
+      send: send,
+      onFallback: (rejected, next, error) => AppLogger.warning(
+        'AgentApiClient',
+        '上游拒绝思考档位 ${rejected.name}，改用 ${next.name} 重试',
+        metadata: {
+          'model': modelFullId,
+          'error': ApiLogger.safeSnippet(error.toString(), max: 400),
+        },
+      ),
     );
   }
 
@@ -844,7 +764,6 @@ class AgentApiClient {
     double? temperature,
     double? topP,
     String? token,
-    Map<String, dynamic>? toolPrefs,
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
@@ -858,135 +777,32 @@ class AgentApiClient {
     int? roundIndex,
     String? traceId,
   }) {
-    return _streamSupport.sendMessageRichStream(
-      agentId: agentId,
-      sessionId: sessionId,
+    return _withThinkingFallback(
       modelFullId: modelFullId,
-      messages: messages,
-      userText: userText,
-      temperature: temperature,
-      topP: topP,
-      token: token,
-      toolPrefs: toolPrefs,
-      providerApiBase: providerApiBase,
-      providerApiKey: providerApiKey,
-      customConfig: customConfig,
-      tools: tools,
       requestOptions: requestOptions,
-      onTextDelta: onTextDelta,
-      onToolCallsDetected: onToolCallsDetected,
-      onToolCallProgress: onToolCallProgress,
-      trace: trace,
-      turnId: turnId,
-      roundIndex: roundIndex,
-      traceId: traceId,
+      send: (options) => _streamSupport.sendMessageRichStream(
+        agentId: agentId,
+        sessionId: sessionId,
+        modelFullId: modelFullId,
+        messages: messages,
+        userText: userText,
+        temperature: temperature,
+        topP: topP,
+        token: token,
+        providerApiBase: providerApiBase,
+        providerApiKey: providerApiKey,
+        customConfig: customConfig,
+        tools: tools,
+        requestOptions: options,
+        onTextDelta: onTextDelta,
+        onToolCallsDetected: onToolCallsDetected,
+        onToolCallProgress: onToolCallProgress,
+        trace: trace,
+        turnId: turnId,
+        roundIndex: roundIndex,
+        traceId: traceId,
+      ),
     );
-  }
-
-  /// 流式发送消息（支持分块），返回消息块流
-  ///
-  /// 应用原则：
-  /// - KISS: 简单的 SSE 解析，只处理必要的字段
-  /// - SOLID: 职责单一，只负责接收和解析 SSE 流
-  Stream<Map<String, dynamic>> sendMessageStream({
-    required String agentId,
-    required String sessionId,
-    required String modelFullId,
-    required List<Map<String, dynamic>> messages,
-    required String userText,
-    double? temperature,
-    String? token,
-    Map<String, dynamic>? toolPrefs,
-    String? providerApiBase,
-    String? providerApiKey,
-  }) async* {
-    final uri = _uri('/api/chat/stream');
-
-    // 构建请求体（与 sendMessageRich 类似）
-    String provider = 'openai';
-    String model = modelFullId;
-    final idx = modelFullId.indexOf(':');
-    if (idx > 0) {
-      provider = modelFullId.substring(0, idx);
-      model = modelFullId.substring(idx + 1);
-    }
-
-    final history = <Map<String, String>>[
-      for (final m in messages)
-        {
-          'role': (m['role'] as String? ?? 'user'),
-          'content': ContentNormalizer.coerceToText(m['content']),
-        }
-    ];
-
-    final payload = <String, dynamic>{
-      'user_id': agentId,
-      'session_id': sessionId,
-      'message': userText,
-      'history': history,
-      'provider': provider,
-      'model': model,
-      if (toolPrefs != null && toolPrefs.isNotEmpty) 'tool_prefs': toolPrefs,
-    };
-
-    final trimmedBase = providerApiBase?.trim();
-    if (trimmedBase != null && trimmedBase.isNotEmpty) {
-      payload['api_base'] = trimmedBase;
-    }
-    final trimmedKey = providerApiKey?.trim();
-    if (trimmedKey != null && trimmedKey.isNotEmpty) {
-      payload['api_key'] = trimmedKey;
-    }
-
-    final hdrs = <String, String>{
-      'Content-Type': 'application/json',
-      'Accept': 'text/event-stream',
-      if (token != null && token.trim().isNotEmpty)
-        'Authorization': 'Bearer ${token.trim()}',
-    };
-
-    // 发送 SSE 请求
-    final request = http.Request('POST', uri);
-    request.headers.addAll(hdrs);
-    request.body = jsonEncode(payload);
-
-    final response = await _client.send(request).timeout(timeout);
-
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception('HTTP ${response.statusCode}');
-    }
-
-    // 解析 SSE 流
-    await for (final chunk in response.stream
-        .transform(utf8.decoder)
-        .transform(const LineSplitter())) {
-      if (chunk.isEmpty) continue;
-
-      // SSE 格式: data: {json}
-      if (chunk.startsWith('data: ')) {
-        final data = chunk.substring(6).trim();
-
-        // 结束标记
-        if (data == '[DONE]') {
-          _evt('sse:done', {'path': '/api/chat/stream'}, level: 'INFO');
-          break;
-        }
-
-        try {
-          final json = jsonDecode(data) as Map<String, dynamic>;
-          _evt(
-              'sse:event',
-              {
-                'keys': json.keys.toList(),
-                'type': json['type'],
-              },
-              level: 'DBUG');
-          yield json;
-        } catch (_) {
-          // 忽略解析错误
-        }
-      }
-    }
   }
 
   /// 同步触发器心跳（用于云端接管判定）

@@ -40,6 +40,9 @@ class KernelToolResult {
 }
 
 /// One assistant response for a round, after unpacking.
+/// Why the model stopped, normalized across providers (batch 2 plan §3.8).
+enum FinishReason { stop, toolCalls, length, contentFilter, unknown }
+
 class AssistantTurn {
   const AssistantTurn({
     required this.text,
@@ -47,6 +50,7 @@ class AssistantTurn {
     this.hiddenThoughtParts = const [],
     this.raw,
     this.presetConsumed = false,
+    this.finishReason,
   });
 
   final String text;
@@ -60,6 +64,9 @@ class AssistantTurn {
   /// fallback must then be skipped.
   final bool presetConsumed;
 
+  /// Null when the provider reported none.
+  final FinishReason? finishReason;
+
   AssistantTurn copyWith({
     String? text,
     List<KernelToolCall>? toolCalls,
@@ -67,6 +74,7 @@ class AssistantTurn {
     Object? raw,
     bool clearRaw = false,
     bool? presetConsumed,
+    FinishReason? finishReason,
   }) {
     return AssistantTurn(
       text: text ?? this.text,
@@ -74,6 +82,7 @@ class AssistantTurn {
       hiddenThoughtParts: hiddenThoughtParts ?? this.hiddenThoughtParts,
       raw: clearRaw ? null : (raw ?? this.raw),
       presetConsumed: presetConsumed ?? this.presetConsumed,
+      finishReason: finishReason ?? this.finishReason,
     );
   }
 }

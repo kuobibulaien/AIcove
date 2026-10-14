@@ -8,19 +8,19 @@ import 'package:http/http.dart' as http;
 import 'package:aicove_flutter/src/core/api/agent_api.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_types.dart';
-import 'package:aicove_flutter/src/features/plugins/domain/base_plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/handlers/ai_tool.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/handlers/tool_parameter.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin_content.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin_metadata.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
-import 'api_runner_variants.dart';
+import 'api_runner_variants.dart';
+import 'test_plugin_support.dart';
 
 const _tinyPngBase64 =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+cN5kAAAAASUVORK5CYII=';
 
-class _SequencedVisionDrawImagePlugin extends BasePlugin {
+class _SequencedVisionDrawImagePlugin extends TestPlugin {
   _SequencedVisionDrawImagePlugin(this.imagePaths)
       : super(
           metadata: const PluginMetadata(
@@ -397,7 +397,6 @@ void _runAll(RunnerFactory createRunner) {
       providerApiBase: 'https://api.openai.com/v1',
       providerApiKey: 'test-key',
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[
         <String, dynamic>{'role': 'user', 'content': '帮我画一只猫'},
       ],
@@ -423,9 +422,12 @@ void _runAll(RunnerFactory createRunner) {
       config: config,
       sessionId: 'conv_stable_vision_send',
       userText: '帮我画一只猫',
-      effectivePlugins: <Plugin>[
+      responseProcessors: testProcessors(<TestPlugin>[
         _SequencedVisionDrawImagePlugin(<String>[firstImage]),
-      ],
+      ]),
+      availableTools: testTools(<TestPlugin>[
+        _SequencedVisionDrawImagePlugin(<String>[firstImage]),
+      ]),
       maxRounds: 4,
     );
 
@@ -473,7 +475,6 @@ void _runAll(RunnerFactory createRunner) {
       providerApiBase: 'https://api.openai.com/v1',
       providerApiKey: 'test-key',
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[
         <String, dynamic>{'role': 'user', 'content': '帮我画一只猫'},
       ],
@@ -499,9 +500,12 @@ void _runAll(RunnerFactory createRunner) {
       config: config,
       sessionId: 'conv_stable_vision_redraw',
       userText: '帮我画一只猫',
-      effectivePlugins: <Plugin>[
+      responseProcessors: testProcessors(<TestPlugin>[
         _SequencedVisionDrawImagePlugin(<String>[firstImage, secondImage]),
-      ],
+      ]),
+      availableTools: testTools(<TestPlugin>[
+        _SequencedVisionDrawImagePlugin(<String>[firstImage, secondImage]),
+      ]),
       maxRounds: 5,
     );
 

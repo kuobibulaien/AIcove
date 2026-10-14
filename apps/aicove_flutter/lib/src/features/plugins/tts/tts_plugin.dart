@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import '../../content_tags/domain/content_tag_registry.dart';
 import '../../content_tags/domain/content_tag_spec.dart';
+import '../../agent_plugins/aicove_plugin.dart';
 import '../domain/index.dart';
 import '../../../core/app_logger.dart';
 import '../../../core/prompts/prompt_builtin_defaults.g.dart';
 import '../../../core/prompts/prompt_template_renderer.dart';
+import 'tts_agent_plugin.dart';
 import 'tts_config.dart';
 import 'tts_parser.dart';
 import 'tts_service.dart';
@@ -162,6 +164,9 @@ class TtsPlugin extends BasePlugin {
   @override
   bool get enabled => _ttsConfig.enabled;
 
+  @override
+  AicovePlugin get agentPlugin => ttsAgentPlugin(this);
+
   /// 是否已配置渠道（用于 UI 提示）
   bool get isConfigured => _requestUrl.isNotEmpty && _selectedModel != null;
 
@@ -239,7 +244,6 @@ class TtsPlugin extends BasePlugin {
   //
   // 保留代码以备将来启用（如语音优先的交互场景）
 
-  @override
   List<AITool> getTools() {
     // 暂时返回空列表，不注册 speak 工具
     return [];
@@ -330,14 +334,6 @@ class TtsPlugin extends BasePlugin {
     return prompt.replaceAll(RegExp(r'\n{3,}'), '\n\n').trim();
   }
 
-  @override
-  Future<String?> getSystemPrompt({
-    String? userMessage,
-    bool supportsToolCalling = false,
-  }) async {
-    return buildTagSemanticsPrompt();
-  }
-
   /// 判断当前是否使用 MiniMax 渠道
   bool _isMinimaxProvider() {
     // 方式1：通过 requestFormat 判断
@@ -368,8 +364,9 @@ class TtsPlugin extends BasePlugin {
     return false;
   }
 
-  @override
-  Future<PluginProcessResult> processResponse(String text) async {
+  /// Turns `<tts>` sections into speech events bound to [voiceRequest] and
+  /// removes the tags.
+  PluginProcessResult convertTtsTags(String text) {
     if (!enabled) {
       return PluginProcessResult(processedText: text, events: []);
     }

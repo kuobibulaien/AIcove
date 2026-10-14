@@ -152,4 +152,222 @@ void main() {
       });
     }
   }
+
+  for (final dark in [false, true]) {
+    testWidgets(
+      'root header and list row icon buttons have no frame or press feedback ($dark)',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(420, 680);
+        addTearDown(tester.view.reset);
+        MoeLiquidGlassService.setMockState(available: true);
+        final boundary = GlobalKey();
+        final colors = dark ? MoeColors.dark() : MoeColors.light();
+        await tester.pumpWidget(
+          MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: withMoeInteractionTheme(
+              ThemeData(
+                brightness: dark ? Brightness.dark : Brightness.light,
+                fontFamily: capture ? 'GroupCapture' : null,
+                extensions: [colors],
+              ),
+            ),
+            home: MoeGlassTheme(
+              enabled: true,
+              useLiquidGlass: false,
+              blurSigma: 16,
+              child: RepaintBoundary(
+                key: boundary,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: dark
+                          ? const [
+                              Color(0xFF15384B),
+                              Color(0xFF1A1528),
+                              Color(0xFF1A332A),
+                            ]
+                          : const [
+                              Color(0xFF78B7C4),
+                              Color(0xFFF6C0A2),
+                              Color(0xFF9AC58E),
+                            ],
+                    ),
+                  ),
+                  child: MoeSurfaceGroup(
+                    child: Scaffold(
+                      backgroundColor: Colors.transparent,
+                      appBar: MoeAppBar(
+                        title: '角色',
+                        centerTitle: true,
+                        actions: [
+                          MoeIconButton(
+                            key: const ValueKey('role-create-btn'),
+                            tooltip: '创建角色',
+                            icon: Icons.person_add_alt_1_outlined,
+                            onTap: () {},
+                          ),
+                        ],
+                      ),
+                      body: ListView(
+                        padding: const EdgeInsets.fromLTRB(16, 80, 16, 24),
+                        children: [
+                          MoeSettingsGroup(
+                            title: '预设列表',
+                            children: [
+                              MoeSettingsRow(
+                                label: '默认绘图预设',
+                                subtitle: 'NovelAI · 832 × 1216 · 1 张',
+                                trailingType: MoeSettingsRowTrailing.custom,
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    MoeIconButton(
+                                      key: const ValueKey('preset-more-btn'),
+                                      icon: Icons.more_vert,
+                                      size: 20,
+                                      color: colors.muted,
+                                      tooltip: '更多操作',
+                                      onTap: () {},
+                                    ),
+                                    Icon(
+                                      Icons.chevron_right,
+                                      size: 20,
+                                      color: colors.muted,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          MoeSettingsGroup(
+                            title: '模型列表（支持拖拽排序）',
+                            children: [
+                              ReorderableListView(
+                                shrinkWrap: true,
+                                physics: const NeverScrollableScrollPhysics(),
+                                buildDefaultDragHandles: false,
+                                onReorder: (_, _) {},
+                                children: [
+                                  ReorderableDelayedDragStartListener(
+                                    key: const ValueKey('model-0'),
+                                    index: 0,
+                                    child: MoeSettingsRow(
+                                      label: 'deepseek-flash',
+                                      subtitle: '快速对话模型',
+                                      showDivider: false,
+                                      trailingType:
+                                          MoeSettingsRowTrailing.custom,
+                                      trailing: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          MoeIconButton(
+                                            key: const ValueKey('model-copy'),
+                                            icon: Icons.copy_outlined,
+                                            size: 16,
+                                            padding: const EdgeInsets.all(6),
+                                            minTouchTarget: 32,
+                                            color: colors.muted,
+                                            onTap: () {},
+                                          ),
+                                          MoeIconButton(
+                                            key: const ValueKey('model-edit'),
+                                            icon: Icons.edit_outlined,
+                                            size: 18,
+                                            padding: const EdgeInsets.all(6),
+                                            minTouchTarget: 32,
+                                            color: colors.muted,
+                                            onTap: () {},
+                                          ),
+                                          MoeIconButton(
+                                            key: const ValueKey('model-del'),
+                                            icon: Icons.delete_outline,
+                                            size: 18,
+                                            padding: const EdgeInsets.all(6),
+                                            minTouchTarget: 32,
+                                            color: Colors.redAccent,
+                                            onTap: () {},
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: MoeSecondaryButton(
+                                  label: '获取模型',
+                                  icon: Icons.cloud_download_outlined,
+                                  onPressed: () {},
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: MoePrimaryButton(
+                                  label: '新建预设',
+                                  icon: Icons.add,
+                                  onPressed: () {},
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        for (final key in [
+          'role-create-btn',
+          'preset-more-btn',
+          'model-copy',
+          'model-edit',
+          'model-del',
+        ]) {
+          expect(
+            find.descendant(
+              of: find.byKey(ValueKey(key)),
+              matching: find.byType(MoeFloatingSurface),
+            ),
+            findsNothing,
+          );
+          expect(
+            find.descendant(
+              of: find.byKey(ValueKey(key)),
+              matching: find.byType(MoeButtonSurface),
+            ),
+            findsNothing,
+          );
+        }
+        if (capture) {
+          await tester.runAsync(() async {
+            final render =
+                boundary.currentContext!.findRenderObject()
+                    as RenderRepaintBoundary;
+            final image = await render.toImage(pixelRatio: 2.0);
+            final data = await image.toByteData(format: ui.ImageByteFormat.png);
+            final file = File(
+              '../../scratch/button-audit-20261013/preview-${dark ? 'dark' : 'light'}.png',
+            );
+            await file.parent.create(recursive: true);
+            await file.writeAsBytes(data!.buffer.asUint8List());
+            image.dispose();
+          });
+        }
+      },
+    );
+  }
 }

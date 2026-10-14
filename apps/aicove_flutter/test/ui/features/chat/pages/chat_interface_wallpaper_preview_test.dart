@@ -49,7 +49,7 @@ void main() {
 
       expect(wallpaperImage(tester), isNull);
       expect(
-        find.byKey(const ValueKey<String>('chat_page_static_blur_layer')),
+        find.byKey(const ValueKey<String>('moe_wallpaper_blur')),
         findsNothing,
       );
 
@@ -58,7 +58,7 @@ void main() {
 
       expect(wallpaperImage(tester), mockBackgroundAsset);
       expect(
-        find.byKey(const ValueKey<String>('chat_page_static_blur_layer')),
+        find.byKey(const ValueKey<String>('moe_wallpaper_blur')),
         blur > 0 ? findsOneWidget : findsNothing,
       );
       expect(find.byType(ImageFiltered), findsNothing);

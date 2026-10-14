@@ -3,9 +3,11 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/app_logger.dart';
+import '../../agent_plugins/aicove_plugin.dart';
 import '../domain/index.dart';
 import '../domain/handlers/ai_tool.dart';
 import '../domain/handlers/tool_parameter.dart';
+import 'trigger_agent_plugin.dart';
 import 'trigger_config.dart';
 import '../../auto_reply/data/auto_reply_trigger.dart';
 import '../../auto_reply/data/auto_reply_trigger_controller.dart';
@@ -42,6 +44,9 @@ class TriggerPlugin extends BasePlugin {
   @override
   bool get enabled => _triggerConfig.enabled;
 
+  @override
+  AicovePlugin get agentPlugin => triggerAgentPlugin(this);
+
   // ========== 生命周期方法 ==========
 
   @override
@@ -66,15 +71,8 @@ class TriggerPlugin extends BasePlugin {
     _triggerConfig = TriggerConfig.fromJson(config);
   }
 
-  @override
-  Future<String?> getSystemPrompt(
-      {String? userMessage, bool supportsToolCalling = false}) async {
-    return null;
-  }
-
   // (注释已丢失)
 
-  @override
   List<AITool> getTools() {
     if (!enabled) return [];
 
@@ -389,9 +387,9 @@ class TriggerPlugin extends BasePlugin {
 
   // ========== 保留兼容：XML 标签解析（标记废弃） ==========
 
-  @override
-  @Deprecated('请使用原生工具调用，此方法仅作为兜底兼容')
-  Future<PluginProcessResult> processResponse(String text) async {
+  /// Legacy `<create_trigger>`/`<delete_trigger>` tags: removed from the
+  /// text; executed only when the XML fallback is on (AR-040).
+  Future<PluginProcessResult> handleLegacyTriggerTags(String text) async {
     if (!enabled) {
       return PluginProcessResult(processedText: text, events: []);
     }

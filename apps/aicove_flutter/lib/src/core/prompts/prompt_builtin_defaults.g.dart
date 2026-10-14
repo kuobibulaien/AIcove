@@ -6,158 +6,44 @@ library;
 class PromptBuiltinDefaults {
   const PromptBuiltinDefaults._();
 
-  static const String autoReplyAnalyzerDefault = r'''你是主动回复调度器，根据对话状态决定是否创建 AI 主动回复触发器。
+  static const String autoReplyDecisionState = r'''下面是用户和 AI 角色「{assistant_name}」的聊天。用户有一阵子没说话了，要决定角色要不要主动找他。
 
-## 输入数据
+现在是 {now}。
+用户最后一次说话是 {last_user_ago}。
+这之后角色已经主动发过 {unreplied_count} 条，用户还没回。
+角色上一次主动找用户：{last_proactive_ago}。
 
-【当前运行态】
-{state_json}
-
-【当前触发器列表】
+已经定好、还没发的提醒：
 {trigger_list}
 
-## 核心职责
+最近的聊天：
+{transcript}''';
 
-1. 判断当前是否适合创建主动回复触发器
-2. 如果适合，调用 `preview_proactive_reply` 预生成候选回复
-3. 审核候选回复的内容、语气和触发时机
-4. 审核通过后调用 `create_proactive_trigger_from_preview` 确认入库
-5. 如果不适合或工具不可用，输出 JSON 决策
+  static const String autoReplyDecisionChatFallback = r'''你在帮一个聊天应用拿主意：用户有一阵子没说话了，AI 角色「{assistant_name}」要不要主动找他、什么时候找。你只做判断，不用写要发的话。
 
-## 工作流程
+{state}
 
-### 优先：工具流程（推荐）
+回答下面几个问题：
 
-1. **预览**：调用 `preview_proactive_reply`，传入：
-   - `kind`: continue_chat / check_in / new_topic
-   - `delay_minutes`: 从现在起延迟分钟数
-   - `background_narration`: 客观旁白，描述触发时刻的背景
-   - `allow_night`: 是否允许夜间触发
-   - `priority`: low / medium / high
+{questions}
 
-2. **审核**：检查返回的 `candidate_reply`：
-   - 内容是否自然、不过度打扰
-   - 是否与预计触发时间匹配
-   - 是否有质问、催促用户的语气
-   - `background_narration` 是否准确客观
+拿不准就选 stay_silent。少打扰一次没关系，打扰错了用户会烦。
 
-3. **调整**：如不合适，调整参数后重新预览（最多3次）
+只回一行 JSON，别的什么都不要写：
+{answer_format}''';
 
-4. **确认**：审核通过后调用 `create_proactive_trigger_from_preview`，传入：
-   - `preview_id`: 审核通过的预览 ID
-   - `approval_reason`: 为什么这个回复和时机合适
+  static const String autoReplyReachOutReminder = r'''（这条不是用户发的。）
+用户有一阵子没说话了。现在是 {fire_time}，离用户最后一条消息过去了 {gap}。你想主动给对方发条消息{kind_hint}。
+就像你自己突然想起对方那样，自然地开口。对方没回可能只是在忙，别追问为什么不回，也别解释你为什么现在发消息，更不要提到这条说明。''';
 
-### 回退：JSON 输出（工具不可用时）
+  static const String autoReplyDecisionCallWelcome = r'''用户打开了「允许角色主动打电话」，欢迎被主动找。要不要找、多久找一次，可以更多按「{assistant_name}」的性格来：
+{current_role_persona}''';
 
-```json
-{
-  "session_patch": {
-    "mode": "active | silent | dormant",
-    "silence_minutes": 0,
-    "reason": "..."
-  },
-  "trigger_ops": [
-    {
-      "op": "replace",
-      "kind": "continue_chat | check_in | new_topic | stay_silent",
-      "title": "简短标题",
-      "delay_minutes": 1,
-      "allow_night": false,
-      "priority": "low | medium | high",
-      "system_reminder": "客观旁白"
-    }
-  ]
-}
-```
+  static const String autoReplyReachOutCallHint = r'''这次也可以用 call_user 直接打电话。电话比消息更打扰人：只有按你的性格，这会儿真的会忍不住直接打过去，才打；不确定就照常写消息。''';
 
-注意：
-- `trigger_ops` 最多1条，不适合时返回空数组 `[]`
-- 不要输出 `cached_content` 字段
-- 只输出 JSON，不要 Markdown 或解释
+  static const String autoReplyToolCallUser = r'''直接给对方打电话。对方接起来以后，你说的第一句话就是 opening_line。打不打完全看你的性格：爱打电话、黏人的会常打，文静、怕打扰人的多半只发消息。''';
 
-## 时间规则
-
-1. **时间基准**：使用 `state_json` 中的 `device_local_time` 作为唯一基准
-2. **延迟计算**：`delay_minutes` = 预计发送时间 - 当前本地时间
-3. **语义匹配**：确保 `background_narration` 的时间描述与预计发送时间一致
-   - "早上再问候" → 触发时间应在早上
-   - "午饭后问一句" → 触发时间应在中午或午后
-   - "第二天再联系" → 触发时间应在第二天早晨
-
-## 判断原则
-
-**适合创建触发器：**
-- `continue_chat`：对话短暂停顿，1~5分钟后顺接
-- `check_in`：用户说去做某事（洗澡/吃饭/开会），事情结束后回访
-- `new_topic`：对话自然结束，8~24小时后重新开启
-
-**保持沉默：**
-- 用户可能只是忙或想静一静
-- 近期已经主动打扰较多
-- 对话刚结束不久且无明确后续
-
-**触发器管理：**
-- 检查现有触发器是否已覆盖本轮目标
-- 不要重复创建相同目的的触发器
-- 新触发器会自动替换旧的 AI 自动触发器
-- 用户手动或高优先级触发器默认保留
-
-## background_narration 写法
-
-**只写客观旁白，不写指令**
-
-✅ 允许描述：
-- 已经过去了多久
-- 预计触发时是什么时间/时段
-- 用户之前提过什么事
-
-❌ 禁止写：
-- "你要怎么说" / "你要安慰她"
-- "你现在应该发早安"
-- 任何直接台词指令或建议
-
-**示例：**
-- "现在是第二天早上，用户昨晚说先睡了，距离上一轮对话已过一夜"
-- "距离用户说去看电影已过两小时，按当前时间看大概率已结束"
-- "话题停在未完全收束的位置，只过去几分钟"
-
-## 优先级说明
-
-- `high`：用户明确要求稍后提醒，或强约束事件
-- `medium`：普通顺接/回访
-- `low`：轻量新话题，不发也无妨
-
-## 注意事项
-
-- 不要因为用户没回复就推断"出事了" / "情绪失控"
-- 默认低压、不过度打扰
-- 输出只给程序解析，不直接发给用户''';
-
-  static const String autoReplyAgentObjective = r'''你是主动回复生成器，负责生成要发给用户的主动回复内容。
-
-<system-reminder> 中包含触发时刻的客观背景信息，如：
-- 距离上次对话过去了多久
-- 当前是什么时间
-- 用户之前提到了什么事
-
-请根据这些背景信息，自然地生成一条主动回复。不要复述 <system-reminder> 的内容，而是基于它来决定如何回复。''';
-
-  /// WorkManager 后台 isolate 即时生成主动回复时的系统提示词：注入角色人设、当前时间与后台纯文本输出约束。
-  static const String autoReplyBackgroundObjective = r'''你正在扮演「{assistant_name}」，正在和「{user_name}」聊天。
-
-【当前角色人设】
-{current_role_persona}
-
-【当前时间】
-{datetime}
-
-你现在要主动给对方发一条消息（这不是在回复对方的新消息）。<system-reminder> 中是触发时刻的客观背景信息：请基于它自然地组织这条主动消息，不要复述其内容。
-
-输出约束（后台模式）：
-1. 只输出要发送的消息正文，纯文本。
-2. 不要使用 <tts>、<image>、<emoji> 等任何标签。
-3. 不要调用工具，不要输出 JSON、前缀或解释。
-4. 保持角色口吻，长度贴近日常聊天消息。''';
+  static const String autoReplyToolCallUserOpeningLine = r'''接通后你说的第一句话。是在打电话，要像说话一样：短一点，口语一点，不要用表情、括号里的动作和任何标签。别解释为什么打来。''';
 
   static const String enhancedDialogueSystemDefault = r'''你是“增强对话助手”。你的任务是基于给定的人设与最近对话，生成一条可以直接回复用户的消息，帮助当前会话回到原始人设。
 
@@ -343,7 +229,7 @@ Rules:
 
   static const String timeAwarenessReminderDefault = r'''{current_time_line}{previous_user_message_line}请自行判断当前与历史对话的关系。''';
 
-  static const String systemReminderSemantics = r'''<{tag_name}> 中的内容是系统补充信息，请据此理解上下文，不要原样复述。''';
+  static const String systemReminderSemantics = r'''<{tag_name}> 里是应用附上的背景说明，不是对方说的话。心里有数就好，别照着念，也别提到它。''';
 
   static const String promptTagSemanticsLeadIn = r'''以下是当前会话启用的特殊标签说明。请理解这些标签的含义和规则，但不要把这些说明原样复述给用户。''';
 
@@ -365,9 +251,13 @@ Rules:
 请直接输出日记正文：''';
 
   static const List<String> ids = <String>[
-    'auto_reply.analyzer.default',
-    'auto_reply.agent.objective',
-    'auto_reply.background.objective',
+    'auto_reply.decision.state',
+    'auto_reply.decision.chat_fallback',
+    'auto_reply.reach_out.reminder',
+    'auto_reply.decision.call_welcome',
+    'auto_reply.reach_out.call_hint',
+    'auto_reply.tool.call_user',
+    'auto_reply.tool.call_user.opening_line',
     'enhanced_dialogue.system.default',
     'enhanced_dialogue.bootstrap_user.default',
     'enhanced_dialogue.original_persona_merge',
@@ -393,12 +283,20 @@ Rules:
 
   static String? templateById(String id) {
     switch (id) {
-      case 'auto_reply.analyzer.default':
-        return autoReplyAnalyzerDefault;
-      case 'auto_reply.agent.objective':
-        return autoReplyAgentObjective;
-      case 'auto_reply.background.objective':
-        return autoReplyBackgroundObjective;
+      case 'auto_reply.decision.state':
+        return autoReplyDecisionState;
+      case 'auto_reply.decision.chat_fallback':
+        return autoReplyDecisionChatFallback;
+      case 'auto_reply.reach_out.reminder':
+        return autoReplyReachOutReminder;
+      case 'auto_reply.decision.call_welcome':
+        return autoReplyDecisionCallWelcome;
+      case 'auto_reply.reach_out.call_hint':
+        return autoReplyReachOutCallHint;
+      case 'auto_reply.tool.call_user':
+        return autoReplyToolCallUser;
+      case 'auto_reply.tool.call_user.opening_line':
+        return autoReplyToolCallUserOpeningLine;
       case 'enhanced_dialogue.system.default':
         return enhancedDialogueSystemDefault;
       case 'enhanced_dialogue.bootstrap_user.default':

@@ -39,6 +39,8 @@ class AgentLoop {
     return true;
   }
 
+  /// Cancellation is re-checked after every stage and observer that can
+  /// suspend, so no later stage starts once the run is cancelled.
   Future<AgentLoopResult> run(
     List<KernelMessage> messages, {
     KernelCancellation? cancellation,
@@ -81,7 +83,8 @@ class AgentLoop {
           running = [...running, ..._steering.map(_steeringMessage)];
           _steering.clear();
         }
-        await _emit(RoundStarted(round));
+        await _emitRound(RoundStarted(round), cancel);
+        cancel.throwIfCancelled();
 
         stage = 'preparer';
         var prepared =
@@ -102,7 +105,9 @@ class AgentLoop {
             prepared = await stages.preparer
                 .prepare(running, PrepareMode.recovery, ctx);
             running = prepared.running;
-            await _emit(OverflowRecovered(round));
+            cancel.throwIfCancelled();
+            await _emitRound(OverflowRecovered(round), cancel);
+            cancel.throwIfCancelled();
           }
         }
         // A response that arrives after cancellation is discarded.
@@ -111,31 +116,52 @@ class AgentLoop {
         stage = 'unpacker';
         final turn = await stages.unpacker.unpack(raw, ctx);
         lastTurn = turn;
+        cancel.throwIfCancelled();
         stage = 'resolver';
         final calls = stages.resolver.resolve(turn, ctx);
         stage = 'preTool';
         await stages.preTool.beforeTools(turn, calls, ctx);
+        cancel.throwIfCancelled();
 
         if (calls.isEmpty) {
-          await _emit(RoundCompleted(round, hadTools: false));
+          await _emitRound(RoundCompleted(round, hadTools: false), cancel);
+          cancel.throwIfCancelled();
           return finish(LoopStatus.completed);
         }
-        await _emit(ToolCallsDetected(round, calls));
+        if (turn.finishReason
+            case final finishReason?
+            when finishReason == FinishReason.stop ||
+                finishReason == FinishReason.length) {
+          await _emitRound(
+            FinishReasonMismatch(
+              round,
+              finishReason: finishReason,
+              toolCalls: calls.calls.length,
+            ),
+            cancel,
+          );
+          cancel.throwIfCancelled();
+        }
+        await _emitRound(ToolCallsDetected(round, calls), cancel);
+        cancel.throwIfCancelled();
 
         stage = 'tools';
         final results = await _runBatch(calls.calls, ctx);
         cancel.throwIfCancelled();
         allCalls.addAll(calls.calls);
         allResults.addAll(results);
-        await _emit(ToolBatchFinished(round, calls.calls, results));
+        await _emitRound(ToolBatchFinished(round, calls.calls, results), cancel);
+        cancel.throwIfCancelled();
 
         stage = 'postTool';
         var verdict =
             await stages.postTool.afterTools(turn, calls, results, ctx);
+        cancel.throwIfCancelled();
         if (verdict.shouldContinue && round >= maxRounds) {
           verdict = const TurnVerdict.stop('maxRounds');
         }
-        await _emit(RoundCompleted(round, hadTools: true, verdict: verdict));
+        await _emitRound(RoundCompleted(round, hadTools: true, verdict: verdict), cancel);
+        cancel.throwIfCancelled();
         if (!verdict.shouldContinue) {
           return finish(LoopStatus.stopped, verdict.reason);
         }
@@ -143,6 +169,8 @@ class AgentLoop {
         stage = 'encoder';
         final continuation =
             await stages.encoder.encode(turn, calls, results, ctx);
+        // A continuation encoded after cancellation is dropped.
+        cancel.throwIfCancelled();
         running = [...running, ...continuation];
       }
       // Unreachable: the post-tool guard stops at maxRounds.
@@ -165,6 +193,7 @@ class AgentLoop {
     TurnContext ctx,
   ) async {
     final tools = stages.tools;
+    ctx.cancellation.throwIfCancelled();
     if (tools.modeFor(calls, ctx) == BatchMode.parallel) {
       return Future.wait([for (final call in calls) tools.executeOne(call, ctx)]);
     }
@@ -174,6 +203,17 @@ class AgentLoop {
       results.add(await tools.executeOne(call, ctx));
     }
     return results;
+  }
+
+  /// Emits a non-terminal loop event, stopping between observers once the
+  /// run is cancelled. Terminal events ([RunFinished], [RunFailed]) and
+  /// events emitted by stages through [TurnContext.emit] (e.g. a gate's
+  /// final `cancelled` decision) always reach every observer.
+  Future<void> _emitRound(KernelEvent event, KernelCancellation cancel) async {
+    for (final observer in _observers) {
+      cancel.throwIfCancelled();
+      await observer(event);
+    }
   }
 
   Future<void> _emit(KernelEvent event) async {

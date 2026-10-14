@@ -1,6 +1,6 @@
 library;
 
-import '../../plugins/time_awareness/time_awareness_plugin.dart';
+import '../../agent_plugins/plugin_request_scope.dart';
 import 'chat_plugin_context_builder.dart';
 
 /// 构建发送链路 trace 相关 payload，避免门面服务继续堆积日志组装细节。
@@ -55,21 +55,18 @@ class ChatSendTracePayloadBuilder {
   Map<String, dynamic> buildRuntimeContextPayload({
     required DateTime now,
     required DateTime? previousUserMessageTime,
-    required List<dynamic> effectivePlugins,
+    required List<PluginRequestScope> pluginScopes,
     required int historyCount,
     required bool systemReminderInjected,
     String? systemReminderContent,
   }) {
-    Map<String, dynamic>? timeAwarenessConfig;
-    String? timeAwarenessPluginName;
-    var timeAwarenessPluginEnabled = false;
-    for (final plugin in effectivePlugins) {
-      if (plugin is! TimeAwarenessPlugin) continue;
-      timeAwarenessPluginName = plugin.name;
-      timeAwarenessPluginEnabled = plugin.enabled;
-      timeAwarenessConfig = Map<String, dynamic>.from(plugin.getConfig());
-      break;
-    }
+    final timeAwareness = pluginScopes
+        .map((scope) => scope.timeContextTrace)
+        .nonNulls
+        .firstOrNull;
+    final timeAwarenessConfig = timeAwareness?.config;
+    final timeAwarenessPluginName = timeAwareness?.pluginName;
+    final timeAwarenessPluginEnabled = timeAwareness?.enabled ?? false;
 
     return <String, dynamic>{
       'clockSource': 'device_local',

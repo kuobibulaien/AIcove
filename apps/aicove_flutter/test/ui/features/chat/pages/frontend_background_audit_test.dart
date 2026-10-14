@@ -5,6 +5,10 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:aicove_flutter/src/ui/features/chat/pages/chat_interface_settings_page.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
+import 'package:aicove_flutter/src/ui/features/chat/widgets/chat_wallpaper_background.dart';
+import 'package:aicove_flutter/src/ui/features/wallpaper/pages/wallpaper_editor_page.dart';
+import 'package:aicove_flutter/src/ui/features/wallpaper/widgets/wallpaper_preview_samples.dart';
+import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 
 import 'chat_interface_test_support.dart';
 
@@ -48,15 +52,21 @@ void main() {
     await tester.pumpWidget(
       _scope(
         MaterialApp(
-          home: ChatInterfaceSettingsPage(
+          home: WallpaperEditorPage(
+            source: null,
+            style: const WallpaperStyle(mask: kDefaultChatWallpaperMask),
+            defaultStyle: const WallpaperStyle(mask: kDefaultChatWallpaperMask),
+            kind: WallpaperPreviewKind.chat,
             conversation: syntheticConversation(),
+            canChangeImage: true,
+            onSave: (_, __) async {},
           ),
         ),
       ),
     );
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
-    await tester.tap(find.text('选择背景图片'));
+    await tester.tap(find.text('选择图片'));
     await tester.pump();
     await tester.pumpWidget(_scope(const MaterialApp(home: Scaffold())));
     picker.result.complete(FilePickerResult([

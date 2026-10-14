@@ -88,6 +88,13 @@ ThemeData withMoeInteractionTheme(ThemeData theme) {
       (theme.brightness == Brightness.dark
           ? MoeColors.dark()
           : MoeColors.light());
+  final iconButtons = const ButtonStyle(
+    backgroundColor: WidgetStatePropertyAll(Colors.transparent),
+    surfaceTintColor: WidgetStatePropertyAll(Colors.transparent),
+    overlayColor: WidgetStatePropertyAll(Colors.transparent),
+    elevation: WidgetStatePropertyAll(0),
+    splashFactory: NoSplash.splashFactory,
+  );
   final buttons = withoutHoverFeedback(
     _withButtonMaterial(const ButtonStyle()),
   );
@@ -105,7 +112,10 @@ ThemeData withMoeInteractionTheme(ThemeData theme) {
   );
   return theme.copyWith(
     hoverColor: Colors.transparent,
-    iconButtonTheme: IconButtonThemeData(style: buttons),
+    highlightColor: Colors.transparent,
+    splashColor: Colors.transparent,
+    splashFactory: NoSplash.splashFactory,
+    iconButtonTheme: IconButtonThemeData(style: iconButtons),
     textButtonTheme: TextButtonThemeData(style: buttons),
     filledButtonTheme: FilledButtonThemeData(style: primaryButtons),
     outlinedButtonTheme: OutlinedButtonThemeData(style: buttons),

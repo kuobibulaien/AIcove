@@ -102,11 +102,18 @@ class MoeLiquidGlass extends StatelessWidget {
     final isAccessibilityDegraded =
         highContrast || accessibilityData.reduceTransparency;
 
-    // 效果可用性：受显式参数、全局主题、平台能力及无障碍降级共同约束
+    // 效果可用性：受显式参数、全局主题、平台能力及无障碍降级共同约束。
+    // 随滚动移动的表面保留材质（模糊与玻璃在滚动中均正确，失效只来自已移除的
+    // 安卓拉伸回弹）；拖动弹层、滑钮跟随层和排序代理仍回退实色。
     final isGlassEnabled =
         (enabled ?? glassTheme?.enabled ?? true) &&
-        !moeSurfaceMovesWithContent(context) &&
+        !moeSurfaceMovesWithContent(context, ignoreScrollables: true) &&
         !isAccessibilityDegraded;
+    // premium 依赖纹理捕获，包文档注明在滚动中可能渲染错误；滚动内改用 standard。
+    final effectiveQuality =
+        quality == GlassQuality.premium && moeSurfaceMovesWithContent(context)
+        ? GlassQuality.standard
+        : quality;
     final isFrosted = glassTheme?.material == MoeSurfaceMaterial.frosted;
     final isLiquidEnabled =
         isGlassEnabled &&
@@ -177,7 +184,10 @@ class MoeLiquidGlass extends StatelessWidget {
         child: ClipPath(
           clipper: ShapeBorderClipper(shape: effectiveShape),
           clipBehavior: clipBehavior,
-          child: isGlassEnabled && baseline.blurSigma(effectiveSigma) > 0
+          // Frosted keeps its filter at zero blur for the fill's vibrancy.
+          child:
+              isGlassEnabled &&
+                  (isFrosted || baseline.blurSigma(effectiveSigma) > 0)
               ? BackdropFilter(
                   filter: isFrosted
                       ? MoeFrostedMaterial.surfaceFilter(
@@ -230,7 +240,7 @@ class MoeLiquidGlass extends StatelessWidget {
                     child: AdaptiveGlass(
                       shape: effectiveShape,
                       settings: effectiveSettings,
-                      quality: quality,
+                      quality: effectiveQuality,
                       useOwnLayer: useOwnLayer,
                       clipBehavior: clipBehavior,
                       child: const SizedBox.expand(),

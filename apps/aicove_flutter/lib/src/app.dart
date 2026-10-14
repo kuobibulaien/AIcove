@@ -11,7 +11,9 @@ import 'package:go_router/go_router.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'ui/theme/tokens.dart';
 import 'ui/shared/animations/parallax_slide_page_route.dart';
+import 'ui/shared/animations/theme_ripple_reveal.dart';
 import 'ui/shared/widgets/desktop_window_frame.dart';
+import 'ui/shared/widgets/moe_scroll_behavior.dart';
 import 'ui/features/home/pages/main_page.dart';
 import 'ui/features/chat/pages/chat_page.dart';
 import 'ui/shared/widgets/moe_adaptive_shell.dart';
@@ -27,6 +29,10 @@ import 'features/observability/trace_store.dart';
 import 'features/chat/domain/conversation.dart';
 import 'features/auto_reply/data/analyzer_scheduler.dart';
 import 'features/auto_reply/data/auto_reply_service.dart';
+import 'features/auto_reply/data/incoming_call.dart';
+import 'features/voice_call/application/active_voice_call.dart';
+import 'ui/features/voice_call/pages/voice_call_page.dart';
+import 'ui/features/voice_call/widgets/incoming_call_host.dart';
 import 'features/auto_reply/data/background_message_reprocessor.dart';
 import 'features/chat/providers2.dart';
 import 'features/chat/services/tts_fallback_notification.dart';
@@ -69,6 +75,8 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       ref.read(cloudSyncProvider);
       ref.read(lanSyncPortProvider);
       unawaited(_retireLegacyMemory());
+      // 后台响过的角色来电：点了通知就接通，没接的记为未接（方案 12 §4.8）。
+      unawaited(ref.read(incomingCallNotificationBridgeProvider).start());
       _requestRecentConversationsWarmup();
       unawaited(_syncAndroidKeepAliveGuard());
       // 预热供应商 SVG 图标
@@ -126,6 +134,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       _requestRecentConversationsWarmup();
       unawaited(_syncAndroidKeepAliveGuard());
       unawaited(ref.read(analyzerSchedulerProvider).onAppResumed());
+      unawaited(ref.read(proactiveCallSettlerProvider).settle());
       // 后台投递的多模态消息在回前台时补跑插件链
       unawaited(ref
           .read(backgroundMessageReprocessorProvider)
@@ -311,6 +320,18 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     return images;
   }
 
+  /// 接听角色来电：先回到这个角色的聊天，再在上面打开通话页。
+  void _openAcceptedCall(Conversation conversation, ActiveVoiceCall call) {
+    _router.go('/chat/${conversation.id}', extra: conversation);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _detailNavigatorKey.currentState?.push(
+        ParallaxSlidePageRoute<void>(
+          page: VoiceCallPage(conversation: conversation, call: call),
+        ),
+      );
+    });
+  }
+
   /// 创建路由配置（只调用一次）
   GoRouter _createRouter() {
     return GoRouter(
@@ -437,12 +458,17 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
             : (settings.isDarkMode ? ThemeMode.dark : ThemeMode.light);
 
         return TtsFallbackNotificationListener(
-          child: MaterialApp.router(
+          // Experimental: resolves the effective light/dark mode and ripples
+          // between them from the tapped toggle (or window center).
+          child: ThemeRippleReveal(
+            themeMode: themeMode,
+            builder: (context, effectiveMode) => MaterialApp.router(
             debugShowCheckedModeBanner: false,
             title: 'AIcove',
+            scrollBehavior: const MoeScrollBehavior(),
             theme: withMoeInteractionTheme(lightTheme),
             darkTheme: withMoeInteractionTheme(darkTheme),
-            themeMode: themeMode,
+            themeMode: effectiveMode,
             localizationsDelegates: const [
               GlobalMaterialLocalizations.delegate,
               GlobalWidgetsLocalizations.delegate,
@@ -463,6 +489,8 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
                       .clamp(kMinTextScaleFactor, kMaxTextScaleFactor)
                       .toDouble() *
                   baselineScale;
+              final isFrosted =
+                  settings.surfaceMaterial == MoeSurfaceMaterial.frosted;
               final uiScale = settings.uiScaleFactor
                   .clamp(kMinUiScaleFactor, kMaxUiScaleFactor)
                   .toDouble();
@@ -472,15 +500,22 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
                 ),
                 child: MoeGlassTheme(
                   enabled: settings.glassEffectEnabled,
-                  blurSigma: settings.glassBlurSigma
+                  // Frosted and glass keep separate blur and fill settings;
+                  // the theme carries those of the active material.
+                  blurSigma: (isFrosted
+                          ? settings.frostedBlurSigma
+                          : settings.glassBlurSigma)
                       .clamp(kMinGlassBlurSigma, kMaxGlassBlurSigma)
                       .toDouble(),
-                  tintFill: settings.glassTintFill,
+                  tintFill: isFrosted
+                      ? settings.frostedTintFill
+                      : settings.glassTintFill,
                   useLiquidGlass: settings.useLiquidGlass,
                   child: MoeWallpaperTheme(
                     wallpaper: settings.globalWallpaper,
-                    customImagePath: settings.globalWallpaperCustomImage,
-                    customMask: settings.globalWallpaperMask,
+                    customImagePath:
+                        settings.activeCustomWallpaper?.imagePath,
+                    style: settings.activeWallpaperStyle,
                     child: DesktopWindowFrame(
                     windowControlsOnRight: settings.windowsWindowControlsSide ==
                         WindowControlButtonSide.right,
@@ -488,7 +523,10 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
                       scale: uiScale,
                       child: TooltipVisibility(
                         visible: false,
-                        child: child ?? const SizedBox.shrink(),
+                        child: IncomingCallHost(
+                          onAccepted: _openAcceptedCall,
+                          child: child ?? const SizedBox.shrink(),
+                        ),
                       ),
                     ),
                   ),
@@ -496,6 +534,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
                 ),
               );
             },
+          ),
           ),
         );
       },

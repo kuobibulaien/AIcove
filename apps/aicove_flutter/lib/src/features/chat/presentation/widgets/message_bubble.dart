@@ -27,9 +27,11 @@ import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../core/models/message_block.dart';
 import '../../../../core/models/block_status.dart';
 import '../../domain/message.dart';
+import '../../domain/quoted_reply.dart';
 import '../../../settings/app_settings.dart';
 import 'audio_player_widget.dart';
 import 'chat_record_bubble.dart';
+import '../../../../ui/features/voice_call/widgets/call_record_bubble.dart';
 import 'incremental_message_text.dart';
 
 /// 语音消息转文字单条展开状态覆盖（null 表示跟随全局设置）
@@ -488,6 +490,9 @@ class MessageBubble extends ConsumerWidget {
     required bool allowStreamingPlaceholder,
     required bool isAudioTextExpanded,
   }) {
+    if (block is CallRecordBlock) {
+      return CallRecordBubble(record: block, textColor: textColor);
+    }
     if (block is ChatRecordBlock) {
       return ChatRecordBubble(record: block, textColor: textColor);
     }
@@ -922,6 +927,7 @@ class MessageBubble extends ConsumerWidget {
   }
 
   /// 消息正文：文档模式的助手消息按 Markdown 渲染，其余走 [_buildMessageText]。
+  /// 用户的引用回复把开头的引用摘要画成气泡内引用块。
   Widget _buildBodyText(String text, TextStyle style) {
     if (documentStyle && !isMe) {
       return MoeMarkdownView(
@@ -930,7 +936,29 @@ class MessageBubble extends ConsumerWidget {
         color: style.color,
       );
     }
-    return _buildMessageText(text, style);
+    final quoted = isMe ? QuotedReply.parse(text) : null;
+    if (quoted == null) return _buildMessageText(text, style);
+    final bodyFontSize = style.fontSize ?? fontSize;
+    return Builder(
+      builder: (context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 1, bottom: 5),
+            child: MoeQuoteBlock(
+              text: quoted.quote,
+              foregroundColor: style.color ?? context.moeColors.text,
+              fontSize: bodyFontSize - 2,
+              // 内嵌圆角 = 气泡圆角 − 气泡纵向内边距。
+              radius: (context.skin.bubbleRadius - MoeBubbleStyle.padding.top)
+                  .clamp(6.0, 14.0),
+            ),
+          ),
+          _buildMessageText(quoted.body, style),
+        ],
+      ),
+    );
   }
 
   /// 正文里的围栏代码块用 [MoeCodeBlock] 渲染，其余保持纯文本（ADR0047）。

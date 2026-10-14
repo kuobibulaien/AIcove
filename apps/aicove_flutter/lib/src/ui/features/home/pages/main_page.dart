@@ -94,26 +94,20 @@ class _MainPageState extends ConsumerState<MainPage> {
         ),
       ),
     );
-    // A full-screen narrow page has no backdrop of its own; with a global
-    // wallpaper it paints that wallpaper under the material tint instead.
-    final glass = MoeGlassTheme.maybeOf(context);
-    if (!isWide &&
-        (glass?.enabled ?? true) &&
-        MoeGlobalWallpaper.isActive(context)) {
-      final fill = glass?.tintFill ?? kDefaultGlassTintFill;
+    // A full-screen narrow page is a page like any other: it shows the global
+    // wallpaper with that wallpaper's own mask and blur, in every material.
+    if (!isWide && MoeGlobalWallpaper.isActive(context)) {
       return MoeGlobalWallpaper(
         slot: GlobalWallpaperSlot.home,
         color: colors.surface,
-        child: ColoredBox(
-          color: colors.glassTintForFill(fill),
-          child: content,
-        ),
+        child: content,
       );
     }
     return MoeFloatingSurface(
       baseline: MoeMaterialBaseline.background,
       // Page backgrounds keep blur and tint without a lens rim at the edges.
       useLiquid: false,
+      frostedOnly: true,
       // Full-screen narrow pages have nothing behind them to blur; a material
       // tint there would repaint the page background as a container color.
       blurEnabled: isWide ? null : false,

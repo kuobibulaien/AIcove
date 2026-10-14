@@ -22,8 +22,10 @@ import '../../settings/app_settings.dart';
 import '../../content_tags/domain/content_tag_registry.dart';
 import '../../content_tags/domain/content_tag_scanner.dart';
 import '../../content_tags/domain/content_tag_spec.dart';
+import '../../agent_plugins/aicove_plugin.dart';
 import '../domain/index.dart';
 import '../plugin_content_tags.dart';
+import 'image_agent_plugin.dart';
 import 'image_config.dart';
 import 'drawing_parameters.dart';
 
@@ -137,6 +139,9 @@ class ImagePlugin extends BasePlugin {
   }
 
   @override
+  AicovePlugin get agentPlugin => imageAgentPlugin(this);
+
+  @override
   Future<void> onInitialize() async {
     await super.onInitialize();
     AppLogger.info('ImagePlugin', 'Image plugin initialized');
@@ -145,14 +150,6 @@ class ImagePlugin extends BasePlugin {
   @override
   Future<void> onConfigChanged(Map<String, dynamic> newConfig) async {
     _config = ImageConfig.fromJson(newConfig);
-  }
-
-  @override
-  Future<String?> getSystemPrompt({
-    String? userMessage,
-    bool supportsToolCalling = false,
-  }) async {
-    return buildTagSemanticsPrompt();
   }
 
   /// All drawing tag instructions belong to the enabled drawing plugin.
@@ -223,7 +220,6 @@ class ImagePlugin extends BasePlugin {
     return status == 'failed' || payload['generation_failed'] == true;
   }
 
-  @override
   List<AITool> getTools() {
     if (!enabled) return [];
     final settings = _settings;
@@ -235,8 +231,9 @@ class ImagePlugin extends BasePlugin {
     return [_drawImageTool];
   }
 
-  @override
-  Future<PluginProcessResult> processResponse(String text) async {
+  /// Turns closed inline `<image>` elements into `image_generate` events and
+  /// removes them; a request snapshot also records its drawing config.
+  PluginProcessResult convertInlineImageTags(String text) {
     if (!enabled) {
       return PluginProcessResult(
         processedText: text,

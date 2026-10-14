@@ -56,12 +56,15 @@ class CharacterListItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final skin = context.skin;
     final colors = context.moeColors;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    final bgColor = isActive ? colors.primary : Colors.transparent;
+    final bgColor = isActive
+        ? colors.primary.withValues(alpha: isDark ? 0.26 : 0.18)
+        : Colors.transparent;
     final borderColor = colors.borderLight;
-    final titleColor = isActive ? Colors.white : colors.text;
-    final subtitleColor =
-        isActive ? Colors.white.withValues(alpha: 0.82) : colors.muted;
+    // Accent text on its own accent tint is too faint; the tint marks the row.
+    final titleColor = colors.text;
+    final subtitleColor = isActive ? colors.textSecondary : colors.muted;
     final timeColor = subtitleColor;
 
     return Material(
@@ -122,7 +125,7 @@ class CharacterListItem extends StatelessWidget {
                             child: Icon(
                               Icons.push_pin,
                               size: 14,
-                              color: isActive ? Colors.white : colors.muted,
+                              color: isActive ? colors.primary : colors.muted,
                             ),
                           ),
                       ],
@@ -179,16 +182,16 @@ class CharacterListItem extends StatelessWidget {
                           const BoxConstraints(minWidth: 20, minHeight: 20),
                       decoration: MoeG2Decoration(
                         radius: 10,
-                        color: isActive ? Colors.white : colors.primary,
+                        color: colors.primary,
                       ),
                       child: Center(
                         child: Text(
                           conversation.unreadCount > 99
                               ? '99+'
                               : '${conversation.unreadCount}',
-                          style: TextStyle(
+                          style: const TextStyle(
                             fontSize: 11,
-                            color: isActive ? colors.primary : Colors.white,
+                            color: Colors.white,
                             fontWeight: MoeFontWeights.emphasis,
                             height: 1.2,
                           ),

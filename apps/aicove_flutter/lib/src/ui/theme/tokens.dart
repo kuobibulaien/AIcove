@@ -210,8 +210,6 @@ const double kDefaultGlassBlurSigma = 16.0;
 const double kMinGlassBlurSigma = 0.0;
 const double kMaxGlassBlurSigma = 32.0;
 
-const double kMaxContentSurfaceBlurSigma = 8.0;
-
 /// Blur minimum of an advanced-material layer. Tint never has a minimum, so
 /// every layer shares the global fill and reads as one colour.
 @immutable

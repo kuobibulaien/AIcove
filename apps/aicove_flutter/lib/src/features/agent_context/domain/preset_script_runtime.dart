@@ -63,6 +63,12 @@ class PresetScriptSnapshot {
   }
 }
 
+/// Opens a preset runtime for one request; the tavern compatibility plugin
+/// provides it as a service.
+typedef PresetRuntimeOpener = Future<PresetScriptRuntime> Function(
+  PresetScriptSnapshot snapshot,
+);
+
 abstract interface class PresetScriptRuntime {
   /// Only business tools may enter the ordinary tool execution loop.
   List<Map<String, dynamic>> get businessTools;

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/time_awareness_plugin_detail_page.dart';
 
 void main() {
@@ -27,7 +28,7 @@ void main() {
     expect(find.text('当前时间注入'), findsOneWidget);
 
     final switchesBefore = tester
-        .widgetList<Switch>(find.byType(Switch))
+        .widgetList<MoeSwitch>(find.byType(MoeSwitch))
         .toList();
     expect(switchesBefore, hasLength(2));
     expect(switchesBefore.every((s) => s.value), isTrue);

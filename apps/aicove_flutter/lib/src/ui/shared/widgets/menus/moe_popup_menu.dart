@@ -22,6 +22,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../moe_floating_surface.dart';
+import '../../../theme/moe_frosted_material.dart';
 import '../../../theme/tokens.dart';
 import '../../effects/smooth_clip.dart';
 
@@ -281,10 +282,18 @@ class _PopupMenuContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bgColor = MoeGlassTheme.maybeOf(context)?.enabled == false
-        ? colors.surface
-        : colors.glassSurface;
+    final brightness = Theme.of(context).brightness;
+    final isDark = brightness == Brightness.dark;
+    final glass = MoeGlassTheme.maybeOf(context);
+    final fill = glass?.tintFill ?? kDefaultGlassTintFill;
+    final bgColor = switch (glass?.material ?? MoeSurfaceMaterial.frosted) {
+      MoeSurfaceMaterial.solid => colors.componentBackground,
+      MoeSurfaceMaterial.frosted => MoeFrostedMaterial.surfaceTint(
+        brightness,
+        fill: fill,
+      ),
+      MoeSurfaceMaterial.liquid => colors.glassTintForFill(fill),
+    };
 
     return Column(
       mainAxisSize: MainAxisSize.min,

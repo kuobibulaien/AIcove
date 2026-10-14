@@ -21,10 +21,10 @@ class ContactsPage extends ConsumerWidget {
         title: '聊天',
         centerTitle: true,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.person_add_alt_1_outlined),
+          MoeIconButton(
+            icon: Icons.person_add_alt_1_outlined,
             tooltip: '新建聊天',
-            onPressed: () => MoeWorkspace.openLocation(context, '/contact/new'),
+            onTap: () => MoeWorkspace.openLocation(context, '/contact/new'),
           ),
         ],
       ),

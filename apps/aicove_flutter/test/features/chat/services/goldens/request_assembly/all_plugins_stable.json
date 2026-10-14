@@ -1,0 +1,168 @@
+{
+  "messages": [
+    {
+      "role": "system",
+      "content": "你是测试角色。\n\n你可以在回复中使用表情包来增加趣味性。\n使用方法：在合适的地方用 [标签] 标记。\n\n可用的表情包标签：不懂、偷看、再见、到了、加油、原来如此、原神、嗯、开心、忙、思考、悄悄、懂了、抱抱、摸鱼、收到、早安、明天见、晚安、智慧、来了、生气、疑惑、累了、耶、草元素、谢谢、赞、难过、震惊、饿了\n\n示例：\n- \"晚安呀~ [晚安]\"\n- \"太感谢你了！[谢谢]\"\n- \"好累啊 [摸鱼]\"\n\n注意：\n- 不要每句话都用表情包，克制使用，每轮回复最多使用一次或者不使用\n- 表情包放在句尾效果更自然\n- 同义词会自动匹配（如\"睡觉\"会匹配到\"晚安\"组的表情包）\n\n<system-reminder> 里是应用附上的背景说明，不是对方说的话。心里有数就好，别照着念，也别提到它。\n\n时间感知插件会通过 <system-reminder> 向模型补充时间上下文：\n- 当前时间提醒按模板 \"当前时间: {datetime}\" 生成，其中 {datetime} 会替换为设备本地时间。\n- 如果 <system-reminder> 中出现“用户上一次发消息的时间为...”，表示上一条真实用户消息的发送时间。\n- 历史消息里形如 [YYYY-MM-DD HH:mm] 的前缀表示该条消息的发送时间。\n\n请将这些内容视为客观时间事实，自行判断当前与历史对话的时序关系，不要原样复述。"
+    },
+    {
+      "role": "user",
+      "content": "早上好"
+    },
+    {
+      "role": "assistant",
+      "content": "早呀<image>a cat on a sofa</image>今天想做什么？"
+    },
+    {
+      "role": "user",
+      "content": "<system-reminder>\n当前时间: 2026-10-12 10:05:30 +00:00 (周一)\n用户上一次发消息的时间为2026-10-12 07:05:30 +00:00 (周一)\n请自行判断当前与历史对话的关系。\n\n本轮回复可以用到的标签（只是提醒，格式和顺序以预设与插件的说明为准）：\n- 想给对方发图时，调用 draw_image 工具，并在正文合适的位置放 <image></image> 占位\n</system-reminder>"
+    },
+    {
+      "role": "user",
+      "content": "帮我画一只猫"
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "create_reminder",
+        "description": "创建一个定时提醒。当用户明确要求设置提醒、闹钟、定时任务时调用此工具。\n使用场景：\n- \"明天早上8点叫我起床\"\n- \"2小时后提醒我喝水\"\n- \"下午3点提醒我开会\"\n\n不要在用户没有明确要求时调用此工具。",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string",
+              "description": "提醒的标题或描述，简洁说明这个提醒是做什么的"
+            },
+            "time": {
+              "type": "string",
+              "description": "触发时间。支持格式：ISO 8601（2026-01-27T08:00:00）或简单时间（08:00，会自动判断今天/明天）"
+            },
+            "prompt": {
+              "type": "string",
+              "description": "触发时的指导提示，告诉你到时候该说什么"
+            }
+          },
+          "required": [
+            "title",
+            "time"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "delete_reminder",
+        "description": "删除一个已存在的提醒。当用户要求取消、删除某个提醒时调用。\n使用场景：\n- \"取消明天的闹钟\"\n- \"不用提醒我了\"\n- \"把那个提醒删掉\"\n\n参数规则：\n- 优先传 id（最准确）\n- 如果没有 id，请传 query（例如 \"明天早上叫我起床\" / \"起床闹钟\"），工具内部会 search\n",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "要删除的提醒 ID（如果已知，优先提供）"
+            },
+            "query": {
+              "type": "string",
+              "description": "不知道 id 时使用：用一句话描述你要取消的提醒（例如\"明天早上叫我起床\"）"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "list_reminders",
+        "description": "列出提醒列表（触发器列表）。当用户问“我有哪些提醒/闹钟/待办”时调用。\n返回 JSON 数组，包含每条提醒的 id/title/next_fire_at/status/priority 等。",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "include_completed": {
+              "type": "boolean",
+              "description": "是否包含已完成、已作废的提醒（默认 false）"
+            },
+            "limit": {
+              "type": "integer",
+              "description": "最多返回多少条（默认 20）"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "search_reminders",
+        "description": "搜索提醒列表。适用于：用户说“把那个起床提醒删掉”“取消明天的闹钟”，但没有 id。\n返回 JSON 数组，包含候选提醒的 id/title/next_fire_at 等。",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "搜索关键词：自然语言描述（例如\"起床\"\"明天早上8点\"\"开会提醒\"）"
+            },
+            "include_completed": {
+              "type": "boolean",
+              "description": "是否包含已完成、已作废的提醒（默认 false）"
+            },
+            "limit": {
+              "type": "integer",
+              "description": "最多返回多少条（默认 5）"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "draw_image",
+        "description": "如果对话场景涉及到生成图片，可调用此工具。你可以自行使用此工具提升角色扮演效果，如生成自拍或生活图片等，自行决定用途。上下文中如果出现［图片］标签，意思是这个地方有一个图片占位，这意味着你需要配合语境发起一次图片工具调用，而不是单纯地回复文本标签。",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "prompt": {
+              "type": "string",
+              "description": "## 核心规范\n\n- 仅限英文，<512 tokens\n- 以 Danbooru 标签为骨架，复杂细节用自然语言补充\n- 推荐顺序：视角 → 主体 → 外貌设定 → 姿势标签 → 场景光影 → 自然语言细节 → 质量标签\n\n质量标签示例：masterpiece, best quality, very aesthetic\n\n## 权重语法\n\n- `{tag}` 加强，`[tag]` 减弱\n- 数值权重：`1.4::tag::`\n- 负权重：`-1::tag::`\n\n## 多人场景（2人及以上）\n\n用 `|` 分隔：`基底提示词 | 角色1 | 角色2`\n\n- 基底：人数、场景、自然语言关系描述（不写外貌）\n- 角色段：独立写外貌、动作\n\n交互动作前缀：\n- `source#动作` 发起方\n- `target#动作` 承受方\n- `mutual#动作` 共同\n\n示例：A girl and a boy are hugging. | girl, target#hug | boy, source#hug\n\n## POV 第一人称视角\n\n- 开头使用 `{{{pov}}}`\n- 可选：`{pov_hands}` 或 `head out of frame`\n- 避免：`full body` 等第三方视角词汇\n- 只描述对方，不描述观者"
+            },
+            "negative_prompt": {
+              "type": "string",
+              "description": "【负面提示词】精简为主，只写必要提示词，防止白熊效应。可选基础负面提示词示例:lowres, artistic error, scan artifacts, worst quality, bad quality, jpeg artifacts, multiple views, very displeasing, too many watermarks, negative space, blank page。注意：在负面内容中，{} 和 [] 的权重语义与正面提示词是反转的。"
+            },
+            "width": {
+              "type": "integer",
+              "description": "图片宽度。严格遵循以下标准：竖图人像 832；横图 1216；方图 1024。 参考值 832，可省略。"
+            },
+            "height": {
+              "type": "integer",
+              "description": "图片高度。严格遵循以下标准：竖图人像 1216；横图 832；方图 1024。 参考值 1216，可省略。"
+            },
+            "count": {
+              "type": "integer",
+              "description": "生成张数 1–4，参考 1，可省略。"
+            }
+          },
+          "required": [
+            "prompt"
+          ]
+        }
+      }
+    }
+  ],
+  "toolChoice": null,
+  "disableBuiltinWebSearch": false,
+  "boundTools": [
+    "create_reminder",
+    "delete_reminder",
+    "list_reminders",
+    "search_reminders",
+    "draw_image"
+  ],
+  "enabledPluginIds": null,
+  "presetStreamResponse": null,
+  "hasPresetScript": false
+}

@@ -213,7 +213,6 @@ void main() {
             MoePrimaryButton,
             MoeSecondaryButton,
             MoeTileButton,
-            MoeIconButton,
             MoreActionTile,
             FilledButton,
             TextButton,
@@ -229,6 +228,15 @@ void main() {
                 findsOneWidget,
               );
             }
+          }
+          for (final button in find.byType(MoeIconButton).evaluate()) {
+            expect(
+              find.descendant(
+                of: find.byWidget(button.widget),
+                matching: find.byType(MoeFloatingSurface),
+              ),
+              findsNothing,
+            );
           }
           final primaryTint = tester.widget<MoeButtonSurface>(
             find.descendant(

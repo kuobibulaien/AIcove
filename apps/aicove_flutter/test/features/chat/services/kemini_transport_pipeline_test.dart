@@ -286,7 +286,6 @@ void _runAll(RunnerFactory createRunner) {
             providerApiBase: 'https://offline.invalid',
             providerApiKey: 'offline-placeholder',
             customConfig: custom,
-            toolPrefs: const {},
             messages: raw,
             presetScript: snapshot,
             tools: mixed ? [weather.toOpenAISchema()] : null,
@@ -294,7 +293,7 @@ void _runAll(RunnerFactory createRunner) {
           ),
           sessionId: 'kemini-offline',
           userText: '去花园',
-          effectivePlugins: const [],
+          responseProcessors: const [],
           enableStreaming: stream,
           onStreamTextDelta: (s) {
             displayed += s;

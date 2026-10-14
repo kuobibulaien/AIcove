@@ -25,6 +25,12 @@ import 'time_awareness/time_awareness_plugin.dart';
 import 'time_awareness/time_awareness_config.dart';
 import 'web_search/web_search_config.dart';
 import 'web_search/web_search_plugin.dart';
+import 'mcp/mcp_connector.dart';
+import 'mcp/mcp_connector_plugin.dart';
+import 'mcp/mcp_connector_providers.dart';
+import 'packages/aicove_package.dart';
+import 'packages/package_plugin.dart';
+import 'packages/package_providers.dart';
 
 /// (注释已丢失)
 final pluginManagerProvider = Provider<PluginManager>((ref) {
@@ -35,6 +41,8 @@ final pluginManagerProvider = Provider<PluginManager>((ref) {
   final imageConfig = ref.watch(imagePluginConfigProvider);
   final timeAwarenessConfig = ref.watch(timeAwarenessPluginConfigProvider);
   final webSearchConfig = ref.watch(webSearchPluginConfigProvider);
+  final mcpConfig = ref.watch(mcpConnectorsConfigProvider);
+  final packages = ref.watch(aicovePackagesProvider);
 
   // Keep PluginManager as singleton to avoid recreating plugin instances.
   _pluginManagerSingleton ??= PluginManager();
@@ -53,12 +61,62 @@ final pluginManagerProvider = Provider<PluginManager>((ref) {
     TimeAwarenessPlugin(timeAwarenessConfig),
   );
   _pluginManagerSingleton!.updatePlugin(WebSearchPlugin(webSearchConfig));
+  _syncMcpConnectorPlugins(_pluginManagerSingleton!, mcpConfig);
+  _syncPackagePlugins(_pluginManagerSingleton!, packages);
 
   return _pluginManagerSingleton!;
 });
 
 // PluginManager 单例
 PluginManager? _pluginManagerSingleton;
+
+/// 等插件配置从磁盘读完再装配请求：冷启动或后台新建的容器里，首次读到的
+/// 还是默认值，装配会把它固定进本次请求快照（2f 审查）。
+Future<void> ensurePluginConfigsLoaded(Ref ref) => Future.wait([
+      ref.read(ttsPluginConfigProvider.notifier).ready,
+      ref.read(triggerPluginConfigProvider.notifier).ready,
+      ref.read(stickerPluginConfigProvider.notifier).ready,
+      ref.read(imagePluginConfigProvider.notifier).ready,
+      ref.read(timeAwarenessPluginConfigProvider.notifier).ready,
+      ref.read(webSearchPluginConfigProvider.notifier).ready,
+      ref.read(mcpConnectorsConfigProvider.notifier).ready,
+      ref.read(aicovePackagesProvider.notifier).ready,
+    ]).then((_) {});
+
+/// 每个 MCP 连接器注册为独立插件；已删除的连接器同步注销。
+void _syncMcpConnectorPlugins(
+  PluginManager manager,
+  McpConnectorsConfig config,
+) {
+  final ids = <String>{};
+  for (final connector in config.connectors) {
+    final plugin = McpConnectorPlugin(connector);
+    ids.add(plugin.id);
+    manager.updatePlugin(plugin);
+  }
+  for (final plugin in manager.getAllPlugins()) {
+    if (McpToolNaming.isConnectorPluginId(plugin.id) &&
+        !ids.contains(plugin.id)) {
+      manager.unregister(plugin.id);
+    }
+  }
+}
+
+/// 每个声明式包注册为插件 `pkg:<id>`；已删除的包同步注销。
+void _syncPackagePlugins(PluginManager manager, List<AicovePackage> packages) {
+  final ids = <String>{};
+  for (final package in packages) {
+    final plugin = PackagePlugin(package);
+    ids.add(plugin.id);
+    manager.updatePlugin(plugin);
+  }
+  for (final plugin in manager.getAllPlugins()) {
+    if (AicovePackage.isPackagePluginId(plugin.id) &&
+        !ids.contains(plugin.id)) {
+      manager.unregister(plugin.id);
+    }
+  }
+}
 
 /// TTS 插件配置 Provider
 final ttsPluginConfigProvider =
@@ -416,8 +474,10 @@ class TriggerPluginConfigNotifier extends StateNotifier<TriggerConfig> {
   static const _storageKey = 'aicove.plugins.trigger.config';
   final Ref _ref;
 
+  late final Future<void> ready;
+
   TriggerPluginConfigNotifier(this._ref) : super(const TriggerConfig()) {
-    _loadConfig();
+    ready = _loadConfig();
   }
 
   void syncFromAppSettings(AppSettings? settings) {
@@ -479,8 +539,10 @@ final stickerPluginConfigProvider =
 class StickerPluginConfigNotifier extends StateNotifier<StickerConfig> {
   static const _storageKey = 'aicove.plugins.sticker.config';
 
+  late final Future<void> ready;
+
   StickerPluginConfigNotifier() : super(const StickerConfig()) {
-    _loadConfig();
+    ready = _loadConfig();
   }
 
   Future<void> _loadConfig() async {
@@ -521,8 +583,10 @@ final imagePluginConfigProvider =
 class ImagePluginConfigNotifier extends StateNotifier<ImageConfig> {
   static const _storageKey = 'aicove.plugins.image.config';
 
+  late final Future<void> ready;
+
   ImagePluginConfigNotifier() : super(const ImageConfig()) {
-    _loadConfig();
+    ready = _loadConfig();
   }
 
   ImageConfig get currentConfig => state;
@@ -679,8 +743,10 @@ class TimeAwarenessPluginConfigNotifier
     extends StateNotifier<TimeAwarenessConfig> {
   static const _storageKey = 'aicove.plugins.time_awareness.config';
 
+  late final Future<void> ready;
+
   TimeAwarenessPluginConfigNotifier() : super(TimeAwarenessConfig()) {
-    _loadConfig();
+    ready = _loadConfig();
   }
 
   Future<void> _loadConfig() async {

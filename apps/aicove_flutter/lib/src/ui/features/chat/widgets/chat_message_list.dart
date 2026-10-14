@@ -52,6 +52,10 @@ import 'regenerate_guidance_dialog.dart';
 import 'frontend_message_probe.dart';
 import '../../../../features/observability/frontend_diagnostics_port.dart';
 import '../../../../features/observability/frontend_diagnostics_provider.dart';
+import '../../voice_call/widgets/voice_call_live_messages.dart'
+    show voiceCallLiveMessagePrefix, voiceCallLiveTurnIndex;
+import '../../../../features/voice_call/providers/voice_call_providers.dart'
+    show activeVoiceCallProvider;
 
 part 'chat_message_list_presentation.dart';
 part 'chat_message_list_timeline.dart';

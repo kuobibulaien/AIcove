@@ -462,7 +462,6 @@ class _SelectionBar extends StatelessWidget {
                   _CircleActionButton(
                     icon: Icons.delete_outline,
                     color: cs.error,
-                    backgroundColor: colors.componentBackground,
                     onTap: onDelete,
                     semanticLabel: '删除($count/$total)',
                   ),
@@ -470,7 +469,6 @@ class _SelectionBar extends StatelessWidget {
                   _CircleActionButton(
                     icon: Icons.select_all,
                     color: colors.focus,
-                    backgroundColor: colors.componentBackground,
                     onTap: onSelectAll,
                     semanticLabel: '全选',
                   ),
@@ -488,31 +486,26 @@ class _CircleActionButton extends StatelessWidget {
   const _CircleActionButton({
     required this.icon,
     required this.color,
-    required this.backgroundColor,
     required this.onTap,
     required this.semanticLabel,
   });
 
   final IconData icon;
   final Color color;
-  final Color backgroundColor;
   final VoidCallback? onTap;
   final String semanticLabel;
 
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
-    return MoeIconButton(
-      icon: icon,
-      semanticLabel: semanticLabel,
-      onTap: onTap,
-      color: onTap == null ? colors.muted : color,
-      backgroundColor: backgroundColor.withValues(alpha: 0.75),
-      pressedBackgroundColor: backgroundColor.withValues(alpha: 0.9),
-      borderRadius: MoeRadii.borderCapsule,
-      border: BorderSide(
-        color: colors.border.withValues(alpha: 0.25),
-        width: 0.8,
+    return MoeFloatingSurface(
+      radius: 999,
+      child: MoeIconButton(
+        icon: icon,
+        semanticLabel: semanticLabel,
+        onTap: onTap,
+        color: onTap == null ? colors.muted : color,
+        borderRadius: MoeRadii.borderCapsule,
       ),
     );
   }

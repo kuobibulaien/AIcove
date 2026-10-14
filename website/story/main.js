@@ -981,6 +981,26 @@ async function run() {
   await finale();
 }
 
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch {}
+  // http pages and some in-app browsers block the async clipboard API
+  const ta = Object.assign(document.createElement('textarea'), { value: text });
+  document.body.append(ta);
+  ta.select();
+  const ok = document.execCommand('copy');
+  ta.remove();
+  return ok;
+}
+
+$('#qq').addEventListener('click', () => $('#qqDialog').showModal());
+$('#qqClose').addEventListener('click', () => $('#qqDialog').close());
+$('#qqCopy').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  if (!(await copyText(btn.dataset.copy))) return;
+  const label = btn.textContent;
+  btn.textContent = '群号已复制';
+  setTimeout(() => { btn.textContent = label; }, 1600);
+});
 $('#again').addEventListener('click', async () => { await bgm.fadeOut(0.8); location.reload(); });
 document.querySelector('.skip').addEventListener('click', async (e) => {
   e.preventDefault();

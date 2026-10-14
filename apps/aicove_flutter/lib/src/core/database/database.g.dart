@@ -55,6 +55,12 @@ class $ConversationsTable extends Conversations
   late final GeneratedColumn<double> chatBackgroundBlurSigma =
       GeneratedColumn<double>('chat_background_blur_sigma', aliasedName, true,
           type: DriftSqlType.double, requiredDuringInsert: false);
+  static const VerificationMeta _chatBackgroundFramingMeta =
+      const VerificationMeta('chatBackgroundFraming');
+  @override
+  late final GeneratedColumn<String> chatBackgroundFraming =
+      GeneratedColumn<String>('chat_background_framing', aliasedName, true,
+          type: DriftSqlType.string, requiredDuringInsert: false);
   static const VerificationMeta _blurredBackgroundMeta =
       const VerificationMeta('blurredBackground');
   @override
@@ -251,6 +257,7 @@ class $ConversationsTable extends Conversations
         chatBackgroundImage,
         chatBackgroundMaskOpacity,
         chatBackgroundBlurSigma,
+        chatBackgroundFraming,
         blurredBackground,
         selfAddress,
         addressUser,
@@ -337,6 +344,12 @@ class $ConversationsTable extends Conversations
           chatBackgroundBlurSigma.isAcceptableOrUnknown(
               data['chat_background_blur_sigma']!,
               _chatBackgroundBlurSigmaMeta));
+    }
+    if (data.containsKey('chat_background_framing')) {
+      context.handle(
+          _chatBackgroundFramingMeta,
+          chatBackgroundFraming.isAcceptableOrUnknown(
+              data['chat_background_framing']!, _chatBackgroundFramingMeta));
     }
     if (data.containsKey('blurred_background')) {
       context.handle(
@@ -513,6 +526,9 @@ class $ConversationsTable extends Conversations
       chatBackgroundBlurSigma: attachedDatabase.typeMapping.read(
           DriftSqlType.double,
           data['${effectivePrefix}chat_background_blur_sigma']),
+      chatBackgroundFraming: attachedDatabase.typeMapping.read(
+          DriftSqlType.string,
+          data['${effectivePrefix}chat_background_framing']),
       blurredBackground: attachedDatabase.typeMapping.read(
           DriftSqlType.string, data['${effectivePrefix}blurred_background']),
       selfAddress: attachedDatabase.typeMapping
@@ -587,6 +603,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
   final String? chatBackgroundImage;
   final double? chatBackgroundMaskOpacity;
   final double? chatBackgroundBlurSigma;
+  final String? chatBackgroundFraming;
   final String? blurredBackground;
   final String? selfAddress;
   final String? addressUser;
@@ -623,6 +640,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       this.chatBackgroundImage,
       this.chatBackgroundMaskOpacity,
       this.chatBackgroundBlurSigma,
+      this.chatBackgroundFraming,
       this.blurredBackground,
       this.selfAddress,
       this.addressUser,
@@ -672,6 +690,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
     if (!nullToAbsent || chatBackgroundBlurSigma != null) {
       map['chat_background_blur_sigma'] =
           Variable<double>(chatBackgroundBlurSigma);
+    }
+    if (!nullToAbsent || chatBackgroundFraming != null) {
+      map['chat_background_framing'] = Variable<String>(chatBackgroundFraming);
     }
     if (!nullToAbsent || blurredBackground != null) {
       map['blurred_background'] = Variable<String>(blurredBackground);
@@ -760,6 +781,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       chatBackgroundBlurSigma: chatBackgroundBlurSigma == null && nullToAbsent
           ? const Value.absent()
           : Value(chatBackgroundBlurSigma),
+      chatBackgroundFraming: chatBackgroundFraming == null && nullToAbsent
+          ? const Value.absent()
+          : Value(chatBackgroundFraming),
       blurredBackground: blurredBackground == null && nullToAbsent
           ? const Value.absent()
           : Value(blurredBackground),
@@ -841,6 +865,8 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           serializer.fromJson<double?>(json['chatBackgroundMaskOpacity']),
       chatBackgroundBlurSigma:
           serializer.fromJson<double?>(json['chatBackgroundBlurSigma']),
+      chatBackgroundFraming:
+          serializer.fromJson<String?>(json['chatBackgroundFraming']),
       blurredBackground:
           serializer.fromJson<String?>(json['blurredBackground']),
       selfAddress: serializer.fromJson<String?>(json['selfAddress']),
@@ -888,6 +914,8 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           serializer.toJson<double?>(chatBackgroundMaskOpacity),
       'chatBackgroundBlurSigma':
           serializer.toJson<double?>(chatBackgroundBlurSigma),
+      'chatBackgroundFraming':
+          serializer.toJson<String?>(chatBackgroundFraming),
       'blurredBackground': serializer.toJson<String?>(blurredBackground),
       'selfAddress': serializer.toJson<String?>(selfAddress),
       'addressUser': serializer.toJson<String?>(addressUser),
@@ -928,6 +956,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           Value<String?> chatBackgroundImage = const Value.absent(),
           Value<double?> chatBackgroundMaskOpacity = const Value.absent(),
           Value<double?> chatBackgroundBlurSigma = const Value.absent(),
+          Value<String?> chatBackgroundFraming = const Value.absent(),
           Value<String?> blurredBackground = const Value.absent(),
           Value<String?> selfAddress = const Value.absent(),
           Value<String?> addressUser = const Value.absent(),
@@ -971,6 +1000,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
         chatBackgroundBlurSigma: chatBackgroundBlurSigma.present
             ? chatBackgroundBlurSigma.value
             : this.chatBackgroundBlurSigma,
+        chatBackgroundFraming: chatBackgroundFraming.present
+            ? chatBackgroundFraming.value
+            : this.chatBackgroundFraming,
         blurredBackground: blurredBackground.present
             ? blurredBackground.value
             : this.blurredBackground,
@@ -1036,6 +1068,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       chatBackgroundBlurSigma: data.chatBackgroundBlurSigma.present
           ? data.chatBackgroundBlurSigma.value
           : this.chatBackgroundBlurSigma,
+      chatBackgroundFraming: data.chatBackgroundFraming.present
+          ? data.chatBackgroundFraming.value
+          : this.chatBackgroundFraming,
       blurredBackground: data.blurredBackground.present
           ? data.blurredBackground.value
           : this.blurredBackground,
@@ -1107,6 +1142,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           ..write('chatBackgroundImage: $chatBackgroundImage, ')
           ..write('chatBackgroundMaskOpacity: $chatBackgroundMaskOpacity, ')
           ..write('chatBackgroundBlurSigma: $chatBackgroundBlurSigma, ')
+          ..write('chatBackgroundFraming: $chatBackgroundFraming, ')
           ..write('blurredBackground: $blurredBackground, ')
           ..write('selfAddress: $selfAddress, ')
           ..write('addressUser: $addressUser, ')
@@ -1148,6 +1184,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
         chatBackgroundImage,
         chatBackgroundMaskOpacity,
         chatBackgroundBlurSigma,
+        chatBackgroundFraming,
         blurredBackground,
         selfAddress,
         addressUser,
@@ -1188,6 +1225,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           other.chatBackgroundImage == this.chatBackgroundImage &&
           other.chatBackgroundMaskOpacity == this.chatBackgroundMaskOpacity &&
           other.chatBackgroundBlurSigma == this.chatBackgroundBlurSigma &&
+          other.chatBackgroundFraming == this.chatBackgroundFraming &&
           other.blurredBackground == this.blurredBackground &&
           other.selfAddress == this.selfAddress &&
           other.addressUser == this.addressUser &&
@@ -1226,6 +1264,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
   final Value<String?> chatBackgroundImage;
   final Value<double?> chatBackgroundMaskOpacity;
   final Value<double?> chatBackgroundBlurSigma;
+  final Value<String?> chatBackgroundFraming;
   final Value<String?> blurredBackground;
   final Value<String?> selfAddress;
   final Value<String?> addressUser;
@@ -1263,6 +1302,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     this.chatBackgroundImage = const Value.absent(),
     this.chatBackgroundMaskOpacity = const Value.absent(),
     this.chatBackgroundBlurSigma = const Value.absent(),
+    this.chatBackgroundFraming = const Value.absent(),
     this.blurredBackground = const Value.absent(),
     this.selfAddress = const Value.absent(),
     this.addressUser = const Value.absent(),
@@ -1301,6 +1341,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     this.chatBackgroundImage = const Value.absent(),
     this.chatBackgroundMaskOpacity = const Value.absent(),
     this.chatBackgroundBlurSigma = const Value.absent(),
+    this.chatBackgroundFraming = const Value.absent(),
     this.blurredBackground = const Value.absent(),
     this.selfAddress = const Value.absent(),
     this.addressUser = const Value.absent(),
@@ -1343,6 +1384,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     Expression<String>? chatBackgroundImage,
     Expression<double>? chatBackgroundMaskOpacity,
     Expression<double>? chatBackgroundBlurSigma,
+    Expression<String>? chatBackgroundFraming,
     Expression<String>? blurredBackground,
     Expression<String>? selfAddress,
     Expression<String>? addressUser,
@@ -1384,6 +1426,8 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
         'chat_background_mask_opacity': chatBackgroundMaskOpacity,
       if (chatBackgroundBlurSigma != null)
         'chat_background_blur_sigma': chatBackgroundBlurSigma,
+      if (chatBackgroundFraming != null)
+        'chat_background_framing': chatBackgroundFraming,
       if (blurredBackground != null) 'blurred_background': blurredBackground,
       if (selfAddress != null) 'self_address': selfAddress,
       if (addressUser != null) 'address_user': addressUser,
@@ -1426,6 +1470,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       Value<String?>? chatBackgroundImage,
       Value<double?>? chatBackgroundMaskOpacity,
       Value<double?>? chatBackgroundBlurSigma,
+      Value<String?>? chatBackgroundFraming,
       Value<String?>? blurredBackground,
       Value<String?>? selfAddress,
       Value<String?>? addressUser,
@@ -1465,6 +1510,8 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
           chatBackgroundMaskOpacity ?? this.chatBackgroundMaskOpacity,
       chatBackgroundBlurSigma:
           chatBackgroundBlurSigma ?? this.chatBackgroundBlurSigma,
+      chatBackgroundFraming:
+          chatBackgroundFraming ?? this.chatBackgroundFraming,
       blurredBackground: blurredBackground ?? this.blurredBackground,
       selfAddress: selfAddress ?? this.selfAddress,
       addressUser: addressUser ?? this.addressUser,
@@ -1526,6 +1573,10 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     if (chatBackgroundBlurSigma.present) {
       map['chat_background_blur_sigma'] =
           Variable<double>(chatBackgroundBlurSigma.value);
+    }
+    if (chatBackgroundFraming.present) {
+      map['chat_background_framing'] =
+          Variable<String>(chatBackgroundFraming.value);
     }
     if (blurredBackground.present) {
       map['blurred_background'] = Variable<String>(blurredBackground.value);
@@ -1627,6 +1678,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
           ..write('chatBackgroundImage: $chatBackgroundImage, ')
           ..write('chatBackgroundMaskOpacity: $chatBackgroundMaskOpacity, ')
           ..write('chatBackgroundBlurSigma: $chatBackgroundBlurSigma, ')
+          ..write('chatBackgroundFraming: $chatBackgroundFraming, ')
           ..write('blurredBackground: $blurredBackground, ')
           ..write('selfAddress: $selfAddress, ')
           ..write('addressUser: $addressUser, ')
@@ -4943,6 +4995,7 @@ typedef $$ConversationsTableCreateCompanionBuilder = ConversationsCompanion
   Value<String?> chatBackgroundImage,
   Value<double?> chatBackgroundMaskOpacity,
   Value<double?> chatBackgroundBlurSigma,
+  Value<String?> chatBackgroundFraming,
   Value<String?> blurredBackground,
   Value<String?> selfAddress,
   Value<String?> addressUser,
@@ -4982,6 +5035,7 @@ typedef $$ConversationsTableUpdateCompanionBuilder = ConversationsCompanion
   Value<String?> chatBackgroundImage,
   Value<double?> chatBackgroundMaskOpacity,
   Value<double?> chatBackgroundBlurSigma,
+  Value<String?> chatBackgroundFraming,
   Value<String?> blurredBackground,
   Value<String?> selfAddress,
   Value<String?> addressUser,
@@ -5037,6 +5091,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             Value<String?> chatBackgroundImage = const Value.absent(),
             Value<double?> chatBackgroundMaskOpacity = const Value.absent(),
             Value<double?> chatBackgroundBlurSigma = const Value.absent(),
+            Value<String?> chatBackgroundFraming = const Value.absent(),
             Value<String?> blurredBackground = const Value.absent(),
             Value<String?> selfAddress = const Value.absent(),
             Value<String?> addressUser = const Value.absent(),
@@ -5075,6 +5130,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             chatBackgroundImage: chatBackgroundImage,
             chatBackgroundMaskOpacity: chatBackgroundMaskOpacity,
             chatBackgroundBlurSigma: chatBackgroundBlurSigma,
+            chatBackgroundFraming: chatBackgroundFraming,
             blurredBackground: blurredBackground,
             selfAddress: selfAddress,
             addressUser: addressUser,
@@ -5113,6 +5169,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             Value<String?> chatBackgroundImage = const Value.absent(),
             Value<double?> chatBackgroundMaskOpacity = const Value.absent(),
             Value<double?> chatBackgroundBlurSigma = const Value.absent(),
+            Value<String?> chatBackgroundFraming = const Value.absent(),
             Value<String?> blurredBackground = const Value.absent(),
             Value<String?> selfAddress = const Value.absent(),
             Value<String?> addressUser = const Value.absent(),
@@ -5151,6 +5208,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             chatBackgroundImage: chatBackgroundImage,
             chatBackgroundMaskOpacity: chatBackgroundMaskOpacity,
             chatBackgroundBlurSigma: chatBackgroundBlurSigma,
+            chatBackgroundFraming: chatBackgroundFraming,
             blurredBackground: blurredBackground,
             selfAddress: selfAddress,
             addressUser: addressUser,
@@ -5224,6 +5282,11 @@ class $$ConversationsTableFilterComposer
 
   ColumnFilters<double> get chatBackgroundBlurSigma => $state.composableBuilder(
       column: $state.table.chatBackgroundBlurSigma,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get chatBackgroundFraming => $state.composableBuilder(
+      column: $state.table.chatBackgroundFraming,
       builder: (column, joinBuilders) =>
           ColumnFilters(column, joinBuilders: joinBuilders));
 
@@ -5439,6 +5502,11 @@ class $$ConversationsTableOrderingComposer
           column: $state.table.chatBackgroundBlurSigma,
           builder: (column, joinBuilders) =>
               ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get chatBackgroundFraming => $state.composableBuilder(
+      column: $state.table.chatBackgroundFraming,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
 
   ColumnOrderings<String> get blurredBackground => $state.composableBuilder(
       column: $state.table.blurredBackground,

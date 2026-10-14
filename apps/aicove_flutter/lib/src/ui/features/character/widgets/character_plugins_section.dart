@@ -13,6 +13,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../features/agent_context/providers/preset_recipe_provider.dart';
 import '../../../../features/chat/domain/persona_prompt_codec.dart';
 import '../../../../features/plugins/image/drawing_preset_provider.dart';
+import '../../../../features/plugins/mcp/mcp_connector.dart';
+import '../../../../features/plugins/mcp/mcp_connector_providers.dart';
+import '../../../../features/plugins/packages/package_providers.dart';
 import '../../../../features/plugins/plugin_providers.dart';
 import '../../../../features/plugins/tts/tts_config.dart';
 import '../../../../features/settings/app_settings.dart';
@@ -115,6 +118,16 @@ class _CharacterPluginsSectionState
       const _PluginSpec(id: 'trigger', label: '主动关怀'),
       const _PluginSpec(id: 'time_awareness', label: '时间感知'),
       const _PluginSpec(id: 'web_search', label: '联网搜索'),
+      // 每个 MCP 连接器单独开关；角色未开启时不会拿到它的工具。
+      for (final connector in ref.watch(mcpConnectorsConfigProvider).connectors)
+        _PluginSpec(
+          id: McpToolNaming.pluginIdOf(connector.id),
+          label: connector.displayName,
+          binding: _BindingSpec(value: _connectorStatus(connector)),
+        ),
+      // 声明式包同样须由角色显式开启。
+      for (final package in ref.watch(aicovePackagesProvider))
+        _PluginSpec(id: package.pluginId, label: package.name),
     ];
 
     final active = plugins.where(_isActive).toList();
@@ -254,12 +267,10 @@ class _CharacterPluginsSectionState
         child: OverflowBox(
           maxHeight: 40,
           child: IgnorePointer(
-            child: Switch(
+            child: MoeSwitch(
               value: value,
+              semanticLabel: plugin.label,
               onChanged: (_) {},
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              activeTrackColor: colors.focus,
-              thumbColor: WidgetStateProperty.all(Colors.white),
             ),
           ),
         ),
@@ -276,6 +287,14 @@ class _CharacterPluginsSectionState
       next.remove(pluginId);
     }
     widget.onPluginIdsChanged(next);
+  }
+
+  // ==================== MCP 连接器 ====================
+
+  static String _connectorStatus(McpConnector connector) {
+    if (!connector.enabled) return '连接器已停用';
+    if (connector.tools.isEmpty) return '尚未连接';
+    return '${connector.activeTools.length} 个工具';
   }
 
   // ==================== 酒馆 ====================

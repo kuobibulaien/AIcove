@@ -109,7 +109,7 @@ class _ContactMemoryPageState extends ConsumerState<ContactMemoryPage> {
     final confirmed = await showMeoTalkDialog(
       context: context,
       title: '删除这条记忆？',
-      content: const Text('删除后聊天时不再带上它。原始聊天不会删除；以后压缩或重建时，模型仍可能从聊天里重新记起相同的事。'),
+      content: const Text('删除后聊天时不再带上它，原始聊天记录不会删除。'),
       confirmText: '删除',
       isDanger: true,
     );
@@ -139,9 +139,8 @@ class _ContactMemoryPageState extends ConsumerState<ContactMemoryPage> {
       context: context,
       title: '从聊天记录重建记忆？',
       content: Text(
-        '会把 ${estimate.messages} 条聊天（约 ${(estimate.inputTokens / 1000).toStringAsFixed(1)}k tokens）'
-        '分 ${estimate.batches} 批交给记忆模型重新整理，费用与聊天量成正比。\n'
-        '开始前会删除所有未锁定的记忆；你锁定的记忆保留。可以随时暂停，之后接着跑。',
+        '将重新整理 ${estimate.messages} 条聊天记录。\n'
+        '未锁定的记忆会被替换，已锁定的记忆保留。',
       ),
       confirmText: '开始重建',
       isDanger: true,
@@ -259,7 +258,7 @@ class _ContactMemoryPageState extends ConsumerState<ContactMemoryPage> {
                         MoeSettingsRow(
                           icon: Icons.history,
                           label: '从聊天记录重建',
-                          subtitle: '把全部聊天重新整理一遍（会产生模型费用）',
+                          subtitle: '重新整理全部聊天记录',
                           enabled: _allowed && !running,
                           onTap: _rebuild,
                         ),
@@ -281,14 +280,9 @@ class _ContactMemoryPageState extends ConsumerState<ContactMemoryPage> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      '记忆存在本机，暂不随云同步；需要备份时可用右上角「复制全部记忆」。'
-                      '聊天时带上的记忆会发送给当前模型服务。锁定的记忆不会被自动整理修改。',
-                    ),
                     const SizedBox(height: 20),
                     MoeSettingsGroup(
-                      title: '常驻（每轮都带，约 2000 tokens 以内）',
+                      title: '常驻记忆',
                       margin: EdgeInsets.zero,
                       children: [
                         if (core.isEmpty)
@@ -306,7 +300,7 @@ class _ContactMemoryPageState extends ConsumerState<ContactMemoryPage> {
                     ),
                     const SizedBox(height: 20),
                     MoeSettingsGroup(
-                      title: '档案（按当前话题检索后带上）',
+                      title: '档案记忆',
                       margin: EdgeInsets.zero,
                       children: [
                         if (archive.isEmpty)
@@ -399,7 +393,7 @@ class _MemoryEditorState extends ConsumerState<_MemoryEditor> {
                 MoeSettingsRow(
                   icon: Icons.push_pin_outlined,
                   label: '常驻',
-                  subtitle: '开启后每轮都带；关闭则存进档案，按话题检索',
+                  subtitle: '每次聊天都会带上',
                   trailingType: MoeSettingsRowTrailing.switchControl,
                   switchValue: _layer == MemoryLayer.core,
                   onSwitchChanged: (value) => setState(
@@ -424,8 +418,6 @@ class _MemoryEditorState extends ConsumerState<_MemoryEditor> {
               const SizedBox(height: 8),
               Text(_error!, style: TextStyle(color: context.moeColors.text)),
             ],
-            const SizedBox(height: 16),
-            const Text('保存后这条记忆会被锁定，自动整理不会再修改或删除它。'),
             const SizedBox(height: 16),
             MoePrimaryButton(label: '保存', onPressed: _saving ? null : _save),
           ],

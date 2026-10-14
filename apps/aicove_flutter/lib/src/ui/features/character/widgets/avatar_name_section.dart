@@ -16,6 +16,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/utils/avatar_helper.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
+import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/theme/tokens.dart';
 
 class AvatarNameSection extends StatelessWidget {
@@ -99,16 +100,18 @@ class AvatarNameSection extends StatelessWidget {
           spacing: 8,
           runSpacing: 8,
           children: [
-            OutlinedButton.icon(
+            MoeSecondaryButton(
               onPressed: onPickCharacterImage,
-              icon: const Icon(Icons.photo_library_outlined),
-              label: Text(hasCharacterImage ? '更换立绘' : '上传立绘'),
+              icon: Icons.photo_library_outlined,
+              label: hasCharacterImage ? '更换立绘' : '上传立绘',
+              size: MoeSecondaryButtonSize.sm,
             ),
             if (hasCharacterImage) ...[
-              OutlinedButton.icon(
+              MoeSecondaryButton(
                 onPressed: onClearCharacterImage,
-                icon: const Icon(Icons.close),
-                label: const Text('清空立绘'),
+                icon: Icons.close,
+                label: '清空立绘',
+                size: MoeSecondaryButtonSize.sm,
               ),
             ],
           ],

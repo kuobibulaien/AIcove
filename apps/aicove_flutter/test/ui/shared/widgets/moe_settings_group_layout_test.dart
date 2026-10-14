@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
+import 'package:aicove_flutter/src/ui/theme/moe_frosted_material.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 
 double _expectedContentWidth(double panelWidth) {
@@ -164,21 +165,23 @@ void main() {
             find.byType(MoeContentSurface),
           );
           final group = find.byType(MoeSettingsGroup);
-          expect(surface.color, isNotNull);
-          expect(surface.blurSigma, 0);
+          expect(surface.color, isNull);
           expect(surface.borderRadius, BorderRadius.circular(20));
+          // Glass renders the liquid lens; frosted keeps one blur filter.
           expect(
             find.descendant(of: group, matching: find.byType(MoeLiquidGlass)),
-            findsNothing,
+            liquid ? findsOneWidget : findsNothing,
           );
           expect(
             find.descendant(of: group, matching: find.byType(AdaptiveGlass)),
-            findsNothing,
+            liquid ? findsWidgets : findsNothing,
           );
-          expect(
-            find.descendant(of: group, matching: find.byType(BackdropFilter)),
-            findsNothing,
-          );
+          if (!liquid) {
+            expect(
+              find.descendant(of: group, matching: find.byType(BackdropFilter)),
+              enabled ? findsOneWidget : findsNothing,
+            );
+          }
           expect(
             find.descendant(
               of: group,

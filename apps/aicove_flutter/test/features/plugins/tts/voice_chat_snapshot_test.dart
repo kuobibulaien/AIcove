@@ -4,7 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:aicove_flutter/src/core/app_logger.dart';
 import 'package:aicove_flutter/src/features/observability/trace_models.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
-import 'package:aicove_flutter/src/features/plugins/domain/plugin.dart';
+import 'package:aicove_flutter/src/features/agent_plugins/plugin_response.dart';
+import 'package:aicove_flutter/src/features/agent_plugins/plugin_runtime.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/handlers/ai_tool.dart';
 import 'package:aicove_flutter/src/features/plugins/plugin_manager.dart';
 import 'package:aicove_flutter/src/features/plugins/plugin_providers.dart';
@@ -22,7 +23,7 @@ class _Runner extends ChatSendApiRunner {
       {required ApiConfig config,
       required String sessionId,
       required String? userText,
-      required List<Plugin> effectivePlugins,
+      required List<PluginResponseProcessor> responseProcessors,
       List<AITool>? availableTools,
       String? turnId,
       TraceLogger? trace,
@@ -35,8 +36,9 @@ class _Runner extends ChatSendApiRunner {
       void Function()? onStreamingFallback,
       TraceContext? traceContext}) async {
     onStreamTextDelta?.call('<tts>测试语音</tts>');
-    final plugin = effectivePlugins.whereType<TtsPlugin>().single;
-    final result = await plugin.processResponse('<tts>测试语音</tts>');
+    final result = await runResponseProcessors(
+        responseProcessors, '<tts>测试语音</tts>',
+        logTag: 'test');
     return ApiCallResult(
         replyText: '<tts>测试语音</tts>',
         processedText: result.processedText,
@@ -55,25 +57,33 @@ void main() {
             config: TtsConfig(enabled: true, voiceFrequency: 40),
             requestUrl: 'https://a.invalid',
             model: 'speech'));
-    final config = ApiConfig(
-        settings: mapUiModelsToAppSettings({}),
-        modelFullId: 'model',
-        providerApiBase: 'https://example.invalid',
-        customConfig: const {},
-        toolPrefs: const {},
-        messages: const [],
-        voiceRequest: request);
     final backendProvider = Provider((ref) => ChatSendBackendService(ref,
         apiRunner: _Runner(),
         readImageAsBase64: (_) async => null,
         shouldUseNonVisionImageFlow: ({required settings, required modelRef}) =>
             false,
         resolveTimeAwarenessPreviousUserMessageTime: (_) => null));
-    // No globally enabled TTS plugin: the in-progress request must still use
-    // its own plugin snapshot rather than the now changed global registry.
+    // No globally enabled TTS plugin at execution: the in-progress request
+    // must still use the reply processors fixed at prepare rather than the
+    // now changed global registry.
     final container = ProviderContainer(
         overrides: [pluginManagerProvider.overrideWithValue(PluginManager())]);
     addTearDown(container.dispose);
+    final refProvider = Provider<Ref>((ref) => ref);
+    final prepared =
+        PluginRuntime.fromPlugins([TtsPlugin(TtsConfig(enabled: true))]);
+    final config = ApiConfig(
+        settings: mapUiModelsToAppSettings({}),
+        modelFullId: 'model',
+        providerApiBase: 'https://example.invalid',
+        customConfig: const {},
+        messages: const [],
+        voiceRequest: request,
+        responseProcessors: prepared.responseProcessors(
+            prepared.snapshot(),
+            prepared.selectForRole(null),
+            PluginResponseInputs(
+                ref: container.read(refProvider), voiceRequest: request)));
     final captured = Completer<VoiceRequest?>();
     final backend = container.read(backendProvider);
     final result = await backend.executeApiCall(

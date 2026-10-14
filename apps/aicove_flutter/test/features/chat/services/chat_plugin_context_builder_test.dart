@@ -1,15 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'test_plugin_support.dart';
 
 import 'package:aicove_flutter/src/features/chat/services/chat_plugin_context_builder.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_types.dart'
     show isProviderRefreshTimingError;
-import 'package:aicove_flutter/src/features/plugins/domain/base_plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/handlers/ai_tool.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin_metadata.dart';
-import 'package:aicove_flutter/src/features/plugins/memory/memory_plugin.dart';
 
 Future<String?> _noopToolHandler(Map<String, dynamic> _) async => 'ok';
 
@@ -27,7 +26,7 @@ StateError _buildProviderRefreshTimingError() => StateError(
       'changed but before the provider rebuilt',
     );
 
-class _StubPlugin extends BasePlugin {
+class _StubPlugin extends TestPlugin {
   _StubPlugin({
     required String id,
     required this.onGetTools,
@@ -82,21 +81,11 @@ class _StubPlugin extends BasePlugin {
       );
 }
 
-class _SpyMemoryPlugin extends MemoryPlugin {
-  _SpyMemoryPlugin(super.ref);
-
-  String? lastConversationId;
-
-  @override
-  Future<String?> getSystemPrompt({
-    String? userMessage,
-    bool supportsToolCalling = false,
-    String? conversationId,
-  }) async {
-    lastConversationId = conversationId;
-    return 'memory_prompt';
-  }
-}
+PluginPromptSource _promptSource(TestPlugin plugin) => PluginPromptSource(
+      pluginId: plugin.id,
+      pluginName: plugin.name,
+      build: () => plugin.getSystemPrompt(userMessage: '你好'),
+    );
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -118,7 +107,7 @@ void main() {
         isProviderRefreshTimingError(StateError('some other error')), isFalse);
   });
 
-  test('collectPluginToolsWithRetry 遇到依赖刷新窗口错误会重试一次', () async {
+  test('collectToolsWithRetry 遇到依赖刷新窗口错误会重试一次', () async {
     const builder = ChatPluginContextBuilder();
     final plugin = _StubPlugin(
       id: 'image',
@@ -130,8 +119,8 @@ void main() {
       },
     );
 
-    final tools = await builder.collectPluginToolsWithRetry(
-      [plugin],
+    final tools = await builder.collectToolsWithRetry(
+      [PluginToolSource(pluginId: plugin.id, tools: plugin.getTools)],
       retryDelay: Duration.zero,
       maxRetryAttempts: 1,
     );
@@ -140,15 +129,15 @@ void main() {
     expect(plugin.getToolsCallCount, 2);
   });
 
-  test('collectPluginToolsWithRetry 遇到普通错误不重试', () async {
+  test('collectToolsWithRetry 遇到普通错误不重试', () async {
     const builder = ChatPluginContextBuilder();
     final plugin = _StubPlugin(
       id: 'image',
       onGetTools: (_) => throw StateError('some other error'),
     );
 
-    final tools = await builder.collectPluginToolsWithRetry(
-      [plugin],
+    final tools = await builder.collectToolsWithRetry(
+      [PluginToolSource(pluginId: plugin.id, tools: plugin.getTools)],
       retryDelay: Duration.zero,
       maxRetryAttempts: 1,
     );
@@ -157,7 +146,7 @@ void main() {
     expect(plugin.getToolsCallCount, 1);
   });
 
-  test('collectPluginToolsWithRetry 超过重试次数后停止', () async {
+  test('collectToolsWithRetry 超过重试次数后停止', () async {
     const builder = ChatPluginContextBuilder();
     final plugin = _StubPlugin(
       id: 'image',
@@ -168,8 +157,8 @@ void main() {
       ),
     );
 
-    final tools = await builder.collectPluginToolsWithRetry(
-      [plugin],
+    final tools = await builder.collectToolsWithRetry(
+      [PluginToolSource(pluginId: plugin.id, tools: plugin.getTools)],
       retryDelay: Duration.zero,
       maxRetryAttempts: 1,
     );
@@ -178,7 +167,7 @@ void main() {
     expect(plugin.getToolsCallCount, 2);
   });
 
-  test('buildPluginPromptEntriesWithFilter 遇到依赖刷新窗口错误会重试一次', () async {
+  test('buildPromptEntries 遇到依赖刷新窗口错误会重试一次', () async {
     const builder = ChatPluginContextBuilder();
     final plugin = _StubPlugin(
       id: 'memory',
@@ -191,10 +180,8 @@ void main() {
       },
     );
 
-    final result = await builder.buildPluginPromptEntriesWithFilter(
-      [plugin],
-      userMessage: '你好',
-      supportsToolCalling: false,
+    final result = await builder.buildPromptEntries(
+      [_promptSource(plugin)],
       retryDelay: Duration.zero,
       maxRetryAttempts: 1,
     );
@@ -204,7 +191,7 @@ void main() {
     expect(plugin.getSystemPromptCallCount, 2);
   });
 
-  test('buildPluginPromptEntriesWithFilter 遇到普通错误时不会重试且按原逻辑降级', () async {
+  test('buildPromptEntries 遇到普通错误时不会重试且按原逻辑降级', () async {
     const builder = ChatPluginContextBuilder();
     final plugin = _StubPlugin(
       id: 'memory',
@@ -213,10 +200,8 @@ void main() {
           throw StateError('some other error'),
     );
 
-    final result = await builder.buildPluginPromptEntriesWithFilter(
-      [plugin],
-      userMessage: '你好',
-      supportsToolCalling: false,
+    final result = await builder.buildPromptEntries(
+      [_promptSource(plugin)],
       retryDelay: Duration.zero,
       maxRetryAttempts: 1,
     );
@@ -225,26 +210,5 @@ void main() {
     expect(result.entries.single.injected, isFalse);
     expect(result.entries.single.reason, 'build_failed');
     expect(result.entries.single.error, contains('some other error'));
-  });
-
-  test('buildPluginPromptEntriesWithFilter 会向 MemoryPlugin 透传目标会话 ID',
-      () async {
-    final container = ProviderContainer();
-    addTearDown(container.dispose);
-    const builder = ChatPluginContextBuilder();
-    final pluginProvider = Provider<_SpyMemoryPlugin>((ref) {
-      return _SpyMemoryPlugin(ref);
-    });
-    final plugin = container.read(pluginProvider);
-
-    final result = await builder.buildPluginPromptEntriesWithFilter(
-      [plugin],
-      userMessage: '你好',
-      supportsToolCalling: false,
-      conversationId: 'conv_target',
-    );
-
-    expect(plugin.lastConversationId, 'conv_target');
-    expect(result.entries.single.content, 'memory_prompt');
   });
 }

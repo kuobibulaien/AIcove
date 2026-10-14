@@ -43,8 +43,6 @@ abstract final class MoeFrostedMaterial {
   /// Heaviest blur. Flutter's popup recipe uses 30, which reads as opaque.
   static const double surfaceSigma = 20;
 
-  static const double minStrength = 0.1;
-
   /// Fill at which the material matches the iOS reference.
   static const double recommendedFill = 0.5;
 
@@ -55,7 +53,7 @@ abstract final class MoeFrostedMaterial {
   static const int _darkContainerLevel = 0x1C;
 
   static double blurSigmaForSetting(double sigma) =>
-      surfaceSigma * (sigma / kMaxGlassBlurSigma).clamp(minStrength, 1.0);
+      surfaceSigma * (sigma / kMaxGlassBlurSigma).clamp(0.0, 1.0);
 
   /// Tint for the global fill (0..1), set independently of the blur.
   /// Zero is fully clear, [recommendedFill] lands on the thin material and
@@ -90,9 +88,7 @@ abstract final class MoeFrostedMaterial {
     double fill = 1,
     TileMode? tileMode,
   }) {
-    final blurSigma = sigma
-        .clamp(surfaceSigma * minStrength, surfaceSigma)
-        .toDouble();
+    final blurSigma = sigma.clamp(0.0, surfaceSigma).toDouble();
     final blur = ui.ImageFilter.blur(
       sigmaX: blurSigma,
       sigmaY: blurSigma,

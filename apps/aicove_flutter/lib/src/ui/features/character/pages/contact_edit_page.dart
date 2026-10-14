@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -21,6 +20,7 @@ import '../../../../features/chat/providers2.dart';
 import '../../../../features/plugins/plugin_providers.dart';
 import '../../../../ui/features/settings/pages/chat_plugin_settings_page.dart';
 import '../../plugins/widgets/tavern_common.dart';
+import '../../chat/widgets/chat_wallpaper_background.dart';
 import '../widgets/avatar_name_section.dart';
 import 'contact_memory_page.dart';
 import '../services/contact_edit_snapshot_store.dart';
@@ -29,6 +29,8 @@ import '../widgets/background_info_section.dart';
 import '../widgets/character_plugins_section.dart';
 import '../widgets/character_text_editor_sheet.dart';
 import '../widgets/tavern_greeting_picker_sheet.dart';
+import '../../../../features/plugins/mcp/mcp_connector.dart';
+import '../../../../features/plugins/packages/aicove_package.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/index.dart';
 
@@ -73,8 +75,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
   late final TextEditingController _avatarCtrl;
   late final TextEditingController _refImageCtrl;
   late final TextEditingController _chatBackgroundCtrl;
-
-  Uint8List? _chatBackgroundBytes;
 
   /// 仅导入角色卡时写入；null 表示沿用会话已有的模糊值。
   double? _chatBackgroundBlurSigma;
@@ -145,7 +145,10 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
     } else {
       _selectedPluginIds = {
         for (final id in conv.enabledPlugins!)
-          if (allPluginIds.contains(id)) id,
+          if (allPluginIds.contains(id) ||
+              McpToolNaming.isConnectorPluginId(id) ||
+              AicovePackage.isPackagePluginId(id))
+            id,
       };
     }
 
@@ -169,7 +172,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
     }
     if (widget.initialSnapshot != null) {
       _deferHeavyVisuals = false;
-      _chatBackgroundBytes = _decodeInitialBackgroundBytes();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         _scheduleBlurEnsure();
@@ -227,12 +229,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
     );
   }
 
-  Uint8List? _decodeInitialBackgroundBytes() {
-    final rawBackground = _chatBackgroundCtrl.text.trim();
-    if (rawBackground.isEmpty) return null;
-    return decodeDataImage(rawBackground);
-  }
-
   void _scheduleDeferredVisualActivation() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -247,13 +243,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
   void _activateHeavyVisuals() {
     if (!mounted || !_deferHeavyVisuals) return;
 
-    final rawBackground = _chatBackgroundCtrl.text.trim();
-    final decodedBackgroundBytes = rawBackground.isEmpty
-        ? null
-        : decodeDataImage(rawBackground);
-
     setState(() {
-      _chatBackgroundBytes = decodedBackgroundBytes;
       _deferHeavyVisuals = false;
     });
     _scheduleBlurEnsure();
@@ -283,32 +273,23 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
       MoePageScaffold(
         extendBodyBehindAppBar: true,
         backgroundColor: colors.surfaceAlt,
+        background: _buildPageBackground(colors),
         appBar: MoeAppBar(
           title: widget.editMode == EditMode.create ? '新建角色' : '编辑角色',
           titleWidget: _buildNameField(colors),
           centerTitle: true,
           showBackButton: true,
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back),
+          leading: MoeIconButton(
+            icon: Icons.arrow_back,
             tooltip: '返回',
-            onPressed: () => unawaited(_handleBack()),
+            onTap: () => unawaited(_handleBack()),
           ),
           actions: _buildNavActions(colors),
         ),
-        body: Stack(
-          children: [
-            // 纯色背景与固定标题栏首帧呈现，较重的表单仍延后挂载。
-            // 设置壁纸后本页与聊天页共用同一张背景图。
-            Positioned.fill(child: _buildPageBackground(colors)),
-
-            // 2. 可滚动内容区
-            Positioned.fill(
-              child: _deferHeavyVisuals
-                  ? _buildDeferredShell(colors)
-                  : _buildEditorScrollContent(colors),
-            ),
-          ],
-        ),
+        // 纯色背景与固定标题栏首帧呈现，较重的表单与壁纸仍延后挂载。
+        body: _deferHeavyVisuals
+            ? _buildDeferredShell(colors)
+            : _buildEditorScrollContent(colors),
       ),
     );
   }
@@ -398,8 +379,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
                 onEditDrawing: () => _openFullScreenEditor(
                   title: '编辑绘图提示',
                   controller: _customDrawingPromptCtrl,
-                  hint:
-                      '可在此设定男女主外貌标签优先使用 Danbooru，也可用自然语言描述，以及对生图的要求。\n\n示例：女主纳西妲，danbooru标签"nahida_(genshin_impact)",男主danbooru标签"aether_(genshin_impact)"，默认生图视角为男主第一视角，少数情况使用第三视角出现男主全身。',
+                  hint: '填写角色的外貌、服装或画面风格要求…',
                 ),
               ),
             ),
@@ -475,65 +455,17 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
     );
   }
 
-  /// 页面背景：上传壁纸后与聊天页共用同一张图，叠加蒙层保证内容可读。
-  Widget _buildPageBackground(MoeColors colors) {
+  /// 页面背景：设置壁纸后与聊天页共用同一壁纸层（同一蒙层与模糊），
+  /// 宽屏由工作区整窗绘制，不与左侧列表的背景割裂。
+  Widget? _buildPageBackground(MoeColors colors) {
     final raw = _chatBackgroundCtrl.text.trim();
-    final image = _deferHeavyVisuals ? null : _resolveWallpaperImage(raw);
-    if (image == null) {
-      return ColoredBox(color: colors.surfaceAlt);
-    }
-    final maskOpacity = (widget.conversation.chatBackgroundMaskOpacity ?? 0.8)
-        .clamp(0.0, 1.0);
-    return ColoredBox(
-      color: colors.surfaceAlt,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          image,
-          IgnorePointer(
-            child: ColoredBox(
-              color: colors.surfaceAlt.withValues(alpha: maskOpacity),
-            ),
-          ),
-        ],
+    if (_deferHeavyVisuals || raw.isEmpty) return null;
+    return ChatWallpaperLayer(
+      image: raw,
+      fallbackColor: colors.surfaceAlt,
+      style: chatWallpaperStyleOf(widget.conversation).copyWith(
+        blur: _chatBackgroundBlurSigma,
       ),
-    );
-  }
-
-  Widget? _resolveWallpaperImage(String raw) {
-    if (raw.isEmpty) return null;
-
-    final bytes = _chatBackgroundBytes ?? decodeDataImage(raw);
-    if (bytes != null) {
-      return Image.memory(
-        bytes,
-        fit: BoxFit.cover,
-        gaplessPlayback: true,
-        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-      );
-    }
-    if (raw.startsWith('data:image')) return null;
-    if (raw.startsWith('http://') || raw.startsWith('https://')) {
-      return Image.network(
-        raw,
-        fit: BoxFit.cover,
-        gaplessPlayback: true,
-        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-      );
-    }
-    if (raw.startsWith('assets/') || raw.startsWith('packages/')) {
-      return Image.asset(
-        raw,
-        fit: BoxFit.cover,
-        gaplessPlayback: true,
-        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-      );
-    }
-    return Image.file(
-      File(raw),
-      fit: BoxFit.cover,
-      gaplessPlayback: true,
-      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
     );
   }
 
@@ -679,10 +611,11 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
     required VoidCallback? onTap,
     String? tooltip,
   }) {
-    return IconButton(
+    return MoeIconButton(
       tooltip: tooltip ?? (icon == Icons.check ? '保存' : '更多'),
-      icon: Icon(icon, color: context.moeColors.primary),
-      onPressed: onTap,
+      icon: icon,
+      color: context.moeColors.primary,
+      onTap: onTap,
     );
   }
 
@@ -788,24 +721,20 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
   // ==================== 导入酒馆角色卡 ====================
 
   Widget _buildTavernCardImportButton() {
-    return OutlinedButton.icon(
+    return MoeSecondaryButton(
       onPressed: _importingCard ? null : _showTavernCardImportSheet,
-      icon: _importingCard
-          ? const SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : const Icon(Icons.file_download_outlined),
-      label: Text(_importingCard ? '正在导入…' : '导入酒馆角色卡'),
+      icon: _importingCard ? null : Icons.file_download_outlined,
+      label: _importingCard ? '正在导入…' : '导入酒馆角色卡',
+      size: MoeSecondaryButtonSize.sm,
     );
   }
 
   Widget _buildTavernPresetImportButton() {
-    return OutlinedButton.icon(
+    return MoeSecondaryButton(
       onPressed: _importTavernPresetAndBind,
-      icon: const Icon(Icons.tune),
-      label: const Text('导入绑定新预设'),
+      icon: Icons.tune,
+      label: '导入绑定新预设',
+      size: MoeSecondaryButtonSize.sm,
     );
   }
 
@@ -921,7 +850,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
         _avatarCtrl.text = dataUrl;
         _refImageCtrl.clear();
         _chatBackgroundCtrl.text = dataUrl;
-        _chatBackgroundBytes = image;
         _chatBackgroundBlurSigma = _kImportedBackgroundBlurSigma;
       }
     });

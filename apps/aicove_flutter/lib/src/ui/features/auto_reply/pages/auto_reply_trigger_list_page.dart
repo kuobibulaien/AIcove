@@ -31,20 +31,19 @@ class AutoReplyTriggerListPage extends ConsumerWidget {
     return MoePageScaffold(
       extendBodyBehindAppBar: true,
       appBar: const MoeAppBar(title: '待触发列表', showBackButton: true),
-      floatingActionButton: IconButton.filled(
-        style: withoutHoverFeedback(
-          IconButton.styleFrom(
-            fixedSize: const Size(56, 56),
-            backgroundColor: colors.primary,
-            foregroundColor: colors.text,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-          ),
+      floatingActionButton: MoeButtonSurface(
+        shareParentSurface: false,
+        width: 56,
+        height: 56,
+        radius: 16,
+        tintColor: colors.primary,
+        child: MoeIconButton(
+          tooltip: '新建触发',
+          icon: Icons.add,
+          color: colors.text,
+          minTouchTarget: 56,
+          onTap: () => showCreateAutoReplyTriggerSheet(context, ref),
         ),
-        tooltip: '新建触发',
-        onPressed: () => showCreateAutoReplyTriggerSheet(context, ref),
-        icon: const Icon(Icons.add),
       ),
       backgroundColor: colors.surface,
       body: MoeSettingsContent(

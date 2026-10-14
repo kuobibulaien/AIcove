@@ -19,15 +19,21 @@ final conversationVisibleCountProvider =
 /// raw database as a second UI-state source.
 final conversationMessageWindowProvider =
     StreamProvider.autoDispose.family<ConversationMessageWindow, String>(
-  (ref, conversationId) async* {
+  (ref, conversationId) {
+    // Watch dependencies synchronously: an `async*` body starts in a later
+    // microtask, leaving the autoDispose visible-count provider unlistened
+    // during rebuild, so it is disposed and resets to the initial count.
     final limit = ref.watch(conversationVisibleCountProvider(conversationId));
     final timeline = ref.watch(conversationTimelineCacheProvider);
     final actions = ref.read(chatActionsProvider);
-    await actions.recoverInterruptedUserMessages(conversationId);
-    yield* timeline
-        .watchWindow(
-          conversationId: conversationId,
-          limit: limit,
+    return Stream<void>.fromFuture(
+      actions.recoverInterruptedUserMessages(conversationId),
+    )
+        .asyncExpand(
+          (_) => timeline.watchWindow(
+            conversationId: conversationId,
+            limit: limit,
+          ),
         )
         .map(
           (window) => ConversationMessageWindow(

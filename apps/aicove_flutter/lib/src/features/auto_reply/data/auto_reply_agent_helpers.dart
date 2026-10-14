@@ -1,7 +1,4 @@
 import '../../../core/services/system_reminder_service.dart';
-import '../../../core/prompts/prompt_builtin_defaults.g.dart';
-import '../../../core/prompts/prompt_template_renderer.dart';
-import '../../chat/domain/conversation.dart';
 import '../../chat/domain/message.dart';
 import '../../chat/services/chat_send_service.dart';
 import '../../settings/app_settings.dart';
@@ -11,6 +8,8 @@ const SystemReminderService _systemReminderService = SystemReminderService();
 /// cachedContent 视为「新鲜」的最大年龄。
 /// 决策（2026-06-13）：短延迟触发器直接发预生成缓存；超过该年龄的缓存
 /// 降级为兜底文案，到点优先即时生成，避免长延迟后发送过时语境。
+/// 2026-10-13 起 AI 调度的触发器把 preparedAt 记为计划发送时间（文案按那一刻
+/// 写成），所以按时发送都算新鲜，只有实际发送比计划晚超过该时长才重写。
 const Duration autoReplyCachedContentMaxAge = Duration(minutes: 60);
 
 /// 判断预生成缓存在 [now] 时刻是否仍然新鲜（可直接发送）。
@@ -23,17 +22,6 @@ bool isCachedAutoReplyContentFresh({
   final age = now.difference(preparedAt);
   if (age.isNegative) return true;
   return age <= maxAge;
-}
-
-String buildAutoReplyAgentObjectivePrompt(Conversation conversation) {
-  return PromptTemplateRenderer.renderTrimmed(
-    PromptBuiltinDefaults.requireTemplate(
-      'auto_reply.agent.objective',
-    ),
-    <String, Object?>{
-      'assistant_name': conversation.title,
-    },
-  );
 }
 
 String resolveAutoReplyAgentModelRef(AppSettings settings) {
@@ -84,10 +72,6 @@ ApiConfig disableNativeToolCallsForAutoReplyGeneration(
     providerApiBase: config.providerApiBase,
     providerApiKey: config.providerApiKey,
     customConfig: config.customConfig,
-    toolPrefs: <String, dynamic>{
-      ...config.toolPrefs,
-      'auto_tools_enabled': false,
-    },
     messages: config.messages,
     tools: null,
     enabledPluginIds: config.enabledPluginIds,
@@ -97,6 +81,7 @@ ApiConfig disableNativeToolCallsForAutoReplyGeneration(
     traceContext: config.traceContext,
     boundImageToolPresetName: config.boundImageToolPresetName,
     boundImageArtistPresetName: config.boundImageArtistPresetName,
+    responseProcessors: config.responseProcessors,
   );
 }
 
@@ -130,7 +115,6 @@ ApiConfig appendAutoReplyReminderAsLastUser(
     providerApiBase: config.providerApiBase,
     providerApiKey: config.providerApiKey,
     customConfig: config.customConfig,
-    toolPrefs: config.toolPrefs,
     messages: normalizedMessages,
     tools: config.tools,
     enabledPluginIds: config.enabledPluginIds,
@@ -140,5 +124,6 @@ ApiConfig appendAutoReplyReminderAsLastUser(
     traceContext: config.traceContext,
     boundImageToolPresetName: config.boundImageToolPresetName,
     boundImageArtistPresetName: config.boundImageArtistPresetName,
+    responseProcessors: config.responseProcessors,
   );
 }

@@ -35,7 +35,7 @@ void main() {
     // Verify switch control exists
     final switchFinder = find.descendant(
       of: find.widgetWithText(MoeSettingsRow, '启用液态效果 (Shader)'),
-      matching: find.byType(Switch),
+      matching: find.byType(MoeSwitch),
     );
     expect(switchFinder, findsOneWidget);
 

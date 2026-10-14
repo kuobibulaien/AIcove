@@ -30,7 +30,7 @@ void main() {
       await tester.tap(find.text('open'));
       await tester.pumpAndSettle();
       expect(find.text('重新生成'), findsNWidgets(2));
-      await tester.tap(find.widgetWithText(TextButton, '重新生成'));
+      await tester.tap(find.text('重新生成').last);
       await tester.pumpAndSettle();
       expect(results, ['']);
       expect(tester.takeException(), isNull);
@@ -41,7 +41,7 @@ void main() {
       await tester.tap(find.text('open'));
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField), '  更简短一些 ');
-      await tester.tap(find.widgetWithText(TextButton, '重新生成'));
+      await tester.tap(find.text('重新生成').last);
       await tester.pumpAndSettle();
       expect(results, ['更简短一些']);
     });
@@ -50,7 +50,7 @@ void main() {
       final results = await pumpHost(tester, width);
       await tester.tap(find.text('open'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(TextButton, '取消'));
+      await tester.tap(find.text('取消'));
       await tester.pumpAndSettle();
       expect(results, [null]);
     });

@@ -9,6 +9,7 @@ import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
 import 'package:aicove_flutter/src/ui/features/character/pages/contact_edit_page.dart';
 import 'package:aicove_flutter/src/ui/features/character/services/contact_edit_snapshot_store.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
+import 'package:aicove_flutter/src/ui/theme/moe_frosted_material.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 
 /// 需求（2026-09-12）：联系人设置界面在亮色／暗色模式下背景色必须统一，
@@ -84,7 +85,7 @@ void main() {
 
   themes.forEach((themeName, scenario) {
     testWidgets(
-        'contact edit cards stay content surfaces under global liquid '
+        'contact edit cards render the liquid lens under global liquid '
         '($themeName)', (tester) async {
       SharedPreferences.setMockInitialValues({});
       MoeLiquidGlassService.setMockState(initialized: true, available: true);
@@ -128,28 +129,18 @@ void main() {
       final settingsGroups = find.byType(MoeSettingsGroup);
       expect(settingsGroups, findsAtLeastNWidgets(3));
 
-      final cardColors = <Color>{
-        for (var i = 0; i < settingsGroups.evaluate().length; i++)
-          _decorationColor(tester, settingsGroups.at(i)),
-      };
-      expect(cardColors, {scenario.colors.componentBackground});
 
       for (var i = 0; i < settingsGroups.evaluate().length; i++) {
         final group = settingsGroups.at(i);
         expect(
           find.descendant(of: group, matching: find.byType(MoeLiquidGlass)),
-          findsNothing,
-          reason: '内容分组不得产生液态材质',
+          findsOneWidget,
+          reason: '内容分组在玻璃档渲染液态材质',
         );
         expect(
           find.descendant(of: group, matching: find.byType(AdaptiveGlass)),
-          findsNothing,
-          reason: '内容分组不得产生液态材质',
-        );
-        expect(
-          find.descendant(of: group, matching: find.byType(BackdropFilter)),
-          findsNothing,
-          reason: '内容分组默认不得产生模糊滤镜',
+          findsWidgets,
+          reason: '内容分组在玻璃档渲染液态材质',
         );
       }
     });

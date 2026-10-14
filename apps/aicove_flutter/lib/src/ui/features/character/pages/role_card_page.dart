@@ -37,10 +37,10 @@ class _RoleCardPageState extends State<RoleCardPage> {
       ),
       bottomHeight: MoeSearchField.heightFor(context),
       actions: [
-        IconButton(
+        MoeIconButton(
           tooltip: '创建角色',
-          icon: const Icon(Icons.person_add_alt_1_outlined),
-          onPressed: () => MoeWorkspace.openLocation(context, '/contact/new'),
+          icon: Icons.person_add_alt_1_outlined,
+          onTap: () => MoeWorkspace.openLocation(context, '/contact/new'),
         ),
       ],
     ),

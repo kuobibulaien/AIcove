@@ -2,7 +2,7 @@
 
 ## 必读
 
-- `docs/项目记忆/README.md`（架构边界一节）
+- `DEVELOPMENT.md`「契约层规范」
 - `apps/aicove_flutter/docs/02_前后端分离与架构规范/Agent上下文管理总架构.md`
 - `apps/aicove_flutter/docs/02_前后端分离与架构规范/聊天请求上下文真相源与组装规范.md`
 

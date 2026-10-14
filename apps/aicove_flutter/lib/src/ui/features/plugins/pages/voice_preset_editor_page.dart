@@ -172,50 +172,46 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
 
   Future<void> _pickModel(List<TtsAvailableModelEntry> models) async {
     String query = '';
-    final selected = await showModalBottomSheet<TtsAvailableModelEntry>(
+    final selected = await showMoeBottomSheet<TtsAvailableModelEntry>(
       context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (context) => FractionallySizedBox(
-        heightFactor: 0.85,
-        child: SafeArea(
-          child: StatefulBuilder(
-            builder: (context, update) {
-              final matches = models
-                  .where(
-                    (m) => '${m.providerName} ${m.displayName}'
-                        .toLowerCase()
-                        .contains(query.toLowerCase()),
-                  )
-                  .toList();
-              return Column(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: MoeSearchField(
-                      padding: EdgeInsets.zero,
-                      hintText: '搜索供应商或模型',
-                      onChanged: (value) => update(() => query = value),
-                    ),
-                  ),
-                  Expanded(
-                    child: ListView.builder(
-                      itemCount: matches.length,
-                      itemBuilder: (context, index) {
-                        final entry = matches[index];
-                        return ListTile(
-                          title: Text(entry.displayName),
-                          subtitle: Text(entry.providerName),
-                          onTap: () => Navigator.pop(context, entry),
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
-        ),
+      title: '选择语音模型',
+      showCloseButton: true,
+      maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+      builder: (context) => StatefulBuilder(
+        builder: (context, update) {
+          final matches = models
+              .where(
+                (m) => '${m.providerName} ${m.displayName}'
+                    .toLowerCase()
+                    .contains(query.toLowerCase()),
+              )
+              .toList();
+          return Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: MoeSearchField(
+                  padding: EdgeInsets.zero,
+                  hintText: '搜索供应商或模型',
+                  onChanged: (value) => update(() => query = value),
+                ),
+              ),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: matches.length,
+                  itemBuilder: (context, index) {
+                    final entry = matches[index];
+                    return ListTile(
+                      title: Text(entry.displayName),
+                      subtitle: Text(entry.providerName),
+                      onTap: () => Navigator.pop(context, entry),
+                    );
+                  },
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
     if (selected == null || !mounted) return;
@@ -240,60 +236,56 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
       if (!mounted) return;
       final voices = [...result.presetVoices, ...result.userVoices];
       String query = '';
-      final selected = await showModalBottomSheet<VoicePreset>(
+      final selected = await showMoeBottomSheet<VoicePreset>(
         context: context,
-        isScrollControlled: true,
-        showDragHandle: true,
-        builder: (context) => FractionallySizedBox(
-          heightFactor: 0.85,
-          child: SafeArea(
-            child: StatefulBuilder(
-              builder: (context, update) {
-                final matches = voices
-                    .where(
-                      (v) =>
-                          '${v.name} ${v.bindings.map((b) => b.remoteVoiceId).join(' ')}'
-                              .toLowerCase()
-                              .contains(query.toLowerCase()),
-                    )
-                    .toList();
-                return Column(
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: MoeSearchField(
-                        padding: EdgeInsets.zero,
-                        hintText: '搜索当前供应商音色',
-                        onChanged: (value) => update(() => query = value),
-                      ),
-                    ),
-                    if (matches.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.all(24),
-                        child: Text('没有找到音色，可返回手动填写音色 ID'),
-                      ),
-                    Expanded(
-                      child: ListView.builder(
-                        itemCount: matches.length,
-                        itemBuilder: (context, index) {
-                          final voice = matches[index];
-                          return ListTile(
-                            title: Text(voice.name),
-                            subtitle: Text(
-                              voice.bindings
-                                  .map((b) => b.remoteVoiceId)
-                                  .join(' · '),
-                            ),
-                            onTap: () => Navigator.pop(context, voice),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                );
-              },
-            ),
-          ),
+        title: '选择音色',
+        showCloseButton: true,
+        maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+        builder: (context) => StatefulBuilder(
+          builder: (context, update) {
+            final matches = voices
+                .where(
+                  (v) =>
+                      '${v.name} ${v.bindings.map((b) => b.remoteVoiceId).join(' ')}'
+                          .toLowerCase()
+                          .contains(query.toLowerCase()),
+                )
+                .toList();
+            return Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: MoeSearchField(
+                    padding: EdgeInsets.zero,
+                    hintText: '搜索当前供应商音色',
+                    onChanged: (value) => update(() => query = value),
+                  ),
+                ),
+                if (matches.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Text('没有找到音色，可返回手动填写音色 ID'),
+                  ),
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: matches.length,
+                    itemBuilder: (context, index) {
+                      final voice = matches[index];
+                      return ListTile(
+                        title: Text(voice.name),
+                        subtitle: Text(
+                          voice.bindings
+                              .map((b) => b.remoteVoiceId)
+                              .join(' · '),
+                        ),
+                        onTap: () => Navigator.pop(context, voice),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       );
       if (!mounted || selected == null) return;
@@ -359,10 +351,10 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
           title: widget.preset == null ? '新建音色预设' : '编辑音色预设',
           showBackButton: true,
           actions: [
-            IconButton(
+            MoeIconButton(
               tooltip: '管理供应商',
-              icon: const Icon(Icons.cloud_outlined),
-              onPressed: () => Navigator.of(
+              icon: Icons.cloud_outlined,
+              onTap: () => Navigator.of(
                 context,
               ).push(ParallaxSlidePageRoute(page: const ModelListPage())),
             ),
@@ -505,9 +497,10 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
                                       12,
                                       8,
                                     ),
-                                    child: TextButton(
+                                    child: MoeSecondaryButton(
+                                      label: '浏览此供应商的音色',
+                                      size: MoeSecondaryButtonSize.sm,
                                       onPressed: _browse,
-                                      child: const Text('浏览此供应商的音色'),
                                     ),
                                   ),
                                 if (_bindings.any(
@@ -578,7 +571,9 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
                                       12,
                                       8,
                                     ),
-                                    child: OutlinedButton(
+                                    child: MoeSecondaryButton(
+                                      label: '选择音频文件',
+                                      size: MoeSecondaryButtonSize.sm,
                                       onPressed: () => _work(() async {
                                         final picked = await FilePicker.platform
                                             .pickFiles(
@@ -606,7 +601,6 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
                                           });
                                         }
                                       }),
-                                      child: const Text('选择音频文件'),
                                     ),
                                   ),
                                 ],
@@ -635,7 +629,9 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
                                       12,
                                       8,
                                     ),
-                                    child: TextButton(
+                                    child: MoeSecondaryButton(
+                                      label: '用参考音频创建云端音色',
+                                      size: MoeSecondaryButtonSize.sm,
                                       onPressed: () {
                                         if (!_validate()) return;
                                         _work(() async {
@@ -666,15 +662,8 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
                                           }
                                         });
                                       },
-                                      child: const Text('用参考音频创建云端音色'),
                                     ),
                                   ),
-                                const Padding(
-                                  padding: EdgeInsets.fromLTRB(12, 0, 12, 10),
-                                  child: Text(
-                                    '支持参考音频的模型可直接试听；其他模型请先创建云端音色，再使用返回的音色 ID。',
-                                  ),
-                                ),
                               ],
                             ],
                           ),
@@ -735,11 +724,16 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
                                     onChanged: (v) =>
                                         setState(() => _frequency = v.round()),
                                   ),
-                                  SwitchListTile(
-                                    contentPadding: EdgeInsets.zero,
-                                    title: const Text('情感参考（支持此能力的模型）'),
-                                    value: _useEmotion,
-                                    onChanged: (v) =>
+                                  MoeSettingsRow(
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      vertical: 8,
+                                    ),
+                                    label: '情感参考',
+                                    showDivider: false,
+                                    trailingType:
+                                        MoeSettingsRowTrailing.switchControl,
+                                    switchValue: _useEmotion,
+                                    onSwitchChanged: (v) =>
                                         setState(() => _useEmotion = v),
                                   ),
                                   if (_useEmotion)
@@ -779,7 +773,9 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
                                   12,
                                   8,
                                 ),
-                                child: OutlinedButton(
+                                child: MoeSecondaryButton(
+                                  label: '生成试听',
+                                  size: MoeSecondaryButtonSize.sm,
                                   onPressed: () {
                                     if (!_validate()) return;
                                     _work(() async {
@@ -806,7 +802,6 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
                                       }
                                     });
                                   },
-                                  child: const Text('生成试听（调用供应商）'),
                                 ),
                               ),
                               if (_audio != null)
@@ -828,11 +823,6 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
                                   ),
                                 ),
                             ],
-                          ),
-                          const SizedBox(height: MoeSettingsLayout.sectionGap),
-                          const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 12),
-                            child: Text('修改自动保存，共享此预设的角色会使用更新后的设置。'),
                           ),
                         ],
                       ),

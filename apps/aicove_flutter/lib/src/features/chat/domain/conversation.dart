@@ -15,6 +15,8 @@ class Conversation {
   final String? chatBackgroundImage; // per-conversation chat background image
   final double? chatBackgroundMaskOpacity; // 0.0 - 1.0, null uses default
   final double? chatBackgroundBlurSigma; // 0.0 - 30.0, null uses default (0)
+  /// 壁纸截取：`WallpaperStyle.encodedFraming` 的 JSON，null 为默认居中。
+  final String? chatBackgroundFraming;
   final String? blurredBackground; // blurred poster background (base64)
   final String? selfAddress; // assistant self-address
   final String? addressUser; // how assistant addresses user
@@ -64,6 +66,7 @@ class Conversation {
     this.chatBackgroundImage,
     this.chatBackgroundMaskOpacity,
     this.chatBackgroundBlurSigma,
+    this.chatBackgroundFraming,
     this.blurredBackground,
     this.selfAddress,
     this.addressUser,
@@ -114,6 +117,7 @@ class Conversation {
     Object? chatBackgroundImage = _sentinel,
     Object? chatBackgroundMaskOpacity = _sentinel,
     Object? chatBackgroundBlurSigma = _sentinel,
+    Object? chatBackgroundFraming = _sentinel,
     Object? blurredBackground = _sentinel,
     Object? selfAddress = _sentinel,
     Object? addressUser = _sentinel,
@@ -156,6 +160,9 @@ class Conversation {
       chatBackgroundBlurSigma: chatBackgroundBlurSigma == _sentinel
           ? this.chatBackgroundBlurSigma
           : chatBackgroundBlurSigma as double?,
+      chatBackgroundFraming: chatBackgroundFraming == _sentinel
+          ? this.chatBackgroundFraming
+          : chatBackgroundFraming as String?,
       blurredBackground: blurredBackground == _sentinel
           ? this.blurredBackground
           : blurredBackground as String?,

@@ -172,6 +172,18 @@ class Device {
 }
 
 void main() {
+  // Starts the real Python sync backend, so it only runs when pointed at a
+  // backend checkout and a Python (3.11, as in the Dockerfile) with
+  // cloud_backend/requirements.txt installed.
+  if (Platform.environment['AICOVE_SYNC_TEST_BACKEND'] == null ||
+      Platform.environment['AICOVE_SYNC_TEST_PYTHON'] == null) {
+    test(
+      'cloud sync contract against the real backend',
+      () {},
+      skip: 'Set AICOVE_SYNC_TEST_BACKEND and AICOVE_SYNC_TEST_PYTHON to run',
+    );
+    return;
+  }
   final now = DateTime.utc(2026, 9, 13);
   Process? server;
   late String address;

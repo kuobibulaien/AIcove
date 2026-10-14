@@ -33,9 +33,10 @@ class ImagePluginDetailPage extends ConsumerWidget {
               children: [
                 Text('绘图预设加载失败：$error'),
                 const SizedBox(height: 12),
-                TextButton(
+                MoeSecondaryButton(
+                  label: '重试',
+                  size: MoeSecondaryButtonSize.sm,
                   onPressed: () => ref.invalidate(drawingPresetCatalogProvider),
-                  child: const Text('重试'),
                 ),
               ],
             ),
@@ -52,16 +53,6 @@ class ImagePluginDetailPage extends ConsumerWidget {
                   MoeSettingsLayout.verticalListPadding,
                 ),
                 children: [
-                  MoeSettingsGroup(
-                    padding: MoeSettingsLayout.contentPadding,
-                    children: [
-                      Text(
-                        '每张角色卡可绑定一个绘图预设。未绑定时使用默认预设；编辑共享预设会影响所有绑定角色。',
-                        style: TextStyle(fontSize: 13, color: colors.muted),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: MoeSettingsLayout.sectionGap),
                   MoeSettingsGroup(
                     title: '预设列表',
                     children: [
@@ -166,11 +157,13 @@ class ImagePluginDetailPage extends ConsumerWidget {
               ),
             ),
           Builder(
-            builder: (menuContext) => IconButton(
+            builder: (menuContext) => MoeIconButton(
               key: ValueKey('preset-menu-${preset.id}'),
-              icon: Icon(Icons.more_vert, size: 20, color: colors.muted),
+              icon: Icons.more_vert,
+              size: 20,
+              color: colors.muted,
               tooltip: '更多操作',
-              onPressed: () => MoePopupMenu.show(
+              onTap: () => MoePopupMenu.show(
                 menuContext,
                 targetBox: menuContext.findRenderObject()! as RenderBox,
                 alignToEnd: true,

@@ -12,6 +12,7 @@ class MoePageScaffold extends StatelessWidget {
     this.appBar,
     this.body,
     this.backgroundColor,
+    this.background,
     this.bottomNavigationBar,
     this.floatingActionButton,
     this.resizeToAvoidBottomInset,
@@ -22,6 +23,10 @@ class MoePageScaffold extends StatelessWidget {
   final PreferredSizeWidget? appBar;
   final Widget? body;
   final Color? backgroundColor;
+
+  /// Custom workspace background (e.g. a character wallpaper); when set it
+  /// replaces the color/global wallpaper and still spans the whole window.
+  final Widget? background;
   final Widget? bottomNavigationBar;
   final Widget? floatingActionButton;
   final bool? resizeToAvoidBottomInset;
@@ -36,7 +41,9 @@ class MoePageScaffold extends StatelessWidget {
     final usesDefault =
         color == scaffoldColor || color == context.moeColors.surface;
     return MoeWorkspaceBackground(
-      background: usesDefault
+      background: background != null
+          ? background!
+          : usesDefault
           ? MoeGlobalWallpaper(slot: GlobalWallpaperSlot.page, color: color)
           : ColoredBox(color: color),
       child: Scaffold(

@@ -202,16 +202,17 @@ class _ExportCharacterPageState extends ConsumerState<ExportCharacterPage> {
                   ),
 
                   // 预览按钮
-                  IconButton(
-                    icon: const Icon(LucideIcons.eye, size: 20),
-                    onPressed: () {
+                  MoeIconButton(
+                    icon: LucideIcons.eye,
+                    size: 20,
+                    tooltip: '预览聊天记录',
+                    onTap: () {
                       Navigator.of(context).push(
                         ParallaxSlidePageRoute(
                           page: ChatPreviewPage(conversation: conv),
                         ),
                       );
                     },
-                    tooltip: '预览聊天记录',
                   ),
                 ],
               ),

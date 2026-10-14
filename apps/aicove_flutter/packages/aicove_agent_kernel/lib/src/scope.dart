@@ -28,7 +28,7 @@ class Registration {
 
 /// Hierarchical resource scope. Services resolve child-first; [dispose]
 /// releases children, then revokes registrations and closes resources in
-/// reverse order, exactly once, even if some closers throw.
+/// reverse order, exactly once, even if some revocations or closers throw.
 class KernelScope {
   KernelScope({KernelScope? parent}) : _parent = parent {
     parent?._children.add(this);
@@ -82,10 +82,22 @@ class KernelScope {
     _closers.add(close);
   }
 
-  /// Revokes every registration made by [owner] in this scope.
+  /// Revokes every registration made by [owner] in this scope. Every one is
+  /// attempted even if some throw; the first error is rethrown.
   void revokeOwner(String owner) {
-    for (final registration in _registrations) {
-      if (registration.owner == owner) registration.revoke();
+    Object? firstError;
+    StackTrace? firstStack;
+    for (final registration in List.of(_registrations)) {
+      if (registration.owner != owner) continue;
+      try {
+        registration.revoke();
+      } catch (e, s) {
+        firstError ??= e;
+        firstStack ??= s;
+      }
+    }
+    if (firstError != null) {
+      Error.throwWithStackTrace(firstError, firstStack!);
     }
   }
 
@@ -103,7 +115,12 @@ class KernelScope {
       }
     }
     for (final registration in _registrations.reversed) {
-      registration.revoke();
+      try {
+        registration.revoke();
+      } catch (e, s) {
+        firstError ??= e;
+        firstStack ??= s;
+      }
     }
     for (final close in _closers.reversed) {
       try {

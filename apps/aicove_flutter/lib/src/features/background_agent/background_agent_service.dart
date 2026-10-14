@@ -15,8 +15,6 @@ import '../chat/services/chat_types.dart';
 import '../observability/trace_models.dart';
 import '../observability/trace_store.dart';
 import '../plugins/domain/handlers/ai_tool.dart';
-import '../plugins/plugin_manager.dart';
-import '../plugins/plugin_providers.dart';
 import '../settings/app_settings.dart';
 import '../settings/direct_mode.dart' as direct;
 import 'domain/background_agent_definition.dart';
@@ -27,7 +25,6 @@ typedef LoadBackgroundAgentMessages = Future<List<Message>> Function(
   int limit,
 );
 typedef LoadBackgroundAgentSettings = Future<AppSettings> Function();
-typedef ReadBackgroundAgentPluginManager = PluginManager Function();
 typedef BuildBackgroundAgentSessionId = String Function(String agentId);
 typedef ResolveBackgroundAgentRequestConfig
     = Future<BackgroundAgentRequestConfig> Function({
@@ -42,7 +39,8 @@ typedef BackgroundAgentExecutor = Future<ApiCallResult> Function({
 });
 
 /// Runner used by background agents; the kernel is selected by the
-/// `AICOVE_AGENT_KERNEL_BG` compile-time switch (ADR0064, batch 1b).
+/// `AICOVE_AGENT_KERNEL_BG` compile-time switch (ADR0064, batch 1b; on by
+/// default since 2026-10-13).
 final backgroundApiRunnerProvider = Provider<ApiRunner>(
   (ref) => createApiRunner(useKernel: kAgentKernelBackground),
 );
@@ -56,7 +54,6 @@ final backgroundAgentServiceProvider = Provider<BackgroundAgentService>((ref) {
               limit: limit,
             ),
     loadSettings: () => ref.read(appSettingsProvider.future),
-    readPluginManager: () => ref.read(pluginManagerProvider),
     executor: ({
       required ApiConfig config,
       required List<AITool> availableTools,
@@ -67,7 +64,7 @@ final backgroundAgentServiceProvider = Provider<BackgroundAgentService>((ref) {
         config: config,
         sessionId: sessionId,
         userText: null,
-        effectivePlugins: const [],
+        responseProcessors: const [],
         availableTools: availableTools,
         maxRounds: maxRounds,
         traceContext: config.traceContext,
@@ -82,23 +79,20 @@ class BackgroundAgentService {
   BackgroundAgentService({
     required LoadBackgroundAgentMessages loadRecentMessages,
     required LoadBackgroundAgentSettings loadSettings,
-    required ReadBackgroundAgentPluginManager readPluginManager,
     ResolveBackgroundAgentRequestConfig? requestConfigResolver,
     BackgroundAgentExecutor? executor,
     BuildBackgroundAgentSessionId? sessionIdFactory,
     TraceStore? traceStore,
   })  : _loadRecentMessages = loadRecentMessages,
         _loadSettings = loadSettings,
-        _readPluginManager = readPluginManager,
         _requestConfigResolver =
-            requestConfigResolver ?? _defaultRequestConfigResolver,
+            requestConfigResolver ?? resolveRequestConfig,
         _executor = executor ?? _defaultExecutor,
         _sessionIdFactory = sessionIdFactory ?? _defaultSessionIdFactory,
         _traceStore = traceStore ?? TraceStore.instance;
 
   final LoadBackgroundAgentMessages _loadRecentMessages;
   final LoadBackgroundAgentSettings _loadSettings;
-  final ReadBackgroundAgentPluginManager _readPluginManager;
   final ResolveBackgroundAgentRequestConfig _requestConfigResolver;
   final BackgroundAgentExecutor _executor;
   final BuildBackgroundAgentSessionId _sessionIdFactory;
@@ -114,7 +108,7 @@ class BackgroundAgentService {
       config: config,
       sessionId: sessionId,
       userText: null,
-      effectivePlugins: const [],
+      responseProcessors: const [],
       availableTools: availableTools,
       maxRounds: maxRounds,
       traceContext: config.traceContext,
@@ -124,7 +118,8 @@ class BackgroundAgentService {
   static String _defaultSessionIdFactory(String agentId) =>
       'bg_agent_${agentId.trim()}_${DateTime.now().millisecondsSinceEpoch}';
 
-  static Future<BackgroundAgentRequestConfig> _defaultRequestConfigResolver({
+  /// 按模型引用解析接口地址、密钥与模型参数；语音通话也复用这一套（ADR0074）。
+  static Future<BackgroundAgentRequestConfig> resolveRequestConfig({
     required AppSettings settings,
     required String? modelRef,
   }) async {
@@ -171,6 +166,7 @@ class BackgroundAgentService {
     final modelConfig = settings.getModelConfig(resolvedModelRef);
     return BackgroundAgentRequestConfig(
       modelFullId: modelFullId,
+      providerId: providerId,
       providerApiBase: providerApiBase,
       providerApiKey: providerApiKey?.isEmpty == true ? null : providerApiKey,
       customConfig: providerAuth.customConfig,
@@ -226,7 +222,6 @@ class BackgroundAgentService {
         providerApiBase: requestConfig.providerApiBase,
         providerApiKey: requestConfig.providerApiKey,
         customConfig: requestConfig.customConfig,
-        toolPrefs: const <String, dynamic>{'auto_tools_enabled': false},
         messages: requestMessages,
         tools: allowedTools.isEmpty
             ? null
@@ -306,10 +301,12 @@ class BackgroundAgentService {
     final messages = explicitMessages ??
         await _loadRecentMessages(
           conversationId,
-          definition.contextSpec.normalizedLastMessages,
+          definition.conversationWindow.normalizedLastMessages,
         );
     return messages
-        .where((message) => definition.contextSpec.includesRole(message.role))
+        .where(
+          (message) => definition.conversationWindow.includesRole(message.role),
+        )
         .toList(growable: false);
   }
 
@@ -325,7 +322,7 @@ class BackgroundAgentService {
         'content': systemPrompt,
       });
     }
-    final includeTimestamp = definition.contextSpec.includeTimestamps;
+    final includeTimestamp = definition.conversationWindow.includeTimestamps;
     if (usedMessages.every((message) => message.role == 'user')) {
       for (final message in usedMessages) {
         messages.addAll(
@@ -432,11 +429,11 @@ class BackgroundAgentService {
         'agentName': definition.name,
         'conversationId': conversationId,
         'historyCount': usedMessages.length,
-        'includeUser': definition.contextSpec.includeUser,
-        'includeAssistant': definition.contextSpec.includeAssistant,
-        'includeSystem': definition.contextSpec.includeSystem,
-        'includeTimestamps': definition.contextSpec.includeTimestamps,
-        'lastMessages': definition.contextSpec.normalizedLastMessages,
+        'includeUser': definition.conversationWindow.includeUser,
+        'includeAssistant': definition.conversationWindow.includeAssistant,
+        'includeSystem': definition.conversationWindow.includeSystem,
+        'includeTimestamps': definition.conversationWindow.includeTimestamps,
+        'lastMessages': definition.conversationWindow.normalizedLastMessages,
       },
     );
 
@@ -456,11 +453,13 @@ class BackgroundAgentService {
           'allowedToolNames':
               allowedTools.map((tool) => tool.name).toList(growable: false),
           'contextSpec': <String, dynamic>{
-            'lastMessages': definition.contextSpec.normalizedLastMessages,
-            'includeUser': definition.contextSpec.includeUser,
-            'includeAssistant': definition.contextSpec.includeAssistant,
-            'includeSystem': definition.contextSpec.includeSystem,
-            'includeTimestamps': definition.contextSpec.includeTimestamps,
+            'lastMessages':
+                definition.conversationWindow.normalizedLastMessages,
+            'includeUser': definition.conversationWindow.includeUser,
+            'includeAssistant': definition.conversationWindow.includeAssistant,
+            'includeSystem': definition.conversationWindow.includeSystem,
+            'includeTimestamps':
+                definition.conversationWindow.includeTimestamps,
           },
         },
         'promptAssembly': <String, dynamic>{
@@ -595,15 +594,15 @@ class BackgroundAgentService {
       tools.add(tool);
     }
 
-    if (whitelist.isEmpty) {
-      return tools;
-    }
-
-    for (final tool in _readPluginManager().getAllTools()) {
-      if (!whitelist.contains(tool.name) || !seen.add(tool.name)) {
-        continue;
-      }
-      tools.add(tool);
+    // Plugin tools for agents arrive with kernel tool registration (batch 2d,
+    // agentOnly exposure); until then a listed name has no source.
+    final unresolved = whitelist.difference(seen);
+    if (unresolved.isNotEmpty) {
+      AppLogger.warning(
+        _traceSource,
+        '后台 agent 白名单工具暂无来源，已跳过',
+        metadata: <String, dynamic>{'tools': unresolved.toList()..sort()},
+      );
     }
     return tools;
   }
@@ -618,9 +617,11 @@ class BackgroundAgentRequestConfig {
     required this.modelTemperature,
     required this.modelTopP,
     required this.modelContextMessageLimit,
+    this.providerId = '',
   });
 
   final String modelFullId;
+  final String providerId;
   final String providerApiBase;
   final String? providerApiKey;
   final Map<String, dynamic> customConfig;

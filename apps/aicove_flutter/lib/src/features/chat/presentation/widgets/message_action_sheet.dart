@@ -42,6 +42,9 @@ Future<void> showMessageActionMenu(
   bool regenerateAudio = false,
   bool showTranscribe = false,
   bool isAudioTextExpanded = false,
+
+  /// false 时不给编辑、重新生成和引用（例如通话中的临时气泡，不在聊天历史里）。
+  bool editable = true,
   required void Function(MessageAction action) onAction,
 }) async {
   final items = <MoePopupMenuItem>[
@@ -67,18 +70,19 @@ Future<void> showMessageActionMenu(
         label: isAudioTextExpanded ? '隐藏文字' : '转文字',
         onTap: () => onAction(MessageAction.toggleAudioText),
       ),
-    MoePopupMenuItem(
-      icon: Icons.format_quote_rounded,
-      label: '引用',
-      onTap: () => onAction(MessageAction.quote),
-    ),
-    if (isUserMessage)
+    if (editable)
+      MoePopupMenuItem(
+        icon: Icons.format_quote_rounded,
+        label: '引用',
+        onTap: () => onAction(MessageAction.quote),
+      ),
+    if (editable && isUserMessage)
       MoePopupMenuItem(
         icon: Icons.edit_rounded,
         label: '编辑',
         onTap: () => onAction(MessageAction.edit),
       )
-    else if (showEnhanceRegenerate)
+    else if (editable && showEnhanceRegenerate)
       MoePopupMenuItem(
         icon: Icons.auto_awesome_rounded,
         label: '增强生成',
@@ -92,7 +96,7 @@ Future<void> showMessageActionMenu(
     ),
   ];
 
-  if (!isUserMessage) {
+  if (!isUserMessage && editable) {
     items.insert(
       1,
       MoePopupMenuItem(

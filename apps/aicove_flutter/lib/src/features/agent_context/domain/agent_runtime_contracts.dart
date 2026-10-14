@@ -318,12 +318,63 @@ class AgentOutputContract {
 }
 
 /// 本次运行需要启用的上下文层及其优先级。
+/// Parameters of the conversation-window layer: how many recent messages,
+/// which roles, and whether to stamp times. Formerly the background agent's
+/// own `BackgroundContextSpec` (ADR0060, batch 2 plan §3.7).
+class ConversationWindowSpec {
+  final int lastMessages;
+  final bool includeUser;
+  final bool includeAssistant;
+  final bool includeSystem;
+  final bool includeTimestamps;
+
+  const ConversationWindowSpec({
+    this.lastMessages = 10,
+    this.includeUser = true,
+    this.includeAssistant = true,
+    this.includeSystem = false,
+    this.includeTimestamps = false,
+  });
+
+  bool includesRole(String role) {
+    switch (role.trim().toLowerCase()) {
+      case 'user':
+        return includeUser;
+      case 'assistant':
+        return includeAssistant;
+      case 'system':
+        return includeSystem;
+      default:
+        return false;
+    }
+  }
+
+  int get normalizedLastMessages => lastMessages < 1 ? 1 : lastMessages;
+
+  ConversationWindowSpec copyWith({
+    int? lastMessages,
+    bool? includeUser,
+    bool? includeAssistant,
+    bool? includeSystem,
+    bool? includeTimestamps,
+  }) {
+    return ConversationWindowSpec(
+      lastMessages: lastMessages ?? this.lastMessages,
+      includeUser: includeUser ?? this.includeUser,
+      includeAssistant: includeAssistant ?? this.includeAssistant,
+      includeSystem: includeSystem ?? this.includeSystem,
+      includeTimestamps: includeTimestamps ?? this.includeTimestamps,
+    );
+  }
+}
+
 class ContextProfile {
   final List<AgentContextLayer> layers;
   final Set<AgentContextAssemblyPermission> assemblyPermissions;
   final Map<AgentContextLayer, int> priorityByLayer;
   final int? tokenBudget;
   final bool traceAssembly;
+  final ConversationWindowSpec conversationWindow;
 
   const ContextProfile({
     this.layers = const <AgentContextLayer>[
@@ -338,6 +389,7 @@ class ContextProfile {
     this.priorityByLayer = const <AgentContextLayer, int>{},
     this.tokenBudget,
     this.traceAssembly = true,
+    this.conversationWindow = const ConversationWindowSpec(),
   });
 
   static const standardChat = ContextProfile(
@@ -354,6 +406,10 @@ class ContextProfile {
     ],
     assemblyPermissions: AgentContextAssemblyPermissions.analyzerSpecialized,
   );
+
+  /// A background analyzer reading [window] of the conversation.
+  static ContextProfile background(ConversationWindowSpec window) =>
+      backgroundAnalyzer.copyWith(conversationWindow: window);
 
   bool includes(AgentContextLayer layer) => layers.contains(layer);
 
@@ -376,6 +432,7 @@ class ContextProfile {
     int? tokenBudget,
     bool clearTokenBudget = false,
     bool? traceAssembly,
+    ConversationWindowSpec? conversationWindow,
   }) {
     return ContextProfile(
       layers: layers ?? this.layers,
@@ -383,6 +440,7 @@ class ContextProfile {
       priorityByLayer: priorityByLayer ?? this.priorityByLayer,
       tokenBudget: clearTokenBudget ? null : (tokenBudget ?? this.tokenBudget),
       traceAssembly: traceAssembly ?? this.traceAssembly,
+      conversationWindow: conversationWindow ?? this.conversationWindow,
     );
   }
 }
@@ -404,6 +462,9 @@ class AgentDefinition {
   final double? temperature;
   final int maxRounds;
 
+  /// How tool calls of this agent are authorized (batch 2 plan §3.4).
+  final AgentToolAuthorization toolPolicy;
+
   const AgentDefinition({
     required this.id,
     required this.name,
@@ -419,6 +480,7 @@ class AgentDefinition {
     this.modelRef,
     this.temperature,
     this.maxRounds = 5,
+    this.toolPolicy = AgentToolAuthorization.allowAll,
   });
 
   AgentDefinition copyWith({
@@ -439,6 +501,7 @@ class AgentDefinition {
     double? temperature,
     bool clearTemperature = false,
     int? maxRounds,
+    AgentToolAuthorization? toolPolicy,
   }) {
     return AgentDefinition(
       id: id ?? this.id,
@@ -457,8 +520,21 @@ class AgentDefinition {
       modelRef: clearModelRef ? null : (modelRef ?? this.modelRef),
       temperature: clearTemperature ? null : (temperature ?? this.temperature),
       maxRounds: maxRounds ?? this.maxRounds,
+      toolPolicy: toolPolicy ?? this.toolPolicy,
     );
   }
+}
+
+/// 工具授权模式（第二批方案 3.4）。
+enum AgentToolAuthorization {
+  /// 全部放行：普通聊天，行为与闸门接入前一致。
+  allowAll,
+
+  /// 手动允许：只读诊断直接执行，其余每次询问。
+  manual,
+
+  /// 无限制：全部放行；可撤销修改照样写撤销记录。
+  unrestricted,
 }
 
 /// 一次 Agent 运行请求。

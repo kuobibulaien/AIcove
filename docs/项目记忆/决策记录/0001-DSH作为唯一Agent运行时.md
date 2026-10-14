@@ -28,4 +28,4 @@ AIcove 已有 Agent 契约与 Dart Plugin，但聊天实际执行仍依赖旧 `C
 
 本 ADR 当前仍为 `proposed`。Phase 0 Runtime Spike 可以先做；任何改变数据库真相源语义的 schema 实施前，必须经用户确认改为 `accepted`，并同步修订现行聊天上下文规范。
 
-详细方案：`apps/aicove_flutter/docs/02_前后端分离与架构规范/AIcove2.0_DSH驱动底层架构改造方案.md`。
+详细方案：`apps/aicove_flutter/docs/05_历史归档/20261007_DSH方案/AIcove2.0_DSH驱动底层架构改造方案.md`。

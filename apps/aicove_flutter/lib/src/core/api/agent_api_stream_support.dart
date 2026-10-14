@@ -20,7 +20,6 @@ class _AgentApiStreamSupport {
     double? temperature,
     double? topP,
     String? token,
-    Map<String, dynamic>? toolPrefs,
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
@@ -216,6 +215,8 @@ class _AgentApiStreamSupport {
       final textDeltaNormalizer = _StreamingTextDeltaNormalizer();
       var done = false;
       var toolCallsObserved = false;
+      // Last finish reason the provider streamed; null when it sent none.
+      String? rawFinishReason;
       final dataLines = <String>[];
       final rawStreamEvents = <Object?>[];
       final streamEventStats = <String, int>{'total': 0, 'dropped': 0};
@@ -314,6 +315,12 @@ class _AgentApiStreamSupport {
             markToolCallsObserved();
           }
 
+          if (eventType == 'message_delta') {
+            final messageDelta = evt['delta'];
+            if (messageDelta is Map && messageDelta['stop_reason'] != null) {
+              rawFinishReason = messageDelta['stop_reason'].toString();
+            }
+          }
           if (eventType == 'content_block_delta') {
             final rawDelta = evt['delta'];
             if (rawDelta is Map) {
@@ -353,6 +360,8 @@ class _AgentApiStreamSupport {
               if (rawCandidate is! Map) continue;
               final candidate = Map<String, dynamic>.from(
                   rawCandidate.cast<String, dynamic>());
+              rawFinishReason =
+                  candidate['finishReason']?.toString() ?? rawFinishReason;
               consumeGeminiCandidate(candidate);
             }
           }
@@ -386,6 +395,8 @@ class _AgentApiStreamSupport {
             handledChoice = true;
             final choice =
                 Map<String, dynamic>.from(first.cast<String, dynamic>());
+            rawFinishReason =
+                choice['finish_reason']?.toString() ?? rawFinishReason;
             final delta = choice['delta'];
             final message = choice['message'];
 
@@ -677,6 +688,7 @@ class _AgentApiStreamSupport {
         toolCalls: builtToolCalls,
         hiddenThoughtParts: hiddenThoughtParts,
         rawResponse: synthesizedRawResponse,
+        rawFinishReason: rawFinishReason,
       );
     } catch (e) {
       sw.stop();

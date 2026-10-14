@@ -103,7 +103,6 @@ class _TavernPresetDetailPageState
 
   List<Widget> _prompts(SillyTavernPreset preset) {
     return [
-      const TavernNote('按发送顺序排列。关掉的条目不会发给模型；修改会影响所有用这套预设的角色，从下一条消息起生效。'),
       TavernPromptList(preset: preset),
       MoeSettingsGroup(
         title: '关于这套预设',
@@ -214,7 +213,6 @@ class _TavernPresetDetailPageState
           ),
         ],
       ),
-      const TavernNote('正则只改发给模型或显示出来的那一份，聊天原文不会变，也不会执行脚本。'),
     ];
   }
 
@@ -269,10 +267,10 @@ class _TavernPresetDetailPageState
             label: 'MVU 变量',
             labelMaxLines: 1,
             subtitle: !preset.mvuEnabled
-                ? '关着时不解析变量，MVU 专用条目也不发给模型'
+                ? '已关闭'
                 : initVarCount > 0
-                ? '已找到 $initVarCount 个 [InitVar] 初始变量条目，聊天时自动维护变量'
-                : '已启用的世界书里没有 [InitVar] 条目；开场白带初始变量时同样生效',
+                ? '已启用 · 含 $initVarCount 个初始变量条目'
+                : '已启用',
             trailingType: MoeSettingsRowTrailing.custom,
             trailing: MoeSwitch(
               key: const ValueKey('mvu-enabled'),
@@ -339,9 +337,6 @@ class _TavernPresetDetailPageState
           ),
         ],
       ),
-      const TavernNote(
-        '最近的聊天里出现关键词时，把对应条目加进上下文；常驻条目每次都加。每本默认最多 2048 token，全部世界书合计不超过可用上下文的四分之一。',
-      ),
     ];
   }
 
@@ -361,14 +356,8 @@ class _TavernPresetDetailPageState
       if (isDefault) ...?observed[observedTagsKey(null)],
     }.difference(mapped).toList()..sort();
     final pending = mapping.candidates.where((n) => !mapped.contains(n));
-    final taken =
-        mapping.supersededScriptIds.length - mapping.hiddenScriptIds.length;
     return [
-      TavernNote(
-        '模型回复里的标签怎么显示：正文照常显示，折叠收进可展开的小块，选项放进回复旁的选项气泡。按预设正则自动识别，也可以手动改，从下一条回复起生效。'
-        '${taken == 0 ? '' : '\n\n有 $taken 条输出网页样式的显示正则已由这里接管，不再运行。'}'
-        '${mapping.hiddenScriptIds.isEmpty ? '' : '\n\n有 ${mapping.hiddenScriptIds.length} 条正则只是把占位符换成网页，网页显示不了，显示时直接隐藏。'}',
-      ),
+      const TavernNote('设置回复中标签的展示方式（正文、折叠或选项）。'),
       MoeSettingsGroup(
         title: '标签 ${mapping.rules.length} 个',
         children: [

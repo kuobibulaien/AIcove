@@ -2,7 +2,8 @@ import 'thinking_level.dart';
 
 /// 按「供应商类型 + 模型 id」静态决定档位方案（design.md §1）。
 ///
-/// 未命中一律退到该供应商的兜底方案，宁可保守也不报错。
+/// 未命中一律退到该供应商的兜底方案。表只决定「先试哪档」，表过时导致的
+/// 上游拒绝由「最低」档的换档重试兜住，因此新模型不补表也能用。
 ThinkingLevelOptions resolveThinkingOptions({
   required String providerType,
   required String modelId,
@@ -29,6 +30,8 @@ final _gpt5Xhigh = RegExp(r'gpt-5\.([2-9]|\d{2,})|gpt-5\.1-codex-max|gpt-5\.\d+-
 final _gpt51 = RegExp(r'gpt-5\.1(?!-codex)');
 final _gpt5Base = RegExp(r'gpt-5(?![\.\d])');
 final _oSeries = RegExp(r'(^|[^a-z0-9])o[134](-|$)');
+final _thinkingToggleFamily = RegExp(r'deepseek|glm-|kimi|doubao|hunyuan');
+final _qwenFamily = RegExp(r'qwen|qwq');
 
 ThinkingLevelOptions _resolveOpenAiCompatible(String model) {
   if (_gpt5Xhigh.hasMatch(model)) {
@@ -59,9 +62,23 @@ ThinkingLevelOptions _resolveOpenAiCompatible(String model) {
       isNative: true,
     );
   }
+  if (_thinkingToggleFamily.hasMatch(model)) {
+    return const ThinkingLevelOptions(
+      scheme: ThinkingScheme.thinkingToggle,
+      levels: [_auto, _off, _low, _medium, _high],
+      isNative: false,
+    );
+  }
+  if (_qwenFamily.hasMatch(model)) {
+    return const ThinkingLevelOptions(
+      scheme: ThinkingScheme.qwenToggle,
+      levels: [_auto, _off, _high],
+      isNative: false,
+    );
+  }
   return const ThinkingLevelOptions(
     scheme: ThinkingScheme.generic,
-    levels: [_auto, _off, _low, _medium, _high],
+    levels: [_auto, _off, _minimal, _low, _medium, _high],
     isNative: false,
   );
 }
@@ -101,6 +118,7 @@ ThinkingLevelOptions _resolveClaude(String model) {
 
 final _gemini3Pro = RegExp(r'gemini-3(\.\d+)?-pro');
 final _gemini3 = RegExp(r'gemini-3');
+final _gemini25Pro = RegExp(r'gemini-2\.5-pro');
 
 ThinkingLevelOptions _resolveGemini(String model) {
   if (_gemini3Pro.hasMatch(model)) {
@@ -115,6 +133,14 @@ ThinkingLevelOptions _resolveGemini(String model) {
       scheme: ThinkingScheme.geminiLevel,
       levels: [_auto, _minimal, _low, _medium, _high],
       isNative: true,
+    );
+  }
+  // 2.5 Pro 关不掉思考（官方文档：thinking cannot be turned off）。
+  if (_gemini25Pro.hasMatch(model)) {
+    return const ThinkingLevelOptions(
+      scheme: ThinkingScheme.geminiBudget,
+      levels: [_auto, _low, _medium, _high],
+      isNative: false,
     );
   }
   return const ThinkingLevelOptions(

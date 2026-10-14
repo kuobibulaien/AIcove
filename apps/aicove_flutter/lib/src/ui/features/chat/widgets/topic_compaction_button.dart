@@ -5,45 +5,23 @@ import '../../../../features/context/providers/context_providers.dart';
 import '../../../shared/widgets/index.dart';
 import '../../../theme/tokens.dart';
 
-class TopicCompactionButton extends ConsumerStatefulWidget {
-  const TopicCompactionButton(
-      {super.key, required this.ownerId, required this.isGenerating});
-  final String ownerId;
-  final bool isGenerating;
-  @override
-  ConsumerState<TopicCompactionButton> createState() =>
-      _TopicCompactionButtonState();
-}
-
-class _TopicCompactionButtonState extends ConsumerState<TopicCompactionButton> {
-  bool _open = false;
-  @override
-  Widget build(BuildContext context) => IconButton(
-        icon: Icon(Icons.edit_note_rounded,
-            color: context.moeColors.headerContentColor),
-        tooltip: '压缩并开启新话题',
-        onPressed: widget.isGenerating || _open
-            ? null
-            : () async {
-                final owner = widget.ownerId;
-                setState(() => _open = true);
-                try {
-                  final result = await showDialog<String>(
-                      context: context,
-                      barrierDismissible: false,
-                      builder: (_) => TopicCompactionDialog(
-                          ownerId: owner,
-                          port: ref.read(manualCompactionProvider)));
-                  if (context.mounted &&
-                      widget.ownerId == owner &&
-                      result != null) {
-                    MoeToast.info(context, result);
-                  }
-                } finally {
-                  if (mounted) setState(() => _open = false);
-                }
-              },
-      );
+/// 聊天页「更多」菜单的手动压缩入口；目标角色生成中只提示不打开。
+Future<void> showTopicCompactionDialog(
+  BuildContext context,
+  WidgetRef ref, {
+  required String ownerId,
+  required bool isGenerating,
+}) async {
+  if (isGenerating) {
+    MoeToast.info(context, '请等本轮回复结束后再压缩。');
+    return;
+  }
+  final result = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => TopicCompactionDialog(
+          ownerId: ownerId, port: ref.read(manualCompactionProvider)));
+  if (context.mounted && result != null) MoeToast.info(context, result);
 }
 
 /// 只操作应用层 Port；确认前不会移动 raw 边界。宽屏 760px，窄屏/键盘下内容滚动。
@@ -169,8 +147,7 @@ class _TopicCompactionDialogState extends State<TopicCompactionDialog> {
     final accepted = await showMeoTalkDialog(
         context: context,
         title: '撤销上次压缩',
-        content: const Text(
-            '恢复压缩前的上下文边界，聊天记录不会删除。已经整理进长期记忆的内容不会撤回；恢复旧消息后也可能恢复旧格式的影响。'),
+        content: const Text('恢复上次压缩前的对话，聊天记录不会删除。'),
         confirmText: '恢复上下文');
     if (accepted != true || !_valid(generation)) return;
     setState(() {
@@ -224,7 +201,7 @@ class _TopicCompactionDialogState extends State<TopicCompactionDialog> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('保留事实、经历与约定，不沿用旧回复格式。新话题按最新角色卡表达，原聊天记录不会删除。'),
+                const Text('把前面的对话整理成摘要，聊天记录不会删除。'),
                 const SizedBox(height: 12),
                 if (_busy) ...[
                   Text(_progress),
@@ -236,13 +213,11 @@ class _TopicCompactionDialogState extends State<TopicCompactionDialog> {
                       minLines: 4,
                       maxLines: 8,
                       label: '新话题内容摘要（可修改）'),
-                  const Text('请检查摘要，删掉不想保留的内容。保存后，该角色若启用了记忆库，会在后台把这段对话整理进长期记忆。'),
+                  const Text('确认后将整理进长期记忆。'),
                   TextButton(
                       onPressed: _prepare, child: const Text('重新整理（保留原话题）')),
                 ],
                 if (_draft == null && !_busy) ...[
-                  const Text(
-                      '整理会使用配置的压缩模型，未配置时使用默认聊天模型；会产生一次或多次模型调用。确认摘要后才切换。'),
                   if (_current != null)
                     Text('上次内容摘要：\n${_current!.summary}',
                         maxLines: 4, overflow: TextOverflow.ellipsis),

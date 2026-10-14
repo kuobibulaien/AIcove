@@ -1,11 +1,15 @@
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
+import '../../theme/moe_frosted_material.dart';
 import '../../theme/tokens.dart';
 import '../effects/smooth_clip.dart';
+import 'moe_liquid_glass.dart';
 
+/// Content cards follow the global material as a page-wide default: solid
+/// stays opaque, frosted uses the same thick blur as floating controls, and
+/// glass renders the same liquid lens and rim as the floating bars. Inside a
+/// scroll view [MoeLiquidGlass] switches to the scroll-safe standard shader.
 class MoeContentSurface extends StatefulWidget {
   const MoeContentSurface({
     super.key,
@@ -16,18 +20,17 @@ class MoeContentSurface extends StatefulWidget {
     this.border = BorderSide.none,
     this.shadows = const [],
     this.padding,
-    this.blurSigma = 0,
-  }) : assert(radius >= 0),
-       assert(blurSigma >= 0);
+  }) : assert(radius >= 0);
 
   final Widget child;
   final double radius;
   final BorderRadius? borderRadius;
+
+  /// Explicit fill; when set the surface stays a plain fill without blur.
   final Color? color;
   final BorderSide border;
   final List<BoxShadow> shadows;
   final EdgeInsetsGeometry? padding;
-  final double blurSigma;
 
   @override
   State<MoeContentSurface> createState() => _MoeContentSurfaceState();
@@ -40,28 +43,44 @@ class _MoeContentSurfaceState extends State<MoeContentSurface> {
   Widget build(BuildContext context) {
     final child = KeyedSubtree(key: _contentKey, child: widget.child);
     final colors = context.moeColors;
+    final glassTheme = MoeGlassTheme.maybeOf(context);
     final accessibilityReduced =
         (MediaQuery.maybeHighContrastOf(context) ?? false) ||
         GlassAccessibilityData.of(context).reduceTransparency;
-    final blurAllowed =
-        (MoeGlassTheme.maybeOf(context)?.enabled ?? true) &&
+    final material = glassTheme?.material ?? MoeSurfaceMaterial.solid;
+    final followsMaterial =
+        widget.color == null &&
+        material != MoeSurfaceMaterial.solid &&
         !accessibilityReduced;
-    final blurRequested = widget.blurSigma > 0;
-    final blurActive = blurRequested && blurAllowed;
-    final sigma = widget.blurSigma.clamp(0.0, kMaxContentSurfaceBlurSigma);
+    final brightness = Theme.of(context).brightness;
+    final tintFill = glassTheme?.tintFill ?? kDefaultGlassTintFill;
+    final content = widget.padding == null
+        ? child
+        : Padding(padding: widget.padding!, child: child);
+    if (followsMaterial && material == MoeSurfaceMaterial.liquid) {
+      // Match the floating bars: same component blur and the glass rim. The
+      // hairline content border is for opaque cards and would hide the rim.
+      return MoeLiquidGlass(
+        radius: widget.radius,
+        borderRadius: widget.borderRadius,
+        shadows: widget.shadows,
+        child: content,
+      );
+    }
+    final sigma = MoeFrostedMaterial.blurSigmaForSetting(
+      glassTheme?.blurSigma ?? kDefaultGlassBlurSigma,
+    );
     final shape = moeG2Shape(
       radius: widget.radius,
       borderRadius: widget.borderRadius,
       side: widget.border,
     );
     final requestedColor = widget.color ?? colors.componentBackground;
-    final effectiveColor =
-        (accessibilityReduced || (blurRequested && !blurAllowed))
+    final effectiveColor = followsMaterial
+        ? MoeFrostedMaterial.surfaceTint(brightness, fill: tintFill)
+        : accessibilityReduced
         ? requestedColor.withValues(alpha: 1)
         : requestedColor;
-    final content = widget.padding == null
-        ? child
-        : Padding(padding: widget.padding!, child: child);
 
     return DecoratedBox(
       decoration: ShapeDecoration(
@@ -76,20 +95,20 @@ class _MoeContentSurfaceState extends State<MoeContentSurface> {
         child: Stack(
           fit: StackFit.passthrough,
           children: [
-            if (blurActive)
+            if (followsMaterial)
               Positioned.fill(
                 child: IgnorePointer(
                   child: BackdropFilter(
-                    filter: ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+                    filter: MoeFrostedMaterial.surfaceFilter(
+                      brightness,
+                      sigma: sigma,
+                      fill: tintFill,
+                    ),
                     child: const SizedBox.expand(),
                   ),
                 ),
               ),
-            Material(
-              color: effectiveColor,
-              shape: shape,
-              child: content,
-            ),
+            Material(color: effectiveColor, shape: shape, child: content),
           ],
         ),
       ),

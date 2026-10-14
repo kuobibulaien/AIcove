@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../theme/tokens.dart';
+import '../moe_content_surface.dart';
 import '../moe_floating_surface.dart';
 
 /// Shared button material. Semantic colors tint the surface without hiding it.
@@ -47,7 +48,11 @@ class MoeButtonSurface extends StatelessWidget {
     // Keep semantic tint and explicit focus feedback without another glass pass.
     final sharesSurface =
         shareParentSurface &&
-        context.findAncestorWidgetOfExactType<MoeFloatingSurface>() != null;
+        (MoeSurfaceGroup.contains(context) ||
+            context.findAncestorWidgetOfExactType<MoeFloatingSurface>() !=
+                null ||
+            context.findAncestorWidgetOfExactType<MoeContentSurface>() !=
+                null);
     final content = AnimatedContainer(
       duration: kAnimFast,
       padding: padding,

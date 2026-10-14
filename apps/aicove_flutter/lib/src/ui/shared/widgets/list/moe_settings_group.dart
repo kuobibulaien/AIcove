@@ -58,7 +58,7 @@ class MoeSettingsGroup extends StatelessWidget {
 
   // === 样式接口 ===
 
-  /// 卡片背景色
+  /// 卡片背景色（为空时跟随全局高级材质）
   final Color? backgroundColor;
 
   /// 卡片圆角
@@ -89,8 +89,7 @@ class MoeSettingsGroup extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
 
-    // 解析样式 - 卡片背景使用主题的组件公共背景色
-    final bgColor = backgroundColor ?? colors.componentBackground;
+    // 未指定背景色时由内容面跟随全局高级材质
     final radius =
         borderRadius ?? BorderRadius.circular(MoeSettingsLayout.cardRadius);
     final g2Radius = radius.topLeft.x;
@@ -133,7 +132,7 @@ class MoeSettingsGroup extends StatelessWidget {
           child: MoeContentSurface(
             radius: g2Radius,
             borderRadius: radius,
-            color: bgColor,
+            color: backgroundColor,
             border: borderSide,
             shadows: shadow,
             padding: innerPadding,

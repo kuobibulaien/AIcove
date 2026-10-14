@@ -10,13 +10,12 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:aicove_flutter/src/features/background_agent/background_agent_service.dart';
 import 'package:aicove_flutter/src/features/background_agent/domain/background_agent_definition.dart';
-import 'package:aicove_flutter/src/features/background_agent/domain/background_context_spec.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/chat/services/api_runner.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_types.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/handlers/ai_tool.dart';
-import 'package:aicove_flutter/src/features/plugins/plugin_manager.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
+import 'package:aicove_flutter/src/features/agent_context/domain/agent_runtime_contracts.dart';
 
 final String? _apiKey = Platform.environment['DEEPSEEK_API_KEY'];
 
@@ -45,7 +44,6 @@ Future<(List<String>, List<String>, String)> _runAgent({
       ),
     ],
     loadSettings: () async => mapUiModelsToAppSettings({}),
-    readPluginManager: () => PluginManager(),
     requestConfigResolver: ({
       required AppSettings settings,
       required String? modelRef,
@@ -69,7 +67,7 @@ Future<(List<String>, List<String>, String)> _runAgent({
           config: config,
           sessionId: sessionId,
           userText: null,
-          effectivePlugins: const [],
+          responseProcessors: const [],
           availableTools: availableTools,
           maxRounds: maxRounds,
           traceContext: config.traceContext,
@@ -82,7 +80,9 @@ Future<(List<String>, List<String>, String)> _runAgent({
       objectivePrompt: withTool
           ? '先调用 memory_lookup 工具查询用户偏好，再用一句话给出建议。'
           : '用一句话概括用户的需求，不要调用工具。',
-      contextSpec: const BackgroundContextSpec(lastMessages: 1),
+      contextProfile: ContextProfile.background(
+        const ConversationWindowSpec(lastMessages: 1),
+      ),
       allowedToolNames: withTool ? const ['memory_lookup'] : const [],
       maxRounds: withTool ? 3 : 1,
     ),
@@ -116,7 +116,6 @@ Future<(List<String>, int, String)> _runStreamingChat({
       providerApiBase: 'https://api.deepseek.com',
       providerApiKey: _apiKey,
       customConfig: const {},
-      toolPrefs: const {},
       modelTemperature: 0,
       messages: const [
         {'role': 'system', 'content': '你是简洁的助手。需要天气时先调用 get_weather。'},
@@ -127,7 +126,7 @@ Future<(List<String>, int, String)> _runStreamingChat({
     ),
     sessionId: 'real_chat',
     userText: '杭州今天天气怎么样？一句话回答。',
-    effectivePlugins: const [],
+    responseProcessors: const [],
     enableStreaming: true,
     onStreamTextDelta: deltas.add,
   );

@@ -418,6 +418,7 @@ class ConversationExporter {
       'chat_background_image_file':
           fileMapping[dbConv.chatBackgroundImage] ?? dbConv.chatBackgroundImage,
       'chat_background_mask_opacity': dbConv.chatBackgroundMaskOpacity,
+      'chat_background_framing': dbConv.chatBackgroundFraming,
       'voice_file': dbConv.voiceFile,
       'persona_prompt': dbConv.personaPrompt,
       'self_address': dbConv.selfAddress,

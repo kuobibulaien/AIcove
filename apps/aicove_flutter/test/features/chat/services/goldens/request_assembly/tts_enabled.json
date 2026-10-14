@@ -1,0 +1,34 @@
+{
+  "messages": [
+    {
+      "role": "system",
+      "content": "你是测试角色。\n\n你可以使用 <tts>文本</tts> 标记来生成语音（降级模式）。\n\n使用规则：\n1. 将需要转换为语音的文本用 <tts></tts> 标记包裹\n2. 每个 <tts></tts> 标记内的文本不要超过 20 个字\n3. 一轮对话中可以使用多个 <tts></tts> 标记\n4. 建议在关键句子或回复的重要部分使用语音\n5. 【禁止】<tts> 内部严禁包含颜文字（如 (^_^)、(*¯︶¯*) 等）、Emoji 或特殊符号，以免影响语音合成发音\n\n示例：\n<tts>你好，很高兴见到你！</tts>\n<tts>今天天气真不错。</tts>\n\n<system-reminder> 里是应用附上的背景说明，不是对方说的话。心里有数就好，别照着念，也别提到它。\n\n时间感知插件会通过 <system-reminder> 向模型补充时间上下文：\n- 当前时间提醒按模板 \"当前时间: {datetime}\" 生成，其中 {datetime} 会替换为设备本地时间。\n- 如果 <system-reminder> 中出现“用户上一次发消息的时间为...”，表示上一条真实用户消息的发送时间。\n- 历史消息里形如 [YYYY-MM-DD HH:mm] 的前缀表示该条消息的发送时间。\n\n请将这些内容视为客观时间事实，自行判断当前与历史对话的时序关系，不要原样复述。"
+    },
+    {
+      "role": "user",
+      "content": "早上好"
+    },
+    {
+      "role": "assistant",
+      "content": "早呀今天想做什么？<tts voice=\"v\">早上好</tts>"
+    },
+    {
+      "role": "user",
+      "content": "<system-reminder>\n当前时间: 2026-10-12 10:05:30 +00:00 (周一)\n用户上一次发消息的时间为2026-10-12 07:05:30 +00:00 (周一)\n请自行判断当前与历史对话的关系。\n\n本轮回复可以用到的标签（只是提醒，格式和顺序以预设与插件的说明为准）：\n- 想用语音说出来的话，放进 <tts></tts>\n</system-reminder>"
+    },
+    {
+      "role": "user",
+      "content": "帮我画一只猫"
+    }
+  ],
+  "tools": null,
+  "toolChoice": null,
+  "disableBuiltinWebSearch": false,
+  "boundTools": [],
+  "enabledPluginIds": [
+    "time_awareness",
+    "tts"
+  ],
+  "presetStreamResponse": null,
+  "hasPresetScript": false
+}

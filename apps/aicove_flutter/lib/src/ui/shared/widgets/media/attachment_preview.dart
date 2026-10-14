@@ -9,6 +9,7 @@ import 'package:aicove_flutter/src/ui/shared/widgets/buttons/moe_button_surface.
 import 'package:path/path.dart' as p;
 import '../../../theme/tokens.dart';
 import '../../effects/smooth_clip.dart';
+import '../moe_content_surface.dart';
 
 /// 图片附件预览（紧凑悬浮缩略图）
 class ImageAttachmentPreview extends StatelessWidget {
@@ -42,11 +43,11 @@ class ImageAttachmentPreview extends StatelessWidget {
                   height: 56,
                   decoration: MoeG2Decoration(
                     radius: 8,
-                    color: Colors.grey.shade300,
+                    color: context.moeColors.componentBackground,
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.broken_image,
-                    color: Colors.grey,
+                    color: context.moeColors.muted,
                     size: 20,
                   ),
                 ),
@@ -96,43 +97,48 @@ class FileAttachmentPreview extends StatelessWidget {
         child: Stack(
           clipBehavior: Clip.none,
           children: [
-            Container(
+            ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 200),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              decoration: MoeG2Decoration(
+              child: MoeContentSurface(
                 radius: 10,
-                color: colors.surfaceAlt,
-                border: Border.all(color: colors.borderLight, width: 0.5),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(leadingIcon, color: colors.muted, size: 20),
-                  const SizedBox(width: 6),
-                  Flexible(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          displayName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: MoeFontWeights.emphasis,
-                            color: colors.text,
-                          ),
-                        ),
-                        if (sizeText != null)
+                border: BorderSide(color: colors.borderLight, width: 0.5),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(leadingIcon, color: colors.muted, size: 20),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
                           Text(
-                            sizeText,
-                            style: TextStyle(fontSize: 10, color: colors.muted),
+                            displayName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: MoeFontWeights.emphasis,
+                              color: colors.text,
+                            ),
                           ),
-                      ],
+                          if (sizeText != null)
+                            Text(
+                              sizeText,
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: colors.muted,
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
             Positioned(

@@ -28,17 +28,15 @@ import '../../settings/app_settings.dart';
 import '../../settings/provider_detail/provider_detail_support.dart';
 import '../../plugins/image/image_config.dart';
 import '../../plugins/image/drawing_preset_provider.dart';
-import '../../plugins/image/image_plugin.dart';
 import '../../plugins/domain/handlers/ai_tool.dart';
 import '../../plugins/plugin_providers.dart';
 import '../../plugins/prompts/plugin_prompts.dart';
-import '../../plugins/sticker/sticker_config.dart';
-import '../../plugins/sticker/sticker_plugin.dart';
-import '../../plugins/time_awareness/time_awareness_config.dart';
-import '../../plugins/time_awareness/time_awareness_plugin.dart';
-import '../../plugins/web_search/web_search_plugin.dart';
-import '../../plugins/tts/tts_plugin.dart';
 import '../../plugins/tts/voice_preset_application.dart';
+import '../../plugins/tavern_compat/tavern_compat_agent_plugin.dart';
+import '../../agent_plugins/plugin_request_context.dart';
+import '../../agent_plugins/plugin_request_scope.dart';
+import '../../agent_plugins/plugin_response.dart';
+import '../../agent_plugins/plugin_runtime.dart';
 import 'tts_fallback_notification.dart';
 import '../../observability/trace_models.dart';
 import '../../observability/trace_store.dart';
@@ -64,6 +62,12 @@ typedef ChatPreviousUserMessageTimeResolver =
     DateTime? Function(List<Message> history);
 
 const _inlinePromptPresetName = '辅助提示词';
+
+/// Wall clock for request assembly (time-awareness reminders). Overridden in
+/// tests so request copies are reproducible.
+final requestClockProvider = Provider<DateTime Function()>(
+  (ref) => DateTime.now,
+);
 
 const _neutralUserNameHint =
     '提示词中的“$kNeutralUserName”只是对对话另一方的指代，不是对方的名字；'
@@ -135,6 +139,12 @@ class ChatSendBackendService {
   /// - 统一收口 persona / tag semantics / plugin prompts / reminders
   /// - 统一收口 tools、provider config、上下文预算与自动压缩、trace
   /// - 不要再把新的主链路装配逻辑加回旧的 `ChatRequestBuilder`
+  ///
+  /// [persistSideEffects] 为 false 时只组装不留痕：不写酒馆预设变量，超出窗口时只做
+  /// 当次的运行时压缩、不写自动摘要。给历史里带占位、不属于聊天真相源的请求用（通话）。
+  ///
+  /// [deferReminders] 为 true 时插件提醒（时间感知等）不插进消息，改由
+  /// [ApiConfig.reminders] 在每次发送时按当时时刻现算，由调用方放到位置上（通话）。
   Future<ApiConfig> prepareApiConfig({
     required Conversation conv,
     required List<Message> history,
@@ -144,6 +154,9 @@ class ChatSendBackendService {
     String? conversationId,
     TraceContext? traceContext,
     int compactionPass = 0,
+    DateTime? requestTime,
+    bool persistSideEffects = true,
+    bool deferReminders = false,
   }) => _prepareApiConfig(
     conv: conv,
     history: history,
@@ -153,6 +166,9 @@ class ChatSendBackendService {
     conversationId: conversationId,
     traceContext: traceContext,
     compactionPass: compactionPass,
+    requestTime: requestTime,
+    persistSideEffects: persistSideEffects,
+    deferReminders: deferReminders,
   );
 
   /// 只读预览：走与真实发送相同的装配，返回模型将看到的完整上下文。
@@ -211,18 +227,21 @@ class ChatSendBackendService {
     TraceContext? traceContext,
     int compactionPass = 0,
     _ContextPreviewCollector? preview,
+    DateTime? requestTime,
+    bool persistSideEffects = true,
+    bool deferReminders = false,
   }) async {
     final resolvedConversationId = (conversationId?.trim().isNotEmpty ?? false)
         ? conversationId!.trim()
         : conv.id;
     final configTrace = trace?.startChild('读取配置');
 
+    await ensurePluginConfigsLoaded(_ref);
     final settings = await _ref.read(appSettingsProvider.future);
     final requestConfig = await _requestConfigBuilder.buildRequestConfig(
       settings,
       modelRef: overrideModel,
     );
-    final toolPrefs = requestConfig.toolPrefs;
     final resolvedProvider = ProviderAdapterFactory.resolveProvider(
       requestConfig.providerId,
       customConfig: requestConfig.customConfig,
@@ -242,7 +261,8 @@ class ChatSendBackendService {
       modelDefaultLevel: requestConfig.modelThinkingLevel,
       presetReasoningEffort: boundPreset?.reasoningEffort,
     );
-    final providerRequestOptions = ProviderChatRequestOptions(
+    final providerRequestOptions = effectiveThinking.applyTo(
+        ProviderChatRequestOptions(
       useSystemPrompt: boundPreset?.useSystemPrompt ?? true,
       temperature: boundPreset?.temperature,
       topP: boundPreset?.topP,
@@ -255,9 +275,7 @@ class ChatSendBackendService {
       seed: boundPreset?.seed,
       maxOutputTokens: boundPreset?.maxOutputTokens,
       reasoningEffort: boundPreset?.reasoningEffort,
-      thinkingLevel: effectiveThinking.level,
-      thinkingScheme: effectiveThinking.options.scheme,
-    );
+    ));
 
     configTrace?.note(
       '配置',
@@ -266,9 +284,6 @@ class ChatSendBackendService {
         'thinkingSource': effectiveThinking.source.name,
         'thinkingScheme': effectiveThinking.options.scheme.name,
         'ttsEnabled': settings.ttsEnabled,
-        'autoTools': toolPrefs['auto_tools_enabled'] == true,
-        'enabledToolsCount':
-            (toolPrefs['mcp_enabled_tools'] as List?)?.length ?? 0,
       },
     );
     configTrace?.end();
@@ -374,50 +389,40 @@ class ChatSendBackendService {
           .read(ttsFallbackNotificationServiceProvider)
           .notify(voiceRequest.error!);
     }
-    final pluginManager = _ref.read(pluginManagerProvider);
-    final effectivePlugins = _pluginContextBuilder
-        .getEffectivePlugins(
-          pluginManager: pluginManager,
-          enabledPluginIds: enabledPluginIds,
-        )
-        .map(
-          (plugin) => plugin is ImagePlugin
-              ? ImagePlugin(
-                  imageConfig,
-                  _ref,
-                  requestSettings: settings,
-                  isRequestSnapshot: true,
-                )
-              : plugin is TtsPlugin
-              ? TtsPlugin.forRequest(
-                  voiceRequest,
-                  systemPromptTemplate: pluginPrompts.of(PluginPromptSlot.tts),
-                )
-              : plugin is StickerPlugin
-              ? StickerPlugin(
-                  StickerConfig.fromJson(plugin.getConfig()).copyWith(
-                    systemPromptTemplate: pluginPrompts.of(
-                      PluginPromptSlot.sticker,
-                    ),
-                  ),
-                )
-              : plugin is TimeAwarenessPlugin
-              ? TimeAwarenessPlugin(
-                  TimeAwarenessConfig.fromJson(plugin.getConfig()).copyWith(
-                    currentTimePromptTemplate: pluginPrompts.of(
-                      PluginPromptSlot.currentTime,
-                    ),
-                  ),
-                )
-              : plugin,
-        )
-        .toList(growable: false);
-    final imagePlugin = effectivePlugins.whereType<ImagePlugin>().firstOrNull;
+    final previousUserMessageTime =
+        _resolveTimeAwarenessPreviousUserMessageTime(history);
+    // 插件按自身范围贡献提示词、提醒、工具与输出标签；核心不再识别具体插件类型。
+    final pluginRuntime = PluginRuntime.fromPlugins(
+      _ref.read(pluginManagerProvider).getAllPlugins(),
+    )..install(tavernCompatAgentPlugin());
+    final pluginScopes = pluginRuntime.requestScopes(
+      pluginRuntime.snapshot(),
+      pluginRuntime.selectForRole(enabledPluginIds),
+      PluginRequestInputs(
+        ref: _ref,
+        settings: settings,
+        imageConfig: imageConfig,
+        voiceRequest: voiceRequest,
+        pluginPrompts: pluginPrompts,
+        history: history,
+        previousUserMessageTime: previousUserMessageTime,
+        useFastImageRoute: shouldUseFastImageRoute,
+        useStableImageRoute: shouldUseStableImageRoute,
+        supportsToolCalling: supportsToolCalling,
+        customDrawingPrompt: personaParts.customDrawingPrompt,
+        reminders: _systemReminderService,
+        boundPreset: boundPreset,
+      ),
+    );
     final contextPolicy = ChatPluginContextPolicy.firstParty(
       activeProviderIds: {
-        for (final plugin in effectivePlugins)
-          if (plugin.enabled) plugin.id,
+        for (final scope in pluginScopes)
+          if (scope.active) scope.pluginId,
       },
+      extraProviders: [
+        for (final plugin in pluginRuntime.plugins)
+          if (plugin.contentTags case final tags?) tags,
+      ],
     );
     var reqMessages = await _requestMessageBuilder.buildRequestMessages(
       history,
@@ -428,8 +433,9 @@ class ChatSendBackendService {
     );
 
     reqMessages = contextPolicy.filterMessages(reqMessages);
-    // 历史回复里的 MVU 更新块只在请求副本中去掉，状态改由宏注入（ADR0071）。
-    reqMessages = stripMvuUpdatesFromHistory(reqMessages);
+    for (final scope in pluginScopes) {
+      reqMessages = scope.filterRequestMessages(reqMessages);
+    }
     final includeInternalImageRule = _containsInternalImageContext(reqMessages);
     final systemParts = <String>[];
     if (boundPreset == null && personaParts.userPrompt.isNotEmpty) {
@@ -438,68 +444,50 @@ class ChatSendBackendService {
     if (handoffPrompt.isNotEmpty) {
       systemParts.add(contextPolicy.filterText(handoffPrompt));
     }
-    final timeAwarenessPlugin = effectivePlugins
-        .whereType<TimeAwarenessPlugin>()
-        .firstOrNull;
-    final previousUserMessageTime =
-        _resolveTimeAwarenessPreviousUserMessageTime(history);
-    final requestTime = DateTime.now();
-    var systemReminderContent = '';
-    final reminderContents = <String>[];
-    if (timeAwarenessPlugin != null && timeAwarenessPlugin.enabled) {
-      final reminderPayload = timeAwarenessPlugin.buildSystemReminderPayload(
-        currentTime: requestTime,
-        previousUserMessageTime: previousUserMessageTime,
-      );
-      if (reminderPayload != null) {
-        final content = _systemReminderService.buildReminderContent(
-          reminderPayload,
-        );
-        if (content.isNotEmpty) {
-          reminderContents.add(content);
-        }
-      }
-    }
-    final imageFailureReminderContent = imagePlugin
-        ?.buildImageFailureReminderContent(history);
-    if (imageFailureReminderContent != null &&
-        imageFailureReminderContent.isNotEmpty) {
-      reminderContents.add(imageFailureReminderContent);
-    }
-    final imageActive = imagePlugin?.enabled ?? false;
+    // Proactive replies are written ahead of time and pass their fire time,
+    // so time-aware plugins describe the moment the reply will be sent.
+    final effectiveRequestTime =
+        requestTime ?? _ref.read(requestClockProvider)();
+    final outputTags = {
+      for (final scope in pluginScopes) ...scope.outputTags,
+    };
     final outputTagReminder = buildOutputTagReminder(
-      imageInline: imageActive && shouldUseFastImageRoute,
-      imageTool:
-          imageActive && shouldUseStableImageRoute && supportsToolCalling,
-      tts: effectivePlugins.whereType<TtsPlugin>().any((p) => p.enabled),
-      presetTags: boundPreset == null
-          ? const <String>[]
-          : inferPresetTagMapping(boundPreset).rules.map((rule) => rule.name),
+      imageInline: outputTags.contains(OutputTagHint.imageInline),
+      imageTool: outputTags.contains(OutputTagHint.imageTool),
+      tts: outputTags.contains(OutputTagHint.tts),
+      presetTags: [
+        for (final scope in pluginScopes) ...scope.presetTagNames,
+      ],
     );
-    if (outputTagReminder.isNotEmpty) {
-      reminderContents.add(outputTagReminder);
-    }
-    systemReminderContent = _systemReminderService.mergeReminderContents(
-      reminderContents,
-    );
-    if (boundPreset == null && systemReminderContent.isNotEmpty) {
+    String remindersAt(DateTime time) =>
+        _systemReminderService.mergeReminderContents([
+          ...collectPluginReminders(pluginScopes, time),
+          outputTagReminder,
+        ]);
+    final systemReminderContent = remindersAt(effectiveRequestTime);
+    // 延后的提醒只记进追踪，不进本次消息。
+    final injectedReminder = deferReminders ? '' : systemReminderContent;
+    if (boundPreset == null && injectedReminder.isNotEmpty) {
       reqMessages = _systemReminderService.insertReminderBeforeLastUser(
         messages: reqMessages,
-        reminderContent: systemReminderContent,
+        reminderContent: injectedReminder,
       );
     }
+    final pluginRequestContext = PluginRequestContext(
+      userMessage: userText ?? '',
+      supportsToolCalling: supportsToolCalling,
+      conversationId: resolvedConversationId,
+      hasInternalImageContext: includeInternalImageRule,
+    );
     final rawPluginPromptBuild = await _pluginContextBuilder
-        .buildPluginPromptEntriesWithFilter(
-          effectivePlugins,
-          userMessage: userText ?? '',
-          supportsToolCalling: supportsToolCalling,
-          conversationId: resolvedConversationId,
-          useFastImageRoute: shouldUseFastImageRoute,
-          customDrawingPrompt: personaParts.customDrawingPrompt,
-          hasInternalImageContext: includeInternalImageRule,
-          hasImageFailureReminder:
-              imageFailureReminderContent?.isNotEmpty ?? false,
-        );
+        .buildPromptEntries([
+          for (final scope in pluginScopes)
+            PluginPromptSource(
+              pluginId: scope.pluginId,
+              pluginName: scope.pluginName,
+              build: () => scope.prompt(pluginRequestContext),
+            ),
+        ]);
     final pluginPromptBuild = PluginPromptBuildResult(
       entries: [
         for (final entry in rawPluginPromptBuild.entries)
@@ -524,24 +512,17 @@ class ChatSendBackendService {
     List<Map<String, dynamic>>? tools;
     List<AITool> boundTools = const [];
     if (supportsToolCalling) {
-      var aiTools = await _pluginContextBuilder.collectPluginToolsWithRetry(
-        effectivePlugins,
-        conversationId: resolvedConversationId,
-      );
-      if (shouldUseFastImageRoute) {
-        aiTools = aiTools.where((tool) => tool.name != 'draw_image').toList();
-      }
+      final aiTools = await _pluginContextBuilder.collectToolsWithRetry([
+        for (final scope in pluginScopes)
+          PluginToolSource(pluginId: scope.pluginId, tools: scope.tools),
+      ]);
       boundTools = List.unmodifiable(aiTools);
       if (aiTools.isNotEmpty) {
-        tools = aiTools.map((t) => t.toOpenAISchema()).toList();
-        if (shouldUseStableImageRoute) {
-          tools = _applyRoleBoundDrawImageToolPreset(
-            tools: tools,
-            imageConfig: imageConfig,
-            toolPresetName: boundImageToolPresetName,
-            customDrawingPrompt: personaParts.customDrawingPrompt,
-          );
+        var schemas = aiTools.map((t) => t.toOpenAISchema()).toList();
+        for (final scope in pluginScopes) {
+          schemas = scope.rewriteToolSchemas(schemas);
         }
+        tools = schemas;
         AppLogger.debug(
           _logTag,
           '收集到工具定义',
@@ -628,10 +609,10 @@ class ChatSendBackendService {
         presetId: boundPreset.id,
         conversationId: resolvedConversationId,
       );
-      final reminderMessage = systemReminderContent.isEmpty
+      final reminderMessage = injectedReminder.isEmpty
           ? null
           : _systemReminderService.buildReminderMessage(
-              reminderContent: systemReminderContent,
+              reminderContent: injectedReminder,
             );
       presetAssembly = _sillyTavernPresetAssembler.assemble(
         preset: boundPreset,
@@ -733,7 +714,8 @@ class ChatSendBackendService {
         .length;
     if (preview != null) {
       // 预览只读，不压缩。
-    } else if (inputTokens >= inputLimit && uncoveredUsers < 2) {
+    } else if (inputTokens >= inputLimit &&
+        (uncoveredUsers < 2 || !persistSideEffects)) {
       finalMessages = await runtimeContext.prepare(finalMessages);
     } else if (inputTokens >= inputLimit) {
       AppLogger.info(
@@ -768,9 +750,11 @@ class ChatSendBackendService {
         conversationId: conversationId,
         traceContext: traceContext,
         compactionPass: compactionPass + 1,
+        deferReminders: deferReminders,
       );
     }
     if (preview == null &&
+        persistSideEffects &&
         boundPreset != null &&
         presetAssembly != null &&
         presetVariableSnapshot != null) {
@@ -804,11 +788,11 @@ class ChatSendBackendService {
         source: 'ChatSendBackendService',
         payload: {
           'runtimeContext': _tracePayloadBuilder.buildRuntimeContextPayload(
-            now: requestTime,
+            now: effectiveRequestTime,
             previousUserMessageTime: previousUserMessageTime,
-            effectivePlugins: effectivePlugins,
+            pluginScopes: pluginScopes,
             historyCount: history.length,
-            systemReminderInjected: systemReminderContent.isNotEmpty,
+            systemReminderInjected: injectedReminder.isNotEmpty,
             systemReminderContent: systemReminderContent,
           ),
           'promptAssembly': _tracePayloadBuilder.buildPromptAssemblyPayload(
@@ -818,7 +802,7 @@ class ChatSendBackendService {
             messagesAfterSystemCount: reqMessages.length,
             finalMessages: finalMessages,
             toolsCount: tools?.length ?? 0,
-            systemReminderInjected: systemReminderContent.isNotEmpty,
+            systemReminderInjected: injectedReminder.isNotEmpty,
             systemReminderContent: systemReminderContent,
             presetAssembly: <String, dynamic>{
               if (boundRecipeId != null && boundRecipeId.isNotEmpty)
@@ -879,7 +863,7 @@ class ChatSendBackendService {
             },
           ),
         },
-        now: requestTime,
+        now: effectiveRequestTime,
       );
       await TraceStore.instance.record(
         traceId: traceContext.traceId,
@@ -911,6 +895,9 @@ class ChatSendBackendService {
 
     return ApiConfig(
       requestInputTokenLimit: inputLimit,
+      openPresetRuntime: pluginRuntime.scope.lookup(
+        TavernCompatServices.presetRuntime,
+      ),
       presetScript: PresetScriptSnapshot.fromPreset(
         boundPreset,
         toolsAllowed: supportsToolCalling,
@@ -934,7 +921,6 @@ class ChatSendBackendService {
       providerApiKeyItemIndex: requestConfig.providerApiKeyItemIndex,
       providerApiKeyStrategy: requestConfig.providerApiKeyStrategy,
       customConfig: requestConfig.customConfig,
-      toolPrefs: toolPrefs,
       messages: finalMessages,
       tools: tools,
       boundTools: boundTools,
@@ -946,9 +932,7 @@ class ChatSendBackendService {
       // 联网搜索插件接管时，本轮去掉模型内置搜索，只走插件工具。
       providerRequestOptions:
           supportsToolCalling &&
-              effectivePlugins.whereType<WebSearchPlugin>().any(
-                (plugin) => plugin.replacesModelBuiltinSearch,
-              )
+              pluginScopes.any((scope) => scope.disablesBuiltinWebSearch)
           ? providerRequestOptions.copyWith(disableBuiltinWebSearch: true)
           : providerRequestOptions,
       // 显示美化正则输出的 HTML 界面无法渲染，已由语义标签组件接管的不再执行，
@@ -964,6 +948,17 @@ class ChatSendBackendService {
       boundImageArtistPresetName: boundImageArtistPresetName,
       drawingConfig: imageConfig,
       voiceRequest: voiceRequest,
+      reminders: deferReminders ? remindersAt : null,
+      responseProcessors: pluginRuntime.responseProcessors(
+        pluginRuntime.snapshot(),
+        pluginRuntime.selectForRole(enabledPluginIds),
+        PluginResponseInputs(
+          ref: _ref,
+          voiceRequest: voiceRequest,
+          drawingConfig: imageConfig,
+          settings: settings,
+        ),
+      ),
     );
   }
 
@@ -985,35 +980,12 @@ class ChatSendBackendService {
         config.voiceRequest!.ownerId != sessionId) {
       throw StateError('语音请求与当前发送角色不一致');
     }
-    final pluginManager = _ref.read(pluginManagerProvider);
-    final effectivePlugins = _pluginContextBuilder
-        .getEffectivePlugins(
-          pluginManager: pluginManager,
-          enabledPluginIds: config.enabledPluginIds,
-        )
-        .map(
-          (plugin) => plugin is ImagePlugin && config.drawingConfig != null
-              ? ImagePlugin(
-                  config.drawingConfig!,
-                  _ref,
-                  requestSettings: config.settings,
-                  isRequestSnapshot: true,
-                )
-              : plugin,
-        )
-        .toList();
-    // A toggle/default change after prepare must not replace this turn's TTS
-    // snapshot. Other plugins keep their existing lifecycle rules.
-    effectivePlugins.removeWhere((plugin) => plugin is TtsPlugin);
-    if (config.voiceRequest != null) {
-      effectivePlugins.add(TtsPlugin.forRequest(config.voiceRequest!));
-    }
     try {
       return await _apiRunner.executeApiCall(
         config: config,
         sessionId: sessionId,
         userText: userText,
-        effectivePlugins: effectivePlugins,
+        responseProcessors: config.responseProcessors,
         availableTools: config.boundTools,
         turnId: turnId,
         trace: trace,
@@ -1103,83 +1075,6 @@ class ChatSendBackendService {
       }
     }
     return false;
-  }
-
-  List<Map<String, dynamic>> _applyRoleBoundDrawImageToolPreset({
-    required List<Map<String, dynamic>> tools,
-    required ImageConfig imageConfig,
-    required String? toolPresetName,
-    required String customDrawingPrompt,
-  }) {
-    final normalizedDrawingPrompt = customDrawingPrompt.trim();
-    final hasToolPreset = toolPresetName != null && toolPresetName.isNotEmpty;
-    if (!hasToolPreset && normalizedDrawingPrompt.isEmpty) {
-      return tools;
-    }
-
-    var blocks = imageConfig.effectiveToolDescriptionBlocks;
-    if (hasToolPreset) {
-      final preset = imageConfig.systemPromptPresets
-          .where((item) => item.name == toolPresetName)
-          .firstOrNull;
-      if (preset != null) {
-        blocks =
-            ImageConfig.decodeToolDescriptionBlocks(preset.content) ??
-            ImageConfig.defaultToolDescriptionBlocks;
-      }
-    }
-    if (normalizedDrawingPrompt.isNotEmpty) {
-      final promptDescription = blocks.promptDescription.trim();
-      blocks = blocks.copyWith(
-        promptDescription:
-            '$promptDescription\n\n【角色专属生图要求】\n$normalizedDrawingPrompt',
-      );
-    }
-
-    return [
-      for (final rawSchema in tools)
-        () {
-          final schema = Map<String, dynamic>.from(rawSchema);
-          final rawFunction = schema['function'];
-          if (rawFunction is! Map) return schema;
-
-          final function = Map<String, dynamic>.from(rawFunction);
-          final functionName = function['name']?.toString().trim();
-          if (functionName != 'draw_image') return schema;
-
-          function['description'] = blocks.toolDescription;
-
-          final rawParameters = function['parameters'];
-          if (rawParameters is Map) {
-            final parameters = Map<String, dynamic>.from(rawParameters);
-            final rawProperties = parameters['properties'];
-            if (rawProperties is Map) {
-              final properties = Map<String, dynamic>.from(rawProperties);
-
-              void overrideDescription(String key, String description) {
-                final rawProperty = properties[key];
-                if (rawProperty is! Map) return;
-                final property = Map<String, dynamic>.from(rawProperty);
-                property['description'] = description;
-                properties[key] = property;
-              }
-
-              overrideDescription('prompt', blocks.promptDescription);
-              overrideDescription(
-                'negative_prompt',
-                blocks.negativePromptDescription,
-              );
-              // 尺寸描述由请求插件生成，保留其中的预设参考值。
-
-              parameters['properties'] = properties;
-            }
-            function['parameters'] = parameters;
-          }
-
-          schema['function'] = function;
-          return schema;
-        }(),
-    ];
   }
 
   /// 本轮 MVU 状态（ADR0071）：按请求 owner 的预设与名字固定来源；读取失败不阻塞发送。

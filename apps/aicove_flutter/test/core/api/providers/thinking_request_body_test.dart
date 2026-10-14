@@ -199,4 +199,39 @@ void main() {
           reason: provider);
     }
   });
+
+  group('OpenAI-compatible toggles', () {
+    Map<String, dynamic> build(ThinkingLevel level, ThinkingScheme scheme) =>
+        OpenAIAdapter().buildRequestBody(
+          model: 'm',
+          messages: messages,
+          requestOptions: opts(level, scheme),
+        );
+
+    test('thinking.type toggle disables without reasoning_effort', () {
+      final off = build(ThinkingLevel.off, ThinkingScheme.thinkingToggle);
+      expect(off['thinking'], {'type': 'disabled'});
+      expect(off, isNot(contains('reasoning_effort')));
+      final low = build(ThinkingLevel.low, ThinkingScheme.thinkingToggle);
+      expect(low['thinking'], {'type': 'enabled'});
+      expect(low, containsPair('reasoning_effort', 'low'));
+    });
+
+    test('qwen toggle writes enable_thinking only', () {
+      final off = build(ThinkingLevel.off, ThinkingScheme.qwenToggle);
+      expect(off, containsPair('enable_thinking', false));
+      expect(off, isNot(contains('reasoning_effort')));
+      expect(build(ThinkingLevel.high, ThinkingScheme.qwenToggle),
+          containsPair('enable_thinking', true));
+    });
+
+    test('unexpanded lowest sends nothing', () {
+      for (final scheme in ThinkingScheme.values) {
+        final body = build(ThinkingLevel.lowest, scheme);
+        expect(body, isNot(contains('reasoning_effort')));
+        expect(body, isNot(contains('thinking')));
+        expect(body, isNot(contains('enable_thinking')));
+      }
+    });
+  });
 }

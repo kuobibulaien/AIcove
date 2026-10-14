@@ -237,6 +237,10 @@ class SegmentedChatFixture {
     await _subscription?.cancel();
     container.dispose();
     timeline.dispose();
+    // Drift runs statements one at a time: this query completes only after
+    // writes the page already queued (e.g. the delayed unread clear), so the
+    // close below never cuts one off.
+    await database.customSelect('SELECT 1').get();
     await database.close();
   }
 }
@@ -256,6 +260,9 @@ class _OfflineSendService extends ChatSendService {
     String? overrideModel,
     String? conversationId,
     TraceContext? traceContext,
+    DateTime? requestTime,
+    bool persistSideEffects = true,
+    bool deferReminders = false,
   }) async =>
       ApiConfig(
         settings: settings,
@@ -263,7 +270,6 @@ class _OfflineSendService extends ChatSendService {
         providerApiBase: '',
         providerApiKey: null,
         customConfig: const {},
-        toolPrefs: const {},
         messages: const [],
         tools: null,
         enabledPluginIds: null,

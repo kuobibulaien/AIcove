@@ -4,7 +4,6 @@ import 'dart:math';
 
 import '../../settings/app_settings.dart';
 import '../../settings/direct_mode.dart' as direct;
-import '../../settings/mcp_api.dart';
 
 /// Request-level config for one chat model attempt.
 class ChatRequestConfig {
@@ -32,9 +31,6 @@ class ChatRequestConfig {
   /// Multi-key strategy used for the selected key.
   final String? providerApiKeyStrategy;
 
-  /// Tool preference payload sent to backend.
-  final Map<String, dynamic> toolPrefs;
-
   /// Provider custom config passed through to backend.
   final Map<String, dynamic> customConfig;
 
@@ -59,7 +55,6 @@ class ChatRequestConfig {
     this.providerApiKeyItemId,
     this.providerApiKeyItemIndex,
     this.providerApiKeyStrategy,
-    required this.toolPrefs,
     this.customConfig = const <String, dynamic>{},
     this.modelTemperature,
     this.modelTopP,
@@ -98,7 +93,7 @@ class _ProviderApiKeySelection {
   final String? strategy;
 }
 
-/// Builds chat request config with MCP cache and direct-mode fallback.
+/// Builds chat request config with direct-mode fallback.
 class ChatRequestConfigBuilder {
   static const String _multiKeyEnabledField = 'multi_key_enabled';
   static const String _multiKeyStrategyField = 'multi_key_strategy';
@@ -108,10 +103,6 @@ class ChatRequestConfigBuilder {
   static const String _multiKeyRandom = 'random';
   static const String _multiKeyExhaust = 'exhaust';
   static final Map<String, int> _roundRobinIndexMap = <String, int>{};
-
-  final McpApi _mcpApi = McpApi();
-  McpConfigDto? _cachedMcpConfig;
-  DateTime? _cachedMcpFetchedAt;
 
   _ProviderApiKeySelection _selectProviderApiKey(ProviderAuth providerAuth) {
     final fallback = providerAuth.apiKeys.isNotEmpty
@@ -242,64 +233,10 @@ class ChatRequestConfigBuilder {
     return items.first;
   }
 
-  Future<McpConfigDto?> getMcpConfig() async {
-    final now = DateTime.now();
-    if (_cachedMcpFetchedAt != null &&
-        now.difference(_cachedMcpFetchedAt!) < McpApi.mobileConfigCacheTtl) {
-      return _cachedMcpConfig;
-    }
-    try {
-      final res = await _mcpApi.fetchConfig();
-      _cachedMcpConfig = res.config;
-      _cachedMcpFetchedAt = DateTime.now();
-      return _cachedMcpConfig;
-    } catch (_) {
-      _cachedMcpConfig = null;
-      _cachedMcpFetchedAt = DateTime.now();
-      return null;
-    }
-  }
-
-  Map<String, dynamic> buildToolPrefs(
-      AppSettings settings, McpConfigDto? config) {
-    final prefs = <String, dynamic>{
-      'tts_enabled': settings.ttsEnabled,
-    };
-    if (config == null || !config.enabled || config.enabledTools.isEmpty) {
-      prefs['auto_tools_enabled'] = false;
-      return prefs;
-    }
-    prefs['auto_tools_enabled'] = true;
-    prefs['mcp_enabled_tools'] = config.enabledTools;
-    if (config.delegate.enabled) {
-      final delegate = config.delegate;
-      final delegateMap = <String, dynamic>{};
-      if (delegate.provider != null && delegate.provider!.isNotEmpty) {
-        delegateMap['provider'] = delegate.provider;
-      }
-      if (delegate.model != null && delegate.model!.isNotEmpty) {
-        delegateMap['model'] = delegate.model;
-      }
-      if (delegate.apiBase != null && delegate.apiBase!.isNotEmpty) {
-        delegateMap['api_base'] = delegate.apiBase;
-      }
-      if (delegate.prompt.isNotEmpty) {
-        delegateMap['prompt'] = delegate.prompt;
-      }
-      if (delegateMap.isNotEmpty) {
-        prefs['mcp_delegate'] = delegateMap;
-      }
-    }
-    return prefs;
-  }
-
   Future<ChatRequestConfig> buildRequestConfig(
     AppSettings settings, {
     String? modelRef,
   }) async {
-    final mcpConfig = await getMcpConfig();
-    final toolPrefs = buildToolPrefs(settings, mcpConfig);
-
     final resolvedModelRef = (modelRef != null && modelRef.trim().isNotEmpty)
         ? modelRef.trim()
         : settings.defaultModelName;
@@ -352,7 +289,6 @@ class ChatRequestConfigBuilder {
       providerApiKeyItemId: providerApiKeySelection.itemId,
       providerApiKeyItemIndex: providerApiKeySelection.itemIndex,
       providerApiKeyStrategy: providerApiKeySelection.strategy,
-      toolPrefs: toolPrefs,
       customConfig: providerAuth.customConfig,
       modelTemperature: modelConfig.temperature,
       modelTopP: modelConfig.topP,

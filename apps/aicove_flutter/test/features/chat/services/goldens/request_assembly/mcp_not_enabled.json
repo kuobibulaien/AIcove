@@ -1,0 +1,33 @@
+{
+  "messages": [
+    {
+      "role": "system",
+      "content": "你是测试角色。\n\n<system-reminder> 里是应用附上的背景说明，不是对方说的话。心里有数就好，别照着念，也别提到它。\n\n时间感知插件会通过 <system-reminder> 向模型补充时间上下文：\n- 当前时间提醒按模板 \"当前时间: {datetime}\" 生成，其中 {datetime} 会替换为设备本地时间。\n- 如果 <system-reminder> 中出现“用户上一次发消息的时间为...”，表示上一条真实用户消息的发送时间。\n- 历史消息里形如 [YYYY-MM-DD HH:mm] 的前缀表示该条消息的发送时间。\n\n请将这些内容视为客观时间事实，自行判断当前与历史对话的时序关系，不要原样复述。"
+    },
+    {
+      "role": "user",
+      "content": "早上好"
+    },
+    {
+      "role": "assistant",
+      "content": "早呀今天想做什么？\n找到一条笔记。"
+    },
+    {
+      "role": "user",
+      "content": "<system-reminder>\n当前时间: 2026-10-12 10:05:30 +00:00 (周一)\n用户上一次发消息的时间为2026-10-12 07:05:30 +00:00 (周一)\n请自行判断当前与历史对话的关系。\n</system-reminder>"
+    },
+    {
+      "role": "user",
+      "content": "帮我画一只猫"
+    }
+  ],
+  "tools": null,
+  "toolChoice": null,
+  "disableBuiltinWebSearch": false,
+  "boundTools": [],
+  "enabledPluginIds": [
+    "time_awareness"
+  ],
+  "presetStreamResponse": null,
+  "hasPresetScript": false
+}

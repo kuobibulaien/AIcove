@@ -100,6 +100,7 @@ class MoeToggleBar<T> extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 14),
         radius: 17,
         tintColor: isSelected ? colors.focus : Colors.transparent,
+        border: isSelected ? Border.fromBorderSide(colors.floatingBorder) : null,
         shadows: const [],
         alignment: Alignment.center,
         child: item.icon != null

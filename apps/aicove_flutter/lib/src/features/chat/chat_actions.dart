@@ -46,6 +46,7 @@ import 'services/chat_tts_handler.dart';
 import 'domain/message.dart';
 import 'domain/chat_display_policy.dart';
 import 'domain/conversation.dart';
+import 'domain/quoted_reply.dart';
 import '../settings/app_settings.dart';
 import 'conversation_providers.dart';
 import 'services/conversation_short_window_store.dart'
@@ -1170,14 +1171,9 @@ class ChatActions {
     }
 
     _ref.read(quotedMessageProvider.notifier).state = null;
-    await send(_composeQuotedSendText(normalizedText, quoted));
-  }
-
-  String _composeQuotedSendText(String text, QuotedMessage quoted) {
-    final quotedText = quoted.content.length > 30
-        ? '${quoted.content.substring(0, 30)}...'
-        : quoted.content;
-    return '> Quote: $quotedText\n\n$text';
+    await send(
+      QuotedReply.compose(quotedContent: quoted.content, text: normalizedText),
+    );
   }
 
   String _resolveFinalStreamText(
@@ -1530,7 +1526,6 @@ class ChatActions {
       providerApiKeyItemIndex: config.providerApiKeyItemIndex,
       providerApiKeyStrategy: config.providerApiKeyStrategy,
       customConfig: config.customConfig,
-      toolPrefs: config.toolPrefs,
       messages: normalizedMessages,
       tools: config.tools,
       boundTools: config.boundTools,
@@ -1543,6 +1538,7 @@ class ChatActions {
       boundImageToolPresetName: config.boundImageToolPresetName,
       boundImageArtistPresetName: config.boundImageArtistPresetName,
       voiceRequest: config.voiceRequest,
+      responseProcessors: config.responseProcessors,
     );
   }
 

@@ -1,6 +1,6 @@
 # AIcove 2.0 实施计划
 
-总设计：`apps/aicove_flutter/docs/02_前后端分离与架构规范/AIcove2.0_DSH驱动底层架构改造方案.md`。
+总设计：`apps/aicove_flutter/docs/05_历史归档/20261007_DSH方案/AIcove2.0_DSH驱动底层架构改造方案.md`。
 
 实施采用“兼容性 Spike -> 可回滚垂直切片 -> 数据/权限/插件迁移 -> 默认切换 -> 旧核心退役”，最终目标是全量 DSH 驱动，不长期维护双 Agent 核心。
 

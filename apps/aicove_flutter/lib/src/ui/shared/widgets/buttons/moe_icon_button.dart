@@ -36,6 +36,7 @@ class MoeIconButton extends StatefulWidget {
     this.padding = const EdgeInsets.all(8),
     this.enabled = true,
     this.semanticLabel,
+    this.tooltip,
     // === 样式接口 ===
     this.color,
     this.pressedColor,
@@ -70,6 +71,9 @@ class MoeIconButton extends StatefulWidget {
 
   /// 语义标签（无障碍）
   final String? semanticLabel;
+
+  /// 语义与测试定位标签（与 semanticLabel 等效，受全局 TooltipVisibility 控制不弹出悬浮提示）
+  final String? tooltip;
 
   // === 样式接口 ===
 
@@ -118,16 +122,13 @@ class _MoeIconButtonState extends State<MoeIconButton> {
   Widget build(BuildContext context) {
     final colors = context.moeColors;
 
-    // 解析颜色
+    // 解析颜色：图标按钮默认无底框、无按压变色或背景反馈
     final normalColor = widget.color ?? colors.text;
-    final pressedColor =
-        widget.pressedColor ?? normalColor.withValues(alpha: 0.6);
+    final pressedColor = widget.pressedColor ?? normalColor;
     final disabledColor = widget.disabledColor ?? colors.muted;
 
     final normalBg = widget.backgroundColor ?? Colors.transparent;
-    final pressedBg =
-        widget.pressedBackgroundColor ??
-        colors.surfaceAlt.withValues(alpha: 0.5);
+    final pressedBg = widget.pressedBackgroundColor ?? normalBg;
 
     final radius = widget.borderRadius ?? MoeRadii.borderSm;
 
@@ -152,6 +153,23 @@ class _MoeIconButtonState extends State<MoeIconButton> {
         ? widget.minTouchTarget
         : contentSize;
 
+    final hasSurface =
+        widget.backgroundColor != null ||
+        widget.pressedBackgroundColor != null ||
+        widget.border != null;
+
+    final iconChild = Center(
+      child: TweenAnimationBuilder<Color?>(
+        duration: kAnimFast,
+        tween: ColorTween(end: currentIconColor),
+        builder: (context, animatedColor, _) => Icon(
+          widget.icon,
+          size: widget.size,
+          color: animatedColor ?? currentIconColor,
+        ),
+      ),
+    );
+
     Widget button = MouseRegion(
       cursor: _isEnabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
       child: GestureDetector(
@@ -164,36 +182,41 @@ class _MoeIconButtonState extends State<MoeIconButton> {
             ? (_) => widget.onLongPress!()
             : null,
         behavior: HitTestBehavior.opaque,
-        child: MoeButtonSurface(
-          tintColor: currentBgColor,
-          borderRadius: radius,
-          border: widget.border == null
-              ? null
-              : Border.fromBorderSide(widget.border!),
-          width: actualSize,
-          height: actualSize,
-          child: Center(
-            child: TweenAnimationBuilder<Color?>(
-              duration: kAnimFast,
-              tween: ColorTween(end: currentIconColor),
-              builder: (context, animatedColor, _) => Icon(
-                widget.icon,
-                size: widget.size,
-                color: animatedColor ?? currentIconColor,
+        child: hasSurface
+            ? MoeButtonSurface(
+                shareParentSurface: false,
+                tintColor: currentBgColor,
+                borderRadius: radius,
+                border: widget.border == null
+                    ? null
+                    : Border.fromBorderSide(widget.border!),
+                width: actualSize,
+                height: actualSize,
+                child: iconChild,
+              )
+            : SizedBox(
+                width: actualSize,
+                height: actualSize,
+                child: iconChild,
               ),
-            ),
-          ),
-        ),
       ),
     );
 
     // 添加语义支持
-    if (widget.semanticLabel != null) {
-      button = Semantics(
-        button: true,
-        enabled: _isEnabled,
-        label: widget.semanticLabel,
-        child: button,
+    final label = widget.semanticLabel ?? widget.tooltip;
+    if (label != null) {
+      button = TooltipVisibility(
+        visible: false,
+        child: Tooltip(
+          message: label,
+          excludeFromSemantics: true,
+          child: Semantics(
+            button: true,
+            enabled: _isEnabled,
+            label: label,
+            child: button,
+          ),
+        ),
       );
     }
 

@@ -7,14 +7,14 @@ import 'package:http/http.dart' as http;
 import 'package:aicove_flutter/src/core/api/agent_api.dart';
 import 'package:aicove_flutter/src/features/agent_context/domain/silly_tavern_preset.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_types.dart';
-import 'package:aicove_flutter/src/features/plugins/domain/base_plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/handlers/ai_tool.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/handlers/tool_parameter.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin_metadata.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
-import 'api_runner_variants.dart';
+import 'api_runner_variants.dart';
+import 'test_plugin_support.dart';
 
 class _FastFollowupClient extends http.BaseClient {
   int callCount = 0;
@@ -204,7 +204,7 @@ class _SingleReplyClient extends http.BaseClient {
   }
 }
 
-class _AsyncAcceptedImagePlugin extends BasePlugin {
+class _AsyncAcceptedImagePlugin extends TestPlugin {
   _AsyncAcceptedImagePlugin()
       : super(
           metadata: const PluginMetadata(
@@ -280,7 +280,7 @@ class _AsyncAcceptedImagePlugin extends BasePlugin {
   }
 }
 
-class _DeliveredImagePlugin extends BasePlugin {
+class _DeliveredImagePlugin extends TestPlugin {
   _DeliveredImagePlugin()
       : super(
           metadata: const PluginMetadata(
@@ -446,7 +446,6 @@ void _runAll(RunnerFactory createRunner) {
       providerApiBase: 'https://api.openai.com/v1',
       providerApiKey: 'test-key',
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[
         <String, dynamic>{
           'role': 'user',
@@ -483,7 +482,8 @@ void _runAll(RunnerFactory createRunner) {
       config: config,
       sessionId: 'conv_fast_async_image',
       userText: '帮我画图并继续回复 JSON',
-      effectivePlugins: <Plugin>[_AsyncAcceptedImagePlugin()],
+      responseProcessors: testProcessors(<TestPlugin>[_AsyncAcceptedImagePlugin()]),
+      availableTools: testTools(<TestPlugin>[_AsyncAcceptedImagePlugin()]),
       onStreamTextReset: () {
         streamResetCount += 1;
       },
@@ -527,7 +527,6 @@ void _runAll(RunnerFactory createRunner) {
       providerApiBase: 'https://api.openai.com/v1',
       providerApiKey: 'test-key',
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[
         <String, dynamic>{
           'role': 'user',
@@ -563,7 +562,8 @@ void _runAll(RunnerFactory createRunner) {
       config: config,
       sessionId: 'conv_image_placeholder_followup',
       userText: '帮我发一张夕阳海边图',
-      effectivePlugins: <Plugin>[_DeliveredImagePlugin()],
+      responseProcessors: testProcessors(<TestPlugin>[_DeliveredImagePlugin()]),
+      availableTools: testTools(<TestPlugin>[_DeliveredImagePlugin()]),
     );
 
     expect(fakeHttpClient.callCount, 2);
@@ -585,7 +585,6 @@ void _runAll(RunnerFactory createRunner) {
       providerApiBase: 'https://api.openai.com/v1',
       providerApiKey: 'test-key',
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[
         <String, dynamic>{'role': 'user', 'content': '继续'},
       ],
@@ -622,7 +621,7 @@ void _runAll(RunnerFactory createRunner) {
       config: config,
       sessionId: 'conv_regex_projection',
       userText: '继续',
-      effectivePlugins: const <Plugin>[],
+      responseProcessors: const [],
       enableStreaming: true,
     );
 

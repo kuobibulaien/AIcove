@@ -136,7 +136,7 @@ class _MessageFormatSettingsPageState
                             ),
                           ),
                           subtitle: Text(
-                            '按标签分组查看和管理',
+                            '导入图片或压缩包，管理 AI 可发的表情',
                             style: TextStyle(fontSize: 13, color: colors.muted),
                           ),
                           trailing: Icon(

@@ -1,10 +1,12 @@
-import 'background_context_spec.dart';
+import '../../agent_context/domain/agent_runtime_contracts.dart';
 
 class BackgroundAgentDefinition {
   final String id;
   final String name;
   final String objectivePrompt;
-  final BackgroundContextSpec contextSpec;
+
+  /// Context layers and the conversation window this agent reads.
+  final ContextProfile contextProfile;
   final List<String> allowedToolNames;
   final String? modelRef;
   final double? temperature;
@@ -14,18 +16,21 @@ class BackgroundAgentDefinition {
     required this.id,
     required this.name,
     required this.objectivePrompt,
-    this.contextSpec = const BackgroundContextSpec(),
+    this.contextProfile = ContextProfile.backgroundAnalyzer,
     this.allowedToolNames = const <String>[],
     this.modelRef,
     this.temperature,
     this.maxRounds = 5,
   });
 
+  ConversationWindowSpec get conversationWindow =>
+      contextProfile.conversationWindow;
+
   BackgroundAgentDefinition copyWith({
     String? id,
     String? name,
     String? objectivePrompt,
-    BackgroundContextSpec? contextSpec,
+    ContextProfile? contextProfile,
     List<String>? allowedToolNames,
     String? modelRef,
     bool clearModelRef = false,
@@ -37,7 +42,7 @@ class BackgroundAgentDefinition {
       id: id ?? this.id,
       name: name ?? this.name,
       objectivePrompt: objectivePrompt ?? this.objectivePrompt,
-      contextSpec: contextSpec ?? this.contextSpec,
+      contextProfile: contextProfile ?? this.contextProfile,
       allowedToolNames: allowedToolNames ?? this.allowedToolNames,
       modelRef: clearModelRef ? null : (modelRef ?? this.modelRef),
       temperature:

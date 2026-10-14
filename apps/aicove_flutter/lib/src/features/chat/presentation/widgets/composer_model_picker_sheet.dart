@@ -132,17 +132,7 @@ class _ComposerModelPickerSheetState
     return ListView(
       padding: const EdgeInsets.fromLTRB(0, 0, 0, 16),
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-          child: Text(
-            '长按拖动默认队列可调整当前默认模型与失败切换顺序。',
-            style: TextStyle(
-              fontSize: 12,
-              color: colors.muted,
-            ),
-          ),
-        ),
-        _buildSectionHeader(colors, '默认队列', '首位为当前默认模型'),
+        _buildSectionHeader(colors, '默认队列', '长按拖动调整顺序'),
         const SizedBox(height: 8),
         MoeSettingsGroup(
           margin: const EdgeInsets.symmetric(horizontal: 16),

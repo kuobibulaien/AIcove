@@ -533,6 +533,9 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     return '$prefix$hh:$mm';
   }
 
+  bool _isLiveCallMessage(Message message) =>
+      message.id.startsWith(voiceCallLiveMessagePrefix);
+
   Future<void> _handleMessageLongPress(
     BuildContext context,
     Message message,
@@ -541,6 +544,8 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     Offset globalPosition, {
     String? selectionId,
   }) async {
+    // 通话中的临时气泡不在聊天历史里：只能复制和删除（只从显示里移除）。
+    final liveCall = _isLiveCallMessage(message);
     final actions = ref.read(chatActionsProvider);
     final enableEnhancedRegenerate =
         kEnhancedRegenerateAvailable &&
@@ -572,7 +577,11 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
       targetBox: bubbleBox,
       globalPosition: globalPosition,
       isUserMessage: isMe,
-      allowSelect: widget.selection != null && message.status != 'sending',
+      allowSelect:
+          !liveCall &&
+          widget.selection != null &&
+          message.status != 'sending',
+      editable: !liveCall,
       messageText: effectiveMessageText,
       showEnhanceRegenerate: enableEnhancedRegenerate && !canRegenerateAudio,
       regenerateAudio: canRegenerateAudio,
@@ -627,6 +636,10 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
             );
             break;
           case MessageAction.delete:
+            if (liveCall) {
+              await _deleteLiveCallMessage(context, message);
+              break;
+            }
             if (message.status == 'sending') {
               MoeToast.show(context, '发送中的消息暂不可删除');
               break;
@@ -635,7 +648,6 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
               context: context,
               title: '删除消息',
               message: '确定删除这条消息吗？',
-              hint: '会从当前会话上下文和本地数据库中移除这条消息。',
               confirmText: '删除',
               isDanger: true,
             );
@@ -651,6 +663,23 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
         }
       },
     );
+  }
+
+  Future<void> _deleteLiveCallMessage(
+    BuildContext context,
+    Message message,
+  ) async {
+    final ok = await showMeoTalkConfirm(
+      context: context,
+      title: '删除消息',
+      message: '确定删除这条消息吗？',
+      hint: '只从聊天里移除，通话记录和通话摘要不受影响。',
+      confirmText: '删除',
+      isDanger: true,
+    );
+    if (ok != true || !context.mounted) return;
+    final index = voiceCallLiveTurnIndex(message.id);
+    if (index != null) ref.read(activeVoiceCallProvider)?.hideTurn(index);
   }
 
   Future<void> _regenerateMedia(
@@ -689,6 +718,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     MessageBlock block,
     Offset globalPosition,
   ) async {
+    if (_isLiveCallMessage(message)) return;
     final actions = ref.read(chatActionsProvider);
     final mediaType = block is AudioBlock ? MediaType.audio : MediaType.image;
     await showMediaActionMenu(
@@ -732,7 +762,6 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
               context: context,
               title: '删除消息',
               message: '确定删除这条消息吗？',
-              hint: '会从当前会话上下文和本地数据库中移除这条消息。',
               confirmText: '删除',
               isDanger: true,
             );

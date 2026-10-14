@@ -181,9 +181,9 @@ void main() {
             findsOneWidget,
           );
           final widget = tester.widget<MoeSlider>(slider);
-          expect(widget.min, 10);
+          expect(widget.min, 0);
           expect(widget.max, 100);
-          expect(widget.divisions, isNull, reason: '模糊度为 10..100 连续滑条');
+          expect(widget.divisions, isNull, reason: '模糊度为 0..100 连续滑条');
           expect(widget.value, moreOrLessEquals(59.375, epsilon: 1e-6));
           for (final label in ['纯色', '模糊', '玻璃', '模糊度', '底色填充']) {
             expect(find.text(label), findsOneWidget);

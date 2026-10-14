@@ -21,25 +21,25 @@ enum PluginPromptSlot {
   image(
     plugin: '绘图',
     title: '<image> 标签说明',
-    hint: '告诉模型何时、怎样输出 <image>英文提示词</image>。角色专属绘图要求在角色设置里填写，会追加在这段之后。',
+    hint: '角色专属绘图要求请在角色设置里填写',
     defaultText: ImageConfig.defaultInlinePromptTemplate,
   ),
   tts(
     plugin: '语音',
     title: '<tts> 标签说明',
-    hint: '可用占位符：{max_chars_per_chunk}、{voice_frequency}；MiniMax／Fish Audio 的补充指引会自动追加。',
+    hint: '可用占位符：{max_chars_per_chunk}、{voice_frequency}',
     defaultText: TtsConfig.defaultSystemPromptTemplate,
   ),
   sticker(
     plugin: '表情包',
     title: '表情包说明',
-    hint: '{tags} 会替换为当前可用的表情包标签；没有表情包时不注入。',
+    hint: '可用占位符：{tags}',
     defaultText: StickerConfig.defaultSystemPromptTemplate,
   ),
   currentTime(
     plugin: '时间感知',
     title: '当前时间提醒',
-    hint: '放在 <system-reminder> 里，{datetime} 会替换为发送时间。',
+    hint: '可用占位符：{datetime}',
     defaultText: TimeAwarenessConfig.defaultCurrentTimePromptTemplate,
   );
 

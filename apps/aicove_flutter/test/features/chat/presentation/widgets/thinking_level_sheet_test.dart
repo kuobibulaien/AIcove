@@ -14,6 +14,7 @@ void main() {
     required ThinkingLevel current,
     required bool hasOwnSetting,
     required void Function(ThinkingLevelSheetResult?) onResult,
+    ThinkingLevel? lowestResolved,
   }) {
     return SkinScope(
       skin: const MoeTalkSkin(),
@@ -30,6 +31,7 @@ void main() {
                     current: current,
                     currentSource: ThinkingLevelSource.session,
                     hasOwnSetting: hasOwnSetting,
+                    lowestResolved: lowestResolved,
                   ));
                 },
                 child: const Text('open'),
@@ -91,6 +93,36 @@ void main() {
     await tester.tap(find.byKey(const ValueKey<String>('thinking_clear')));
     await tester.pumpAndSettle();
     expect(result?.cleared, isTrue);
+    expect(result?.level, isNull);
+  });
+
+  testWidgets('lowest row shows the remembered level and offers redetect',
+      (tester) async {
+    ThinkingLevelSheetResult? result;
+    final options = resolveThinkingOptions(
+      providerType: 'openai',
+      modelId: 'some-relay-model',
+    );
+    await tester.pumpWidget(host(
+      options: options,
+      current: ThinkingLevel.lowest,
+      hasOwnSetting: false,
+      lowestResolved: ThinkingLevel.minimal,
+      onResult: (r) => result = r,
+    ));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('最低'), findsOneWidget);
+    expect(find.textContaining('本渠道已试出：极低'), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('thinking_clear')), findsNothing);
+
+    final redetect = find.byKey(const ValueKey<String>('thinking_redetect'));
+    await tester.ensureVisible(redetect);
+    await tester.pumpAndSettle();
+    await tester.tap(redetect);
+    await tester.pumpAndSettle();
+    expect(result?.redetect, isTrue);
     expect(result?.level, isNull);
   });
 }

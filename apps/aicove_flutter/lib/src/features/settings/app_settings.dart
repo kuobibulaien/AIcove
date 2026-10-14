@@ -9,6 +9,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/api/thinking/thinking_fallback.dart';
 import '../../core/utils/message_formatter.dart';
 import '../../ui/theme/tokens.dart';
 import 'custom_wallpaper_store.dart';
@@ -227,6 +228,23 @@ List<String> _collectVisible(List<Map<String, dynamic>> providers) {
 
 /// 把持久化的 ui_models 数据映射为 [AppSettings]。
 /// 供后台 isolate（无 Riverpod 环境）在执行时现读最新设置使用。
+/// 旧版唯一一张自定义壁纸迁入列表后的 id。
+const _kLegacyWallpaperId = 'legacy';
+
+List<CustomWallpaper> _mapCustomWallpapers(Map<String, dynamic> data) {
+  final raw = data['global_wallpaper_customs'];
+  if (raw is List) {
+    return [
+      for (final item in raw.map(CustomWallpaper.fromJson))
+        if (item != null) item,
+    ];
+  }
+  final legacyPath = (data['global_wallpaper_custom_image'] as String?)?.trim();
+  return legacyPath == null || legacyPath.isEmpty
+      ? const []
+      : [CustomWallpaper(id: _kLegacyWallpaperId, imagePath: legacyPath)];
+}
+
 AppSettings mapUiModelsToAppSettings(Map<String, dynamic> data) {
   return _mapToSettings(data);
 }
@@ -325,13 +343,26 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
   final globalWallpaper = GlobalWallpaper.fromValue(
     data['global_wallpaper'] as String?,
   );
-  final globalWallpaperCustomImage =
-      data['global_wallpaper_custom_image'] as String?;
-  final globalWallpaperMask =
-      ((data['global_wallpaper_mask'] as num?)?.toDouble() ??
-              kDefaultCustomWallpaperMask)
-          .clamp(0.0, 1.0)
-          .toDouble();
+  final wallpaperCustoms = _mapCustomWallpapers(data);
+  final wallpaperCustomIds = {for (final item in wallpaperCustoms) item.id};
+  final rawWallpaperStyles = data['global_wallpaper_styles'];
+  final wallpaperStyles = <String, WallpaperStyle>{
+    if (rawWallpaperStyles is Map)
+      for (final entry in rawWallpaperStyles.entries)
+        '${entry.key}': WallpaperStyle.fromJson(
+          entry.value,
+          custom: wallpaperCustomIds.contains('${entry.key}'),
+        ),
+  };
+  // 旧版只有一张自定义壁纸及其遮罩，读成列表里的一项。
+  final legacyWallpaperMask = data['global_wallpaper_mask'] as num?;
+  if (wallpaperCustomIds.contains(_kLegacyWallpaperId) &&
+      !wallpaperStyles.containsKey(_kLegacyWallpaperId) &&
+      legacyWallpaperMask != null) {
+    wallpaperStyles[_kLegacyWallpaperId] = WallpaperStyle(
+      mask: legacyWallpaperMask.toDouble().clamp(0.0, 1.0),
+    );
+  }
   final isDarkMode = (data['is_dark_mode'] as bool?) ?? false;
   final useSystemTheme = (data['use_system_theme'] as bool?) ?? true;
   // 支持十六进制颜色值（如 'FC96AA'）或旧枚举值（如 'pink'）
@@ -345,10 +376,19 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
       ((data['glass_blur_sigma'] as num?)?.toDouble() ?? kDefaultGlassBlurSigma)
           .clamp(kMinGlassBlurSigma, kMaxGlassBlurSigma)
           .toDouble();
+  // Before frosted got its own slider, both materials shared the glass blur.
+  final frostedBlurSigma =
+      ((data['frosted_blur_sigma'] as num?)?.toDouble() ?? glassBlurSigma)
+          .clamp(kMinGlassBlurSigma, kMaxGlassBlurSigma)
+          .toDouble();
   // Before the fill slider existed, tint followed the blur setting.
   final glassTintFill =
       ((data['glass_tint_fill'] as num?)?.toDouble() ??
               glassBlurSigma / kMaxGlassBlurSigma)
+          .clamp(0.0, 1.0)
+          .toDouble();
+  final frostedTintFill =
+      ((data['frosted_tint_fill'] as num?)?.toDouble() ?? glassTintFill)
           .clamp(0.0, 1.0)
           .toDouble();
   final useLiquidGlass = data['use_liquid_glass'] != false;
@@ -434,8 +474,13 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     autoReplySettings: autoReplySettings,
     globalBackgroundColor: globalBackgroundColor,
     globalWallpaper: globalWallpaper,
-    globalWallpaperCustomImage: globalWallpaperCustomImage,
-    globalWallpaperMask: globalWallpaperMask,
+    globalWallpaperCustoms: wallpaperCustoms,
+    globalWallpaperCustomId:
+        data['global_wallpaper_custom_id'] as String? ??
+        (wallpaperCustomIds.contains(_kLegacyWallpaperId)
+            ? _kLegacyWallpaperId
+            : null),
+    globalWallpaperStyles: wallpaperStyles,
     chatBackgroundColor: chatBackgroundColor,
     isDarkMode: isDarkMode,
     useSystemTheme: useSystemTheme,
@@ -443,7 +488,9 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     interfaceSkin: interfaceSkin,
     glassEffectEnabled: glassEffectEnabled,
     glassBlurSigma: glassBlurSigma,
+    frostedBlurSigma: frostedBlurSigma,
     glassTintFill: glassTintFill,
+    frostedTintFill: frostedTintFill,
     useLiquidGlass: useLiquidGlass,
     userAvatar: userAvatar,
     userName: userName,
@@ -496,7 +543,9 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
 
   /// 空字符串表示跟随默认聊天模型。
   Future<void> setCompactionModel(String modelRef) async {
-    await _commit(() => _api.updatePartial({'compaction_model': modelRef.trim()}));
+    await _commit(
+      () => _api.updatePartial({'compaction_model': modelRef.trim()}),
+    );
   }
 
   /// 空字符串表示跟随压缩模型。
@@ -773,6 +822,7 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
 
   Future<void> deleteProvider(String providerId) async {
     await _commit(() => _api.deleteProvider(providerId));
+    await ThinkingFallbackMemory.instance.forgetProvider(providerId);
   }
 
   Future<void> reorderProviders(List<String> providerIds) async {
@@ -809,6 +859,10 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
         customConfig: customConfig,
       ),
     );
+    // 地址或自定义参数变了，上游可能换了，之前试出来的「最低」档作废。
+    if (apiBaseUrl != null || customConfig != null) {
+      await ThinkingFallbackMemory.instance.forgetProvider(providerId);
+    }
   }
 
   Future<List<String>> previewProviderModels({
@@ -1054,9 +1108,7 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
   }
 
   Future<void> setChatDisplayStyle(ChatDisplayStyle style) async {
-    await _commit(
-      () => _api.updatePartial({'chat_display_style': style.name}),
-    );
+    await _commit(() => _api.updatePartial({'chat_display_style': style.name}));
   }
 
   Future<void> setAutoScrollOnSend(bool enabled) async {
@@ -1075,28 +1127,96 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     );
   }
 
-  /// 保存用户选的图片为自定义全局壁纸并切换过去；旧图随之删除。
-  Future<void> setCustomGlobalWallpaper(Uint8List bytes, String fileName) async {
-    final previous = state.valueOrNull?.globalWallpaperCustomImage;
-    final path = await saveCustomWallpaperFile(bytes, fileName);
+  Future<void> selectCustomGlobalWallpaper(String id) async {
     await _commit(
       () => _api.updatePartial({
         'global_wallpaper': GlobalWallpaper.custom.value,
-        'global_wallpaper_custom_image': path,
+        'global_wallpaper_custom_id': id,
       }),
     );
-    if (previous != null && previous != path) {
-      await deleteCustomWallpaperFile(previous);
-    }
   }
 
-  Future<void> setGlobalWallpaperMask(double opacity) async {
+  /// 把用户选的图片存为一张新的自定义壁纸，并切换过去。
+  Future<void> addCustomGlobalWallpaper(
+    Uint8List bytes,
+    String fileName,
+  ) async {
+    final current = state.valueOrNull;
+    if (current == null) return;
+    final path = await saveCustomWallpaperFile(bytes, fileName);
+    final item = CustomWallpaper(
+      id: 'wp_${DateTime.now().microsecondsSinceEpoch}',
+      imagePath: path,
+    );
     await _commit(
       () => _api.updatePartial({
-        'global_wallpaper_mask': opacity.clamp(0.0, 1.0),
+        ..._customWallpaperPatch(
+          current,
+          customs: [...current.globalWallpaperCustoms, item],
+        ),
+        'global_wallpaper': GlobalWallpaper.custom.value,
+        'global_wallpaper_custom_id': item.id,
       }),
     );
   }
+
+  /// 删除一张自定义壁纸及其图片；正在用的话改为不用壁纸。
+  Future<void> removeCustomGlobalWallpaper(String id) async {
+    final current = state.valueOrNull;
+    if (current == null) return;
+    final removed = current.globalWallpaperCustoms
+        .where((item) => item.id == id)
+        .firstOrNull;
+    if (removed == null) return;
+    final wasActive = current.activeCustomWallpaper?.id == id;
+    await _commit(
+      () => _api.updatePartial({
+        ..._customWallpaperPatch(
+          current,
+          customs: [
+            for (final item in current.globalWallpaperCustoms)
+              if (item.id != id) item,
+          ],
+          styles: {...current.globalWallpaperStyles}..remove(id),
+        ),
+        if (wasActive) 'global_wallpaper': GlobalWallpaper.none.value,
+        if (wasActive) 'global_wallpaper_custom_id': null,
+      }),
+    );
+    await deleteCustomWallpaperFile(removed.imagePath);
+  }
+
+  /// 保存某张壁纸的遮罩与模糊；内置壁纸的 key 是 value，自定义是 id。
+  Future<void> setGlobalWallpaperStyle(String key, WallpaperStyle style) async {
+    final current = state.valueOrNull;
+    if (current == null) return;
+    await _commit(
+      () => _api.updatePartial(
+        _customWallpaperPatch(
+          current,
+          styles: {...current.globalWallpaperStyles, key: style},
+        ),
+      ),
+    );
+  }
+
+  /// 写回壁纸列表与调节；旧版单张字段已并入列表，一并清空。
+  Map<String, dynamic> _customWallpaperPatch(
+    AppSettings current, {
+    List<CustomWallpaper>? customs,
+    Map<String, WallpaperStyle>? styles,
+  }) => {
+    'global_wallpaper_customs': [
+      for (final item in customs ?? current.globalWallpaperCustoms)
+        item.toJson(),
+    ],
+    'global_wallpaper_styles': {
+      for (final entry in (styles ?? current.globalWallpaperStyles).entries)
+        entry.key: entry.value.toJson(),
+    },
+    'global_wallpaper_custom_image': null,
+    'global_wallpaper_mask': null,
+  };
 
   Future<void> setInterfaceSkin(InterfaceSkin skin) async {
     await _commit(() => _api.updatePartial({'interface_skin': skin.value}));
@@ -1145,23 +1265,37 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     await _commit(() => _api.updatePartial({'glass_effect_enabled': enabled}));
   }
 
-  Future<void> setGlassBlurSigma(double sigma) async {
-    final clamped = sigma
-        .clamp(kMinGlassBlurSigma, kMaxGlassBlurSigma)
-        .toDouble();
-    // Pin the fill too, so a legacy fill derived from blur stays independent.
-    final fill = state.value?.glassTintFill;
+  Future<void> setGlassBlurSigma(double sigma) => _setMaterialValue(
+    'glass_blur_sigma',
+    sigma.clamp(kMinGlassBlurSigma, kMaxGlassBlurSigma).toDouble(),
+  );
+
+  Future<void> setFrostedBlurSigma(double sigma) => _setMaterialValue(
+    'frosted_blur_sigma',
+    sigma.clamp(kMinGlassBlurSigma, kMaxGlassBlurSigma).toDouble(),
+  );
+
+  Future<void> setGlassTintFill(double fill) =>
+      _setMaterialValue('glass_tint_fill', fill.clamp(0.0, 1.0).toDouble());
+
+  Future<void> setFrostedTintFill(double fill) =>
+      _setMaterialValue('frosted_tint_fill', fill.clamp(0.0, 1.0).toDouble());
+
+  /// Writes one material slider and pins the other three, so values that
+  /// older stores derive from each other stop following the changed one.
+  Future<void> _setMaterialValue(String key, double value) async {
+    final current = state.value;
     await _commit(
       () => _api.updatePartial({
-        'glass_blur_sigma': clamped,
-        if (fill != null) 'glass_tint_fill': fill,
+        if (current != null) ...{
+          'glass_blur_sigma': current.glassBlurSigma,
+          'frosted_blur_sigma': current.frostedBlurSigma,
+          'glass_tint_fill': current.glassTintFill,
+          'frosted_tint_fill': current.frostedTintFill,
+        },
+        key: value,
       }),
     );
-  }
-
-  Future<void> setGlassTintFill(double fill) async {
-    final clamped = fill.clamp(0.0, 1.0).toDouble();
-    await _commit(() => _api.updatePartial({'glass_tint_fill': clamped}));
   }
 
   Future<void> setUseLiquidGlass(bool useLiquid) async {

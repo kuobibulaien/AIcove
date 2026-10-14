@@ -68,7 +68,7 @@ void main() {
       () async {
     final request = VoiceRequest(ownerId: 'a', service: FakeSpeech('minimax'));
     final plugin = TtsPlugin.forRequest(request);
-    final processed = await plugin.processResponse('<tts>你好呀</tts>');
+    final processed = plugin.convertTtsTags('<tts>你好呀</tts>');
     expect(processed.events, isNotEmpty);
     expect(VoiceRequest.forEvents(processed.events), same(request));
     expect(jsonEncode(processed.events.map((e) => e.toJson()).toList()),

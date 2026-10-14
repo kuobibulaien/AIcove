@@ -6,11 +6,11 @@ import 'package:aicove_flutter/src/core/api/providers/provider_adapter.dart';
 import 'package:aicove_flutter/src/core/app_logger.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_types.dart';
-import 'package:aicove_flutter/src/features/plugins/domain/base_plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin_metadata.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
-import 'api_runner_variants.dart';
+import 'api_runner_variants.dart';
+import 'test_plugin_support.dart';
 
 AppSettings _buildTestSettings() {
   const modelRef = 'openai:gpt-3.5-turbo';
@@ -75,7 +75,6 @@ class _SplitInlineImageStreamingClient extends AgentApiClient {
     double? temperature,
     double? topP,
     String? token,
-    Map<String, dynamic>? toolPrefs,
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
@@ -99,7 +98,6 @@ class _SplitInlineImageStreamingClient extends AgentApiClient {
     double? temperature,
     double? topP,
     String? token,
-    Map<String, dynamic>? toolPrefs,
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
@@ -137,7 +135,6 @@ class _SplitThinkStreamingClient extends AgentApiClient {
     double? temperature,
     double? topP,
     String? token,
-    Map<String, dynamic>? toolPrefs,
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
@@ -161,7 +158,6 @@ class _SplitThinkStreamingClient extends AgentApiClient {
     double? temperature,
     double? topP,
     String? token,
-    Map<String, dynamic>? toolPrefs,
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
@@ -199,7 +195,6 @@ class _SplitOptionsStreamingClient extends AgentApiClient {
     double? temperature,
     double? topP,
     String? token,
-    Map<String, dynamic>? toolPrefs,
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
@@ -223,7 +218,6 @@ class _SplitOptionsStreamingClient extends AgentApiClient {
     double? temperature,
     double? topP,
     String? token,
-    Map<String, dynamic>? toolPrefs,
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
@@ -261,7 +255,6 @@ class _StrayThinkCloseStreamingClient extends AgentApiClient {
     double? temperature,
     double? topP,
     String? token,
-    Map<String, dynamic>? toolPrefs,
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
@@ -285,7 +278,6 @@ class _StrayThinkCloseStreamingClient extends AgentApiClient {
     double? temperature,
     double? topP,
     String? token,
-    Map<String, dynamic>? toolPrefs,
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
@@ -322,7 +314,6 @@ class _AttributeImageTagStreamingClient extends AgentApiClient {
     double? temperature,
     double? topP,
     String? token,
-    Map<String, dynamic>? toolPrefs,
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
@@ -346,7 +337,6 @@ class _AttributeImageTagStreamingClient extends AgentApiClient {
     double? temperature,
     double? topP,
     String? token,
-    Map<String, dynamic>? toolPrefs,
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
@@ -371,7 +361,7 @@ class _AttributeImageTagStreamingClient extends AgentApiClient {
   }
 }
 
-class _InlineImageStripPlugin extends BasePlugin {
+class _InlineImageStripPlugin extends TestPlugin {
   _InlineImageStripPlugin()
       : super(
           metadata: const PluginMetadata(
@@ -422,7 +412,6 @@ class _StrayImageCloseStreamingClient extends AgentApiClient {
     double? temperature,
     double? topP,
     String? token,
-    Map<String, dynamic>? toolPrefs,
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
@@ -446,7 +435,6 @@ class _StrayImageCloseStreamingClient extends AgentApiClient {
     double? temperature,
     double? topP,
     String? token,
-    Map<String, dynamic>? toolPrefs,
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
@@ -485,7 +473,6 @@ class _SplitPresetThinkStreamingClient extends AgentApiClient {
     double? temperature,
     double? topP,
     String? token,
-    Map<String, dynamic>? toolPrefs,
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
@@ -523,7 +510,6 @@ void _runAll(RunnerFactory createRunner) {
       providerApiBase: 'https://api.openai.com/v1',
       providerApiKey: 'test-key',
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[
         <String, dynamic>{
           'role': 'user',
@@ -542,7 +528,8 @@ void _runAll(RunnerFactory createRunner) {
       config: config,
       sessionId: 'conv_stream_filter_image_prompt',
       userText: '帮我画一只猫',
-      effectivePlugins: <Plugin>[_InlineImageStripPlugin()],
+      responseProcessors: testProcessors(<TestPlugin>[_InlineImageStripPlugin()]),
+      availableTools: testTools(<TestPlugin>[_InlineImageStripPlugin()]),
       enableStreaming: true,
       onStreamTextDelta: streamedDeltas.add,
       maxRounds: 1,
@@ -562,7 +549,6 @@ void _runAll(RunnerFactory createRunner) {
       providerApiBase: 'https://api.openai.com/v1',
       providerApiKey: 'test-key',
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[
         <String, dynamic>{
           'role': 'user',
@@ -580,7 +566,7 @@ void _runAll(RunnerFactory createRunner) {
       config: config,
       sessionId: 'conv_stream_filter_think_tag',
       userText: '你刚才在想什么',
-      effectivePlugins: const <Plugin>[],
+      responseProcessors: const [],
       enableStreaming: true,
       onStreamTextDelta: streamedDeltas.add,
       maxRounds: 1,
@@ -603,7 +589,6 @@ void _runAll(RunnerFactory createRunner) {
       providerApiBase: 'https://api.openai.com/v1',
       providerApiKey: 'test-key',
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[
         <String, dynamic>{
           'role': 'user',
@@ -621,7 +606,7 @@ void _runAll(RunnerFactory createRunner) {
       config: config,
       sessionId: 'conv_stream_filter_think_stray_close',
       userText: '继续',
-      effectivePlugins: const <Plugin>[],
+      responseProcessors: const [],
       enableStreaming: true,
       onStreamTextDelta: streamedDeltas.add,
       maxRounds: 1,
@@ -641,7 +626,6 @@ void _runAll(RunnerFactory createRunner) {
       providerApiBase: 'https://api.openai.com/v1',
       providerApiKey: 'test-key',
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[
         <String, dynamic>{
           'role': 'user',
@@ -660,7 +644,7 @@ void _runAll(RunnerFactory createRunner) {
       config: config,
       sessionId: 'conv_stream_filter_image_attr',
       userText: '继续',
-      effectivePlugins: const <Plugin>[],
+      responseProcessors: const [],
       enableStreaming: true,
       onStreamTextDelta: streamedDeltas.add,
       maxRounds: 1,
@@ -688,7 +672,6 @@ void _runAll(RunnerFactory createRunner) {
       providerApiBase: 'https://api.openai.com/v1',
       providerApiKey: 'test-key',
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[
         <String, dynamic>{
           'role': 'user',
@@ -706,7 +689,7 @@ void _runAll(RunnerFactory createRunner) {
       config: config,
       sessionId: 'conv_stream_filter_stray_image_close',
       userText: '继续',
-      effectivePlugins: const <Plugin>[],
+      responseProcessors: const [],
       enableStreaming: true,
       onStreamTextDelta: streamedDeltas.add,
       maxRounds: 1,
@@ -726,7 +709,6 @@ void _runAll(RunnerFactory createRunner) {
       providerApiBase: 'https://api.openai.com/v1',
       providerApiKey: 'test-key',
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[
         <String, dynamic>{'role': 'user', 'content': '接下来呢'},
       ],
@@ -740,7 +722,7 @@ void _runAll(RunnerFactory createRunner) {
       config: config,
       sessionId: 'conv_stream_filter_options',
       userText: '接下来呢',
-      effectivePlugins: const <Plugin>[],
+      responseProcessors: const [],
       enableStreaming: true,
       onStreamTextDelta: streamedDeltas.add,
       maxRounds: 1,
@@ -758,7 +740,6 @@ void _runAll(RunnerFactory createRunner) {
       providerApiBase: 'https://api.openai.com/v1',
       providerApiKey: 'test-key',
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[
         <String, dynamic>{'role': 'user', 'content': '在吗'},
       ],
@@ -772,7 +753,7 @@ void _runAll(RunnerFactory createRunner) {
       config: config,
       sessionId: 'conv_stream_filter_preset_think',
       userText: '在吗',
-      effectivePlugins: const <Plugin>[],
+      responseProcessors: const [],
       enableStreaming: true,
       onStreamTextDelta: streamedDeltas.add,
       maxRounds: 1,

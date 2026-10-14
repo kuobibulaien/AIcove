@@ -4,14 +4,16 @@ import 'package:aicove_flutter/src/core/sync/cloud_setting_policy.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_chat_wallpaper.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_page_scaffold.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/moe_static_blur_layer.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Widget _host(
   Widget child, {
-  GlobalWallpaper wallpaper = GlobalWallpaper.mist,
+  GlobalWallpaper wallpaper = GlobalWallpaper.catnap,
   String? customImagePath,
+  WallpaperStyle style = const WallpaperStyle(mask: 0.4),
   bool dark = false,
 }) {
   return MaterialApp(
@@ -22,7 +24,7 @@ Widget _host(
     home: MoeWallpaperTheme(
       wallpaper: wallpaper,
       customImagePath: customImagePath,
-      customMask: 0.4,
+      style: style,
       child: child,
     ),
   );
@@ -53,37 +55,88 @@ void main() {
   });
 
   test('wallpaper choice is parsed and stays on this device', () {
-    final settings = mapUiModelsToAppSettings({'global_wallpaper': 'apricot'});
-    expect(settings.globalWallpaper, GlobalWallpaper.apricot);
-    expect(
-      mapUiModelsToAppSettings({}).globalWallpaper,
-      GlobalWallpaper.none,
-    );
+    final settings = mapUiModelsToAppSettings({'global_wallpaper': 'catnap'});
+    expect(settings.globalWallpaper, GlobalWallpaper.catnap);
+    for (final legacy in ['mist', 'apricot']) {
+      expect(
+        mapUiModelsToAppSettings({'global_wallpaper': legacy}).globalWallpaper,
+        GlobalWallpaper.catnap,
+      );
+    }
+    expect(mapUiModelsToAppSettings({}).globalWallpaper, GlobalWallpaper.none);
     expect(localGeneralSettings, contains('global_wallpaper'));
 
-    final custom = mapUiModelsToAppSettings({
-      'global_wallpaper': 'custom',
-      'global_wallpaper_custom_image': '/tmp/w.png',
-      'global_wallpaper_mask': 1.5,
-    });
-    expect(custom.globalWallpaper, GlobalWallpaper.custom);
-    expect(custom.globalWallpaperCustomImage, '/tmp/w.png');
-    expect(custom.globalWallpaperMask, 1.0);
     expect(
-      mapUiModelsToAppSettings({}).globalWallpaperMask,
-      kDefaultCustomWallpaperMask,
+      mapUiModelsToAppSettings({}).activeWallpaperStyle,
+      const WallpaperStyle(),
     );
     expect(
       localGeneralSettings,
-      containsAll(['global_wallpaper_custom_image', 'global_wallpaper_mask']),
+      containsAll([
+        'global_wallpaper_customs',
+        'global_wallpaper_custom_id',
+        'global_wallpaper_styles',
+      ]),
     );
+  });
+
+  test('several custom wallpapers each keep their own mask and blur', () {
+    final settings = mapUiModelsToAppSettings({
+      'global_wallpaper': 'custom',
+      'global_wallpaper_custom_id': 'b',
+      'global_wallpaper_customs': [
+        {'id': 'a', 'path': '/tmp/a.png'},
+        {'id': 'b', 'path': '/tmp/b.png'},
+        {'id': '', 'path': '/tmp/broken.png'},
+      ],
+      'global_wallpaper_styles': {
+        'b': {'mask': 1.5, 'blur': 12},
+        'catnap': {'blur': 99},
+      },
+    });
+    expect(settings.globalWallpaperCustoms.map((e) => e.id), ['a', 'b']);
+    expect(settings.activeCustomWallpaper?.imagePath, '/tmp/b.png');
+    expect(
+      settings.activeWallpaperStyle,
+      const WallpaperStyle(mask: 1, blur: 12),
+    );
+    expect(
+      settings.wallpaperStyleFor('a', custom: true),
+      const WallpaperStyle(mask: kDefaultCustomWallpaperMask),
+    );
+    expect(
+      settings.wallpaperStyleFor('catnap', custom: false),
+      const WallpaperStyle(blur: kMaxWallpaperBlur),
+    );
+
+    final deleted = mapUiModelsToAppSettings({
+      'global_wallpaper': 'custom',
+      'global_wallpaper_custom_id': 'gone',
+      'global_wallpaper_customs': [
+        {'id': 'a', 'path': '/tmp/a.png'},
+      ],
+    });
+    expect(deleted.activeCustomWallpaper, isNull);
+  });
+
+  test('the single legacy custom wallpaper becomes a list entry', () {
+    final settings = mapUiModelsToAppSettings({
+      'global_wallpaper': 'custom',
+      'global_wallpaper_custom_image': '/tmp/w.png',
+      'global_wallpaper_mask': 0.6,
+    });
+    expect(settings.globalWallpaperCustoms, [
+      const CustomWallpaper(id: 'legacy', imagePath: '/tmp/w.png'),
+    ]);
+    expect(settings.activeCustomWallpaper?.imagePath, '/tmp/w.png');
+    expect(settings.activeWallpaperStyle, const WallpaperStyle(mask: 0.6));
   });
 
   testWidgets('default page background uses the page wallpaper', (
     tester,
   ) async {
     await tester.pumpWidget(_host(const MoePageScaffold(body: SizedBox())));
-    expect(_assetNames(tester), {'assets/wallpapers/mist_3_light.webp'});
+    expect(_assetNames(tester), {'assets/wallpapers/catnap_light.webp'});
   });
 
   testWidgets('pages passing the theme surface still get the wallpaper', (
@@ -100,12 +153,32 @@ void main() {
         dark: true,
       ),
     );
-    expect(_assetNames(tester), {'assets/wallpapers/mist_3_dark.webp'});
+    expect(_assetNames(tester), {'assets/wallpapers/catnap_dark.webp'});
+  });
+
+  testWidgets('page background widget replaces the global wallpaper', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(
+        const MoePageScaffold(
+          background: ColoredBox(
+            key: Key('role-wallpaper'),
+            color: Colors.blue,
+          ),
+          body: SizedBox(),
+        ),
+      ),
+    );
+    expect(find.byKey(const Key('role-wallpaper')), findsOneWidget);
+    expect(_assetNames(tester), isEmpty);
   });
 
   testWidgets('custom page colors keep their own background', (tester) async {
     await tester.pumpWidget(
-      _host(const MoePageScaffold(backgroundColor: Colors.red, body: SizedBox())),
+      _host(
+        const MoePageScaffold(backgroundColor: Colors.red, body: SizedBox()),
+      ),
     );
     expect(_assetNames(tester), isEmpty);
   });
@@ -124,12 +197,13 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      _host(
-        const MoeChatWallpaper(child: SizedBox()),
-        wallpaper: GlobalWallpaper.apricot,
-      ),
+      _host(const MoeChatWallpaper(child: SizedBox()), dark: true),
     );
-    expect(_assetNames(tester), {'assets/wallpapers/apricot_2_light.webp'});
+    expect(_assetNames(tester), {'assets/wallpapers/catnap_dark.webp'});
+    expect(
+      tester.widget<Image>(find.byType(Image)).alignment,
+      Alignment.centerLeft,
+    );
   });
 
   testWidgets('custom wallpaper covers every page with a readability mask', (
@@ -149,7 +223,8 @@ void main() {
     ).scaffoldBackgroundColor;
     expect(
       find.byWidgetPredicate(
-        (w) => w is ColoredBox && w.color == scaffoldColor.withValues(alpha: 0.4),
+        (w) =>
+            w is ColoredBox && w.color == scaffoldColor.withValues(alpha: 0.4),
       ),
       findsOneWidget,
     );
@@ -165,5 +240,24 @@ void main() {
       ),
     );
     expect(find.byType(Image), findsNothing);
+  });
+
+  testWidgets('wallpaper blur adds the static blur layer under the mask', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(
+        const MoeChatWallpaper(child: SizedBox()),
+        style: const WallpaperStyle(blur: 15),
+      ),
+    );
+    final layer = tester.widget<MoeStaticBlurLayer>(
+      find.byType(MoeStaticBlurLayer),
+    );
+    expect(layer.source, 'assets/wallpapers/catnap_light.webp');
+    expect(layer.blur, 15);
+
+    await tester.pumpWidget(_host(const MoeChatWallpaper(child: SizedBox())));
+    expect(find.byType(MoeStaticBlurLayer), findsNothing);
   });
 }

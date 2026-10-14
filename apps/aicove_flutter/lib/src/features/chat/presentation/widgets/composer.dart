@@ -26,7 +26,6 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import '../../../../core/services/attachment_picker_service.dart';
 import '../../../../ui/theme/tokens.dart';
-import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../settings/app_settings.dart';
 import '../../../dialogue_options/application/dialogue_options_providers.dart';
 import '../../chat_actions.dart';
@@ -34,9 +33,11 @@ import '../../application/chat_edit.dart';
 import '../../chat_layer_providers.dart';
 import '../../conversation_providers.dart';
 import '../../domain/conversation.dart';
+import '../../domain/quoted_reply.dart';
 import 'composer_model_picker_sheet.dart';
 import 'composer_more_panel.dart';
 import 'thinking_level_sheet.dart';
+import '../../../../core/api/thinking/thinking_fallback.dart';
 import '../../../../core/api/thinking/thinking_level_labels.dart';
 import '../../../../core/api/providers/provider_adapter_factory.dart';
 import '../../../../core/api/thinking/thinking_level_resolver.dart';
@@ -117,6 +118,9 @@ class Composer extends ConsumerStatefulWidget {
   onSubmitEdit;
   final ValueChanged<double>? onHeightChanged;
   final VoidCallback? onInputTap;
+
+  /// 输入框占位文字，默认“消息”；通话打字模式下提示文字会进通话。
+  final String? hintText;
   const Composer({
     super.key,
     required this.onSend,
@@ -128,6 +132,7 @@ class Composer extends ConsumerStatefulWidget {
     this.onSubmitEdit,
     this.onHeightChanged,
     this.onInputTap,
+    this.hintText,
   });
 
   @override
@@ -1275,7 +1280,7 @@ class _ComposerState extends ConsumerState<Composer> {
                 readOnly: _suppressKeyboard || _editSubmitting || _draftLoading,
                 showCursor: !_suppressKeyboard,
                 decoration: InputDecoration.collapsed(
-                  hintText: '消息',
+                  hintText: widget.hintText ?? '消息',
                   hintStyle: TextStyle(color: colors.muted),
                 ).copyWith(visualDensity: VisualDensity.standard),
                 enabled: !widget.disabled,
@@ -1305,41 +1310,20 @@ class _ComposerState extends ConsumerState<Composer> {
 
     final colors = context.moeColors;
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.transparent,
-        border: Border(top: BorderSide(color: colors.border, width: 0.5)),
-      ),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
       child: Row(
         children: [
-          Container(
-            width: 3,
-            height: 32,
-            decoration: MoeG2Decoration(radius: 2, color: colors.accentColor),
-          ),
-          const SizedBox(width: 8),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  quoted.isUser ? '回复 我' : '回复 TA',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: colors.accentColor,
-                    fontWeight: MoeFontWeights.emphasis,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  quoted.content,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 13, color: colors.muted),
-                ),
-              ],
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: MoeQuoteBlock(
+                label: quoted.isUser ? '回复 我' : '回复 TA',
+                text: QuotedReply.parse(quoted.content)?.body ?? quoted.content,
+                foregroundColor: colors.text,
+                accentColor: colors.accentColor,
+                maxLines: 1,
+              ),
             ),
           ),
           const SizedBox(width: 8),
@@ -1546,6 +1530,12 @@ class _ComposerState extends ConsumerState<Composer> {
       presetReasoningEffort: presetEffort,
     );
 
+    final modelFullId = '$providerId:${settings.getRawModelId(modelRef)}';
+    final lowestResolved = effective.level.isLowest
+        ? await ThinkingFallbackMemory.instance.recall(modelFullId)
+        : null;
+    if (!mounted) return;
+
     final result = await showThinkingLevelSheet(
       context,
       title: '思考档位 · ${settings.getModelDisplayName(modelRef)}',
@@ -1554,8 +1544,15 @@ class _ComposerState extends ConsumerState<Composer> {
       currentSource: effective.source,
       hasOwnSetting: conversation.thinkingLevels.containsKey(modelRef),
       clearLabel: '清除本会话设置，改用模型默认',
+      lowestResolved: lowestResolved,
     );
     if (result == null || !mounted) return;
+    if (result.redetect) {
+      await ThinkingFallbackMemory.instance.forget(modelFullId);
+      if (!mounted) return;
+      MoeToast.success(context, '已清除，下次发送时重新检测最低档');
+      return;
+    }
 
     await ref
         .read(conversationsProvider.notifier)

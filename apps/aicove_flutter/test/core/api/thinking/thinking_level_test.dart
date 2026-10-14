@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:aicove_flutter/src/core/api/providers/provider_adapter.dart';
 import 'package:aicove_flutter/src/core/api/thinking/thinking_level.dart';
 import 'package:aicove_flutter/src/core/api/thinking/thinking_level_catalog.dart';
 import 'package:aicove_flutter/src/core/api/thinking/thinking_level_labels.dart';
@@ -42,17 +43,39 @@ void main() {
       expect(opts('openai', 'gpt-4o').scheme, ThinkingScheme.generic);
     });
 
-    test('unknown openai-compatible model falls back to generic 4-tier', () {
-      final o = opts('openai', 'deepseek-chat');
+    test('unknown openai-compatible model falls back to generic tiers', () {
+      final o = opts('openai', 'some-relay-model');
       expect(o.scheme, ThinkingScheme.generic);
       expect(o.isNative, isFalse);
       expect(o.levels, [
         ThinkingLevel.auto,
         ThinkingLevel.off,
+        ThinkingLevel.minimal,
         ThinkingLevel.low,
         ThinkingLevel.medium,
         ThinkingLevel.high,
       ]);
+    });
+
+    test('deepseek / glm / kimi use thinking.type toggle', () {
+      for (final model in ['deepseek-v4-flash', 'glm-5.1', 'kimi-k2.6']) {
+        expect(opts('openai', model).scheme, ThinkingScheme.thinkingToggle,
+            reason: model);
+      }
+    });
+
+    test('qwen uses enable_thinking toggle', () {
+      final o = opts('openai', 'qwen3-max');
+      expect(o.scheme, ThinkingScheme.qwenToggle);
+      expect(o.levels, [ThinkingLevel.auto, ThinkingLevel.off, ThinkingLevel.high]);
+    });
+
+    test('gemini-2.5-pro cannot be turned off', () {
+      final o = opts('gemini', 'gemini-2.5-pro');
+      expect(o.scheme, ThinkingScheme.geminiBudget);
+      expect(o.levels, isNot(contains(ThinkingLevel.off)));
+      expect(opts('gemini', 'gemini-2.5-flash').levels,
+          contains(ThinkingLevel.off));
     });
 
     test('claude-opus-5 exposes effort low..max with off', () {
@@ -147,23 +170,49 @@ void main() {
     });
   });
 
-  group('softwareDefault (R1.5)', () {
-    test('off when available', () {
-      expect(opts('claude', 'claude-opus-5').softwareDefault, ThinkingLevel.off);
-      expect(opts('openai', 'gpt-5.2').softwareDefault, ThinkingLevel.off);
-      expect(opts('gemini', 'gemini-2.5-pro').softwareDefault, ThinkingLevel.off);
+  group('softwareDefault and lowest candidates', () {
+    test('software default is lowest for every scheme', () {
+      for (final (provider, model) in [
+        ('claude', 'claude-opus-5'),
+        ('openai', 'gpt-5.2'),
+        ('openai', 'some-relay-model'),
+        ('gemini', 'gemini-3-flash'),
+      ]) {
+        expect(opts(provider, model).softwareDefault, ThinkingLevel.lowest,
+            reason: model);
+      }
     });
 
-    test('lowest level when off unavailable', () {
-      expect(opts('claude', 'claude-fable-5').softwareDefault, ThinkingLevel.low);
-      expect(opts('gemini', 'gemini-3-flash').softwareDefault, ThinkingLevel.minimal);
-      expect(opts('gemini', 'gemini-3-pro').softwareDefault, ThinkingLevel.low);
-      expect(opts('openai', 'o3').softwareDefault, ThinkingLevel.low);
-      expect(opts('openai', 'gpt-5').softwareDefault, ThinkingLevel.minimal);
+    test('lowest tries off, then minimal, then low', () {
+      expect(opts('openai', 'some-relay-model').lowestCandidates,
+          [ThinkingLevel.off, ThinkingLevel.minimal, ThinkingLevel.low]);
+      expect(opts('claude', 'claude-opus-5').lowestCandidates,
+          [ThinkingLevel.off, ThinkingLevel.low]);
+      expect(opts('openai', 'gpt-5').lowestCandidates,
+          [ThinkingLevel.minimal, ThinkingLevel.low]);
+      expect(opts('gemini', 'gemini-3-flash').lowestCandidates,
+          [ThinkingLevel.minimal, ThinkingLevel.low]);
     });
 
-    test('generic stays auto', () {
-      expect(opts('openai', 'deepseek-chat').softwareDefault, ThinkingLevel.auto);
+    test('models that cannot go low fall back to their lowest level', () {
+      expect(opts('claude', 'claude-fable-5').lowestCandidates,
+          [ThinkingLevel.low]);
+      expect(opts('openai', 'qwen3-max').lowestCandidates,
+          [ThinkingLevel.off]);
+      expect(opts('gemini', 'gemini-2.5-pro').lowestCandidates,
+          [ThinkingLevel.low]);
+    });
+
+    test('choices put auto and lowest before upstream levels', () {
+      expect(opts('openai', 'o3').choices, [
+        ThinkingLevel.auto,
+        ThinkingLevel.lowest,
+        ThinkingLevel.low,
+        ThinkingLevel.medium,
+        ThinkingLevel.high,
+      ]);
+      expect(opts('openai', 'o3').coerce(ThinkingLevel.lowest),
+          ThinkingLevel.lowest);
     });
   });
 
@@ -200,7 +249,7 @@ void main() {
         providerType: 'openai',
         modelId: 'gpt-5.2',
       );
-      expect(fallback.level, ThinkingLevel.off);
+      expect(fallback.level, ThinkingLevel.lowest);
       expect(fallback.source, ThinkingLevelSource.softwareDefault);
     });
 
@@ -211,7 +260,7 @@ void main() {
           modelId: 'claude-fable-5',
           presetReasoningEffort: raw,
         );
-        expect(r.level, ThinkingLevel.low, reason: 'raw=$raw');
+        expect(r.level, ThinkingLevel.lowest, reason: 'raw=$raw');
         expect(r.source, ThinkingLevelSource.softwareDefault);
       }
     });
@@ -223,6 +272,34 @@ void main() {
         sessionLevel: ThinkingLevel.xhigh,
       );
       expect(r.level, ThinkingLevel.high);
+    });
+  });
+
+  group('applyTo request options', () {
+    test('lowest expands to candidates and sends the first one', () {
+      final r = resolveEffectiveThinkingLevel(
+        providerType: 'openai',
+        modelId: 'gpt-5',
+      );
+      final options = r.applyTo(null);
+      expect(options.thinkingLevel, ThinkingLevel.minimal);
+      expect(options.thinkingScheme, ThinkingScheme.openaiEffort);
+      expect(options.thinkingCandidates,
+          [ThinkingLevel.minimal, ThinkingLevel.low]);
+    });
+
+    test('explicit level clears stale candidates', () {
+      final base = const ProviderChatRequestOptions(
+        thinkingCandidates: [ThinkingLevel.off],
+      );
+      final r = resolveEffectiveThinkingLevel(
+        providerType: 'openai',
+        modelId: 'gpt-5.2',
+        sessionLevel: ThinkingLevel.high,
+      );
+      final options = r.applyTo(base);
+      expect(options.thinkingLevel, ThinkingLevel.high);
+      expect(options.thinkingCandidates, isNull);
     });
   });
 

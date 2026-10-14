@@ -27,8 +27,8 @@ void main() {
       final prompt = service.buildReminderSemanticsPrompt();
 
       expect(prompt, contains('<system-reminder>'));
-      expect(prompt, contains('系统补充信息'));
-      expect(prompt, contains('不要原样复述'));
+      expect(prompt, contains('不是对方说的话'));
+      expect(prompt, contains('别照着念'));
     });
 
     test('合并多个 reminder 内容时会过滤空字符串并按空行拼接', () {

@@ -72,6 +72,10 @@ android {
         ndk { abiFilters.clear(); abiFilters += "arm64-v8a" }
     }
 
+    // Compress native libs inside the APK (2026-10-12 decision). Releases are sideloaded from
+    // GitHub, so download size beats the small install-time cost of extracting .so files.
+    packaging { jniLibs { useLegacyPackaging = true } }
+
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.

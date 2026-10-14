@@ -1,7 +1,7 @@
 name: aicove_flutter
 description: Flutter frontend for AIcove AI companion
 publish_to: 'none'
-version: 0.1.0+2026100201
+version: 0.2.0+2026101402
 
 environment:
   sdk: '>=3.12.2 <4.0.0'
@@ -27,6 +27,9 @@ dependencies:
   shared_preferences: ^2.3.2
   just_audio: ^0.9.39
   audio_session: ^0.1.21
+  sherpa_onnx: 1.13.8 # 本地离线语音识别与 VAD（ADR0074）
+  record: 7.1.1 # 语音通话麦克风采集（16 kHz PCM 流）
+  mp_audio_stream: 0.3.0 # 语音通话流式 PCM 播放
   file_picker: ^8.0.3
   image_picker: ^1.0.7
   image_gallery_saver_plus: ^4.0.1
@@ -84,6 +87,21 @@ dev_dependencies:
   # Drift 代码生成
   drift_dev: ^2.18.0
   build_runner: ^2.4.0
+
+# sherpa_onnx 只给平台包写了 ^ 范围；锁定同版本，避免 Dart FFI 结构与原生库错位。
+# 1.13.4 自带的 macOS／iOS 原生库签名损坏，构建时 openrsync 被系统杀掉，故用 1.13.8。
+# 1.13.8 的 Web 插件要求 web ^1.1，与 share_plus 9 的 web ^0.5 冲突；web 包只在 Web 构建中编译，
+# 而 Web 不是目标平台（2026-07-20 裁决），覆盖不影响原生构建。
+dependency_overrides:
+  sherpa_onnx_android_arm64: 1.13.8
+  sherpa_onnx_android_armeabi: 1.13.8
+  sherpa_onnx_android_x86: 1.13.8
+  sherpa_onnx_android_x86_64: 1.13.8
+  sherpa_onnx_ios: 1.13.8
+  sherpa_onnx_linux: 1.13.8
+  sherpa_onnx_macos: 1.13.8
+  sherpa_onnx_windows: 1.13.8
+  web: ^1.1.0
 
 flutter:
   # SDK 升级不同时迁移原生依赖管理，继续使用现有 CocoaPods。

@@ -77,20 +77,15 @@ class TtsVoicePresetSection extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   if (!preset.isBuiltIn)
-                    GestureDetector(
+                    MoeIconButton(
+                      icon: Icons.delete_outline,
+                      size: 20,
+                      padding: const EdgeInsets.all(6),
+                      minTouchTarget: 32,
+                      color: colors.muted,
+                      tooltip: '删除音色',
                       onTap: () =>
                           _confirmDeleteLocalVoice(context, preset, notifier),
-                      child: MoeButtonSurface(
-                        radius: 999,
-                        child: Padding(
-                          padding: const EdgeInsets.all(8),
-                          child: Icon(
-                            Icons.delete_outline,
-                            size: 20,
-                            color: colors.muted,
-                          ),
-                        ),
-                      ),
                     ),
                   Icon(Icons.chevron_right, size: 20, color: colors.muted),
                 ],

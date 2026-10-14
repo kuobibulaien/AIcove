@@ -10,8 +10,6 @@
 | 本地后端 | `apps/aicove_flutter/lib/src/features/`、`lib/src/core/` | 聊天主链路、Agent Runtime、插件、记忆、本地数据库。它是 Flutter 进程内的 Dart 代码，前端通过方法调用使用它，不走 HTTP。**本项目所说的"后端"一律指这一层。** |
 | 云端 | `cloud_backend/` | 只承担云同步及必要账号认证（客户端已接入，正在测试）；旧 API 配发、会员及其他云端服务已删除。 |
 
-界面规范：以 Mac 为基准，窄屏即手机模式，宽屏为左侧悬浮完整手机一级界面加右侧同一套二级页面。规则正文只在[项目宪法第 3 条](#项目宪法)和[全端共用界面架构与布局规范](apps/aicove_flutter/docs/界面布局说明.md)，此处不复制。
-
 ## Agent Context Runtime
 
 项目架构方向是 **Agent 上下文管理系统**（不是提示词管理系统）。核心公式：`Agent = 模型 + 上下文策略 + 工具策略 + 输出契约 + 后处理器`。
@@ -77,27 +75,23 @@ AgentDefinition
 
 **插件配置统一预设化：角色卡按插件绑定预设，由预设集中管理渠道、模型及能力参数；"默认设置"改为"默认预设"。** 绘图与音色已按此改造，其他插件逐步接入，不代表全量完成。正式规范：[插件预设与角色卡绑定规范](apps/aicove_flutter/docs/02_前后端分离与架构规范/插件预设与角色卡绑定规范.md)。
 
-## 功能一览
-
-面向用户的功能介绍只在根 [README.md](README.md) 维护，此处不复制。
-
 ## 技术栈
 
 - **前端**：Flutter / Dart（[项目 SDK 与命令入口](apps/aicove_flutter/tool/DIAGNOSTICS.md#项目-flutter-sdk2026-09-12)，SDK 3.44.6 经 `tool/flutterw` 调用，不用机器全局 Flutter）· Riverpod · GoRouter · Drift
 - **云端**：FastAPI + Uvicorn · SQLAlchemy · JWT · Docker
-- **平台**：macOS（基准）、Android（真机验收）、iOS、Windows、Linux 目录保留；Web 已于 2026-09-13 移除
+- **平台**：macOS（基准）、Android（真机验收）、iOS、Windows、Linux 目录保留；Web 已于 2026-09-13 移除，不要加回（ADR0030）
 
 ## 目录结构
 
 ```
 aicove/
-├── AGENTS.md                      # AI 协作规范：执行方式、授权边界、文档索引（唯一权威）
+├── AGENTS.md                      # AI 协作规则唯一入口：执行方式、授权、文档地图
 ├── CLAUDE.md / GEMINI.md          # 各 harness 入口，只指向 AGENTS.md
 ├── README.md                      # 产品介绍（给用户看）
 ├── DEVELOPMENT.md                 # 本文件：架构约束 + 项目宪法（验证流程唯一权威）
 ├── hooks/memory.py                # 会话钩子：自动注入项目记忆、追加需求日志
 ├── docs/项目记忆/                  # 所有 agent 共用的长期记忆
-│   ├── README.md                  #   总览、当前重点、模块边界速查（hook 每次注入）
+│   ├── README.md                  #   当前状态与模块边界速查（hook 每次注入）
 │   ├── 需求日志.md                 #   用户原话 + 一句话结果
 │   ├── 决策记录/                   #   架构级决定（ADR），一事一文件
 │   ├── 经验教训.md                 #   踩坑硬约束
@@ -154,21 +148,6 @@ python3 tool/mac_debug_session.py restart   # 改了 main / 初始化逻辑 / �
 
 云端如需启动：见 [cloud_backend/README.md](cloud_backend/README.md)。
 
-## 资源文档索引
-
-| 文档 | 说明 |
-|---|---|
-| [docs/README.md](apps/aicove_flutter/docs/README.md) | **文档库总入口** |
-| [公共组件总览](apps/aicove_flutter/docs/公共组件总览.md) | 前端 UI 积木速查 |
-| [API 架构说明](apps/aicove_flutter/docs/API架构说明.md) | API 架构与聊天流程 |
-| [聊天上下文真相源规范](apps/aicove_flutter/docs/02_前后端分离与架构规范/聊天请求上下文真相源与组装规范.md) | 数据库真相源基石规范 |
-| [Agent 上下文总架构](apps/aicove_flutter/docs/02_前后端分离与架构规范/Agent上下文管理总架构.md) | Agent Runtime / 装配 / 迁移原则 |
-| [全端共用界面架构与布局规范](apps/aicove_flutter/docs/界面布局说明.md) | Mac 基准、完整手机界面复用、悬浮主从布局与导航验收 |
-| [tool/DIAGNOSTICS.md](apps/aicove_flutter/tool/DIAGNOSTICS.md) | 日志采集、调试会话、Dart MCP |
-| [cloud_backend/README.md](cloud_backend/README.md) | 云同步协议、测试与运行配置 |
-
----
-
 # 项目宪法
 
 > 每次写代码都必须遵守。做不到先停下来问。
@@ -200,7 +179,7 @@ python3 tool/mac_debug_session.py restart   # 改了 main / 初始化逻辑 / �
 - 日常 Dart 迭代：复用现有 Debug 会话（`tool/mac_debug_session.py`），修改后先热重载并确认本次成功，再按改动范围用 Dart MCP 读取运行时异常、组件树及执行相关行为检查；通常保留当前页面与状态，不为普通校验重新构建或安装。需要重跑 main／初始化逻辑或改了依赖时使用热重启，它会重置 Dart 状态。**MCP 不会自动同步源码；连接成功、工具可见或旧组件树可读，都不能证明本次修改已生效。** 命令与连接方式见[调试与日志说明](apps/aicove_flutter/tool/DIAGNOSTICS.md#dart-mcp)。
 - 只排查当前运行状态：未修改代码时可直接用 MCP 读取，不先重载、重启或安装；先保留现有异常现场。手机 Release 问题继续按 AGENTS 的日志采集流程处理。
 - 重新构建与安装：Swift／Kotlin／原生插件、SDK 或需重新构建的依赖变更，以及正式交付／切换 Profile、Release 时，重新构建目标版本；项目命令经 `tool/flutterw`，按需用 `run --no-resident`。安装只在交付、用户明确要求或目标设备验证需要更新应用时进行，不因"做一次校验"固定重装。没有调试或性能对照需要时，不先跑 Debug 再构建 Release 重复验收。
-- 测试设备（2026-09-23）：界面、交互与性能测试默认直接在 Mac 窄屏（手机模式）完成，不需要手机，也不为测试占用、操作或等待用户手机。仅 Mac 无法模拟的手机专属能力（系统安全区、软键盘、系统返回手势）才在手机上补验；未补验的在交付中注明缺口。手机 Release 运行问题的现场日志仍按 AGENTS「运行问题排查」采集。
+- 测试设备（2026-09-23）：界面、交互与性能测试默认直接在 Mac 窄屏（手机模式）完成，不需要手机，也不为测试占用、操作或等待用户手机。仅 Mac 无法模拟的手机专属能力（系统安全区、软键盘、系统返回手势）才在手机上补验；未补验的在交付中注明缺口。手机 Release 运行问题的现场日志仍按 AGENTS「运行与调试」采集。
 - 性能验证：使用 Profile 读取帧耗时等实际性能数据；MCP 异常为空、Debug 流畅或组件树正常均不能作为性能通过的证据。Mac GPU 明显强于手机，窄屏测性能时除了看掉帧，还要与同条件基线（如空白页、纯色材质）对比 UI／光栅耗时的相对增量，按增量判断手机上的风险。
 - 界面验证按实际影响选择：不改变界面行为的修改不做界面验收；改动某个页面时检查该页面在窄／宽两种承载下的实际界面；改动公共组件或主题时，按其影响范围从[界面架构与布局规范](apps/aicove_flutter/docs/界面布局说明.md)第 8 节挑选对应矩阵项（例如只改按钮颜色，检查该组件在浅／深主题下的实际显示即可）；只有触及布局壳、导航栈、断点或跨页面共享排布机制时才执行完整矩阵。证据优先用日志、MCP 运行时异常与组件树、布局断言；颜色、模糊、间距等外观仍需查看实际界面或截图，不能由组件树替代。涉及移动端时补实际手机安全区、软键盘与返回验证，未验平台说明缺口。
 - 纯文档改动：检查链接、规则一致性与完整差异，无需编译安装。

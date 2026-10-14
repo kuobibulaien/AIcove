@@ -26,6 +26,8 @@ class Conversations extends Table {
       real().nullable()(); // 0.0 - 1.0, null uses default
   RealColumn get chatBackgroundBlurSigma =>
       real().nullable()(); // 0.0 - 30.0, null uses default (0)
+  // 壁纸宽窄屏截取（JSON），null 为默认居中
+  TextColumn get chatBackgroundFraming => text().nullable()();
   TextColumn get blurredBackground =>
       text().nullable()(); // poster blurred background (base64)
   TextColumn get selfAddress => text().nullable()();
@@ -231,7 +233,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(QueryExecutor executor) : super(executor);
 
   @override
-  int get schemaVersion => 21;
+  int get schemaVersion => 23;
 
   @override
   MigrationStrategy get migration {
@@ -241,6 +243,7 @@ class AppDatabase extends _$AppDatabase {
         await _ensureAutoReplyClaimTable();
         await _ensureContextMemoryTables();
         await _ensureMessageStateTable();
+        await _ensureVoiceCallTables();
       },
       onUpgrade: (Migrator m, int from, int to) async {
         // v1 -> v2 的旧记忆表已随 v18 退役（ADR0038），不再创建。
@@ -319,10 +322,23 @@ class AppDatabase extends _$AppDatabase {
         if (from < 21) {
           await _ensureMessageStateTable();
         }
+        // v21 -> v22: 语音通话记录与逐句转写（ADR0074），只存本机不同步
+        if (from < 22) {
+          await _ensureVoiceCallTables();
+        }
+        // v22 -> v23: 角色壁纸宽窄屏截取
+        if (from < 23) {
+          await _safeAddColumn(
+              'conversations', 'chat_background_framing TEXT');
+        }
       },
       // 只补物理访问索引，不改变表/记录格式或user_version。
       // 已有v16也能获得索引，且回退到此前v16应用无需降级数据库。
-      beforeOpen: (_) => _ensureChatEntryIndexes(),
+      beforeOpen: (_) async {
+        await _ensureChatEntryIndexes();
+        await _ensureAutoReplyClaimCompletion();
+        await _ensureProactiveCallTable();
+      },
     );
   }
 
@@ -430,18 +446,131 @@ CREATE INDEX IF NOT EXISTS message_states_conversation_kind
 ON message_states(conversation_id, kind)''');
   }
 
+  /// 语音通话（ADR0074）：每通电话一行，逐句转写单独存放，不进 messages。
+  /// 聊天里只落一条带 callRecord 的消息指向 call_sessions.id。
+  /// 由 SqliteCallRecordStore 以参数化 SQL 访问；不同步。
+  Future<void> _ensureVoiceCallTables() async {
+    await customStatement('''
+CREATE TABLE IF NOT EXISTS call_sessions (
+  id TEXT PRIMARY KEY NOT NULL,
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  started_at INTEGER NOT NULL,
+  ended_at INTEGER NOT NULL,
+  duration_ms INTEGER NOT NULL
+)''');
+    await customStatement('''
+CREATE INDEX IF NOT EXISTS call_sessions_conversation
+ON call_sessions(conversation_id, started_at)''');
+    await customStatement('''
+CREATE TABLE IF NOT EXISTS call_turns (
+  call_id TEXT NOT NULL REFERENCES call_sessions(id) ON DELETE CASCADE,
+  seq INTEGER NOT NULL,
+  role TEXT NOT NULL,
+  text TEXT NOT NULL,
+  interrupted INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (call_id, seq)
+)''');
+  }
+
   /// 主动回复触发器执行权认领表：前台轮询与后台 WorkManager 发送前
-  /// 必须先 INSERT OR IGNORE 认领，认领失败即另一方已执行。
+  /// 必须先认领，认领失败即另一方正在执行或已送达（见 AutoReplyClaimStore）。
   /// 不走 drift 表定义（仅 raw SQL 访问），避免为单一互斥表引入 codegen。
   Future<void> _ensureAutoReplyClaimTable() async {
     await customStatement('''
 CREATE TABLE IF NOT EXISTS auto_reply_trigger_claims (
   trigger_id TEXT NOT NULL PRIMARY KEY,
   claimed_by TEXT NOT NULL,
-  claimed_at INTEGER NOT NULL
+  claimed_at INTEGER NOT NULL,
+  completed_at INTEGER,
+  message_id TEXT
 )
 ''');
   }
+
+  /// 主动来电记录（方案 12 §13，ProactiveCallLedger）：前台、WorkManager 与
+  /// 通知回调共用的本机互斥表，同认领表只走 raw SQL、每次打开时建表，不升
+  /// schema 版本，也不同步。
+  Future<void> _ensureProactiveCallTable() async {
+    await customStatement('''
+CREATE TABLE IF NOT EXISTS proactive_calls (
+  trigger_id TEXT NOT NULL PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  opening_line TEXT NOT NULL,
+  rang_at INTEGER NOT NULL,
+  answer_until INTEGER NOT NULL,
+  state TEXT NOT NULL,
+  confirmed INTEGER NOT NULL DEFAULT 0,
+  settled_at INTEGER
+)
+''');
+    // Tables from before `confirmed` (2026-10-14): their calls were all
+    // delivered, so they count as confirmed. A duplicate column means another
+    // isolate added it first.
+    final columns = await customSelect(
+      'PRAGMA table_info(proactive_calls)',
+    ).get();
+    if (columns.any((row) => row.data['name'] == 'confirmed')) return;
+    try {
+      await customStatement(
+        'ALTER TABLE proactive_calls '
+        'ADD COLUMN confirmed INTEGER NOT NULL DEFAULT 1',
+      );
+    } on SqliteException catch (error) {
+      if (!error.message.contains('duplicate column')) rethrow;
+    }
+  }
+
+  /// 认领租约（2026-10-12）给旧表补 completed_at 与 message_id：本地互斥表，
+  /// 不升 schema 版本，每次打开时按列是否存在补齐。旧记录视为已完成，不会被
+  /// 接管。
+  Future<void> _ensureAutoReplyClaimCompletion() async {
+    // Same bounded retry as _ensureChatEntryIndexes: the foreground and the
+    // WorkManager isolate may open the database at the same moment.
+    for (var attempt = 0;; attempt++) {
+      try {
+        await transaction(() async {
+          final columns = await customSelect(
+            'PRAGMA table_info(auto_reply_trigger_claims)',
+          ).get();
+          if (columns.isEmpty) return;
+          final names = {for (final row in columns) row.data['name']};
+          if (!names.contains('completed_at')) {
+            await customStatement(
+              'ALTER TABLE auto_reply_trigger_claims '
+              'ADD COLUMN completed_at INTEGER',
+            );
+            await customStatement(
+              'UPDATE auto_reply_trigger_claims SET completed_at = claimed_at',
+            );
+          }
+          if (!names.contains('message_id')) {
+            await customStatement(
+              'ALTER TABLE auto_reply_trigger_claims ADD COLUMN message_id TEXT',
+            );
+          }
+        });
+        return;
+      } on SqliteException catch (error) {
+        // 锁冲突有界重试；另一连接已补好列时，下一轮读到列存在即返回。
+        if ((error.resultCode == 5 || error.resultCode == 6) && attempt < 6) {
+          await Future<void>.delayed(
+            Duration(milliseconds: 50 * (1 << attempt)),
+          );
+          continue;
+        }
+        // 另一个 isolate 抢先补列导致 duplicate column：重新检查一次。
+        final after = await customSelect(
+          'PRAGMA table_info(auto_reply_trigger_claims)',
+        ).get();
+        final names = {for (final row in after) row.data['name']};
+        if (!names.contains('completed_at') || !names.contains('message_id')) {
+          rethrow;
+        }
+        return;
+      }
+    }
+  }
+
 
   Future<void> _safeAddColumn(String table, String columnDef) async {
     try {

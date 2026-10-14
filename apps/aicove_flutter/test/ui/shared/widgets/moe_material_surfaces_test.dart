@@ -54,9 +54,36 @@ void main() {
           ), dark: dark));
           await tester.pumpAndSettle();
           expect(tester.takeException(), isNull);
-          // Every sample here moves with the outer scroll view.
-          expect(find.byType(BackdropFilter), findsNothing);
-          expect(find.byType(AdaptiveGlass), findsNothing);
+          // Inside the outer scroll view surfaces keep the global material
+          // (liquid on the scroll-safe standard shader); the content group
+          // takes one blur under frosted and the liquid lens under glass.
+          expect(
+            find.byType(BackdropFilter),
+            switch (mode) {
+              MoeSurfaceMaterial.solid => findsNothing,
+              MoeSurfaceMaterial.frosted => findsAtLeastNWidgets(2),
+              MoeSurfaceMaterial.liquid => findsNothing,
+            },
+          );
+          expect(
+            find.descendant(
+              of: find.byType(MoeSettingsGroup),
+              matching: find.byType(BackdropFilter),
+            ),
+            mode == MoeSurfaceMaterial.frosted ? findsOneWidget : findsNothing,
+          );
+          final glass = find.byType(AdaptiveGlass);
+          if (mode == MoeSurfaceMaterial.liquid) {
+            expect(glass, findsWidgets);
+            for (final element in glass.evaluate()) {
+              expect(
+                (element.widget as AdaptiveGlass).quality,
+                GlassQuality.standard,
+              );
+            }
+          } else {
+            expect(glass, findsNothing);
+          }
           if (const bool.fromEnvironment('WRITE_MATERIAL_QA')) {
             final boundary = capture.currentContext!.findRenderObject() as RenderRepaintBoundary;
             await tester.runAsync(() async {

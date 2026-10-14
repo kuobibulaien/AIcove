@@ -220,9 +220,12 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
                 ),
               ),
               const SizedBox(width: 8),
-              IconButton(
-                icon: const Icon(Icons.edit, size: 20, color: moeMuted),
-                onPressed: _editName,
+              MoeIconButton(
+                icon: Icons.edit,
+                size: 20,
+                color: moeMuted,
+                tooltip: '修改名称',
+                onTap: _editName,
               ),
             ],
           ),

@@ -1,0 +1,27 @@
+{
+  "messages": [
+    {
+      "role": "system",
+      "content": "你是测试角色。"
+    },
+    {
+      "role": "user",
+      "content": "早上好"
+    },
+    {
+      "role": "assistant",
+      "content": "早呀今天想做什么？"
+    },
+    {
+      "role": "user",
+      "content": "帮我画一只猫"
+    }
+  ],
+  "tools": null,
+  "toolChoice": null,
+  "disableBuiltinWebSearch": false,
+  "boundTools": [],
+  "enabledPluginIds": [],
+  "presetStreamResponse": null,
+  "hasPresetScript": false
+}

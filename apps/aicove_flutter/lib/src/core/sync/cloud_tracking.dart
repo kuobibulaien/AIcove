@@ -15,7 +15,8 @@ const cloudTables = <String, String>{
 /// 本地表）时，旧版本设备仍能收到聊天记录。收到的列多于本机时，接收端会拒绝。
 // 18：conversations 新增 chat_display_style（ADR0047）。
 // 19：conversations 新增 is_hidden（ADR0070）。
-const kCloudRowSchema = 19;
+// 20：conversations 新增 chat_background_framing（壁纸宽窄屏截取）。
+const kCloudRowSchema = 20;
 
 /// 已退役、不再同步的类型（ADR0038）。本地不采集、不上传；
 /// 云端推下来的旧记录只清掉收件箱，不写本地，也不回传删除。

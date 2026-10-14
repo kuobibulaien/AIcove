@@ -5,6 +5,7 @@ import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import '../../theme/tokens.dart';
 import '../../theme/moe_frosted_material.dart';
+import '../effects/smooth_clip.dart';
 import 'moe_liquid_glass.dart';
 import 'moe_surface_motion.dart';
 
@@ -18,6 +19,7 @@ class MoeFloatingSurface extends StatefulWidget {
     this.baseline = MoeMaterialBaseline.component,
     this.blurEnabled,
     this.useLiquid,
+    this.frostedOnly = false,
     this.borderRadius,
     this.solidColor,
     this.border,
@@ -36,6 +38,11 @@ class MoeFloatingSurface extends StatefulWidget {
 
   /// 是否启用液态效果（为 null 时跟随全局设置 [MoeGlassTheme.useLiquidGlass]）
   final bool? useLiquid;
+
+  /// Uses the frosted recipe in the glass level too, with that level's own
+  /// blur and fill. For full-page text backgrounds, where the thin glass tint
+  /// cannot keep text readable and no lens edge is drawn.
+  final bool frostedOnly;
   final BorderRadius? borderRadius;
   final Color? solidColor;
   final BorderSide? border;
@@ -65,12 +72,15 @@ class _MoeFloatingSurfaceState extends State<MoeFloatingSurface> {
     final colors = context.moeColors;
     final glassTheme = MoeGlassTheme.maybeOf(context);
     final highContrast = MediaQuery.maybeHighContrastOf(context) ?? false;
+    final isFrosted =
+        glassTheme?.material == MoeSurfaceMaterial.frosted ||
+        (widget.frostedOnly &&
+            glassTheme?.material == MoeSurfaceMaterial.liquid);
     final isBlurEnabled =
         (blurEnabled ?? glassTheme?.enabled ?? true) &&
-        !moeSurfaceMovesWithContent(context) &&
+        !moeSurfaceMovesWithContent(context, ignoreScrollables: true) &&
         !highContrast &&
         !GlassAccessibilityData.of(context).reduceTransparency;
-    final isFrosted = glassTheme?.material == MoeSurfaceMaterial.frosted;
     final brightness = Theme.of(context).brightness;
     final effectiveSigma = isFrosted
         ? MoeFrostedMaterial.blurSigmaForSetting(
@@ -102,6 +112,32 @@ class _MoeFloatingSurfaceState extends State<MoeFloatingSurface> {
     }
 
     final effectiveRadius = borderRadius ?? BorderRadius.circular(radius);
+    final maxCorner = [
+      effectiveRadius.topLeft.x,
+      effectiveRadius.topRight.x,
+      effectiveRadius.bottomLeft.x,
+      effectiveRadius.bottomRight.x,
+    ].reduce((a, b) => a > b ? a : b);
+    final effectiveSide =
+        border ??
+        (isBlurEnabled
+            ? colors.floatingBorder
+            : BorderSide(
+                color: colors.borderLight.withValues(
+                  alpha: colors.borderLight.a * 0.55,
+                ),
+                width: 0.6,
+              ));
+    final OutlinedBorder surfaceShape = maxCorner > 0 && maxCorner < 48
+        ? moeG2Shape(
+            radius: radius,
+            borderRadius: effectiveRadius,
+            side: effectiveSide,
+          )
+        : RoundedRectangleBorder(
+            borderRadius: effectiveRadius,
+            side: effectiveSide,
+          );
 
     final surfaceMaterial = Material(
       color: isBlurEnabled
@@ -109,33 +145,26 @@ class _MoeFloatingSurfaceState extends State<MoeFloatingSurface> {
                 ? MoeFrostedMaterial.surfaceTint(brightness, fill: tintFill)
                 : colors.glassTintForFill(tintFill))
           : (solidColor ?? colors.componentBackground).withValues(alpha: 1),
-      shape: RoundedRectangleBorder(
-        borderRadius: effectiveRadius,
-        side:
-            border ??
-            (isBlurEnabled
-                ? colors.floatingBorder
-                : BorderSide(
-                    color: colors.borderLight.withValues(
-                      alpha: colors.borderLight.a * 0.55,
-                    ),
-                    width: 0.6,
-                  )),
-      ),
+      shape: surfaceShape,
       child: content,
     );
 
     return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: effectiveRadius,
-        boxShadow: shadows ?? colors.floatingShadows,
+      decoration: ShapeDecoration(
+        shape: surfaceShape.copyWith(side: BorderSide.none),
+        shadows: shadows ?? colors.floatingShadows,
       ),
-      child: ClipRRect(
-        borderRadius: effectiveRadius,
+      child: ClipPath(
+        clipper: ShapeBorderClipper(
+          shape: surfaceShape.copyWith(side: BorderSide.none),
+        ),
         child: Stack(
           fit: StackFit.passthrough,
           children: [
-            if (isBlurEnabled && baseline.blurSigma(effectiveSigma) > 0)
+            // Frosted keeps its filter at zero blur: the vibrancy matrix
+            // still follows the fill.
+            if (isBlurEnabled &&
+                (isFrosted || baseline.blurSigma(effectiveSigma) > 0))
               Positioned.fill(
                 child: IgnorePointer(
                   child: BackdropFilter(

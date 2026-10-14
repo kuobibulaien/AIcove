@@ -35,6 +35,8 @@
 	<array>
 		<string>_aicove-sync._tcp</string>
 	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>和角色语音通话时识别你说的话。</string>
 	<key>NSCameraUsageDescription</key>
 	<string>扫描另一台设备上的局域网配对二维码。</string>
 	<key>NSLocalNetworkUsageDescription</key>

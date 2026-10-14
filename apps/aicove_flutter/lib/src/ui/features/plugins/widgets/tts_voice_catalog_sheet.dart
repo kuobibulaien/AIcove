@@ -295,46 +295,40 @@ class _TtsVoiceCatalogSheetContentState
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (canDelete)
-                  GestureDetector(
-                    onTap: isDeleting ? null : () => _confirmDeleteVoice(voice),
-                    child: MoeButtonSurface(
-                      radius: 999,
-                      child: Padding(
-                        padding: const EdgeInsets.all(8),
-                        child: isDeleting
-                            ? SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: colors.muted,
-                                ),
-                              )
-                            : Icon(
-                                Icons.delete_outline,
-                                size: 20,
-                                color: colors.muted,
-                              ),
+                  if (isDeleting)
+                    Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: colors.muted,
+                        ),
                       ),
+                    )
+                  else
+                    MoeIconButton(
+                      icon: Icons.delete_outline,
+                      size: 20,
+                      padding: const EdgeInsets.all(6),
+                      minTouchTarget: 32,
+                      color: colors.muted,
+                      tooltip: '删除音色',
+                      onTap: () => _confirmDeleteVoice(voice),
                     ),
-                  ),
                 if (!alreadyAdded)
-                  GestureDetector(
+                  MoeIconButton(
+                    icon: Icons.add_circle_outline,
+                    size: 20,
+                    padding: const EdgeInsets.all(6),
+                    minTouchTarget: 32,
+                    color: colors.primary,
+                    tooltip: '添加音色',
                     onTap: () {
                       Navigator.of(context).pop();
                       widget.onVoiceSelected(voice);
                     },
-                    child: MoeButtonSurface(
-                      radius: 999,
-                      child: Padding(
-                        padding: const EdgeInsets.all(8),
-                        child: Icon(
-                          Icons.add_circle_outline,
-                          size: 20,
-                          color: colors.primary,
-                        ),
-                      ),
-                    ),
                   ),
               ],
             )

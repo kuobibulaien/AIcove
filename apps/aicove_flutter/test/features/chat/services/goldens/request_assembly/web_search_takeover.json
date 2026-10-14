@@ -1,0 +1,78 @@
+{
+  "messages": [
+    {
+      "role": "system",
+      "content": "你是测试角色。"
+    },
+    {
+      "role": "user",
+      "content": "早上好"
+    },
+    {
+      "role": "assistant",
+      "content": "早呀今天想做什么？"
+    },
+    {
+      "role": "user",
+      "content": "帮我画一只猫"
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "web_search",
+        "description": "联网搜索网页。需要最新信息、实时事件、你不确定的事实或用户要求查资料时调用。返回若干条结果（标题、链接、发布时间、正文摘录）。query 用一句完整的自然语言描述想找的内容，不要只堆关键词。",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "搜索内容，用自然语言描述理想的网页"
+            },
+            "num_results": {
+              "type": "integer",
+              "description": "返回条数，1~10，默认 5"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "web_fetch",
+        "description": "读取指定网页的正文。搜索结果摘录不够、或用户给了链接需要阅读时调用。一次最多 5 个链接。",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "urls": {
+              "type": "array",
+              "description": "要读取的网页链接列表（http/https）",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "urls"
+          ]
+        }
+      }
+    }
+  ],
+  "toolChoice": null,
+  "disableBuiltinWebSearch": true,
+  "boundTools": [
+    "web_search",
+    "web_fetch"
+  ],
+  "enabledPluginIds": [
+    "web_search"
+  ],
+  "presetStreamResponse": null,
+  "hasPresetScript": false
+}

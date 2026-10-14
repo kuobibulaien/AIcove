@@ -17,7 +17,6 @@ class _AgentApiDirectChatSupport {
     double? temperature,
     double? topP,
     String? token,
-    Map<String, dynamic>? toolPrefs,
     String? providerApiBase,
     String? providerApiKey,
     Map<String, dynamic>? customConfig,
@@ -206,6 +205,7 @@ class _AgentApiDirectChatSupport {
           toolCalls: result.toolCalls,
           hiddenThoughtParts: result.hiddenThoughtParts,
           rawResponse: result.rawResponse,
+          rawFinishReason: result.rawFinishReason,
         );
       }
 

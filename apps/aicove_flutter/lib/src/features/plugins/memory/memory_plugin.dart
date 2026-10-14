@@ -6,7 +6,9 @@ import '../../../core/database/database_provider.dart';
 import '../../chat/services/chat_history_store.dart';
 import '../../memory/application/memory_retrieval.dart';
 import '../../memory/providers/memory_providers.dart';
+import '../../agent_plugins/aicove_plugin.dart';
 import '../domain/index.dart';
+import 'memory_agent_plugin.dart';
 
 /// 长期记忆插件：只负责在每轮请求前注入该角色的记忆。
 ///
@@ -29,9 +31,11 @@ class MemoryPlugin extends BasePlugin {
   bool get enabled => true;
 
   @override
-  Future<String?> getSystemPrompt({
+  AicovePlugin get agentPlugin => memoryAgentPlugin(this);
+
+  /// The role's memory for this request; null without a request owner.
+  Future<String?> buildMemoryPrompt({
     String? userMessage,
-    bool supportsToolCalling = false,
     String? conversationId,
   }) async {
     // 缺少请求作用域时失败关闭；活动页面可能已经切到别的角色。
@@ -61,10 +65,6 @@ class MemoryPlugin extends BasePlugin {
           },
         );
   }
-
-  @override
-  Future<PluginProcessResult> processResponse(String text) async =>
-      PluginProcessResult(processedText: text, events: const []);
 
   Future<String> _roleLabel(String ownerId) async {
     final row = await _ref.read(conversationRepositoryProvider).getById(ownerId);

@@ -111,11 +111,16 @@ class Private:
         return found
 
 
-def scan_tree(root, private):
+def scan_tree(root, private, bundle=False):
     hits = {}
     for path in root.rglob('*'):
         if path.is_file() and not path.is_symlink() and '.git' not in path.relative_to(root).parts:
-            found = private.hits(path.read_bytes())
+            data = path.read_bytes()
+            # In an app bundle only the Dart code (App.framework) embeds our build paths;
+            # third-party native libs carry their own CI paths such as /path/to/home/.
+            third_party = (bundle and data[:4] in MACHO_MAGIC
+                           and 'App.framework' not in path.relative_to(root).parts)
+            found = private.hits(data, include_users_dir=not third_party)
             if found:
                 hits[str(path.relative_to(root))] = found
     return hits
@@ -339,7 +344,7 @@ class Release:
                                          stderr=subprocess.DEVNULL)
         if signed != entitlements:
             sys.exit('build: entitlements changed while re-signing the Mac app')
-        hits = scan_tree(app, self.private)
+        hits = scan_tree(app, self.private, bundle=True)
         if hits:
             sys.exit(f'build: Mac app privacy scan failed: {hits}')
         run(['ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', str(app), str(self.assets / self.zip_name)])
@@ -355,7 +360,7 @@ class Release:
         app.parent.mkdir(parents=True)
         run(['ditto', str(source), str(app)])
         strip_macho(app)
-        hits = scan_tree(app, self.private)
+        hits = scan_tree(app, self.private, bundle=True)
         if hits:
             sys.exit(f'build: iOS app privacy scan failed: {hits}')
         run(['ditto', '-c', '-k', '--norsrc', '--keepParent', 'Payload', str(self.assets / self.ipa_name)], cwd=root)

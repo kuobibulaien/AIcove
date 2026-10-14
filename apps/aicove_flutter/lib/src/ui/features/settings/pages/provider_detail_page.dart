@@ -514,15 +514,17 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage>
           title: '渠道详情',
           showBackButton: true,
           actions: [
-            IconButton(
-              icon: Icon(Icons.speed_outlined, color: colors.text),
+            MoeIconButton(
+              icon: Icons.speed_outlined,
+              color: colors.text,
               tooltip: '测试模型',
-              onPressed: () => _testConnection(provider),
+              onTap: () => _testConnection(provider),
             ),
-            IconButton(
-              icon: Icon(Icons.delete_outline, color: colors.text),
+            MoeIconButton(
+              icon: Icons.delete_outline,
+              color: colors.text,
               tooltip: '删除',
-              onPressed: () => _deleteProvider(provider),
+              onTap: () => _deleteProvider(provider),
             ),
           ],
         ),

@@ -150,6 +150,8 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
     bool clearChatBackgroundMaskOpacity = false,
     double? chatBackgroundBlurSigma,
     bool clearChatBackgroundBlurSigma = false,
+    String? chatBackgroundFraming,
+    bool clearChatBackgroundFraming = false,
     String? selfAddress,
     bool clearSelfAddress = false,
     String? addressUser,
@@ -179,6 +181,14 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
             characterImage: current.characterImage,
             avatarUrl: current.avatarUrl,
           );
+    String? nextFraming(Conversation c) => nextChatBackgroundFraming(
+          c,
+          image: chatBackgroundImage,
+          clearImage: clearChatBackgroundImage,
+          framing: chatBackgroundFraming,
+          clearFraming: clearChatBackgroundFraming,
+        );
+
     final nextUpdatedAt = DateTime.now();
     final nextConversation = current?.copyWith(
       displayName: displayName ?? current.displayName,
@@ -195,6 +205,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
       chatBackgroundBlurSigma: clearChatBackgroundBlurSigma
           ? null
           : (chatBackgroundBlurSigma ?? current.chatBackgroundBlurSigma),
+      chatBackgroundFraming: nextFraming(current),
       selfAddress:
           clearSelfAddress ? null : (selfAddress ?? current.selfAddress),
       addressUser:
@@ -227,6 +238,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
               chatBackgroundBlurSigma: clearChatBackgroundBlurSigma
                   ? null
                   : (chatBackgroundBlurSigma ?? c.chatBackgroundBlurSigma),
+              chatBackgroundFraming: nextFraming(c),
               selfAddress:
                   clearSelfAddress ? null : (selfAddress ?? c.selfAddress),
               addressUser:
@@ -487,3 +499,18 @@ final activeConversationProvider = Provider<Conversation?>((ref) {
   }
   return ref.watch(resolvedConversationByIdProvider(fallbackId));
 });
+
+/// 编辑后的壁纸截取。截取只对当前图片有意义：清除图片，或换了图片又没给新截取
+/// 时一并复位。
+String? nextChatBackgroundFraming(
+  Conversation current, {
+  String? image,
+  bool clearImage = false,
+  String? framing,
+  bool clearFraming = false,
+}) {
+  if (clearFraming || clearImage) return null;
+  if (framing != null) return framing;
+  final imageChanged = image != null && image != current.chatBackgroundImage;
+  return imageChanged ? null : current.chatBackgroundFraming;
+}

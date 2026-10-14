@@ -101,8 +101,8 @@ class _MoeListTileState extends State<MoeListTile> {
     
     // 解析样式
     final bgColor = widget.backgroundColor ?? Colors.transparent;
-    final selectedBg = widget.selectedBackgroundColor ?? colors.focus.withValues(alpha: 0.1);
-    final pressedBg = widget.pressedBackgroundColor ?? colors.surfaceAlt.withValues(alpha: 0.5);
+    final selectedBg = widget.selectedBackgroundColor ?? colors.focus.withValues(alpha: 0.12);
+    final pressedBg = widget.pressedBackgroundColor ?? colors.text.withValues(alpha: 0.06);
     final padding = widget.contentPadding ?? const EdgeInsets.symmetric(horizontal: 16, vertical: 12);
     final leadingWidth = widget.minLeadingWidth ?? 48;
     final gap = widget.horizontalGap ?? 12;

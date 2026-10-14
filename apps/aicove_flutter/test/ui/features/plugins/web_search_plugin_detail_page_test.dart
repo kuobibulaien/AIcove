@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:aicove_flutter/src/features/plugins/plugin_providers.dart';
 import 'package:aicove_flutter/src/features/plugins/web_search/web_search_config.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/web_search_plugin_detail_page.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -140,8 +141,9 @@ void main() {
       await tester.tap(
         find.descendant(
           of: find.byKey(const ValueKey('web-search-replace-builtin')),
-          matching: find.byType(Switch),
+          matching: find.byType(MoeSwitch),
         ),
+        warnIfMissed: false,
       );
       await tester.pumpAndSettle();
       expect(

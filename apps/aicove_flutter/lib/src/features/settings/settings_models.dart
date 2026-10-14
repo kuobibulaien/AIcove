@@ -15,7 +15,13 @@ import '../../core/prompts/prompt_builtin_defaults.g.dart';
 import '../../ui/theme/tokens.dart';
 
 export '../../ui/theme/moe_wallpaper.dart'
-    show GlobalWallpaper, GlobalWallpaperSlot, kDefaultCustomWallpaperMask;
+    show
+        CustomWallpaper,
+        GlobalWallpaper,
+        GlobalWallpaperSlot,
+        WallpaperStyle,
+        kDefaultCustomWallpaperMask,
+        kMaxWallpaperBlur;
 
 export '../../core/api/thinking/thinking_level.dart' show ThinkingLevel;
 export '../chat/domain/chat_display_policy.dart' show ChatDisplayStyle;
@@ -406,12 +412,11 @@ class AutoReplySettings {
   final String quietHoursEnd;
   final bool allowExactAlarm;
   final bool allowAiSetReminders;
-  final String analyzerPrompt;
+
+  /// 允许角色主动打电话（方案 12 §4.8）。默认关闭，避免打扰。
+  final bool allowProactiveCalls;
   final String? analyzerModel;
   final String? analyzerProvider;
-
-  static const String defaultAnalyzerPrompt =
-      PromptBuiltinDefaults.autoReplyAnalyzerDefault;
 
   const AutoReplySettings({
     this.dailyLimit = 3,
@@ -421,7 +426,7 @@ class AutoReplySettings {
     this.quietHoursEnd = '08:00',
     this.allowExactAlarm = false,
     this.allowAiSetReminders = true,
-    this.analyzerPrompt = defaultAnalyzerPrompt,
+    this.allowProactiveCalls = false,
     this.analyzerModel,
     this.analyzerProvider,
   });
@@ -434,7 +439,7 @@ class AutoReplySettings {
     String? quietHoursEnd,
     bool? allowExactAlarm,
     bool? allowAiSetReminders,
-    String? analyzerPrompt,
+    bool? allowProactiveCalls,
     String? analyzerModel,
     String? analyzerProvider,
     bool clearAnalyzerModel = false,
@@ -448,7 +453,7 @@ class AutoReplySettings {
       quietHoursEnd: quietHoursEnd ?? this.quietHoursEnd,
       allowExactAlarm: allowExactAlarm ?? this.allowExactAlarm,
       allowAiSetReminders: allowAiSetReminders ?? this.allowAiSetReminders,
-      analyzerPrompt: analyzerPrompt ?? this.analyzerPrompt,
+      allowProactiveCalls: allowProactiveCalls ?? this.allowProactiveCalls,
       analyzerModel: clearAnalyzerModel
           ? null
           : (analyzerModel ?? this.analyzerModel),
@@ -466,7 +471,7 @@ class AutoReplySettings {
     'quiet_hours_end': quietHoursEnd,
     'allow_exact_alarm': allowExactAlarm,
     'allow_ai_set_reminders': allowAiSetReminders,
-    'analyzer_prompt': analyzerPrompt,
+    'allow_proactive_calls': allowProactiveCalls,
     'analyzer_model': analyzerModel,
     'analyzer_provider': analyzerProvider,
   };
@@ -492,14 +497,6 @@ class AutoReplySettings {
       return v;
     }
 
-    String normalizeAnalyzerPrompt(dynamic value) {
-      final prompt = value is String ? value.trim() : '';
-      if (prompt.isEmpty) {
-        return defaultAnalyzerPrompt;
-      }
-      return prompt;
-    }
-
     return AutoReplySettings(
       dailyLimit: clampInt(json['daily_limit'] as num?, 1, 10, 3),
       minIntervalMinutes: clampInt(
@@ -516,7 +513,7 @@ class AutoReplySettings {
       quietHoursEnd: normalizeTime(json['quiet_hours_end'] as String?, '08:00'),
       allowExactAlarm: json['allow_exact_alarm'] == true,
       allowAiSetReminders: json['allow_ai_set_reminders'] != false,
-      analyzerPrompt: normalizeAnalyzerPrompt(json['analyzer_prompt']),
+      allowProactiveCalls: json['allow_proactive_calls'] == true,
       analyzerModel: json['analyzer_model'] as String?,
       analyzerProvider: json['analyzer_provider'] as String?,
     );
@@ -973,11 +970,11 @@ class ModelConfig {
 
 /// 全局字体缩放上下限
 const double kMinTextScaleFactor = 0.8;
-const double kMaxTextScaleFactor = 1.5;
+const double kMaxTextScaleFactor = 1.2;
 
 /// 全局界面缩放上下限
 const double kMinUiScaleFactor = 0.85;
-const double kMaxUiScaleFactor = 1.20;
+const double kMaxUiScaleFactor = 1.15;
 
 /// 图片预览大小缩放上下限
 const double kMinImagePreviewScale = 0.5;
@@ -1057,11 +1054,35 @@ class AppSettings {
   /// 未自定义背景的界面默认使用的全局壁纸。
   final GlobalWallpaper globalWallpaper;
 
-  /// 自定义全局壁纸在本机的图片路径（仅本机，不同步）。
-  final String? globalWallpaperCustomImage;
+  /// 用户添加的自定义壁纸，按添加顺序排列（仅本机，不同步）。
+  final List<CustomWallpaper> globalWallpaperCustoms;
 
-  /// 自定义全局壁纸的底色遮罩不透明度（0..1）。
-  final double globalWallpaperMask;
+  /// [globalWallpaper] 为自定义时选中的那张的 id。
+  final String? globalWallpaperCustomId;
+
+  /// 每张壁纸的遮罩与模糊：内置壁纸按 value、自定义壁纸按 id 存。
+  final Map<String, WallpaperStyle> globalWallpaperStyles;
+
+  /// 当前选中的自定义壁纸；没选自定义或那张已删除时为 null。
+  CustomWallpaper? get activeCustomWallpaper {
+    if (globalWallpaper != GlobalWallpaper.custom) return null;
+    for (final item in globalWallpaperCustoms) {
+      if (item.id == globalWallpaperCustomId) return item;
+    }
+    return null;
+  }
+
+  /// 某张壁纸的调节，没调过时用默认值。
+  WallpaperStyle wallpaperStyleFor(String key, {required bool custom}) =>
+      globalWallpaperStyles[key] ?? WallpaperStyle.defaultFor(custom: custom);
+
+  /// 当前壁纸的调节。
+  WallpaperStyle get activeWallpaperStyle {
+    final custom = activeCustomWallpaper;
+    return custom != null
+        ? wallpaperStyleFor(custom.id, custom: true)
+        : wallpaperStyleFor(globalWallpaper.value, custom: false);
+  }
   final ChatBackgroundColor chatBackgroundColor;
   final bool isDarkMode;
   final bool useSystemTheme;
@@ -1078,8 +1099,14 @@ class AppSettings {
   /// 玻璃厚度的兼容存储值（sigma）；界面与渲染映射为三个档位。
   final double glassBlurSigma;
 
+  /// 模糊材质的模糊度（sigma），与玻璃材质的 [glassBlurSigma] 分开存储。
+  final double frostedBlurSigma;
+
   /// 高级材质底色填充程度（0..1），与模糊度独立调节。
   final double glassTintFill;
+
+  /// 模糊材质的底色填充（0..1），与玻璃材质的 [glassTintFill] 分开存储。
+  final double frostedTintFill;
 
   /// 是否使用液态玻璃材质（透镜物理折射，关闭时为常规平整毛玻璃）
   final bool useLiquidGlass;
@@ -1137,8 +1164,9 @@ class AppSettings {
     required this.autoReplySettings,
     required this.globalBackgroundColor,
     this.globalWallpaper = GlobalWallpaper.none,
-    this.globalWallpaperCustomImage,
-    this.globalWallpaperMask = kDefaultCustomWallpaperMask,
+    this.globalWallpaperCustoms = const [],
+    this.globalWallpaperCustomId,
+    this.globalWallpaperStyles = const {},
     required this.chatBackgroundColor,
     required this.isDarkMode,
     required this.useSystemTheme,
@@ -1148,7 +1176,9 @@ class AppSettings {
     this.expandAudioText = true,
     this.glassEffectEnabled = true,
     this.glassBlurSigma = kDefaultGlassBlurSigma,
+    this.frostedBlurSigma = kDefaultGlassBlurSigma,
     this.glassTintFill = kDefaultGlassTintFill,
+    this.frostedTintFill = kDefaultGlassTintFill,
     this.useLiquidGlass = false,
     this.defaultChatModels = const <String>[],
     this.skipVisionCompatDialog = false,
@@ -1208,8 +1238,9 @@ class AppSettings {
     AutoReplySettings? autoReplySettings,
     GlobalBackgroundColor? globalBackgroundColor,
     GlobalWallpaper? globalWallpaper,
-    String? globalWallpaperCustomImage,
-    double? globalWallpaperMask,
+    List<CustomWallpaper>? globalWallpaperCustoms,
+    String? globalWallpaperCustomId,
+    Map<String, WallpaperStyle>? globalWallpaperStyles,
     ChatBackgroundColor? chatBackgroundColor,
     bool? isDarkMode,
     bool? useSystemTheme,
@@ -1219,7 +1250,9 @@ class AppSettings {
     bool? expandAudioText,
     bool? glassEffectEnabled,
     double? glassBlurSigma,
+    double? frostedBlurSigma,
     double? glassTintFill,
+    double? frostedTintFill,
     bool? useLiquidGlass,
     List<String>? defaultChatModels,
     bool? skipVisionCompatDialog,
@@ -1263,9 +1296,11 @@ class AppSettings {
     autoReplySettings: autoReplySettings ?? this.autoReplySettings,
     globalBackgroundColor: globalBackgroundColor ?? this.globalBackgroundColor,
     globalWallpaper: globalWallpaper ?? this.globalWallpaper,
-    globalWallpaperCustomImage:
-        globalWallpaperCustomImage ?? this.globalWallpaperCustomImage,
-    globalWallpaperMask: globalWallpaperMask ?? this.globalWallpaperMask,
+    globalWallpaperCustoms:
+        globalWallpaperCustoms ?? this.globalWallpaperCustoms,
+    globalWallpaperCustomId:
+        globalWallpaperCustomId ?? this.globalWallpaperCustomId,
+    globalWallpaperStyles: globalWallpaperStyles ?? this.globalWallpaperStyles,
     chatBackgroundColor: chatBackgroundColor ?? this.chatBackgroundColor,
     isDarkMode: isDarkMode ?? this.isDarkMode,
     useSystemTheme: useSystemTheme ?? this.useSystemTheme,
@@ -1275,7 +1310,9 @@ class AppSettings {
     expandAudioText: expandAudioText ?? this.expandAudioText,
     glassEffectEnabled: glassEffectEnabled ?? this.glassEffectEnabled,
     glassBlurSigma: glassBlurSigma ?? this.glassBlurSigma,
+    frostedBlurSigma: frostedBlurSigma ?? this.frostedBlurSigma,
     glassTintFill: glassTintFill ?? this.glassTintFill,
+    frostedTintFill: frostedTintFill ?? this.frostedTintFill,
     useLiquidGlass: useLiquidGlass ?? this.useLiquidGlass,
     defaultChatModels: defaultChatModels ?? this.defaultChatModels,
     skipVisionCompatDialog:

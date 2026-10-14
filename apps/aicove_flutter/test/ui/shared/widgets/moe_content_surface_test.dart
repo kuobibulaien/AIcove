@@ -1,5 +1,6 @@
 import 'package:aicove_flutter/src/ui/shared/effects/smooth_clip.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
+import 'package:aicove_flutter/src/ui/theme/moe_frosted_material.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 import 'package:figma_squircle/figma_squircle.dart';
 import 'package:flutter/material.dart';
@@ -11,6 +12,8 @@ Widget _wrap({
   bool dark = false,
   bool glassEnabled = false,
   bool liquid = false,
+  double blurSigma = 16,
+  double tintFill = kDefaultGlassTintFill,
   bool highContrast = false,
   bool reduceTransparency = false,
 }) {
@@ -22,7 +25,8 @@ Widget _wrap({
     ),
     builder: (context, child) => MoeGlassTheme(
       enabled: glassEnabled,
-      blurSigma: 16,
+      blurSigma: blurSigma,
+      tintFill: tintFill,
       useLiquidGlass: liquid,
       child: MediaQuery(
         data: MediaQuery.of(context).copyWith(highContrast: highContrast),
@@ -50,36 +54,65 @@ Material _surfaceMaterial(WidgetTester tester) {
 void main() {
   tearDown(() => MoeLiquidGlassService.setMockState());
 
-  for (final mode in MoeSurfaceMaterial.values) {
-    testWidgets('default surface stays opaque in $mode', (tester) async {
-      MoeLiquidGlassService.setMockState(available: true);
-      await tester.pumpWidget(
-        _wrap(
-          glassEnabled: mode != MoeSurfaceMaterial.solid,
-          liquid: mode == MoeSurfaceMaterial.liquid,
-          child: const MoeContentSurface(child: Text('内容')),
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(find.byType(BackdropFilter), findsNothing);
-      expect(find.byType(AdaptiveGlass), findsNothing);
-      expect(find.byType(MoeLiquidGlass), findsNothing);
-      expect(tester.takeException(), isNull);
-    });
-  }
+  testWidgets('solid mode stays opaque componentBackground', (tester) async {
+    await tester.pumpWidget(
+      _wrap(child: const MoeContentSurface(child: Text('内容'))),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(BackdropFilter), findsNothing);
+    expect(
+      _surfaceMaterial(tester).color,
+      MoeColors.light().componentBackground,
+    );
+  });
 
   for (final dark in [false, true]) {
-    testWidgets('honors componentBackground dark=$dark', (tester) async {
-      final colors = dark ? MoeColors.dark() : MoeColors.light();
-      await tester.pumpWidget(
-        _wrap(dark: dark, child: const MoeContentSurface(child: Text('内容'))),
-      );
-      await tester.pumpAndSettle();
-      expect(_surfaceMaterial(tester).color, colors.componentBackground);
-    });
+    for (final liquid in [false, true]) {
+      testWidgets('global material dark=$dark liquid=$liquid', (tester) async {
+        MoeLiquidGlassService.setMockState(available: true);
+        final brightness = dark ? Brightness.dark : Brightness.light;
+        await tester.pumpWidget(
+          _wrap(
+            dark: dark,
+            glassEnabled: true,
+            liquid: liquid,
+            blurSigma: 32,
+            tintFill: 0.8,
+            child: const MoeContentSurface(child: Text('内容')),
+          ),
+        );
+        await tester.pumpAndSettle();
+        if (liquid) {
+          // Glass matches the floating bars: component blur and glass rim.
+          final glass = tester.widget<MoeLiquidGlass>(
+            find.byType(MoeLiquidGlass),
+          );
+          expect(glass.baseline, MoeMaterialBaseline.component);
+          expect(glass.border, isNull);
+          expect(find.byType(AdaptiveGlass), findsOneWidget);
+          expect(find.text('内容'), findsOneWidget);
+        } else {
+          expect(find.byType(BackdropFilter), findsOneWidget);
+          expect(find.byType(MoeLiquidGlass), findsNothing);
+          expect(
+            tester.widget<BackdropFilter>(find.byType(BackdropFilter)).filter,
+            MoeFrostedMaterial.surfaceFilter(
+              brightness,
+              sigma: MoeFrostedMaterial.blurSigmaForSetting(32),
+              fill: 0.8,
+            ),
+          );
+          expect(
+            _surfaceMaterial(tester).color,
+            MoeFrostedMaterial.surfaceTint(brightness, fill: 0.8),
+          );
+        }
+        expect(tester.takeException(), isNull);
+      });
+    }
   }
 
-  testWidgets('explicit color alpha is honored without blur', (tester) async {
+  testWidgets('explicit color stays a plain fill without blur', (tester) async {
     const color = Color(0x80123456);
     await tester.pumpWidget(
       _wrap(
@@ -88,70 +121,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    expect(find.byType(BackdropFilter), findsNothing);
     expect(_surfaceMaterial(tester).color, color);
   });
-
-  testWidgets('blurSigma 6 creates exactly one backdrop filter', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      _wrap(
-        glassEnabled: true,
-        child: const MoeContentSurface(
-          blurSigma: 6,
-          color: Color(0x80123456),
-          child: Text('内容'),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.byType(BackdropFilter), findsOneWidget);
-    final filter = tester.widget<BackdropFilter>(
-      find.byType(BackdropFilter),
-    );
-    expect(filter.filter.toString(), contains('6.0'));
-    expect(_surfaceMaterial(tester).color, const Color(0x80123456));
-  });
-
-  testWidgets('blur sigma clamps to kMaxContentSurfaceBlurSigma', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      _wrap(
-        glassEnabled: true,
-        child: const MoeContentSurface(blurSigma: 24, child: Text('内容')),
-      ),
-    );
-    await tester.pumpAndSettle();
-    final filter = tester.widget<BackdropFilter>(
-      find.byType(BackdropFilter),
-    );
-    expect(filter.filter.toString(), contains('$kMaxContentSurfaceBlurSigma'));
-  });
-
-  for (final (name, highContrast, reduceTransparency, glassEnabled) in [
-    ('high contrast', true, false, true),
-    ('reduce transparency', false, true, true),
-    ('global glass disabled', false, false, false),
-  ]) {
-    testWidgets('blur suppressed under $name', (tester) async {
-      await tester.pumpWidget(
-        _wrap(
-          glassEnabled: glassEnabled,
-          highContrast: highContrast,
-          reduceTransparency: reduceTransparency,
-          child: const MoeContentSurface(
-            blurSigma: 6,
-            color: Color(0x80123456),
-            child: Text('内容'),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(find.byType(BackdropFilter), findsNothing);
-      expect(_surfaceMaterial(tester).color!.a, 1.0);
-    });
-  }
 
   for (final (name, highContrast, reduceTransparency) in [
     ('high contrast', true, false),
@@ -160,58 +132,35 @@ void main() {
     testWidgets('accessibility $name forces opaque without blur', (
       tester,
     ) async {
-      await tester.pumpWidget(
-        _wrap(
-          glassEnabled: true,
-          highContrast: highContrast,
-          reduceTransparency: reduceTransparency,
-          child: const MoeContentSurface(
-            color: Color(0x80123456),
-            child: Text('内容'),
+      for (final color in [null, const Color(0x80123456)]) {
+        await tester.pumpWidget(
+          _wrap(
+            glassEnabled: true,
+            highContrast: highContrast,
+            reduceTransparency: reduceTransparency,
+            child: MoeContentSurface(color: color, child: const Text('内容')),
           ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(find.byType(BackdropFilter), findsNothing);
-      expect(_surfaceMaterial(tester).color!.a, 1.0);
+        );
+        await tester.pumpAndSettle();
+        expect(find.byType(BackdropFilter), findsNothing);
+        expect(_surfaceMaterial(tester).color!.a, 1.0);
+      }
     });
   }
-
-  testWidgets('global glass disabled alone keeps explicit alpha', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      _wrap(
-        glassEnabled: false,
-        child: const MoeContentSurface(
-          color: Color(0x80123456),
-          child: Text('内容'),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.byType(BackdropFilter), findsNothing);
-    expect(_surfaceMaterial(tester).color, const Color(0x80123456));
-  });
 
   testWidgets('child TextField state survives blur and global mode toggles', (
     tester,
   ) async {
     MoeLiquidGlassService.setMockState(available: true);
     final mode = ValueNotifier(MoeSurfaceMaterial.solid);
-    final blur = ValueNotifier(0.0);
     addTearDown(mode.dispose);
-    addTearDown(blur.dispose);
     await tester.pumpWidget(
       ValueListenableBuilder(
-        valueListenable: blur,
-        builder: (_, sigma, __) => ValueListenableBuilder(
-          valueListenable: mode,
-          builder: (_, value, __) => _wrap(
-            glassEnabled: value != MoeSurfaceMaterial.solid,
-            liquid: value == MoeSurfaceMaterial.liquid,
-            child: MoeContentSurface(blurSigma: sigma, child: const _Draft()),
-          ),
+        valueListenable: mode,
+        builder: (_, value, __) => _wrap(
+          glassEnabled: value != MoeSurfaceMaterial.solid,
+          liquid: value == MoeSurfaceMaterial.liquid,
+          child: const MoeContentSurface(child: _Draft()),
         ),
       ),
     );
@@ -223,17 +172,14 @@ void main() {
       MoeSurfaceMaterial.solid,
     ]) {
       mode.value = value;
-      for (final sigma in [6.0, 0.0]) {
-        blur.value = sigma;
-        await tester.pumpAndSettle();
-        expect(tester.state(find.byType(_Draft)), same(original));
-        expect(find.text('未保存的草稿'), findsOneWidget);
-        expect(
-          tester.widget<TextField>(find.byType(TextField)).focusNode!.hasFocus,
-          isTrue,
-        );
-        expect(tester.takeException(), isNull);
-      }
+      await tester.pumpAndSettle();
+      expect(tester.state(find.byType(_Draft)), same(original));
+      expect(find.text('未保存的草稿'), findsOneWidget);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).focusNode!.hasFocus,
+        isTrue,
+      );
+      expect(tester.takeException(), isNull);
     }
   });
 
@@ -249,10 +195,7 @@ void main() {
         child: const SizedBox(
           width: 100,
           height: 100,
-          child: MoeContentSurface(
-            borderRadius: radius,
-            child: Text('内容'),
-          ),
+          child: MoeContentSurface(borderRadius: radius, child: Text('内容')),
         ),
       ),
     );
@@ -263,9 +206,7 @@ void main() {
     final rect = tester.getRect(find.byType(MoeContentSurface));
     final local = Rect.fromLTWH(0, 0, rect.width, rect.height);
     final path = (material.shape as SmoothRectangleBorder).getOuterPath(local);
-    final expectedPath = moeG2Shape(
-      borderRadius: radius,
-    ).getOuterPath(local);
+    final expectedPath = moeG2Shape(borderRadius: radius).getOuterPath(local);
     expect(path.getBounds(), expectedPath.getBounds());
     for (final point in [
       const Offset(2, 2),
@@ -296,10 +237,7 @@ void main() {
       Rect.fromLTWH(0, 0, rect.width, rect.height),
     );
     expect(path.contains(const Offset(0.5, 0.5)), isTrue);
-    expect(
-      path.getBounds(),
-      Rect.fromLTWH(0, 0, rect.width, rect.height),
-    );
+    expect(path.getBounds(), Rect.fromLTWH(0, 0, rect.width, rect.height));
   });
 
   testWidgets('border and shadows share the clip and material shape', (

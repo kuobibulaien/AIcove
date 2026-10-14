@@ -48,7 +48,16 @@ class CustomBottomNav extends StatelessWidget {
         ),
       ),
     );
-    if (MoeSurfaceGroup.contains(context)) return content;
+    if (MoeSurfaceGroup.contains(context)) {
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border(
+            top: BorderSide(color: colors.divider, width: borderWidth),
+          ),
+        ),
+        child: content,
+      );
+    }
     return MoeFloatingSurface(radius: 0, shadows: const [], child: content);
   }
 }

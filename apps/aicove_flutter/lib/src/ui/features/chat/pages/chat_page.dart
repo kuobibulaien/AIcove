@@ -39,6 +39,8 @@ import '../../../../features/chat/domain/message.dart';
 import '../../../../features/chat/presentation/widgets/composer.dart';
 import '../../../../features/chat/domain/persona_prompt_codec.dart';
 import '../../../../features/plugins/image/drawing_preset_provider.dart';
+import '../../../../features/plugins/plugin_providers.dart'
+    show ttsPluginConfigProvider;
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../features/settings/app_settings.dart';
@@ -58,6 +60,12 @@ import '../widgets/topic_compaction_button.dart';
 import '../widgets/frontend_message_probe.dart';
 import '../widgets/chat_viewport_controller.dart';
 import '../widgets/chat_wallpaper_background.dart';
+import '../../voice_call/pages/voice_call_page.dart';
+import '../../voice_call/widgets/voice_call_floating_window.dart';
+import '../../voice_call/widgets/voice_call_live_messages.dart';
+import '../../../../features/voice_call/application/active_voice_call.dart';
+import '../../../../features/voice_call/providers/voice_call_providers.dart'
+    show ActiveVoiceCallNotifier, activeVoiceCallProvider;
 
 const Duration kChatPageImagePrecacheDelay = Duration(milliseconds: 180);
 const Duration kChatPageUnreadClearDelay = Duration(milliseconds: 160);
@@ -203,26 +211,14 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   );
 
   Future<bool> _confirmAction(String title, String message) async =>
-      await showDialog<bool>(
+      await showMeoTalkDialog(
         context: context,
         useRootNavigator: false,
-        builder: (ctx) => AlertDialog(
-          title: Text(title),
-          content: Text(message),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: Text(
-                '确定',
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
-            ),
-          ],
-        ),
+        title: title,
+        content: Text(message),
+        cancelText: '取消',
+        confirmText: '确定',
+        isDanger: true,
       ) ==
       true;
 
@@ -396,6 +392,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           onTap: () => MoeWorkspace.open(
             context,
             ChatTavernPresetPage(conversationId: conv.id),
+          ),
+        ),
+        MoePopupMenuItem(
+          label: '压缩并开启新话题',
+          onTap: () => showTopicCompactionDialog(
+            context,
+            ref,
+            ownerId: conv.id,
+            isGenerating: ref.read(sendingProvider),
           ),
         ),
         MoePopupMenuItem(
@@ -593,6 +598,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _modelFailoverPromptController = ref.read(
       modelFailoverPromptProvider.notifier,
     );
+    _voiceCalls = ref.read(activeVoiceCallProvider.notifier);
     final targetId = widget.conversationId;
     if (targetId == null) return;
     _startEntrySideEffects(targetId);
@@ -754,6 +760,66 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _viewportController.onUserSend();
   }
 
+  late final ActiveVoiceCallNotifier _voiceCalls;
+  ActiveVoiceCall? _boundCall;
+  List<Message> _voiceCallMessages = const <Message>[];
+
+  /// 订阅当前通话：逐句记录变化时刷新临时气泡与悬浮窗。
+  void _bindVoiceCall(ActiveVoiceCall? call) {
+    if (identical(call, _boundCall)) return;
+    _boundCall?.removeListener(_onVoiceCallChanged);
+    _boundCall = call;
+    call?.addListener(_onVoiceCallChanged);
+    _voiceCallMessages = call == null
+        ? const <Message>[]
+        : voiceCallLiveMessages(call);
+  }
+
+  void _onVoiceCallChanged() {
+    final call = _boundCall;
+    if (!mounted || call == null) return;
+    final next = voiceCallLiveMessages(call);
+    final previous = _voiceCallMessages;
+    final changed =
+        next.length != previous.length ||
+        !next.every((m) => previous.any((p) => p.id == m.id));
+    setState(() {
+      // 列表按引用判断临时消息是否变化，没变就沿用原列表。
+      if (changed) _voiceCallMessages = next;
+    });
+    if (next.length > previous.length) _forceChatListToBottom();
+  }
+
+  /// 这个聊天里收成悬浮窗、正在打字的通话；挂断收尾中不再接收输入。
+  ActiveVoiceCall? _typingVoiceCall(String? conversationId) {
+    final call = _boundCall;
+    if (call == null || !call.minimized || call.ending) return null;
+    return call.conversationId == conversationId ? call : null;
+  }
+
+  void _openVoiceCall(Conversation conv) {
+    final current = ref.read(activeVoiceCallProvider);
+    if (current != null && current.conversationId != conv.id) {
+      MoeToast.brief(context, '正在和别的角色通话');
+      return;
+    }
+    final call = _voiceCalls.start(conv);
+    // 从悬浮窗回来：输入换回语音。
+    call.restore();
+    MoeWorkspace.open(context, VoiceCallPage(conversation: conv, call: call));
+  }
+
+  /// 通话打字模式下，输入框的文字只进通话，不进主对话。
+  bool _sendToVoiceCall(ActiveVoiceCall call, String text) {
+    final sent = call.sendText(text);
+    if (sent) {
+      _forceChatListToBottom();
+    } else if (mounted) {
+      MoeToast.brief(context, '通话还没接通，稍等一下');
+    }
+    return sent;
+  }
+
   void _showSendingInProgressToast() {
     MoeToast.brief(context, 'Please wait for current message to finish');
   }
@@ -778,6 +844,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   Future<bool> _submitPlainTextSend(String text) async {
     if (!mounted) return false;
     final owner = ref.read(activeConversationProvider)?.id;
+    final call = _typingVoiceCall(owner);
+    if (call != null) return _sendToVoiceCall(call, text);
     if (owner == null || !await _preparePlainTextSend()) return false;
     if (!_isCurrentSendOwner(owner) || ref.read(sendingProvider)) return false;
     _dispatchPlainTextSend(text);
@@ -786,6 +854,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   Future<bool> _submitImageSend(String imagePath, {String? text}) async {
     if (!mounted) return false;
+    if (_typingVoiceCall(ref.read(activeConversationProvider)?.id) != null) {
+      MoeToast.brief(context, '通话中只能打字');
+      return false;
+    }
     if (ref.read(sendingProvider)) {
       _showSendingInProgressToast();
       return false;
@@ -1201,6 +1273,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       once: true,
     );
     _modelFailoverPromptController.dismiss();
+    _boundCall?.removeListener(_onVoiceCallChanged);
+    // 收成悬浮窗的通话跟着这个聊天页；聊天页关掉就挂断。
+    _voiceCalls.hangUpIfMinimizedAwayFrom(null);
     _conversationActivation.clear();
     _entryRouteAnimation?.removeStatusListener(_onEntryRouteStatus);
     _imagePrecacheTimer?.cancel();
@@ -1289,7 +1364,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final hasMoreMessages = currentConversationId == null
         ? false
         : ref.watch(conversationHasMoreProvider(currentConversationId));
-    const transientMessages = <Message>[];
+    _bindVoiceCall(ref.watch(activeVoiceCallProvider));
+    // 切到别的角色时，收成悬浮窗的通话随之挂断。
+    ref.listen<String?>(
+      activeConversationProvider.select((c) => c?.id),
+      (_, next) => _voiceCalls.hangUpIfMinimizedAwayFrom(next),
+    );
+    final callHere = _boundCall?.conversationId == currentConversationId;
+    // 通话内容只作临时显示，不进主对话；挂断后收进同一条通话气泡。
+    final transientMessages =
+        callHere ? _voiceCallMessages : const <Message>[];
+    final typingCall = _typingVoiceCall(currentConversationId);
     final actions = ref.read(chatActionsProvider); // (注释已丢失)
     final chatStatus = ref.watch(chatStatusProvider);
     // 字段级订阅：页面只关心聊天背景色，设置里其他字段变化不再重建整页
@@ -1356,9 +1441,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           showBackButton: MoeWorkspace.showsBackButton(context),
           nativeInset: nativeInset,
           toolbarHeight: toolbarHeight,
-          title: Row(
+          // 标题区太窄（窄屏且按钮多）时先让出头像，只留名字。
+          title: LayoutBuilder(
+            builder: (context, box) => Row(
             children: [
-              if (conv != null) ...[
+              if (conv != null &&
+                  box.maxWidth >=
+                      telegramChatHeaderAvatarSize +
+                          telegramChatHeaderGap +
+                          48) ...[
                 MoeAvatar(
                   name: conv.displayName,
                   avatarUrl: conv.avatarUrl,
@@ -1415,6 +1506,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               ),
             ],
           ),
+          ),
           actions: [
             if (_selection.active)
               IconButton(
@@ -1423,10 +1515,14 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 icon: const Icon(Icons.close),
               ),
             if (!_selection.active && !deferEntryShell && conv != null) ...[
-              TopicCompactionButton(
-                ownerId: conv.id,
-                isGenerating: isGenerating,
-              ),
+              // 通话属于语音插件：全局或这个角色关掉语音时不提供通话。
+              if (ref.watch(ttsPluginConfigProvider).enabled &&
+                  (conv.enabledPlugins?.contains('tts') ?? true))
+                IconButton(
+                  tooltip: '语音通话',
+                  icon: Icon(Icons.call_outlined, color: colors.headerContentColor),
+                  onPressed: isGenerating ? null : () => _openVoiceCall(conv),
+                ),
               Listener(
                 onPointerDown: (event) => _chatMenuPosition = event.position,
                 child: IconButton(
@@ -1593,7 +1689,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                           await _submitImageSend(imagePath, text: text);
                         },
                         onSubmitImage: _submitImageSend,
+                        hintText: typingCall != null ? '通话中，打字给对方' : null,
                         onFileSelected: (filePath, {String? text}) {
+                          if (typingCall != null) {
+                            MoeToast.brief(context, '通话中只能打字');
+                            return;
+                          }
                           if (ref.read(sendingProvider)) {
                             _showSendingInProgressToast();
                             return;
@@ -1610,6 +1711,14 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   ],
                 ),
               ),
+              if (typingCall != null && conv != null)
+                Positioned.fill(
+                  child: VoiceCallFloatingWindow(
+                    call: typingCall,
+                    topInset: listTopSpacing,
+                    onTap: () => _openVoiceCall(conv),
+                  ),
+                ),
             ],
           ),
         ),

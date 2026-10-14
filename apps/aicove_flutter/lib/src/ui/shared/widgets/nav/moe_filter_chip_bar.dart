@@ -72,14 +72,8 @@ class MoeFilterChipBar<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.moeColors;
-
-    return Container(
+    return SizedBox(
       width: double.infinity,
-      decoration: BoxDecoration(
-        color: colors.surface,
-        border: Border(bottom: BorderSide(color: colors.borderLight)),
-      ),
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         padding: padding,
@@ -135,7 +129,9 @@ class _FilterChipState<T> extends State<_FilterChip<T>> {
     // 颜色计算
     final bgColor = isSelected
         ? colors.primary
-        : (_pressed && isEnabled ? colors.surfaceAlt : colors.surface);
+        : (_pressed && isEnabled
+              ? colors.text.withValues(alpha: 0.08)
+              : Colors.transparent);
     final textColor = isSelected
         ? colors.text
         : (isEnabled ? colors.text : colors.muted);
@@ -143,8 +139,8 @@ class _FilterChipState<T> extends State<_FilterChip<T>> {
         ? colors.text
         : (isEnabled ? colors.text : colors.muted);
     final countBgColor = isSelected
-        ? colors.surface
-        : colors.primary.withValues(alpha: 0.2);
+        ? colors.primary.withValues(alpha: 0.24)
+        : colors.primary.withValues(alpha: 0.16);
     final countTextColor = isSelected ? colors.text : colors.primary;
 
     return GestureDetector(
@@ -153,9 +149,10 @@ class _FilterChipState<T> extends State<_FilterChip<T>> {
       onTapCancel: isEnabled ? () => setState(() => _pressed = false) : null,
       onTap: widget.onTap,
       child: MoeButtonSurface(
+        shareParentSurface: false,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         radius: 20,
-        tintColor: isSelected ? bgColor : Colors.transparent,
+        tintColor: bgColor,
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [

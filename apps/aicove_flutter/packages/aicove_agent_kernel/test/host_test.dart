@@ -56,6 +56,33 @@ void main() {
       expect(scope.isDisposed, isTrue);
     });
 
+    test('a failing revocation does not stop the remaining cleanup', () async {
+      final log = <String>[];
+      final scope = KernelScope();
+      scope.addCloser(() => log.add('close'));
+      scope.track('a', () => log.add('revoke-a'));
+      scope.track('b', () => throw StateError('revoke failed'));
+      scope.track('c', () => log.add('revoke-c'));
+
+      await expectLater(scope.dispose(), throwsStateError);
+      expect(log, ['revoke-c', 'revoke-a', 'close']);
+      await scope.dispose();
+      expect(log, hasLength(3));
+    });
+
+    test('revokeOwner attempts every registration of the owner', () {
+      final log = <String>[];
+      final scope = KernelScope();
+      scope.track('p', () => throw StateError('revoke failed'));
+      final second = scope.track('p', () => log.add('second'));
+      final other = scope.track('q', () => log.add('other'));
+
+      expect(() => scope.revokeOwner('p'), throwsStateError);
+      expect(log, ['second']);
+      expect(second.isRevoked, isTrue);
+      expect(other.isRevoked, isFalse);
+    });
+
     test('child service overrides parent and parent value returns after dispose',
         () async {
       const key = ServiceKey<String>('model');
@@ -152,7 +179,7 @@ void main() {
 
       final failures = <ContributionFailure>[];
       final out = await host.snapshot().collectContributions(
-            const ContributionInput({}),
+            ContributionInput(const {}),
             onFailure: failures.add,
           );
       expect(out, ['now', 'retry']);
@@ -163,9 +190,44 @@ void main() {
           (r) => r.contributor((_) async => throw StateError('must'),
               policy: ErrorPolicy.required)));
       await expectLater(
-        host.snapshot().collectContributions(const ContributionInput({})),
+        host.snapshot().collectContributions(ContributionInput(const {})),
         throwsStateError,
       );
+    });
+  });
+
+  group('contribution input', () {
+    test('a contributor that mutates the input and throws leaves no trace',
+        () async {
+      final host = PluginHost(KernelScope());
+      host.install(plugin('mutator', (r) => r.contributor((input) async {
+            (input.data['list'] as List).add('x');
+            return ['unreachable'];
+          })));
+      host.install(plugin('nested', (r) => r.contributor((input) async {
+            (input.data['map'] as Map)['k'] = 'changed';
+            return ['unreachable'];
+          })));
+      host.install(plugin('reader', (r) => r.contributor((input) async => [
+            '${input.data['list']}',
+            '${input.data['map']}',
+          ])));
+
+      final source = <String, Object?>{
+        'list': ['a'],
+        'map': {'k': 'v'},
+      };
+      final failures = <ContributionFailure>[];
+      final out = await host.snapshot().collectContributions(
+            ContributionInput(source),
+            onFailure: failures.add,
+          );
+      expect(out, ['[a]', '{k: v}']);
+      expect(failures.map((f) => f.owner), ['mutator', 'nested']);
+      expect(source, {
+        'list': ['a'],
+        'map': {'k': 'v'},
+      });
     });
   });
 

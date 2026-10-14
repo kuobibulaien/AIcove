@@ -6,13 +6,13 @@ import 'package:http/http.dart' as http;
 
 import 'package:aicove_flutter/src/core/api/agent_api.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_types.dart';
-import 'package:aicove_flutter/src/features/plugins/domain/base_plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/handlers/ai_tool.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin_metadata.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
-import 'api_runner_variants.dart';
+import 'api_runner_variants.dart';
+import 'test_plugin_support.dart';
 
 AppSettings _buildTestSettings({
   CallFlowMode mode = CallFlowMode.auto,
@@ -123,7 +123,7 @@ class _SingleRoundDrawClient extends http.BaseClient {
   }
 }
 
-class _FakeLookupPlugin extends BasePlugin {
+class _FakeLookupPlugin extends TestPlugin {
   _FakeLookupPlugin()
       : super(
           metadata: const PluginMetadata(
@@ -174,7 +174,7 @@ class _FakeLookupPlugin extends BasePlugin {
   }
 }
 
-class _FakeWeatherPlugin extends BasePlugin {
+class _FakeWeatherPlugin extends TestPlugin {
   _FakeWeatherPlugin()
       : super(
           metadata: const PluginMetadata(
@@ -400,7 +400,7 @@ class _ThreeRoundNarrativeClient extends http.BaseClient {
   }
 }
 
-class _AsyncAwareDrawImagePlugin extends BasePlugin {
+class _AsyncAwareDrawImagePlugin extends TestPlugin {
   _AsyncAwareDrawImagePlugin()
       : super(
           metadata: const PluginMetadata(
@@ -557,7 +557,6 @@ void _runAll(RunnerFactory createRunner) {
       providerApiBase: 'https://api.openai.com/v1',
       providerApiKey: 'test-key',
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[
         <String, dynamic>{
           'role': 'user',
@@ -592,7 +591,8 @@ void _runAll(RunnerFactory createRunner) {
       config: config,
       sessionId: 'conv_non_vision_test',
       userText: '帮我画一只猫',
-      effectivePlugins: <Plugin>[drawPlugin],
+      responseProcessors: testProcessors(<TestPlugin>[drawPlugin]),
+      availableTools: testTools(<TestPlugin>[drawPlugin]),
       maxRounds: 3,
     );
 
@@ -625,7 +625,6 @@ void _runAll(RunnerFactory createRunner) {
       providerApiBase: 'https://api.openai.com/v1',
       providerApiKey: 'test-key',
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[
         <String, dynamic>{'role': 'user', 'content': '今晚几点有空？'},
       ],
@@ -651,7 +650,8 @@ void _runAll(RunnerFactory createRunner) {
       config: config,
       sessionId: 'conv_keep_round1_narrative',
       userText: '今晚几点有空？',
-      effectivePlugins: <Plugin>[_FakeLookupPlugin()],
+      responseProcessors: testProcessors(<TestPlugin>[_FakeLookupPlugin()]),
+      availableTools: testTools(<TestPlugin>[_FakeLookupPlugin()]),
       maxRounds: 3,
     );
 
@@ -670,7 +670,6 @@ void _runAll(RunnerFactory createRunner) {
       providerApiBase: 'https://api.openai.com/v1',
       providerApiKey: 'test-key',
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[
         <String, dynamic>{'role': 'user', 'content': '今晚几点有空？'},
       ],
@@ -696,7 +695,8 @@ void _runAll(RunnerFactory createRunner) {
       config: config,
       sessionId: 'conv_fast_lookup_followup',
       userText: '今晚几点有空？',
-      effectivePlugins: <Plugin>[_FakeLookupPlugin(), _FakeWeatherPlugin()],
+      responseProcessors: testProcessors(<TestPlugin>[_FakeLookupPlugin(), _FakeWeatherPlugin()]),
+      availableTools: testTools(<TestPlugin>[_FakeLookupPlugin(), _FakeWeatherPlugin()]),
       maxRounds: 5,
     );
 
@@ -718,7 +718,6 @@ void _runAll(RunnerFactory createRunner) {
       providerApiBase: 'https://api.openai.com/v1',
       providerApiKey: 'test-key',
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[
         <String, dynamic>{'role': 'user', 'content': '帮我查下今晚安排，再画张图'},
       ],
@@ -752,7 +751,8 @@ void _runAll(RunnerFactory createRunner) {
       config: config,
       sessionId: 'conv_fast_mixed_tools',
       userText: '帮我查下今晚安排，再画张图',
-      effectivePlugins: <Plugin>[drawPlugin, _FakeLookupPlugin()],
+      responseProcessors: testProcessors(<TestPlugin>[drawPlugin, _FakeLookupPlugin()]),
+      availableTools: testTools(<TestPlugin>[drawPlugin, _FakeLookupPlugin()]),
       maxRounds: 5,
     );
 
@@ -776,7 +776,6 @@ void _runAll(RunnerFactory createRunner) {
       providerApiBase: 'https://api.openai.com/v1',
       providerApiKey: 'test-key',
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[
         <String, dynamic>{'role': 'user', 'content': '今晚几点有空？'},
       ],
@@ -802,7 +801,8 @@ void _runAll(RunnerFactory createRunner) {
       config: config,
       sessionId: 'conv_filter_round1_instruction',
       userText: '今晚几点有空？',
-      effectivePlugins: <Plugin>[_FakeLookupPlugin()],
+      responseProcessors: testProcessors(<TestPlugin>[_FakeLookupPlugin()]),
+      availableTools: testTools(<TestPlugin>[_FakeLookupPlugin()]),
       maxRounds: 3,
     );
 

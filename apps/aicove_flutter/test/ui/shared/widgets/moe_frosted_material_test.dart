@@ -11,13 +11,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 void main() {
-  test('blurSigmaForSetting maps the 10..100% range onto the thin recipe', () {
-    expect(MoeFrostedMaterial.blurSigmaForSetting(0), 2);
+  test('blurSigmaForSetting maps the 0..100% range onto the thin recipe', () {
+    expect(MoeFrostedMaterial.blurSigmaForSetting(0), 0);
     expect(MoeFrostedMaterial.blurSigmaForSetting(3.2), 2);
     expect(MoeFrostedMaterial.blurSigmaForSetting(16), 10);
     expect(MoeFrostedMaterial.blurSigmaForSetting(32), 20);
     expect(MoeFrostedMaterial.blurSigmaForSetting(100), 20);
-    expect(MoeFrostedMaterial.blurSigmaForSetting(-8), 2);
+    expect(MoeFrostedMaterial.blurSigmaForSetting(-8), 0);
   });
 
   test('tint follows the fill and stays below popup opacity', () {
@@ -170,7 +170,7 @@ void main() {
         ),
       );
       final regionChecksums = <double, int>{};
-      final strengths = {0.0: 2.0, 3.2: 2.0, 16.0: 10.0, 32.0: 20.0};
+      final strengths = {0.0: 0.0, 3.2: 2.0, 16.0: 10.0, 32.0: 20.0};
       for (final MapEntry(key: sigma, value: expectedSigma)
           in strengths.entries) {
         final reference = await render(
@@ -239,7 +239,7 @@ void main() {
           }
         }
       }
-      // Blur floors at 10%, but the tint fill may still go fully clear.
+      // Zero blur and zero fill leave the backdrop fully clear.
       expect(regionChecksums[0], isNot(regionChecksums[3.2]));
       expect(regionChecksums[0], isNot(regionChecksums[16]));
       expect(regionChecksums[0], isNot(regionChecksums[32]));
@@ -248,7 +248,7 @@ void main() {
   }
 
   testWidgets(
-    'frosted keeps the blur floor at every strength and solid removes all filters',
+    'frosted keeps its filter at every strength and solid removes all filters',
     (tester) async {
       for (final enabled in [true, false]) {
         for (final sigma in [0.0, 3.2, 32.0]) {

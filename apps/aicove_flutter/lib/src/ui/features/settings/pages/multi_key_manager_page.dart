@@ -521,10 +521,11 @@ class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
             showBackButton: true,
             actions: [
               if (constraints.maxWidth < 480)
-                Builder(builder: (buttonContext) => IconButton(
+                Builder(builder: (buttonContext) => MoeIconButton(
                   tooltip: '更多 Key 操作',
-                  icon: Icon(Icons.more_horiz, color: colors.text),
-                  onPressed: () => MoePopupMenu.show(buttonContext,
+                  icon: Icons.more_horiz,
+                  color: colors.text,
+                  onTap: () => MoePopupMenu.show(buttonContext,
                     targetBox: buttonContext.findRenderObject()! as RenderBox,
                     alignToEnd: true,
                     items: [
@@ -540,31 +541,39 @@ class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
                   ),
                 ))
               else ...[
-              IconButton(
-                icon: Icon(Icons.delete_outline, color: colors.text),
+              MoeIconButton(
+                icon: Icons.delete_outline,
+                color: colors.text,
                 tooltip: '删除错误 Key',
-                onPressed: () => _deleteErrorKeys(provider, items),
+                onTap: () => _deleteErrorKeys(provider, items),
               ),
-              IconButton(
-                icon: _detecting
-                    ? SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: colors.text,
-                        ),
-                      )
-                    : Icon(Icons.monitor_heart_outlined, color: colors.text),
-                tooltip: '检测',
-                onPressed: _detecting
-                    ? null
-                    : () => _detectAll(provider, items),
-              ),
-              IconButton(
-                icon: Icon(Icons.add, color: colors.text),
+              if (_detecting)
+                SizedBox(
+                  width: MoeButtonSizes.minTouchTarget,
+                  height: MoeButtonSizes.minTouchTarget,
+                  child: Center(
+                    child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: colors.text,
+                      ),
+                    ),
+                  ),
+                )
+              else
+                MoeIconButton(
+                  icon: Icons.monitor_heart_outlined,
+                  color: colors.text,
+                  tooltip: '检测',
+                  onTap: () => _detectAll(provider, items),
+                ),
+              MoeIconButton(
+                icon: Icons.add,
+                color: colors.text,
                 tooltip: '添加',
-                onPressed: () => _addKeys(provider, items),
+                onTap: () => _addKeys(provider, items),
               ),
               ],
             ],
@@ -792,17 +801,32 @@ class _MultiKeyRow extends StatelessWidget {
           )),
         )
       else
-        IconButton(
-          icon: Icon(Icons.monitor_heart_outlined, color: colors.textSecondary),
-          tooltip: '检测', onPressed: onDetect,
+        MoeIconButton(
+          icon: Icons.monitor_heart_outlined,
+          size: 20,
+          padding: const EdgeInsets.all(6),
+          minTouchTarget: 36,
+          color: colors.textSecondary,
+          tooltip: '检测',
+          onTap: onDetect,
         ),
-      IconButton(
-        icon: Icon(Icons.edit_outlined, color: colors.textSecondary),
-        tooltip: '编辑', onPressed: onEdit,
+      MoeIconButton(
+        icon: Icons.edit_outlined,
+        size: 20,
+        padding: const EdgeInsets.all(6),
+        minTouchTarget: 36,
+        color: colors.textSecondary,
+        tooltip: '编辑',
+        onTap: onEdit,
       ),
-      IconButton(
-        icon: Icon(Icons.delete_outline, color: colors.toastError),
-        tooltip: '删除', onPressed: onDelete,
+      MoeIconButton(
+        icon: Icons.delete_outline,
+        size: 20,
+        padding: const EdgeInsets.all(6),
+        minTouchTarget: 36,
+        color: colors.toastError,
+        tooltip: '删除',
+        onTap: onDelete,
       ),
     ];
     return Padding(

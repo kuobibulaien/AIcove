@@ -1,9 +1,44 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:aicove_flutter/src/ui/shared/widgets/buttons/moe_primary_button.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/buttons/moe_secondary_button.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/meotalk_dialog.dart';
 
 void main() {
+  testWidgets('MeoTalkDialog 底部按钮具备按钮语义与键盘焦点触发', (tester) async {
+    final semantics = tester.ensureSemantics();
+    var confirmed = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MeoTalkDialog(
+            title: '确认操作',
+            content: const Text('是否继续？'),
+            onConfirm: () => confirmed = true,
+          ),
+        ),
+      ),
+    );
+    expect(
+      tester.getSemantics(find.byType(MoeSecondaryButton)).flagsCollection.isButton,
+      isTrue,
+    );
+    expect(
+      tester.getSemantics(find.byType(MoePrimaryButton)).flagsCollection.isButton,
+      isTrue,
+    );
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    expect(confirmed, isTrue);
+    semantics.dispose();
+  });
+
   testWidgets('MeoTalkDialog 会根据键盘 inset 上移', (tester) async {
     await tester.pumpWidget(
       const MediaQuery(

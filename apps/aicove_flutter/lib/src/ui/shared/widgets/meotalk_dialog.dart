@@ -8,9 +8,10 @@ library;
 
 import 'package:aicove_flutter/src/ui/theme/moe_interaction_theme.dart';
 import 'package:flutter/material.dart';
+import 'buttons/moe_primary_button.dart';
+import 'buttons/moe_secondary_button.dart';
 import 'moe_floating_surface.dart';
 import '../../theme/tokens.dart';
-import '../effects/smooth_clip.dart';
 
 /// MeoTalk 底部弹窗
 class MeoTalkDialog extends StatelessWidget {
@@ -147,50 +148,27 @@ class MeoTalkDialog extends StatelessWidget {
       return const SizedBox.shrink();
     }
 
-    const buttonRadius = 12.0;
+    const buttonRadius = BorderRadius.all(Radius.circular(12));
 
     return Row(
       children: [
         if (showCancelButton)
           Expanded(
-            child: SizedBox(
-              height: 48,
-              child: MoeG2ClipRRect(
-                radius: buttonRadius,
-                child: TextButton(
-                  onPressed: onCancel ?? () => Navigator.of(context).pop(false),
-                  style: withoutHoverFeedback(TextButton.styleFrom(
-                    backgroundColor: colors.surface,
-                  )),
-                  child: Text(
-                    cancelText ?? '取消',
-                    style: TextStyle(fontSize: 16, color: colors.text),
-                  ),
-                ),
-              ),
+            child: MoeSecondaryButton(
+              label: cancelText ?? '取消',
+              borderRadius: buttonRadius,
+              onPressed: onCancel ?? () => Navigator.of(context).pop(false),
             ),
           ),
         if (showCancelButton && showConfirmButton) const SizedBox(width: 12),
         if (showConfirmButton)
           Expanded(
-            child: SizedBox(
-              height: 48,
-              child: MoeG2ClipRRect(
-                radius: buttonRadius,
-                child: TextButton(
-                  onPressed: onConfirm,
-                  style: withoutHoverFeedback(TextButton.styleFrom(
-                    backgroundColor: colors.surface,
-                  )),
-                  child: Text(
-                    confirmText ?? '确认',
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: isDanger ? Colors.red : colors.accentColor,
-                    ),
-                  ),
-                ),
-              ),
+            child: MoePrimaryButton(
+              label: confirmText ?? '确认',
+              borderRadius: buttonRadius,
+              backgroundColor: isDanger ? Colors.red : colors.accentColor,
+              foregroundColor: isDanger ? Colors.red : colors.accentColor,
+              onPressed: onConfirm,
             ),
           ),
       ],
@@ -211,9 +189,11 @@ Future<bool?> showMeoTalkDialog({
   bool showConfirmButton = true,
   bool barrierDismissible = true,
   bool isDanger = false,
+  bool useRootNavigator = true,
 }) {
   return showDialog<bool>(
     context: context,
+    useRootNavigator: useRootNavigator,
     barrierDismissible: barrierDismissible,
     barrierColor: Colors.transparent,
     builder: (context) => MeoTalkDialog(

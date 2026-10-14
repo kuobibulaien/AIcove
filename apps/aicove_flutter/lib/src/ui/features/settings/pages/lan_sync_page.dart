@@ -70,22 +70,13 @@ class _LanSyncPageState extends ConsumerState<LanSyncPage> {
   }
 
   Future<void> _forget(LanPeerView peer) async {
-    final approved = await showDialog<bool>(
+    final approved = await showMeoTalkDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('取消与${peer.name}的配对？'),
-        content: const Text('本机历史保留；对方将无法继续读取或同步本机数据。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('保留'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('取消配对'),
-          ),
-        ],
-      ),
+      title: '取消与${peer.name}的配对？',
+      content: const Text('本机历史保留；对方将无法继续读取或同步本机数据。'),
+      cancelText: '保留',
+      confirmText: '取消配对',
+      isDanger: true,
     );
     if (approved == true) await _run((port) => port.forget(peer.id));
   }
@@ -273,9 +264,7 @@ class _LanSyncPageState extends ConsumerState<LanSyncPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Text(
-                      '设备之间直接同步，不需要云账号。两端连接同一 Wi-Fi 或热点；配对后会一直保持连接，有改动自动同步。',
-                    ),
+                    const Text('两台设备连接同一 Wi-Fi 或热点即可直接同步。'),
                     const SizedBox(height: 16),
                     if (state == null) ...[
                       if (async.hasError) const Text('局域网同步初始化失败，请重试'),

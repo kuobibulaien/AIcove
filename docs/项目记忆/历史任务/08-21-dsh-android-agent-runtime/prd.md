@@ -2,7 +2,7 @@
 
 ## Goal
 
-把 AIcove 的 Agent 底层升级为官方 DeepSeek Harness：先让 Android 客户端在设备本地运行 DSH，再把聊天、主动消息、记忆、多模态和后台 Agent 分阶段迁移成 Cordis 插件或宿主能力，最终退役平行的自研 Agent 核心。总体方案见 `apps/aicove_flutter/docs/02_前后端分离与架构规范/AIcove2.0_DSH驱动底层架构改造方案.md`。
+把 AIcove 的 Agent 底层升级为官方 DeepSeek Harness：先让 Android 客户端在设备本地运行 DSH，再把聊天、主动消息、记忆、多模态和后台 Agent 分阶段迁移成 Cordis 插件或宿主能力，最终退役平行的自研 Agent 核心。总体方案见 `apps/aicove_flutter/docs/05_历史归档/20261007_DSH方案/AIcove2.0_DSH驱动底层架构改造方案.md`。
 
 ## Confirmed Facts
 

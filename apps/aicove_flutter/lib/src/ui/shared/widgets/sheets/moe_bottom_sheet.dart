@@ -136,6 +136,7 @@ class MoeBottomSheet extends StatelessWidget {
                                             onPressed: () =>
                                                 Navigator.maybePop(context),
                                             child: MoeButtonSurface(
+                                              shareParentSurface: false,
                                               width: 32,
                                               height: 32,
                                               radius: 999,

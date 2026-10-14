@@ -172,7 +172,7 @@ class GeminiAdapter implements ProviderAdapter {
     ProviderChatRequestOptions options,
   ) {
     final level = options.thinkingLevel;
-    if (level == null || level.isAuto) return;
+    if (level == null || !level.isConcrete) return;
     final existing = generationConfig['thinkingConfig'];
     final thinkingConfig = <String, dynamic>{
       if (existing is Map) ...Map<String, dynamic>.from(existing),
@@ -204,9 +204,11 @@ class GeminiAdapter implements ProviderAdapter {
     final toolCalls = <ToolCall>[];
     final hiddenThoughtParts = <Map<String, dynamic>>[];
     final candidates = (response['candidates'] as List?) ?? const [];
+    String? rawFinishReason;
 
     if (candidates.isNotEmpty) {
       final first = candidates.first as Map<String, dynamic>;
+      rawFinishReason = first['finishReason']?.toString();
       final content = first['content'] as Map<String, dynamic>?;
       final parts = (content?['parts'] as List?) ?? const [];
 
@@ -239,6 +241,7 @@ class GeminiAdapter implements ProviderAdapter {
       toolCalls: toolCalls,
       hiddenThoughtParts: hiddenThoughtParts,
       rawResponse: response,
+      rawFinishReason: rawFinishReason,
     );
   }
 

@@ -53,6 +53,7 @@ body {
   overflow-x: hidden;
 }
 a { color: inherit; text-decoration: none; }
+button.btn { font-family: inherit; color: inherit; cursor: pointer; }
 .wrap { width: min(1120px, 100% - 32px); margin-inline: auto; }
 .serif { font-family: "Fraunces", Georgia, serif; }
 
@@ -83,6 +84,12 @@ a { color: inherit; text-decoration: none; }
 .btn-ghost { border: 1.5px solid var(--line); background: var(--surface); }
 .btn-ghost:hover { border-color: var(--pink); }
 .nav .btn { padding: 9px 18px; font-size: 14px; }
+.nav-actions { display: flex; gap: 10px; }
+.qq-dialog { margin: auto; width: min(340px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; padding: 22px; border: 0; border-radius: 24px; background: var(--surface); color: var(--text); text-align: center; box-shadow: 0 30px 60px -20px rgba(0,0,0,.45); }
+.qq-dialog::backdrop { background: rgba(20, 16, 24, .55); }
+.qq-dialog img { display: block; width: 100%; height: auto; border-radius: 16px; }
+.qq-dialog p { margin: 14px 0 16px; font-size: 14px; color: var(--text-2); }
+.qq-dialog .qq-actions { display: flex; gap: 10px; justify-content: center; }
 
 /* ---------- hero ---------- */
 .hero { position: relative; padding: 88px 0 72px; }
@@ -289,6 +296,7 @@ footer a:hover { color: var(--text); }
 /* ---------- responsive ---------- */
 @media (max-width: 900px) {
   .nav-links { display: none; }
+  .nav .btn { padding: 8px 14px; }
   .hero { padding-top: 56px; }
   .hero .wrap, .row { grid-template-columns: 1fr; gap: 44px; }
   .row.flip .art { order: 0; }
@@ -327,7 +335,10 @@ footer a:hover { color: var(--text); }
       <a href="#privacy">隐私</a>
       <a href="./">小故事</a>
     </nav>
-    <a class="btn btn-primary" href="https://github.com/kuobibulaien/AIcove/releases">免费下载</a>
+    <div class="nav-actions">
+      <button class="btn btn-ghost" data-qq>内测反馈群</button>
+      <a class="btn btn-primary" href="https://github.com/kuobibulaien/AIcove/releases">预览版下载</a>
+    </div>
   </div>
 </header>
 
@@ -342,7 +353,7 @@ footer a:hover { color: var(--text); }
         <div class="cta">
           <a class="btn btn-primary" href="https://github.com/kuobibulaien/AIcove/releases">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-5-5m5 5l5-5M5 21h14"/></svg>
-            下载测试版
+            预览版下载
           </a>
           <a class="btn btn-ghost" href="https://github.com/kuobibulaien/AIcove">在 GitHub 上查看</a>
           <a class="btn btn-ghost" href="./">
@@ -625,12 +636,45 @@ footer a:hover { color: var(--text); }
     <span>
       <a href="https://github.com/kuobibulaien/AIcove">GitHub</a> ·
       <a href="https://github.com/kuobibulaien/AIcove/issues">反馈问题</a> ·
-      <a href="https://github.com/kuobibulaien/AIcove/releases">版本发布</a>
+      <a href="https://github.com/kuobibulaien/AIcove/releases">版本发布</a> ·
+      QQ 群 1121312961
     </span>
   </div>
 </footer>
 
+<dialog class="qq-dialog" id="qqDialog">
+  <img src="assets/qq-group.jpg" alt="AIcove 内测反馈 QQ 群二维码" width="600" height="751">
+  <p>QQ 扫码加入，或搜索群号 1121312961</p>
+  <div class="qq-actions">
+    <button class="btn btn-primary" data-copy="1121312961">复制群号</button>
+    <button class="btn btn-ghost" data-close>关闭</button>
+  </div>
+</dialog>
+
 <script>
+  const qqDialog = document.getElementById('qqDialog');
+  document.querySelector('[data-qq]').addEventListener('click', () => qqDialog.showModal());
+  qqDialog.querySelector('[data-close]').addEventListener('click', () => qqDialog.close());
+  qqDialog.addEventListener('click', (e) => { if (e.target === qqDialog) qqDialog.close(); });
+
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); return true; } catch {}
+    // http pages and some in-app browsers block the async clipboard API
+    const ta = Object.assign(document.createElement('textarea'), { value: text });
+    document.body.append(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  }
+
+  document.querySelectorAll('[data-copy]').forEach((btn) => btn.addEventListener('click', async () => {
+    if (!(await copyText(btn.dataset.copy))) return;
+    const label = btn.textContent;
+    btn.textContent = '群号已复制';
+    setTimeout(() => { btn.textContent = label; }, 1600);
+  }));
+
   const io = new IntersectionObserver((entries) => {
     for (const e of entries) if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
   }, { threshold: 0.12 });

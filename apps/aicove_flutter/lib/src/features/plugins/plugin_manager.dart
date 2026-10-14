@@ -1,10 +1,9 @@
 // ignore_for_file: avoid_print
 import 'domain/index.dart';
-import '../../core/app_logger.dart';
 
 /// 插件管理器
 /// 负责注册、管理和协调所有插件
-/// 支持生命周期管理、功能收集和命令处理
+/// 支持生命周期管理；执行能力经 v2 注册器贡献（见 PluginRuntime）
 class PluginManager {
   final Map<String, Plugin> _plugins = {};
 
@@ -38,80 +37,6 @@ class PluginManager {
   /// 根据 ID 获取插件
   Plugin? getPlugin(String pluginId) {
     return _plugins[pluginId];
-  }
-
-  /// 获取所有启用插件的系统提示词
-  /// 返回合并后的提示词字符串
-  /// 
-  /// [supportsToolCalling] 为 true 时，支持 Tool Calling 的插件会跳过提示词注入
-  /// 
-  /// 注意：单个插件失败不会影响其他插件和整体对话流程
-  Future<String> getSystemPrompts({String? userMessage, bool supportsToolCalling = false}) async {
-    final enabledPlugins = getEnabledPlugins();
-    if (enabledPlugins.isEmpty) {
-      return '';
-    }
-
-    final prompts = <String>[];
-    for (final plugin in enabledPlugins) {
-      try {
-        final prompt = await plugin.getSystemPrompt(
-          userMessage: userMessage,
-          supportsToolCalling: supportsToolCalling,
-        );
-        if (prompt != null && prompt.isNotEmpty) {
-          prompts.add(prompt);
-        }
-      } catch (e) {
-        // 单个插件失败不影响其他插件和整体对话流程
-        AppLogger.warning('PluginManager', '插件 getSystemPrompt 失败', metadata: {
-          'pluginId': plugin.id,
-          'error': e.toString(),
-        });
-      }
-    }
-
-    if (prompts.isEmpty) {
-      return '';
-    }
-
-    return prompts.join('\n\n');
-  }
-
-  /// 处理 AI 响应
-  /// 按顺序通过所有启用的插件处理文本
-  /// 返回最终处理结果和所有插件生成的事件
-  Future<PluginProcessResult> processResponse(String text) async {
-    final enabledPlugins = getEnabledPlugins();
-    if (enabledPlugins.isEmpty) {
-      return PluginProcessResult(
-        processedText: text,
-        events: [],
-      );
-    }
-
-    String currentText = text;
-    final allEvents = <PluginEvent>[];
-
-    // 按顺序通过每个插件处理
-    for (final plugin in enabledPlugins) {
-      try {
-        final result = await plugin.processResponse(currentText);
-        currentText = result.processedText;
-        allEvents.addAll(result.events);
-      } catch (e) {
-        // 插件处理失败不应影响其他插件
-        AppLogger.warning('PluginManager', '插件 processResponse 失败', metadata: {
-          'pluginId': plugin.id,
-          'error': e.toString(),
-        });
-      }
-    }
-
-    return PluginProcessResult(
-      processedText: currentText,
-      events: allEvents,
-    );
   }
 
   /// 更新插件配置
@@ -257,93 +182,5 @@ class PluginManager {
     }
     
     print('[PluginManager] 所有插件已销毁');
-  }
-
-  // ========== 新增：功能收集 ==========
-
-  /// 获取所有启用插件的命令
-  List<CommandHandler> getAllCommands() {
-    final commands = <CommandHandler>[];
-    
-    for (final plugin in getEnabledPlugins()) {
-      try {
-        commands.addAll(plugin.getCommands());
-      } catch (e) {
-        print('[PluginManager] 插件 ${plugin.id} 获取命令失败: $e');
-      }
-    }
-    
-    return commands;
-  }
-
-  /// 获取所有启用插件的 AI 工具
-  List<AITool> getAllTools() {
-    final tools = <AITool>[];
-    
-    for (final plugin in getEnabledPlugins()) {
-      try {
-        tools.addAll(plugin.getTools());
-      } catch (e) {
-        print('[PluginManager] 插件 ${plugin.id} 获取工具失败: $e');
-      }
-    }
-    
-    return tools;
-  }
-
-  /// 根据名称查找工具
-  AITool? findToolByName(String name) {
-    for (final tool in getAllTools()) {
-      if (tool.name == name) return tool;
-    }
-    return null;
-  }
-
-  /// 获取指定类型的所有 LLM 钩子
-  List<LLMHook> getHooksByType(LLMHookType type) {
-    final hooks = <LLMHook>[];
-    
-    for (final plugin in getEnabledPlugins()) {
-      try {
-        final allHooks = plugin.getHooks();
-        hooks.addAll(allHooks.where((h) => h.type == type));
-      } catch (e) {
-        print('[PluginManager] 插件 ${plugin.id} 获取钩子失败: $e');
-      }
-    }
-    
-    return hooks;
-  }
-
-  // ========== 新增：命令处理 ==========
-
-  /// 处理用户输入的命令
-  /// [input] 用户输入的命令字符串
-  /// [context] 插件上下文，包含环境信息和操作能力
-  /// 返回 null 表示不是命令或没有匹配的命令
-  Future<String?> handleCommand(String input, PluginContext context) async {
-    final trimmed = input.trim();
-    
-    // 检查是否以 / 开头
-    if (!trimmed.startsWith('/')) {
-      return null;
-    }
-    
-    // 获取所有命令
-    final commands = getAllCommands();
-    
-    // 查找匹配的命令
-    for (final cmd in commands) {
-      if (cmd.matches(trimmed)) {
-        try {
-          final args = cmd.parseArgs(trimmed);
-          return await cmd.handler(context, args);
-        } catch (e) {
-          return '命令执行失败: $e';
-        }
-      }
-    }
-    
-    return '未找到命令: ${trimmed.split(' ').first}';
   }
 }

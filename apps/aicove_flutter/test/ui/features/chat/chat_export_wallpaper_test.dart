@@ -80,7 +80,7 @@ void main() {
               background: ChatWallpaperLayer(
                 image: 'data:image/png;base64,${base64Encode(png)}',
                 fallbackColor: Colors.white,
-                maskOpacity: 0.2,
+                style: const WallpaperStyle(mask: 0.2),
               ),
               chatSize: const Size(390, 800),
             ),

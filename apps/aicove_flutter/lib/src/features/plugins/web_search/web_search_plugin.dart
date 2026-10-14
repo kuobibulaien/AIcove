@@ -5,7 +5,9 @@ import 'package:http/http.dart' as http;
 
 import '../../../core/app_logger.dart';
 import '../../content_tags/domain/content_tag_registry.dart';
+import '../../agent_plugins/aicove_plugin.dart';
 import '../domain/index.dart';
+import 'web_search_agent_plugin.dart';
 import 'web_search_config.dart';
 import 'web_search_service.dart';
 
@@ -45,13 +47,15 @@ class WebSearchPlugin extends BasePlugin {
   @override
   bool get enabled => _config.isConfigured;
 
+  @override
+  AicovePlugin get agentPlugin => webSearchAgentPlugin(this);
+
   /// 本插件生效时是否要求去掉模型内置搜索参数。
   bool get replacesModelBuiltinSearch =>
       enabled && _config.replaceModelBuiltinSearch;
 
   WebSearchService get _service => WebSearchService(_config, client: _client);
 
-  @override
   List<AITool> getTools() {
     if (!enabled) return const [];
     return [
@@ -149,16 +153,6 @@ class WebSearchPlugin extends BasePlugin {
   }
 
   static String _error(String message) => jsonEncode({'error': message});
-
-  @override
-  Future<String?> getSystemPrompt({
-    String? userMessage,
-    bool supportsToolCalling = false,
-  }) async => null;
-
-  @override
-  Future<PluginProcessResult> processResponse(String text) async =>
-      PluginProcessResult(processedText: text, events: const []);
 
   @override
   void updateConfig(Map<String, dynamic> config) {

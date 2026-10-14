@@ -27,6 +27,7 @@ STATE_DIR = Path.home() / ".cache" / "aicove-memory"
 MAX_PROMPT_CHARS = 4000
 MIN_PROMPT_CHARS = 4
 RECENT_ENTRIES = 3
+README_SOFT_LIMIT = 6000  # 字符；超过说明当前状态页又开始堆过程了
 
 # 各平台塞进用户消息里的非用户文本，记录前剥掉
 NOISE_TAGS = ("system-reminder", "ide_selection", "ide_opened_file", "command-message", "command-args", "task-notification")
@@ -64,22 +65,22 @@ def _recent_entries(limit: int) -> str:
     body = text.split("\n## 历史回溯", 1)[0]
     entries = re.split(r"\n(?=### \d{4}-\d{2}-\d{2})", body)
     entries = [e.strip().removesuffix("---").strip() for e in entries if e.strip().startswith("### ")]
+    entries = [e for e in entries if "结果：（待补）" not in e]
     return "\n\n".join(entries[-limit:])
 
 
 def cmd_start(agent: str) -> int:
     if not README.exists():
         return 0
-    parts = [
-        f"<project-memory agent=\"{agent}\" source=\"docs/项目记忆/README.md\">",
-        README.read_text(encoding="utf-8").strip(),
-    ]
+    readme = README.read_text(encoding="utf-8").strip()
+    parts = [f"<project-memory agent=\"{agent}\" source=\"docs/项目记忆/README.md\">", readme]
+    if len(readme) > README_SOFT_LIMIT:
+        parts.append(f"\n警告：本页 {len(readme)} 字，超过 {README_SOFT_LIMIT}。本次收工时把过程性描述移出，每行只留当前状态。")
     recent = _recent_entries(RECENT_ENTRIES)
     if recent:
-        parts.append("\n## 最近需求（需求日志末几条）\n\n" + recent)
+        parts.append("\n## 最近完成的需求\n\n" + recent)
     parts.append(
-        "\n提醒：本次若有实际改动，会话结束前按上面「写入规则」把需求日志的「结果：」行改成一句简短结果（纯问答不必补）；"
-        "架构级决定写决策记录，非平凡 bug 写经验教训。"
+        "\n提醒：有实际改动时，收工按 AGENTS.md「开工与收工」回写（需求日志结果、状态原地改写、ADR、经验教训）。"
     )
     parts.append("</project-memory>")
     _emit("SessionStart", "\n".join(parts))

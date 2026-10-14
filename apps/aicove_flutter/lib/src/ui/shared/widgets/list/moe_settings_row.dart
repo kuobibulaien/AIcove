@@ -26,6 +26,7 @@ library;
 
 import 'package:flutter/material.dart';
 import '../../../theme/tokens.dart';
+import '../form/moe_switch.dart';
 
 /// 右侧控件类型
 enum MoeSettingsRowTrailing {
@@ -170,7 +171,7 @@ class _MoeSettingsRowState extends State<MoeSettingsRow> {
     final bgColor = widget.backgroundColor ?? Colors.transparent;
     final pressedBg =
         widget.pressedBackgroundColor ??
-        colors.surfaceAlt.withValues(alpha: 0.5);
+        colors.text.withValues(alpha: 0.06);
     final dividerColor = widget.dividerColor ?? colors.divider;
     final padding =
         widget.contentPadding ??
@@ -283,11 +284,11 @@ class _MoeSettingsRowState extends State<MoeSettingsRow> {
 
       case MoeSettingsRowTrailing.switchControl:
         return IgnorePointer(
-          child: Switch(
+          child: MoeSwitch(
             value: widget.switchValue ?? false,
+            enabled: widget.enabled && widget.onSwitchChanged != null,
+            semanticLabel: widget.label,
             onChanged: widget.onSwitchChanged,
-            activeTrackColor: colors.focus,
-            thumbColor: WidgetStateProperty.all(Colors.white),
           ),
         );
 

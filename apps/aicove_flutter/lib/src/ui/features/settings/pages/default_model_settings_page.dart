@@ -170,7 +170,7 @@ class _DefaultModelSettingsPageState
                       controller: _contextWindowCtrl,
                       label: '窗口大小（k tokens）',
                       hint: '272',
-                      helperText: '默认 272k，约用到 80% 时自动压缩；原始聊天保留',
+                      helperText: '默认 272k',
                       keyboardType: TextInputType.number,
                       textInputAction: TextInputAction.done,
                       inputFormatters: <TextInputFormatter>[

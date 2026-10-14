@@ -799,6 +799,8 @@ class ConversationImporter {
       ),
       chatBackgroundMaskOpacity:
           Value((conv['chat_background_mask_opacity'] as num?)?.toDouble()),
+      chatBackgroundFraming:
+          Value(conv['chat_background_framing'] as String?),
       voiceFile: Value(conv['voice_file'] as String?),
       personaPrompt: Value(conv['persona_prompt'] as String? ?? ''),
       selfAddress: Value(conv['self_address'] as String?),

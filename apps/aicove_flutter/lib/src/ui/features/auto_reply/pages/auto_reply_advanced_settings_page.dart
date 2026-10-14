@@ -1,6 +1,6 @@
 /// AutoReplyAdvancedSettingsPage - 主动关怀「更多设置」
 ///
-/// 不常改的选项：后台判断用的模型与提示词、准时提醒、Android 后台运行检查清单、
+/// 不常改的选项：后台判断用的模型、准时提醒、Android 后台运行检查清单、
 /// 历史记录。前台保活由「是否有角色启用主动关怀」自动决定，这里只做系统授权检查。
 library;
 
@@ -151,8 +151,6 @@ class _AutoReplyAdvancedSettingsPageState
 
   Widget _buildContent(AppSettings settings) {
     final current = settings.autoReplySettings;
-    final customPrompt =
-        current.analyzerPrompt != AutoReplySettings.defaultAnalyzerPrompt;
 
     return MoeSettingsContent(
       child: Builder(
@@ -171,26 +169,9 @@ class _AutoReplyAdvancedSettingsPageState
                   detailText: _analyzerModelLabel(current),
                   onTap: () => _showModelPicker(current, settings),
                 ),
-                MoeSettingsRow(
-                  label: '判断提示词',
-                  trailingType: MoeSettingsRowTrailing.text,
-                  detailText: customPrompt ? '已自定义' : '默认',
-                  onTap: () => _showEditPromptSheet(current),
-                ),
-                if (customPrompt)
-                  MoeSettingsRow(
-                    label: '恢复默认提示词',
-                    labelColor: context.moeColors.primary,
-                    trailingType: MoeSettingsRowTrailing.none,
-                    onTap: () => _save(
-                      current.copyWith(
-                        analyzerPrompt: AutoReplySettings.defaultAnalyzerPrompt,
-                      ),
-                    ),
-                  ),
               ],
             ),
-            const AutoReplySectionFooter('AI 在后台看聊天记录，决定什么时候主动找你；可以换成便宜的小模型。'),
+            const AutoReplySectionFooter('可换成更轻量的模型以节省费用；要发的消息仍由对话模型来写。'),
             const SizedBox(height: MoeSettingsLayout.sectionGap),
 
             MoeSettingsGroup(
@@ -284,26 +265,6 @@ class _AutoReplyAdvancedSettingsPageState
               analyzerModel: result.model,
               analyzerProvider: result.provider,
             ),
-    );
-  }
-
-  Future<void> _showEditPromptSheet(AutoReplySettings current) async {
-    await showMoeAutoSaveTextEditor(
-      context: context,
-      title: '编辑判断提示词',
-      initialValue: current.analyzerPrompt,
-      maxLines: 12,
-      onSave: (text) async {
-        if (text.trim().isEmpty) throw const FormatException('提示词不能为空');
-        final latest =
-            ref.read(appSettingsProvider).valueOrNull?.autoReplySettings ??
-            current;
-        await ref
-            .read(appSettingsProvider.notifier)
-            .updateAutoReplySettings(
-              latest.copyWith(analyzerPrompt: text.trim()),
-            );
-      },
     );
   }
 }

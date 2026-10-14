@@ -1,3 +1,7 @@
+import '../domain/proactive_action.dart';
+
+export '../domain/proactive_action.dart' show ProactiveAction;
+
 /// 触发器类型
 enum AutoReplyTriggerType { delay, fixed }
 
@@ -102,6 +106,9 @@ class AutoReplyTrigger {
   /// 过期原因（如果状态是 expired）
   final String? expireReason;
 
+  /// 到点后做什么：发消息，或打电话（[cachedContent] 为开场白）。
+  final ProactiveAction action;
+
   const AutoReplyTrigger({
     required this.id,
     required this.title,
@@ -125,6 +132,7 @@ class AutoReplyTrigger {
     this.preparedAt,
     this.source = TriggerSource.userManual,
     this.expireReason,
+    this.action = ProactiveAction.sendMessage,
   });
 
   /// 是否处于活跃状态（可能触发）
@@ -245,6 +253,7 @@ class AutoReplyTrigger {
     TriggerSource? source,
     String? conversationId,
     String? expireReason,
+    ProactiveAction? action,
   }) {
     return AutoReplyTrigger(
       id: id ?? this.id,
@@ -271,6 +280,7 @@ class AutoReplyTrigger {
       source: source ?? this.source,
       conversationId: conversationId ?? this.conversationId,
       expireReason: expireReason ?? this.expireReason,
+      action: action ?? this.action,
     );
   }
 
@@ -299,6 +309,7 @@ class AutoReplyTrigger {
       'source': source.name,
       'conversation_id': conversationId,
       'expire_reason': expireReason,
+      if (action != ProactiveAction.sendMessage) 'action': action.id,
     };
   }
 
@@ -338,6 +349,7 @@ class AutoReplyTrigger {
       source: _parseSource(json['source'] as String?),
       conversationId: conversationId,
       expireReason: json['expire_reason'] as String?,
+      action: ProactiveAction.fromId(json['action'] as String?),
     );
   }
 
@@ -422,6 +434,9 @@ class AutoReplyTriggerEvent {
   final TriggerSource source;
   final String? reason; // 用于 expired 事件
 
+  /// fired 事件：本次发送持有的执行权令牌，派发与收尾都凭它校验。
+  final String? claimToken;
+
   const AutoReplyTriggerEvent({
     required this.type,
     required this.triggerId,
@@ -430,6 +445,7 @@ class AutoReplyTriggerEvent {
     required this.conversationId,
     required this.source,
     this.reason,
+    this.claimToken,
   });
 }
 

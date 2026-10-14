@@ -237,7 +237,7 @@ class _MoeTextFieldState extends State<MoeTextField> {
     final colors = context.moeColors;
     
     // 解析样式
-    final fillColor = widget.fillColor ?? colors.surface;
+    final fillColor = widget.fillColor ?? colors.componentBackground;
     final focusFillColor = widget.focusFillColor ?? fillColor;
     final errorFillColor = widget.errorFillColor ?? fillColor;
     

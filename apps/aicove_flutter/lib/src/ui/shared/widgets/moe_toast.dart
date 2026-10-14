@@ -16,8 +16,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/buttons/moe_button_surface.dart';
 import '../../theme/tokens.dart';
-import '../../theme/skin_provider.dart';
-import '../effects/smooth_clip.dart';
+import 'moe_floating_surface.dart';
 
 /// Toast 类型枚举
 enum ToastType { info, success, error, warning }
@@ -209,9 +208,13 @@ class _ToastWidgetState extends State<_ToastWidget>
 
   @override
   Widget build(BuildContext context) {
-    final skin = context.skin;
-    final bgColor = _toastBackgroundColor(context, widget.type);
-    final decoration = skin.toastDecoration(bgColor);
+    final colors = context.moeColors;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final accent = _toastBackgroundColor(context, widget.type);
+    final tint = widget.type == ToastType.info
+        ? Colors.transparent
+        : accent.withValues(alpha: isDark ? 0.26 : 0.16);
+    final iconColor = widget.type == ToastType.info ? colors.text : accent;
 
     return Positioned(
       top: MediaQuery.sizeOf(context).height * 0.15,
@@ -222,39 +225,41 @@ class _ToastWidgetState extends State<_ToastWidget>
           opacity: _fadeAnimation,
           child: ScaleTransition(
             scale: _scaleAnimation,
-            child: Material(
-              color: Colors.transparent,
-              child: MoeG2ClipRRect(
-                radius: MoeSmoothRadii.sm,
-                child: Container(
-                  constraints: BoxConstraints(
-                    maxWidth: MediaQuery.sizeOf(context).width * 0.8,
-                  ),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 14,
-                  ),
-                  decoration: decoration,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (widget.icon != null) ...[
-                        Icon(widget.icon, color: Colors.white, size: 20),
-                        const SizedBox(width: 10),
-                      ],
-                      Flexible(
-                        child: Text(
-                          widget.message,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 15,
-                            fontWeight: MoeFontWeights.emphasis,
-                            height: 1.3,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: MediaQuery.sizeOf(context).width * 0.8,
+              ),
+              child: MoeFloatingSurface(
+                baseline: MoeMaterialBaseline.background,
+                radius: MoeSmoothRadii.md,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(color: tint),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 14,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (widget.icon != null) ...[
+                          Icon(widget.icon, color: iconColor, size: 20),
+                          const SizedBox(width: 10),
+                        ],
+                        Flexible(
+                          child: Text(
+                            widget.message,
+                            style: TextStyle(
+                              color: colors.text,
+                              fontSize: 15,
+                              fontWeight: MoeFontWeights.emphasis,
+                              height: 1.3,
+                            ),
+                            textAlign: TextAlign.center,
                           ),
-                          textAlign: TextAlign.center,
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -314,9 +319,13 @@ class _DismissibleToastWidgetState extends State<_DismissibleToastWidget>
 
   @override
   Widget build(BuildContext context) {
-    final skin = context.skin;
-    final bgColor = _toastBackgroundColor(context, widget.type);
-    final decoration = skin.toastDecoration(bgColor);
+    final colors = context.moeColors;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final accent = _toastBackgroundColor(context, widget.type);
+    final tint = widget.type == ToastType.info
+        ? Colors.transparent
+        : accent.withValues(alpha: isDark ? 0.26 : 0.16);
+    final iconColor = widget.type == ToastType.info ? colors.text : accent;
 
     return Positioned(
       top: MediaQuery.sizeOf(context).height * 0.15,
@@ -327,90 +336,92 @@ class _DismissibleToastWidgetState extends State<_DismissibleToastWidget>
           opacity: _fadeAnimation,
           child: ScaleTransition(
             scale: _scaleAnimation,
-            child: Material(
-              color: Colors.transparent,
-              child: MoeG2ClipRRect(
-                radius: MoeSmoothRadii.sm,
-                child: Container(
-                  constraints: BoxConstraints(
-                    maxWidth: MediaQuery.sizeOf(context).width * 0.85,
-                  ),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
-                  ),
-                  decoration: decoration,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(
-                            Icons.warning_amber_outlined,
-                            color: Colors.white,
-                            size: 18,
-                          ),
-                          const SizedBox(width: 8),
-                          Flexible(
-                            child: Text(
-                              widget.message,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 14,
-                                fontWeight: MoeFontWeights.emphasis,
-                                height: 1.3,
-                              ),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: MediaQuery.sizeOf(context).width * 0.85,
+              ),
+              child: MoeFloatingSurface(
+                baseline: MoeMaterialBaseline.background,
+                radius: MoeSmoothRadii.md,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(color: tint),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.warning_amber_outlined,
+                              color: iconColor,
+                              size: 18,
                             ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          GestureDetector(
-                            onTap: widget.onDismiss,
-                            child: MoeButtonSurface(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 6,
-                              ),
-                              radius: 16,
-                              tintColor: Colors.white.withValues(alpha: 0.2),
+                            const SizedBox(width: 8),
+                            Flexible(
                               child: Text(
-                                '知道了',
+                                widget.message,
                                 style: TextStyle(
-                                  color: context.moeColors.text,
-                                  fontSize: 12,
+                                  color: colors.text,
+                                  fontSize: 14,
                                   fontWeight: MoeFontWeights.emphasis,
+                                  height: 1.3,
                                 ),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 12),
-                          GestureDetector(
-                            onTap: widget.onDismissForever,
-                            child: MoeButtonSurface(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 6,
-                              ),
-                              radius: 16,
-                              tintColor: Colors.white.withValues(alpha: 0.2),
-                              child: Text(
-                                '不再提醒',
-                                style: TextStyle(
-                                  color: context.moeColors.text,
-                                  fontSize: 12,
-                                  fontWeight: MoeFontWeights.emphasis,
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            GestureDetector(
+                              onTap: widget.onDismiss,
+                              child: MoeButtonSurface(
+                                shareParentSurface: false,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 6,
+                                ),
+                                radius: 16,
+                                child: Text(
+                                  '知道了',
+                                  style: TextStyle(
+                                    color: colors.text,
+                                    fontSize: 12,
+                                    fontWeight: MoeFontWeights.emphasis,
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                        ],
-                      ),
-                    ],
+                            const SizedBox(width: 12),
+                            GestureDetector(
+                              onTap: widget.onDismissForever,
+                              child: MoeButtonSurface(
+                                shareParentSurface: false,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 6,
+                                ),
+                                radius: 16,
+                                child: Text(
+                                  '不再提醒',
+                                  style: TextStyle(
+                                    color: colors.text,
+                                    fontSize: 12,
+                                    fontWeight: MoeFontWeights.emphasis,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),

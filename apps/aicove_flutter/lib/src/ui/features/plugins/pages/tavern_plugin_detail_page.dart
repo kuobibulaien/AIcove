@@ -37,14 +37,9 @@ class TavernPluginDetailPage extends ConsumerWidget {
               MoeSettingsLayout.verticalListPadding,
             ),
             children: [
-              TavernNote(
-                defaultId == null
-                    ? '一套预设包含提示词、正则和世界书。角色可以在编辑页单独绑定；还没设默认预设，没绑定的角色按 AIcove 原来的方式聊天。'
-                    : '一套预设包含提示词、正则和世界书。角色可以在编辑页单独绑定；没绑定的角色使用标着「默认」的那套。',
-              ),
               if (settings.hasError || presets.hasError) ...[
-                const SizedBox(height: MoeSettingsLayout.sectionGap),
                 _ErrorGroup(settingsBroken: settings.hasError, busy: busy),
+                const SizedBox(height: MoeSettingsLayout.sectionGap),
               ],
               MoeSettingsGroup(
                 title: '我的预设',
@@ -170,10 +165,12 @@ class _PresetRow extends ConsumerWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (isDefault) const TavernBadge('默认'),
-            IconButton(
+            MoeIconButton(
               tooltip: '更多操作',
-              icon: Icon(Icons.more_horiz, size: 20, color: colors.muted),
-              onPressed: () => _showMenu(context, ref, anchor),
+              icon: Icons.more_horiz,
+              size: 20,
+              color: colors.muted,
+              onTap: () => _showMenu(context, ref, anchor),
             ),
             Icon(Icons.chevron_right, size: 20, color: colors.muted),
           ],

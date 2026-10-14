@@ -118,7 +118,7 @@ void main() {
     final tint = find.byKey(const ValueKey('material-tint-slider'));
     expect(slider, findsOneWidget);
     final widget = tester.widget<MoeSlider>(slider);
-    expect(widget.min, 10);
+    expect(widget.min, 0, reason: '模糊度可拉到零');
     expect(widget.max, 100);
     expect(widget.divisions, isNull);
     expect(widget.value, 50);
@@ -137,7 +137,7 @@ void main() {
       tester.widget<MoeSlider>(slider).onChanged!(entry.key);
       await tester.pumpAndSettle();
       expect(
-        container.read(appSettingsProvider).requireValue.glassBlurSigma,
+        container.read(appSettingsProvider).requireValue.frostedBlurSigma,
         moreOrLessEquals(entry.value, epsilon: 1e-9),
       );
       expect(
@@ -148,39 +148,41 @@ void main() {
     final persisted = ProviderContainer();
     addTearDown(persisted.dispose);
     expect(
-      (await persisted.read(appSettingsProvider.future)).glassBlurSigma,
+      (await persisted.read(appSettingsProvider.future)).frostedBlurSigma,
       32,
     );
     expect(tester.widget<MoeSlider>(tint).value, 50, reason: '模糊不带动底色');
     tester.widget<MoeSlider>(tint).onChanged!(20);
     await tester.pumpAndSettle();
     final afterTint = container.read(appSettingsProvider).requireValue;
-    expect(afterTint.glassTintFill, moreOrLessEquals(0.2, epsilon: 1e-9));
-    expect(afterTint.glassBlurSigma, 32, reason: '底色不带动模糊');
+    expect(afterTint.frostedTintFill, moreOrLessEquals(0.2, epsilon: 1e-9));
+    expect(afterTint.glassTintFill, 0.5, reason: '模糊材质底色不带动玻璃');
+    expect(afterTint.frostedBlurSigma, 32, reason: '底色不带动模糊');
+    expect(afterTint.glassBlurSigma, 16, reason: '模糊材质不带动玻璃');
     final tintPersisted = ProviderContainer();
     addTearDown(tintPersisted.dispose);
     expect(
-      (await tintPersisted.read(appSettingsProvider.future)).glassTintFill,
+      (await tintPersisted.read(appSettingsProvider.future)).frostedTintFill,
       moreOrLessEquals(0.2, epsilon: 1e-9),
     );
     await tester.drag(slider, const Offset(-1000, 0));
     await tester.pumpAndSettle();
-    expect(tester.widget<MoeSlider>(slider).value, 10);
+    expect(tester.widget<MoeSlider>(slider).value, 0);
     expect(
-      container.read(appSettingsProvider).requireValue.glassBlurSigma,
-      moreOrLessEquals(3.2, epsilon: 1e-9),
+      container.read(appSettingsProvider).requireValue.frostedBlurSigma,
+      0,
     );
     await tester.drag(slider, const Offset(2000, 0));
     await tester.pumpAndSettle();
     expect(tester.widget<MoeSlider>(slider).value, 100);
     expect(
-      container.read(appSettingsProvider).requireValue.glassBlurSigma,
+      container.read(appSettingsProvider).requireValue.frostedBlurSigma,
       32,
     );
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('stored zero floors at 10% under frosted without rewriting', (
+  testWidgets('frosted and glass keep separate blur and fill settings', (
     tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(420, 1200));
@@ -198,36 +200,62 @@ void main() {
     final container = ProviderScope.containerOf(
       tester.element(find.byType(UiSettingsPage)),
     );
+    AppSettings read() => container.read(appSettingsProvider).requireValue;
     await container.read(appSettingsProvider.future);
     await tester.pumpAndSettle();
-    final glassSlider = find.byKey(const ValueKey('material-blur-slider'));
-    expect(tester.widget<MoeSlider>(glassSlider).value, 0);
-    expect(tester.widget<MoeSlider>(glassSlider).min, 0);
-    expect(tester.widget<MoeSlider>(glassSlider).max, 100);
+    final slider = find.byKey(const ValueKey('material-blur-slider'));
+    final tint = find.byKey(const ValueKey('material-tint-slider'));
+    expect(tester.widget<MoeSlider>(slider).value, 0);
+    expect(tester.widget<MoeSlider>(slider).min, 0);
+    // The legacy fill follows the old shared blur: zero.
+    expect(tester.widget<MoeSlider>(tint).value, 0);
     await Scrollable.ensureVisible(
       tester.element(find.text('模糊')),
       alignment: 0.5,
     );
     await tester.tap(find.text('模糊'));
     await tester.pumpAndSettle();
-    expect(tester.widget<MoeSlider>(glassSlider).value, 10);
-    expect(find.text('模糊度'), findsOneWidget);
-    expect(
-      container.read(appSettingsProvider).requireValue.glassBlurSigma,
-      0,
-      reason: '显示保底不回写存储',
-    );
+    // A store from before the split inherits the shared value, zero included.
+    expect(tester.widget<MoeSlider>(slider).value, 0);
+    expect(tester.widget<MoeSlider>(slider).min, 0);
+    tester.widget<MoeSlider>(slider).onChanged!(75);
+    await tester.pumpAndSettle();
+    expect(read().frostedBlurSigma, 24);
+    expect(read().glassBlurSigma, 0, reason: '模糊材质不带动玻璃');
+    tester.widget<MoeSlider>(tint).onChanged!(60);
+    await tester.pumpAndSettle();
+    expect(read().frostedTintFill, moreOrLessEquals(0.6, epsilon: 1e-9));
+    expect(read().glassTintFill, 0, reason: '模糊材质底色不带动玻璃');
     await tester.tap(find.text('玻璃'));
     await tester.pumpAndSettle();
-    expect(tester.widget<MoeSlider>(glassSlider).value, 0);
-    expect(tester.widget<MoeSlider>(glassSlider).min, 0);
-    expect(container.read(appSettingsProvider).requireValue.glassBlurSigma, 0);
+    expect(tester.widget<MoeSlider>(slider).value, 0);
+    expect(tester.widget<MoeSlider>(tint).value, 0);
+    tester.widget<MoeSlider>(slider).onChanged!(25);
+    await tester.pumpAndSettle();
+    expect(read().glassBlurSigma, 8);
+    expect(read().frostedBlurSigma, 24, reason: '玻璃不带动模糊材质');
+    tester.widget<MoeSlider>(tint).onChanged!(30);
+    await tester.pumpAndSettle();
+    expect(read().glassTintFill, moreOrLessEquals(0.3, epsilon: 1e-9));
+    expect(
+      read().frostedTintFill,
+      moreOrLessEquals(0.6, epsilon: 1e-9),
+      reason: '玻璃底色不带动模糊材质',
+    );
+    await tester.tap(find.text('模糊'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<MoeSlider>(slider).value, 75);
+    expect(
+      tester.widget<MoeSlider>(tint).value,
+      moreOrLessEquals(60, epsilon: 1e-9),
+    );
     final fresh = ProviderContainer();
     addTearDown(fresh.dispose);
-    expect(
-      (await fresh.read(appSettingsProvider.future)).glassBlurSigma,
-      0,
-    );
+    final restored = await fresh.read(appSettingsProvider.future);
+    expect(restored.frostedBlurSigma, 24);
+    expect(restored.glassBlurSigma, 8);
+    expect(restored.frostedTintFill, moreOrLessEquals(0.6, epsilon: 1e-9));
+    expect(restored.glassTintFill, moreOrLessEquals(0.3, epsilon: 1e-9));
     expect(tester.takeException(), isNull);
   });
 }

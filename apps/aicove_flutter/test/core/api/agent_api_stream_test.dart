@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 
 import 'package:aicove_flutter/src/core/api/agent_api.dart';
+import 'package:aicove_flutter/src/core/api/providers/finish_reason.dart';
 import 'package:aicove_flutter/src/core/api_logger.dart';
 import 'package:aicove_flutter/src/features/observability/trace_store.dart';
 
@@ -413,6 +414,74 @@ void main() {
       final latest = ApiLogger.entries.value.last;
       expect(latest.url, contains(':streamGenerateContent'));
       expect(latest.url, isNot(contains('alt=sse')));
+    });
+
+    group('finish reason', () {
+      Future<SendMessageRichResult> stream(
+        String model,
+        String base,
+        List<String> lines,
+      ) =>
+          AgentApiClient(
+            client: _FakeStreamingClient(statusCode: 200, responseLines: lines),
+          ).sendMessageRichStream(
+            agentId: 'agent_1',
+            sessionId: 'session_1',
+            modelFullId: model,
+            messages: const <Map<String, dynamic>>[],
+            userText: '继续',
+            providerApiBase: base,
+            providerApiKey: 'test-key',
+          );
+
+      test('OpenAI-compatible streams keep the last finish_reason', () async {
+        final result = await stream(
+          'openai:gpt-4o-mini',
+          'https://api.openai.com/v1',
+          const [
+            'data: {"choices":[{"delta":{"content":"好"},"finish_reason":null}]}',
+            '',
+            'data: {"choices":[{"delta":{},"finish_reason":"length"}]}',
+            '',
+            'data: [DONE]',
+            '',
+          ],
+        );
+        expect(result.rawFinishReason, 'length');
+        expect(result.finishReason, FinishReason.length);
+      });
+
+      test('Claude streams take stop_reason from message_delta', () async {
+        final result = await stream(
+          'claude:claude-sonnet-4-6',
+          'https://api.anthropic.com',
+          const [
+            'event: content_block_delta',
+            'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"好"}}',
+            '',
+            'event: message_delta',
+            'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
+            '',
+            'event: message_stop',
+            'data: {"type":"message_stop"}',
+            '',
+          ],
+        );
+        expect(result.finishReason, FinishReason.stop);
+      });
+
+      test('Gemini streams take finishReason from the candidate', () async {
+        final result = await stream(
+          'gemini:gemini-2.5-pro',
+          'https://generativelanguage.googleapis.com/v1beta',
+          const [
+            '[{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"lookup","args":{}}}]},"finishReason":"STOP"}]}]',
+            '',
+          ],
+        );
+        expect(result.toolCalls, hasLength(1));
+        expect(result.finishReason, FinishReason.stop);
+      });
     });
 
     test('supports claude stream with text_delta and input_json_delta',

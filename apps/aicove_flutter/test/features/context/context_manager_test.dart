@@ -792,7 +792,6 @@ void main() {
     final agent = BackgroundAgentService(
       loadRecentMessages: (_, __) async => throw StateError('不得回退缓存'),
       loadSettings: () async => mapUiModelsToAppSettings({}),
-      readPluginManager: PluginManager.new,
       requestConfigResolver: ({required settings, required modelRef}) async =>
           const BackgroundAgentRequestConfig(
             modelFullId: 'openai:fake',
@@ -864,7 +863,6 @@ void main() {
   ) => BackgroundAgentService(
     loadRecentMessages: (_, __) async => throw StateError('不得回退缓存'),
     loadSettings: () async => mapUiModelsToAppSettings({}),
-    readPluginManager: PluginManager.new,
     requestConfigResolver: ({required settings, required modelRef}) async =>
         const BackgroundAgentRequestConfig(
           modelFullId: 'openai:fake',

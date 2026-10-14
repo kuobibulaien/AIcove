@@ -314,17 +314,23 @@ void main() {
 
   testWidgets('主动关怀首页无总开关，全部分组同列等宽', (tester) async {
     await _mount(tester, const AutoReplySettingsPage());
-    for (final label in ['待发送的消息', '让 AI 帮你记提醒', '打扰程度', '更多设置']) {
+    for (final label in [
+      '待发送的消息',
+      '让 AI 帮你记提醒',
+      '允许主动打电话',
+      '打扰程度',
+      '更多设置',
+    ]) {
       expect(find.text(label), findsWidgets, reason: label);
     }
     expect(find.text('主动回复'), findsNothing);
-    expect(find.byType(Switch), findsNWidgets(2));
+    expect(find.byType(MoeSwitch), findsNWidgets(3));
     _expectUnifiedSurfaceWidth(tester);
   });
 
   testWidgets('主动关怀更多设置全部分组同列等宽', (tester) async {
     await _mount(tester, const AutoReplyAdvancedSettingsPage());
-    for (final label in ['判断时机', '使用的模型', '判断提示词', '更准时', '历史记录']) {
+    for (final label in ['判断时机', '使用的模型', '更准时', '历史记录']) {
       expect(find.text(label), findsWidgets, reason: label);
     }
     _expectUnifiedSurfaceWidth(tester);

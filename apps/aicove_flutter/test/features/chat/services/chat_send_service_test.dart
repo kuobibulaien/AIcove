@@ -13,6 +13,10 @@ import 'package:path_provider_platform_interface/path_provider_platform_interfac
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:aicove_flutter/src/core/models/message_block.dart';
+import 'package:aicove_flutter/src/core/api/thinking/thinking_level.dart';
+import 'package:aicove_flutter/src/features/voice_call/data/api_runner_call_reply_generator.dart';
+import 'package:aicove_flutter/src/features/voice_call/data/voice_call_context_brief.dart';
+import 'package:aicove_flutter/src/features/voice_call/domain/voice_call_ports.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
 import 'package:aicove_flutter/src/core/database/database.dart' as db;
 import 'package:aicove_flutter/src/core/database/database_provider.dart';
@@ -20,6 +24,9 @@ import 'package:aicove_flutter/src/core/database/converters/database_converters.
 import 'package:aicove_flutter/src/features/agent_context/data/silly_tavern_preset_store.dart';
 import 'package:aicove_flutter/src/features/agent_context/providers/preset_recipe_provider.dart';
 import 'package:aicove_flutter/src/features/agent_context/domain/tavern_compatibility_port.dart';
+import 'package:aicove_flutter/src/features/agent_context/domain/silly_tavern_preset_parser.dart';
+import 'package:aicove_flutter/src/features/agent_context/domain/silly_tavern_preset.dart';
+import 'package:aicove_flutter/src/features/agent_context/data/silly_tavern_variable_store.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/chat/domain/persona_prompt_codec.dart';
@@ -27,8 +34,6 @@ import 'package:aicove_flutter/src/features/plugins/image/image_config.dart';
 import 'package:aicove_flutter/src/features/plugins/image/drawing_preset.dart';
 import 'package:aicove_flutter/src/features/plugins/image/drawing_preset_provider.dart';
 import 'package:aicove_flutter/src/features/plugins/plugin_providers.dart';
-import 'package:aicove_flutter/src/features/plugins/trigger/trigger_config.dart';
-import 'package:aicove_flutter/src/features/plugins/trigger/trigger_plugin.dart';
 import 'package:aicove_flutter/src/features/observability/trace_models.dart';
 import 'package:aicove_flutter/src/features/observability/trace_store.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_request_message_builder.dart';
@@ -62,6 +67,15 @@ class _FakePathProviderPlatform extends PathProviderPlatform {
 
   @override
   Future<String?> getTemporaryPath() async => rootPath;
+}
+
+class _PresetPort implements TavernCompatibilityPort {
+  _PresetPort(this.preset);
+  final SillyTavernPreset preset;
+  @override
+  Future<SillyTavernPreset?> resolvePreset(String? explicitId) async => preset;
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 void main() {
@@ -613,6 +627,155 @@ void main() {
     ], settings: fakeSettings(defaultModelName: 'openai:gpt-4o'),
       pluginPolicy: ChatPluginContextPolicy.firstParty(activeProviderIds: {})),
       throwsA(isA<StateError>()));
+  });
+
+  test('a call snapshot never writes preset variables', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final preset = const SillyTavernPresetParser().parseSource('''
+{
+  "prompts": [
+    {"identifier":"vars","role":"system","content":"{{setvar::last::{{lastusermessage}}}}记住"},
+    {"identifier":"chatHistory","marker":true}
+  ],
+  "prompt_order": [{"order":[
+    {"identifier":"vars","enabled":true},
+    {"identifier":"chatHistory","enabled":true}
+  ]}]
+}
+''', sourceFileName: 'vars.json');
+    final container = ProviderContainer(overrides: [
+      appSettingsProvider.overrideWith(() => _FakeAppSettingsNotifier(
+        fakeSettings(defaultModelName: 'openai:gpt-4o'),
+      )),
+      tavernCompatibilityPortProvider.overrideWithValue(_PresetPort(preset)),
+    ]);
+    addTearDown(container.dispose);
+    final now = DateTime(2026, 10, 12);
+    final conv = Conversation(id: 'vars', title: 'v', displayName: 'v',
+        createdAt: now, updatedAt: now, messages: const []);
+    Future<Map<String, String>> saved() async =>
+        (await SillyTavernVariableStore().load(
+          presetId: preset.id,
+          conversationId: conv.id,
+        )).values;
+
+    await prepareVoiceCallBaseConfig(
+      container.read(chatSendServiceProvider),
+      conv,
+      settings: fakeSettings(defaultModelName: 'openai:gpt-4o'),
+      recent: [msg('u1', '我明天面试', now)],
+    );
+    expect(await saved(), isEmpty);
+
+    // 对照：打字聊天照常写变量。
+    await container.read(chatSendServiceProvider).prepareApiConfig(
+      conv: conv,
+      history: [msg('u1', '我明天面试', now)],
+      userText: '我明天面试',
+    );
+    expect(await saved(), {'last': '我明天面试'});
+  });
+
+  test('a voice call starts from the same assembly as text chat', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final appDb = db.AppDatabase.forTesting(NativeDatabase.memory());
+    final container = ProviderContainer(overrides: [
+      databaseProvider.overrideWithValue(appDb),
+      appSettingsProvider.overrideWith(() => _FakeAppSettingsNotifier(
+        fakeSettings(defaultModelName: 'openai:gpt-4o'),
+      )),
+    ]);
+    addTearDown(() async {
+      container.dispose();
+      await appDb.close();
+    });
+    final base = DateTime(2026, 10, 12, 9);
+    final conv = Conversation(
+      id: 'nahida',
+      title: '纳西妲',
+      displayName: '纳西妲',
+      personaPrompt: '你是纳西妲。',
+      createdAt: base,
+      updatedAt: base,
+      messages: const [],
+    );
+    await container
+        .read(conversationRepositoryProvider)
+        .upsert(ConversationConverter.toCompanion(conv));
+    final call = CallRecordBlock(
+      messageId: 'm3',
+      callId: 'c1',
+      duration: const Duration(minutes: 2),
+      summary: '用户说面试结束了。',
+    );
+    for (final m in [
+      msg('m1', '我明天面试', base),
+      Message(id: 'm2', role: 'assistant', content: '加油呀', createdAt: base),
+      Message(
+        id: 'm3',
+        role: 'user',
+        content: call.content,
+        blocks: [call],
+        createdAt: base,
+      ),
+    ]) {
+      await container
+          .read(messageRepositoryProvider)
+          .upsert(MessageConverter.toCompanion(m, conv.id));
+    }
+
+    final chat = container.read(chatSendServiceProvider);
+    final window = await loadVoiceCallWindow(chat, conv);
+    final split = splitVoiceCallWindow(window, keepRecent: 2);
+    expect(split.earlier.map((m) => m.id), ['m1']);
+    final config = await prepareVoiceCallBaseConfig(
+      chat,
+      conv,
+      settings: fakeSettings(defaultModelName: 'openai:gpt-4o'),
+      recent: split.recent,
+      withBrief: true,
+    );
+
+    expect(config.messages.first['role'], 'system');
+    expect(config.messages.first['content'], contains('你是纳西妲。'));
+    // 占位可能被并进相邻的回复里，以拼好通话轮次后真正发出去的请求为准。
+    final sent = buildVoiceCallMessages(config.messages, const [
+      CallTurn(role: 'user', text: '喂'),
+    ], brief: '用户明天面试。');
+    final contents = sent.map((m) => m['content'].toString()).toList();
+    expect(contents, contains('加油呀'));
+    expect(contents.any((c) => c.contains('用户明天面试。')), isTrue);
+    // 较早的原文不整段带上，由接通前摘要代替。
+    expect(contents, isNot(contains('我明天面试')));
+    expect(contents.any((c) => c.contains('⟦')), isFalse);
+    // 上一通电话只以标签加摘要出现在上下文里。
+    expect(contents, contains('[语音通话 02:00]\n通话摘要：用户说面试结束了。'));
+    expect(contents.last, '喂');
+    // 时间提醒不固定在接通那一刻、文字聊天的末尾，而是每轮按当时时间现算，
+    // 紧贴通话里用户最新一句。
+    final stamp = RegExp(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}');
+    expect(
+      config.messages.any((m) => stamp.hasMatch(m['content'].toString())),
+      isFalse,
+    );
+    final later = buildVoiceCallMessages(config.messages, const [
+      CallTurn(role: 'user', text: '喂'),
+      CallTurn(role: 'assistant', text: '在呢'),
+      CallTurn(role: 'user', text: '现在几点'),
+    ], pluginReminder: config.reminders!(DateTime(2026, 10, 12, 21, 30)));
+    final timed = later
+        .where((m) => stamp.hasMatch(m['content'].toString()))
+        .toList();
+    expect(timed, hasLength(1));
+    expect(timed.single['content'], contains('2026-10-12 21:30'));
+    expect(timed.single['content'], contains(kVoiceCallInstruction));
+    expect(later[later.indexOf(timed.single) + 1]['content'], '现在几点');
+    expect(config.modelFullId, 'openai:gpt-4o');
+    expect(config.presetStreamResponse, isTrue);
+    expect(config.tools, isNull);
+    expect(config.enabledPluginIds,
+        everyElement(isIn(kVoiceCallContextPluginIds)));
+    expect(config.providerRequestOptions?.thinkingLevel, ThinkingLevel.off);
   });
 
   for (final includeHistory in [false, true]) {
@@ -1352,22 +1515,6 @@ void main() {
 
   }
 
-  test('trigger plugin should not inject system prompt', () async {
-    final container = ProviderContainer();
-    addTearDown(container.dispose);
-    final pluginProvider = Provider<TriggerPlugin>(
-      (ref) => TriggerPlugin(const TriggerConfig(enabled: true), ref),
-    );
-    final plugin = container.read(pluginProvider);
-
-    final prompt = await plugin.getSystemPrompt(
-      userMessage: '明天八点提醒我',
-      supportsToolCalling: true,
-    );
-
-    expect(prompt, isNull);
-  });
-
   test('prepareApiConfig resolves thinking level: session > model default > software default',
       () async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
@@ -1495,9 +1642,11 @@ void main() {
     expect(options!.temperature, isNull);
     expect(options.reasoningEffort, isNull);
     expect(options.useSystemPrompt, isTrue);
-    // gpt-4o-mini 未识别为原生档位模型 → generic → 软件默认 auto
-    expect(options.thinkingLevel, ThinkingLevel.auto);
+    // gpt-4o-mini 未识别为原生档位模型 → generic → 软件默认「最低」，先试关
+    expect(options.thinkingLevel, ThinkingLevel.off);
     expect(options.thinkingScheme, ThinkingScheme.generic);
+    expect(options.thinkingCandidates,
+        [ThinkingLevel.off, ThinkingLevel.minimal, ThinkingLevel.low]);
     expect(apiConfig.presetRegexScripts, isEmpty);
     expect(apiConfig.presetRegexAuthorized, isFalse);
     expect(apiConfig.presetStreamResponse, isNull);

@@ -1,0 +1,71 @@
+{
+  "messages": [
+    {
+      "role": "system",
+      "content": "你是测试角色。\n\n<system-reminder> 里是应用附上的背景说明，不是对方说的话。心里有数就好，别照着念，也别提到它。"
+    },
+    {
+      "role": "user",
+      "content": "早上好"
+    },
+    {
+      "role": "assistant",
+      "content": "早呀<image>a cat on a sofa</image>今天想做什么？\n刚才试着给你画图。"
+    },
+    {
+      "role": "user",
+      "content": "<system-reminder>\nimage_generation_failed=true\nimage_generation_failure_reason=timeout\nimage_generation_failure_raw_prompt=1girl\nimage_generation_failure_prompt=style, 1girl\n\n本轮回复可以用到的标签（只是提醒，格式和顺序以预设与插件的说明为准）：\n- 想给对方发图时，调用 draw_image 工具，并在正文合适的位置放 <image></image> 占位\n</system-reminder>"
+    },
+    {
+      "role": "user",
+      "content": "帮我画一只猫"
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "draw_image",
+        "description": "如果对话场景涉及到生成图片，可调用此工具。你可以自行使用此工具提升角色扮演效果，如生成自拍或生活图片等，自行决定用途。上下文中如果出现［图片］标签，意思是这个地方有一个图片占位，这意味着你需要配合语境发起一次图片工具调用，而不是单纯地回复文本标签。",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "prompt": {
+              "type": "string",
+              "description": "## 核心规范\n\n- 仅限英文，<512 tokens\n- 以 Danbooru 标签为骨架，复杂细节用自然语言补充\n- 推荐顺序：视角 → 主体 → 外貌设定 → 姿势标签 → 场景光影 → 自然语言细节 → 质量标签\n\n质量标签示例：masterpiece, best quality, very aesthetic\n\n## 权重语法\n\n- `{tag}` 加强，`[tag]` 减弱\n- 数值权重：`1.4::tag::`\n- 负权重：`-1::tag::`\n\n## 多人场景（2人及以上）\n\n用 `|` 分隔：`基底提示词 | 角色1 | 角色2`\n\n- 基底：人数、场景、自然语言关系描述（不写外貌）\n- 角色段：独立写外貌、动作\n\n交互动作前缀：\n- `source#动作` 发起方\n- `target#动作` 承受方\n- `mutual#动作` 共同\n\n示例：A girl and a boy are hugging. | girl, target#hug | boy, source#hug\n\n## POV 第一人称视角\n\n- 开头使用 `{{{pov}}}`\n- 可选：`{pov_hands}` 或 `head out of frame`\n- 避免：`full body` 等第三方视角词汇\n- 只描述对方，不描述观者"
+            },
+            "negative_prompt": {
+              "type": "string",
+              "description": "【负面提示词】精简为主，只写必要提示词，防止白熊效应。可选基础负面提示词示例:lowres, artistic error, scan artifacts, worst quality, bad quality, jpeg artifacts, multiple views, very displeasing, too many watermarks, negative space, blank page。注意：在负面内容中，{} 和 [] 的权重语义与正面提示词是反转的。"
+            },
+            "width": {
+              "type": "integer",
+              "description": "图片宽度。严格遵循以下标准：竖图人像 832；横图 1216；方图 1024。 参考值 832，可省略。"
+            },
+            "height": {
+              "type": "integer",
+              "description": "图片高度。严格遵循以下标准：竖图人像 1216；横图 832；方图 1024。 参考值 1216，可省略。"
+            },
+            "count": {
+              "type": "integer",
+              "description": "生成张数 1–4，参考 1，可省略。"
+            }
+          },
+          "required": [
+            "prompt"
+          ]
+        }
+      }
+    }
+  ],
+  "toolChoice": null,
+  "disableBuiltinWebSearch": false,
+  "boundTools": [
+    "draw_image"
+  ],
+  "enabledPluginIds": [
+    "image"
+  ],
+  "presetStreamResponse": null,
+  "hasPresetScript": false
+}

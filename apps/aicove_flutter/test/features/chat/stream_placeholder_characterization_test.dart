@@ -381,6 +381,9 @@ class _ScriptedStreamingSendService extends ChatSendService {
     String? overrideModel,
     String? conversationId,
     TraceContext? traceContext,
+    DateTime? requestTime,
+    bool persistSideEffects = true,
+    bool deferReminders = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -388,7 +391,6 @@ class _ScriptedStreamingSendService extends ChatSendService {
       providerApiBase: _settings.apiBaseUrl,
       providerApiKey: null,
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: const <Map<String, dynamic>>[],
       tools: null,
       enabledPluginIds: null,

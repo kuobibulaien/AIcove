@@ -441,7 +441,7 @@ class ModelRowTile extends ConsumerWidget {
                         ),
                         tintColor: isSelected
                             ? type.color.withValues(alpha: 0.15)
-                            : context.moeColors.componentBackground,
+                            : Colors.transparent,
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(
                           color: isSelected
@@ -489,83 +489,32 @@ class ModelRowTile extends ConsumerWidget {
                       color: context.moeColors.text,
                     ),
                   ),
-                  Text(
-                    '仅用于 chat 模型，可自动识别或手动指定。',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: context.moeColors.muted,
-                    ),
-                  ),
                   const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: context.moeColors.componentBackground,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: context.moeColors.border),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.auto_awesome_outlined,
-                          size: 18,
-                          color: context.moeColors.muted,
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                '自动识别能力',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: context.moeColors.text,
-                                ),
-                              ),
-                              Text(
-                                '关闭后可手动选择：视觉 / 工具 / 思考',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: context.moeColors.muted,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Switch(
-                          value: useAutoCapabilities,
-                          onChanged: (value) {
-                            setSheetState(() => useAutoCapabilities = value);
-                            HapticFeedback.selectionClick();
-                          },
-                        ),
-                      ],
-                    ),
+                  MoeSettingsGroup(
+                    margin: EdgeInsets.zero,
+                    children: [
+                      MoeSettingsRow(
+                        icon: Icons.auto_awesome_outlined,
+                        iconColor: context.moeColors.muted,
+                        label: '自动识别能力',
+                        subtitle: '关闭后可手动选择：视觉 / 工具 / 思考',
+                        trailingType: MoeSettingsRowTrailing.switchControl,
+                        switchValue: useAutoCapabilities,
+                        showDivider: false,
+                        onSwitchChanged: (value) {
+                          setSheetState(() => useAutoCapabilities = value);
+                          HapticFeedback.selectionClick();
+                        },
+                      ),
+                    ],
                   ),
                   if (useAutoCapabilities)
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '自动模式将按模型名推断能力标签。',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: context.moeColors.muted,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          ModelFeatureChips(
-                            modelId: modelId,
-                            showIcon: true,
-                            maxShow: 4,
-                          ),
-                        ],
+                      child: ModelFeatureChips(
+                        modelId: modelId,
+                        showIcon: true,
+                        maxShow: 4,
                       ),
                     )
                   else
@@ -600,7 +549,7 @@ class ModelRowTile extends ConsumerWidget {
                               ),
                               tintColor: isSelected
                                   ? feature.color.withValues(alpha: 0.15)
-                                  : context.moeColors.componentBackground,
+                                  : Colors.transparent,
                               borderRadius: BorderRadius.circular(8),
                               border: Border.all(
                                 color: isSelected
@@ -766,54 +715,23 @@ class ModelRowTile extends ConsumerWidget {
 
                 // 禁用工具调用开关
                 const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: context.moeColors.componentBackground,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: context.moeColors.border),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.build_outlined,
-                        size: 18,
-                        color: context.moeColors.muted,
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '禁用工具调用',
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: context.moeColors.text,
-                              ),
-                            ),
-                            Text(
-                              '开启后 AI 无法使用语音、提醒等插件',
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: context.moeColors.muted,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Switch(
-                        value: disableToolCalling,
-                        onChanged: (value) {
-                          setSheetState(() => disableToolCalling = value);
-                          HapticFeedback.selectionClick();
-                        },
-                      ),
-                    ],
-                  ),
+                MoeSettingsGroup(
+                  margin: EdgeInsets.zero,
+                  children: [
+                    MoeSettingsRow(
+                      icon: Icons.build_outlined,
+                      iconColor: context.moeColors.muted,
+                      label: '禁用工具调用',
+                      subtitle: '开启后 AI 无法使用语音、提醒等插件',
+                      trailingType: MoeSettingsRowTrailing.switchControl,
+                      switchValue: disableToolCalling,
+                      showDivider: false,
+                      onSwitchChanged: (value) {
+                        setSheetState(() => disableToolCalling = value);
+                        HapticFeedback.selectionClick();
+                      },
+                    ),
+                  ],
                 ),
 
                 const SizedBox(height: 20),

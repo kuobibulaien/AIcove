@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -10,8 +12,18 @@ import 'package:aicove_flutter/src/ui/features/settings/pages/context_memory_set
 import 'package:aicove_flutter/src/ui/features/plugins/pages/time_awareness_plugin_detail_page.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/tts_plugin_detail_page.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/sticker_settings_page.dart';
+import 'package:aicove_flutter/src/features/stickers/sticker_library.dart';
+import 'package:aicove_flutter/src/features/stickers/sticker_library_provider.dart';
 
 void main() {
+  setUpAll(() async {
+    // 表情包页读本机库：换成临时目录里的空库（只有内置套组）。
+    final root = await Directory.systemTemp.createTemp('sticker_audit');
+    final library = StickerLibrary(root);
+    await library.load();
+    StickerLibraryNotifier.open = () async => library;
+  });
+
   const pages = <String, Widget>{
     'artist': ArtistPresetPage(),
     'draw-description': DrawImageToolDescriptionPage(),

@@ -1,3 +1,4 @@
+import 'package:aicove_agent_kernel/aicove_agent_kernel.dart' show ToolEffect;
 import 'tool_parameter.dart';
 
 /// AI 工具（用于 Function Calling）
@@ -17,15 +18,33 @@ class AITool {
   /// 返回：执行结果（会传回给 AI）
   final Future<String?> Function(Map<String, dynamic> args) handler;
 
+  /// 完整的参数 JSON Schema（外部工具如 MCP 自带）；非空时取代 [parameters]。
+  final Map<String, dynamic>? inputSchema;
+
+  /// 工具效果，授权闸门据此判断（第二批方案 3.4）；未声明按对外副作用处理。
+  final ToolEffect effect;
+
   const AITool({
     required this.name,
     required this.description,
     required this.parameters,
     required this.handler,
+    this.inputSchema,
+    this.effect = ToolEffect.external,
   });
 
   /// 转为 OpenAI Function Calling 格式
   Map<String, dynamic> toOpenAISchema() {
+    if (inputSchema != null) {
+      return {
+        'type': 'function',
+        'function': {
+          'name': name,
+          'description': description,
+          'parameters': inputSchema,
+        },
+      };
+    }
     final properties = <String, dynamic>{};
     final required = <String>[];
 
@@ -52,6 +71,13 @@ class AITool {
 
   /// 转为 Anthropic Tool 格式
   Map<String, dynamic> toAnthropicSchema() {
+    if (inputSchema != null) {
+      return {
+        'name': name,
+        'description': description,
+        'input_schema': inputSchema,
+      };
+    }
     final properties = <String, dynamic>{};
     final required = <String>[];
 

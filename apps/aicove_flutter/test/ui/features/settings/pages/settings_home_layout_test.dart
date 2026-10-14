@@ -4,6 +4,7 @@ import 'package:aicove_flutter/src/ui/shared/widgets/moe_adaptive_shell.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_avatar.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_content_surface.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_liquid_glass.dart';
+import 'package:aicove_flutter/src/ui/theme/moe_frosted_material.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/list/moe_settings_row.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 import 'package:flutter/material.dart';
@@ -76,12 +77,7 @@ void main() {
         final rows = tester
             .widgetList<MoeSettingsRow>(find.byType(MoeSettingsRow))
             .toList();
-        expect(rows.map((e) => e.label), [
-          '模型',
-          '通用',
-          '插件',
-          '调试',
-        ]);
+        expect(rows.map((e) => e.label), ['模型', '通用', '插件', '调试']);
         for (final row in rows) {
           expect(
             tester.getRect(find.byWidget(row.iconWidget!)).left,
@@ -166,7 +162,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('root cards stay content surfaces under global liquid', (
+  testWidgets('root cards render the liquid lens under global liquid', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues({});
@@ -195,21 +191,14 @@ void main() {
         tester.widget<MoeContentSurface>(surface),
         isA<MoeContentSurface>(),
       );
-      expect(
-        find.descendant(of: surface, matching: find.byType(AdaptiveGlass)),
-        findsNothing,
-      );
+      // Glass renders the liquid lens behind the card content.
       expect(
         find.descendant(of: surface, matching: find.byType(MoeLiquidGlass)),
-        findsNothing,
+        findsOneWidget,
       );
       expect(
-        find.descendant(of: surface, matching: find.byType(BackdropFilter)),
-        findsNothing,
-      );
-      expect(
-        _innerMaterial(tester, surface).color,
-        MoeColors.light().componentBackground,
+        find.descendant(of: surface, matching: find.byType(AdaptiveGlass)),
+        findsWidgets,
       );
     }
     expect(tester.takeException(), isNull);

@@ -174,13 +174,7 @@ class _CloudSyncSettings extends ConsumerWidget {
         if (state.totalMessages > 0)
           Text('本轮消息：${state.confirmedMessages}/${state.totalMessages} 条已确认'),
         if (state.uploadedFiles > 0)
-          Text(
-            '本轮已上传：${state.uploadedFiles} 个唯一文件，共 ${(state.uploadedBytes / (1024 * 1024)).toStringAsFixed(1)} MiB',
-          ),
-        const SizedBox(height: 8),
-        const Text(
-          '同步全部历史消息、界面与插件设置。仅超过 30 天的聊天图片可只传缩略图；近期聊天图片、头像、背景及插件用图均传原图。',
-        ),
+          Text('已上传 ${state.uploadedFiles} 个文件'),
         if (state.error != null)
           Padding(
             padding: const EdgeInsets.only(top: 8),

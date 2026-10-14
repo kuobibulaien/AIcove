@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 
@@ -9,7 +8,7 @@ import 'package:aicove_flutter/src/core/api/agent_api.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
 import 'package:aicove_flutter/src/features/background_agent/background_agent_service.dart';
 import 'package:aicove_flutter/src/features/background_agent/domain/background_agent_definition.dart';
-import 'package:aicove_flutter/src/features/background_agent/domain/background_context_spec.dart';
+import 'package:aicove_flutter/src/features/agent_context/domain/agent_runtime_contracts.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/chat/services/api_runner.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_send_api_runner.dart';
@@ -19,12 +18,9 @@ import '../chat/services/api_runner_variants.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_types.dart';
 import 'package:aicove_flutter/src/features/observability/trace_models.dart';
 import 'package:aicove_flutter/src/features/observability/trace_store.dart';
-import 'package:aicove_flutter/src/features/plugins/domain/base_plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/handlers/ai_tool.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/handlers/tool_parameter.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin.dart';
-import 'package:aicove_flutter/src/features/plugins/domain/plugin_metadata.dart';
-import 'package:aicove_flutter/src/features/plugins/plugin_manager.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 
 AppSettings _buildTestSettings() {
@@ -74,44 +70,6 @@ AppSettings _buildTestSettings() {
     hideUserAvatar: true,
     defaultChatModels: <String>[modelRef],
   );
-}
-
-class _StubToolPlugin extends BasePlugin {
-  _StubToolPlugin({
-    required String id,
-    required this.tools,
-  }) : super(
-          metadata: PluginMetadata(
-            id: id,
-            name: id,
-            description: 'test plugin',
-            version: '1.0.0',
-            author: 'test',
-            icon: Icons.extension,
-          ),
-        );
-
-  final List<AITool> tools;
-
-  @override
-  bool get enabled => true;
-
-  @override
-  List<AITool> getTools() => tools;
-
-  @override
-  Future<String?> getSystemPrompt({
-    String? userMessage,
-    bool supportsToolCalling = false,
-  }) async =>
-      null;
-
-  @override
-  Future<PluginProcessResult> processResponse(String text) async =>
-      PluginProcessResult(
-        processedText: text,
-        events: const <PluginEvent>[],
-      );
 }
 
 class _SequencedToolCallClient extends http.BaseClient {
@@ -191,24 +149,10 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('BackgroundAgentService', () {
-    test('按上下文配置过滤消息并按白名单收集工具', () async {
-      final pluginManager = PluginManager()
-        ..register(
-          _StubToolPlugin(
-            id: 'memory',
-            tools: <AITool>[
-              _buildTool('memory_lookup', (_) async => '{"ok":true}'),
-            ],
-          ),
-        )
-        ..register(
-          _StubToolPlugin(
-            id: 'trigger',
-            tools: <AITool>[
-              _buildTool('delete_trigger', (_) async => '{"ok":true}'),
-            ],
-          ),
-        );
+    test('按上下文配置过滤消息；白名单里暂无来源的工具名被跳过', () async {
+      final tools = <AITool>[
+        _buildTool('memory_lookup', (_) async => '{"ok":true}'),
+      ];
 
       ApiConfig? capturedConfig;
       List<AITool>? capturedTools;
@@ -244,7 +188,6 @@ void main() {
           ),
         ],
         loadSettings: () async => _buildTestSettings(),
-        readPluginManager: () => pluginManager,
         requestConfigResolver: ({
           required AppSettings settings,
           required String? modelRef,
@@ -279,20 +222,23 @@ void main() {
       );
 
       final result = await service.run(
-        definition: const BackgroundAgentDefinition(
+        definition: BackgroundAgentDefinition(
           id: 'memory_agent',
           name: '记忆整理',
           objectivePrompt: '提取长期记忆',
-          contextSpec: BackgroundContextSpec(
-            lastMessages: 3,
-            includeUser: true,
-            includeAssistant: false,
-            includeTimestamps: true,
+          contextProfile: ContextProfile.background(
+            const ConversationWindowSpec(
+              lastMessages: 3,
+              includeUser: true,
+              includeAssistant: false,
+              includeTimestamps: true,
+            ),
           ),
-          allowedToolNames: <String>['memory_lookup'],
+          allowedToolNames: <String>['memory_lookup', 'delete_trigger'],
         ),
         conversationId: 'conv_1',
         extraInstruction: '只输出关键信息',
+        additionalTools: tools,
       );
 
       expect(result.sessionId, 'bg_test_session');
@@ -349,20 +295,14 @@ void main() {
           timeout: timeout,
         ),
       );
-      final pluginManager = PluginManager()
-        ..register(
-          _StubToolPlugin(
-            id: 'memory',
-            tools: <AITool>[
-              _buildTool('memory_lookup', (_) async {
-                return jsonEncode(<String, dynamic>{
-                  'success': true,
-                  'memory': '用户偏好无糖美式',
-                });
-              }),
-            ],
-          ),
-        );
+      final tools = <AITool>[
+        _buildTool('memory_lookup', (_) async {
+          return jsonEncode(<String, dynamic>{
+            'success': true,
+            'memory': '用户偏好无糖美式',
+          });
+        }),
+      ];
       TraceStore.instance.debugResetForTest();
       addTearDown(TraceStore.instance.debugResetForTest);
       TraceContext? capturedTraceContext;
@@ -377,7 +317,6 @@ void main() {
           ),
         ],
         loadSettings: () async => _buildTestSettings(),
-        readPluginManager: () => pluginManager,
         requestConfigResolver: ({
           required AppSettings settings,
           required String? modelRef,
@@ -403,7 +342,7 @@ void main() {
             config: config,
             sessionId: sessionId,
             userText: null,
-            effectivePlugins: const [],
+            responseProcessors: const [],
             availableTools: availableTools,
             maxRounds: maxRounds,
             traceContext: config.traceContext,
@@ -413,15 +352,18 @@ void main() {
       );
 
       final result = await service.run(
-        definition: const BackgroundAgentDefinition(
+        definition: BackgroundAgentDefinition(
           id: 'memory_agent',
           name: '记忆整理',
           objectivePrompt: '调用工具读取记忆并给出总结',
-          contextSpec: BackgroundContextSpec(lastMessages: 1),
+          contextProfile: ContextProfile.background(
+            const ConversationWindowSpec(lastMessages: 1),
+          ),
           allowedToolNames: <String>['memory_lookup'],
           maxRounds: 2,
         ),
         conversationId: 'conv_2',
+        additionalTools: tools,
       );
 
       expect(client.callCount, 2);
@@ -460,7 +402,6 @@ void main() {
           fail('传入 contextMessages 后不应再调用 loadRecentMessages');
         },
         loadSettings: () async => _buildTestSettings(),
-        readPluginManager: () => PluginManager(),
         requestConfigResolver: ({
           required AppSettings settings,
           required String? modelRef,
@@ -492,14 +433,16 @@ void main() {
       );
 
       final result = await service.run(
-        definition: const BackgroundAgentDefinition(
+        definition: BackgroundAgentDefinition(
           id: 'memory_agent',
           name: '记忆整理',
           objectivePrompt: '提取长期记忆',
-          contextSpec: BackgroundContextSpec(
-            includeUser: true,
-            includeAssistant: true,
-            includeTimestamps: true,
+          contextProfile: ContextProfile.background(
+            const ConversationWindowSpec(
+              includeUser: true,
+              includeAssistant: true,
+              includeTimestamps: true,
+            ),
           ),
         ),
         conversationId: 'conv_override',
@@ -528,7 +471,6 @@ void main() {
       final service = BackgroundAgentService(
         loadRecentMessages: (_, __) async => const <Message>[],
         loadSettings: () async => _buildTestSettings(),
-        readPluginManager: () => PluginManager(),
         requestConfigResolver: ({
           required AppSettings settings,
           required String? modelRef,
@@ -560,11 +502,13 @@ void main() {
       );
 
       await service.run(
-        definition: const BackgroundAgentDefinition(
+        definition: BackgroundAgentDefinition(
           id: 'auto_reply_scheduler',
           name: '主动回复触发判断',
           objectivePrompt: '决定是否主动回复',
-          contextSpec: BackgroundContextSpec(includeTimestamps: true),
+          contextProfile: ContextProfile.background(
+            const ConversationWindowSpec(includeTimestamps: true),
+          ),
         ),
         conversationId: 'preset_nahida',
         contextMessages: <Message>[
@@ -593,11 +537,11 @@ void main() {
         ),
       );
     });
-    test('后台执行器默认走旧执行器，开关为真时为内核执行器', () {
+    test('后台执行器默认走内核执行器，开关为假时为旧执行器', () {
       final container = ProviderContainer();
       addTearDown(container.dispose);
-      expect(kAgentKernelBackground, isFalse);
-      expect(container.read(backgroundApiRunnerProvider), isA<ChatSendApiRunner>());
+      expect(kAgentKernelBackground, isTrue);
+      expect(container.read(backgroundApiRunnerProvider), isA<KernelApiRunner>());
       expect(createApiRunner(useKernel: true), isA<KernelApiRunner>());
       expect(createApiRunner(useKernel: false), isA<ChatSendApiRunner>());
     });

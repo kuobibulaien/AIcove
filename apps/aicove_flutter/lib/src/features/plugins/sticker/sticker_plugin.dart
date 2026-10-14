@@ -1,9 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../domain/index.dart';
+import '../../agent_plugins/aicove_plugin.dart';
 import '../../../core/prompts/prompt_builtin_defaults.g.dart';
 import '../../../core/prompts/prompt_template_renderer.dart';
+import '../../stickers/sticker_library.dart';
 import '../../stickers/sticker_registry.dart';
+import 'sticker_agent_plugin.dart';
 import 'sticker_config.dart';
 
 /// 表情包插件 - 解析 AI 回复中的 [标签] 并转换为表情包
@@ -41,6 +46,11 @@ class StickerPlugin extends BasePlugin {
   @override
   bool get enabled => _stickerConfig.enabled;
 
+  StickerConfig get config => _stickerConfig;
+
+  @override
+  AicovePlugin get agentPlugin => stickerAgentPlugin(this);
+
   // ========== 生命周期方法 ==========
 
   @override
@@ -51,12 +61,11 @@ class StickerPlugin extends BasePlugin {
 
   // ========== 现有功能（保留） ==========
 
-  @override
-  Future<String?> getSystemPrompt(
-      {String? userMessage, bool supportsToolCalling = false}) async {
+  /// Tag list prompt; null when off or no stickers are installed.
+  Future<String?> buildSystemPrompt() async {
     if (!enabled) return null;
 
-    // 获取所有可用标签
+    await StickerLibrary.ensureLoaded();
     final registry = StickerRegistry.instance;
     final tags = registry.allTags.toList()..sort();
 
@@ -77,12 +86,13 @@ class StickerPlugin extends BasePlugin {
     );
   }
 
-  @override
-  Future<PluginProcessResult> processResponse(String text) async {
+  /// Turns known `[tag]` marks into sticker events and removes them.
+  Future<PluginProcessResult> convertStickerTags(String text) async {
     if (!enabled || text.isEmpty) {
       return PluginProcessResult(processedText: text, events: []);
     }
 
+    await StickerLibrary.ensureLoaded();
     final events = <PluginEvent>[];
     String processedText = text;
 
@@ -106,10 +116,11 @@ class StickerPlugin extends BasePlugin {
           data: {
             'tag': tag,
             'stickerId': sticker.id,
-            'assetPath': sticker.assetPath,
+            'assetPath': sticker.path,
             'description': sticker.description,
           },
         ));
+        unawaited(StickerLibrary.markUsedIfLoaded(sticker.id));
 
         // 从文本中移除标签
         processedText = processedText.replaceFirst(match.group(0)!, '');

@@ -2,9 +2,7 @@ import 'package:flutter/material.dart';
 import 'plugin_metadata.dart';
 import 'plugin_state.dart';
 import 'plugin_content.dart';
-import 'handlers/command_handler.dart';
-import 'handlers/ai_tool.dart';
-import 'handlers/llm_hook.dart';
+import '../../agent_plugins/aicove_plugin.dart';
 
 /// 插件基础接口
 /// 定义所有插件必须实现的核心功能
@@ -61,31 +59,11 @@ abstract class Plugin {
   /// 用途：应用新配置、重新初始化相关资源
   Future<void> onConfigChanged(Map<String, dynamic> newConfig);
 
-  // ========== 功能注册（新增） ==========
+  // ========== 执行（ADR0064 第二批） ==========
 
-  /// 获取插件提供的命令处理器
-  /// 用于响应用户输入的命令（如 /tts）
-  List<CommandHandler> getCommands();
-
-  /// 获取插件提供的 AI 工具
-  /// 用于 Function Calling（让 AI 调用插件功能）
-  List<AITool> getTools();
-
-  /// 获取插件提供的 LLM 钩子
-  /// 用于在 LLM 请求/响应前后介入处理
-  List<LLMHook> getHooks();
-
-  // ========== 现有功能（保留） ==========
-
-  /// 获取插件提供的系统提示词
-  /// 当插件启用时，这些提示词会被注入到对话中
-  /// [userMessage] 是用户当前发送的消息，用于 RAG 等上下文感知场景
-  /// [supportsToolCalling] 为 true 时，插件可以跳过提示词注入（使用原生工具调用）
-  Future<String?> getSystemPrompt({String? userMessage, bool supportsToolCalling = false});
-
-  /// 处理 AI 响应文本
-  /// 插件可以从响应中提取特定标记，生成事件，并返回处理后的文本
-  Future<PluginProcessResult> processResponse(String text);
+  /// 提示词、提醒、工具与回复处理全部经 v2 注册器贡献（批次 2c 起）；
+  /// 本接口只保留管理部分（元数据、开关、配置、生命周期）。
+  AicovePlugin get agentPlugin;
 
   /// 更新插件配置
   void updateConfig(Map<String, dynamic> config);

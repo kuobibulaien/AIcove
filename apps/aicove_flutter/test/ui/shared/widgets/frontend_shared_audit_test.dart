@@ -97,18 +97,24 @@ void main() {
     expect(calls, 0);
   });
 
-  testWidgets('switch row default false can be toggled', (tester) async {
+  testWidgets('switch row default false can be toggled and exposes semantics', (tester) async {
+    final semantics = tester.ensureSemantics();
     bool? changed;
     await tester.pumpWidget(MaterialApp(
         home: Scaffold(
             body: MoeSettingsRow(
       label: 'switch',
       trailingType: MoeSettingsRowTrailing.switchControl,
+      switchValue: true,
       onSwitchChanged: (value) => changed = value,
     ))));
+    final switchSemantics = tester.getSemantics(find.byType(MoeSwitch));
+    expect(switchSemantics.flagsCollection.isToggled, isNotNull);
+    expect(switchSemantics.label, contains('switch'));
     await tester.tap(find.text('switch'));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
-    expect(changed, true);
+    expect(changed, false);
+    semantics.dispose();
   });
 }

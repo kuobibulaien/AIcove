@@ -151,7 +151,8 @@ class _MoeSwitchState extends State<MoeSwitch> {
     
     // 解析颜色
     final activeTrack = widget.activeTrackColor ?? colors.focus;
-    final inactiveTrack = widget.inactiveTrackColor ?? colors.surfaceAlt;
+    final inactiveTrack =
+        widget.inactiveTrackColor ?? colors.text.withValues(alpha: 0.14);
     final activeThumb = widget.thumbColor ?? widget.activeColor ?? Colors.white;
     final inactiveThumb = widget.thumbColor ?? widget.inactiveColor ?? Colors.white;
     final disabledThumb = widget.disabledThumbColor ?? colors.muted;
@@ -206,15 +207,11 @@ class _MoeSwitchState extends State<MoeSwitch> {
     );
 
     // 添加语义支持
-    if (widget.semanticLabel != null) {
-      switchWidget = Semantics(
-        toggled: widget.value,
-        enabled: _isEnabled,
-        label: widget.semanticLabel,
-        child: switchWidget,
-      );
-    }
-
-    return switchWidget;
+    return Semantics(
+      toggled: widget.value,
+      enabled: _isEnabled,
+      label: widget.semanticLabel,
+      child: switchWidget,
+    );
   }
 }

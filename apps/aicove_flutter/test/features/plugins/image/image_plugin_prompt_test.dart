@@ -149,10 +149,7 @@ void main() {
     });
     final plugin = container.read(pluginProvider);
 
-    final prompt = await plugin.getSystemPrompt(
-      userMessage: '画一张自拍',
-      supportsToolCalling: true,
-    );
+    final prompt = plugin.buildTagSemanticsPrompt();
 
     expect(prompt, isNull);
     expect(plugin.getTools().map((tool) => tool.name), contains('draw_image'));
@@ -178,10 +175,7 @@ void main() {
     });
     final plugin = container.read(pluginProvider);
 
-    final prompt = await plugin.getSystemPrompt(
-      userMessage: '画一张自拍',
-      supportsToolCalling: true,
-    );
+    final prompt = plugin.buildTagSemanticsPrompt();
 
     expect(prompt, isNotNull);
     expect(prompt, contains('<image>英文正向提示词</image>'));
@@ -209,7 +203,7 @@ void main() {
     });
     final plugin = container.read(pluginProvider);
 
-    final result = await plugin.processResponse(
+    final result = plugin.convertInlineImageTags(
       '前文 <image>1girl, cat ears, masterpiece</image> 后文',
     );
 
@@ -218,7 +212,7 @@ void main() {
     expect(result.events.single.type, 'image_generate');
     expect(result.events.single.data['prompt'], '1girl, cat ears, masterpiece');
 
-    final emptyTagResult = await plugin.processResponse('<image></image>');
+    final emptyTagResult = plugin.convertInlineImageTags('<image></image>');
     expect(emptyTagResult.events, isEmpty);
     expect(emptyTagResult.processedText, '<image></image>');
   });
@@ -260,10 +254,7 @@ void main() {
     });
     final plugin = container.read(pluginProvider);
 
-    final prompt = await plugin.getSystemPrompt(
-      userMessage: '画一张自拍',
-      supportsToolCalling: true,
-    );
+    final prompt = plugin.buildTagSemanticsPrompt();
 
     expect(prompt, contains('快速模式独立规则'));
     expect(prompt, isNot(contains('稳定模式专用规则')));
@@ -322,7 +313,7 @@ void main() {
     expect(tool.parameters.keys, containsAll(['steps', 'guidance_scale', 'count']));
     expect(tool.parameters['steps']!.description, contains('23'));
     expect(tool.parameters['width']!.required, isFalse);
-    final events = (await plugin.processResponse('<image>{"prompt":"cat","steps":35}</image>')).events;
+    final events = plugin.convertInlineImageTags('<image>{"prompt":"cat","steps":35}</image>').events;
     expect((events.single.data['drawingConfig'] as Map)['defaultSteps'], 23);
     expect(events.single.data['prompt'], contains('35'));
     final result = jsonDecode((await tool.handler({'prompt': 'cat', 'steps': 0}))!);
@@ -373,7 +364,7 @@ void main() {
     final second = bodies[1]['parameters'] as Map;
     expect([first['width'], first['height'], first['steps'], first['scale']], [1024, 1024, 35, 6]);
     expect([second['width'], second['height'], second['steps']], [768, 1024, 30]);
-    final event = (await a.processResponse('<image>cat</image>')).events.single;
+    final event = a.convertInlineImageTags('<image>cat</image>').events.single;
     expect((event.data['drawingConfig'] as Map)['defaultSteps'], 23);
   });
 

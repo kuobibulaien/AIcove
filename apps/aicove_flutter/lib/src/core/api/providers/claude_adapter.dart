@@ -168,7 +168,7 @@ class ClaudeAdapter implements ProviderAdapter {
     ProviderChatRequestOptions options,
   ) {
     final level = options.thinkingLevel;
-    if (level == null || level.isAuto) return;
+    if (level == null || !level.isConcrete) return;
     final scheme = options.thinkingScheme ?? ThinkingScheme.claudeEffort;
 
     if (level.isOff) {
@@ -230,6 +230,7 @@ class ClaudeAdapter implements ProviderAdapter {
       toolResults: const [],
       toolCalls: toolCalls,
       rawResponse: response,
+      rawFinishReason: response['stop_reason']?.toString(),
     );
   }
 

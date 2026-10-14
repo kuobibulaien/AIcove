@@ -104,16 +104,19 @@ class _DialogueOptionsBadgeState extends ConsumerState<DialogueOptionsBadge> {
       key: _anchorKey,
       width: widget.size,
       height: widget.size,
-      child: MoeIconButton(
-        key: const ValueKey('dialogue_options_badge'),
-        icon: Icons.auto_awesome_outlined,
-        semanticLabel: '对话选项',
-        size: 22,
-        padding: EdgeInsets.all((widget.size - 22) / 2),
-        minTouchTarget: widget.size,
-        borderRadius: BorderRadius.circular(widget.size / 2),
-        color: context.moeColors.accentColor,
-        onTap: _show,
+      child: MoeFloatingSurface(
+        radius: widget.size / 2,
+        child: MoeIconButton(
+          key: const ValueKey('dialogue_options_badge'),
+          icon: Icons.auto_awesome_outlined,
+          semanticLabel: '对话选项',
+          size: 22,
+          padding: EdgeInsets.all((widget.size - 22) / 2),
+          minTouchTarget: widget.size,
+          borderRadius: BorderRadius.circular(widget.size / 2),
+          color: context.moeColors.accentColor,
+          onTap: _show,
+        ),
       ),
     );
   }

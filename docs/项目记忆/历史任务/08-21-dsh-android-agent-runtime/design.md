@@ -2,7 +2,7 @@
 
 ## Status
 
-规划中。第一阶段已确定为可回滚聊天垂直切片；数据真相源分工仍需在 schema 实施前接受 ADR。完整总体设计以 `apps/aicove_flutter/docs/02_前后端分离与架构规范/AIcove2.0_DSH驱动底层架构改造方案.md` 为准，本文保留实现摘要。
+规划中。第一阶段已确定为可回滚聊天垂直切片；数据真相源分工仍需在 schema 实施前接受 ADR。完整总体设计以 `apps/aicove_flutter/docs/05_历史归档/20261007_DSH方案/AIcove2.0_DSH驱动底层架构改造方案.md` 为准，本文保留实现摘要。
 
 ## Architecture
 

@@ -3,12 +3,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_request_config.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
-import 'package:aicove_flutter/src/features/settings/mcp_api.dart';
 import 'package:aicove_flutter/src/features/settings/provider_detail/provider_detail_support.dart';
 
 void main() {
   test('用尽策略沿用当前 Key，当前 Key 错误后切到下一个可用 Key', () async {
-    final builder = _NoMcpChatRequestConfigBuilder();
+    final builder = ChatRequestConfigBuilder();
 
     final initial = await builder.buildRequestConfig(
       _buildSettings(
@@ -33,7 +32,7 @@ void main() {
   });
 
   test('模型默认思考档位从 ModelConfig 读出', () async {
-    final builder = _NoMcpChatRequestConfigBuilder();
+    final builder = ChatRequestConfigBuilder();
 
     final withLevel = await builder.buildRequestConfig(
       _buildSettings(
@@ -51,11 +50,6 @@ void main() {
     );
     expect(without.modelThinkingLevel, isNull);
   });
-}
-
-class _NoMcpChatRequestConfigBuilder extends ChatRequestConfigBuilder {
-  @override
-  Future<McpConfigDto?> getMcpConfig() async => null;
 }
 
 AppSettings _buildSettings({

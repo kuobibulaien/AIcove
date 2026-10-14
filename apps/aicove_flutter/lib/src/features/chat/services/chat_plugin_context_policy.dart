@@ -1,6 +1,8 @@
 import '../../content_tags/domain/content_tag_registry.dart';
 import '../../content_tags/domain/content_tag_scanner.dart';
+import '../../content_tags/domain/content_tag_spec.dart';
 import '../../plugins/image/image_plugin.dart';
+import '../../plugins/mcp/mcp_connector.dart';
 import '../../plugins/plugin_content_tags.dart';
 
 /// Request-scoped filtering. Never writes filtered content back to raw history.
@@ -8,27 +10,47 @@ import '../../plugins/plugin_content_tags.dart';
 /// 标签与工具的归属来自内容扩展注册表（ADR0044）：归属方本轮未生效时，
 /// 其标签连同正文、其工具调用与结果成对移除。
 class ChatPluginContextPolicy {
-  ChatPluginContextPolicy(ContentTagRegistry registry)
-      : _registry = registry,
+  ChatPluginContextPolicy(
+    ContentTagRegistry registry, {
+    Set<String>? activeProviderIds,
+  })  : _registry = registry,
+        _activeProviderIds = activeProviderIds,
         _scanner = ContentTagScanner(registry);
 
   /// 第一方插件：[activeProviderIds] 为本轮有效插件 id（全局开启且角色允许）。
+  /// [extraProviders] 为其他已安装插件（如声明式包）声明的标签，排在第一方
+  /// 之后，同名标签不能覆盖第一方声明。
   factory ChatPluginContextPolicy.firstParty({
     required Set<String> activeProviderIds,
+    Iterable<ContentTagProvider> extraProviders = const [],
   }) =>
-      ChatPluginContextPolicy(ContentTagRegistry(
-        firstPartyContentTagProviders,
+      ChatPluginContextPolicy(
+        ContentTagRegistry(
+          [...firstPartyContentTagProviders, ...extraProviders],
+          activeProviderIds: activeProviderIds,
+        ),
         activeProviderIds: activeProviderIds,
-      ));
+      );
 
   final ContentTagRegistry _registry;
+
+  /// 本轮生效的插件 id；为 null 时不按 MCP 连接器过滤。
+  final Set<String>? _activeProviderIds;
   final ContentTagScanner _scanner;
 
   /// 已下线的旧记忆工具（ADR0038）：历史里残留的调用与结果成对从请求中去掉。
   static const retiredTools = {'memory_search', 'memory_read', 'context_read'};
 
-  bool allowsTool(String name) =>
-      !retiredTools.contains(name) && _registry.allowsTool(name);
+  bool allowsTool(String name) {
+    if (retiredTools.contains(name)) return false;
+    // MCP 连接器的工具名自带连接器 id，本轮未开启该连接器时成对移出历史。
+    final connectorId = McpToolNaming.connectorIdOfTool(name);
+    final active = _activeProviderIds;
+    if (connectorId != null && active != null) {
+      return active.contains(McpToolNaming.pluginIdOf(connectorId));
+    }
+    return _registry.allowsTool(name);
+  }
 
   /// 关闭绘图时不读取或描述 assistant 生成的图片块（ADR0017）。
   bool get includesGeneratedImages =>

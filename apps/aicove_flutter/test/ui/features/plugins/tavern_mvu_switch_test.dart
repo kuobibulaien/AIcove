@@ -114,7 +114,7 @@ void main() {
     await _settle(tester);
 
     expect(find.text('MVU 变量'), findsOneWidget);
-    expect(find.textContaining('已找到 1 个 [InitVar]'), findsOneWidget);
+    expect(find.text('已启用 · 含 1 个初始变量条目'), findsOneWidget);
     if (out.isNotEmpty) {
       await tester.runAsync(() async {
         final boundary =
@@ -130,7 +130,7 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('mvu-enabled')));
     await _settle(tester);
-    expect(find.textContaining('关着时不解析变量'), findsOneWidget);
+    expect(find.text('已关闭'), findsOneWidget);
     final saved = await tester.runAsync(() => store.get(presetId));
     expect(saved!.mvuEnabled, isFalse);
     expect(tester.takeException(), isNull);

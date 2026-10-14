@@ -130,7 +130,6 @@ class _FakeChatSendPort implements ChatSendPort {
       providerApiBase: 'https://example.com',
       providerApiKey: 'test-key',
       customConfig: const <String, dynamic>{},
-      toolPrefs: const <String, dynamic>{},
       messages: <Map<String, dynamic>>[
         for (final message in history) <String, dynamic>{'id': message.id}
       ],
